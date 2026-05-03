@@ -1,0 +1,62 @@
+services:
+  # --- Open WebUI: The Dashboard ---
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    volumes:
+      # This mounts the 'open-webui-data' folder on your Mac to the container
+      - ./open-webui-data:/app/backend/data
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - 'OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1'
+      - 'OPENAI_API_KEY=not-needed'
+      - 'RAG_WEB_SEARCH_RESULT_COUNT=10'
+      - 'RAG_WEB_SEARCH_CONCURRENT_REQUESTS=10'
+      - 'ENABLE_EVALUATION_ARENA_MODELS=false'
+      - 'WEBUI_ADMIN_EMAIL=${OWUI_ADMIN_EMAIL}'
+      - 'WEBUI_ADMIN_PASSWORD=${OWUI_ADMIN_PASSWORD}'
+      - 'WEBUI_ADMIN_NAME=Admin'
+      - HF_TOKEN
+      - 'HF_HOME=/root/.cache/huggingface'
+      - 'SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface'
+    extra_hosts:
+      # Allows the container to talk to your mlx-openai-server on the Mac host
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 1s
+      timeout: 1s
+      retries: 1200
+    depends_on:
+      - searxng
+
+  open-webui-init:
+    build: .
+    image: open-webui-init:latest
+    pull_policy: if_not_present
+    restart: no
+    environment:
+      - 'OWUI_URL=http://open-webui:8080'
+      - OWUI_ADMIN_EMAIL
+      - OWUI_ADMIN_PASSWORD
+      - TASK_MODEL
+      - TASK_MODEL_PORT
+    depends_on:
+      open-webui:
+        condition: service_healthy
+    volumes:
+      - ./openwebui-init:/app
+
+  # --- SearXNG: The Private Search Engine ---
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+      - FORWARDED_ALLOW_IPS=*
