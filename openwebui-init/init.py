@@ -105,6 +105,9 @@ def apply_model_configs(headers):
             "name": model.get("name", model_id),
             "meta": meta,
             "params": params,
+            # OWUI's ModelForm requires access_grants to be a list; omitting it
+            # (None) makes every update fail with a 500 ValidationError.
+            "access_grants": model.get("access_grants", []),
             "data": model
         }
 
