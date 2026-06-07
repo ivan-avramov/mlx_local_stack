@@ -53,7 +53,7 @@ uv run python -u -m mlx_vlm.server \
 TASK_MODEL_PID=$!
 
 # --- Start main multi- model server ---
-echo "Starting task model (mlx_vlm, port 8092)..."
+echo "Starting main model (mlx_vlm, port 8092)..."
 MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start &>logs/main_model.log &
 MAIN_MODEL_PID=$!
 
