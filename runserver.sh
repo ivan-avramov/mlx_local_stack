@@ -3,8 +3,11 @@ set -euo pipefail
 
 ENV_FILE="$(dirname "$0")/.env"
 TASK_MODEL_HOST="127.0.0.1"
+MAIN_MODEL_HOST="127.0.0.1"
 export TASK_MODEL_PORT="8092"
+MAIN_MODEL_PORT="8000"
 TASK_MODEL_URL="http://${TASK_MODEL_HOST}:${TASK_MODEL_PORT}"
+MAIN_MODEL_URL="http://${MAIN_MODEL_HOST}:${MAIN_MODEL_PORT}"
 
 # the task model should be defined in the openwebui-init/models_config.json.
 export TASK_MODEL="mlx-community/Qwen2.5-1.5B-Instruct-4bit"
@@ -42,7 +45,7 @@ uv run python do_backup.py docker-compose.yml open-webui-data/
 log_ok "Backup completed.\n"
 
 # --- Start task model server ---
-echo "Starting task model (mlx_vlm, port 8092)..."
+echo "Starting task model (mlx_vlm, ${TASK_MODEL_URL})..."
 uv run python -u -m mlx_vlm.server \
   --model $TASK_MODEL \
   --host $TASK_MODEL_HOST \
@@ -53,7 +56,7 @@ uv run python -u -m mlx_vlm.server \
 TASK_MODEL_PID=$!
 
 # --- Start main multi- model server ---
-echo "Starting main model (mlx_vlm, port 8092)..."
+echo "Starting main model (mlx_vlm, ${MAIN_MODEL_URL})..."
 MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start &>logs/main_model.log &
 MAIN_MODEL_PID=$!
 
