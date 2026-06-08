@@ -19,13 +19,6 @@
 # messages / chat summaries never evict the primary from mlx-serve's single
 # GPU slot. The task model's own entry (bottom) routes it to :8092 via
 # extra_params.api_base.
-#
-# Note on supports_function_calling (set in aider.model.metadata.json): only the
-# gemma models with a `tool_call_parser` in main_models.yaml truly parse tool
-# calls (moe-8-128, 31b-4-256, 31b-6-128, 31b-4-256-UD). moe-4-256 and Qwen3.6
-# do not — but aider's diff/whole editing never uses tool calls, so it doesn't
-# matter in practice. Flip those two to false in the metadata file if you want
-# strict accuracy.
 
 - name: openai/Qwen3.6-27B-UD-MLX-6bit
   edit_format: diff
@@ -33,6 +26,10 @@
   use_repo_map: true
   streaming: true
   extra_params:
+    # max_tokens MUST be sent explicitly: aider treats max_output_tokens as an
+    # informational cap and does NOT put it on the wire, so mlx-serve falls back
+    # to its 2048 default and Qwen's thinking gets truncated mid-thought.
+    max_tokens: 81920
     # Qwen3.6 is a thinking model. These pass straight through to mlx_vlm
     # (same knobs the OpenWebUI thinking filter uses). thinking_budget caps
     # the think phase so it leaves room to emit the diff within max_output.
@@ -44,30 +41,41 @@
   weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
   use_repo_map: true
   streaming: true
+  extra_params:
+    # Send max_tokens explicitly (see Qwen3.6 note) — else mlx-serve caps at 2048.
+    max_tokens: 32768
 
 - name: openai/gemma-4-26b-moe-8-128
   edit_format: diff
   weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
   use_repo_map: true
   streaming: true
+  extra_params:
+    max_tokens: 32768
 
 - name: openai/gemma-4-31b-4-256
   edit_format: diff
   weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
   use_repo_map: true
   streaming: true
+  extra_params:
+    max_tokens: 32768
 
 - name: openai/gemma-4-26b-moe-4-256
   edit_format: diff
   weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
   use_repo_map: true
   streaming: true
+  extra_params:
+    max_tokens: 32768
 
 - name: openai/gemma-4-31b-4-256-UD
   edit_format: diff
   weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
   use_repo_map: true
   streaming: true
+  extra_params:
+    max_tokens: 32768
 
 # Weak model: route to the standalone task server on :8092 (NOT mlx-serve :8000),
 # so it never swaps out the loaded primary.

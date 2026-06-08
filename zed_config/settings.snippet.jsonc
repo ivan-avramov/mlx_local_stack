@@ -1,0 +1,97 @@
+// Zed settings for the mlx_local_stack — MERGE these keys into your
+// ~/.config/zed/settings.json (don't replace the whole file). See README.md.
+//
+//   mlx-serve (multi-model, one-at-a-time, swaps on demand) .. http://localhost:8000/v1
+//   task model (always-on, standalone) ...................... http://localhost:8092/v1
+//
+// Key facts that differ from the aider config:
+//  - Zed's `max_tokens` is the FULL context window (Zed reserves output itself);
+//    it is NOT window-minus-output like aider's max_input_tokens.
+//  - All models are tool-capable (mlx-serve auto-infers the parser from the chat
+//    template), so every entry is `tools: true` and can drive the agent.
+//  - Zed's openai_compatible provider can't forward custom body params, so we
+//    CANNOT send enable_thinking / thinking_budget. Qwen3.6 thinks by default;
+//    `interleaved_reasoning: true` routes its <think> into a separate pane, and
+//    `max_completion_tokens` bounds total generation (no force-close budget).
+{
+  "language_models": {
+    "openai_compatible": {
+      "mlx-local": {
+        "api_url": "http://localhost:8000/v1",
+        "available_models": [
+          {
+            "name": "gemma-4-31b-6-128",
+            "display_name": "gemma-4-31b-6-128 (6-bit, quality)",
+            "max_tokens": 131072,
+            "max_output_tokens": 32768,
+            "capabilities": { "tools": true, "images": true, "parallel_tool_calls": true, "prompt_cache_key": false }
+          },
+          {
+            "name": "gemma-4-31b-4-256",
+            "display_name": "gemma-4-31b-4-256 (4-bit, 256k ctx)",
+            "max_tokens": 262144,
+            "max_output_tokens": 32768,
+            "capabilities": { "tools": true, "images": true, "parallel_tool_calls": true, "prompt_cache_key": false }
+          },
+          {
+            "name": "gemma-4-31b-4-256-UD",
+            "display_name": "gemma-4-31b-4-256-UD",
+            "max_tokens": 262144,
+            "max_output_tokens": 32768,
+            "capabilities": { "tools": true, "images": true, "parallel_tool_calls": true, "prompt_cache_key": false }
+          },
+          {
+            "name": "gemma-4-26b-moe-8-128",
+            "display_name": "gemma-4-26b-moe-8-128",
+            "max_tokens": 131072,
+            "max_output_tokens": 32768,
+            "capabilities": { "tools": true, "images": true, "parallel_tool_calls": true, "prompt_cache_key": false }
+          },
+          {
+            "name": "gemma-4-26b-moe-4-256",
+            "display_name": "gemma-4-26b-moe-4-256 (fast)",
+            "max_tokens": 262144,
+            "max_output_tokens": 32768,
+            "capabilities": { "tools": true, "images": true, "parallel_tool_calls": true, "prompt_cache_key": false }
+          },
+          {
+            "name": "Qwen3.6-27B-UD-MLX-6bit",
+            "display_name": "Qwen3.6 27B (thinking)",
+            "max_tokens": 262144,
+            "max_completion_tokens": 81920,
+            "interleaved_reasoning": true,
+            "capabilities": { "tools": true, "images": true, "parallel_tool_calls": true, "prompt_cache_key": false }
+          }
+        ]
+      },
+
+      // Always-on task model on :8092 — used for the lightweight roles so they
+      // never swap out the agent model on mlx-serve's single GPU slot.
+      "mlx-task": {
+        "api_url": "http://localhost:8092/v1",
+        "available_models": [
+          {
+            "name": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+            "display_name": "Task 1.5B (summaries/commits)",
+            "max_tokens": 32768,
+            "max_output_tokens": 2048,
+            "capabilities": { "tools": false, "images": false, "parallel_tool_calls": false, "prompt_cache_key": false }
+          }
+        ]
+      }
+    }
+  },
+
+  "agent": {
+    // Primary agent model. Swap to gemma-4-31b-4-256 for 2x context, or
+    // Qwen3.6-27B-UD-MLX-6bit for reasoning-heavy work (verify its thinking +
+    // tool-call behavior in the agent first — see README).
+    "default_model":          { "provider": "mlx-local", "model": "gemma-4-31b-6-128" },
+    "inline_assistant_model": { "provider": "mlx-local", "model": "gemma-4-31b-6-128" },
+    // Keep subagents on the same model as the primary to avoid model swaps.
+    "subagent_model":         { "provider": "mlx-local", "model": "gemma-4-31b-6-128" },
+    // Light roles -> always-on task model on :8092 (no swap of the agent model).
+    "commit_message_model":   { "provider": "mlx-task",  "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit" },
+    "thread_summary_model":   { "provider": "mlx-task",  "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit" }
+  }
+}
