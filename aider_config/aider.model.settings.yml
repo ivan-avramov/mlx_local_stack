@@ -1,0 +1,90 @@
+# aider model settings for the mlx_local_stack
+#   mlx-serve (multi-model server) ......... http://localhost:8000/v1
+#   task model (always-on, standalone) ..... http://localhost:8092/v1
+#
+# Install: copy to ~/.aider.model.settings.yml  (note the leading dot).
+# See README.md in this folder.
+#
+# edit_format: "diff" is the default here. If a model misapplies edits
+# (you'll see "failed to apply edit"), switch that model to:
+#   whole        -> rewrites whole files; most reliable on smaller local models
+#   diff-fenced  -> alternate diff style some models parse better
+#
+# editor_model_name is intentionally UNSET. In architect mode aider then uses
+# the main model as the editor, so a single `/model X` switch moves the
+# architect AND editor roles together. (weak_model_name stays pinned — `/model`
+# does not change it.)
+#
+# weak_model_name is pinned to the always-on task model on :8092 so commit
+# messages / chat summaries never evict the primary from mlx-serve's single
+# GPU slot. The task model's own entry (bottom) routes it to :8092 via
+# extra_params.api_base.
+#
+# Note on supports_function_calling (set in aider.model.metadata.json): only the
+# gemma models with a `tool_call_parser` in main_models.yaml truly parse tool
+# calls (moe-8-128, 31b-4-256, 31b-6-128, 31b-4-256-UD). moe-4-256 and Qwen3.6
+# do not — but aider's diff/whole editing never uses tool calls, so it doesn't
+# matter in practice. Flip those two to false in the metadata file if you want
+# strict accuracy.
+
+- name: openai/Qwen3.6-27B-UD-MLX-6bit
+  edit_format: diff
+  weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  use_repo_map: true
+  streaming: true
+  extra_params:
+    # Qwen3.6 is a thinking model. These pass straight through to mlx_vlm
+    # (same knobs the OpenWebUI thinking filter uses). thinking_budget caps
+    # the think phase so it leaves room to emit the diff within max_output.
+    enable_thinking: true
+    thinking_budget: 49152
+
+- name: openai/gemma-4-31b-6-128
+  edit_format: diff
+  weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  use_repo_map: true
+  streaming: true
+
+- name: openai/gemma-4-26b-moe-8-128
+  edit_format: diff
+  weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  use_repo_map: true
+  streaming: true
+
+- name: openai/gemma-4-31b-4-256
+  edit_format: diff
+  weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  use_repo_map: true
+  streaming: true
+
+- name: openai/gemma-4-26b-moe-4-256
+  edit_format: diff
+  weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  use_repo_map: true
+  streaming: true
+
+- name: openai/gemma-4-31b-4-256-UD
+  edit_format: diff
+  weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  use_repo_map: true
+  streaming: true
+
+# Weak model: route to the standalone task server on :8092 (NOT mlx-serve :8000),
+# so it never swaps out the loaded primary.
+- name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  edit_format: whole
+  use_repo_map: false
+  streaming: true
+  extra_params:
+    api_base: http://localhost:8092/v1
+    api_key: not-needed
+
+# Cloud fallback — Opus via the Anthropic API. Needs ANTHROPIC_API_KEY in your
+# environment (or .env). Not on mlx-serve, so switching to it never evicts a
+# local model. litellm already knows this model's capabilities/costs, so it
+# needs no metadata entry — only this behavior entry.
+- name: anthropic/claude-opus-4-8
+  edit_format: diff
+  weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  use_repo_map: true
+  streaming: true
