@@ -44,6 +44,10 @@ Three things to internalize:
 2. **Qwen thinking is bounded, not budgeted.** `thinking: true` lets Copilot parse/display the `<think>` reasoning, but Copilot can't forward `thinking_budget` to the server — thinking is capped only by `maxOutputTokens` (81920). Same practical limit as Zed.
 3. **No "weak model" role.** Unlike aider/Zed, Copilot doesn't expose a separate summary/commit-message model, so the always-on :8092 task model has no role to fill here. Copilot (and its built-in sub-agents) use the model you select. The `chatLanguageModels.json` here therefore only lists the :8000 agent models.
 
+## Thinking is DISPLAY-only here, not enabled
+
+`thinking: true` is set on all six models so Copilot parses/renders reasoning *if it's produced* — **it does not turn thinking on.** mlx-serve defaults thinking OFF (`DEFAULT_ENABLE_THINKING=False`), and Copilot's Custom Endpoint / `openai_compatible` provider can't send the `enable_thinking` body param. So these models will **not actually think** under VS Code until thinking is enabled *server-side* in mlx-serve. (aider and opencode can enable it per-request via body params; VS Code and Zed can't.)
+
 ## Agent-mode requirements & gotchas
 
 - **Tool calling + streaming are required for Agent mode.** A model without tool calling won't even appear in the agent model picker. All our models are tool-capable (mlx-serve auto-infers the parser from the chat template), so every entry sets `toolCalling: true`.
