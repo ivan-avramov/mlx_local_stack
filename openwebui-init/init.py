@@ -215,7 +215,6 @@ def apply_openai_connection_config(headers):
 token = get_token()
 headers = {"Authorization": f"Bearer {token}"}
 
-ensure_function(headers, "thinking.py", "enable_extended_thinking", "Extended Thinking", "Enable extended thinking in models that support it")
 ensure_function(headers, "advanced.py", "advanced_params", "Advanced Parameters", "Configure advanced model settings, such as temperature, top_p, and penalties")
 ensure_function(headers, "profile_strict.py", "profile_strict", "Profile Strict", "Deterministic implementation tasks under explicit constraints (multi-rule coding prompts, refactoring, algorithm implementation)")
 ensure_function(headers, "profile_math.py", "profile_math", "Profile Math", "Math / formal-logic profile for calculus, proofs, and step-by-step derivations")
