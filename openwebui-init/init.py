@@ -25,6 +25,17 @@ def get_token():
         print("Assuming setup is already complete or credentials changed. Skipping init.")
         sys.exit(0)
 
+def remove_function(headers, func_id):
+    """Delete a function if present (idempotent). Used to retire functions we
+    no longer ship, so they don't linger in open-webui-data across restarts."""
+    r = requests.delete(f"{BASE_URL}/api/v1/functions/id/{func_id}/delete", headers=headers)
+    if r.status_code == 200:
+        print(f"Removed retired function {func_id}.")
+    elif r.status_code in (401, 404):
+        print(f"Retired function {func_id} not present; nothing to remove.")
+    else:
+        print(f"Failed to remove function {func_id}: {r.status_code} {r.text}")
+
 def ensure_function(headers, filepath, func_id, name, description):
     r = requests.get(f"{BASE_URL}/api/v1/functions/id/{func_id}", headers=headers)
     if r.status_code == 200:
@@ -214,6 +225,10 @@ def apply_openai_connection_config(headers):
 
 token = get_token()
 headers = {"Authorization": f"Bearer {token}"}
+
+# Retired: thinking is now enabled server-side for all main models, so the
+# per-chat Extended Thinking toggle is gone. Delete any lingering copy.
+remove_function(headers, "enable_extended_thinking")
 
 ensure_function(headers, "advanced.py", "advanced_params", "Advanced Parameters", "Configure advanced model settings, such as temperature, top_p, and penalties")
 ensure_function(headers, "profile_strict.py", "profile_strict", "Profile Strict", "Deterministic implementation tasks under explicit constraints (multi-rule coding prompts, refactoring, algorithm implementation)")
