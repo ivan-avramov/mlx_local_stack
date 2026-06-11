@@ -1,5 +1,5 @@
 """
-title: Profile · Strict
+title: Strict
 author: ivan-avramov
 version: 0.2.0
 required_open_webui_version: 0.9.2
