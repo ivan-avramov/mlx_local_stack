@@ -3,37 +3,21 @@ manager_port: 8000                # Port the FastAPI manager listens on
 inactivity_timeout_seconds: 10800   # Unload model after x seconds of no requests
 startup_timeout_seconds: 300      # Max wait for model to become READY
 
-models:
-  - name: gemma-4-26b-moe-4-256
-    type: vision
-    on_demand: true
-    hf_path: mlx-community/gemma-4-26b-a4b-it-4bit
-    max_kv_cache_size: 262144
-    kv_quant_scheme: uniform
-    kv_bits: 4
-    prefill_step_size: 512
-    quantized_kv_start: 0
-    enable_thinking: true
+# Notes:
+# - kv_quant_scheme=uniform + integer kv_bits => standard QuantizedKVCache (TurboQuant
+#   is NOT engaged; it only activates for scheme=turboquant or fractional kv_bits).
+# - cache_limit_gb / memory_limit_frac are NOT set here on purpose: the MLX Metal
+#   buffer-pool cap is auto-derived per model at startup from heads x prefill_step x
+#   max_kv_cache_size (see mlx-vlm server cli), and the total-memory backstop adapts to
+#   each machine's RAM. Set cache_limit_gb explicitly only to override the derivation.
+# - reasoning_parser / tool_call_parser intentionally omitted: process_manager does not
+#   forward them for type=vision models, and mlx-vlm auto-infers the tool parser.
 
-  - name: gemma-4-26b-moe-8-128
+models:
+  - name: gemma-4-26b-a4b-it-8bit
     type: vision
     on_demand: true
     hf_path: mlx-community/gemma-4-26b-a4b-it-8bit
-    reasoning_parser: "gemma4"
-    tool_call_parser: "gemma4"
-    max_kv_cache_size: 131072
-    kv_quant_scheme: uniform
-    kv_bits: 4
-    prefill_step_size: 512
-    quantized_kv_start: 0
-    enable_thinking: true
-
-  - name: gemma-4-31b-4-256
-    type: vision
-    on_demand: true
-    hf_path: mlx-community/gemma-4-31b-it-4bit
-    reasoning_parser: "gemma4"
-    tool_call_parser: "gemma4"
     max_kv_cache_size: 262144
     kv_quant_scheme: uniform
     kv_bits: 4
@@ -41,25 +25,21 @@ models:
     quantized_kv_start: 0
     enable_thinking: true
 
-  - name: gemma-4-31b-6-128
+  - name: gemma-4-31b-it-6bit
     type: vision
     on_demand: true
     hf_path: mlx-community/gemma-4-31b-it-6bit
-    reasoning_parser: "gemma4"
-    tool_call_parser: "gemma4"
-    max_kv_cache_size: 131072
+    max_kv_cache_size: 262144
     kv_quant_scheme: uniform
     kv_bits: 4
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
 
-  - name: gemma-4-31b-4-256-UD
+  - name: gemma-4-31b-it-UD-MLX-4bit
     type: vision
     on_demand: true
     hf_path: unsloth/gemma-4-31b-it-UD-MLX-4bit
-    reasoning_parser: "gemma4"
-    tool_call_parser: "gemma4"
     max_kv_cache_size: 262144
     kv_quant_scheme: uniform
     kv_bits: 4
@@ -71,6 +51,40 @@ models:
     type: vision
     on_demand: true
     hf_path: unsloth/Qwen3.6-27B-UD-MLX-6bit
+    max_kv_cache_size: 262144
+    kv_quant_scheme: uniform
+    kv_bits: 4
+    prefill_step_size: 512
+    quantized_kv_start: 0
+    enable_thinking: true
+
+  # QAT / optimized-quant experiments (quality-vs-size; QAT/OptiQ earn their keep at 4-6 bit).
+  - name: gemma-4-31B-it-qat-6bit
+    type: vision
+    on_demand: true
+    hf_path: mlx-community/gemma-4-31B-it-qat-6bit
+    max_kv_cache_size: 196608      # 192K: weights ~31GB make 256K (~58GB) trip the RAM backstop
+    kv_quant_scheme: uniform
+    kv_bits: 4
+    prefill_step_size: 512
+    quantized_kv_start: 0
+    enable_thinking: true
+
+  - name: gemma-4-26B-A4B-it-OptiQ-4bit
+    type: vision
+    on_demand: true
+    hf_path: mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit
+    max_kv_cache_size: 262144
+    kv_quant_scheme: uniform
+    kv_bits: 4
+    prefill_step_size: 512
+    quantized_kv_start: 0
+    enable_thinking: true
+
+  - name: gemma-4-26B-A4B-it-QAT-MLX-4bit
+    type: vision
+    on_demand: true
+    hf_path: lmstudio-community/gemma-4-26B-A4B-it-QAT-MLX-4bit
     max_kv_cache_size: 262144
     kv_quant_scheme: uniform
     kv_bits: 4
