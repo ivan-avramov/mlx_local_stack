@@ -1,0 +1,29 @@
+[load] mlx-community/gemma-4-31b-it-4bit
+Fetching 11 files:   0%|          | 0/11 [00:00<?, ?it/s]Fetching 11 files: 100%|██████████| 11/11 [00:00<00:00, 193043.28it/s]
+$STACK_REPO/.venv/lib/python3.12/site-packages/transformers/audio_utils.py:549: UserWarning: At least one mel filter has all zero values. The value for `num_mel_filters` (128) may be set too high. Or, the value for `num_frequency_bins` (257) may be set too low.
+  warnings.warn(
+[load] done in 5s | weights active=18.4G cache=0.0G
+[cache] 60 layers: 10 full / 50 sliding
+[prefill]   10240/96256 tok | active= 19.9G cache=  7.7G peak= 20.8G | 65 tok/s
+[prefill]   20480/96256 tok | active= 20.2G cache= 24.8G peak= 21.4G | 62 tok/s
+[prefill]   30720/96256 tok | active= 20.5G cache= 32.1G peak= 22.0G | 58 tok/s
+[prefill]   40960/96256 tok | active= 20.6G cache= 32.3G peak= 22.6G | 56 tok/s
+[prefill]   51200/96256 tok | active= 21.0G cache= 30.6G peak= 23.2G | 54 tok/s
+[prefill]   61440/96256 tok | active= 21.1G cache= 30.1G peak= 23.8G | 53 tok/s
+[prefill]   71680/96256 tok | active= 21.3G cache= 30.9G peak= 24.3G | 51 tok/s
+[prefill]   81920/96256 tok | active= 21.6G cache= 30.6G peak= 24.9G | 49 tok/s
+[prefill]   92160/96256 tok | active= 21.8G cache= 29.2G peak= 25.5G | 46 tok/s
+[prefill]   96255/96256 tok | active= 21.9G cache=  6.1G peak= 25.7G | 46 tok/s
+
+=== RESULT @ ctx=96255 (uniform 4-bit, step=512) ===
+weights (fixed)...............  18.4 G
+active high-water (true peak).  25.7 G   <- get_peak_memory
+active now (post-prefill).....  21.9 G
+buffer pool retained..........   6.1 G   <- get_cache_memory
+approx RSS (active+pool)......  28.0 G   <- ~ Activity Monitor
+single-chunk working set......   3.8 G   <- intra-chunk co-residency at long ctx
+after mx.clear_cache()........ active=21.9G cache=0.0G  (reclaimed 6.1G)
+
+READ: if single-chunk working set ~= 1 global layer (~3.4G@96K) -> MLX frees per-layer,
+      high RSS is POOL retention -> mx.clear_cache() during prefill is the cheap fix.
+      if single-chunk working set is many GB -> intra-chunk co-residency -> per-layer eval.
