@@ -11,6 +11,7 @@ Usage:
 import argparse
 import json
 import textwrap
+import time
 import urllib.request
 
 BASE = "http://localhost:8000"
@@ -93,6 +94,7 @@ def main():
     )
     print("[needle] sending prefill request (may take several minutes) ...", flush=True)
 
+    t0 = time.perf_counter()
     r = post(
         "/v1/chat/completions",
         {
@@ -100,11 +102,17 @@ def main():
             "messages": [
                 {"role": "user", "content": context + "\n\n" + question}
             ],
-            "max_tokens": 32,
+            # Small relative to a 200K+ prefill so decode/suffix stays a tiny
+            # slice of wall time. prefill_tps below also subtracts the
+            # server-reported decode time (predicted_ms), so the prefill metric
+            # is isolated from decode regardless of this value. 256 leaves room
+            # for a short think block + the ~10-char answer on thinking models.
+            "max_tokens": 256,
             "temperature": 0.0,
             "stream": False,
         },
     )
+    wall_s = time.perf_counter() - t0
 
     tm = r.get("timings") or {}
     response_text = (
@@ -116,7 +124,21 @@ def main():
     peak = tm.get("peak_memory")
     pt = (r.get("usage") or {}).get("prompt_tokens") or tm.get("prompt_n")
 
-    print(f"[needle] prompt_tokens={pt} peak_mem={peak}GB")
+    # Prefill throughput: subtract the server-reported decode time from wall
+    # time to isolate prefill, mirroring validate_256k.py.
+    pred_ms = tm.get("predicted_ms") or 0.0
+    prefill_s = max(wall_s - pred_ms / 1000, 0.01)
+    prefill_tps = round(pt / prefill_s) if pt else None
+    decode_tps = tm.get("predicted_per_second")
+
+    print(
+        f"[needle] prompt_tokens={pt} peak_mem={peak}GB wall={wall_s:.1f}s "
+        f"decode_ms={pred_ms:.0f}"
+    )
+    print(
+        f"[needle] PREFILL ~{prefill_tps} tok/s | decode ~{decode_tps} tok/s",
+        flush=True,
+    )
     print(f"[needle] model response: {response_text!r}")
 
     found = NEEDLE in response_text
