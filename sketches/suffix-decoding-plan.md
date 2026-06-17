@@ -3,7 +3,8 @@
 **Status:** v1 implemented (2026-06-16). Drafter-free n-gram / prompt-lookup speculative
 decoding for dense standard-attention models (gemma4 — dense + MoE). Code lives in the
 canonical forks `../mlx-vlm` and `../mlx-serve` (parent-folder repos; the `mlx_local_stack/src/*`
-submodules sync from them). v1.1 (hybrid Qwen3.6 / GatedDeltaNet) planned below.
+submodules sync from them). v1.1 (hybrid Qwen3.6 / GatedDeltaNet) also implemented (2026-06-16);
+see §8.
 
 **Goal:** Add a *model-free* speculative decoder — no draft model, no trained MTP head, no
 extra weights, no extra GPU memory — that proposes draft tokens from an n-gram / suffix
@@ -237,6 +238,33 @@ class SuffixDecodingProposer:
 
 ## 8. v1.1 — Hybrid (Qwen3.6 / GatedDeltaNet) support
 
+**Status:** implemented (2026-06-16). Shipped: mlx-vlm `fd1948c`, mlx_local_stack `b9d9bca`.
+The gap / fix / steps below are the original plan, kept as history; annotations note how each
+shipped.
+
+### Outcome
+
+- Fix landed as designed: a per-target hook `LanguageModel.suffix_verify_kwargs()` — gemma4
+  returns `{}`, qwen3_5 returns `{"capture_layer_ids": []}` (creates the `gdn_sink` + enables
+  `target_verify`, capturing GDN snapshots). `run_suffix_decoding_rounds` reads the hook (never
+  sniffs model_type) and threads `**verify_kwargs` into the verify forward; the existing
+  `rollback_speculative_cache` now receives non-None `gdn_states` on qwen.
+- The §8 caveat about empty `capture_layer_ids=[]` adding hidden-capture overhead is resolved:
+  confirmed no overhead — the empty list leaves `capture_set` empty → `hidden_states == []`.
+- Follow-up bug found only on the real model (not the tiny tests): the `target_verify` attention
+  path's manual per-position loop slices cache keys directly, which crashes under quantized KV
+  (Qwen3.6 runs `kv_quant_scheme=turboquant`) with `'_QuantizedStateProxy' object is not
+  subscriptable`. Fixed by skipping the manual loop for quantized caches (`hasattr(cache,
+  "bits")`) and falling through to the cache-aware SDPA path — same result up to FP; also fixes
+  dflash/mtp target-verify under quantized KV.
+- Tests (all green; 41 suffix + 144 speculative): tiny qwen3_5 GDN rollback equivalence gate, a
+  targeted GDN-state-restored-to-clean assertion, a turboquant-KV regression test, hook unit
+  guards, and a natural-proposer greedy-equivalence gate. gemma4 v1 gates unaffected.
+- Enabled `draft_kind: suffix` on all three `Qwen3.6-27B*` entries in `main_models.yaml`.
+- Real-model validation on Qwen3.6-27B-UD-MLX-6bit: correct (no crash, coherent output on
+  turboquant + GDN) and ~2.79× decode speedup on echo-heavy code (27.4 vs 9.8 tok/s baseline),
+  no regression on novel prose (graceful degradation).
+
 ### The gap (verified in code)
 
 v1's suffix verify does `lm(verify_input, cache=prompt_cache)` with no capture flag. In
@@ -269,9 +297,10 @@ always None and its rollback trims KV only — correct as-is.)
 ### Caveats / things to verify in v1.1
 
 - Empty `capture_layer_ids=[]` may still append a trailing hidden state (minor overhead) —
-  confirm and, if it matters, add a gdn-only capture flag.
+  confirm and, if it matters, add a gdn-only capture flag. (Resolved: no overhead — see Outcome.)
 - Suffix must keep working under quantized KV (Qwen3.6 runs `kv_quant_scheme: turboquant`,
   `kv_bits=3`). dflash/MTP already handle TQ caches on qwen — reuse, add no kv_bits gating.
+  (Shipped: hit a target_verify crash under turboquant; fixed — see Outcome.)
 - Correctness gate unchanged and non-negotiable: greedy output token-identical with/without
   suffix, up to floating-point non-associativity (see §9: block-vs-single matmul already
   diverges on soft distributions; inherent to all block-verify speculation, not a suffix bug).
