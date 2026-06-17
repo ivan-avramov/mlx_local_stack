@@ -1,6 +1,18 @@
 # Plan: Long-Context Prefill Fix + Fused Quantized Attention Kernels
 
-**Status:** Phase 1 complete (2026-06-16). Probe stopped at 80K context (10/32 steps); needle test pending. Other optimizations planned before resuming Phase 2+.
+**Status:** Two distinct prefill walls, now separated by the 200K viability spike (§5,
+2026-06-16):
+- LOAD/MEMORY wall — **FIXED** (Fix A′, fork c3192a0 / stack e296c4f). The 200K OOM was a
+  dense `[N, N]` causal mask (~40 GB), caused by suffix decoding silently disabling chunked
+  prefill on qwen3_5 — KV-scheme-independent, which is why both uniform and TQ OOM'd
+  identically. Re-enabling chunked prefill via a model policy fixed it; 200K now bounded
+  ~47–48 GB, 16K needle PASS. This was NOT the KV scheme and NOT the §1 scores-matrix story.
+- SPEED wall — **OPEN** (Fix B.2). `quantized_attention`'s Python K-tile loop is ≈ O(T²);
+  16K prefill ≈ 228 s (~70 tok/s), so 200K projects to hours. 200K now fits but isn't
+  interactive on TQ. The fast long-context path is uniform KV until B.2 lands.
+
+SuffixDecoding v1.1 (commits 888f3b1 → 1c9f7a5) accelerates DECODE only; it is also what
+triggered the LOAD wall regression (it passes a non-None draft_model).
 
 **Goal of the work:** make long-context (up to 256K) **prefill** work within ~50 GB on an
 M2 Max (64 GB), for both TurboQuant (TQ) and uniform quantized KV caches, by replacing the
@@ -85,12 +97,67 @@ Reference doc with the original TQ diagnosis:
 
 ---
 
+## 1a. Update (2026-06-16): prefill SPEED is the blocker; suffix decoding is orthogonal
+
+Two things happened since §1 was written, and together they move the bottleneck from memory
+to prefill speed.
+
+The Phase 1 memory fix works for its target (the TQ `dequantize()` spike is gone). The probe
+ran clean to 80K; peak Metal memory rose from 33.65 GB at 8K to 39.44 GB at 80K. That curve
+was first read as buffer-pool retention; the later 200K spike (§5 RESULTS) showed it is
+actually the dense `[N, N]` causal mask growing as N² — a *separate* memory wall the Phase-1
+fix never touched. See §5 for the correction.
+
+What the probe exposed instead is a prefill-speed wall. Prefill throughput falls from 73
+tok/s at 8K to 30 tok/s at 80K, and the per-token cost is *rising*, not holding flat. That
+makes total prefill cost roughly O(T²): each new chunk of prompt attends to everything before
+it through `quantized_attention`'s Python K-tile loop, so the loop does more work per query as
+the context grows. Extrapolating the decline, a single 200K prefill projects to roughly
+1.5–4+ hours. That is not interactive load time — it is a batch job.
+
+SuffixDecoding v1.1 landed in the fork (commits 888f3b1 → 1c9f7a5) and is now enabled across
+all models in `main_models.yaml` (`draft_kind: suffix`, `draft_block_size: 16`,
+`suffix_min_match: 2`, `draft_cooldown: 2`). It is drafter-free speculative decoding: instead
+of a separate draft model, it proposes candidate continuations from n-gram / prompt-lookup
+matches against text already seen, then verifies them in one forward pass. On qwen3_5 it is
+GatedDeltaNet-aware — the verify forward captures the GDN recurrent state (via
+`capture_layer_ids=[]`) so that rejected drafts roll the recurrent state back correctly rather
+than corrupting it. See `sketches/suffix-decoding-plan.md` and
+`sketches/suffix-decoding-v1.1-plan.md` for that workstream.
+
+So SuffixDecoding accelerates DECODE, the answer-generation phase that runs *after* the prompt
+is loaded. It does nothing for PREFILL, the prompt-loading phase. The two phases are
+independent, and the slow thing right now is prefill.
+
+| Phase           | Wall                                                   | The fix                                     |
+|-----------------|--------------------------------------------------------|---------------------------------------------|
+| Prefill (LOAD)  | dense `[N, N]` causal mask (~40 GB @200K) when chunked prefill is off | qwen3_5 `chunked_prefill_policy` — **done** (§5 FIX) |
+| Prefill (SPEED) | `quantized_attention` Python K-tile loop, ≈ O(T²)      | Fix B.2 (fused / T-tiled prefill kernel) — open |
+| Decode          | autoregressive token-by-token generation               | SuffixDecoding v1.1 (already landed)        |
+
+Note (post-200K-spike): the LOAD wall above is the dense-mask regression, not the
+`quantized_attention` loop. It was discovered after §1a was first written; the
+`quantized_attention` K-tile loop is the SPEED wall only. See §5 RESULTS / root cause.
+
+None of this re-opens the §0 quality decision. TQ stays the locked KV scheme — the issue is
+that its *current implementation* (the `quantized_attention` Python loop) is too slow for
+interactive 200K+ contexts, not that the quant choice is wrong. The consequence is a priority
+shift: Fix B.2 (fused / T-tiled `prefill_attention`) is promoted from an optional speed
+upgrade to the critical-path unblocker for TQ at long context. Until B.2 lands, the only fast
+long-context path is uniform KV through mlx_lm's fused
+`quantized_scaled_dot_product_attention` — and that carries a long-context-quality cost at
+4-bit, which is exactly why TQ was chosen in the first place. The owner's prior "230K loaded
+in minutes" experience was on that uniform path, not on TQ.
+
+---
+
 ## 2. The three fixes
 
 | Fix | What | Scope | Effort | Critical path? |
 |-----|------|-------|--------|----------------|
 | **A** Dispatch rewire in `base.py` | Route TQ prefill fallback to `quantized_attention()` instead of `dequantize()` | TQ prefill | ~1 hour | Yes — **done** |
-| **B** Codec choice + optional fused path | Make `mode` configurable; optional T-tiling fix in `prefill_attention` | TQ quality + speed | B.1 ~1 day; B.2 ~1 day Metal | B.1 yes (quality); B.2 optional (also a **performance** fix — restores fused Metal path) |
+| **A′** qwen3_5 `chunked_prefill_policy` | Re-enable chunked prefill under suffix decoding → kill the dense `[N, N]` causal mask (the long-context LOAD/MEMORY wall) | all qwen3_5 long-context, KV-scheme-independent | ~37 LOC | Yes — **done** (fork c3192a0, stack e296c4f). Was the actual 200K OOM (§5), not the KV scheme |
+| **B** Codec choice + fused prefill path | Make `mode` configurable; T-tiling fix in `prefill_attention` | TQ quality + speed | B.1 ~1 day; B.2 ~1 day Metal | B.1 yes (quality); B.2 **critical-path for TQ long-context PERFORMANCE** — confirmed by §5: 200K now FITS (Fix A′) but is hours-slow through the O(T²) `quantized_attention` loop, so TQ is not interactive at 200K until this lands |
 | **C** Fused uniform prefill kernel | Flash kernel reading mlx affine-quant KV directly | uniform-only | ~1–3 days (Metal) | No — completeness/fallback/upstream |
 
 All edits land in the **fork at `../mlx-vlm`** (see §4 workflow), never directly in the
@@ -168,22 +235,35 @@ and is the cleaner long-term/upstream artifact.
 > stack (see §4), then run the probe (§5).
 
 - **Phase 1 — Fix A (done).** Dispatch rewire in `base.py` + YAML config
-  (`kv_quant_scheme: turboquant, kv_bits: 3`). Probe to 256K must confirm peak < 50 GB,
-  flat memory curve, and needle retrieval. Tests: 36/36 pass including
+  (`kv_quant_scheme: turboquant, kv_bits: 3`). Tests: 36/36 pass including
   `test_turboquant_prefill_no_dequantize_called`. Probe run 2026-06-16 (stopped at 80K —
-  see §5 for data). No OOM. Memory curve flat-to-linear; peak grows ~0.7–0.9 GB per
-  8K-step after the pool cap engages. Extrapolated 256K peak: 55–75 GB (see §5). Needle
-  test (`benchmark/needle_256k.py`) written but not yet run; will run after other
-  optimizations land.
+  see §5 for data). No OOM to 80K. The 55–75 GB "256K peak" extrapolation here is
+  **retracted**: that curve was the dense `[N, N]` causal mask growing as N², not the KV
+  path, and the box is 68.7 GB not ~100 GB (§5, §6). Fix A removed the TQ `dequantize()`
+  spike but not the mask wall — that took Fix A′.
+- **Phase 1′ — Fix A′ (done).** qwen3_5 `chunked_prefill_policy` re-enables chunked prefill
+  under suffix decoding, killing the dense `[N, N]` causal mask that was the actual 200K OOM
+  (§5 RESULTS / root cause). Fork c3192a0, stack e296c4f. Validated: 200K prefill bounded
+  ~47–48 GB (no OOM), 16K end-to-end needle PASS. This closes the long-context LOAD/MEMORY
+  wall. The SPEED wall (Fix B.2) remains.
+- **200K viability spike (§5) — DONE.** Result: both uniform-4bit and TQ OOM-crashed at 200K
+  (~58–60 GB, jetsam) — and the cause was neither KV scheme but the dense causal mask above.
+  The spike's three-case decision logic never applied. It did, however, settle Fix B.2's
+  priority: with the mask wall fixed, 200K fits but is hours-slow through TQ
+  `quantized_attention`, so B.2 is the interactive-TQ unblocker (Phase 3).
 - **Phase 2 — codec quality (next).** Benchmark MSE vs Prod codec on the `benchmark/`
   harness (short coding + retrieval run). Add `mode` as a constructor parameter on
   `TurboQuantKVCache`; expose via `kv_quant_mode` in YAML. If Prod wins on quality: switch.
   Validate that `quantized_attention` with Prod keys produces correct results
   (`key_codec.score_prepared` on K-tiles — the non-fused path needs a numerical check before
   production use).
-- **Phase 3 — optional speed (Fix B.2).** Fix T-tiling in `prefill_attention` so it handles
-  256K without the scores spike. Then Prod codec gets its dedicated fused kernel path.
-  Validate numerics and memory.
+- **Phase 3 — Fix B.2 (priority confirmed by the §5 spike).** Fix T-tiling in
+  `prefill_attention` so it handles 256K without the scores spike. Then Prod codec gets its
+  dedicated fused kernel path. Validate numerics and memory. The §5 spike settled this: with
+  the mask wall closed by Fix A′, 200K now fits but TQ prefill is hours-slow through the
+  O(T²) `quantized_attention` K-tile loop (16K took ~228 s ≈ 70 tok/s). B.2 is the unblocker
+  for an interactive TQ long-context daily driver; until it lands the fast long-context path
+  is uniform KV.
 - **Phase 4 — model/quant bake-off (unchanged).** With TQ KV working, evaluate Qwen weight
   quants (UD-4 / OptiQ-4 / UD-6 / MLX-8) for quality on the `benchmark/` harness (coding +
   reasoning) + the owner's real tasks; capture decode tok/s. Pick the best-quality quant that
@@ -223,6 +303,13 @@ git submodule update --remote src/mlx-vlm   # runserver.sh also auto-syncs on st
 - `.venv/.../mlx_lm/models/cache.py:232` — `QuantizedKVCache`.
 - `memtest_prefill_exercise/turboquant_debug_spike.md` — diagnosis + A/B kernel sketches.
 - `benchmark/validate_256k.py` — the 8K-step memory-curve probe (§5).
+- `benchmark/needle_256k.py` — single-shot needle test, and (to add) prefill-tps reporting for
+  the §5 viability spike; written 2026-06-16.
+- `benchmark/suffix_qwen_ab.py` — suffix A/B test: echo-vs-novel decode-rate contrast on the
+  real 27B (does SuffixDecoding actually accelerate decode?).
+- `eval_harness.py` — repo-root preload / probe / status helpers driving mlx-serve over HTTP.
+- `sketches/suffix-decoding-plan.md`, `sketches/suffix-decoding-v1.1-plan.md` — the
+  SuffixDecoding workstream (decode acceleration; orthogonal to prefill — see §1a).
 - `main_models.yaml` — per-model serving config.
 
 **`main_models.yaml` config for TQ on Qwen (Phase 1, already active):**
@@ -272,11 +359,13 @@ at 256K, no OOM. Pre-fix it OOMed around ~96–250K.
 | 72K   | 67,050    | 38.59 GB        | +0.90 | 32            |
 | 80K   | 74,471    | 39.44 GB        | +0.85 | 30            |
 
-No OOM. Peak grows ~0.7–0.9 GB per 8K-step after the initial ramp; the per-step increment
-oscillates around ~0.85 with slow upward drift (Metal buffer-pool retention, partially
-capped by the auto-derived `cache_limit`). Linear extrapolation → ~58 GB at 256K. Pessimistic
-quadratic → ~75 GB. Both are within the 85 GB Metal budget on this machine
-(memory_limit_frac=0.85 × 100 GB).
+No OOM. Peak grows ~0.7–0.9 GB per 8K-step. **This was originally read as Metal buffer-pool
+retention — that was wrong.** The 200K spike (RESULTS below) confirms the growth is the dense
+`[N, N]` causal mask: 39.44 GB peak − ~33 GB base = 6.4 GB = exactly 80K² bytes, an N²
+curve, not the flat-to-linear pool curve assumed here. The "extrapolation fits if the box is
+~100 GB / 0.85 × 100 GB" reasoning is also retracted — the machine is 68.7 GB (see §6), and
+the mask, not the KV path, is what blows up. The probe ran clean only because it stopped at
+80K, where the mask is still ~6 GB.
 
 **Performance note:** prefill tok/s drops from 73 at 8K to 30 at 80K (roughly O(T) scaling
 expected for the K-tile loop). The owner reports prior 230K loads took minutes with uniform
@@ -284,9 +373,75 @@ KV + the fused `mx.fast.scaled_dot_product_attention` Metal kernel. `quantized_a
 Python K-tile loop is substantially slower. Fix B.2 (T-tiling in `prefill_attention`) is
 therefore also a **performance fix**, not just optional correctness hygiene.
 
-Probe stopped at 80K to avoid the multi-hour tail. Single-shot needle test at 256K
-(`benchmark/needle_256k.py`) will provide both the OOM proof and context-use check in one
-request when resumed.
+Probe stopped at 80K to avoid the multi-hour tail. The 200K viability spike (RESULTS below)
+resumed it and turned up the dense-mask OOM, which this 80K probe was already showing as the
+N² memory growth — it just hadn't grown large enough at 80K to crash.
+
+### Uniform vs TQ 200K viability spike (next action)
+
+The one experiment that decides everything else. It tells us whether TQ-via-`quantized_attention`
+is usable at 200K as-is, or whether Fix B.2 is a hard prerequisite — and whether uniform-4bit
+is the pragmatic interim daily driver.
+
+**Goal.** For the *same* Qwen weights under two KV schemes, measure three things at 200K:
+- prefill tok/s (the headline — does TQ confirm the ~10–15 tok/s / multi-hour projection?);
+- peak memory (does uniform OOM at 200K even after the buffer-pool cap from commit bf7b05f?);
+- needle retrieval (does 4-bit uniform actually retain the needle at 200K, or does TQ's
+  long-context quality edge show up here?).
+
+Holding the weights fixed isolates the KV-scheme variable, which is the whole point.
+
+**Setup.** Add a TEMPORARY twin entry to `main_models.yaml`:
+
+```yaml
+  - name: Qwen3.6-27B-UD-MLX-6bit-uni4
+    type: vision
+    on_demand: true
+    hf_path: unsloth/Qwen3.6-27B-UD-MLX-6bit   # same weights as the TQ entry
+    max_kv_cache_size: 262144
+    kv_quant_scheme: uniform                    # the only difference vs the TQ entry
+    kv_bits: 4
+    prefill_step_size: 512
+    quantized_kv_start: 0
+    enable_thinking: true
+    # same suffix params as every other entry (draft_kind: suffix, etc.)
+```
+
+One restart then serves BOTH the TQ entry and this uniform twin serially — the manager swaps
+on demand, one model at a time, so there is no double-load. Note the existing
+`Qwen3.6-27B-MLX-8bit` and `Qwen3.6-27B-OptiQ-4bit` entries are already uniform, but they are
+DIFFERENT weights, so they confound the weight variable with the KV-scheme variable and cannot
+answer this question. Alternative if you prefer not to add an entry: flip the existing TQ entry
+to uniform, restart, test, then flip it back and restart again.
+
+**Pre-flight (operating rules).** Confirm there are NO stray Python eval/generate/validate
+processes still running; serve exactly ONE model at a time; and make sure nothing else hits
+`:8000` during the run. Concurrent load contaminates both the memory and the timing numbers.
+
+**Run order.** Uniform FIRST. It is the fast positive control — it de-risks the harness (proves
+the needle script, timing, and memory readout all work) before committing to the slow TQ run.
+Then TQ.
+
+**Command:**
+```bash
+uv run python benchmark/needle_256k.py --model <name> --ctx 200000
+```
+The script needs a small addition: report prefill tok/s as `prompt_tokens / (wall_s −
+predicted_ms/1000)`, mirroring how `validate_256k.py` derives it (subtract the decode time from
+wall time to isolate prefill). Keep `max_tokens` small so decode and SuffixDecoding don't skew
+the prefill timing.
+
+**TQ early-abort.** The per-chunk rate is visible within ~1 minute of the TQ run. If it confirms
+the ~10–15 tok/s projection (i.e. hours to complete), record the rate and kill the run — there
+is no need to sit through a full 200K prefill to make the decision.
+
+**Decision logic.**
+1. Uniform is fast + fits + retrieves the needle → uniform-4bit is the pragmatic 200K daily
+   driver TODAY; TQ becomes a quality upgrade gated on Fix B.2.
+2. TQ prefill is ~hours → confirms TQ-via-`quantized_attention` is not viable interactively;
+   Fix B.2 is promoted to the critical-path unblocker.
+3. Uniform OOMs at 200K but TQ fits → memory (and quality) favor TQ; Fix B.2 is critical for
+   speed, or lower `max_kv_cache_size` to trade context for headroom.
 
 **Correctness (do not trust "didn't OOM" alone):**
 - Numerics: compare `quantized_attention` output vs the dequant/SDPA path on a short prompt
@@ -299,6 +454,83 @@ request when resumed.
 **Perf:** record prefill tok/s and decode tok/s from the probe. Fix B.2 (if built) should
 improve prefill vs the K-tile loop in `quantized_attention`. TQ decode speed vs uniform is
 informational (TQ is chosen regardless).
+
+### RESULTS (2026-06-16): both KV schemes OOM at 200K — neither the spike's premise
+
+Ran `benchmark/needle_256k.py --ctx 200000` on Qwen3.6-27B-UD-MLX-6bit, same weights, two KV
+schemes (temporary `-uni4` twin entry, since removed; surgical manager restart to pick up the
+YAML).
+
+| KV scheme        | result      | live peak | time to crash | needle | prefill tok/s |
+|------------------|-------------|-----------|---------------|--------|---------------|
+| uniform, kv_bits=4 | OOM crash | ~58.6 GB  | ~35 s         | none   | none          |
+| TQ, kv_bits=3      | OOM crash | ~60.1 GB  | ~20–30 s      | none   | none          |
+
+Both worker subprocesses were OS-killed (jetsam, `<defunct>`) — true *system-RAM* exhaustion,
+not a graceful Metal-budget abort. Neither retrieved the needle; neither produced a
+prefill-tps number (both crashed mid-prefill, before decode). **The §5 three-case decision
+logic did not apply — none of its cases predicted "both schemes OOM."** Holding the weights
+fixed did isolate the KV variable, and the answer was that the KV variable was not the cause.
+
+### CONFIRMED ROOT CAUSE: suffix decoding disabled chunked prefill → dense [N, N] causal mask
+
+The 200K OOM was **not** the KV scheme, and **not** the §1 "uniform scores-matrix spike"
+story. It is a regression from enabling drafter-free suffix decoding on Qwen3.6 (commit
+1cb9da8), and it is KV-scheme-independent — which is exactly why both schemes OOM identically
+at the same ~58–60 GB.
+
+Chain:
+1. Drafter-free suffix decoding passes a **non-None `draft_model`** (a `SuffixDecodingProposer`).
+2. `_chunked_prefill_enabled` (`ar.py`) falls back to `return draft_model is None` unless the
+   model exposes a `chunked_prefill_policy`. **qwen3_5 had no policy** → returns False →
+   chunked prefill DISABLED.
+3. → the **full prompt** runs in one forward pass.
+4. → qwen3_5 builds its own mask over the full sequence: `create_causal_mask(N, offset)` →
+   a dense bool `[N, N+offset]` causal mask. At N=200K that is ~40 GB → system OOM.
+
+**Quantitative clincher:** the Phase-1 80K peak of 39.44 GB minus the ~33 GB base = 6.4 GB =
+exactly 80K² bytes, i.e. a full `[80K, 80K]` mask. The earlier conclusion that this curve was
+buffer-pool retention (§1a, §5 Phase-1 note) was wrong — it was the mask growing as N². The
+gemma data point fits the same model: `gemma-4-31b` ran 100K at ~40 GB RSS = a 10 GB
+`[100K, 100K]` mask plus a lighter weights base, so it fit by luck of being smaller — gemma
+would also OOM at 200K. Pre-suffix, `draft_model` was None → chunking ON → a tiny per-chunk
+mask `[512, offset]`, consistent with the owner's prior "230K loaded in minutes."
+
+This means there are **two distinct walls**, and they were being conflated:
+
+- **(a) the long-context LOAD/MEMORY wall** — the dense `[N, N]` causal mask, fatal above
+  ~150K. Caused by chunked prefill being switched off, not by the KV quant or the attention
+  kernel. FIXED below by re-enabling chunked prefill.
+- **(b) the long-context SPEED wall** — the O(N²) `quantized_attention` Python K-tile loop
+  (Fix B.2 / T-tiled `prefill_attention`). STILL OPEN.
+
+### FIX (shipped + validated): re-enable chunked prefill on qwen3_5 — no new kernel
+
+The fix is a `chunked_prefill_policy` added to the qwen3_5 `LanguageModel` (mirroring gemma4's)
+that keeps chunked prefill **ON** for `draft_kind == "suffix"`. This is safe because suffix
+captures the GatedDeltaNet recurrent state at verify/decode time on the *post-prefill* cache:
+chunked prefill produces the identical end-of-prompt state as one full-prompt forward, so the
+capture is unaffected. **No new mask kernel was needed** — the per-chunk mask is already tiny
+(`[512, offset]`, ~0.1 GB). `max_kv_cache_size` does not help here: it caps KV storage, not the
+prompt-length mask.
+
+Shipped: fork `ivan-avramov/mlx-vlm` @ **c3192a0**; stack submodule bumped (stack commit
+**e296c4f**). Validated on the real 27B (Qwen3.6-27B-UD-MLX-6bit, TQ kv_bits=3):
+
+- **200K prefill no longer OOMs** — memory bounded ~47–48 GB for >2 min (vs the pre-fix
+  60 GB crash at ~25 s).
+- **16K end-to-end needle PASS** (retrieved `XKRYPTO9F2`), prefill ~70 tok/s, peak 35 GB,
+  suffix decode intact (~9 tok/s).
+
+TDD: a dispatch test (chunked prefill now enabled for suffix on qwen3_5) plus an equivalence
+test (chunked 3-tok-step prefill matches one full-prompt forward on the GDN recurrent state +
+next-token logits, atol 1e-4). No regressions across the suffix / mtp / dispatch suites.
+
+The MEMORY wall (a) is now closed at 200K. The SPEED wall (b) is what's left: 200K now FITS
+but is slow. 16K prefill took ~228 s (≈ 70 tok/s), so 200K projects to hours through the
+`quantized_attention` K-tile loop. The fast long-context path remains uniform KV. Fix B.2
+(T-tiled `prefill_attention`) is therefore the unblocker for an *interactive* TQ long-context
+daily driver.
 
 ---
 
@@ -325,3 +557,16 @@ informational (TQ is chosen regardless).
   512/256, Qwen 256) — re-check per model before enabling B.2.
 - **memory_limit_frac (0.85 ≈ 58 GB):** keep target < 50 GB for headroom; raising the frac
   risks system OOM.
+- **Machine RAM contradiction (RESOLVED):** the box is 68.7 GB unified (confirmed via
+  `/v1/status` `total_gb`), the ~64 GB-class M2 Max — NOT the ~100 GB the §5
+  extrapolation assumed. The "0.85 × 100 GB" note in §5 was simply wrong. The Metal/RAM
+  ceiling at `memory_limit_frac` 0.85 is ~58 GB. 200K prefill did not fit either KV scheme as
+  originally configured (both OOM-crashed at ~58–60 GB; see §5 RESULTS). The real cause turned
+  out not to be the §5 extrapolation tail at all — it was a dense upfront causal mask (§5 root
+  cause), KV-scheme-independent.
+- **Suffix-vs-prefill (don't misread the perf story):** SuffixDecoding v1.1 accelerates
+  DECODE only — it cannot cut long-context LOAD (prefill) time. But it is not inert on
+  prefill either: enabling it passed a non-None `draft_model`, which silently disabled
+  chunked prefill on qwen3_5 and created the dense `[N, N]` causal mask that was the 200K
+  LOAD wall (§5 root cause). That wall is now fixed by re-enabling chunked prefill (Fix A′),
+  not by speculative decoding. The remaining prefill SPEED wall is Fix B.2.
