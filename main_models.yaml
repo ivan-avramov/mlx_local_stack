@@ -66,10 +66,10 @@ models:
     suffix_min_match: 2
     draft_cooldown: 2
 
-  # NOTE: suffix decoding is intentionally NOT enabled on the Qwen3.6 entries.
-  # Qwen3.6 is a hybrid GatedDeltaNet model; suffix v1's verify doesn't capture
-  # the GDN recurrent state, so a rejected draft can't be rolled back correctly.
-  # Hybrid support is v1.1 (see sketches/suffix-decoding-plan.md).
+  # Suffix decoding IS enabled on Qwen3.6 as of v1.1: the verify forward now
+  # captures the GatedDeltaNet recurrent state (capture_layer_ids=[]) so rejected
+  # drafts roll back correctly, including under quantized (turboquant) KV.
+  # See sketches/suffix-decoding-plan.md §8. Requires the v1.1 fix in src/mlx-vlm.
   - name: Qwen3.6-27B-UD-MLX-6bit
     type: vision
     on_demand: true
@@ -80,6 +80,10 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
+    draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
+    draft_block_size: 16
+    suffix_min_match: 2
+    draft_cooldown: 2
 
   # QAT / optimized-quant experiments (quality-vs-size; QAT/OptiQ earn their keep at 4-6 bit).
   - name: gemma-4-31B-it-qat-6bit
@@ -138,6 +142,10 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
+    draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
+    draft_block_size: 16
+    suffix_min_match: 2
+    draft_cooldown: 2
 
   - name: Qwen3.6-27B-OptiQ-4bit
     type: vision
@@ -149,3 +157,7 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
+    draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
+    draft_block_size: 16
+    suffix_min_match: 2
+    draft_cooldown: 2
