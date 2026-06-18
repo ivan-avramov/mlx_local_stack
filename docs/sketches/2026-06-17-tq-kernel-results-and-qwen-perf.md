@@ -85,9 +85,9 @@ Enabled. Decode throughput depends entirely on prompt type: 17.4 tok/s on a nove
 
 ### Neural Accelerators for prefill
 
-Blocked, and likely moot. mlx 0.31.2 already ships NA kernels (`nax.h`: `fp_quantized_nax`, `steel_gemm_*_nax`, `steel_attention_nax`, `quantized_nax`), but they do not activate on M5. The plain matmul fp16/fp32 ratio measures 1.35x, not the ~4x you would see if NA were live, and `quantized_matmul` (~50 TFLOP/s) sits right alongside plain matmul (~57). M5's fast prefill is steel-GEMM, not NA.
+Definitive negative result. The full toolchain is now in place: Xcode installed, the Metal Toolchain component downloaded (`xcodebuild -downloadComponent MetalToolchain`), and mlx built from git main (0.32.0.dev20260617) from source with the Metal-4 compiler. NA still does not activate on M5. Plain matmul fp16/fp32 measures 1.35–1.42x, not the ~3–4x NA would give. `quantized_matmul` holds at ~50–57 TFLOP/s, unchanged from the wheel, and fp16 SDPA at ~41 TFLOP/s shows no jump.
 
-Activating NA would need a newer mlx or a source build. The M5 has no cmake and no Metal compiler (CommandLineTools only), so a from-source build is blocked without installing full Xcode, and it may be a runtime dispatch gate rather than just a build issue. NA is goal #4. Deferred.
+The NA kernels are present in mlx main: `steel/gemm/nax.h` and `steel/attn/nax.h` both call `mpp::tensor_ops::matmul2d`. The runtime dispatch just does not select them on M5, and there is no env flag to force it (checked the compiled lib). This is an upstream mlx dispatch/integration gap, kernels coded but not wired for general or quantized matmul on M5, not a build problem. The build was never the blocker. It is not fixable from our side without patching mlx's C++ dispatch. M5's fast prefill is steel-GEMM, not NA.
 
 ### Novel/UI decode lever
 
@@ -121,5 +121,5 @@ Per-context guidance:
 ## Open and future work
 
 - MTP self-speculation for novel/UI decode: re-convert keeping the MTP head, then wire `draft_kind=mtp`.
-- NA on M5: needs full Xcode plus a newer or source mlx, and it may not activate even then. Goal #4.
+- NA via mlx: the source build is done and confirms NA does not activate (upstream dispatch gap). Re-test on a future mlx release that wires the dispatch; the kernels are already present, so it may turn on in a later version. The discriminator (`benchmark/spikes/na_discriminator.py`) and the source-built mlx (`~/Documents/ws/pyenv/.venv`) are available to re-run.
 - The fused prefill decomposed path stays available behind `TQ_FUSED_PREFILL=1`. A fused-flash variant is unbuilt and not worth building, since prefill is GatedDeltaNet/MLP-bound.
