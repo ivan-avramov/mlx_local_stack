@@ -5,6 +5,20 @@
 
 ---
 
+## Update (2026-06-17): Phase-1 validated + multi-generation findings
+
+Spikes A–E ran on an M2 Max, and a TensorOps gating spike (F) ran on a remote M5 Max. The design holds, with three refinements. LUT scoring is dropped: dequant + MMA beat it at every bit width tested. The inner matmul is now generation-keyed — `simdgroup_matrix` on M2–M4 (no matrix silicon) and Metal 4 TensorOps routing to the per-core Neural Accelerators on M5+. And MMA is a prefill-only lever: decode (`L = 1`) is matrix–vector and bandwidth-bound on every generation, so it keeps the shared flash structure but not the matrix op. Both M2–M4 and M5 Max are production targets; we optimize for maximum quality and performance on both.
+
+| Spike | Conclusion | Verdict |
+|---|---|---|
+| A (MMA viability) | `simdgroup_matrix` runs in `mx.fast.metal_kernel`, fp16-in/fp32-acc exact for QKᵀ, 3.2–8.4× over scalar on M2 | Confirmed; prefill backend on M2–M4 |
+| B (LUT scoring) | MMA beat LUT 3–6× at 3- and 4-bit; LUT slower than scalar at small `M` | Rejected; LUT dropped |
+| C (GQA tile-reuse) | Wins up to 1.6× at 200K with a token-block split that preserves occupancy; peaks at G≈2 heads/threadgroup | Confirmed with caveat |
+| D + E (roofline / decode @200K) | Bandwidth-bound; current TQ decode is 2× slower than fp16 SDPA at 200K despite 3-bit | Confirmed; large headroom, needs a bandwidth-efficient kernel |
+| F (M5 TensorOps reachability) | MLX JIT compiles Metal 4 TensorOps on M5 Max; `matmul2d` exposes native int4b operands + fp32 accumulate | Reachable; cooperative-tensor fitting is the first M5-backend task |
+
+---
+
 ## 1. Goal and non-goals
 
 ### Goal
@@ -19,6 +33,8 @@ The kernel is optimized against three axes, in the priority order the owner set:
 1. Model output **quality**.
 2. **Generality** across models — no per-model hardcoding; model-specific quirks plug in architecturally.
 3. **Runtime speed** on Apple Silicon specifically.
+
+The runtime-speed axis now spans two GPU generations explicitly: M2–M4, which has no matrix silicon and reaches its peak through `simdgroup_matrix`, and M5+, whose per-core Neural Accelerators are reached through Metal 4 TensorOps. Both are first-class targets.
 
 Target workload: multi-turn chat with session prefix-KV-caching, context growing toward 200K. Per-turn cost is a small incremental prefill of the new tokens plus the decode of the reply, both running over a large cached KV. The expensive operation is reading and scoring against that large cache, not re-prefilling it.
 
@@ -109,7 +125,7 @@ A single parameterized flash-attention Metal kernel, with the codec dequant inje
 ### Flash core
 
 - **KV-tiled with fp32 online softmax (flash).** Single dispatch, with a 2-pass KV-block split for GPU occupancy at long `T`. The split is occupancy-driven, replacing the hand-tuned threshold ladder.
-- **Handles `L ≥ 1` uniformly.** Decode (`L = 1`) and prefill (`L > 1`) run the same kernel. Prefill adds intra-block causal masking (query `i` attends to keys `≤ base + i`) and causal-tile skipping (skip K-tiles entirely in the query block's future).
+- **Handles `L ≥ 1` uniformly.** Decode (`L = 1`) and prefill (`L > 1`) run the same kernel. Prefill adds intra-block causal masking (query `i` attends to keys `≤ base + i`) and causal-tile skipping (skip K-tiles entirely in the query block's future). The inner op, though, differs by `L`: MMA / TensorOps is a prefill lever, because `L > 1` is matrix–matrix. Decode (`L = 1`) is matrix–vector and bandwidth-bound — a single query row uses 1/8 of an 8×8 MMA tile — so decode does not use MMA. Its levers are GQA tile-reuse, occupancy, and efficient packed loads. The flash structure is shared; the inner op is keyed on `L`.
 - **GQA tile-reuse.** Load each kv-head's K/V tile once into threadgroup memory and serve all `R` query-heads from it. This removes the `R×` bandwidth bug and is the highest-value Apple-Silicon speed lever found.
 - **Score in rotated space.** Pre-rotate the `L` queries once (RHT / Hadamard, or a matmul for non-pow2) to produce `q_rot` (and `q_proj` for Prod). Keys stay in rotated space (no per-key inverse rotation); only the `L × D` output is inverse-rotated. This keeps the O(D log D) rotation off the hot T-loop and matches the codec math exactly.
 
@@ -123,14 +139,25 @@ A device-side "reconstruct rotated coordinate" function is injected into the Met
 | Prod | MSE plus a QJL stage: unpack a 1-bit sign plane per dim → `±1`, dot against the pre-projected query `q_proj`, scale by the stored fp16 `residual_norm` and the constant `sqrt(pi/2)/dim`. |
 | Polar | Out of scope (documented extension point). |
 
-### Compute strategy (spike-selected, see §6)
+### Compute strategy (spike-validated, see §6)
 
-The flash core is written to accept either inner-product op:
+There is one compute path: dequantize the K/V tile to fp16 in threadgroup memory, then matmul with fp32 accumulate. Spike B settled the earlier MMA-vs-LUT question — dequant-to-fp16 + `simdgroup_matrix` MMA beat LUT/codebook-gather by 3–6× at both 3-bit and 4-bit, and LUT was slower than scalar at small query counts. So LUT is dropped from the design. The single MMA-style dequant+matmul path also serves the generality axis, since one op covers every codec and bit width.
 
-- (a) **MMA.** Dequantize the K/V tile to fp16 in threadgroup memory, then use `simdgroup_matrix` for `QKᵀ` and `AV` with fp32 accumulate.
-- (b) **LUT scoring.** Precompute `q·codebook` per query block once (fp32, exact) and replace per-key multiplies with threadgroup-memory gathers and adds. Favored at 3-bit, and for `QKᵀ` only — `AV` stays dequant + MMA.
+The inner matmul is a generation-keyed backend behind the same flash core:
 
-The spike picks the winner.
+- **`simdgroup_matrix`** (fp16-in / fp32-accumulate). Optimal on M2–M4, where there is no matrix silicon.
+- **Metal 4 TensorOps / Metal Performance Primitives `matmul2d`** (cooperative tensors). Routes to the M5 Neural Accelerators.
+
+The shared flash structure — online softmax, KV-tiling, codec dequant, capability gate, kill-switch — is generation-independent. Only the inner matmul swaps.
+
+### 4.1 Compute backend is generation-keyed
+
+| GPU generation | Matrix hardware | Prefill matmul backend |
+|---|---|---|
+| M2 / M3 / M4 | none (`simdgroup_matrix` runs on FP32 ALUs) | hand-written `simdgroup_matrix`, fp16-in / fp32-acc |
+| M5 Pro/Max+ | per-core Neural Accelerator | Metal 4 TensorOps `matmul2d` (cooperative tensors) → Neural Accelerator |
+
+On M2/M3/M4 the Metal 4 `matmul2d` path runs on the same datapath as `simdgroup_matrix` (within ~20%), so `simdgroup_matrix` is the right choice there; the flip to TensorOps only pays off on M5. Selection is by GPU family at kernel-build time, behind the existing capability gate.
 
 ---
 
@@ -146,7 +173,7 @@ The spike picks the winner.
 | Transparent fallback to the existing K-tile loop | | ✓ | |
 | Enforced by a test matrix; no model-name branches | | ✓ | |
 | GQA tile-reuse (≈`R×`) | | | ✓ |
-| MMA / LUT inner product | | | ✓ |
+| Generation-keyed MMA inner product (prefill) | | | ✓ |
 | No score materialization | | | ✓ |
 | Causal-tile skip | | | ✓ |
 | Single dispatch, eliminating per-tile `mx.eval` syncs | | | ✓ |
@@ -158,35 +185,47 @@ The spike picks the winner.
 
 Validate the Apple-Silicon bets before building anything.
 
-### Spike A — `simdgroup_matrix` MMA viability in `mx.fast.metal_kernel`
+### Spike A — `simdgroup_matrix` MMA viability in `mx.fast.metal_kernel` (DONE)
 
 - **Hypothesis:** `simdgroup_matrix` compiles and runs inside `mx.fast.metal_kernel` and beats the scalar `simd_sum` reduction for `QKᵀ` and `AV` at Qwen dims.
 - **Measure:** that it compiles and runs at all (unproven in this codebase), then `QKᵀ` / `AV` throughput against the current scalar reduction at `head_dim = 256`, `R = 6`.
 - **Success:** MMA runs correctly and is faster than the scalar baseline at these dims.
+- **Result:** CONFIRMED. `simdgroup_matrix` compiles and runs in `mx.fast.metal_kernel`; fp16-in / fp32-acc is exact for QKᵀ (max-abs-diff 0.0). Beats scalar `simd_sum` 3.2–8.4× on M2 Max (1.3–5.3× on M5, where scalar is ~3× faster); ~2000 GFLOP/s against an `mx.matmul` ceiling of ~3900 on M2.
 
-### Spike B — LUT scoring at 3-bit
+### Spike B — LUT scoring at 3-bit (DONE)
 
 - **Hypothesis:** Precomputing `q·codebook` per query block and replacing per-key multiplies with gathers beats MMA at 3-bit.
 - **Measure:** throughput and numerics of the `q·codebook` precompute + gather against Spike A.
 - **Success:** LUT scoring matches MMA numerics and is at least competitive on throughput at 3-bit.
+- **Result:** REJECTED. MMA beat LUT 3–6× at both 3-bit and 4-bit; LUT was slower than scalar at small `M`. LUT is dropped from the design.
 
-### Spike C — GQA tile-reuse decode prototype
+### Spike C — GQA tile-reuse decode prototype (DONE)
 
 - **Hypothesis:** Loading a kv tile once and serving `R` heads removes the `R×` re-read and wins big at long context. This may be the largest lever and is the cheapest to test.
 - **Measure:** the bandwidth win against today's per-head re-read at long context.
 - **Success:** measurable bandwidth reduction and decode speedup at long context.
+- **Result:** CONFIRMED with a caveat. Naive single-pass tile-reuse is occupancy-starved (~46 GB/s) and regresses. With a token-block split that preserves occupancy it wins up to 1.6× at 200K, peaking at G≈2 heads/threadgroup — packing more heads/threadgroup serially eats the saving and raises register pressure.
 
-### Spike D — bandwidth- vs compute-bound at large `T`
+### Spike D — bandwidth- vs compute-bound at large `T` (DONE)
 
 - **Hypothesis:** At large `T` the kernel is bandwidth-bound, so 3-bit reads set the ceiling.
 - **Measure:** where the kernel sits on the roofline at large `T`.
 - **Success:** a clear answer on whether a 3-bit fused kernel can beat fp16 fused SDPA, not just the Python loop.
+- **Result:** CONFIRMED bandwidth-bound. Practical peak DRAM BW is ~310 GB/s on M2 Max (~558 on M5 Max). fp16 dense `mx.fast` SDPA decode at 200K hits ~75–78% of peak. 3-bit KV cuts traffic 5.3×.
 
-### Spike E — decode-at-200K baseline
+### Spike E — decode-at-200K baseline (DONE)
 
 - **Hypothesis:** Decode at 200K may itself need tuning, independent of prefill.
 - **Measure:** current decode tok/s with a 200K cached KV — the other half of per-turn responsiveness.
 - **Success:** a baseline number that tells us whether a decode-tuning follow-up is needed.
+- **Result:** The current production TQ decode is 2× SLOWER than fp16 SDPA at 200K (7.45 ms vs 3.52 ms on M2) despite 3-bit — it pays the `R×` GQA-redundant read and runs at ~40% efficiency. The headroom is large, but a naive 3-bit kernel only ties fp16 SDPA; capturing the prize needs a bandwidth-efficient kernel.
+
+### Spike F — Metal 4 TensorOps reachability (M5, DONE)
+
+- **Hypothesis:** `mx.fast.metal_kernel`'s runtime JIT can compile Metal 4 TensorOps on M5, opening a path to the Neural Accelerators.
+- **Measure:** whether the TensorOps headers compile and run, and whether `matmul2d` exposes operand types and accumulation modes usable for quantized-KV attention.
+- **Success:** TensorOps reachable from the MLX JIT, with a credible operand/accumulation fit.
+- **Result:** REACHABLE. The runtime JIT compiles Metal 4 TensorOps on M5 Max / macOS 26.5 — both `<metal_tensor>` and `<MetalPerformancePrimitives/...>` headers compile and run. `matmul2d` natively supports half×half→float and has live `int4b_format` / `uint4b_format` operand types, so a 4-bit-packed operand can feed the Neural Accelerator directly with fp32 accumulate. A running `matmul2d` still needs the supported cooperative-tensor destination configuration — bounded API-fitting work, scheduled as the first task of the M5 backend.
 
 ---
 
@@ -209,6 +248,8 @@ Flip `gemma4` to `kv_quant_scheme: turboquant` and validate end-to-end. `gemma4`
 ## 8. Numerics and TDD
 
 Reference of record: full fp32 dequant of the KV, fed to `mx.fast.scaled_dot_product_attention` in fp32. This bounds the absolute codec + kernel error, not just parity with today's loop. Assert a tight max-abs-diff.
+
+Spike A confirmed fp16-input / fp32-accumulate is numerically exact for QKᵀ (max-abs-diff 0.0), so the MMA path does not loosen the error bound. On M5 the `int4b_format` `matmul2d` path performs in-accelerator dequant, so `kv_bits=4` maps onto native hardware rather than a custom dequant prologue.
 
 Reuse `test_turboquant.py` patterns: query-block-size invariance, prefill-matches-dequantized-attention, causal alignment.
 
@@ -241,19 +282,25 @@ main_models.yaml
 
 The primary gate is the eligibility predicate — TQ, MSE or Prod codec, wrapper-routed, supported dims. The flag is an override on top of it.
 
+`kv_bits` also interacts with the GPU generation. On M5, prefer `kv_bits=4`: TensorOps supports 2/4/8-bit operands natively but not 3-bit, so a 3-bit KV on M5 needs either a repack-to-4-bit (which drops the traffic advantage from ~5.3× to ~4×) or a cooperative-tensor custom in-kernel dequant. 4-bit also improves quality. On M2–M4, 3-bit remains fine — custom dequant plus `simdgroup_matrix`.
+
 ---
 
 ## 10. Risks and mitigations
 
 | Risk | Mitigation |
 |---|---|
-| MMA unproven in `mx.fast.metal_kernel` | Spike A de-risks it. Fallback is scalar / LUT, which still beats the Python loop. |
+| MMA unproven in `mx.fast.metal_kernel` | Spike A confirmed it. Fallback is the scalar reduction, which still beats the Python loop. |
+| Fused-flash may lose to a decomposed path on high-bandwidth Apple silicon | A single-author M4 study (Rigel, arXiv 2606.12765) found fused flash 3.6–5× slower than a decomposed path (materialize scores, then separate matmuls) at prefill seq-len ≤8192, because ample bandwidth makes the score round-trip cheap. Benchmark decomposed-vs-fused at the target sizes. Note that no-score-materialization is also a memory requirement at 200K (the ~16.8 GB score tensor), not only a speed choice. |
+| M5 TensorOps requires the cooperative-tensor API | Gating spike F proved the headers and types are reachable from the MLX JIT. Fitting the supported `matmul2d` specialization is the first M5-backend task. Fallback is MLX built-in ops (`mx.matmul`), which already route to the Neural Accelerators. |
 | Register pressure holding `L` queries × `D = 256` | Tile `L` into sub-blocks. |
 | fp16 dequant precision for MMA | fp32 accumulate; 3-bit values represent exactly in fp16. |
 | Causal off-by-one | TDD. |
 | Prod needs dual pre-rotated query streams | Carry both `q_rot` and `q_proj`. |
 | `BatchTurboQuantKVCache` (continuous-batching) is a parallel path | Give it the same treatment, or explicitly fall back. |
 | Single-shot-200K non-attention floor is real | Amortized in the prefix-cache multi-turn regime; out of scope per §1. |
+
+fp16-KV cannot be the decode bar at 200K on a 64 GB machine — it OOMs. It is the gold-standard bar only at ≤~64K. At 200K, 3-bit TQ is the only memory-viable scheme, so the bar there is the bandwidth budget, not fp16 SDPA.
 
 ---
 
