@@ -12,8 +12,9 @@ GATE_GB = 46.0
 
 def run_ladder(driver, model: str, chars_per_token: float,
                idle_baseline_gb: float, model_pid: int | None,
+               params: dict,
                grid=DEFAULT_GRID, gate_gb: float = GATE_GB,
-               sampler_factory=MemorySampler, max_tokens: int = 256) -> list[dict]:
+               sampler_factory=MemorySampler) -> list[dict]:
     """Run the capacity ladder.
 
     GATE METRIC = the model's MLX peak memory (mx.get_peak_memory, reported by the
@@ -28,6 +29,12 @@ def run_ladder(driver, model: str, chars_per_token: float,
     A hard OOM -- the request 500s / disconnects before returning -- is caught, recorded
     as a non-fitting rung with an `error`, and stops the ladder (so the gate registers
     "does not fit here" instead of crashing the run).
+
+    `params` carries the production sampling params plus bounded generation limits
+    (max_tokens=256, thinking_budget=256). The gate is the MLX-peak (prefill spike),
+    which is independent of decode length, so generation is intentionally bounded here;
+    `retrieval_acc` is a ROUGH co-signal only (thinking-bounded) — authoritative
+    retrieval is a dedicated probe.
     """
     records: list[dict] = []
     for ctx in grid:
@@ -36,8 +43,7 @@ def run_ladder(driver, model: str, chars_per_token: float,
         sampler = sampler_factory(pid=model_pid)
         try:
             with sampler:
-                out = driver.complete(model, messages,
-                                      {"max_tokens": max_tokens, "temperature": 0.0})
+                out = driver.complete(model, messages, params)
         except Exception as e:  # hard OOM / server error at this context -> does not fit
             sp = sampler.system_peak_gb
             rec = PerfRecord(ctx=ctx, peak_rss_gb=sampler.peak_rss_gb,

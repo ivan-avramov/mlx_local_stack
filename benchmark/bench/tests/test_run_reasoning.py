@@ -2,6 +2,7 @@
 import json
 import os
 import bench.run_reasoning as R
+from bench.model_params import params_for
 
 
 class FakeDriver:
@@ -114,3 +115,65 @@ def test_main_no_preload_flag(monkeypatch, tmp_path):
 
 def test_calibrate_cpt_returns_positive():
     assert R.calibrate_cpt(FakeDriver(), "m") > 0
+
+
+def test_main_passes_params_to_ladder(monkeypatch, tmp_path):
+    """main() builds params via params_for and passes a params dict to run_reasoning_ladder."""
+    captured = {}
+
+    def fake_ladder(*a, **kw):
+        captured["params"] = kw.get("params") or (a[4] if len(a) > 4 else None)
+        return CANNED_RECORDS_PASS_FAIL
+
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
+    monkeypatch.setattr(R, "MemorySampler", FakeSampler)
+    monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "find_model_server_pid", lambda: None)
+    monkeypatch.setattr(R, "run_reasoning_ladder", fake_ladder)
+    R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit",
+            "--grid", "8000,16000", "--no-preload"])
+    assert captured["params"] is not None
+    # Gemma model → GEMMA params set
+    expected = params_for("gemma-4-26B-A4B-it-QAT-MLX-4bit")
+    assert captured["params"]["temperature"] == expected["temperature"]
+    assert captured["params"]["max_tokens"] == expected["max_tokens"]
+    assert captured["params"]["thinking_budget"] == expected["thinking_budget"]
+
+
+def test_main_max_tokens_override(monkeypatch, tmp_path):
+    """--max-tokens overrides params_for value."""
+    captured = {}
+
+    def fake_ladder(*a, **kw):
+        captured["params"] = kw.get("params")
+        return CANNED_RECORDS_PASS_FAIL
+
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
+    monkeypatch.setattr(R, "MemorySampler", FakeSampler)
+    monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "find_model_server_pid", lambda: None)
+    monkeypatch.setattr(R, "run_reasoning_ladder", fake_ladder)
+    R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit",
+            "--grid", "8000,16000", "--no-preload", "--max-tokens", "1234"])
+    assert captured["params"]["max_tokens"] == 1234
+
+
+def test_main_thinking_budget_override(monkeypatch, tmp_path):
+    """--thinking-budget overrides params_for value."""
+    captured = {}
+
+    def fake_ladder(*a, **kw):
+        captured["params"] = kw.get("params")
+        return CANNED_RECORDS_PASS_FAIL
+
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
+    monkeypatch.setattr(R, "MemorySampler", FakeSampler)
+    monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "find_model_server_pid", lambda: None)
+    monkeypatch.setattr(R, "run_reasoning_ladder", fake_ladder)
+    R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit",
+            "--grid", "8000,16000", "--no-preload", "--thinking-budget", "4096"])
+    assert captured["params"]["thinking_budget"] == 4096

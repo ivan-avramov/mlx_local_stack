@@ -212,6 +212,10 @@ class ExplodingDriver:
         raise RuntimeError("server exploded")
 
 
+_PROD_PARAMS = {"max_tokens": 256, "temperature": 0.0, "thinking_budget": 128,
+                "top_p": 0.95, "top_k": 20, "enable_thinking": True}
+
+
 def test_ladder_stops_at_cliff():
     """Ladder stops after the first rung below threshold."""
     # Use AllCorrectDriver for all but last rung
@@ -250,8 +254,8 @@ def test_ladder_stops_at_cliff():
     driver = CliffDriver()
     records = R.run_reasoning_ladder(
         driver, "model", chars_per_token=4.0, model_pid=99999,
+        params=_PROD_PARAMS,
         grid=grid, threshold=threshold, samples=samples, chain_len=4,
-        max_tokens=512, thinking_budget=256,
         sampler_factory=FakeSampler,
     )
     # Should have rung0 (pass) and rung1 (fail), stop before rung2
@@ -266,8 +270,8 @@ def test_ladder_all_pass_runs_full_grid():
     driver = AllCorrectDriver()
     records = R.run_reasoning_ladder(
         driver, "model", chars_per_token=4.0, model_pid=99999,
+        params=_PROD_PARAMS,
         grid=grid, threshold=0.85, samples=2, chain_len=4,
-        max_tokens=512, thinking_budget=256,
         sampler_factory=FakeSampler,
     )
     assert len(records) == 2
@@ -281,8 +285,8 @@ def test_ladder_exception_scores_zero():
     driver = ExplodingDriver()
     records = R.run_reasoning_ladder(
         driver, "model", chars_per_token=4.0, model_pid=99999,
+        params=_PROD_PARAMS,
         grid=grid, threshold=0.85, samples=3, chain_len=4,
-        max_tokens=512, thinking_budget=256,
         sampler_factory=FakeSampler,
     )
     assert len(records) == 1
@@ -296,8 +300,8 @@ def test_ladder_record_fields():
     driver = AllCorrectDriver()
     records = R.run_reasoning_ladder(
         driver, "model", chars_per_token=4.0, model_pid=99999,
+        params=_PROD_PARAMS,
         grid=grid, threshold=0.85, samples=2, chain_len=4,
-        max_tokens=512, thinking_budget=256,
         sampler_factory=FakeSampler,
     )
     r = records[0]
@@ -308,3 +312,31 @@ def test_ladder_record_fields():
     assert "errors" in r
     assert r["samples"] == 2
     assert r["chain_len"] == 4
+
+
+def test_ladder_params_forwarded_to_driver():
+    """params dict is forwarded verbatim to driver.complete (not hardcoded)."""
+    received = []
+
+    class RecordParamsDriver:
+        def complete(self, model, messages, params, timeout=3600):
+            received.append(dict(params))
+            user_content = messages[-1]["content"] if messages else ""
+            m = re.search(r'= (\d{5})\.', user_content)
+            val = m.group(1) if m else "99999"
+            return {"content": f"ANSWER: {val}", "prompt_tokens": 100,
+                    "prefill_s": 0.5, "prefill_tps": 200, "decode_tps": 50.0,
+                    "peak_mem_gb": 20.0, "wall_s": 1.0}
+
+    custom_params = {"max_tokens": 512, "temperature": 0.7, "thinking_budget": 999,
+                     "top_p": 0.95, "enable_thinking": True}
+    R.run_reasoning_ladder(
+        RecordParamsDriver(), "model", chars_per_token=4.0, model_pid=99999,
+        params=custom_params, grid=(8000,), threshold=0.85, samples=1, chain_len=4,
+        sampler_factory=FakeSampler,
+    )
+    assert len(received) == 1
+    # temperature must pass through (not overridden to 0.0)
+    assert received[0]["temperature"] == 0.7
+    assert received[0]["max_tokens"] == 512
+    assert received[0]["thinking_budget"] == 999

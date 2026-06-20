@@ -118,12 +118,11 @@ def run_reasoning_ladder(
     model: str,
     chars_per_token: float,
     model_pid,
+    params: dict,
     grid=REASONING_GRID,
     threshold: float = 0.85,
     samples: int = 5,
     chain_len: int = 4,
-    max_tokens: int = 4096,
-    thinking_budget: int = 2048,
     sampler_factory=MemorySampler,
 ) -> list[dict]:
     """CLIMB-TO-CLIFF: run the variable-tracking task at increasing context sizes.
@@ -131,6 +130,11 @@ def run_reasoning_ladder(
     For each length L in grid, runs `samples` independent trials (each with a
     distinct seed = L * 1000 + trial_index). Accuracy = mean of trial scores.
     Stops (breaks) after the first rung with accuracy < threshold.
+
+    `params` is the production generation params dict (temperature, top_p, top_k,
+    min_p, penalties, max_tokens, enable_thinking, thinking_budget). Passed
+    straight to driver.complete — this is a quality measurement, so full
+    production params are used.
 
     Returns a list of per-rung dicts:
       {"ctx": L, "accuracy": float, "samples": N, "chain_len": N, "errors": N}
@@ -147,11 +151,6 @@ def run_reasoning_ladder(
             messages = [
                 {"role": "user", "content": context + "\n\n" + question}
             ]
-            params = {
-                "max_tokens": max_tokens,
-                "temperature": 0.0,
-                "thinking_budget": thinking_budget,
-            }
             with sampler_factory(pid=model_pid):
                 try:
                     result = driver.complete(model, messages, params)

@@ -1,5 +1,6 @@
 import json, os
 import bench.run_capacity as R
+from bench.model_params import params_for
 
 class FakeDriver:
     def preload(self, model, timeout=900): return 1.0
@@ -40,3 +41,32 @@ def test_main_writes_results(tmp_path, monkeypatch):
     assert first["server_peak_gb"] == 40.0 and first["fits"] is True  # MLX-peak gate (40<=46)
     assert first["peak_rss_gb"] == 35.0                               # steady-state reported
     assert first["model_footprint_gb"] == round(45.0 - 10.0, 2)       # 35.0 coarse cross-check
+
+
+def test_main_passes_bounded_params_to_ladder(tmp_path, monkeypatch):
+    """main() builds params from params_for, then bounds max_tokens=256, thinking_budget=256."""
+    captured = {}
+
+    def fake_ladder(*a, **kw):
+        captured["params"] = kw.get("params") or (a[5] if len(a) > 5 else None)
+        return [{"ctx": 160000, "server_peak_gb": 40.0, "peak_rss_gb": 35.0,
+                 "system_peak_gb": 45.0, "model_footprint_gb": 35.0,
+                 "prefill_s": 1.0, "prefill_tps": 200, "decode_tps": 9.5,
+                 "prompt_tokens": 1000, "retrieval_acc": 1.0, "fits": True}]
+
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
+    monkeypatch.setattr(R, "MemorySampler", FakeSampler)
+    monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "find_model_server_pid", lambda: 12345)
+    monkeypatch.setattr(R, "run_ladder", fake_ladder)
+    R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit",
+            "--grid", "160000", "--no-preload"])
+    assert captured["params"] is not None
+    # Must be bounded regardless of model's production max_tokens
+    assert captured["params"]["max_tokens"] == 256
+    assert captured["params"]["thinking_budget"] == 256
+    # Production sampling params must still be present
+    base = params_for("gemma-4-26B-A4B-it-QAT-MLX-4bit")
+    assert captured["params"]["temperature"] == base["temperature"]
+    assert captured["params"]["top_p"] == base["top_p"]

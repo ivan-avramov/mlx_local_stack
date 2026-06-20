@@ -10,6 +10,7 @@ import time
 
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, system_used_gb, find_model_server_pid
+from .model_params import params_for
 from .capacity_ladder import run_ladder, DEFAULT_GRID, GATE_GB
 from .scorecard import capacity_retrieval_scorecard
 
@@ -53,8 +54,13 @@ def main(argv=None) -> int:
     cpt = calibrate_cpt(driver, args.model)
     print(f"[capacity] {args.model} cpt={cpt:.2f} grid={grid} gate={args.gate_gb}GB", flush=True)
 
+    # Build production sampling params, then bound generation for the memory probe.
+    # The gate is the MLX prefill spike, which is independent of decode length;
+    # we don't pay for a long thinking decode here.
+    params = {**params_for(args.model), "max_tokens": 256, "thinking_budget": 256}
+
     records = run_ladder(driver, args.model, cpt, idle_baseline_gb=idle_baseline,
-                         model_pid=model_pid, grid=grid, gate_gb=args.gate_gb,
+                         model_pid=model_pid, params=params, grid=grid, gate_gb=args.gate_gb,
                          sampler_factory=MemorySampler)
     for r in records:
         mp = r.get("server_peak_gb")

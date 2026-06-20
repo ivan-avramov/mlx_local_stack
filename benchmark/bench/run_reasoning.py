@@ -10,6 +10,7 @@ import time
 
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, system_used_gb, find_model_server_pid
+from .model_params import params_for
 from .reasoning import run_reasoning_ladder, REASONING_GRID
 
 RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
@@ -35,8 +36,10 @@ def main(argv=None) -> int:
     ap.add_argument("--samples", type=int, default=5)
     ap.add_argument("--chain-len", type=int, default=4)
     ap.add_argument("--threshold", type=float, default=0.85)
-    ap.add_argument("--max-tokens", type=int, default=4096)
-    ap.add_argument("--thinking-budget", type=int, default=2048)
+    ap.add_argument("--max-tokens", type=int, default=None,
+                    help="Override production max_tokens (default: use model's production value)")
+    ap.add_argument("--thinking-budget", type=int, default=None,
+                    help="Override production thinking_budget (default: use model's production value)")
     ap.add_argument("--no-preload", action="store_true")
     args = ap.parse_args(argv)
 
@@ -59,19 +62,30 @@ def main(argv=None) -> int:
               "memory sampling disabled", flush=True)
 
     cpt = calibrate_cpt(driver, args.model)
+
+    # Build production params; apply any CLI overrides
+    params = params_for(args.model)
+    if args.max_tokens is not None:
+        params["max_tokens"] = args.max_tokens
+    if args.thinking_budget is not None:
+        params["thinking_budget"] = args.thinking_budget
+
     print(f"[reasoning] {args.model} cpt={cpt:.2f} grid={grid} "
           f"threshold={args.threshold} samples={args.samples} "
           f"chain_len={args.chain_len}", flush=True)
+    print(f"[reasoning] params: temp={params.get('temperature')} "
+          f"top_p={params.get('top_p')} "
+          f"thinking_budget={params.get('thinking_budget')} "
+          f"max_tokens={params.get('max_tokens')}", flush=True)
 
     records = run_reasoning_ladder(
         driver, args.model, cpt,
         model_pid=model_pid,
+        params=params,
         grid=grid,
         threshold=args.threshold,
         samples=args.samples,
         chain_len=args.chain_len,
-        max_tokens=args.max_tokens,
-        thinking_budget=args.thinking_budget,
         sampler_factory=MemorySampler,
     )
 
