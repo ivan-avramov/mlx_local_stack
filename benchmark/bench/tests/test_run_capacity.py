@@ -30,12 +30,13 @@ def test_main_writes_results(tmp_path, monkeypatch):
     assert rc == 0
     sc = json.load(open(os.path.join(tmp_path, "m", "capacity_retrieval.json")))
     assert sc["model"] == "m" and sc["axis"] == "capacity_retrieval"
-    assert sc["gate_metric"] == "model_process_peak_rss_gb"
+    assert sc["gate_metric"] == "mlx_peak_gb (mx.get_peak_memory, the prefill spike)"
     assert len(sc["records"]) == 2
     assert sc["idle_baseline_gb"] == 10.0
     # verify capacity_ladder.jsonl has one line per rung
     lines = open(os.path.join(tmp_path, "m", "capacity_ladder.jsonl")).readlines()
     assert len(lines) == 2
     first = json.loads(lines[0])
-    assert first["peak_rss_gb"] == 35.0 and first["fits"] is True   # RSS gate
-    assert first["model_footprint_gb"] == round(45.0 - 10.0, 2)     # 35.0 secondary
+    assert first["server_peak_gb"] == 40.0 and first["fits"] is True  # MLX-peak gate (40<=46)
+    assert first["peak_rss_gb"] == 35.0                               # steady-state reported
+    assert first["model_footprint_gb"] == round(45.0 - 10.0, 2)       # 35.0 coarse cross-check

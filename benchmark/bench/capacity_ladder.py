@@ -1,6 +1,7 @@
 """Incremental-fill capacity + retrieval ladder. Grows the context in 32K steps,
-captures the model process's peak RSS each step, scores multi-needle retrieval, and
-stops at the 46GB RSS gate. One completion per rung (one prefill), so cost is bounded."""
+captures BOTH the model's MLX peak memory (the prefill SPIKE = OOM trigger, the gate)
+and its steady-state RSS (resident cost), scores multi-needle retrieval, and stops at
+the 46GB peak gate. One completion per rung (one prefill), so cost is bounded."""
 from dataclasses import asdict
 from .instrument import MemorySampler, PerfRecord
 from .retrieval import build_context, make_question, score
@@ -15,37 +16,54 @@ def run_ladder(driver, model: str, chars_per_token: float,
                sampler_factory=MemorySampler, max_tokens: int = 256) -> list[dict]:
     """Run the capacity ladder.
 
-    GATE METRIC = the model server process's peak RSS (model_pid), sampled live during
-    each rung. fits = peak_rss_gb <= gate_gb -- i.e. "the model's actual resident memory
-    is under the budget". system_peak_gb and model_footprint_gb (system-used minus the
-    pre-preload idle_baseline_gb) are recorded as a secondary cross-check only.
+    GATE METRIC = the model's MLX peak memory (mx.get_peak_memory, reported by the
+    server as peak_mem_gb -> recorded as server_peak_gb). This is the prefill SPIKE,
+    which is what actually triggers OOM. fits = server_peak_gb <= gate_gb.
+
+    Reported alongside (NOT the gate): peak_rss_gb = the model process's steady-state
+    resident memory (~the decode-time cost; psutil RSS under-counts the spike on Apple
+    Silicon, hence it is not the gate). system_peak_gb / model_footprint_gb (system-used
+    minus the pre-preload idle_baseline_gb) are coarse cross-checks.
+
+    A hard OOM -- the request 500s / disconnects before returning -- is caught, recorded
+    as a non-fitting rung with an `error`, and stops the ladder (so the gate registers
+    "does not fit here" instead of crashing the run).
     """
     records: list[dict] = []
     for ctx in grid:
         context, needles = build_context(ctx, chars_per_token)
         messages = [{"role": "user", "content": context + "\n\n" + make_question(needles)}]
-        with sampler_factory(pid=model_pid) as sampler:
-            out = driver.complete(model, messages,
-                                  {"max_tokens": max_tokens, "temperature": 0.0})
+        sampler = sampler_factory(pid=model_pid)
+        try:
+            with sampler:
+                out = driver.complete(model, messages,
+                                      {"max_tokens": max_tokens, "temperature": 0.0})
+        except Exception as e:  # hard OOM / server error at this context -> does not fit
+            sp = sampler.system_peak_gb
+            rec = PerfRecord(ctx=ctx, peak_rss_gb=sampler.peak_rss_gb,
+                             system_peak_gb=sp,
+                             model_footprint_gb=round(sp - idle_baseline_gb, 2))
+            records.append({**asdict(rec), "retrieval_acc": 0.0, "fits": False,
+                            "error": f"{type(e).__name__}: {str(e)[:160]}"})
+            break
         system_peak = sampler.system_peak_gb
+        mlx_peak = out.get("peak_mem_gb")
         rec = PerfRecord(
             ctx=ctx,
-            peak_rss_gb=sampler.peak_rss_gb,          # GATE METRIC: model process RSS
-            model_footprint_gb=round(system_peak - idle_baseline_gb, 2),  # secondary
-            system_peak_gb=system_peak,               # secondary
-            # server_peak_gb is the server's lifetime high-water mark (never reset by the
-            # server), recorded for reference only and NOT used for the gate.
-            server_peak_gb=out.get("peak_mem_gb"),
+            server_peak_gb=mlx_peak,                  # GATE METRIC: MLX peak (the spike)
+            peak_rss_gb=sampler.peak_rss_gb,          # steady-state / resident (no spike)
+            system_peak_gb=system_peak,               # coarse cross-check
+            model_footprint_gb=round(system_peak - idle_baseline_gb, 2),  # coarse
             prefill_s=out.get("prefill_s"),
             prefill_tps=out.get("prefill_tps"),
             decode_tps=out.get("decode_tps"),
             prompt_tokens=out.get("prompt_tokens"),
         )
-        fits = rec.peak_rss_gb <= gate_gb             # actual process RSS under budget
+        fits = (mlx_peak is not None) and (mlx_peak <= gate_gb)   # spike under budget
         row = {**asdict(rec),
                "retrieval_acc": score(out.get("content", ""), needles),
                "fits": fits}
         records.append(row)
         if not fits:
-            break  # stop the ladder once the RSS gate is tripped
+            break  # stop the ladder once the peak gate is tripped
     return records

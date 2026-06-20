@@ -57,11 +57,13 @@ def main(argv=None) -> int:
                          model_pid=model_pid, grid=grid, gate_gb=args.gate_gb,
                          sampler_factory=MemorySampler)
     for r in records:
-        print(f"[capacity] ctx={r['ctx']} prompt_tokens={r['prompt_tokens']} "
-              f"RSS={r['peak_rss_gb']}GB/{args.gate_gb} "
-              f"(sys_peak={r['system_peak_gb']}GB sys_footprint={r['model_footprint_gb']}GB) "
-              f"acc={r['retrieval_acc']:.2f} prefill={r['prefill_tps']}tok/s "
-              f"decode={r['decode_tps']}tok/s fits={r['fits']}", flush=True)
+        mp = r.get("server_peak_gb")
+        mp = round(mp, 1) if isinstance(mp, (int, float)) else mp
+        print(f"[capacity] ctx={r['ctx']} tok={r['prompt_tokens']} "
+              f"MLXpeak={mp}GB/{args.gate_gb} (gate,spike) RSS={r['peak_rss_gb']}GB (steady) "
+              f"sys={r['system_peak_gb']}GB acc={r['retrieval_acc']:.2f} "
+              f"prefill={r['prefill_tps']} decode={r['decode_tps']} fits={r['fits']}"
+              + (f" ERR={r['error']}" if r.get("error") else ""), flush=True)
 
     sc = capacity_retrieval_scorecard(args.model, records, gate_gb=args.gate_gb)
     sc["idle_baseline_gb"] = round(idle_baseline, 2)

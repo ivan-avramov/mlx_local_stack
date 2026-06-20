@@ -13,7 +13,7 @@ def capacity_retrieval_scorecard(model: str, records: list[dict],
     return {
         "model": model,
         "axis": "capacity_retrieval",
-        "gate_metric": "model_process_peak_rss_gb",
+        "gate_metric": "mlx_peak_gb (mx.get_peak_memory, the prefill spike)",
         "gate_gb": gate_gb,
         "retrieval_threshold": retrieval_threshold,
         "records": records,
