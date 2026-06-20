@@ -42,7 +42,8 @@ Build (spec → plan → TDD), reusing trusted benchmarks:
 - **Coding (agentic, in-loop):** Aider polyglot (core) + SWE-bench-Verified subset (30–50 issues).
 - **Instruction-following:** IFEval.
 - **Execution-gated correctness** (sandbox) + **mixed-family judge panel** (Sonnet + Opus + GPT-5.5/codex; median; per-judge reported) for the subjective code-quality rubric (10 axes). Judge ≠ correctness oracle.
-- Carry the **thinking-budget fix** (generous `max_tokens` + `thinking_budget`).
+- **Production config:** all model calls use `params_for(model)` verbatim — temp/top_p/top_k/min_p/penalties + enable_thinking + thinking_budget (hard headroom cap) + max_tokens. No greedy, no ad-hoc budgets. (Harness threads this; commit `ed3449c`.)
+- **Also build a dedicated retrieval probe** (multi-needle / NIAH) at production params → the clean retrieval curve for both models. Closes the gemma thinking-starvation cleanup (the capacity probe's `retrieval_acc` is only a rough co-signal).
 
 ### Step 2 — heavy reasoning  [BUILD] → run on both, extend grid
 - **RULER-aggregation** + **NoLiMa** (latent 2-hop, minimal lexical overlap — the honest effective-context test). Thinking-controlled, exact-match/MC.
@@ -64,5 +65,6 @@ Priority order:
 - Two machines: `ssh $REMOTE_HOST` (M5 Max, ~7× faster, remote/clean → heavy runs) + local M2 Max (dev laptop). **One model per machine at a time**, unload between, **keep the box quiet during a run** (MLX-peak gate is robust to other processes; RAM headroom isn't).
 - Lean router (no OWUI/docker): `MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start`. On M5 prepend `PATH=/opt/homebrew/bin:$PATH` (uv not on non-interactive PATH) and `set -a; . ./.env; set +a` for HF_TOKEN.
 - Tests: `cd benchmark && uv run --with pytest --with psutil python -m pytest bench/tests/`.
+- **Config fidelity:** quality runs (reasoning, coding, dedicated retrieval) use `params_for(model)` production params verbatim (commit `ed3449c`); the capacity probe is a *memory* measurement → production sampling + bounded generation (the prefill peak is decode-length-independent), so its `retrieval_acc` is a rough co-signal. Completed Phase-1 capacity + light-VT results STAND (memory is sampling-insensitive; the VT thinking cap didn't bind) — the fix is forward-looking.
 - Sync harness to M5 via rsync (nothing pushed to origin): `rsync -a benchmark/bench/ $REMOTE_HOST:~/Documents/ws/mlx_local_stack/benchmark/bench/`.
 - Suggested order: build Step 1 (coding) + Step 2 (heavy reasoning) harness in parallel, then run both across the 2 models (Qwen on M5, gemma on M2), then Step 3. MTP (Phase 2) right after.
