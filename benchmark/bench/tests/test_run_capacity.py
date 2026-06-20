@@ -13,7 +13,6 @@ class FakeSampler:
     def __init__(self, **kw): pass
     def __enter__(self): return self
     def __exit__(self, *a): pass
-    model_footprint_gb = 30.0
     system_peak_gb = 45.0
     peak_rss_gb = 0.0
 
@@ -24,8 +23,16 @@ def test_main_writes_results(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    # idle baseline = 10 GB; system_peak = 45 GB → footprint = 35 GB (fits under 46)
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
     rc = R.main(["--model", "m", "--grid", "160000,192000"])
     assert rc == 0
-    out = json.load(open(os.path.join(tmp_path, "m", "capacity_retrieval.json")))
-    assert out["model"] == "m" and out["axis"] == "capacity_retrieval"
-    assert len(out["records"]) == 2
+    sc = json.load(open(os.path.join(tmp_path, "m", "capacity_retrieval.json")))
+    assert sc["model"] == "m" and sc["axis"] == "capacity_retrieval"
+    assert len(sc["records"]) == 2
+    assert sc["idle_baseline_gb"] == 10.0
+    # verify capacity_ladder.jsonl has one line per rung
+    lines = open(os.path.join(tmp_path, "m", "capacity_ladder.jsonl")).readlines()
+    assert len(lines) == 2
+    first = json.loads(lines[0])
+    assert first["model_footprint_gb"] == round(45.0 - 10.0, 2)  # 35.0

@@ -8,7 +8,7 @@ import json
 import os
 
 from .driver import MlxServeDriver
-from .instrument import MemorySampler
+from .instrument import MemorySampler, system_used_gb
 from .capacity_ladder import run_ladder, DEFAULT_GRID, GATE_GB
 from .scorecard import capacity_retrieval_scorecard
 
@@ -34,20 +34,25 @@ def main(argv=None) -> int:
     grid = tuple(int(x) for x in args.grid.split(","))
 
     driver = MlxServeDriver()
+    idle_baseline = system_used_gb()
+    print(f"[capacity] idle baseline = {idle_baseline:.2f} GB", flush=True)
     if not args.no_preload:
         driver.preload(args.model)
     cpt = calibrate_cpt(driver, args.model)
     print(f"[capacity] {args.model} cpt={cpt:.2f} grid={grid} gate={args.gate_gb}GB", flush=True)
 
-    records = run_ladder(driver, args.model, cpt, grid=grid, gate_gb=args.gate_gb,
+    records = run_ladder(driver, args.model, cpt, idle_baseline_gb=idle_baseline,
+                         grid=grid, gate_gb=args.gate_gb,
                          sampler_factory=MemorySampler)
     for r in records:
-        print(f"[capacity] ctx={r['ctx']} footprint={r['model_footprint_gb']}GB "
+        print(f"[capacity] ctx={r['ctx']} prompt_tokens={r['prompt_tokens']} "
+              f"footprint={r['model_footprint_gb']}GB "
               f"sys_peak={r['system_peak_gb']}GB acc={r['retrieval_acc']:.2f} "
               f"prefill={r['prefill_tps']}tok/s decode={r['decode_tps']}tok/s fits={r['fits']}",
               flush=True)
 
     sc = capacity_retrieval_scorecard(args.model, records, gate_gb=args.gate_gb)
+    sc["idle_baseline_gb"] = round(idle_baseline, 2)
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "capacity_ladder.jsonl"), "w") as f:

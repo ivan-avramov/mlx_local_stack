@@ -10,8 +10,14 @@ GATE_GB = 46.0
 
 
 def run_ladder(driver, model: str, chars_per_token: float,
+               idle_baseline_gb: float,
                grid=DEFAULT_GRID, gate_gb: float = GATE_GB,
                sampler_factory=MemorySampler, max_tokens: int = 256) -> list[dict]:
+    """Run the capacity ladder.
+
+    idle_baseline_gb: system memory used (GB) captured BEFORE the model was loaded.
+      footprint = system_peak_gb - idle_baseline_gb; the gate is applied to footprint.
+    """
     records: list[dict] = []
     for ctx in grid:
         context, needles = build_context(ctx, chars_per_token)
@@ -19,11 +25,15 @@ def run_ladder(driver, model: str, chars_per_token: float,
         with sampler_factory() as sampler:
             out = driver.complete(model, messages,
                                   {"max_tokens": max_tokens, "temperature": 0.0})
+        system_peak = sampler.system_peak_gb
+        footprint = round(system_peak - idle_baseline_gb, 2)
         rec = PerfRecord(
             ctx=ctx,
-            model_footprint_gb=sampler.model_footprint_gb,
-            system_peak_gb=sampler.system_peak_gb,
+            model_footprint_gb=footprint,
+            system_peak_gb=system_peak,
             peak_rss_gb=sampler.peak_rss_gb,
+            # server_peak_gb is the server's lifetime high-water mark (never reset by the
+            # server), so it is recorded here for reference only and NOT used for the gate.
             server_peak_gb=out.get("peak_mem_gb"),
             prefill_s=out.get("prefill_s"),
             prefill_tps=out.get("prefill_tps"),
