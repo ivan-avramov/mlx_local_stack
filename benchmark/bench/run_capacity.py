@@ -6,9 +6,10 @@ Writes benchmark/results/<model>/capacity_retrieval.json (+ capacity_ladder.json
 import argparse
 import json
 import os
+import time
 
 from .driver import MlxServeDriver
-from .instrument import MemorySampler, system_used_gb
+from .instrument import MemorySampler, system_used_gb, find_model_server_pid
 from .capacity_ladder import run_ladder, DEFAULT_GRID, GATE_GB
 from .scorecard import capacity_retrieval_scorecard
 
@@ -38,18 +39,29 @@ def main(argv=None) -> int:
     print(f"[capacity] idle baseline = {idle_baseline:.2f} GB", flush=True)
     if not args.no_preload:
         driver.preload(args.model)
+    # Find the model server subprocess so we sample its ACTUAL RSS (the gate metric).
+    model_pid = None
+    for _ in range(10):
+        model_pid = find_model_server_pid()
+        if model_pid is not None:
+            break
+        time.sleep(1)
+    if model_pid is None:
+        print("[capacity] ERROR: model server process not found; cannot RSS-gate", flush=True)
+        return 1
+    print(f"[capacity] model server pid={model_pid}", flush=True)
     cpt = calibrate_cpt(driver, args.model)
     print(f"[capacity] {args.model} cpt={cpt:.2f} grid={grid} gate={args.gate_gb}GB", flush=True)
 
     records = run_ladder(driver, args.model, cpt, idle_baseline_gb=idle_baseline,
-                         grid=grid, gate_gb=args.gate_gb,
+                         model_pid=model_pid, grid=grid, gate_gb=args.gate_gb,
                          sampler_factory=MemorySampler)
     for r in records:
         print(f"[capacity] ctx={r['ctx']} prompt_tokens={r['prompt_tokens']} "
-              f"footprint={r['model_footprint_gb']}GB "
-              f"sys_peak={r['system_peak_gb']}GB acc={r['retrieval_acc']:.2f} "
-              f"prefill={r['prefill_tps']}tok/s decode={r['decode_tps']}tok/s fits={r['fits']}",
-              flush=True)
+              f"RSS={r['peak_rss_gb']}GB/{args.gate_gb} "
+              f"(sys_peak={r['system_peak_gb']}GB sys_footprint={r['model_footprint_gb']}GB) "
+              f"acc={r['retrieval_acc']:.2f} prefill={r['prefill_tps']}tok/s "
+              f"decode={r['decode_tps']}tok/s fits={r['fits']}", flush=True)
 
     sc = capacity_retrieval_scorecard(args.model, records, gate_gb=args.gate_gb)
     sc["idle_baseline_gb"] = round(idle_baseline, 2)

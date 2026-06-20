@@ -25,11 +25,35 @@ def rss_gb(pid: int) -> float:
         return (m if m > 1e9 else m * 1024) / GB
 
 
+def find_model_server_pid(pattern: str = "mlx_vlm.server") -> int | None:
+    """PID of the model-serving subprocess (the process that actually holds the
+    weights + KV), matched by `pattern` in its command line. One model loads at a
+    time, so at most one matches; if several do, return the highest-RSS one (the real
+    model process, not a wrapper). Returns None if psutil is unavailable or no match."""
+    try:
+        import psutil
+    except Exception:
+        return None
+    best = None
+    for p in psutil.process_iter(["pid", "cmdline", "memory_info"]):
+        try:
+            cmd = " ".join(p.info.get("cmdline") or [])
+            if pattern in cmd:
+                mi = p.info.get("memory_info")
+                rss = mi.rss if mi else 0
+                if best is None or rss > best[0]:
+                    best = (rss, p.info["pid"])
+        except Exception:
+            continue
+    return best[1] if best else None
+
+
 class MemorySampler:
-    """Captures absolute peak system-used and (optionally) one PID's peak RSS while active.
-    Reports system_peak_gb (absolute high-water mark seen during the sampling window).
-    Footprint relative to an idle baseline is the caller's responsibility:
-      footprint_gb = sampler.system_peak_gb - idle_baseline_gb"""
+    """Captures, while active: the model process's peak RSS (peak_rss_gb, when a pid is
+    given) and absolute peak system-used (system_peak_gb). peak_rss_gb is the model's
+    ACTUAL resident footprint and is the capacity-gate metric. system_peak_gb is a
+    secondary cross-check; footprint-vs-idle is the caller's job:
+      system_footprint_gb = sampler.system_peak_gb - idle_baseline_gb"""
 
     def __init__(self, pid: int | None = None, interval: float = 0.2):
         self.pid = pid

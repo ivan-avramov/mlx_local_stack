@@ -14,7 +14,7 @@ class FakeSampler:
     def __enter__(self): return self
     def __exit__(self, *a): pass
     system_peak_gb = 45.0
-    peak_rss_gb = 0.0
+    peak_rss_gb = 35.0   # gate metric: under 46 → fits
 
 def test_calibrate_returns_positive_cpt():
     assert R.calibrate_cpt(FakeDriver(), "m") > 0
@@ -23,16 +23,19 @@ def test_main_writes_results(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
-    # idle baseline = 10 GB; system_peak = 45 GB → footprint = 35 GB (fits under 46)
+    # idle=10GB; RSS=35 (gate metric, fits); system_peak=45 → sys_footprint=35 (secondary)
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "find_model_server_pid", lambda: 12345)
     rc = R.main(["--model", "m", "--grid", "160000,192000"])
     assert rc == 0
     sc = json.load(open(os.path.join(tmp_path, "m", "capacity_retrieval.json")))
     assert sc["model"] == "m" and sc["axis"] == "capacity_retrieval"
+    assert sc["gate_metric"] == "model_process_peak_rss_gb"
     assert len(sc["records"]) == 2
     assert sc["idle_baseline_gb"] == 10.0
     # verify capacity_ladder.jsonl has one line per rung
     lines = open(os.path.join(tmp_path, "m", "capacity_ladder.jsonl")).readlines()
     assert len(lines) == 2
     first = json.loads(lines[0])
-    assert first["model_footprint_gb"] == round(45.0 - 10.0, 2)  # 35.0
+    assert first["peak_rss_gb"] == 35.0 and first["fits"] is True   # RSS gate
+    assert first["model_footprint_gb"] == round(45.0 - 10.0, 2)     # 35.0 secondary
