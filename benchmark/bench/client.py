@@ -66,4 +66,5 @@ def probe(model: str, messages: list, params: dict, timeout: float = 3600) -> di
         "peak_mem_gb": tm.get("peak_memory"),
         "finish_reason": (r.get("choices") or [{}])[0].get("finish_reason"),
         "wall_s": round(wall, 1),
+        "raw_timings": tm,
     }
