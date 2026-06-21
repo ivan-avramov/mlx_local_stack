@@ -56,7 +56,7 @@ def make_question(needles: list[str]) -> str:
             f"List all {len(needles)} codes, separated by commas. Output only the codes.")
 
 
-def hits(response_text: str, needles: list[str]) -> list[bool]:
+def hits(response_text: str | None, needles: list[str]) -> list[bool]:
     """Per-needle presence (substring match), in needle order."""
     text = response_text or ""
     return [n in text for n in needles]
@@ -113,6 +113,7 @@ def run_retrieval_ladder(driver, model, chars_per_token, model_pid, params,
         records.append({"ctx": ctx_len, "accuracy": round(accuracy, 3),
                         "per_depth_acc": per_depth_acc, "samples": samples,
                         "needles": n_dep, "errors": errors})
+        # NB: threshold is NOT a stop condition here — full curve by design (the CLI uses it for effective_ctx).
         if errors == samples:  # hard failure (OOM) at this ctx; larger will also fail
             break
     return records
