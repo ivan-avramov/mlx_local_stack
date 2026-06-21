@@ -65,22 +65,28 @@ def swebench_available() -> bool:
     return importlib.util.find_spec("swebench") is not None
 
 
+def _safe_path(repo_dir: str, rel) -> str:
+    """Resolve `rel` within repo_dir; return repo_dir's realpath if `rel` escapes (so the
+    agent's reads stay contained). Trailing-sep prefix check — a bare startswith would let a
+    sibling like /tmp/repo-evil escape /tmp/repo."""
+    root = os.path.realpath(repo_dir)
+    full = os.path.realpath(os.path.join(root, rel or "."))
+    return full if (full == root or full.startswith(root + os.sep)) else root
+
+
 def solve_instance(driver, model, instance, repo_dir, params, max_turns: int = 12) -> str:
     """Minimal explore-and-patch agent: read-only repo tools + submit. Returns the submitted
     unified-diff patch (or ""). The repo checkout into repo_dir is the caller's responsibility."""
-    def _safe(rel):  # contain reads within repo_dir
-        full = os.path.realpath(os.path.join(repo_dir, rel or "."))
-        return full if full.startswith(os.path.realpath(repo_dir)) else repo_dir
 
     def list_dir(a):
         try:
-            return "\n".join(sorted(os.listdir(_safe(a.get("path", ".")))))[:4000]
+            return "\n".join(sorted(os.listdir(_safe_path(repo_dir, a.get("path", ".")))))[:4000]
         except OSError as e:
             return f"ERROR: {e}"
 
     def read_file(a):
         try:
-            with open(_safe(a.get("path", "")), encoding="utf-8", errors="replace") as f:
+            with open(_safe_path(repo_dir, a.get("path", "")), encoding="utf-8", errors="replace") as f:
                 return f.read()[:8000]
         except OSError as e:
             return f"ERROR: {e}"
@@ -136,7 +142,11 @@ def run_swebench(model, n: int = 40, seed: int = 0, dataset: str = "princeton-nl
         preds.append({"instance_id": inst["instance_id"], "model_name_or_path": model, "model_patch": patch})
     predictions_path = predictions_path or os.path.join(os.getcwd(), f"swebench_preds_{run_id}.jsonl")
     report_path = report_path or os.path.join(os.getcwd(), f"swebench_report_{run_id}.json")
-    write_predictions(predictions_path, preds)
+    try:
+        write_predictions(predictions_path, preds)
+    except OSError as e:  # bad path / full disk / permissions — degrade, never raise
+        return {**base, "n": len(subset), "acc": None, "skipped": False,
+                "note": f"could not write predictions to {predictions_path} ({e})"}
     cmd = [sys.executable, "-m", "swebench.harness.run_evaluation",
            "--dataset_name", dataset, "--predictions_path", predictions_path,
            "--run_id", run_id, "--max_workers", str(max_workers)]

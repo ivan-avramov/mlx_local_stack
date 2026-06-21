@@ -106,3 +106,25 @@ def test_run_swebench_cli_writes_json(tmp_path, monkeypatch):
     assert rc == 0
     out = json.load(open(os.path.join(tmp_path, "mymodel", "swebench.json")))
     assert out["acc"] == 0.5 and out["tool"] == "swebench_verified" and out["n"] == 2
+
+
+def test_safe_path_contains_and_rejects_escape(tmp_path):
+    root = str(tmp_path)
+    assert SW._safe_path(root, "a/b.py") == os.path.realpath(os.path.join(root, "a/b.py"))
+    assert SW._safe_path(root, ".") == os.path.realpath(root)
+    assert SW._safe_path(root, "../evil.py") == os.path.realpath(root)   # escape -> root
+
+
+def test_safe_path_rejects_sibling_prefix(tmp_path):
+    root = os.path.join(str(tmp_path), "repo")
+    os.makedirs(root, exist_ok=True)
+    # /tmp/.../repo-evil must NOT be reachable from repo_dir=/tmp/.../repo
+    assert SW._safe_path(root, "../repo-evil/secret") == os.path.realpath(root)
+
+
+def test_run_swebench_write_predictions_failure_degrades(monkeypatch, tmp_path):
+    monkeypatch.setattr(SW, "swebench_available", lambda: True)
+    out = SW.run_swebench("m", n=1, instances=[{"instance_id": "i1", "repo": "r"}],
+                          driver=object(), params={}, agent_fn=lambda *a, **k: "PATCH",
+                          predictions_path=str(tmp_path / "nope" / "preds.jsonl"))  # parent dir missing
+    assert out["acc"] is None and out["skipped"] is False and "note" in out
