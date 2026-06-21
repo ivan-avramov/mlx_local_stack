@@ -135,8 +135,11 @@ def grade_lcb(name, model):
                 "note": f"lcb_runner not available ({type(e).__name__}: {str(e)[:80]}); see benchmark/README.md"}
     try:
         problems = load_code_generation_dataset(release_version=benchmarks.LCB_RELEASE)
-        sample_by_id = {getattr(p, "question_id", None): p.get_evaluation_sample()["input_output"]
-                        for p in problems}
+        sample_by_id = {}
+        for p in problems:
+            qid = getattr(p, "question_id", None)
+            if qid is not None:
+                sample_by_id[qid] = p.get_evaluation_sample()["input_output"]
     except Exception as e:  # noqa: BLE001 — dataset/accessor drift on the installed version
         return {"benchmark": name, "model": model, "n": len(rows), "acc": None,
                 "note": f"lcb dataset/sample load failed ({type(e).__name__}: {str(e)[:80]})"}

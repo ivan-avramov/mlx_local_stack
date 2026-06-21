@@ -100,6 +100,7 @@ def test_grade_lcb_no_completions(monkeypatch):
     monkeypatch.setattr(G, "_rows", lambda m, n: [])
     out = G.grade_lcb("livecodebench", "m")
     assert out["n"] == 0 and out["acc"] is None
+    assert "note" in out
 
 
 def test_grade_lcb_graceful_degrade_when_lcb_runner_missing(monkeypatch):
