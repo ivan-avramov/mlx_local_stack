@@ -144,6 +144,28 @@ def test_aggregate_empty():
     assert agg["overall"] is None and agg["n_records"] == 0
 
 
+def test_judge_one_flags_family_split():
+    panel = [
+        ("sonnet", lambda s, u: '{"scores": {"readability": 5}}'),
+        ("opus", lambda s, u: '{"scores": {"readability": 5}}'),
+        ("gpt-5.5", lambda s, u: '{"scores": {"readability": 1}}'),
+    ]
+    assert J.judge_one("t", "o", judge_fns=panel)["split"] is True
+
+
+def test_judge_one_no_split_when_families_agree():
+    panel = [
+        ("sonnet", lambda s, u: '{"scores": {"readability": 4}}'),
+        ("gpt-5.5", lambda s, u: '{"scores": {"readability": 4}}'),
+    ]
+    assert J.judge_one("t", "o", judge_fns=panel)["split"] is False
+
+
+def test_aggregate_low_confidence_on_split():
+    records = [{"median": {"readability": 3}, "n_judges": 3, "split": True}]
+    assert J.aggregate(records)["low_confidence"] is True
+
+
 def test_run_judge_cli_writes_json(tmp_path, monkeypatch):
     recs = tmp_path / "recs.jsonl"
     recs.write_text(json.dumps({"task": "T1", "output": "code1"}) + "\n" +

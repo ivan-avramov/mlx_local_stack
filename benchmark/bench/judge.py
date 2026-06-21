@@ -12,6 +12,30 @@ import subprocess
 RUBRIC_AXES = ["reasoning", "robustness", "readability", "maintainability", "design",
                "performance", "security", "testability", "portability", "operational"]
 
+_FAMILY = {"sonnet": "anthropic", "opus": "anthropic", "gpt-5.5": "openai"}
+_SPLIT_THRESHOLD = 2.0  # on the 1-5 scale
+
+
+def _split(per_judge: dict) -> bool:
+    """True if judge families disagree sharply: on any axis with scores from >=2 families,
+    the gap between per-family mean scores is >= _SPLIT_THRESHOLD. Judges whose name isn't in
+    _FAMILY (or that returned no scores) are ignored."""
+    fam_scores: dict = {}
+    for name, scores in per_judge.items():
+        fam = _FAMILY.get(name)
+        if fam is None or not scores:
+            continue
+        for axis, v in scores.items():
+            fam_scores.setdefault(fam, {}).setdefault(axis, []).append(v)
+    axes = set()
+    for fam in fam_scores:
+        axes |= set(fam_scores[fam])
+    for axis in axes:
+        means = [statistics.mean(fam_scores[fam][axis]) for fam in fam_scores if axis in fam_scores[fam]]
+        if len(means) >= 2 and (max(means) - min(means)) >= _SPLIT_THRESHOLD:
+            return True
+    return False
+
 _ANCHORS = ("Score each axis 1-5: 1=poor, 2=below average, 3=adequate, 4=good, "
             "5=excellent. 'reasoning' is advisory only (correctness is verified separately "
             "by execution).")
@@ -113,7 +137,7 @@ def judge_one(task, output, reference=None, judge_fns=DEFAULT_JUDGES) -> dict:
         if vals:
             median[axis] = round(statistics.median(vals), 2)
     return {"per_judge": per_judge, "median": median,
-            "judges_used": used, "n_judges": len(used)}
+            "judges_used": used, "n_judges": len(used), "split": _split(per_judge)}
 
 
 def aggregate(records: list) -> dict:
@@ -133,6 +157,6 @@ def aggregate(records: list) -> dict:
         if vals:
             per_axis[axis] = round(statistics.mean(vals), 2)
     overall = round(statistics.mean(record_overalls), 2) if record_overalls else None
-    low_conf = any((r.get("n_judges", 0) < 2) for r in records)
+    low_conf = any((r.get("n_judges", 0) < 2) for r in records) or any(r.get("split") for r in records)
     return {"overall": overall, "per_axis": per_axis,
             "n_records": len(records), "low_confidence": low_conf}
