@@ -91,3 +91,52 @@ def test_codex_judge_degrades_on_nonzero_and_raise():
     def boom(c, **k):
         raise FileNotFoundError("codex not found")
     assert J.codex_judge("s", "u", runner=boom) is None
+
+
+def test_judge_one_medians_across_judges():
+    panel = [
+        ("a", lambda s, u: '{"scores": {"readability": 4, "security": 2}}'),
+        ("b", lambda s, u: '{"scores": {"readability": 2, "security": 4}}'),
+        ("c", lambda s, u: '{"scores": {"readability": 3, "security": 3}}'),
+    ]
+    out = J.judge_one("task", "code", judge_fns=panel)
+    assert out["n_judges"] == 3 and out["judges_used"] == ["a", "b", "c"]
+    assert out["median"]["readability"] == 3      # median(4,2,3)
+    assert out["median"]["security"] == 3         # median(2,4,3)
+    assert out["per_judge"]["a"]["readability"] == 4
+
+
+def test_judge_one_skips_failed_judges():
+    panel = [
+        ("a", lambda s, u: '{"scores": {"design": 5}}'),
+        ("b", lambda s, u: None),                       # backend unavailable
+        ("c", lambda s, u: "garbage, no json"),         # unparseable
+    ]
+    out = J.judge_one("t", "o", judge_fns=panel)
+    assert out["n_judges"] == 1 and out["judges_used"] == ["a"]
+    assert out["per_judge"]["b"] is None
+    assert out["median"]["design"] == 5
+
+
+def test_judge_one_all_fail_empty_median():
+    panel = [("a", lambda s, u: None)]
+    out = J.judge_one("t", "o", judge_fns=panel)
+    assert out["n_judges"] == 0 and out["median"] == {}
+
+
+def test_aggregate_overall_and_low_confidence():
+    records = [
+        {"median": {"readability": 4, "security": 4}, "n_judges": 3},
+        {"median": {"readability": 2, "security": 2}, "n_judges": 1},   # < 2 judges
+    ]
+    agg = J.aggregate(records)
+    # per-record overall = mean of its axis medians: r1=4.0, r2=2.0 -> overall mean 3.0
+    assert agg["overall"] == 3.0
+    assert agg["per_axis"]["readability"] == 3.0
+    assert agg["n_records"] == 2
+    assert agg["low_confidence"] is True            # a record had n_judges < 2
+
+
+def test_aggregate_empty():
+    agg = J.aggregate([])
+    assert agg["overall"] is None and agg["n_records"] == 0

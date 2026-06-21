@@ -4,6 +4,7 @@ execution-PASSING coding outputs; the judge is never a correctness oracle. Backe
 the panel aggregates by per-axis median and reports per-judge scores."""
 import json
 import re
+import statistics
 import subprocess
 
 # The 10 subjective code-quality axes (correctness-of-reasoning is advisory; binding
@@ -90,3 +91,48 @@ DEFAULT_JUDGES = [
     ("opus", lambda s, u: anthropic_judge("claude-opus-4-8", s, u)),
     ("gpt-5.5", codex_judge),
 ]
+
+
+def judge_one(task, output, reference=None, judge_fns=DEFAULT_JUDGES) -> dict:
+    """Run every judge on one (task, output), parse scores, and median across judges.
+    Failed/unparseable judges are recorded as None and excluded from the medians."""
+    system, user = build_judge_prompt(task, output, reference)
+    per_judge, used = {}, []
+    for name, fn in judge_fns:
+        try:
+            raw = fn(system, user)
+        except Exception:  # noqa: BLE001 — a judge fn must not break the panel
+            raw = None
+        scores = parse_scores(raw) if raw else None
+        per_judge[name] = scores
+        if scores:
+            used.append(name)
+    median = {}
+    for axis in RUBRIC_AXES:
+        vals = [per_judge[n][axis] for n in used if axis in per_judge[n]]
+        if vals:
+            median[axis] = round(statistics.median(vals), 2)
+    return {"per_judge": per_judge, "median": median,
+            "judges_used": used, "n_judges": len(used)}
+
+
+def aggregate(records: list) -> dict:
+    """Aggregate per-record judge_one outputs: overall = mean across records of each record's
+    mean-axis-median; per_axis = mean across records of that axis's median; low_confidence if
+    any record had fewer than 2 judges."""
+    if not records:
+        return {"overall": None, "per_axis": {}, "n_records": 0, "low_confidence": True}
+    record_overalls = []
+    for r in records:
+        med = r.get("median") or {}
+        if med:
+            record_overalls.append(statistics.mean(med.values()))
+    per_axis = {}
+    for axis in RUBRIC_AXES:
+        vals = [r["median"][axis] for r in records if (r.get("median") or {}).get(axis) is not None]
+        if vals:
+            per_axis[axis] = round(statistics.mean(vals), 2)
+    overall = round(statistics.mean(record_overalls), 2) if record_overalls else None
+    low_conf = any((r.get("n_judges", 0) < 2) for r in records)
+    return {"overall": overall, "per_axis": per_axis,
+            "n_records": len(records), "low_confidence": low_conf}
