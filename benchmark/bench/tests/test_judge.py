@@ -1,5 +1,6 @@
 """Tests for the code-quality judge panel (rubric/prompt/parser, backends, aggregation)."""
 import json
+import types
 
 import bench.judge as J
 
@@ -37,3 +38,56 @@ def test_parse_scores_none_on_garbage():
     assert J.parse_scores("no json here") is None
     assert J.parse_scores('{"scores": {}}') is None      # no recognized axes
     assert J.parse_scores("") is None
+
+
+class _FakeBlock:
+    def __init__(self, type, text=""):
+        self.type = type
+        self.text = text
+
+
+class _FakeAnthropic:
+    """Stand-in anthropic.Anthropic client returning a scripted JSON text block."""
+    def __init__(self, text):
+        self._text = text
+        self.messages = types.SimpleNamespace(create=self._create)
+        self.captured = {}
+
+    def _create(self, **kw):
+        self.captured = kw
+        return types.SimpleNamespace(content=[_FakeBlock("thinking", ""),
+                                              _FakeBlock("text", self._text)])
+
+
+def test_anthropic_judge_extracts_text_and_passes_params():
+    client = _FakeAnthropic('{"scores": {"readability": 4}}')
+    out = J.anthropic_judge("claude-opus-4-8", "sys", "usr", client=client)
+    assert out == '{"scores": {"readability": 4}}'
+    assert client.captured["model"] == "claude-opus-4-8"
+    assert client.captured["system"] == "sys"
+    assert client.captured["thinking"] == {"type": "adaptive"}
+    assert "budget_tokens" not in client.captured and "temperature" not in client.captured
+
+
+def test_anthropic_judge_degrades_on_error():
+    class Boom:
+        def __init__(self):
+            self.messages = types.SimpleNamespace(create=self._c)
+        def _c(self, **kw):
+            raise RuntimeError("401 no key")
+    assert J.anthropic_judge("claude-opus-4-8", "s", "u", client=Boom()) is None
+
+
+def test_codex_judge_runs_and_returns_stdout():
+    def fake_runner(cmd, **kw):
+        return types.SimpleNamespace(returncode=0, stdout='{"scores": {"design": 5}}', stderr="")
+    assert J.codex_judge("sys", "usr", runner=fake_runner) == '{"scores": {"design": 5}}'
+
+
+def test_codex_judge_degrades_on_nonzero_and_raise():
+    assert J.codex_judge("s", "u", runner=lambda c, **k: types.SimpleNamespace(
+        returncode=1, stdout="", stderr="boom")) is None
+
+    def boom(c, **k):
+        raise FileNotFoundError("codex not found")
+    assert J.codex_judge("s", "u", runner=boom) is None

@@ -4,6 +4,7 @@ execution-PASSING coding outputs; the judge is never a correctness oracle. Backe
 the panel aggregates by per-axis median and reports per-judge scores."""
 import json
 import re
+import subprocess
 
 # The 10 subjective code-quality axes (correctness-of-reasoning is advisory; binding
 # correctness is execution, not the judge).
@@ -51,3 +52,41 @@ def parse_scores(text: str) -> dict | None:
         if isinstance(v, (int, float)):
             out[axis] = max(1, min(5, int(round(v))))
     return out or None
+
+
+def anthropic_judge(model_id, system, user, max_tokens: int = 4096, client=None) -> str | None:
+    """Score via the Anthropic API (Sonnet/Opus). Lazy-imports anthropic; graceful-degrade
+    (missing package / no API key / API error) -> None. Adaptive thinking; no sampling params
+    (removed on Opus 4.8)."""
+    try:
+        if client is None:
+            import anthropic
+            client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model=model_id, max_tokens=max_tokens, system=system,
+            messages=[{"role": "user", "content": user}],
+            thinking={"type": "adaptive"})
+        return next((b.text for b in resp.content if getattr(b, "type", None) == "text"), "")
+    except Exception:  # noqa: BLE001 — optional backend; degrade
+        return None
+
+
+def codex_judge(system, user, runner=subprocess.run) -> str | None:
+    """Score via GPT-5.5 through a one-shot `codex` CLI invocation. Graceful-degrade if the
+    codex CLI is absent (the real subprocess.run raises FileNotFoundError -> caught) or errors.
+    The exact invocation is validated on first real run."""
+    prompt = f"{system}\n\n{user}"
+    try:
+        proc = runner(["codex", "exec", prompt], capture_output=True, text=True, timeout=300)
+    except Exception:  # noqa: BLE001 — codex absent (FileNotFoundError) / launch error
+        return None
+    if getattr(proc, "returncode", 1) != 0:
+        return None
+    return getattr(proc, "stdout", "") or None
+
+
+DEFAULT_JUDGES = [
+    ("sonnet", lambda s, u: anthropic_judge("claude-sonnet-4-6", s, u)),
+    ("opus", lambda s, u: anthropic_judge("claude-opus-4-8", s, u)),
+    ("gpt-5.5", codex_judge),
+]
