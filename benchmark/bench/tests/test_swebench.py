@@ -1,4 +1,5 @@
 import json
+import os
 import types
 
 import bench.swebench_adapter as SW
@@ -90,3 +91,18 @@ def test_solve_instance_returns_submitted_patch(monkeypatch, tmp_path):
     patch = SW.solve_instance(object(), "m", {"instance_id": "i1", "problem_statement": "fix"},
                               str(tmp_path), {})
     assert patch == "THE DIFF"
+
+
+def test_run_swebench_cli_writes_json(tmp_path, monkeypatch):
+    import bench.run_swebench as RS
+    monkeypatch.setattr(RS, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(RS, "MlxServeDriver", lambda: object())
+    monkeypatch.setattr(RS, "params_for", lambda m: {"temperature": 0.7})
+    monkeypatch.setattr(RS, "run_swebench", lambda **kw: {
+        "model": kw["model"], "axis": "agentic_coding", "tool": "swebench_verified",
+        "n": 2, "resolved": 1, "total": 2, "resolve_rate": 0.5, "acc": 0.5,
+        "subset_ids": ["i1", "i2"], "skipped": False})
+    rc = RS.main(["--model", "mymodel", "--n", "2", "--no-preload"])
+    assert rc == 0
+    out = json.load(open(os.path.join(tmp_path, "mymodel", "swebench.json")))
+    assert out["acc"] == 0.5 and out["tool"] == "swebench_verified" and out["n"] == 2
