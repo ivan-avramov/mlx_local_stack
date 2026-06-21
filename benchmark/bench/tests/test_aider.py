@@ -83,6 +83,16 @@ def test_run_aider_runner_raises_degrades(monkeypatch):
     assert out["acc"] is None and "raised" in out["note"]
 
 
+def test_run_aider_success_but_no_rate_parsed_notes(monkeypatch):
+    monkeypatch.setattr(A, "aider_available", lambda repo: True)
+
+    def fake_runner(cmd, **kw):
+        return types.SimpleNamespace(returncode=0, stdout="benchmark finished, no rates here", stderr="")
+
+    out = A.run_aider("m", "/ex", "/aider", runner=fake_runner)
+    assert out["acc"] is None and out["skipped"] is False and "note" in out
+
+
 def test_run_aider_cli_writes_json(tmp_path, monkeypatch):
     monkeypatch.setattr(RA, "RESULTS", str(tmp_path))
     monkeypatch.setattr(RA, "run_aider", lambda **kw: {

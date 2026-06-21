@@ -53,5 +53,8 @@ def run_aider(model, exercises_dir, aider_repo, edit_format="whole", num_tests=N
     pr = rates.get("pass_rate_2")
     if pr is None:
         pr = rates.get("pass_rate_1")
-    acc = (pr / 100.0 if (pr is not None and pr > 1.0) else pr)
+    if pr is None:  # ran (rc=0) but no pass_rate parsed -> likely an output-format mismatch
+        return {**base, **rates, "acc": None, "skipped": False,
+                "note": "aider ran (rc=0) but no pass_rate_# parsed from stdout — check aider output format"}
+    acc = pr / 100.0 if pr > 1.0 else pr   # aider prints percentages (0-100) -> 0-1 fraction
     return {**base, **rates, "acc": acc, "skipped": False}

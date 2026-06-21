@@ -30,6 +30,8 @@ def main(argv=None) -> int:
                        num_tests=args.num_tests, endpoint=args.endpoint, run_name=args.run_name)
     if result.get("skipped"):
         print(f"[aider] SKIPPED: {result.get('note')}", flush=True)
+    elif result.get("acc") is None:
+        print(f"[aider] NO SCORE: {result.get('note')}", flush=True)
     else:
         print(f"[aider] {args.model} acc={result.get('acc')} "
               f"pass_rate_1={result.get('pass_rate_1')} pass_rate_2={result.get('pass_rate_2')}", flush=True)
