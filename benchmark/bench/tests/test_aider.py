@@ -1,8 +1,10 @@
 """Tests for the Aider polyglot adapter (pass-rate parse, subprocess driving, degrade)."""
+import json
 import os
 import types
 
 import bench.aider_adapter as A
+import bench.run_aider as RA
 
 
 def test_parse_pass_rate_extracts_both():
@@ -79,3 +81,15 @@ def test_run_aider_runner_raises_degrades(monkeypatch):
 
     out = A.run_aider("m", "/ex", "/aider", runner=boom)
     assert out["acc"] is None and "raised" in out["note"]
+
+
+def test_run_aider_cli_writes_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(RA, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(RA, "run_aider", lambda **kw: {
+        "model": kw["model"], "axis": "agentic_coding", "tool": "aider_polyglot",
+        "edit_format": "whole", "pass_rate_1": 40.0, "pass_rate_2": 55.0, "acc": 0.55,
+        "skipped": False})
+    rc = RA.main(["--model", "mymodel", "--exercises-dir", "/ex", "--aider-repo", "/aider"])
+    assert rc == 0
+    out = json.load(open(os.path.join(tmp_path, "mymodel", "aider.json")))
+    assert out["model"] == "mymodel" and out["acc"] == 0.55 and out["tool"] == "aider_polyglot"
