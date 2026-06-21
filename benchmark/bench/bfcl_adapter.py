@@ -74,9 +74,14 @@ def run_bfcl(model, categories=AST_CATEGORIES, endpoint="localhost", port=8000,
                 "note": "bfcl CLI not found; pip install bfcl-eval where BFCL runs (see README)"}
     env = {**os.environ, "LOCAL_SERVER_ENDPOINT": endpoint, "LOCAL_SERVER_PORT": str(port)}
     for phase in ("generate", "evaluate"):
-        proc = runner(_cli(phase, model, categories, result_dir, score_dir, limit),
-                      env=env, capture_output=True, text=True)
-        if getattr(proc, "returncode", 0) != 0:
+        try:
+            proc = runner(_cli(phase, model, categories, result_dir, score_dir, limit),
+                          env=env, capture_output=True, text=True)
+        except Exception as e:  # noqa: BLE001 — bfcl binary/PATH failure; degrade, never raise
             return {**base, "acc": None, "n": 0, "skipped": False,
-                    "note": f"bfcl {phase} failed rc={proc.returncode}: {(proc.stderr or '')[:160]}"}
+                    "note": f"bfcl {phase} raised: {type(e).__name__}: {str(e)[:120]}"}
+        rc = getattr(proc, "returncode", 1)  # missing returncode => treat as failure
+        if rc != 0:
+            return {**base, "acc": None, "n": 0, "skipped": False,
+                    "note": f"bfcl {phase} failed rc={rc}: {(getattr(proc, 'stderr', '') or '')[:160]}"}
     return {**base, **parse_scores(score_dir, model, categories), "skipped": False}

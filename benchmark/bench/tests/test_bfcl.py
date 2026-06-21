@@ -86,3 +86,14 @@ def test_run_bfcl_nonzero_exit_degrades(tmp_path, monkeypatch):
                      result_dir=str(tmp_path / "result"), score_dir=str(tmp_path / "score"),
                      runner=fake_runner)
     assert out["acc"] is None and "note" in out
+    assert out["skipped"] is False
+
+
+def test_run_bfcl_runner_exception_degrades(monkeypatch):
+    monkeypatch.setattr(A, "bfcl_available", lambda: True)
+
+    def boom_runner(cmd, **kw):
+        raise FileNotFoundError("bfcl vanished")
+
+    out = A.run_bfcl("m", categories=("simple",), runner=boom_runner)
+    assert out["acc"] is None and out["skipped"] is False and "raised" in out["note"]
