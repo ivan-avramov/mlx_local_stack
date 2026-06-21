@@ -40,7 +40,7 @@ Only one model is resident in the router at a time. How items interleave across 
 ```bash
 # 0. (once) install grading deps into the stack venv
 uv pip install -r benchmark/requirements.txt
-uv pip install "git+https://github.com/LiveCodeBench/LiveCodeBench.git"   # lcb_runner
+uv pip install "git+https://github.com/LiveCodeBench/LiveCodeBench.git"   # lcb_runner (grading)
 
 # 1. see which benchmarks load and which models are served
 uv run python benchmark/run.py list
@@ -77,6 +77,18 @@ The harness reads the roster from `/v1/models`, so no code change is needed for 
 | `humanevalplus` | coding | official `evalplus` (pass@1) | HumanEval+ (164). |
 | `mbppplus` | coding | official `evalplus` (pass@1) | MBPP+ (~378). |
 | `livecodebench` | coding | official `lcb_runner` | Contamination-resistant; pin a release window. |
+
+### LiveCodeBench grading
+
+`lcb_runner` is an optional, lazy-imported dependency. Install it where you run `grade`:
+
+```bash
+uv pip install "git+https://github.com/LiveCodeBench/LiveCodeBench.git"
+```
+
+Generation and grading both use the pinned release `benchmarks.LCB_RELEASE` for contamination
+control. `grade` reports pass@1 as a 0–1 fraction in `acc` (raw `pass@1` recorded alongside). If
+`lcb_runner` is absent, the row degrades to `acc: null` with a note rather than failing the batch.
 
 ### GPQA auth
 GPQA is gated. Put `HF_TOKEN=hf_...` in `.env` (the stack already sources it) and accept the
