@@ -11,6 +11,8 @@ Two consumers:
 import random
 import string
 
+from .instrument import MemorySampler
+
 FILLER = "The quick brown fox jumps over the lazy dog near the riverbank at sunset. "
 DEPTHS = (0.1, 0.3, 0.5, 0.7, 0.9)
 
@@ -64,3 +66,53 @@ def score(response_text: str, needles: list[str]) -> float:
     if not needles:
         return 0.0
     return sum(hits(response_text, needles)) / len(needles)
+
+
+RETRIEVAL_GRID = (8000, 32000, 64000, 128000, 192000, 256000)
+
+
+def run_retrieval_ladder(driver, model, chars_per_token, model_pid, params,
+                         grid=RETRIEVAL_GRID, threshold: float = 0.85, samples: int = 5,
+                         depths=DEPTHS, sampler_factory=MemorySampler) -> list[dict]:
+    """FULL CURVE (not climb-to-cliff): run multi-needle retrieval at every context
+    length in `grid`. Retrieval can be non-monotonic (a model may dip mid-context and
+    recover), so — unlike run_reasoning_ladder — a rung below threshold does NOT stop
+    the ladder. Only a HARD failure (every trial at a rung raises => errors == samples,
+    which at long context means OOM/disconnect) stops it, because larger contexts will
+    also fail.
+
+    For each rung, runs `samples` trials with distinct needle seeds (seed = ctx*1000 +
+    trial). `params` is forwarded verbatim to driver.complete — this is a quality
+    measurement, so full production params (incl. thinking_budget) are used unbounded.
+
+    Returns per-rung dicts: {"ctx", "accuracy", "per_depth_acc", "samples", "needles",
+    "errors"} where accuracy is the mean fraction of needles returned across trials and
+    per_depth_acc[d] is the hit rate at depth d across trials.
+    """
+    records: list[dict] = []
+    n_dep = len(depths)
+    for ctx_len in grid:
+        trial_hits: list[list[bool]] = []
+        errors = 0
+        for trial in range(samples):
+            seed = ctx_len * 1000 + trial
+            context, needles = build_context(ctx_len, chars_per_token,
+                                             depths=depths, seed=seed)
+            messages = [{"role": "user",
+                         "content": context + "\n\n" + make_question(needles)}]
+            with sampler_factory(pid=model_pid):
+                try:
+                    result = driver.complete(model, messages, params)
+                    trial_hits.append(hits(result.get("content", ""), needles))
+                except Exception:  # noqa: BLE001 — OOM/disconnect at this ctx
+                    trial_hits.append([False] * n_dep)
+                    errors += 1
+        accuracy = sum(sum(h) / n_dep for h in trial_hits) / len(trial_hits)
+        per_depth_acc = [round(sum(h[d] for h in trial_hits) / len(trial_hits), 3)
+                         for d in range(n_dep)]
+        records.append({"ctx": ctx_len, "accuracy": round(accuracy, 3),
+                        "per_depth_acc": per_depth_acc, "samples": samples,
+                        "needles": n_dep, "errors": errors})
+        if errors == samples:  # hard failure (OOM) at this ctx; larger will also fail
+            break
+    return records
