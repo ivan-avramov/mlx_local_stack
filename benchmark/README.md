@@ -77,6 +77,7 @@ The harness reads the roster from `/v1/models`, so no code change is needed for 
 | `humanevalplus` | coding | official `evalplus` (pass@1) | HumanEval+ (164). |
 | `mbppplus` | coding | official `evalplus` (pass@1) | MBPP+ (~378). |
 | `livecodebench` | coding | official `lcb_runner` | Contamination-resistant; pin a release window. |
+| `ifeval` | instruction-following | official vendored verifiers (programmatic, no judge) | Optional/lazy deps; missing → `acc: null` + note. Reports prompt/instruction-level strict & loose. |
 
 ### LiveCodeBench grading
 
@@ -89,6 +90,18 @@ uv pip install "git+https://github.com/LiveCodeBench/LiveCodeBench.git"
 Generation and grading both use the pinned release `benchmarks.LCB_RELEASE` for contamination
 control. `grade` reports pass@1 as a 0–1 fraction in `acc` (raw `pass@1` recorded alongside). If
 `lcb_runner` is absent, the row degrades to `acc: null` with a note rather than failing the batch.
+
+### IFEval (instruction-following)
+
+`ifeval` measures programmatic instruction-following (e.g. "use no commas", "exactly 3 bullet
+points", "respond in JSON") — scored by the **official google-research verifiers**, vendored
+under `bench/vendor/instruction_following_eval` (pinned commit, Apache-2.0); there is no model
+judge. Verifier deps (`absl-py`, `langdetect`, `nltk` + punkt, `immutabledict`) are optional and
+lazy-imported — install `benchmark/requirements.txt` where you run `grade`; if absent, IFEval
+degrades to `acc: null` with a note instead of failing the batch. Grading reports four numbers —
+`prompt_strict` (the headline `acc`: fraction of prompts following all their instructions),
+`inst_strict`, `prompt_loose`, `inst_loose` — over the `google/IFEval` set (541 prompts; `mid`
+tier samples 30, `heavy` runs all 541).
 
 ### GPQA auth
 GPQA is gated. Put `HF_TOKEN=hf_...` in `.env` (the stack already sources it) and accept the
