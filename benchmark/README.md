@@ -130,6 +130,37 @@ If `bfcl-eval` is not installed, the probe writes `skipped: true` with a note an
 decode settings) is resolved on the box where `bfcl-eval` runs; confirm the handler mapping on
 first real run.
 
+### Aider polyglot (agentic edit)
+
+`bench/run_aider.py` measures agentic edit-via-instruction by driving Aider's own polyglot
+benchmark harness against the running mlx-serve endpoint. The harness is optional — install it
+where you run the probe:
+
+```bash
+pip install aider-chat
+git clone https://github.com/Aider-AI/aider             # provides benchmark/benchmark.py
+git clone https://github.com/Aider-AI/polyglot-benchmark  # the exercises (--exercises-dir)
+```
+
+It is a **standalone probe**, not part of the `generate`/`grade` tier pipeline. Run it with:
+
+```bash
+# mlx-serve serving <model> at :8000; aider + polyglot-benchmark cloned:
+cd benchmark && uv run python -m bench.run_aider --model Qwen3.6-27B-UD-MLX-6bit \
+    --aider-repo ../aider --exercises-dir ../polyglot-benchmark
+```
+
+The probe sets `OPENAI_API_BASE` to the mlx-serve endpoint and invokes aider's harness with
+`--model openai/<served>` and `--edit-format whole`. Aider runs each exercise in its own
+sandbox; no edit loop is reimplemented here. Results go to `results/<model>/aider.json` with
+`pass_rate_1`, `pass_rate_2`, and a 0–1 `acc` (= `pass_rate_2`, aider's second-attempt rate;
+falls back to `pass_rate_1` if the second rate is absent).
+
+If the harness isn't found, the probe writes `skipped: true` with a note and exits cleanly. If
+aider runs but no `pass_rate_#` parses from stdout, it records `acc: null` with a note — check
+the aider output format. The `openai/<name>` model mapping and sandbox execution mode (docker vs
+local) are confirmed on the first real run.
+
 ### GPQA auth
 GPQA is gated. Put `HF_TOKEN=hf_...` in `.env` (the stack already sources it) and accept the
 dataset terms once on the Hub. Until then `list` shows it UNAVAILABLE and it is skipped.
