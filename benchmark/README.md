@@ -82,6 +82,24 @@ The harness reads the roster from `/v1/models`, so no code change is needed for 
 GPQA is gated. Put `HF_TOKEN=hf_...` in `.env` (the stack already sources it) and accept the
 dataset terms once on the Hub. Until then `list` shows it UNAVAILABLE and it is skipped.
 
+## Retrieval probe (dedicated)
+
+`bench/run_retrieval.py` measures multi-needle NIAH retrieval as an
+accuracy-vs-context curve at full production params — distinct from the capacity
+probe, whose retrieval number is a thinking-starved co-signal (256-token answer budget).
+Five distinct codes are planted at depths {0.1, 0.3, 0.5, 0.7, 0.9}; the model is asked
+to list all of them; accuracy = fraction returned, with a per-depth breakdown.
+
+```bash
+cd benchmark && uv run python -m bench.run_retrieval --model Qwen3.6-27B-UD-MLX-6bit
+```
+
+Writes `results/<model>/retrieval.json` with per-rung `accuracy` + `per_depth_acc` and a
+headline `retrieval_effective_ctx` (largest context length with accuracy ≥ 0.85). It is a
+full curve, not climb-to-cliff: a mid-context dip does not stop the ladder (retrieval can
+recover); only a hard OOM at a context length stops it. Run Qwen's 192K/256K rungs on the
+M5 (browser-closed/clean) profile.
+
 ## Tiers (escalating scope)
 
 Pick scope with `--tier light|mid|heavy`. The three tiers nest: light's item set is a
