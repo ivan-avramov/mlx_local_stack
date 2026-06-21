@@ -152,6 +152,29 @@ full curve, not climb-to-cliff: a mid-context dip does not stop the ladder (retr
 recover); only a hard OOM at a context length stops it. Run Qwen's 192K/256K rungs on the
 M5 (browser-closed/clean) profile.
 
+## Heavy reasoning (aggregation + latent)
+
+Two standalone probes for reasoning ceiling, both at production params, climb-to-cliff and
+auto-extending past 64K in 8K steps until the model fails:
+
+- **Aggregation** (`run_aggregation`) — RULER-style common-words extraction: a long word
+  stream where a few target words are most frequent; the model must aggregate counts across
+  the *whole* context and return them. Tests aggregation, not single-needle retrieval.
+  → `results/<model>/aggregation.json`.
+- **Latent** (`run_latent`) — a NoLiMa-*style* probe: one needle states a fact about a named
+  character; the question refers to it with no lexical overlap, so answering needs a 1-hop
+  world-knowledge inference. This is a **self-authored curated set**, not the official NoLiMa
+  dataset (which is under the Adobe Research License) — it measures *relative* latent-reasoning
+  depth, not leaderboard parity. → `results/<model>/latent.json`.
+
+```bash
+cd benchmark && uv run python -m bench.run_aggregation --model Qwen3.6-27B-UD-MLX-6bit
+cd benchmark && uv run python -m bench.run_latent      --model Qwen3.6-27B-UD-MLX-6bit
+```
+
+Both use exact-match grading (no judge). Each writes per-rung accuracy and a headline
+`reasoning_effective_ctx` — the largest context length with accuracy ≥ 0.85.
+
 ## Tiers (escalating scope)
 
 Pick scope with `--tier light|mid|heavy`. The three tiers nest: light's item set is a
