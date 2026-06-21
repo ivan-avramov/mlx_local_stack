@@ -3,6 +3,7 @@ import sys
 import types
 
 import bench.benchmarks as B
+import bench.grade as G
 
 
 def test_lcb_release_is_pinned():
@@ -29,3 +30,22 @@ def test_load_lcb_uses_pinned_release(monkeypatch):
 
     B._load_lcb(limit=None, seed=0)
     assert captured["release"] == B.LCB_RELEASE
+
+
+def test_lcb_eval_inputs_assembles_and_skips_unknown():
+    rows = [
+        {"id": "q1", "content": "Here:\n```python\nprint(1)\n```"},
+        {"id": "qX", "content": "```python\nprint(9)\n```"},  # unknown id -> skipped
+    ]
+    sample_by_id = {"q1": '{"inputs": [], "outputs": []}'}
+    samples_list, generations_list, ids = G._lcb_eval_inputs(rows, sample_by_id)
+    assert ids == ["q1"]
+    assert samples_list == [{"input_output": '{"inputs": [], "outputs": []}'}]
+    assert len(generations_list) == 1 and len(generations_list[0]) == 1
+    assert "print(1)" in generations_list[0][0]  # code extracted from the fenced block
+
+
+def test_lcb_eval_inputs_empty_when_no_matches():
+    rows = [{"id": "qX", "content": "```python\nx=1\n```"}]
+    samples_list, generations_list, ids = G._lcb_eval_inputs(rows, {"q1": "IO"})
+    assert samples_list == [] and generations_list == [] and ids == []

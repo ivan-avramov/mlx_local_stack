@@ -100,6 +100,26 @@ def grade_evalplus(name, model):
             "acc": plus, "pass@1_base": base, "pass@1_plus": plus, "raw": out[-400:]}
 
 
+def _lcb_eval_inputs(rows, sample_by_id):
+    """Build codegen_metrics inputs from saved generation rows + a {question_id: input_output}
+    map. One sample per row whose id is in the map (rows from outside the pinned release are
+    skipped). Returns (samples_list, generations_list, ids):
+      samples_list[i]    = {"input_output": <json str>}
+      generations_list[i]= [<extracted code string>]   (one completion per problem)
+    """
+    samples_list, generations_list, ids = [], [], []
+    for r in rows:
+        qid = r.get("id")
+        io = sample_by_id.get(qid)
+        if io is None:
+            continue
+        code = extract.extract_code(r.get("content", ""))
+        samples_list.append({"input_output": io})
+        generations_list.append([code])
+        ids.append(qid)
+    return samples_list, generations_list, ids
+
+
 def grade_lcb(name, model):
     rows = [r for r in _rows(model, name) if not r.get("error")]
     try:
