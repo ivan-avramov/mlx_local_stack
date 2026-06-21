@@ -15,6 +15,7 @@ SPECS = {
     "humanevalplus": {"kind": "coding",    "answer_type": "code", "gated": False},
     "mbppplus":      {"kind": "coding",    "answer_type": "code", "gated": False},
     "livecodebench": {"kind": "coding",    "answer_type": "code", "gated": False},
+    "ifeval":        {"kind": "instruction", "answer_type": "programmatic", "gated": False},
 }
 
 # Pinned LiveCodeBench release window for contamination control + reproducibility.
@@ -94,7 +95,7 @@ def _load_evalplus(which, limit, seed):
 
 
 def _load_lcb(limit, seed):
-    # Version-windowed for contamination control; see README for pinning a release.
+    # Pinned to LCB_RELEASE for contamination control (see module constant + README).
     from lcb_runner.benchmarks.code_generation import load_code_generation_dataset
     probs = load_code_generation_dataset(release_version=LCB_RELEASE)
     items = []
@@ -104,6 +105,23 @@ def _load_lcb(limit, seed):
             prompt += "\n\nStarter code:\n```python\n" + p.starter_code + "\n```"
         items.append({"id": getattr(p, "question_id", None), "prompt": prompt,
                       "meta": {"platform": getattr(p, "platform", None)}})
+    return _subsample(items, limit, seed)
+
+
+# ----------------------------------------------------------------- instruction-following loader
+def _ifeval_item(row: dict) -> dict:
+    """Shape one google/IFEval row -> harness item. The HF schema pads every kwargs dict
+    with all-possible-keys = None; the verifiers' build_description breaks on None, so each
+    per-instruction kwargs dict is filtered to its non-None entries."""
+    kwargs = [{k: v for k, v in (kw or {}).items() if v is not None} for kw in row["kwargs"]]
+    return {"id": row["key"], "prompt": row["prompt"],
+            "meta": {"instruction_id_list": list(row["instruction_id_list"]), "kwargs": kwargs}}
+
+
+def _load_ifeval(limit, seed):
+    from datasets import load_dataset
+    ds = load_dataset("google/IFEval", split="train")
+    items = [_ifeval_item(row) for row in ds]
     return _subsample(items, limit, seed)
 
 
@@ -118,6 +136,8 @@ def load(name: str, limit: int | None = None, seed: int = 0) -> list:
         return _load_evalplus(name, limit, seed)
     if name == "livecodebench":
         return _load_lcb(limit, seed)
+    if name == "ifeval":
+        return _load_ifeval(limit, seed)
     raise ValueError(f"unknown benchmark {name!r}; known: {list(SPECS)}")
 
 
@@ -140,4 +160,6 @@ def build_messages(name: str, item: dict) -> list:
         return [{"role": "user", "content":
                  "Complete the following task. Return the complete solution as a single "
                  "self-contained ```python code block, no explanation after it.\n\n" + item["prompt"]}]
+    if name == "ifeval":
+        return [{"role": "user", "content": item["prompt"]}]
     raise ValueError(name)

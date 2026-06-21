@@ -32,10 +32,10 @@ from bench import benchmarks, client, generate, grade, model_params  # noqa: E40
 TIERS = {
     "light": (["humanevalplus", "mbppplus", "aime"],
               {"humanevalplus": 15, "mbppplus": 15, "aime": 5}),
-    "mid":   (["humanevalplus", "mbppplus", "livecodebench", "aime", "math500"],
-              {"humanevalplus": 40, "mbppplus": 40, "livecodebench": 15, "aime": 30, "math500": 30}),
-    "heavy": (["humanevalplus", "mbppplus", "livecodebench", "aime", "math500", "gpqa"],
-              {"humanevalplus": 164, "mbppplus": 378, "livecodebench": 100, "aime": 60, "math500": 200, "gpqa": 198}),
+    "mid":   (["humanevalplus", "mbppplus", "livecodebench", "ifeval", "aime", "math500"],
+              {"humanevalplus": 40, "mbppplus": 40, "livecodebench": 15, "ifeval": 30, "aime": 30, "math500": 30}),
+    "heavy": (["humanevalplus", "mbppplus", "livecodebench", "ifeval", "aime", "math500", "gpqa"],
+              {"humanevalplus": 164, "mbppplus": 378, "livecodebench": 100, "ifeval": 541, "aime": 60, "math500": 200, "gpqa": 198}),
 }
 
 
