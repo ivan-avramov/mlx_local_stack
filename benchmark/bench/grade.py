@@ -156,6 +156,80 @@ def grade_lcb(name, model):
             "matched": len(ids), "total_rows": len(rows)}
 
 
+def _load_ifeval_lib():
+    """Lazy-import the vendored IFEval verifiers. Adds bench/vendor to sys.path so the
+    package's absolute imports (`from instruction_following_eval import ...`) resolve, and
+    best-effort ensures the nltk 'punkt' tokenizer the verifiers need. Raises if the deps
+    (absl-py/langdetect/nltk/immutabledict) are absent — the caller degrades gracefully."""
+    import os
+    vendor = os.path.join(os.path.dirname(__file__), "vendor")
+    if vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    from instruction_following_eval import evaluation_lib  # noqa: E402 — heavy optional deps
+    try:
+        import nltk
+        try:
+            nltk.data.find("tokenizers/punkt")
+        except LookupError:
+            nltk.download("punkt", quiet=True)
+    except Exception:  # noqa: BLE001 — tokenizer is best-effort; verifiers that need it will fail closed
+        pass
+    return evaluation_lib
+
+
+def _ifeval_aggregate(strict_outs, loose_outs) -> dict:
+    """Prompt-level = fraction of prompts following ALL their instructions; instruction-level
+    = fraction of individual instructions followed. Computed for strict and loose verdicts."""
+    def prompt_acc(outs):
+        return (sum(1 for o in outs if o.follow_all_instructions) / len(outs)) if outs else 0.0
+
+    def inst_acc(outs):
+        flat = [b for o in outs for b in o.follow_instruction_list]
+        return (sum(1 for b in flat if b) / len(flat)) if flat else 0.0
+
+    return {
+        "prompt_strict": round(prompt_acc(strict_outs), 4),
+        "inst_strict": round(inst_acc(strict_outs), 4),
+        "prompt_loose": round(prompt_acc(loose_outs), 4),
+        "inst_loose": round(inst_acc(loose_outs), 4),
+    }
+
+
+def grade_ifeval(name, model):
+    """Grade IFEval with the vendored official verifiers (lazy, graceful-degrade). Re-loads
+    the IFEval dataset to recover per-item instruction_id_list/kwargs, runs strict+loose, and
+    aggregates. Headline acc = prompt-level strict."""
+    rows = [r for r in _rows(model, name) if not r.get("error")]
+    if not rows:
+        return {"benchmark": name, "model": model, "n": 0, "acc": None, "note": "no completions"}
+    try:
+        ev = _load_ifeval_lib()
+    except Exception as e:  # noqa: BLE001 — optional verifier deps
+        return {"benchmark": name, "model": model, "n": len(rows), "acc": None,
+                "note": f"ifeval verifiers unavailable ({type(e).__name__}: {str(e)[:80]}); "
+                        f"install benchmark/requirements.txt where grade runs"}
+    meta_by_id = {it["id"]: it for it in benchmarks.load("ifeval", None, 0)}
+    strict_outs, loose_outs, graded = [], [], 0
+    for r in rows:
+        it = meta_by_id.get(r.get("id"))
+        if it is None:
+            continue
+        inp = ev.InputExample(key=it["id"], instruction_id_list=it["meta"]["instruction_id_list"],
+                              prompt=it["prompt"], kwargs=it["meta"]["kwargs"])
+        p2r = {it["prompt"]: r.get("content", "")}
+        try:
+            strict_outs.append(ev.test_instruction_following_strict(inp, p2r))
+            loose_outs.append(ev.test_instruction_following_loose(inp, p2r))
+        except Exception:  # noqa: BLE001 — a single verifier blowing up shouldn't kill the batch
+            continue
+        graded += 1
+    if not graded:
+        return {"benchmark": name, "model": model, "n": 0, "acc": None,
+                "note": "no rows matched the IFEval dataset"}
+    agg = _ifeval_aggregate(strict_outs, loose_outs)
+    return {"benchmark": name, "model": model, "n": graded, "acc": agg["prompt_strict"], **agg}
+
+
 def grade(name, model):
     kind = benchmarks.SPECS[name]["kind"]
     if kind == "reasoning":
@@ -164,6 +238,8 @@ def grade(name, model):
         return grade_evalplus(name, model)
     if name == "livecodebench":
         return grade_lcb(name, model)
+    if name == "ifeval":
+        return grade_ifeval(name, model)
     raise ValueError(name)
 
 
