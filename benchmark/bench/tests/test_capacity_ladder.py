@@ -1,3 +1,4 @@
+import re
 import bench.capacity_ladder as L
 
 class FakeDriver:
@@ -5,7 +6,9 @@ class FakeDriver:
     def __init__(self, mlx_peaks):
         self.peaks = iter(mlx_peaks)
     def complete(self, model, messages, params, timeout=3600):
-        return {"content": "XKRZ0A7Q, XKRZ1B7Q, XKRZ2C7Q, XKRZ3D7Q, XKRZ4E7Q",
+        # Extract the actual planted needles from the prompt instead of hardcoding
+        found = re.findall(r"is ([A-Z0-9]{8})\.", messages[-1]["content"])
+        return {"content": ", ".join(found),
                 "prompt_tokens": 1000, "prefill_s": 5.0, "prefill_tps": 200,
                 "decode_tps": 9.5, "peak_mem_gb": next(self.peaks)}
 
