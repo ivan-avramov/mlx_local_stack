@@ -218,10 +218,12 @@ def grade_ifeval(name, model):
                               prompt=it["prompt"], kwargs=it["meta"]["kwargs"])
         p2r = {it["prompt"]: r.get("content", "")}
         try:
-            strict_outs.append(ev.test_instruction_following_strict(inp, p2r))
-            loose_outs.append(ev.test_instruction_following_loose(inp, p2r))
+            s_out = ev.test_instruction_following_strict(inp, p2r)
+            l_out = ev.test_instruction_following_loose(inp, p2r)
         except Exception:  # noqa: BLE001 — a single verifier blowing up shouldn't kill the batch
             continue
+        strict_outs.append(s_out)   # append BOTH only after both succeed, so the
+        loose_outs.append(l_out)    # strict/loose lists stay index-aligned
         graded += 1
     if not graded:
         return {"benchmark": name, "model": model, "n": 0, "acc": None,

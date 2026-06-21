@@ -138,3 +138,38 @@ def test_grade_ifeval_graceful_degrade_when_verifiers_missing(monkeypatch):
     monkeypatch.setattr(G, "_load_ifeval_lib", boom)
     out = G.grade_ifeval("ifeval", "m")
     assert out["acc"] is None and "note" in out
+
+
+def test_grade_ifeval_skips_row_when_loose_raises(monkeypatch):
+    """If loose raises after strict succeeds for a row, that row is skipped ENTIRELY
+    (strict/loose lists stay aligned), not partially appended."""
+    rows = [{"id": 1, "content": "x"}, {"id": 2, "content": "y"}]
+    monkeypatch.setattr(G, "_rows", lambda m, n: rows)
+    meta = [
+        {"id": 1, "prompt": "P1", "meta": {"instruction_id_list": ["a"], "kwargs": [{}]}},
+        {"id": 2, "prompt": "P2", "meta": {"instruction_id_list": ["a"], "kwargs": [{}]}},
+    ]
+    monkeypatch.setattr(G.benchmarks, "load", lambda *a: meta)
+
+    class EV:
+        class InputExample:
+            def __init__(self, key, instruction_id_list, prompt, kwargs):
+                self.key = key; self.instruction_id_list = instruction_id_list
+                self.prompt = prompt; self.kwargs = kwargs
+
+        @staticmethod
+        def test_instruction_following_strict(inp, p2r):
+            ok = inp.prompt == "P1"
+            return _Out(ok, [ok])
+
+        @staticmethod
+        def test_instruction_following_loose(inp, p2r):
+            if inp.prompt == "P2":
+                raise RuntimeError("loose blew up")
+            return _Out(True, [True])
+
+    monkeypatch.setattr(G, "_load_ifeval_lib", lambda: EV())
+    out = G.grade_ifeval("ifeval", "m")
+    assert out["n"] == 1                 # P2 skipped (loose raised) -> only P1 graded
+    assert out["prompt_strict"] == 1.0   # aggregated over the 1 aligned row, not the desynced 2
+    assert out["prompt_loose"] == 1.0
