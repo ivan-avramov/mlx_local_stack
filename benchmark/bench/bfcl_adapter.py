@@ -43,3 +43,40 @@ def parse_scores(score_dir: str, model: str, categories=AST_CATEGORIES) -> dict:
         total += t
     acc = round(correct / total, 4) if total else None
     return {"per_category": per_category, "acc": acc, "n": total}
+
+
+def bfcl_available() -> bool:
+    return shutil.which("bfcl") is not None
+
+
+def _cli(phase, model, categories, result_dir, score_dir, limit):
+    cmd = ["bfcl", phase, "--model", model,
+           "--test-category", ",".join(categories)]
+    if phase == "generate":
+        cmd += ["--num-threads", "1", "--skip-server-setup",
+                "--result-dir", result_dir]
+        if limit is not None:
+            cmd += ["--num-tests", str(limit)]
+    else:  # evaluate
+        cmd += ["--result-dir", result_dir, "--score-dir", score_dir]
+    return cmd
+
+
+def run_bfcl(model, categories=AST_CATEGORIES, endpoint="localhost", port=8000,
+             result_dir="bfcl_runs/result", score_dir="bfcl_runs/score",
+             limit=None, runner=subprocess.run) -> dict:
+    """Drive bfcl-eval against the local mlx-serve endpoint for the AST single-turn
+    categories, then normalize the scores. `runner` is injectable for tests. Lazy-detected;
+    graceful-degrade if `bfcl` is absent or a phase exits non-zero."""
+    base = {"model": model, "axis": "tool_calling", "categories": list(categories)}
+    if not bfcl_available():
+        return {**base, "acc": None, "n": 0, "skipped": True,
+                "note": "bfcl CLI not found; pip install bfcl-eval where BFCL runs (see README)"}
+    env = {**os.environ, "LOCAL_SERVER_ENDPOINT": endpoint, "LOCAL_SERVER_PORT": str(port)}
+    for phase in ("generate", "evaluate"):
+        proc = runner(_cli(phase, model, categories, result_dir, score_dir, limit),
+                      env=env, capture_output=True, text=True)
+        if getattr(proc, "returncode", 0) != 0:
+            return {**base, "acc": None, "n": 0, "skipped": False,
+                    "note": f"bfcl {phase} failed rc={proc.returncode}: {(proc.stderr or '')[:160]}"}
+    return {**base, **parse_scores(score_dir, model, categories), "skipped": False}

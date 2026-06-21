@@ -1,6 +1,7 @@
 """Tests for the BFCL tool-calling adapter (score parsing, subprocess driving, degrade)."""
 import json
 import os
+import types
 
 import bench.bfcl_adapter as A
 
@@ -43,3 +44,45 @@ def test_parse_scores_missing_category_excluded(tmp_path):
 def test_parse_scores_all_missing_gives_none(tmp_path):
     out = A.parse_scores(str(tmp_path), "m")
     assert out["acc"] is None and out["n"] == 0
+
+
+def test_run_bfcl_degrades_when_cli_absent(monkeypatch):
+    monkeypatch.setattr(A, "bfcl_available", lambda: False)
+    out = A.run_bfcl("m", categories=("simple",))
+    assert out["skipped"] is True and out["acc"] is None and "note" in out
+    assert out["axis"] == "tool_calling"
+
+
+def test_run_bfcl_invokes_generate_then_evaluate_then_parses(tmp_path, monkeypatch):
+    monkeypatch.setattr(A, "bfcl_available", lambda: True)
+    calls = []
+
+    def fake_runner(cmd, **kw):
+        calls.append(cmd)
+        # On the evaluate call, drop a score file so parse_scores finds it.
+        if "evaluate" in cmd:
+            _write_score(str(tmp_path / "score"), "m", "simple",
+                         {"accuracy": 0.9, "correct_count": 9, "total_count": 10})
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    out = A.run_bfcl("m", categories=("simple",),
+                     result_dir=str(tmp_path / "result"), score_dir=str(tmp_path / "score"),
+                     runner=fake_runner)
+    assert any("generate" in c for c in calls)
+    assert any("evaluate" in c for c in calls)
+    # generate precedes evaluate
+    assert next(i for i, c in enumerate(calls) if "generate" in c) < \
+           next(i for i, c in enumerate(calls) if "evaluate" in c)
+    assert out["acc"] == 0.9 and out["n"] == 10 and out["skipped"] is False
+
+
+def test_run_bfcl_nonzero_exit_degrades(tmp_path, monkeypatch):
+    monkeypatch.setattr(A, "bfcl_available", lambda: True)
+
+    def fake_runner(cmd, **kw):
+        return types.SimpleNamespace(returncode=2, stdout="", stderr="boom")
+
+    out = A.run_bfcl("m", categories=("simple",),
+                     result_dir=str(tmp_path / "result"), score_dir=str(tmp_path / "score"),
+                     runner=fake_runner)
+    assert out["acc"] is None and "note" in out
