@@ -121,15 +121,36 @@ def _lcb_eval_inputs(rows, sample_by_id):
 
 
 def grade_lcb(name, model):
+    """Grade LiveCodeBench via the official lcb_runner executor (lazy, graceful-degrade).
+    Re-loads the PINNED release to recover per-problem test cases, runs codegen_metrics
+    on the saved completions, and reports pass@1 normalized to a 0–1 fraction."""
     rows = [r for r in _rows(model, name) if not r.get("error")]
+    if not rows:
+        return {"benchmark": name, "model": model, "n": 0, "acc": None, "note": "no completions"}
     try:
-        from lcb_runner.evaluation import codegen_metrics  # noqa: F401
-    except Exception as e:  # noqa: BLE001
+        from lcb_runner.benchmarks.code_generation import load_code_generation_dataset
+        from lcb_runner.evaluation import codegen_metrics
+    except Exception as e:  # noqa: BLE001 — optional heavy dep
         return {"benchmark": name, "model": model, "n": len(rows), "acc": None,
-                "note": f"lcb_runner not available ({e}); see benchmark/README.md"}
-    # Wiring validated once lcb_runner is installed; see README "LiveCodeBench" section.
-    return {"benchmark": name, "model": model, "n": len(rows), "acc": None,
-            "note": "lcb grading wiring pending package install — see README"}
+                "note": f"lcb_runner not available ({type(e).__name__}: {str(e)[:80]}); see benchmark/README.md"}
+    try:
+        problems = load_code_generation_dataset(release_version=benchmarks.LCB_RELEASE)
+        sample_by_id = {getattr(p, "question_id", None): p.get_evaluation_sample()["input_output"]
+                        for p in problems}
+    except Exception as e:  # noqa: BLE001 — dataset/accessor drift on the installed version
+        return {"benchmark": name, "model": model, "n": len(rows), "acc": None,
+                "note": f"lcb dataset/sample load failed ({type(e).__name__}: {str(e)[:80]})"}
+    samples_list, generations_list, ids = _lcb_eval_inputs(rows, sample_by_id)
+    if not samples_list:
+        return {"benchmark": name, "model": model, "n": 0, "acc": None,
+                "note": f"no saved rows matched the pinned release {benchmarks.LCB_RELEASE}"}
+    metrics, _results, _meta = codegen_metrics(samples_list, generations_list,
+                                               k_list=[1], num_process_evaluate=8, timeout=6)
+    pass1 = metrics.get("pass@1")
+    acc = (pass1 / 100.0 if (pass1 is not None and pass1 > 1.0) else pass1)
+    return {"benchmark": name, "model": model, "n": len(samples_list), "acc": acc,
+            "pass@1": pass1, "release": benchmarks.LCB_RELEASE,
+            "matched": len(ids), "total_rows": len(rows)}
 
 
 def grade(name, model):
