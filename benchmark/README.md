@@ -161,6 +161,36 @@ aider runs but no `pass_rate_#` parses from stdout, it records `acc: null` with 
 the aider output format. The `openai/<name>` model mapping and sandbox execution mode (docker vs
 local) are confirmed on the first real run.
 
+### SWE-bench-Verified (agentic)
+
+`bench/run_swebench.py` measures agentic repo-issue resolution. A minimal explore-and-patch
+agent — built on three reusable primitives introduced here: `exec_sandbox` (run code or tests
+in an isolated temp dir with a timeout), `agent_loop` (a bounded tool-calling loop over the
+Driver), and the driver's new optional `tools`/`tool_calls` pass-through — generates a unified-diff
+`model_patch` per instance over a stratified 40-instance subset of
+`princeton-nlp/SWE-bench_Verified`. The official `swebench` harness then applies each patch and
+runs the repo's test suite inside docker. The harness is optional:
+
+```bash
+pip install swebench    # + a running docker daemon
+```
+
+It is a **standalone probe**, not part of the `generate`/`grade` tier pipeline. Run it with:
+
+```bash
+# mlx-serve serving <model> at :8000; swebench + docker available:
+cd benchmark && uv run python -m bench.run_swebench --model Qwen3.6-27B-UD-MLX-6bit --n 40
+```
+
+Results go to `results/<model>/swebench.json` with `resolved`, `total`, `resolve_rate` (= `acc`,
+0–1), and `subset_ids` (the 40 instance IDs, logged so the subset is never silent).
+
+If `swebench`, docker, or the dataset are absent, the probe writes `skipped: true` with a note
+and exits cleanly — it never crashes the broader harness.
+
+The agent, per-instance repo checkout (`repo_provider`), docker harness flags, and the exact
+report path/keys are wired and validated at the first real run. Start with `--n 2`.
+
 ### GPQA auth
 GPQA is gated. Put `HF_TOKEN=hf_...` in `.env` (the stack already sources it) and accept the
 dataset terms once on the Hub. Until then `list` shows it UNAVAILABLE and it is skipped.
