@@ -15,30 +15,56 @@ RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
 
 
 def _read_records(path):
+    """Parse a JSONL file; skip and count malformed lines (never-raise / graceful-degrade).
+    Returns (records, n_skipped)."""
     out = []
+    n_skipped = 0
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 out.append(json.loads(line))
-    return out
+            except json.JSONDecodeError as exc:
+                n_skipped += 1
+                print(f"[judge] WARN skipped malformed line ({exc}): {line[:120]!r}",
+                      flush=True)
+    return out, n_skipped
 
 
 def main(argv=None) -> int:
+    import sys
     ap = argparse.ArgumentParser(description="Mixed-family code-quality judge panel.")
     ap.add_argument("--model", required=True)
     ap.add_argument("--records", required=True, help="JSONL of {task, output, reference?}")
     args = ap.parse_args(argv)
 
-    records_in = _read_records(args.records)
-    judged = [judge_one(r["task"], r["output"], r.get("reference")) for r in records_in]
+    try:
+        records_in, n_skipped = _read_records(args.records)
+    except OSError as exc:
+        print(f"[judge] ERROR cannot open records file: {exc}", file=sys.stderr, flush=True)
+        return 1
+
+    judged = []
+    for r in records_in:
+        task = r.get("task", "")
+        output = r.get("output", "")
+        if not task and not output:
+            n_skipped += 1
+            print("[judge] WARN skipped record missing both task and output", flush=True)
+            continue
+        judged.append(judge_one(task, output, r.get("reference")))
+
     agg = aggregate(judged)
     result = {"model": args.model, "axis": "code_quality", "n_records": agg["n_records"],
               "overall": agg["overall"], "per_axis": agg["per_axis"],
-              "low_confidence": agg["low_confidence"], "records": judged}
+              "low_confidence": agg["low_confidence"], "n_skipped": n_skipped,
+              "records": judged}
 
     print(f"[judge] {args.model} overall={agg['overall']} per_axis={agg['per_axis']} "
-          f"n={agg['n_records']} low_confidence={agg['low_confidence']}", flush=True)
+          f"n={agg['n_records']} n_skipped={n_skipped} low_confidence={agg['low_confidence']}",
+          flush=True)
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "judge.json"), "w") as f:

@@ -166,6 +166,51 @@ def test_aggregate_low_confidence_on_split():
     assert J.aggregate(records)["low_confidence"] is True
 
 
+# ── Finding 2: brace-match parser — trailing prose with brace must not break parse ──
+def test_parse_scores_trailing_prose_with_brace():
+    """Greedy regex would span to the last } in the prose; brace-match stops at the right one."""
+    text = '{"scores": {"design": 4}} Note: use {x} here.'
+    out = J.parse_scores(text)
+    assert out == {"design": 4}
+
+
+# ── Finding 3: bool scores must be rejected, not coerced ──
+def test_parse_scores_rejects_bool_values():
+    """bool ⊂ int in Python; must explicitly reject True/False as numeric scores."""
+    # all-bool → empty → None
+    assert J.parse_scores('{"scores": {"readability": true, "security": false}}') is None
+    # mixed: int survives, bool dropped
+    out = J.parse_scores('{"scores": {"design": 3, "readability": true}}')
+    assert out == {"design": 3}
+
+
+# ── Finding 1: CLI per-record resilience ──
+def test_run_judge_cli_tolerates_malformed_jsonl(tmp_path, monkeypatch):
+    """A bad JSONL line must be skipped+counted; good records still process; main returns 0."""
+    recs = tmp_path / "recs.jsonl"
+    recs.write_text(
+        json.dumps({"task": "T1", "output": "code1"}) + "\n"
+        + "NOT JSON {{{\n"
+        + json.dumps({"task": "T2", "output": "code2"}) + "\n"
+    )
+    monkeypatch.setattr(RJ, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(RJ, "judge_one", lambda task, output, reference=None: {
+        "per_judge": {}, "median": {"readability": 4},
+        "judges_used": ["x"], "n_judges": 1, "split": False})
+    rc = RJ.main(["--model", "mymodel2", "--records", str(recs)])
+    assert rc == 0
+    out = json.load(open(os.path.join(tmp_path, "mymodel2", "judge.json")))
+    assert out["n_records"] == 2        # two good records processed
+    assert out["n_skipped"] >= 1        # the bad line was counted
+
+
+def test_run_judge_cli_missing_file_returns_1(tmp_path, monkeypatch):
+    """A missing records file must return 1 without raising."""
+    monkeypatch.setattr(RJ, "RESULTS", str(tmp_path))
+    rc = RJ.main(["--model", "x", "--records", str(tmp_path / "no_such_file.jsonl")])
+    assert rc == 1
+
+
 def test_run_judge_cli_writes_json(tmp_path, monkeypatch):
     recs = tmp_path / "recs.jsonl"
     recs.write_text(json.dumps({"task": "T1", "output": "code1"}) + "\n" +

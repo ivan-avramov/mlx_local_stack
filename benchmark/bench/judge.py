@@ -60,12 +60,24 @@ def parse_scores(text: str) -> dict | None:
     recognized RUBRIC_AXES (clamped). None if nothing valid parses."""
     if not text:
         return None
-    # Find the first {...} block (greedy enough for a single flat scores object).
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if not m:
+    # Find the first balanced {...} block using a brace-depth scan so that trailing
+    # prose containing braces (e.g. "Note: use {x} here.") does not corrupt the parse.
+    start = text.find("{")
+    if start == -1:
         return None
+    depth, end = 0, -1
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end == -1:
+        return None  # unbalanced braces
     try:
-        obj = json.loads(m.group(0))
+        obj = json.loads(text[start:end + 1])
     except json.JSONDecodeError:
         return None
     raw = obj.get("scores") if isinstance(obj, dict) else None
@@ -74,7 +86,7 @@ def parse_scores(text: str) -> dict | None:
     out = {}
     for axis in RUBRIC_AXES:
         v = raw.get(axis)
-        if isinstance(v, (int, float)):
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
             out[axis] = max(1, min(5, int(round(v))))
     return out or None
 
