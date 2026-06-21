@@ -103,6 +103,33 @@ degrades to `acc: null` with a note instead of failing the batch. Grading report
 `inst_strict`, `prompt_loose`, `inst_loose` — over the `google/IFEval` set (541 prompts; `mid`
 tier samples 30, `heavy` runs all 541).
 
+### BFCL (tool-calling)
+
+`bench/run_bfcl.py` measures single-turn function-calling by driving the official Berkeley
+Function Calling Leaderboard harness against the running mlx-serve endpoint. `bfcl-eval` is an
+optional dependency — install it where you run the probe:
+
+```bash
+pip install bfcl-eval==2025.12.17
+```
+
+It is a **standalone probe**, not part of the `generate`/`grade` tier pipeline. Run it with:
+
+```bash
+# mlx-serve serving <model> at :8000, bfcl-eval installed:
+cd benchmark && uv run python -m bench.run_bfcl --model Qwen3.6-27B-UD-MLX-6bit
+```
+
+The probe runs the four AST single-turn categories — `simple`, `multiple`, `parallel`,
+`parallel_multiple` — via `--skip-server-setup` against `localhost:8000`. The BFCL AST checker
+scores calls structurally; no tool execution happens. Results go to
+`results/<model>/bfcl.json` with per-category accuracy and a count-weighted overall `acc`.
+
+If `bfcl-eval` is not installed, the probe writes `skipped: true` with a note and exits cleanly
+— it never crashes the broader harness. The `--model` handler (which controls prompt format and
+decode settings) is resolved on the box where `bfcl-eval` runs; confirm the handler mapping on
+first real run.
+
 ### GPQA auth
 GPQA is gated. Put `HF_TOKEN=hf_...` in `.env` (the stack already sources it) and accept the
 dataset terms once on the Hub. Until then `list` shows it UNAVAILABLE and it is skipped.
