@@ -1,8 +1,10 @@
 """Tests for the code-quality judge panel (rubric/prompt/parser, backends, aggregation)."""
 import json
+import os
 import types
 
 import bench.judge as J
+import bench.run_judge as RJ
 
 
 def test_rubric_has_ten_axes():
@@ -140,3 +142,18 @@ def test_aggregate_overall_and_low_confidence():
 def test_aggregate_empty():
     agg = J.aggregate([])
     assert agg["overall"] is None and agg["n_records"] == 0
+
+
+def test_run_judge_cli_writes_json(tmp_path, monkeypatch):
+    recs = tmp_path / "recs.jsonl"
+    recs.write_text(json.dumps({"task": "T1", "output": "code1"}) + "\n" +
+                    json.dumps({"task": "T2", "output": "code2"}) + "\n")
+    monkeypatch.setattr(RJ, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(RJ, "judge_one", lambda task, output, reference=None: {
+        "per_judge": {}, "median": {"readability": 4}, "judges_used": ["x"], "n_judges": 1})
+    rc = RJ.main(["--model", "mymodel", "--records", str(recs)])
+    assert rc == 0
+    out = json.load(open(os.path.join(tmp_path, "mymodel", "judge.json")))
+    assert out["model"] == "mymodel" and out["axis"] == "code_quality"
+    assert out["n_records"] == 2 and len(out["records"]) == 2
+    assert out["per_axis"]["readability"] == 4.0
