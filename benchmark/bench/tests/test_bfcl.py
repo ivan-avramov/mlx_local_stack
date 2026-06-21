@@ -4,6 +4,7 @@ import os
 import types
 
 import bench.bfcl_adapter as A
+import bench.run_bfcl as RB
 
 
 def _write_score(score_dir, model, cat, summary_obj, extra_lines=()):
@@ -97,3 +98,15 @@ def test_run_bfcl_runner_exception_degrades(monkeypatch):
 
     out = A.run_bfcl("m", categories=("simple",), runner=boom_runner)
     assert out["acc"] is None and out["skipped"] is False and "raised" in out["note"]
+
+
+def test_run_bfcl_cli_writes_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(RB, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(RB, "run_bfcl", lambda **kw: {
+        "model": kw["model"], "axis": "tool_calling", "categories": list(kw["categories"]),
+        "per_category": {"simple": {"accuracy": 0.9, "correct": 9, "total": 10}},
+        "acc": 0.9, "n": 10, "skipped": False})
+    rc = RB.main(["--model", "mymodel", "--categories", "simple"])
+    assert rc == 0
+    out = json.load(open(os.path.join(tmp_path, "mymodel", "bfcl.json")))
+    assert out["model"] == "mymodel" and out["axis"] == "tool_calling" and out["acc"] == 0.9
