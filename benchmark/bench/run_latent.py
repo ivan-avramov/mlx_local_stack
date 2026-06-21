@@ -1,0 +1,84 @@
+"""CLI: run the latent-association reasoning ladder (NoLiMa-style) for one model at
+PRODUCTION params.
+
+  cd benchmark && uv run python -m bench.run_latent --model Qwen3.6-27B-UD-MLX-6bit
+
+Writes benchmark/results/<model>/latent.json."""
+import argparse
+import json
+import os
+import time
+
+from .driver import MlxServeDriver
+from .instrument import MemorySampler, system_used_gb, find_model_server_pid
+from .model_params import params_for
+from .latent import run_latent_ladder, LATENT_GRID
+
+RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
+_CAL_FILLER = "The quick brown fox jumps over the lazy dog near the riverbank at sunset. "
+
+
+def calibrate_cpt(driver, model: str) -> float:
+    out = driver.complete(model, [{"role": "user", "content": _CAL_FILLER * 200}],
+                          {"max_tokens": 1, "temperature": 0.0}, timeout=120)
+    chars = len(_CAL_FILLER * 200)
+    pt = out.get("prompt_tokens") or 1
+    return chars / pt
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="Latent-association reasoning ladder (NoLiMa-style).")
+    ap.add_argument("--model", required=True)
+    ap.add_argument("--grid", default=",".join(str(g) for g in LATENT_GRID))
+    ap.add_argument("--samples", type=int, default=5)
+    ap.add_argument("--threshold", type=float, default=0.85)
+    ap.add_argument("--max-ctx", type=int, default=131072)
+    ap.add_argument("--max-tokens", type=int, default=None)
+    ap.add_argument("--thinking-budget", type=int, default=None)
+    ap.add_argument("--no-preload", action="store_true")
+    args = ap.parse_args(argv)
+    grid = tuple(int(x) for x in args.grid.split(","))
+
+    driver = MlxServeDriver()
+    if not args.no_preload:
+        driver.preload(args.model)
+    model_pid = None
+    for _ in range(10):
+        model_pid = find_model_server_pid()
+        if model_pid is not None:
+            break
+        time.sleep(1)
+    if model_pid is None:
+        print("[latent] WARNING: model server process not found; memory sampling disabled", flush=True)
+
+    cpt = calibrate_cpt(driver, args.model)
+    params = params_for(args.model)
+    if args.max_tokens is not None:
+        params["max_tokens"] = args.max_tokens
+    if args.thinking_budget is not None:
+        params["thinking_budget"] = args.thinking_budget
+
+    print(f"[latent] {args.model} cpt={cpt:.2f} grid={grid} threshold={args.threshold} "
+          f"samples={args.samples} thinking_budget={params.get('thinking_budget')}", flush=True)
+
+    records = run_latent_ladder(driver, args.model, cpt, model_pid=model_pid, params=params,
+                                grid=grid, threshold=args.threshold, samples=args.samples,
+                                max_ctx=args.max_ctx, sampler_factory=MemorySampler)
+    for r in records:
+        print(f"[latent] ctx={r['ctx']} acc={r['accuracy']} errors={r['errors']}", flush=True)
+
+    passing = [r["ctx"] for r in records if r["accuracy"] >= args.threshold]
+    reasoning_effective_ctx = max(passing) if passing else None
+    result = {"model": args.model, "axis": "reasoning", "task": "latent_nolima_style",
+              "threshold": args.threshold, "grid": list(grid), "records": records,
+              "reasoning_effective_ctx": reasoning_effective_ctx}
+    out_dir = os.path.join(RESULTS, args.model)
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "latent.json"), "w") as f:
+        json.dump(result, f, indent=2)
+    print(f"[latent] REASONING_EFFECTIVE_CTX={reasoning_effective_ctx}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
