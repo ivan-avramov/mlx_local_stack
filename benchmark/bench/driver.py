@@ -7,7 +7,7 @@ from . import client
 class Driver(Protocol):
     def preload(self, model: str, timeout: float = 900) -> float: ...
     def complete(self, model: str, messages: list, params: dict,
-                 timeout: float = 3600) -> dict: ...
+                 timeout: float = 3600, tools=None) -> dict: ...
 
 
 class MlxServeDriver:
@@ -18,8 +18,8 @@ class MlxServeDriver:
         return client.preload(model, timeout=timeout)
 
     def complete(self, model: str, messages: list, params: dict,
-                 timeout: float = 3600) -> dict:
-        r = client.probe(model, messages, params, timeout=timeout)
+                 timeout: float = 3600, tools=None) -> dict:
+        r = client.probe(model, messages, params, timeout=timeout, tools=tools)
         tm = r.get("raw_timings") or {}
         wall = r.get("wall_s") or 0.0
         pred_ms = tm.get("predicted_ms") or 0.0
@@ -28,6 +28,7 @@ class MlxServeDriver:
         return {
             "content": r.get("content", ""),
             "reasoning": r.get("reasoning", ""),
+            "tool_calls": r.get("tool_calls") or [],
             "prompt_tokens": pt,
             "completion_tokens": r.get("completion_tokens"),
             "decode_tps": r.get("decode_tps"),

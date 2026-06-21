@@ -45,12 +45,14 @@ def strip_thinking(text: str) -> str:
     return _THINK.sub("", text or "").strip()
 
 
-def probe(model: str, messages: list, params: dict, timeout: float = 3600) -> dict:
+def probe(model: str, messages: list, params: dict, timeout: float = 3600, tools=None) -> dict:
     """One non-streaming completion using the model's production params (temperature,
     top_p, top_k, min_p, repetition_penalty, presence_penalty, max_tokens,
     enable_thinking, thinking_budget — all forwarded to mlx_vlm). Returns answer text +
     timing/length telemetry."""
     body = {"model": model, "messages": messages, "stream": False, **params}
+    if tools:
+        body["tools"] = tools
     t0 = time.perf_counter()
     r = _post("/v1/chat/completions", body, timeout=timeout)
     wall = time.perf_counter() - t0
@@ -60,6 +62,7 @@ def probe(model: str, messages: list, params: dict, timeout: float = 3600) -> di
     return {
         "content": msg.get("content") or "",
         "reasoning": msg.get("reasoning") or "",
+        "tool_calls": msg.get("tool_calls") or [],
         "prompt_tokens": us.get("prompt_tokens") or tm.get("prompt_n"),
         "completion_tokens": us.get("completion_tokens"),
         "decode_tps": tm.get("predicted_per_second"),
