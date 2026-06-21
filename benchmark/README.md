@@ -236,6 +236,38 @@ cd benchmark && uv run python -m bench.run_latent      --model Qwen3.6-27B-UD-ML
 Both use exact-match grading (no judge). Each writes per-rung accuracy and a headline
 `reasoning_effective_ctx` — the largest context length with accuracy ≥ 0.85.
 
+## Judge panel (subjective code quality)
+
+`bench/run_judge.py` scores execution-passing coding outputs on a 10-axis subjective rubric using
+a mixed-family panel: `claude-sonnet-4-6` and `claude-opus-4-8` via the Anthropic API, plus
+GPT-5.5 via the `codex` CLI. It is not a correctness oracle — correctness is execution-gated by
+LCB/Aider/SWE. The panel only sees outputs that already passed. The `reasoning` axis is advisory.
+
+The judge prompt is blind: it never names the model that produced the candidate output.
+
+Aggregation: per-axis **median** across the judges that returned valid scores, with **per-judge
+scores retained** in the output. A `low_confidence` flag is set when fewer than 2 judges return
+scores, or when there is a large Anthropic-vs-OpenAI family split (≥2 on the 1–5 scale on any axis).
+
+Backends are optional, lazy, and graceful-degrade. Install what you need where you run the judge
+(grade-time, off the measurement box — no model load required):
+
+```bash
+uv pip install anthropic    # Sonnet + Opus; also set ANTHROPIC_API_KEY
+# codex CLI on PATH         # GPT-5.5 (one-shot invocation)
+```
+
+A missing backend is skipped; the panel never crashes. Run it with:
+
+```bash
+# passing.jsonl: one {task, output, reference?} per execution-passing solution
+cd benchmark && uv run python -m bench.run_judge --model <model> --records passing.jsonl
+```
+
+Writes `results/<model>/judge.json` with `overall`, `per_axis`, `low_confidence`, and the full
+per-record per-judge breakdown. The real API calls and JSON adherence are validated on the first
+real run.
+
 ## Tiers (escalating scope)
 
 Pick scope with `--tier light|mid|heavy`. The three tiers nest: light's item set is a
