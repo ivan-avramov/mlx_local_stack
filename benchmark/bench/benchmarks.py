@@ -17,6 +17,10 @@ SPECS = {
     "livecodebench": {"kind": "coding",    "answer_type": "code", "gated": False},
 }
 
+# Pinned LiveCodeBench release window for contamination control + reproducibility.
+# Generation and grading MUST use the same release; the id is recorded in the grade output.
+LCB_RELEASE = "release_v5"
+
 
 def _subsample(items: list, limit: int | None, seed: int) -> list:
     """Deterministic, PREFIX-NESTED subset: shuffle once by seed, take the first `limit`.
@@ -92,7 +96,7 @@ def _load_evalplus(which, limit, seed):
 def _load_lcb(limit, seed):
     # Version-windowed for contamination control; see README for pinning a release.
     from lcb_runner.benchmarks.code_generation import load_code_generation_dataset
-    probs = load_code_generation_dataset(release_version="release_latest")
+    probs = load_code_generation_dataset(release_version=LCB_RELEASE)
     items = []
     for p in probs:
         prompt = p.question_content if hasattr(p, "question_content") else str(p)
