@@ -24,12 +24,16 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
+    # SUFFIX DISABLED 2026-06-21 for the lossless SELECTION bake-off: suffix
+    # (and MTP/draft) are inherently non-lossless in bf16 (prefill-vs-decode
+    # kernel numerics, NOT a logic bug) and make gemma cascade into rambling.
+    # Re-enable for Phase-2 deployment. See project_suffix_decoding_nonlossless.
     # Drafter-free suffix decoding (see gemma-4-31b-it-6bit for notes). gemma4
     # MoE is still standard-attention, so suffix verify/rollback works.
-    draft_kind: suffix
-    draft_block_size: 16
-    suffix_min_match: 2
-    draft_cooldown: 2
+    # draft_kind: suffix
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
 
   - name: gemma-4-31b-it-6bit
     type: vision
@@ -46,10 +50,10 @@ models:
     # graceful on novel prose. draft_cooldown pauses proposing after N
     # consecutive 0-accept rounds so novel text never regresses. Omit
     # draft_kind to disable; omit draft_cooldown for no cooldown.
-    draft_kind: suffix
-    draft_block_size: 16   # max draft (proposal) length
-    suffix_min_match: 2    # minimum n-gram match length
-    draft_cooldown: 2      # pause after 2 consecutive 0-accept rounds
+    # draft_kind: suffix
+    # draft_block_size: 16   # max draft (proposal) length
+    # suffix_min_match: 2    # minimum n-gram match length
+    # draft_cooldown: 2      # pause after 2 consecutive 0-accept rounds
 
   - name: gemma-4-31b-it-UD-MLX-4bit
     type: vision
@@ -61,10 +65,10 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
-    draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
-    draft_block_size: 16
-    suffix_min_match: 2
-    draft_cooldown: 2
+    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
 
   # Suffix decoding IS enabled on Qwen3.6 as of v1.1: the verify forward now
   # captures the GatedDeltaNet recurrent state (capture_layer_ids=[]) so rejected
@@ -80,10 +84,12 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
-    draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware); 6x on quoting, ~0 on novel/UI (see sketch)
-    draft_block_size: 16
-    suffix_min_match: 2
-    draft_cooldown: 2
+    # SUFFIX DISABLED 2026-06-21 for the lossless SELECTION bake-off (re-enable
+    # for Phase-2 deployment; Qwen tolerates suffix). See memory.
+    # draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware); 6x on quoting, ~0 on novel/UI (see sketch)
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
 
   # QAT / optimized-quant experiments (quality-vs-size; QAT/OptiQ earn their keep at 4-6 bit).
   - name: gemma-4-31B-it-qat-6bit
@@ -96,10 +102,10 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
-    draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
-    draft_block_size: 16
-    suffix_min_match: 2
-    draft_cooldown: 2
+    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
 
   - name: gemma-4-26B-A4B-it-OptiQ-4bit
     type: vision
@@ -111,10 +117,10 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
-    draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
-    draft_block_size: 16
-    suffix_min_match: 2
-    draft_cooldown: 2
+    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
 
   - name: gemma-4-26B-A4B-it-QAT-MLX-4bit
     type: vision
@@ -126,10 +132,27 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
-    draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
-    draft_block_size: 16
-    suffix_min_match: 2
-    draft_cooldown: 2
+    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
+
+  # vanilla mlx-community 4bit — added 2026-06-21 for the W0 quant-convergence ladder
+  # (QAT-4bit / OptiQ-4bit / vanilla-4bit / 8bit). Same spawn params as the other A4B 4bits.
+  - name: gemma-4-26b-a4b-it-4bit
+    type: vision
+    on_demand: true
+    hf_path: mlx-community/gemma-4-26b-a4b-it-4bit
+    max_kv_cache_size: 262144
+    kv_quant_scheme: uniform
+    kv_bits: 4
+    prefill_step_size: 512
+    quantized_kv_start: 0
+    enable_thinking: true
+    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
 
   # Qwen3.6-27B quant ladder for the 256K quality bake-off (added 2026-06-16).
   - name: Qwen3.6-27B-MLX-8bit
@@ -142,10 +165,10 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
-    draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
-    draft_block_size: 16
-    suffix_min_match: 2
-    draft_cooldown: 2
+    # draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
 
   - name: Qwen3.6-27B-OptiQ-4bit
     type: vision
@@ -157,7 +180,7 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     enable_thinking: true
-    draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
-    draft_block_size: 16
-    suffix_min_match: 2
-    draft_cooldown: 2
+    # draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
