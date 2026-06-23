@@ -44,6 +44,20 @@ framework → same wall.** EpiCache is orthogonal. Full detail: memory `project-
 | Qwen-6bit-UD (dense) | 1.0 | 1.0 →224 K | ❌ **192 K-capped** | effective 32 K (1 error@48K under mem pressure) | 15 | **SUPERSEDED by the distill** |
 | vanilla `mlx-community` gemma-4bit | ✗ (rambles, acc 0.4) | — | — | — | — | **dropped** (quant-level non-converger) |
 
+### ⚠️ CORRECTION (post-handoff) — reasoning "convergence" is a FALSE PASS for gemma + distill
+The convergence harness scores `converged = (finish_reason=="stop")`, but the **thinking_budget**,
+when hit, forces an end-of-thinking token → the model answers + EOSes → `finish="stop"` → counted
+as converged. It only catches **max_tokens** hits, NOT **thinking_budget** hits. Checking the
+numbers: gemma-OptiQ agg `comp_tok=16,402` ≈ budget **16,384** (3/3 samples), distill agg `49,175`
+≈ budget **49,152** → **both HIT their thinking budgets = NON-CONVERGENCE (failures), mis-scored as
+converged.** Only **Qwen-6bit truly converges reasoning** (11,708 << 49,152). gemma's reasoning
+"convergence" was masked by its 3×-smaller budget. **Coding convergence is real** for all (well
+under budget); **recall/256K-fit unaffected** (max_tokens=256). TODO: (a) harness fix — flag
+`completion_tokens ≥ thinking_budget` as failure regardless of finish_reason; (b) re-run reasoning
+convergence at lower temp (0.1-0.3) for gemma + distill; a model still hitting the budget is a
+genuine non-converger. So the table's "converge" column is VALID FOR CODING ONLY; reasoning
+convergence is unresolved.
+
 Key findings:
 - **gemma recall is QUANT-sensitive, not architectural**: OptiQ-4bit recalls 1.0 where QAT-4bit
   was 0.6-0.8 (same MoE arch) — OptiQ protects the 5 full-attn layers.

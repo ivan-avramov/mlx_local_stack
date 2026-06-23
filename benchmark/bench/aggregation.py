@@ -36,14 +36,20 @@ def _distinct_words(rng: random.Random, n: int) -> list[str]:
 
 def build_cwe(target_tokens: int, chars_per_token: float, k: int = 5,
               freq_common: int = 30, freq_uncommon: int = 3,
-              seed: int = 0) -> tuple[str, list[str], str]:
+              seed: int = 0, n_distractor: int = None) -> tuple[str, list[str], str]:
     """Build a CWE context. Targets appear freq_common times, distractors freq_uncommon
-    times; total occurrences fill ~target_tokens. Returns (context, targets, question)."""
+    times; total occurrences fill ~target_tokens. Returns (context, targets, question).
+
+    If ``n_distractor`` is given, the ENUMERATION LOAD (number of distinct distractor words
+    to tally) is set directly and ``target_tokens`` is ignored. This is how the graded probe
+    dials difficulty — the count of distinct words, which is what blows the thinking budget —
+    independently of raw context length, to find each model's enumeration cliff."""
     rng = random.Random(seed)
-    # Estimate total word slots from the char budget (avg pseudo-word ~5 chars + 1 space).
-    total_chars = int(target_tokens * chars_per_token)
-    total_words = max(k * freq_common + 1, total_chars // 6)
-    n_distractor = max(1, (total_words - k * freq_common) // freq_uncommon)
+    if n_distractor is None:
+        # Estimate total word slots from the char budget (avg pseudo-word ~5 chars + 1 space).
+        total_chars = int(target_tokens * chars_per_token)
+        total_words = max(k * freq_common + 1, total_chars // 6)
+        n_distractor = max(1, (total_words - k * freq_common) // freq_uncommon)
     pool = _distinct_words(rng, k + n_distractor)
     targets = pool[:k]
     distractors = pool[k:]
