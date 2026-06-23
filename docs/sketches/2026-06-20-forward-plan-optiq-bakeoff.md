@@ -66,5 +66,5 @@ Priority order:
 - Lean router (no OWUI/docker): `MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start`. On M5 prepend `PATH=/opt/homebrew/bin:$PATH` (uv not on non-interactive PATH) and `set -a; . ./.env; set +a` for HF_TOKEN.
 - Tests: `cd benchmark && uv run --with pytest --with psutil python -m pytest bench/tests/`.
 - **Config fidelity:** quality runs (reasoning, coding, dedicated retrieval) use `params_for(model)` production params verbatim (commit `ed3449c`); the capacity probe is a *memory* measurement → production sampling + bounded generation (the prefill peak is decode-length-independent), so its `retrieval_acc` is a rough co-signal. Completed Phase-1 capacity + light-VT results STAND (memory is sampling-insensitive; the VT thinking cap didn't bind) — the fix is forward-looking.
-- Sync harness to M5 via rsync (nothing pushed to origin): `rsync -a benchmark/bench/ $REMOTE_HOST:~/Documents/ws/mlx_local_stack/benchmark/bench/`.
+- Sync harness to M5 via rsync (nothing pushed to origin): `rsync -a benchmark/bench/ $REMOTE_HOST:$REMOTE_REPO/benchmark/bench/`.
 - Suggested order: build Step 1 (coding) + Step 2 (heavy reasoning) harness in parallel, then run both across the 2 models (Qwen on M5, gemma on M2), then Step 3. MTP (Phase 2) right after.

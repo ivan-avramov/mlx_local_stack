@@ -11,7 +11,7 @@ The big fused-kernel rewrites, both prefill and decode, were measured and are no
 
 ## Environment
 
-Two targets, both 64GB. An M2 Max for dev, and a remote M5 Max reached over `ssh $REMOTE_HOST` with the repos under `~/Documents/ws/`. The M5 is about 7x faster for real-model turnaround, which is why most end-to-end validation ran there: 16K prefill measured 579 tok/s on M5 versus 84 tok/s on M2, a 28s wall versus 212s.
+Two targets, both 64GB. An M2 Max for dev, and a remote M5 Max reached over `ssh $REMOTE_HOST` with the repos under `$REMOTE_REPO/../`. The M5 is about 7x faster for real-model turnaround, which is why most end-to-end validation ran there: 16K prefill measured 579 tok/s on M5 versus 84 tok/s on M2, a 28s wall versus 212s.
 
 ## Phase-1 spikes (A–H)
 
@@ -121,5 +121,5 @@ Per-context guidance:
 ## Open and future work
 
 - MTP self-speculation for novel/UI decode: re-convert keeping the MTP head, then wire `draft_kind=mtp`.
-- NA via mlx: the source build is done and confirms NA does not activate (upstream dispatch gap). Re-test on a future mlx release that wires the dispatch; the kernels are already present, so it may turn on in a later version. The discriminator (`benchmark/spikes/na_discriminator.py`) and the source-built mlx (`~/Documents/ws/pyenv/.venv`) are available to re-run.
+- NA via mlx: the source build is done and confirms NA does not activate (upstream dispatch gap). Re-test on a future mlx release that wires the dispatch; the kernels are already present, so it may turn on in a later version. The discriminator (`benchmark/spikes/na_discriminator.py`) and the source-built mlx (`$REMOTE_REPO/../pyenv/.venv`) are available to re-run.
 - The fused prefill decomposed path stays available behind `TQ_FUSED_PREFILL=1`. A fused-flash variant is unbuilt and not worth building, since prefill is GatedDeltaNet/MLP-bound.

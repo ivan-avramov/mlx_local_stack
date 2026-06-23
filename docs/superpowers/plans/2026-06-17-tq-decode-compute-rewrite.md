@@ -6,7 +6,7 @@
 
 **Architecture:** Spike G proved decode is compute-bound: the read-only ceiling (M2 136 / M5 299 GB/s) is ~1.6–2.4× the full kernel (M2 57 / M5 182 GB/s), and the readonly ceiling ≈ fp16-SDPA latency. The cost is the per-token dot-product: per-dim **codebook gathers from device memory** + per-token **simd_sum** reductions, ×G heads ×T tokens. Optimize those (stage codebook/q in fast memory, cut per-token reduction overhead), gated behind a flag, validated by TDD against the fp32 reference and benchmarked on **both M2 and M5**.
 
-**Tech Stack:** MLX `mx.fast.metal_kernel` (MSL), Metal `simd_sum`/threadgroup memory, Python 3, pytest. Fork: `../mlx-vlm`. Remote M5: `ssh $REMOTE_HOST`, repos at `~/Documents/ws/`.
+**Tech Stack:** MLX `mx.fast.metal_kernel` (MSL), Metal `simd_sum`/threadgroup memory, Python 3, pytest. Fork: `../mlx-vlm`. Remote M5: `ssh $REMOTE_HOST`, repos at `$REMOTE_REPO/../`.
 
 ## Global Constraints
 
@@ -65,8 +65,8 @@ Record GB/s for full/opt/readonly at each T. Compute `gap_closed = (opt - full) 
 - [ ] **Step 4: Benchmark on M5 Max**
 
 ```bash
-scp -q benchmark/spikes/spike_h_decode_opt.py $REMOTE_HOST:~/Documents/ws/mlx_local_stack/benchmark/spikes/
-ssh $REMOTE_HOST 'cd ~/Documents/ws/mlx_local_stack && .venv/bin/python benchmark/spikes/spike_h_decode_opt.py'
+scp -q benchmark/spikes/spike_h_decode_opt.py $REMOTE_HOST:$REMOTE_REPO/benchmark/spikes/
+ssh $REMOTE_HOST 'cd $REMOTE_REPO && .venv/bin/python benchmark/spikes/spike_h_decode_opt.py'
 ```
 Record the same.
 
@@ -157,8 +157,8 @@ Expected: opt faster than current; outputs match.
 - [ ] **Step 2: Same on M5 Max**
 
 ```bash
-scp -q benchmark/spikes/bench_decode_attention.py $REMOTE_HOST:~/Documents/ws/mlx_local_stack/benchmark/spikes/
-ssh $REMOTE_HOST 'cd ~/Documents/ws/mlx_local_stack && .venv/bin/python benchmark/spikes/bench_decode_attention.py'
+scp -q benchmark/spikes/bench_decode_attention.py $REMOTE_HOST:$REMOTE_REPO/benchmark/spikes/
+ssh $REMOTE_HOST 'cd $REMOTE_REPO && .venv/bin/python benchmark/spikes/bench_decode_attention.py'
 ```
 Expected: opt ≥ current (M5 headroom smaller; even parity acceptable per the bar).
 

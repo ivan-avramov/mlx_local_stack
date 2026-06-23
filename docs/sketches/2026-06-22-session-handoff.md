@@ -9,7 +9,7 @@ the **daily-driver bake-off** suffix-off, and prototyping two **speed levers** (
 
 Two machines, **strictly one model resident per machine**: **M2** = local 68.7 GB
 (`$HOME/...`, co-resident with the Claude session ~22 GB → unreliable >192 K capacity),
-**M5 Max** = 64 GB target box (`ssh $REMOTE_HOST`, user `ivan`, repo `$REMOTE_REPO/../`, bare PATH
+**M5 Max** = 64 GB target box (`ssh $REMOTE_HOST`, user `$REMOTE_USER`, repo `$REMOTE_REPO/../`, bare PATH
 → `export PATH=/opt/homebrew/bin:$HOME/.local/bin:$PATH`).
 
 ## 1. Resolved: suffix decoding is INHERENT bf16, not a logic bug

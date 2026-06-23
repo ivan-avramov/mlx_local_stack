@@ -4,7 +4,7 @@
 # known-non-converger QAT last. Deep-sample the winner afterward. Realistic params
 # (only sample COUNT is reduced — not a generation param).
 set -u
-cd $STACK_REPO/benchmark
+cd "$(dirname "$0")"
 for M in gemma-4-26B-A4B-it-OptiQ-4bit gemma-4-26b-a4b-it-4bit gemma-4-26b-a4b-it-8bit gemma-4-26B-A4B-it-QAT-MLX-4bit; do
   echo "===== $(date '+%H:%M:%S') START $M ====="
   PYTHONPATH=. ../.venv/bin/python -m bench.run_convergence --model "$M" --samples 1 --coding-samples 1 2>&1

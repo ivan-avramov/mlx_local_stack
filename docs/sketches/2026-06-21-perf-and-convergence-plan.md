@@ -89,7 +89,7 @@ Each runs in **isolation** at realistic config, reporting **perf gain vs quality
 
 ## Operational appendix (drive-ready)
 
-**Boxes.** M2max = local (this repo: `$STACK_REPO`). M5max = `ssh $REMOTE_HOST` (repo `$REMOTE_REPO`, user `ivan`, ~7× faster). **M5 non-interactive ssh has a bare PATH** — every remote command must start with `export PATH=/opt/homebrew/bin:$HOME/.local/bin:$PATH`. Both have the candidates cached.
+**Boxes.** M2max = local (this repo: `$STACK_REPO`). M5max = `ssh $REMOTE_HOST` (repo `$REMOTE_REPO`, user `$REMOTE_USER`, ~7× faster). **M5 non-interactive ssh has a bare PATH** — every remote command must start with `export PATH=/opt/homebrew/bin:$HOME/.local/bin:$PATH`. Both have the candidates cached.
 
 **Parent forks (edit here, NOT `src/*` submodules):** `../mlx-vlm` and `.../mlx-serve`. Deployed code runs from each repo's `src/mlx-vlm` submodule + the repo `.venv`; after a fork fix, deploy to the box for verification. Both fork and M5 submodule are at mlx-vlm `7009a3f` (clean) for the functions in play.
 

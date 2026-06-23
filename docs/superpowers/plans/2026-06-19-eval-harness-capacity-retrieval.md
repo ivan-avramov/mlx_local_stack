@@ -15,7 +15,7 @@
 - **Capacity gate:** model footprint peak ≤ **46GB** (usable profile); also report total system-used peak. Copied from spec §7.
 - **Retrieval/capacity L-grid:** `{160_000, 192_000, 224_000, 256_000}` tokens, incremental 32K fill, RSS captured at each step; stop the moment footprint > 46GB. Spec §7.
 - **Effective-length threshold:** retrieval accuracy ≥ **0.85**. Spec §7.
-- **Runs on the box under test:** harness and server co-located; `MLX_SERVE_BASE` defaults to `http://localhost:8000` (existing `client.py`). M5 reached via `ssh $REMOTE_HOST` (repos under `~/Documents/ws/`).
+- **Runs on the box under test:** harness and server co-located; `MLX_SERVE_BASE` defaults to `http://localhost:8000` (existing `client.py`). M5 reached via `ssh $REMOTE_HOST` (repos under `$REMOTE_REPO/../`).
 - **One model at a time:** never load two big models concurrently; unload/`preload` deliberately (project RAM constraint).
 - **Edit parent forks, not submodules:** this plan touches only `benchmark/` in the stack repo; no mlx-vlm/mlx-serve changes. If a server change is ever needed, it goes in the `../mlx-vlm` / `../mlx-serve` parent forks, not `src/*`.
 - **Results location:** `benchmark/results/<model>/capacity_retrieval.json` (+ raw `benchmark/results/<model>/capacity_ladder.jsonl`), matching the existing `benchmark/results/` convention.
@@ -770,10 +770,10 @@ This task has no unit test; it is the real-world acceptance gate the whole MVP e
 
 - [ ] **Step 1: Get the harness onto the M5 box**
 
-The stack repo on M5 is `~/Documents/ws/mlx_local_stack`. Sync the new `benchmark/bench/` code there (rsync avoids depending on a pushed remote):
+The stack repo on M5 is `$REMOTE_REPO`. Sync the new `benchmark/bench/` code there (rsync avoids depending on a pushed remote):
 
 ```bash
-rsync -av --delete benchmark/bench/ $REMOTE_HOST:~/Documents/ws/mlx_local_stack/benchmark/bench/
+rsync -av --delete benchmark/bench/ $REMOTE_HOST:$REMOTE_REPO/benchmark/bench/
 ```
 
 - [ ] **Step 2: Ensure the server is up with the model and the pool cap active**
@@ -781,14 +781,14 @@ rsync -av --delete benchmark/bench/ $REMOTE_HOST:~/Documents/ws/mlx_local_stack/
 On M5, start the stack (or confirm it's running) and confirm the auto-derived `mx.set_cache_limit` is applied (the load-bearing cap, mlx-vlm `cli.py`):
 
 ```bash
-ssh $REMOTE_HOST 'cd ~/Documents/ws/mlx_local_stack && grep -i "cache.limit\|set_cache_limit\|cache_limit_gb" logs/main_model.log | tail -5'
+ssh $REMOTE_HOST 'cd $REMOTE_REPO && grep -i "cache.limit\|set_cache_limit\|cache_limit_gb" logs/main_model.log | tail -5'
 ```
 Expected: a line showing the derived cache limit was set at startup. If absent, start the stack first (`./runserver.sh` / the `/mlx` flow) and re-check.
 
 - [ ] **Step 3: Run the capacity ladder on the real model**
 
 ```bash
-ssh $REMOTE_HOST 'cd ~/Documents/ws/mlx_local_stack/benchmark && uv run python -m bench.run_capacity --model Qwen3.6-27B-UD-MLX-6bit'
+ssh $REMOTE_HOST 'cd $REMOTE_REPO/benchmark && uv run python -m bench.run_capacity --model Qwen3.6-27B-UD-MLX-6bit'
 ```
 Expected: per-rung lines for 160K→256K with `footprint`, `acc`, `prefill`/`decode` tok/s, `fits`; then a final `GATE_PASS=...` line. (Each 256K prefill is minutes — the full ladder is tens of minutes. Consider running under `nohup`/background.)
 
@@ -797,7 +797,7 @@ Expected: per-rung lines for 160K→256K with `footprint`, `acc`, `prefill`/`dec
 Read the result and write the finding into the program record:
 
 ```bash
-ssh $REMOTE_HOST 'cat ~/Documents/ws/mlx_local_stack/benchmark/results/Qwen3.6-27B-UD-MLX-6bit/capacity_retrieval.json'
+ssh $REMOTE_HOST 'cat $REMOTE_REPO/benchmark/results/Qwen3.6-27B-UD-MLX-6bit/capacity_retrieval.json'
 ```
 Capture: does `capacity_gate_pass` hold (256K footprint ≤ 46GB)? What is `max_fitting_ctx` and `retrieval_effective_ctx`? This **resolves Phase 1's #1 open question** (the 256K fit, previously only extrapolated from 200K). Append the numbers to `docs/sketches/2026-06-19-phase1-candidate-research.md` (or a new results sketch) and commit.
 
