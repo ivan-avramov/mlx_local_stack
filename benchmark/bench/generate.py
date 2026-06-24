@@ -45,6 +45,31 @@ def _append(path: Path, row: dict) -> None:
         f.write(json.dumps(row) + "\n")
 
 
+def _conv_row(p, params):
+    return {"finish_reason": p.get("finish_reason"),
+            "completion_tokens": p.get("completion_tokens"),
+            "thinking_budget": params.get("thinking_budget")}
+
+
+def probe_with_recovery(model, messages, params, *, probe_fn, restart_fn=None, preload_fn=None):
+    """Probe once; if it looped/truncated AND restart_fn is given, restart the router and
+    re-probe ONCE. Returns (probe_result, recovery):
+      None            -> converged (or N/A); no restart needed
+      'recovered'     -> looped, then converged after a fresh router => stale-router state
+      'loop_persisted'-> looped AGAIN on a fresh router => genuine quant/model loop
+    Auto-distinguishes the two root causes (stale router vs quant) without a human in loop."""
+    p = probe_fn(model, messages, params)
+    if restart_fn is None or convergence.is_converged(_conv_row(p, params)) is not False:
+        return p, None
+    restart_fn()
+    if preload_fn is not None:
+        preload_fn(model)
+    p2 = probe_fn(model, messages, params)
+    recovery = "recovered" if convergence.is_converged(_conv_row(p2, params)) is not False \
+        else "loop_persisted"
+    return p2, recovery
+
+
 def build_queue(models, benches, limits, seed, order="roundrobin"):
     """order='roundrobin' (default): item-major — every model gets item i of each bench
     before any model gets item i+1, so any stopping prefix is a balanced comparison.
@@ -86,7 +111,7 @@ def _fmt_eta(seconds: float) -> str:
 
 
 def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overrides=None,
-        order="roundrobin"):
+        order="roundrobin", restart_fn=None):
     overrides = overrides or {}  # global param overrides on top of each model's config params
     queue, counts = build_queue(models, benches, limits, seed, order=order)
     total = sum(counts.values()) * len(models)
@@ -95,6 +120,17 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
         return
     print(f"[generate] {len(queue)} items remaining of {total} "
           f"({len(models)} models x {benches}). chunk={chunk_minutes}min, runway={chunks}.", flush=True)
+
+    # Provenance: stamp every (model, bench) with its exact config (box, code SHAs, quant
+    # effective-bits, KV config, sampling) so results are never silently cross-compared.
+    from . import provenance  # lazy (provenance imports generate)
+    for m, b, _ in queue:
+        mp = result_path(m, b).with_suffix(".manifest.json")
+        if not mp.exists():
+            try:
+                provenance.write(m, b)
+            except Exception as e:  # noqa: BLE001 — never block a run on provenance
+                print(f"  [provenance] skipped {m}/{b}: {type(e).__name__}: {str(e)[:60]}", flush=True)
 
     per_item = {}                       # model -> list of per-item seconds (rolling)
     cur_model = None
@@ -113,8 +149,12 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
             try:
                 params = model_params.params_for(model)
                 params.update(overrides)
-                p = client.probe(model, benchmarks.build_messages(b, it), params)
-                row = {"id": it["id"], "bench": b, "model": model,
+                p, recovery = probe_with_recovery(
+                    model, benchmarks.build_messages(b, it), params,
+                    probe_fn=client.probe, restart_fn=restart_fn, preload_fn=client.preload)
+                if recovery:
+                    print(f"  [loop-recovery] {model}/{b}/{it['id']}: {recovery}", flush=True)
+                row = {"id": it["id"], "bench": b, "model": model, "recovery": recovery,
                        "answer_gold": it.get("answer"), "options": it.get("options"),
                        "content": client.strip_thinking(p["content"]),
                        "completion_tokens": p["completion_tokens"], "prompt_tokens": p["prompt_tokens"],

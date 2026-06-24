@@ -23,6 +23,33 @@ CANARY = (
 )
 
 
+def restart_router(base: str = "http://localhost:8000", wait_s: int = 90) -> bool:
+    """Force a fresh local router: kill mlx procs, relaunch mlx-serve, wait for health.
+    Used as generate.run's restart_fn for auto-restart-on-loop. Returns True if healthy.
+    Runs from repo root (the recipe sources ./.env and reads main_models.yaml)."""
+    import subprocess
+    import time
+    import urllib.request
+    for pat in ("mlx-serve", "mlx_vlm.server"):
+        subprocess.run(["pkill", "-9", "-f", pat], stderr=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL)
+    time.sleep(3)
+    recipe = ("set -a; . ./.env 2>/dev/null || true; set +a; "
+              "MLX_SERVE_CONFIG=main_models.yaml nohup uv run mlx-serve start "
+              ">>logs/main_model.log 2>&1 </dev/null &")
+    subprocess.Popen(["bash", "-lc", recipe])
+    deadline = time.time() + wait_s
+    while time.time() < deadline:
+        time.sleep(3)
+        try:
+            with urllib.request.urlopen(base + "/health", timeout=4) as r:
+                if b"ok" in r.read():
+                    return True
+        except Exception:  # noqa: BLE001
+            pass
+    return False
+
+
 def run_canary(model: str) -> bool:
     client.preload(model)
     params = model_params.params_for(model)
