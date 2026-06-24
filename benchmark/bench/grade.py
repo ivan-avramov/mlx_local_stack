@@ -10,7 +10,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import benchmarks, extract, generate
+from . import benchmarks, convergence, extract, generate
 
 
 def _rows(model, bench):
@@ -120,10 +120,25 @@ def _lcb_eval_inputs(rows, sample_by_id):
     return samples_list, generations_list, ids
 
 
+def _lcb_by_difficulty(ids, diff_by_id, detail_pass):
+    """Group per-problem pass@1 (0-1, index-keyed as in metrics['detail']['pass@1'],
+    index-aligned with ids) by the problem's Easy/Medium/Hard difficulty. LCB is calibrated
+    across calibers, so the per-difficulty breakdown — not the overall number — is what
+    separates clustered mid-tier / quantized candidates. Returns
+    {DIFFICULTY: {'n': N, 'pass@1': mean}}."""
+    from collections import defaultdict
+    buckets = defaultdict(list)
+    for idx, frac in detail_pass.items():
+        i = int(idx)
+        qid = ids[i] if 0 <= i < len(ids) else None
+        buckets[diff_by_id.get(qid, "UNKNOWN")].append(frac)
+    return {d: {"n": len(v), "pass@1": sum(v) / len(v)} for d, v in buckets.items()}
+
+
 def grade_lcb(name, model):
     """Grade LiveCodeBench via the official lcb_runner executor (lazy, graceful-degrade).
     Re-loads the PINNED release to recover per-problem test cases, runs codegen_metrics
-    on the saved completions, and reports pass@1 normalized to a 0–1 fraction."""
+    on the saved completions, and reports pass@1 (0–1) overall AND per difficulty."""
     rows = [r for r in _rows(model, name) if not r.get("error")]
     if not rows:
         return {"benchmark": name, "model": model, "n": 0, "acc": None, "note": "no completions"}
@@ -136,10 +151,12 @@ def grade_lcb(name, model):
     try:
         problems = load_code_generation_dataset(release_version=benchmarks.LCB_RELEASE)
         sample_by_id = {}
+        diff_by_id = {}
         for p in problems:
             qid = getattr(p, "question_id", None)
             if qid is not None:
                 sample_by_id[qid] = p.get_evaluation_sample()["input_output"]
+                diff_by_id[qid] = str(getattr(p, "difficulty", "")).split(".")[-1].upper()
     except Exception as e:  # noqa: BLE001 — dataset/accessor drift on the installed version
         return {"benchmark": name, "model": model, "n": len(rows), "acc": None,
                 "note": f"lcb dataset/sample load failed ({type(e).__name__}: {str(e)[:80]})"}
@@ -151,8 +168,12 @@ def grade_lcb(name, model):
                                                k_list=[1], num_process_evaluate=8, timeout=6)
     pass1 = metrics.get("pass@1")
     acc = (pass1 / 100.0 if (pass1 is not None and pass1 > 1.0) else pass1)
+    # Per-difficulty pass@1 (detail values are per-problem 0-1 fractions, index-aligned).
+    detail = (metrics.get("detail") or {}).get("pass@1") or {}
+    by_difficulty = _lcb_by_difficulty(ids, diff_by_id, detail)
     return {"benchmark": name, "model": model, "n": len(samples_list), "acc": acc,
             "pass@1": pass1, "release": benchmarks.LCB_RELEASE,
+            "by_difficulty": by_difficulty,
             "matched": len(ids), "total_rows": len(rows)}
 
 
@@ -235,14 +256,22 @@ def grade_ifeval(name, model):
 def grade(name, model):
     kind = benchmarks.SPECS[name]["kind"]
     if kind == "reasoning":
-        return grade_reasoning(name, model)
-    if name in ("humanevalplus", "mbppplus"):
-        return grade_evalplus(name, model)
-    if name == "livecodebench":
-        return grade_lcb(name, model)
-    if name == "ifeval":
-        return grade_ifeval(name, model)
-    raise ValueError(name)
+        score = grade_reasoning(name, model)
+    elif name in ("humanevalplus", "mbppplus"):
+        score = grade_evalplus(name, model)
+    elif name == "livecodebench":
+        score = grade_lcb(name, model)
+    elif name == "ifeval":
+        score = grade_ifeval(name, model)
+    else:
+        raise ValueError(name)
+    # Convergence guard: attach per-run convergence audit. A run with any looped/truncated
+    # item is INVALID — those items must not be silently scored (stale router? quant loop?).
+    audit = convergence.audit(_rows(model, name))
+    score["convergence_rate"] = audit["convergence_rate"]
+    score["loop_ids"] = audit["loop_ids"]
+    score["valid"] = audit["valid"]
+    return score
 
 
 def grade_all(models, benches):

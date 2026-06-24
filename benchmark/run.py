@@ -98,13 +98,29 @@ def cmd_generate(args):
 def cmd_grade(args):
     models, benches, limits = _resolve(args)
     scores = grade.grade_all(models, benches)
-    print(f"\n{'model':<34}{'benchmark':<15}{'n':>5}{'acc':>9}{'err':>5}{'sat%':>7}")
-    print("-" * 79)
+    print(f"\n{'model':<34}{'benchmark':<15}{'n':>5}{'acc':>9}{'err':>5}{'conv%':>7}  valid")
+    print("-" * 86)
+    invalid = []
     for s in scores:
         acc = f"{s['acc']*100:.1f}%" if s.get("acc") is not None else (s.get("note", "—")[:30])
-        sat = f"{s['budget_saturation']*100:.0f}" if s.get("budget_saturation") is not None else "—"
-        print(f"{s['model']:<34}{s['benchmark']:<15}{s.get('n', 0):>5}{acc:>9}{s.get('errors', 0):>5}{sat:>7}")
-    print("\nsat% = share of items that used ~all the thinking budget (didn't self-converge)")
+        cr = s.get("convergence_rate")
+        conv = f"{cr*100:.0f}" if cr is not None else "—"
+        ok = s.get("valid")
+        flag = "OK" if ok else ("INVALID" if ok is False else "—")
+        if ok is False:
+            invalid.append(s)
+        print(f"{s['model']:<34}{s['benchmark']:<15}{s.get('n', 0):>5}{acc:>9}{s.get('errors', 0):>5}{conv:>7}  {flag}")
+        bd = s.get("by_difficulty")
+        if bd:
+            cells = "  ".join(f"{d}:{v['pass@1']*100:.0f}%(n={v['n']})"
+                               for d, v in sorted(bd.items()))
+            print(f"      by difficulty: {cells}")
+    print("\nconv% = share of items that CONVERGED (finish=stop AND tokens < thinking_budget)")
+    if invalid:
+        print("\n⚠️  INVALID runs — looped/truncated items present (NOT a clean result; investigate "
+              "stale router or quant loop, do NOT report acc):")
+        for s in invalid:
+            print(f"   {s['model']} / {s['benchmark']}: loops {s.get('loop_ids')}")
     print("Full scores -> benchmark/results/scores.json")
 
 

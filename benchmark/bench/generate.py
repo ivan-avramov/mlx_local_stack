@@ -10,7 +10,7 @@ import json
 import time
 from pathlib import Path
 
-from . import benchmarks, client, model_params
+from . import benchmarks, client, convergence, model_params
 
 RESULTS = Path("benchmark/results")
 
@@ -121,6 +121,10 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                        "decode_tps": p["decode_tps"], "peak_mem_gb": p["peak_mem_gb"],
                        "finish_reason": p["finish_reason"], "wall_s": p["wall_s"],
                        "temperature": params.get("temperature"), "thinking_budget": params.get("thinking_budget")}
+                # Convergence guard: a thinking-budget / max_tokens hit is NOT convergence
+                # even though finish_reason can be "stop". Recorded per item; a run with any
+                # non-converged item is flagged INVALID at grade time (never silently scored).
+                row["converged"] = convergence.is_converged(row)
             except Exception as e:  # noqa: BLE001 — network/OOM; record & continue
                 row = {"id": it["id"], "bench": b, "model": model, "error": str(e)[:200]}
             _append(result_path(model, b), row)
