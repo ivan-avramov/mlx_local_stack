@@ -96,8 +96,10 @@ def cmd_generate(args):
         from bench import preflight
         restart_fn = preflight.restart_router
         print("[generate] auto-restart-on-loop ENABLED (looped item -> fresh router + 1 retry)")
+    print(f"[generate] sampling profile = {args.sampling_profile}")
     generate.run(models, benches, limits, seed=args.seed, chunk_minutes=args.chunk_minutes,
-                 chunks=chunks, overrides=overrides, order=args.order, restart_fn=restart_fn)
+                 chunks=chunks, overrides=overrides, order=args.order, restart_fn=restart_fn,
+                 sampling_profile=args.sampling_profile)
 
 
 def cmd_grade(args):
@@ -176,6 +178,10 @@ def main():
     sp.add_argument("--auto-restart-on-loop", dest="auto_restart_on_loop", action="store_true",
                     help="on a looped/truncated item, restart the router + re-probe once; "
                          "classify recovered (stale router) vs loop_persisted (genuine quant loop)")
+    sp.add_argument("--sampling-profile", dest="sampling_profile",
+                    choices=["production", "official"], default="production",
+                    help="production = daily-driver opencode.json config (default); "
+                         "official = each family's published recommended sampling (quality eval)")
 
     sp = sub.add_parser("grade"); common(sp); sp.set_defaults(func=cmd_grade)
     sp = sub.add_parser("status"); common(sp); sp.set_defaults(func=cmd_status)

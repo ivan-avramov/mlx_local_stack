@@ -83,7 +83,8 @@ def _resolve_snapshot(hf_path):
     return None
 
 
-def gather(model: str, registry_path: str = "main_models.yaml") -> dict:
+def gather(model: str, registry_path: str = "main_models.yaml",
+           profile: str = "production") -> dict:
     """Assemble the real provenance manifest for ``model`` on this box."""
     kv = registry_kv(model, registry_path) or {}
     quant = {}
@@ -96,16 +97,19 @@ def gather(model: str, registry_path: str = "main_models.yaml") -> dict:
         except Exception:  # noqa: BLE001 — never block a run on provenance
             quant = {"note": "quant_info failed"}
     try:
-        sampling = model_params.params_for(model)
+        sampling = model_params.params_for(model, profile=profile)
     except Exception:  # noqa: BLE001
         sampling = {}
-    return build_manifest(model=model, box=_box(), ts=int(time.time()),
-                          git_shas=_git_shas(), kv=kv, quant=quant, sampling=sampling)
+    man = build_manifest(model=model, box=_box(), ts=int(time.time()),
+                         git_shas=_git_shas(), kv=kv, quant=quant, sampling=sampling)
+    man["sampling_profile"] = profile
+    return man
 
 
-def write(model: str, bench: str, registry_path: str = "main_models.yaml") -> dict:
+def write(model: str, bench: str, registry_path: str = "main_models.yaml",
+          profile: str = "production") -> dict:
     """Gather + write results/<model>/<bench>.manifest.json. Returns the manifest."""
-    man = gather(model, registry_path)
+    man = gather(model, registry_path, profile=profile)
     path = generate.result_path(model, bench).with_suffix(".manifest.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(man, indent=2))

@@ -28,6 +28,31 @@ QWEN = {
     "thinking_budget": 49152,
 }
 
+# OFFICIAL recommended sampling (quality-first eval profile) — diverges from production:
+# gemma-4 (Google): temp 1.0, rep_pen 1.0, "high temp best for coding".
+# Qwen3.6 (model card, coding): temp 0.6, min_p 0.0, presence_penalty 0.0.
+# thinking_budget kept generous (a hard cap = headroom; convergence happens well below it).
+GEMMA_OFFICIAL = {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 64,
+    "repetition_penalty": 1.0,
+    "max_tokens": 32768,
+    "enable_thinking": True,
+    "thinking_budget": 16384,
+}
+
+QWEN_OFFICIAL = {
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "top_k": 20,
+    "min_p": 0.0,
+    "presence_penalty": 0.0,
+    "max_tokens": 81920,
+    "enable_thinking": True,
+    "thinking_budget": 49152,
+}
+
 # Served-model name (main_models.yaml / GET /v1/models) -> param set.
 PARAMS = {
     "gemma-4-26b-a4b-it-8bit": GEMMA,
@@ -39,11 +64,25 @@ PARAMS = {
     "Qwen3.6-27B-UD-MLX-6bit": QWEN,
 }
 
+_PROFILES = {
+    "gemma": {"production": GEMMA, "official": GEMMA_OFFICIAL},
+    "qwen": {"production": QWEN, "official": QWEN_OFFICIAL},
+}
 
-def params_for(model: str) -> dict:
-    """Return a copy of the model's generation params. New Gemma-family models default
-    to the Gemma set; add non-Gemma models to PARAMS explicitly."""
+
+def _family(model: str) -> str:
     base = PARAMS.get(model)
-    if base is None:
-        base = QWEN if "qwen" in model.lower() else GEMMA
-    return dict(base)
+    if base is QWEN:
+        return "qwen"
+    if base is GEMMA:
+        return "gemma"
+    return "qwen" if "qwen" in model.lower() else "gemma"
+
+
+def params_for(model: str, profile: str = "production") -> dict:
+    """Return a copy of the model's generation params.
+
+    profile='production' (default) = the daily-driver opencode.json config.
+    profile='official' = the family's published recommended sampling (quality-first eval).
+    New Gemma-family models default to the Gemma set; non-Gemma fall back to Qwen by name."""
+    return dict(_PROFILES[_family(model)][profile])

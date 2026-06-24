@@ -111,7 +111,7 @@ def _fmt_eta(seconds: float) -> str:
 
 
 def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overrides=None,
-        order="roundrobin", restart_fn=None):
+        order="roundrobin", restart_fn=None, sampling_profile="production"):
     overrides = overrides or {}  # global param overrides on top of each model's config params
     queue, counts = build_queue(models, benches, limits, seed, order=order)
     total = sum(counts.values()) * len(models)
@@ -128,7 +128,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
         mp = result_path(m, b).with_suffix(".manifest.json")
         if not mp.exists():
             try:
-                provenance.write(m, b)
+                provenance.write(m, b, profile=sampling_profile)
             except Exception as e:  # noqa: BLE001 — never block a run on provenance
                 print(f"  [provenance] skipped {m}/{b}: {type(e).__name__}: {str(e)[:60]}", flush=True)
 
@@ -147,7 +147,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                 cur_model = model
             t0 = time.perf_counter()
             try:
-                params = model_params.params_for(model)
+                params = model_params.params_for(model, profile=sampling_profile)
                 params.update(overrides)
                 p, recovery = probe_with_recovery(
                     model, benchmarks.build_messages(b, it), params,
