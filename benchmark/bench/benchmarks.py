@@ -175,6 +175,41 @@ _REASON_SUFFIX = {
     "math500": "\n\nSolve step by step. Put your final answer in \\boxed{}.",
 }
 
+# Official LiveCodeBench code-generation prompt, transcribed verbatim from
+# lcb_runner/prompts/code_generation.py (SYSTEM_MESSAGE_GENERIC +
+# get_generic_question_template_answer). Qwen3.6 was officially evaluated with this template;
+# its thinking-mode variant intentionally DROPS the "return only the program" restriction
+# (our old prompt's "no explanation after it" made thinking models diverge). We reproduce the
+# strings here rather than import lcb_runner so generation stays free of that heavy dependency
+# (the prompt-only cache means generation never loads it). AtCoder/Codeforces problems (no
+# starter code) get the explicit stdin framing; LeetCode functional problems get the starter
+# code. The code extractor takes the last ```python fence, so trailing prose is fine.
+_LCB_SYSTEM = ("You are an expert Python programmer. You will be given a question (problem "
+               "specification) and will generate a correct Python program that matches the "
+               "specification and passes all tests.")
+_LCB_FMT_WITH_STARTER = ("You will use the following starter code to write the solution to "
+                         "the problem and enclose your code within delimiters.")
+_LCB_FMT_STDIN = ("Read the inputs from stdin solve the problem and write the answer to "
+                  "stdout (do not directly test on the sample inputs). Enclose your code "
+                  "within delimiters as follows. Ensure that when the python program runs, "
+                  "it reads the inputs, runs the algorithm and writes output to STDOUT.")
+
+
+def _lcb_messages(item: dict) -> list:
+    # Raw question/starter from meta (the prompt-only cache preserves both); fall back to
+    # item["prompt"] (treated as a stdin problem) for hand-built smoke items without meta.
+    meta = item.get("meta") or {}
+    question = meta.get("question_content") or item["prompt"]
+    starter = meta.get("starter_code") or ""
+    body = f"### Question:\n{question}\n\n"
+    if starter:
+        body += f"### Format: {_LCB_FMT_WITH_STARTER}\n```python\n{starter}\n```\n\n"
+    else:
+        body += f"### Format: {_LCB_FMT_STDIN}\n```python\n# YOUR CODE HERE\n```\n\n"
+    body += "### Answer: (use the provided format with backticks)\n\n"
+    return [{"role": "system", "content": _LCB_SYSTEM},
+            {"role": "user", "content": body}]
+
 
 def build_messages(name: str, item: dict) -> list:
     if name in ("aime", "math500"):
@@ -184,7 +219,9 @@ def build_messages(name: str, item: dict) -> list:
         body = (f"{item['prompt']}\n\n{opts}\n\nThink carefully, then give the letter of the "
                 f"correct option in \\boxed{{}}.")
         return [{"role": "user", "content": body}]
-    if name in ("humanevalplus", "mbppplus", "livecodebench"):
+    if name == "livecodebench":
+        return _lcb_messages(item)
+    if name in ("humanevalplus", "mbppplus"):
         return [{"role": "user", "content":
                  "Complete the following task. Return the complete solution as a single "
                  "self-contained ```python code block, no explanation after it.\n\n" + item["prompt"]}]
