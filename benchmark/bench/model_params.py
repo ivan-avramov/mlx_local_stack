@@ -51,9 +51,10 @@ QWEN_OFFICIAL = {
     # Qwen3.6's documented rec for HARD programming problems is ~81,920 generation tokens, and
     # our investigation confirmed hard LCB items need ~80K to genuinely converge. The budget
     # must MEET that (not the daily-driver 49152) or the convergence guard falsely flags
-    # genuine-but-long reasoning as a loop (ct >= thinking_budget). max_tokens exceeds the
-    # budget so the answer still fits AFTER an ~80K thinking trace.
-    "max_tokens": 98304,
+    # genuine-but-long reasoning as a loop (ct >= thinking_budget). The harness clamps
+    # thinking_budget to 0.8*max_tokens, so max_tokens=102400 keeps the 81920 budget at face
+    # value (98304 would shrink it to 78643) while still leaving ~20K for the answer.
+    "max_tokens": 102400,
     "enable_thinking": True,
     "thinking_budget": 81920,
 }

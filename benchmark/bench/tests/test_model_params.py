@@ -43,6 +43,10 @@ def test_official_qwen_budget_matches_documented_hard_problem_rec():
     q = MP.params_for("Qwen3.6-27B-MLX-8bit", profile="official")
     assert q["thinking_budget"] >= 81920
     assert q["max_tokens"] > q["thinking_budget"]
+    # The harness clamps thinking_budget to 0.8*max_tokens (room for the answer after the
+    # forced close). For the budget to be enforced at face value (not silently shrunk),
+    # max_tokens must be >= thinking_budget / 0.8.
+    assert q["max_tokens"] >= q["thinking_budget"] / 0.8
 
 
 def test_production_qwen_budget_unchanged():

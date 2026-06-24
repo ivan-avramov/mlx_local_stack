@@ -111,8 +111,13 @@ def _fmt_eta(seconds: float) -> str:
 
 
 def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overrides=None,
-        order="roundrobin", restart_fn=None, sampling_profile="production"):
+        order="roundrobin", restart_fn=None, sampling_profile="production", probe_timeout=3600):
     overrides = overrides or {}  # global param overrides on top of each model's config params
+    # Per-probe HTTP timeout, bound via a closure so probe_with_recovery's (model, msg, params)
+    # call signature is unchanged. The default 3600s is too short for a slow dense model whose
+    # thinking budget implies >60min of generation (e.g. Qwen3.6-27B @ ~13.5 tok/s, 80K budget).
+    def _probe(m, msg, pa):
+        return client.probe(m, msg, pa, timeout=probe_timeout)
     queue, counts = build_queue(models, benches, limits, seed, order=order)
     total = sum(counts.values()) * len(models)
     if not queue:
@@ -151,7 +156,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                 params.update(overrides)
                 p, recovery = probe_with_recovery(
                     model, benchmarks.build_messages(b, it), params,
-                    probe_fn=client.probe, restart_fn=restart_fn, preload_fn=client.preload)
+                    probe_fn=_probe, restart_fn=restart_fn, preload_fn=client.preload)
                 if recovery:
                     print(f"  [loop-recovery] {model}/{b}/{it['id']}: {recovery}", flush=True)
                 row = {"id": it["id"], "bench": b, "model": model, "recovery": recovery,
