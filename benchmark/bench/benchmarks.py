@@ -94,17 +94,45 @@ def _load_evalplus(which, limit, seed):
     return _subsample(items, limit, seed)
 
 
+def _lcb_prompt_cache_path():
+    """Machine-local prompt-only cache (never committed). Lets generation skip loading the
+    full LCB dataset (880 problems + large private test cases ~10GB) — only prompts are
+    needed to generate; test cases load at grade time."""
+    import os
+    return os.path.expanduser("~/.cache/livecodebench/lcb_%s_prompts.json" % LCB_RELEASE)
+
+
+def _lcb_item(p):
+    qc = p.question_content if hasattr(p, "question_content") else str(p)
+    sc = getattr(p, "starter_code", "") or ""
+    prompt = qc + ("\n\nStarter code:\n```python\n" + sc + "\n```" if sc else "")
+    plat = getattr(p, "platform", None)
+    return {"id": getattr(p, "question_id", None), "prompt": prompt,
+            "meta": {"platform": str(plat) if plat is not None else None,
+                     "question_content": qc, "starter_code": sc}}
+
+
 def _load_lcb(limit, seed):
     # Pinned to LCB_RELEASE for contamination control (see module constant + README).
-    from lcb_runner.benchmarks.code_generation import load_code_generation_dataset
-    probs = load_code_generation_dataset(release_version=LCB_RELEASE)
-    items = []
-    for p in probs:
-        prompt = p.question_content if hasattr(p, "question_content") else str(p)
-        if getattr(p, "starter_code", ""):
-            prompt += "\n\nStarter code:\n```python\n" + p.starter_code + "\n```"
-        items.append({"id": getattr(p, "question_id", None), "prompt": prompt,
-                      "meta": {"platform": getattr(p, "platform", None)}})
+    # Prompt-only cache avoids holding the full dataset (incl. private test cases) in RAM
+    # alongside the model during generation — the dataset (test cases) is only loaded at
+    # grade time. Build the cache once on a miss, then every generation run is light.
+    import json
+    import os
+    cache = _lcb_prompt_cache_path()
+    if os.path.exists(cache):
+        with open(cache) as f:
+            items = json.load(f)
+    else:
+        from lcb_runner.benchmarks.code_generation import load_code_generation_dataset
+        probs = load_code_generation_dataset(release_version=LCB_RELEASE)
+        items = [_lcb_item(p) for p in probs]
+        del probs
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        tmp = cache + ".tmp"          # atomic write: a failed dump never leaves a corrupt cache
+        with open(tmp, "w") as f:
+            json.dump(items, f)
+        os.replace(tmp, cache)
     return _subsample(items, limit, seed)
 
 

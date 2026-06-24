@@ -13,8 +13,9 @@ def test_lcb_release_is_pinned():
     assert B.LCB_RELEASE.startswith("release_")
 
 
-def test_load_lcb_uses_pinned_release(monkeypatch):
-    """_load_lcb passes the pinned release to the dataset loader (not 'release_latest')."""
+def test_load_lcb_uses_pinned_release(monkeypatch, tmp_path):
+    """On a cache MISS, _load_lcb passes the pinned release to the dataset loader (the
+    prompt cache is per-release via its filename, so contamination control is preserved)."""
     captured = {}
 
     fake_mod = types.ModuleType("lcb_runner.benchmarks.code_generation")
@@ -27,6 +28,8 @@ def test_load_lcb_uses_pinned_release(monkeypatch):
     monkeypatch.setitem(sys.modules, "lcb_runner", types.ModuleType("lcb_runner"))
     monkeypatch.setitem(sys.modules, "lcb_runner.benchmarks", types.ModuleType("lcb_runner.benchmarks"))
     monkeypatch.setitem(sys.modules, "lcb_runner.benchmarks.code_generation", fake_mod)
+    # Force a cache miss so the build path (which calls the loader) runs.
+    monkeypatch.setattr(B, "_lcb_prompt_cache_path", lambda: str(tmp_path / "miss.json"))
 
     B._load_lcb(limit=None, seed=0)
     assert captured["release"] == B.LCB_RELEASE
