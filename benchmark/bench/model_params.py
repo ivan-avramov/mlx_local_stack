@@ -48,9 +48,14 @@ QWEN_OFFICIAL = {
     "top_k": 20,
     "min_p": 0.0,
     "presence_penalty": 0.0,
-    "max_tokens": 81920,
+    # Qwen3.6's documented rec for HARD programming problems is ~81,920 generation tokens, and
+    # our investigation confirmed hard LCB items need ~80K to genuinely converge. The budget
+    # must MEET that (not the daily-driver 49152) or the convergence guard falsely flags
+    # genuine-but-long reasoning as a loop (ct >= thinking_budget). max_tokens exceeds the
+    # budget so the answer still fits AFTER an ~80K thinking trace.
+    "max_tokens": 98304,
     "enable_thinking": True,
-    "thinking_budget": 49152,
+    "thinking_budget": 81920,
 }
 
 # Served-model name (main_models.yaml / GET /v1/models) -> param set.

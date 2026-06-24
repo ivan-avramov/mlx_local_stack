@@ -31,3 +31,22 @@ def test_official_profile_qwen_coding():
     assert q["min_p"] == 0.0
     assert q["presence_penalty"] == 0.0
     assert q["top_k"] == 20
+
+
+def test_official_qwen_budget_matches_documented_hard_problem_rec():
+    # Qwen3.6's official rec for HARD programming problems is ~81,920 generation tokens; our
+    # investigation confirmed hard LCB items need ~80K to genuinely converge. The convergence
+    # guard flags completion_tokens >= thinking_budget as a non-convergence (loop). If the
+    # budget is set below the documented requirement, genuine-but-long reasoning is FALSELY
+    # flagged a loop. So the official thinking_budget must be >= 81920, and max_tokens must
+    # exceed it (room for the answer AFTER thinking, else a converged trace truncates).
+    q = MP.params_for("Qwen3.6-27B-MLX-8bit", profile="official")
+    assert q["thinking_budget"] >= 81920
+    assert q["max_tokens"] > q["thinking_budget"]
+
+
+def test_production_qwen_budget_unchanged():
+    # Daily-driver config is NOT touched by the eval correction.
+    q = MP.params_for("Qwen3.6-27B-UD-MLX-6bit", profile="production")
+    assert q["thinking_budget"] == 49152
+    assert q["max_tokens"] == 81920
