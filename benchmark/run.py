@@ -98,9 +98,12 @@ def cmd_generate(args):
         print("[generate] auto-restart-on-loop ENABLED (looped item -> fresh router + 1 retry)")
     print(f"[generate] sampling profile = {args.sampling_profile}")
     print(f"[generate] per-probe HTTP timeout = {args.probe_timeout}s")
+    if args.clean_stale:
+        print("[generate] --clean-stale ENABLED (delete + regenerate any results whose config differs)")
     generate.run(models, benches, limits, seed=args.seed, chunk_minutes=args.chunk_minutes,
                  chunks=chunks, overrides=overrides, order=args.order, restart_fn=restart_fn,
-                 sampling_profile=args.sampling_profile, probe_timeout=args.probe_timeout)
+                 sampling_profile=args.sampling_profile, probe_timeout=args.probe_timeout,
+                 clean_stale=args.clean_stale)
 
 
 def cmd_grade(args):
@@ -187,6 +190,10 @@ def main():
                     help="per-item HTTP timeout (s). Raise for slow dense models whose thinking "
                          "budget implies >60min generation (e.g. Qwen3.6-27B @ ~13.5 tok/s, 80K "
                          "budget ~100min → use ~9000). Default 3600.")
+    sp.add_argument("--clean-stale", dest="clean_stale", action="store_true",
+                    help="delete + regenerate any existing results whose recorded config "
+                         "(sampling/profile/KV) differs from this run, instead of resuming on "
+                         "top of them (which would mix provenance). Default: warn + keep.")
 
     sp = sub.add_parser("grade"); common(sp); sp.set_defaults(func=cmd_grade)
     sp = sub.add_parser("status"); common(sp); sp.set_defaults(func=cmd_status)

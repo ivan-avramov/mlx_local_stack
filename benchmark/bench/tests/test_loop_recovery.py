@@ -1,15 +1,21 @@
-"""Tests for generate.probe_with_recovery — auto-restart-on-loop.
+"""Tests for generate.probe_with_recovery — auto-restart-on-loop, repsig-gated.
 
-If an item loops/truncates mid-run it may be the creeping stale-router state. The harness
-restarts the router + re-probes ONCE: if it now converges the loop was stale-router state
-(``recovered``); if it loops AGAIN on a fresh router it's a genuine quant/model loop
-(``loop_persisted``). This auto-distinguishes the two root causes we found.
+A non-converged item is only worth a router-restart retry if its thinking trace looks like a
+DEGENERATE repetition loop (which a fresh router may clear — the stale-router cause). A clean
+budget-hit (genuine long reasoning that didn't finish) won't be helped by a restart and would
+just double the cost on a slow model, so it's flagged 'genuine_nonconvergence' and NOT retried.
+If a loop is retried: converges on the fresh router -> 'recovered' (stale-router state);
+loops again -> 'loop_persisted' (genuine quant/model loop).
 """
 import bench.generate as G
 
+LOOP = "\n".join(["this is the same repeated reasoning line, over and over again"] * 40)
+GENUINE = "\n".join(f"distinct reasoning step number {i}, with its own unique content here"
+                    for i in range(60))
 
-def _p(finish, ct):
-    return {"finish_reason": finish, "completion_tokens": ct, "content": "x"}
+
+def _p(finish, ct, reasoning=""):
+    return {"finish_reason": finish, "completion_tokens": ct, "content": "x", "reasoning": reasoning}
 
 
 def test_converged_first_no_restart():
@@ -29,7 +35,7 @@ def test_converged_first_no_restart():
 
 
 def test_loop_then_recovered():
-    seq = iter([_p("stop", 17000), _p("stop", 3000)])   # loop, then converge after restart
+    seq = iter([_p("stop", 17000, LOOP), _p("stop", 3000, GENUINE)])  # loop, then converge
     calls = {"restart": 0, "preload": 0}
 
     p, rec = G.probe_with_recovery(
@@ -43,7 +49,7 @@ def test_loop_then_recovered():
 
 
 def test_loop_persists_on_fresh_router():
-    seq = iter([_p("stop", 17000), _p("stop", 16500)])  # loops both times -> genuine
+    seq = iter([_p("stop", 17000, LOOP), _p("stop", 16500, LOOP)])  # loops both times -> genuine
     p, rec = G.probe_with_recovery("m", [], {"thinking_budget": 16384},
                                    probe_fn=lambda *_: next(seq),
                                    restart_fn=lambda: None)
@@ -51,9 +57,26 @@ def test_loop_persists_on_fresh_router():
     assert p["completion_tokens"] == 16500
 
 
+def test_genuine_budget_hit_is_not_retried():
+    # conv=False (ct >= budget) but the trace is genuine long reasoning, not a loop ->
+    # a restart wouldn't help (it'd just burn another ~full generation). Flag, don't retry.
+    calls = {"restart": 0, "probe": 0}
+
+    def probe_fn(m, msg, p):
+        calls["probe"] += 1
+        return _p("stop", 80000, GENUINE)
+
+    p, rec = G.probe_with_recovery("m", [], {"thinking_budget": 16384},
+                                   probe_fn=probe_fn,
+                                   restart_fn=lambda: calls.__setitem__("restart", calls["restart"] + 1))
+    assert rec == "genuine_nonconvergence"
+    assert calls["restart"] == 0 and calls["probe"] == 1   # NOT re-run
+    assert p["completion_tokens"] == 80000
+
+
 def test_no_restart_fn_means_no_recovery():
     p, rec = G.probe_with_recovery("m", [], {"thinking_budget": 16384},
-                                   probe_fn=lambda *_: _p("stop", 17000),
+                                   probe_fn=lambda *_: _p("stop", 17000, LOOP),
                                    restart_fn=None)
     assert rec is None
     assert p["completion_tokens"] == 17000   # looped result returned as-is

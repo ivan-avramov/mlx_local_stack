@@ -13,6 +13,24 @@ so those items are never silently scored as zeros — a loop is a failure to INV
 """
 
 
+def looks_like_loop(text, *, min_lines=20, max_repeat=20, min_unique_ratio=0.6) -> bool:
+    """Heuristic: does a thinking trace look like a DEGENERATE repetition loop (worth a
+    router-restart retry) rather than genuine long reasoning (which a restart won't help)?
+
+    Looks at non-trivial lines (>20 chars). A loop = one line repeats >= max_repeat times AND
+    the unique-line ratio is below min_unique_ratio (BOTH, so a long genuine trace that merely
+    repeats a transitional phrase is not flagged). Needs >= min_lines lines to judge; short or
+    empty traces are not loops. Calibrated on campaign data: gemma loops had max-repeat 34-78
+    with ~44% unique; genuine Qwen traces had max-repeat <=23 with >=84% unique."""
+    import collections
+    lines = [ln.strip() for ln in (text or "").splitlines() if len(ln.strip()) > 20]
+    if len(lines) < min_lines:
+        return False
+    max_rep = max(collections.Counter(lines).values())
+    unique_ratio = len(set(lines)) / len(lines)
+    return max_rep >= max_repeat and unique_ratio < min_unique_ratio
+
+
 def is_converged(row: dict):
     """True/False for a generated item; None when the row isn't a usable generation
     (error, or missing completion_tokens)."""

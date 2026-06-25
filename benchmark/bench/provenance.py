@@ -34,6 +34,41 @@ def registry_kv(model: str, registry_path: str):
     return None
 
 
+# The output-determining slice of a manifest. If any of these differ, existing results were
+# produced under a different distribution and CANNOT be mixed with new ones via resume.
+_FINGERPRINT_SAMPLING = ("temperature", "top_p", "top_k", "min_p", "presence_penalty",
+                         "repetition_penalty", "thinking_budget", "max_tokens", "enable_thinking")
+
+
+def config_fingerprint(manifest):
+    """The comparable slice of a manifest: sampling profile + key sampling params + KV bits.
+    Returns None for a missing manifest (unknown provenance)."""
+    if not manifest:
+        return None
+    s = manifest.get("sampling") or {}
+    return {
+        "sampling_profile": manifest.get("sampling_profile"),
+        "sampling": {k: s.get(k) for k in _FINGERPRINT_SAMPLING},
+        "kv_bits": (manifest.get("kv") or {}).get("kv_bits"),
+    }
+
+
+def is_compatible(existing, current) -> bool:
+    """True iff `existing` results were produced under the same output-determining config as
+    `current`. A missing/unparseable existing manifest is treated as incompatible (unknown
+    provenance must not be silently resumed)."""
+    return existing is not None and config_fingerprint(existing) == config_fingerprint(current)
+
+
+def current_manifest_lite(model: str, profile: str = "production",
+                          registry_path: str = "main_models.yaml") -> dict:
+    """A cheap manifest (sampling + KV only, no quant_info snapshot scan) for the resume
+    compatibility check — same shape config_fingerprint consumes."""
+    return {"sampling_profile": profile,
+            "sampling": model_params.params_for(model, profile=profile),
+            "kv": registry_kv(model, registry_path) or {}}
+
+
 def build_manifest(*, model, box, ts, git_shas, kv, quant, sampling) -> dict:
     """Pure assembly of a provenance record from its parts."""
     return {

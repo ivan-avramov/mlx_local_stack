@@ -61,6 +61,11 @@ def probe_with_recovery(model, messages, params, *, probe_fn, restart_fn=None, p
     p = probe_fn(model, messages, params)
     if restart_fn is None or convergence.is_converged(_conv_row(p, params)) is not False:
         return p, None
+    # Non-converged. A router restart only helps a DEGENERATE loop (the stale-router cause).
+    # A clean budget-hit (genuine long reasoning that didn't finish) won't be helped — retrying
+    # just burns another full generation on a slow model — so flag it and move on.
+    if not convergence.looks_like_loop(p.get("reasoning")):
+        return p, "genuine_nonconvergence"
     restart_fn()
     if preload_fn is not None:
         preload_fn(model)
@@ -68,6 +73,49 @@ def probe_with_recovery(model, messages, params, *, probe_fn, restart_fn=None, p
     recovery = "recovered" if convergence.is_converged(_conv_row(p2, params)) is not False \
         else "loop_persisted"
     return p2, recovery
+
+
+def provenance_precheck(models, benches, profile="production", clean_stale=False):
+    """Guard against the stale-results contamination: an existing results file produced under
+    a DIFFERENT config (sampling/profile/KV) than this run cannot be mixed in via done_ids
+    resume. For each (model, bench) with existing results, compare its manifest to the current
+    config; on mismatch either delete it (clean_stale) so it regenerates fresh, or warn loudly
+    and keep it (default). Compatible (same-config) results are left to resume normally.
+    Returns a list of (model, bench, action) for the affected pairs."""
+    from . import provenance
+    actions = []
+    for m in models:
+        try:
+            cur = provenance.current_manifest_lite(m, profile)
+        except Exception as e:  # noqa: BLE001 — never block a run on the precheck
+            print(f"  [provenance] precheck skipped {m}: {type(e).__name__}: {str(e)[:60]}", flush=True)
+            continue
+        for b in benches:
+            jsonl = result_path(m, b)
+            if not jsonl.exists():
+                continue
+            mp = jsonl.with_suffix(".manifest.json")
+            existing = None
+            if mp.exists():
+                try:
+                    existing = json.loads(mp.read_text())
+                except Exception:  # noqa: BLE001
+                    existing = None
+            if provenance.is_compatible(existing, cur):
+                continue
+            if clean_stale:
+                jsonl.unlink()
+                if mp.exists():
+                    mp.unlink()
+                actions.append((m, b, "cleaned"))
+                print(f"  [provenance] CLEANED stale {m}/{b} (config differs from this run) "
+                      f"— regenerating fresh", flush=True)
+            else:
+                actions.append((m, b, "stale"))
+                print(f"  [provenance] ⚠️  STALE {m}/{b}: existing results were produced under a "
+                      f"DIFFERENT config — resume would MIX provenance. Re-run with --clean-stale "
+                      f"(or delete the file).", flush=True)
+    return actions
 
 
 def build_queue(models, benches, limits, seed, order="roundrobin"):
@@ -111,13 +159,18 @@ def _fmt_eta(seconds: float) -> str:
 
 
 def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overrides=None,
-        order="roundrobin", restart_fn=None, sampling_profile="production", probe_timeout=3600):
+        order="roundrobin", restart_fn=None, sampling_profile="production", probe_timeout=3600,
+        clean_stale=False):
     overrides = overrides or {}  # global param overrides on top of each model's config params
     # Per-probe HTTP timeout, bound via a closure so probe_with_recovery's (model, msg, params)
     # call signature is unchanged. The default 3600s is too short for a slow dense model whose
     # thinking budget implies >60min of generation (e.g. Qwen3.6-27B @ ~13.5 tok/s, 80K budget).
     def _probe(m, msg, pa):
         return client.probe(m, msg, pa, timeout=probe_timeout)
+    # Provenance guard: never resume on top of results produced under a different config
+    # (the stale-results contamination). Runs BEFORE build_queue so cleaned files don't leak
+    # into done_ids. clean_stale deletes mismatched files; default just warns.
+    provenance_precheck(models, benches, profile=sampling_profile, clean_stale=clean_stale)
     queue, counts = build_queue(models, benches, limits, seed, order=order)
     total = sum(counts.values()) * len(models)
     if not queue:
