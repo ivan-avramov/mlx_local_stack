@@ -32,7 +32,9 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Qwen3.6-27B-UD-MLX-6bit-kv16 (dense) | official t0.6 | humanevalplus | light | 10 | 90% (9/10) | 100% | VALID |
 | Qwen3.6-27B-UD-MLX-6bit-kv16 (dense) | official t0.6 | mbppplus | light | 10 | 80% (8/10) | 100% | VALID |
 | Qwen3.6-27B-UD-MLX-6bit-kv16 (dense) | official t0.6 | aime | light | 5 | 80% (4/5) | 80% (1 loop aime25-3) | INVALID |
-| gemma-4-26b-a4b-it-8bit (MoE) | production t0.7 | humanevalplus / mbppplus / aime | light | — | pending (M2) | — | — |
+| gemma-4-26b-a4b-it-8bit (MoE) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
+| gemma-4-26b-a4b-it-8bit (MoE) | production t0.7 | mbppplus | light | 10 | 80% (8/10) | 80% (2 loops) | INVALID |
+| gemma-4-26b-a4b-it-8bit (MoE) | production t0.7 | aime | light | 5 | 40% (2/5) | 0% (all 5 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus / mbppplus / aime | light | — | pending (M5) | — | — |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | official t0.6 | humanevalplus / mbppplus / aime | light | — | pending (M5) | — | — |
 
