@@ -75,18 +75,20 @@ def probe_with_recovery(model, messages, params, *, probe_fn, restart_fn=None, p
     return p2, recovery
 
 
-def provenance_precheck(models, benches, profile="production", clean_stale=False):
+def provenance_precheck(models, benches, profile="production", clean_stale=False, overrides=None):
     """Guard against the stale-results contamination: an existing results file produced under
     a DIFFERENT config (sampling/profile/KV) than this run cannot be mixed in via done_ids
     resume. For each (model, bench) with existing results, compare its manifest to the current
     config; on mismatch either delete it (clean_stale) so it regenerates fresh, or warn loudly
     and keep it (default). Compatible (same-config) results are left to resume normally.
-    Returns a list of (model, bench, action) for the affected pairs."""
+    `overrides` are CLI sampling overrides (e.g. --temperature) layered on the profile — they
+    are folded into the current config so an OFAT sweep correctly treats prior-temperature
+    results as stale. Returns a list of (model, bench, action) for the affected pairs."""
     from . import provenance
     actions = []
     for m in models:
         try:
-            cur = provenance.current_manifest_lite(m, profile)
+            cur = provenance.current_manifest_lite(m, profile, overrides=overrides)
         except Exception as e:  # noqa: BLE001 — never block a run on the precheck
             print(f"  [provenance] precheck skipped {m}: {type(e).__name__}: {str(e)[:60]}", flush=True)
             continue
@@ -170,7 +172,8 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # Provenance guard: never resume on top of results produced under a different config
     # (the stale-results contamination). Runs BEFORE build_queue so cleaned files don't leak
     # into done_ids. clean_stale deletes mismatched files; default just warns.
-    provenance_precheck(models, benches, profile=sampling_profile, clean_stale=clean_stale)
+    provenance_precheck(models, benches, profile=sampling_profile, clean_stale=clean_stale,
+                        overrides=overrides)
     queue, counts = build_queue(models, benches, limits, seed, order=order)
     total = sum(counts.values()) * len(models)
     if not queue:
@@ -186,7 +189,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
         mp = result_path(m, b).with_suffix(".manifest.json")
         if not mp.exists():
             try:
-                provenance.write(m, b, profile=sampling_profile)
+                provenance.write(m, b, profile=sampling_profile, overrides=overrides)
             except Exception as e:  # noqa: BLE001 — never block a run on provenance
                 print(f"  [provenance] skipped {m}/{b}: {type(e).__name__}: {str(e)[:60]}", flush=True)
 

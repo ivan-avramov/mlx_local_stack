@@ -61,11 +61,18 @@ def is_compatible(existing, current) -> bool:
 
 
 def current_manifest_lite(model: str, profile: str = "production",
-                          registry_path: str = "main_models.yaml") -> dict:
+                          registry_path: str = "main_models.yaml",
+                          overrides: dict = None) -> dict:
     """A cheap manifest (sampling + KV only, no quant_info snapshot scan) for the resume
-    compatibility check — same shape config_fingerprint consumes."""
+    compatibility check — same shape config_fingerprint consumes. `overrides` are the CLI
+    sampling overrides (e.g. --temperature) layered on the profile; they MUST be applied here
+    so the fingerprint reflects the ACTUAL config (else an OFAT sweep silently resumes results
+    produced at a different temperature/budget)."""
+    sampling = model_params.params_for(model, profile=profile)
+    if overrides:
+        sampling.update(overrides)
     return {"sampling_profile": profile,
-            "sampling": model_params.params_for(model, profile=profile),
+            "sampling": sampling,
             "kv": registry_kv(model, registry_path) or {}}
 
 
@@ -119,8 +126,10 @@ def _resolve_snapshot(hf_path):
 
 
 def gather(model: str, registry_path: str = "main_models.yaml",
-           profile: str = "production") -> dict:
-    """Assemble the real provenance manifest for ``model`` on this box."""
+           profile: str = "production", overrides: dict = None) -> dict:
+    """Assemble the real provenance manifest for ``model`` on this box. `overrides` are the
+    CLI sampling overrides layered on the profile, recorded so the manifest matches what
+    generation actually used."""
     kv = registry_kv(model, registry_path) or {}
     quant = {}
     snap = _resolve_snapshot(kv.get("hf_path"))
@@ -135,6 +144,8 @@ def gather(model: str, registry_path: str = "main_models.yaml",
         sampling = model_params.params_for(model, profile=profile)
     except Exception:  # noqa: BLE001
         sampling = {}
+    if overrides:
+        sampling.update(overrides)
     man = build_manifest(model=model, box=_box(), ts=int(time.time()),
                          git_shas=_git_shas(), kv=kv, quant=quant, sampling=sampling)
     man["sampling_profile"] = profile
@@ -142,9 +153,9 @@ def gather(model: str, registry_path: str = "main_models.yaml",
 
 
 def write(model: str, bench: str, registry_path: str = "main_models.yaml",
-          profile: str = "production") -> dict:
+          profile: str = "production", overrides: dict = None) -> dict:
     """Gather + write results/<model>/<bench>.manifest.json. Returns the manifest."""
-    man = gather(model, registry_path, profile=profile)
+    man = gather(model, registry_path, profile=profile, overrides=overrides)
     path = generate.result_path(model, bench).with_suffix(".manifest.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(man, indent=2))

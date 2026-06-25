@@ -183,9 +183,11 @@ def main():
                     help="on a looped/truncated item, restart the router + re-probe once; "
                          "classify recovered (stale router) vs loop_persisted (genuine quant loop)")
     sp.add_argument("--sampling-profile", dest="sampling_profile",
-                    choices=["production", "official"], default="production",
+                    choices=model_params.profile_names(), default="production",
                     help="production = daily-driver opencode.json config (default); "
-                         "official = each family's published recommended sampling (quality eval)")
+                         "official = each family's published recommended sampling (quality eval); "
+                         "coding = converging sampling + a thinking_budget large enough to not "
+                         "truncate hard-problem reasoning")
     sp.add_argument("--probe-timeout", dest="probe_timeout", type=int, default=3600,
                     help="per-item HTTP timeout (s). Raise for slow dense models whose thinking "
                          "budget implies >60min generation (e.g. Qwen3.6-27B @ ~13.5 tok/s, 80K "

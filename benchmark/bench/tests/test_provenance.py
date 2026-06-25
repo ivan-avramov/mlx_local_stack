@@ -55,6 +55,20 @@ def test_registry_kv_extracts_entry(tmp_path):
     assert P.registry_kv("missing", str(yml)) is None
 
 
+def test_current_manifest_lite_reflects_sampling_overrides(tmp_path):
+    # OFAT sweeps pass --temperature (etc.) as overrides ON TOP of the profile. Those overrides
+    # MUST flow into the manifest fingerprint, or clean-stale would silently resume results
+    # produced at a DIFFERENT temperature -- the same contamination class as the budget bug.
+    reg = tmp_path / "reg.yaml"
+    reg.write_text("models:\n  - name: gemma-4-26B-A4B-it-OptiQ-4bit\n    hf_path: org/g\n    kv_bits: 0\n")
+    base = P.current_manifest_lite("gemma-4-26B-A4B-it-OptiQ-4bit", "coding", str(reg))
+    over = P.current_manifest_lite("gemma-4-26B-A4B-it-OptiQ-4bit", "coding", str(reg),
+                                   overrides={"temperature": 0.5})
+    assert base["sampling"]["temperature"] == 0.7          # coding keeps production temp
+    assert over["sampling"]["temperature"] == 0.5          # override applied
+    assert P.is_compatible(base, over) is False            # temp change -> clean-stale regenerates
+
+
 def test_build_manifest_assembles_full_config():
     m = P.build_manifest(
         model="qwen-8bit",

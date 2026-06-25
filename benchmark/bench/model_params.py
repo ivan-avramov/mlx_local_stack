@@ -59,6 +59,16 @@ QWEN_OFFICIAL = {
     "thinking_budget": 81920,
 }
 
+# CODING-capability profile: each arch's CONVERGING sampling + a thinking_budget large enough
+# to not truncate hard-problem reasoning. gemma's daily-driver budget (16384) truncates hard
+# LCB items mid-think (measured median ~17K thinking tokens, most <28K) -> all-INVALID
+# budget-hits; `coding` lifts gemma to 32768 (max_tokens 49152, clamp-safe at 0.8) so
+# convergence is MEASURED, not the cap. Sampling stays at production temp 0.7 (the converging
+# config) -- NOT the loop-prone official temp 1.0. Qwen's coding config already meets its
+# documented ~81920 need, so QWEN_CODING = QWEN_OFFICIAL (temp 0.6 + 81920 budget).
+GEMMA_CODING = {**GEMMA, "max_tokens": 49152, "thinking_budget": 32768}
+QWEN_CODING = dict(QWEN_OFFICIAL)
+
 # Served-model name (main_models.yaml / GET /v1/models) -> param set.
 PARAMS = {
     "gemma-4-26b-a4b-it-8bit": GEMMA,
@@ -71,8 +81,8 @@ PARAMS = {
 }
 
 _PROFILES = {
-    "gemma": {"production": GEMMA, "official": GEMMA_OFFICIAL},
-    "qwen": {"production": QWEN, "official": QWEN_OFFICIAL},
+    "gemma": {"production": GEMMA, "official": GEMMA_OFFICIAL, "coding": GEMMA_CODING},
+    "qwen": {"production": QWEN, "official": QWEN_OFFICIAL, "coding": QWEN_CODING},
 }
 
 
@@ -83,6 +93,12 @@ def _family(model: str) -> str:
     if base is GEMMA:
         return "gemma"
     return "qwen" if "qwen" in model.lower() else "gemma"
+
+
+def profile_names():
+    """All defined sampling-profile names (union across families). The CLI's
+    --sampling-profile choices derive from this so the two can't drift out of sync."""
+    return sorted({p for fam in _PROFILES.values() for p in fam})
 
 
 def params_for(model: str, profile: str = "production") -> dict:

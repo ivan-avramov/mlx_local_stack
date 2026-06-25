@@ -54,3 +54,36 @@ def test_production_qwen_budget_unchanged():
     q = MP.params_for("Qwen3.6-27B-UD-MLX-6bit", profile="production")
     assert q["thinking_budget"] == 49152
     assert q["max_tokens"] == 81920
+
+
+def test_coding_profile_gemma_lifts_budget_keeps_converging_sampling():
+    # The CODING-capability profile: gemma's daily-driver thinking_budget (16384) truncates
+    # hard LCB reasoning mid-think (median ~17K, most items <28K) -> all-INVALID budget-hits.
+    # `coding` lifts the budget to 32768 so convergence is MEASURED, not the cap -- while
+    # keeping gemma's CONVERGING production sampling (temp 0.7), NOT the loop-prone official 1.0.
+    g = MP.params_for("gemma-4-26B-A4B-it-OptiQ-4bit", profile="coding")
+    assert g["temperature"] == 0.7                    # production (converging) sampling, not 1.0
+    assert g["repetition_penalty"] == 1.08
+    assert g["thinking_budget"] == 32768              # lifted from the daily-driver 16384
+    assert g["max_tokens"] >= g["thinking_budget"] / 0.8   # clamp-safe (room for the answer)
+
+
+def test_coding_profile_qwen_has_converging_budget():
+    # Qwen already needs (and gets, in its coding sampling) ~81920 to converge on hard LCB.
+    q = MP.params_for("Qwen3.6-27B-MLX-8bit", profile="coding")
+    assert q["thinking_budget"] >= 81920
+    assert q["temperature"] == 0.6                    # qwen coding sampling
+    assert q["max_tokens"] >= q["thinking_budget"] / 0.8
+
+
+def test_production_and_official_profiles_unchanged_by_coding_addition():
+    # Adding `coding` must not perturb the existing two profiles.
+    assert MP.params_for("gemma-4-31b-it-6bit")["thinking_budget"] == 16384
+    assert MP.params_for("gemma-4-31b-it-6bit", profile="official")["temperature"] == 1.0
+
+
+def test_profile_names_exposes_all_profiles_for_cli_choices():
+    # run.py's --sampling-profile choices derive from this, so adding a profile can't drift
+    # out of sync with the CLI (which is exactly the bug that made `coding` an invalid choice).
+    names = MP.profile_names()
+    assert set(names) == {"production", "official", "coding"}
