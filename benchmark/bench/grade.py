@@ -75,29 +75,75 @@ def grade_reasoning(name, model):
             "budget_saturation": round(saturated / n, 3) if n else None, "items": items}
 
 
-def grade_evalplus(name, model):
+EVALPLUS_IMAGE = "ganler/evalplus:latest"
+_PAD_SOLUTION = "def __pad__():\n    pass\n"
+
+
+def _evalplus_all_ids(ds):
+    """Full problem id list (evalplus's all-problems assertion requires every problem
+    present). Lazy import so reasoning grading works without evalplus installed."""
+    if ds == "humaneval":
+        from evalplus.data import get_human_eval_plus
+        return list(get_human_eval_plus().keys())
+    from evalplus.data import get_mbpp_plus
+    return list(get_mbpp_plus().keys())
+
+
+def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, all_ids=None):
+    """Grade humanevalplus/mbppplus with the OFFICIAL evalplus evaluator run IN DOCKER.
+    Docker (Linux) is required because evalplus's reliability_guard calls resource.setrlimit
+    in a way macOS rejects ('current limit exceeds maximum'); the container also isolates the
+    executed code. evalplus asserts ALL problems are present, so we pad our subset to the full
+    problem set with failing dummies, run the evaluator, then read pass@1 for ONLY our
+    generated subset from the per-problem *_eval_results.json. Never raises; graceful-degrade
+    with a note. `runner`/`all_ids` are injectable for tests."""
     ds = "humaneval" if name == "humanevalplus" else "mbpp"
     rows = [r for r in _rows(model, name) if not r.get("error")]
-    samples = [{"task_id": r["id"], "solution": extract.extract_code(r.get("content", ""))} for r in rows]
-    if not samples:
+    our = {r["id"]: extract.extract_code(r.get("content", "")) for r in rows if r.get("id")}
+    if not our:
         return {"benchmark": name, "model": model, "n": 0, "acc": None, "note": "no completions"}
-    sdir = generate.result_path(model, name).parent
-    spath = sdir / f"{name}_samples.jsonl"
-    spath.write_text("\n".join(json.dumps(s) for s in samples), encoding="utf-8")
     try:
-        proc = subprocess.run([sys.executable, "-m", "evalplus.evaluate",
-                               "--dataset", ds, "--samples", str(spath)],
-                              capture_output=True, text=True, timeout=3600)
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        return {"benchmark": name, "model": model, "n": len(samples), "acc": None,
-                "note": f"evalplus unavailable/failed: {e}. pip install -r benchmark/requirements.txt"}
-    out = proc.stdout + proc.stderr
-    # evalplus prints lines like 'humaneval+ (base+extra)\npass@1: 0.640'
-    m = re.findall(r"pass@1:\s*([0-9.]+)", out)
-    base = float(m[0]) if m else None
-    plus = float(m[-1]) if len(m) > 1 else base
-    return {"benchmark": name, "model": model, "n": len(samples),
-            "acc": plus, "pass@1_base": base, "pass@1_plus": plus, "raw": out[-400:]}
+        ids = all_ids if all_ids is not None else _evalplus_all_ids(ds)
+    except Exception as e:  # noqa: BLE001 — evalplus not importable for the id list
+        return {"benchmark": name, "model": model, "n": len(our), "acc": None,
+                "note": f"evalplus dataset unavailable for padding ({type(e).__name__}: {str(e)[:80]})"}
+    # Absolute path: `docker run -v` treats a relative host path as a NAMED VOLUME (RESULTS is
+    # relative), which would mount an empty /work and yield no results.
+    sdir = generate.result_path(model, name).parent.resolve()
+    sdir.mkdir(parents=True, exist_ok=True)
+    spath = sdir / f"{name}_samples.jsonl"
+    with spath.open("w", encoding="utf-8") as f:                 # pad subset -> full set
+        for tid in ids:
+            f.write(json.dumps({"task_id": tid, "solution": our.get(tid, _PAD_SOLUTION)}) + "\n")
+    rpath = sdir / f"{name}_samples_eval_results.json"
+    if rpath.exists():
+        rpath.unlink()                                            # don't read a stale result
+    cmd = ["docker", "run", "--rm", "--platform", "linux/amd64", "-v", f"{sdir}:/work",
+           image, "evalplus.evaluate", "--dataset", ds, "--samples", f"/work/{name}_samples.jsonl"]
+    try:
+        proc = runner(cmd, capture_output=True, text=True, timeout=3600)
+    except Exception as e:  # noqa: BLE001 — docker missing / timeout
+        return {"benchmark": name, "model": model, "n": len(our), "acc": None,
+                "note": f"evalplus docker failed: {type(e).__name__}: {str(e)[:100]}"}
+    if not rpath.exists():
+        err = (getattr(proc, "stderr", "") or "")[-160:]
+        return {"benchmark": name, "model": model, "n": len(our), "acc": None,
+                "note": f"evalplus produced no results (rc={getattr(proc, 'returncode', '?')}): {err}"}
+    ev = json.loads(rpath.read_text()).get("eval", {})
+    base = plus = n = 0
+    for tid in our:                                               # subset only; padding ignored
+        res = ev.get(tid)
+        if not res:
+            continue
+        r0 = res[0] if isinstance(res, list) else res
+        n += 1
+        base += 1 if r0.get("base_status") == "pass" else 0
+        plus += 1 if r0.get("plus_status") == "pass" else 0
+    if n == 0:
+        return {"benchmark": name, "model": model, "n": 0, "acc": None,
+                "note": "no subset task_ids found in evalplus results"}
+    return {"benchmark": name, "model": model, "n": n, "acc": round(plus / n, 4),
+            "pass@1_base": round(base / n, 4), "pass@1_plus": round(plus / n, 4)}
 
 
 def _lcb_eval_inputs(rows, sample_by_id):
