@@ -50,6 +50,9 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | gemma-4-31B-it-qat-6bit (dense) | production t0.7 | **livecodebench** | **mid** | 15 | 80% (E100/M86/H60) | 93% (1 budget-hit) | INVALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (Qwen-arch) | official t0.6 | **livecodebench** | **mid** | 8/15 | — | DNF (3/8 conv; median 82,855 > budget) | DNF-MEANDER |
 | Qwen3.6-27B-UD-MLX-6bit (dense, prod-KV) | official t0.6 | **livecodebench** | **mid** | 1/15 | — | DNF (item1 id3496 ct=82507 > 81920 budget, ~114min/item, ETA 26h) | DNF-MEANDER |
+| gemma-4-31b-it-6bit (dense) | production t0.7 | **math500** | **mid** | 30 | **83.3%** | 100% (median 2000 tok) | VALID |
+| gemma-4-31B-it-qat-6bit (dense) | production t0.7 | **math500** | **mid** | 30 | **83.3%** | 100% (median 2409 tok) | VALID |
+| gemma-4-31b-it-UD-MLX-4bit (dense) | production t0.7 | **math500** | **mid** | 30 | 83.3%* | 67% (10 loops/budget-hit; median 8165 tok) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | aime | light | 5 | 80% (4/5) | 80% (1 loop) | INVALID |
@@ -133,6 +136,17 @@ making it the **3rd Qwen3.6-27B-arch model to DNF on LCB**. Net: the Qwen3.6-27B
 UNRELIABLE converger on hard coding at the official budget (a temp-ladder fix is unexplored), whereas
 every dense gemma-4-31B converges cleanly (80–93%) and scores 80–87% — the dense gemma-4-31B is the
 coding + convergence front-runner.
+
+### math500 — dense-gemma reasoning + a 4-bit convergence split (2026-06-26)
+
+All three dense gemmas score the SAME raw math500 acc (83.3%, N=30), but convergence splits
+them: `gemma-4-31b-it-6bit` (median 2000 tok) and `gemma-4-31B-it-qat-6bit` (median 2409) are
+both 100%-converged / VALID, while `gemma-4-31b-it-UD-MLX-4bit` OVER-REASONS (median 8165, max
+17157) and the grader flags 10 looped/budget-hit items → 67% conv / **INVALID** (acc not reported).
+Same box + harness, so it is genuine 4-bit tail-fragility (the same over-reasoning seen on LCB),
+not stale router. Reinforces the front-runner: the 6-bit dense gemmas converge reliably; the
+UD-MLX-4bit is the cheaper-but-flakier sibling. NB measurement: convergence MUST use each item's
+recorded thinking_budget (gemma's, not a hardcoded 81920) — the grader's conv% is authoritative.
 
 ### Provenance
 

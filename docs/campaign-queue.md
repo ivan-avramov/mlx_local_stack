@@ -94,10 +94,10 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
 1. **[DONE]** dense-gemma LCB @ production t0.7: gemma-4-31b-it-6bit **86.7%** (conv 12/15) +
    gemma-4-31b-it-UD-MLX-4bit **86.7%** (conv 14/15) — both BEAT the MoE (80%, H60→H80) with
    cleaner convergence. Graded + recorded.
-2. **[RUNNING]** math500 (N=30) @ production: gemma-4-31b-it-6bit **DONE 30/30** (conv 30/30,
-   median 2000 — perfect), gemma-4-31b-it-UD-MLX-4bit **~20/30** (2026-06-26; converging finish=stop
-   but OVER-REASONS — 8–17k-token traces vs 6bit's ~2k median, a 4-bit tail-fragility tell; ~3h to
-   finish at ~10 tok/s). Poller does NOT watch math500 → grade both on M2-idle.
+2. **[DONE]** math500 (N=30) @ production — graded 2026-06-26: gemma-4-31b-it-6bit **83.3% / 100%
+   conv / VALID** (median 2000); gemma-4-31b-it-UD-MLX-4bit **83.3% raw but 67% conv / INVALID**
+   (over-reasons, median 8165, 10 loops — 4-bit tail-fragility). With gemma-4-31B-it-qat-6bit
+   (83.3% / 100% conv / VALID, M5) → all 3 dense gemmas done on math500. Recorded in campaign-results.md.
 3. **[NEXT — on M2-idle, ATTENDED first-run]** Aider polyglot SMOKE (`--limit` small) on the dense
    front-runner (gemma-4-31b-it-6bit / UD-4bit), then full Aider → SWE-Verified-40. CORE agentic
    axes, never run — the real "256K agentic coding" test. Box-idle monitor pings M2-IDLE → launch.
