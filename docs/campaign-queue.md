@@ -44,12 +44,12 @@ Last updated: 2026-06-25.
 
 ## M2 (local laptop, co-resident with the AI session ~22GB → ≤192K only)
 
-1. **[RUNNING] gemma-4-26B-A4B-it-OptiQ-4bit — temperature-ladder @coding LCB.**
-   Driver: `tempsweep.sh`. Rungs temp 0.7 (done, archived `.t07`, conv 8/15) → **0.5 (running)**
-   → 0.3, fixed 32768 budget headroom, same 15 items; raw archived per-temp (`.t05`/`.t03`).
-   Decision rule = **highest temp that converges WITHOUT a pass@1 regression** (AGENTS.md recipe).
-2. **[THEN] grade the temp rungs** (post-sweep, from the `.tNN` archives) → pick the reliable
-   temp → record in campaign-results.md. Then M2 idle (next item TBD).
+1. **[DONE 2026-06-25] gemma-4-26B-A4B-it-OptiQ-4bit — temperature ladder @coding LCB.**
+   Result: lowering temp HURTS — 0.7 conv 8/15 / median 14k → 0.5 conv 2/9 / median 33k (hump-shaped,
+   0.7 near peak). **DECISION: keep production temp 0.7 for this model**; temp 0.3 skipped (counterproductive).
+   Recorded in campaign-results.md (Temperature ladder note). Rungs archived `.t07` (15) / `.t05` (10).
+2. **[M2 FREE]** next item TBD — e.g. another candidate's LCB, or assist the Ornith eval once its MLX
+   quant is ready. Awaiting assignment.
 
 ## Reboot recovery
 
