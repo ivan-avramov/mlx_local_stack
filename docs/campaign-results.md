@@ -47,6 +47,8 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | gemma-4-26B-A4B-it-QAT-MLX-4bit (MoE) | production t0.7 | **livecodebench** | **mid** | 15 | 66.7% (E100/M57/H60) | 33% (10 budget-hit) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | **livecodebench** | **mid** | 15 | **86.7% (E100/M86/H80)** | 80% (3 budget-hit) | INVALID |
 | gemma-4-31b-it-UD-MLX-4bit (dense) | production t0.7 | **livecodebench** | **mid** | 15 | **86.7% (E100/M86/H80)** | 93% (1 budget-hit) | INVALID |
+| gemma-4-31B-it-qat-6bit (dense) | production t0.7 | **livecodebench** | **mid** | 15 | 80% (E100/M86/H60) | 93% (1 budget-hit) | INVALID |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (Qwen-arch) | official t0.6 | **livecodebench** | **mid** | 8/15 | — | DNF (3/8 conv; median 82,855 > budget) | DNF-MEANDER |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | aime | light | 5 | 80% (4/5) | 80% (1 loop) | INVALID |
@@ -116,6 +118,18 @@ unsloth 8bit checkpoint (template/thinking handling) or genuine 8bit verbosity �
 Qwen results. **DEPRIORITIZED** (heaviest quant; 8-bit weights don't fit ≤46GB@256K anyway).
 Harness gap surfaced: the `generate` path persists only the post-`</think>` answer, not the
 thinking text, so the DNF *type* required a live probe — capture thinking for future DNF triage.
+
+### Qwen3.6-27B-arch MEANDERS on LCB (pattern, 2026-06-26)
+
+The Qwen3.6-27B candidates largely fail to self-terminate on hard LCB at the official 81920
+budget — same MEANDERING signature as `Qwen3.6-27B-MLX-8bit` (DNF): `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+LCB hit conv 3/8, median 82,855 (> budget), max 102,401 (hit max_tokens) → DNF (stopped at 8/15,
+archived `livecodebench.DNF-meander.jsonl`). The ONLY Qwen that converged on LCB is the base
+`Qwen3.6-27B-OptiQ-4bit`. `Qwen3.6-27B-UD-MLX-6bit` LCB skipped (unsloth, same high meander risk as
+the 8bit; the pattern is established — a confirm-probe is optional). Net: the Qwen3.6-27B-arch is an
+UNRELIABLE converger on hard coding at the official budget (a temp-ladder fix is unexplored), whereas
+every dense gemma-4-31B converges cleanly (80–93%) and scores 80–87% — the dense gemma-4-31B is the
+coding + convergence front-runner.
 
 ### Provenance
 

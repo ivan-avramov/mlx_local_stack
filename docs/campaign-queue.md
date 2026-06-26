@@ -27,9 +27,9 @@ Last updated: 2026-06-25.
 | gemma-4-26B-A4B-it-QAT-MLX-4bit | MoE | ✓ | ✓ | ✓ INVALID (loop-prone) | dominated |
 | gemma-4-31b-it-6bit | dense | ◻ | ✓ | ✓ **86.7%** (conv 12/15) | +kv16 LCB ✓; beats MoE |
 | gemma-4-31b-it-UD-MLX-4bit | dense | ✓ | ✓ | ✓ **86.7%** (conv 14/15) | cleanest LCB conv; beats MoE |
-| gemma-4-31B-it-qat-6bit | dense | ◻ | ✓ **AIME 100%/100%conv** | ~ (M5 now) | **convergence + reasoning leader** |
-| Qwen3.6-27B-UD-MLX-6bit | dense | ✓ | ✓ | ◻ (M5 queued; watch meander) | +kv16 LCB ✓ |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | MoE-distill | ✓ | ✓ | ~ (M5; watch meander) | |
+| gemma-4-31B-it-qat-6bit | dense | ◻ | ✓ **AIME 100%/100%conv** | ✓ 80% (conv 14/15) | **convergence + reasoning leader** |
+| Qwen3.6-27B-UD-MLX-6bit | dense | ✓ | ✓ | ◻ DEFERRED (Qwen meander pattern) | +kv16 LCB ✓ |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | MoE-distill | ✓ | ✓ | ⚠ DNF-MEANDER (median 82,855>bud) | |
 | Qwen3.6-27B-OptiQ-4bit | MoE | ✓ | ✓ | ✓ | only prod-KV Qwen LCB done |
 | Qwen3.6-27B-MLX-8bit | MoE | ◻ | ⚠ DNF (meander) | ◻ | DEPRIORITIZED; +kv16 LCB ✓ |
 | deepreinforce-ai/Ornith-1.0-35B | MoE | ◻ | ◻ | ◻ | NEW; in PREP (M5) |
@@ -45,13 +45,13 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
    8-bit won't fit ≤46GB@256K). See campaign-results.md.
 2. **[DONE]** gemma-4-31B-it-qat-6bit — light: STANDOUT (HE+ 100% / MBPP+ 80% / AIME 100%, all
    100% convergence, all VALID). Graded + recorded.
-3. **[RUNNING]** M5 LCB sweep (`lightsweep.sh`, livecodebench=15), in order:
-   a. gemma-4-31B-it-qat-6bit @ production t0.7 (running first — fast, validated)
-   b. Qwen3.6-27B-Opus-Distill-OptiQ-4bit @ qwen official — **WATCH for meandering**
-   c. Qwen3.6-27B-UD-MLX-6bit @ qwen official — **WATCH for meandering** (unsloth, like the DNF'd 8bit)
-   → watch the first few items' token lengths on the Qwen rungs; cut/flag if they saturate the
-   81920 budget like Qwen3.6-27B-MLX-8bit did. Apply the temperature-ladder recipe only if a
-   model won't converge.
+3. **[DONE]** M5 LCB sweep:
+   a. gemma-4-31B-it-qat-6bit LCB ✓ — 80% (E100/M86/H60), conv 14/15 (cleanest dense conv).
+   b. Qwen3.6-27B-Opus-Distill-OptiQ-4bit LCB ⚠ **DNF-MEANDER** (stopped at 8/15; median 82,855 >
+      budget) — same pathology as Qwen3.6-27B-MLX-8bit.
+   c. Qwen3.6-27B-UD-MLX-6bit LCB **DEFERRED** — Qwen-arch-meanders pattern established (8bit +
+      distill DNF; only base Qwen3.6-27B-OptiQ-4bit converged). Optional: a confirm-probe or a
+      Qwen temperature-ladder, but low priority (dense gemma-4-31B is the coding front-runner).
 4. **[QUEUED — PREP] deepreinforce-ai/Ornith-1.0-35B** (M5 ONLY @256K; sampling = qwen
    official, temp 0.6). MoE (8-of-256 experts) — **measure its convergence, don't assume the
    dense advantage**.
