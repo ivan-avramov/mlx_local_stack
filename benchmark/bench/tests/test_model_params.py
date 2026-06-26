@@ -87,3 +87,14 @@ def test_profile_names_exposes_all_profiles_for_cli_choices():
     # out of sync with the CLI (which is exactly the bug that made `coding` an invalid choice).
     names = MP.profile_names()
     assert set(names) == {"production", "official", "coding"}
+
+
+def test_ornith_is_qwen_family_by_name_and_registry():
+    # Ornith-1.0-35B is qwen3_5_moe arch -> must use Qwen sampling, NOT the
+    # gemma name-fallback (no "qwen" substring in the name).
+    m = "Ornith-1.0-35B-mlx-uniform-4bit"
+    assert MP._family(m) == "qwen"
+    off = MP.params_for(m, profile="official")
+    assert off["temperature"] == 0.6
+    assert off["thinking_budget"] == 81920
+    assert off["presence_penalty"] == 0.0

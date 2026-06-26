@@ -78,6 +78,9 @@ PARAMS = {
     "gemma-4-26B-A4B-it-OptiQ-4bit": GEMMA,
     "gemma-4-26B-A4B-it-QAT-MLX-4bit": GEMMA,
     "Qwen3.6-27B-UD-MLX-6bit": QWEN,
+    # Ornith-1.0-35B is qwen3_5_moe arch (hybrid linear-attn MoE) — Qwen sampling,
+    # not the gemma name-fallback ("qwen" isn't in the name).
+    "Ornith-1.0-35B-mlx-uniform-4bit": QWEN,
 }
 
 _PROFILES = {
