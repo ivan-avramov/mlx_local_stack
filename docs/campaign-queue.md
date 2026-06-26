@@ -15,7 +15,7 @@ tracked per model: production-KV (4-bit, daily-driver) and the `-kv16` (bf16-KV)
 survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNNING]` driver per
 **Reboot recovery**. (Full registry names only — per the AGENTS.md rule; no shorthands.)
 
-Last updated: 2026-06-25.
+Last updated: 2026-06-26.
 
 ## Status matrix (✓ done · ~ running · ◻ pending · ⚠ stale/blocked · – n/a)
 
@@ -28,7 +28,7 @@ Last updated: 2026-06-25.
 | gemma-4-31b-it-6bit | dense | ◻ | ✓ | ✓ **86.7%** (conv 12/15) | +kv16 LCB ✓; beats MoE |
 | gemma-4-31b-it-UD-MLX-4bit | dense | ✓ | ✓ | ✓ **86.7%** (conv 14/15) | cleanest LCB conv; beats MoE |
 | gemma-4-31B-it-qat-6bit | dense | ◻ | ✓ **AIME 100%/100%conv** | ✓ 80% (conv 14/15) | **convergence + reasoning leader** |
-| Qwen3.6-27B-UD-MLX-6bit | dense | ✓ | ✓ | ◻ DEFERRED (Qwen meander pattern) | +kv16 LCB ✓ |
+| Qwen3.6-27B-UD-MLX-6bit | dense | ✓ | ✓ | ⚠ DNF-MEANDER (item1 ct82507>81920, ~114min/item) | 3rd Qwen-arch LCB DNF; +kv16 LCB ✓ |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | MoE-distill | ✓ | ✓ | ⚠ DNF-MEANDER (median 82,855>bud) | |
 | Qwen3.6-27B-OptiQ-4bit | MoE | ✓ | ✓ | ✓ | only prod-KV Qwen LCB done |
 | Qwen3.6-27B-MLX-8bit | MoE | ◻ | ⚠ DNF (meander) | ◻ | DEPRIORITIZED; +kv16 LCB ✓ |
@@ -49,32 +49,44 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
    a. gemma-4-31B-it-qat-6bit LCB ✓ — 80% (E100/M86/H60), conv 14/15 (cleanest dense conv).
    b. Qwen3.6-27B-Opus-Distill-OptiQ-4bit LCB ⚠ **DNF-MEANDER** (stopped at 8/15; median 82,855 >
       budget) — same pathology as Qwen3.6-27B-MLX-8bit.
-4. **[RUNNING] Qwen3.6-27B-UD-MLX-6bit LCB** @ qwen official — user wants it in the charts (was a
-   primary candidate). WATCH for meandering (8bit + distill DNF'd; unsloth) → watch-and-cut +
-   record DNF if it saturates the 81920 budget, else let it complete.
-5. **[BLOCKED — loader tolerance] deepreinforce-ai/Ornith-1.0-35B** conversion (M5 ONLY @256K;
-   sampling = qwen official, temp 0.6). MoE (8-of-256 experts) — measure convergence, don't assume.
-   - a. [DONE] BF16 → 65G / 16 shards in cache.
-   - b. **[BLOCKED]** uniform-4bit via `mlx_lm.convert` FAILED: `ValueError: Received 30720
-     parameters not in model: language_model.model...` — stock mlx_lm rejects the `language_model.`-
-     prefixed weights from the `Qwen3_5MoeForConditionalGeneration` wrapper. **FIX (attended):**
-     convert via the mlx-vlm FORK's loader (has vision-tower / key-strip tolerance) OR strip the
-     `language_model.` prefix in a key-remap, THEN OptiQ-6bit + uniform-4bit, `quant_info` eff-bpw.
-     RAM is fine (49G free after a clean router restart) — the blocker is arch/key handling, NOT memory.
-     **QAT is NOT possible for us** (training-time; would need DeepReinforce to release QAT weights).
-   - c. (after b) verify the loader loads-as-text on a tiny smoke; d. M5-local (uncommitted)
-     `main_models.yaml` entry (kv_bits 4, max_kv_cache_size, prefill_step_size 512).
-   - EVAL: capacity `mx.get_peak_memory`@256K → retrieval → LCB → BFCL native-FC → SWE-Verified-40.
-   - MEMORY @256K (heavy GQA, 2 KV heads → small KV): OptiQ-6bit + 4-bit KV ≈ 36–40GB;
-     uniform-4bit + 4-bit KV ≈ 27GB — both fit ≤46GB. 8-bit weights or fp16-KV do NOT.
+4. **[DONE — DNF]** Qwen3.6-27B-UD-MLX-6bit LCB @ qwen official — **DNF-MEANDER** (2026-06-26):
+   item 1 (id 3496) `finish=stop` but `ct=82507 > 81920` budget = NON-CONVERGED, ~114 min/item,
+   driver ETA ~26h → cut at N=1 (strong priors: prior run 11–17h ETA + 8bit + distill both DNF'd).
+   3rd Qwen3.6-27B-arch LCB DNF. Recorded in campaign-results.md.
+5. **[RUNNING] math500 (N=30) on gemma-4-31B-it-qat-6bit** @ production (launched 2026-06-26 to
+   refill M5 after the LCB cut) — completes the reasoning axis across all 3 dense gemmas
+   (6bit + UD-4bit on M2). qat-6bit is the convergence leader → expect fast clean convergence.
+   Grade on completion; record + append.
+6. **[DEFERRED — needs loader port, awaiting go] deepreinforce-ai/Ornith-1.0-35B** conversion.
+   - a. [DONE] BF16 → 65G / 16 shards in cache (snapshot 5df2ed3f).
+   - b. **ROOT CAUSE (2026-06-26):** NOT a simple prefix issue. Ornith is a **hybrid linear-attention
+     MoE** (Qwen3-Next-style): layers use `linear_attn.*` (A_log/conv1d/dt_bias/in_proj_qkv|a|b|z/
+     out_proj), MoE = router `mlp.gate` + **256 UNFUSED experts** (`experts.{0..255}.{gate,up,down}_proj.weight`)
+     + a **shared expert** (`mlp.shared_expert.*` + `shared_expert_gate`), all under the VL wrapper
+     (`model.language_model.*` + `model.visual.*`). config: model_type qwen3_5_moe / text qwen3_5_moe_text,
+     40 layers, 256 experts / 8 active, moe_intermediate 512, shared_expert_intermediate 512, tie=False.
+   - `mlx_vlm.convert` (right tool, routes through `qwen3_5_moe.sanitize`) FAILED:
+     `KeyError: model.language_model.layers.0.mlp.experts.gate_up_proj` — the fork's sanitize expects
+     the **fused** Qwen3.6-VL expert layout, Ornith ships **unfused** experts + a shared expert.
+   - **FIX (engineering, attended):** patch `../mlx-vlm/.../qwen3_5_moe/qwen3_5_moe.py:sanitize` to
+     STACK the 256 unfused `experts.{e}.{proj}.weight` → 3D `switch_mlp.{proj}.weight`, handle the
+     `shared_expert` keys, and CONFIRM the fork's `language.py` actually implements the `linear_attn`
+     layer (conv1d handling in sanitize suggests yes — verify). Smoke-load via PYTHONPATH before
+     converting. Alt route: mlx_lm `qwen3_next` text loader + key-remap (strip `model.language_model.`,
+     drop `model.visual.*`). **QAT is NOT possible for us** (training-time).
+   - DECISION PENDING: worth the port vs deprioritize? Front-runner (dense gemma-4-31B) is already clear.
+   - EVAL (if built): capacity @256K → retrieval → LCB → BFCL native-FC → SWE-Verified-40.
+   - MEMORY @256K: uniform-4bit + 4-bit KV ≈ 27GB; uniform-6bit + 4-bit KV ≈ 36–40GB — both fit ≤46GB.
+     (OptiQ NOT reachable via `mlx_vlm.convert` — q_modes are affine/mxfp4/nvfp4/mxfp8; OptiQ = separate tool.)
 
 ### M2 (local laptop, ≤192K only — co-resident ~22GB)
 1. **[DONE]** dense-gemma LCB @ production t0.7: gemma-4-31b-it-6bit **86.7%** (conv 12/15) +
    gemma-4-31b-it-UD-MLX-4bit **86.7%** (conv 14/15) — both BEAT the MoE (80%, H60→H80) with
    cleaner convergence. Graded + recorded.
 2. **[RUNNING]** math500 (N=30) @ production: gemma-4-31b-it-6bit **DONE 30/30** (conv 30/30,
-   median 2000 — perfect), gemma-4-31b-it-UD-MLX-4bit ~15/30. Poller does NOT watch math500 →
-   grade both on M2-idle.
+   median 2000 — perfect), gemma-4-31b-it-UD-MLX-4bit **~20/30** (2026-06-26; converging finish=stop
+   but OVER-REASONS — 8–17k-token traces vs 6bit's ~2k median, a 4-bit tail-fragility tell; ~3h to
+   finish at ~10 tok/s). Poller does NOT watch math500 → grade both on M2-idle.
 3. **[NEXT — on M2-idle, ATTENDED first-run]** Aider polyglot SMOKE (`--limit` small) on the dense
    front-runner (gemma-4-31b-it-6bit / UD-4bit), then full Aider → SWE-Verified-40. CORE agentic
    axes, never run — the real "256K agentic coding" test. Box-idle monitor pings M2-IDLE → launch.
