@@ -32,7 +32,7 @@ Last updated: 2026-06-25.
 | Qwen UD-6bit | ✓ | ✓ | ◻ (prod) | +kv16 LCB ✓ |
 | Qwen distill-OptiQ-4bit | ✓ | ✓ | ◻ | |
 | Qwen OptiQ-4bit | ✓ | ✓ | ✓ | only Qwen with prod-KV LCB |
-| Qwen MLX-8bit | ◻ | ~ (M5 now) | ◻ | +kv16 LCB ✓ |
+| Qwen MLX-8bit | ◻ | ⚠ DNF (meander) | ◻ | DEPRIORITIZED; +kv16 LCB ✓ |
 | **Ornith-1.0-35B** (4bit/OptiQ) | ◻ | ◻ | ◻ | NEW; in PREP (M5) |
 
 **Higher tiers — `◻` PENDING for ALL candidates** (none run yet): math500, IFEval (⚠ blocked),
@@ -41,9 +41,13 @@ GPQA, BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge pane
 ## Per-box worklist (pull next from here)
 
 ### M5 (256K-capable, quiet box)
-1. **[RUNNING]** Qwen3.6-27B-MLX-8bit — light (qwen `official`).
-2. **[QUEUED]** gemma-4-31B-it-qat-6bit — light (deferred wrapper: waits on the Qwen driver PID,
-   then preflight + `--clean-stale` to purge the ⚠ stale-9 and rerun fresh).
+1. **[DNF/DEPRIORITIZED]** Qwen3.6-27B-MLX-8bit — light stopped at 16/25 (MEANDERING
+   non-convergence: 82K-token budget-saturating traces incl. easy coding; ~10–30h). Anomalous vs
+   other Qwen quants → suspect the unsloth 8bit checkpoint; 8-bit won't fit ≤46GB@256K anyway.
+   See campaign-results.md.
+2. **[RUNNING]** gemma-4-31B-it-qat-6bit — light (`lightsweep.sh`, production; preflight +
+   `--clean-stale` purges the stale-9 and reruns). NOTE: launched MANUALLY (the deferred wrapper
+   was disarmed) — drive M5's next items (Qwen LCB → Ornith) manually on idle.
 3. **[QUEUED]** Qwen LCB (the differentiator) — UD-6bit, distill, 8bit at qwen `official` (OptiQ-4bit
    already done). Apply the temperature-ladder recipe only if a model won't converge.
 4. **[QUEUED]** gemma-4-31B-it-qat-6bit — LCB (after its light).

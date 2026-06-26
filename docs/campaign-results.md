@@ -90,6 +90,27 @@ First application of the AGENTS.md temperature-ladder recipe (OFAT `--temp` at f
 
 Dropping 0.7→0.5 doubled the reasoning length and halved convergence (large effect, decision-grade despite n=9). Likely mechanism: the reasoning-exit token isn't the argmax, so lower/greedier temp keeps extending the most-probable "more reasoning" continuation and rarely samples the exit. temp 0.3 was NOT run (the descent was counterproductive). **DECISION: operate this model at production temp 0.7** (recorded LCB pass@1 80% E100/M86/H60 @ production budget). Combined with the budget finding (16384→32768 didn't help — see the THINKING-BUDGET rule in AGENTS.md), gemma-MoE's hard-LCB over-reasoning is INTRINSIC — not tunable via temp-down or budget-up. Raw rungs archived: `livecodebench.t07.jsonl` (15), `.t05.jsonl` (10, partial).
 
+### Qwen3.6-27B-MLX-8bit light — DNF (non-convergence: MEANDERING) (2026-06-25)
+
+**STOPPED at 16/25, marked DNF/INVALID** for non-convergence. Multiple items saturate the
+81920 thinking budget generating ~82K-token traces — including an EASY coding item
+(`Mbpp/596` ct=81,946) and `aime24-89` (ct=82,763) — at ~12 tok/s that's ~2h/item, projecting
+~10–30h for the light tier alone. The big items HIT the budget (ct ≥ 81,920) → non-converged.
+
+**Non-convergence TYPE = MEANDERING (over-exploration), NOT degenerate repetition.** Confirmed
+via a capped-budget probe (aime24-72): the reasoning is coherent step-by-step math with
+8-gram/20-gram uniqueness ≈1.00 (no verbatim loops, only one repeated expression) and
+backtracking markers ("wait"×7, "actually"×3) — it re-derives and re-checks at length without
+concluding. Consistent with the saved final answers being coherent (boxed) despite the
+budget-saturated think. This is the `meandering` non-convergence class (vs gemma's temp-1.0
+`degenerate-repetition`).
+
+Anomalous vs the OTHER Qwen quants (OptiQ-4bit + UD-6bit converge cleanly), so suspect the
+unsloth 8bit checkpoint (template/thinking handling) or genuine 8bit verbosity — not the other
+Qwen results. **DEPRIORITIZED** (heaviest quant; 8-bit weights don't fit ≤46GB@256K anyway).
+Harness gap surfaced: the `generate` path persists only the post-`</think>` answer, not the
+thinking text, so the DNF *type* required a live probe — capture thinking for future DNF triage.
+
 ### Provenance
 
 Grading detail and the stale-router / temp-1.0 root cause live in git history (commits through acad470) and `AGENTS.md`.
