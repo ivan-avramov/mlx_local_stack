@@ -57,7 +57,19 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
    refill M5 after the LCB cut) — completes the reasoning axis across all 3 dense gemmas
    (6bit + UD-4bit on M2). qat-6bit is the convergence leader → expect fast clean convergence.
    Grade on completion; record + append.
-6. **[UNBLOCKED — patch shipped; next = smoke-load + convert when M5 frees] deepreinforce-ai/Ornith-1.0-35B** conversion.
+6. **[CONVERTED + VALIDATED + light tier RUNNING @ t0.6] deepreinforce-ai/Ornith-1.0-35B** (uniform-4bit).
+   - **2026-06-26 STATUS:** converted (uniform-4bit, ~19GB, 4.649bpw, M5-local registry entry, uncommitted)
+     + smoke-loaded (all keys map) + canary-generated coherent code. Decode is FAST: **69 tok/s** (linear-attn
+     payoff, ~5-7x the dense gemmas). Light tier (he+/mbpp+/aime) RUNNING @ official **temp 0.6** (pid via
+     logs/ornith_light_t06.log), launched DIRECTLY (run.py generate, --clean-stale) — see CANARY note below.
+   - **CONVERGENCE — the open question:** Ornith inherits the qwen3_5_moe meander. Preflight canary @ PRODUCTION
+     **temp 0.7** MEANDERED on a trivial is_palindrome: finish=stop but ct=49221 > 49152 budget = NON-CONVERGED
+     (cousin Qwen3.6-27B-UD-MLX-6bit converged the same canary in 1941 tok @ 0.7). BUT manual canary @ **temp 0.6**
+     converged is_prime in 1369 tok → sharp temp knee. Running light tier @ 0.6 to test convergence on real benches;
+     if it meanders @ 0.6 too → temp-ladder (0.5/0.3) or DNF. Watcher reports first-items convergence.
+   - **HARNESS ISSUE (preflight-profile mismatch):** preflight.py run_canary HARDCODES production params
+     (temp 0.7), ignoring the run's :official profile → false-fails qwen-arch models we eval @ 0.6. FIX (TDD):
+     thread the sampling profile through preflight.sh -> preflight.py:run_canary. Queued.
    - **LOADER FIX SHIPPED 2026-06-26** (fork f0d50c9, stack submodule bump af992b6, synced to M5):
      `qwen3_5_moe.sanitize` now tolerates the UNFUSED per-expert layout (stacks
      `experts.{e}.{proj}.weight` → `switch_mlp.{proj}.weight`); fused Qwen3.6-VL path preserved.
