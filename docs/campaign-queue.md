@@ -26,9 +26,12 @@ Last updated: 2026-06-25.
    agentic coding, 256K native, SWE-Verified 75.6, tool-calling `qwen3_xml`, MIT. Sampling =
    our qwen `coding`/official profile (temp 0.6, top_p 0.95). **M5 ONLY** (256K).
    - PREP (no MLX build exists — GGUF only upstream):
-     a. download BF16 (~70GB) to M5 (559GB free, ample).
-     b. quantize → MLX: **uniform-4bit** (`mlx_lm.convert -q`, ~17.5GB, memory-safe baseline)
-        AND **OptiQ-4bit** (`mlx-optiq`, quality); record eff-bpw via `quant_info`.
+     a. [DONE 2026-06-25] download BF16 → 65G / 16 shards / 0 incomplete in the M5 HF cache
+        (authenticated via `~/.zshrc` HF_TOKEN; `snapshot_download` is resumable).
+     b. [NEXT — run only when M5 has NO resident model: RAM] quantize → MLX: **uniform-4bit**
+        (`mlx_lm.convert -q`, ~17.5GB, memory-safe baseline) AND **OptiQ-4bit** (`mlx-optiq`,
+        quality); record eff-bpw via `quant_info`. CAUTION: a 65GB BF16 on a 64GB box can OOM
+        if the converter loads it whole — verify it streams/mmaps layer-by-layer first.
      c. verify loader for `qwen3_5_moe` / `Qwen3_5MoeForConditionalGeneration` (256-expert
         gather; `ForConditionalGeneration` → confirm loads as text) on a tiny smoke.
      d. add M5-local (uncommitted) `main_models.yaml` entry: kv_bits 4, `max_kv_cache_size`,
