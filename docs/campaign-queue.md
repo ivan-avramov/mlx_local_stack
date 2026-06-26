@@ -25,8 +25,8 @@ Last updated: 2026-06-25.
 | gemma-4-26b-a4b-it-8bit | MoE | ✓ | ✓ | ✓ | +kv16 LCB ✓ |
 | gemma-4-26b-a4b-it-4bit | MoE | ◻ | ✓ | ✓ INVALID (over-reasons) | dominated |
 | gemma-4-26B-A4B-it-QAT-MLX-4bit | MoE | ✓ | ✓ | ✓ INVALID (loop-prone) | dominated |
-| gemma-4-31b-it-6bit | dense | ◻ | ✓ | ~ (M2; conv 5/6) | +kv16 LCB ✓ |
-| gemma-4-31b-it-UD-MLX-4bit | dense | ✓ | ✓ | ◻ (M2, after 6bit) | cleanest light conv |
+| gemma-4-31b-it-6bit | dense | ◻ | ✓ | ✓ **86.7%** (conv 12/15) | +kv16 LCB ✓; beats MoE |
+| gemma-4-31b-it-UD-MLX-4bit | dense | ✓ | ✓ | ✓ **86.7%** (conv 14/15) | cleanest LCB conv; beats MoE |
 | gemma-4-31B-it-qat-6bit | dense | ◻ | ✓ **AIME 100%/100%conv** | ~ (M5 now) | **convergence + reasoning leader** |
 | Qwen3.6-27B-UD-MLX-6bit | dense | ✓ | ✓ | ◻ (M5 queued; watch meander) | +kv16 LCB ✓ |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | MoE-distill | ✓ | ✓ | ~ (M5; watch meander) | |
@@ -71,11 +71,15 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
      uniform-4bit + 4-bit KV ≈ 27GB — both fit ≤46GB. 8-bit weights or fp16-KV do NOT.
 
 ### M2 (local laptop, ≤192K only — co-resident ~22GB)
-1. **[RUNNING]** dense-gemma LCB @ production t0.7 (`lightsweep.sh`): gemma-4-31b-it-6bit
-   (conv 5/6) → gemma-4-31b-it-UD-MLX-4bit. Slow (dense 31B on hard LCB) but converging.
-2. **[QUEUED]** agentic axes on gemma LCB-survivors (≤192K fits): Aider polyglot, then
-   SWE-Verified-40. (CORE campaign axes — tooling built+merged, never run.)
-3. **[QUEUED]** BFCL native-FC + math500 on the lead gemma candidates.
+1. **[DONE]** dense-gemma LCB @ production t0.7: gemma-4-31b-it-6bit **86.7%** (conv 12/15) +
+   gemma-4-31b-it-UD-MLX-4bit **86.7%** (conv 14/15) — both BEAT the MoE (80%, H60→H80) with
+   cleaner convergence. Graded + recorded.
+2. **[RUNNING]** math500 (N=30) on gemma-4-31b-it-6bit + gemma-4-31b-it-UD-MLX-4bit @ production
+   (launched while user away — safe known axis, dense reasons concisely on math). NOTE: the
+   LCB-completion poller does NOT watch math500 → grade it on M2-idle.
+3. **[QUEUED]** agentic axes on gemma LCB-survivors (≤192K fits): Aider polyglot, then
+   SWE-Verified-40 (CORE; built+merged, never run — needs attention for the first run, not unattended).
+4. **[QUEUED]** BFCL native-FC on the lead gemma candidates.
 
 ## Backlog (unassigned — priority order)
 1. **Finish LCB across ALL candidates** (the differentiator) — partly in the worklists above.
