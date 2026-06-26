@@ -57,7 +57,18 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
    refill M5 after the LCB cut) — completes the reasoning axis across all 3 dense gemmas
    (6bit + UD-4bit on M2). qat-6bit is the convergence leader → expect fast clean convergence.
    Grade on completion; record + append.
-6. **[DEFERRED — needs loader port, awaiting go] deepreinforce-ai/Ornith-1.0-35B** conversion.
+6. **[UNBLOCKED — patch shipped; next = smoke-load + convert when M5 frees] deepreinforce-ai/Ornith-1.0-35B** conversion.
+   - **LOADER FIX SHIPPED 2026-06-26** (fork f0d50c9, stack submodule bump af992b6, synced to M5):
+     `qwen3_5_moe.sanitize` now tolerates the UNFUSED per-expert layout (stacks
+     `experts.{e}.{proj}.weight` → `switch_mlp.{proj}.weight`); fused Qwen3.6-VL path preserved.
+     TDD: `mlx_vlm/tests/test_qwen3_5_moe_sanitize.py` (both layouts, 24 tests pass). The fork's
+     `qwen3_5_moe` already implements the full hybrid arch (GatedDeltaNet `linear_attn` + full-attn,
+     MoE with `shared_expert` + router) — this sanitize gap was the only blocker.
+   - **NEXT (needs M5 free — currently running math500 on qat-6bit):**
+     (i) smoke-load real Ornith via PYTHONPATH, confirm ZERO missing/unexpected keys;
+     (ii) `python -m mlx_vlm.convert --hf-path <snap 5df2ed3f> -q --q-bits 4 --mlx-path <out>` (uniform-4bit, ≈27GB);
+     (iii) M5-local uncommitted `main_models.yaml` entry (kv_bits 4, max_kv_cache_size, prefill_step_size 512);
+     (iv) capacity `mx.get_peak_memory`@256K → retrieval → LCB → BFCL native-FC → SWE-Verified-40.
    - a. [DONE] BF16 → 65G / 16 shards in cache (snapshot 5df2ed3f).
    - b. **ROOT CAUSE (2026-06-26):** NOT a simple prefix issue. Ornith is a **hybrid linear-attention
      MoE** (Qwen3-Next-style): layers use `linear_attn.*` (A_log/conv1d/dt_bias/in_proj_qkv|a|b|z/
