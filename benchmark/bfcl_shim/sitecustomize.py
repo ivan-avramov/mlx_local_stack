@@ -60,6 +60,19 @@ def _register():
             is_fc_model=True,
             underscore_to_dot=False,
         ),
+        # Dense gemma-4-31B front-runner (prompt-mode; no native gemma FC handler).
+        "gemma-4-31b-it-6bit": ModelConfig(
+            model_name="gemma-4-31b-it-6bit",
+            display_name="gemma-4-31b-it-6bit (mlx-serve local, Prompt)",
+            url="https://huggingface.co/mlx-community/gemma-4-31b-it-6bit",
+            org="local",
+            license="gemma-terms-of-use",
+            model_handler=GemmaEpiHandler,
+            input_price=None,
+            output_price=None,
+            is_fc_model=False,
+            underscore_to_dot=False,
+        ),
         # Locally-converted Opus-reasoning distill (qwen3_5 arch -> Qwen handler). M5-only;
         # tokenizer resolved via REMOTE_OPENAI_TOKENIZER_PATH (its local snapshot dir).
         "Qwen3.6-27B-Opus-Distill-OptiQ-4bit": ModelConfig(
