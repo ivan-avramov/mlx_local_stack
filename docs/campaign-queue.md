@@ -49,23 +49,21 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
    a. gemma-4-31B-it-qat-6bit LCB ✓ — 80% (E100/M86/H60), conv 14/15 (cleanest dense conv).
    b. Qwen3.6-27B-Opus-Distill-OptiQ-4bit LCB ⚠ **DNF-MEANDER** (stopped at 8/15; median 82,855 >
       budget) — same pathology as Qwen3.6-27B-MLX-8bit.
-   c. Qwen3.6-27B-UD-MLX-6bit LCB **DEFERRED** — Qwen-arch-meanders pattern established (8bit +
-      distill DNF; only base Qwen3.6-27B-OptiQ-4bit converged). Optional: a confirm-probe or a
-      Qwen temperature-ladder, but low priority (dense gemma-4-31B is the coding front-runner).
-4. **[QUEUED — PREP] deepreinforce-ai/Ornith-1.0-35B** (M5 ONLY @256K; sampling = qwen
-   official, temp 0.6). MoE (8-of-256 experts) — **measure its convergence, don't assume the
-   dense advantage**.
-   - PREP (no MLX build upstream; **QAT is NOT possible for us** — it's training-time, would need
-     DeepReinforce to release QAT weights; we do post-training quant only):
-     a. [DONE] BF16 → 65G / 16 shards in cache.
-     b. [NEXT — M5-free only: RAM] quantize → MLX: **OptiQ 6-bit** (`mlx-optiq`, quality-first
-        primary) **+ uniform 4-bit** (`mlx_lm.convert`, memory-safe baseline); record eff-bpw via
-        `quant_info`. CAUTION: 65GB BF16 on a 64GB box can OOM unless the converter streams/mmaps —
-        verify first.
-     c. verify the `qwen3_5_moe` loader (256-expert gather; `Qwen3_5MoeForConditionalGeneration`
-        → confirm loads as text) on a tiny smoke.
-     d. M5-local (uncommitted) `main_models.yaml` entry: kv_bits 4, `max_kv_cache_size`,
-        `prefill_step_size 512`.
+4. **[RUNNING] Qwen3.6-27B-UD-MLX-6bit LCB** @ qwen official — user wants it in the charts (was a
+   primary candidate). WATCH for meandering (8bit + distill DNF'd; unsloth) → watch-and-cut +
+   record DNF if it saturates the 81920 budget, else let it complete.
+5. **[BLOCKED — loader tolerance] deepreinforce-ai/Ornith-1.0-35B** conversion (M5 ONLY @256K;
+   sampling = qwen official, temp 0.6). MoE (8-of-256 experts) — measure convergence, don't assume.
+   - a. [DONE] BF16 → 65G / 16 shards in cache.
+   - b. **[BLOCKED]** uniform-4bit via `mlx_lm.convert` FAILED: `ValueError: Received 30720
+     parameters not in model: language_model.model...` — stock mlx_lm rejects the `language_model.`-
+     prefixed weights from the `Qwen3_5MoeForConditionalGeneration` wrapper. **FIX (attended):**
+     convert via the mlx-vlm FORK's loader (has vision-tower / key-strip tolerance) OR strip the
+     `language_model.` prefix in a key-remap, THEN OptiQ-6bit + uniform-4bit, `quant_info` eff-bpw.
+     RAM is fine (49G free after a clean router restart) — the blocker is arch/key handling, NOT memory.
+     **QAT is NOT possible for us** (training-time; would need DeepReinforce to release QAT weights).
+   - c. (after b) verify the loader loads-as-text on a tiny smoke; d. M5-local (uncommitted)
+     `main_models.yaml` entry (kv_bits 4, max_kv_cache_size, prefill_step_size 512).
    - EVAL: capacity `mx.get_peak_memory`@256K → retrieval → LCB → BFCL native-FC → SWE-Verified-40.
    - MEMORY @256K (heavy GQA, 2 KV heads → small KV): OptiQ-6bit + 4-bit KV ≈ 36–40GB;
      uniform-4bit + 4-bit KV ≈ 27GB — both fit ≤46GB. 8-bit weights or fp16-KV do NOT.
@@ -74,11 +72,12 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
 1. **[DONE]** dense-gemma LCB @ production t0.7: gemma-4-31b-it-6bit **86.7%** (conv 12/15) +
    gemma-4-31b-it-UD-MLX-4bit **86.7%** (conv 14/15) — both BEAT the MoE (80%, H60→H80) with
    cleaner convergence. Graded + recorded.
-2. **[RUNNING]** math500 (N=30) on gemma-4-31b-it-6bit + gemma-4-31b-it-UD-MLX-4bit @ production
-   (launched while user away — safe known axis, dense reasons concisely on math). NOTE: the
-   LCB-completion poller does NOT watch math500 → grade it on M2-idle.
-3. **[QUEUED]** agentic axes on gemma LCB-survivors (≤192K fits): Aider polyglot, then
-   SWE-Verified-40 (CORE; built+merged, never run — needs attention for the first run, not unattended).
+2. **[RUNNING]** math500 (N=30) @ production: gemma-4-31b-it-6bit **DONE 30/30** (conv 30/30,
+   median 2000 — perfect), gemma-4-31b-it-UD-MLX-4bit ~15/30. Poller does NOT watch math500 →
+   grade both on M2-idle.
+3. **[NEXT — on M2-idle, ATTENDED first-run]** Aider polyglot SMOKE (`--limit` small) on the dense
+   front-runner (gemma-4-31b-it-6bit / UD-4bit), then full Aider → SWE-Verified-40. CORE agentic
+   axes, never run — the real "256K agentic coding" test. Box-idle monitor pings M2-IDLE → launch.
 4. **[QUEUED]** BFCL native-FC on the lead gemma candidates.
 
 ## Backlog (unassigned — priority order)
