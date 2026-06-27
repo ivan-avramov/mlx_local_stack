@@ -121,10 +121,17 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
 3. **BFCL native-FC** (tool-calling) — built, never run.
 4. **Judge panel** (Sonnet+Opus+codex, blind, over execution-PASSING outputs only) — built, never run.
 5. **math500 + GPQA** (reasoning) — built, never run.
-6. **New candidates to acquire:** Ornith (in prep), Qwen3.6 oMLX-6bit, Qwen3.6-27B-MTP variants.
-7. **Effective-context curves** (retrieval-depth + reasoning-depth, kept SEPARATE; retrieval
+6. **New candidates to acquire:** Qwen3.6 oMLX-6bit, Qwen3.6-27B-MTP variants.
+7. **WATCH-FOR-RELEASE — `deepreinforce-ai/Ornith-1.0-31B` (Dense, Gemma-4-based):** announced in the
+   Ornith-1.0 blog/news (family = 9B Dense / **31B Dense (Gemma-4)** / 35B MoE (Qwen-3.5) / 397B MoE),
+   but NOT yet on HF as of 2026-06-26 (authoritative API list with token = 35B/9B/397B only; the 31B repo
+   404s). HIGH PRIORITY when it lands — it's our converging dense front-runner's base (gemma-4-31B) PLUS
+   Ornith's self-scaffolding agentic-coding RL, directly targeting the campaign's open differentiator.
+   Re-check HF periodically. (35B MoE = ours, already converted/eval'd. 9B Dense available now but below the
+   64GB capability target — low value.)
+8. **Effective-context curves** (retrieval-depth + reasoning-depth, kept SEPARATE; retrieval
    partial, reasoning-depth not started) — the ≥0.85 gate.
-8. **bf16-KV ("kv16") ceiling sub-study** — kv16 LCB exists for Qwen3.6-27B-MLX-8bit /
+9. **bf16-KV ("kv16") ceiling sub-study** — kv16 LCB exists for Qwen3.6-27B-MLX-8bit /
    Qwen3.6-27B-UD-MLX-6bit / gemma-4-26b-a4b-it-8bit / gemma-4-31b-it-6bit; extend + compare vs
    production-KV per the quality-first plan.
 
