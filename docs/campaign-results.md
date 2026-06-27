@@ -56,6 +56,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | humanevalplus | light | 10 | **90.0%** | 100% (median 1562 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | mbppplus | light | 10 | **80.0%** | 100% (median 943 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | aime | light | 5 | 80.0%* | 80% (1 loop aime25-3 ct82528>budget) | INVALID |
+| gemma-4-31b-it-6bit (dense) | BFCL prompt-mode (no-think) | bfcl-AST | tool | 1000 | **79.4%** (s74/m93.5/p71/pm84.5) | n/a (FC, no think) | VALID* |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | aime | light | 5 | 80% (4/5) | 80% (1 loop) | INVALID |
@@ -170,6 +171,17 @@ incl. 256K → effective_ctx = full 256K.** Decode stays fast (48→37 tok/s as 
 (under-counts Metal — 32.4GB is the real peak). **FIRST candidate to clear TRUE 256K**: the dense gemmas
 hit the ~58GB backstop and were capped at 192K; 4-bit KV would drop Ornith's peak further still.
 NEXT: LCB gauntlet @ t0.6 (does it escape the qwen3_5_moe LCB-DNF?).
+
+### BFCL tool-calling — gemma-4-31b-it-6bit + an N caveat (2026-06-26)
+
+`gemma-4-31b-it-6bit` BFCL-AST (non-live, prompt-mode via GemmaEpiHandler — gemma has no
+native FC handler): **79.4% on n=1000** (FULL category set: simple 0.74/400, multiple 0.935/200,
+parallel 0.71/200, parallel_multiple 0.845/200). TWO caveats: (1) **N mismatch** — the prior
+`gemma-4-26B-A4B-it-OptiQ-4bit` (MoE) scored 0.93 on **n=200** (50/cat), so the two are NOT
+directly comparable; parity fix = re-run the MoE at full-N (queued). (2) **No-think**: BFCL
+prompt-mode emits direct function calls (~28-tok completions, no reasoning trace) — consistent
+with the prior MoE protocol so comparable to it, but NOT the daily-driver thinking-on reality.
+Going forward, standardize BFCL N (full-N is more robust; n=200 is faster).
 
 ### Provenance
 
