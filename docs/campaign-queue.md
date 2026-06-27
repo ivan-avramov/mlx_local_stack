@@ -32,7 +32,7 @@ Last updated: 2026-06-26.
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | MoE-distill | ✓ | ✓ | ⚠ DNF-MEANDER (median 82,855>bud) | |
 | Qwen3.6-27B-OptiQ-4bit | MoE | ✓ | ✓ | ✓ | only prod-KV Qwen LCB done |
 | Qwen3.6-27B-MLX-8bit | MoE | ◻ | ⚠ DNF (meander) | ◻ | DEPRIORITIZED; +kv16 LCB ✓ |
-| Ornith-1.0-35B-mlx-uniform-4bit | MoE-hybrid | ◻ | ✓ (he90/mbpp80 VALID; aime 1 budget-hit) | ◻ | CONVERGES @ t0.6; fast 72tok/s; next=256K cap→LCB |
+| Ornith-1.0-35B-mlx-uniform-4bit | MoE-hybrid | ✓ **256K@32.4GB, ret1.00** | ✓ (he90/mbpp80 VALID; aime 1 budget-hit) | ~ RUNNING @t0.6 | GATE PASS (first to clear true 256K); converges @t0.6; fast 37-72tok/s |
 
 **Higher tiers — `◻` PENDING for ALL candidates** (none run): math500, IFEval (⚠ blocked), GPQA,
 BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.

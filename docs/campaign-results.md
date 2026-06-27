@@ -161,10 +161,15 @@ sanitize, [[commit f0d50c9]]). Light tier @ official **temp 0.6**: humanevalplus
 INVALID). It CONVERGES on coding where its qwen3_5_moe cousins (8bit / distill / UD-6bit) all
 DNF-meandered — but only at temp 0.6: the preflight canary @ production temp 0.7 saturated the
 49152 budget on a trivial is_palindrome (sharp temp knee; eval at official 0.6). Decode is FAST,
-**~72 tok/s** (~5-7x the dense gemmas — the linear-attn payoff). Memory looks excellent (tiny KV:
-only 10 KV-bearing layers, 2 KV heads → 256K KV ≈ 5GB fp16 / ~1.3GB 4-bit), but the GATE number
-(`mx.get_peak_memory` prefill spike @256K) is UNMEASURED — RSS (19.3GB resident @ short ctx)
-under-counts Metal. NEXT: 256K capacity gate → LCB gauntlet (does it escape the family LCB-DNF?).
+**~72 tok/s** (~5-7x the dense gemmas — the linear-attn payoff).
+
+**CAPACITY (measured 2026-06-26, fp16 KV upper-bound):** GATE PASS — 256K MLX-peak = **32.4GB** (vs 46GB
+gate, 13.6GB headroom); ladder 160K/192K/224K/256K = 28.2 / 29.6 / 31.0 / 32.4GB (peak grows only +4.2GB
+over 96K tokens — the linear-attn payoff in action). **Perfect needle retrieval (acc 1.00) at EVERY rung
+incl. 256K → effective_ctx = full 256K.** Decode stays fast (48→37 tok/s as ctx→256K). RSS steady ~21GB
+(under-counts Metal — 32.4GB is the real peak). **FIRST candidate to clear TRUE 256K**: the dense gemmas
+hit the ~58GB backstop and were capped at 192K; 4-bit KV would drop Ornith's peak further still.
+NEXT: LCB gauntlet @ t0.6 (does it escape the qwen3_5_moe LCB-DNF?).
 
 ### Provenance
 
