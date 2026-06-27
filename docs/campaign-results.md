@@ -53,6 +53,9 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | gemma-4-31b-it-6bit (dense) | production t0.7 | **math500** | **mid** | 30 | **83.3%** | 100% (median 2000 tok) | VALID |
 | gemma-4-31B-it-qat-6bit (dense) | production t0.7 | **math500** | **mid** | 30 | **83.3%** | 100% (median 2409 tok) | VALID |
 | gemma-4-31b-it-UD-MLX-4bit (dense) | production t0.7 | **math500** | **mid** | 30 | 83.3%* | 67% (10 loops/budget-hit; median 8165 tok) | INVALID |
+| Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | humanevalplus | light | 10 | **90.0%** | 100% (median 1562 tok) | VALID |
+| Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | mbppplus | light | 10 | **80.0%** | 100% (median 943 tok) | VALID |
+| Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | aime | light | 5 | 80.0%* | 80% (1 loop aime25-3 ct82528>budget) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | aime | light | 5 | 80% (4/5) | 80% (1 loop) | INVALID |
@@ -147,6 +150,21 @@ Same box + harness, so it is genuine 4-bit tail-fragility (the same over-reasoni
 not stale router. Reinforces the front-runner: the 6-bit dense gemmas converge reliably; the
 UD-MLX-4bit is the cheaper-but-flakier sibling. NB measurement: convergence MUST use each item's
 recorded thinking_budget (gemma's, not a hardcoded 81920) — the grader's conv% is authoritative.
+
+### Ornith-1.0-35B uniform-4bit — a converging, fast, memory-light candidate (2026-06-26)
+
+`deepreinforce-ai/Ornith-1.0-35B` is qwen3_5_moe (HYBRID linear-attention MoE: 30/40 layers
+Gated-DeltaNet linear-attn with constant state, 10 full-attn; 256 experts/8 active + shared
+expert). Converted to uniform-4bit (≈19GB, 4.649bpw) via the patched fork loader (unfused-expert
+sanitize, [[commit f0d50c9]]). Light tier @ official **temp 0.6**: humanevalplus **90%**, mbppplus
+**80%** (both 100% conv / VALID), aime 80% (4/5 conv; one budget-hit on the known-hard aime25-3 →
+INVALID). It CONVERGES on coding where its qwen3_5_moe cousins (8bit / distill / UD-6bit) all
+DNF-meandered — but only at temp 0.6: the preflight canary @ production temp 0.7 saturated the
+49152 budget on a trivial is_palindrome (sharp temp knee; eval at official 0.6). Decode is FAST,
+**~72 tok/s** (~5-7x the dense gemmas — the linear-attn payoff). Memory looks excellent (tiny KV:
+only 10 KV-bearing layers, 2 KV heads → 256K KV ≈ 5GB fp16 / ~1.3GB 4-bit), but the GATE number
+(`mx.get_peak_memory` prefill spike @256K) is UNMEASURED — RSS (19.3GB resident @ short ctx)
+under-counts Metal. NEXT: 256K capacity gate → LCB gauntlet (does it escape the family LCB-DNF?).
 
 ### Provenance
 
