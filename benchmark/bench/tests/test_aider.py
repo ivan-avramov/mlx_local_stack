@@ -103,3 +103,18 @@ def test_run_aider_cli_writes_json(tmp_path, monkeypatch):
     assert rc == 0
     out = json.load(open(os.path.join(tmp_path, "mymodel", "aider.json")))
     assert out["model"] == "mymodel" and out["acc"] == 0.55 and out["tool"] == "aider_polyglot"
+
+
+def test_run_aider_sets_aider_docker_to_bypass_host_guard(tmp_path, monkeypatch):
+    # aider's benchmark.py returns immediately (prints a docker warning, runs nothing) unless
+    # AIDER_DOCKER is set. We run on the host (toolchains present), so the adapter MUST set it —
+    # otherwise every run yields "NO SCORE" (no pass_rate parsed).
+    monkeypatch.setattr(A, "aider_available", lambda repo: True)
+    captured = {}
+
+    def fake_runner(cmd, **kw):
+        captured["env"] = kw.get("env", {})
+        return types.SimpleNamespace(returncode=0, stdout="pass_rate_2: 55.0\n", stderr="")
+
+    A.run_aider("m", exercises_dir="/ex", aider_repo="/aider", runner=fake_runner)
+    assert captured["env"].get("AIDER_DOCKER") == "1"

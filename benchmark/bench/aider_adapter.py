@@ -34,7 +34,11 @@ def run_aider(model, exercises_dir, aider_repo, edit_format="whole", num_tests=N
         return {**base, "acc": None, "skipped": True,
                 "note": f"aider harness not found under {aider_repo!r}; "
                         f"clone Aider-AI/aider + polyglot-benchmark (see README)"}
-    env = {**os.environ, "OPENAI_API_BASE": endpoint, "OPENAI_API_KEY": "sk-local"}
+    # AIDER_DOCKER: aider's benchmark.py refuses to run (prints a warning + returns, no exercises)
+    # unless this is set — a guard against running unvetted model code outside a container. We run
+    # on the host (all polyglot toolchains present + a controlled benchmark), so set it explicitly.
+    env = {**os.environ, "OPENAI_API_BASE": endpoint, "OPENAI_API_KEY": "sk-local",
+           "AIDER_DOCKER": "1"}
     cmd = [sys.executable, os.path.join(aider_repo, "benchmark", "benchmark.py"), run_name,
            "--model", f"openai/{model}", "--edit-format", edit_format,
            "--threads", "1", "--exercises-dir", exercises_dir, "--new"]
