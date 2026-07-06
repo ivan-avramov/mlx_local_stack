@@ -60,6 +60,9 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | humanevalplus | light | 10 | **90.0%** | 100% (median 1562 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | mbppplus | light | 10 | **80.0%** | 100% (median 943 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | aime | light | 5 | 80.0%* | 80% (1 loop aime25-3 ct82528>budget) | INVALID |
+| Ornith-1.0-35B-mlx-uniform-6bit (qwen3_5_moe, 6.622bpw) | official t0.6 | humanevalplus | light | 10 | **90.0%** (=4bit) | 90% (1 loop HumanEval/67; med 1478) | INVALID |
+| Ornith-1.0-35B-mlx-uniform-6bit (qwen3_5_moe, 6.622bpw) | official t0.6 | mbppplus | light | 10 | **80.0%** (=4bit) | 100% (med 1214) | VALID |
+| Ornith-1.0-35B-mlx-uniform-6bit (qwen3_5_moe, 6.622bpw) | official t0.4 | **livecodebench** | **mid** | 15 | pass@1 grade-blocked (lcb dataset-load) | **47% (7/15; med 82130 — budget-saturating)** vs 4bit's 80% @ same t0.4/budget | INVALID |
 | gemma-4-31b-it-6bit (dense) | BFCL prompt-mode (no-think) | bfcl-AST | tool | 1000 | **79.4%** (s74/m93.5/p71/pm84.5) | n/a (FC, no think) | VALID* |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | BFCL native-FC (qwen `<tool_call>`; think~off, 3/400) | bfcl-AST | tool | 1000 | **74.9%** (s77.75/m85/p70/pm64) | n/a | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
@@ -198,6 +201,29 @@ needs a lower op-temp than official 0.6, and at 0.4 it's competitive with dense 
 INVALID) but 80% pass@1 is strong; the CONVERGENCE knee (20–33%→73–80%, runaways 3+→0 by 0.4/0.3) is dramatic +
 decision-grade. NEXT: agentic axes (Aider/SWE-40) @ op-temp 0.4 — Ornith's self-scaffolding differentiator.
 Ornith math500 @ t0.4 launched to gauge its reasoning axis while the agentic run is set up.
+
+### Ornith uniform-6bit — bit-width OFAT: NO quality gain over uniform-4bit (2026-07-06)
+
+Converted `Ornith-1.0-35B-mlx-uniform-6bit` ourselves (`mlx_vlm.convert --q-bits 6`, 6.622bpw, 27G,
+verified clean; router gates auto-kept at 8-bit). Ran the SAME config as uniform-4bit (fp16 KV, official
+sampling) to isolate WEIGHT bit-width. Result — **higher fidelity does not help Ornith, and hurts
+convergence:**
+- **Light coding IDENTICAL:** he+ 90% / mbpp+ 80% (exactly the 4bit numbers). No pass@1 gain.
+- **LCB @ t0.4 WORSE convergence:** apples-to-apples (both t0.4, both budget 81920) — 6bit **conv 7/15 (47%),
+  median 82,130 tok (budget-saturating)** vs 4bit **12/15 (80%), median 31,704**. The 6bit meanders MORE at
+  the shared op-temp — op-temp is quant-specific, and 6bit likely needs a lower one (≤0.3); but even so its
+  pass@1 ceiling can't exceed the 4bit's (light already identical).
+- **Mechanism/conclusion:** uniform-4bit is already at Ornith's quality ceiling — the RL-trained model is
+  quant-robust, so MORE bits buy nothing (and shift reasoning-exit dynamics unfavorably at t0.4). **Keep
+  uniform-4bit** (19G, faster, cleaner convergence). By extension, OptiQ (≈6-bit quality at 4-bit size) is
+  unlikely to raise pass@1 — its value for Ornith, if any, would be SMALLER SIZE at equal quality (3.97 vs
+  4.649 bpw), not a quality boost. (We still run the OptiQ convert to confirm empirically.)
+- **HARNESS BUG surfaced (LCB pass@1 grading):** `grade livecodebench` now fails to load the dataset —
+  `livecodebench/code_generation_lite couldn't be found on HF Hub` / "remove trust_remote_code" — even with
+  `HF_DATASETS_OFFLINE=1` (cached). A datasets-version incompatibility (same class as the blocked IFEval),
+  NOT network and NOT the model. Convergence still grades (from the jsonl). This blocks LCB pass@1 for the
+  6bit run AND the upcoming distill / Ornith-OptiQ ladders until fixed — the jsonls persist, so pass@1 is
+  re-gradable once the loader is fixed. Queued as a bug.
 
 ### BFCL tool-calling — gemma-4-31b-it-6bit + an N caveat (2026-06-26)
 
