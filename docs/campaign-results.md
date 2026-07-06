@@ -176,14 +176,16 @@ for Ornith — a DRAMATIC KNEE at temp 0.3:
 |---|---|---|---|---|
 | 0.6 (official baseline) | (lost*) | 3/9 (~33%) | 3+ (→102401 max_tokens) | high |
 | 0.5 | (lost*) | 1/5 (~20%) | 0 (budget-sat ~82K) | ~82K |
-| **0.3** | **80% (E100/M71/H80)** | **11/15 (73%)** | **0** | **26873** |
-At 0.3 Ornith converges 73% (vs 20–33%) with 80% pass@1 — competitive with dense gemma (86.7%) and gemma-MoE
-(80%). So Ornith is NOT a hard-LCB DNF; it needs a lower operating temp than official 0.6. *Caveats: 0.6/0.5
-raw data was lost (macOS /tmp cleanup + raw `--clean-stale` overwrites, doesn't archive like tempsweep) so the
-exact pass@1 delta vs 0.6 is unmeasured; n=15 pass@1 is noisy (±13pp); 4 hard items (abc358_e/abc368_b/arc186_b/
-abc372_c) still budget-hit at 0.3 → strict-INVALID, but 80% pass@1 is strong. The CONVERGENCE knee (20–33%→73%,
-runaways 3+→0) is dramatic + decision-grade. **Operating temp for Ornith coding = 0.3.** NEXT: agentic axes
-(Aider/SWE-40) — Ornith's actual self-scaffolding differentiator, and a re-run of rung 0.6 to pin the pass@1 baseline.
+| 0.3 | 80% (E100/M71/H80) | 11/15 (73%) | 0 | 26873 |
+| **0.4** | **80% (E100/M86/H60)** | **12/15 (80%)** | **0** | **31704** |
+0.3 and 0.4 BOTH hit 80% pass@1 (per-difficulty differs — M71/H80 vs M86/H60 — but n=5–7 is ±13pp noise); 0.4
+converges slightly BETTER (12/15 vs 11/15) at a HIGHER temp. Per the recipe (highest temp that holds pass@1 +
+converges; 0.5/0.6 meander), **operating temp for Ornith coding = 0.4.** So Ornith is NOT a hard-LCB DNF — it
+needs a lower op-temp than official 0.6, and at 0.4 it's competitive with dense gemma (86.7%) / gemma-MoE (80%).
+*Caveats: 0.6/0.5 raw pass@1 lost (/tmp cleanup); n=15 pass@1 noisy; some hard items still budget-hit (strict-
+INVALID) but 80% pass@1 is strong; the CONVERGENCE knee (20–33%→73–80%, runaways 3+→0 by 0.4/0.3) is dramatic +
+decision-grade. NEXT: agentic axes (Aider/SWE-40) @ op-temp 0.4 — Ornith's self-scaffolding differentiator.
+Ornith math500 @ t0.4 launched to gauge its reasoning axis while the agentic run is set up.
 
 ### BFCL tool-calling — gemma-4-31b-it-6bit + an N caveat (2026-06-26)
 

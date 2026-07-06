@@ -22,10 +22,11 @@ Last updated: 2026-07-05 (evening). **AGENTIC AXIS IS LIVE** (dockerized Aider �
 tuned params in `aider_config/aider.model.settings.yml`, thinking ON). ~15 min/case; use subsets (n=10-40).
 - **M2 (RUNNING):** `gemma-4-31b-it-6bit` Aider n=10 @ tuned (temp0.7/think16384/diff). On finish → grade+record →
   NEXT: load `gemma-4-26B-A4B-it-OptiQ-4bit` + Aider n=10 (dense-vs-MoE agentic H2H) → then extend the winners.
-- **M5 (RUNNING):** Ornith LCB **rung 0.4** (10/15, conv ~7/10 — converges like 0.3). On finish → grade pass@1 →
-  op-temp decision (0.4 vs 0.3; higher-that-holds-pass@1 wins) → NEXT: build the `aider-benchmark` image on M5
-  (OrbStack) + add Ornith served-name settings entry (qwen sampling @ op-temp, thinking_budget 81920) + run
-  Ornith Aider n=10 (its self-scaffolding differentiator — the whole point).
+- **M5 (RUNNING):** Ornith LCB ladder DONE → **op-temp = 0.4** (0.3/0.4 both 80% pass@1; 0.4 converges better @
+  higher temp). Now running **Ornith math500 @ t0.4** (n=30) — reliable keep-busy + gauges the reasoning axis.
+  On finish → grade+record. NEXT (agentic, when back or after math500): M5 has ~/aider + ~/polyglot but NO image
+  yet — build `aider-benchmark` (docker_build.sh from ~/aider) + add Ornith metadata (tokens) + settings entry
+  (qwen sampling @ **temp 0.4**, thinking_budget 81920) + run Ornith Aider n=10 (self-scaffolding differentiator).
 - **RECOVERY if my session drops:** the Aider runs are `docker run` containers (survive session exit like nohup) —
   check `docker ps` / `benchmark/results/<model>/aider.json`; relaunch via `benchmark/run_aider_docker.sh <model> <N>`.
   M5 LCB via the sweep drivers. Watchers do NOT survive — re-poll manually.
@@ -45,7 +46,7 @@ tuned params in `aider_config/aider.model.settings.yml`, thinking ON). ~15 min/c
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | MoE-distill | ✓ | ✓ | ⚠ DNF-MEANDER (median 82,855>bud) | |
 | Qwen3.6-27B-OptiQ-4bit | MoE | ✓ | ✓ | ✓ | only prod-KV Qwen LCB done |
 | Qwen3.6-27B-MLX-8bit | MoE | ◻ | ⚠ DNF (meander) | ◻ | DEPRIORITIZED; +kv16 LCB ✓ |
-| Ornith-1.0-35B-mlx-uniform-4bit | MoE-hybrid | ✓ **256K@32.4GB, ret1.00** | ✓ (he90/mbpp80 VALID; aime 1 budget-hit) | ✓ **80%@t0.3** (E100/M71/H80, conv 73% — KNEE; meanders@0.5/0.6) | GATE PASS (first true 256K); fast 37-72tok/s; ladder DONE 06-27, op-temp 0.3; NEXT=agentic |
+| Ornith-1.0-35B-mlx-uniform-4bit | MoE-hybrid | ✓ **256K@32.4GB, ret1.00** | ✓ (he90/mbpp80 VALID; aime 1 budget-hit) | ✓ **80%@t0.4** (op-temp; conv 12/15; =0.3 pass@1 but better conv; 0.5/0.6 meander) | GATE PASS (first true 256K); fast; ladder DONE (op-temp **0.4**); NEXT=agentic |
 
 **Higher tiers — `◻` PENDING for ALL candidates** (none run): math500, IFEval (⚠ blocked), GPQA,
 BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
