@@ -15,7 +15,9 @@ tracked per model: production-KV (4-bit, daily-driver) and the `-kv16` (bf16-KV)
 survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNNING]` driver per
 **Reboot recovery**. (Full registry names only — per the AGENTS.md rule; no shorthands.)
 
-Last updated: 2026-06-26.
+Last updated: 2026-07-05. **BOTH BOXES IDLE since 2026-06-27** (all launched runs completed; my keep-busy
+loop died when the CLI process exited over the gap). NEXT = the AGENTIC axes (Aider / SWE-Verified-40) — the
+campaign CORE, never run, and Ornith's actual self-scaffolding differentiator. Relaunch work per the worklist.
 
 ## Status matrix (✓ done · ~ running · ◻ pending · ⚠ stale/blocked · – n/a)
 
@@ -32,7 +34,7 @@ Last updated: 2026-06-26.
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | MoE-distill | ✓ | ✓ | ⚠ DNF-MEANDER (median 82,855>bud) | |
 | Qwen3.6-27B-OptiQ-4bit | MoE | ✓ | ✓ | ✓ | only prod-KV Qwen LCB done |
 | Qwen3.6-27B-MLX-8bit | MoE | ◻ | ⚠ DNF (meander) | ◻ | DEPRIORITIZED; +kv16 LCB ✓ |
-| Ornith-1.0-35B-mlx-uniform-4bit | MoE-hybrid | ✓ **256K@32.4GB, ret1.00** | ✓ (he90/mbpp80 VALID; aime 1 budget-hit) | ~ TEMP-LADDER 0.6→0.5→0.3 (hard AtCoder items meander@0.6: abc358_e ran to max_tokens, abc368_b budget-sat) | GATE PASS (first true 256K); fast 37-72tok/s; LCB ladder running (driver /tmp/ornith_lcb_ladder.sh) |
+| Ornith-1.0-35B-mlx-uniform-4bit | MoE-hybrid | ✓ **256K@32.4GB, ret1.00** | ✓ (he90/mbpp80 VALID; aime 1 budget-hit) | ✓ **80%@t0.3** (E100/M71/H80, conv 73% — KNEE; meanders@0.5/0.6) | GATE PASS (first true 256K); fast 37-72tok/s; ladder DONE 06-27, op-temp 0.3; NEXT=agentic |
 
 **Higher tiers — `◻` PENDING for ALL candidates** (none run): math500, IFEval (⚠ blocked), GPQA,
 BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
@@ -53,11 +55,13 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
    item 1 (id 3496) `finish=stop` but `ct=82507 > 81920` budget = NON-CONVERGED, ~114 min/item,
    driver ETA ~26h → cut at N=1 (strong priors: prior run 11–17h ETA + 8bit + distill both DNF'd).
    3rd Qwen3.6-27B-arch LCB DNF. Recorded in campaign-results.md.
-5. **[RUNNING] math500 (N=30) on gemma-4-31B-it-qat-6bit** @ production (launched 2026-06-26 to
-   refill M5 after the LCB cut) — completes the reasoning axis across all 3 dense gemmas
-   (6bit + UD-4bit on M2). qat-6bit is the convergence leader → expect fast clean convergence.
-   Grade on completion; record + append.
-6. **[CONVERTED + VALIDATED + light tier RUNNING @ t0.6] deepreinforce-ai/Ornith-1.0-35B** (uniform-4bit).
+5. **[DONE]** math500 (N=30) gemma-4-31B-it-qat-6bit @ production — **83.3% / 100% conv / VALID**
+   (median 2409). All 3 dense gemmas done on math500. Recorded in campaign-results.md.
+6. **[DONE — light + capacity + LCB-ladder complete; op-temp 0.3] deepreinforce-ai/Ornith-1.0-35B** (uniform-4bit).
+   **VERDICT (2026-06-27):** light he+90/mbpp+80 (100% conv); capacity **256K@32.4GB, retrieval 1.00** (first to
+   clear true 256K); LCB temp-ladder → **80% pass@1 @ t0.3** (E100/M71/H80, conv 73% — the KNEE; meanders @0.5/0.6).
+   Operating temp for Ornith coding = **0.3**. **NEXT = agentic axes** (its self-scaffolding differentiator) + a
+   rung-0.6 re-run to pin the pass@1 baseline (0.6/0.5 raw lost to /tmp cleanup). Historical detail below.
    - **2026-06-26 STATUS:** converted (uniform-4bit, ~19GB, 4.649bpw, M5-local registry entry, uncommitted)
      + smoke-loaded (all keys map) + canary-generated coherent code. Decode is FAST: **69 tok/s** (linear-attn
      payoff, ~5-7x the dense gemmas). Light tier (he+/mbpp+/aime) RUNNING @ official **temp 0.6** (pid via

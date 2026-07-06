@@ -170,7 +170,20 @@ over 96K tokens — the linear-attn payoff in action). **Perfect needle retrieva
 incl. 256K → effective_ctx = full 256K.** Decode stays fast (48→37 tok/s as ctx→256K). RSS steady ~21GB
 (under-counts Metal — 32.4GB is the real peak). **FIRST candidate to clear TRUE 256K**: the dense gemmas
 hit the ~58GB backstop and were capped at 192K; 4-bit KV would drop Ornith's peak further still.
-NEXT: LCB gauntlet @ t0.6 (does it escape the qwen3_5_moe LCB-DNF?).
+**LCB TEMP-LADDER (ran 2026-06-27, model-specific per recipe):** the hard-LCB meander IS temperature-tunable
+for Ornith — a DRAMATIC KNEE at temp 0.3:
+| rung | pass@1 | convergence | runaways (finish=length) | median tok |
+|---|---|---|---|---|
+| 0.6 (official baseline) | (lost*) | 3/9 (~33%) | 3+ (→102401 max_tokens) | high |
+| 0.5 | (lost*) | 1/5 (~20%) | 0 (budget-sat ~82K) | ~82K |
+| **0.3** | **80% (E100/M71/H80)** | **11/15 (73%)** | **0** | **26873** |
+At 0.3 Ornith converges 73% (vs 20–33%) with 80% pass@1 — competitive with dense gemma (86.7%) and gemma-MoE
+(80%). So Ornith is NOT a hard-LCB DNF; it needs a lower operating temp than official 0.6. *Caveats: 0.6/0.5
+raw data was lost (macOS /tmp cleanup + raw `--clean-stale` overwrites, doesn't archive like tempsweep) so the
+exact pass@1 delta vs 0.6 is unmeasured; n=15 pass@1 is noisy (±13pp); 4 hard items (abc358_e/abc368_b/arc186_b/
+abc372_c) still budget-hit at 0.3 → strict-INVALID, but 80% pass@1 is strong. The CONVERGENCE knee (20–33%→73%,
+runaways 3+→0) is dramatic + decision-grade. **Operating temp for Ornith coding = 0.3.** NEXT: agentic axes
+(Aider/SWE-40) — Ornith's actual self-scaffolding differentiator, and a re-run of rung 0.6 to pin the pass@1 baseline.
 
 ### BFCL tool-calling — gemma-4-31b-it-6bit + an N caveat (2026-06-26)
 
@@ -178,10 +191,16 @@ NEXT: LCB gauntlet @ t0.6 (does it escape the qwen3_5_moe LCB-DNF?).
 native FC handler): **79.4% on n=1000** (FULL category set: simple 0.74/400, multiple 0.935/200,
 parallel 0.71/200, parallel_multiple 0.845/200). TWO caveats: (1) **N mismatch** — the prior
 `gemma-4-26B-A4B-it-OptiQ-4bit` (MoE) scored 0.93 on **n=200** (50/cat), so the two are NOT
-directly comparable; parity fix = re-run the MoE at full-N (queued). (2) **No-think**: BFCL
-prompt-mode emits direct function calls (~28-tok completions, no reasoning trace) — consistent
-with the prior MoE protocol so comparable to it, but NOT the daily-driver thinking-on reality.
-Going forward, standardize BFCL N (full-N is more robust; n=200 is faster).
+directly comparable. (2) **No-think**: BFCL prompt-mode emits direct function calls (~28-tok
+completions, no reasoning trace) — comparable to the prior MoE protocol but NOT the daily-driver
+thinking-on reality. Going forward, standardize BFCL N.
+
+**PARITY H2H (matched full-N=1000, resolved 2026-06-27):** re-ran the MoE at full-N →
+`gemma-4-26B-A4B-it-OptiQ-4bit` (MoE) = **0.94** (simple 0.96 / multiple 0.95 / parallel 0.915 /
+parallel_multiple 0.915) vs `gemma-4-31b-it-6bit` (dense) = **0.794** (0.74/0.935/0.71/0.845). At
+matched N the **MoE clearly WINS tool-calling** (+0.15) — notably on simple_python (0.96 vs 0.74) and
+parallel (0.915 vs 0.71). So: dense gemma-4-31B leads on LCB/reasoning + convergence, but the gemma-MoE
+leads on BFCL tool-calling. (The MoE's earlier n=200 0.93 held up at full-N 0.94 — robust.)
 
 ### Provenance
 
