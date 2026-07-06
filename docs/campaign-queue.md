@@ -15,9 +15,20 @@ tracked per model: production-KV (4-bit, daily-driver) and the `-kv16` (bf16-KV)
 survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNNING]` driver per
 **Reboot recovery**. (Full registry names only — per the AGENTS.md rule; no shorthands.)
 
-Last updated: 2026-07-05. **BOTH BOXES IDLE since 2026-06-27** (all launched runs completed; my keep-busy
-loop died when the CLI process exited over the gap). NEXT = the AGENTIC axes (Aider / SWE-Verified-40) — the
-campaign CORE, never run, and Ornith's actual self-scaffolding differentiator. Relaunch work per the worklist.
+Last updated: 2026-07-05 (evening). **AGENTIC AXIS IS LIVE** (dockerized Aider — see below).
+
+## AUTONOMOUS PLAN (user away ~hours — keep BOTH boxes busy; drive on watcher pings)
+**Aider is dockerized + working** (`benchmark/run_aider_docker.sh` + `aider-benchmark` image on M2; served-name
+tuned params in `aider_config/aider.model.settings.yml`, thinking ON). ~15 min/case; use subsets (n=10-40).
+- **M2 (RUNNING):** `gemma-4-31b-it-6bit` Aider n=10 @ tuned (temp0.7/think16384/diff). On finish → grade+record →
+  NEXT: load `gemma-4-26B-A4B-it-OptiQ-4bit` + Aider n=10 (dense-vs-MoE agentic H2H) → then extend the winners.
+- **M5 (RUNNING):** Ornith LCB **rung 0.4** (10/15, conv ~7/10 — converges like 0.3). On finish → grade pass@1 →
+  op-temp decision (0.4 vs 0.3; higher-that-holds-pass@1 wins) → NEXT: build the `aider-benchmark` image on M5
+  (OrbStack) + add Ornith served-name settings entry (qwen sampling @ op-temp, thinking_budget 81920) + run
+  Ornith Aider n=10 (its self-scaffolding differentiator — the whole point).
+- **RECOVERY if my session drops:** the Aider runs are `docker run` containers (survive session exit like nohup) —
+  check `docker ps` / `benchmark/results/<model>/aider.json`; relaunch via `benchmark/run_aider_docker.sh <model> <N>`.
+  M5 LCB via the sweep drivers. Watchers do NOT survive — re-poll manually.
 
 ## Status matrix (✓ done · ~ running · ◻ pending · ⚠ stale/blocked · – n/a)
 
