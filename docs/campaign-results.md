@@ -56,6 +56,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | official t0.4 | **math500** | **mid** | 30 | 83.3%* | 70% (9 loops; median 23150) | INVALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | aider t0.4 diff (dockerized) | **aider-polyglot** | **agentic** | 34 | **61.8% (pass_rate_2; pr1 17.6%; well-formed 94.1%)** | n/a | VALID |
 | gemma-4-31b-it-6bit (dense) | aider t0.7 whole (dockerized) | **aider-polyglot** | **agentic** | 5 | **60% (pass_rate_2; pr1 20%; well-formed 100%)** | n/a | VALID* |
+| gemma-4-26B-A4B-it-OptiQ-4bit (MoE) | production t0.7 whole (dockerized) | **aider-polyglot** | **agentic** | 5 | 20% (pr2 1/5) — **contaminated** | n/a | **INVALID** (5/5 output-token-limit: thinking ate the 32768 budget → ~0 answer) |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | humanevalplus | light | 10 | **90.0%** | 100% (median 1562 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | mbppplus | light | 10 | **80.0%** | 100% (median 943 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | aime | light | 5 | 80.0%* | 80% (1 loop aime25-3 ct82528>budget) | INVALID |
@@ -237,7 +238,21 @@ exercise 1 (0 done in 2h, repeated identical 8126-tok generations): its SEARCH/R
 `edit_format: whole` (Ornith stays `diff`); re-running. Also fixed a litellm timeout (default 600s <
 gemma's ~20min/req → timeout-retry loop) via `timeout: 3600` in the aider settings. NET so far: Ornith's
 speed + lightness (19GB, 75 tok/s) make it the PRACTICAL agentic candidate; the dense gemmas are strong
-single-shot but slow + finicky for the 2-attempt agentic loop. gemma-whole + n=25 confirmations running.
+single-shot but slow + finicky for the 2-attempt agentic loop.
+
+**3-WAY agentic H2H COMPLETE (2026-07-06):** `Ornith-1.0-35B` (diff) **61.8% pr2 (n=34, VALID)** ≫
+`gemma-4-31b-it-6bit` (dense, whole) **60% pr2 (n=5, VALID; ~56 min/case)** ≫ `gemma-4-26B-A4B-it-OptiQ-4bit`
+(MoE, whole) **INVALID** (n=5). The MoE run is CONTAMINATED, not a clean 20%: it hit the output-token
+limit on 5/5 cases — `Input ~2,283 of 98,304` (input-context FINE) but `Output ~0 of 32,768` after long
+thinking = its reasoning consumed the entire 32,768 output budget, leaving ~0 for the whole-file answer
+(`exhausted_context_windows` is aider's mislabel for output-limit hits). This is the SAME over-reasoning
+pathology documented on LCB (the 4B-active MoE meanders/loops, conv 73%), now fatal in whole-format agentic:
+whole requires emitting the full file AFTER thinking, and the MoE's thinking never leaves room. The dense
+gemma reasons concisely and left budget for the file (hence 60% clean). **Mechanism, not a fluke** — but a
+larger `max_tokens` (e.g. 49152–65536, within the 98K context) could disambiguate config-vs-capability;
+a clean MoE re-run is BACKLOG (does not change the verdict — Ornith already wins agentic, is faster + 256K).
+NET: Ornith is the PRACTICAL agentic-coding pick; dense gemma is viable-but-slow; the gemma-MoE's
+over-reasoning makes it unsuitable for the whole-format agentic loop at the standard budget.
 
 ### Provenance
 
