@@ -4,14 +4,20 @@ Session checkpoint for the 256K-agentic-coding local-LLM selection campaign. Com
 `docs/campaign-results.md` (full scoreboard) · `docs/campaign-queue.md` (durable worklist + recovery) · `AGENTS.md` (norms).
 
 ## TL;DR verdict
-**Ornith-1.0-35B-mlx-uniform-4bit is the pick for local 256K *agentic* coding on 64GB.** It's the only
-candidate that clears true 256K (`mx.get_peak_memory` 32.4GB ≤46GB gate, retrieval 1.00), is fast enough
-for the practical agentic loop (37–75 tok/s, ~5–7× the dense gemmas), and is respectable on every axis.
-The dense gemma-4-31B is stronger single-shot (LCB 86.7%) but **capped at 192K** and **too slow/finicky for
-agentic** (~3h/case, needed whole-format). gemma-MoE leads tool-calling (BFCL 94%). Qwen3.6-27B arch DNFs LCB.
+**Ornith-1.0-35B-mlx-uniform-4bit is the pick for local 256K *agentic* coding on 64GB.** NOTE Ornith is
+ITSELF an MoE — `qwen3_5_moe`: 256 experts / **8 active** (fine-grained, moe_intermediate 512) + a shared
+expert + **hybrid linear-attention** (30/40 layers GatedDeltaNet, 10 full-attn); 35B total but few active
+params. That architecture IS why it wins: sparse activation → fast decode + light weights (~19GB @4bit);
+linear-attn → tiny KV → fits true 256K. It's the only candidate that clears 256K (`mx.get_peak_memory`
+32.4GB ≤46GB gate, retrieval 1.00), is fast enough for the agentic loop (37–75 tok/s, ~5–7× the dense
+gemmas), and is respectable on every axis. So the comparison is NOT "dense vs MoE" — it's three specific
+models: **Ornith (sparse-MoE + linear-attn) beats BOTH the dense gemma-4-31B AND the other MoE
+(gemma-4-26B-A4B-it-OptiQ-4bit)** for this goal. Dense gemma-4-31B = stronger single-shot (LCB 86.7%) but
+**192K-capped** + **too slow/finicky for agentic** (~3h/case, needed whole-format). gemma-4-26B-A4B MoE
+leads tool-calling (BFCL 94%). Qwen3.6-27B arch DNFs LCB.
 
 ## Results (all axes; op-temps/configs in campaign-results.md)
-| axis | Ornith-35B u4 | dense gemma-4-31B-6bit | gemma-MoE-OptiQ-4bit |
+| axis | Ornith-35B u4 (MoE+lin-attn, 8/256 active) | dense gemma-4-31B-6bit | gemma-4-26B-A4B MoE-OptiQ-4bit |
 |---|---|---|---|
 | 256K capacity | ✅ 32.4GB, ret 1.00 | ❌ 192K cap | — |
 | decode speed | 37–75 tok/s | ~7–10 | fast |
