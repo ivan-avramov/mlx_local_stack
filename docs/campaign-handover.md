@@ -21,7 +21,7 @@ leads tool-calling (BFCL 94%). Qwen3.6-27B arch DNFs LCB.
 |---|---|---|---|
 | 256K capacity | ✅ 32.4GB, ret 1.00 | ❌ 192K cap | — |
 | decode speed | 37–75 tok/s | ~7–10 | fast |
-| aider agentic (pr2) | **61.8%** (n=34, wf 94%) | works, ~3h/case (whole) | pending |
+| aider agentic (pr2) | **61.8%** (n=34, ~6min/case) | **60%** (n=5, ~3h/case, whole) | pending |
 | LCB | 80% @t0.4 | **86.7%** | 80% |
 | math500 | 83.3% | 83.3% | — |
 | light he+/mbpp+ | 90/80 | 100/70–80 | 100/80 |
@@ -29,9 +29,10 @@ leads tool-calling (BFCL 94%). Qwen3.6-27B arch DNFs LCB.
 - Ornith LCB **op-temp = 0.4** (temp-ladder: 0.5/0.6 meander; 0.3/0.4 both 80% pass@1, 0.4 converges best).
 - Ornith quirk: meanders (budget-saturates) on the *hardest* items → strict-INVALID on some, but strong pass@1.
 
-## Currently RUNNING (as of HEAD 0713e60)
-- **M2** → `gemma-4-31b-it-6bit` aider (whole format, n=5): **3/5 done, slow (~3h/ex)**. Container `aider-gemma-4-31b-it-6bit`. Log `/tmp/aider_gemma_whole.log`. Watcher `bnjhgfisn`.
-- **M5** → Ornith BFCL (native FC, full-N): **RUNNING**. Log `logs/ornith_bfcl.log`. Watcher `befnwyurx`.
+## Currently RUNNING
+- **M2** → gemma-4-26B-A4B-it-OptiQ-4bit aider (whole, n=5): RUNNING. Log `/tmp/aider_moe_whole.log`. (gemma-4-31b-it-6bit aider DONE = 60% pr2, n=5.)
+- **M5** → Ornith BFCL (native FC, full-N): RUNNING. Log `logs/ornith_bfcl.log`. Watcher `befnwyurx`.
+- Aider containers survive session exit — `docker ps`; grep pass_rate_ in the logs.
 
 ## Aider agentic — HOW IT WORKS (the session's main build)
 Dockerized via aider's official flow. `benchmark/run_aider_docker.sh <served-model> [N] [edit_format] [run_name]`:

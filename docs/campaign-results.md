@@ -55,6 +55,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | gemma-4-31b-it-UD-MLX-4bit (dense) | production t0.7 | **math500** | **mid** | 30 | 83.3%* | 67% (10 loops/budget-hit; median 8165 tok) | INVALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | official t0.4 | **math500** | **mid** | 30 | 83.3%* | 70% (9 loops; median 23150) | INVALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | aider t0.4 diff (dockerized) | **aider-polyglot** | **agentic** | 34 | **61.8% (pass_rate_2; pr1 17.6%; well-formed 94.1%)** | n/a | VALID |
+| gemma-4-31b-it-6bit (dense) | aider t0.7 whole (dockerized) | **aider-polyglot** | **agentic** | 5 | **60% (pass_rate_2; pr1 20%; well-formed 100%)** | n/a | VALID* |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | humanevalplus | light | 10 | **90.0%** | 100% (median 1562 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | mbppplus | light | 10 | **80.0%** | 100% (median 943 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | aime | light | 5 | 80.0%* | 80% (1 loop aime25-3 ct82528>budget) | INVALID |
