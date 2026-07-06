@@ -163,8 +163,15 @@ Gated-DeltaNet linear-attn with constant state, 10 full-attn; 256 experts/8 acti
 expert). Converted to uniform-4bit (≈19GB, 4.649bpw) via the patched fork loader (unfused-expert
 sanitize, [[commit f0d50c9]]). Light tier @ official **temp 0.6**: humanevalplus **90%**, mbppplus
 **80%** (both 100% conv / VALID), aime 80% (4/5 conv; one budget-hit on the known-hard aime25-3 →
-INVALID). It CONVERGES on coding where its qwen3_5_moe cousins (8bit / distill / UD-6bit) all
-DNF-meandered — but only at temp 0.6: the preflight canary @ production temp 0.7 saturated the
+INVALID). It CONVERGES on coding where its same-generation Qwen3.6-27B siblings (8bit / distill /
+UD-6bit) all DNF-meandered — and these are **qwen3_5, DENSE** (verified from config: model_type
+`qwen3_5`, `n_experts=None`, `Qwen3_5ForConditionalGeneration` on the 8bit + UD-6bit), NOT the
+`qwen3_5_moe` an earlier draft called them. They share Ornith's *hybrid linear-attn backbone*
+(identical `full_attention_interval=4`, 3:1 linear:full GatedDeltaNet layout, linear-attn dims) but
+are the DENSE variant — Ornith adds MoE sparsity (256 experts / 8 active + shared expert) on top of
+that RL post-training. So Ornith's convergence edge over these siblings reflects BOTH its MoE arch
+AND its RL, not training alone — the comparison is a dense-vs-Ornith ablation, not same-arch.
+But only at temp 0.6: the preflight canary @ production temp 0.7 saturated the
 49152 budget on a trivial is_palindrome (sharp temp knee; eval at official 0.6). Decode is FAST,
 **~72 tok/s** (~5-7x the dense gemmas — the linear-attn payoff).
 
