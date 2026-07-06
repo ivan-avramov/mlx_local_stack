@@ -25,13 +25,13 @@ leads tool-calling (BFCL 94%). Qwen3.6-27B arch DNFs LCB.
 | LCB | 80% @t0.4 | **86.7%** | 80% |
 | math500 | 83.3% | 83.3% | — |
 | light he+/mbpp+ | 90/80 | 100/70–80 | 100/80 |
-| BFCL tool-calling | **RUNNING (M5)** | 79.4% (n=1000) | **94%** (n=1000) |
+| BFCL tool-calling | 74.9% (n=1000) | 79.4% (n=1000) | **94%** (n=1000) |
 - Ornith LCB **op-temp = 0.4** (temp-ladder: 0.5/0.6 meander; 0.3/0.4 both 80% pass@1, 0.4 converges best).
 - Ornith quirk: meanders (budget-saturates) on the *hardest* items → strict-INVALID on some, but strong pass@1.
 
 ## Currently RUNNING
 - **M2** → gemma-4-26B-A4B-it-OptiQ-4bit aider (whole, n=5): RUNNING. Log `/tmp/aider_moe_whole.log`. (gemma-4-31b-it-6bit aider DONE = 60% pr2, n=5.)
-- **M5** → Ornith BFCL (native FC, full-N): RUNNING. Log `logs/ornith_bfcl.log`. Watcher `befnwyurx`.
+- **M5** → Ornith BFCL (native FC, full-N): **DONE = 74.9%** (s77.75/m85/p70/pm64; last of the 3 on tool-calling). M5 now FREE.
 - Aider containers survive session exit — `docker ps`; grep pass_rate_ in the logs.
 
 ## Aider agentic — HOW IT WORKS (the session's main build)

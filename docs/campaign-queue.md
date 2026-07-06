@@ -46,7 +46,7 @@ tuned params in `aider_config/aider.model.settings.yml`, thinking ON). ~15 min/c
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | MoE-distill | ✓ | ✓ | ⚠ DNF-MEANDER (median 82,855>bud) | |
 | Qwen3.6-27B-OptiQ-4bit | MoE | ✓ | ✓ | ✓ | only prod-KV Qwen LCB done |
 | Qwen3.6-27B-MLX-8bit | MoE | ◻ | ⚠ DNF (meander) | ◻ | DEPRIORITIZED; +kv16 LCB ✓ |
-| Ornith-1.0-35B-mlx-uniform-4bit | MoE-hybrid | ✓ **256K@32.4GB, ret1.00** | ✓ (he90/mbpp80 VALID; aime 1 budget-hit) | ✓ **80%@t0.4** (op-temp; conv 12/15; =0.3 pass@1 but better conv; 0.5/0.6 meander) | GATE PASS (first true 256K); fast; ladder DONE (op-temp **0.4**); NEXT=agentic |
+| Ornith-1.0-35B-mlx-uniform-4bit | MoE-hybrid | ✓ **256K@32.4GB, ret1.00** | ✓ (he90/mbpp80 VALID; aime 1 budget-hit) | ✓ **80%@t0.4** (op-temp; conv 12/15; =0.3 pass@1 but better conv; 0.5/0.6 meander) | GATE PASS (first true 256K); fast; agentic DONE (aider 61.8% pr2); BFCL DONE (74.9%, last of 3); NEXT=(optional) uniform-6bit quality variant |
 
 **Higher tiers — `◻` PENDING for ALL candidates** (none run): math500, IFEval (⚠ blocked), GPQA,
 BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.

@@ -60,6 +60,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | mbppplus | light | 10 | **80.0%** | 100% (median 943 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | aime | light | 5 | 80.0%* | 80% (1 loop aime25-3 ct82528>budget) | INVALID |
 | gemma-4-31b-it-6bit (dense) | BFCL prompt-mode (no-think) | bfcl-AST | tool | 1000 | **79.4%** (s74/m93.5/p71/pm84.5) | n/a (FC, no think) | VALID* |
+| Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | BFCL native-FC (qwen `<tool_call>`; think~off, 3/400) | bfcl-AST | tool | 1000 | **74.9%** (s77.75/m85/p70/pm64) | n/a | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | aime | light | 5 | 80% (4/5) | 80% (1 loop) | INVALID |
@@ -206,6 +207,18 @@ parallel_multiple 0.915) vs `gemma-4-31b-it-6bit` (dense) = **0.794** (0.74/0.93
 matched N the **MoE clearly WINS tool-calling** (+0.15) — notably on simple_python (0.96 vs 0.74) and
 parallel (0.915 vs 0.71). So: dense gemma-4-31B leads on LCB/reasoning + convergence, but the gemma-MoE
 leads on BFCL tool-calling. (The MoE's earlier n=200 0.93 held up at full-N 0.94 — robust.)
+
+**3-WAY at matched full-N=1000, incl. Ornith (2026-07-06):** `Ornith-1.0-35B-mlx-uniform-4bit` BFCL-AST
+(native FC — the model emits qwen `<tool_call>` text; thinking effectively off, only 3/400 traces carried
+`<think>`, so comparable to the gemmas' no-think FC protocol) = **74.9%** (simple_python 0.7775/400,
+multiple 0.85/200, parallel 0.70/200, parallel_multiple 0.64/200). Final BFCL-AST ranking:
+**gemma-4-26B-A4B-it-OptiQ-4bit (MoE) 0.94 ≫ gemma-4-31b-it-6bit (dense) 0.794 > Ornith-1.0-35B (MoE) 0.749.**
+Ornith is LAST on structured single-turn tool-calling — the inverse of its agentic-coding standing (Aider
+61.8% pr2, where it leads). Not a harness artifact: outputs are well-formed qwen `<tool_call>` calls and the
+per-category gradient (0.78→0.85→0.70→0.64) tracks difficulty, not a parse collapse. Mechanism: Ornith's RL
+specialization is MULTI-TURN agentic self-scaffolding (the Aider edit loop), not single-shot API-selection;
+BFCL-AST rewards the latter, which the gemma-MoE is tuned for. Takeaway: **tool-calling and agentic-coding are
+distinct axes** — the gemma-MoE is the tool-calling pick, Ornith the agentic-coding + 256K-capacity pick.
 
 ### Agentic axis (Aider polyglot, dockerized) — Ornith standout; dense gemma edit-loop (2026-07-06)
 
