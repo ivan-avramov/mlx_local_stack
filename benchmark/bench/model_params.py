@@ -81,6 +81,7 @@ PARAMS = {
     # Ornith-1.0-35B is qwen3_5_moe arch (hybrid linear-attn MoE) — Qwen sampling,
     # not the gemma name-fallback ("qwen" isn't in the name).
     "Ornith-1.0-35B-mlx-uniform-4bit": QWEN,
+    "Ornith-1.0-35B-mlx-uniform-6bit": QWEN,
 }
 
 _PROFILES = {
