@@ -15,7 +15,19 @@ tracked per model: production-KV (4-bit, daily-driver) and the `-kv16` (bf16-KV)
 survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNNING]` driver per
 **Reboot recovery**. (Full registry names only — per the AGENTS.md rule; no shorthands.)
 
-Last updated: 2026-07-05 (evening). **AGENTIC AXIS IS LIVE** (dockerized Aider — see below).
+Last updated: 2026-07-06. **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
+
+## M5 NEXT — ordered plan (OptiQ + temp-ladder, 2026-07-06)
+Correction logged: OptiQ is NOT download-only — we have `.venv-optiq/bin/optiq` and a self-converted `Qwen3.6-27B-Opus-Distill-OptiQ-4bit/optiq_mixed` (3.97bpw). `mlx_lm` ships NATIVE `qwen3_5_moe.py` → Ornith's MoE loads without the mlx_vlm unfused-expert patch.
+1. **[RUNNING]** `Ornith-1.0-35B-mlx-uniform-6bit` eval — light he+10/mbpp+10 @official t0.6 + LCB=15 @t0.4 (OFAT vs uniform-4bit; log `logs/ornith_6bit_eval.log`, watcher-driven). Gates whether higher fidelity moves Ornith at all.
+2. **[NEXT — needs M5 free (unload 6bit first)]** **OptiQ-convert Ornith ourselves.** Cmd (from repo dir):
+   `.venv-optiq/bin/optiq convert $HOME/.cache/huggingface/hub/models--deepreinforce-ai--Ornith-1.0-35B/snapshots/5df2ed3f675c7beaa490328cc70bb573b65fb660 --target-bpw 4.0 --reference auto -o $HOME/models/Ornith-1.0-35B-OptiQ-4bit`
+   - `--reference auto`: streams bf16 from disk when it won't fit RAM (65GB bf16 on 64GB → auto uniform-4bit-baseline path); calibration-driven KL sensitivity (`optiq.jsonl` mix, `--n-calibration 24` default). VLM wrapper → mlx_lm quantizes the LANGUAGE sub-module only (= what we eval). target-bpw 4.0 mirrors the distill/gemma OptiQ-4bit (smaller than uniform-4bit's 4.649bpw — the calibration value-prop).
+   - Then: M5-local uncommitted registry entry (mirror uniform-4bit: `kv_bits 0` fp16, `max_kv_cache_size 262144`, `prefill_step_size 512`); register `Ornith-1.0-35B-OptiQ-4bit` in `benchmark/bench/model_params.py` → QWEN (commit+push+ff-merge, like the 6bit); restart router; smoke-load.
+3. **[THEN] LCB temp-ladder (0.4 / 0.3) for BOTH OptiQ models** (mirror the uniform-Ornith recipe — highest temp that converges AND holds pass@1; official 0.6 meanders for this family):
+   a. `Ornith-1.0-35B-OptiQ-4bit` (once converted) — its op-temp + pass@1 vs uniform-4bit/6bit (the "does calibration help Ornith at 4-bit size" answer).
+   b. `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (EXISTING self-convert `~/Documents/ws/models/.../optiq_mixed`, 3.97bpw, dense qwen3_5, Opus-reasoning distill) — it **DNF-meandered at official t0.6 ONLY and NEVER got the temp-ladder**; this is the proper re-run it's owed. If it converges at 0.4/0.3 it re-enters contention.
+4. **[RECORD]** the distill's EXISTING-but-UNRECORDED BFCL (n=200: simple 0.96 / multiple 0.96 / …) → scoreboard, flagged N=200 (not the standardized N=1000; consider an N=1000 re-run for parity).
 
 ## AUTONOMOUS PLAN (user away ~hours — keep BOTH boxes busy; drive on watcher pings)
 **Aider is dockerized + working** (`benchmark/run_aider_docker.sh` + `aider-benchmark` image on M2; served-name
