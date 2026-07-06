@@ -54,7 +54,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | gemma-4-31B-it-qat-6bit (dense) | production t0.7 | **math500** | **mid** | 30 | **83.3%** | 100% (median 2409 tok) | VALID |
 | gemma-4-31b-it-UD-MLX-4bit (dense) | production t0.7 | **math500** | **mid** | 30 | 83.3%* | 67% (10 loops/budget-hit; median 8165 tok) | INVALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | official t0.4 | **math500** | **mid** | 30 | 83.3%* | 70% (9 loops; median 23150) | INVALID |
-| Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | aider t0.4 diff (dockerized) | **aider-polyglot** | **agentic** | 10 | **80% (pass_rate_2; pr1 20%)** | n/a | VALID* |
+| Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | aider t0.4 diff (dockerized) | **aider-polyglot** | **agentic** | 34 | **61.8% (pass_rate_2; pr1 17.6%; well-formed 94.1%)** | n/a | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | humanevalplus | light | 10 | **90.0%** | 100% (median 1562 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | mbppplus | light | 10 | **80.0%** | 100% (median 943 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | aime | light | 5 | 80.0%* | 80% (1 loop aime25-3 ct82528>budget) | INVALID |
@@ -208,8 +208,8 @@ leads on BFCL tool-calling. (The MoE's earlier n=200 0.93 held up at full-N 0.94
 
 ### Agentic axis (Aider polyglot, dockerized) — Ornith standout; dense gemma edit-loop (2026-07-06)
 
-**Ornith-1.0-35B uniform-4bit @ op-temp 0.4 = 80% pass_rate_2 (n=10, pr1 20%)** — strong agentic-edit
-result, and FAST (~384s/case vs the dense gemmas' ~24 min/req). Its self-scaffolding RL differentiator
+**Ornith-1.0-35B uniform-4bit @ op-temp 0.4 = 61.8% pass_rate_2 (n=34; the n=10 80% was small-sample
+optimism; well-formed 94.1%)** — solid agentic-edit result, and FAST (~384s/case vs the dense gemmas' ~24 min/req). Its self-scaffolding RL differentiator
 shows on the axis it was built for. **Dense gemma-4-31b-it-6bit @ diff format STUCK** — looped on
 exercise 1 (0 done in 2h, repeated identical 8126-tok generations): its SEARCH/REPLACE diffs don't apply
 (the aider README's "misapplies edits" case) → retry loop. Fix: switched gemma served entries to
