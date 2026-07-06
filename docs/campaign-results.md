@@ -54,6 +54,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | gemma-4-31B-it-qat-6bit (dense) | production t0.7 | **math500** | **mid** | 30 | **83.3%** | 100% (median 2409 tok) | VALID |
 | gemma-4-31b-it-UD-MLX-4bit (dense) | production t0.7 | **math500** | **mid** | 30 | 83.3%* | 67% (10 loops/budget-hit; median 8165 tok) | INVALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | official t0.4 | **math500** | **mid** | 30 | 83.3%* | 70% (9 loops; median 23150) | INVALID |
+| Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | aider t0.4 diff (dockerized) | **aider-polyglot** | **agentic** | 10 | **80% (pass_rate_2; pr1 20%)** | n/a | VALID* |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | humanevalplus | light | 10 | **90.0%** | 100% (median 1562 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | mbppplus | light | 10 | **80.0%** | 100% (median 943 tok) | VALID |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | aime | light | 5 | 80.0%* | 80% (1 loop aime25-3 ct82528>budget) | INVALID |
@@ -204,6 +205,18 @@ parallel_multiple 0.915) vs `gemma-4-31b-it-6bit` (dense) = **0.794** (0.74/0.93
 matched N the **MoE clearly WINS tool-calling** (+0.15) — notably on simple_python (0.96 vs 0.74) and
 parallel (0.915 vs 0.71). So: dense gemma-4-31B leads on LCB/reasoning + convergence, but the gemma-MoE
 leads on BFCL tool-calling. (The MoE's earlier n=200 0.93 held up at full-N 0.94 — robust.)
+
+### Agentic axis (Aider polyglot, dockerized) — Ornith standout; dense gemma edit-loop (2026-07-06)
+
+**Ornith-1.0-35B uniform-4bit @ op-temp 0.4 = 80% pass_rate_2 (n=10, pr1 20%)** — strong agentic-edit
+result, and FAST (~384s/case vs the dense gemmas' ~24 min/req). Its self-scaffolding RL differentiator
+shows on the axis it was built for. **Dense gemma-4-31b-it-6bit @ diff format STUCK** — looped on
+exercise 1 (0 done in 2h, repeated identical 8126-tok generations): its SEARCH/REPLACE diffs don't apply
+(the aider README's "misapplies edits" case) → retry loop. Fix: switched gemma served entries to
+`edit_format: whole` (Ornith stays `diff`); re-running. Also fixed a litellm timeout (default 600s <
+gemma's ~20min/req → timeout-retry loop) via `timeout: 3600` in the aider settings. NET so far: Ornith's
+speed + lightness (19GB, 75 tok/s) make it the PRACTICAL agentic candidate; the dense gemmas are strong
+single-shot but slow + finicky for the 2-attempt agentic loop. gemma-whole + n=25 confirmations running.
 
 ### Provenance
 
