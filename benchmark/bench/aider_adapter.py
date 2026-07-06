@@ -43,6 +43,14 @@ def run_aider(model, exercises_dir, aider_repo, edit_format="whole", num_tests=N
     # (== the python running benchmark.py). Prepend that bindir so the test-runner finds it
     # (other langs — cargo/go/npm/javac/g++ — resolve from the inherited PATH).
     env["PATH"] = os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")
+    # benchmark.py asserts BENCHMARK_DNAME (default relative "tmp.benchmarks") exists; we run from
+    # an arbitrary CWD, so pin it to an absolute dir under the aider repo (and create it).
+    bench_workdir = os.path.join(aider_repo, "benchmark", "tmp.benchmarks")
+    try:
+        os.makedirs(bench_workdir, exist_ok=True)
+    except OSError:
+        pass
+    env["AIDER_BENCHMARK_DIR"] = bench_workdir
     cmd = [sys.executable, os.path.join(aider_repo, "benchmark", "benchmark.py"), run_name,
            "--model", f"openai/{model}", "--edit-format", edit_format,
            "--threads", "1", "--exercises-dir", exercises_dir, "--new"]

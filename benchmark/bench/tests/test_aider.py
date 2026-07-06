@@ -134,3 +134,21 @@ def test_run_aider_prepends_python_bindir_to_path_for_test_tools(monkeypatch):
 
     A.run_aider("m", exercises_dir="/ex", aider_repo="/aider", runner=fake_runner)
     assert os.path.dirname(sys.executable) in captured["env"]["PATH"].split(os.pathsep)
+
+
+def test_run_aider_sets_absolute_benchmark_dir(monkeypatch, tmp_path):
+    # benchmark.py asserts BENCHMARK_DNAME (default relative "tmp.benchmarks") exists; the adapter
+    # runs from an arbitrary CWD, so it must point AIDER_BENCHMARK_DIR at an absolute, existing dir.
+    import os
+    monkeypatch.setattr(A, "aider_available", lambda repo: True)
+    captured = {}
+
+    def fake_runner(cmd, **kw):
+        captured["env"] = kw.get("env", {})
+        return types.SimpleNamespace(returncode=0, stdout="pass_rate_2: 55.0\n", stderr="")
+
+    repo = str(tmp_path / "aider")
+    A.run_aider("m", exercises_dir="/ex", aider_repo=repo, runner=fake_runner)
+    bd = captured["env"].get("AIDER_BENCHMARK_DIR")
+    assert bd == os.path.join(repo, "benchmark", "tmp.benchmarks")
+    assert os.path.isabs(bd) and os.path.isdir(bd)   # adapter created it
