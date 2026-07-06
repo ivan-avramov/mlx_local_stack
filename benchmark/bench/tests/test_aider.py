@@ -118,3 +118,19 @@ def test_run_aider_sets_aider_docker_to_bypass_host_guard(tmp_path, monkeypatch)
 
     A.run_aider("m", exercises_dir="/ex", aider_repo="/aider", runner=fake_runner)
     assert captured["env"].get("AIDER_DOCKER") == "1"
+
+
+def test_run_aider_prepends_python_bindir_to_path_for_test_tools(monkeypatch):
+    # polyglot python exercises run `pytest` via subprocess (TEST_COMMANDS[".py"]=["pytest"]);
+    # pytest lives in the aider venv (== the python running benchmark.py), so the adapter must
+    # prepend that bindir to PATH or the test-runner FileNotFoundErrors on `pytest`.
+    import os, sys
+    monkeypatch.setattr(A, "aider_available", lambda repo: True)
+    captured = {}
+
+    def fake_runner(cmd, **kw):
+        captured["env"] = kw.get("env", {})
+        return types.SimpleNamespace(returncode=0, stdout="pass_rate_2: 55.0\n", stderr="")
+
+    A.run_aider("m", exercises_dir="/ex", aider_repo="/aider", runner=fake_runner)
+    assert os.path.dirname(sys.executable) in captured["env"]["PATH"].split(os.pathsep)

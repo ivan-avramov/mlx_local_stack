@@ -39,6 +39,10 @@ def run_aider(model, exercises_dir, aider_repo, edit_format="whole", num_tests=N
     # on the host (all polyglot toolchains present + a controlled benchmark), so set it explicitly.
     env = {**os.environ, "OPENAI_API_BASE": endpoint, "OPENAI_API_KEY": "sk-local",
            "AIDER_DOCKER": "1"}
+    # The polyglot python exercises run `pytest` via subprocess; it lives in the aider venv
+    # (== the python running benchmark.py). Prepend that bindir so the test-runner finds it
+    # (other langs — cargo/go/npm/javac/g++ — resolve from the inherited PATH).
+    env["PATH"] = os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")
     cmd = [sys.executable, os.path.join(aider_repo, "benchmark", "benchmark.py"), run_name,
            "--model", f"openai/{model}", "--edit-format", edit_format,
            "--threads", "1", "--exercises-dir", exercises_dir, "--new"]
