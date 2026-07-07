@@ -31,19 +31,21 @@ Both "better quant" avenues investigated + closed:
 - Distill is genuinely strong (Opus reasoning + 0.94 tool-calling + converges at low temp), BUT dense 27B → slower decode than Ornith's MoE; for 256K AGENTIC, Ornith's speed likely keeps it the pick. Finish the ladder → decide op-temp → then its other axes (light, agentic) if worth it.
 - **NOTE — LCB pass@1 grading BROKEN** (see Blocked): ladders yield CONVERGENCE only until fixed; jsonls persist (re-gradable). Light pass@1 (evalplus docker) still works.
 
-## AUTONOMOUS PLAN (user away ~hours — keep BOTH boxes busy; drive on watcher pings)
-**Aider is dockerized + working** (`benchmark/run_aider_docker.sh` + `aider-benchmark` image on M2; served-name
-tuned params in `aider_config/aider.model.settings.yml`, thinking ON). ~15 min/case; use subsets (n=10-40).
-- **M2 (RUNNING):** `gemma-4-31b-it-6bit` Aider n=10 @ tuned (temp0.7/think16384/diff). On finish → grade+record →
-  NEXT: load `gemma-4-26B-A4B-it-OptiQ-4bit` + Aider n=10 (dense-vs-MoE agentic H2H) → then extend the winners.
-- **M5 (RUNNING):** Ornith LCB ladder DONE → **op-temp = 0.4** (0.3/0.4 both 80% pass@1; 0.4 converges better @
-  higher temp). Now running **Ornith math500 @ t0.4** (n=30) — reliable keep-busy + gauges the reasoning axis.
-  On finish → grade+record. NEXT (agentic, when back or after math500): M5 has ~/aider + ~/polyglot but NO image
-  yet — build `aider-benchmark` (docker_build.sh from ~/aider) + add Ornith metadata (tokens) + settings entry
-  (qwen sampling @ **temp 0.4**, thinking_budget 81920) + run Ornith Aider n=10 (self-scaffolding differentiator).
-- **RECOVERY if my session drops:** the Aider runs are `docker run` containers (survive session exit like nohup) —
-  check `docker ps` / `benchmark/results/<model>/aider.json`; relaunch via `benchmark/run_aider_docker.sh <model> <N>`.
-  M5 LCB via the sweep drivers. Watchers do NOT survive — re-poll manually.
+## AUTONOMOUS PLAN — user away ~hours 2026-07-06 evening (keep BOTH boxes busy; drive on watcher pings)
+Fully characterize the DISTILL (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, re-opened candidate) at its op-temp,
+split across both boxes. Both caffeinated (`caffeinate -i -s -w <pid>`) so idle-sleep won't disrupt.
+- **M5 (self-chaining driver, pid 11076, log `logs/m5_distill_chars.log`, watcher):** waits for the running
+  t0.3 LCB (pid 5704) → then AUTONOMOUSLY runs distill **light @ t0.3** (he+10/mbpp+10/aime5) → **math500 @ t0.3**
+  (n=30) → **BFCL n=1000** (upgrades the n=200 0.94). Prints `ALL_M5_DISTILL_CHARS_DONE` when finished. On that
+  signal → grade (evalplus-docker for light, `run.py grade` for math500, BFCL auto-writes bfcl.json) + record.
+  Op-temp 0.3 chosen: t0.3 converges 5/5 clean; t0.4 shakier (2/3). LCB pass@1 blocked (datasets bug — convergence only).
+- **M2 (RUNNING):** distill **LCB t0.4** (pid ~56563, slow ~11tps co-resident) — grinds to complete the 0.4
+  convergence rate for the 0.3-vs-0.4 comparison. On finish → grade convergence + **regenerate the errored
+  `abc358_e`** (delete its line from the jsonl + rerun same cmd to fill it) for a clean N=15.
+- **RECOVERY if session drops (nohup survives, watchers + caffeinate do NOT):** re-check `pgrep -f "run.py generate"`
+  + `logs/m5_distill_chars.log` on M5, `logs/distill_lcb_t04.log` on M2; relaunch any dead driver (M5 driver =
+  `/tmp/m5_distill_chars.sh` but edit the `kill -0 5704` guard if 5704 is gone → just run its 3 generate/BFCL cmds);
+  re-apply caffeinate; re-launch background pollers. Grades are re-runnable (jsonls persist). M5 IP churns — subnet-scan.
 
 ## Status matrix (✓ done · ~ running · ◻ pending · ⚠ stale/blocked · – n/a)
 
