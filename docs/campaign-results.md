@@ -66,6 +66,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | gemma-4-31b-it-6bit (dense) | BFCL prompt-mode (no-think) | bfcl-AST | tool | 1000 | **79.4%** (s74/m93.5/p71/pm84.5) | n/a (FC, no think) | VALID* |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | BFCL native-FC (qwen `<tool_call>`; think~off, 3/400) | bfcl-AST | tool | 1000 | **74.9%** (s77.75/m85/p70/pm64) | n/a | VALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense, self-OptiQ 3.97bpw) | official t0.6 FC | bfcl-AST | tool | 200 | **94.0%** (s96/m96/p94/pm90) | n/a | VALID* (N=200, not the std N=1000) |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.3 (temp-ladder) | **livecodebench** | **mid** | 15 | pass@1 grade-blocked (lcb datasets bug) | **15/15 (100%) converged, 0 runaway, median 24406** | VALID (conv) |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | aime | light | 5 | 80% (4/5) | 80% (1 loop) | INVALID |
@@ -244,6 +245,25 @@ BOTH "better quant" avenues are now closed: more bits don't help (6bit), and Opt
 The 52G broken artifact (`~/models/Ornith-1.0-35B-OptiQ-4bit/`, optiq_mixed + uniform_4bit baseline) is
 reclaimable. (A workaround would need patching `mlx_optiq` to handle fused experts — not worth it given zero
 expected quality gain.)
+
+### Distill temp-ladder — REHABILITATED: its LCB "DNF" was a temperature artifact (2026-07-06)
+
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (dense `qwen3_5`, TeichAI Opus-reasoning distill, self-OptiQ 3.97bpw)
+was recorded DNF-MEANDER on LCB — but ONLY ever run at official t0.6, and NEVER given the temp-ladder that
+rescued its same-family cousin Ornith. Ran the ladder (same item set, budget 81920, vary only temp):
+| temp | convergence | median tokens | verdict |
+|---|---|---|---|
+| 0.6 (official) | 3/8 | >82K (budget-saturating) | DNF-meander (as recorded) |
+| 0.4 | ~2/3 (partial, M2) | high | shaky |
+| **0.3** | **15/15 (100%)** | **24,406** | **CLEAN — 0 runaway** |
+**The DNF was 100% a temperature artifact.** At t0.3 the distill converges perfectly (15/15, no runaways,
+healthy median) — same knee as Ornith, one notch lower (Ornith op-temp 0.4, distill 0.3; op-temp is
+model/quant-specific). **Distill op-temp = 0.3.** So it was prematurely dismissed. It is now a genuinely
+strong candidate: Opus-reasoning distillation + BFCL **0.94** (tool-calling, tied with the gemma-MoE leader) +
+clean LCB convergence. CAVEAT vs the pick: it's a DENSE 27B → slower decode than Ornith's sparse MoE, so for
+the 256K *agentic* goal Ornith's speed likely still wins; the distill is the strongest ALTERNATIVE / a
+single-shot-reasoning contender. LCB pass@1 pending the datasets-grade fix (convergence is decision-grade on
+its own here). Full characterization at t0.3 (light / math500 / BFCL n=1000) running.
 
 ### BFCL tool-calling — gemma-4-31b-it-6bit + an N caveat (2026-06-26)
 
