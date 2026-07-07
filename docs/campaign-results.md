@@ -66,7 +66,8 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | gemma-4-31b-it-6bit (dense) | BFCL prompt-mode (no-think) | bfcl-AST | tool | 1000 | **79.4%** (s74/m93.5/p71/pm84.5) | n/a (FC, no think) | VALID* |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | BFCL native-FC (qwen `<tool_call>`; think~off, 3/400) | bfcl-AST | tool | 1000 | **74.9%** (s77.75/m85/p70/pm64) | n/a | VALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense, self-OptiQ 3.97bpw) | official t0.6 FC | bfcl-AST | tool | 200 | **94.0%** (s96/m96/p94/pm90) | n/a | VALID* (N=200, not the std N=1000) |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.3 (temp-ladder) | **livecodebench** | **mid** | 15 | pass@1 grade-blocked (lcb datasets bug) | **15/15 (100%) converged, 0 runaway, median 24406** | VALID (conv) |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.4 (temp-ladder) | **livecodebench** | **mid** | 15 | pass@1 grade-blocked (lcb datasets bug) | 9/15 (60%) converged (+1 err abc358_e), median 25713 | INVALID (conv) |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.3 (temp-ladder, **op-temp**) | **livecodebench** | **mid** | 15 | pass@1 grade-blocked (lcb datasets bug) | **15/15 (100%) converged, 0 runaway, median 24406** | VALID (conv) |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | aime | light | 5 | 80% (4/5) | 80% (1 loop) | INVALID |
@@ -254,7 +255,7 @@ rescued its same-family cousin Ornith. Ran the ladder (same item set, budget 819
 | temp | convergence | median tokens | verdict |
 |---|---|---|---|
 | 0.6 (official) | 3/8 | >82K (budget-saturating) | DNF-meander (as recorded) |
-| 0.4 | ~2/3 (partial, M2) | high | shaky |
+| 0.4 | **9/15 (60%)** (+1 sleep-error abc358_e) | 25,713 | shaky |
 | **0.3** | **15/15 (100%)** | **24,406** | **CLEAN — 0 runaway** |
 **The DNF was 100% a temperature artifact.** At t0.3 the distill converges perfectly (15/15, no runaways,
 healthy median) — same knee as Ornith, one notch lower (Ornith op-temp 0.4, distill 0.3; op-temp is
