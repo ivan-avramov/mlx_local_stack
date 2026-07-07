@@ -168,13 +168,18 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
 ## Blocked
 - **IFEval**: `datasets` load fails "Feature type 'List' not found" (version incompatibility) — fix
   before the instruction-following axis runs; the sweep currently skips it (acc:null, no crash).
-- **LCB pass@1 grading** (NEW 2026-07-06): `grade livecodebench` fails to load the dataset —
-  `livecodebench/code_generation_lite couldn't be found on HF Hub` / "remove trust_remote_code", even with
-  `HF_DATASETS_OFFLINE=1`. A datasets-version incompatibility (same class as IFEval), NOT network/model.
-  Worked before (4bit LCB graded 80%) → a datasets bump broke it. **Convergence still grades** (from the
-  jsonl — the temp-ladders' primary signal); only pass@1 is blocked. Affects the 6bit LCB + distill
-  ladders + any future LCB pass@1. jsonls persist → re-gradable once the loader is fixed (pin datasets, or
-  point lcb_runner at a local dataset copy). Light pass@1 (evalplus docker) is unaffected.
+- **LCB pass@1 grading** (diagnosed 2026-07-06): ROOT CAUSE = **`datasets 4.8.5` removed `trust_remote_code`**,
+  and LCB `code_generation_lite` is a **script-based** dataset; `lcb_runner`'s `load_code_generation_dataset`
+  calls `load_dataset(..., trust_remote_code=True)` → hard fail (`trust_remote_code is not supported anymore`).
+  (The HF cache is also incomplete — `.incomplete_info.lock`, no `.arrow` — from the network churn.)
+  **Generation is unaffected** (it reads the cached prompts JSON `~/.cache/livecodebench/lcb_<rel>_prompts.json`);
+  only GRADING needs the full script-dataset load (test cases). **Convergence still grades from the jsonl**
+  (the temp-ladders' primary signal); only LCB *pass@1* is blocked. Affects 6bit LCB + both distill ladders.
+  **FIX (deferred — needs stable network; do NOT downgrade `.venv` in-place while runs use it):** make a
+  dedicated `.venv-lcbgrade` with `datasets<3` (e.g. 2.21.0) + `lcb_runner` grading deps, clear the incomplete
+  cache (`rm -rf ~/.cache/huggingface/datasets/livecodebench___code_generation_lite`), re-download, and grade
+  via that venv's python. jsonls persist → all LCB pass@1 is re-gradable retroactively. Light pass@1 (evalplus
+  docker) is unaffected.
 
 ## Gating policy
 - Breadth-first: capacity → light → LCB → (survivors) reasoning/tool → agentic → judge.
