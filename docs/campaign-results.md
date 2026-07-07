@@ -73,6 +73,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | mbppplus | light | 10 | 60% (6/10, N=10 noise) | 100% (median 366) | VALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | aime | light | 5 | **100%** (4/4 graded; 1 err aime25-14) | 100% | VALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | **math500** | **mid** | 30 | **80.8%** (21/26 graded; 4 err) | 100% | VALID |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense, kv_bits4) | capacity | **256K capacity** | **gate** | — | ✅ GATE PASS 256K: mx-peak **43.3GB** (≤46, only 2.7GB headroom), retrieval **1.00** all rungs; decode **9.4 tps** @256K | ladder 160/192/224/256K = 31.9/35.3/39.8/43.3GB | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | aime | light | 5 | 80% (4/5) | 80% (1 loop) | INVALID |
@@ -282,6 +283,26 @@ viable, NOT prohibitive (and faster than dense-gemma's ~56min/case whole-format)
 genuinely strong agentic candidate we'd wrongly dismissed — but Ornith remains the pick on **validated (n=34)
 agentic + faster MoE decode + PROVEN 256K capacity** (distill 256K capacity unmeasured). If the distill holds
 ~70%+ at higher n, it becomes the top single-shot-reasoning + agentic ALTERNATIVE; worth a 256K-capacity probe.
+
+**256K CAPACITY (the capstone, 2026-07-07) — VALIDATES THE THESIS.** The distill CLEARS 256K: mx-peak ladder
+160/192/224/256K = **31.9 / 35.3 / 39.8 / 43.3 GB**, retrieval **1.00 at every rung**, GATE_PASS (≤46). So a
+dense-27B qwen3_5 (linear-attn) IS 256K-viable. BUT the numbers decide the 256K-agentic goal for Ornith:
+- **Memory headroom:** distill **43.3GB @256K = only 2.7GB under the gate** (near the ceiling; no room for a
+  browser/other apps) vs **Ornith 32.4GB = 13.6GB headroom** (comfortable). Distill KV grows +11.4GB over
+  96K tokens vs Ornith's +4.2GB — the dense-27B's bigger full-attn KV (5120-hidden, 16 full-attn layers) vs
+  the MoE's lighter footprint (2048-hidden, 10 full-attn).
+- **Decode speed:** distill **9.4 tps @256K** vs **Ornith 37 tps** — **~4× slower**. For the agentic loop
+  (decode-heavy over long context) this is decisive: a 24K-token reasoning turn is ~43 min on the distill vs
+  ~11 min on Ornith.
+**CONCLUSION — the distill exploration STRENGTHENS the verdict, it doesn't overturn it.** The distill is the
+stronger *raw-quality* model on several single-shot axes (he+ 100, aime 100, BFCL 0.94) and it clears 256K —
+yet for **256K AGENTIC coding** Ornith wins decisively on the two axes that matter at long context: **decode
+speed (4×) and memory headroom (5×)**. This is the campaign thesis fully evidenced: *sparse-MoE + linear-attn
+(Ornith) is the right architecture for local 256K agentic coding* — even a strong dense alternative that clears
+256K is too slow + too memory-tight there. `Ornith-1.0-35B-mlx-uniform-4bit` remains the pick; the distill is
+the documented strongest ALTERNATIVE / best single-shot-reasoning+tool-calling option, not the agentic pick.
+(Caveat: distill capacity @ kv_bits4 vs Ornith @ kv_bits0/fp16 — different KV scheme; both clear the gate, and
+the speed gap is architecture-driven, not KV. Distill aider n=34 still confirming the 80%→? small-sample.)
 
 ### BFCL tool-calling — gemma-4-31b-it-6bit + an N caveat (2026-06-26)
 
