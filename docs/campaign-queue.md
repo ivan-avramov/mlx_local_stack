@@ -34,11 +34,14 @@ Both "better quant" avenues investigated + closed:
 ## AUTONOMOUS PLAN — user away ~hours 2026-07-06 evening (keep BOTH boxes busy; drive on watcher pings)
 Fully characterize the DISTILL (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, re-opened candidate) at its op-temp,
 split across both boxes. Both caffeinated (`caffeinate -i -s -w <pid>`) so idle-sleep won't disrupt.
-- **M5 (self-chaining driver, pid 11076, log `logs/m5_distill_chars.log`, watcher):** waits for the running
-  t0.3 LCB (pid 5704) → then AUTONOMOUSLY runs distill **light @ t0.3** (he+10/mbpp+10/aime5) → **math500 @ t0.3**
-  (n=30) → **BFCL n=1000** (upgrades the n=200 0.94). Prints `ALL_M5_DISTILL_CHARS_DONE` when finished. On that
-  signal → grade (evalplus-docker for light, `run.py grade` for math500, BFCL auto-writes bfcl.json) + record.
-  Op-temp 0.3 chosen: t0.3 converges 5/5 clean; t0.4 shakier (2/3). LCB pass@1 blocked (datasets bug — convergence only).
+- **M5 chain DONE (recorded):** distill @ t0.3 = he+ **100%** / mbpp+ 60% / aime **100%** (4/4) / math500 **80.8%**,
+  all **100% conv**. (BFCL n=1000 re-run ABANDONED — `run_bfcl` couldn't find the `bfcl` CLI in the ssh env even
+  with `.venv-bench/bin` on PATH; the n=200 **0.94** stands + raw preserved. NB each failed run_bfcl clobbers
+  `bfcl.json` to null — re-parse raw or ignore; scoreboard is truth.) **NOW RUNNING: distill CAPACITY ladder to
+  256K** (`bash benchmark/run_capacity_seq.sh Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, grid 160/192/224/256K, log
+  `logs/distill_capacity.log`, watcher). KEY question: does the distill (qwen3_5 dense + linear-attn, kv_bits4)
+  clear 256K ≤46GB like Ornith? 160K already = 28.6GB/ret1.0 → very likely yes. On finish → record + it becomes
+  a full 256K competitor (Ornith still pick on MoE decode speed). LCB pass@1 still blocked (datasets bug).
 - **M2:** distill **LCB t0.4 DONE** = 9/15 (60%) conv (+1 err abc358_e) → confirms op-temp 0.3 (vs t0.3 15/15).
   abc358_e regen SKIPPED (t0.4 stays INVALID regardless; op-temp settled). **Now RUNNING distill AIDER** n=5 @
   t0.3 diff (agentic axis — the one M5 isn't covering): `bash benchmark/run_aider_docker.sh
