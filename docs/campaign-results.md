@@ -62,7 +62,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe, hybrid linear-attn) | official t0.6 | aime | light | 5 | 80.0%* | 80% (1 loop aime25-3 ct82528>budget) | INVALID |
 | Ornith-1.0-35B-mlx-uniform-6bit (qwen3_5_moe, 6.622bpw) | official t0.6 | humanevalplus | light | 10 | **90.0%** (=4bit) | 90% (1 loop HumanEval/67; med 1478) | INVALID |
 | Ornith-1.0-35B-mlx-uniform-6bit (qwen3_5_moe, 6.622bpw) | official t0.6 | mbppplus | light | 10 | **80.0%** (=4bit) | 100% (med 1214) | VALID |
-| Ornith-1.0-35B-mlx-uniform-6bit (qwen3_5_moe, 6.622bpw) | official t0.4 | **livecodebench** | **mid** | 15 | pass@1 grade-blocked (lcb dataset-load) | **47% (7/15; med 82130 — budget-saturating)** vs 4bit's 80% @ same t0.4/budget | INVALID |
+| Ornith-1.0-35B-mlx-uniform-6bit (qwen3_5_moe, 6.622bpw) | official t0.4 | **livecodebench** | **mid** | 15 | 86.7% RAW (E100/M86/H80) — **INVALID** (over-reasoned to it) | **47% (7/15; med 82130 budget-saturating)** vs 4bit's 80%@80%conv | INVALID |
 | gemma-4-31b-it-6bit (dense) | BFCL prompt-mode (no-think) | bfcl-AST | tool | 1000 | **79.4%** (s74/m93.5/p71/pm84.5) | n/a (FC, no think) | VALID* |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | BFCL native-FC (qwen `<tool_call>`; think~off, 3/400) | bfcl-AST | tool | 1000 | **74.9%** (s77.75/m85/p70/pm64) | n/a | VALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense, self-OptiQ 3.97bpw) | official t0.6 FC | bfcl-AST | tool | 200 | **94.0%** (s96/m96/p94/pm90) | n/a | VALID* (N=200, not the std N=1000) |
@@ -220,8 +220,11 @@ convergence:**
 - **Light coding IDENTICAL:** he+ 90% / mbpp+ 80% (exactly the 4bit numbers). No pass@1 gain.
 - **LCB @ t0.4 WORSE convergence:** apples-to-apples (both t0.4, both budget 81920) — 6bit **conv 7/15 (47%),
   median 82,130 tok (budget-saturating)** vs 4bit **12/15 (80%), median 31,704**. The 6bit meanders MORE at
-  the shared op-temp — op-temp is quant-specific, and 6bit likely needs a lower one (≤0.3); but even so its
-  pass@1 ceiling can't exceed the 4bit's (light already identical).
+  the shared op-temp — op-temp is quant-specific. **NB (graded 2026-07-07 via the fixed py3.11 pipeline):** the
+  6bit's RAW LCB pass@1 is 86.7% (E100/M86/H80) — nominally *higher* than the 4bit's 80% — but it's **INVALID**:
+  it got there by NOT self-terminating (8/15 budget-saturated), i.e. trading convergence for a couple more
+  correct-by-the-budget answers. Per the convergence discipline that's a BAD trade, not a clean gain; the
+  4bit's clean **80% @ 80% conv** is the right pick.
 - **Mechanism/conclusion:** uniform-4bit is already at Ornith's quality ceiling — the RL-trained model is
   quant-robust, so MORE bits buy nothing (and shift reasoning-exit dynamics unfavorably at t0.4). **Keep
   uniform-4bit** (19G, faster, cleaner convergence). By extension, OptiQ (≈6-bit quality at 4-bit size) is
