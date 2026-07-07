@@ -194,11 +194,11 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
   cache (`rm -rf ~/.cache/huggingface/datasets/livecodebench___code_generation_lite`), re-download, and grade
   via that venv's python. jsonls persist → all LCB pass@1 is re-gradable retroactively. Light pass@1 (evalplus
   docker) is unaffected.
-  **ATTEMPTED 2026-07-07, HIT A WALL:** built `.venv-lcbgrade` via `uv venv` + `uv pip install 'datasets<3' ...`
-  but the install FAILED — **`pyext` (an lcb_runner dep) won't build on Python 3.12** ("Build failures... problem
-  with the package"). So a clean dedicated-venv fix needs Python ≤3.11 for `.venv-lcbgrade` (uv venv --python 3.11)
-  or dropping pyext (grading may not need it for pass@1 — test). Deferred again; convergence data suffices for the
-  ladders and the distill/Ornith coding quality is well-established via he+/mbpp+/math500/aime.
+  **RESOLVED 2026-07-07:** built `.venv-lcbgrade` with **`uv venv --python 3.11`** + `uv pip install
+  'datasets<3' json_repair requests numpy` (pyext NOT needed — codegen_metrics grades pass@1 without it; the
+  py3.12 pyext build wall is avoided by py3.11). LCB dataset loads (880 problems) + grading works. Grade any LCB
+  run with: `PYTHONPATH=$HOME/.cache/livecodebench/LiveCodeBench .venv-lcbgrade/bin/python benchmark/run.py grade
+  --models <M> --benches livecodebench`. Retroactively graded: distill t0.3 = **80% (E100/M86/H60)**; 6bit in progress.
 
 ## Gating policy
 - Breadth-first: capacity → light → LCB → (survivors) reasoning/tool → agentic → judge.
