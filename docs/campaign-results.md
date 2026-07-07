@@ -65,6 +65,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Ornith-1.0-35B-mlx-uniform-6bit (qwen3_5_moe, 6.622bpw) | official t0.4 | **livecodebench** | **mid** | 15 | pass@1 grade-blocked (lcb dataset-load) | **47% (7/15; med 82130 — budget-saturating)** vs 4bit's 80% @ same t0.4/budget | INVALID |
 | gemma-4-31b-it-6bit (dense) | BFCL prompt-mode (no-think) | bfcl-AST | tool | 1000 | **79.4%** (s74/m93.5/p71/pm84.5) | n/a (FC, no think) | VALID* |
 | Ornith-1.0-35B-mlx-uniform-4bit (qwen3_5_moe) | BFCL native-FC (qwen `<tool_call>`; think~off, 3/400) | bfcl-AST | tool | 1000 | **74.9%** (s77.75/m85/p70/pm64) | n/a | VALID |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense, self-OptiQ 3.97bpw) | official t0.6 FC | bfcl-AST | tool | 200 | **94.0%** (s96/m96/p94/pm90) | n/a | VALID* (N=200, not the std N=1000) |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | aime | light | 5 | 80% (4/5) | 80% (1 loop) | INVALID |
@@ -224,6 +225,25 @@ convergence:**
   NOT network and NOT the model. Convergence still grades (from the jsonl). This blocks LCB pass@1 for the
   6bit run AND the upcoming distill / Ornith-OptiQ ladders until fixed — the jsonls persist, so pass@1 is
   re-gradable once the loader is fixed. Queued as a bug.
+
+### OptiQ-convert Ornith — mixed recipe UNSUPPORTED on the fused-expert MoE (2026-07-06)
+
+We DO have a local OptiQ tool (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we self-converted the dense
+Opus-distill with it). Ran `optiq convert <Ornith bf16> --target-bpw 4.0 --reference auto`. The MoE **loaded
+fine** in `mlx_lm` (native `qwen3_5_moe`, no patch needed) and the KL sensitivity/calibration pass ran — but
+the mixed-precision APPLY step FAILED: `Static mixed recipe failed (may not support this model): Received
+30720 parameters not in model`. **30,720 = 256 experts × 40 layers × 3 proj(gate/up/down)** — OptiQ's recipe
+allocates bits per UNFUSED expert, but `mlx_lm` loads the experts FUSED (3D `switch_mlp` tensors), so the
+30,720 per-expert assignments can't map. It fell back → the saved `optiq_mixed` is **8.376 bpw / 34G**
+(config claims 4-bit experts but the weights are ~8-bit — config/weight inconsistent = broken), not a usable
+4-bit OptiQ. (The dense distill OptiQ worked precisely because it has NO experts.)
+**Conclusion:** OptiQ's mixed recipe does not support the `qwen3_5_moe` fused-expert layout, and — crucially —
+the **6bit OFAT already showed there's no quality headroom to recover** (uniform-4bit is Ornith's ceiling). So
+BOTH "better quant" avenues are now closed: more bits don't help (6bit), and OptiQ can't produce a valid
+4-bit MoE (and wouldn't help if it could). **`Ornith-1.0-35B-mlx-uniform-4bit` is the definitive config.**
+The 52G broken artifact (`~/models/Ornith-1.0-35B-OptiQ-4bit/`, optiq_mixed + uniform_4bit baseline) is
+reclaimable. (A workaround would need patching `mlx_optiq` to handle fused experts — not worth it given zero
+expected quality gain.)
 
 ### BFCL tool-calling — gemma-4-31b-it-6bit + an N caveat (2026-06-26)
 
