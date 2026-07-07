@@ -72,7 +72,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | humanevalplus | light | 10 | **100%** (10/10) | 100% (median 475) | VALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | mbppplus | light | 10 | 60% (6/10, N=10 noise) | 100% (median 366) | VALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | aime | light | 5 | **100%** (4/4 graded; 1 err aime25-14) | 100% | VALID |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | **math500** | **mid** | 30 | **80.8%** (21/26 graded; 4 err) | 100% | VALID |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | **math500** | **mid** | 30 | **81.5%** (22/27 graded; sleep-errs regenerated; ~3 hard items intrinsically error/meander) | 100% | VALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense, kv_bits4) | capacity | **256K capacity** | **gate** | — | ✅ GATE PASS 256K: mx-peak **43.3GB** (≤46, only 2.7GB headroom), retrieval **1.00** all rungs; decode **9.4 tps** @256K | ladder 160/192/224/256K = 31.9/35.3/39.8/43.3GB | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
