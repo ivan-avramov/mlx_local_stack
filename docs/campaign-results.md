@@ -68,6 +68,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense, self-OptiQ 3.97bpw) | official t0.6 FC | bfcl-AST | tool | 200 | **94.0%** (s96/m96/p94/pm90) | n/a | VALID* (N=200, not the std N=1000) |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.4 (temp-ladder) | **livecodebench** | **mid** | 15 | pass@1 grade-blocked (lcb datasets bug) | 9/15 (60%) converged (+1 err abc358_e), median 25713 | INVALID (conv) |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.3 (temp-ladder, **op-temp**) | **livecodebench** | **mid** | 15 | pass@1 grade-blocked (lcb datasets bug) | **15/15 (100%) converged, 0 runaway, median 24406** | VALID (conv) |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.3 diff (dockerized) | **aider-polyglot** | **agentic** | 5 | **80% (pass_rate_2 4/5; pr1 20%; well-formed 100%; 0 loops/ctx-exhaust; ~14.5min/case)** | n/a | VALID* (n=5 small-sample) |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | humanevalplus | light | 10 | 100% (10/10) | 100% | VALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | mbppplus | light | 10 | 70% (7/10) | 90% (1 loop) | INVALID |
 | gemma-4-31b-it-6bit (dense) | production t0.7 | aime | light | 5 | 80% (4/5) | 80% (1 loop) | INVALID |
@@ -265,6 +266,18 @@ clean LCB convergence. CAVEAT vs the pick: it's a DENSE 27B → slower decode th
 the 256K *agentic* goal Ornith's speed likely still wins; the distill is the strongest ALTERNATIVE / a
 single-shot-reasoning contender. LCB pass@1 pending the datasets-grade fix (convergence is decision-grade on
 its own here). Full characterization at t0.3 (light / math500 / BFCL n=1000) running.
+
+**AGENTIC (Aider, dockerized, diff @ t0.3, 2026-07-07):** distill = **80% pass_rate_2 (4/5, n=5)**, well-formed
+100%, **0 loops / 0 context-exhaustion**, ~14.5 min/case — a CLEAN, strong agentic run (contrast the gemma-MoE
+which over-reasoned to INVALID; the distill's diff-format edits apply fine, qwen-arch like Ornith). Provisional
+agentic ranking: **distill 80% (n=5) > Ornith 61.8% (n=34) > dense-gemma 60% (n=5) ≫ gemma-MoE INVALID.** TWO
+big caveats before over-reading: (1) **n=5 is small-sample optimism** — Ornith itself showed 80% @ n=10 that fell
+to 61.8% @ n=34, so the distill's 80% likely regresses; a higher-n re-run is underway. (2) It's a DENSE 27B, so
+decode is slower than Ornith's sparse MoE — though ~14.5 min/case (diff + tight t0.3 convergence) is agentic-
+viable, NOT prohibitive (and faster than dense-gemma's ~56min/case whole-format). NET: the distill is a
+genuinely strong agentic candidate we'd wrongly dismissed — but Ornith remains the pick on **validated (n=34)
+agentic + faster MoE decode + PROVEN 256K capacity** (distill 256K capacity unmeasured). If the distill holds
+~70%+ at higher n, it becomes the top single-shot-reasoning + agentic ALTERNATIVE; worth a 256K-capacity probe.
 
 ### BFCL tool-calling — gemma-4-31b-it-6bit + an N caveat (2026-06-26)
 
