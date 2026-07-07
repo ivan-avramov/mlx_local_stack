@@ -39,9 +39,14 @@ split across both boxes. Both caffeinated (`caffeinate -i -s -w <pid>`) so idle-
   (n=30) → **BFCL n=1000** (upgrades the n=200 0.94). Prints `ALL_M5_DISTILL_CHARS_DONE` when finished. On that
   signal → grade (evalplus-docker for light, `run.py grade` for math500, BFCL auto-writes bfcl.json) + record.
   Op-temp 0.3 chosen: t0.3 converges 5/5 clean; t0.4 shakier (2/3). LCB pass@1 blocked (datasets bug — convergence only).
-- **M2 (RUNNING):** distill **LCB t0.4** (pid ~56563, slow ~11tps co-resident) — grinds to complete the 0.4
-  convergence rate for the 0.3-vs-0.4 comparison. On finish → grade convergence + **regenerate the errored
-  `abc358_e`** (delete its line from the jsonl + rerun same cmd to fill it) for a clean N=15.
+- **M2:** distill **LCB t0.4 DONE** = 9/15 (60%) conv (+1 err abc358_e) → confirms op-temp 0.3 (vs t0.3 15/15).
+  abc358_e regen SKIPPED (t0.4 stays INVALID regardless; op-temp settled). **Now RUNNING distill AIDER** n=5 @
+  t0.3 diff (agentic axis — the one M5 isn't covering): `bash benchmark/run_aider_docker.sh
+  Qwen3.6-27B-Opus-Distill-OptiQ-4bit 5 diff distill-diff-t03`, log `/tmp/aider_distill_t03.log`, container
+  `aider-Qwen3_6-27B-Opus-Distill-OptiQ-4bit` (survives session). Added distill entries to
+  `aider_config/aider.model.settings.yml` (diff, temp0.3, budget81920) + M2 aider-clone `model-metadata.json`
+  (context 131072). On finish → grep pass_rate_ → record. Dense-27B slow (~30-60min/case) + diff-format (qwen
+  arch, proven w/ Ornith); watch for edit-loop/context-exhaust like the gemma runs.
 - **RECOVERY if session drops (nohup survives, watchers + caffeinate do NOT):** re-check `pgrep -f "run.py generate"`
   + `logs/m5_distill_chars.log` on M5, `logs/distill_lcb_t04.log` on M2; relaunch any dead driver (M5 driver =
   `/tmp/m5_distill_chars.sh` but edit the `kill -0 5704` guard if 5704 is gone → just run its 3 generate/BFCL cmds);
