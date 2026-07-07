@@ -45,8 +45,12 @@ split across both boxes. Both caffeinated (`caffeinate -i -s -w <pid>`) so idle-
   Qwen3.6-27B-Opus-Distill-OptiQ-4bit 5 diff distill-diff-t03`, log `/tmp/aider_distill_t03.log`, container
   `aider-Qwen3_6-27B-Opus-Distill-OptiQ-4bit` (survives session). Added distill entries to
   `aider_config/aider.model.settings.yml` (diff, temp0.3, budget81920) + M2 aider-clone `model-metadata.json`
-  (context 131072). On finish → grep pass_rate_ → record. Dense-27B slow (~30-60min/case) + diff-format (qwen
-  arch, proven w/ Ornith); watch for edit-loop/context-exhaust like the gemma runs.
+  (context 131072). Dense-27B + diff-format (qwen arch, proven w/ Ornith).
+  - **n=5 DONE = 80% pr2 (4/5), CLEAN** (well-formed 100%, 0 loops/ctx-exhaust, ~14.5min/case — agentic-viable,
+    not prohibitive). Highest of the 4, BUT n=5 small-sample (cf Ornith n=10 80%→n=34 62%). **NOW RUNNING n=34**
+    (`distill-diff-t03-n34`, log `/tmp/aider_distill_n34.log`, container survives, watcher) to confirm vs regress —
+    direct parity with Ornith's n=34. On finish → grep pass_rate_ → record. If it holds ~70%+, distill = top
+    agentic ALTERNATIVE (then worth a 256K-capacity probe); Ornith still pick (faster MoE + proven 256K).
 - **RECOVERY if session drops (nohup survives, watchers + caffeinate do NOT):** re-check `pgrep -f "run.py generate"`
   + `logs/m5_distill_chars.log` on M5, `logs/distill_lcb_t04.log` on M2; relaunch any dead driver (M5 driver =
   `/tmp/m5_distill_chars.sh` but edit the `kill -0 5704` guard if 5704 is gone → just run its 3 generate/BFCL cmds);
