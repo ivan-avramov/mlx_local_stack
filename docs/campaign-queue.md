@@ -17,17 +17,19 @@ survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNN
 
 Last updated: 2026-07-06. **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
 
-## M5 NEXT — ordered plan (OptiQ + temp-ladder, 2026-07-06)
-Correction logged: OptiQ is NOT download-only — we have `.venv-optiq/bin/optiq` and a self-converted `Qwen3.6-27B-Opus-Distill-OptiQ-4bit/optiq_mixed` (3.97bpw). `mlx_lm` ships NATIVE `qwen3_5_moe.py` → Ornith's MoE loads without the mlx_vlm unfused-expert patch.
-1. **[RUNNING]** `Ornith-1.0-35B-mlx-uniform-6bit` eval — light he+10/mbpp+10 @official t0.6 + LCB=15 @t0.4 (OFAT vs uniform-4bit; log `logs/ornith_6bit_eval.log`, watcher-driven). Gates whether higher fidelity moves Ornith at all.
-2. **[NEXT — needs M5 free (unload 6bit first)]** **OptiQ-convert Ornith ourselves.** Cmd (from repo dir):
-   `.venv-optiq/bin/optiq convert $HOME/.cache/huggingface/hub/models--deepreinforce-ai--Ornith-1.0-35B/snapshots/5df2ed3f675c7beaa490328cc70bb573b65fb660 --target-bpw 4.0 --reference auto -o $HOME/models/Ornith-1.0-35B-OptiQ-4bit`
-   - `--reference auto`: streams bf16 from disk when it won't fit RAM (65GB bf16 on 64GB → auto uniform-4bit-baseline path); calibration-driven KL sensitivity (`optiq.jsonl` mix, `--n-calibration 24` default). VLM wrapper → mlx_lm quantizes the LANGUAGE sub-module only (= what we eval). target-bpw 4.0 mirrors the distill/gemma OptiQ-4bit (smaller than uniform-4bit's 4.649bpw — the calibration value-prop).
-   - Then: M5-local uncommitted registry entry (mirror uniform-4bit: `kv_bits 0` fp16, `max_kv_cache_size 262144`, `prefill_step_size 512`); register `Ornith-1.0-35B-OptiQ-4bit` in `benchmark/bench/model_params.py` → QWEN (commit+push+ff-merge, like the 6bit); restart router; smoke-load.
-3. **[THEN] LCB temp-ladder (0.4 / 0.3) for BOTH OptiQ models** (mirror the uniform-Ornith recipe — highest temp that converges AND holds pass@1; official 0.6 meanders for this family):
-   a. `Ornith-1.0-35B-OptiQ-4bit` (once converted) — its op-temp + pass@1 vs uniform-4bit/6bit (the "does calibration help Ornith at 4-bit size" answer).
-   b. `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (EXISTING self-convert `~/Documents/ws/models/.../optiq_mixed`, 3.97bpw, dense qwen3_5, Opus-reasoning distill) — it **DNF-meandered at official t0.6 ONLY and NEVER got the temp-ladder**; this is the proper re-run it's owed. If it converges at 0.4/0.3 it re-enters contention.
-4. **[RECORD]** the distill's EXISTING-but-UNRECORDED BFCL (n=200: simple 0.96 / multiple 0.96 / …) → scoreboard, flagged N=200 (not the standardized N=1000; consider an N=1000 re-run for parity).
+## Quant question — CLOSED: uniform-4bit is Ornith's definitive config (2026-07-06)
+Both "better quant" avenues investigated + closed:
+1. **[DONE]** `Ornith-1.0-35B-mlx-uniform-6bit` OFAT — **NO quality gain**: light he+/mbpp+ **identical (90/80)**; LCB @t0.4 convergence **WORSE (7/15 vs 4bit's 12/15**, median 82K vs 32K, same budget). uniform-4bit is the quality ceiling (RL model is quant-robust). Recorded.
+2. **[DONE — FAILED]** OptiQ-convert Ornith (`.venv-optiq/bin/optiq convert … --target-bpw 4.0 --reference auto`): MoE **loaded** in mlx_lm + calibration ran, but the mixed recipe APPLY failed — `Static mixed recipe failed: 30720 params not in model` (= 256 experts × 40 layers × 3 proj; OptiQ allocates bits per UNFUSED expert, mlx_lm loads them FUSED) → broken **8.376bpw/34G** artifact, not a valid 4-bit. **OptiQ mixed recipe does not support the qwen3_5_moe fused-expert layout.** 52G artifact `~/models/Ornith-1.0-35B-OptiQ-4bit/` reclaimable. Recorded.
+→ **`Ornith-1.0-35B-mlx-uniform-4bit` is definitive.** Ornith-OptiQ ladder (was 6a) is MOOT.
+
+## DISTILL — the re-opened candidate (temp-ladder RUNNING, 2026-07-06)
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (dense qwen3_5, Opus-reasoning distill, self-OptiQ 3.97bpw at `~/Documents/ws/models/.../optiq_mixed`) was DNF'd at official t0.6 ONLY — **never got the temp-ladder**. Now properly tested:
+- **[RUNNING M2] LCB t0.4** (thinking_budget 81920): item 1 **CONVERGED** (24,341 tok) — DNF was a temp artifact. item 2 `abc358_e` errored (sleep) → needs regen. Watcher-driven. Log `/tmp` … `logs/distill_lcb_t04.log`.
+- **[RUNNING M5] LCB t0.3** (parallel rung): `logs/distill_lcb_t03.log`. (Cross-box OK — convergence/pass@1 are box-independent; only speed/mem need same-box.)
+- **[DONE] BFCL n=200 = 0.94** (s96/m96/p94/pm90) — tied with the gemma-MoE tool-calling leader. Recorded (flagged N=200).
+- Distill is genuinely strong (Opus reasoning + 0.94 tool-calling + converges at low temp), BUT dense 27B → slower decode than Ornith's MoE; for 256K AGENTIC, Ornith's speed likely keeps it the pick. Finish the ladder → decide op-temp → then its other axes (light, agentic) if worth it.
+- **NOTE — LCB pass@1 grading BROKEN** (see Blocked): ladders yield CONVERGENCE only until fixed; jsonls persist (re-gradable). Light pass@1 (evalplus docker) still works.
 
 ## AUTONOMOUS PLAN (user away ~hours — keep BOTH boxes busy; drive on watcher pings)
 **Aider is dockerized + working** (`benchmark/run_aider_docker.sh` + `aider-benchmark` image on M2; served-name
@@ -166,6 +168,13 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
 ## Blocked
 - **IFEval**: `datasets` load fails "Feature type 'List' not found" (version incompatibility) — fix
   before the instruction-following axis runs; the sweep currently skips it (acc:null, no crash).
+- **LCB pass@1 grading** (NEW 2026-07-06): `grade livecodebench` fails to load the dataset —
+  `livecodebench/code_generation_lite couldn't be found on HF Hub` / "remove trust_remote_code", even with
+  `HF_DATASETS_OFFLINE=1`. A datasets-version incompatibility (same class as IFEval), NOT network/model.
+  Worked before (4bit LCB graded 80%) → a datasets bump broke it. **Convergence still grades** (from the
+  jsonl — the temp-ladders' primary signal); only pass@1 is blocked. Affects the 6bit LCB + distill
+  ladders + any future LCB pass@1. jsonls persist → re-gradable once the loader is fixed (pin datasets, or
+  point lcb_runner at a local dataset copy). Light pass@1 (evalplus docker) is unaffected.
 
 ## Gating policy
 - Breadth-first: capacity → light → LCB → (survivors) reasoning/tool → agentic → judge.
