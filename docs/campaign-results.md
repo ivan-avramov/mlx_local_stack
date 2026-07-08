@@ -68,7 +68,7 @@ Light tier, each model at its per-arch sampling above. Graded via the official E
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense, self-OptiQ 3.97bpw) | official t0.6 FC | bfcl-AST | tool | 200 | **94.0%** (s96/m96/p94/pm90) | n/a | VALID* (N=200, not the std N=1000) |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.4 (temp-ladder) | **livecodebench** | **mid** | 15 | pass@1 grade-blocked (lcb datasets bug) | 9/15 (60%) converged (+1 err abc358_e), median 25713 | INVALID (conv) |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.3 (temp-ladder, **op-temp**) | **livecodebench** | **mid** | 15 | **80.0% (E100/M86/H60)** | **15/15 (100%) converged, median 24406** | VALID |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.3 diff (dockerized) | **aider-polyglot** | **agentic** | 5 | **80% (pass_rate_2 4/5; pr1 20%; well-formed 100%; 0 loops/ctx-exhaust; ~14.5min/case)** | n/a | VALID* (n=5 small-sample) |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | t0.3 diff (dockerized) | **aider-polyglot** | **agentic** | 16 | **75% (pass_rate_2 12/16; pr1 18.8%; well-formed 100%)** | n/a | VALID (n=5's 80% HELD @ n=16; n=34 stalled on a router-timeout loop @ case 17 — harness, not model) |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | humanevalplus | light | 10 | **100%** (10/10) | 100% (median 475) | VALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | mbppplus | light | 10 | 60% (6/10, N=10 noise) | 100% (median 366) | VALID |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense) | official t0.3 | aime | light | 5 | **100%** (4/4 graded; 1 err aime25-14) | 100% | VALID |
@@ -279,8 +279,11 @@ its own here). Full characterization at t0.3 (light / math500 / BFCL n=1000) run
 100%, **0 loops / 0 context-exhaustion**, ~14.5 min/case — a CLEAN, strong agentic run (contrast the gemma-MoE
 which over-reasoned to INVALID; the distill's diff-format edits apply fine, qwen-arch like Ornith). Provisional
 agentic ranking: **distill 80% (n=5) > Ornith 61.8% (n=34) > dense-gemma 60% (n=5) ≫ gemma-MoE INVALID.** TWO
-big caveats before over-reading: (1) **n=5 is small-sample optimism** — Ornith itself showed 80% @ n=10 that fell
-to 61.8% @ n=34, so the distill's 80% likely regresses; a higher-n re-run is underway. (2) It's a DENSE 27B, so
+big caveats before over-reading: (1) small-sample — but a higher-n re-run **CONFIRMED it HOLDS: 75% pass_rate_2
+@ n=16 (12/16), well-formed 100%** (the n=34 run stalled at case 17 on a router-timeout retry loop — harness, not
+model; cases 1–16 clean). So the distill did NOT regress to Ornith-like ~62%; it's genuinely ~75–80% agentic.
+NB the 75%@16 vs Ornith 61.8%@34 isn't fully matched-n (the distill's first-16 vs Ornith's harder 34-set), but
+the distill clearly holds a strong agentic score. (2) It's a DENSE 27B, so
 decode is slower than Ornith's sparse MoE — though ~14.5 min/case (diff + tight t0.3 convergence) is agentic-
 viable, NOT prohibitive (and faster than dense-gemma's ~56min/case whole-format). NET: the distill is a
 genuinely strong agentic candidate we'd wrongly dismissed — but Ornith remains the pick on **validated (n=34)
