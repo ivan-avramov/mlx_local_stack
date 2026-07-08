@@ -211,3 +211,28 @@ models:
     kv_bits: 0
     prefill_step_size: 512
     enable_thinking: true
+
+  # ── Campaign picks for 256K agentic coding (MLX quants, hosted on HF: caslca) ──
+  # Ornith = THE PICK: sparse-MoE (8/256 active) + hybrid linear-attn; clears true 256K
+  # (mx-peak 32.4GB @ fp16 KV), fast decode (37 tok/s @256K). Coding op-temp 0.4.
+  - name: Ornith-1.0-35B-mlx-uniform-4bit
+    type: vision
+    on_demand: true
+    hf_path: caslca/Ornith-1.0-35B-mlx-uniform-4bit
+    max_kv_cache_size: 262144
+    kv_bits: 0                     # fp16 KV — 256K peak 32.4GB (≤46GB gate, 13.6GB headroom)
+    prefill_step_size: 512
+    enable_thinking: true
+
+  # Distill = strongest single-shot ALTERNATIVE (Opus-reasoning distill, dense qwen3_5 +
+  # linear-attn); clears 256K (mx-peak 43.3GB @ 4-bit KV). Coding op-temp 0.3.
+  - name: Qwen3.6-27B-Opus-Distill-OptiQ-4bit
+    type: vision
+    on_demand: true
+    hf_path: caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit
+    max_kv_cache_size: 262144
+    kv_quant_scheme: turboquant
+    kv_bits: 4                     # turboquant 4-bit KV — 256K peak 43.3GB
+    prefill_step_size: 512
+    quantized_kv_start: 0
+    enable_thinking: true
