@@ -36,6 +36,14 @@ def _register():
     from local_handlers import GemmaEpiHandler, QwenFCEpiHandler
 
     custom = {
+        "Ornith-1.0-35B-mlx-uniform-4bit": ModelConfig(
+            model_name="Ornith-1.0-35B-mlx-uniform-4bit",
+            display_name="Ornith-1.0-35B-mlx-uniform-4bit (mlx-serve local, FC)",
+            url="local", org="local", license="mit",
+            model_handler=QwenFCEpiHandler,
+            input_price=None, output_price=None,
+            is_fc_model=True, underscore_to_dot=False,
+        ),
         "gemma-4-26B-A4B-it-OptiQ-4bit": ModelConfig(
             model_name="gemma-4-26B-A4B-it-OptiQ-4bit",
             display_name="gemma-4-26B-A4B-it-OptiQ-4bit (mlx-serve local, Prompt)",
