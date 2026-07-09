@@ -17,6 +17,28 @@ survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNN
 
 Last updated: 2026-07-06. **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
 
+## PHASE 2 — OPTIMIZATION (perf + KV memory) — LIVE 2026-07-08
+Spec: `docs/superpowers/specs/2026-07-07-phase2-optimization-program-design.md`. Winners:
+`Ornith-1.0-35B-mlx-uniform-4bit` + `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. Box split: M5 =
+speed/mem (single-box, apples-to-apples) + LCB quality; M2 = parallel he+/mbpp+ quality + APC.
+- **Baselines (M5, mx-peak = server_peak_gb):** Ornith fp16-KV = **32.6 GB / 37.9 tps decode /
+  794 tps prefill @256K**, ret 1.0 (⚠ 128K ret 0.2 — RE-PROBE queued). distill 4bit-KV =
+  **43.3 GB / 9.4 tps / ~124 tps prefill @256K** (2.7 GB headroom).
+- **#1 APC prefix caching = DONE → SHIP:** lossless, flag-flip (`APC_ENABLED=1`). Agentic
+  multi-turn TTFT **54.5×@7.5K → 147×@25K** (distill), **34×@25K** (Ornith); warm ~0.3–2 s flat.
+  APC-on @256K fits gate on BOTH: Ornith 32.6 GB (=off), distill 30.8 GB. **No memory/speed cost.**
+  Reuses only at prefix boundaries (growing-conversation agentic pattern); single-shot benches
+  don't show it. **RECOMMEND: enable `APC_ENABLED=1` in the production router env.**
+- **#2 quant-KV:** **Ornith KEEP fp16** (DONE — 4-bit is −27%/−60% speed for memory it doesn't
+  need). **distill kv3 = PARKED** (2026-07-08): −2.9 GB but he+ gate (96.5% vs 95.7%) is too weak —
+  ceiling'd short-chain coding does NOT stress KV fidelity; worry = multi-step math / precise
+  retrieval. Needs math500+aime+multi-needle OFAT gate before adoption; deferred (low mem value).
+  Insight: turboquant KV = memory-for-SPEED trade (slower than fp16).
+- **#3 eviction (low ROI — hybrid attn) / #6 MTP (low ROI — net-slowdown prior):** OPTIONAL.
+- **#4 lookahead / #5 TQ fused kernel:** BUILDS — need own brainstorm→spec; #5 highest remaining
+  upside (would make quant-KV free). **Awaiting user steer.**
+- BOXES @ 2026-07-08 07:15: both IDLE (Phase-2 config levers complete); routers up.
+
 ## Quant question — CLOSED: uniform-4bit is Ornith's definitive config (2026-07-06)
 Both "better quant" avenues investigated + closed:
 1. **[DONE]** `Ornith-1.0-35B-mlx-uniform-6bit` OFAT — **NO quality gain**: light he+/mbpp+ **identical (90/80)**; LCB @t0.4 convergence **WORSE (7/15 vs 4bit's 12/15**, median 82K vs 32K, same budget). uniform-4bit is the quality ceiling (RL model is quant-robust). Recorded.

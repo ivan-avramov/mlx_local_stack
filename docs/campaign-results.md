@@ -4,6 +4,70 @@ Tracks results and rankings for every candidate (model, config) in the local-LLM
 
 **Current phase: light-tier broad sweep.**
 
+## PHASE 2 — OPTIMIZATION RESULTS (perf + KV memory on the two winners) — 2026-07-08
+
+Winners: `Ornith-1.0-35B-mlx-uniform-4bit` (pick) + `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+(alternative). Spec: `docs/superpowers/specs/2026-07-07-phase2-optimization-program-design.md`.
+Metric = `mx.get_peak_memory` (= `server_peak_gb`); prefill/decode reported separately; M5 = all
+speed/mem (single-box), M2 = quality gates. Baselines are same-box (M5).
+
+### Baselines (M5, shipped config)
+| model | KV | 256K mx-peak | prefill@256K | decode@256K | retrieval |
+|---|---|---|---|---|---|
+| Ornith-1.0-35B-mlx-uniform-4bit | fp16 | 32.6 GB | 794 tps | 37.9 tps | 1.0 (128K 0.2 was a FLAKE — re-probe=1.0) |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | turboquant 4-bit | 37.9 GB* | 124 tps | 9.6 tps | 1.0 |
+
+*distill 256K = 37.9 GB here vs an older 43.3 GB reading (same kv4/step-512 config); ~8 GB
+headroom either way. Ornith is 3–4× faster than distill on both prefill and decode (MoE + linear-attn).
+
+### #1 APC prefix caching — **SHIP** (lossless, flag-flip `APC_ENABLED=1`)
+Agentic multi-turn (growing conversation, warm turn reuses `[sys+history]` prefix):
+| model | ~7.5K | ~25K | warm TTFT |
+|---|---|---|---|
+| distill | 54.5× | 147× | ~2 s (flat) |
+| Ornith | — | 34.3× (9.1s→0.27s) | ~0.3 s (flat) |
+
+Warm TTFT is ~constant; speedup scales linearly with context (256K cold prefill → warm ~0.3–2 s).
+**Ornith APC-on @256K mx-peak = 32.6 GB = identical to APC-off** (warm reuses live cache, not
+duplicated; pool metadata cheap) → **no memory/speed cost, fits the gate.** Single-shot benches
+do NOT show APC (needs a growing conversation). Mechanism note: hybrid linear-attn uses a
+snapshot-rewind/replay restore, effective only at prefix-boundary reuse (the agentic pattern);
+independent divergent queries get no reuse (a 1.04× false-null cost me one bad test).
+
+### #2 quant-KV bit-width — turboquant KV is a memory-for-SPEED trade (not a free decode win)
+| model | change | 256K mx-peak | decode@256K | prefill@256K | verdict |
+|---|---|---|---|---|---|
+| Ornith | fp16 → turboquant 4-bit | 32.6 → 26.9 GB (−5.7) | 37.9 → 27.5 (−27%) | 794 → 319 (−60%) | **KEEP fp16** (faster + lossless; memory not needed) |
+| distill | turboquant 4-bit → 3-bit | 37.9 → 35.0 GB (−2.9) | 9.6 → 9.8 (flat) | 124 → 124 (flat) | **PROVISIONAL — do NOT adopt yet.** he+ **96.5%** (kv3) vs **95.7%** (kv4) is a WEAK gate: short-chain coding, ceiling'd, does NOT stress KV fidelity. Low-bit KV degrades in **multi-step math / precise long-context retrieval** (compounding attention errors) — untested. GATE PENDING: math500 + aime + multi-needle retrieval, kv3 vs kv4, OFAT. **PARKED 2026-07-08** — low memory value (−2.9 GB on the alternative model, no speed gain); revisit the reasoning/retrieval gate later before any adoption. |
+
+**APC ships for BOTH winners (256K gate):** Ornith APC-on @256K = 32.6 GB (= APC-off);
+distill APC-on @256K = 30.8 GB — both well under 46 GB. (distill 256K peak has ~±6 GB run-to-run
+variance in the prefill spike — 43.3/37.9/30.8 across runs, all fit; likely Metal pool retention.)
+
+Mechanism (transfers to B200): quantized-KV attention kernel (dequant + RHT) is slower than fp16
+SDPA, so KV bit-reduction saves memory but does NOT speed decode — which is exactly what **#5
+(fused MMA quantized-attention kernel)** would fix, potentially making Ornith 4-bit KV free.
+
+### #5 fused quantized-KV DECODE kernel (GQA tile-reuse) — BUILT + VALIDATED 2026-07-08
+
+Spec: `docs/superpowers/specs/2026-06-17-…-design.md`; plan: `docs/superpowers/plans/2026-07-08-fused-quantized-kv-decode-kernel.md`. Fixed the R×=6 GQA-redundant DRAM read in the 2-pass MSE decode kernel (G≈2 heads/threadgroup, occupancy-preserving block split; spike-C2 port). Single-pass left legacy (tile-reuse regresses short-T occupancy-bound). Numerically fp32-exact (diff 0.0000; 45 tests).
+
+**Speed — kernel micro-bench vs full-model (the important distinction):**
+- **Kernel micro-bench (attention op isolated):** ~1.3–1.47× over legacy TQ on both boxes; on M5 it beat the micro-bench's fp16 bar (3-bit @256K 1.07×, 4-bit 1.16×). ⚠ **BUT that fp16 bar was `mx.fast.SDPA` on *dequantized* KV, NOT native fp16 KV** — an unfair comparison (dequant overhead). It overstated the win.
+- **Full-model (M5, clean box, the real numbers):**
+  - **Ornith @256K decode:** native fp16 **37.9** > 4-bit new-kernel **29.5** > 4-bit legacy **27.5** tps. New kernel narrows the 4-bit penalty (−27% → **−22%** vs native fp16) but does NOT flip it. mx-peak 26.8 GB (saves 5.8 GB vs fp16's 32.6).
+  - **distill @256K decode:** 4-bit new **9.8** vs legacy 9.6 (**+2%**).
+- **Why small end-to-end:** attention is only ~10/40 layers of these hybrid linear-attn models, so the kernel's ~1.3× on the attention op dilutes to +2–7% overall; and native fp16 (no dequant) beats tile-reuse-4-bit.
+
+**Corrected implication:** quantized KV is **still a memory-for-speed trade** — the new kernel is a real but modest improvement to the TQ decode path (mainly a transferable technique), NOT a flip. **Ornith STAYS fp16** (native fp16 decode wins; the "free 4-bit" prize is NOT achieved). distill's forced-quantized decode gains a marginal +2%. The parked kv3 memory lever does NOT revive on decode-speed grounds. Follow-on (deferred): prefill MMA (M5 TensorOps / M2 simdgroup), Prod codec, gemma4 generality — but prefill is amortized by APC, so #5's remaining ROI is low for this deployment.
+
+### Remaining levers (assessment)
+- **#3 eviction** — arch-limited: both winners are hybrid linear-attn (only ~10/40 layers grow a
+  KV to evict); sinks+window risk retrieval. Low expected value.
+- **#4 prompt-lookahead (build)** / **#5 TQ fused kernel (build)** — the real decode/prefill
+  builds; each needs its own brainstorm→spec. #5 is well-motivated by the #2 finding above.
+- **#6 MTP self-spec (distill)** — proven-negative prior (net slowdown); one honest shot at most.
+
 ## Sampling config (per-arch)
 
 Sampling is per-ARCH, not unified. Each model runs at its own arch's config.
