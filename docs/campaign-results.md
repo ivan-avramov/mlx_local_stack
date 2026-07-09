@@ -72,6 +72,18 @@ Spec: `docs/superpowers/specs/2026-06-17-…-design.md`; plan: `docs/superpowers
 
 **Corrected implication:** quantized KV is **still a memory-for-speed trade** — the new kernel is a real but modest improvement to the TQ decode path (mainly a transferable technique), NOT a flip. **Ornith STAYS fp16** (native fp16 decode wins; the "free 4-bit" prize is NOT achieved). distill's forced-quantized decode gains a marginal +2%. The parked kv3 memory lever does NOT revive on decode-speed grounds. Follow-on (deferred): prefill MMA (M5 TensorOps / M2 simdgroup), Prod codec, gemma4 generality — but prefill is amortized by APC, so #5's remaining ROI is low for this deployment.
 
+### FU-2 — registry-side default sampling — **SHIPPED 2026-07-09** (config-consistency, not a quality lever)
+Per-model `generation_defaults` in `main_models.yaml` → mlx-serve forwards it opaquely as one
+`--generation-defaults <json>` arg (no per-param names) → mlx-vlm applies each entry only when the
+request omits it (**precedence request > yaml > checkpoint > hardcoded**; unknown key fails loud at
+startup; resolved sampling logged at INFO). Closes the config hole where **vscode/zed carry no sampling**:
+they ran the distill at its checkpoint **temp 1.0** and Ornith at hardcoded **greedy 0.0**; now they get
+the tuned op-temps + `presence_penalty 0.0` (suffix engages). `enable_thinking` moved into the block.
+**Runtime-verified on M2+M5**: a no-sampling distill request resolves to `temperature=0.3 top_p=0.95
+top_k=20 min_p=0.0 presence_penalty=0.0 max_tokens=102400 thinking_budget=81920 enable_thinking=True`
+(the yaml, not the checkpoint's 1.0); an explicit `temperature=0.9` wins. Forks: mlx-serve 8333436,
+mlx-vlm 9f087c2. Spec: `docs/superpowers/specs/2026-07-09-registry-default-sampling-design.md`.
+
 ### Remaining levers (assessment)
 - **#3 eviction** — arch-limited: both winners are hybrid linear-attn (only ~10/40 layers grow a
   KV to evict); sinks+window risk retrieval. Low expected value.

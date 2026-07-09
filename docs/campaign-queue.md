@@ -44,10 +44,15 @@ speed/mem (single-box, apples-to-apples) + LCB quality; M2 = parallel he+/mbpp+ 
   hybrid models), does NOT beat native fp16 → Ornith stays fp16. Prefill MMA / Prod codec / gemma4
   generality = deferred follow-ons (low ROI — APC amortizes prefill).
 - **#3 eviction / #6 MTP:** low ROI (hybrid attn / net-slowdown prior) — NOT PURSUED.
-- **STATE @ 2026-07-09 — Phase-2 COMPLETE.** Shipped: APC (#1), suffix both winners (#4), decode
-  kernel (#5). Ornith = fp16 KV + suffix; distill = tq-4bit KV + suffix. Stack committed (UNPUSHED);
-  M5 clean-deploy pending the stack push. PARKED: distill-kv3 (needs reasoning gate), registry-side
-  default-sampling in mlx-serve (fixes the vscode/zed no-sampling gap).
+- **STATE @ 2026-07-09 — Phase-2 COMPLETE + FU-2 SHIPPED.** Shipped: APC (#1), suffix both winners
+  (#4), decode kernel (#5). Ornith = fp16 KV + suffix; distill = tq-4bit KV + suffix. Stack pushed
+  (`main` @ 7a1b311); forks pushed (mlx-serve 8333436, mlx-vlm 9f087c2); M2 + M5 deployed + router-restarted.
+- **FU-2 (registry-side default sampling) = SHIPPED 2026-07-09.** Per-model `generation_defaults` in
+  `main_models.yaml`, forwarded opaquely by mlx-serve, applied by mlx-vlm when a request omits a field
+  (request > yaml > checkpoint > hardcoded; unknown key fails loud; resolved sampling logged at INFO).
+  Closes the vscode/zed no-sampling gap — runtime-verified on M2+M5 (no-sampling distill request resolves
+  to temp 0.3, not the checkpoint's 1.0). Spec: `docs/superpowers/specs/2026-07-09-registry-default-sampling-design.md`.
+- **STILL PARKED: distill-kv3** (needs the math500+aime+multi-needle reasoning/retrieval gate = FU-1).
 
 ## Quant question — CLOSED: uniform-4bit is Ornith's definitive config (2026-07-06)
 Both "better quant" avenues investigated + closed:
