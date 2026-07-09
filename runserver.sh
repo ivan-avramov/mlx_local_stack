@@ -56,8 +56,12 @@ uv run python -u -m mlx_vlm.server \
 TASK_MODEL_PID=$!
 
 # --- Start main multi- model server ---
+# APC (Automatic Prefix Caching) — Phase-2 #1, 2026-07-08. Lossless, exact KV reuse of the
+# shared prompt prefix across turns → agentic multi-turn TTFT collapses 34-147x (re-prefill
+# ~0). No memory/speed cost @256K (Ornith 32.6GB w/ or w/o). Pool=16384 blocks (256K ctx).
+# The mlx_vlm.server worker inherits this env (process_manager); disable by unsetting APC_ENABLED.
 echo "Starting main model (mlx_vlm, ${MAIN_MODEL_URL})..."
-MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start &>logs/main_model.log &
+APC_ENABLED=1 APC_NUM_BLOCKS=16384 MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start &>logs/main_model.log &
 MAIN_MODEL_PID=$!
 
 echo -n "Waiting for main model to be ready..."
