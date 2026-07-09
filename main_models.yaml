@@ -23,7 +23,8 @@ models:
     kv_bits: 4
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
     # SUFFIX DISABLED 2026-06-21 for the lossless SELECTION bake-off: suffix
     # (and MTP/draft) are inherently non-lossless in bf16 (prefill-vs-decode
     # kernel numerics, NOT a logic bug) and make gemma cascade into rambling.
@@ -44,7 +45,8 @@ models:
     kv_bits: 4
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
     # Drafter-free n-gram / prompt-lookup speculative decoding (mlx-vlm fork).
     # Dense gemma4 is a v1 target. Big win on echo-heavy coding/reasoning,
     # graceful on novel prose. draft_cooldown pauses proposing after N
@@ -64,7 +66,8 @@ models:
     kv_bits: 4
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
     # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
     # draft_block_size: 16
     # suffix_min_match: 2
@@ -83,7 +86,8 @@ models:
     kv_bits: 4               # validated 2026-06-17: best quality that fits 200K (peak 40GB, needle PASS on M5); MSE-4 > Prod-3 > MSE-3
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
     # SUFFIX DISABLED 2026-06-21 for the lossless SELECTION bake-off (re-enable
     # for Phase-2 deployment; Qwen tolerates suffix). See memory.
     # draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware); 6x on quoting, ~0 on novel/UI (see sketch)
@@ -101,7 +105,8 @@ models:
     kv_bits: 4
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
     # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
     # draft_block_size: 16
     # suffix_min_match: 2
@@ -116,7 +121,8 @@ models:
     kv_bits: 4
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
     # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
     # draft_block_size: 16
     # suffix_min_match: 2
@@ -131,7 +137,8 @@ models:
     kv_bits: 4
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
     # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
     # draft_block_size: 16
     # suffix_min_match: 2
@@ -148,7 +155,8 @@ models:
     kv_bits: 4
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
     # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
     # draft_block_size: 16
     # suffix_min_match: 2
@@ -164,7 +172,8 @@ models:
     kv_bits: 4
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
     # draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
     # draft_block_size: 16
     # suffix_min_match: 2
@@ -179,7 +188,8 @@ models:
     kv_bits: 4
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
     # draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
     # draft_block_size: 16
     # suffix_min_match: 2
@@ -194,7 +204,8 @@ models:
     max_kv_cache_size: 262144
     kv_bits: 0
     prefill_step_size: 512
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
   - name: gemma-4-31b-it-6bit-kv16
     type: vision
     on_demand: true
@@ -202,7 +213,8 @@ models:
     max_kv_cache_size: 262144
     kv_bits: 0
     prefill_step_size: 512
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
   - name: gemma-4-26b-a4b-it-8bit-kv16
     type: vision
     on_demand: true
@@ -210,7 +222,8 @@ models:
     max_kv_cache_size: 262144
     kv_bits: 0
     prefill_step_size: 512
-    enable_thinking: true
+    generation_defaults:
+      enable_thinking: true
 
   # ── Campaign picks for 256K agentic coding (MLX quants, hosted on HF: caslca) ──
   # Ornith = THE PICK: sparse-MoE (8/256 active) + hybrid linear-attn; clears true 256K
@@ -222,7 +235,18 @@ models:
     max_kv_cache_size: 262144
     kv_bits: 0                     # fp16 KV — 256K peak 32.4GB (≤46GB gate, 13.6GB headroom)
     prefill_step_size: 512
-    enable_thinking: true
+    # Registry-side generation defaults — the tuned sampling reaches ALL clients (incl.
+    # vscode/zed, which carry no sampling). Applied only when a request omits the field.
+    # Coding op-temp 0.4. presence_penalty 0.0 lets suffix engage. See docs FU-2.
+    generation_defaults:
+      temperature: 0.4
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
     # Suffix (drafter-free n-gram) decoding — Phase-2 #4, 2026-07-09. QUALITY-NEUTRAL on the MoE
     # (vs OFF: he+ 93/95, mbpp+ 86/87, LCB 93.3/80 — all within N=100/15 single-sample noise; conv
     # intact; loops item-intrinsic, not suffix). Speed-POSITIVE despite MoE verify (2.41x verbatim /
@@ -242,7 +266,18 @@ models:
     kv_bits: 4                     # turboquant 4-bit KV — 256K peak 43.3GB
     prefill_step_size: 512
     quantized_kv_start: 0
-    enable_thinking: true
+    # Registry-side generation defaults — the tuned sampling reaches ALL clients (incl.
+    # vscode/zed, which carry no sampling). Applied only when a request omits the field.
+    # Coding op-temp 0.3. presence_penalty 0.0 lets suffix engage. See docs FU-2.
+    generation_defaults:
+      temperature: 0.3
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
     # Suffix (drafter-free n-gram) decoding — Phase-2 #4, 2026-07-08. Quality-NEUTRAL
     # (he+ 94.0%/mbpp+ 77.1% ≈ OFF, 100% conv; byte-identical @t0.3) + 1.2-2.7x edit-heavy
     # decode (dense qwen3_5 → cheap verify). NO cooldown (validated faster; matches Ornith).
