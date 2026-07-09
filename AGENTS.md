@@ -10,6 +10,26 @@ Local stack: mlx_vlm task model (port 8092), mlx-serve main models (port 8000), 
 
 - `runserver.sh` (full bring-up; reads `.env` for `HF_TOKEN`), `main_models.yaml` (mlx-serve registry), `openwebui_config.json` (seeded each start), `do_backup.py`.
 
+## Client/agent integrations (configs we ship)
+
+Five clients, all pointed at the mlx-serve router (`localhost:8000`, OpenAI-compatible), all exposing the two winners (`Ornith-1.0-35B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`):
+
+| config | client | class |
+|---|---|---|
+| `opencode_config/opencode.json` | opencode CLI (primary agentic driver) | full-sampling |
+| `aider_config/` (`aider.model.settings.yml` + `.model.metadata.json` + `.conf.yml`) | aider (also the bench harness via `benchmark/run_aider_docker.sh`) | full-sampling |
+| `openwebui-init/models_config.json` | OpenWebUI (:3000) — SOURCE OF TRUTH, pushed to OWUI by `publish_models.py`/`init.py` (NOT the DB-export `openwebui_config.json`) | full-sampling |
+| `vscode_config/chatLanguageModels.json` | VS Code — Copilot Chat BYOK + Roo Code | registration-only |
+| `zed_config/settings.snippet.jsonc` | Zed editor assistant | registration-only |
+
+- **full-sampling** (opencode, aider, openwebui): carry the complete per-model sampling — `temperature`, `top_p`, `top_k`, `min_p`, `presence_penalty`, `max_tokens`, `enable_thinking`, `thinking_budget`. Only through these does the tuned op-temp AND `presence_penalty: 0.0` (which lets suffix decoding engage — a nonzero one trips the fallback) actually reach the model. (OWUI's `_family_defaults.py` VENDOR_RECOMMENDED is only a cross-check reference — e.g. qwen3 presence_penalty 1.5 — NOT what we deploy; `models_config.json` overrides with our tuned values.)
+- **registration-only** (vscode, zed): declare model + context + capabilities only — their config formats can't carry sampling. mlx-serve holds NO per-model sampling defaults (verified), so these run at the mlx_vlm worker's DEFAULT sampling, NOT the tuned config.
+
+**NOTE-TO-SELF — a per-model config change must hit EVERY carrier, then audit for drift:**
+- **Sampling / thinking** (temp, top_p, top_k, min_p, penalties, budget): update ALL THREE carriers — `opencode_config/opencode.json`, `aider_config/aider.model.settings.yml`, AND `openwebui-init/models_config.json` (then `publish_models.py` pushes OWUI); keep them consistent. (Audited 2026-07-08: all three identical + latest — Ornith t0.4 / distill t0.3, top_p 0.95, top_k 20, min_p 0.0, presence_penalty 0.0, max_tokens 102400, thinking_budget 81920.)
+- **New model / context / capabilities**: update all five configs (each lists models) + `main_models.yaml`.
+- **KNOWN GAP (vscode + zed only):** their formats carry no sampling, so the tuned op-temps + `presence_penalty 0.0` don't reach them (worker defaults → suffix may silently fall back). Proper fix: registry-side default sampling in mlx-serve (per-model `temperature`/`top_p`/… in `main_models.yaml`, applied when a request omits them) — NOT YET BUILT.
+
 ## Logs
 
 `logs/{mlx_vlm,task_model,main_model,compose}.log`.
