@@ -52,7 +52,23 @@ speed/mem (single-box, apples-to-apples) + LCB quality; M2 = parallel he+/mbpp+ 
   (request > yaml > checkpoint > hardcoded; unknown key fails loud; resolved sampling logged at INFO).
   Closes the vscode/zed no-sampling gap — runtime-verified on M2+M5 (no-sampling distill request resolves
   to temp 0.3, not the checkpoint's 1.0). Spec: `docs/superpowers/specs/2026-07-09-registry-default-sampling-design.md`.
-- **STILL PARKED: distill-kv3** (needs the math500+aime+multi-needle reasoning/retrieval gate = FU-1).
+- **FU-1 (distill-kv3 gate) = PARKED 2026-07-09 with a staged plan.** Question: adopt turboquant
+  **3-bit KV** on the distill? Saves **2.9 GB @256K, zero speed change**, on the *alternative* model
+  (which already fits the 46 GB gate with headroom). Worry: 3-bit KV compounds attention error →
+  degrades precise long-context retrieval + multi-step math; the he+ gate (96.5 vs 95.7) is too weak.
+  **OFAT setup:** kv4 vs a `-kv3` registry variant (clone distill entry, `kv_bits: 4→3`, keep
+  `generation_defaults`+suffix identical), same box/session; provenance stamps `kv_bits` so
+  `--clean-stale` separates arms. Run on M5 (256K-capable, free). Needs a tiny `run_retrieval.py
+  --temp` add (TDD) for a clean temp-0 fidelity read.
+  **Cheap→heavy staging (fast-fail):**
+  - **Tier 0 smoke (~15 min):** load `-kv3`, single-needle @64K temp0 → retrieves? (wiring + gross sanity).
+  - **Tier 1 cheap reject filter (~1.5–2 h):** multi-needle (5×5) retrieval @{32K,64K,128K}, kv4 vs kv3,
+    temp 0, samples 3. kv3 drops needles vs kv4 → **REJECT now**; kv3 ≈ kv4 → escalate.
+  - **Tier 2 overnight gate:** multi-needle @{192K,256K} + math500 N=30 + aime N=15 @t0.3, kv4 vs kv3.
+    **Adopt kv3 only if quality-neutral on BOTH** retrieval (per-depth ≈ kv4 @256K) and reasoning
+    (pass@1 within single-sample noise + convergence intact). Any dramatic drop → keep kv4.
+  **ROI note:** low value (2.9 GB on the alternative model, no speed) — do Tier 0+1 first, then decide
+  whether the overnight is worth it. Full design context: chat 2026-07-09; spec-worthy if pursued.
 
 ## Quant question — CLOSED: uniform-4bit is Ornith's definitive config (2026-07-06)
 Both "better quant" avenues investigated + closed:
