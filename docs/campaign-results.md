@@ -48,6 +48,17 @@ Mechanism (transfers to B200): quantized-KV attention kernel (dequant + RHT) is 
 SDPA, so KV bit-reduction saves memory but does NOT speed decode — which is exactly what **#5
 (fused MMA quantized-attention kernel)** would fix, potentially making Ornith 4-bit KV free.
 
+### #4 suffix (prompt-lookahead) decoding — SHIP both winners 2026-07-09
+
+Drafter-free n-gram / prompt-lookup ("suffix") speculative decoding (`draft_kind: suffix`, registry-side; engages because the carriers send `presence_penalty 0.0`). Sampler-applied → distribution-preserving under sampling (the selection-phase "non-lossless" verdict was greedy-only; empirically confirmed here). Quality gate OFF vs ON, op-temp, OFAT:
+
+| model | he+ ON/OFF | mbpp+ ON/OFF | LCB ON/OFF | decode speedup |
+|---|---|---|---|---|
+| distill (dense, t0.3) | 94.0 / ~95.7* | 77.1(N35) / — | 80% (kv4) | 1.2–2.7× edit-heavy |
+| Ornith (MoE, t0.4) | 93.0 / 95.0 | 86.0 / 87.0 | 93.3 / 80.0 | 2.41× verbatim / 1.09× novel |
+
+Both **QUALITY-NEUTRAL** — every delta within N=100/15 single-sample noise, convergence intact, loops item-intrinsic (same hard items both arms, not suffix). The **MoE-hostile prior was WRONG**: Ornith's ~30/40 **linear-attn** backbone keeps the batched block-verify cheap, so suffix nets positive even on *novel* text (not just reuse). **NO `draft_cooldown`** (phase-1: cooldown hurts reuse, 2.01× vs 2.41×). Shipped on both winners (`main_models.yaml`, commit a16dbb6). *(*distill OFF he+ = the N=117 production-profile baseline, not a clean official OFAT — the OFF official arm DNF'd on the meander tax; byte-identical-@t0.3 audit + ON numbers carry the verdict.)
+
 ### #5 fused quantized-KV DECODE kernel (GQA tile-reuse) — BUILT + VALIDATED 2026-07-08
 
 Spec: `docs/superpowers/specs/2026-06-17-…-design.md`; plan: `docs/superpowers/plans/2026-07-08-fused-quantized-kv-decode-kernel.md`. Fixed the R×=6 GQA-redundant DRAM read in the 2-pass MSE decode kernel (G≈2 heads/threadgroup, occupancy-preserving block split; spike-C2 port). Single-pass left legacy (tile-reuse regresses short-T occupancy-bound). Numerically fp32-exact (diff 0.0000; 45 tests).

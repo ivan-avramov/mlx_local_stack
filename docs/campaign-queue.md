@@ -34,10 +34,20 @@ speed/mem (single-box, apples-to-apples) + LCB quality; M2 = parallel he+/mbpp+ 
   ceiling'd short-chain coding does NOT stress KV fidelity; worry = multi-step math / precise
   retrieval. Needs math500+aime+multi-needle OFAT gate before adoption; deferred (low mem value).
   Insight: turboquant KV = memory-for-SPEED trade (slower than fp16).
-- **#3 eviction (low ROI — hybrid attn) / #6 MTP (low ROI — net-slowdown prior):** OPTIONAL.
-- **#4 lookahead / #5 TQ fused kernel:** BUILDS — need own brainstorm→spec; #5 highest remaining
-  upside (would make quant-KV free). **Awaiting user steer.**
-- BOXES @ 2026-07-08 07:15: both IDLE (Phase-2 config levers complete); routers up.
+- **#4 suffix decoding = DONE → SHIPPED both winners** (2026-07-09): quality-neutral (distill
+  he+94/mbpp+77; Ornith he+93/mbpp+86/LCB93.3 ≈ OFF, conv intact, loops item-intrinsic) +
+  speed-positive (distill 1.2–2.7× edit; Ornith 2.41× verbatim / 1.09× novel — the MoE-hostile
+  prior was WRONG, linear-attn backbone keeps verify cheap). `draft_kind: suffix`, NO cooldown
+  (phase-1: cooldown hurts reuse). Registry-side; carriers send presence_penalty 0.0 so it engages.
+- **#5 fused GQA-tile-reuse DECODE kernel = DONE → SHIPPED** (fork bf7c793, submodule bumped):
+  lossless (fp32-exact), ~1.3× over legacy TQ; +2–7% end-to-end (attention is ~10/40 layers of the
+  hybrid models), does NOT beat native fp16 → Ornith stays fp16. Prefill MMA / Prod codec / gemma4
+  generality = deferred follow-ons (low ROI — APC amortizes prefill).
+- **#3 eviction / #6 MTP:** low ROI (hybrid attn / net-slowdown prior) — NOT PURSUED.
+- **STATE @ 2026-07-09 — Phase-2 COMPLETE.** Shipped: APC (#1), suffix both winners (#4), decode
+  kernel (#5). Ornith = fp16 KV + suffix; distill = tq-4bit KV + suffix. Stack committed (UNPUSHED);
+  M5 clean-deploy pending the stack push. PARKED: distill-kv3 (needs reasoning gate), registry-side
+  default-sampling in mlx-serve (fixes the vscode/zed no-sampling gap).
 
 ## Quant question — CLOSED: uniform-4bit is Ornith's definitive config (2026-07-06)
 Both "better quant" avenues investigated + closed:
