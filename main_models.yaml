@@ -13,88 +13,24 @@ startup_timeout_seconds: 300      # Max wait for model to become READY
 # - reasoning_parser / tool_call_parser intentionally omitted: process_manager does not
 #   forward them for type=vision models, and mlx-vlm auto-infers the tool parser.
 
+agent_defaults:
+  opencode: Ornith-1.0-35B-mlx-uniform-4bit
+  aider: Ornith-1.0-35B-mlx-uniform-4bit
+
+# The task model (mlx_vlm, :8092 — titles/summaries) is NOT a `models:` entry: that
+# would make the :8000 router serve it / OWUI auto-list it as a router model. It is a
+# top-level source-of-truth block that configgen's loader parses with the same
+# per-entry logic as `models:`, purely for the config-generator emitters to read.
+task_model:
+  name: mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  hf_path: mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  presentation:
+    role: task
+    display_name: "Task 1.5B (titles/summaries)"
+    context: 30000
+    output: 2048
+
 models:
-  - name: gemma-4-26b-a4b-it-8bit
-    type: vision
-    on_demand: true
-    hf_path: mlx-community/gemma-4-26b-a4b-it-8bit
-    max_kv_cache_size: 262144
-    kv_quant_scheme: uniform
-    kv_bits: 4
-    prefill_step_size: 512
-    quantized_kv_start: 0
-    generation_defaults:
-      enable_thinking: true
-    # SUFFIX DISABLED 2026-06-21 for the lossless SELECTION bake-off: suffix
-    # (and MTP/draft) are inherently non-lossless in bf16 (prefill-vs-decode
-    # kernel numerics, NOT a logic bug) and make gemma cascade into rambling.
-    # Re-enable for Phase-2 deployment. See project_suffix_decoding_nonlossless.
-    # Drafter-free suffix decoding (see gemma-4-31b-it-6bit for notes). gemma4
-    # MoE is still standard-attention, so suffix verify/rollback works.
-    # draft_kind: suffix
-    # draft_block_size: 16
-    # suffix_min_match: 2
-    # draft_cooldown: 2
-
-  - name: gemma-4-31b-it-6bit
-    type: vision
-    on_demand: true
-    hf_path: mlx-community/gemma-4-31b-it-6bit
-    max_kv_cache_size: 262144
-    kv_quant_scheme: uniform
-    kv_bits: 4
-    prefill_step_size: 512
-    quantized_kv_start: 0
-    generation_defaults:
-      enable_thinking: true
-    # Drafter-free n-gram / prompt-lookup speculative decoding (mlx-vlm fork).
-    # Dense gemma4 is a v1 target. Big win on echo-heavy coding/reasoning,
-    # graceful on novel prose. draft_cooldown pauses proposing after N
-    # consecutive 0-accept rounds so novel text never regresses. Omit
-    # draft_kind to disable; omit draft_cooldown for no cooldown.
-    # draft_kind: suffix
-    # draft_block_size: 16   # max draft (proposal) length
-    # suffix_min_match: 2    # minimum n-gram match length
-    # draft_cooldown: 2      # pause after 2 consecutive 0-accept rounds
-
-  - name: gemma-4-31b-it-UD-MLX-4bit
-    type: vision
-    on_demand: true
-    hf_path: unsloth/gemma-4-31b-it-UD-MLX-4bit
-    max_kv_cache_size: 262144
-    kv_quant_scheme: uniform
-    kv_bits: 4
-    prefill_step_size: 512
-    quantized_kv_start: 0
-    generation_defaults:
-      enable_thinking: true
-    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
-    # draft_block_size: 16
-    # suffix_min_match: 2
-    # draft_cooldown: 2
-
-  # Suffix decoding IS enabled on Qwen3.6 as of v1.1: the verify forward now
-  # captures the GatedDeltaNet recurrent state (capture_layer_ids=[]) so rejected
-  # drafts roll back correctly, including under quantized (turboquant) KV.
-  # See sketches/suffix-decoding-plan.md §8. Requires the v1.1 fix in src/mlx-vlm.
-  - name: Qwen3.6-27B-UD-MLX-6bit
-    type: vision
-    on_demand: true
-    hf_path: unsloth/Qwen3.6-27B-UD-MLX-6bit
-    max_kv_cache_size: 262144
-    kv_quant_scheme: turboquant
-    kv_bits: 4               # validated 2026-06-17: best quality that fits 200K (peak 40GB, needle PASS on M5); MSE-4 > Prod-3 > MSE-3
-    prefill_step_size: 512
-    quantized_kv_start: 0
-    generation_defaults:
-      enable_thinking: true
-    # SUFFIX DISABLED 2026-06-21 for the lossless SELECTION bake-off (re-enable
-    # for Phase-2 deployment; Qwen tolerates suffix). See memory.
-    # draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware); 6x on quoting, ~0 on novel/UI (see sketch)
-    # draft_block_size: 16
-    # suffix_min_match: 2
-    # draft_cooldown: 2
-
   # QAT / optimized-quant experiments (quality-vs-size; QAT/OptiQ earn their keep at 4-6 bit).
   - name: gemma-4-31B-it-qat-6bit
     type: vision
@@ -106,7 +42,21 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     generation_defaults:
+      temperature: 0.7
+      top_p: 0.95
+      top_k: 64
+      min_p: 0.0
+      repetition_penalty: 1.08
+      max_tokens: 32768
+      thinking_budget: 16384
       enable_thinking: true
+    presentation:
+      role: main
+      family: gemma
+      display_name: "gemma-4-31B-it-qat-6bit (dense)"
+      context: 196608
+      output: 32768
+      capabilities: [tools, vision, thinking, web_search, code_interpreter]
     # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
     # draft_block_size: 16
     # suffix_min_match: 2
@@ -122,108 +72,25 @@ models:
     prefill_step_size: 512
     quantized_kv_start: 0
     generation_defaults:
+      temperature: 0.7
+      top_p: 0.95
+      top_k: 64
+      min_p: 0.0
+      repetition_penalty: 1.08
+      max_tokens: 49152
+      thinking_budget: 32768
       enable_thinking: true
+    presentation:
+      role: main
+      family: gemma
+      display_name: "gemma-4-26B-A4B-it-OptiQ-4bit (MoE)"
+      context: 262144
+      output: 49152
+      capabilities: [tools, vision, thinking, web_search, code_interpreter]
     # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
     # draft_block_size: 16
     # suffix_min_match: 2
     # draft_cooldown: 2
-
-  - name: gemma-4-26B-A4B-it-QAT-MLX-4bit
-    type: vision
-    on_demand: true
-    hf_path: lmstudio-community/gemma-4-26B-A4B-it-QAT-MLX-4bit
-    max_kv_cache_size: 262144
-    kv_quant_scheme: uniform
-    kv_bits: 4
-    prefill_step_size: 512
-    quantized_kv_start: 0
-    generation_defaults:
-      enable_thinking: true
-    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
-    # draft_block_size: 16
-    # suffix_min_match: 2
-    # draft_cooldown: 2
-
-  # vanilla mlx-community 4bit — added 2026-06-21 for the W0 quant-convergence ladder
-  # (QAT-4bit / OptiQ-4bit / vanilla-4bit / 8bit). Same spawn params as the other A4B 4bits.
-  - name: gemma-4-26b-a4b-it-4bit
-    type: vision
-    on_demand: true
-    hf_path: mlx-community/gemma-4-26b-a4b-it-4bit
-    max_kv_cache_size: 262144
-    kv_quant_scheme: uniform
-    kv_bits: 4
-    prefill_step_size: 512
-    quantized_kv_start: 0
-    generation_defaults:
-      enable_thinking: true
-    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
-    # draft_block_size: 16
-    # suffix_min_match: 2
-    # draft_cooldown: 2
-
-  # Qwen3.6-27B quant ladder for the 256K quality bake-off (added 2026-06-16).
-  - name: Qwen3.6-27B-MLX-8bit
-    type: vision
-    on_demand: true
-    hf_path: unsloth/Qwen3.6-27B-MLX-8bit
-    max_kv_cache_size: 262144
-    kv_quant_scheme: turboquant   # was uniform (2026-06-19): TQ is the validated Qwen KV path (full-attn layers); GDN layers have no KV. uniform-vs-TQ kept as a Phase-2 OFAT knob.
-    kv_bits: 4
-    prefill_step_size: 512
-    quantized_kv_start: 0
-    generation_defaults:
-      enable_thinking: true
-    # draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
-    # draft_block_size: 16
-    # suffix_min_match: 2
-    # draft_cooldown: 2
-
-  - name: Qwen3.6-27B-OptiQ-4bit
-    type: vision
-    on_demand: true
-    hf_path: mlx-community/Qwen3.6-27B-OptiQ-4bit
-    max_kv_cache_size: 262144
-    kv_quant_scheme: turboquant   # was uniform (2026-06-19): TQ is the validated Qwen KV path (full-attn layers); GDN layers have no KV. uniform-vs-TQ kept as a Phase-2 OFAT knob.
-    kv_bits: 4
-    prefill_step_size: 512
-    quantized_kv_start: 0
-    generation_defaults:
-      enable_thinking: true
-    # draft_kind: suffix       # drafter-free suffix decoding (v1.1 GDN-aware)
-    # draft_block_size: 16
-    # suffix_min_match: 2
-    # draft_cooldown: 2
-
-  # --- bf16-KV variants for the quality-first eval (kv_bits 0 => no KV quant; the bigger
-  # quality lever per the research). The 4-bit entries above are kept for the Stage-3 KV ladder.
-  - name: Qwen3.6-27B-MLX-8bit-kv16
-    type: vision
-    on_demand: true
-    hf_path: unsloth/Qwen3.6-27B-MLX-8bit
-    max_kv_cache_size: 262144
-    kv_bits: 0
-    prefill_step_size: 512
-    generation_defaults:
-      enable_thinking: true
-  - name: gemma-4-31b-it-6bit-kv16
-    type: vision
-    on_demand: true
-    hf_path: mlx-community/gemma-4-31b-it-6bit
-    max_kv_cache_size: 262144
-    kv_bits: 0
-    prefill_step_size: 512
-    generation_defaults:
-      enable_thinking: true
-  - name: gemma-4-26b-a4b-it-8bit-kv16
-    type: vision
-    on_demand: true
-    hf_path: mlx-community/gemma-4-26b-a4b-it-8bit
-    max_kv_cache_size: 262144
-    kv_bits: 0
-    prefill_step_size: 512
-    generation_defaults:
-      enable_thinking: true
 
   # ── Campaign picks for 256K agentic coding (MLX quants, hosted on HF: caslca) ──
   # Ornith = THE PICK: sparse-MoE (8/256 active) + hybrid linear-attn; clears true 256K
@@ -247,6 +114,13 @@ models:
       max_tokens: 102400
       thinking_budget: 81920
       enable_thinking: true
+    presentation:
+      role: main
+      family: qwen
+      display_name: "Ornith-1.0-35B (256K agentic, MoE)"
+      context: 262144
+      output: 102400
+      capabilities: [tools, vision, thinking, web_search, code_interpreter]
     # Suffix (drafter-free n-gram) decoding — Phase-2 #4, 2026-07-09. QUALITY-NEUTRAL on the MoE
     # (vs OFF: he+ 93/95, mbpp+ 86/87, LCB 93.3/80 — all within N=100/15 single-sample noise; conv
     # intact; loops item-intrinsic, not suffix). Speed-POSITIVE despite MoE verify (2.41x verbatim /
@@ -278,6 +152,13 @@ models:
       max_tokens: 102400
       thinking_budget: 81920
       enable_thinking: true
+    presentation:
+      role: main
+      family: qwen
+      display_name: "Qwen3.6-27B Opus-Distill (reasoning)"
+      context: 262144
+      output: 102400
+      capabilities: [tools, vision, thinking, web_search, code_interpreter]
     # Suffix (drafter-free n-gram) decoding — Phase-2 #4, 2026-07-08. Quality-NEUTRAL
     # (he+ 94.0%/mbpp+ 77.1% ≈ OFF, 100% conv; byte-identical @t0.3) + 1.2-2.7x edit-heavy
     # decode (dense qwen3_5 → cheap verify). NO cooldown (validated faster; matches Ornith).

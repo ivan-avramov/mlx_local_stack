@@ -64,3 +64,25 @@ def test_unknown_role_raises(tmp_path):
     body = VALID.replace("role: main", "role: bogus")
     with pytest.raises(ValueError, match="role"):
         load_source(_write(tmp_path, body))
+
+def test_loads_task_model_block(tmp_path):
+    # The task model (mlx_vlm on :8092) must NOT live under `models:` (that would make
+    # the :8000 router serve it / OWUI auto-list it). It lives in a top-level
+    # `task_model:` block, parsed with the same per-entry logic as `models:` entries.
+    body = VALID + """
+task_model:
+  name: mlx-community/Task-Model
+  hf_path: mlx-community/Task-Model
+  presentation:
+    role: task
+    display_name: "Task Model"
+    context: 30000
+    output: 2048
+"""
+    s = load_source(_write(tmp_path, body))
+    task_specs = [m for m in s.models if m.role == "task"]
+    assert len(task_specs) == 1
+    assert task_specs[0].name == "mlx-community/Task-Model"
+    assert task_specs[0].port == 8092
+    # still one main model from the `models:` block
+    assert len(s.models) == 2
