@@ -1,4 +1,4 @@
-import textwrap, pytest
+import pytest
 from configgen.source import load_source
 
 def _write(tmp_path, body):
@@ -54,3 +54,13 @@ def test_models_without_presentation_are_skipped(tmp_path):
     body = VALID + "  - name: Router-Only\n    hf_path: ns/x\n    kv_bits: 4\n"
     s = load_source(_write(tmp_path, body))
     assert [m.name for m in s.models] == ["Qwen-A"]
+
+def test_duplicate_name_raises(tmp_path):
+    body = VALID + "  - name: Qwen-A\n    hf_path: ns/other\n    presentation:\n      role: task\n      display_name: \"Qwen A2\"\n      context: 262144\n      output: 102400\n"
+    with pytest.raises(ValueError, match="duplicate"):
+        load_source(_write(tmp_path, body))
+
+def test_unknown_role_raises(tmp_path):
+    body = VALID.replace("role: main", "role: bogus")
+    with pytest.raises(ValueError, match="role"):
+        load_source(_write(tmp_path, body))

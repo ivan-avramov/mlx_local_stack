@@ -45,8 +45,10 @@ def load_source(path: str) -> Source:
         if role not in _ROLES:
             raise ValueError(f"model {name!r} has invalid role {role!r}")
         family = pres.get("family")
-        if role == "main" and family not in _FAMILIES:
-            raise ValueError(f"model {name!r} has invalid/missing family {family!r}")
+        if family is not None and family not in _FAMILIES:
+            raise ValueError(f"model {name!r} has invalid family {family!r}")
+        if role == "main" and family is None:
+            raise ValueError(f"model {name!r} (role=main) requires a family")
         edit_format = pres.get("edit_format") or ("diff" if family == "qwen" else "whole")
         models.append(ModelSpec(
             name=name, hf_path=entry.get("hf_path", ""), role=role, family=family,
