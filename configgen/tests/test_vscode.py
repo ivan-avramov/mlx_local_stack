@@ -8,4 +8,4 @@ def test_vscode_registration_only(sample_source):
     assert ids == {"Qwen-A", "Gemma-B"}            # task excluded
     q = next(m for m in models if m["id"] == "Qwen-A")
     assert q["maxInputTokens"] == 262144 - 102400 and q["maxOutputTokens"] == 102400
-    assert "temperature" not in q                  # registration-only
+    assert set(q) == {"id", "name", "url", "toolCalling", "vision", "thinking", "maxInputTokens", "maxOutputTokens"}
