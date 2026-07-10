@@ -13,7 +13,7 @@ The files are checked in **without** the leading dot so they're visible in the r
 
 | Repo file | Install as | Purpose |
 |---|---|---|
-| `aider.model.metadata.json` | `~/.aider.model.metadata.json` | Context windows, costs (0 — local/free), and capability flags (`supports_vision`, `supports_pdf_input`, …) for the local models. aider/litellm don't know these custom model names otherwise. |
+| `aider.model.metadata.json` | `~/.aider.model.metadata.json` | Per-model `max_input_tokens` / `max_output_tokens`, `supports_vision` / `supports_pdf_input` (from each model's `vision` capability in `main_models.yaml`), plus `litellm_provider: "openai"` and `mode: "chat"` so litellm treats these custom model names as OpenAI-compatible chat models. aider/litellm don't know these custom model names otherwise, and litellm gates image/PDF attachment on `supports_vision`/`supports_pdf_input` — without them, attachments silently fail for models that actually support them. |
 | `aider.model.settings.yml` | `~/.aider.model.settings.yml` | Per-model behavior: `edit_format`, pinned weak model, thinking knobs, and the `:8092` route for the weak model. |
 | `aider.conf.yml` | `~/.aider.conf.yml` | Global defaults: the default model and the mlx-serve endpoint. |
 

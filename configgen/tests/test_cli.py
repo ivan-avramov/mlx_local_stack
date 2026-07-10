@@ -23,3 +23,11 @@ def test_check_detects_drift_multifile(tmp_path, sample_source):
     # tamper one of aider's three dict-shaped output files
     (root / "aider_config/aider.model.metadata.json").write_text("{}\n")
     assert run(["check"], source=sample_source, root=str(root)) == 1
+
+
+def test_unknown_command_fails_without_loading_source(tmp_path):
+    # root has no main_models.yaml at all: an unknown subcommand must fail
+    # cleanly (nonzero) WITHOUT ever attempting to load it — validation of
+    # the subcommand happens before load_source is called.
+    root = tmp_path
+    assert run(["bogus"], root=str(root)) == 2

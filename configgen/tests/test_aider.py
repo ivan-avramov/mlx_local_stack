@@ -60,3 +60,10 @@ def test_aider_three_files(sample_source):
     assert meta["openai/Qwen-A"]["max_output_tokens"] == 102400
     assert meta["openai/Gemma-B"]["max_input_tokens"] == 196608 - 32768
     assert meta["openai/Gemma-B"]["max_output_tokens"] == 32768
+
+    # Vision/PDF flags + litellm bookkeeping (aider/litellm gate image attachment on
+    # supports_vision — Qwen-A's fixture capabilities include "vision")
+    assert meta["openai/Qwen-A"]["supports_vision"] is True
+    assert meta["openai/Qwen-A"]["supports_pdf_input"] is True
+    assert meta["openai/Qwen-A"]["litellm_provider"] == "openai"
+    assert meta["openai/Qwen-A"]["mode"] == "chat"

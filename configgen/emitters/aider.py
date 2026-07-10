@@ -23,7 +23,11 @@ def emit_aider(source: Source) -> dict:
                          "extra_params": {"api_base": f"http://localhost:{task.port}/v1",
                                           "api_key": "not-needed"}})
     metadata = {f"openai/{m.name}": {"max_input_tokens": input_limit(m),
-                                     "max_output_tokens": m.output} for m in main}
+                                     "max_output_tokens": m.output,
+                                     "supports_vision": "vision" in m.capabilities,
+                                     "supports_pdf_input": "vision" in m.capabilities,
+                                     "litellm_provider": "openai",
+                                     "mode": "chat"} for m in main}
     default = source.agent_defaults.get("aider")
     conf = {"openai-api-base": "http://localhost:8000/v1", "openai-api-key": "not-needed"}
     if default:

@@ -36,19 +36,19 @@ The rich, per-model **Custom Endpoint** provider + `chatLanguageModels.json` for
 |---|---|---|---|
 | Token field meaning | `max_input_tokens` = prompt budget | `max_tokens` = **full window** | `maxInputTokens` = **prompt budget** |
 | → numbers used here | 163840 / 212992 / 159744 | full-window (196608 / 262144) | **match aider** (163840 / 212992 / 159744) |
-| Thinking control | `enable_thinking` + `thinking_budget` (full) | `interleaved_reasoning` only | `thinking: true` flag — **but no `thinking_budget`** |
+| Thinking control | `enable_thinking` + `thinking_budget` (full, overridable per-request) | `interleaved_reasoning` only | `thinking: true` flag — no per-request override; `enable_thinking`/`thinking_budget` come from mlx-serve's registry default |
 | Weak/summary model | pinned to :8092 task model | per-role keys → :8092 | **no per-role model** — Copilot uses your picked model for everything |
 | Edit mechanism | text diffs | tool calls | tool calls |
 
 Three things to internalize:
 
 1. **Use the aider numbers, not the Zed numbers.** `maxInputTokens` is the prompt budget, so it's set to `window − output` (163840 for the 196K-window `gemma-4-31B-it-qat-6bit`, 212992 for the 256K-window `gemma-4-26B-A4B-it-OptiQ-4bit`, 159744 for Ornith and the Qwen3.6 distill, both 256K windows with a 102400-token output cap). That keeps `prompt + output ≤ window`, so mlx-serve never has to clamp.
-2. **Thinking is bounded, not budgeted, for every model.** `thinking: true` lets Copilot parse/display the `<think>` reasoning, but Copilot can't forward `thinking_budget` to the server — thinking is capped only by `maxOutputTokens` (32768 / 49152 / 102400 depending on model). Same practical limit as Zed.
+2. **Thinking budget comes from the server, not the client, for every model.** `thinking: true` lets Copilot parse/display the `<think>` reasoning, and Copilot's own config format has no field for `thinking_budget` — but VS Code's requests omit it, so mlx-serve's per-model `generation_defaults` registry fills one in (16384 / 32768 / 81920 / 81920) automatically. `maxOutputTokens` is still the outer backstop if that default were ever absent.
 3. **No "weak model" role.** Unlike aider/Zed, Copilot doesn't expose a separate summary/commit-message model, so the always-on :8092 task model has no role to fill here. Copilot (and its built-in sub-agents) use the model you select. The `chatLanguageModels.json` here therefore only lists the :8000 agent models.
 
-## Thinking is DISPLAY-only here, not enabled
+## Thinking works out of the box here, via server-side registry defaults
 
-`thinking: true` is set on all four models so Copilot parses/renders reasoning *if it's produced* — **it does not turn thinking on.** mlx-serve defaults thinking OFF (`DEFAULT_ENABLE_THINKING=False`), and Copilot's Custom Endpoint / `openai_compatible` provider can't send the `enable_thinking` body param. So these models will **not actually think** under VS Code until thinking is enabled *server-side* in mlx-serve. (aider and opencode can enable it per-request via body params; VS Code and Zed can't.)
+`thinking: true` is set on all four models so Copilot parses/renders reasoning once it's produced. Copilot's Custom Endpoint / `openai_compatible` provider can't send `enable_thinking` (or any other sampling param) in the request body — but as of FU-2, mlx-serve no longer needs it to: each model's `generation_defaults` in `main_models.yaml` (including `enable_thinking: true` and the tuned op-temp / `presence_penalty` / etc.) is forwarded to mlx_vlm and applied whenever a request omits that field. Since VS Code's requests omit `enable_thinking` entirely, the server fills it in — thinking (and the rest of the tuned sampling) **is active** under VS Code, not just displayed. The one real gap: VS Code still can't override those defaults per-request (e.g. to force a different `thinking_budget` for one session) — it gets whatever the registry has configured. (aider and opencode can still override per-request via body params; VS Code and Zed run on the registry defaults instead.)
 
 ## Agent-mode requirements & gotchas
 

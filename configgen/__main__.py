@@ -46,14 +46,14 @@ def run(argv: list[str], source: Source | None = None, root: str = ".") -> int:
         print("usage: configgen <generate|check>", file=sys.stderr)
         return 2
     command = argv[0]
+    if command not in {"generate", "check"}:
+        print(f"unknown command: {command!r}", file=sys.stderr)
+        return 2
     if source is None:
         source = load_source(str(root_path / "main_models.yaml"))
     if command == "generate":
         return _generate(source, root_path)
-    if command == "check":
-        return _check(source, root_path)
-    print(f"unknown command: {command!r}", file=sys.stderr)
-    return 2
+    return _check(source, root_path)
 
 
 if __name__ == "__main__":
