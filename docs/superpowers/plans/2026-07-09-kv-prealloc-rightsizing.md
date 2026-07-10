@@ -668,13 +668,21 @@ Add a module-level import near the `maybe_quantize_kv_cache` import (`:45`): `ma
 
 (Gated on `kv_bits is None` so it never fp16-pre-allocs a to-be-quantized cache. This also covers the case where `prompt_cache` was passed in already-built.)
 
-**Call site (b) — quantized models, in the prefill loop.** Immediately after the `quantize_cache_fn(prompt_cache)` call in the prefill loop (`:539`), add:
+**Call site (b) — quantized models, in the chunked prefill loop.** Immediately after the `quantize_cache_fn(prompt_cache)` call in the chunked prefill loop (`:548`; only runs for prompts longer than `prefill_step_size`), add:
 
 ```python
                     preallocate_cache_fn(prompt_cache)
 ```
 
 (Runs after quantization — OOM-safe. Copy-converts the leftover fp16 skip-layer and any `QuantizedKVCache` post-conversion; idempotent, so it settles after the first chunk and no-ops for fp16 models already handled by site (a).)
+
+**Call site (c) — short/non-chunked prefill + decode, in `_step`.** `_step()` (the shared per-forward helper) handles non-chunked prefill (prompts ≤ `prefill_step_size`) AND every decode step, and calls `quantize_cache_fn(prompt_cache)` at `:409`. Immediately after THAT call, add:
+
+```python
+            preallocate_cache_fn(prompt_cache)
+```
+
+(REQUIRED — without it, quantized models on short prompts never pre-alloc: they skip the chunked loop (b) entirely and quantize only through `_step`. Idempotent, so on the decode path after conversion it is a no-op. This is the site the chunked-only plan originally missed.)
 
 - [ ] **Step 4: Run test to verify it passes**
 
