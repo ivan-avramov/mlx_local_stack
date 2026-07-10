@@ -39,6 +39,13 @@ git submodule update --init --recursive --remote
 echo "Bootstrapping uv..."
 uv sync
 
+# Drift guard: client configs (opencode/aider/vscode/zed/OWUI) are GENERATED from
+# main_models.yaml by configgen — if main_models.yaml changed without re-running
+# `configgen generate`, the checked-in configs are stale. Fail fast (set -e) rather
+# than launch clients against an out-of-date model list/sampling.
+echo "Checking generated client configs for drift..."
+uv run python -m configgen check
+log_ok "Client configs match main_models.yaml.\n"
 
 echo "Backing up OpenWebUI data..."
 uv run python do_backup.py docker-compose.yml open-webui-data/
