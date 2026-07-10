@@ -15,7 +15,12 @@ def sampling_openai(m: ModelSpec) -> dict:
     return {k: m.sampling[k] for k in _OPENAI_KEYS if k in m.sampling}
 
 def sampling_extra(m: ModelSpec) -> dict:
-    keys = _QWEN_EXTRA if m.family == "qwen" else _GEMMA_EXTRA
+    if m.family == "qwen":
+        keys = _QWEN_EXTRA
+    elif m.family == "gemma":
+        keys = _GEMMA_EXTRA
+    else:
+        return {}
     return {k: m.sampling[k] for k in keys if k in m.sampling}
 
 def owui_meta(m: ModelSpec) -> dict:
