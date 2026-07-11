@@ -160,6 +160,44 @@ def apply_task_model_config(headers):
         print(f"Failed to update task model config: {r_post.status_code} {r_post.text}")
 
 
+def apply_web_search_config(headers):
+    """Enable Web Search and point it at the local SearXNG sidecar.
+
+    OWUI >=0.10 flattened this out of the old rag.web.search.* nesting
+    (still what the checked-in openwebui_config.json DB-export uses) into
+    a top-level web.search.* config namespace served by the retrieval
+    router. The docker-compose `cp openwebui_config.json
+    open-webui-data/config.json` seed step only applies to a brand-new
+    config store, so a box whose DB predates this schema silently stays
+    at OWUI's defaults (search disabled) no matter what the checked-in
+    file says. Pushing it live here, every run, keeps it in sync instead.
+    """
+    read_url = f"{BASE_URL}/api/v1/retrieval/config"
+    write_url = f"{BASE_URL}/api/v1/retrieval/config/update"
+
+    r_get = requests.get(read_url, headers=headers)
+    if r_get.status_code != 200:
+        print(f"Failed to fetch web search config: {r_get.status_code} {r_get.text}")
+        return
+
+    # The update endpoint replaces every field in `web` wholesale, so we
+    # must merge into the existing dict rather than send a partial one.
+    web = r_get.json().get("web", {})
+    web["ENABLE_WEB_SEARCH"] = True
+    web["WEB_SEARCH_ENGINE"] = "searxng"
+    web["SEARXNG_QUERY_URL"] = "http://searxng:8080/search?q=<query>&format=json"
+    web["SEARXNG_LANGUAGE"] = "all"
+    web["WEB_SEARCH_RESULT_COUNT"] = 10
+    web["WEB_SEARCH_CONCURRENT_REQUESTS"] = 5
+
+    r_post = requests.post(write_url, headers=headers, json={"web": web})
+    if r_post.status_code == 200:
+        enabled = r_post.json().get("web", {}).get("ENABLE_WEB_SEARCH")
+        print(f"Web search config applied successfully: ENABLE_WEB_SEARCH={enabled}")
+    else:
+        print(f"Failed to apply web search config: {r_post.status_code} {r_post.text}")
+
+
 def apply_openai_connection_config(headers):
     # Grab the model and port from the environment
     target_model = os.environ.get('TASK_MODEL', 'mlx-community/gemma-3-1b-it-4bit')
@@ -239,6 +277,7 @@ ensure_function(headers, "profile_casual.py", "profile_casual", "Casual", "Casua
 apply_model_configs(headers)
 apply_openai_connection_config(headers)
 apply_task_model_config(headers)
+apply_web_search_config(headers)
 
 print("Init complete")
 sys.exit(0)
