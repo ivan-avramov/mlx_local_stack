@@ -19,6 +19,7 @@ export HF_HOME="${HOME}/.cache/huggingface"
 export MLX_VLM_LOG_FILE="logs/mlx_vlm.log"
 export MLX_VLM_LOG_LEVEL="INFO"
 export TASK_MODEL_LOG_FILE="logs/task_model.log"
+export TASK_MODEL_LOG_FILE0="logs/task_model_0.log"
 export TASK_MODEL_LOG_LEVEL="INFO"
 export OWUI_ADMIN_EMAIL="admin@a.a"
 export OWUI_ADMIN_PASSWORD="admin"
@@ -61,7 +62,7 @@ uv run python -u -m mlx_vlm.server \
   --port $TASK_MODEL_PORT \
   --log-level $TASK_MODEL_LOG_LEVEL \
   --log-file $TASK_MODEL_LOG_FILE \
-  --quantized-kv-start 0 &>$TASK_MODEL_LOG_FILE &
+  --quantized-kv-start 0 &>$TASK_MODEL_LOG_FILE0 &
 TASK_MODEL_PID=$!
 
 # --- Start main multi- model server ---
