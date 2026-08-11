@@ -41,17 +41,35 @@ def test_lcb_eval_inputs_assembles_and_skips_unknown():
         {"id": "qX", "content": "```python\nprint(9)\n```"},  # unknown id -> skipped
     ]
     sample_by_id = {"q1": '{"inputs": [], "outputs": []}'}
-    samples_list, generations_list, ids = G._lcb_eval_inputs(rows, sample_by_id)
+    samples_list, generations_list, ids, orders = G._lcb_eval_inputs(rows, sample_by_id)
     assert ids == ["q1"]
     assert samples_list == [{"input_output": '{"inputs": [], "outputs": []}'}]
     assert len(generations_list) == 1 and len(generations_list[0]) == 1
     assert "print(1)" in generations_list[0][0]  # code extracted from the fenced block
+    assert orders == [[0]]                       # a v1 row is sample 0
+
+
+def test_lcb_eval_inputs_groups_k_samples_under_one_problem():
+    """codegen_metrics takes a LIST of completions per problem and reports per-problem pass@1
+    over them. Emitting one problem entry per DRAW would report each sample as its own problem —
+    silently converting an item-level metric into a draw-level one and breaking the pairing with
+    every other grader."""
+    rows = [
+        {"id": "q1", "sample": 1, "content": "```python\nprint(2)\n```"},
+        {"id": "q1", "sample": 0, "content": "```python\nprint(1)\n```"},
+        {"id": "q2", "sample": 0, "content": "```python\nprint(3)\n```"},
+    ]
+    samples_list, generations_list, ids, orders = G._lcb_eval_inputs(
+        rows, {"q1": "IO1", "q2": "IO2"})
+    assert ids == ["q1", "q2"] and len(samples_list) == 2
+    assert orders == [[0, 1], [0]], "samples must be ordered, not left in file order"
+    assert "print(1)" in generations_list[0][0] and "print(2)" in generations_list[0][1]
 
 
 def test_lcb_eval_inputs_empty_when_no_matches():
     rows = [{"id": "qX", "content": "```python\nx=1\n```"}]
-    samples_list, generations_list, ids = G._lcb_eval_inputs(rows, {"q1": "IO"})
-    assert samples_list == [] and generations_list == [] and ids == []
+    samples_list, generations_list, ids, orders = G._lcb_eval_inputs(rows, {"q1": "IO"})
+    assert samples_list == [] and generations_list == [] and ids == [] and orders == []
 
 
 class _FakeProblem:

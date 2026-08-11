@@ -103,36 +103,96 @@ def cmd_generate(args):
     generate.run(models, benches, limits, seed=args.seed, chunk_minutes=args.chunk_minutes,
                  chunks=chunks, overrides=overrides, order=args.order, restart_fn=restart_fn,
                  sampling_profile=args.sampling_profile, probe_timeout=args.probe_timeout,
-                 clean_stale=args.clean_stale)
+                 clean_stale=args.clean_stale, samples=args.samples, seed_base=args.seed_base)
 
 
 def cmd_grade(args):
     models, benches, limits = _resolve(args)
     scores = grade.grade_all(models, benches)
-    print(f"\n{'model':<34}{'benchmark':<15}{'n':>5}{'acc':>9}{'err':>5}{'conv%':>7}  valid")
-    print("-" * 86)
-    invalid = []
+    hdr = (f"\n{'model':<34}{'benchmark':<14}{'n':>4}{'k':>3}{'acc':>8}{'95% CI':>16}"
+           f"{'MDE':>7}{'conv%':>7}{'gate':>6}  harness")
+    print(hdr)
+    print("-" * len(hdr))
+    broken, ungated = [], []
     for s in scores:
         acc = f"{s['acc']*100:.1f}%" if s.get("acc") is not None else (s.get("note", "—")[:30])
-        cr = s.get("convergence_rate")
+        ci = s.get("ci95")
+        # A metric is NEVER printed without its interval and the axis resolution: an unadorned
+        # 86.7% invites a ranking the sample size cannot support.
+        k = s.get("samples") or 0
+        ci_s = f"[{ci[0]*100:.0f},{ci[1]*100:.0f}]" if ci else ("—" if k > 1 else "n=1")
+        mde_s = f"±{s['mde']*100:.0f}pp" if s.get("mde") is not None else "—"
+        cr = s.get("conv_rate")
         conv = f"{cr*100:.0f}" if cr is not None else "—"
-        ok = s.get("valid")
-        flag = "OK" if ok else ("INVALID" if ok is False else "—")
-        if ok is False:
-            invalid.append(s)
-        print(f"{s['model']:<34}{s['benchmark']:<15}{s.get('n', 0):>5}{acc:>9}{s.get('errors', 0):>5}{conv:>7}  {flag}")
+        gate = "PASS" if s.get("conv_gate_pass") else "FAIL"
+        harness = "ok" if s.get("valid") else "BROKEN"
+        if not s.get("valid"):
+            broken.append(s)
+        elif not s.get("conv_gate_pass"):
+            ungated.append(s)
+        print(f"{s['model']:<34}{s['benchmark']:<14}{s.get('n', 0):>4}{k:>3}{acc:>8}{ci_s:>16}"
+              f"{mde_s:>7}{conv:>7}{gate:>6}  {harness}")
+        extra = []
+        if s.get("pass_at_1_converged") is not None:
+            extra.append(f"pass@1|conv={s['pass_at_1_converged']*100:.1f}% "
+                         f"(n={s.get('n_converged_items')})")
+        if s.get("acc_strict") is not None:
+            extra.append(f"strict@{s.get('acc_strict_budget')}={s['acc_strict']*100:.1f}%")
+        if s.get("nonconv_kinds"):
+            extra.append("nonconv=" + ",".join(f"{kk}:{vv}" for kk, vv in sorted(s["nonconv_kinds"].items())))
+        if s.get("n_contaminated"):
+            extra.append(f"contaminated={s['n_contaminated']} (excluded from acc)")
+        rel = s.get("reliability")
+        if rel:
+            extra.append("reliability c_i=" + ",".join(f"{c}x{n}" for c, n in sorted(rel["histogram"].items(), reverse=True)))
+        if extra:
+            print("      " + " | ".join(extra))
         bd = s.get("by_difficulty")
         if bd:
             cells = "  ".join(f"{d}:{v['pass@1']*100:.0f}%(n={v['n']})"
                                for d, v in sorted(bd.items()))
             print(f"      by difficulty: {cells}")
-    print("\nconv% = share of items that CONVERGED (finish=stop AND tokens < thinking_budget)")
-    if invalid:
-        print("\n⚠️  INVALID runs — looped/truncated items present (NOT a clean result; investigate "
-              "stale router or quant loop, do NOT report acc):")
-        for s in invalid:
-            print(f"   {s['model']} / {s['benchmark']}: loops {s.get('loop_ids')}")
-    print("Full scores -> benchmark/results/scores.json")
+    print("\nDECISION RULE (pre-registered): conv% >= 90 is a GATE; pass@1|conv RANKS within it.")
+    print("acc = correctness over generated items (historical meaning). strict@<budget> counts a")
+    print("truncated draw as failed — a DERIVED deployment number, never the ranking key (it rises")
+    print("with thinking_budget). 'harness' is BROKEN only when the HARNESS failed, not the model.")
+    if ungated:
+        print("\n⚠️  below the convergence gate — these models did not self-terminate often enough;")
+        print("    investigate the mechanism (nonconv kinds above), do NOT rank on pass@1 alone:")
+        for s in ungated:
+            print(f"   {s['model']} / {s['benchmark']}: conv {s['conv_rate']*100:.0f}% "
+                  f"kinds={s.get('nonconv_kinds')}")
+    if broken:
+        print("\n⛔ HARNESS-BROKEN runs (errors, not model behaviour) — fix and re-run:")
+        for s in broken:
+            print(f"   {s['model']} / {s['benchmark']}: {s.get('note')}")
+    print(f"Full scores -> {generate.results_root()}/scores.json")
+
+
+def cmd_compare(args):
+    """Paired head-to-head between two models on one bench, with a verdict that can be
+    'inconclusive'. Refuses any comparison the data cannot support rather than printing a delta."""
+    from bench import compare as CMP
+    models, benches, _ = _resolve(args)
+    if len(models) != 2:
+        print("compare needs exactly two --models"); return
+    for b in benches:
+        r = CMP.compare(models[0], models[1], b, margin=args.margin)
+        print(f"\n=== {b}: {models[0]}  vs  {models[1]}")
+        if not r["comparable"]:
+            print(f"  NOT COMPARABLE — {r['reason']}")
+            continue
+        d = r["delta"]
+        print(f"  matched items: {r['n_items']}   samples: {r['samples']}   axis MDE: ±{r['mde']*100:.0f}pp")
+        print(f"  {r['metric']}: {r['a']*100:.1f}% vs {r['b']*100:.1f}%")
+        print(f"  delta {d['delta']*100:+.1f}pp   95% CI [{d['lo']*100:+.1f}, {d['hi']*100:+.1f}]pp")
+        print(f"  VERDICT: {d['verdict'].upper()}")
+        if d["verdict"] == "inconclusive":
+            print(f"  (the interval spans 0 and is wider than the ±{args.margin*100:.0f}pp "
+                  f"equivalence margin — this is NOT evidence of a tie; it is too little data. "
+                  f"{r['n_for_margin']} matched items would be needed.)")
+        for w in r.get("warnings", []):
+            print(f"  ⚠️  {w}")
 
 
 def cmd_status(args):
@@ -192,6 +252,15 @@ def main():
                     help="per-item HTTP timeout (s). Raise for slow dense models whose thinking "
                          "budget implies >60min generation (e.g. Qwen3.6-27B @ ~13.5 tok/s, 80K "
                          "budget ~100min → use ~9000). Default 3600.")
+    sp.add_argument("--samples", type=int, default=1,
+                    help="draws per item (k). Each draw gets its own seed — WITHOUT that the "
+                         "server returns byte-identical text and reliability reads as perfect. "
+                         "k buys RELIABILITY, not power: at N=15, k=1->5 shrinks the SD only "
+                         "12.7->10.8pp, while 5x the items gives -55%. Use k=2-3 and spend the "
+                         "rest on items.")
+    sp.add_argument("--seed-base", dest="seed_base", type=int, default=0,
+                    help="shift every draw's seed (for an independent replication of a run that "
+                         "already exists on disk)")
     sp.add_argument("--clean-stale", dest="clean_stale", action="store_true",
                     help="delete + regenerate any existing results whose recorded config "
                          "(sampling/profile/KV) differs from this run, instead of resuming on "
@@ -199,6 +268,10 @@ def main():
 
     sp = sub.add_parser("grade"); common(sp); sp.set_defaults(func=cmd_grade)
     sp = sub.add_parser("status"); common(sp); sp.set_defaults(func=cmd_status)
+
+    sp = sub.add_parser("compare"); common(sp); sp.set_defaults(func=cmd_compare)
+    sp.add_argument("--margin", type=float, default=0.05,
+                    help="equivalence margin for the TOST verdict (default 5pp)")
 
     args = p.parse_args()
     args.func(args)

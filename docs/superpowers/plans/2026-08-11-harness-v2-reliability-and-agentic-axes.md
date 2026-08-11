@@ -32,7 +32,7 @@ run-to-run *reliability* — and k=2–3 is enough for that. Minimum detectable 
 | items N | 15 | 40 | 100 | 164 | 378 |
 |---|---|---|---|---|---|
 | **MDE (±pp)** | **32** | **20** | **12.5** | **9.8** | **6.4** |
-| items needed for δ= | 20pp → 39 | 15pp → 70 | 10pp → 157 | 5pp → 628 | |
+| items needed for δ= | 20pp → 40 | 15pp → 70 | 10pp → 157 | 5pp → 628 | |
 
 So the campaign's live deltas — LCB 86.7 vs 80 (6.7pp), aider 75 vs 61.8 (13pp) — need **N≈100–470
 matched items**, not k=5 on N=15. Rev 1 would have spent ~40h of distill time to shrink an interval

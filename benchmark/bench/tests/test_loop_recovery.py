@@ -6,6 +6,11 @@ budget-hit (genuine long reasoning that didn't finish) won't be helped by a rest
 just double the cost on a slow model, so it's flagged 'genuine_nonconvergence' and NOT retried.
 If a loop is retried: converges on the fresh router -> 'recovered' (stale-router state);
 loops again -> 'loop_persisted' (genuine quant/model loop).
+
+The retry is DIAGNOSTIC ONLY. `probe_with_recovery` returns (primary, recovery, secondary) with
+`primary` always the FIRST probe: returning the retry as the datum would grant an extra draw
+selectively to failures and inflate conv% for the loop-prone models under investigation. See
+test_recovery_annotation.py for the full argument and the contamination flag.
 """
 import bench.generate as G
 
@@ -28,9 +33,9 @@ def test_converged_first_no_restart():
     def restart_fn():
         calls["restart"] += 1
 
-    p, rec = G.probe_with_recovery("m", [], {"thinking_budget": 16384},
-                                   probe_fn=probe_fn, restart_fn=restart_fn)
-    assert rec is None
+    p, rec, retry = G.probe_with_recovery("m", [], {"thinking_budget": 16384},
+                                          probe_fn=probe_fn, restart_fn=restart_fn)
+    assert rec is None and retry is None
     assert calls["restart"] == 0 and calls["probe"] == 1
 
 
@@ -38,23 +43,24 @@ def test_loop_then_recovered():
     seq = iter([_p("stop", 17000, LOOP), _p("stop", 3000, GENUINE)])  # loop, then converge
     calls = {"restart": 0, "preload": 0}
 
-    p, rec = G.probe_with_recovery(
+    p, rec, retry = G.probe_with_recovery(
         "m", [], {"thinking_budget": 16384},
         probe_fn=lambda *_: next(seq),
         restart_fn=lambda: calls.__setitem__("restart", calls["restart"] + 1),
         preload_fn=lambda m: calls.__setitem__("preload", calls["preload"] + 1))
     assert rec == "recovered"
     assert calls["restart"] == 1 and calls["preload"] == 1
-    assert p["completion_tokens"] == 3000
+    assert p["completion_tokens"] == 17000, "the FIRST (looped) probe stays the datum"
+    assert retry["completion_tokens"] == 3000, "the recovered retry is returned separately"
 
 
 def test_loop_persists_on_fresh_router():
     seq = iter([_p("stop", 17000, LOOP), _p("stop", 16500, LOOP)])  # loops both times -> genuine
-    p, rec = G.probe_with_recovery("m", [], {"thinking_budget": 16384},
-                                   probe_fn=lambda *_: next(seq),
-                                   restart_fn=lambda: None)
+    p, rec, retry = G.probe_with_recovery("m", [], {"thinking_budget": 16384},
+                                          probe_fn=lambda *_: next(seq),
+                                          restart_fn=lambda: None)
     assert rec == "loop_persisted"
-    assert p["completion_tokens"] == 16500
+    assert p["completion_tokens"] == 17000 and retry["completion_tokens"] == 16500
 
 
 def test_genuine_budget_hit_is_not_retried():
@@ -66,17 +72,17 @@ def test_genuine_budget_hit_is_not_retried():
         calls["probe"] += 1
         return _p("stop", 80000, GENUINE)
 
-    p, rec = G.probe_with_recovery("m", [], {"thinking_budget": 16384},
-                                   probe_fn=probe_fn,
-                                   restart_fn=lambda: calls.__setitem__("restart", calls["restart"] + 1))
+    p, rec, retry = G.probe_with_recovery(
+        "m", [], {"thinking_budget": 16384}, probe_fn=probe_fn,
+        restart_fn=lambda: calls.__setitem__("restart", calls["restart"] + 1))
     assert rec == "genuine_nonconvergence"
     assert calls["restart"] == 0 and calls["probe"] == 1   # NOT re-run
-    assert p["completion_tokens"] == 80000
+    assert p["completion_tokens"] == 80000 and retry is None
 
 
 def test_no_restart_fn_means_no_recovery():
-    p, rec = G.probe_with_recovery("m", [], {"thinking_budget": 16384},
-                                   probe_fn=lambda *_: _p("stop", 17000, LOOP),
-                                   restart_fn=None)
-    assert rec is None
+    p, rec, retry = G.probe_with_recovery("m", [], {"thinking_budget": 16384},
+                                          probe_fn=lambda *_: _p("stop", 17000, LOOP),
+                                          restart_fn=None)
+    assert rec is None and retry is None
     assert p["completion_tokens"] == 17000   # looped result returned as-is

@@ -11,7 +11,7 @@ import os
 import time
 from pathlib import Path
 
-from . import benchmarks, client, convergence, model_params
+from . import benchmarks, client, convergence, model_params, rowschema, traces
 
 _DEFAULT_RESULTS = Path("benchmark/results")
 RESULTS = _DEFAULT_RESULTS          # module-level seam; tests monkeypatch this
@@ -41,20 +41,35 @@ def result_path(model: str, bench: str) -> Path:
     return results_root() / _safe(model) / f"{bench}.jsonl"
 
 
-def done_ids(model: str, bench: str) -> set:
-    """IDs already generated without error (errors are retried on resume)."""
+def _read_rows(model: str, bench: str) -> list:
     p = result_path(model, bench)
     if not p.exists():
-        return set()
-    out = set()
+        return []
+    out = []
     for line in p.read_text(encoding="utf-8").splitlines():
         try:
-            row = json.loads(line)
+            out.append(json.loads(line))
         except json.JSONDecodeError:
             continue
-        if row.get("id") is not None and not row.get("error"):
-            out.add(row["id"])
     return out
+
+
+def done_ids(model: str, bench: str) -> set:
+    """IDs already generated without error (errors are retried on resume). Sample-blind — kept
+    for existing callers; multi-sample resume uses done_keys()."""
+    return {r["id"] for r in _read_rows(model, bench)
+            if r.get("id") is not None and not r.get("error")}
+
+
+def done_keys(model: str, bench: str) -> set:
+    """(id, sample) pairs already generated without error.
+
+    Resume identity must include the sample index: `done_ids` would consider an item finished
+    after ONE of its k samples. A v1 row (no `sample` field) counts as sample 0 — that is how
+    every result already on disk keeps resuming instead of regenerating.
+    """
+    return {rowschema.row_key(r) for r in _read_rows(model, bench)
+            if r.get("id") is not None and not r.get("error")}
 
 
 def _append(path: Path, row: dict) -> None:
@@ -71,26 +86,41 @@ def _conv_row(p, params):
 
 def probe_with_recovery(model, messages, params, *, probe_fn, restart_fn=None, preload_fn=None):
     """Probe once; if it looped/truncated AND restart_fn is given, restart the router and
-    re-probe ONCE. Returns (probe_result, recovery):
-      None            -> converged (or N/A); no restart needed
-      'recovered'     -> looped, then converged after a fresh router => stale-router state
-      'loop_persisted'-> looped AGAIN on a fresh router => genuine quant/model loop
-    Auto-distinguishes the two root causes (stale router vs quant) without a human in loop."""
+    re-probe ONCE. Returns (primary, recovery, secondary):
+      recovery=None            -> converged (or N/A); no restart needed
+      'genuine_nonconvergence' -> a clean budget-hit; NOT retried (see below)
+      'recovered'              -> looped, then converged after a fresh router => stale-router state
+      'loop_persisted'         -> looped AGAIN on a fresh router => genuine quant/model loop
+    Auto-distinguishes the two root causes (stale router vs quant) without a human in the loop.
+
+    `primary` is ALWAYS the FIRST probe, and `secondary` (the post-restart retry, or None) is
+    returned alongside rather than replacing it. That asymmetry is the whole point:
+
+      * Returning the SECOND probe as the datum — the original behaviour — grants an extra draw
+        selectively to failures, inflating conv% for precisely the loop-prone models whose
+        convergence is under investigation. The measurement drifts toward the hypothesis.
+      * Returning the first probe and SCORING it is the opposite error: it is a known
+        stale-router artifact, so pass@1 absorbs a corrupted generation.
+
+    So the caller records the first probe as the convergence datum, keeps the second for
+    diagnosis, and marks the row contaminated so grading can exclude it from pass@1 with a
+    reported count. Neither number is quietly fabricated.
+    """
     p = probe_fn(model, messages, params)
     if restart_fn is None or convergence.is_converged(_conv_row(p, params)) is not False:
-        return p, None
+        return p, None, None
     # Non-converged. A router restart only helps a DEGENERATE loop (the stale-router cause).
     # A clean budget-hit (genuine long reasoning that didn't finish) won't be helped — retrying
     # just burns another full generation on a slow model — so flag it and move on.
     if not convergence.looks_like_loop(p.get("reasoning")):
-        return p, "genuine_nonconvergence"
+        return p, "genuine_nonconvergence", None
     restart_fn()
     if preload_fn is not None:
         preload_fn(model)
     p2 = probe_fn(model, messages, params)
     recovery = "recovered" if convergence.is_converged(_conv_row(p2, params)) is not False \
         else "loop_persisted"
-    return p2, recovery
+    return p, recovery, p2
 
 
 def provenance_precheck(models, benches, profile="production", clean_stale=False, overrides=None):
@@ -138,11 +168,20 @@ def provenance_precheck(models, benches, profile="production", clean_stale=False
     return actions
 
 
-def build_queue(models, benches, limits, seed, order="roundrobin"):
-    """order='roundrobin' (default): item-major — every model gets item i of each bench
+def build_queue(models, benches, limits, seed, order="roundrobin", samples: int = 1):
+    """Build the work queue of (model, bench, item, sample) entries.
+
+    order='roundrobin' (default): item-major — every model gets item i of each bench
     before any model gets item i+1, so any stopping prefix is a balanced comparison.
     order='model': model-major — each model finishes all its items before the next
-    (fewest swaps; complete one model at a time)."""
+    (fewest swaps; complete one model at a time).
+
+    `samples` is the OUTERMOST loop in both orderings: a full sweep of every item at sample 0
+    completes before any item reaches sample 1. Generation is interruptible by design, so a
+    stopped prefix has to be a balanced measurement; the other nesting would leave a partial run
+    holding 3 samples of item 1 and nothing of items 2..15, and a reliability number computed
+    from a single item is worse than none.
+    """
     cache = {}
     for b in benches:
         try:
@@ -150,23 +189,25 @@ def build_queue(models, benches, limits, seed, order="roundrobin"):
         except Exception as e:  # noqa: BLE001 — gated/missing dataset or package
             print(f"  [skip] benchmark {b!r} unavailable: {type(e).__name__}: {str(e)[:80]}", flush=True)
     counts = {b: len(v) for b, v in cache.items()}
-    done = {(m, b): done_ids(m, b) for m in models for b in cache}
+    done = {(m, b): done_keys(m, b) for m in models for b in cache}
     queue = []
     if order == "model":
         for model in models:
             for b in cache:
-                for it in cache[b]:
-                    if it["id"] not in done[(model, b)]:
-                        queue.append((model, b, it))
+                for s in range(samples):
+                    for it in cache[b]:
+                        if rowschema.key(it["id"], s) not in done[(model, b)]:
+                            queue.append((model, b, it, s))
     else:                                       # roundrobin (item-major)
         maxn = max((len(v) for v in cache.values()), default=0)
-        for i in range(maxn):
-            for model in models:                # group a model's item-i across benches => 1 swap/round
-                for b in cache:
-                    if i < len(cache[b]):
-                        it = cache[b][i]
-                        if it["id"] not in done[(model, b)]:
-                            queue.append((model, b, it))
+        for s in range(samples):
+            for i in range(maxn):
+                for model in models:            # group a model's item-i across benches => 1 swap/round
+                    for b in cache:
+                        if i < len(cache[b]):
+                            it = cache[b][i]
+                            if rowschema.key(it["id"], s) not in done[(model, b)]:
+                                queue.append((model, b, it, s))
     return queue, counts
 
 
@@ -180,7 +221,7 @@ def _fmt_eta(seconds: float) -> str:
 
 def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overrides=None,
         order="roundrobin", restart_fn=None, sampling_profile="production", probe_timeout=3600,
-        clean_stale=False):
+        clean_stale=False, samples: int = 1, seed_base: int = 0):
     overrides = overrides or {}  # global param overrides on top of each model's config params
     # Per-probe HTTP timeout, bound via a closure so probe_with_recovery's (model, msg, params)
     # call signature is unchanged. The default 3600s is too short for a slow dense model whose
@@ -192,18 +233,19 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # into done_ids. clean_stale deletes mismatched files; default just warns.
     provenance_precheck(models, benches, profile=sampling_profile, clean_stale=clean_stale,
                         overrides=overrides)
-    queue, counts = build_queue(models, benches, limits, seed, order=order)
-    total = sum(counts.values()) * len(models)
+    queue, counts = build_queue(models, benches, limits, seed, order=order, samples=samples)
+    total = sum(counts.values()) * len(models) * samples
     if not queue:
         print(f"[generate] nothing to do — all {total} items already generated.", flush=True)
         return
     print(f"[generate] {len(queue)} items remaining of {total} "
-          f"({len(models)} models x {benches}). chunk={chunk_minutes}min, runway={chunks}.", flush=True)
+          f"({len(models)} models x {benches} x {samples} sample(s)). "
+          f"chunk={chunk_minutes}min, runway={chunks}.", flush=True)
 
     # Provenance: stamp every (model, bench) with its exact config (box, code SHAs, quant
     # effective-bits, KV config, sampling) so results are never silently cross-compared.
     from . import provenance  # lazy (provenance imports generate)
-    for m, b, _ in queue:
+    for m, b, _it, _s in queue:
         mp = result_path(m, b).with_suffix(".manifest.json")
         if not mp.exists():
             try:
@@ -219,7 +261,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     i = 0
     try:
         while i < len(queue):
-            model, b, it = queue[i]
+            model, b, it, sample = queue[i]
             if model != cur_model:
                 load_s = client.preload(model)
                 print(f"  >> loaded {model} ({load_s}s)", flush=True)
@@ -228,12 +270,24 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
             try:
                 params = model_params.params_for(model, profile=sampling_profile)
                 params.update(overrides)
-                p, recovery = probe_with_recovery(
+                # EVERY draw carries an explicit seed. Measured on the live server: with no
+                # seed, repeated identical requests return BYTE-IDENTICAL text (the sampler is
+                # keyed deterministically per request, DEFAULT_SEED=0, and the shipped
+                # suffix-decoding path keys off (seed, row_id, position)). So k unseeded samples
+                # are k copies of one generation -- pass^k would collapse to pass@1 and
+                # reliability would report perfect stability for every model. Seeding also makes
+                # the draws reproducible, which is what distinguishes a resume from a re-draw.
+                draw_seed = rowschema.sample_seed(it["id"], sample, base=seed_base)
+                params["seed"] = draw_seed
+                p, recovery, retry = probe_with_recovery(
                     model, benchmarks.build_messages(b, it), params,
                     probe_fn=_probe, restart_fn=restart_fn, preload_fn=client.preload)
                 if recovery:
                     print(f"  [loop-recovery] {model}/{b}/{it['id']}: {recovery}", flush=True)
-                row = {"id": it["id"], "bench": b, "model": model, "recovery": recovery,
+                row = {"id": it["id"], "sample": sample,
+                       "schema_version": rowschema.SCHEMA_VERSION,
+                       "sampler_seed": draw_seed, "seed_base": seed_base,
+                       "bench": b, "model": model, "recovery": recovery,
                        "answer_gold": it.get("answer"), "options": it.get("options"),
                        "content": client.strip_thinking(p["content"]),
                        "completion_tokens": p["completion_tokens"], "prompt_tokens": p["prompt_tokens"],
@@ -244,8 +298,36 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                 # even though finish_reason can be "stop". Recorded per item; a run with any
                 # non-converged item is flagged INVALID at grade time (never silently scored).
                 row["converged"] = convergence.is_converged(row)
+                # Persist a COMPRESSED view of the thinking trace + its statistics. The full
+                # text is dropped (an 82K-token meander would bloat the jsonl ~40x), but the
+                # head, the tail and the repetition/novelty statistics are enough to classify a
+                # non-convergence offline. Without this, typing a DNF meant re-running the model
+                # under a bespoke live probe — which is how the campaign lost the ability to
+                # tell "degenerate repetition" from "meander" on runs already completed.
+                row.update(traces.compress_trace(p.get("reasoning")))
+                row["reasoning_stats"] = traces.trace_stats(p.get("reasoning"))
+                row["nonconv_kind"] = traces.classify(row)
+                # A restart-retry is DIAGNOSTIC, not the datum. The first probe stays recorded
+                # above; the retry is nested here and the row is flagged so grading excludes it
+                # from pass@1 (scoring a known stale-router artifact would be the mirror-image
+                # bias of letting the retry silently replace it). See probe_with_recovery.
+                if retry is not None:
+                    rp = {"content": client.strip_thinking(retry["content"]),
+                          "completion_tokens": retry["completion_tokens"],
+                          "finish_reason": retry["finish_reason"],
+                          "wall_s": retry["wall_s"],
+                          "thinking_budget": params.get("thinking_budget")}
+                    rp["converged"] = convergence.is_converged(rp)
+                    row["recovery_probe"] = rp
+                    row["contaminated"] = "stale_router"
             except Exception as e:  # noqa: BLE001 — network/OOM; record & continue
-                row = {"id": it["id"], "bench": b, "model": model, "error": str(e)[:200]}
+                # An error row carries the same (id, sample) identity: resume retries errored
+                # rows, and without `sample` it could not tell which draw to redo.
+                row = {"id": it["id"], "sample": sample,
+                       "schema_version": rowschema.SCHEMA_VERSION,
+                       "sampler_seed": rowschema.sample_seed(it["id"], sample, base=seed_base),
+                       "seed_base": seed_base,
+                       "bench": b, "model": model, "error": str(e)[:200]}
             _append(result_path(model, b), row)
             dt = time.perf_counter() - t0
             per_item.setdefault(model, []).append(dt)
@@ -256,7 +338,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                 chunk_idx += 1
                 # ETA: remaining items per model x that model's rolling avg item time
                 rem = {}
-                for m, bb, _ in queue[i:]:
+                for m, bb, _it2, _s2 in queue[i:]:
                     rem[m] = rem.get(m, 0) + 1
                 eta = sum(n * (sum(per_item.get(m, [dt])) / len(per_item.get(m, [dt]))) for m, n in rem.items())
                 print(f"  --- breakpoint: chunk {chunk_idx} done | {i}/{len(queue)} items "

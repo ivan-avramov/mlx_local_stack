@@ -8,20 +8,131 @@ import json
 import subprocess
 import sys
 
-from . import benchmarks, convergence, extract, generate
+from . import benchmarks, convergence, extract, generate, rowschema, stats, traces
+
+# The pre-registered convergence gate. conv_rate >= this is a GATE; pass@1|converged RANKS within
+# it. Not a tunable: it is declared here so a run cannot be reinterpreted after the fact.
+CONV_GATE = 0.90
+
+# Above this share of errored rows the run is a harness failure, not a measurement.
+_MAX_ERROR_SHARE = 0.20
 
 
 def _rows(model, bench):
+    """All rows, migrated to the v2 view (a v1 row becomes sample 0)."""
     p = generate.result_path(model, bench)
     if not p.exists():
         return []
     out = []
     for line in p.read_text(encoding="utf-8").splitlines():
         try:
-            out.append(json.loads(line))
+            out.append(rowschema.migrate(json.loads(line)))
         except json.JSONDecodeError:
             pass
     return out
+
+
+def _per_item(items):
+    """[{id, sample, score}] -> {id: [score, ...]} for the stats layer. Items are the unit of
+    analysis; pooling the N*k draws would understate variance by ignoring item clustering."""
+    out = {}
+    for i in items:
+        out.setdefault(i["id"], []).append(float(i["score"]))
+    return out
+
+
+def _finalize(score: dict, rows: list) -> dict:
+    """Attach the convergence VECTOR and the sampling statistics to any grader's output.
+
+    One shared post-processor so no grader can forget a field — but it needs per-(item, sample)
+    results, which is why every grader now returns `items`. Emits:
+
+      acc                  correctness over generated items — UNCHANGED historical meaning
+      conv_rate            share of generated items that self-terminated (legacy alias:
+                           convergence_rate)
+      conv_gate_pass       conv_rate >= CONV_GATE (the gate half of the decision rule)
+      pass_at_1_converged  correctness among CONVERGED items only (the ranking half)
+      acc_strict           truncation counted as failure — DERIVED deployment number, never the
+                           ranking key, and always reported with the budget that produced it
+                           because it rises monotonically with thinking_budget
+      nonconv_kinds        mechanism breakdown (budget_hit / meander / degenerate_repetition / ...)
+      samples / ci95 / reliability / mde
+      n_contaminated       rows excluded from correctness as known stale-router artifacts
+      valid                HARNESS-clean, not converged (see the module tests)
+    """
+    items = score.get("items") or []
+    generated = [r for r in rows if not r.get("error")]
+    errs = len(rows) - len(generated)
+
+    audit = convergence.audit(rows)
+    score["conv_rate"] = audit["convergence_rate"]
+    score["convergence_rate"] = audit["convergence_rate"]   # legacy key: existing readers/tests
+    score["all_converged"] = audit["valid"]
+    score["loop_ids"] = audit["loop_ids"]
+    score["conv_gate_pass"] = (audit["convergence_rate"] is not None
+                               and audit["convergence_rate"] >= CONV_GATE)
+    score["nonconv_kinds"] = traces.summarize(rows)["kinds"]
+
+    conv_by_key = {rowschema.row_key(r): convergence.is_converged(r) for r in rows}
+    budgets = {r.get("thinking_budget") for r in generated if r.get("thinking_budget")}
+    score["acc_strict_budget"] = budgets.pop() if len(budgets) == 1 else sorted(budgets) or None
+
+    scored = [i for i in items if not i.get("contaminated")]
+    score["n_contaminated"] = len(items) - len(scored)
+
+    per_item = _per_item(scored)
+    score["acc"] = round(stats.pass_at_1(per_item), 4) if per_item else None
+
+    # GRADED outcome, where the evaluator exposes per-test verdicts (LiveCodeBench does; evalplus
+    # reports only a per-sample base/plus status, so it stays binary). Binary pass/fail throws away
+    # most of what an execution-gated suite knows: the pass FRACTION is a continuous per-item score,
+    # which cuts the items needed for a given resolution by 2-4x at zero extra model time. Reported
+    # ALONGSIDE acc, never instead of it -- acc must stay the official, publishable pass@1.
+    graded_items = [{**i, "score": i["score_graded"]} for i in scored if "score_graded" in i]
+    if graded_items:
+        gp = _per_item(graded_items)
+        score["acc_graded"] = round(stats.pass_at_1(gp), 4)
+        gboot = stats.cluster_bootstrap(gp, iters=2000, seed=0)
+        score["ci95_graded"] = [round(gboot["lo"], 4), round(gboot["hi"], 4)]
+    else:
+        score["acc_graded"] = score["ci95_graded"] = None
+
+    # strict: a truncated draw scores 0 regardless of correctness
+    strict_items = [{**i, "score": (0.0 if conv_by_key.get((i["id"], i["sample"])) is False
+                                    else i["score"])} for i in scored]
+    strict_per_item = _per_item(strict_items)
+    score["acc_strict"] = round(stats.pass_at_1(strict_per_item), 4) if strict_per_item else None
+
+    conv_items = [i for i in scored if conv_by_key.get((i["id"], i["sample"])) is not False]
+    conv_per_item = _per_item(conv_items)
+    score["pass_at_1_converged"] = round(stats.pass_at_1(conv_per_item), 4) if conv_per_item else None
+    score["n_converged_items"] = len(conv_per_item)
+
+    ks = {len(v) for v in per_item.values()}
+    score["samples"] = max(ks) if ks else 0
+    if per_item:
+        boot = stats.cluster_bootstrap(per_item, iters=2000, seed=0)
+        score["ci95"] = [round(boot["lo"], 4), round(boot["hi"], 4)]
+        score["mde"] = round(stats.mde(len(per_item)), 4)
+    else:
+        score["ci95"] = score["mde"] = None
+    # Reliability needs k>1 AND binary draws. At k=1 there is nothing to be reliable about, and
+    # reporting it anyway would read as "perfectly stable" for every model.
+    score["reliability"] = None
+    if score["samples"] > 1:
+        try:
+            score["reliability"] = stats.reliability(per_item)
+        except ValueError:
+            score["reliability"] = None      # graded (non-binary) scores: histogram undefined
+
+    share = errs / len(rows) if rows else 0.0
+    score["errors"] = errs
+    score["valid"] = bool(rows) and share <= _MAX_ERROR_SHARE
+    if not score["valid"]:
+        score["note"] = (f"{errs}/{len(rows)} rows are harness errors "
+                         f"({share:.0%} > {_MAX_ERROR_SHARE:.0%}) — fix the harness and re-run"
+                         if rows else "no rows")
+    return score
 
 
 def _norm_math(s: str | None) -> str:
@@ -67,7 +178,9 @@ def grade_reasoning(name, model):
             pred = extract.extract_boxed(content)
             ok = _math_eq(pred, gold)
         correct += int(ok)
-        items.append({"id": r["id"], "pred": pred, "gold": gold, "ok": ok})
+        items.append({"id": r["id"], "sample": r.get("sample", 0), "pred": pred, "gold": gold,
+                      "ok": bool(ok), "score": float(bool(ok)),
+                      "contaminated": r.get("contaminated")})
     return {"benchmark": name, "model": model, "n": n, "errors": errors,
             "correct": correct, "acc": round(correct / n, 4) if n else None,
             "budget_saturation": round(saturated / n, 3) if n else None, "items": items}
@@ -97,7 +210,14 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
     with a note. `runner`/`all_ids` are injectable for tests."""
     ds = "humaneval" if name == "humanevalplus" else "mbpp"
     rows = [r for r in _rows(model, name) if not r.get("error")]
-    our = {r["id"]: extract.extract_code(r.get("content", "")) for r in rows if r.get("id")}
+    # {task_id: {sample: code}} — NOT {task_id: code}. Keying by id alone let the LAST sample
+    # win, so with k samples pass@1 was computed from 1/k of the data while the CI and the
+    # reliability histogram were reported over k. Sample order is preserved because evalplus
+    # returns per-task results as a LIST indexed by submission order.
+    our: dict = {}
+    for r in rows:
+        if r.get("id"):
+            our.setdefault(r["id"], {})[r.get("sample", 0)] = extract.extract_code(r.get("content", ""))
     if not our:
         return {"benchmark": name, "model": model, "n": 0, "acc": None, "note": "no completions"}
     try:
@@ -110,9 +230,17 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
     sdir = generate.result_path(model, name).parent.resolve()
     sdir.mkdir(parents=True, exist_ok=True)
     spath = sdir / f"{name}_samples.jsonl"
-    with spath.open("w", encoding="utf-8") as f:                 # pad subset -> full set
+    order: dict = {}                                              # task_id -> [sample, ...]
+    with spath.open("w", encoding="utf-8") as f:                  # pad subset -> full set
         for tid in ids:
-            f.write(json.dumps({"task_id": tid, "solution": our.get(tid, _PAD_SOLUTION)}) + "\n")
+            if tid in our:
+                order[tid] = sorted(our[tid])
+                for smp in order[tid]:
+                    f.write(json.dumps({"task_id": tid, "solution": our[tid][smp]}) + "\n")
+            else:
+                # Padding exists only to satisfy evalplus's all-problems assertion — ONE failing
+                # dummy per absent task, never k of them.
+                f.write(json.dumps({"task_id": tid, "solution": _PAD_SOLUTION}) + "\n")
     rpath = sdir / f"{name}_samples_eval_results.json"
     if rpath.exists():
         rpath.unlink()                                            # don't read a stale result
@@ -128,40 +256,58 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
         return {"benchmark": name, "model": model, "n": len(our), "acc": None,
                 "note": f"evalplus produced no results (rc={getattr(proc, 'returncode', '?')}): {err}"}
     ev = json.loads(rpath.read_text()).get("eval", {})
-    base = plus = n = 0
+    items, base_hits, plus_hits, draws = [], 0, 0, 0
     for tid in our:                                               # subset only; padding ignored
         res = ev.get(tid)
         if not res:
             continue
-        r0 = res[0] if isinstance(res, list) else res
-        n += 1
-        base += 1 if r0.get("base_status") == "pass" else 0
-        plus += 1 if r0.get("plus_status") == "pass" else 0
-    if n == 0:
+        res = res if isinstance(res, list) else [res]
+        for idx, smp in enumerate(order.get(tid, [0])):
+            r_i = res[idx] if idx < len(res) else {}
+            base_ok = r_i.get("base_status") == "pass"
+            plus_ok = r_i.get("plus_status") == "pass"
+            base_hits += int(base_ok)
+            plus_hits += int(plus_ok)
+            draws += 1
+            items.append({"id": tid, "sample": smp, "ok": plus_ok, "score": float(plus_ok),
+                          "base_ok": base_ok})
+    if not items:
         return {"benchmark": name, "model": model, "n": 0, "acc": None,
                 "note": "no subset task_ids found in evalplus results"}
-    return {"benchmark": name, "model": model, "n": n, "acc": round(plus / n, 4),
-            "pass@1_base": round(base / n, 4), "pass@1_plus": round(plus / n, 4)}
+    n_items = len({i["id"] for i in items})
+    return {"benchmark": name, "model": model, "n": n_items, "items": items,
+            "acc": round(plus_hits / draws, 4),
+            "pass@1_base": round(base_hits / draws, 4),
+            "pass@1_plus": round(plus_hits / draws, 4)}
 
 
 def _lcb_eval_inputs(rows, sample_by_id):
     """Build codegen_metrics inputs from saved generation rows + a {question_id: input_output}
-    map. One sample per row whose id is in the map (rows from outside the pinned release are
-    skipped). Returns (samples_list, generations_list, ids):
-      samples_list[i]    = {"input_output": <json str>}
-      generations_list[i]= [<extracted code string>]   (one completion per problem)
+    map. Rows from outside the pinned release are skipped. Returns
+    (samples_list, generations_list, ids, sample_orders):
+      samples_list[i]     = {"input_output": <json str>}
+      generations_list[i] = [<code>, ...]   ALL k completions for problem i
+      sample_orders[i]    = [<sample index>, ...] aligned with generations_list[i]
+
+    One entry PER PROBLEM with its k generations grouped, not one entry per row: codegen_metrics
+    takes a list of completions per problem and reports per-problem pass@1 over them. Emitting k
+    separate problem entries would instead report each draw as its own problem, which silently
+    turns an item-level metric into a draw-level one (and breaks the pairing with other graders).
     """
-    samples_list, generations_list, ids = [], [], []
+    grouped: dict = {}
     for r in rows:
         qid = r.get("id")
-        io = sample_by_id.get(qid)
-        if io is None:
+        if sample_by_id.get(qid) is None:
             continue
-        code = extract.extract_code(r.get("content", ""))
-        samples_list.append({"input_output": io})
-        generations_list.append([code])
+        grouped.setdefault(qid, {})[r.get("sample", 0)] = extract.extract_code(r.get("content", ""))
+    samples_list, generations_list, ids, sample_orders = [], [], [], []
+    for qid, by_sample in grouped.items():
+        order = sorted(by_sample)
+        samples_list.append({"input_output": sample_by_id[qid]})
+        generations_list.append([by_sample[s] for s in order])
         ids.append(qid)
-    return samples_list, generations_list, ids
+        sample_orders.append(order)
+    return samples_list, generations_list, ids, sample_orders
 
 
 def _lcb_by_difficulty(ids, diff_by_id, detail_pass):
@@ -204,20 +350,48 @@ def grade_lcb(name, model):
     except Exception as e:  # noqa: BLE001 — dataset/accessor drift on the installed version
         return {"benchmark": name, "model": model, "n": len(rows), "acc": None,
                 "note": f"lcb dataset/sample load failed ({type(e).__name__}: {str(e)[:80]})"}
-    samples_list, generations_list, ids = _lcb_eval_inputs(rows, sample_by_id)
+    samples_list, generations_list, ids, sample_orders = _lcb_eval_inputs(rows, sample_by_id)
     if not samples_list:
         return {"benchmark": name, "model": model, "n": 0, "acc": None,
                 "note": f"no saved rows matched the pinned release {benchmarks.LCB_RELEASE}"}
-    metrics, _results, _meta = codegen_metrics(samples_list, generations_list,
-                                               k_list=[1], num_process_evaluate=8, timeout=6)
+    metrics, results, _meta = codegen_metrics(samples_list, generations_list,
+                                              k_list=[1], num_process_evaluate=8, timeout=6)
     pass1 = metrics.get("pass@1")
     acc = (pass1 / 100.0 if (pass1 is not None and pass1 > 1.0) else pass1)
     # Per-difficulty pass@1 (detail values are per-problem 0-1 fractions, index-aligned).
     detail = (metrics.get("detail") or {}).get("pass@1") or {}
     by_difficulty = _lcb_by_difficulty(ids, diff_by_id, detail)
+    # Per-(item, sample) results from codegen_metrics' per-problem, per-generation verdicts.
+    # `results` is index-aligned with generations_list; each entry is the list of per-generation
+    # outcomes (a list of per-test booleans, or a scalar). Degrade to the problem-level pass@1
+    # fraction if the shape is unfamiliar, rather than guessing per-draw.
+    items = []
+    for idx, qid in enumerate(ids):
+        per_gen = results.get(idx) if isinstance(results, dict) else (
+            results[idx] if isinstance(results, list) and idx < len(results) else None)
+        frac = detail.get(idx, detail.get(str(idx)))
+        for j, smp in enumerate(sample_orders[idx]):
+            ok, graded = None, None
+            if isinstance(per_gen, list) and j < len(per_gen):
+                v = per_gen[j]
+                if isinstance(v, list) and v:
+                    # Per-test-case verdicts. `ok` stays ALL-must-pass so `acc` remains the
+                    # official pass@1 (comparable with published numbers); the pass FRACTION is
+                    # reported separately as the graded outcome, which carries far more
+                    # information per item and cuts the N needed for a given resolution 2-4x.
+                    ok = all(bool(x) for x in v)
+                    graded = sum(1 for x in v if bool(x)) / len(v)
+                else:
+                    ok = bool(v)
+            if ok is None:                       # unfamiliar shape: fall back to the problem mean
+                ok = bool(frac) if frac is not None else False
+            item = {"id": qid, "sample": smp, "ok": ok, "score": float(ok)}
+            if graded is not None:
+                item["score_graded"] = graded
+            items.append(item)
     return {"benchmark": name, "model": model, "n": len(samples_list), "acc": acc,
             "pass@1": pass1, "release": benchmarks.LCB_RELEASE,
-            "by_difficulty": by_difficulty,
+            "by_difficulty": by_difficulty, "items": items,
             "matched": len(ids), "total_rows": len(rows)}
 
 
@@ -309,13 +483,10 @@ def grade(name, model):
         score = grade_ifeval(name, model)
     else:
         raise ValueError(name)
-    # Convergence guard: attach per-run convergence audit. A run with any looped/truncated
-    # item is INVALID — those items must not be silently scored (stale router? quant loop?).
-    audit = convergence.audit(_rows(model, name))
-    score["convergence_rate"] = audit["convergence_rate"]
-    score["loop_ids"] = audit["loop_ids"]
-    score["valid"] = audit["valid"]
-    return score
+    # The convergence VECTOR + sampling statistics, attached in ONE place so no grader can
+    # forget a field. Replaces the old run-level INVALID flag: non-convergence is now a reported
+    # outcome with a mechanism, not a voided run. See _finalize.
+    return _finalize(score, _rows(model, name))
 
 
 def grade_all(models, benches):
