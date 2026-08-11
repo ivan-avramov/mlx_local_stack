@@ -39,30 +39,145 @@ def registry_kv(model: str, registry_path: str):
 _FINGERPRINT_SAMPLING = ("temperature", "top_p", "top_k", "min_p", "presence_penalty",
                          "repetition_penalty", "thinking_budget", "max_tokens", "enable_thinking")
 
+# v2 additions: RUNTIME knobs that change results without touching sampling.
+#   apc_enabled  — prefix caching (runserver.sh sets it; the AGENTS.md bench recipe does not)
+#   draft_kind   — suffix/speculative decoding
+#   max_turns / deadline_s / loop_guard / client / edit_format — the agentic-axis knobs
+# `samples` is deliberately ABSENT: drawing k samples does not change the distribution each
+# sample comes from, and including it would mark every existing single-sample result stale.
+_FINGERPRINT_RUNTIME = ("apc_enabled", "draft_kind", "max_turns", "deadline_s", "loop_guard",
+                        "client", "edit_format")
 
-def config_fingerprint(manifest):
-    """The comparable slice of a manifest: sampling profile + key sampling params + KV bits.
-    Returns None for a missing manifest (unknown provenance)."""
+FINGERPRINT_VERSION = 2
+
+
+def config_fingerprint(manifest, version: int | None = None):
+    """The comparable slice of a manifest, at fingerprint `version`.
+
+    v1 = sampling profile + key sampling params + KV bits (what the pre-v2 harness compared).
+    v2 = v1 + the runtime block.
+
+    `version=None` means "this manifest's own version". Returns None for a missing manifest
+    (unknown provenance).
+    """
     if not manifest:
         return None
+    if version is None:
+        version = manifest.get("fingerprint_version", 1)
     s = manifest.get("sampling") or {}
-    return {
+    fp = {
         "sampling_profile": manifest.get("sampling_profile"),
         "sampling": {k: s.get(k) for k in _FINGERPRINT_SAMPLING},
         "kv_bits": (manifest.get("kv") or {}).get("kv_bits"),
     }
+    if version >= 2:
+        r = manifest.get("runtime") or {}
+        fp["runtime"] = {k: r.get(k) for k in _FINGERPRINT_RUNTIME}
+    return fp
 
 
 def is_compatible(existing, current) -> bool:
     """True iff `existing` results were produced under the same output-determining config as
-    `current`. A missing/unparseable existing manifest is treated as incompatible (unknown
-    provenance must not be silently resumed)."""
-    return existing is not None and config_fingerprint(existing) == config_fingerprint(current)
+    `current`. A missing/unparseable existing manifest is incompatible (unknown provenance must
+    not be silently resumed).
+
+    Comparison happens at the LOWEST version the two manifests both declare. That is what keeps
+    v2 from being destructive: every result already on disk is v1 (no runtime block), so a v2
+    harness compares them on the v1 slice — bit-for-bit the old behaviour — instead of finding a
+    universal mismatch and letting `--clean-stale` delete the lot. Two v2 manifests compare on
+    the full set, so the guard is strictly stronger for everything produced from here on.
+    """
+    if existing is None:
+        return False
+    v = min(existing.get("fingerprint_version", 1), current.get("fingerprint_version", 1))
+    a, b = config_fingerprint(existing, v), config_fingerprint(current, v)
+    if v < 2:
+        return a == b
+    ra, rb = a.pop("runtime", {}), b.pop("runtime", {})
+    return a == b and _runtime_compatible(ra, rb)
+
+
+def _unobserved(value) -> bool:
+    """True for a runtime value that was never observed: "unknown" (detection failed) or None
+    (knob not applicable to this axis)."""
+    return value is None or value == "unknown"
+
+
+def _runtime_compatible(a: dict, b: dict) -> bool:
+    """Runtime-slice comparison where an UNOBSERVED value on either side is a wildcard.
+
+    This asymmetry with the sampling slice is deliberate and load-bearing. APC state is detected
+    best-effort by scanning the router process, so it can legitimately come back "unknown" on one
+    run and "1" on the next. Under strict equality that flip would make an existing results file
+    report STALE, and `--clean-stale` would DELETE it — losing real generation to a detection
+    failure. Results are gitignored and unversioned, so that is unrecoverable.
+
+    Refusing to condemn on ignorance is the safe direction: the worst case is resuming across a
+    knob we could not observe, and the manifest still records `apc_source: "unknown"` so the row
+    is auditable and reporting can flag it. Two OBSERVED, DIFFERING values are still incompatible.
+    """
+    for k in set(a) | set(b):
+        va, vb = a.get(k), b.get(k)
+        if _unobserved(va) or _unobserved(vb):
+            continue
+        if va != vb:
+            return False
+    return True
+
+
+# --------------------------------------------------------------- APC state (recorded, not measured)
+def _router_env() -> dict | None:
+    """Best-effort read of the live router process's environment. APC is a serving-layer knob
+    set on the ROUTER, not in the harness process, so it cannot be read from our own env.
+    Returns None when no router is found or the platform/permissions refuse."""
+    try:
+        import psutil
+        for p in psutil.process_iter(["pid", "cmdline"]):
+            cmd = " ".join(p.info.get("cmdline") or [])
+            if "mlx-serve" in cmd or "mlx_vlm.server" in cmd:
+                return p.environ()
+    except Exception:  # noqa: BLE001 — best-effort; absent psutil / AccessDenied / gone
+        return None
+    return None
+
+
+def apc_state(process_env_lookup=_router_env) -> dict:
+    """Whether prefix caching was on for this run: {"apc_enabled": "1"|"0"|"unknown", "source"}.
+
+    APC is a serving-layer cache, NOT a model capability, so it is never benchmarked — but it
+    must be recorded, because `runserver.sh` enables it while the AGENTS.md benchmarking recipe
+    does not, which silently made benchmark runs differ from the daily driver on a knob worth
+    34-147x on TTFT.
+
+    Precedence: an explicit `MLX_BENCH_APC` declaration by the operator, else the router
+    process's own env (absent APC_ENABLED there means OFF), else "unknown" — reported honestly
+    rather than guessed.
+    """
+    declared = os.environ.get("MLX_BENCH_APC")
+    if declared is not None:
+        return {"apc_enabled": str(declared), "source": "env"}
+    try:
+        env = process_env_lookup()
+    except Exception:  # noqa: BLE001 — never block a run on provenance
+        env = None
+    if isinstance(env, dict):
+        return {"apc_enabled": str(env.get("APC_ENABLED", "0")), "source": "process"}
+    return {"apc_enabled": "unknown", "source": "unknown"}
+
+
+def _runtime_block(runtime: dict = None) -> dict:
+    """The v2 runtime block: detected APC state plus whatever knobs the caller declares (the
+    agentic axes pass max_turns/deadline_s/loop_guard/client/edit_format through here)."""
+    st = apc_state()
+    block = {"apc_enabled": st["apc_enabled"], "apc_source": st["source"]}
+    if runtime:
+        block.update(runtime)
+    return block
 
 
 def current_manifest_lite(model: str, profile: str = "production",
                           registry_path: str = "main_models.yaml",
-                          overrides: dict = None) -> dict:
+                          overrides: dict = None, runtime: dict = None) -> dict:
     """A cheap manifest (sampling + KV only, no quant_info snapshot scan) for the resume
     compatibility check — same shape config_fingerprint consumes. `overrides` are the CLI
     sampling overrides (e.g. --temperature) layered on the profile; they MUST be applied here
@@ -73,10 +188,12 @@ def current_manifest_lite(model: str, profile: str = "production",
         sampling.update(overrides)
     return {"sampling_profile": profile,
             "sampling": sampling,
-            "kv": registry_kv(model, registry_path) or {}}
+            "kv": registry_kv(model, registry_path) or {},
+            "fingerprint_version": FINGERPRINT_VERSION,
+            "runtime": _runtime_block(runtime)}
 
 
-def build_manifest(*, model, box, ts, git_shas, kv, quant, sampling) -> dict:
+def build_manifest(*, model, box, ts, git_shas, kv, quant, sampling, runtime=None) -> dict:
     """Pure assembly of a provenance record from its parts."""
     return {
         "model": model,
@@ -86,6 +203,8 @@ def build_manifest(*, model, box, ts, git_shas, kv, quant, sampling) -> dict:
         "kv": kv,
         "quant": quant,
         "sampling": sampling,
+        "fingerprint_version": FINGERPRINT_VERSION,
+        "runtime": runtime if runtime is not None else {},
     }
 
 
@@ -126,7 +245,7 @@ def _resolve_snapshot(hf_path):
 
 
 def gather(model: str, registry_path: str = "main_models.yaml",
-           profile: str = "production", overrides: dict = None) -> dict:
+           profile: str = "production", overrides: dict = None, runtime: dict = None) -> dict:
     """Assemble the real provenance manifest for ``model`` on this box. `overrides` are the
     CLI sampling overrides layered on the profile, recorded so the manifest matches what
     generation actually used."""
@@ -147,15 +266,17 @@ def gather(model: str, registry_path: str = "main_models.yaml",
     if overrides:
         sampling.update(overrides)
     man = build_manifest(model=model, box=_box(), ts=int(time.time()),
-                         git_shas=_git_shas(), kv=kv, quant=quant, sampling=sampling)
+                         git_shas=_git_shas(), kv=kv, quant=quant, sampling=sampling,
+                         runtime=_runtime_block(runtime))
     man["sampling_profile"] = profile
     return man
 
 
 def write(model: str, bench: str, registry_path: str = "main_models.yaml",
-          profile: str = "production", overrides: dict = None) -> dict:
+          profile: str = "production", overrides: dict = None, runtime: dict = None) -> dict:
     """Gather + write results/<model>/<bench>.manifest.json. Returns the manifest."""
-    man = gather(model, registry_path, profile=profile, overrides=overrides)
+    man = gather(model, registry_path, profile=profile, overrides=overrides,
+                 runtime=runtime)
     path = generate.result_path(model, bench).with_suffix(".manifest.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(man, indent=2))

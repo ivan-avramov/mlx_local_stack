@@ -78,6 +78,11 @@ PARAMS = {
     "gemma-4-26B-A4B-it-OptiQ-4bit": GEMMA,
     "gemma-4-26B-A4B-it-QAT-MLX-4bit": GEMMA,
     "Qwen3.6-27B-UD-MLX-6bit": QWEN,
+    "Qwen3.6-27B-OptiQ-4bit": QWEN,
+    "Qwen3.6-27B-MLX-8bit": QWEN,
+    # Registered EXPLICITLY, not by the name-substring fallback: this model reaching QWEN by
+    # luck is how it silently ran at production temp 0.7 instead of its deployed 0.3.
+    "Qwen3.6-27B-Opus-Distill-OptiQ-4bit": QWEN,
     # Ornith-1.0-35B is qwen3_5_moe arch (hybrid linear-attn MoE) — Qwen sampling,
     # not the gemma name-fallback ("qwen" isn't in the name).
     "Ornith-1.0-35B-mlx-uniform-4bit": QWEN,
@@ -88,6 +93,44 @@ _PROFILES = {
     "gemma": {"production": GEMMA, "official": GEMMA_OFFICIAL, "coding": GEMMA_CODING},
     "qwen": {"production": QWEN, "official": QWEN_OFFICIAL, "coding": QWEN_CODING},
 }
+
+# The `deployed` profile is NOT in _PROFILES: it is per-MODEL, not per-family, and it is not
+# duplicated here at all. It is read from main_models.yaml's `generation_defaults` — the FU-2
+# source of truth that mlx-serve actually forwards to the worker. Family-uniform tables cannot
+# express per-model operating temperatures (Ornith 0.4 vs distill 0.3), and every copy of a
+# config is a copy that can drift.
+DEPLOYED = "deployed"
+_REGISTRY_CACHE: dict = {}
+
+
+def _registry_models(registry_path: str) -> dict:
+    """{name: entry} for `models:` entries only, parsed once per path.
+
+    `task_model` is a TOP-LEVEL block (it must never be served by the router), so it is
+    deliberately NOT included — a naive parse would hand out its max_tokens 512.
+    """
+    if registry_path in _REGISTRY_CACHE:
+        return _REGISTRY_CACHE[registry_path]
+    import yaml                      # lazy: keeps model_params importable without pyyaml
+    try:
+        with open(registry_path) as f:
+            doc = yaml.safe_load(f) or {}
+    except OSError as e:
+        raise LookupError(f"cannot read the model registry {registry_path!r}: {e}") from e
+    entries = doc.get("models") or [] if isinstance(doc, dict) else []
+    out = {e["name"]: e for e in entries if isinstance(e, dict) and e.get("name")}
+    _REGISTRY_CACHE[registry_path] = out
+    return out
+
+
+def registry_generation_defaults(model: str, registry_path: str = "main_models.yaml"):
+    """The model's deployed `generation_defaults` block, or None if the model isn't a served
+    registry entry. Raises LookupError only if the registry itself is unreadable."""
+    entry = _registry_models(registry_path).get(model)
+    if entry is None:
+        return None
+    gd = entry.get("generation_defaults")
+    return dict(gd) if isinstance(gd, dict) else None
 
 
 def _family(model: str) -> str:
@@ -100,15 +143,35 @@ def _family(model: str) -> str:
 
 
 def profile_names():
-    """All defined sampling-profile names (union across families). The CLI's
+    """All defined sampling-profile names (union across families) plus `deployed`. The CLI's
     --sampling-profile choices derive from this so the two can't drift out of sync."""
-    return sorted({p for fam in _PROFILES.values() for p in fam})
+    return sorted({p for fam in _PROFILES.values() for p in fam} | {DEPLOYED})
 
 
-def params_for(model: str, profile: str = "production") -> dict:
+def params_for(model: str, profile: str = "production",
+               registry_path: str = "main_models.yaml") -> dict:
     """Return a copy of the model's generation params.
 
-    profile='production' (default) = the daily-driver opencode.json config.
-    profile='official' = the family's published recommended sampling (quality-first eval).
-    New Gemma-family models default to the Gemma set; non-Gemma fall back to Qwen by name."""
+    profile='deployed'   = main_models.yaml `generation_defaults` — what mlx-serve actually
+                           forwards to the worker. PER-MODEL (Ornith 0.4 vs distill 0.3), and
+                           the only profile that reflects production. Use it for new axes.
+    profile='production' = the historical daily-driver table in THIS file. Kept because
+                           existing results rows were produced under it; it has since drifted
+                           from what we ship (see test_deployed_profile.py).
+    profile='official'   = the family's published recommended sampling (quality-first eval).
+    profile='coding'     = official + a budget large enough not to truncate hard reasoning.
+
+    `deployed` FAILS LOUD (LookupError) when the registry cannot answer. Falling back to a
+    family default there would silently reintroduce exactly the drift this profile fixes.
+    The family tables keep their name-substring fallback for the historical profiles.
+    """
+    if profile == DEPLOYED:
+        gd = registry_generation_defaults(model, registry_path)
+        if gd is None:
+            known = sorted(_registry_models(registry_path))
+            raise LookupError(
+                f"no deployed generation_defaults for {model!r} in {registry_path!r}: the model "
+                f"is absent from `models:` or its entry has no generation_defaults block. "
+                f"Registry models: {known}")
+        return gd
     return dict(_PROFILES[_family(model)][profile])

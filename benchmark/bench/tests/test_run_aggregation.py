@@ -40,7 +40,7 @@ def _run_main(monkeypatch, tmp_path, canned, extra_argv=None):
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
-    monkeypatch.setattr(R, "find_model_server_pid", lambda: None)
+    monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_aggregation_ladder", lambda *a, **kw: canned)
     argv = ["--model", "mymodel", "--grid", "8000,16000", "--no-preload"]
     if extra_argv:
@@ -68,7 +68,7 @@ def test_main_params_via_params_for(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
-    monkeypatch.setattr(R, "find_model_server_pid", lambda: None)
+    monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_aggregation_ladder", fake_ladder)
     R.main(["--model", "Qwen3.6-27B-UD-MLX-6bit", "--grid", "8000", "--no-preload"])
     assert captured["params"]["thinking_budget"] == params_for("Qwen3.6-27B-UD-MLX-6bit")["thinking_budget"]

@@ -7,12 +7,30 @@
   `chunks="all"` runs to completion; `chunks=N` auto-runs N chunks then stops (runway).
 """
 import json
+import os
 import time
 from pathlib import Path
 
 from . import benchmarks, client, convergence, model_params
 
-RESULTS = Path("benchmark/results")
+_DEFAULT_RESULTS = Path("benchmark/results")
+RESULTS = _DEFAULT_RESULTS          # module-level seam; tests monkeypatch this
+
+
+def results_root() -> Path:
+    """The single root of the results tree. Precedence:
+
+        explicitly-overridden module RESULTS  >  $MLX_BENCH_RESULTS  >  the default
+
+    "Explicitly overridden" = differs from the shipped default, which is what a test's
+    ``monkeypatch.setattr(generate, "RESULTS", tmp_path)`` does and what normal operation never
+    does. The monkeypatch has to WIN over the env var: otherwise an operator with
+    MLX_BENCH_RESULTS exported would silently redirect every test's writes into the real tree.
+    """
+    if Path(RESULTS) != _DEFAULT_RESULTS:
+        return Path(RESULTS)
+    env = os.environ.get("MLX_BENCH_RESULTS")
+    return Path(env) if env else Path(RESULTS)
 
 
 def _safe(model: str) -> str:
@@ -20,7 +38,7 @@ def _safe(model: str) -> str:
 
 
 def result_path(model: str, bench: str) -> Path:
-    return RESULTS / _safe(model) / f"{bench}.jsonl"
+    return results_root() / _safe(model) / f"{bench}.jsonl"
 
 
 def done_ids(model: str, bench: str) -> set:

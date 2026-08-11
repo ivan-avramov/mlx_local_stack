@@ -48,7 +48,7 @@ def _run_main(monkeypatch, tmp_path, canned, extra_argv=None):
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
-    monkeypatch.setattr(R, "find_model_server_pid", lambda: None)
+    monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_retrieval_ladder", lambda *a, **kw: canned)
     argv = ["--model", "mymodel", "--grid", "8000,32000", "--no-preload"]
     if extra_argv:
@@ -111,7 +111,7 @@ def test_params_via_params_for(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
-    monkeypatch.setattr(R, "find_model_server_pid", lambda: None)
+    monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_retrieval_ladder", fake_ladder)
     R.main(["--model", "Qwen3.6-27B-UD-MLX-6bit", "--grid", "8000,32000", "--no-preload"])
     expected = params_for("Qwen3.6-27B-UD-MLX-6bit")
@@ -130,7 +130,7 @@ def test_thinking_budget_override(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
-    monkeypatch.setattr(R, "find_model_server_pid", lambda: None)
+    monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_retrieval_ladder", fake_ladder)
     R.main(["--model", "Qwen3.6-27B-UD-MLX-6bit", "--grid", "8000", "--no-preload",
             "--thinking-budget", "4096"])

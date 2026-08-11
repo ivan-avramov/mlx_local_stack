@@ -48,6 +48,28 @@ def find_model_server_pid(pattern: str = "mlx_vlm.server") -> int | None:
     return best[1] if best else None
 
 
+def await_model_pid(finder=find_model_server_pid, sleeper=None, attempts: int = 10):
+    """Best-effort wait for the model-server PID: look, sleep 1s, repeat up to `attempts`.
+
+    Returns the pid, or None if it never appears (memory sampling is then disabled — every
+    caller treats that as a warning, never an error). `finder`/`sleeper` are injectable so a
+    test doesn't spend 10 real seconds discovering there is no model server; a `finder` that
+    raises is swallowed, since psutil can blow up mid-iteration and this is best-effort.
+    """
+    if sleeper is None:
+        import time
+        sleeper = time.sleep
+    for _ in range(attempts):
+        try:
+            pid = finder()
+        except Exception:  # noqa: BLE001 — best-effort probe; never fatal
+            pid = None
+        if pid is not None:
+            return pid
+        sleeper(1)
+    return None
+
+
 class MemorySampler:
     """Captures, while active: the model process's peak RSS (peak_rss_gb, when a pid is
     given) and absolute peak system-used (system_peak_gb). peak_rss_gb is the model's

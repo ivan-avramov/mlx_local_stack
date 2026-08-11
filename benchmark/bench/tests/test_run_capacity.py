@@ -26,7 +26,7 @@ def test_main_writes_results(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
     # idle=10GB; RSS=35 (gate metric, fits); system_peak=45 → sys_footprint=35 (secondary)
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
-    monkeypatch.setattr(R, "find_model_server_pid", lambda: 12345)
+    monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
     rc = R.main(["--model", "m", "--grid", "160000,192000"])
     assert rc == 0
     sc = json.load(open(os.path.join(tmp_path, "m", "capacity_retrieval.json")))
@@ -58,7 +58,7 @@ def test_main_passes_bounded_params_to_ladder(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
-    monkeypatch.setattr(R, "find_model_server_pid", lambda: 12345)
+    monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
     monkeypatch.setattr(R, "run_ladder", fake_ladder)
     R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit",
             "--grid", "160000", "--no-preload"])

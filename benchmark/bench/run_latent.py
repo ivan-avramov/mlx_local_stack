@@ -7,10 +7,9 @@ Writes benchmark/results/<model>/latent.json."""
 import argparse
 import json
 import os
-import time
 
 from .driver import MlxServeDriver
-from .instrument import MemorySampler, system_used_gb, find_model_server_pid
+from .instrument import MemorySampler, await_model_pid, system_used_gb
 from .model_params import params_for
 from .latent import run_latent_ladder, LATENT_GRID
 
@@ -42,12 +41,7 @@ def main(argv=None) -> int:
     driver = MlxServeDriver()
     if not args.no_preload:
         driver.preload(args.model)
-    model_pid = None
-    for _ in range(10):
-        model_pid = find_model_server_pid()
-        if model_pid is not None:
-            break
-        time.sleep(1)
+    model_pid = await_model_pid()
     if model_pid is None:
         print("[latent] WARNING: model server process not found; memory sampling disabled", flush=True)
 

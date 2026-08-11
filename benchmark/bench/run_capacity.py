@@ -6,10 +6,9 @@ Writes benchmark/results/<model>/capacity_retrieval.json (+ capacity_ladder.json
 import argparse
 import json
 import os
-import time
 
 from .driver import MlxServeDriver
-from .instrument import MemorySampler, system_used_gb, find_model_server_pid
+from .instrument import MemorySampler, await_model_pid, system_used_gb
 from .model_params import params_for
 from .capacity_ladder import run_ladder, DEFAULT_GRID, GATE_GB
 from .scorecard import capacity_retrieval_scorecard
@@ -41,12 +40,7 @@ def main(argv=None) -> int:
     if not args.no_preload:
         driver.preload(args.model)
     # Find the model server subprocess so we sample its ACTUAL RSS (the gate metric).
-    model_pid = None
-    for _ in range(10):
-        model_pid = find_model_server_pid()
-        if model_pid is not None:
-            break
-        time.sleep(1)
+    model_pid = await_model_pid()
     if model_pid is None:
         print("[capacity] ERROR: model server process not found; cannot RSS-gate", flush=True)
         return 1

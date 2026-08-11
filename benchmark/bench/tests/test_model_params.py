@@ -86,7 +86,7 @@ def test_profile_names_exposes_all_profiles_for_cli_choices():
     # run.py's --sampling-profile choices derive from this, so adding a profile can't drift
     # out of sync with the CLI (which is exactly the bug that made `coding` an invalid choice).
     names = MP.profile_names()
-    assert set(names) == {"production", "official", "coding"}
+    assert set(names) == {"production", "official", "coding", "deployed"}
 
 
 def test_ornith_is_qwen_family_by_name_and_registry():

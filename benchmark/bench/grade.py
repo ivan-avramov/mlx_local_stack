@@ -5,10 +5,8 @@ Coding (humanevalplus/mbppplus): shell out to the official `evalplus` evaluator 
 saved completions. (livecodebench: see grade_lcb — needs lcb_runner.)
 """
 import json
-import re
 import subprocess
 import sys
-from pathlib import Path
 
 from . import benchmarks, convergence, extract, generate
 
@@ -325,7 +323,8 @@ def grade_all(models, benches):
     for model in models:
         for b in benches:
             scores.append(grade(b, model))
-    Path("benchmark/results").mkdir(parents=True, exist_ok=True)
-    Path("benchmark/results/scores.json").write_text(
+    root = generate.results_root()          # NOT a second hardcoded literal — one seam (see
+    root.mkdir(parents=True, exist_ok=True)  # generate.results_root)
+    (root / "scores.json").write_text(
         json.dumps([{k: v for k, v in s.items() if k != "items"} for s in scores], indent=2))
     return scores

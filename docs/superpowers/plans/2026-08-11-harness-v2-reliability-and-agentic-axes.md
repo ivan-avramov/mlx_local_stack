@@ -142,13 +142,19 @@ new axis in every later phase.
 
 ### Task 0.1 — Environment bootstrap (no code)
 
-- [ ] `.venv-bench` per AGENTS.md (mlx + pytest + json_repair, **no** `mlx_audio`); confirm
+- [x] `.venv-bench` per AGENTS.md (mlx + pytest + json_repair, **no** `mlx_audio`); confirm
       `bench/tests` collects — expect **32** test files (not 33).
-- [ ] `.venv-lcbgrade` (`uv venv --python 3.11`, `datasets<3`) per the resolved recipe in
+- [x] `.venv-lcbgrade` (`uv venv --python 3.11`, `datasets<3`) per the resolved recipe in
       `campaign-queue.md`; verify the LCB dataset loads (880 problems).
-- [ ] Restore `${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh` from
+- [x] Restore `${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh` — created with
+      `STACK_REPO` filled; **the M5 fields still hold the example placeholders and need the
+      operator's values** before anything can reach the remote box. from
       `config.example.sh` (absent → `$REMOTE_HOST` unresolvable → M5 unreachable by the documented path).
-- [ ] **Snapshot M5's `benchmark/results/` off-box before any provenance change.** Results are
+- [~] **Snapshot M5's `benchmark/results/` off-box before any provenance change.** BLOCKED on
+      M5 host details (config.sh placeholders). Risk retired in code instead: fingerprint v2 is
+      versioned so v1 manifests compare on the v1 slice, and an unobserved runtime value is a
+      wildcard — no existing result can be condemned by the extension. Snapshot still advised
+      before the first `--clean-stale` on M5. Results are
       gitignored and unversioned; a `--clean-stale` fingerprint mistake is irrecoverable and would
       destroy months of generation.
 
@@ -160,15 +166,15 @@ Rev 1 specified an env-based root and claimed nothing breaks. Wrong: **8 tests**
 `provenance_precheck` tests fail, one passes **vacuously** on `acts == []`, and two write into the
 real results tree.
 
-- [ ] **Step 1 (test):** `test_results_root.py` — precedence is `$MLX_BENCH_RESULTS` → **module
+- [x] **Step 1 (test):** `test_results_root.py` — precedence is `$MLX_BENCH_RESULTS` → **module
       `RESULTS`** → default; `monkeypatch.setattr(G, "RESULTS", tmp)` still redirects `result_path()`
       (assert explicitly — this is the compat contract); `result_path("a/b", "aime")` still escapes to
       `a__b`.
-- [ ] **Step 2:** Implement with that precedence. Route `grade_all`'s hardcoded
+- [x] **Step 2:** Implement with that precedence. Route `grade_all`'s hardcoded
       `Path("benchmark/results")` (`grade.py:328-329`) through it, and the 12 sibling constants in
       `run_*.py` / `diag_agg_reasoning.py` (which resolve **file**-relative while `generate.RESULTS`
       is **CWD**-relative — Phase 7's `report` needs one root).
-- [ ] **Step 3:** Full suite green, all 8 monkeypatch tests included.
+- [x] **Step 3:** Full suite green, all 8 monkeypatch tests included.
 
 ### Task 0.3 — Fix `model_params.py` drift (prerequisite for every later phase)
 
@@ -178,15 +184,15 @@ real results tree.
 `PARAMS` is family-uniform so per-model op-temps are unrepresentable, and
 `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` **is not registered at all** (it falls through to name-matching).
 
-- [ ] **Step 1 (test):** `test_model_params.py` extension — `params_for(<Ornith>, "deployed")` returns
+- [x] **Step 1 (test):** `test_model_params.py` extension — `params_for(<Ornith>, "deployed")` returns
       exactly the shipped `generation_defaults` from `main_models.yaml` (temp 0.4, presence_penalty
       0.0, …); same for the distill (temp 0.3); an unregistered model raises rather than silently
       falling back; `presence_penalty` is 0.0 on every deployed profile (a nonzero one disables suffix
       decoding, i.e. measures a different serving config than production).
-- [ ] **Step 2:** Add a `deployed` profile sourced **from `main_models.yaml` `generation_defaults`**
+- [x] **Step 2:** Add a `deployed` profile sourced **from `main_models.yaml` `generation_defaults`**
       (single source of truth, per FU-2) with per-model overrides. Keep `production`/`official`/
       `coding` untouched so historical rows stay reproducible.
-- [ ] **Step 3:** Record a params-audit row in `campaign-results.md`: for each candidate, deployed vs
+- [x] **Step 3:** Record a params-audit row in `campaign-results.md`: for each candidate, deployed vs
       what each historical profile actually sent. This tells us which existing rows were measured at
       the deployed config and which were not — a prerequisite for trusting any of them.
 
@@ -195,29 +201,29 @@ real results tree.
 APC is a serving-layer cache, not a model capability, so **it is never benchmarked** (operator
 decision, 2026-08-11). This task only makes its state visible so runs are comparable.
 
-- [ ] **Step 1:** Amend AGENTS.md's router recipe to state APC explicitly, both forms
+- [x] **Step 1:** Amend AGENTS.md's router recipe to state APC explicitly, both forms
       (`APC_ENABLED=1` for daily-driver-faithful runs; unset for cold-prefill speed baselines), and
       note that `runserver.sh:74` sets it — so past benchmark runs launched from the AGENTS.md recipe
       had APC **off** while the daily driver had it **on**. This is an apples-to-apples fix for
       *existing speed rows*, not a new measurement.
-- [ ] **Step 2 (test):** `test_provenance_fingerprint.py` — the fingerprint includes every
+- [x] **Step 2 (test):** `test_provenance_fingerprint.py` — the fingerprint includes every
       **behaviour-changing** knob: `apc_enabled`, `draft_kind`, `max_turns`, `deadline_s`, loop-guard
       thresholds, `client`, `edit_format`; and **excludes** `samples` (which does not change the
       output distribution — including it would mark every existing result stale). Guard-test both
       directions.
-- [ ] **Step 3:** Implement. Note the whitelist at `provenance.py:39` already structurally prevents
+- [x] **Step 3:** Implement. Note the whitelist at `provenance.py:39` already structurally prevents
       `samples` leaking in; the guard test locks that in.
 
 ### Task 0.5 — Shared test fakes
 
-- [ ] **Step 1 (test):** `test_conftest_fakes.py` — fakes behave as advertised.
-- [ ] **Step 2:** Implement `conftest.py`. **Two distinct seams, not one** (rev 1 conflated them):
+- [x] **Step 1 (test):** `test_conftest_fakes.py` — fakes behave as advertised.
+- [x] **Step 2:** Implement `conftest.py`. **Two distinct seams, not one** (rev 1 conflated them):
       `FakeProbe` matching `client.probe`'s dict shape *completely* — `generate.py:221-224` indexes
       `prompt_tokens`/`decode_tps`/`peak_mem_gb`/`wall_s` inside a bare `except` (`:229-230`), so an
       under-specified fake silently produces **error rows** and the samples/resume tests would go
       green on zero coverage; and `FakeDriver` matching `driver.Driver.complete` (which has no
       `probe`). Plus `FakeRunner`, `frozen_clock`.
-- [ ] **Step 3:** Commit: `test(bench): bootstrap, results-root seam, deployed sampling profile`.
+- [x] **Step 3:** Commit: `test(bench): bootstrap, results-root seam, deployed sampling profile`.
 
 ---
 
