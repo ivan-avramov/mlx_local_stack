@@ -4,6 +4,69 @@ Tracks results and rankings for every candidate (model, config) in the local-LLM
 
 **Current phase: light-tier broad sweep.**
 
+## HARNESS V2 — measurement findings (2026-08-11)
+
+Plan: `docs/superpowers/plans/2026-08-11-harness-v2-reliability-and-agentic-axes.md`. These are
+HARNESS results, not model results — no candidate ranking changes. Three of them bear on how the
+existing rows should be read.
+
+### 1. Unseeded requests are DETERMINISTIC — every historical single-sample row is a fixed replay
+Measured on the live stack: with no `seed` in the request, three draws of one prompt at
+temperature 0.8 returned **byte-identical** text; `seed=7` twice is identical, `seed=8` differs.
+The worker keys its sampler per request (`DEFAULT_SEED = 0`) and the suffix-decoding path shipped
+on both winners keys off `(seed, row_id, position)`. The router forwards the whole body with no
+allowlist (`router.py:514`), so a request-level seed reaches the worker unchanged.
+
+Two consequences:
+- **For NEW multi-sample work:** `--samples k` without per-draw seeds would have produced k
+  IDENTICAL rows — pass^k would collapse to pass@1 and reliability would report perfect stability
+  for every model while appearing to work. Every draw now carries
+  `rowschema.sample_seed(item_id, sample)` (blake2b, not `hash()`, which is salted per process).
+- **For the EXISTING rows:** they are unaffected as estimates (one draw per item, each item a
+  different prompt), but they are **deterministic replays, not resampleable draws**. So the
+  reproducibility of a re-run at the same config was never evidence of low variance — re-running
+  the same items at the same temperature reproduces the same answers by construction. AGENTS.md's
+  "temp 0.7 means single-sample runs carry variance" holds ACROSS items; it does not mean a re-run
+  would have landed differently. Any past claim that a repeated run "confirmed" a number needs
+  re-reading in that light.
+
+### 2. `model_params.py` had drifted from what we deploy (would have mis-measured every new axis)
+`PARAMS` is family-uniform, so per-model operating temperatures were unrepresentable, while FU-2
+made `main_models.yaml` `generation_defaults` the deployed truth. Audited: QWEN `production` =
+temp 0.7 / min_p 0.03 / **presence_penalty 0.3**, but deployed `Ornith-1.0-35B-mlx-uniform-4bit` =
+temp 0.4 and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` = temp 0.3, both at `presence_penalty 0.0` —
+and the distill was **not registered in PARAMS at all** (it reached QWEN by a name substring).
+A nonzero `presence_penalty` also DISABLES suffix decoding, so the old profile would have measured
+a different serving path too. New `deployed` profile reads the registry; verified live (rows carry
+temperature 0.4). A drift-guard test now fails if a registry model is added without its sampling.
+
+### 3. Benchmark runs and the daily driver differed on APC
+`runserver.sh:74` sets `APC_ENABLED=1`; the AGENTS.md benchmarking router recipe omits it. So runs
+launched per the recipe had prefix caching OFF while the daily driver had it ON — a knob worth
+34–147× on TTFT. APC state is now recorded in every manifest (fingerprint v2) and `compare`
+refuses a speed/memory comparison across differing APC state. APC itself is **not** benchmarked
+(operator decision: it is a serving-layer cache, not a model capability).
+
+### Also fixed (would have produced wrong numbers)
+- `grade_evalplus` keyed solutions by `task_id`, so with k samples the **last one silently won**:
+  pass@1 from 1/k of the data while CIs were reported over k. Now keyed by `(task_id, sample)`.
+- `grade_lcb` emitted one evaluator entry per ROW, which would have reported each draw as its own
+  problem. Now one entry per problem with its k generations.
+- Loop-recovery returned the post-restart retry as the item's datum — an extra draw granted
+  selectively to failures, inflating `conv%` for exactly the loop-prone models under investigation.
+  The first probe is now the datum, the retry is nested, and the row is marked `contaminated` and
+  excluded from correctness with a reported count.
+- Convergence is now scored PER ITEM as a vector `(pass@1|converged, conv%, nonconv_kinds)` with a
+  pre-registered rule (`conv% ≥ 0.90` gates, `pass@1|converged` ranks). Run-level INVALID is
+  retired; `acc` keeps its historical meaning. `acc_strict@<budget>` is derived and never the
+  ranking key, because it rises with `thinking_budget` and the campaign holds rows at
+  16384/32768/81920. **The ~40 legacy INVALID rows below still need relabelling under this rule.**
+- Statistical core: items buy power, samples buy reliability. MDE (paired binary, α=.05, power .80)
+  is **±32pp at N=15** and ±20pp at N=40, so the live deltas (LCB 6.7pp, aider 13pp) need ~100–470
+  matched items. Intervals come from a two-stage cluster bootstrap (a pooled Wilson over N·k trials
+  is ~2× too tight at k=5). `compare` refuses unmatched item sets and reports
+  `inconclusive` rather than implying a tie.
+
 ## PHASE 2 — OPTIMIZATION RESULTS (perf + KV memory on the two winners) — 2026-07-08
 
 Winners: `Ornith-1.0-35B-mlx-uniform-4bit` (pick) + `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`

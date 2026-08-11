@@ -243,7 +243,7 @@ ignoring item-level clustering**: with k=5, ρ≈0.7, the design effect 1+(k−1
 Wilson(12,15), is **(0.548, 0.930) — 38pp wide**. Rev 1 would have shipped intervals ~2× too tight
 while advertising that it fixed false precision.
 
-- [ ] **Step 1 (test):** `test_stats.py`, hand-computed:
+- [x] **Step 1 (test):** `test_stats.py`, hand-computed:
       - `wilson(8,10)` ≈ `(0.490, 0.943)`; `wilson(0,5)` lower is **clamped** to 0.0 and
         `wilson(5,5)` upper **clamped** to 1.0 (the closed form floats to ±1e-17 without a clamp);
         `wilson(0,0)` → `(None, None)`, not ZeroDivisionError.
@@ -273,8 +273,8 @@ while advertising that it fixed false precision.
         degenerate cases: `p=0` → `inf`; report `successes_per_hour` (bounded) as the primary display
         form because a ratio-to-a-rate has no usable bootstrap (at n=5, p=.2 a replicate has 0
         successes 33% of the time → CI upper = inf).
-- [ ] **Step 2:** Implement, stdlib only (no numpy — `stats` must import in every venv).
-- [ ] **Step 3:** Each docstring states what the metric answers, its failure mode, and its minimum n.
+- [x] **Step 2:** Implement, stdlib only (no numpy — `stats` must import in every venv).
+- [x] **Step 3:** Each docstring states what the metric answers, its failure mode, and its minimum n.
 
 ### Task 1.2 — `--samples k` end-to-end, including the grader that silently drops k−1 of them
 
@@ -283,23 +283,23 @@ while advertising that it fixed false precision.
 `res[0]`. Rev 1 shipped `--samples` without touching this: humanevalplus/mbppplus would have graded
 **1/k of the data while reporting CIs and reliability over k**. That is a wrong-number bug, not a gap.
 
-- [ ] **Step 1 (test):** `test_samples_resume.py` — `build_queue(..., samples=3)` emits 3 entries per
+- [x] **Step 1 (test):** `test_samples_resume.py` — `build_queue(..., samples=3)` emits 3 entries per
       item with distinct `sample`; roundrobin interleaves **items before samples** (a stopped prefix
       stays balanced across items); `done_keys()` on a jsonl mixing v1 (no `sample`) and v2 rows
       satisfies `sample=0` from the v1 row and queues only 1 and 2; errored rows retry per key.
-- [ ] **Step 2 (test):** `test_grade_evalplus_samples.py` — k rows per task produce **k** lines in the
+- [x] **Step 2 (test):** `test_grade_evalplus_samples.py` — k rows per task produce **k** lines in the
       samples jsonl and pass@1 is read per `(task_id, sample)` from `eval[tid][i]`; the item's score
       is its **pass fraction across samples**, not the last sample. Same for `grade_lcb`
       (`_lcb_eval_inputs` currently emits `[code]`, one generation per problem — must become k).
-- [ ] **Step 3 (test):** every grader returns `items: [{id, sample, ok}]`. Rev 1 promised "one shared
+- [x] **Step 3 (test):** every grader returns `items: [{id, sample, ok}]`. Rev 1 promised "one shared
       post-processor" for strict/raw/reliability, but only `grade_reasoning` exposes per-item results
       (`grade.py:72`); `grade_evalplus` (`:145`), `grade_lcb` (`:220`) and `grade_ifeval` (`:299`)
       return aggregates only, so the post-processor was unimplementable as specified. Per-item output
       is the prerequisite, and it comes first.
-- [ ] **Step 4:** Implement; `done_keys()` alongside `done_ids()` (other callers exist).
+- [x] **Step 4:** Implement; `done_keys()` alongside `done_ids()` (other callers exist).
       `run.py --samples N` (default 1), printed in the params banner. **Record the sampler seed per
       row** — without it the k draws aren't reproducible and a resume can't be told from a re-draw.
-- [ ] **Step 5 (test):** `test_provenance_samples.py` — an existing single-sample results file stays
+- [x] **Step 5 (test):** `test_provenance_samples.py` — an existing single-sample results file stays
       **compatible** and resumes rather than being flagged stale.
 
 ### Task 1.3 — Graded outcomes (the cheapest power win in the plan)
@@ -307,11 +307,11 @@ while advertising that it fixed false precision.
 Binary pass/fail throws away most of the information in an execution-gated test suite. Test-case pass
 *fraction* cuts required N by 2–4× at zero model cost.
 
-- [ ] **Step 1 (test):** per-item `score ∈ [0,1]` from the evaluators' per-test results (evalplus
+- [~] **Step 1 (test):** per-item `score ∈ [0,1]` from the evaluators' per-test results. **PARTIAL:** LiveCodeBench exposes per-test verdicts, so `acc_graded` ships for it; evalplus reports only a per-sample base/plus status, so it stays binary. The `score`/`score_graded` split is in place, so partial credit can flow in later without another schema change (evalplus
       `base_status`/`plus_status` per test where available; LCB per-test-case detail), with binary
       `ok` retained for backward compatibility and for the headline.
-- [ ] **Step 2:** Implement; `cluster_bootstrap` accepts continuous per-item scores unchanged.
-- [ ] **Step 3:** Report both. Continuous is the *powered* comparison; binary stays the reported
+- [x] **Step 2:** Implement; `cluster_bootstrap` accepts continuous per-item scores unchanged.
+- [x] **Step 3:** Report both. Continuous is the *powered* comparison; binary stays the reported
       pass@1 for comparability with published numbers.
 
 ### Task 1.4 — Trace capture + non-convergence classification
@@ -320,18 +320,18 @@ Binary pass/fail throws away most of the information in an execution-gated test 
 DNF needed a bespoke live probe. Own note in `campaign-results.md`: "capture thinking for future DNF
 triage" — still unfixed.
 
-- [ ] **Step 1 (test):** `test_trace_capture.py` — rows carry `reasoning_chars`, `reasoning_head`
+- [x] **Step 1 (test):** `test_trace_capture.py` — rows carry `reasoning_chars`, `reasoning_head`
       (4096), `reasoning_tail` (4096), `reasoning_stats` = `{lines, unique_line_ratio,
       max_line_repeat, ngram8_unique, ngram20_unique}`; a short trace yields head==tail==whole with no
       truncation marker; total trace storage capped ~8KB/row (an 82K-token meander must not bloat the
       jsonl 40×).
-- [ ] **Step 2 (test):** `classify_nonconvergence(row)` → `None` | `max_tokens` | `budget_hit` |
+- [x] **Step 2 (test):** `classify_nonconvergence(row)` → `None` | `max_tokens` | `budget_hit` |
       `degenerate_repetition` | `meander`, with **precedence defined and tested** for the ambiguous
       case (`finish=="length"` **and** `looks_like_loop` → `degenerate_repetition`, because the
       mechanism, not the stop reason, is what we act on). Fixtures transcribed from the two documented
       real cases (gemma repetition: max-repeat 34–78 / ~44% unique; Qwen meander: max-repeat ≤23 /
       ≥84% unique) so thresholds stay calibrated to campaign data.
-- [ ] **Step 3:** Implement and wire into the generation row.
+- [x] **Step 3:** Implement and wire into the generation row.
 
 ### Task 1.5 — Recovery: annotate, don't silently substitute *or* silently score
 
@@ -341,46 +341,46 @@ inflating `conv%` for exactly the loop-prone models under investigation. Rev 1's
 first probe) traded that for a different error: it grades a **known stale-router artifact** as the
 model's answer.
 
-- [ ] **Step 1 (test):** `test_recovery_annotation.py` — on a restart-retry the row keeps the
+- [x] **Step 1 (test):** `test_recovery_annotation.py` — on a restart-retry the row keeps the
       **first** probe as the convergence datum, nests the second under `recovery_probe`, and sets
       `contaminated: "stale_router"`. Contaminated items are **excluded from pass@1** with a reported
       count, never scored from a known-bad state. `convergence.audit` counts primaries only, so the
       recovery path cannot move `conv%`.
-- [ ] **Step 2:** Implement; update `test_loop_recovery.py`.
+- [x] **Step 2:** Implement; update `test_loop_recovery.py`.
 
 ### Task 1.6 — The metric vector (D2 revised)
 
-- [ ] **Step 1 (test):** `test_grade_vector.py` — for rows {A correct+converged, B correct+budget-hit,
+- [x] **Step 1 (test):** `test_grade_vector.py` — for rows {A correct+converged, B correct+budget-hit,
       C wrong+converged}: `conv_rate == 2/3`; `pass_at_1_converged == 1/2` (A,C only);
       `acc_strict == 1/3` reported as `acc_strict@16384`; `nonconv_kinds == {"budget_hit": 1}`;
       **`acc` is unchanged in meaning** and equals the historical raw definition (silently redefining
       `acc` would retroactively change ~40 published rows). `valid` means harness-clean (error rate
       under threshold), not converged.
-- [ ] **Step 2 (test):** cross-model comparison of `pass_at_1_converged` **refuses** unless paired on
+- [x] **Step 2 (test):** cross-model comparison of `pass_at_1_converged` **refuses** unless paired on
       the intersection of items both models converged on, and reports that intersection's size —
       conditioning on convergence conditions on a model-dependent, easier subset.
-- [ ] **Step 3 (test):** `test_grade_v1_compat.py` — a v1 fixture jsonl in `bench/tests/fixtures/`
+- [x] **Step 3 (test):** `test_grade_v1_compat.py` — a v1 fixture jsonl in `bench/tests/fixtures/`
       grades to the **same `acc` and `conv_rate`** as before, with the new fields added.
-- [ ] **Step 4:** Implement. `convergence.audit`'s field is renamed `all_converged` (leaving `valid`
+- [x] **Step 4:** Implement. `convergence.audit`'s field is renamed `all_converged` (leaving `valid`
       to `grade.py`); update `test_convergence.py:44,85` and `run.py:119-134`'s INVALID printing,
       which both assert the old semantics — rev 1 listed neither.
 
 ### Task 1.7 — `compare` + the AGENTS.md amendment
 
-- [ ] **Step 1 (test):** `test_compare_cmd.py` — comparability is **same item-id set + same profile
+- [x] **Step 1 (test):** `test_compare_cmd.py` — comparability is **same item-id set + same profile
       name + same budget/max_tokens + same box (for speed/memory) + same APC state**, and
       **explicitly tolerates different per-model op-temps** (Ornith t0.4 vs distill t0.3 are the
       *intended* configs; rev 1's fingerprint-equality rule would have refused every comparison the
       campaign needs, since `temperature` is in `_FINGERPRINT_SAMPLING`). Verdicts come from
       `paired_delta` + `holm`. A 6.7pp delta at n=15 returns **`inconclusive`** with the MDE printed.
-- [ ] **Step 2:** Implement `run.py compare`. Never print a delta without its CI and the axis MDE.
-- [ ] **Step 3:** Amend AGENTS.md — the D2 vector and its pre-registered decision rule; items-first
+- [x] **Step 2:** Implement `run.py compare`. Never print a delta without its CI and the axis MDE.
+- [x] **Step 3:** Amend AGENTS.md — the D2 vector and its pre-registered decision rule; items-first
       power with the MDE table; cluster bootstrap; TOST/`inconclusive`; Holm across the family; the
       APC recording rule; ETTS as `E[T_s] + ((1−p)/p)E[T_f]` / successes-per-hour. Also **backfill**:
       relabel the ~40 historical INVALID rows under the new vector where their jsonls survive, or mark
       them `legacy-INVALID (pre-v2 rule)` where they don't. ⚠️ Standing-rule change — flag in the
       commit message.
-- [ ] **Step 4:** Commit: `feat(bench): items-first power, cluster bootstrap, convergence vector`.
+- [x] **Step 4:** Commit: `feat(bench): items-first power, cluster bootstrap, convergence vector`.
 
 ---
 
@@ -393,13 +393,13 @@ model's answer.
 
 ### Task 2.1 — Counters + loop guard (pure)
 
-- [ ] **Step 1 (test):** `test_agent_outcomes.py` — `Counters.observe()` increments
+- [x] **Step 1 (test):** `test_agent_outcomes.py` — `Counters.observe()` increments
       `unknown_tool_calls` (name absent from the schema), `arg_schema_violations` (missing required
       arg / wrong type), and tracks `max_identical_repeat` over `(name, canonical_json(args))`;
       `LoopGuard(max_identical=3, max_unknown=5).should_abort()` is False at 2 identical, True at 3,
       True at 5 unknown, reason `tool_error_loop`; `recovered_after_error` / `turns_to_recovery`
       capture a valid call following an invalid one — the corrective-feedback-recovery metric.
-- [ ] **Step 2:** Implement as a pure dataclass + guard.
+- [x] **Step 2:** Implement as a pure dataclass + guard.
 
 ### Task 2.2 — Wire into `agent_loop.run_agent`
 
@@ -407,7 +407,7 @@ model's answer.
 no outcome label; no deadline; no repeat detection. A model that called a nonexistent tool 400 times
 while being handed the correct list would appear as `turns=12, submitted=None`.
 
-- [ ] **Step 1 (test):** `test_agent_loop_taxonomy.py`, all via `FakeDriver`:
+- [x] **Step 1 (test):** `test_agent_loop_taxonomy.py`, all via `FakeDriver`:
       - infinite identical invalid call → aborts at 3 repeats, `outcome == "tool_error_loop"`,
         `turns == 3`;
       - one unknown tool then the right one → `recovered_after_error is True`,
@@ -416,11 +416,11 @@ while being handed the correct list would appear as `turns=12, submitted=None`.
         partial transcript retained;
       - `max_turns` exhausted → `turn_cap`, distinct from `no_submit` (model ended with prose);
       - driver raising a transport error → `server_error`, never an uncaught exception.
-- [ ] **Step 2:** Implement. `max_turns` 12 → 30 (the loop guard, not the turn cap, is now the runaway
+- [x] **Step 2:** Implement. `max_turns` 12 → 30 (the loop guard, not the turn cap, is now the runaway
       protection). **These are fingerprint-affecting** (Task 0.4) — post-change agentic numbers are
       not comparable to the Ornith n=34 / distill n=16 baselines, so M1 re-baselines both arms in one
       session.
-- [ ] **Step 3 (test):** `swebench_adapter.solve_instance` currently returns a **`str`** (`:107`) and
+- [x] **Step 3 (test):** `swebench_adapter.solve_instance` currently returns a **`str`** (`:107`) and
       the injectable `agent_fn` contract (`:120`) + caller (`:139 patch = agent_fn(...)`) +
       `test_swebench.py:59,84,91` all assume that. Return `(patch, outcome, counters)` via a **new**
       function, keeping `solve_instance`'s signature intact — rev 1 called this "a test extension"; it
@@ -448,13 +448,13 @@ while being handed the correct list would appear as `turns=12, submitted=None`.
 Cheap, and it must run **before** M1 because it decides gemma's `edit_format` and therefore whether the
 cross-family agentic comparison is format-confounded.
 
-- [ ] **Step 1 (test):** `test_editformat_preflight.py` — `check_edit_format(driver, model)` asks for
+- [x] **Step 1 (test):** `test_editformat_preflight.py` — `check_edit_format(driver, model)` asks for
       one SEARCH/REPLACE block against a fixture file, applies it with a minimal parser, returns
       `{"diff": bool, "whole": bool}`; a non-applying block reports `diff: False` **with the raw block
       captured** for diagnosis.
-- [ ] **Step 2:** Implement. Run it on all three candidates (~5 min each). Record per-model
+- [x] **Step 2:** Implement. Run it on all three candidates (~5 min each). Record per-model
       `edit_format` in the registry-facing notes; the 2h gemma stuck run is exactly what this prevents.
-- [ ] **Step 3:** Commit: `feat(bench): agentic failure taxonomy, loop guard, deadlines, time-to-success, edit-format preflight`.
+- [x] **Step 3:** Commit: `feat(bench): agentic failure taxonomy, loop guard, deadlines, time-to-success, edit-format preflight`.
 
 ---
 
