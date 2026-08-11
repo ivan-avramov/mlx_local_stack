@@ -149,8 +149,22 @@ def apply_task_model_config(headers):
         print(f"Task model already configured correctly as {target_model}. Skipping update.")
         return
 
-    # Update both local and external task model references
+    # BOTH keys, because utils/task.py:get_task_model_id picks one of them based
+    # on the CHAT model's connection_type and silently falls back to the chat
+    # model itself when the chosen one is empty:
+    #
+    #   if models[chat_model]['connection_type'] == 'local': use TASK_MODEL
+    #   else:                                                use TASK_MODEL_EXTERNAL
+    #   neither set -> return the chat model
+    #
+    # Setting only TASK_MODEL is what sent every title/tags/follow-up call to
+    # the 27B/35B/31B with thinking enabled: routers/openai.py defaults a
+    # connection with no api_config entry to 'external', so the else-branch ran
+    # and TASK_MODEL_EXTERNAL was ''. apply_openai_connection_config now marks
+    # the main connection 'local' as well, so this is belt-and-braces: whichever
+    # branch get_task_model_id takes, it lands on the task model.
     config["TASK_MODEL"] = target_model
+    config["TASK_MODEL_EXTERNAL"] = target_model
 
     # Push the mutated state to the dedicated update endpoint
     r_post = requests.post(write_url, headers=headers, json=config)
@@ -199,10 +213,12 @@ def apply_web_search_config(headers):
 
 
 def apply_openai_connection_config(headers):
-    # Grab the model and port from the environment
+    # Grab the model and ports from the environment
     target_model = os.environ.get('TASK_MODEL', 'mlx-community/gemma-3-1b-it-4bit')
     task_port = os.environ.get('TASK_MODEL_PORT', '8092')
+    main_port = os.environ.get('MAIN_MODEL_PORT', '8000')
     task_model_url = f"http://host.docker.internal:{task_port}/v1"
+    main_model_url = f"http://host.docker.internal:{main_port}/v1"
 
     # OpenWebUI mounts OpenAI API configuration directly at /openai, not /api/v1/openai
     read_url = f"{BASE_URL}/openai/config"
@@ -221,21 +237,15 @@ def apply_openai_connection_config(headers):
     keys = config.get("OPENAI_API_KEYS", [])
     api_configs = config.get("OPENAI_API_CONFIGS", {})
 
-    # Check if our task backend is already registered in the array
+    # --- The task connection (:8092): register it and pin its allowlist ---
+    # The allowlist is what makes the 1.5B appear in the UI selector at all.
     if task_model_url in urls:
         idx_str = str(urls.index(task_model_url))
-
-        # Ensure the api_configs dict has an entry for this index
         if idx_str not in api_configs:
             api_configs[idx_str] = {}
-
-        current_models = api_configs[idx_str].get("model_ids", [])
-        if current_models == [target_model]:
-            print(f"OpenAI connection for {task_model_url} already filtering by {target_model}. Skipping.")
-            return
-
-        # Enforce the allowlist to ensure it populates in the UI selector
         api_configs[idx_str]["model_ids"] = [target_model]
+        api_configs[idx_str].setdefault("enable", True)
+        api_configs[idx_str]["connection_type"] = "local"
     else:
         # Inject the connection explicitly if it doesn't exist
         urls.append(task_model_url)
@@ -249,6 +259,35 @@ def apply_openai_connection_config(headers):
             "connection_type": "local"
         }
 
+    # --- The main connection (:8000): mark it 'local'. THIS IS THE ROOT CAUSE ---
+    # The main router is registered from compose's OPENAI_API_BASE_URL env var,
+    # which creates a base URL with NO OPENAI_API_CONFIGS entry. routers/openai.py
+    # then defaults its connection_type to 'external' (openai.py:584), so
+    # get_task_model_id takes the external branch for every main model and falls
+    # back to the chat model. Observed live on OWUI 0.11.0: all four main models
+    # reported connection_type='external' and a title-generation call made the
+    # router download and load gemma-4-31B-it-qat-6bit.
+    #
+    # model_ids stays EMPTY on purpose: an empty allowlist means "ask the
+    # connection for its model list" (openai.py:553), so the router keeps
+    # publishing whatever main_models.yaml serves. A non-empty list here would
+    # freeze the model list at init time.
+    if main_model_url in urls:
+        main_idx = str(urls.index(main_model_url))
+        entry = api_configs.setdefault(main_idx, {})
+        entry.setdefault("enable", True)
+        entry.setdefault("tags", [])
+        entry.setdefault("prefix_id", "")
+        entry.setdefault("model_ids", [])
+        entry["connection_type"] = "local"
+        print(f"Marked main connection {main_model_url} (idx {main_idx}) as connection_type=local.")
+    else:
+        print(
+            f"WARNING: main model connection {main_model_url} is not registered in "
+            f"OPENAI_API_BASE_URLS ({urls}). Task-model routing cannot be fixed for it; "
+            "the routing assertion below will fail if task calls resolve to a chat model."
+        )
+
     config["OPENAI_API_BASE_URLS"] = urls
     config["OPENAI_API_KEYS"] = keys
     config["OPENAI_API_CONFIGS"] = api_configs
@@ -259,6 +298,80 @@ def apply_openai_connection_config(headers):
         print(f"Successfully reconciled OpenAI connection config for model: {target_model}: {r_post}")
     else:
         print(f"Failed to update OpenAI config: {r_post.status_code} {r_post.text}")
+
+
+def assert_task_model_routing(headers):
+    """Fail the init container if OWUI would route task calls to a chat model.
+
+    Everything above is a declarative push; this is the check that it LANDED.
+    It reimplements utils/task.py:get_task_model_id against the LIVE config and
+    the LIVE model list, for every non-task model, and exits nonzero if any of
+    them resolves to something other than the task model.
+
+    Why an assertion and not a comment: this misroute is silent by construction.
+    OWUI keeps working, titles/tags/follow-ups keep appearing, and the only
+    symptom is that each one costs a full thinking generation on a 27-35B model
+    instead of ~1s on the 1.5B. It went unnoticed through several stack updates.
+    The image is also deliberately unpinned (docker-compose.yml pulls :main every
+    run), so the gate this depends on can change under us at any time -- an
+    assertion turns that into a loud bring-up failure instead of a slow regression.
+    """
+    target_model = os.environ.get('TASK_MODEL', 'mlx-community/gemma-3-1b-it-4bit')
+
+    r_cfg = requests.get(f"{BASE_URL}/api/v1/tasks/config", headers=headers)
+    r_models = requests.get(f"{BASE_URL}/api/models", headers=headers)
+    if r_cfg.status_code != 200 or r_models.status_code != 200:
+        print(
+            f"Task-routing assertion could not read state "
+            f"(tasks/config HTTP {r_cfg.status_code}, models HTTP {r_models.status_code})."
+        )
+        sys.exit(1)
+
+    cfg = r_cfg.json()
+    task_model = cfg.get("TASK_MODEL") or ""
+    task_model_external = cfg.get("TASK_MODEL_EXTERNAL") or ""
+
+    payload = r_models.json()
+    entries = payload.get("data", payload) if isinstance(payload, dict) else payload
+    models = {m.get("id"): m for m in entries if isinstance(m, dict) and m.get("id")}
+
+    def resolve(chat_model_id):
+        """Mirror of utils/task.py:get_task_model_id (OWUI 0.11.0)."""
+        if models.get(chat_model_id, {}).get("connection_type") == "local":
+            if task_model and task_model in models:
+                return task_model
+        else:
+            if task_model_external and task_model_external in models:
+                return task_model_external
+        return chat_model_id
+
+    misrouted = {}
+    for model_id, model in models.items():
+        if model_id == target_model or model.get("owned_by") == "arena":
+            continue
+        resolved = resolve(model_id)
+        if resolved != target_model:
+            misrouted[model_id] = (model.get("connection_type"), resolved)
+
+    if misrouted:
+        print("\n*** TASK MODEL ROUTING ASSERTION FAILED ***")
+        print(f"  expected every chat model's task calls to resolve to: {target_model}")
+        print(f"  TASK_MODEL={task_model!r} TASK_MODEL_EXTERNAL={task_model_external!r}")
+        for model_id, (conn_type, resolved) in sorted(misrouted.items()):
+            print(f"  {model_id!r}: connection_type={conn_type!r} -> resolves to {resolved!r}")
+        print(
+            "\n  Consequence: OWUI's title / tags / follow-up / search-query generation\n"
+            "  would run on that chat model (thinking enabled) after every response,\n"
+            "  instead of the dedicated task model. See apply_openai_connection_config.\n"
+            "  If OWUI changed get_task_model_id, re-read utils/task.py from the image\n"
+            "  and update both that function and resolve() above."
+        )
+        sys.exit(1)
+
+    print(
+        f"Task-model routing verified: all {len(models) - 1} chat model(s) resolve "
+        f"task calls to {target_model}."
+    )
 
 
 token = get_token()
@@ -278,6 +391,10 @@ apply_model_configs(headers)
 apply_openai_connection_config(headers)
 apply_task_model_config(headers)
 apply_web_search_config(headers)
+
+# Verify the routing actually landed. Must run LAST: it reads the live state
+# back, so it validates the pushes above rather than restating their intent.
+assert_task_model_routing(headers)
 
 print("Init complete")
 sys.exit(0)

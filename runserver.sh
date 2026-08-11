@@ -5,7 +5,9 @@ ENV_FILE="$(dirname "$0")/.env"
 TASK_MODEL_HOST="127.0.0.1"
 MAIN_MODEL_HOST="127.0.0.1"
 export TASK_MODEL_PORT="8092"
-MAIN_MODEL_PORT="8000"
+# Exported: openwebui-init needs it to mark the main router's OWUI connection
+# 'local', without which OWUI routes every task call to the chat model.
+export MAIN_MODEL_PORT="8000"
 TASK_MODEL_URL="http://${TASK_MODEL_HOST}:${TASK_MODEL_PORT}"
 MAIN_MODEL_URL="http://${MAIN_MODEL_HOST}:${MAIN_MODEL_PORT}"
 
@@ -116,10 +118,13 @@ docker compose up -d
 echo -n "Waiting for openwebui-init..."
 
 #docker compose logs -f open-webui-init &>logs/open-webui-init.log &
-docker compose wait open-webui-init
-EXIT_CODE=$?
+# `|| EXIT_CODE=$?` matters: under `set -e` a nonzero `docker compose wait` would
+# abort the script before the check below, so the actionable message never printed
+# and a failed init looked like a bare teardown.
+EXIT_CODE=0
+docker compose wait open-webui-init || EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
-  log_fail "OpenWebUI initialization failed. Check logs/compose.log for details.\n"
+  log_fail "OpenWebUI initialization failed (exit $EXIT_CODE). Run 'docker compose logs open-webui-init' — a nonzero exit here also means the task-model routing assertion failed.\n"
   exit 1
 fi
 log_ok "OpenWebUI initialization completed.\n"
