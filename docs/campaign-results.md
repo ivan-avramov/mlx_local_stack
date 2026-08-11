@@ -47,6 +47,27 @@ launched per the recipe had prefix caching OFF while the daily driver had it ON 
 refuses a speed/memory comparison across differing APC state. APC itself is **not** benchmarked
 (operator decision: it is a serving-layer cache, not a model capability).
 
+### 4. Edit-format probe — first real rows, and an M2 capacity constraint
+`preflight.check_edit_format` (5 min/model, replaces the 2-hour gemma stuck-run discovery):
+
+| model | diff | whole | recommended | note |
+|---|---|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` (19GB) | ✅ | ✅ | **diff** | emits a clean SEARCH/REPLACE block that applies; confirms its shipped `edit_format: diff` on evidence, and confirms `whole` is a known-good fallback |
+| `gemma-4-31B-it-qat-6bit` (29GB) | — | — | — | **NOT MEASURED** — `probe_error`; see below. NOT a model verdict |
+
+**M2 cannot host the 29GB dense gemma while an agent session is resident.** Loading it drove
+available RAM to 2.7GB and the whole local stack came down (orderly `server.shutdown` in
+`logs/main_model.log`, then the task model and the OWUI containers) — the memory backstop
+AGENTS.md warns about, now with a concrete threshold. Consequences for D1 (gemma stays a
+candidate; 256K is a goal, not a mandate):
+- gemma's arms — including this 5-minute probe — must run on **M5**, or on M2 with the agent
+  session closed. They cannot be interleaved with an assisted session.
+- This is a sharper version of the reviewers' cost objection: not just "9× slower per case" but
+  "cannot share the box at all". It does not argue for dropping gemma; it fixes WHERE its arms run.
+- The qwen-arch pair (19GB / ~20GB) IS co-resident-safe for short probes: Ornith loaded in 10s and
+  probed cleanly. Long generations are a different matter — a 16K-token math item at 81920 budget
+  pushed M2 to 94% pressure.
+
 ### Also fixed (would have produced wrong numbers)
 - `grade_evalplus` keyed solutions by `task_id`, so with k samples the **last one silently won**:
   pass@1 from 1/k of the data while CIs were reported over k. Now keyed by `(task_id, sample)`.

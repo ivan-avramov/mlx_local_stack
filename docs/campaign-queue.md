@@ -74,6 +74,33 @@ replaced.**
 **Stop-building rule:** if M1 is `inconclusive` AND P4 shows no length-dependent separation, the
 verdict is settled on speed+memory margins — stop building axes and write it up.
 
+### STATE 2026-08-11 — Phases 0/1/2 DONE (531 tests). BLOCKED at the M1 gate.
+Committed: `a11cfe9` (plan) → `6a84a3f` (P0) → `f5d5230` (P1) → `9d9f2d5` + `fef0ed2` (P2).
+Shipped: results-root seam, `deployed` sampling profile (registry-sourced), fingerprint v2,
+`stats.py`, `traces.py`, `rowschema.py`, `--samples k` with mandatory per-draw seeds, the
+convergence vector, per-sample evalplus/LCB grading, `compare` with TOST/Holm,
+`agent_outcomes.py` + loop guard + deadlines, aider `.aider.results.json` parsing,
+`check_edit_format`, and the `run_canary` profile fix (queue item at "HARNESS ISSUE
+(preflight-profile mismatch)" is now CLOSED).
+
+**The M1 gate cannot proceed without operator input — three hard blockers:**
+1. **No aider harness on this box.** `~/aider` and `~/polyglot-benchmark` are absent,
+   `AIDER_BENCHMARK_DIR` unset, no `tmp.benchmarks` (verified by filesystem search). The Homebrew
+   install ships the pip package only; `benchmark/benchmark.py` lives in the REPO. Both repos must
+   be cloned before any agentic run.
+2. **M5 is unreachable.** `config.sh` was restored with `STACK_REPO` filled but the `REMOTE_HOST` /
+   `REMOTE_USER` / `REMOTE_REPO` fields still hold the example placeholders.
+3. **M1 is 18h (Ornith, M5) + ~41h (distill) + ~32h (gemma) of model time**, and gemma additionally
+   cannot share a box with an agent session (see campaign-results HARNESS V2 §4).
+
+**Per the anti-graveyard rule, Phases 3-6 are NOT started** — building more axes before M1 produces
+a committed row is exactly the pattern that left four axes built-and-never-run.
+
+⚠️ **The local stack is DOWN** (router :8000, task model :8092, OWUI :3000) — taken out by the 29GB
+gemma load. Restore with `/mlx`. Deliberately not restarted automatically: `runserver.sh:40` runs
+`git submodule update --remote`, which would move the deployed submodule pointers off their pinned
+SHAs, and a bare router restart would then collide with `/mlx` on :8000.
+
 **NOT PURSUED — operator decisions 2026-08-11, do not re-raise.** (1) **APC quality gate:** APC is a
 serving-layer cache, **not a model capability**, so it is out of scope for the benchmarks. Its state is
 still recorded as provenance (P0/Task 0.4) purely so speed rows are comparable — `runserver.sh:74` sets
