@@ -15,7 +15,78 @@ tracked per model: production-KV (4-bit, daily-driver) and the `-kv16` (bf16-KV)
 survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNNING]` driver per
 **Reboot recovery**. (Full registry names only — per the AGENTS.md rule; no shorthands.)
 
-Last updated: 2026-07-06. **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
+Last updated: 2026-08-11. **HARNESS V2 IS THE LIVE WORKSTREAM** (see below); **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
+
+## HARNESS V2 — LIVE 2026-08-11 (build the harness before any more model runs)
+
+Plan: `docs/superpowers/plans/2026-08-11-harness-v2-reliability-and-agentic-axes.md`. A critical
+review found the 256K-agentic verdict rests on evidence that never exercised the claim: **no repeated
+sampling** (every quality row is n=1 → most deltas are noise and run-to-run reliability is
+unmeasured), **run-level convergence invalidation** discarding ~40 rows that get read anyway,
+**agentic failure modes structurally invisible** (`agent_loop.py` counts no tool errors, no deadline,
+no loop guard), **256K cleared on needle retrieval only** (vartrack/CWE built, never run, capped at
+131K; all coding evidence <4K input), and **zero evaluation through opencode**, the declared primary
+driver.
+
+**Rev 2 after adversarial review (3 reviewers, findings spot-checked against the code).** Rev 1's
+central premise — buy power with more samples per item — was **wrong** and is reversed:
+`Var(pass@1) = σ²_btw/N + E[pq]/(N·k)`, so at N=15 going k=1→5 shrinks SD only 12.7→10.8pp (−14% for 5×
+model time) while N=15→75 at k=1 gives −55%. **Items buy power; samples buy only reliability (k=2–3 is
+enough).** MDE (paired binary, α.05/power.80, p_d≈0.2): N=15 → **±32pp**, N=40 → ±20pp, N=100 → ±12.5pp.
+So the live deltas (LCB 6.7pp, aider 13pp) need N≈100–470 matched items. **"Inconclusive" is a valid,
+likely answer** — if quality ties within resolution, Ornith's 4× decode + 5× memory margins decide.
+
+Phases: **0** bootstrap (`.venv-bench`/`.venv-lcbgrade`/`config.sh` are all MISSING on M2; snapshot M5
+results before touching provenance) + results-root seam + **`model_params.py` drift fix** (QWEN is
+t0.7/min_p0.03/presence0.3 — none of it deployed, and the distill isn't even registered → every new
+axis would mis-measure) + **APC policy** (`runserver.sh:74` sets `APC_ENABLED=1`, the AGENTS.md
+benchmarking recipe omits it → past benchmark runs silently differed from the daily driver) · **1**
+stats core: items-first power, **cluster bootstrap** (pooled Wilson is ~2× too tight), graded outcomes,
+per-sample plumbing incl. the **`grade_evalplus`/`grade_lcb` bug that silently grades 1/k of the data**,
+trace capture, recovery annotate-and-exclude, convergence **vector**, `compare` with TOST + Holm ·
+**2** failure taxonomy + loop guard + deadlines + correct time-to-success + aider `.aider.results.json`
+parse · **▶M1 GATE◀** matched-34-item Ornith-vs-distill aider H2H — *no phase starts until this row is
+committed* · **3** BFCL **repaired** thinking-ON (kept: 0.94 vs 0.749 at n=1000 is ~12σ, the only
+powered axis we own) + toolprobe as a labelled ±25pp *diagnostic* · **4** long context:
+**distractor-padding OFAT** on existing graded items (isolates length from difficulty, paired by
+construction) + haystack tasks with a **mandatory no-context control** (a pinned public repo is
+training data) · **5** scorecard v2 + **breakage detector** (~40 items; explicitly NOT the ≤5% gate —
+MDE ±20pp) + edit-format & canary preflights · **6** CONDITIONAL brownfield spec-to-feature, gated on a
+saturation probe.
+
+Decisions: **D1 THREE candidates, none excluded** — `Ornith-1.0-35B-mlx-uniform-4bit`,
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `gemma-4-31B-it-qat-6bit`. **256K is a goal, not a mandate:**
+both reviewers argued for cutting gemma (192K ceiling per `main_models.yaml:55`; ~56 min/aider-case ≈ 9×
+Ornith) and that was **rejected by operator decision** — characterise each candidate at what it *can*
+do. Handled by: **per-candidate rungs** (gemma 0/64K/128K/192K, qwen-arch pair adds 256K) with
+cross-model deltas at the **common rungs only** and the ceiling recorded as a config fact (never a blank
+or a zero); gemma **sequenced after** the winners on whichever box is free so it never blocks the M1
+verdict question; and the **edit-format confound measured first** (gemma runs `whole` because its
+SEARCH/REPLACE diffs don't apply, the qwen-arch pair runs `diff` → the edit-format preflight moves to
+P2/Task 2.4, before M1, and every cross-family agentic row carries the confound label).
+**D2 revised: convergence is a VECTOR**, `(pass@1|converged, conv%, nonconv_kinds)` with `conv% ≥ 0.90`
+as a gate and `pass@1|converged` ranking within it; `acc_strict@<budget>` is a derived deployment
+number, never the ranking key (rev 1's strict-as-headline made `thinking_budget` a knob on the
+headline, which AGENTS.md forbids). `acc` keeps its historical meaning. Needs the AGENTS.md amendment
+in P1/Task 1.7 **plus a backfill/relabel of the ~40 legacy INVALID rows**. **D6 BFCL is repaired, not
+replaced.**
+
+**Stop-building rule:** if M1 is `inconclusive` AND P4 shows no length-dependent separation, the
+verdict is settled on speed+memory margins — stop building axes and write it up.
+
+**NOT PURSUED — operator decisions 2026-08-11, do not re-raise.** (1) **APC quality gate:** APC is a
+serving-layer cache, **not a model capability**, so it is out of scope for the benchmarks. Its state is
+still recorded as provenance (P0/Task 0.4) purely so speed rows are comparable — `runserver.sh:74` sets
+`APC_ENABLED=1` while the AGENTS.md benchmarking recipe omits it, a knob worth 34–147× on TTFT, so past
+benchmark runs silently differed from the daily driver. (2) **Vision axis:** not a primary focus, no
+signal will be gathered; the registry advertises `vision` on every entry and the 4-bit converts' visual
+tower stays an accepted untested capability rather than a measurement gap.
+
+**Top remaining unmeasured gap (follow-on #1): multi-turn session depth.** Every axis, old and new, is
+single-task and fresh-context; the daily driver fails at turn 40 with 180K of accumulated context.
+
+All model-run items below are QUEUED BEHIND Phase 1 — re-running axes on the current harness would add
+rows we can't rank on (and, via the evalplus/LCB per-sample bug, rows that would be wrong).
 
 ## PHASE 2 — OPTIMIZATION (perf + KV memory) — LIVE 2026-07-08
 Spec: `docs/superpowers/specs/2026-07-07-phase2-optimization-program-design.md`. Winners:
