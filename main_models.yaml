@@ -24,6 +24,22 @@ agent_defaults:
 task_model:
   name: mlx-community/Qwen2.5-1.5B-Instruct-4bit
   hf_path: mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  # Bounds every OWUI task call. Two paths read this, and both come from the
+  # OWUI model params configgen emits from here (openwebui-init/models_config.json):
+  #   - title / tags / follow-up read it explicitly (routers/tasks.py:157,
+  #     `info.params.max_tokens`, defaulting to 1000 if absent)
+  #   - autocomplete builds a payload with NO max_tokens at all and goes through
+  #     the normal chat path, so only the model params bound it (before this, it
+  #     fell through to the mlx_vlm server default -- observed max_tokens=2048 in
+  #     logs/task_model.log; with it, the same request logs max_tokens=512)
+  # 512 is generous headroom against measured output (title 12, tags 15,
+  # follow-up 92, autocomplete 25 tokens, all finish_reason=stop) while capping
+  # the worst case at ~3s on this model.
+  # NOTE: mlx-serve ignores this block entirely (the task model runs as a
+  # standalone mlx_vlm process from runserver.sh, not as a router model), so
+  # generation_defaults here reaches the CLIENT configs only, never a server flag.
+  generation_defaults:
+    max_tokens: 512
   presentation:
     role: task
     display_name: "Task 1.5B (titles/summaries)"

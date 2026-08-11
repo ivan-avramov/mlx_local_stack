@@ -144,9 +144,29 @@ def apply_task_model_config(headers):
 
     config = r_get.json()
 
-    # Avoid unnecessary writes if the state already matches
-    if config.get("TASK_MODEL") == target_model and config.get("TASK_MODEL_EXTERNAL") == target_model:
-        print(f"Task model already configured correctly as {target_model}. Skipping update.")
+    # Autocomplete: on, with a bounded input. OWUI's autocomplete payload
+    # (routers/tasks.py) carries NO max_tokens of its own and goes through the
+    # normal chat path, so the only thing capping its output is the task model's
+    # OWUI params -- which configgen now emits from main_models.yaml
+    # (generation_defaults.max_tokens). The input side is this key: OWUI's own UI
+    # describes it as "-1 for no limit, or a positive integer for a specific
+    # limit", and the backend never reads it (grep of routers/tasks.py: it is
+    # only mapped and exposed), so it is enforced client-side. 1000 is
+    # conservative whether the unit is characters or tokens; -1 would re-prefill
+    # an arbitrarily long draft on every autocomplete trigger.
+    desired = {
+        "TASK_MODEL": target_model,
+        "TASK_MODEL_EXTERNAL": target_model,
+        "ENABLE_AUTOCOMPLETE_GENERATION": True,
+        "AUTOCOMPLETE_GENERATION_INPUT_MAX_LENGTH": 1000,
+    }
+
+    # Avoid unnecessary writes if the state already matches. Compares EVERY key
+    # we manage, not just the model: an early return keyed on the task model
+    # alone would silently skip the autocomplete settings forever once the model
+    # was right.
+    if all(config.get(k) == v for k, v in desired.items()):
+        print(f"Task config already correct (task model {target_model}, autocomplete on). Skipping update.")
         return
 
     # BOTH keys, because utils/task.py:get_task_model_id picks one of them based
@@ -163,13 +183,16 @@ def apply_task_model_config(headers):
     # and TASK_MODEL_EXTERNAL was ''. apply_openai_connection_config now marks
     # the main connection 'local' as well, so this is belt-and-braces: whichever
     # branch get_task_model_id takes, it lands on the task model.
-    config["TASK_MODEL"] = target_model
-    config["TASK_MODEL_EXTERNAL"] = target_model
+    config.update(desired)
 
     # Push the mutated state to the dedicated update endpoint
     r_post = requests.post(write_url, headers=headers, json=config)
     if r_post.status_code == 200:
-        print(f"Successfully reconciled task model config to: {target_model}: {r_post.json()}")
+        applied = r_post.json()
+        print(f"Successfully reconciled task model config to: {target_model}: {applied}")
+        for k, v in desired.items():
+            if applied.get(k) != v:
+                print(f"  WARNING: {k} came back as {applied.get(k)!r}, expected {v!r}")
     else:
         print(f"Failed to update task model config: {r_post.status_code} {r_post.text}")
 
