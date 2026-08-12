@@ -63,8 +63,8 @@ run_batch() {
   local cap=$(( CAP_PER_CASE * N ))
   say "--- BATCH $tag/$lang n=$N cap=${cap}s"
   AIDER_LANGUAGES="$lang" AIDER_KEYWORDS="$kw" \
-    bash benchmark/run_aider_docker.sh "$model" "$N" "$fmt" "m1-$tag-$lang" \
-    >> "/tmp/m1_${tag}_${lang}.log" 2>&1 &
+    bash benchmark/run_aider_docker.sh "$model" "$N" "$fmt" "$TAG-$tag-$lang" \
+    >> "/tmp/${TAG}_${tag}_${lang}.log" 2>&1 &
   local pid=$!
   local t=0
   while kill -0 "$pid" 2>/dev/null; do
