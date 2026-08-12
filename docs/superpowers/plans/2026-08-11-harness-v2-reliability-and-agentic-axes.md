@@ -492,7 +492,21 @@ distill's 75% (n=16) — a 13pp gap *favouring the alternative*, dismissed on un
 **Wall-clock: ~1 day build + ~6h BFCL/model. Box: M5. DoD: BFCL thinking-ON rows + a toolprobe
 diagnostic row.**
 
-- [ ] **Task 3.1 — Repair BFCL (the powered axis).** Existing rows are **no-think** (3/400 traces
+- [ ] **Task 3.1 — Repair BFCL (the powered axis).** ROOT CAUSE LOCATED 2026-08-11 (no work done
+      yet): `benchmark/bfcl_shim/local_handlers.py:77-78` builds its request as
+      `dict(model=…, temperature=…, prompt=…, max_tokens=leftover_tokens_count, timeout=72000)` —
+      it passes **no `enable_thinking`, no `thinking_budget`, and none of top_p / top_k / min_p /
+      presence_penalty**. So every historical BFCL row ran on whatever the omitted fields defaulted
+      to (pre-FU-2 that meant the CHECKPOINT default, not our config), and `max_tokens` came from
+      bfcl_eval's own `leftover_tokens_count` — the min(4096) cap AGENTS.md flags, which cannot fit
+      a thinking trace plus an answer even if thinking were enabled. That fully explains "thinking
+      effectively off, 3/400 traces carried `<think>`". The repair is therefore two lines of intent:
+      send `params_for(model, "deployed")` explicitly (so op-temp, `presence_penalty 0.0` and
+      `enable_thinking`/`thinking_budget` all reach the worker) and raise `max_tokens` so
+      thinking + answer fit. Prereqs verified present on M5: `bfcl_eval` importable, the `bfcl`
+      entrypoint in `.venv-bench`, the shim, and prior `bfcl.json` rows for Ornith / the distill /
+      `Qwen3.6-27B-OptiQ-4bit` to re-run against.
+      Existing rows are **no-think** (3/400 traces
       carried `<think>`), violating AGENTS.md, and BFCL hard-caps generation at 4096 which cannot fit
       a thinking model's trace + answer. Re-run n=1000 native-FC with thinking ON and the cap raised;
       add a preflight assertion that `max_tokens − thinking_budget` leaves real answer headroom.
