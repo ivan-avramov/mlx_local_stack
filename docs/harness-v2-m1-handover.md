@@ -73,7 +73,8 @@ The runner scripts are now committed at `benchmark/m1/` (parameterised, no PII),
 
 ## Where M1 stands
 
-**RUNNING as of 2026-08-11 23:00 — tag `m1e`, Ornith arm, python wave.** M5 access was restored via
+**RUNNING as of 2026-08-11 23:43 — tag `m1f`, Ornith arm, python wave.** (`m1e` was voided: it hit
+2x HTTP 500 at 4.2GB free, and the KV right-sizing below changed the config for both arms.) M5 access was restored via
 the Full Disk Access grant (so `REMOTE_REPO` is unchanged), the registry is reverted (`cache_limit_gb`
 gone), `/tmp` is clean, all 7 void run dirs are archived, and the launch was verified rather than
 assumed: one listener on :8000, zero `APC` in the router env, no `--cache-limit-gb` in the worker
@@ -87,6 +88,20 @@ STALL rule requires `inflight<=0`). Counts are now `SINCE`-filtered and the tag 
 both driver and heartbeat. Lesson worth keeping: instrument failures must be loud, and a monitor
 that cannot distinguish "healthy" from "not looking" is worse than none.
 
+**⚠️ REGISTRY IS MODIFIED ON M5 (uncommitted, deliberate): `max_kv_cache_size` and
+`kv_prealloc_tokens` are 65536 (not 262144) on BOTH winner entries.** Why: with 262144 the worker
+loads at 20.8GB and grows to ~54GB under use, hitting Metal OOM / HTTP 500 at ~4GB free — twice
+(once with APC's pool front-loading it, once without APC at all). That ceiling is the Metal
+buffer-pool cap, which mlx-serve AUTO-DERIVES from `heads x prefill_step x max_kv_cache_size`, so a
+256K cap sizes the pool for 256K while this axis's prompts are <=17.5K tokens. `cache_limit_gb: 8`
+was tried first and is BELOW the load footprint (the model failed to load), so the derivation itself
+had to shrink. 65536 is 3.5x the largest observed prompt, applied IDENTICALLY to both arms, and caps
+capacity only — it cannot change generation quality. VERIFIED: memory now holds at 32-35GB free
+across four sustained generations with 0x500, where the old config collapsed 32.9 -> 4.2GB.
+**Consequences:** (1) M1 rows must record this KV sizing; (2) it must NOT be used for the 256K
+capacity/long-context axes — revert to 262144 for those; (3) `git status` on M5 will show
+main_models.yaml dirty, which is intentional — do not blindly `git checkout` it mid-run.
+
 **Prior attempts — zero usable cases.** Three attempts were voided, all by harness/config faults, none
 by model behaviour:
 
@@ -94,6 +109,7 @@ by model behaviour:
 |---|---|
 | `m1` | ran with `APC_ENABLED=1` → 33GB pool → Metal OOM → 14×HTTP 500 → aider retried against its 24h timeout while failures were scored as MODEL failures |
 | `m1b` | started, then stopped seconds later when APC was removed (operator correction) |
+| `m1e` | 19 cases, then 2xHTTP 500 at 4.2GB free — Metal pool growth with APC already OFF; voided by the KV right-sizing |
 | `m1c` | 9 clean cases, then I added `cache_limit_gb: 8` mid-run on a hunch about a single 8.2GB memory reading; the revert collided with the TCC loss |
 
 Void run dirs are archived to `~/Documents/ws/aider/benchmark/tmp.benchmarks/../VOID-apc-oom-2026-08-11`
