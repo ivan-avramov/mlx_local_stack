@@ -19,7 +19,32 @@ R=${REPO:?set REPO}
 cd "$R"
 export AIDER_REPO=${AIDER_REPO:?set AIDER_REPO}
 export POLYGLOT_DIR=${POLYGLOT_DIR:?set POLYGLOT_DIR}
-export AIDER_SETTINGS=/tmp/aider.bench.settings.yml   # weak_model -> self (shipped one 404s)
+# RUN TAG: bump it after ANY config change. collect_case_results globs by run name, so reusing a
+# tag pools void cases with clean ones. Used so far: m1/m1b/m1c (all void).
+TAG=${TAG:-m1e}
+
+# Benchmark-only aider settings, GENERATED here so the run can never reference a file that does not
+# exist: the shipped carrier points every model's weak_model_name at
+# openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit, which lives on :8092 and is deliberately NOT a
+# router entry — aider has ONE endpoint, so every weak-model call (history summarisation past
+# max_chat_history_tokens) 404s and then retries against aider's 24h RETRY_TIMEOUT. Pointing the
+# weak model at the served model itself is reachable and deterministic. The shipped file is untouched.
+export AIDER_SETTINGS=/tmp/aider.bench.settings.yml
+"${REPO:?set REPO}"/.venv-bench/bin/python - <<'GENSETTINGS'
+import os, pathlib, re
+repo = pathlib.Path(os.environ["REPO"])
+src = (repo / "aider_config/aider.model.settings.yml").read_text()
+out, cur = [], None
+for line in src.splitlines():
+    m = re.match(r"- name: openai/(\S+)", line)
+    if m:
+        cur = m.group(1)
+    if "weak_model_name:" in line and cur:
+        line = re.sub(r"weak_model_name:.*", f"weak_model_name: openai/{cur}", line)
+    out.append(line)
+pathlib.Path("/tmp/aider.bench.settings.yml").write_text("\n".join(out) + "\n")
+print("[driver] generated /tmp/aider.bench.settings.yml (weak_model -> self)")
+GENSETTINGS
 LOG=/tmp/m1_run.log
 N=22
 CAP_PER_CASE=1500          # 25 min/case ceiling; a batch is killed past N*CAP
@@ -65,7 +90,7 @@ run_model() {
   say "=== unloaded $model"
 }
 
-say "M1 start: 5 langs x $N pinned-by-name, APC=1, deployed sampling, cap ${CAP_PER_CASE}s/case"
+say "M1 start tag=$TAG: 5 langs x $N pinned-by-name, APC=OFF, deployed sampling, cap ${CAP_PER_CASE}s/case"
 run_model Ornith-1.0-35B-mlx-uniform-4bit diff ornith
 run_model Qwen3.6-27B-Opus-Distill-OptiQ-4bit diff distill
 say "M1 DRIVER COMPLETE"
