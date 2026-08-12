@@ -15,8 +15,17 @@ FIRST_500=0
 prev_cases=-1; prev_calls=-1; quiet=0; start=$(date +%s)
 while true; do
   cases=$(find "$BM" -path "*${TAG}-*" -name ".aider.results.json" 2>/dev/null | wc -l | tr -d ' ')
-  calls=$(grep -c "router — POST /v1/chat/completions" "$R/logs/main_model.log" 2>/dev/null || echo 0)
-  donecalls=$(grep -c "/v1/chat/completions 200" "$R/logs/main_model.log" 2>/dev/null || echo 0)
+  # SINCE ("YYYY-MM-DD HH:MM:SS") is REQUIRED for a trustworthy inflight figure: killing a previous
+  # driver leaves an arrival with no completion, so an unfiltered count carries a permanent +1 offset
+  # and `inflight>0` would suppress the STALL check forever — a silently disabled alarm.
+  if [ -n "${SINCE:-}" ]; then
+    calls=$(awk -v s="$SINCE" 'substr($0,1,19) >= s' "$R/logs/main_model.log" 2>/dev/null | grep -c "router — POST /v1/chat/completions")
+    donecalls=$(awk -v s="$SINCE" 'substr($0,1,19) >= s' "$R/logs/main_model.log" 2>/dev/null | grep -c "/v1/chat/completions 200")
+    errs=$(awk -v s="$SINCE" 'substr($0,1,19) >= s' "$R/logs/main_model.log" 2>/dev/null | grep -c "chat/completions 500")
+  else
+    calls=$(grep -c "router — POST /v1/chat/completions" "$R/logs/main_model.log" 2>/dev/null || echo 0)
+    donecalls=$(grep -c "/v1/chat/completions 200" "$R/logs/main_model.log" 2>/dev/null || echo 0)
+    fi
   inflight=$(( calls - donecalls ))
   last=$(tail -1 /tmp/m1_run.log 2>/dev/null | cut -c1-90)
   driver=$(pgrep -f m1_driver.sh >/dev/null && echo up || echo DOWN)
@@ -24,7 +33,6 @@ while true; do
   router=$(curl -s -o /dev/null -m 8 -w '%{http_code}' localhost:8000/v1/models 2>/dev/null)
   freegb=$(python3 -c "import psutil;print(f'{psutil.virtual_memory().available/1e9:.1f}')" 2>/dev/null \
            || $R/.venv-bench/bin/python -c "import psutil;print(f'{psutil.virtual_memory().available/1e9:.1f}')" 2>/dev/null)
-  errs=$(grep -c "chat/completions 500" "$R/logs/main_model.log" 2>/dev/null || echo 0)
   el=$(( ($(date +%s) - start) / 60 ))
   if [ "$prev_cases" -lt 0 ]; then dc=0; dk=0; else dc=$((cases-prev_cases)); dk=$((calls-prev_calls)); fi
   # progress rate + ETA from cases completed since this monitor started
