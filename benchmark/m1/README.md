@@ -42,7 +42,8 @@ bash benchmark/m1/ornith_ladder.sh       # queued temp-ladder re-check (run AFTE
   carrier is correctly left alone. (Alternative: start the :8092 task model beside the bench router.)
 - **Use a FRESH run tag after any config change.** `collect_case_results` globs by run name, so
   reusing a tag pools void cases with clean ones. Tags used so far: `m1` (void, APC-OOM),
-  `m1b` (void), `m1c` (void, config reverted mid-flight) → next is `m1e`.
+  `m1b` (void), `m1c` (void, config reverted mid-flight), `m1e` (void: 2x HTTP 500 at 4.2GB free,
+  then the KV right-sizing changed the config) → live tag is `m1f`.
 - **`pgrep -f "mlx-serve start" | wc -l` is NOT a duplicate-router check** — it counts the `uv run`
   wrapper and its child. Use the listener count on :8000
   (`lsof -nP -iTCP:8000 -sTCP:LISTEN`). A genuine duplicate showed SIX processes and two workers.
