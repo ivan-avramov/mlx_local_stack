@@ -82,6 +82,31 @@ replaced.**
 **Stop-building rule:** if M1 is `inconclusive` AND P4 shows no length-dependent separation, the
 verdict is settled on speed+memory margins — stop building axes and write it up.
 
+### ⚠️ THE `conv% ≥ 0.90` GATE IS WITHDRAWN (2026-08-11) — unratified and unsound
+It was never derived or agreed; it came from the adversarial review's suggested scheme and I adopted
+it verbatim while calling it "pre-registered". Measured problems: conv% is quantized so the gate's
+strictness tracks n (n=5 demands perfection, n=100 tolerates 10 misses); a point estimate against a
+hard threshold ignores sampling error, so a model whose TRUE rate is exactly 0.90 fails 35–45% of the
+time by chance; and on cost grounds 0.90 is ~10× too LENIENT — a runaway turn is 102,401 tokens vs a
+3,294 median (**31×**), so even conv 0.99 spends 24% of session wall-clock on non-self-terminating
+turns, and Ornith's agentic 0.94 spends ~62%. Empirically those turns are wasted, not merely slow:
+both output-limit cases so far (`python/paasio`, `javascript/grep`) FAILED both attempts while
+burning 920s and 775s (n=2 — suggestive, not established).
+**Replacement (proposed, awaiting ratification):** rank on `successes_per_hour`
+(`stats.time_to_success`) — it internalizes the runaway cost in measured seconds and needs no
+invented constant — and report `conv%` + `nonconv_kinds` + the cost-weighted share as DIAGNOSTICS.
+
+### [QUEUED — operator-approved 2026-08-11] Ornith temp-ladder re-check, runs after M1's two arms
+Script staged at `/tmp/ornith_ladder.sh` on M5 (syntax-checked, NOT started — M1 owns the worker).
+Rungs 0.5 / 0.4 / 0.35 / 0.3 / 0.2 via the FAST mechanism (`bench.run_convergence`: aggregation@8K +
+one real coding prompt, `--samples 5 --coding-samples 3`; only the SAMPLE COUNT is reduced, never a
+generation param), archiving `convergence.t<T>.json` per rung. ~1–2h total.
+QUESTION IT ANSWERS: Ornith's op-temp 0.4 was picked under the old rule, which accepted conv 80%,
+and no rung in its recorded ladder (0.6→33%, 0.5→20%, 0.4→80%, 0.3→73%) ever reached 90%. Is that
+~80% ceiling REAL (a model property, and a documented limit for the pick) or an artifact of rung
+selection? Note the ladder tunes on single-shot probes; sampling has NEVER been tuned for the
+agentic loop, which is a separate open gap.
+
 ### STATE 2026-08-11 (evening) — M1 GATE LAUNCHED on M5; re-grade DONE
 Unblocked by the operator: commits pushed (`eddc082`), M5 synced ff-only, aider + polyglot cloned to
 `~/Documents/ws`, `aider-benchmark:latest` image built, model-metadata entries added for all three
