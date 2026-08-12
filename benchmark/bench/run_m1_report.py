@@ -29,6 +29,52 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bench import aider_adapter, stats  # noqa: E402
 
 
+def convergence_from_router_log(path, model, thinking_budget, max_tokens, since=None):
+    """Per-CALL convergence for the agentic axis, read from the router log.
+
+    The convergence discipline was only ever applied to single-shot benches, but a runaway turn is
+    worse in an agentic loop: it costs wall-clock AND poisons the next turn's context. Observed on
+    the first Ornith wave — one call returned `completion=102401`, i.e. the model produced its whole
+    102,400-token budget and was truncated, burning 14.1 minutes on one turn.
+
+    Attribution to a specific exercise is not reliable (the log has no case id), so this reports
+    RUN-LEVEL counts, which is enough to say "N of M turns failed to self-terminate":
+      budget_hit  completion >= thinking_budget  (thinking filled its cap, then answered)
+      runaway     completion >= max_tokens       (hard truncation; finish_reason would be length)
+    """
+    import re
+    calls, budget_hits, runaways, tokens = 0, 0, 0, []
+    pat = re.compile(r"model=(\S+).*?\| completion=(\d+)")
+    # `since` ("YYYY-MM-DD HH:MM:SS") excludes calls that predate this run. Without it the counts
+    # silently absorb smoke/aborted-run traffic against the same model, which would understate the
+    # non-convergence RATE by inflating the denominator with short warm-up calls.
+    try:
+        with open(os.path.expanduser(path), errors="replace") as f:
+            for line in f:
+                if "/v1/chat/completions 200" not in line:
+                    continue
+                if since and line[:len(since)] < since:
+                    continue
+                m = pat.search(line)
+                if not m or m.group(1) != model:
+                    continue
+                ct = int(m.group(2))
+                calls += 1
+                tokens.append(ct)
+                if ct >= max_tokens:
+                    runaways += 1
+                elif ct >= thinking_budget:
+                    budget_hits += 1
+    except OSError:
+        return None
+    if not calls:
+        return None
+    tokens.sort()
+    return {"calls": calls, "budget_hits": budget_hits, "runaways": runaways,
+            "nonconverged_rate": round((budget_hits + runaways) / calls, 4),
+            "median_completion": tokens[len(tokens) // 2], "max_completion": tokens[-1]}
+
+
 def collect_arm(bench_dir, tag, langs):
     """All cases for one arm, keyed by exercise name so arms can be paired item-by-item."""
     cases, by_lang = {}, {}
@@ -70,6 +116,12 @@ def main(argv=None):
     ap.add_argument("--langs", default="python,javascript,go,rust,java")
     ap.add_argument("--markdown", action="store_true")
     ap.add_argument("--json-out", default=None)
+    ap.add_argument("--router-log", default=None,
+                    help="mlx-serve log; adds per-CALL convergence (runaway/budget-hit counts)")
+    ap.add_argument("--thinking-budget", type=int, default=81920)
+    ap.add_argument("--max-tokens", type=int, default=102400)
+    ap.add_argument("--since", default=None,
+                    help='ignore router-log calls before this "YYYY-MM-DD HH:MM:SS" (exclude smoke)')
     a = ap.parse_args(argv)
 
     langs = [x.strip() for x in a.langs.split(",") if x.strip()]
@@ -79,6 +131,9 @@ def main(argv=None):
         cases, by_lang = collect_arm(os.path.expanduser(a.bench_dir), tag, langs)
         s = summarize(model or tag, cases)
         s["tag"], s["by_lang"], s["cases"] = tag, by_lang, cases
+        if a.router_log:
+            s["conv"] = convergence_from_router_log(a.router_log, s["model"],
+                                                    a.thinking_budget, a.max_tokens, a.since)
         arms.append(s)
 
     for s in arms:
@@ -98,6 +153,12 @@ def main(argv=None):
               f"test_timeouts={agg.get('test_timeouts')}  crashed={agg.get('n_crashed')}")
         print(f"  time-to-success: {rel.get('expected_s')}s  "
               f"({rel.get('successes_per_hour')}/h)  thin_evidence={rel.get('thin_evidence')}")
+        c = s.get("conv")
+        if c:
+            print(f"  TURN CONVERGENCE: {c['calls']} calls, {c['runaways']} runaway (hit "
+                  f"max_tokens), {c['budget_hits']} budget-hit -> nonconverged "
+                  f"{c['nonconverged_rate']*100:.1f}% of turns; median {c['median_completion']} "
+                  f"max {c['max_completion']} completion tokens")
 
     if len(arms) == 2 and all(s["n"] for s in arms):
         a0, a1 = arms
