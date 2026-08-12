@@ -117,6 +117,54 @@ been read as proof that our POST-processing diverged from the evaluator — inst
 and doubting the breakdown, which is the number the evaluator hands over most directly.
 </details>
 
+## JUDGE PANEL — first run ever (2026-08-12): no code-quality difference detected
+
+The blind quality panel was built long ago and had **never been run**. Run now on m1f's
+both-solve set, because execution-gated `acc` measures only "the provided tests pass" and says
+nothing about maintainability — the gap that motivated the panel in the first place.
+
+**Design.** Judges: 4 × Opus subagents. Items: the **22 BOTH-SOLVE paired exercises** (15 python,
+7 javascript) — exercises where BOTH models produced test-passing code. That restriction is the
+point: AGENTS.md forbids the judge as a correctness oracle, and pitting a passing solution against
+a failing one would smuggle correctness back into a "quality" score. Solution files only, taken
+from each exercise's `.meta/config.json` → `files.solution`; test files withheld so the judge
+cannot grade against them. Blinding: A/B per exercise from a blake2b of the exercise name
+(reproducible, no RNG), landing 11/22 A=Ornith; the key was in a file no judge saw. Dimensions:
+readability / idiom / simplicity / structure, 1–5. **Every item was judged TWICE by different
+judges with A/B swapped**, so position bias — the best-documented failure mode of pairwise LLM
+judging — becomes a measurement instead of an assumption.
+
+**RESULT — the instrument is the headline.** Order-consistency was only **12/22 (55%)**. Decomposed:
+only **3 HARD reversals** (model → other model: `javascript/bottle-song`, `javascript/ocr-numbers`,
+`python/hangman`, all distill→Ornith) and **7 SOFT flips** across the tie boundary. Raw position
+preference is mild (label-A won 18 vs label-B 15 of 33 decided), so instability is concentrated at
+the tie boundary, not in a gross left/right bias. **The judge's own confidence is well calibrated:**
+consistent 1/1 at `high`, 2/2 at `medium`, but only **9/19 (47%) at `low`** — so `confidence` is a
+usable filter, and a single-order panel would have produced a confident-looking answer with a coin's
+reliability. The counterbalancing paid for itself.
+
+**On the defensible (order-consistent) set, n=12: Ornith 6 / distill 4 / tie 2**, sign test on the 10
+decided pairs **two-sided p = 0.754**. Mean dimension scores over all 44 judgments are flat:
+
+| model | readability | idiom | simplicity | structure | overall |
+|---|---|---|---|---|---|
+| Ornith-1.0-35B-mlx-uniform-4bit | 3.77 | 3.89 | 3.66 | 3.66 | **3.74** |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | 3.80 | 3.70 | 3.82 | 3.84 | **3.79** |
+
+**Reading: NO code-quality difference detected — and this is INCONCLUSIVE, not a demonstrated tie.**
+A sign test on 10 decided pairs needs **9/10 (90%)** in one direction to reach p≤.05, so this panel
+could only ever have detected a landslide; 0.05 of a point on a 1–5 scale is noise. What it does
+establish is a **separation of concerns**: the distill's advantage over Ornith is in **how many**
+exercises it solves at all (exclusive-solve 7 vs 1, McNemar p=0.070), **not** in the quality of the
+code when both succeed. Also a useful sanity check on the whole pipeline: the panel independently
+flagged `javascript/binary` as a high-confidence tie because the two models emitted
+**token-for-token identical** code.
+
+**Scope limits.** python + javascript only (the languages both arms had finished); go/rust/java
+should roughly double the both-solve set when m1f completes. Single judge FAMILY (Opus) — AGENTS.md
+specifies a **mixed-family** panel, so cross-family agreement is still unmeasured and this run does
+not satisfy that requirement. Raw verdicts + key + aggregator: `benchmark/results/_judge/`.
+
 ## HARNESS V2 — measurement findings (2026-08-11)
 
 Plan: `docs/superpowers/plans/2026-08-11-harness-v2-reliability-and-agentic-axes.md`. These are
