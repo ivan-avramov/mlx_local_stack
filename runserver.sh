@@ -67,11 +67,17 @@ TASK_MODEL_PID=$!
 
 # --- Start main multi- model server ---
 # APC (Automatic Prefix Caching) — Phase-2 #1, 2026-07-08. Lossless, exact KV reuse of the
-# shared prompt prefix across turns → agentic multi-turn TTFT collapses 34-147x (re-prefill
-# ~0). No memory/speed cost @256K (Ornith 32.6GB w/ or w/o). Pool=16384 blocks (256K ctx).
+# shared prompt prefix across turns → agentic multi-turn TTFT collapses 34-147x (re-prefill ~0).
+# POOL SIZE IS NOT FREE (corrected 2026-08-11). Blocks are 16 tokens (apc.py DEFAULT_BLOCK_SIZE),
+# and the pool is allocated up front at ~2MB/block: the old 16384 blocks (a full 256K prefix)
+# MEASURED ~33GB, which left this box 4.1GB free with Ornith-1.0-35B-mlx-uniform-4bit resident
+# (54.2GB footprint vs 20.8GB with APC absent) and killed a benchmark arm on
+# [METAL] Insufficient Memory. The "no memory cost @256K" note above was about mx-peak with the
+# pool already charged, not about the pool itself. 2048 blocks = 32K cached tokens ≈ 4GB, and the
+# measured win was at 7.5K-25K of shared prefix, so this keeps the whole demonstrated benefit.
 # The mlx_vlm.server worker inherits this env (process_manager); disable by unsetting APC_ENABLED.
 echo "Starting main model (mlx_vlm, ${MAIN_MODEL_URL})..."
-APC_ENABLED=1 APC_NUM_BLOCKS=16384 MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start &>logs/main_model.log &
+APC_ENABLED=1 APC_NUM_BLOCKS=2048 MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start &>logs/main_model.log &
 MAIN_MODEL_PID=$!
 
 echo -n "Waiting for main model to be ready..."

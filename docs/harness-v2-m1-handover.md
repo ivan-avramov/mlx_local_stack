@@ -165,8 +165,18 @@ distill slower.
    on the campaign's only ~12σ axis. Repair = send `params_for(model,"deployed")` + raise max_tokens.
 6. **`model_params` had drifted** from the deployed config and the distill was unregistered; the new
    `deployed` profile reads `main_models.yaml` `generation_defaults`. Use it for all new axes.
-7. **APC's 16384-block pool costs ~33GB** — your daily driver (`runserver.sh`) is ~4GB from a Metal
-   OOM with Ornith loaded. Independent of benchmarking; worth reducing.
+7. **APC's 16384-block pool costs ~33GB** — the daily driver (`runserver.sh`) was ~4GB from a Metal
+   OOM with Ornith loaded. Independent of benchmarking. **FIXED 2026-08-11: pool is now 2048 blocks
+   (32K tokens ≈ 4GB), guarded by a test at ≤4096.** APC stays ENABLED for the daily driver and
+   absent for benchmark runs — pool size and the flag are separate knobs.
+8. **The `weak_model_name` "bug" was NOT real — do not re-fix it** (withdrawn 2026-08-11). aider does
+   not have a single endpoint: `configgen/emitters/aider.py:20-24` emits the task model with its own
+   `extra_params.api_base` on :8092, `models.py:617` builds the weak model as its own `Model`, and
+   `models.py:1010-1011` merges `extra_params` into the litellm kwargs — so weak traffic reaches
+   :8092 as designed (hence 0 404s in the smoke). Pointing `weak_model_name` at the served model
+   would move commit messages onto the 19-29GB agent model. The real, narrower hazard is
+   benchmark-only: the bench router recipe starts :8000 only, so a weak call gets ECONNREFUSED and
+   then aider's 24h `RETRY_TIMEOUT`; the driver's generated settings already mitigate it.
 
 ## Open decisions for the operator
 

@@ -139,3 +139,24 @@ def test_runtime_overrides_are_merged_into_the_manifest(monkeypatch):
     man = P.current_manifest_lite("m", "deployed", runtime={"max_turns": 30, "client": "internal"})
     assert man["runtime"]["max_turns"] == 30 and man["runtime"]["client"] == "internal"
     assert man["runtime"]["apc_enabled"] == "0"      # detection still present alongside
+
+
+# ------------------------------------------------------------------ APC pool sizing
+def test_runserver_apc_pool_fits_the_daily_driver():
+    """The APC pool is sized in 16-token blocks (`apc.py` DEFAULT_BLOCK_SIZE), and it is NOT
+    free: 16384 blocks (= a full 256K prefix) MEASURED ~33GB, which put the daily driver 4.1GB
+    from a Metal OOM with `Ornith-1.0-35B-mlx-uniform-4bit` resident (54.2GB footprint vs 20.8GB
+    with APC absent) and killed an M1 benchmark arm. The Phase-2 win that justifies APC at all was
+    measured at 7.5K-25K of shared prefix (54.5x-147x TTFT), so a 32K pool buys the whole
+    demonstrated benefit for ~4GB. Guard the size, not the flag: APC stays ON for the daily driver.
+    """
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[3] / "runserver.sh").read_text()
+    m = re.search(r"APC_NUM_BLOCKS=(\d+)", src)
+    assert m, "runserver.sh no longer sets APC_NUM_BLOCKS — re-derive the pool cost before removing"
+    blocks = int(m.group(1))
+    assert blocks <= 4096, (
+        f"APC_NUM_BLOCKS={blocks} => {blocks * 16 // 1024}K cached tokens; at the measured "
+        f"~2MB/block that is ~{blocks * 2 // 1024}GB of pool on a 48GB daily-driver box"
+    )

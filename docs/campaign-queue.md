@@ -130,14 +130,25 @@ Driver: `/tmp/m1_driver.sh` on M5 (nohup, launcher `/tmp/m1_launch.sh` waits out
 `/tmp/m1_run.log` + `/tmp/m1_<tag>_<lang>.log`. Ornith first (`diff`), then the distill (`diff`),
 with an unload between — ONE resident model.
 
-**SHIPPED-CONFIG BUG FOUND (needs an operator decision, not urgent):**
-`aider_config/aider.model.settings.yml` sets `weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit`
-for every model, but that model is served ONLY on :8092 and is deliberately NOT a router entry —
-aider has ONE endpoint (:8000), so every weak-model call (commit messages, chat-history
-summarisation past `max_chat_history_tokens`) 404s. It did not fire in the 1-case smoke (0 404s in
-the router log) but it is a latent mid-run failure. M1 runs with a generated
-`/tmp/aider.bench.settings.yml` that points `weak_model_name` at the SAME served model; the shipped
-carrier is untouched (a real fix is a 4-carrier change per the AGENTS.md note-to-self).
+**~~SHIPPED-CONFIG BUG~~ — WITHDRAWN 2026-08-11, the shipped config is CORRECT. Read this before
+"fixing" it:** the claim was that `aider_config/aider.model.settings.yml` points every model's
+`weak_model_name` at `openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit`, which lives only on :8092
+and is deliberately not a router entry, so every weak-model call 404s against aider's single
+:8000 endpoint. **aider does NOT have a single endpoint.** `configgen/emitters/aider.py:20-24`
+deliberately emits a 5th settings entry for the task model carrying its own
+`extra_params.api_base: http://localhost:8092/v1` (asserted by `configgen/tests/test_aider.py:45`),
+and aider honours it: `models.py:617` builds the weak model as its OWN `Model` (so it does its own
+settings lookup by name) and `models.py:1010-1011` does `kwargs.update(self.extra_params)`, putting
+`api_base` straight into the litellm call. Weak-model traffic therefore goes to :8092 as designed,
+which is also why the 1-case smoke showed 0 404s. **Pointing `weak_model_name` at the served model
+would be a REGRESSION** — every commit message and history summarisation would run on the 19-29GB
+agent model instead of the 1.5B task model.
+**The REAL hazard is benchmark-only, and narrower.** The AGENTS.md bench router recipe starts
+:8000 ONLY — no :8092 task model — so under that recipe a weak-model call gets ECONNREFUSED (not a
+404) and then retries against aider's 24h `RETRY_TIMEOUT`. `benchmark/m1/m1_driver.sh`'s generated
+`/tmp/aider.bench.settings.yml` (weak -> self) is the correct mitigation FOR BENCHMARKS and stays.
+The alternative for future runs is to start the :8092 task model alongside the bench router.
+No carrier change is needed, and none of the four sampling carriers is involved.
 
 **COST NOTE — the 384s/case prior is not holding.** The 1-case cpp smoke (spiral-matrix, 2 attempts)
 ran ~16 min with model calls of 42s / 41s / **202s**, i.e. 2-3× the 6.4 min/case prior (which came

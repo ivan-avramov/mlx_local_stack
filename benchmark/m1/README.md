@@ -30,11 +30,16 @@ bash benchmark/m1/ornith_ladder.sh       # queued temp-ladder re-check (run AFTE
 - **cpp is excluded from the headline set.** A g++ template-error cascade fed back into the prompt
   produced a 165k-token request on the first cpp exercise, past the model's input budget: that
   measures the C++ toolchain, not the model. Run it as a separate sub-study if wanted.
-- **The shipped `weak_model_name` 404s.** `aider_config/aider.model.settings.yml` points every
-  model's weak model at `openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit`, which lives on :8092 and
-  is deliberately NOT a router entry — aider has one endpoint. The driver generates
-  `/tmp/aider.bench.settings.yml` pointing the weak model at the served model itself; the shipped
-  carrier is untouched (a real fix is a 4-carrier change per the AGENTS.md note-to-self).
+- **The bench router serves no weak model — but the SHIPPED config is fine** (corrected
+  2026-08-11). aider does NOT have one endpoint: `configgen/emitters/aider.py:20-24` emits a task-model
+  settings entry with its own `extra_params.api_base: http://localhost:8092/v1`, and aider honours it
+  (`models.py:617` builds the weak model as its own `Model`; `models.py:1010-1011` merges
+  `extra_params` into the litellm kwargs). So the daily driver routes weak-model traffic to :8092
+  correctly — do NOT "fix" `weak_model_name`, that would move commit messages onto the 19-29GB agent
+  model. What breaks is BENCHMARKS: the AGENTS.md router recipe starts :8000 only, so a weak-model
+  call gets ECONNREFUSED and then retries against aider's 24h `RETRY_TIMEOUT`. Hence the driver
+  generates `/tmp/aider.bench.settings.yml` pointing the weak model at the served model; the shipped
+  carrier is correctly left alone. (Alternative: start the :8092 task model beside the bench router.)
 - **Use a FRESH run tag after any config change.** `collect_case_results` globs by run name, so
   reusing a tag pools void cases with clean ones. Tags used so far: `m1` (void, APC-OOM),
   `m1b` (void), `m1c` (void, config reverted mid-flight) → next is `m1e`.
