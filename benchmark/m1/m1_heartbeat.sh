@@ -5,6 +5,7 @@
 export PATH=/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH
 R=${REPO:?set REPO}
 BM=${AIDER_REPO:?set AIDER_REPO}/benchmark/tmp.benchmarks
+TAG=${TAG:-m1e}      # must match the driver, else progress counts VOID cases
 TARGET=220          # 110 matched cases x 2 models
 # Memory and 500s are tracked because the FIRST M1 attempt died on a Metal GPU OOM: the shipped
 # APC_NUM_BLOCKS=16384 pool cost ~33GB, leaving 4.1GB free, and aider then retried the failures
