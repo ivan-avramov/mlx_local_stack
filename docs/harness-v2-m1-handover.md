@@ -64,7 +64,21 @@ The runner scripts are now committed at `benchmark/m1/` (parameterised, no PII),
 
 ## Where M1 stands
 
-**Not complete. Zero usable cases.** Three attempts were voided, all by harness/config faults, none
+**RUNNING as of 2026-08-11 23:00 — tag `m1e`, Ornith arm, python wave.** M5 access was restored via
+the Full Disk Access grant (so `REMOTE_REPO` is unchanged), the registry is reverted (`cache_limit_gb`
+gone), `/tmp` is clean, all 7 void run dirs are archived, and the launch was verified rather than
+assumed: one listener on :8000, zero `APC` in the router env, no `--cache-limit-gb` in the worker
+args, footprint ~20.9GB, and the run dir name literally contains `m1e`.
+
+Monitoring had THREE defects, all of which failed silently toward "everything is fine", all now
+fixed: the heartbeat counted void cases (glob matched an old tag), then matched nothing (glob pinned
+to a tag the driver wasn't using), then carried an alarm that could never fire (a killed driver
+leaves an arrival with no completion, so the unfiltered `inflight` had a permanent +1 offset and the
+STALL rule requires `inflight<=0`). Counts are now `SINCE`-filtered and the tag comes from `$TAG` in
+both driver and heartbeat. Lesson worth keeping: instrument failures must be loud, and a monitor
+that cannot distinguish "healthy" from "not looking" is worse than none.
+
+**Prior attempts — zero usable cases.** Three attempts were voided, all by harness/config faults, none
 by model behaviour:
 
 | tag | what happened |
