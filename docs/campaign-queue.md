@@ -41,7 +41,12 @@ central premise — buy power with more samples per item — was **wrong** and i
 `Var(pass@1) = σ²_btw/N + E[pq]/(N·k)`, so at N=15 going k=1→5 shrinks SD only 12.7→10.8pp (−14% for 5×
 model time) while N=15→75 at k=1 gives −55%. **Items buy power; samples buy only reliability (k=2–3 is
 enough).** MDE (paired binary, α.05/power.80, p_d≈0.2): N=15 → **±32pp**, N=40 → ±20pp, N=100 → ±12.5pp.
-So the live deltas (LCB 6.7pp, aider 13pp) need N≈100–470 matched items. **"Inconclusive" is a valid,
+So the live deltas (~~LCB 6.7pp~~ **RETRACTED 2026-08-12 — see below**, aider 13pp) need N≈100–470
+matched items. ⚠️ **THE LCB DELTA DOES NOT EXIST.** Re-graded at `d214bf9` after fixing a grading
+bug (lcb_runner's `-1` timeout / `-2` error sentinels were truthy and scored as PASSES), all three
+candidates land on **acc = pass@1 = 0.800** — a three-way tie, n=15, MDE ±32pp. Any arm sized to
+"resolve the 6.7pp LCB gap" is sized against an artifact; the aider delta is the only live one, and
+M1 is measuring it. **"Inconclusive" is a valid,
 likely answer** — if quality ties within resolution, Ornith's 4× decode + 5× memory margins decide.
 
 Phases: **0** bootstrap (`.venv-bench`/`.venv-lcbgrade`/`config.sh` were all MISSING on the driver box; snapshot M5

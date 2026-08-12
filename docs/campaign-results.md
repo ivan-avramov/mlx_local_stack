@@ -24,17 +24,32 @@ Box: M5 (all rows). Backed up off-box to `~/mlx_bench_snapshots/m5-results-2026-
 | Ornith-1.0-35B-mlx-uniform-4bit | mbppplus | **100** | 87.0% | [80,93] | ±13pp | 100 | PASS | 87.0% (n=100) | 87.0%@81920 | — |
 | Ornith-1.0-35B-mlx-uniform-4bit | math500 | 30 | 83.3% | [70,97] | ±23pp | **70** | **FAIL** | 85.7% (n=21) | 60.0%@81920 | budget_hit:9 |
 | Ornith-1.0-35B-mlx-uniform-4bit | aime | 5 | 80.0% | [40,100] | ±56pp | 80 | FAIL | 75.0% (n=4) | 60.0%@81920 | budget_hit:1 |
-| Ornith-1.0-35B-mlx-uniform-4bit | livecodebench | 15 | 93.3% | [80,100] | ±32pp | **80** | **FAIL** | 91.7% (n=12) | 73.3%@81920 | budget_hit:3 |
+| Ornith-1.0-35B-mlx-uniform-4bit | livecodebench | 15 | **80.0%** ⁽ᴬ⁾ | [60,100] | ±32pp | **80** | **FAIL** | 75.0% (n=12) | 60.0%@81920 | budget_hit:3 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | humanevalplus | 36 | 91.7% | [81,100] | ±21pp | 100 | PASS | 91.7% (n=36) | 91.7%@81920 | — |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | mbppplus | 10 | 60.0% | [30,90] | ±40pp | 100 | PASS | 60.0% (n=10) | 60.0%@81920 | — |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | math500 | 27 | 81.5% | [67,96] | ±24pp | 100 | PASS | 81.5% (n=27) | 81.5%@81920 | — |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aime | 4 | 100% | [100,100] | ±63pp | 100 | PASS | 100% (n=4) | 100%@81920 | — |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | livecodebench | 15 | 93.3% | [80,100] | ±32pp | 100 | PASS | 93.3% (n=15) | 93.3%@81920 | — |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | livecodebench | 15 | **80.0%** ⁽ᴬ⁾ | [53,100] | ±32pp | 100 | PASS | 80.0% (n=15) | 80.0%@81920 | — |
 | gemma-4-31B-it-qat-6bit | humanevalplus | 10 | 100% | [100,100] | ±40pp | 100 | PASS | 100% (n=10) | 100%@16384 | — |
 | gemma-4-31B-it-qat-6bit | mbppplus | 10 | 80.0% | [50,100] | ±40pp | 100 | PASS | 80.0% (n=10) | 80.0%@16384 | — |
 | gemma-4-31B-it-qat-6bit | math500 | 30 | 83.3% | [70,97] | ±23pp | 100 | PASS | 83.3% (n=30) | 83.3%@16384 | — |
 | gemma-4-31B-it-qat-6bit | aime | 5 | 100% | [100,100] | ±56pp | 100 | PASS | 100% (n=5) | 100%@16384 | — |
-| gemma-4-31B-it-qat-6bit | livecodebench | 15 | 86.7% | [67,100] | ±32pp | 93 | PASS | 85.7% (n=14) | 80.0%@16384 | budget_hit:1 |
+| gemma-4-31B-it-qat-6bit | livecodebench | 15 | **80.0%** ⁽ᴬ⁾ | [60,100] | ±32pp | 93 | PASS | 78.6% (n=14) | 73.3%@16384 | budget_hit:1 |
+
+⁽ᴬ⁾ **LCB rows CORRECTED 2026-08-12 (re-graded at `d214bf9`).** The three values first published here
+(93.3 / 93.3 / 86.7) were inflated by a grading bug, not measured: `grade_lcb` read lcb_runner's
+per-test verdicts by truthiness, and lcb_runner encodes **-1 = timeout** and **-2 = runtime/compile
+error**, both of which are truthy in Python — so every timeout and every crash scored as a PASS, and
+`_finalize` then overwrote the official `acc` with the mean of those inflated items. Re-graded with
+the fix, all three models land on **acc = pass@1 = 0.800**, and `acc == mean(by_difficulty)` now
+holds for each (it did not before). **LCB is a THREE-WAY TIE at 80%**, n=15, MDE ±32pp, with
+massively overlapping intervals — it is not a differentiator in either direction, and the **"LCB
+6.7pp delta" that the plan and queue cite as the live gap does not exist.** The more informative
+number is `acc_graded` (per-test pass FRACTION, which carries partial credit): distill **0.965**
+[0.915,1.0] > gemma **0.944** [0.861,1.0] > Ornith **0.928** [0.839,1.0] — still overlapping, but
+the ordering is at least real. Blast radius is LCB only: the exact-match graders compare values
+(`str(pred)==str(gold)`, `_math_eq`) and evalplus compares `== "pass"`, so no other axis is touched
+and Ornith's n=100 evalplus rows stand.
 
 **What the vector changes about the reading of this data:**
 
@@ -53,6 +68,20 @@ Box: M5 (all rows). Backed up off-box to `~/mlx_bench_snapshots/m5-results-2026-
 4. **The distill's mbpp+ 60%** is n=10, ±40pp — also not a ranking, despite looking alarming next
    to Ornith's 87% (n=100). Note `compare` REFUSES this pair: different item sets and different n.
 5. LCB aggregate acc is the official evaluator's `pass@1`; see the by-difficulty bug below.
+
+✅ **QUARANTINE LIFTED 2026-08-12 — `by_difficulty` was never the bug; `acc` was.** The fault is
+diagnosed and fixed (`d214bf9`, see ⁽ᴬ⁾ above): the breakdown had been correct the whole time and
+`acc` was the inflated number. After the fix `mean(by_difficulty) == acc == pass@1 == 0.800` for all
+three models, and the identical E100/M86/H60 breakdown is simply CORRECT — all three genuinely solve
+the same 12 of the same 15 fixed problems, whose difficulty split is 3/7/5. **Every historical
+`E../M../H..` figure in this document is sound**; all nine reconcile exactly with their own run's
+aggregate (12/15, 10/15 and 13/15 all check out). The reasoning below was wrong in one specific way,
+recorded because the error is instructive: it compared a HISTORICAL breakdown against a RE-GRADE
+aggregate — two different grading runs — and then declared the contradiction impossible. When two
+numbers disagree, check that they came from the same computation before concluding one is impossible.
+The proposed diagnostic grading run with `num_process_evaluate=1` was **not needed** and was not run.
+
+<details><summary>original (incorrect) quarantine reasoning, kept for the audit trail</summary>
 
 ⚠️ **BUG — LCB `by_difficulty` is not reportable (found 2026-08-11).** All three models print an
 identical breakdown (EASY 100% n=3 / MEDIUM 86% n=7 / HARD 60% n=5) which averages to 12/15 = 80%,
@@ -79,6 +108,14 @@ Narrowed so far (2026-08-11), ruling out the cheap explanations:
 - **Next step:** one real grading run that dumps the raw `metrics` dict (use
   `num_process_evaluate=1` — the pool dies under an ssh heredoc). Deliberately NOT run yet: it
   would contend for CPU with the M1 wall-clock measurements now in flight.
+
+Why the above missed it: the two invariant tests DID pass, and that was taken as clearing our own
+code — but `_install_fake_lcb` supplies `results={}`, which routes `grade_lcb` down its `frac`
+fallback and never exercises the per-test-verdict path at all. A test that cannot fail on the faulty
+line is not evidence. The bullet "lcb_runner says the two MUST agree" was also right, and should have
+been read as proof that our POST-processing diverged from the evaluator — instead of trusting `acc`
+and doubting the breakdown, which is the number the evaluator hands over most directly.
+</details>
 
 ## HARNESS V2 — measurement findings (2026-08-11)
 
