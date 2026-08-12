@@ -109,7 +109,9 @@ def cmd_generate(args):
 def cmd_grade(args):
     models, benches, limits = _resolve(args)
     scores = grade.grade_all(models, benches)
-    hdr = (f"\n{'model':<34}{'benchmark':<14}{'n':>4}{'k':>3}{'acc':>8}{'95% CI':>16}"
+    # 44, not 34: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is 35 chars and ran into the next column,
+    # and these rows get pasted straight into campaign-results.md.
+    hdr = (f"\n{'model':<44}{'benchmark':<14}{'n':>4}{'k':>3}{'acc':>8}{'95% CI':>16}"
            f"{'MDE':>7}{'conv%':>7}{'gate':>6}  harness")
     print(hdr)
     print("-" * len(hdr))
@@ -130,7 +132,7 @@ def cmd_grade(args):
             broken.append(s)
         elif not s.get("conv_gate_pass"):
             ungated.append(s)
-        print(f"{s['model']:<34}{s['benchmark']:<14}{s.get('n', 0):>4}{k:>3}{acc:>8}{ci_s:>16}"
+        print(f"{s['model']:<44}{s['benchmark']:<14}{s.get('n', 0):>4}{k:>3}{acc:>8}{ci_s:>16}"
               f"{mde_s:>7}{conv:>7}{gate:>6}  {harness}")
         extra = []
         if s.get("pass_at_1_converged") is not None:

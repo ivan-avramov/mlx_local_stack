@@ -11,6 +11,59 @@ must be re-run on M5. The M4 Pro driver hosts **NO campaign models at all** (~26
 AI session) and is a different chip class, so it is never a valid speed-comparison box — ALL model
 runs are M5 runs. See `AGENTS.md` → Operating rules.
 
+## RE-GRADE UNDER THE CONVERGENCE VECTOR — M5, existing data, zero model time (2026-08-11)
+
+All 83 existing M5 result files re-graded with harness v2 (`grade` at `eddc082`). **No new
+generation** — this is the same data the scoreboard below already reports, read under the
+pre-registered rule (`conv% ≥ 0.90` GATES, `pass@1|converged` RANKS within it) and with intervals.
+Box: M5 (all rows). Backed up off-box to `~/mlx_bench_snapshots/m5-results-2026-08-11/`.
+
+| model | bench | n | acc | 95% CI | MDE | conv% | gate | pass@1\|conv | strict@budget | nonconv |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Ornith-1.0-35B-mlx-uniform-4bit | humanevalplus | **100** | 95.0% | [90,99] | ±13pp | 95 | PASS | 94.7% (n=95) | 90.0%@81920 | budget_hit:5 |
+| Ornith-1.0-35B-mlx-uniform-4bit | mbppplus | **100** | 87.0% | [80,93] | ±13pp | 100 | PASS | 87.0% (n=100) | 87.0%@81920 | — |
+| Ornith-1.0-35B-mlx-uniform-4bit | math500 | 30 | 83.3% | [70,97] | ±23pp | **70** | **FAIL** | 85.7% (n=21) | 60.0%@81920 | budget_hit:9 |
+| Ornith-1.0-35B-mlx-uniform-4bit | aime | 5 | 80.0% | [40,100] | ±56pp | 80 | FAIL | 75.0% (n=4) | 60.0%@81920 | budget_hit:1 |
+| Ornith-1.0-35B-mlx-uniform-4bit | livecodebench | 15 | 93.3% | [80,100] | ±32pp | **80** | **FAIL** | 91.7% (n=12) | 73.3%@81920 | budget_hit:3 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | humanevalplus | 36 | 91.7% | [81,100] | ±21pp | 100 | PASS | 91.7% (n=36) | 91.7%@81920 | — |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | mbppplus | 10 | 60.0% | [30,90] | ±40pp | 100 | PASS | 60.0% (n=10) | 60.0%@81920 | — |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | math500 | 27 | 81.5% | [67,96] | ±24pp | 100 | PASS | 81.5% (n=27) | 81.5%@81920 | — |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aime | 4 | 100% | [100,100] | ±63pp | 100 | PASS | 100% (n=4) | 100%@81920 | — |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | livecodebench | 15 | 93.3% | [80,100] | ±32pp | 100 | PASS | 93.3% (n=15) | 93.3%@81920 | — |
+| gemma-4-31B-it-qat-6bit | humanevalplus | 10 | 100% | [100,100] | ±40pp | 100 | PASS | 100% (n=10) | 100%@16384 | — |
+| gemma-4-31B-it-qat-6bit | mbppplus | 10 | 80.0% | [50,100] | ±40pp | 100 | PASS | 80.0% (n=10) | 80.0%@16384 | — |
+| gemma-4-31B-it-qat-6bit | math500 | 30 | 83.3% | [70,97] | ±23pp | 100 | PASS | 83.3% (n=30) | 83.3%@16384 | — |
+| gemma-4-31B-it-qat-6bit | aime | 5 | 100% | [100,100] | ±56pp | 100 | PASS | 100% (n=5) | 100%@16384 | — |
+| gemma-4-31B-it-qat-6bit | livecodebench | 15 | 86.7% | [67,100] | ±32pp | 93 | PASS | 85.7% (n=14) | 80.0%@16384 | budget_hit:1 |
+
+**What the vector changes about the reading of this data:**
+
+1. **Ornith fails the convergence gate on three axes** — math500 (70%, 9 budget-hits), LCB (80%),
+   aime (80%) — while the distill and gemma-qat-6bit clear it everywhere. Under the old rule those
+   runs were "INVALID" and read anyway with asterisks; under the vector the statement is precise:
+   *among items it converged on* Ornith is fine (math500 85.7%, LCB 91.7%), it just does not
+   self-terminate reliably. That is a real, ranked deficiency for a daily driver, and it is the
+   first axis on which the current pick looks worse than the alternative.
+2. **The campaign's own scoreboard UNDERSTATES its best evidence.** Ornith's evalplus rows are
+   **n=100**, not the n=10 recorded below — 95.0% [90,99] and 87.0% [80,93] at ±13pp are the
+   best-powered quality numbers the campaign owns, and they sat unreported.
+3. **"AIME 100% (5/5)" was never a differentiator.** At n=5 the MDE is ±56pp (n=4 → ±63pp). The
+   gemma-qat-6bit standout and the distill's 100% are indistinguishable from each other and from
+   Ornith's 80%.
+4. **The distill's mbpp+ 60%** is n=10, ±40pp — also not a ranking, despite looking alarming next
+   to Ornith's 87% (n=100). Note `compare` REFUSES this pair: different item sets and different n.
+5. LCB aggregate acc is the official evaluator's `pass@1`; see the by-difficulty bug below.
+
+⚠️ **BUG — LCB `by_difficulty` is not reportable (found 2026-08-11).** All three models print an
+identical breakdown (EASY 100% n=3 / MEDIUM 86% n=7 / HARD 60% n=5) which averages to 12/15 = 80%,
+while their aggregate accs are 93.3 / 93.3 / 86.7. Identical per-difficulty rates across three
+models with differing aggregates is impossible, and the breakdown contradicts the aggregate within
+a single run. The aggregate comes straight from `codegen_metrics`' `pass@1` and is trusted; the
+breakdown is **quarantined** until diagnosed. This matters because the per-difficulty split is
+exactly what the campaign cites as the LCB differentiator (e.g. "E100/M86/H60"), so **every
+historical `E../M../H..` figure is now suspect too.** A direct diagnostic could not be run under
+ssh (LCB's evaluator uses a process pool that dies in a heredoc); needs a proper script run.
+
 ## HARNESS V2 — measurement findings (2026-08-11)
 
 Plan: `docs/superpowers/plans/2026-08-11-harness-v2-reliability-and-agentic-axes.md`. These are

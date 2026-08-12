@@ -82,7 +82,45 @@ replaced.**
 **Stop-building rule:** if M1 is `inconclusive` AND P4 shows no length-dependent separation, the
 verdict is settled on speed+memory margins — stop building axes and write it up.
 
-### STATE 2026-08-11 — Phases 0/1/2 DONE (531 tests). BLOCKED at the M1 gate.
+### STATE 2026-08-11 (evening) — M1 GATE LAUNCHED on M5; re-grade DONE
+Unblocked by the operator: commits pushed (`eddc082`), M5 synced ff-only, aider + polyglot cloned to
+`~/Documents/ws`, `aider-benchmark:latest` image built, model-metadata entries added for all three
+candidates, router up on M5 `0.0.0.0:8000` with `APC_ENABLED=1`.
+
+**DONE, zero model time:** all 83 existing M5 result files re-graded under the convergence vector
+(table in `campaign-results.md`). This is Phase 1's committed row. Headlines: Ornith **fails the
+conv gate** on math500 (70%) / LCB (80%) / aime (80%) while the distill and gemma-qat-6bit clear it
+everywhere; Ornith's evalplus data is **n=100 (±13pp), not the n=10 the scoreboard recorded**;
+"AIME 100% (5/5)" is ±56pp and never was a differentiator. Off-box backup at
+`~/mlx_bench_snapshots/m5-results-2026-08-11/` (closes the deferred P0 snapshot item).
+
+**M1 DESIGN CHANGED after inspecting aider's enumeration — it is STRATIFIED now.** aider enumerates
+cpp first, so the historical `Ornith n=34` was 26cpp+8go and the `distill n=16` was 16cpp: those runs
+differed in **language mix**, not merely in N, making that comparison worse than "unmatched item
+sets" implied. aider does expose `--languages`/`--keywords`, so M1 runs **6 languages × 18 exercises
+= 108 matched cases per model** (deterministic per language, so both models get byte-identical
+items). n=108 → MDE **±12.0pp**, and `n_for(13.2pp)=91`, so the gap that currently decides the
+campaign is RESOLVABLE; the originally-planned n=34 (±21.5pp) was guaranteed inconclusive.
+Driver: `/tmp/m1_driver.sh` on M5 (nohup, launcher `/tmp/m1_launch.sh` waits out the smoke), logs
+`/tmp/m1_run.log` + `/tmp/m1_<tag>_<lang>.log`. Ornith first (`diff`), then the distill (`diff`),
+with an unload between — ONE resident model.
+
+**SHIPPED-CONFIG BUG FOUND (needs an operator decision, not urgent):**
+`aider_config/aider.model.settings.yml` sets `weak_model_name: openai/mlx-community/Qwen2.5-1.5B-Instruct-4bit`
+for every model, but that model is served ONLY on :8092 and is deliberately NOT a router entry —
+aider has ONE endpoint (:8000), so every weak-model call (commit messages, chat-history
+summarisation past `max_chat_history_tokens`) 404s. It did not fire in the 1-case smoke (0 404s in
+the router log) but it is a latent mid-run failure. M1 runs with a generated
+`/tmp/aider.bench.settings.yml` that points `weak_model_name` at the SAME served model; the shipped
+carrier is untouched (a real fix is a 4-carrier change per the AGENTS.md note-to-self).
+
+**COST NOTE — the 384s/case prior is not holding.** The 1-case cpp smoke (spiral-matrix, 2 attempts)
+ran ~16 min with model calls of 42s / 41s / **202s**, i.e. 2-3× the 6.4 min/case prior (which came
+from the historical cpp+go n=34 run). Not extrapolated from one case: the driver runs
+language-by-language, so real throughput is measured on the cpp wave and n can be trimmed at a
+language boundary before the whole 108 is committed. cpp first is the conservative order.
+
+### STATE 2026-08-11 (earlier) — Phases 0/1/2 DONE (531 tests). BLOCKED at the M1 gate.
 Committed: `a11cfe9` (plan) → `6a84a3f` (P0) → `f5d5230` (P1) → `9d9f2d5` + `fef0ed2` (P2).
 Shipped: results-root seam, `deployed` sampling profile (registry-sourced), fingerprint v2,
 `stats.py`, `traces.py`, `rowschema.py`, `--samples k` with mandatory per-draw seeds, the
