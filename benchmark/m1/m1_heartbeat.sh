@@ -25,6 +25,7 @@ while true; do
   else
     calls=$(grep -c "router — POST /v1/chat/completions" "$R/logs/main_model.log" 2>/dev/null || echo 0)
     donecalls=$(grep -c "/v1/chat/completions 200" "$R/logs/main_model.log" 2>/dev/null || echo 0)
+    errs=$(grep -c "chat/completions 500" "$R/logs/main_model.log" 2>/dev/null || echo 0)
     fi
   inflight=$(( calls - donecalls ))
   last=$(tail -1 /tmp/m1_run.log 2>/dev/null | cut -c1-90)
