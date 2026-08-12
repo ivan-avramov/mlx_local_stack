@@ -19,13 +19,26 @@ the standard `everyone deny delete`; `~/Documents` is `drwx------` owned by the 
 as. POSIX permits, the kernel refuses: that is the macOS **TCC** signature (Documents is a protected
 folder). Access also *flapped* — a write succeeded at 21:5x and everything failed by 22:0x.
 
-Note `sshd` does not appear in Full Disk Access by default; the list only auto-populates for apps
-that have requested it. Options:
-1. In Full Disk Access press **+** and add `/usr/libexec/sshd-keygen-wrapper` (the usual entry) or
-   `/usr/sbin/sshd`, then reconnect.
-2. **More durable: move the repo out of `~/Documents`** (e.g. `~/ws/mlx_local_stack`) — TCC does not
-   protect arbitrary home subfolders, so this class of failure disappears. Update `REMOTE_REPO` in
-   `${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh`.
+**ROOT CAUSE CONFIRMED (operator observation + verified on the box): it is PUBLICKEY vs PASSWORD
+auth, not the disk and not a transient.** Password ssh can read `~/Documents`; key-based ssh cannot.
+Mechanism: `/etc/pam.d/sshd` carries `auth required pam_opendirectory.so`, which runs only for
+password / keyboard-interactive auth — OpenSSH **skips the PAM auth stack for publickey**, so no
+OpenDirectory-authenticated session is created and TCC denies protected folders to that process.
+And the "flapping" was not the box degrading: `who` showed a network login `ttys008` from 18:13 while
+things worked, and it was GONE when access broke — a password-authenticated session had been
+supplying the context that the key-based automation was riding on.
+
+Fixes, most robust first:
+1. **Move the repo out of `~/Documents`** (e.g. `~/ws/mlx_local_stack`). TCC protects only
+   Documents/Desktop/Downloads, so no privacy grant is needed at all and the fix survives OS updates
+   that reset TCC. Then update `REMOTE_REPO` in
+   `${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh`. Same for the aider/polyglot clones.
+2. Grant Full Disk Access to **`/usr/libexec/sshd-keygen-wrapper`** (the binary launchd runs for ssh
+   sessions; `/usr/sbin/sshd` also exists). It is not listed by default — press **+**, then
+   Cmd+Shift+G and type the path, since `/usr/libexec` is hidden. This makes key-based sessions work
+   independently of any interactive login.
+3. Diagnostic only, not a fix: keeping a password-authenticated ssh session open restores access —
+   which is what was accidentally happening for the first few hours of the session.
 
 ### ⚠️ Do this BEFORE starting the stack on M5
 `main_models.yaml` on M5 carries an **uncommitted `cache_limit_gb: 8`** on both winner entries, added
