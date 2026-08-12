@@ -138,3 +138,56 @@ def test_grade_lcb_no_rows_match_release(monkeypatch):
     _install_fake_lcb(monkeypatch, [_FakeProblem("q1", "{}")], {"pass@1": 100.0})
     out = G.grade_lcb("livecodebench", "m")
     assert out["n"] == 0 and out["acc"] is None and "match" in out["note"].lower()
+
+
+def test_by_difficulty_is_consistent_with_the_aggregate(monkeypatch):
+    """INVARIANT: the n-weighted mean of by_difficulty must equal the aggregate acc.
+
+    Live re-grade on M5 (2026-08-11) violated this: three models printed an IDENTICAL breakdown
+    (EASY 100% n=3 / MEDIUM 86% n=7 / HARD 60% n=5 -> 12/15 = 80%) while their aggregates were
+    93.3 / 93.3 / 86.7. Identical per-difficulty rates across three models with differing
+    aggregates is impossible, and the breakdown contradicts the aggregate WITHIN one run — so one
+    of the two numbers is wrong, and the per-difficulty split is exactly what the campaign cites
+    as its LCB differentiator ("E100/M86/H60").
+
+    This test pins the invariant against FAKE lcb_runner output whose detail and aggregate agree
+    by construction. If it passes, our index alignment is sound and the fault is in how the real
+    `metrics["detail"]["pass@1"]` is keyed/scaled — which needs one real grading run to settle.
+    """
+    rows = [{"id": f"q{i}", "sample": 0, "content": "```python\nx=1\n```"} for i in range(4)]
+    monkeypatch.setattr(G, "_rows", lambda m, n: rows)
+    probs = []
+    for i, diff in enumerate(["EASY", "EASY", "MEDIUM", "HARD"]):
+        p = _FakeProblem(f"q{i}", '{"inputs":[],"outputs":[]}')
+        p.difficulty = diff
+        probs.append(p)
+    # 3 of 4 pass -> aggregate 75%; detail must say the same, per problem index.
+    metrics = {"pass@1": 75.0, "detail": {"pass@1": {0: 1.0, 1: 1.0, 2: 1.0, 3: 0.0}}}
+    _install_fake_lcb(monkeypatch, probs, metrics)
+    out = G.grade_lcb("livecodebench", "m")
+
+    bd = out["by_difficulty"]
+    total_n = sum(v["n"] for v in bd.values())
+    weighted = sum(v["n"] * v["pass@1"] for v in bd.values()) / total_n
+    assert total_n == 4, f"every graded problem must land in exactly one bucket, got {bd}"
+    assert abs(weighted - out["acc"]) < 1e-9, (
+        f"by_difficulty ({weighted:.4f}) disagrees with acc ({out['acc']}) — breakdown is "
+        f"misaligned with the aggregate: {bd}")
+    assert bd["EASY"]["pass@1"] == 1.0 and bd["HARD"]["pass@1"] == 0.0
+
+
+def test_by_difficulty_survives_string_keyed_detail(monkeypatch):
+    """Defensive: json round-trips turn int keys into strings. A str/int mismatch would make every
+    lookup miss and silently produce an UNKNOWN-only breakdown."""
+    rows = [{"id": f"q{i}", "sample": 0, "content": "```python\nx=1\n```"} for i in range(2)]
+    monkeypatch.setattr(G, "_rows", lambda m, n: rows)
+    probs = []
+    for i, diff in enumerate(["EASY", "HARD"]):
+        p = _FakeProblem(f"q{i}", '{"inputs":[],"outputs":[]}')
+        p.difficulty = diff
+        probs.append(p)
+    metrics = {"pass@1": 50.0, "detail": {"pass@1": {"0": 1.0, "1": 0.0}}}
+    _install_fake_lcb(monkeypatch, probs, metrics)
+    bd = G.grade_lcb("livecodebench", "m")["by_difficulty"]
+    assert "UNKNOWN" not in bd, f"string-keyed detail was not handled: {bd}"
+    assert bd["EASY"]["pass@1"] == 1.0 and bd["HARD"]["pass@1"] == 0.0

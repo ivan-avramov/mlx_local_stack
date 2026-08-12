@@ -61,8 +61,24 @@ models with differing aggregates is impossible, and the breakdown contradicts th
 a single run. The aggregate comes straight from `codegen_metrics`' `pass@1` and is trusted; the
 breakdown is **quarantined** until diagnosed. This matters because the per-difficulty split is
 exactly what the campaign cites as the LCB differentiator (e.g. "E100/M86/H60"), so **every
-historical `E../M../H..` figure is now suspect too.** A direct diagnostic could not be run under
-ssh (LCB's evaluator uses a process pool that dies in a heredoc); needs a proper script run.
+historical `E../M../H..` figure is now suspect too.**
+
+Narrowed so far (2026-08-11), ruling out the cheap explanations:
+- **Not a duplicate-rows artifact.** Each `livecodebench.jsonl` holds exactly 15 rows / 15 distinct
+  ids / no `sample` field, so the new per-sample grouping sees k=1 per problem — it cannot be
+  collapsing appended runs into multi-sample items.
+- **Not our index alignment or key typing.** Two new invariant tests
+  (`test_by_difficulty_is_consistent_with_the_aggregate`, `..._survives_string_keyed_detail`) pass
+  against fake evaluator output, including the int-vs-str `detail` key hazard.
+- **lcb_runner says the two MUST agree.** `compute_metrics_from_results` builds
+  `pass@k = estimate_pass_at_k(total, correct, k).mean()` and
+  `detail[pass@k] = dict(zip(task_ids, estimate_pass_at_k(total, correct, k)))` from the same
+  array, keyed by problem index — so the aggregate is by construction the mean of the detail.
+- Suspicious coincidence worth chasing: Ornith's printed breakdown (12/15 = 80%, E100/M86/H60) is
+  EXACTLY its historical t0.4 row, while its aggregate here (93.3%) matches the suffix-ON run.
+- **Next step:** one real grading run that dumps the raw `metrics` dict (use
+  `num_process_evaluate=1` — the pool dies under an ssh heredoc). Deliberately NOT run yet: it
+  would contend for CPU with the M1 wall-clock measurements now in flight.
 
 ## HARNESS V2 — measurement findings (2026-08-11)
 
