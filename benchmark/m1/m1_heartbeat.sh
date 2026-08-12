@@ -14,7 +14,7 @@ TARGET=220          # 110 matched cases x 2 models
 FIRST_500=0
 prev_cases=-1; prev_calls=-1; quiet=0; start=$(date +%s)
 while true; do
-  cases=$(find "$BM" -path "*m1-*" -name ".aider.results.json" 2>/dev/null | wc -l | tr -d ' ')
+  cases=$(find "$BM" -path "*${TAG}-*" -name ".aider.results.json" 2>/dev/null | wc -l | tr -d ' ')
   calls=$(grep -c "router — POST /v1/chat/completions" "$R/logs/main_model.log" 2>/dev/null || echo 0)
   donecalls=$(grep -c "/v1/chat/completions 200" "$R/logs/main_model.log" 2>/dev/null || echo 0)
   inflight=$(( calls - donecalls ))
