@@ -310,6 +310,23 @@ def _lcb_eval_inputs(rows, sample_by_id):
     return samples_list, generations_list, ids, sample_orders
 
 
+def _lcb_test_passed(x):
+    """Read ONE lcb_runner per-test verdict the way the evaluator itself reads it.
+
+    lcb_runner encodes 1/True = pass, 0/False = wrong answer, **-1 = timeout**, **-2 = runtime or
+    compile error** (`evaluation/testing_util.py` appends -2 on each error path;
+    `compute_code_generation_metrics.py` uses `curr_res = [-2]` for a whole-problem failure).
+    `bool(-1)` and `bool(-2)` are TRUE in Python, so scoring a verdict by truthiness counts every
+    timeout and every crash as a PASS.
+
+    That is not hypothetical: the 2026-08-11 re-grade published LCB `acc` 0.9333 / 0.9333 / 0.8667
+    for the three candidates while the official evaluator's `pass@1` was 0.80 for ALL THREE — a
+    phantom 6.7pp "differentiator" the campaign was sizing future arms against. The
+    `by_difficulty` breakdown, which was quarantined over it, had been correct the whole time.
+    """
+    return x is True or x == 1
+
+
 def _lcb_by_difficulty(ids, diff_by_id, detail_pass):
     """Group per-problem pass@1 (0-1, index-keyed as in metrics['detail']['pass@1'],
     index-aligned with ids) by the problem's Easy/Medium/Hard difficulty. LCB is calibrated
@@ -379,12 +396,16 @@ def grade_lcb(name, model):
                     # official pass@1 (comparable with published numbers); the pass FRACTION is
                     # reported separately as the graded outcome, which carries far more
                     # information per item and cuts the N needed for a given resolution 2-4x.
-                    ok = all(bool(x) for x in v)
-                    graded = sum(1 for x in v if bool(x)) / len(v)
+                    # Sentinels MUST go through _lcb_test_passed — a truthiness test scores
+                    # timeouts (-1) and crashes (-2) as passes and inflates both numbers.
+                    ok = all(_lcb_test_passed(x) for x in v)
+                    graded = sum(1 for x in v if _lcb_test_passed(x)) / len(v)
                 else:
-                    ok = bool(v)
+                    ok = _lcb_test_passed(v)
             if ok is None:                       # unfamiliar shape: fall back to the problem mean
-                ok = bool(frac) if frac is not None else False
+                # `frac` is a per-problem pass fraction, so a partial (0.5 at k>1) must not count
+                # as a pass for a single draw — bool(0.5) would.
+                ok = frac is not None and frac >= 1.0
             item = {"id": qid, "sample": smp, "ok": ok, "score": float(ok)}
             if graded is not None:
                 item["score_graded"] = graded

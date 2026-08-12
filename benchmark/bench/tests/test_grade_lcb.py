@@ -191,3 +191,89 @@ def test_by_difficulty_survives_string_keyed_detail(monkeypatch):
     bd = G.grade_lcb("livecodebench", "m")["by_difficulty"]
     assert "UNKNOWN" not in bd, f"string-keyed detail was not handled: {bd}"
     assert bd["EASY"]["pass@1"] == 1.0 and bd["HARD"]["pass@1"] == 0.0
+
+
+def _install_fake_lcb_with_results(monkeypatch, problems, metrics, results):
+    """Like _install_fake_lcb but supplies the RESULTS array too.
+
+    The other fakes pass `results={}`, which sends grade_lcb down its `frac` fallback and so never
+    exercises the per-test-verdict path — the path that produced a wrong `acc` in production.
+    """
+    base = types.ModuleType("lcb_runner")
+    bench_pkg = types.ModuleType("lcb_runner.benchmarks")
+    cg = types.ModuleType("lcb_runner.benchmarks.code_generation")
+    cg.load_code_generation_dataset = lambda release_version=None: problems
+    ev = types.ModuleType("lcb_runner.evaluation")
+    ev.codegen_metrics = lambda samples, gens, **kw: [metrics, results, []]
+    for name, mod in [("lcb_runner", base), ("lcb_runner.benchmarks", bench_pkg),
+                      ("lcb_runner.benchmarks.code_generation", cg), ("lcb_runner.evaluation", ev)]:
+        monkeypatch.setitem(sys.modules, name, mod)
+
+
+def _three_problem_setup(monkeypatch, results):
+    """3 problems: q0 all-pass, q1 wrong answer, q2 timeout+error. Official pass@1 = 1/3."""
+    rows = [{"id": f"q{i}", "sample": 0, "content": "```python\nx=1\n```"} for i in range(3)]
+    monkeypatch.setattr(G, "_rows", lambda m, n: rows)
+    probs = []
+    for i, diff in enumerate(["EASY", "MEDIUM", "HARD"]):
+        p = _FakeProblem(f"q{i}", '{"inputs":[],"outputs":[]}')
+        p.difficulty = diff
+        probs.append(p)
+    metrics = {"pass@1": 1 / 3 * 100, "detail": {"pass@1": {0: 1.0, 1: 0.0, 2: 0.0}}}
+    _install_fake_lcb_with_results(monkeypatch, probs, metrics, results)
+    # Through grade(), NOT grade_lcb(): `_finalize` recomputes `acc` from `items`, and that
+    # recomputation is where the sentinel bug actually bites. Calling grade_lcb directly returns
+    # its own (correct) acc and cannot observe the fault.
+    return G.grade("livecodebench", "m")
+
+
+def test_lcb_timeout_and_error_sentinels_are_failures_not_passes(monkeypatch):
+    """lcb_runner encodes a per-test verdict as 1/True pass, 0/False wrong answer, **-1 timeout**
+    and **-2 runtime/compile error** (`evaluation/testing_util.py` appends -2;
+    `compute_code_generation_metrics.py` uses `curr_res = [-2]` for a whole-problem error).
+
+    `bool(-1)` and `bool(-2)` are TRUE in Python, so scoring a verdict by truthiness counts every
+    timeout and every crash as a PASS. Measured consequence on M5 (2026-08-11): the re-grade
+    published LCB `acc` 0.9333 / 0.9333 / 0.8667 for the three candidates while the official
+    evaluator's `pass@1` was 0.80 for all three — i.e. a phantom 6.7pp "differentiator" that the
+    campaign was sizing future arms against. The by_difficulty breakdown was correct all along.
+    """
+    out = _three_problem_setup(monkeypatch, {
+        0: [[1, 1, 1]],       # all tests pass
+        1: [[1, 0, 1]],       # wrong answer on test 2
+        2: [[1, -1, -2]],     # timeout then error -> MUST be a failure
+    })
+    # _finalize rounds to 4dp, so compare at that precision, not float-exact.
+    assert out["acc"] == round(1 / 3, 4), (
+        f"acc={out['acc']} — a -1/-2 sentinel was scored as a pass; expected {round(1/3,4)}")
+
+
+def test_lcb_acc_equals_the_official_pass_at_1(monkeypatch):
+    """INVARIANT: `acc` is the publishable official number, so it must equal the evaluator's
+    `pass@1`. `_finalize` recomputes `acc` from `items`, which is only sound if item `ok` is
+    derived exactly as the evaluator derives its verdict. Production violated this silently."""
+    out = _three_problem_setup(monkeypatch, {
+        0: [[1, 1, 1]], 1: [[1, 0, 1]], 2: [[1, -1, -2]],
+    })
+    official = out["pass@1"] / 100.0
+    assert out["acc"] == round(official, 4), (
+        f"acc={out['acc']} != official pass@1={round(official,4)}; the two must not diverge")
+
+
+def test_lcb_whole_problem_error_scores_zero(monkeypatch):
+    """A compile/import failure gives `[-2]` for the whole problem. Truthiness made that a pass."""
+    out = _three_problem_setup(monkeypatch, {0: [[1, 1, 1]], 1: [[0]], 2: [[-2]]})
+    assert out["acc"] == round(1 / 3, 4), (
+        f"acc={out['acc']}; a [-2] problem was scored as a pass")
+
+
+def test_lcb_graded_fraction_excludes_sentinels(monkeypatch):
+    """`acc_graded` is the per-test pass FRACTION; counting -1/-2 as passing inflates it too."""
+    out = _three_problem_setup(monkeypatch, {
+        0: [[1, 1, 1]],       # 3/3
+        1: [[1, 0, 1]],       # 2/3
+        2: [[1, -1, -2]],     # 1/3 -- NOT 3/3
+    })
+    expected = round((1.0 + 2 / 3 + 1 / 3) / 3, 4)
+    assert out["acc_graded"] == expected, (
+        f"acc_graded={out['acc_graded']} != {expected}; sentinels counted as passing tests")
