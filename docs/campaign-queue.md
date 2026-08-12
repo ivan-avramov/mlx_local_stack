@@ -6,8 +6,16 @@ next item (never "TBD"). Companion docs: results + rankings in `docs/campaign-re
 (the AGGREGATE record); process/recipes (sampling profiles, temperature-ladder, budget
 mechanics, convergence rule, full-model-name rule) in `AGENTS.md`. **Keep this file current.**
 
+**⚠️ BOX TOPOLOGY CHANGED 2026-08-11 — the M2 Max 64GB laptop is GONE.** Local is now an **M4 Pro,
+48GB**, which after the ~22GB AI session has ~26GB headroom and therefore hosts **NO campaign
+models** (stricter than the old M2 Max, which was merely unreliable >192K). **ALL model runs now go
+to M5 — there is ONE worker box, so the old parallel box-split is dead and remaining work
+SERIALIZES.** The driver does harness dev, grading, orchestration and docs only. Every `M2`
+reference below is HISTORICAL: those results are not re-measurable (apples-to-apples bars cross-box
+baselines and the box no longer exists), so anything needing a LIVE baseline must be re-run on M5.
+
 **Box-split note:** each box has its OWN `benchmark/results/` — campaign state is scattered
-across M2 + M5; `campaign-results.md` is the single aggregated truth. Two KV configs are
+across the retired M2 Max + M5; `campaign-results.md` is the single aggregated truth. Two KV configs are
 tracked per model: production-KV (4-bit, daily-driver) and the `-kv16` (bf16-KV) ceiling variant.
 
 **Durability:** SURVIVES a reboot — this file + per-box `benchmark/results/*.jsonl` +
@@ -36,7 +44,7 @@ enough).** MDE (paired binary, α.05/power.80, p_d≈0.2): N=15 → **±32pp**, 
 So the live deltas (LCB 6.7pp, aider 13pp) need N≈100–470 matched items. **"Inconclusive" is a valid,
 likely answer** — if quality ties within resolution, Ornith's 4× decode + 5× memory margins decide.
 
-Phases: **0** bootstrap (`.venv-bench`/`.venv-lcbgrade`/`config.sh` are all MISSING on M2; snapshot M5
+Phases: **0** bootstrap (`.venv-bench`/`.venv-lcbgrade`/`config.sh` were all MISSING on the driver box; snapshot M5
 results before touching provenance) + results-root seam + **`model_params.py` drift fix** (QWEN is
 t0.7/min_p0.03/presence0.3 — none of it deployed, and the distill isn't even registered → every new
 axis would mis-measure) + **APC policy** (`runserver.sh:74` sets `APC_ENABLED=1`, the AGENTS.md
@@ -83,15 +91,22 @@ convergence vector, per-sample evalplus/LCB grading, `compare` with TOST/Holm,
 `check_edit_format`, and the `run_canary` profile fix (queue item at "HARNESS ISSUE
 (preflight-profile mismatch)" is now CLOSED).
 
-**The M1 gate cannot proceed without operator input — three hard blockers:**
-1. **No aider harness on this box.** `~/aider` and `~/polyglot-benchmark` are absent,
-   `AIDER_BENCHMARK_DIR` unset, no `tmp.benchmarks` (verified by filesystem search). The Homebrew
-   install ships the pip package only; `benchmark/benchmark.py` lives in the REPO. Both repos must
-   be cloned before any agentic run.
-2. **M5 is unreachable.** `config.sh` was restored with `STACK_REPO` filled but the `REMOTE_HOST` /
-   `REMOTE_USER` / `REMOTE_REPO` fields still hold the example placeholders.
+**The M1 gate cannot proceed without operator input — hard blockers (rechecked 2026-08-11):**
+1. **No aider harness on EITHER box.** `~/aider` and `~/polyglot-benchmark` are absent on the M4 Pro
+   driver AND on M5 (filesystem-verified 2026-08-11), `AIDER_BENCHMARK_DIR` unset, no `tmp.benchmarks`.
+   The Homebrew install ships the pip package only; `benchmark/benchmark.py` lives in the REPO. Both
+   repos must be cloned **on M5** (that is where every model run now happens) before any agentic run.
+2. ~~**M5 is unreachable.**~~ **RESOLVED 2026-08-11:** passwordless ssh is live (ECDSA key, mDNS-alias
+   `Host` block, ControlMaster multiplexing) and the driver's `config.sh` now carries real
+   `REMOTE_HOST`/`REMOTE_USER`/`REMOTE_REPO` values. M5 is synced to `origin/main` with submodules
+   forced to their pinned SHAs, and has repo + all three venvs + docker (`linux/amd64` emulation OK).
 3. **M1 is 18h (Ornith, M5) + ~41h (distill) + ~32h (gemma) of model time**, and gemma additionally
-   cannot share a box with an agent session (see campaign-results HARNESS V2 §4).
+   cannot share a box with an agent session (see campaign-results HARNESS V2 §4). **Now WORSE than
+   when written:** with the M2 Max gone these cannot run in parallel across two boxes — all ~91h
+   serializes onto M5.
+4. **NEW — the harness-v2 code is NOT on M5.** Phases 0–2 (`a11cfe9`…`1b02681`, 6 commits) are
+   committed locally but UNPUSHED, so `origin/main` (and therefore M5) is still at `36f6782`. M5
+   cannot run the new harness until those are pushed and it is re-synced.
 
 **Per the anti-graveyard rule, Phases 3-6 are NOT started** — building more axes before M1 produces
 a committed row is exactly the pattern that left four axes built-and-never-run.
@@ -117,8 +132,9 @@ rows we can't rank on (and, via the evalplus/LCB per-sample bug, rows that would
 
 ## PHASE 2 — OPTIMIZATION (perf + KV memory) — LIVE 2026-07-08
 Spec: `docs/superpowers/specs/2026-07-07-phase2-optimization-program-design.md`. Winners:
-`Ornith-1.0-35B-mlx-uniform-4bit` + `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. Box split: M5 =
-speed/mem (single-box, apples-to-apples) + LCB quality; M2 = parallel he+/mbpp+ quality + APC.
+`Ornith-1.0-35B-mlx-uniform-4bit` + `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. Box split (HISTORICAL —
+phase complete, and the M2 Max is retired): M5 = speed/mem (single-box, apples-to-apples) + LCB
+quality; M2 = parallel he+/mbpp+ quality + APC.
 - **Baselines (M5, mx-peak = server_peak_gb):** Ornith fp16-KV = **32.6 GB / 37.9 tps decode /
   794 tps prefill @256K**, ret 1.0 (⚠ 128K ret 0.2 — RE-PROBE queued). distill 4bit-KV =
   **43.3 GB / 9.4 tps / ~124 tps prefill @256K** (2.7 GB headroom).
@@ -176,7 +192,7 @@ Both "better quant" avenues investigated + closed:
 
 ## DISTILL — the re-opened candidate (temp-ladder RUNNING, 2026-07-06)
 `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (dense qwen3_5, Opus-reasoning distill, self-OptiQ 3.97bpw at `~/Documents/ws/models/.../optiq_mixed`) was DNF'd at official t0.6 ONLY — **never got the temp-ladder**. Now properly tested:
-- **[RUNNING M2] LCB t0.4** (thinking_budget 81920): item 1 **CONVERGED** (24,341 tok) — DNF was a temp artifact. item 2 `abc358_e` errored (sleep) → needs regen. Watcher-driven. Log `/tmp` … `logs/distill_lcb_t04.log`.
+- **[DONE — ran on the now-retired M2 Max] LCB t0.4** (thinking_budget 81920): item 1 **CONVERGED** (24,341 tok) — DNF was a temp artifact. item 2 `abc358_e` errored (sleep) → needs regen. Final result recorded below (9/15 conv). Log `/tmp` … `logs/distill_lcb_t04.log` (on the retired box — gone).
 - **[RUNNING M5] LCB t0.3** (parallel rung): `logs/distill_lcb_t03.log`. (Cross-box OK — convergence/pass@1 are box-independent; only speed/mem need same-box.)
 - **[DONE] BFCL n=200 = 0.94** (s96/m96/p94/pm90) — tied with the gemma-MoE tool-calling leader. Recorded (flagged N=200).
 - Distill is genuinely strong (Opus reasoning + 0.94 tool-calling + converges at low temp), BUT dense 27B → slower decode than Ornith's MoE; for 256K AGENTIC, Ornith's speed likely keeps it the pick. Finish the ladder → decide op-temp → then its other axes (light, agentic) if worth it.
@@ -193,7 +209,7 @@ split across both boxes. Both caffeinated (`caffeinate -i -s -w <pid>`) so idle-
   `logs/distill_capacity.log`, watcher). KEY question: does the distill (qwen3_5 dense + linear-attn, kv_bits4)
   clear 256K ≤46GB like Ornith? 160K already = 28.6GB/ret1.0 → very likely yes. On finish → record + it becomes
   a full 256K competitor (Ornith still pick on MoE decode speed). LCB pass@1 still blocked (datasets bug).
-- **M2:** distill **LCB t0.4 DONE** = 9/15 (60%) conv (+1 err abc358_e) → confirms op-temp 0.3 (vs t0.3 15/15).
+- **M2 (RETIRED BOX — historical record; any `[RUNNING]` state here is dead, and its local `benchmark/results/` and `/tmp` logs are gone with the machine):** distill **LCB t0.4 DONE** = 9/15 (60%) conv (+1 err abc358_e) → confirms op-temp 0.3 (vs t0.3 15/15).
   abc358_e regen SKIPPED (t0.4 stays INVALID regardless; op-temp settled). **Now RUNNING distill AIDER** n=5 @
   t0.3 diff (agentic axis — the one M5 isn't covering): `bash benchmark/run_aider_docker.sh
   Qwen3.6-27B-Opus-Distill-OptiQ-4bit 5 diff distill-diff-t03`, log `/tmp/aider_distill_t03.log`, container
@@ -205,10 +221,13 @@ split across both boxes. Both caffeinated (`caffeinate -i -s -w <pid>`) so idle-
     (`distill-diff-t03-n34`, log `/tmp/aider_distill_n34.log`, container survives, watcher) to confirm vs regress —
     direct parity with Ornith's n=34. On finish → grep pass_rate_ → record. If it holds ~70%+, distill = top
     agentic ALTERNATIVE (then worth a 256K-capacity probe); Ornith still pick (faster MoE + proven 256K).
-- **RECOVERY if session drops (nohup survives, watchers + caffeinate do NOT):** re-check `pgrep -f "run.py generate"`
-  + `logs/m5_distill_chars.log` on M5, `logs/distill_lcb_t04.log` on M2; relaunch any dead driver (M5 driver =
+- **RECOVERY if session drops (nohup survives, watchers + caffeinate do NOT)** — *M5-only as of 2026-08-11; the
+  M2 half of this procedure is void, that box and its `logs/distill_lcb_t04.log` are gone:* re-check
+  `pgrep -f "run.py generate"`
+  + `logs/m5_distill_chars.log` on M5; relaunch any dead driver (M5 driver =
   `/tmp/m5_distill_chars.sh` but edit the `kill -0 5704` guard if 5704 is gone → just run its 3 generate/BFCL cmds);
-  re-apply caffeinate; re-launch background pollers. Grades are re-runnable (jsonls persist). M5 IP churns — subnet-scan.
+  re-apply caffeinate; re-launch background pollers. Grades are re-runnable (jsonls persist). (M5 IP churn is
+  no longer an issue: reach it as `ssh $REMOTE_HOST` via the mDNS-based `Host` block — no subnet scanning.)
 
 ## Status matrix (✓ done · ~ running · ◻ pending · ⚠ stale/blocked · – n/a)
 
@@ -296,8 +315,14 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
    - EVAL (if built): capacity @256K → retrieval → LCB → BFCL native-FC → SWE-Verified-40.
    - MEMORY @256K: uniform-4bit + 4-bit KV ≈ 27GB; uniform-6bit + 4-bit KV ≈ 36–40GB — both fit ≤46GB.
      (OptiQ NOT reachable via `mlx_vlm.convert` — q_modes are affine/mxfp4/nvfp4/mxfp8; OptiQ = separate tool.)
+7. **[NEXT — RE-HOMED from M2 2026-08-11, ATTENDED first-run]** Aider polyglot SMOKE (`--limit` small) on the
+   dense front-runner (`gemma-4-31b-it-6bit` / `gemma-4-31b-it-UD-MLX-4bit`), then full Aider →
+   SWE-Verified-40. CORE agentic axes, never run — the real "256K agentic coding" test. **BLOCKED on M1-gate
+   blocker #1:** `~/aider` + `~/polyglot-benchmark` must be cloned ON M5 first (absent there as of 2026-08-11).
+   The old "box-idle monitor pings M2-IDLE → launch" trigger is void; M5 idleness is the trigger now.
+8. **[QUEUED — RE-HOMED from M2 2026-08-11]** BFCL native-FC on the lead gemma candidates.
 
-### M2 (local laptop, ≤192K only — co-resident ~22GB)
+### M2 Max — RETIRED 2026-08-11 (historical record only; pending items re-homed to M5 above)
 1. **[DONE]** dense-gemma LCB @ production t0.7: gemma-4-31b-it-6bit **86.7%** (conv 12/15) +
    gemma-4-31b-it-UD-MLX-4bit **86.7%** (conv 14/15) — both BEAT the MoE (80%, H60→H80) with
    cleaner convergence. Graded + recorded.
@@ -305,10 +330,9 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
    conv / VALID** (median 2000); gemma-4-31b-it-UD-MLX-4bit **83.3% raw but 67% conv / INVALID**
    (over-reasons, median 8165, 10 loops — 4-bit tail-fragility). With gemma-4-31B-it-qat-6bit
    (83.3% / 100% conv / VALID, M5) → all 3 dense gemmas done on math500. Recorded in campaign-results.md.
-3. **[NEXT — on M2-idle, ATTENDED first-run]** Aider polyglot SMOKE (`--limit` small) on the dense
-   front-runner (gemma-4-31b-it-6bit / UD-4bit), then full Aider → SWE-Verified-40. CORE agentic
-   axes, never run — the real "256K agentic coding" test. Box-idle monitor pings M2-IDLE → launch.
-4. **[QUEUED]** BFCL native-FC on the lead gemma candidates.
+3. **[RE-HOMED → M5 worklist item 7 (2026-08-11)]** Aider polyglot SMOKE, then full Aider →
+   SWE-Verified-40. Was never started here; the box is gone.
+4. **[RE-HOMED → M5 worklist item 8 (2026-08-11)]** BFCL native-FC on the lead gemma candidates.
 
 ## Backlog (unassigned — priority order)
 1. **Finish LCB across ALL candidates** (the differentiator) — partly in the worklists above.
@@ -356,11 +380,12 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
 - **NO pruning on partial results** — cuts decided only across the full suite.
 - Emerging signal: DENSE gemma-4 converges where the MoE loops (gemma-4-31B-it-qat-6bit leads);
   the MoE's edge is decode speed. Pending the LCB-differentiator completion + agentic axes.
-- Gates: ≤46GB MLX-peak @256K (≤56GB browser-closed, metric = `mx.get_peak_memory`); M2 ≤192K;
+- Gates: ≤46GB MLX-peak @256K (≤56GB browser-closed, metric = `mx.get_peak_memory`); the M4 Pro driver
+  hosts NO models at all (so every capacity/quality/speed run is an M5 run — there is no local rung);
   ONE resident model per box; judge over execution-PASSING outputs only; two eff-ctx curves separate.
 
 ## Reboot recovery
 1. Restart the router (per-box recipe in AGENTS.md): `MLX_SERVE_CONFIG=main_models.yaml nohup uv run mlx-serve start …` → :8000.
 2. For each `[RUNNING]` item, relaunch its driver (`lightsweep.sh`/`tempsweep.sh`, same args) — it resumes from disk via done_ids / `--clean-stale`.
-3. The deferred wrappers + box-idle/per-model monitors are unreliable across M5 IP changes — drive M5 MANUALLY against this worklist; find M5 by ssh-scanning the subnet (`nc -G 3`, not `-G 1`).
+3. Drive M5 MANUALLY against this worklist. Reaching it is no longer the problem it was: `ssh $REMOTE_HOST` resolves via an mDNS-based `Host` block (ECDSA key per the box's FIPS ssh policy, ControlMaster multiplexed), so IP churn needs no subnet scan. If the name ever fails to resolve, find it with `dns-sd -B _ssh._tcp local` rather than sweeping the subnet. Note M5 is Jamf-managed: confirm Remote Login is still enabled (`systemsetup -getremotelogin`) if it goes unreachable, since a compliance policy can switch it off.
 4. Sanity-check with `benchmark/preflight.sh` before trusting a resumed run.

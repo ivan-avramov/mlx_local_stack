@@ -4,6 +4,13 @@ Tracks results and rankings for every candidate (model, config) in the local-LLM
 
 **Current phase: light-tier broad sweep.**
 
+**⚠️ BOX TOPOLOGY CHANGED 2026-08-11 — the M2 Max 64GB laptop is GONE**, replaced by an **M4 Pro,
+48GB**. Every `M2` row and note below is HISTORICAL and NOT re-measurable: the apples-to-apples rule
+bars cross-box baselines and that box no longer exists, so anything still needing a LIVE baseline
+must be re-run on M5. The M4 Pro driver hosts **NO campaign models at all** (~26GB headroom after the
+AI session) and is a different chip class, so it is never a valid speed-comparison box — ALL model
+runs are M5 runs. See `AGENTS.md` → Operating rules.
+
 ## HARNESS V2 — measurement findings (2026-08-11)
 
 Plan: `docs/superpowers/plans/2026-08-11-harness-v2-reliability-and-agentic-axes.md`. These are
@@ -47,7 +54,7 @@ launched per the recipe had prefix caching OFF while the daily driver had it ON 
 refuses a speed/memory comparison across differing APC state. APC itself is **not** benchmarked
 (operator decision: it is a serving-layer cache, not a model capability).
 
-### 4. Edit-format probe — first real rows, and an M2 capacity constraint
+### 4. Edit-format probe — first real row (measured on the 48GB M4 Pro DRIVER box)
 `preflight.check_edit_format` (5 min/model, replaces the 2-hour gemma stuck-run discovery):
 
 | model | diff | whole | recommended | note |
@@ -55,18 +62,22 @@ refuses a speed/memory comparison across differing APC state. APC itself is **no
 | `Ornith-1.0-35B-mlx-uniform-4bit` (19GB) | ✅ | ✅ | **diff** | emits a clean SEARCH/REPLACE block that applies; confirms its shipped `edit_format: diff` on evidence, and confirms `whole` is a known-good fallback |
 | `gemma-4-31B-it-qat-6bit` (29GB) | — | — | — | **NOT MEASURED** — `probe_error`; see below. NOT a model verdict |
 
-**M2 cannot host the 29GB dense gemma while an agent session is resident.** Loading it drove
-available RAM to 2.7GB and the whole local stack came down (orderly `server.shutdown` in
-`logs/main_model.log`, then the task model and the OWUI containers) — the memory backstop
-AGENTS.md warns about, now with a concrete threshold. Consequences for D1 (gemma stays a
-candidate; 256K is a goal, not a mandate):
-- gemma's arms — including this 5-minute probe — must run on **M5**, or on M2 with the agent
-  session closed. They cannot be interleaved with an assisted session.
-- This is a sharper version of the reviewers' cost objection: not just "9× slower per case" but
-  "cannot share the box at all". It does not argue for dropping gemma; it fixes WHERE its arms run.
-- The qwen-arch pair (19GB / ~20GB) IS co-resident-safe for short probes: Ornith loaded in 10s and
-  probed cleanly. Long generations are a different matter — a 16K-token math item at 81920 budget
-  pushed M2 to 94% pressure.
+**BOX ATTRIBUTION, corrected 2026-08-11:** both probes ran on the **48GB M4 Pro driver box**, not on
+the retired M2 Max — `hw.memsize` read 51.5GB (= 48GiB) at the time, so the swap had already
+happened and I should have caught it. What survives the correction:
+- **The Ornith row STANDS.** Edit-format adherence is a capability property and is box-independent.
+  Likewise the deployed-profile plumbing validated in §2 (rows carrying `temperature: 0.4`) and the
+  seed determinism in §1 — all config/plumbing facts, not hardware facts.
+- **Nothing about speed or memory from that box is usable at all** — different chip class, far less
+  bandwidth. It is never a valid speed-comparison box, independently of RAM.
+- **The gemma `probe_error` was the driver box dying, not a model result.** Loading the 29GB model
+  drove available RAM to 2.7GB and took the whole local stack down (orderly `server.shutdown`, then
+  the task model and the OWUI containers). Under the topology in force from 2026-08-11 that is just
+  the documented policy — the driver box hosts NO campaign models — so it is **not** new evidence
+  about gemma and does **not** bear on D1. It is recorded only as a caution: a 29GB load on the 48GB
+  driver takes the stack with it. gemma's arms run on M5, like every model run now does.
+- Ornith (19GB) did load and probe cleanly on the driver box in 10s, but per the new rule that was
+  out of policy too; the probe will be re-run on M5 alongside gemma's so both arms share a box.
 
 ### Also fixed (would have produced wrong numbers)
 - `grade_evalplus` keyed solutions by `task_id`, so with k samples the **last one silently won**:
