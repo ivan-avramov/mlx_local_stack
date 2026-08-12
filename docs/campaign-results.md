@@ -117,7 +117,135 @@ been read as proof that our POST-processing diverged from the evaluator — inst
 and doubting the breakdown, which is the number the evaluator hands over most directly.
 </details>
 
-## JUDGE PANEL — first run ever (2026-08-12): no code-quality difference detected
+## ▶M1 GATE — INTERIM (2026-08-12, run `m1f`, 3 of 5 languages): the distill wins, p=0.0042
+
+⚠️ **INTERIM — rust and java are still generating.** Ornith's arm is COMPLETE (110/110); the distill
+has python + javascript complete plus part of go. Recorded now because the result already crosses
+significance and it REVERSES the campaign's standing pick. Config: run tag `m1f`, box M5, APC OFF,
+`deployed` sampling, **`max_kv_cache_size` 65536** (right-sized for this axis — see the handover;
+memory/speed numbers from this run are NOT comparable to any 256K row), aider `diff` format both
+arms, 2 attempts, items pinned BY NAME so both arms see byte-identical exercises.
+
+**Paired on 48 byte-identical exercises:**
+
+| metric | Ornith-1.0-35B-mlx-uniform-4bit | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | delta | McNemar exact |
+|---|---|---|---|---|
+| **final (≤2 attempts)** | 26/48 = **54.2%** | 38/48 = **79.2%** | **+25.0pp** | **p = 0.0042** ✅ |
+| attempt-1 only | 12/48 = 25.0% | 19/48 = 39.6% | +14.6pp | p = 0.092 (n.s.) |
+
+Exclusive solves on `final`: **only-Ornith 2** (`python/forth`, `javascript/list-ops`) vs
+**only-distill 14**. The `final` result survives Holm across the two tests (0.0042×2 = 0.0084).
+This is the campaign's FIRST matched agentic measurement — the historical "13.2pp" came from two
+unrelated unseeded random subsets with different language mixes and was never a measured gap.
+
+**The three-number decomposition (report all three; `final` alone is not a model property):**
+
+```
+final = attempt-1 + (1 − attempt-1) × repair_rate
+```
+
+| | attempt-1 | repair rate | → final | languages |
+|---|---|---|---|---|
+| Ornith-1.0-35B-mlx-uniform-4bit | 24.5% | **33.7%** (28/83) | 50.0% | all 5 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | 39.6% | **65.5%** (19/29) | 79.2% | 3 |
+
+The identity is exact (Ornith 0.245+0.755×0.337=0.499; distill 0.396+0.604×0.655=0.792). **Repair
+rate — does it fix its own failure when shown the failing test — is the sharpest discriminator we
+own, and the distill is ~2× better on it.** Both models draw about half their `final` from repair, so
+the scaffold contributes about equally to both; the distill simply exploits it far better.
+
+**WHAT `final` MEASURES — a (model × scaffold × config) composite, not a model property.** Verified:
+the repair turn receives the pytest traceback, which INCLUDES the failing test's source lines and
+expected values (e.g. `expected = [True]` / `AssertionError: Lists differ: [] != [True]`). So `final`
+means "converges when shown the failing assertions", a weaker claim than "writes correct code from a
+spec". The paired design still licenses the COMPARISON, because the scaffold is held constant across
+arms — and the constant is not silently handicapping either model: **well-formed 100% / 0 malformed /
+0 context-exhaustion for BOTH across 158 cases**, so the `diff` edit format fits both. But the result
+does **NOT transfer across scaffolds**: this is an *aider* result, and the campaign still has ZERO
+evaluation through `opencode`, the declared primary driver.
+
+**Per-language (Ornith complete) — a language gradient, not a complexity one:**
+
+| lang | Ornith a1 / final / repair | distill a1 / final / repair |
+|---|---|---|
+| python | 31.8 / 72.7 / 60.0% | 40.9 / 86.4 / 76.9% |
+| javascript | 18.2 / 36.4 / 22.2% | 31.8 / 72.7 / 60.0% |
+| go | 45.5 / 63.6 / 33.3% | (partial) |
+| rust | 18.2 / 31.8 / 16.7% | pending |
+| java | 9.1 / 45.5 / 40.0% | pending |
+
+Ornith collapses outside python/go. Note polyglot has NO difficulty stratification (unlike LCB's
+E/M/H), so this is a language axis we stumbled into; a real complexity gradient is an open gap.
+
+**Runaway tax: ZERO.** 284 turns (213 Ornith / 71 distill), 0 budget-hits, 0 `max_tokens` hits, max
+completion 62,083 / 59,974 against an 81,920 budget, wasted wall-clock **0.0%**, agentic conv%
+**100% for both**. Speed: Ornith ~2.2 min/case vs distill ~6.3 (≈2.9×).
+
+## JUDGE PANEL v2 — 3 roles x 2 orders, reference-guided (2026-08-12): NOT RELIABLE ENOUGH TO RANK
+
+Second panel, rebuilt on the LLM-as-judge literature after v1 (below) came back only 55%
+self-consistent. **Result: still no quality difference, and the panel's own inter-rater reliability
+is too low to license a ranking even if there had been one.**
+
+**Design.** 24 BOTH-SOLVE paired exercises (15 python, 7 javascript, 2 go). 3 judges x 2 orders = 6
+passes/item. Judges: **Opus** (holistic "would I merge this"), **Sonnet** (maintainability role:
+naming / readability / cognitive_load / ease_of_safe_change), **Sonnet** (architecture role:
+decomposition / cohesion_coupling / error_handling_structure / idiom_api_fit). Analytic rubrics,
+1-5 with anchors, one role per prompt. **Reference-guided:** every exercise ships `.meta/example.py`
+(83/83), supplied as a calibration anchor with explicit instruction not to reward mere similarity.
+Blind A/B from a blake2b of the exercise name (11/24 A=Ornith), key withheld from all judges.
+
+**Order-consistency, per judge — the role decomposition HURT:**
+
+| judge | model | order-consistent | hard reversals |
+|---|---|---|---|
+| holistic | Opus | **17/24 (71%)** | 4 |
+| architecture | Sonnet | 15/24 (62%) | 4 |
+| maintainability | Sonnet | **10/24 (42%)** | 8 |
+
+Reference-guided holistic Opus judging is the best configuration measured (71%, up from v1's 55%),
+but the narrow role prompts are *worse* — maintainability at 42% is indistinguishable from a coin.
+Plausible mechanism: forcing a narrow lens onto near-identical 20-60 line solutions manufactures
+distinctions that are not there.
+
+**Panel verdict (majority over each judge's order-consistent calls):** distill 9, Ornith 7,
+no-majority 4, tie 2 — sign test on 16 decided items **p = 0.804**.
+
+**INTER-RATER RELIABILITY: Krippendorff alpha (ordinal, 15 units, 3 raters) = 0.517**, below the
+~0.667 usually required for even tentative conclusions. Pairwise: holistic-vs-maintainability 75%
+(n=8), holistic-vs-architecture 60% (n=10), maintainability-vs-architecture 7/7. **The three roles
+do not agree enough to pool, so the panel verdict above should not be used to rank anything.**
+
+**Per-dimension means (all 6 passes) — every delta is noise on a 1-5 scale:**
+
+| dimension | Ornith | distill | delta |
+|---|---|---|---|
+| readability | 3.58 | 3.69 | +0.10 |
+| naming | 3.52 | 3.50 | −0.02 |
+| cognitive_load | 3.35 | 3.54 | +0.19 |
+| ease_of_safe_change | 3.42 | 3.50 | +0.08 |
+| decomposition | 3.27 | 3.35 | +0.08 |
+| cohesion_coupling | 3.21 | 3.42 | +0.21 |
+| error_handling_structure | 3.10 | 3.00 | −0.10 |
+| idiom_api_fit | 3.27 | 3.38 | +0.10 |
+| overall_quality | 3.35 | 3.52 | +0.17 |
+
+**Verbosity bias: not driving anything.** Mean solution length 1149 vs 1157 chars (no asymmetry to
+exploit); the panel picked the longer solution in 10/16 decided items (62%, binomial p≈0.45).
+
+**Interpretation.** Two readings fit equally well and the data cannot separate them: either the
+instrument is too noisy at this scale, or there is genuinely nothing to discriminate between two
+sets of test-passing 20-60 line exercises. Either way **the quality axis does not differentiate
+these two models**, and the decision therefore rests on the capability axis, where the M1 gate above
+is unambiguous (+25.0pp final, p=0.0042). A useful pipeline check survives both readings: all six
+judges independently called `javascript/binary` a high-confidence tie because the two models emitted
+token-for-token identical code.
+
+**If this is run again:** reference-guided *holistic* Opus, drop the narrow role prompts, and spend
+the budget on more ITEMS instead of more roles. Still single-family (Opus+Sonnet are both Claude),
+so AGENTS.md's mixed-family requirement remains unmet. Artifacts: `benchmark/results/_judge2/`.
+
+## JUDGE PANEL v1 — first run ever (2026-08-12): no code-quality difference detected
 
 The blind quality panel was built long ago and had **never been run**. Run now on m1f's
 both-solve set, because execution-gated `acc` measures only "the provided tests pass" and says
