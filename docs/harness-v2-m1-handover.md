@@ -11,7 +11,7 @@ All pushed to `origin/main`. **533 tests green** (`.venv-bench/bin/python -m pyt
 
 ---
 
-## 🔴 BLOCKER — M5 lost filesystem access mid-run; two things need doing ON the box
+## ✅ RESOLVED — M5 filesystem access (kept for the root cause; no action outstanding)
 
 Everything under `~/Documents` on M5 returns `Operation not permitted` to the ssh session (`~` and
 `/tmp` are fine). Disk is HEALTHY — SMART Verified, 467GB free, no I/O errors, and the only ACL is
@@ -28,6 +28,10 @@ And the "flapping" was not the box degrading: `who` showed a network login `ttys
 things worked, and it was GONE when access broke — a password-authenticated session had been
 supplying the context that the key-based automation was riding on.
 
+Fix APPLIED: option 2 below (Full Disk Access for `sshd-keygen-wrapper`), so `REMOTE_REPO` is
+unchanged at `~/Documents/ws/mlx_local_stack`. Option 1 remains the more durable choice if this
+recurs after an OS update.
+
 Fixes, most robust first:
 1. **Move the repo out of `~/Documents`** (e.g. `~/ws/mlx_local_stack`). TCC protects only
    Documents/Desktop/Downloads, so no privacy grant is needed at all and the fix survives OS updates
@@ -40,7 +44,11 @@ Fixes, most robust first:
 3. Diagnostic only, not a fix: keeping a password-authenticated ssh session open restores access —
    which is what was accidentally happening for the first few hours of the session.
 
-### ⚠️ Do this BEFORE starting the stack on M5
+### ✅ DONE — registry reverted and scratch cleaned (2026-08-11 22:5x)
+Kept as the recipe if `cache_limit_gb` ever reappears. Verified: `grep -c 'cache_limit_gb: 8'` = 0,
+no stray routers/workers, `/tmp` clean, tree clean apart from a `.DS_Store`.
+
+<details><summary>original instructions</summary>
 `main_models.yaml` on M5 carries an **uncommitted `cache_limit_gb: 8`** on both winner entries, added
 by me late in the session. **With it, Ornith FAILS TO LOAD.** Revert either way:
 
@@ -59,6 +67,7 @@ pkill -f 'mlx-serve start'; pkill -f mlx_vlm.server   # a stray router is up wit
 ```
 The runner scripts are now committed at `benchmark/m1/` (parameterised, no PII), so deleting the
 `/tmp` copies loses nothing.
+</details>
 
 ---
 
