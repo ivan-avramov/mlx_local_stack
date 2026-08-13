@@ -479,9 +479,11 @@ def grade_ifeval(name, model):
                         f"install benchmark/requirements.txt where grade runs"}
     meta_by_id = {it["id"]: it for it in benchmarks.load("ifeval", None, 0)}
     strict_outs, loose_outs, graded = [], [], 0
+    unmatched, skipped = 0, 0
     for r in rows:
         it = meta_by_id.get(r.get("id"))
         if it is None:
+            unmatched += 1
             continue
         inp = ev.InputExample(key=it["id"], instruction_id_list=it["meta"]["instruction_id_list"],
                               prompt=it["prompt"], kwargs=it["meta"]["kwargs"])
@@ -490,15 +492,30 @@ def grade_ifeval(name, model):
             s_out = ev.test_instruction_following_strict(inp, p2r)
             l_out = ev.test_instruction_following_loose(inp, p2r)
         except Exception:  # noqa: BLE001 — a single verifier blowing up shouldn't kill the batch
+            # COUNT it. A bare `continue` shrinks n invisibly, and n is the headline's denominator:
+            # the 5-item smoke reported n=4 with no indication that an item had been dropped.
+            skipped += 1
             continue
         strict_outs.append(s_out)   # append BOTH only after both succeed, so the
         loose_outs.append(l_out)    # strict/loose lists stay index-aligned
         graded += 1
     if not graded:
+        # Distinguish the two ways this happens. "no rows matched the dataset" was reported for BOTH,
+        # so a run whose verifiers all raised looked like an id-mismatch and would have been
+        # misdiagnosed.
+        why = (f"all {skipped} completions were dropped by verifier exceptions"
+               if skipped else f"{unmatched} completions matched no dataset id")
         return {"benchmark": name, "model": model, "n": 0, "acc": None,
-                "note": "no rows matched the IFEval dataset"}
+                "n_verifier_skipped": skipped, "n_unmatched": unmatched,
+                "n_completions": len(rows),
+                "note": f"nothing graded: {why}"}
     agg = _ifeval_aggregate(strict_outs, loose_outs)
-    return {"benchmark": name, "model": model, "n": graded, "acc": agg["prompt_strict"], **agg}
+    out = {"benchmark": name, "model": model, "n": graded, "acc": agg["prompt_strict"], **agg,
+           "n_verifier_skipped": skipped, "n_unmatched": unmatched, "n_completions": len(rows)}
+    if skipped or unmatched:
+        out["note"] = (f"{len(rows)} completions -> n={graded} graded; "
+                       f"{skipped} dropped by a verifier exception, {unmatched} not in the dataset")
+    return out
 
 
 def grade(name, model):

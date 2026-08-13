@@ -213,3 +213,31 @@ def test_acc_is_None_when_there_is_neither_items_nor_a_grader_acc():
     G._finalize(score, rows=[{"id": 1, "finish_reason": "stop",
                                                "completion_tokens": 10, "thinking_budget": 81920}])
     assert score["acc"] is None
+
+
+def test_verifier_skips_are_COUNTED_not_silently_dropped(monkeypatch):
+    """A bare `continue` on a verifier exception shrinks n invisibly.
+
+    Measured on the 5-item smoke: 5 rows generated, n=4 reported — one item's verifier raised and was
+    dropped with no trace. At 541 items a silent 4% loss is undetectable, and n is the denominator of
+    the headline. Skips must be counted and reported so the reader can see the real denominator.
+    """
+    import bench.grade as G
+
+    class FakeEv:
+        class InputExample:
+            def __init__(self, **kw): pass
+        @staticmethod
+        def test_instruction_following_strict(inp, p2r):
+            raise RuntimeError("verifier blew up")
+        @staticmethod
+        def test_instruction_following_loose(inp, p2r):
+            raise RuntimeError("verifier blew up")
+
+    monkeypatch.setattr(G, "_load_ifeval_lib", lambda: FakeEv)
+    monkeypatch.setattr(G, "_rows", lambda m, b: [{"id": 7, "content": "x"}])
+    monkeypatch.setattr(G.benchmarks, "load", lambda *a, **k: [
+        {"id": 7, "prompt": "p", "meta": {"instruction_id_list": ["a"], "kwargs": [{}]}}])
+    out = G.grade_ifeval("ifeval", "M")
+    assert out["n_verifier_skipped"] == 1, "a dropped item must be counted"
+    assert "1" in str(out.get("note", "")), "and surfaced in the note"
