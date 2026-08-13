@@ -120,3 +120,17 @@ def test_run_convergence_rejects_an_unknown_set_key():
     with pytest.raises(Exception) as e:
         RC._apply_set(dict(base), ["min-p=0.02"])
     assert "min-p" in str(e.value), "the offending key must be named in the error"
+
+
+def test_run_convergence_finds_the_registry_regardless_of_cwd(monkeypatch, tmp_path):
+    """The `deployed` profile reads main_models.yaml, but run_convergence's documented invocation
+    is `cd benchmark && ...`, so a CWD-relative registry path cannot be found. Making `deployed`
+    the default therefore broke the tool from its own documented working directory. The registry
+    location must not depend on CWD."""
+    from bench import run_convergence as RC
+    assert hasattr(RC, "_registry_path"), "registry path must be resolved, not left CWD-relative"
+    monkeypatch.chdir(tmp_path)                       # anywhere at all
+    p = RC._registry_path()
+    import os
+    assert os.path.isabs(p), f"registry path must be absolute, got {p!r}"
+    assert os.path.exists(p), f"resolved registry does not exist: {p!r}"

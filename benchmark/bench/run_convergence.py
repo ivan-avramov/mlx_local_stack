@@ -102,6 +102,17 @@ def _summ(records, task) -> dict:
     return out
 
 
+def _registry_path() -> str:
+    """Absolute path to main_models.yaml, independent of CWD.
+
+    `params_for(..., "deployed")` reads the registry at a CWD-RELATIVE default, but this module's
+    documented invocation is `cd benchmark && PYTHONPATH=. ...` — so making `deployed` the default
+    broke the tool from its own documented working directory. Resolve from the module location
+    instead: benchmark/bench/ -> repo root.
+    """
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "main_models.yaml"))
+
+
 def _apply_set(params: dict, kvs) -> dict:
     """Apply `--set KEY=VAL` overrides, casting numerically, REJECTING unknown keys.
 
@@ -162,7 +173,7 @@ def main(argv=None) -> int:
     if not args.no_preload:
         t = driver.preload(args.model)
         print(f"[conv] preloaded {args.model} in {t}s", flush=True)
-    params = params_for(args.model, args.sampling_profile)
+    params = params_for(args.model, args.sampling_profile, _registry_path())
     if args.max_tokens is not None:
         params["max_tokens"] = args.max_tokens
     if args.temperature is not None:
