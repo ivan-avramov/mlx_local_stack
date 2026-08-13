@@ -74,11 +74,44 @@ def unique_prefix(idx: int, approx_tokens: int, cpt: float = 4.61) -> str:
     return head + (_FILLER * n)
 
 
+def positive_control(driver, model, tokens: int, timeout: float) -> dict:
+    """Serve ONE prefix TWICE and report the prefill speed-up. A REQUIRED pre-check.
+
+    WHY THIS EXISTS (a defect in this probe's first version, 2026-08-13). The main measurement uses
+    deliberately UNIQUE prefixes to force the pool to fill -- which means it produces zero cache HITS
+    by construction, and therefore CANNOT distinguish "APC is enabled and cheap" from "APC is not
+    running at all". The first run of this probe returned bit-identical peaks in both arms; that was
+    only recognised as "APC never engaged" because the identity to nine decimal places looked wrong
+    and the worker's /metrics was checked by hand. Had the peaks drifted slightly by chance, the
+    honest-looking conclusion "APC costs ~0.1GB, acceptable" would have been reported for a subsystem
+    that was doing nothing.
+
+    So: never report an APC memory number without first demonstrating APC actually reuses a prefix.
+    The recorded win is 34-147x, so a threshold of 2x is conservative by an order of magnitude and
+    cannot false-negative a working cache.
+    """
+    msg = unique_prefix(-1, tokens) + "\n\nReply: OK"
+    runs = []
+    for _ in range(2):
+        r = driver.complete(model, [{"role": "user", "content": msg}], dict(PARAMS),
+                            timeout=timeout)
+        runs.append({"prefill_s": r.get("prefill_s"), "prompt_tokens": r.get("prompt_tokens")})
+    cold, warm = runs[0]["prefill_s"] or 0.0, runs[1]["prefill_s"] or 0.0
+    ratio = (cold / warm) if warm else None
+    return {"cold_prefill_s": cold, "warm_prefill_s": warm,
+            "prefill_speedup": round(ratio, 2) if ratio else None,
+            "reuse_detected": bool(ratio and ratio >= 2.0),
+            "runs": runs}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="APC memory high-water-mark probe.")
     ap.add_argument("--model", required=True)
     ap.add_argument("--label", required=True, help="apc_off | apc_on (the router env state; "
                                                    "recorded verbatim, NOT verified here)")
+    ap.add_argument("--skip-positive-control", action="store_true",
+                    help="skip the prefix-reuse pre-check. Only for the apc_off arm, where no reuse "
+                         "is the EXPECTED result.")
     ap.add_argument("--requests", type=int, default=5)
     ap.add_argument("--tokens-per-request", type=int, default=9000)
     ap.add_argument("--timeout", type=float, default=900)
@@ -94,6 +127,17 @@ def main(argv=None) -> int:
           f"= ~{total_target} tok vs pool capacity {POOL_TOKENS_AT_2048_BLOCKS} tok "
           f"({'EXCEEDS -> measures the CEILING' if total_target > POOL_TOKENS_AT_2048_BLOCKS else 'BELOW -> under-fills, invalid'})",
           flush=True)
+
+    ctrl = None
+    if not args.skip_positive_control:
+        ctrl = positive_control(driver, args.model, args.tokens_per_request, args.timeout)
+        print(f"[apc] POSITIVE CONTROL: cold={ctrl['cold_prefill_s']}s warm={ctrl['warm_prefill_s']}s "
+              f"speedup={ctrl['prefill_speedup']}x reuse_detected={ctrl['reuse_detected']}", flush=True)
+        if not ctrl["reuse_detected"]:
+            print("[apc] *** NO PREFIX REUSE DETECTED. Any memory delta below is NOT a measurement "
+                  "of APC's cost -- APC is not reusing prefixes, so it is storing nothing. Check the "
+                  "worker's /metrics server.apc block (lookups_hit / stores / resident_bytes) before "
+                  "drawing ANY conclusion about APC memory. ***", flush=True)
 
     draws = []
     for i in range(args.requests):
@@ -120,6 +164,11 @@ def main(argv=None) -> int:
         "total_prompt_tokens_prefilled": prefilled,
         "pool_capacity_exceeded": prefilled > POOL_TOKENS_AT_2048_BLOCKS,
         "max_peak_mem_gb": max(peaks) if peaks else None,
+        "positive_control": ctrl,
+        # The memory number is only interpretable as "APC's cost" when APC demonstrably reuses
+        # prefixes. Recorded explicitly so a future reader cannot mistake an inert-APC zero for a
+        # cheap-APC zero -- which is exactly what nearly happened on 2026-08-13.
+        "memory_number_interpretable": (ctrl is None or ctrl["reuse_detected"]),
         "draws": draws,
     }
     out = args.out or os.path.join(RESULTS, args.model, f"apc_memory_{args.label}.json")
