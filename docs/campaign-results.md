@@ -416,8 +416,7 @@ below that ratio, so the harness cannot silently convert a budget hit into an or
 
 Ornith-1.0-35B-mlx-uniform-4bit, M5, `deployed` sampling (temp 0.4, `presence_penalty` 0.0, stamped
 in the manifest), APC absent (`apc_enabled: '0'`, detected per-pid), fingerprint v2, 541 items.
-Driver `benchmark/m1/ifeval_run.sh`. **Interim at n=41: `prompt_strict 90.2% / inst_strict 91.7% /
-prompt_loose 95.1% / inst_loose 96.7%`, conv 100%, 0 errors.** Full run in progress (~22 s/item
+Driver `benchmark/m1/ifeval_run.sh`. **Interim at n=107: `prompt_strict 86.0% / prompt_loose 89.7%`, conv 99.1%, 0 errors, 0 verifier skips.** Full run in progress (~22 s/item
 measured; Ornith ~3 h, distill ~10.7 h).
 
 ### ⚠️ DEFECT 1 — a missing nltk corpus was BIASING acc upward by ~3pp
@@ -433,31 +432,52 @@ shrink the denominator, it biases the number. Fixed to fail LOUD (whole-bench `a
 actionable note) rather than report a clean-looking figure over a biased 79% subset. **Cost of the
 correction: zero model time** — grading is a separate phase, so the persisted rows just re-graded.
 
-### ⚠️ DEFECT 2 — a self-terminating repetition loop scored as CONVERGED
-Item `2849`: **52,503 completion tokens** of a two-line alternating loop —
-`unique_line_ratio 0.0093`, `max_line_repeat 2071`, `ngram8_unique 0.0123`, tail literally two lines
-forever — at **193 tok/s**, because suffix decoding accelerates verbatim repetition. Recorded as
-`finish_reason "stop"`, `converged: True`, `nonconv_kind: None`, because it EOS'd at 64% of the
-81,920 budget.
+### ⚠️ DEFECT 2 — self-terminating repetition loops scored as CONVERGED (4 of 107 items)
+Two independent loop SIGNATURES, both invisible to the shipped convergence rule, and the second one
+also invisible to my first attempt at detecting the first:
 
-`traces._is_repetition` already existed and was correct; `classify` never reached it, because it
-early-returns `None` for anything `convergence.is_converged` accepts. **The harness had the evidence
+| id | tokens | wall | lines | uniq_line | max_repeat | ngram8_uniq | finish | signature |
+|---|---|---|---|---|---|---|---|---|
+| 2849 | 52,503 | 272 s | 4,179 | **0.0093** | **2,071** | 0.0123 | stop | LINE-level |
+| 279 | 52,409 | 446 s | **22** | 1.0000 | 1 | **0.0104** | stop | CONTENT-level |
+| 3608 | 54,702 | 285 s | **29** | 0.8966 | 2 | **0.0323** | stop | CONTENT-level |
+| 3188 | 65,450 | 335 s | **12** | 1.0000 | 1 | **0.0077** | length | CONTENT-level |
+| *healthy, for scale* | 9,875 | 94 s | 483 | 0.8116 | 3 | **0.7285** | stop | — |
+
+`2849` repeats one line 2,071 times. The other three cycle **near-identical phrasings**, so every line
+is technically unique and line-repetition detection sees nothing — but their 8-gram uniqueness is
+**0.008–0.032 against ~0.73 for healthy items**, a 20–90× gap. Item 2849 ran at **193 tok/s** because
+suffix decoding accelerates verbatim repetition.
+
+`traces._is_repetition` existed and was correct for the line-level case; `classify` never reached it,
+early-returning `None` for anything `convergence.is_converged` accepts. **The harness had the evidence
 and did not use it.**
 
-**Cost, which is why a row count understates this ~8×:** 1 of 41 rows (2%) but **22% of wall-clock
-and 33% of completion tokens.** Thresholds are not marginal — the loop sits at `unique_line_ratio`
-0.0093 / `max_repeat` 2071 while every healthy row measured ≥ 0.44 / ≤ 11, a two-order-of-magnitude
-gap.
+⚠️ **Two of my own thresholds were wrong before the data corrected them, which is worth recording:**
+first I detected only line-level repetition (caught 1 of 4); then I added a content-level rule guarded
+on `lines >= 100`, which caught **0** of the three it was written for — because the loops live inside
+one giant paragraph (id 279 is 52,409 tokens in **22 lines**, ~2,400 tokens per line) while healthy
+long traces are 385–483 lines for ~9.5K tokens. **Line count measures formatting, not length.** Guarded
+on `chars >= 20000` instead. The lesson generalises: fixture values invented to look plausible let a
+wrong guard pass its own tests.
+
+**Cost, which is why a row count understates this ~7×:** the three EOS'd loops are 2.8% of items but
+**26% of wall-clock and 33% of completion tokens**. `3188` is separately a genuine non-convergence and
+is now labelled `degenerate_repetition` rather than `max_tokens` — the classifier docstring already
+argues for acting on the mechanism, since "max_tokens" hides the sampling/quant defect.
 
 ⚠️ **THIS REVISES "the runaway tax has nothing to charge."** That finding (0/284 turns, 0.0% wasted
-wall-clock) was measured on **budget-hits and `max_tokens` truncations only** — and this class is
-neither. The instrument was blind to a loop cheap enough to finish on its own. The tax is not zero;
-it was being measured with the wrong detector.
+wall-clock) was measured on **budget-hits and `max_tokens` truncations only** — three of these four are
+neither. The instrument was blind to loops cheap enough to self-terminate. The tax is not zero.
 
-The ratified convergence formula is **deliberately unchanged** (it exists to stop a budget-hit's
-forced EOS from false-passing, and it still does). Added instead as an additive diagnostic:
+**The ratified convergence formula is deliberately unchanged** — it exists to stop a budget-hit's
+forced EOS from false-passing, and it still does. Added instead as additive diagnostics:
 `traces.is_degenerate` + `n_degenerate_eosed` / `degenerate_wall_share` / `degenerate_token_share`.
-**Whether `converged` should absorb this class is an operator decision, not a harness one.**
+**CLOSED-BY-MEASUREMENT (see `docs/open-questions.md` M1): these should NOT be scored DNF.** Item 2849
+**passed both strict and loose verifiers** — a valid 276-char answer. The model self-terminated, so the
+work was complete by its own decision and the answer is usable; marking it DNF would discard a valid
+result. Contrast a thinking-budget hit, where the answer IS produced from work we truncated. So this is
+a **cost** defect, not a correctness one, and it is instrumented as such.
 
 ### The historical record CANNOT be checked for this — 1% audit coverage
 `traces.is_degenerate` reads persisted `reasoning_stats`, so old rows are re-classifiable with no
