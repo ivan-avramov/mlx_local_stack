@@ -7,11 +7,41 @@ Points [opencode](https://opencode.ai) (the SST terminal agent) at this stack's 
 - **mlx-serve** — multi-model server on `http://localhost:8000/v1`, serving four chat models on demand: `gemma-4-31B-it-qat-6bit` (dense), `gemma-4-26B-A4B-it-OptiQ-4bit` (MoE), `Ornith-1.0-35B-mlx-uniform-4bit` (the default), `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. Loads **one model at a time**, swaps on demand (~10s cold start).
 - **task model** — standalone, always-on server on `http://localhost:8092/v1` (`Qwen2.5-1.5B-Instruct-4bit`), used as opencode's `small_model` (lightweight tasks like title generation).
 
-## ⚠️ Read first: known open bug
+## ✅ Read first: VERIFIED WORKING on opencode 1.18.15 (2026-08-13) — and the real trap is ours, not upstream
 
-[opencode#5674](https://github.com/anomalyco/opencode/issues/5674) reports that in some recent versions the bundled `@ai-sdk/openai-compatible` provider **doesn't forward the `options` block (including `baseURL`) to the API** — the reporter calls custom OpenAI-compatible endpoints "currently unusable," and the fix PR was still open at time of writing. Many setups work fine, so it's version-dependent.
+**Measured end-to-end on this stack** (`benchmark/m1/p1a_opencode_smoke.sh`; full detail in
+`docs/campaign-results.md` under "P1a"):
 
-**Verify before investing:** after configuring, confirm requests actually reach `localhost:8000` (watch `logs/mlx_vlm.log` for a request when you send a message). If they don't, this bug is the likely cause — check your opencode version against the issue/PR, upgrade, or front the stack with a gateway (e.g. litellm) as a fallback.
+| what | result |
+|---|---|
+| request reaches `localhost:8000` | **yes** — `200`, `model=Ornith-1.0-35B-mlx-uniform-4bit` |
+| `options.max_tokens` forwards (standard AI-SDK param) | **yes** — set it to 7, got `completion=8` (vs 45 baseline) |
+| `options.thinking_budget` forwards (non-standard extra) | **yes** — set it to 16, `completion` fell 740 → 261 |
+| `options.enable_thinking` forwards | **yes** — and the prompt count shifted 18,093 → **18,095**, i.e. it reached the worker and changed the chat template |
+
+So the tuned sampling **does** land, and **[opencode#5674](https://github.com/anomalyco/opencode/issues/5674) does not affect 1.18.15.**
+(b) and (c) are different mechanisms — the AI SDK maps `max_tokens` itself, while
+`thinking_budget`/`enable_thinking`/`min_p` ride through as pass-through body params — so both were
+tested separately rather than inferring one from the other.
+
+### ⚠️ THE ACTUAL FAILURE MODE, and why #5674 is a misleading first guess
+Before this was fixed, **every** request failed and nothing reached `:8000` — which looks exactly like
+#5674. The real cause was **our own generated config**: the emitter wrote a cosmetic top-level
+`_generated` provenance key, and opencode validates strictly, rejecting the whole file:
+
+```
+Error: Configuration is invalid at ~/.config/opencode/opencode.json
+  ↳ Unrecognized key: _generated
+```
+
+Fixed at source — `configgen/emitters/opencode.py` no longer emits it, pinned by
+`configgen/tests/test_opencode.py::test_no_unrecognized_top_level_keys`. **If requests stop reaching
+`:8000`, check for a config-validation error FIRST** (`opencode models` prints it, and it is not
+always obvious in the TUI) before suspecting #5674 or reaching for a litellm gateway. An unknown
+top-level key is silent in every other consumer we emit for and fatal in this one.
+
+**Cost note for benchmarking:** opencode sends **~18,050 prompt tokens for a four-word request**
+(system prompt + tool schemas). Budget that per turn — it is the "heavy" end of the harness gradient.
 
 ## Install
 
