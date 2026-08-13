@@ -118,7 +118,7 @@ def cmd_grade(args):
     # 44, not 34: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is 35 chars and ran into the next column,
     # and these rows get pasted straight into campaign-results.md.
     hdr = (f"\n{'model':<44}{'benchmark':<14}{'n':>4}{'k':>3}{'acc':>8}{'95% CI':>16}"
-           f"{'MDE':>7}{'conv%':>7}{'gate':>6}  harness")
+           f"{'MDE':>7}{'conv%':>7}{'degen':>7}  harness")
     print(hdr)
     print("-" * len(hdr))
     broken, ungated = [], []
@@ -132,14 +132,18 @@ def cmd_grade(args):
         mde_s = f"±{s['mde']*100:.0f}pp" if s.get("mde") is not None else "—"
         cr = s.get("conv_rate")
         conv = f"{cr*100:.0f}" if cr is not None else "—"
-        gate = "PASS" if s.get("conv_gate_pass") else "FAIL"
+        # NOT a gate verdict: `conv_gate_pass` derives from the WITHDRAWN conv%>=90 threshold, so
+        # printing PASS/FAIL here contradicted the footer. Show the degeneracy diagnostic instead —
+        # a count of self-terminating repetition loops, which is real information and not a verdict.
+        nd = s.get("n_degenerate_eosed")
+        degen = "-" if not nd else str(nd)
         harness = "ok" if s.get("valid") else "BROKEN"
         if not s.get("valid"):
             broken.append(s)
         elif not s.get("conv_gate_pass"):
             ungated.append(s)
         print(f"{s['model']:<44}{s['benchmark']:<14}{s.get('n', 0):>4}{k:>3}{acc:>8}{ci_s:>16}"
-              f"{mde_s:>7}{conv:>7}{gate:>6}  {harness}")
+              f"{mde_s:>7}{conv:>7}{degen:>7}  {harness}")
         extra = []
         if s.get("pass_at_1_converged") is not None:
             extra.append(f"pass@1|conv={s['pass_at_1_converged']*100:.1f}% "

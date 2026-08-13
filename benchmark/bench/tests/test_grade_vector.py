@@ -281,3 +281,15 @@ def test_the_params_log_line_names_the_ACTUAL_profile_not_a_hardcoded_one():
     src = (Path(__file__).resolve().parents[2] / "run.py").read_text()
     assert "using per-model production params" not in src
     assert "sampling profile = {args.sampling_profile!r}" in src
+
+
+def test_scoreboard_column_does_not_print_a_PASS_FAIL_from_the_withdrawn_gate():
+    """The footer said the conv gate is withdrawn while the row still printed `gate PASS` — the two
+    contradicted each other, and a PASS/FAIL column is read as a verdict regardless of any footer.
+    The column now carries the degeneracy DIAGNOSTIC (a count), which is information rather than a
+    ruling.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "run.py").read_text()
+    assert '"PASS" if s.get("conv_gate_pass")' not in src
+    assert "{'degen':>7}" in src, "the diagnostic column must replace the gate column"
