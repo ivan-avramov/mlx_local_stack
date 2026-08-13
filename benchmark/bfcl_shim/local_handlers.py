@@ -73,11 +73,43 @@ class _ThinkingStripMixin:
         if hasattr(self, "skip_special_tokens"):
             extra_body["skip_special_tokens"] = self.skip_special_tokens
 
+        # SEND THE DEPLOYED SAMPLING AND ASK FOR THINKING EXPLICITLY.
+        #
+        # Previously this sent only model/temperature/prompt/max_tokens/timeout, so every tuned
+        # field was dropped and the worker fell back to its own defaults. Two consequences, both
+        # measured: BFCL reported only 3/400 traces carrying <think> on the campaign's one
+        # well-powered axis (n=1000), and an unset presence_penalty risks a nonzero default, which
+        # DISABLES suffix decoding — i.e. the run would score a different serving path than we ship.
+        #
+        # NOTE ON THINKING: this path posts a prompt that bfcl has ALREADY formatted, to
+        # /v1/completions, which bypasses the model's chat template — and the template is normally
+        # what `enable_thinking` drives. Sending it here is necessary but may not be sufficient;
+        # whether <think> actually appears has to be confirmed with a live smoke, not assumed.
+        sampling = {}
+        try:
+            from bench import model_params
+            sampling = dict(model_params.params_for(self.model_path_or_id, "deployed"))
+        except Exception:
+            # Registry can't answer (name mismatch / absent entry). Do NOT silently fall back to a
+            # family table — that is the drift the `deployed` profile exists to prevent. Use only
+            # the two invariants that are true for every candidate we serve, and let the rest be
+            # the worker's problem, visibly.
+            sampling = {"presence_penalty": 0.0, "enable_thinking": True}
+        body = {k: sampling[k] for k in
+                ("top_p", "top_k", "min_p", "presence_penalty", "enable_thinking") if k in sampling}
+        body.setdefault("presence_penalty", 0.0)
+        body["enable_thinking"] = True
+        # Budget must exceed the generation cap or thinking gets clipped mid-<think> and the item
+        # scores as a MODEL failure. Never tune this down to make a run "work" (AGENTS.md).
+        body["thinking_budget"] = max(int(sampling.get("thinking_budget") or 0),
+                                      leftover_tokens_count, 16384)
+        extra_body.update(body)
+
         start_time = time.time()
-        kw = dict(model=self.model_path_or_id, temperature=self.temperature,
-                  prompt=formatted_prompt, max_tokens=leftover_tokens_count, timeout=72000)
-        if extra_body:
-            kw["extra_body"] = extra_body
+        kw = dict(model=self.model_path_or_id,
+                  temperature=sampling.get("temperature", self.temperature),
+                  prompt=formatted_prompt, max_tokens=leftover_tokens_count, timeout=72000,
+                  extra_body=extra_body)
         api_response = self.client.completions.create(**kw)
         return api_response, time.time() - start_time
 

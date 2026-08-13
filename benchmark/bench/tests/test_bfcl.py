@@ -182,3 +182,73 @@ def test_run_bfcl_cli_writes_json(tmp_path, monkeypatch):
     assert rc == 0
     out = json.load(open(os.path.join(tmp_path, "mymodel", "bfcl.json")))
     assert out["model"] == "mymodel" and out["axis"] == "tool_calling" and out["acc"] == 0.9
+
+
+# --------------------------------------------------------------- request construction
+# The campaign's only well-powered axis (n=1000) reported only 3/400 traces carrying <think>.
+# Root cause is the request the shim builds: it sends model/temperature/prompt/max_tokens/timeout
+# and NOTHING else, so every tuned sampling parameter is dropped and the worker falls back to its
+# own defaults for top_p/top_k/min_p/presence_penalty. A nonzero presence_penalty additionally
+# DISABLES suffix decoding, i.e. the run would measure a different serving path from the one we ship.
+#
+# The shim imports bfcl_eval and `overrides` AT MODULE SCOPE, so it cannot be imported without those
+# heavy deps installed — which is contrary to AGENTS.md ("bench tooling must lazy-import heavy deps
+# ... and be mocked in tests"). They are stubbed here rather than installed.
+def _load_shim(monkeypatch):
+    import sys, types
+    ov = types.ModuleType("overrides")
+    ov.override = lambda f: f
+    monkeypatch.setitem(sys.modules, "overrides", ov)
+    for mod, cls in (("gemma", "GemmaHandler"), ("qwen", "QwenHandler"), ("qwen_fc", "QwenFCHandler")):
+        full = f"bfcl_eval.model_handler.local_inference.{mod}"
+        m = types.ModuleType(full)
+        setattr(m, cls, type(cls, (), {}))
+        monkeypatch.setitem(sys.modules, full, m)
+    for pkg in ("bfcl_eval", "bfcl_eval.model_handler", "bfcl_eval.model_handler.local_inference"):
+        monkeypatch.setitem(sys.modules, pkg, types.ModuleType(pkg))
+    monkeypatch.delitem(sys.modules, "benchmark.bfcl_shim.local_handlers", raising=False)
+    import importlib
+    return importlib.import_module("benchmark.bfcl_shim.local_handlers")
+
+
+def _capture_request(monkeypatch):
+    """Run _ThinkingStripMixin._query_prompting against a stub client and return the kwargs."""
+    LH = _load_shim(monkeypatch)
+    cap = {}
+
+    class _Completions:
+        @staticmethod
+        def create(**kw):
+            cap.update(kw)
+            return type("R", (), {})()
+
+    class H(LH._ThinkingStripMixin):
+        model_path_or_id = "Ornith-1.0-35B-mlx-uniform-4bit"
+        temperature = 0.4
+        max_context_length = 262144
+        client = type("C", (), {"completions": _Completions})()
+        tokenizer = type("T", (), {"tokenize": staticmethod(lambda s: ["x"] * 10)})()
+        def _format_prompt(self, message, function): return "PROMPT"
+
+    H()._query_prompting({"function": [], "message": []})
+    return {**cap, **(cap.get("extra_body") or {})}
+
+
+def test_bfcl_request_carries_the_deployed_sampling(monkeypatch):
+    """Every tuned sampling field must reach the worker. Omitting them is how BFCL measured a
+    model that was neither thinking nor sampling the way we deploy it."""
+    body = _capture_request(monkeypatch)
+    for field in ("top_p", "top_k", "min_p", "presence_penalty"):
+        assert field in body, f"{field} is not sent — the worker will use its own default"
+    assert body["presence_penalty"] == 0.0, (
+        "a nonzero presence_penalty disables suffix decoding, changing the serving path")
+
+
+def test_bfcl_request_requests_thinking_explicitly(monkeypatch):
+    """AGENTS.md: thinking is ENABLED FOR ALL TESTS. Relying on the registry default is not enough
+    here — this path posts a PRE-FORMATTED prompt to /v1/completions, so the chat template (which
+    is what enable_thinking normally drives) is bypassed. Send it explicitly and generously."""
+    body = _capture_request(monkeypatch)
+    assert body.get("enable_thinking") is True, "thinking must be requested explicitly"
+    assert body.get("thinking_budget", 0) >= 16384, (
+        "a small thinking budget truncates mid-<think> and scores as a model failure")
