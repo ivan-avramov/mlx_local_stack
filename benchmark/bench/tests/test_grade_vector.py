@@ -267,7 +267,12 @@ def test_scoreboard_footer_states_the_RATIFIED_reporting_rule(capsys):
     from pathlib import Path
     src = (Path(__file__).resolve().parents[2] / "run.py").read_text()
     assert "DIAGNOSTIC" in src.upper(), "conv% must be labelled a diagnostic, not a gate"
-    assert "never the ranking key" in src, "acc_strict must keep its never-rank caveat"
+    # acc_strict is NO LONGER "never the ranking key" — operator ruling 2026-08-13 made it THE
+    # ranking key at a matched budget. What must persist is the matched-budget CONDITION and the
+    # demotion of pass@1|conv, which is the metric that actually carries the 99-DNF pathology.
+    assert "THE RANKING KEY at a matched budget" in src
+    assert "EQUAL" in src and "thinking_budget" in src, "the matched-budget condition must be stated"
+    assert "must NEVER rank" in src, "pass@1|conv must be marked as never-rank"
 
 
 def test_the_params_log_line_names_the_ACTUAL_profile_not_a_hardcoded_one():
@@ -293,3 +298,47 @@ def test_scoreboard_column_does_not_print_a_PASS_FAIL_from_the_withdrawn_gate():
     src = (Path(__file__).resolve().parents[2] / "run.py").read_text()
     assert '"PASS" if s.get("conv_gate_pass")' not in src
     assert "{'degen':>7}" in src, "the diagnostic column must replace the gate column"
+
+
+# ------------------------------------------------------------------ DNF counts in the denominator
+def test_acc_strict_counts_a_DNF_as_a_FAILURE_not_an_exclusion():
+    """Operator ruling 2026-08-13: a model that DNFs 99 of 100 tasks scores 1%, NOT 100%.
+
+    This is the property that makes acc_strict the ranking key at a matched budget, and it is exactly
+    what `pass@1|converged` gets wrong — that metric conditions on convergence, shrinking the
+    denominator, so the 99-DNF model would score 100% on its single converged item.
+    """
+    import bench.grade as G
+    # 100 items: 1 converged and correct, 99 truncated at the budget (DNF)
+    rows = [{"id": 0, "sample": 0, "finish_reason": "stop", "completion_tokens": 100,
+             "thinking_budget": 81920}]
+    items = [{"id": 0, "sample": 0, "score": 1.0}]
+    for i in range(1, 100):
+        rows.append({"id": i, "sample": 0, "finish_reason": "stop",
+                     "completion_tokens": 81920, "thinking_budget": 81920})   # budget hit = DNF
+        items.append({"id": i, "sample": 0, "score": 1.0})   # even if the ANSWER looks right
+    score = {"benchmark": "x", "model": "m", "items": items}
+    G._finalize(score, rows)
+
+    assert score["acc_strict"] == 0.01, (
+        f"acc_strict={score['acc_strict']} — a DNF must score 0 with the denominator INTACT")
+    assert score["pass_at_1_converged"] == 1.0, (
+        "pass@1|converged is expected to show the pathology (100% on 1 item) — which is precisely "
+        "why it is a diagnostic and must never rank")
+    assert score["n_converged_items"] == 1
+
+
+def test_agents_md_records_acc_strict_as_the_ranking_key_at_a_matched_budget():
+    """The rule and the code must not drift apart: this is the doc half of the ruling."""
+    from pathlib import Path
+    doc = (Path(__file__).resolve().parents[3] / "AGENTS.md").read_text()
+    assert "IS THE RANKING KEY at a MATCHED budget" in doc
+    assert "DEMOTED to a DIAGNOSTIC and must NEVER rank" in doc
+
+
+def test_compare_still_refuses_a_CROSS_BUDGET_comparison():
+    """acc_strict is only sound at a matched budget, so the mechanical guard must stay — it is what
+    makes the narrow ruling safe rather than reintroducing the hazard the old prohibition feared."""
+    import bench.compare as C
+    assert "thinking_budget" in C._MUST_MATCH_SAMPLING
+    assert "max_tokens" in C._MUST_MATCH_SAMPLING

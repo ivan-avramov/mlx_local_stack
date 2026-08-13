@@ -118,7 +118,7 @@ def cmd_grade(args):
     # 44, not 34: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is 35 chars and ran into the next column,
     # and these rows get pasted straight into campaign-results.md.
     hdr = (f"\n{'model':<44}{'benchmark':<14}{'n':>4}{'k':>3}{'acc':>8}{'95% CI':>16}"
-           f"{'MDE':>7}{'conv%':>7}{'degen':>7}  harness")
+           f"{'MDE':>7}{'strict':>8}{'conv%':>7}{'degen':>7}  harness")
     print(hdr)
     print("-" * len(hdr))
     broken, ungated = [], []
@@ -137,19 +137,24 @@ def cmd_grade(args):
         # a count of self-terminating repetition loops, which is real information and not a verdict.
         nd = s.get("n_degenerate_eosed")
         degen = "-" if not nd else str(nd)
+        # acc_strict IS the ranking key at a matched budget (operator ruling 2026-08-13): a DNF is a
+        # FAILURE in the denominator, so a model that DNFs 99 of 100 tasks scores 1%, not 100%. It was
+        # previously buried in the detail line; a ranking key has to be in the table.
+        st = s.get("acc_strict")
+        strict_s = "—" if st is None else f"{st * 100:.1f}%"
         harness = "ok" if s.get("valid") else "BROKEN"
         if not s.get("valid"):
             broken.append(s)
         elif not s.get("conv_gate_pass"):
             ungated.append(s)
         print(f"{s['model']:<44}{s['benchmark']:<14}{s.get('n', 0):>4}{k:>3}{acc:>8}{ci_s:>16}"
-              f"{mde_s:>7}{conv:>7}{degen:>7}  {harness}")
+              f"{mde_s:>7}{strict_s:>8}{conv:>7}{degen:>7}  {harness}")
         extra = []
         if s.get("pass_at_1_converged") is not None:
             extra.append(f"pass@1|conv={s['pass_at_1_converged']*100:.1f}% "
                          f"(n={s.get('n_converged_items')})")
         if s.get("acc_strict") is not None:
-            extra.append(f"strict@{s.get('acc_strict_budget')}={s['acc_strict']*100:.1f}%")
+            extra.append(f"strict budget={s.get('acc_strict_budget')}")
         if s.get("n_degenerate_eosed"):
             extra.append(f"degen={s['n_degenerate_eosed']} "
                          f"(wall {s.get('degenerate_wall_share', 0) * 100:.0f}%, "
@@ -179,9 +184,13 @@ def cmd_grade(args):
     print("  3 latency     — mean/median/p95 seconds per task")
     print("  4 runaway tax — non-self-terminating RATE and its measured share of wall-clock")
     print("conv% and nonconv kinds are DIAGNOSTICS, not a pass/fail: the conv%>=90 gate is WITHDRAWN.")
-    print("acc = correctness over generated items (historical meaning). strict@<budget> counts a")
-    print("truncated draw as failed — a DERIVED deployment number, never the ranking key (it rises")
-    print("with thinking_budget). 'harness' is BROKEN only when the HARNESS failed, not the model.")
+    print("strict = THE RANKING KEY at a matched budget: a DNF scores 0 with the denominator INTACT,")
+    print("  so a model that DNFs 99 of 100 tasks scores 1%, not 100%. Comparable only at an EQUAL")
+    print("  thinking_budget (compare refuses otherwise); the budget is shown in the detail line.")
+    print("acc = correctness over generated items (historical meaning), kept so published rows stay")
+    print("  comparable. pass@1|conv is a DIAGNOSTIC and must NEVER rank — it conditions on")
+    print("  convergence, shrinking the denominator, which is the 99-DNF pathology above.")
+    print("'harness' is BROKEN only when the HARNESS failed, not the model.")
     print("degen = self-terminating repetition loops: scored CONVERGED and included in acc, flagged")
     print("for the judge panel; their wall/token share is COST, reported beside capability.")
     if ungated:
