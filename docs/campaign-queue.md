@@ -33,28 +33,40 @@ interactive DAILY DRIVER.** Models (incl. quant technique/level/distillation) ar
 changes over time; sampling config and KV quant are searched inputs; context reach and speed are
 MEASURED, not gated. **APC is OFF everywhere and out of scope** — not an axis, not discussed.
 
-### M1 GATE — SETTLED (run `m1f`, 2026-08-12). The coder role goes to the distill.
-Paired on **89 byte-identical items that BOTH arms actually ran** (python/javascript/go/rust
-complete; java recovered separately as `m1g`):
+### M1 GATE — COMPLETE at n=110 (runs `m1f` + `m1g`, 2026-08-12). Coder role: the distill.
+All 5 languages x 22 pinned-by-name exercises, both arms, RAN-filtered. `distill/java` comes from
+the `m1g` re-run after a TCC failure truncated it in `m1f`; the truncated dir is excluded by the
+RAN filter (empty `tests_outcomes`), not by a hand-maintained skip list.
 
 | metric | Ornith-1.0-35B-mlx-uniform-4bit | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | delta | McNemar exact |
 |---|---|---|---|---|
-| **final (≤2 attempts)** | 46/89 = **51.7%** | 66/89 = **74.2%** | **+22.5pp** | **p = 8.8e-05** |
-| attempt-1 | 26/89 = 29.2% | 34/89 = 38.2% | +9.0pp | p = 0.15 (n.s.) |
-| **repair rate** | 28/83 = **33.7%** | 32/55 = **58.2%** | — | — |
-| mean/case | 2.17 min | 8.42 min (3.9×) | — | — |
+| **final (<=2 attempts)** | 55/110 = **50.0%** | 81/110 = **73.6%** | **+23.6pp** | **p = 1.3e-05** |
+| attempt-1 | 27/110 = 24.5% | 36/110 = 32.7% | +8.2pp | p = 0.122 (n.s.) |
+| **repair rate** | 28/83 = **33.7%** | 45/74 = **60.8%** | — | — |
+| mean/case | 2.17 min (4.0h total) | 8.42 min (15.4h total) | 3.9x | — |
 
-Exclusive solves: only-Ornith **3** (`python/forth`, `javascript/list-ops`, `go/counter`) vs
-only-distill **23**. **Mechanism: the distill is not much better first-try — it is ~1.7× better at
-REPAIRING its own failure when shown the failing test.** Config: APC off, `deployed` sampling,
-`max_kv_cache_size` 65536 (right-sized for this axis; memory/speed here are NOT comparable to a
-256K row), aider `diff`, tries=2, items pinned by name.
+Exclusive solves: only-Ornith **5** (`python/forth`, `javascript/list-ops`, `go/counter`,
+`java/bank-account`, `java/dominoes`) vs only-distill **31**. **Every language favours the distill**
+(python +13.6, javascript +36.4, go +13.6, rust +27.3, java +27.3pp) — the result is not carried by
+one language.
 
-⚠️ `final` is a **(model × scaffold × config)** composite, NOT a model property: the repair turn
+**MECHANISM: it is REPAIR, not raw capability.** Attempt-1 differs by only +8.2pp and is NOT
+significant (p=0.122); the distill's edge is that it fixes its own failure when shown the failing
+test 60.8% of the time vs 33.7%. Per-arm well-formed was 90.9-100% for Ornith and 100% for the
+distill, so `diff` handicaps neither.
+
+Config: APC absent, `deployed` sampling, `max_kv_cache_size` 65536 (right-sized for this axis;
+memory/speed here are NOT comparable to a 256K row), aider `diff`, `tries=2`, items pinned by name.
+
+⚠️ `final` is a **(model x scaffold x config)** composite, NOT a model property: the repair turn
 receives the pytest traceback INCLUDING the failing test's source and expected values. The paired
-design still licenses the comparison (scaffold held constant; well-formed 100% / 0 malformed for
-both, so `diff` handicaps neither) but it does **not transfer across scaffolds** — this is an
-*aider* result and the campaign still has ZERO opencode evidence.
+design licenses the COMPARISON (scaffold constant) but the result does **not transfer across
+scaffolds** — this is an *aider* result and the campaign still has ZERO opencode evidence.
+
+⚠️ **SAMPLING IS UNTUNED FOR THIS AXIS.** Both temps came from SINGLE-SHOT ladders. Since unseeded
+retries are byte-identical, low temperature anchors attempt 2 on attempt 1's failed approach, so the
+multi-turn optimum is plausibly higher — and the two models are mis-tuned by DIFFERENT amounts
+(0.4 vs 0.3). Campaign-v3 P2-P4 exists to resolve this before the verdict is called final.
 
 ### FIVE CAMPAIGN CLAIMS FALSIFIED 2026-08-12 — check the record before trusting it
 | claimed | actual |
