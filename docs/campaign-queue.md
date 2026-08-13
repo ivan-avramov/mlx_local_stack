@@ -25,6 +25,87 @@ survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNN
 
 Last updated: 2026-08-11. **HARNESS V2 IS THE LIVE WORKSTREAM** (see below); **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
 
+## ▶ STATE 2026-08-13 — Tier-0 rev A audited + rev B running; suffix nondeterminism isolated
+
+### The "runaway worker" in handoff §1 had already cleared itself — premise was WRONG
+The abandoned distill request did **not** need killing: it **completed at 23:40:06** (200,
+`completion=39479`, `prompt=16214`, 10.4 tok/s, 3,801,911 ms = **63.4 min**) and the model
+**idle-unloaded cleanly at 02:36:56** after 14,412s. At 07:47 there was no `mlx_vlm.server` process
+at all and no python burning CPU — only a healthy 14h-old router. So the cost was ~63 min of worker
+time, not an open-ended burn. Note it also **CONVERGED** (39,479 < 81,920 budget), which is what
+makes the cell's cost a *task-scope* problem rather than a model pathology.
+Router nonetheless restarted for a known-clean baseline: **exactly one listener on :8000, APC var
+count 0 (checked on the pid, not assumed), health 200, 4 models registered.**
+
+### P2 TIER-0 rev A — Ornith arm VERIFIED, then audited; two design defects found
+Archived off volatile `/tmp` to `~/mlx_bench_snapshots/tier0-2026-08-12/` (11 JSONs + logs, all 11
+md5-distinct → the stale-copy failure did NOT recur). Claim **confirmed at the per-draw level**:
+**33/33 draws converged, 0 budget hits, all `finish_reason=stop`**, max 40,607 tok vs 81,920 budget;
+`converged_rate` 1.0 and `budget_hit_rate` 0.0 in all 11 cells; 0 label-vs-param mismatches.
+**⇒ There is no convergence knee for Ornith at these settings — an ANSWER, not a null.**
+**⇒ P3's ρ on `conv%` is UNDEFINED for Ornith** (a constant vector has no rank correlation), and
+P3's other half — per-config *agentic* results — does not exist yet (P4 unrun). Full detail +
+the two defects (inert `min_p`/`top_p`/`top_k`; a mis-specified collapse cell that was an exact
+duplicate of `t0.4_mp0.0`) in `docs/campaign-results.md`.
+
+### ⚠️ DETERMINISM IS CONFIG-DEPENDENT — suffix decoding is the source, truncation masks it
+The suffix isolation test was run **before** touching that config, and the naive version of it
+would have been CONFOUNDED. 2x2 (suffix {ON,OFF} × truncation {deployed 0.95/20, none 1.0/0/0.0}),
+Ornith, 3 reps, byte-identity on sha256 of reasoning+content, suffix verified OFF **at the worker
+cmdline**:
+
+| | truncation ON | truncation OFF |
+|---|---|---|
+| **suffix ON** (shipped) | identical 1 sig/3 | **DIVERGENT 3 sigs/3** (ct 2,825/4,467/3,736) |
+| **suffix OFF** | identical 1 sig/3 | identical 1 sig/3 |
+
+**KEEP SUFFIX ON** — measured 1.27× faster same-box/same-session (23.8s vs 30.3s mean), and the
+deployed config truncates, so every client and every `deployed`-profile row is already on the
+reproducible path. But **AGENTS.md's "unseeded requests are byte-identical" now carries a
+condition**, and rev A's `min_p=0.0` column (4 of 11 cells) was measured on the nondeterministic
+path. Probe: `benchmark/bench/probe_determinism.py` (+15 tests; suite 544 → **559 green**).
+
+### ~ RUNNING — P2 TIER-0 rev B, 22 cells, both models (`benchmark/m1/tier0b_grid.sh`)
+Launched 08:08. Three evidence-forced changes vs rev A, all scope/ordering — **no generation param
+was touched** (capping `max_tokens` was explicitly REJECTED: it would manufacture the
+non-convergence the screen measures, per AGENTS.md):
+1. **task = `vartrack`, not `aggregation`@8K.** Measured on the distill: aggregation = 39,479 tok /
+   **63.4 min per sample**; vartrack = **550/558 tok / ~31 s**, converged, acc 1.0. Full cell
+   **2m04s** instead of >2h — a ~60× cell-cost reduction, and it drops the synthetic word-tally
+   that the handoff itself flagged as a poor agentic proxy.
+2. **truncation held at deployed** `top_p 0.95 / top_k 20` → every cell deterministic.
+3. **`min_p` spacing widened** to 0.0 / 0.05 / 0.15 (0.0/0.02/0.05 was inert).
+Collapse test re-specified with a genuine min_p-only comparator (`min_p 0.05`, top_p/top_k off).
+Archive is DURABLE: `~/mlx_bench_snapshots/tier0b-2026-08-13/`. Param verifier
+`benchmark/m1/tier0b_check.py` now checks **all four truncation knobs + presence_penalty +
+thinking_budget + max_tokens** (rev A's checked only temp and `min_p` — blind to the very knobs
+rev B depends on), and was smoke-tested in BOTH directions before use.
+
+### P1a opencode go/no-go — two blockers found before spending worker time
+- **(c) PASS on inspection:** `opencode run [message..]` is a real non-interactive mode.
+  opencode is installed on both boxes, but versions SKEW (driver 1.18.0, M5 **1.18.15**) and
+  #5674 is version-dependent. **`pi` is ABSENT on both boxes** — confirms the plan's note.
+- **⚠️ M5's DEPLOYED opencode config is STALE and predates both winners.**
+  `~/.config/opencode/opencode.json` lists `gemma-4-31b-4-256`, `Qwen3.6-27B-UD-MLX-6bit` etc. and
+  **neither `Ornith-1.0-35B-mlx-uniform-4bit` nor `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`**. The
+  repo's generated `opencode_config/opencode.json` is correct (tuned sampling + `presence_penalty
+  0.0`); it simply was never deployed. The smoke deploys it and restores the backup after.
+- **⚠️ THE GATE AS SPECIFIED IS NOT EXECUTABLE — there is no resolved-sampling log line.**
+  AGENTS.md/FU-2 says "resolved sampling is logged at INFO"; the fork has **no such line**
+  (no log of the merged params in `mlx-vlm/mlx_vlm/server/generation.py`), and the live worker logs
+  confirm it — mlx-serve sends worker **stdout to DEVNULL**, only stderr to
+  `$TMPDIR/mlx-manager-logs/<model>.log` (`process_manager.py:387`, truncated per load), which
+  contains no sampling fields. **And a resolved-sampling line would not answer the question
+  anyway:** under FU-2 the registry fills every omitted field, and opencode's configured values are
+  IDENTICAL to the registry's — so "temperature=0.4" appears whether opencode forwarded it or sent
+  nothing. Readback must use a value that DIFFERS from the registry default.
+  **Replacement (behavioural, reads `completion=<n>` off mlx-serve's own metrics line):**
+  `benchmark/m1/p1a_opencode_smoke.sh` — gate A endpoint reach; gate B `max_tokens: 7` (standard
+  AI-SDK param path); gate C `thinking_budget: 16` (non-standard extras path). **B and C are
+  different mechanisms and can disagree; C is the one the campaign depends on, so B-pass/C-fail is
+  a NO-GO for tuned comparisons through opencode, not a partial success.**
+  Runs after rev B (opencode would swap the resident model and evict the grid's).
+
 ## ▶ STATE 2026-08-12 — M1 SETTLED; CAMPAIGN V3 IS THE LIVE PLAN
 
 Plan: `docs/superpowers/plans/2026-08-12-campaign-v3-two-role-selection.md` (rev 2, after three

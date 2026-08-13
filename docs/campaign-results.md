@@ -293,6 +293,103 @@ should roughly double the both-solve set when m1f completes. Single judge FAMILY
 specifies a **mixed-family** panel, so cross-family agreement is still unmeasured and this run does
 not satisfy that requirement. Raw verdicts + key + aggregator: `benchmark/results/_judge/`.
 
+## P2 TIER-0 SAMPLING GRID — Ornith arm COMPLETE (2026-08-12, graded/audited 2026-08-13)
+
+Box M5, APC absent (router env `APC=` count 0, verified on the pid), `deployed` sampling profile,
+`max_kv_cache_size` 65536, suffix decoding ON as shipped, `presence_penalty` 0.0 throughout.
+Grid = 3 temps {0.2, 0.4, 0.6} x 3 `min_p` {0.0, 0.02, 0.05} plus 2 collapse-test cells, at
+`--samples 2 --coding-samples 1`; `top_k=0 / top_p=1.0` in the 9 grid cells (min_p is the one
+scale-free truncation knob), deployed `top_k 20 / top_p 0.95` in the `collapse_3knob` cell.
+Archived off volatile `/tmp` to `~/mlx_bench_snapshots/tier0-2026-08-12/` (11 result JSONs +
+per-cell logs), all 11 verified distinct by md5 — the stale-copy failure mode did NOT recur.
+
+### Result: there is no convergence knee for Ornith at these settings — an ANSWER, not a null
+**`converged_rate` 1.0 and `budget_hit_rate` 0.0 in ALL 11 cells**, on both the aggregation and
+coding halves. Audited per-draw rather than from the summaries: **33/33 draws converged**, 33/33
+`finish_reason == "stop"`, **0 budget hits**, max `completion_tokens` **40,607** against the 81,920
+budget (~50% headroom). Aggregation median completion ranged 32,685–40,607 tokens across cells;
+coding 2,562–3,819. Label-vs-recorded-param audit: **0 mismatches** in the 9 labelled cells.
+
+**Consequence for P3 — the ρ proxy analysis cannot use `conv%` for Ornith.** A constant vector has
+no rank correlation, so Spearman ρ on convergence is *undefined*, not merely weak. If the screen is
+to predict anything for this model it must be on a metric that actually varies (median reasoning
+tokens does: 6,287 → 40,607). Note also that P3 correlates the screen against per-config **agentic**
+results that **do not exist yet** (P4 has not run), so the second half of that correlation is
+currently unmeasured.
+
+### Two design defects in the grid, both measured
+- **`min_p` is inert across the chosen spacing, and so are `top_p`/`top_k`.** Grouping cells by
+  per-draw output signature gives **8 distinct signatures across 11 cells**:
+  `t0.2_mp0.02 ≡ t0.2_mp0.05`, and `t0.4_mp0.02 ≡ t0.4_mp0.05 ≡ collapse_3knob`. The last identity
+  is the informative one: `collapse_3knob` runs the **deployed 3-knob** truncation (top_p 0.95 /
+  top_k 20 / min_p 0.0) and is byte-equal to **min_p-only** cells at min_p 0.02 and 0.05. So the
+  three truncation knobs are **mutually redundant in this range** — the only distinction the model
+  resolves is truncation ON vs OFF. Effective distinct configs ≈ **6 (3 temps × 2 truncation
+  states)**, not 9. Widen the `min_p` spacing (e.g. 0.0 / 0.05 / 0.15) or drop it as an axis.
+- **The collapse test is mis-specified.** `collapse_minp_only` was intended as the min_p-only
+  comparator but is set to `min_p 0.0, top_p 1.0, top_k 0` — i.e. **nothing active**, making it an
+  *exact duplicate* of `t0.4_mp0.0` (params verified equal field-by-field). As written the test
+  compares "deployed truncation vs no truncation", not "3-knob vs min_p-only". The collapse claim
+  is nevertheless **supported** — by the accidental `collapse_3knob ≡ t0.4_mp0.02 ≡ t0.4_mp0.05`
+  identity above. A correctly-specified comparator needs `min_p > 0`.
+  That duplication had one lucky payoff: it gave a free same-config replicate, which is how the
+  determinism defect below was found.
+
+## DETERMINISM IS CONFIG-DEPENDENT — suffix decoding is the source, truncation masks it (2026-08-13)
+
+**This AMENDS "Unseeded requests are DETERMINISTIC" (HARNESS V2 §1 below), which is true only
+under a condition that was not stated.**
+
+The Tier-0 audit turned up a contradiction: `t0.4_mp0.0` and `collapse_minp_only` have
+**byte-identical params** yet produced **2,941 vs 2,841** completion tokens on `run_convergence`'s
+**hardcoded** `CODING_PROMPT` — a constant string, so neither the live-measured `cpt` (4.61 in all
+11 cells) nor a task seed can account for it. Meanwhile three cells differing only in inert knobs
+were exactly equal. So determinism held in some cells and failed in others.
+
+Every cell that reproduced had a truncation knob active; the pair that diverged had all three off.
+That makes the naive isolation test ("one config twice with suffix ON, twice with OFF")
+**confounded** — at the deployed config truncation is active, so it reproduces under both suffix
+states and would have *falsely exonerated* suffix decoding. Truncation has to be a factor:
+
+**2x2, Ornith-1.0-35B-mlx-uniform-4bit, M5, same box/session, APC absent, temp 0.4,
+`presence_penalty` 0.0, 3 reps per cell, byte-identity decided on sha256 of the returned
+reasoning + content** (`bench/probe_determinism.py`; suffix toggled in the registry with a
+router restart between arms, and verified **at the worker cmdline** — the suffix-OFF worker
+carries no `--draft-*` argument — not merely assumed from the yaml):
+
+| | truncation ON (deployed 0.95 / 20) | truncation OFF (1.0 / 0 / 0.0) |
+|---|---|---|
+| **suffix ON** (shipped) | byte-identical, 1 sig/3 (ct 2,364 ×3) | **DIVERGENT, 3 sigs/3** (ct 2,825 / 4,467 / 3,736) |
+| **suffix OFF** | byte-identical, 1 sig/3 (ct 2,318 ×3) | byte-identical, 1 sig/3 (ct 3,127 ×3) |
+
+**Suffix decoding is the source of the nondeterminism, and tail truncation masks it.** With the
+tail unclipped the sampler ranges over the full vocabulary, where suffix decoding's kernel numerics
+flip sampled tokens — and the effect is not marginal: a **1.6× spread** in generated length
+(2,825 → 4,467) at a fixed config. Clip the tail and it vanishes; turn suffix off and it vanishes
+even unclipped. This is the mechanism behind AGENTS.md's "inherently non-lossless — kernel numerics
+flip greedy argmaxes", now localized to the untruncated path and measured at the byte level.
+
+**What this does and does not change:**
+- **The deployed config is SAFE.** All four sampling carriers ship `top_p 0.95 / top_k 20`, so every
+  client and every `deployed`-profile benchmark row runs on the truncated, reproducible path. The
+  HARNESS V2 §1 conclusion stands **for the deployed config**; it does not generalize to arbitrary
+  sampling, and the qualifier now needs to travel with it.
+- **The Tier-0 `min_p = 0.0` column was measured on a nondeterministic path** (4 of 11 cells:
+  `t0.2_mp0.0`, `t0.4_mp0.0`, `t0.6_mp0.0`, `collapse_minp_only`), because the grid deliberately set
+  `top_k 0 / top_p 1.0`. At `--samples 2` those cells are largely noise, and any ρ built on them
+  correlates noise with noise. **Fix: hold `top_p`/`top_k` at the deployed values and vary `min_p`**
+  — which also makes the grid measure the path we actually serve.
+- **Suffix ON and OFF are different fixed points, not the same output.** At the same truncated
+  config they disagree (ct 2,364 vs 2,318, different hashes) while each is internally reproducible.
+  So the shipped "quality-neutral" finding is an *aggregate* claim (he+/mbpp+/LCB within noise), and
+  remains one; it never implied identical text, and these rows confirm it does not hold at the byte
+  level.
+- **KEEP suffix ON.** The operator's stated reason is latency and it holds here: same box, same
+  session, same truncated config, 3 reps each — **23.8s mean wall with suffix ON vs 30.3s OFF, a
+  1.27× speedup** on a novel coding prompt (consistent with the recorded 1.09× novel / 2.41×
+  verbatim). Disabling it to buy reproducibility would be paying a real latency cost to fix
+  something the deployed truncation already prevents.
+
 ## HARNESS V2 — measurement findings (2026-08-11)
 
 Plan: `docs/superpowers/plans/2026-08-11-harness-v2-reliability-and-agentic-axes.md`. These are
@@ -300,6 +397,12 @@ HARNESS results, not model results — no candidate ranking changes. Three of th
 existing rows should be read.
 
 ### 1. Unseeded requests are DETERMINISTIC — every historical single-sample row is a fixed replay
+⚠️ **AMENDED 2026-08-13 — true only when the sampler TRUNCATES the tail.** With suffix decoding ON
+(shipped on both winners) and `top_p 1.0 / top_k 0 / min_p 0.0`, three identical unseeded requests
+returned **three different** outputs spanning 1.6× in length. The deployed config truncates
+(`top_p 0.95 / top_k 20`), so everything below holds for it — but the qualifier must travel with the
+claim. See "DETERMINISM IS CONFIG-DEPENDENT" above for the 2x2 that isolates it.
+
 Measured on the live stack: with no `seed` in the request, three draws of one prompt at
 temperature 0.8 returned **byte-identical** text; `seed=7` twice is identical, `seed=8` differs.
 The worker keys its sampler per request (`DEFAULT_SEED = 0`) and the suffix-decoding path shipped
