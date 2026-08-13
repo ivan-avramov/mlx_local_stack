@@ -84,24 +84,57 @@ posts a pre-formatted prompt to `/v1/completions` and bypasses the chat template
 **Recommendation:** BFCL live smoke first — cheapest, and it is the only powered axis the campaign owns
 (0.94 vs 0.749 at n=1000 is ~12σ). Then judge panel v3. SWE-bench last; it is the largest build.
 
+### O9. Does the judge panel rate looped-then-correct answers differently from directly-correct ones?
+Falls out of M1. Four rows on the IFEval run are execution-passing but reached the answer through a
+degenerate loop (ids 2849, 279, 3608 line/content-level; 3188 also truncated). They are eligible for
+the judge panel by the campaign's own rule — execution-passing outputs — and `is_degenerate` marks them
+for attention.
+**Why it is worth asking:** a 2,071x loop plausibly correlates with a worse ANSWER even when the
+verifier passes; if it does not, that is equally informative, because it would mean reasoning-trace
+pathology is invisible in output quality and is therefore purely a cost concern after all.
+**Blocked on:** the panel's reliability (recorded as "NOT RELIABLE ENOUGH TO RANK" at v2), so this needs
+the panel-reliability work first — or it can only ever be suggestive.
+**Recommendation:** hold until the panel is trustworthy; do not spend model time on a comparison whose
+instrument cannot carry it.
+
 ---
 
 ## CLOSED-BY-MEASUREMENT
 
-### M1. Should `converged` absorb self-terminating repetition loops? — **NO** (2026-08-13)
-I raised this; measurement dissolved it. The operator's principle — *exhausting the thinking budget is
-a failed run, because we interrupted the model rather than it deciding it was done* — is correct **and
-already the implemented rule**: `converged = finish_reason=="stop" AND completion_tokens <
-thinking_budget`, so a budget hit is already not converged, and AGENTS.md already calls it a fail
-signal. (Terminology note: **EOS = end-of-SEQUENCE**, the model's own stop token — not end-of-session.)
+### M1. Should `converged` absorb self-terminating repetition loops? — **NO** (2026-08-13, operator-confirmed)
+**Operator ruling: this is NOT a DNF. It is a valid converged response — converged as determined by the
+MODEL — and it is recorded and evaluated for quality like any other row: correctness AND subjective
+quality.**
 
-But item 2849 was **not** a budget exhaustion: 52,503 tokens at **64% of budget** with
-`finish_reason "stop"`, i.e. the model stopped itself. Its answer **PASSED both strict and loose**
-verifiers (`benchmark/m1/inspect_item.py`) — a valid 276-char answer. So the work was complete by the
-model's own decision and the answer is usable; marking it DNF would **discard a valid result**, the
-opposite error. What it wasted is 271 s and 52,503 tokens for 276 characters — a **cost** defect.
-Hence: kept as an additive cost diagnostic (`n_degenerate_eosed`, `degenerate_wall_share`,
-`degenerate_token_share`), and the ratified convergence formula is unchanged.
+The operator's principle — *exhausting the thinking budget is a failed run, because we interrupted the
+model rather than it deciding it was done* — is correct **and already the implemented rule**:
+`converged = finish_reason=="stop" AND completion_tokens < thinking_budget`, so a budget hit is already
+not converged, and AGENTS.md already calls it a fail signal. (Terminology: **EOS = end-of-SEQUENCE**,
+the model's own stop token — not end-of-session. My jargon caused the confusion.)
+
+Item 2849 was **not** a budget exhaustion: 52,503 tokens at **64% of budget** with `finish_reason
+"stop"`, i.e. the model stopped itself, and its answer **PASSED both strict and loose** verifiers
+(`benchmark/m1/inspect_item.py`) — a valid 276-char answer. The work was complete by the model's own
+decision, so marking it DNF would **discard a valid result**, the opposite error to the one the budget
+rule guards against.
+
+⚠️ **REFINEMENT (2026-08-13, correcting my own framing).** I called this "a COST defect, not a
+correctness one". That is accurate but INCOMPLETE, and the incompleteness matters: what was actually
+measured is only the cost half (271 s and 52,503 tokens for 276 chars). Whether a model that loops
+2,071 times before answering produced *good work* is a question the instrumentation cannot answer, and
+"correctness passed, so it is fine apart from the tokens" must not stand in for it. Per the campaign's
+instrumentation rule, subjective quality belongs to the blind mixed-family JUDGE PANEL over
+execution-PASSING outputs — and this row is exactly such an output, so it is **eligible, not exempt**.
+
+**So `is_degenerate` is a FLAG FOR THE JUDGE PANEL'S ATTENTION, not a verdict.** Consequences:
+- These rows stay in `acc` and in the item set. **No exclusion, no reweighting, no DNF.**
+- `degenerate_wall_share` / `degenerate_token_share` remain reasoning-token COST, reported beside
+  capability and never folded into it.
+- The open question becomes **O9** below: does the panel rate looped-then-correct answers differently
+  from directly-correct ones? Better question, and answerable.
+- ⚠️ Caveat: the judge panel is on record as **"NOT RELIABLE ENOUGH TO RANK"** (v2, two runs). It can
+  raise a signal here; it cannot settle it, and a panel result on this must not be presented as
+  decisive.
 
 ### M2. How do APC and session caching compose? — **THEY DON'T** (2026-08-13)
 Mutually exclusive per request: `generation.py:2455-2464` dispatches any request with a

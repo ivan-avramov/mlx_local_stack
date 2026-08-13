@@ -473,11 +473,22 @@ neither. The instrument was blind to loops cheap enough to self-terminate. The t
 **The ratified convergence formula is deliberately unchanged** — it exists to stop a budget-hit's
 forced EOS from false-passing, and it still does. Added instead as additive diagnostics:
 `traces.is_degenerate` + `n_degenerate_eosed` / `degenerate_wall_share` / `degenerate_token_share`.
-**CLOSED-BY-MEASUREMENT (see `docs/open-questions.md` M1): these should NOT be scored DNF.** Item 2849
-**passed both strict and loose verifiers** — a valid 276-char answer. The model self-terminated, so the
-work was complete by its own decision and the answer is usable; marking it DNF would discard a valid
-result. Contrast a thinking-budget hit, where the answer IS produced from work we truncated. So this is
-a **cost** defect, not a correctness one, and it is instrumented as such.
+**OPERATOR-CONFIRMED, and this is the scoring rule (see `docs/open-questions.md` M1): NOT a DNF.** It is
+a valid converged response — converged as determined by the MODEL — and it is recorded and evaluated for
+quality like any other row, on BOTH correctness and subjective quality. Item 2849 **passed both strict
+and loose verifiers** (a valid 276-char answer), and that pass counts in `acc`. Contrast a
+thinking-budget hit, where the answer IS produced from work we truncated.
+
+⚠️ **Do not read this as "correctness passed, so only the tokens were wasted."** What is measured here is
+only the COST half (271 s / 52,503 tokens for 276 chars). Whether a model that loops 2,071 times before
+answering produced *good work* is a question this instrumentation cannot answer. Per the campaign's
+instrumentation rule that belongs to the blind mixed-family JUDGE PANEL over execution-PASSING outputs —
+and these rows are exactly such outputs, so they are **eligible, not exempt**. `is_degenerate` is
+therefore a **flag for the panel's attention, not a verdict**: the rows stay in `acc` and in the item set
+with no exclusion or reweighting, while `degenerate_wall_share` / `degenerate_token_share` stay as
+reasoning-token cost reported beside capability, never folded into it. The follow-up question is O9
+(does the panel rate looped-then-correct answers differently?), which is blocked on the panel's own
+reliability — recorded as "NOT RELIABLE ENOUGH TO RANK" at v2.
 
 ### The historical record CANNOT be checked for this — 1% audit coverage
 `traces.is_degenerate` reads persisted `reasoning_stats`, so old rows are re-classifiable with no
