@@ -25,6 +25,66 @@ survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNN
 
 Last updated: 2026-08-11. **HARNESS V2 IS THE LIVE WORKSTREAM** (see below); **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
 
+## ▶ NEW CANDIDATE SCAN 2026-08-13 (web research, operator-requested) — 3 viable, 2 categorically out
+
+⚠️ **THE FRONTIER HAS LEFT OUR HARDWARE CLASS.** The current top open-weights agentic-coding models are
+now 10–40× beyond a 64GB box, so the campaign is not choosing "the best open model" — it is choosing the
+best model that FITS. State this in the write-up; it is a finding, not a caveat:
+
+| model | released | size | fits ≤46GB @256K? |
+|---|---|---|---|
+| **GLM-5.2** (MIT) — top open-weights on SWE-bench Pro 62.1%, Terminal-Bench 81.0 | 2026-06-16 | **744B** total / 40B active → ~372GB @4bit | ❌ **IMPOSSIBLE** (−326GB) |
+| **Kimi K3** (open 2026-07-27) — leads LiveBench Agentic Coding 57.58 | 2026-07-16 | **2.8T** / 104B active, **1.56TB** MXFP4 | ❌ **IMPOSSIBLE** (−1,514GB) |
+
+### ✅ VIABLE NEW CANDIDATES — acquire and screen, in this order
+
+**1. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B` — STRONGEST FIT, acquire first.**
+Released **2026-08-11** (two days ago), OpenMDW-1.1, free commercial use.
+- **262,144 (256K) NATIVE context** — only Ornith and the distill clear that today, and this is native
+  rather than extended.
+- **30B MoE with 3B ACTIVE** — the same fast-decode structure that is Ornith's differentiator.
+  Reported ~80–100 tok/s at 4-bit on a 32–64GB Mac.
+- **MLX 4-bit port already exists at 17.8GB** (mlx-community; Ollama ships `…:30b-mlx`), leaving
+  ~28GB of KV budget under the gate — no conversion work, unlike Ornith.
+- Hybrid **LatentMoE: interleaved Mamba-2 + MoE + select attention**; 128 routed + 1 shared expert,
+  6 per token. Purpose-built for the **agentic execution layer**, which is exactly our coder role.
+- ⚠️ **Integration risks to check FIRST:** (a) it is **TEXT-ONLY**, and every registry entry so far is
+  `type: vision` — needs the mlx_lm path or a non-vision registry type; (b) **Mamba-2 hybrid** is a new
+  arch for our fork — the Ornith precedent says budget for a `sanitize`/loader fix; (c) it ships **MTP
+  layers** for native speculative decoding, and AGENTS.md records MTP as a **net slowdown** for us — so
+  disable MTP and measure suffix decoding instead, or the speed row is not comparable.
+
+**2. `prism-ml/Ternary-Bonsai-27B-mlx-2bit` — the most INTERESTING scientifically, acquire second.**
+Announced 2026-07-14.
+- **262K context**, **5.9GB at 1.71 effective bits/weight** → ~40GB of KV headroom, the largest of any
+  candidate by far. Custom 2-bit hybrid-attention MLX kernels already exist.
+- **It is a Qwen3.6-27B derivative**, i.e. the SAME family as our distill — so our loader, thinking
+  format and sampling carriers very likely work unchanged.
+- Vendor claims **~95% of the Qwen3.6-27B baseline** (80.5 vs 85.0 aggregate over 15 math/coding/
+  tool-calling/knowledge/vision/instruction benchmarks) and recommends the ternary build specifically
+  for **agents, coding assistants and tool use**.
+- ⚠️ **Why this is the sharpest test we could run:** a claimed ~5% aggregate drop sits EXACTLY on the
+  campaign's `≤5% quality drop` lossy-lever gate. Treat the vendor number as a hypothesis, not a
+  result — it is an aggregate over a benchmark mix we did not choose, and our own axes are what the
+  gate is defined on. If it holds, a 5.9GB model with 262K context reframes the whole memory budget.
+
+**3. `Meta Muse Glimmer 30B` (Apache 2.0) — acquire third, or skip.**
+Released 2026-08-10.
+- 30B **DENSE** multimodal, <20GB at 4-bit, Gemma-like arch with hybrid GQA + SWA (3:1 local:global,
+  2,048-token window).
+- ⚠️ **Context is 131,072 (128K)** — BELOW the 256K goal. Admissible under "256K is a goal, not a
+  mandate" (gemma was kept at 192K), but it competes for the same slot as models that do clear it.
+- ⚠️ **`mlx-lm`/`mlx-vlm` DO NOT SUPPORT THE ARCHITECTURE YET** — day-0 MLX support came via
+  Rapid-MLX vendoring the text backbone. That is an Ornith-scale port, for a model that gives up
+  half the context.
+- Dense 30B ⇒ slower decode than a 3B-active MoE, on the axis where Ornith wins.
+- Note `Muse Spark 1.2` (Meta's top model) is also being open-sourced — size unknown, likely out of
+  budget; re-check when specs land.
+
+**Sequencing note:** all three are screened with the Tier-0 → capacity → light ladder, NOT dropped
+straight into the agentic axis. And the campaign has ONE worker currently committed to IFEval, so
+acquisition/conversion work (driver-side, free) should proceed while the worker finishes.
+
 ## ▶ RATIFIED SEQUENCE 2026-08-13 (operator): **P4 → BFCL → judge panel → SWE-bench**
 P3 is CANCELLED (see the phase table). Rationale for the order: P4 answers the sampling question M1 left
 open; BFCL is the cheapest remaining axis AND the only POWERED one the campaign owns (0.94 vs 0.749 at
