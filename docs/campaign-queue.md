@@ -25,6 +25,14 @@ survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNN
 
 Last updated: 2026-08-11. **HARNESS V2 IS THE LIVE WORKSTREAM** (see below); **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
 
+## ▶ RATIFIED SEQUENCE 2026-08-13 (operator): **P4 → BFCL → judge panel → SWE-bench**
+P3 is CANCELLED (see the phase table). Rationale for the order: P4 answers the sampling question M1 left
+open; BFCL is the cheapest remaining axis AND the only POWERED one the campaign owns (0.94 vs 0.749 at
+n=1000 is ~12σ), though its live smoke must verify `<think>` actually appears, since that path posts a
+pre-formatted prompt to `/v1/completions` and bypasses the chat template; the judge panel needs its
+reliability fixed first (recorded "NOT RELIABLE ENOUGH TO RANK" at v2) and gates O9; SWE-bench is the
+largest build so it goes last. Full decision record: `docs/open-questions.md`.
+
 ## ▶ STATE 2026-08-13 — Tier-0 rev A audited + rev B running; suffix nondeterminism isolated
 
 ### The "runaway worker" in handoff §1 had already cleared itself — premise was WRONG
@@ -275,7 +283,7 @@ every extractor must filter on non-empty `tests_outcomes`.
 | P1a | pi + opencode go/no-go smokes — endpoint reach AND sampling actually landing | queued (gates ~24h) |
 | P1b/c | harness recon + agnostic monitor | ✅ |
 | P2 | Tier-0 grid, 9 configs (3 temp × 3 min_p) + TEST the 4D→2D collapse | queued |
-| P3 | proxy validation: Spearman ρ + **exact permutation p** on the Tier-0 grid | queued |
+| P3 | ~~proxy validation: Spearman ρ + exact permutation p on the Tier-0 grid~~ | ❌ **CANCELLED 2026-08-13** (operator). ρ on `conv%` is UNDEFINED — rev A 33/33 and rev B 66/66 converged, i.e. a constant vector — and the agentic half of the correlation does not exist until P4 runs. Re-specify on reasoning-token cost AFTER P4 if a proxy is still wanted. |
 | P4 | Tier-1 agentic tune @ `tries=4`, Tier-2 confirm on **held-out EXERCISES** (89 unused) | queued |
 | P5 | daily role: Ornith temp-ladder, IFEval (ready now), multi-turn chat eval (missing) | partly ready |
 | P6 | repo-level via **SWE-bench (built, never run)** + harness gradient | queued |
