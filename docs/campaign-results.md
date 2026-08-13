@@ -412,6 +412,43 @@ Rev B came within range of it again — the 52,833-token draw took 999 s of the 
 `thinking_budget ÷ measured decode rate` with a margin, or fail the cell loudly when the timeout is
 below that ratio, so the harness cannot silently convert a budget hit into an orphaned generation.
 
+## PHASE-2 RE-VERIFY (operator-authorised 2026-08-13): #4 suffix CONFIRMED, #5 GQA kernel UNFALSIFIABLE
+
+Prompted by the APC finding — a shipped, documented Phase-2 "win" that turned out absent. If one of
+three evaporated silently, the others needed checking.
+
+### #4 suffix (prompt-lookahead) decoding — **CONFIRMED, real**
+Measured incidentally by the determinism 2x2: same box, same session, same truncated config, 3 reps
+each — **23.8 s mean wall with suffix ON vs 30.3 s OFF = 1.27×** on a novel coding prompt (recorded
+claim: 2.41× verbatim / 1.09× novel; a novel-ish prompt with repeated structure landing between them
+is consistent). Also confirmed ACTIVE at the worker cmdline (`--draft-kind suffix --draft-block-size
+16 --suffix-min-match 2`). **Keep.**
+
+### #5 fused quantized-KV GQA tile-reuse decode kernel — **cannot be re-verified at runtime**
+| check | result |
+|---|---|
+| Is the fused kernel the default? | **Yes.** `turboquant.py:6332` reads `getattr(self, "_decode_2pass_use_legacy", False)` → default `False` → fused path. |
+| Can it be A/B'd? | **NO.** `_decode_2pass_use_legacy` appears in **exactly one place in the whole fork — the `getattr` that reads it.** Nothing ever sets it: no env var, no CLI flag, no test. It served a one-off micro-bench and is now **dead code**. |
+| Does its precondition hold? | **Yes for both winners.** The kernel sets `heads_per_group = 2 if n_repeats % 2 == 0 else 1`, and at `G=1` the tile-reuse **degenerates to the legacy R-redundant read, i.e. no benefit at all**. Distill: 24 q-heads / 4 kv-heads → `n_repeats 6` → **G=2**. Ornith: 16 / 2 → `n_repeats 8` → **G=2**. |
+| Does it apply to Ornith? | **No** — it is the *quantized*-KV 2-pass path, and Ornith ships fp16 KV (`kv_bits: 0`). Consistent with the Phase-2 record ("does NOT beat native fp16 → Ornith stays fp16"). It is a **distill-only** lever. |
+
+**So the recorded "lossless, ~1.3× over legacy TQ, +2–7% end-to-end" is UNFALSIFIABLE as shipped** —
+structurally the same problem as APC: an optimization we cannot check is running well. The difference
+is that this one is at least *on the path* by default and its precondition is satisfied, whereas APC
+was measurably inert.
+**Fix proposed, NOT applied:** add an env hook (e.g. `TQ_DECODE_2PASS_LEGACY=1`) in the parent fork so
+the toggle is reachable and the claim can be A/B'd same-box/same-session. Small change; without it the
+lever is permanently unauditable.
+**Note for the speed question:** since the kernel is already the default and its precondition holds,
+there is no *unbanked* speed win here. The distill remains the campaign's wall-clock bottleneck
+(3.9× Ornith per aider case) with this lever already engaged.
+
+### ⚠️ GENERAL LESSON — a perf lever with no runtime toggle is unauditable by construction
+Three Phase-2 wins, three different verification states: #4 re-verified and real; #5 on-by-default but
+with its A/B path deleted; #1 (APC) **absent**. Any future lever should ship with an env-toggle *and* a
+counter/stat that proves it engaged (APC's own `/metrics` block is what made its inertness provable —
+that part of the design was right).
+
 ## ⚠️ APC IS INERT ON THE DEPLOYED STACK — zero memory cost AND zero benefit (2026-08-13)
 
 Operator question: APC is acceptable if it buys TTFT for free, but not if it eats memory that pushes
