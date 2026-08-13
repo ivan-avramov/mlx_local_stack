@@ -42,8 +42,14 @@ MEANDER_MIN_NGRAM8_UNIQUE = 0.8
 # ngram8_unique 0.0104, and id 3608 had 0.8966 / 2 with 0.0323 — both invisible to line repetition.
 # Healthy items on the same run measured ~0.73, so 0.15 sits in a 5-20x gap on one side and 20-70x
 # on the other. Requires a long trace: a brief reply may legitimately repeat a template.
+#
+# GUARDED ON CHARS, NOT LINES — a first attempt used `lines >= 100` and caught NONE of these, because
+# the loop runs inside one giant paragraph: id 279 is 52,409 tokens in 22 LINES (~2,400 tokens per
+# line), id 3608 is 54,702 in 29, id 3188 is 65,450 in 12. Line count measures formatting, not length,
+# so a line-count guard excludes exactly the cases this rule exists to catch. Healthy long traces on
+# the same run were 385-483 lines for ~9.5K tokens, i.e. the SHAPE differs as much as the content.
 DEGENERATE_MAX_NGRAM8_UNIQUE = 0.15
-DEGENERATE_MIN_LINES = 100
+DEGENERATE_MIN_CHARS = 20000
 
 # "waiting" is not "wait" — \b keeps these whole words, and \s+ lets a phrase straddle a newline.
 _MARKERS = {
@@ -127,7 +133,7 @@ def _is_repetition(stats: dict) -> bool:
                and stats.get("max_line_repeat", 0) >= REPEAT_MAX_REPEAT
                and ratio is not None and ratio < REPEAT_MIN_UNIQUE_RATIO)
     n8 = stats.get("ngram8_unique")
-    by_content = (stats.get("lines", 0) >= DEGENERATE_MIN_LINES
+    by_content = (stats.get("chars", 0) >= DEGENERATE_MIN_CHARS
                   and n8 is not None and n8 < DEGENERATE_MAX_NGRAM8_UNIQUE)
     return bool(by_line or by_content)
 

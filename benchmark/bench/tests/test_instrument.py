@@ -115,7 +115,8 @@ def test_ngram_degeneracy_is_caught_even_when_every_LINE_is_unique():
     """id 279: unique_line_ratio 1.0 and max_line_repeat 1 — line repetition is blind to this."""
     import bench.traces as T
     row = {"finish_reason": "stop", "completion_tokens": 52409, "thinking_budget": 81920,
-           "reasoning_stats": {"chars": 180000, "lines": 900, "unique_line_ratio": 1.0,
+           # REAL shape from the run: 22 lines, ~170K chars. A line-count guard misses this.
+           "reasoning_stats": {"chars": 170000, "lines": 22, "unique_line_ratio": 1.0,
                                "max_line_repeat": 1, "ngram8_unique": 0.0104}}
     assert T.is_degenerate(row) is True
 
@@ -124,7 +125,7 @@ def test_ngram_degeneracy_with_mostly_unique_lines_is_caught():
     """id 3608: unique_line_ratio 0.8966 — comfortably above the line-repetition threshold."""
     import bench.traces as T
     row = {"finish_reason": "stop", "completion_tokens": 54702, "thinking_budget": 81920,
-           "reasoning_stats": {"chars": 190000, "lines": 1200, "unique_line_ratio": 0.8966,
+           "reasoning_stats": {"chars": 185000, "lines": 29, "unique_line_ratio": 0.8966,
                                "max_line_repeat": 2, "ngram8_unique": 0.0323}}
     assert T.is_degenerate(row) is True
 
@@ -133,15 +134,16 @@ def test_a_healthy_trace_at_the_measured_uniqueness_is_NOT_flagged():
     """Healthy IFEval items measured ngram8_unique ~0.73; the threshold must sit far below that."""
     import bench.traces as T
     for ng in (0.7285, 0.7388, 0.5478, 0.30):
+        # REAL healthy shape: 483 lines for ~9.9K tokens — note the shape differs as much as content
         row = {"finish_reason": "stop", "completion_tokens": 9875, "thinking_budget": 81920,
-               "reasoning_stats": {"chars": 30000, "lines": 400, "unique_line_ratio": 0.81,
+               "reasoning_stats": {"chars": 33000, "lines": 483, "unique_line_ratio": 0.81,
                                    "max_line_repeat": 3, "ngram8_unique": ng}}
         assert T.is_degenerate(row) is False, f"ngram8_unique={ng} must not be flagged"
 
 
 def test_a_SHORT_trace_with_low_ngram_uniqueness_is_not_flagged():
-    """Low uniqueness is only meaningful over a long trace — a brief answer can legitimately repeat
-    a template. Guarding on length keeps a 3-line reply from being called a loop."""
+    """Low uniqueness is only meaningful over a LONG trace (measured in chars, not lines) — a brief
+    answer can legitimately repeat a template."""
     import bench.traces as T
     row = {"finish_reason": "stop", "completion_tokens": 60, "thinking_budget": 81920,
            "reasoning_stats": {"chars": 200, "lines": 4, "unique_line_ratio": 0.5,
@@ -154,6 +156,6 @@ def test_meander_still_requires_HIGH_novelty_and_is_unaffected():
     the opposite, and must not be relabelled as meanders."""
     import bench.traces as T
     row = {"finish_reason": "stop", "completion_tokens": 81920, "thinking_budget": 81920,
-           "reasoning_stats": {"chars": 180000, "lines": 900, "unique_line_ratio": 1.0,
+           "reasoning_stats": {"chars": 170000, "lines": 22, "unique_line_ratio": 1.0,
                                "max_line_repeat": 1, "ngram8_unique": 0.0104}}
     assert T.classify(row) == "degenerate_repetition", "a low-novelty loop is not a meander"
