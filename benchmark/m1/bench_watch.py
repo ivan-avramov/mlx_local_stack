@@ -60,7 +60,7 @@ def _alive(pattern: str) -> bool:
                           capture_output=True).returncode == 0
 
 
-def assess(model, bench, total, prev_n, flat_ticks, rate_hist) -> tuple[str, int, int, list]:
+def assess(model, bench, total, prev_n, flat_ticks, rate_hist, started=True) -> tuple[str, int, int, list]:
     """Return (report, n, flat_ticks, rate_hist). Pure enough to test with fake rows."""
     rows = _rows(model, bench)
     live = [r for r in rows if not r.get("error")]
@@ -68,6 +68,15 @@ def assess(model, bench, total, prev_n, flat_ticks, rate_hist) -> tuple[str, int
     lines = []
 
     # ---- 1 PROGRESSING
+    # A model the driver has not reached yet sits at n=0 for hours. Escalating that to INVESTIGATE
+    # every tick — as the first version did — is a false alarm that teaches the reader to ignore the
+    # alert, defeating the point of the daemon. "started" is False until the model has ANY rows AND
+    # no earlier tick saw rows for it (rows VANISHING would be a real problem, not a queue).
+    if not started and n == 0:
+        lines.append(f"  1 PROGRESS  n=0/{total}  QUEUED — driver has not reached this model yet")
+        lines.append("  4 CORRECTION none (queued)")
+        return "\n".join(lines), n, 0, rate_hist
+
     delta = None if prev_n is None else n - prev_n
     if delta is None:
         lines.append(f"  1 PROGRESS  n={n}/{total} (first tick, no delta yet)")
@@ -133,7 +142,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     models = [m for m in args.models.split(",") if m]
-    state = {m: {"prev": None, "flat": 0, "rates": []} for m in models}
+    state = {m: {"prev": None, "flat": 0, "rates": [], "started": False} for m in models}
     out = Path(args.out)
 
     while True:
@@ -141,8 +150,10 @@ def main(argv=None) -> int:
         blocks = [f"===== {time.strftime('%H:%M:%S')}  driver={'ALIVE' if alive else 'GONE'} ====="]
         for m in models:
             s = state[m]
-            rep, n, flat, rates = assess(m, args.bench, args.total, s["prev"], s["flat"], s["rates"])
-            state[m] = {"prev": n, "flat": flat, "rates": rates}
+            rep, n, flat, rates = assess(m, args.bench, args.total, s["prev"], s["flat"],
+                                         s["rates"], started=s["started"])
+            state[m] = {"prev": n, "flat": flat, "rates": rates,
+                        "started": s["started"] or n > 0}
             blocks.append(f"{m}")
             blocks.append(rep)
         with out.open("a") as f:

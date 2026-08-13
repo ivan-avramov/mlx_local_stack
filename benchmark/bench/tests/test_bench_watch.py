@@ -90,3 +90,31 @@ def test_error_rows_are_excluded_from_the_rate_and_wall_statistics():
     rep, n, *_ = _assess(rows, prev=0)
     assert n == 10, "n counts all rows, matching the file"
     assert "errors=5" in rep
+
+
+# ------------------------------------------------------------ queued != stalled (false-alarm fix)
+def test_a_model_that_has_not_STARTED_is_queued_not_stalled():
+    """Shipped with a false positive: the driver runs models sequentially, so the second sits at n=0
+    for hours and escalated to INVESTIGATE every tick while the first was progressing normally. An
+    alert that fires on healthy state trains the reader to ignore it — which defeats the whole point
+    of putting the cadence in a daemon.
+    """
+    BW._rows = lambda m, b: []
+    rep, n, flat, _ = BW.assess("M", "ifeval", 100, 0, 8, [], started=False)
+    assert n == 0
+    assert "QUEUED" in rep, "a not-yet-started model must say so"
+    assert "INVESTIGATE" not in rep, "and must not escalate"
+
+
+def test_a_started_model_that_goes_flat_STILL_escalates():
+    """The fix must not silence the real signal."""
+    BW._rows = lambda m, b: [_row()] * 10
+    rep, _, flat, _ = BW.assess("M", "ifeval", 100, 10, 2, [], started=True)
+    assert flat == 3 and "INVESTIGATE" in rep
+
+
+def test_a_model_at_zero_rows_is_treated_as_started_once_it_has_ever_had_rows():
+    """started=True with n=0 would mean rows VANISHED — that is a real problem, not a queue."""
+    BW._rows = lambda m, b: []
+    rep, *_ = BW.assess("M", "ifeval", 100, 5, 0, [], started=True)
+    assert "QUEUED" not in rep
