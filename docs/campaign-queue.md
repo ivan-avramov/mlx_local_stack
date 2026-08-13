@@ -65,7 +65,53 @@ reproducible path. But **AGENTS.md's "unseeded requests are byte-identical" now 
 condition**, and rev A's `min_p=0.0` column (4 of 11 cells) was measured on the nondeterministic
 path. Probe: `benchmark/bench/probe_determinism.py` (+15 tests; suite 544 → **559 green**).
 
-### ~ RUNNING — P2 TIER-0 rev B, 22 cells, both models (`benchmark/m1/tier0b_grid.sh`)
+### ✅ P2 TIER-0 rev B COMPLETE — 22/22 cells, both models, **50 min total**, zero failures
+Full table in `docs/campaign-results.md`. Headlines:
+- **Determinism fix CONFIRMED independently:** rev B's duplicate-config pair (`collapse_3knob` ≡
+  `t0.4_mp0.0`) is **byte-identical on both models**, where rev A's equivalent pair diverged.
+- **Convergence SATURATED: 66/66 draws converged, 0 budget hits, all `finish=stop`.** Neither winner
+  has a knee anywhere in temp 0.2–0.6 × min_p 0.0–0.15. **⇒ `conv%` is the wrong screen metric** —
+  it has no variance for either winner, while cost varies **47×** within one model.
+- **Ornith is FLAT** (coding 2,921 → 2,016 tok, 31 → 24 s as temp rises; no instability anywhere).
+  **The distill is unstable at temp 0.6:** one draw ran **52,833 tok / 16.6 min** on the same problem
+  it does in 1,122 tok / 41 s at temp 0.4 — and `conv%` scored it a clean pass. Independently
+  **confirms the distill's op-temp 0.3** from a new task and harness path.
+- **`min_p` is inert at low temp and only bites at high temp:** at 0.2 all three values are
+  byte-identical; at 0.4 only 0.15 differs; at 0.6 all three differ. So a `min_p` axis is only
+  meaningful above ~0.4 — rev A's inertness was not merely a spacing choice.
+- **Collapse test PASSES, properly specified** (genuine min_p-only comparator) ⇒ 4D→2D validated in
+  the regime tested.
+- ⚠️ **HARNESS DEFECT:** `run_convergence` uses `driver.complete`'s default **3600 s** timeout while
+  `thinking_budget` is 81,920. At the distill's 10–16 tok/s on long prompts the budget needs
+  **85–136 min**, so a genuine `budget_hit` is **UNOBSERVABLE** — the client abandons at ~37–58K
+  tokens and the worker keeps generating. This IS the rev-A cascade mechanism (that cell ran 3,802 s
+  vs the 3,600 s timeout). Fix proposed, NOT applied: derive the timeout from
+  `thinking_budget ÷ measured decode rate`, or fail loudly when it is below that ratio.
+
+### ✅ P1a opencode go/no-go — **GO** (all gates pass), after fixing a blocker in our own config
+- ⚠️ **BLOCKER, now confirmed:** `configgen/emitters/opencode.py:17` emits a top-level
+  **`_generated`** key; opencode 1.18.15 rejects the file outright (`Unrecognized key: _generated`),
+  so **zero requests reached :8000** and every gate failed `rc=1`. Removing only that key makes the
+  config load with all four models. **This would have been misread as "#5674 confirmed, opencode
+  unusable"** — cancelling the plan's primary driver over a defect in our own emitter.
+  **FIX PROPOSED, NOT APPLIED** (awaiting authorisation): drop `_generated` from the opencode
+  emitter's doc. `configgen/emitters/vscode.py:11` also emits it, but into an array element for a
+  different consumer — **verify separately, do not assume broken**. No configgen test asserts on
+  `_generated`, so the fix needs a new test pinning that the opencode doc has no unrecognized
+  top-level keys.
+- **With that fixed, #5674 does NOT affect 1.18.15 and the tuned sampling genuinely LANDS:**
+  (a) endpoint reach 200; (b) `max_tokens: 7` → `completion=8` vs 45 baseline (standard AI-SDK
+  path); (c) `thinking_budget: 16` → `completion=261` vs **740** baseline (non-standard extras path);
+  (c′) `enable_thinking: false` → `completion=200` **and the prompt count shifts 18,093 → 18,095**,
+  i.e. it reached the worker and changed the chat template. (b) and (c) are different mechanisms, so
+  (b) alone would not have implied (c); both pass. (d) `opencode run` is a real non-interactive mode.
+- **Measured cost for the gradient:** opencode sends **~18,050 prompt tokens for a four-word
+  request**. That is the heavy end quantified — budget ~18K prefill per turn. `pi` is still absent
+  from both boxes.
+- Caveat: results are **opencode 1.18.15 only** (driver box is 1.18.0; #5674 is version-dependent).
+  `small_model` still points at :8092, which the lean bench router does not start.
+
+### (superseded) ~ RUNNING — P2 TIER-0 rev B, 22 cells, both models (`benchmark/m1/tier0b_grid.sh`)
 Launched 08:08. Three evidence-forced changes vs rev A, all scope/ordering — **no generation param
 was touched** (capping `max_tokens` was explicitly REJECTED: it would manufacture the
 non-convergence the screen measures, per AGENTS.md):

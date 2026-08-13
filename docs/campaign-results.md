@@ -335,6 +335,144 @@ currently unmeasured.
   That duplication had one lucky payoff: it gave a free same-config replicate, which is how the
   determinism defect below was found.
 
+## P2 TIER-0 REV B — 22/22 cells, BOTH models, 50 min total, zero failures (2026-08-13)
+
+`benchmark/m1/tier0b_grid.sh`. M5, APC absent, `deployed` profile, kv 65536, suffix ON, task
+**vartrack**, truncation held at deployed `top_p 0.95 / top_k 20`, `min_p` {0.0, 0.05, 0.15},
+temps {0.2, 0.4, 0.6}, `--samples 2 --coding-samples 1`, all 22 archives md5-distinct, all params
+verified against the request by `tier0b_check.py` (which checks all four truncation knobs plus
+`presence_penalty`, `thinking_budget` and `max_tokens`). Durable archive:
+`~/mlx_bench_snapshots/tier0b-2026-08-13/`. **Total worker time 50 min for both models** — against
+rev A, whose distill arm produced zero cells in over an hour.
+
+### The determinism fix is CONFIRMED by an independent route
+Rev B contains a duplicate-config pair by construction (`collapse_3knob` and `t0.4_mp0.0` are
+identical field-by-field). In rev A the equivalent pair **diverged**. In rev B, with truncation held
+at the deployed values, both models produce **byte-identical per-draw outputs** for that pair. So
+holding `top_p`/`top_k` at deployed values does fix reproducibility, verified on two models in a
+separate grid rather than only in the 2x2 probe.
+
+### Convergence is SATURATED for both winners — and `conv%` is therefore the wrong screen metric
+**33/33 draws converged for EACH model** (66/66 total), **0 budget hits**, every
+`finish_reason == "stop"`, in all 22 cells. So neither winner has a convergence knee anywhere in
+temp 0.2–0.6 × min_p 0.0–0.15. `conv%` = 1.0 everywhere.
+
+But convergence being pinned at 1.0 hides an enormous cost spread, and only in one model:
+
+| coding-prompt draw | t0.2 | t0.4 | t0.6 (mp 0.0 / 0.05 / 0.15) |
+|---|---|---|---|
+| **Ornith** tokens | 2,921 | 2,830 | 2,180 / 2,019 / 2,016 |
+| **Ornith** wall | 31.2 s | 30.1 s | 24.1 / 23.3 / 23.6 s |
+| **distill** tokens | 1,322 | 1,122 | 4,921 / **52,833** / 1,632 |
+| **distill** wall | 48.1 s | 40.8 s | 179 s / **999 s** / 64 s |
+
+**Ornith is flat and mildly *decreasing* in temperature** (2,921 → ~2,016 tokens; 31 s → 24 s) — no
+instability anywhere, which extends rev A's "no knee" from one temp to the whole range.
+**The distill is stable at 0.2–0.4 and unstable at 0.6**: one draw ran **52,833 tokens / 16.6 min**
+on the *same* small meeting-rooms problem it solves in 1,122 tokens / 41 s at temp 0.4 — a **47×
+token and 24× wall-clock blowup** that `conv%` scores as a clean pass, because it did self-terminate
+under the 81,920 budget.
+
+Two conclusions:
+- **Independently confirms the distill's op-temp 0.3** and the recorded finding that its earlier LCB
+  "DNF" was a temperature artifact, from a different task and a different harness path.
+- **Rank the screen on reasoning-token cost, not `conv%`.** `conv%` has no variance to offer for
+  either winner (66/66), while cost varies 47× within one model. This is the same lesson AGENTS.md
+  already applies to `acc_strict` — a metric pinned by construction cannot discriminate.
+
+### `min_p` is inert at low temperature and only bites at high temperature
+Distinct per-draw output signatures: **6 of 11 cells for EACH model** (identically for both, which
+is itself notable). The structure:
+- **temp 0.2 — `min_p` 0.0 ≡ 0.05 ≡ 0.15**, byte-identical. Wholly inert, even at 0.15.
+- **temp 0.4 — 0.0 ≡ 0.05**, while 0.15 differs.
+- **temp 0.6 — all three differ.**
+
+Mechanistically consistent: `min_p` prunes below `min_p × p_max`, so on a peaked (low-temperature)
+distribution `top_p 0.95 / top_k 20` has already removed everything `min_p` would have taken. It
+only becomes a distinct knob once temperature flattens the distribution. **So a `min_p` axis is only
+meaningful above ~0.4**, and rev A's inertness was not just a spacing problem.
+
+### The collapse test now PASSES, properly specified
+With a genuine min_p-only comparator (`collapse_minp_only` = `min_p 0.05`, `top_p 1.0`, `top_k 0`),
+it is **byte-identical to the deployed 3-knob cell** on both models. **The 4D→2D collapse is
+VALIDATED**: either truncation mechanism alone yields the same token stream. Caveat to carry: at
+temp 0.4 `min_p 0.05` is itself inert, so this establishes equivalence in the regime tested, not at
+temp 0.6 where the knobs do separate.
+
+### ⚠️ HARNESS DEFECT — on slow models a genuine `budget_hit` is UNOBSERVABLE
+`run_convergence.run_one` calls `driver.complete` at its **default 3600 s** timeout while
+`thinking_budget` is 81,920. On the distill's long-prompt cells decode is **10–16 tok/s**, so the
+budget needs **85–136 min** to reach but the client abandons at 60 min (~37–58K tokens). The request
+can therefore never be scored as a budget hit — instead the client gives up and, as rev A proved,
+**the worker keeps generating**. That is not hypothetical: rev A's aggregation cell ran
+**3,802 s > 3,600 s**, so the client timed out ~200 s before the worker finished, which is exactly
+what orphaned the generation and cascaded into every later cell's 120 s `calibrate_cpt`.
+Rev B came within range of it again — the 52,833-token draw took 999 s of the 3,600 s budget.
+**Fix (proposed, not applied):** derive the per-request timeout from
+`thinking_budget ÷ measured decode rate` with a margin, or fail the cell loudly when the timeout is
+below that ratio, so the harness cannot silently convert a budget hit into an orphaned generation.
+
+## P1a — opencode GO/NO-GO: **GO**, after fixing a blocker in our own shipped config (2026-08-13)
+
+`benchmark/m1/p1a_opencode_smoke.sh` + manual gate runs, M5, opencode **1.18.15**, Ornith resident.
+
+### ⚠️ BLOCKER FOUND AND CONFIRMED — the shipped `opencode.json` does not load at all
+`configgen/emitters/opencode.py:17` emits a top-level **`_generated`** provenance key.
+opencode 1.18.15 validates its config strictly and **rejects the whole file**:
+
+```
+Error: Configuration is invalid at ~/.config/opencode/opencode.json
+  ↳ Unrecognized key: _generated
+```
+
+Every gate failed with `rc=1` and **zero requests reached :8000** — not because of #5674, but
+because our own generated config is invalid for this version. Confirmed by removing only that key:
+the config loads and all four `mlx-local` models resolve, including both winners. **This is a live
+defect in a shipped carrier, and it would have been read as "#5674 confirmed, opencode unusable" —
+the wrong conclusion, and one that would have cancelled a harness the plan calls the primary
+driver.** (`configgen/emitters/vscode.py:11` emits `_generated` too, but into a JSON *array* element
+for a different consumer — needs its own check, not assumed broken.)
+
+### With that fixed, all three gates PASS — #5674 does NOT affect 1.18.15
+| gate | test | result |
+|---|---|---|
+| **(a) endpoint reach** | tuned config as shipped | **PASS** — `200`, `model=Ornith-1.0-35B-mlx-uniform-4bit`, reply `OK`, `completion=45` |
+| **(b) standard params forward** | `options.max_tokens: 7` (registry default 102400) | **PASS** — `completion=8`, vs 45 baseline |
+| **(c) non-standard extras forward** | `options.thinking_budget: 16` (default 81920) | **PASS** — `completion=261` vs **740** baseline, same 18,093-token prompt |
+| **(c′) extras, independent probe** | `options.enable_thinking: false` | **PASS** — `completion=200`, and `prompt` shifts 18,093 → **18,095**, i.e. the flag reached the worker and changed the CHAT TEMPLATE |
+| **(d) scriptable** | `opencode run [message..]` | **PASS** — real non-interactive mode |
+
+Gates (b) and (c) exercise **different mechanisms** — the AI SDK maps `max_tokens` itself, while
+`thinking_budget`/`enable_thinking`/`min_p` must ride through as pass-through body params — so
+(b) passing would not have implied (c). Both pass, so **the tuned sampling genuinely lands** and
+opencode is a valid carrier for tuned comparisons. The `prompt` token count shifting under
+`enable_thinking: false` is the strongest single piece of evidence: only the worker's chat template
+could change it.
+
+**Why the readback is behavioural rather than log-based:** there is **no resolved-sampling log line**
+to read. AGENTS.md/FU-2 says "resolved sampling is logged at INFO", but the fork logs no merged
+params, mlx-serve sends worker **stdout to DEVNULL** and only stderr to
+`$TMPDIR/mlx-manager-logs/<model>.log` (`process_manager.py:387`, truncated per load), and those
+files contain no sampling fields. **And such a line could not answer the question anyway:** under
+FU-2 the registry fills every omitted field and opencode's values are IDENTICAL to the registry's,
+so `temperature=0.4` would appear whether opencode forwarded it or sent nothing. The readback must
+use values that DIFFER from the registry default — which is what the gates above do.
+
+### Cost fact for the harness gradient (measured, not estimated)
+opencode sends **~18,050 prompt tokens for a four-word request** (system prompt + tool schemas).
+That is the "heavy" end of the gradient quantified: every opencode turn pays ~18K prefill before the
+task, against pi's target of <1K. Budget the gradient accordingly — and note `pi` is **absent from
+both boxes**, so it remains unbudgeted engineering, not a ready arm.
+
+### Carried caveats
+- **Version skew:** driver box runs opencode **1.18.0**, M5 runs **1.18.15**. #5674 is
+  version-dependent; these results are 1.18.15 only. Run harness work on M5.
+- **`small_model` points at :8092**, which the lean bench router does not start. It did not break
+  these single-turn gates, but title/summary calls in longer sessions will hit a dead endpoint —
+  the same class of hazard already documented for aider's `weak_model_name`.
+- M5's deployed config is currently the repo config **minus `_generated`** (a temporary local
+  deployment for validation), pending the configgen fix.
+
 ## DETERMINISM IS CONFIG-DEPENDENT — suffix decoding is the source, truncation masks it (2026-08-13)
 
 **This AMENDS "Unseeded requests are DETERMINISTIC" (HARNESS V2 §1 below), which is true only
