@@ -412,6 +412,72 @@ Rev B came within range of it again — the 52,833-token draw took 999 s of the 
 `thinking_budget ÷ measured decode rate` with a margin, or fail the cell loudly when the timeout is
 below that ratio, so the harness cannot silently convert a budget hit into an orphaned generation.
 
+## IFEVAL — LIVE (2026-08-13) + two defects the 5-minute evaluation rule caught
+
+Ornith-1.0-35B-mlx-uniform-4bit, M5, `deployed` sampling (temp 0.4, `presence_penalty` 0.0, stamped
+in the manifest), APC absent (`apc_enabled: '0'`, detected per-pid), fingerprint v2, 541 items.
+Driver `benchmark/m1/ifeval_run.sh`. **Interim at n=41: `prompt_strict 90.2% / inst_strict 91.7% /
+prompt_loose 95.1% / inst_loose 96.7%`, conv 100%, 0 errors.** Full run in progress (~22 s/item
+measured; Ornith ~3 h, distill ~10.7 h).
+
+### ⚠️ DEFECT 1 — a missing nltk corpus was BIASING acc upward by ~3pp
+`n_verifier_skipped = 8 of 38` completions — **21% of items silently dropped** — from
+`LookupError: Resource 'punkt_tab' not found`. `_load_ifeval_lib` did try to ensure the tokenizer but
+checked only `tokenizers/punkt`, while nltk ≥ 3.8.2 needs `punkt_tab`; its `except Exception: pass`
+was annotated "verifiers that need it will fail closed", and they do not — they raise **per item**,
+inside a loop that swallowed them with a bare `continue`.
+
+**The dropped items were HARDER than average, so the skip inflated the headline:** re-grading after
+downloading the corpora moved acc **93.3% (n=30) → 90.2% (n=41)**. A silent skip does not merely
+shrink the denominator, it biases the number. Fixed to fail LOUD (whole-bench `acc:null` + an
+actionable note) rather than report a clean-looking figure over a biased 79% subset. **Cost of the
+correction: zero model time** — grading is a separate phase, so the persisted rows just re-graded.
+
+### ⚠️ DEFECT 2 — a self-terminating repetition loop scored as CONVERGED
+Item `2849`: **52,503 completion tokens** of a two-line alternating loop —
+`unique_line_ratio 0.0093`, `max_line_repeat 2071`, `ngram8_unique 0.0123`, tail literally two lines
+forever — at **193 tok/s**, because suffix decoding accelerates verbatim repetition. Recorded as
+`finish_reason "stop"`, `converged: True`, `nonconv_kind: None`, because it EOS'd at 64% of the
+81,920 budget.
+
+`traces._is_repetition` already existed and was correct; `classify` never reached it, because it
+early-returns `None` for anything `convergence.is_converged` accepts. **The harness had the evidence
+and did not use it.**
+
+**Cost, which is why a row count understates this ~8×:** 1 of 41 rows (2%) but **22% of wall-clock
+and 33% of completion tokens.** Thresholds are not marginal — the loop sits at `unique_line_ratio`
+0.0093 / `max_repeat` 2071 while every healthy row measured ≥ 0.44 / ≤ 11, a two-order-of-magnitude
+gap.
+
+⚠️ **THIS REVISES "the runaway tax has nothing to charge."** That finding (0/284 turns, 0.0% wasted
+wall-clock) was measured on **budget-hits and `max_tokens` truncations only** — and this class is
+neither. The instrument was blind to a loop cheap enough to finish on its own. The tax is not zero;
+it was being measured with the wrong detector.
+
+The ratified convergence formula is **deliberately unchanged** (it exists to stop a budget-hit's
+forced EOS from false-passing, and it still does). Added instead as an additive diagnostic:
+`traces.is_degenerate` + `n_degenerate_eosed` / `degenerate_wall_share` / `degenerate_token_share`.
+**Whether `converged` should absorb this class is an operator decision, not a harness one.**
+
+### The historical record CANNOT be checked for this — 1% audit coverage
+`traces.is_degenerate` reads persisted `reasoning_stats`, so old rows are re-classifiable with no
+model time. Running it over the whole tree found **1 EOS'd loop in 5,835 rows**, which looks
+reassuring and **is not**: `reasoning_stats` only arrived with harness v2 (2026-08-11), and
+`benchmark/m1/stats_coverage.py` measures the audit's real reach:
+
+| bench | rows | with stats | coverage |
+|---|---|---|---|
+| mbppplus_samples | 3,402 | 0 | 0% |
+| humanevalplus_samples | 1,476 | 0 | 0% |
+| humanevalplus / mbppplus / livecodebench / math500 / aime / capacity | 869 | 0 | 0% |
+| **ifeval** | 50 | 50 | **100%** |
+| **TOTAL** | **5,835** | **50** | **1%** |
+
+So the finding is **1 loop in 50 AUDITABLE rows = 2%**, with **99% of the corpus UNKNOWN, not
+clean**. Whether past `conv%` figures were over-optimistic is **unknowable from the persisted data** —
+it can only be established by re-running an axis under the v2 harness. Every new run is auditable
+(the generate path persists stats), so this closes going forward but not backward.
+
 ## PHASE-2 RE-VERIFY (operator-authorised 2026-08-13): #4 suffix CONFIRMED, #5 GQA kernel UNFALSIFIABLE
 
 Prompted by the APC finding — a shipped, documented Phase-2 "win" that turned out absent. If one of
