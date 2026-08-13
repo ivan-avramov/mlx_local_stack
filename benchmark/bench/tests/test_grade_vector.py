@@ -242,3 +242,42 @@ def test_graded_is_none_when_the_evaluator_has_no_partial_credit(write_rows):
              "thinking_budget": 100}]
     s = GR._finalize({"items": items}, rows)
     assert s["acc"] == 1.0 and s["acc_graded"] is None
+
+
+# ------------------------------------------------------------------ the scoreboard footer
+def test_scoreboard_footer_does_not_assert_the_WITHDRAWN_conv_gate(capsys):
+    """AGENTS.md records `conv% >= 0.90` as WITHDRAWN — unratified and unsound (quantized in n; a
+    point estimate against a hard threshold, so a model whose TRUE rate is 0.90 fails 35-45% of the
+    time by chance; and ~10x too lenient on cost grounds). The scoreboard nonetheless printed it on
+    every run, described as "pre-registered", which is how a retracted rule keeps being applied.
+
+    AGENTS.md's ratified replacement is FOUR separately-interpretable numbers and no composites, with
+    conv% + nonconv_kinds as DIAGNOSTICS rather than a pass/fail.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "run.py").read_text()
+    assert "conv% >= 90 is a GATE" not in src, (
+        "the scoreboard still prints the withdrawn conv gate as pre-registered")
+    assert "pre-registered" not in src or "WITHDRAWN" in src, (
+        "do not describe a decision rule as pre-registered unless it is ratified")
+
+
+def test_scoreboard_footer_states_the_RATIFIED_reporting_rule(capsys):
+    """The replacement must actually be said, not merely have the wrong thing removed."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "run.py").read_text()
+    assert "DIAGNOSTIC" in src.upper(), "conv% must be labelled a diagnostic, not a gate"
+    assert "never the ranking key" in src, "acc_strict must keep its never-rank caveat"
+
+
+def test_the_params_log_line_names_the_ACTUAL_profile_not_a_hardcoded_one():
+    """It printed "using per-model production params" immediately before "sampling profile =
+    deployed" — contradicting itself. The manifest was always correct, but production-vs-deployed is
+    the distinction that decides whether a run measured what we ship (`production` has drifted to
+    temp 0.7 / min_p 0.03 / presence_penalty 0.3, and a nonzero presence_penalty also disables suffix
+    decoding), so a mislabel here sends a reader to the wrong conclusion about a whole run.
+    """
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "run.py").read_text()
+    assert "using per-model production params" not in src
+    assert "sampling profile = {args.sampling_profile!r}" in src

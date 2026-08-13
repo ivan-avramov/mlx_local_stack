@@ -90,7 +90,13 @@ def cmd_generate(args):
     if args.max_tokens is not None:
         overrides["max_tokens"] = args.max_tokens
     chunks = "all" if args.chunks in ("all", "-1") else args.chunks
-    print(f"[params] using per-model production params (model_params.py); overrides={overrides or 'none'}")
+    # Name the ACTUAL profile. This used to hardcode "production" and print immediately before
+    # "[generate] sampling profile = deployed", i.e. it contradicted the next line. The manifest was
+    # always right, but production-vs-deployed is exactly the distinction that decides whether a run
+    # measured what we ship (`production` has DRIFTED: temp 0.7 / min_p 0.03 / presence_penalty 0.3,
+    # and a nonzero presence_penalty also disables suffix decoding), so mislabelling it is dangerous.
+    print(f"[params] sampling profile = {args.sampling_profile!r} (model_params.py); "
+          f"overrides={overrides or 'none'}")
     restart_fn = None
     if args.auto_restart_on_loop:
         from bench import preflight
@@ -140,6 +146,10 @@ def cmd_grade(args):
                          f"(n={s.get('n_converged_items')})")
         if s.get("acc_strict") is not None:
             extra.append(f"strict@{s.get('acc_strict_budget')}={s['acc_strict']*100:.1f}%")
+        if s.get("n_degenerate_eosed"):
+            extra.append(f"degen={s['n_degenerate_eosed']} "
+                         f"(wall {s.get('degenerate_wall_share', 0) * 100:.0f}%, "
+                         f"tok {s.get('degenerate_token_share', 0) * 100:.0f}%)")
         if s.get("nonconv_kinds"):
             extra.append("nonconv=" + ",".join(f"{kk}:{vv}" for kk, vv in sorted(s["nonconv_kinds"].items())))
         if s.get("n_contaminated"):
@@ -154,12 +164,24 @@ def cmd_grade(args):
             cells = "  ".join(f"{d}:{v['pass@1']*100:.0f}%(n={v['n']})"
                                for d, v in sorted(bd.items()))
             print(f"      by difficulty: {cells}")
-    print("\nDECISION RULE (pre-registered): conv% >= 90 is a GATE; pass@1|conv RANKS within it.")
+    # The `conv% >= 90` GATE is WITHDRAWN (AGENTS.md, 2026-08-11) — it was never derived or agreed,
+    # conv% is quantized in n, a point estimate against a hard threshold fails 35-45% of the time by
+    # chance at a TRUE rate of 0.90, and on cost grounds it is ~10x too lenient. Printing it as
+    # "pre-registered" is how a retracted rule keeps getting applied, so the footer now states the
+    # ratified reporting rule instead: four separately-interpretable numbers, no composites.
+    print("\nREPORTING RULE (AGENTS.md): report these SEPARATELY — no composites.")
+    print("  1 capability  — acc/pass@1 + CI, plus the exclusive-solve sets")
+    print("  2 edit competence — well-formed / malformed / context-exhaustion rates")
+    print("  3 latency     — mean/median/p95 seconds per task")
+    print("  4 runaway tax — non-self-terminating RATE and its measured share of wall-clock")
+    print("conv% and nonconv kinds are DIAGNOSTICS, not a pass/fail: the conv%>=90 gate is WITHDRAWN.")
     print("acc = correctness over generated items (historical meaning). strict@<budget> counts a")
     print("truncated draw as failed — a DERIVED deployment number, never the ranking key (it rises")
     print("with thinking_budget). 'harness' is BROKEN only when the HARNESS failed, not the model.")
+    print("degen = self-terminating repetition loops: scored CONVERGED and included in acc, flagged")
+    print("for the judge panel; their wall/token share is COST, reported beside capability.")
     if ungated:
-        print("\n⚠️  below the convergence gate — these models did not self-terminate often enough;")
+        print("\n⚠️  LOW CONVERGENCE (a diagnostic, NOT a gate) — these did not self-terminate often;")
         print("    investigate the mechanism (nonconv kinds above), do NOT rank on pass@1 alone:")
         for s in ungated:
             print(f"   {s['model']} / {s['benchmark']}: conv {s['conv_rate']*100:.0f}% "
