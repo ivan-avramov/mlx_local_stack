@@ -295,3 +295,68 @@ def test_the_check_covers_punkt_tab_not_just_punkt(monkeypatch):
     except Exception:
         pass
     assert any("punkt_tab" in p for p in looked), f"punkt_tab never checked; looked at {looked}"
+
+
+# ---------------------------------------------------------------- items, so the ranking key exists
+def test_grade_ifeval_emits_per_item_scores(monkeypatch):
+    """Without `items`, the shared post-processor cannot compute acc_strict — the RANKING KEY — nor a
+    CI nor an MDE. Surfacing acc_strict as a column (2026-08-13) exposed it as "—" for the very axis
+    being run, i.e. the ruling that a DNF fails in the denominator could not be applied to IFEval.
+
+    The per-item score is prompt-level strict (follow_all_instructions), so acc computed from items is
+    IDENTICAL to the prompt_strict the grader already reported — this adds capability without moving
+    any existing number.
+    """
+    import bench.grade as G
+
+    class Out:
+        def __init__(self, ok):
+            self.follow_all_instructions = ok
+            self.follow_instruction_list = [ok]
+
+    class FakeEv:
+        class InputExample:
+            def __init__(self, **kw):
+                pass
+        @staticmethod
+        def test_instruction_following_strict(inp, p2r):
+            return Out(True)
+        @staticmethod
+        def test_instruction_following_loose(inp, p2r):
+            return Out(True)
+
+    monkeypatch.setattr(G, "_load_ifeval_lib", lambda: FakeEv)
+    monkeypatch.setattr(G, "_rows", lambda m, b: [
+        {"id": 7, "sample": 0, "content": "x"}, {"id": 8, "sample": 0, "content": "y"}])
+    monkeypatch.setattr(G.benchmarks, "load", lambda *a, **k: [
+        {"id": i, "prompt": f"p{i}", "meta": {"instruction_id_list": ["a"], "kwargs": [{}]}}
+        for i in (7, 8)])
+    out = G.grade_ifeval("ifeval", "M")
+    assert "items" in out, "grade_ifeval must emit per-item scores"
+    assert len(out["items"]) == 2
+    assert {i["id"] for i in out["items"]} == {7, 8}
+    assert all(set(i) >= {"id", "sample", "score"} for i in out["items"])
+    # acc from items must equal the grader's own prompt-level strict number
+    assert out["acc"] == out["prompt_strict"] == 1.0
+
+
+def test_ifeval_items_carry_the_row_sample_index(monkeypatch):
+    """acc_strict keys on (id, sample); a wrong sample index would silently mis-join at --samples>1."""
+    import bench.grade as G
+
+    class Out:
+        follow_all_instructions = True
+        follow_instruction_list = [True]
+
+    class FakeEv:
+        class InputExample:
+            def __init__(self, **kw):
+                pass
+        test_instruction_following_strict = staticmethod(lambda i, p: Out())
+        test_instruction_following_loose = staticmethod(lambda i, p: Out())
+
+    monkeypatch.setattr(G, "_load_ifeval_lib", lambda: FakeEv)
+    monkeypatch.setattr(G, "_rows", lambda m, b: [{"id": 7, "sample": 3, "content": "x"}])
+    monkeypatch.setattr(G.benchmarks, "load", lambda *a, **k: [
+        {"id": 7, "prompt": "p", "meta": {"instruction_id_list": ["a"], "kwargs": [{}]}}])
+    assert G.grade_ifeval("ifeval", "M")["items"][0]["sample"] == 3

@@ -10,8 +10,11 @@ import sys
 
 from . import benchmarks, convergence, extract, generate, rowschema, stats, traces
 
-# The pre-registered convergence gate. conv_rate >= this is a GATE; pass@1|converged RANKS within
-# it. Not a tunable: it is declared here so a run cannot be reinterpreted after the fact.
+# ⚠️ WITHDRAWN as a GATE (AGENTS.md, 2026-08-11): unratified and unsound — conv% is quantized in n, a
+# point estimate against a hard threshold fails 35-45% of the time by chance at a TRUE rate of 0.90,
+# and on cost grounds it is ~10x too lenient. `conv_gate_pass` is still COMPUTED for backward
+# compatibility with existing readers, but it is NOT presented as a verdict and must not rank.
+# The ranking key is `acc_strict` at a MATCHED budget (operator ruling 2026-08-13).
 CONV_GATE = 0.90
 
 # Above this share of errored rows the run is a harness failure, not a measurement.
@@ -51,10 +54,14 @@ def _finalize(score: dict, rows: list) -> dict:
       conv_rate            share of generated items that self-terminated (legacy alias:
                            convergence_rate)
       conv_gate_pass       conv_rate >= CONV_GATE (the gate half of the decision rule)
-      pass_at_1_converged  correctness among CONVERGED items only (the ranking half)
-      acc_strict           truncation counted as failure — DERIVED deployment number, never the
-                           ranking key, and always reported with the budget that produced it
-                           because it rises monotonically with thinking_budget
+      pass_at_1_converged  correctness among CONVERGED items only — a DIAGNOSTIC that must NEVER
+                           rank. It CONDITIONS on convergence, shrinking the denominator, so a model
+                           that DNFs 99 of 100 tasks scores 100% on its one converged item
+      acc_strict           ⭐ THE RANKING KEY at a MATCHED budget (operator ruling 2026-08-13): a
+                           truncated draw scores 0 with the DENOMINATOR INTACT, so the 99-DNF model
+                           scores 1%. Comparable only at an equal thinking_budget — `compare` refuses
+                           otherwise (`_MUST_MATCH_SAMPLING`) — hence the budget travels with it in
+                           `acc_strict_budget`
       nonconv_kinds        mechanism breakdown (budget_hit / meander / degenerate_repetition / ...)
       samples / ci95 / reliability / mde
       n_contaminated       rows excluded from correctness as known stale-router artifacts
@@ -527,6 +534,10 @@ def grade_ifeval(name, model):
     meta_by_id = {it["id"]: it for it in benchmarks.load("ifeval", None, 0)}
     strict_outs, loose_outs, graded = [], [], 0
     unmatched, skipped = 0, 0
+    # Per-item scores so the shared post-processor can compute acc_strict — THE RANKING KEY — plus a
+    # CI and an MDE. The score is prompt-level strict (follow_all_instructions), so acc derived from
+    # these is IDENTICAL to prompt_strict; this adds capability without moving an existing number.
+    items = []
     for r in rows:
         it = meta_by_id.get(r.get("id"))
         if it is None:
@@ -545,6 +556,8 @@ def grade_ifeval(name, model):
             continue
         strict_outs.append(s_out)   # append BOTH only after both succeed, so the
         loose_outs.append(l_out)    # strict/loose lists stay index-aligned
+        items.append({"id": r.get("id"), "sample": r.get("sample", 0),
+                      "score": float(bool(s_out.follow_all_instructions))})
         graded += 1
     if not graded:
         # Distinguish the two ways this happens. "no rows matched the dataset" was reported for BOTH,
@@ -558,6 +571,7 @@ def grade_ifeval(name, model):
                 "note": f"nothing graded: {why}"}
     agg = _ifeval_aggregate(strict_outs, loose_outs)
     out = {"benchmark": name, "model": model, "n": graded, "acc": agg["prompt_strict"], **agg,
+           "items": items,
            "n_verifier_skipped": skipped, "n_unmatched": unmatched, "n_completions": len(rows)}
     if skipped or unmatched:
         out["note"] = (f"{len(rows)} completions -> n={graded} graded; "
