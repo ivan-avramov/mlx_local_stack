@@ -36,7 +36,15 @@ best model that FITS. State this in the write-up; it is a finding, not a caveat:
 | **GLM-5.2** (MIT) — top open-weights on SWE-bench Pro 62.1%, Terminal-Bench 81.0 | 2026-06-16 | **744B** total / 40B active → ~372GB @4bit | ❌ **IMPOSSIBLE** (−326GB) |
 | **Kimi K3** (open 2026-07-27) — leads LiveBench Agentic Coding 57.58 | 2026-07-16 | **2.8T** / 104B active, **1.56TB** MXFP4 | ❌ **IMPOSSIBLE** (−1,514GB) |
 
-### ✅ VIABLE NEW CANDIDATES — acquire and screen, in this order
+### ✅ OPERATOR DECISIONS 2026-08-13 on the candidate scan
+- **`NVIDIA-Nemotron-3.5-Lightning-30B-A3B` → QUEUED for acquisition + screening.** Operator approved.
+- **`Ternary-Bonsai-27B` → PARKED as an experiment, NOT queued.** Operator reasoning, and it is correct:
+  it buys back RAM and we are already comfortable there (17–19GB of weights against a 46GB gate), so it
+  solves a problem we do not have and does not buy quality. It would only become relevant if we needed
+  1M context, or two resident models on one box, or moved to a smaller machine — none of which is live.
+- **Claude-Opus community distills → see the DISTILL SCAN above** (one conditional, one rejected).
+
+### VIABLE NEW CANDIDATES — details, in acquisition order
 
 **1. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B` — STRONGEST FIT, acquire first.**
 Released **2026-08-11** (two days ago), OpenMDW-1.1, free commercial use.
@@ -84,6 +92,51 @@ Released 2026-08-10.
 **Sequencing note:** all three are screened with the Tier-0 → capacity → light ladder, NOT dropped
 straight into the agentic axis. And the campaign has ONE worker currently committed to IFEval, so
 acquisition/conversion work (driver-side, free) should proceed while the worker finishes.
+
+### 🧪 DISTILL SCAN 2026-08-13 (operator-requested) — the frontier distills DO NOT EXIST YET
+Our coder winner IS a distill, and M1 showed its edge is **REPAIR** (+23.6pp final, attempt-1 n.s.), so a
+distill that also decodes fast would target the campaign's central tradeoff directly. Searched; the
+answer is mostly negative, and the negative is the useful part.
+
+**❌ No GLM-5.2 or Kimi K3 distill has been released.** This is the one that would matter most — it is the
+only route to frontier capability inside 64GB, since the teachers themselves are 372GB / 1.5TB. Community
+requests exist on the GLM-5.2 HF discussions ("We need some Air or at least some Flash"); Zhipu has not
+shipped a smaller variant. **→ WATCH-FOR-RELEASE, high priority.** A GLM-5.2-distill in the 30B class
+would be the single most valuable acquisition available to this campaign.
+
+**⚠️ The Claude-Opus community distills are CONTEXT-CRIPPLED — our existing one is better positioned:**
+
+| model | base | teacher | ctx | provenance quality | verdict |
+|---|---|---|---|---|---|
+| **`lordx64/Qwen3.6-35B-A3B-Claude-4.7-Opus-Reasoning-Distilled`** | Qwen3.6-35B-A3B (MoE, 256 exp, 8+1 shared, **3B active**) | Opus **4.7** | **64K** | GSM8K 84.3 / MMLU-Pro 74.9, but **AIME "pending extraction fix"**, GPQA "pending" | **CONDITIONAL — see below** |
+| `Jackrong/Qwen3.5-35B-A3B-Claude-4.6-Opus-Reasoning-Distilled` | Qwen3.5-35B-A3B (`qwen3_5_moe` — **Ornith's own base family**) | Opus 4.6 | **8,192** | **LoRA, only 1.31% trainable (465M/35.6B)**; no benchmarks at all, reports training LOSS (0.384) | **❌ REJECT** |
+| *ours, for comparison:* `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | qwen3_5 dense + linear-attn | Opus (version unrecorded) | **262K measured, 43.3GB mx-peak** | 110 paired exercises, McNemar p=1.3e-05 | **incumbent** |
+
+**Why Jackrong is rejected outright:** an 8K context window is 1/32 of the campaign target, and a LoRA
+touching 1.31% of parameters is not a plausible vehicle for transferring reasoning depth. It reports
+training loss rather than any capability number. Tempting only because it shares Ornith's exact base
+(`qwen3_5_moe`), which would have made a clean RL-vs-distillation OFAT on an identical base — that
+experiment is worth wanting, but not with this artifact.
+
+**Why lordx64 is CONDITIONAL rather than queued outright.** It is the only candidate that could beat our
+current coder on the actual tradeoff M1 exposed: the distill wins capability (73.6% vs 50.0%) but costs
+**3.9× per case**, and a 35B model with **3B active** would keep the repair advantage while removing the
+speed penalty — i.e. Ornith's decode profile with the distill's reasoning. Against that:
+- **64K context, not 256K.** ⚠️ Note carefully: **M1 itself ran at `max_kv_cache_size` 65536**, so for the
+  AGENTIC axis 64K is exactly what we already used and the comparison is directly valid. What 64K blocks
+  is the **256K capacity claim** — so it may screen as a strong CODER while being ineligible for the
+  campaign's headline long-context result. Do not conflate those.
+- **No MLX build** (GGUF only: IQ4_XS 18.9GB / Q5_K_M / Q8_0). We would self-convert, which we have done
+  twice (Ornith uniform-4bit, distill OptiQ). Base is 256-expert Qwen3.6-A3B, so the fork's existing
+  `qwen3_5_moe.sanitize` unfused-expert fix probably applies — verify by smoke-load before converting.
+- **Unaudited provenance.** A community upload whose own benchmark table says "pending extraction fix" is
+  a signal about rigour, not just incompleteness. Treat every claimed number as unverified.
+
+**Recommended handling:** screen it on the **agentic axis at 64K**, where it is directly comparable to the
+M1 rows, and record its context ceiling as a **config fact** (as the campaign already does for gemma's
+192K) rather than as a blank or a zero. If it matches the distill's repair rate at Ornith's speed, it
+supersedes both winners for the coder role — and that is worth the conversion work. If it does not, it
+cost one screen.
 
 ## ▶ RATIFIED SEQUENCE 2026-08-13 (operator): **P4 → BFCL → judge panel → SWE-bench**
 P3 is CANCELLED (see the phase table). Rationale for the order: P4 answers the sampling question M1 left
