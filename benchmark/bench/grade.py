@@ -81,7 +81,16 @@ def _finalize(score: dict, rows: list) -> dict:
     score["n_contaminated"] = len(items) - len(scored)
 
     per_item = _per_item(scored)
-    score["acc"] = round(stats.pass_at_1(per_item), 4) if per_item else None
+    # Where per-item scores exist they DEFINE acc (pass@1 over items) — unchanged.
+    # But do NOT clobber an acc the grader computed itself when there are no per-item structures.
+    # IFEval's headline is prompt-level strict and it populates no `items` list, so the previous
+    # unconditional assignment replaced a real 0.75 with None: scores.json recorded
+    # `"acc": null, "prompt_strict": 0.75` and the scoreboard column read "—", which is
+    # indistinguishable from a grading failure and read as "IFEval is still broken".
+    if per_item:
+        score["acc"] = round(stats.pass_at_1(per_item), 4)
+    else:
+        score.setdefault("acc", None)
 
     # GRADED outcome, where the evaluator exposes per-test verdicts (LiveCodeBench does; evalplus
     # reports only a per-sample base/plus status, so it stays binary). Binary pass/fail throws away

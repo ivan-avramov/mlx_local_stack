@@ -173,3 +173,43 @@ def test_grade_ifeval_skips_row_when_loose_raises(monkeypatch):
     assert out["n"] == 1                 # P2 skipped (loose raised) -> only P1 graded
     assert out["prompt_strict"] == 1.0   # aggregated over the 1 aligned row, not the desynced 2
     assert out["prompt_loose"] == 1.0
+
+
+# ---------------------------------------------------------------- the acc-clobber regression
+def test_a_grader_computed_acc_survives_the_convergence_postprocessor():
+    """IFEval computes its own headline (prompt-level strict) and populates NO per-item list.
+
+    `_finalize` sets `score["acc"]` from `score["items"]` unconditionally
+    (grade.py:84), so for any bench that computes acc its own way the headline was silently
+    REPLACED WITH None. Measured 2026-08-13 on a 5-item IFEval smoke: grade_ifeval returned
+    acc=0.75 (prompt_strict), and scores.json recorded `"acc": null, "prompt_strict": 0.75` — the
+    real number was present but the headline column read "—", which looks exactly like a grading
+    failure and would have been read as "IFEval is still broken".
+
+    Per-item benches must keep winning (their acc is the pass@1 over items); only the
+    no-items-but-acc-already-set case changes.
+    """
+    import bench.grade as G
+    score = {"benchmark": "ifeval", "model": "M", "n": 4, "acc": 0.75, "prompt_strict": 0.75}
+    G._finalize(score, rows=[{"id": 1, "finish_reason": "stop",
+                                               "completion_tokens": 10, "thinking_budget": 81920}])
+    assert score["acc"] == 0.75, "the grader's own headline was clobbered by the post-processor"
+
+
+def test_per_item_acc_still_overrides_for_benches_that_provide_items():
+    """The normal path is unchanged: where per-item scores exist they define acc."""
+    import bench.grade as G
+    score = {"benchmark": "humanevalplus", "model": "M", "acc": 0.99,
+             "items": [{"id": 1, "sample": 0, "score": 0.0},
+                       {"id": 2, "sample": 0, "score": 1.0}]}
+    G._finalize(score, rows=[{"id": 1, "finish_reason": "stop",
+                                               "completion_tokens": 10, "thinking_budget": 81920}])
+    assert score["acc"] == 0.5, "per-item pass@1 must still define acc where items exist"
+
+
+def test_acc_is_None_when_there_is_neither_items_nor_a_grader_acc():
+    import bench.grade as G
+    score = {"benchmark": "gpqa", "model": "M"}
+    G._finalize(score, rows=[{"id": 1, "finish_reason": "stop",
+                                               "completion_tokens": 10, "thinking_budget": 81920}])
+    assert score["acc"] is None
