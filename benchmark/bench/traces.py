@@ -36,6 +36,15 @@ REPEAT_MIN_UNIQUE_RATIO = 0.6
 # half is belt-and-braces: both signals must agree before an operator is sent to the temp ladder.
 MEANDER_MIN_NGRAM8_UNIQUE = 0.8
 
+# CONTENT-level degeneracy: a trace can cycle near-identical PHRASINGS so that every line is
+# technically unique while the 8-gram content is almost entirely repeated. Measured on IFEval
+# (2026-08-13, n=106): id 279 had unique_line_ratio 1.0000 / max_line_repeat 1 but
+# ngram8_unique 0.0104, and id 3608 had 0.8966 / 2 with 0.0323 — both invisible to line repetition.
+# Healthy items on the same run measured ~0.73, so 0.15 sits in a 5-20x gap on one side and 20-70x
+# on the other. Requires a long trace: a brief reply may legitimately repeat a template.
+DEGENERATE_MAX_NGRAM8_UNIQUE = 0.15
+DEGENERATE_MIN_LINES = 100
+
 # "waiting" is not "wait" — \b keeps these whole words, and \s+ lets a phrase straddle a newline.
 _MARKERS = {
     "wait": r"\bwait\b",
@@ -102,13 +111,25 @@ def compress_trace(text, head=4096, tail=4096) -> dict:
 
 
 def _is_repetition(stats: dict) -> bool:
-    """Degenerate verbatim loop: one line repeats a lot AND overall uniqueness is low (BOTH, so a
-    long genuine trace that merely repeats a transitional phrase is not flagged). Needs enough
-    lines to judge."""
+    """Degenerate loop, by EITHER of two independent signatures.
+
+    1. LINE-level: one line repeats a lot AND overall line uniqueness is low (BOTH, so a long genuine
+       trace that merely repeats a transitional phrase is not flagged).
+    2. CONTENT-level: 8-gram uniqueness is near zero over a long trace. This catches the case where
+       the loop varies each line just enough to defeat (1) — measured on IFEval, 2 of 3 degenerate
+       items had unique_line_ratio 1.0 and 0.90 with ngram8_unique 0.0104 and 0.0323, i.e. the same
+       phrasing recycled with trivial edits.
+
+    Needs enough lines to judge in both cases.
+    """
     ratio = stats.get("unique_line_ratio")
-    return (stats.get("lines", 0) >= REPEAT_MIN_LINES
-            and stats.get("max_line_repeat", 0) >= REPEAT_MAX_REPEAT
-            and ratio is not None and ratio < REPEAT_MIN_UNIQUE_RATIO)
+    by_line = (stats.get("lines", 0) >= REPEAT_MIN_LINES
+               and stats.get("max_line_repeat", 0) >= REPEAT_MAX_REPEAT
+               and ratio is not None and ratio < REPEAT_MIN_UNIQUE_RATIO)
+    n8 = stats.get("ngram8_unique")
+    by_content = (stats.get("lines", 0) >= DEGENERATE_MIN_LINES
+                  and n8 is not None and n8 < DEGENERATE_MAX_NGRAM8_UNIQUE)
+    return bool(by_line or by_content)
 
 
 def _is_novel(stats: dict) -> bool:
