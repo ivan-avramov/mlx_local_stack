@@ -94,6 +94,13 @@ Five clients, all pointed at the mlx-serve router (`localhost:8000`, OpenAI-comp
   4. **Does it need CORRECTION, and is correcting it cheaper than letting it finish?** Say which.
   Findings go in the run log, not just in conversation. This rule exists because five status reports
   in one session were wrong about whether a run was advancing.
+  ⚠️ **THE CADENCE MUST LIVE IN A DAEMON, NOT IN THE CONVERSATION.** An agent only executes when the
+  operator sends a message, so "the agent will check every 5 minutes" is unimplementable and produced
+  two hour-long gaps on 2026-08-13. Launch **`benchmark/m1/bench_watch.py`** alongside every run: it
+  answers all four questions itself every 300s into a file the operator can `tail -f`, escalates N
+  consecutive flat ticks to STALL SUSPECTED with the evidence needed to distinguish a stall from a
+  long-tail item, and names the suspect item when the rate collapses. A monitor that prints only a
+  counter satisfies "reported" and NOT "evaluated".
 - Monitoring: foreground `sleep` is blocked. Launch long runs detached on the box (`nohup … </dev/null &`), poll from a LOCAL background poller (run_in_background) checking the result file + `pgrep` liveness. Bench runners print per-rung only at the end — watch `logs/main_model.log` completion lines for live progress.
 
 ## Measurement discipline (READ before any A/B)
