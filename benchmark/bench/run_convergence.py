@@ -102,6 +102,33 @@ def _summ(records, task) -> dict:
     return out
 
 
+def _apply_set(params: dict, kvs) -> dict:
+    """Apply `--set KEY=VAL` overrides, casting numerically, REJECTING unknown keys.
+
+    The previous inline loop did `params[k] = v` with no validation, so `--set min-p=0.02`
+    (hyphen) or `--set minp=0.02` silently added a junk key and left min_p at its default — and
+    the run then looks completely healthy. Sampling typos that fail silently are the exact class
+    of defect this project keeps paying for, so an unknown key is a hard error naming itself.
+    """
+    for kv in kvs:
+        if "=" not in kv:
+            raise ValueError(f"--set expects KEY=VAL, got {kv!r}")
+        k, v = kv.split("=", 1)
+        if k not in params:
+            raise ValueError(
+                f"--set {k!r} is not a known generation parameter. Known: "
+                f"{sorted(params)}. (A typo here would silently leave the real parameter at its "
+                f"default while the run appeared healthy.)")
+        for cast in (int, float):
+            try:
+                v = cast(v)
+                break
+            except ValueError:
+                pass
+        params[k] = v
+    return params
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="W0 thinking-convergence probe.")
     ap.add_argument("--model", required=True)
@@ -121,6 +148,13 @@ def main(argv=None) -> int:
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VAL",
                     help="override any param (escalation levers, e.g. --set min_p=0.02 "
                          "--set repetition_penalty=1.0 --set presence_penalty=1.0)")
+    ap.add_argument("--sampling-profile", dest="sampling_profile", default="deployed",
+                    help="sampling profile. DEFAULT 'deployed' = main_models.yaml "
+                         "generation_defaults, i.e. what mlx-serve actually forwards. The older "
+                         "'production' table has DRIFTED from what we ship (QWEN production = "
+                         "temp 0.7 / min_p 0.03 / presence_penalty 0.3, and a nonzero "
+                         "presence_penalty DISABLES suffix decoding, changing the serving path). "
+                         "Only pass 'production' to reproduce a historical row.")
     ap.add_argument("--no-preload", action="store_true")
     args = ap.parse_args(argv)
 
@@ -128,20 +162,12 @@ def main(argv=None) -> int:
     if not args.no_preload:
         t = driver.preload(args.model)
         print(f"[conv] preloaded {args.model} in {t}s", flush=True)
-    params = params_for(args.model)
+    params = params_for(args.model, args.sampling_profile)
     if args.max_tokens is not None:
         params["max_tokens"] = args.max_tokens
     if args.temperature is not None:
         params["temperature"] = args.temperature
-    for kv in args.set:
-        k, v = kv.split("=", 1)
-        for cast in (int, float):
-            try:
-                v = cast(v)
-                break
-            except ValueError:
-                pass
-        params[k] = v
+    params = _apply_set(params, args.set)
     cpt = calibrate_cpt(driver, args.model)
     print(f"[conv] {args.model} cpt={cpt:.2f} temp={params['temperature']} "
           f"max_tokens={params['max_tokens']} thinking_budget={params.get('thinking_budget')} "

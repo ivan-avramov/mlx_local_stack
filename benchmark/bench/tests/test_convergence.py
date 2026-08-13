@@ -86,3 +86,37 @@ def test_audit_all_converged_is_valid():
     assert a["valid"] is True
     assert a["loop_ids"] == []
     assert a["convergence_rate"] == 1.0
+
+
+# ------------------------------------------------- run_convergence sampling provenance
+# run_convergence is the FAST mechanism the temperature-ladder recipe and the campaign-v3 Tier-0
+# grid both drive. Two defects would have mis-measured every config in that grid.
+def test_run_convergence_uses_the_deployed_profile(monkeypatch):
+    """It called params_for(model) with NO profile, so it silently got the DEFAULT 'production'
+    table — which AGENTS.md records as DRIFTED from what we ship (QWEN production = temp 0.7 /
+    min_p 0.03 / presence_penalty 0.3). A nonzero presence_penalty also DISABLES suffix decoding,
+    so the whole grid would have measured a different serving path from the one we deploy."""
+    from bench import run_convergence as RC
+    import inspect
+    src = inspect.getsource(RC.main)
+    assert "params_for(args.model)" not in src, (
+        "params_for called without a profile -> defaults to the drifted 'production' table")
+    assert 'params_for(args.model, args.sampling_profile' in src or \
+           'params_for(args.model, "deployed"' in src or \
+           "params_for(args.model, DEPLOYED" in src, \
+        "the deployed profile (registry generation_defaults) must be used for new axes"
+
+
+def test_run_convergence_rejects_an_unknown_set_key():
+    """`--set` did `params[k] = v` with no validation, so `--set min-p=0.02` (hyphen) or
+    `--set minp=0.02` silently added a junk key and left min_p at its default — the run then looks
+    entirely healthy. Unknown keys must fail LOUD."""
+    from bench import run_convergence as RC
+    assert hasattr(RC, "_apply_set"), "--set handling should be a testable function"
+    base = {"temperature": 0.4, "min_p": 0.0, "max_tokens": 100}
+    out = RC._apply_set(dict(base), ["min_p=0.02"])
+    assert out["min_p"] == 0.02, "a valid key must be applied and numerically cast"
+    import pytest
+    with pytest.raises(Exception) as e:
+        RC._apply_set(dict(base), ["min-p=0.02"])
+    assert "min-p" in str(e.value), "the offending key must be named in the error"
