@@ -25,6 +25,7 @@ import json
 import os
 import time
 
+from .budget_timeout import classify_stall, derive_timeout
 from .driver import MlxServeDriver
 from .model_params import params_for
 from .aggregation import build_cwe, score_cwe
@@ -52,8 +53,25 @@ def calibrate_cpt(driver, model: str) -> float:
     return len(_CAL_FILLER * 200) / (out.get("prompt_tokens") or 1)
 
 
-def run_one(driver, model, params, messages, targets=None, score_fn=None) -> dict:
-    r = driver.complete(model, messages, params)
+def calibrate_decode_tps(driver, model: str, params: dict) -> float:
+    """Measure this model's decode rate so the request timeout can be DERIVED, not assumed.
+
+    Without this the timeout is a fixed 3600s against an 81,920-token budget — and at the distill's
+    measured 10-16 tok/s the budget needs 85-136 min, so the client always abandons first and the
+    worker keeps generating. That orphaned generation is what cascaded through Tier-0 rev A.
+    Short generation, deployed sampling, thinking left ON (only the token count is small).
+    """
+    p = dict(params)
+    p["max_tokens"] = 128
+    out = driver.complete(model, [{"role": "user", "content": "Count from 1 to 40, comma separated."}],
+                          p, timeout=300)
+    return out.get("decode_tps") or 0.0
+
+
+def run_one(driver, model, params, messages, targets=None, score_fn=None,
+            timeout: float = None) -> dict:
+    r = (driver.complete(model, messages, params, timeout=timeout) if timeout
+         else driver.complete(model, messages, params))
     fr = r.get("finish_reason")
     ct = r.get("completion_tokens")
     # completion_tokens is the TOTAL generated (reasoning + answer). A thinking_budget hit
@@ -77,6 +95,13 @@ def run_one(driver, model, params, messages, targets=None, score_fn=None) -> dic
         "decode_tps": r.get("decode_tps"),
         "wall_s": r.get("wall_s"),
     }
+    # Label the MECHANISM, not just the fact of failure: degenerate_repetition (a real loop),
+    # meander (long but non-repeating), budget_hit (external truncation), max_tokens, or
+    # client_timeout (OURS, not the model's). AGENTS.md requires nonconv_kind per item, and
+    # conflating "we gave up" with "the model failed" is what mis-scored rev A.
+    stall = classify_stall(fr, ct, budget, r.get("reasoning") or "")
+    rec["nonconv_kind"] = stall["nonconv_kind"]
+    rec["stall_evidence"] = stall["evidence"]
     if targets is not None:
         rec["accuracy"] = round((score_fn or score_cwe)(r.get("content", ""), targets), 3)
     return rec
@@ -179,6 +204,15 @@ def main(argv=None) -> int:
     if args.temperature is not None:
         params["temperature"] = args.temperature
     params = _apply_set(params, args.set)
+    tps = calibrate_decode_tps(driver, args.model, params)
+    to = derive_timeout(params.get("thinking_budget"), tps)
+    print(f"[conv] decode={tps:.1f} tok/s -> request timeout {to['timeout_s']}s "
+          f"(budget_observable={to['budget_observable']}) :: {to['reason']}", flush=True)
+    if not to["budget_observable"]:
+        print("[conv] *** WARNING: at this decode rate a clean budget_hit CANNOT be observed — a "
+              "timeout here is uninterpretable, and the worker may keep generating after we give "
+              "up. Reduce prompt scope (task/agg-ctx/samples), never the generation params. ***",
+              flush=True)
     cpt = calibrate_cpt(driver, args.model)
     print(f"[conv] {args.model} cpt={cpt:.2f} temp={params['temperature']} "
           f"max_tokens={params['max_tokens']} thinking_budget={params.get('thinking_budget')} "
@@ -198,31 +232,34 @@ def main(argv=None) -> int:
             score_fn = score_cwe
         rec = run_one(driver, args.model, params,
                       [{"role": "user", "content": ctx + "\n\n" + q}],
-                      targets=target, score_fn=score_fn)
+                      targets=target, score_fn=score_fn, timeout=to["timeout_s"])
         rec.update({"task": args.task, "ctx": args.agg_ctx, "trial": trial})
         records.append(rec)
         print(f"[conv] {args.task} t{trial} finish={rec['finish_reason']} conv={rec['converged']} "
               f"budget_hit={rec['budget_hit']} "
               f"comp_tok={rec['completion_tokens']}/{rec['thinking_budget']} "
               f"reas_ch={rec['reasoning_chars']} cont_ch={rec['content_chars']} "
-              f"acc={rec.get('accuracy')} wall={rec['wall_s']}s tps={rec['decode_tps']}",
+              f"kind={rec['nonconv_kind']} acc={rec.get('accuracy')} "
+              f"wall={rec['wall_s']}s tps={rec['decode_tps']}",
               flush=True)
 
     for trial in range(args.coding_samples):
         rec = run_one(driver, args.model, params,
-                      [{"role": "user", "content": CODING_PROMPT}])
+                      [{"role": "user", "content": CODING_PROMPT}], timeout=to["timeout_s"])
         rec.update({"task": "coding", "trial": trial})
         records.append(rec)
         print(f"[conv] code t{trial} finish={rec['finish_reason']} conv={rec['converged']} "
               f"budget_hit={rec['budget_hit']} "
               f"comp_tok={rec['completion_tokens']}/{rec['thinking_budget']} "
               f"reas_ch={rec['reasoning_chars']} cont_ch={rec['content_chars']} "
-              f"wall={rec['wall_s']}s tps={rec['decode_tps']}", flush=True)
+              f"kind={rec['nonconv_kind']} wall={rec['wall_s']}s tps={rec['decode_tps']}",
+              flush=True)
 
     summary = {args.task: _summ(records, args.task),
                "coding": _summ(records, "coding")}
     result = {"model": args.model, "axis": "convergence", "task": args.task, "params": params,
-              "agg_ctx": args.agg_ctx, "records": records, "summary": summary}
+              "agg_ctx": args.agg_ctx, "measured_decode_tps": round(tps, 1), "timeout": to,
+              "records": records, "summary": summary}
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
     fname = "convergence.json" if args.task == "aggregation" else f"convergence_{args.task}.json"

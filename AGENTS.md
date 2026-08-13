@@ -50,6 +50,29 @@ Five clients, all pointed at the mlx-serve router (`localhost:8000`, OpenAI-comp
 - M4 Pro = local 48GB **DRIVER** laptop (repo `$STACK_REPO`). Co-resident with the AI session (~22GB) it has ~26GB headroom, so it hosts **NO campaign models at all** — this is stricter than the old M2 Max, which merely got unreliable >192K. Driver-only work: harness dev, grading (`grade`/`grade_evalplus`), orchestration, docs. It is also a different chip class (far less memory bandwidth than any Max part), so it is **NEVER** a valid speed-comparison box even ignoring RAM. **Consequence: ALL model runs go to M5** — the old parallel "M2 quality + M5 speed" box-split is dead, and the campaign now has a SINGLE worker.
 - Pre-2026-08-11 `M2` results are HISTORICAL and NOT re-measurable: the apples-to-apples rule bars cross-box baselines and that box no longer exists. Anything still needing a LIVE baseline must be re-run on M5.
 - M5 Max = remote 64GB **WORKER** box (all model runs), faster. `ssh $REMOTE_HOST` (user `$REMOTE_USER`, repo `$REMOTE_REPO`). Non-interactive ssh has a bare PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) — prepend every remote cmd with `export PATH=/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH`. **`/usr/local/bin` is required**: docker/OrbStack lives there, and omitting it makes `docker` look MISSING when it is installed and running. M5 has no `.env`, but an `HF_TOKEN` is exported in `~/.zshrc` — non-interactive ssh does NOT source `.zshrc`, so cached models load fine token-less BUT downloading a new/ungated model unauthenticated hits HF rate limits; load it first with `export HF_TOKEN="$(zsh -ic 'print -rn -- $HF_TOKEN' 2>/dev/null)"` (export it, don't pass via argv; never print/commit the value). Docker on M5 = 29.4.0, aarch64 server, with working `linux/amd64` emulation → `grade_evalplus` can run on EITHER box.
+- **GIT IS THE ONLY CROSS-BOX TRANSPORT — RULE, operator instruction 2026-08-13.** Any code, script,
+  config or doc that must exist on more than one box travels **commit → push → `git fetch` +
+  `git merge --ff-only`**, never `scp`. Rationale, paid for twice: a whole Tier-0 grid launch died
+  `rc=2` on every cell because 14 local commits were not on M5, and the box then accumulated ~12
+  scp'd files that made "what is actually running here?" unanswerable — including a stray
+  `benchmark/bench/test_convergence.py` scp'd to the wrong directory, a same-basename duplicate that
+  can break pytest collection. scp leaves no provenance, no history, and no way to diff a box against
+  a known state.
+  - **The one sanctioned exception** is a THROWAWAY diagnostic that will never be relied on twice
+    (a one-off probe script under `/tmp`). It must live in `/tmp`, never in the repo tree, so it
+    cannot masquerade as committed code. Anything that produces a recorded result gets committed
+    first.
+  - **The dirty-registry case is not an obstacle** (verified 2026-08-13, used 4×): because incoming
+    commits do not touch `main_models.yaml`, `git fetch && git merge --ff-only` succeeds with the
+    registry permanently modified. Do NOT `git checkout` it.
+  - **Procedure when a box has drifted:** (1) `cp -p main_models.yaml /tmp/…` to back up the
+    intentional dirt; (2) **checksum every locally-modified file against the committed version**
+    (`git show HEAD:<path> | md5 -q` vs the box's `md5 -q`) and only discard those that match —
+    never `git checkout -- .` on faith, or unique work is destroyed silently; (3) remove untracked
+    files the merge will deliver; (4) `git merge --ff-only`; (5) restore the registry backup and
+    verify by md5; (6) `git submodule update --force` only if the pointers actually moved.
+  - ⚠️ zsh does NOT word-split unquoted variables, so `for f in $FILES` runs ONCE with the whole
+    string. Iterate with `while IFS= read -r f; do … done < file`, and use `ssh -n` inside loops.
 - Syncing M5 (verified 2026-08-11): its `main_models.yaml` is **CLEAN and committed** — the distill resolves from the hub (`hf_path: caslca/…`), no local absolute path — so a sync is just `git fetch origin main && git merge --ff-only origin/main`, plus `git submodule update --force` when the submodule pointers actually moved. (HISTORICAL hazard, no longer live: M5 used to carry an UNCOMMITTED local registry entry, and with `pull.rebase=true` a plain `git pull` ABORTED on the dirty registry. If you ever re-add a local `hf_path`, that hazard returns — and never commit local paths.)
 - Router (re)start recipe (per box): `cd <repo> && set -a; . ./.env 2>/dev/null; set +a; MLX_SERVE_CONFIG=main_models.yaml nohup uv run mlx-serve start >logs/main_model.log 2>&1 </dev/null &` → :8000. Run the lean router (no OWUI/docker) for benchmarking.
 - After a crash the router may report a model "ready" with no live subprocess → 500s. Restart the router to clear.

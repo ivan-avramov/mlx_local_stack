@@ -64,18 +64,97 @@ Four spine requirements, each earned by a defect already paid for:
    client abandons and the worker keeps generating. In a 40-turn session that orphans the whole
    session, not one cell.
 
-**Cost control — the thing that makes this affordable.** A 40-turn session re-prefills the whole
-transcript every turn, so naive cost is O(turns²). At the distill's measured ~15 tok/s on long
-prompts this is the dominant risk. Mitigations, in order of preference:
-- **Report TTFT separately and expect it to dominate** (AGENTS.md already requires prefill/decode
-  split); do not let prefill cost masquerade as model quality.
-- **This is the one axis where APC would matter enormously** — and APC is currently **inert**
-  (measured 2026-08-13: 0 lookups, 0 stores, no reuse). Fixing APC is a *prerequisite for
-  affordability at 40+ turns*, not a nice-to-have. Until then, budget full re-prefill per turn.
-- Pilot at **n=3 sessions × 1 model** before committing; measure, don't extrapolate (rev A was sized
-  from the wrong model's timing and lost an hour).
+### 1.1 COST — defined, and MEASURED (this replaces an earlier wrong claim in this doc)
+
+**"Cost" is two different things and they must never be merged into one number:**
+
+| | what it is | units | property |
+|---|---|---|---|
+| **token cost** | tokens the model CHOOSES to generate (completion, of which reasoning is the bulk) | tokens | **model behaviour**; hardware-independent; transfers to H200/B200 |
+| **wall cost** | what a user waits | seconds = prefill + (completion tokens ÷ decode rate) | **deployment reality**; box-specific; NOT transferable |
+
+They diverge badly. Today's Tier-0 blowup was **47× in tokens** (1,122 → 52,833) but **24× in wall**
+(41 s → 999 s) — same event, different multipliers, because prefill and decode rate differ per turn.
+Report both, always, and keep prefill and decode split (AGENTS.md already requires this). Token cost
+is the one that says something about the *model*; wall cost is the one that says whether we can
+afford the run.
+
+**MEASURED 2026-08-13 — a growing conversation gets INCREMENTAL prefill, so session cost is
+O(turns), NOT O(turns²).** An earlier draft of this doc asserted the opposite and called APC repair a
+prerequisite for 40+ turns. **That was wrong.** The fork's own session cache (`PromptCacheState`,
+`server/session_manager.py:get_or_create_prompt_cache_state`) holds KV + token history across turns
+and prefills only the tokens after the common prefix. It needs **no `chat_id` from the client** —
+`_find_session_by_hash_prefix` routes anonymous requests to their session by chained per-message
+sha256s, which is exactly what a plain OpenAI-compatible client (aider, opencode) sends.
+
+Ornith, M5, 6-turn growing conversation, ~2.1K new tokens per turn:
+
+| turn | total prompt tok | new tok | wall | ms per NEW tok | ms per TOTAL tok |
+|---|---|---|---|---|---|
+| 1 | 2,102 | 2,102 | 5.35 s | 2.55 | 2.55 |
+| 2 | 4,209 | 2,107 | 1.73 s | 0.82 | 0.41 |
+| 4 | 8,423 | 2,107 | 1.82 s | 0.86 | 0.22 |
+| 6 | 12,637 | 2,107 | 1.92 s | 0.91 | **0.15** |
+
+Cost per *new* token is flat (0.82 → 0.91 ms, an 11% rise over 6 turns = mild attention growth);
+cost per *total* token falls **17×**. Only new tokens are prefilled.
+
+**Consequence — this axis is CHEAP, and APC is irrelevant to it.** Per-turn prefill is ~2 s at
+12K context, so decode dominates. A 40-turn session at ~800 completion tokens/turn:
+Ornith (~140 tok/s) ≈ **6 min/session**; the distill (~28 tok/s) ≈ **21 min/session**. Three sessions
+× both winners ≈ **1.5 h**. APC plays no part: it is a separate generic prefix cache, it is excluded
+from all benchmarking by standing operator instruction, and it is not what makes this work.
+
+Still pilot before committing (rev A was sized from the wrong model's timing and lost an hour), but
+the affordability question is answered.
 
 ---
+
+## 1.2 THE BENCHMARK MUST NOT SATURATE — measure a BREAKING POINT, not a fixed-depth score
+
+Operator requirement: hard enough that no model saturates it, so it resolves *between* models. This
+is the single most important design constraint, and the campaign has already been burned by ignoring
+it — repeatedly:
+
+| axis | result | usable resolution? |
+|---|---|---|
+| Tier-0 `conv%` | 1.0 in **66/66** draws | **none** — saturated, ρ undefined |
+| he+ (distill) | 100% | **none** — ceiling'd |
+| LCB @ n=15 | three-way tie at 80% | **none** at that n |
+| aider polyglot | 50.0% vs 73.6%, p=1.3e-05 | **yes** — the only axis that ever separated the winners |
+
+**The design rule that makes saturation structurally impossible: make the metric a THRESHOLD, not a
+score at a fixed depth.** Instead of "% of constraints retained at turn 40" (which can be 100% for
+everyone), measure **the depth at which retention first fails**. If nobody fails by turn 40, the
+answer isn't "tie" — it's "run to 80". The metric is unbounded above, so a model can only saturate it
+by being unboundedly good.
+
+This is not a new invention: it is exactly how the campaign already handles context
+(effective-context = the depth where accuracy crosses 0.85, not pass/fail at one length). Applying
+the same shape here keeps it consistent with the one threshold the campaign has ratified.
+
+**Pre-registered escalation ladder** (decided BEFORE looking, so it can't be rationalised after):
+1. Run at depth D (B: 40 turns; A: 20 turns).
+2. If **both** models are still clean, **double D** and re-run. Session cost is O(turns), so doubling
+   depth roughly doubles cost — affordable per §1.1.
+3. If **both** models fail immediately (turn < 5), the construct is too hard to resolve anything —
+   *reduce* constraint count / task coupling rather than reporting a floor-effect tie.
+4. Stop when the two winners' breaking points differ by more than the paired CI, or when depth
+   exceeds what the KV budget allows (record the ceiling as a config fact, never as a blank).
+
+**Difficulty knobs, to be turned until separation appears** — enumerated now so escalation is
+mechanical rather than improvised:
+- **B:** number of simultaneous constraints (4 → 8); constraints that FIGHT the model's default style
+  (e.g. "never use bullet points" against a model that loves lists — a genuinely adversarial ask);
+  more topic switches between plant and probe; distractor instructions in between; longer pasted
+  documents to grow context faster.
+- **A:** tighter coupling between tasks (later tasks touching the same functions, not just the same
+  files); more turns before re-running the full suite; refactors that *require* touching earlier code.
+
+**And the honest pre-registration:** if a metric still saturates after escalation, it is reported as
+**"no resolution at this depth"** — not as a tie, and not quietly dropped. "Inconclusive is a valid
+answer" already applies; a saturated metric is a *weaker* statement than inconclusive, because it
+means the instrument couldn't have detected a difference at all.
 
 ## 2. Benchmark A — CODER session depth ("sustained feature work")
 
@@ -98,10 +177,11 @@ per turn:  new_task_tests_pass    (progress)
            diff_applied_cleanly    (edit competence at depth)
 ```
 
-**Primary metric: regression rate vs turn index** — `P(a previously-passing test fails at turn t)`.
-This is the "re-breaks fixed code" failure, it needs no judge, and it is invisible to every axis we
-own. Secondary: cumulative tasks-green, well-formed-diff rate vs depth, context tokens at first
-regression.
+**Primary metric (threshold-shaped, per §1.2): FIRST-REGRESSION DEPTH** — the turn index at which a
+previously-passing test first fails, plus the regression rate curve beyond it. This is the
+"re-breaks fixed code" failure, it needs no judge, and it is invisible to every axis we own. Reporting
+it as a depth rather than a rate at fixed depth is what stops it ceiling'ing. Secondary: cumulative
+tasks-green, well-formed-diff rate vs depth, and token/wall cost per turn (§1.1, both units).
 
 **Item source.** Build from the **89 unused polyglot exercises** (M1 used 110 of 199), converted into
 dependent sequences — *not* the 110 already used, to keep the held-out set clean for P4/Tier-2.
@@ -137,16 +217,18 @@ Then run 40+ turns of realistic mixed work (explanations, small code, refactor a
 **deliberate topic switches**, one long pasted document to force context growth). **Probe each
 constraint repeatedly at increasing depth** (turns 12, 20, 28, 36, 44).
 
-**Primary metric: constraint retention vs depth** — `P(constraint honoured | turns since it was
-given, context tokens)`. Mechanical, cheap, per-turn, model-agnostic, no judge.
+**Primary metric (threshold-shaped, per §1.2): RETENTION-BREAK DEPTH** — the turn index at which a
+constraint is first violated, per constraint, plus the retention curve
+`P(honoured | turns since given, context tokens)`. Mechanical, cheap, per-turn, model-agnostic, no
+judge. Escalate depth per the ladder if neither model breaks.
 
 **Secondary:**
 - **Self-contradiction:** re-ask a factual question answered at turn 5; does the answer still match?
   (Mechanical: compare to its own earlier answer, not to ground truth.)
 - **Instruction recency bias:** plant two *compatible* constraints far apart; is only the recent one
   honoured?
-- **Cost curve:** TTFT and context tokens vs turn — the practical "unusable by turn 40" number, and
-  the one that decides whether APC repair is mandatory for this role.
+- **Cost curve:** token cost and wall cost vs turn, reported separately (§1.1) — the practical
+  "unusable by turn 40" number. Measured: prefill is incremental, so decode dominates.
 - **Judge panel LAST, and only over sessions that pass the mechanical checks** — per AGENTS.md, the
   judge is for subjective quality (coherence, helpfulness), never as a correctness oracle. It also
   has an unretired reliability problem (judge panel v2: "NOT RELIABLE ENOUGH TO RANK"), so it must
@@ -167,8 +249,12 @@ the rule that retrieval-depth and reasoning-depth curves stay separate — this 
 - **Don't build B on a judge as primary.** The panel is built, run twice, and recorded as not
   reliable enough to rank; a 40-turn session multiplies its variance.
 - **Don't use the 110 M1 exercises for A.** It would contaminate the held-out set P4/Tier-2 needs.
-- **Don't run either at 40+ turns before APC is understood.** Full re-prefill per turn is O(turns²);
-  this axis is where the inert-APC finding actually bites.
+- **Don't score at a single fixed depth.** A fixed-depth score can ceiling; a breaking-point depth
+  cannot (§1.2). Every axis that ever saturated on this campaign did so by being a fixed-depth or
+  fixed-item score.
+- **Don't bring APC into this.** It is excluded from all benchmarking by standing operator
+  instruction, it is a generic prefix cache rather than session caching, and it is measurably not
+  what makes multi-turn affordable — the fork's `PromptCacheState` session cache is (§1.1).
 
 ## 5. Sequencing (cheapest informative thing first)
 
@@ -193,6 +279,6 @@ Steps 1–3 are ~6 h total and answer "is this measurable and affordable" before
    *one* realistic feature built over 15 turns (more realistic, weaker oracle — partial credit
    becomes a judgement call)? I lean to the dependent-task sequence because the oracle stays
    mechanical.
-3. **Does repairing APC get priority over building this?** For the daily-driver role it is close to a
-   prerequisite: without prefix reuse, a 40-turn session is dominated by re-prefill, and TTFT is the
-   very thing the role is judged on.
+3. ~~Does repairing APC get priority?~~ **WITHDRAWN — the question was malformed.** APC is excluded
+   from benchmarking by standing instruction, and the measurement in §1.1 shows session caching
+   already gives incremental prefill, so nothing about this axis depends on APC.
