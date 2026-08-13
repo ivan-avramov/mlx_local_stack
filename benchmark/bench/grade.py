@@ -71,7 +71,17 @@ def _finalize(score: dict, rows: list) -> dict:
     score["loop_ids"] = audit["loop_ids"]
     score["conv_gate_pass"] = (audit["convergence_rate"] is not None
                                and audit["convergence_rate"] >= CONV_GATE)
-    score["nonconv_kinds"] = traces.summarize(rows)["kinds"]
+    tsum = traces.summarize(rows)
+    score["nonconv_kinds"] = tsum["kinds"]
+    # EOS'd degenerate loops: rows the ratified convergence formula counts as CONVERGED whose trace
+    # is a verbatim loop. Surfaced by COST share because the row count understates it badly — the
+    # IFEval case was 1 row in 28 (4%) but 32% of wall-clock. This is also the class the
+    # "runaway tax has nothing to charge" finding could not see, since that was measured on
+    # budget-hits and max_tokens truncations only.
+    score["n_degenerate_eosed"] = tsum["n_degenerate_eosed"]
+    score["degenerate_eosed_ids"] = tsum["degenerate_eosed_ids"]
+    score["degenerate_wall_share"] = tsum["degenerate_wall_share"]
+    score["degenerate_token_share"] = tsum["degenerate_token_share"]
 
     conv_by_key = {rowschema.row_key(r): convergence.is_converged(r) for r in rows}
     budgets = {r.get("thinking_budget") for r in generated if r.get("thinking_budget")}

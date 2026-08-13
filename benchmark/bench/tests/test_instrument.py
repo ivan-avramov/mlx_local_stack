@@ -28,3 +28,76 @@ def test_find_model_server_pid_picks_highest_rss(monkeypatch):
     monkeypatch.setattr(psutil, "process_iter",
                         lambda attrs=None: iter([_P(1, ["python", "other"], 10)]))
     assert I.find_model_server_pid() is None  # no match
+
+
+# ------------------------------------------------------------------ EOS'd degenerate loops
+# Found on the IFEval run, 2026-08-13: one Ornith row generated 52,503 tokens of a two-line
+# alternating loop (unique_line_ratio 0.0093, max_line_repeat 2071, ngram8_unique 0.0123) and was
+# scored `converged: True, nonconv_kind: None` — because it EOS'd under the 81,920 budget. The
+# repetition detector already existed and was correct; `classify` just never reached it, since it
+# early-returns None for anything `convergence.is_converged` accepts. That single row was 4% of
+# rows but 32% of wall-clock and 45% of tokens.
+def test_a_self_terminating_repetition_loop_is_FLAGGED_even_though_it_converged():
+    """The row satisfies the ratified convergence formula, so conv% must keep counting it as
+    converged — but the loop must not be invisible."""
+    import bench.traces as T
+    row = {"finish_reason": "stop", "completion_tokens": 52503, "thinking_budget": 81920,
+           "reasoning_stats": {"chars": 171994, "lines": 4179, "unique_line_ratio": 0.0093,
+                               "max_line_repeat": 2071, "ngram8_unique": 0.0123}}
+    import bench.convergence as C
+    assert C.is_converged(row) is True, "the ratified formula is unchanged"
+    assert T.classify(row) is None, "nonconv_kind stays None: it did self-terminate"
+    assert T.is_degenerate(row) is True, "but the loop must be detectable"
+
+
+def test_a_healthy_long_trace_is_not_flagged():
+    """Every healthy IFEval row measured unique_line_ratio >= 0.44 and max_line_repeat <= 11, so the
+    threshold sits in a two-order-of-magnitude gap, not on a boundary."""
+    import bench.traces as T
+    row = {"finish_reason": "stop", "completion_tokens": 5775, "thinking_budget": 81920,
+           "reasoning_stats": {"chars": 20000, "lines": 300, "unique_line_ratio": 0.663,
+                               "max_line_repeat": 4, "ngram8_unique": 0.674}}
+    assert T.is_degenerate(row) is False
+
+
+def test_a_short_trace_is_never_flagged():
+    """Too few lines to judge — inconclusive must not read as degenerate."""
+    import bench.traces as T
+    row = {"finish_reason": "stop", "completion_tokens": 50, "thinking_budget": 81920,
+           "reasoning_stats": {"chars": 200, "lines": 3, "unique_line_ratio": 0.33,
+                               "max_line_repeat": 2, "ngram8_unique": 0.5}}
+    assert T.is_degenerate(row) is False
+
+
+def test_error_rows_and_missing_stats_are_not_flagged():
+    import bench.traces as T
+    assert T.is_degenerate({"error": "boom"}) is False
+    assert T.is_degenerate({"finish_reason": "stop", "completion_tokens": 10}) is False
+
+
+def test_a_NON_converged_loop_still_classifies_as_degenerate_repetition():
+    """The pre-existing path must be untouched: a loop that hit the budget is still non-converged
+    AND still named degenerate_repetition."""
+    import bench.traces as T
+    row = {"finish_reason": "stop", "completion_tokens": 81920, "thinking_budget": 81920,
+           "reasoning_stats": {"chars": 300000, "lines": 5000, "unique_line_ratio": 0.01,
+                               "max_line_repeat": 3000, "ngram8_unique": 0.01}}
+    assert T.classify(row) == "degenerate_repetition"
+    assert T.is_degenerate(row) is True
+
+
+def test_summarize_reports_the_eosed_loop_count_and_its_cost_share():
+    """The number that matters is the COST share, not the row count: 1 of 28 rows was 32% of wall."""
+    import bench.traces as T
+    degen = {"finish_reason": "stop", "completion_tokens": 52503, "thinking_budget": 81920,
+             "wall_s": 271.5,
+             "reasoning_stats": {"lines": 4179, "unique_line_ratio": 0.0093,
+                                 "max_line_repeat": 2071, "ngram8_unique": 0.0123}}
+    ok = {"finish_reason": "stop", "completion_tokens": 2500, "thinking_budget": 81920,
+          "wall_s": 25.0,
+          "reasoning_stats": {"lines": 200, "unique_line_ratio": 0.9,
+                              "max_line_repeat": 2, "ngram8_unique": 0.8}}
+    s = T.summarize([degen] + [ok] * 27)
+    assert s["n_degenerate_eosed"] == 1
+    assert 0.28 < s["degenerate_wall_share"] < 0.34
+    assert 0.40 < s["degenerate_token_share"] < 0.50

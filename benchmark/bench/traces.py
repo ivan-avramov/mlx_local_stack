@@ -119,6 +119,27 @@ def _is_novel(stats: dict) -> bool:
             and stats.get("max_line_repeat", 0) < REPEAT_MAX_REPEAT)
 
 
+def is_degenerate(row: dict, *, trace_text=None) -> bool:
+    """Does this row's trace show a degenerate verbatim loop — REGARDLESS of how it ended?
+
+    `classify` cannot answer this, by design: it early-returns None for anything
+    `convergence.is_converged` accepts, so a loop that self-terminates UNDER the thinking budget is
+    never examined. Measured on IFEval 2026-08-13: one Ornith row emitted 52,503 tokens of a two-line
+    alternating loop (unique_line_ratio 0.0093, max_line_repeat 2071, ngram8_unique 0.0123) with
+    finish_reason "stop" at 64% of budget — scored `converged: True, nonconv_kind: None`. It was 4%
+    of rows but 32% of wall-clock and 45% of tokens.
+
+    The ratified convergence formula (`finish_reason == "stop" AND completion_tokens < budget`) is
+    deliberately NOT changed here: that rule exists to stop a budget-hit's forced EOS from
+    false-passing, and it still does. This is a SEPARATE, additive diagnostic for a third case the
+    rule never covered — a loop cheap enough to finish on its own.
+    """
+    if row.get("error"):
+        return False
+    stats = row.get("reasoning_stats") or (trace_stats(trace_text) if trace_text else None)
+    return bool(stats and _is_repetition(stats))
+
+
 def classify(row: dict, *, trace_text=None):
     """Name the non-convergence MECHANISM for one generation row, or None if it converged.
 
@@ -165,4 +186,18 @@ def summarize(rows) -> dict:
             continue
         kinds[kind] += 1
         ids.setdefault(kind, []).append(row.get("id"))
-    return {"n": sum(kinds.values()), "kinds": dict(kinds), "ids_by_kind": ids}
+
+    # EOS'd degenerate loops: rows the ratified formula counts as CONVERGED whose trace is a
+    # verbatim loop. Reported by COST share, not row count — the IFEval case was 1 row in 28 (4%)
+    # but 32% of wall-clock, so a count alone understates it by ~8x. This is the number that
+    # revises "the runaway tax has nothing to charge": that claim was measured on budget-hits and
+    # max_tokens truncations only, which this class is neither.
+    live = [r for r in rows if not r.get("error")]
+    eosed = [r for r in live if classify(r) is None and is_degenerate(r)]
+    tot_w = sum(r.get("wall_s") or 0 for r in live)
+    tot_t = sum(r.get("completion_tokens") or 0 for r in live)
+    return {"n": sum(kinds.values()), "kinds": dict(kinds), "ids_by_kind": ids,
+            "n_degenerate_eosed": len(eosed),
+            "degenerate_eosed_ids": [r.get("id") for r in eosed],
+            "degenerate_wall_share": round(sum(r.get("wall_s") or 0 for r in eosed) / tot_w, 4) if tot_w else 0.0,
+            "degenerate_token_share": round(sum(r.get("completion_tokens") or 0 for r in eosed) / tot_t, 4) if tot_t else 0.0}

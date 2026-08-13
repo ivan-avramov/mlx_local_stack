@@ -11,9 +11,12 @@ import os
 import time
 from pathlib import Path
 
-from . import benchmarks, client, convergence, model_params, rowschema, traces
+from . import benchmarks, client, convergence, model_params, paths, rowschema, traces
 
-_DEFAULT_RESULTS = Path("benchmark/results")
+# ABSOLUTE, resolved from the module location. It was Path("benchmark/results") — CWD-relative, so
+# running from benchmark/ wrote a second invisible tree at benchmark/benchmark/results/. Same
+# absolute value as a repo-root invocation, so existing trees are untouched. See bench/paths.py.
+_DEFAULT_RESULTS = paths.default_results_root()
 RESULTS = _DEFAULT_RESULTS          # module-level seam; tests monkeypatch this
 
 

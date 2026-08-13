@@ -14,10 +14,19 @@ import time
 import yaml
 
 from . import generate, model_params, quant_info
+from . import paths
 
 
-def registry_kv(model: str, registry_path: str):
-    """KV + path config for ``model`` from a main_models.yaml-style registry, or None."""
+def registry_kv(model: str, registry_path: str | None = None):
+    """KV + path config for ``model`` from a main_models.yaml-style registry, or None.
+
+    ``registry_path=None`` resolves to the repo's `main_models.yaml` independent of the CWD.
+    Resolved HERE so every caller — including the three public entry points that now default to
+    None — gets it. A bare "main_models.yaml" default meant provenance was silently SKIPPED from
+    any CWD but the repo root, so rows carried no sampling/APC fingerprint and --clean-stale could
+    not detect config drift. See bench/paths.py.
+    """
+    registry_path = str(paths.registry_path()) if registry_path is None else registry_path
     with open(registry_path) as f:
         doc = yaml.safe_load(f)
     entries = doc.get("models", doc) if isinstance(doc, dict) else doc
@@ -176,7 +185,7 @@ def _runtime_block(runtime: dict = None) -> dict:
 
 
 def current_manifest_lite(model: str, profile: str = "production",
-                          registry_path: str = "main_models.yaml",
+                          registry_path: str | None = None,
                           overrides: dict = None, runtime: dict = None) -> dict:
     """A cheap manifest (sampling + KV only, no quant_info snapshot scan) for the resume
     compatibility check — same shape config_fingerprint consumes. `overrides` are the CLI
@@ -244,7 +253,7 @@ def _resolve_snapshot(hf_path):
     return None
 
 
-def gather(model: str, registry_path: str = "main_models.yaml",
+def gather(model: str, registry_path: str | None = None,
            profile: str = "production", overrides: dict = None, runtime: dict = None) -> dict:
     """Assemble the real provenance manifest for ``model`` on this box. `overrides` are the
     CLI sampling overrides layered on the profile, recorded so the manifest matches what
@@ -272,7 +281,7 @@ def gather(model: str, registry_path: str = "main_models.yaml",
     return man
 
 
-def write(model: str, bench: str, registry_path: str = "main_models.yaml",
+def write(model: str, bench: str, registry_path: str | None = None,
           profile: str = "production", overrides: dict = None, runtime: dict = None) -> dict:
     """Gather + write results/<model>/<bench>.manifest.json. Returns the manifest."""
     man = gather(model, registry_path, profile=profile, overrides=overrides,

@@ -6,6 +6,7 @@ Params are family-uniform: one Gemma-4 set (all dense + MoE quants) and one Qwen
 mlx-serve forwards these straight to mlx_vlm (top_k / min_p / repetition_penalty /
 presence_penalty / enable_thinking / thinking_budget are all honored).
 """
+from . import paths
 
 GEMMA = {
     "temperature": 0.7,
@@ -103,12 +104,18 @@ DEPLOYED = "deployed"
 _REGISTRY_CACHE: dict = {}
 
 
-def _registry_models(registry_path: str) -> dict:
+def _registry_models(registry_path: str | None = None) -> dict:
     """{name: entry} for `models:` entries only, parsed once per path.
 
     `task_model` is a TOP-LEVEL block (it must never be served by the router), so it is
     deliberately NOT included — a naive parse would hand out its max_tokens 512.
+
+    ``registry_path=None`` resolves to the repo's `main_models.yaml` independent of the CWD. The
+    old bare-string default made the `deployed` profile — the FU-2 source of truth for what we
+    actually ship — unreadable from any CWD but the repo root, which is not merely a missing file:
+    it decides whether a run measures the sampling we deploy.
     """
+    registry_path = str(paths.registry_path()) if registry_path is None else registry_path
     if registry_path in _REGISTRY_CACHE:
         return _REGISTRY_CACHE[registry_path]
     import yaml                      # lazy: keeps model_params importable without pyyaml
@@ -123,7 +130,7 @@ def _registry_models(registry_path: str) -> dict:
     return out
 
 
-def registry_generation_defaults(model: str, registry_path: str = "main_models.yaml"):
+def registry_generation_defaults(model: str, registry_path: str | None = None):
     """The model's deployed `generation_defaults` block, or None if the model isn't a served
     registry entry. Raises LookupError only if the registry itself is unreadable."""
     entry = _registry_models(registry_path).get(model)
@@ -149,7 +156,7 @@ def profile_names():
 
 
 def params_for(model: str, profile: str = "production",
-               registry_path: str = "main_models.yaml") -> dict:
+               registry_path: str | None = None) -> dict:
     """Return a copy of the model's generation params.
 
     profile='deployed'   = main_models.yaml `generation_defaults` — what mlx-serve actually

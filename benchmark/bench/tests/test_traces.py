@@ -244,5 +244,17 @@ def test_summarize_counts_kinds_and_skips_converged_and_error_rows():
 
 
 def test_summarize_of_an_empty_or_all_converged_run():
-    assert T.summarize([]) == {"n": 0, "kinds": {}, "ids_by_kind": {}}
-    assert T.summarize([CONV, CONV]) == {"n": 0, "kinds": {}, "ids_by_kind": {}}
+    """No non-convergences to explain, and no EOS'd degenerate loops either.
+
+    Asserted field-by-field rather than by exact dict equality: `summarize` gained the
+    EOS'd-degenerate-loop diagnostic (2026-08-13), and pinning the whole return shape made an
+    additive field look like a regression.
+    """
+    for rows in ([], [CONV, CONV]):
+        s = T.summarize(rows)
+        assert s["n"] == 0
+        assert s["kinds"] == {}
+        assert s["ids_by_kind"] == {}
+        assert s["n_degenerate_eosed"] == 0
+        assert s["degenerate_wall_share"] == 0.0
+        assert s["degenerate_token_share"] == 0.0

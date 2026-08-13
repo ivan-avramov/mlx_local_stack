@@ -76,6 +76,24 @@ Five clients, all pointed at the mlx-serve router (`localhost:8000`, OpenAI-comp
 - Syncing M5 (verified 2026-08-11): its `main_models.yaml` is **CLEAN and committed** — the distill resolves from the hub (`hf_path: caslca/…`), no local absolute path — so a sync is just `git fetch origin main && git merge --ff-only origin/main`, plus `git submodule update --force` when the submodule pointers actually moved. (HISTORICAL hazard, no longer live: M5 used to carry an UNCOMMITTED local registry entry, and with `pull.rebase=true` a plain `git pull` ABORTED on the dirty registry. If you ever re-add a local `hf_path`, that hazard returns — and never commit local paths.)
 - Router (re)start recipe (per box): `cd <repo> && set -a; . ./.env 2>/dev/null; set +a; MLX_SERVE_CONFIG=main_models.yaml nohup uv run mlx-serve start >logs/main_model.log 2>&1 </dev/null &` → :8000. Run the lean router (no OWUI/docker) for benchmarking.
 - After a crash the router may report a model "ready" with no live subprocess → 500s. Restart the router to clear.
+- **EVERY BENCHMARK RUN REPORTS AND IS CRITICALLY EVALUATED EVERY 5 MINUTES — RULE, operator
+  instruction 2026-08-13.** A detached monitor writes a progress line to a FILE every 300s, and the
+  driving agent must actually ASSESS it on that cadence, not merely print it. The assessment answers
+  four questions each time, and a "still running" that answers none of them is not an assessment:
+  1. **Is it PROGRESSING?** Compare the item counter against its own previous value — never worker
+     busyness. "worker=GENERATING" was reported as on-track for 13 minutes while the worker was
+     finishing an ABANDONED request. A file count is not progress either: aider writes a result file
+     per exercise it SETS UP, so filter on non-empty `tests_outcomes`.
+  2. **Is the RATE what was predicted, and if not why?** Re-derive the ETA from the MEAN (these
+     distributions are heavily right-tailed — measured on IFEval: mean 31.5s vs median 22.3s, with
+     45% of all wall-clock in the top decile of items, so a median-based ETA flatters by ~40%).
+     A rate drop is a SIGNAL: on IFEval it was one item emitting 52,503 tokens.
+  3. **Is the OUTPUT sane?** Check error count, convergence, `nonconv_kinds`, and the completion-token
+     distribution — including `n_degenerate_eosed` / `degenerate_wall_share`, since a verbatim loop
+     that self-terminates under budget is scored CONVERGED and is invisible in `conv%`.
+  4. **Does it need CORRECTION, and is correcting it cheaper than letting it finish?** Say which.
+  Findings go in the run log, not just in conversation. This rule exists because five status reports
+  in one session were wrong about whether a run was advancing.
 - Monitoring: foreground `sleep` is blocked. Launch long runs detached on the box (`nohup … </dev/null &`), poll from a LOCAL background poller (run_in_background) checking the result file + `pgrep` liveness. Bench runners print per-rung only at the end — watch `logs/main_model.log` completion lines for live progress.
 
 ## Measurement discipline (READ before any A/B)
