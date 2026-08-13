@@ -412,6 +412,76 @@ Rev B came within range of it again — the 52,833-token draw took 999 s of the 
 `thinking_budget ÷ measured decode rate` with a margin, or fail the cell loudly when the timeout is
 below that ratio, so the harness cannot silently convert a budget hit into an orphaned generation.
 
+## ⚠️ APC IS INERT ON THE DEPLOYED STACK — zero memory cost AND zero benefit (2026-08-13)
+
+Operator question: APC is acceptable if it buys TTFT for free, but not if it eats memory that pushes
+a candidate out of consideration against the ≤46GB @256K gate. **Measured answer: it currently costs
+nothing, because it does nothing.** `benchmark/bench/probe_apc_memory.py` (+12 tests).
+
+### The memory measurement: identical to nine decimal places
+M5, Ornith-1.0-35B-mlx-uniform-4bit, kv 65536, router restarted before each arm so
+`mx.get_peak_memory` is a clean high-water mark. 5 requests with **mutually unique** prefixes
+(unique marker at the FRONT — APC matches on prefixes, so a shared head would hit instead of store),
+44,945 prompt tokens prefilled vs the pool's 32,768-token capacity, i.e. enough to force the
+**ceiling** rather than sample a light session:
+
+| arm | router env | max `peak_mem_gb` | prefill |
+|---|---|---|---|
+| APC absent | no `APC*` vars (verified per-pid) | **22.957264336** | ~2,990 tok/s |
+| APC on | `APC_ENABLED=1 APC_NUM_BLOCKS=2048` (verified in **worker** env too) | **22.957264336** | ~2,990 tok/s |
+
+Bit-identical across a router restart. That is not "APC is cheap" — it is a signal that nothing was
+cached, and it was treated as such rather than reported as a convenient null.
+
+### Confirmed: APC is enabled but NEVER CONSULTED
+The worker's own `/metrics` (`server.apc`, worker :8091) reports:
+
+```
+enabled: true, num_blocks: 2048, block_size: 16
+pool_used: 0   lookups_hit: 0   lookups_miss: 0   stores: 0
+matched_tokens: 0   rejects: 0   rejects_by_reason: {}   resident_bytes: 0
+```
+
+**`lookups_miss: 0` is the smoking gun.** A rejected or missed lookup would still be *counted*; zero
+lookups means APC is never asked. And functionally, the same 9K-token prefix served three times shows
+no reuse at all — prefill **3.10 → 3.00 → 3.00 s** (~1.03×) against the recorded **34–147×**.
+
+### Three candidate mechanisms tested, all ELIMINATED
+1. **Env not reaching the worker** — ruled out: `APC_ENABLED=1`/`APC_NUM_BLOCKS=2048` are present in
+   the *worker* process env (`ps -Eww` on the worker pid), not just the router's.
+2. **Suffix decoding conflicts with APC** — plausible from
+   `server/generation.py:2487-2493`, whose comment says suffix "is single-sequence and only wired on
+   the cached/inline path" and force-sets `draft_model=None` on the batch path. **Falsified:** with
+   suffix commented out of the registry and the router restarted, APC still reports 0 lookups /
+   0 stores / 0 resident bytes.
+3. **The mlx-serve router mangles the request** — ruled out: calling the worker **directly on :8091**,
+   router bypassed, also yields 0 lookups and no reuse (3.25 → 3.08 s).
+
+**Mechanism remains OPEN.** Not-yet-tested candidates: `kv_prealloc_tokens` (we pre-allocate the full
+KV cap as one contiguous buffer, which a paged block pool may have nothing to page into);
+`continuous_batching_enabled: true`; an APC path wired only for `/v1/completions` or for the
+tenant-header route (`server/app.py:189`). Deployed submodule was verified to match the parent fork
+on the relevant lines, so this is not fork/submodule skew.
+
+### What this means for the decision
+- **APC cannot cost any candidate its gate.** It consumes zero bytes, so the ≤46GB @256K admissibility
+  of every candidate is untouched. The operator's constraint is satisfied — trivially, and for the
+  wrong reason.
+- **The daily driver is NOT getting the win it is documented to get.** `runserver.sh:80` ships
+  `APC_ENABLED=1 APC_NUM_BLOCKS=2048`, and Phase-2 recorded "**#1 APC prefix caching = DONE → SHIP**,
+  agentic multi-turn TTFT 54.5×@7.5K → 147×@25K". On the current stack that win is **absent**. Either
+  the Phase-2 measurement ran on a configuration we no longer ship, or a regression has landed since.
+  **That recorded result should be treated as UNRELIABLE until re-measured.**
+- **The 2048-block pool fix is still correct** and should stay: it bounds the ceiling if APC is ever
+  repaired, and the guard test keeps it ≤4096.
+- **The benchmark policy is unaffected** — runs keep APC absent, which is now known to be
+  indistinguishable from APC present anyway.
+- **Ornith was the right model to measure** as the conservative case: fp16 KV gives it the *larger*
+  per-block cost, while the distill (4-bit KV, ~4× smaller blocks) has the *tighter* headroom
+  (43.3GB vs the 46GB gate). A zero on Ornith is a zero on the distill. If APC is repaired, the
+  ceiling to re-check is "the KV of 32,768 extra tokens for that model" — blocks × block_size is a
+  token capacity, so the cost is `kv_bits`-dependent and must be re-measured per model, not assumed.
+
 ## P1a — opencode GO/NO-GO: **GO**, after fixing a blocker in our own shipped config (2026-08-13)
 
 `benchmark/m1/p1a_opencode_smoke.sh` + manual gate runs, M5, opencode **1.18.15**, Ornith resident.

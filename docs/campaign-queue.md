@@ -88,6 +88,51 @@ Full table in `docs/campaign-results.md`. Headlines:
   vs the 3,600 s timeout). Fix proposed, NOT applied: derive the timeout from
   `thinking_budget ÷ measured decode rate`, or fail loudly when it is below that ratio.
 
+### ⚠️ APC IS INERT — zero memory cost AND zero benefit (operator question answered, 2026-08-13)
+`benchmark/bench/probe_apc_memory.py` (+12 tests). Ornith, M5, router restarted per arm so
+`mx.get_peak_memory` is a clean mark; 44,945 tok prefilled across **mutually unique** prefixes vs the
+pool's 32,768-tok capacity (forces the CEILING, not a light sample).
+- **APC absent vs `APC_ENABLED=1 APC_NUM_BLOCKS=2048`: peak `22.957264336` GB in BOTH arms** —
+  bit-identical across a router restart. Treated as a red flag, not a convenient null.
+- Worker `/metrics` `server.apc`: `enabled: true` but `pool_used 0, lookups_hit 0, **lookups_miss 0**,
+  stores 0, rejects 0, resident_bytes 0`. **Zero lookups = never consulted** (a miss would still be
+  counted). Functionally: same 9K prefix 3× → prefill 3.10/3.00/3.00 s (~1.03×) vs a recorded 34–147×.
+- **Three mechanisms tested, all eliminated:** env absent from the worker (no — present in the worker's
+  own env); suffix decoding conflict (no — falsified, 0 lookups with suffix commented out too); router
+  mangling the request (no — direct-to-worker :8091 also 0 lookups). Deployed submodule verified to
+  match the parent fork, so not skew. **Mechanism OPEN** — untested: `kv_prealloc_tokens` (we
+  pre-allocate the full KV cap contiguously, which a paged pool may have nothing to page into),
+  `continuous_batching_enabled: true`, an APC path wired only for `/v1/completions`.
+- **DECISION CONSEQUENCE:** the operator's constraint is satisfied — APC cannot cost any candidate its
+  gate, because it consumes nothing. But **the daily driver is not getting the win it is documented to
+  get**, so Phase-2's "#1 APC → SHIP, TTFT 54.5×@7.5K → 147×@25K" is **UNRELIABLE until re-measured**.
+  Keep the 2048-block pool (bounds the ceiling if repaired; guard test holds it ≤4096). Benchmark
+  policy unaffected — APC-absent is now known to be indistinguishable from APC-present.
+- Ornith was the conservative choice: fp16 KV = the LARGER pool, while the distill has the tighter
+  headroom but ~4× smaller blocks. A zero on Ornith is a zero on the distill. If repaired, the ceiling
+  to re-check is "the KV of 32,768 extra tokens for that model" — `kv_bits`-dependent, re-measure per
+  model.
+
+### 📐 MULTI-TURN SESSION DEPTH — design landed, NOT built (2026-08-13)
+`docs/superpowers/specs/2026-08-13-multi-turn-session-depth-design.md`. Two targeted benchmarks per
+operator direction, one shared per-turn instrumentation spine (turn-indexed, seeded per turn, deployed
+truncation, decode-rate-derived timeout).
+- **A — CODER session depth:** 12–20 dependent tasks over the same files in ONE context; accumulating
+  tests re-run every turn. **Primary metric = regression rate vs turn index** (does it re-break what it
+  fixed) — mechanical oracle, invisible to every axis we own, and not reachable by "M1 with more turns"
+  since M1 restarts context per case. Built from the **89 unused** polyglot exercises to keep the M1
+  110 held out.
+- **B — DAILY DRIVER session depth:** 40+ turns with **planted, mechanically checkable constraints**
+  (British spelling, a fixed project name, no bullets, an end token) probed at increasing depth.
+  **Primary metric = constraint retention vs depth.** No judge in the headline — the panel is recorded
+  as "not reliable enough to rank". This is a THIRD curve (instruction-retention depth), kept separate
+  from retrieval- and reasoning-depth per the campaign rule.
+- **Sequencing:** IFEval first (ready now, zero new code — validates the constraint-checking machinery
+  B depends on), then 12-turn pilots, then size depth/n **from measured cost**. ~6 h to know whether
+  this is measurable and affordable.
+- ⚠️ **APC repair is close to a prerequisite for B:** full re-prefill per turn is O(turns²), and TTFT
+  is exactly what the daily-driver role is judged on.
+
 ### ✅ P1a opencode go/no-go — **GO** (all gates pass), after fixing a blocker in our own config
 - ⚠️ **BLOCKER, now confirmed:** `configgen/emitters/opencode.py:17` emits a top-level
   **`_generated`** key; opencode 1.18.15 rejects the file outright (`Unrecognized key: _generated`),
