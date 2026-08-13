@@ -434,8 +434,15 @@ BFCL (tool-calling), Aider polyglot, SWE-Verified-40 (agentic), judge panel.
    production-KV per the quality-first plan.
 
 ## Blocked
-- **IFEval**: `datasets` load fails "Feature type 'List' not found" (version incompatibility) — fix
-  before the instruction-following axis runs; the sweep currently skips it (acc:null, no crash).
+- ~~**IFEval**: `datasets` load fails "Feature type 'List' not found"~~ **STALE — NOT BLOCKED
+  (re-verified 2026-08-12).** The datasets incompatibility is gone: `benchmarks.load("ifeval")`
+  loads 541 examples cleanly on BOTH boxes (driver `datasets` 5.0.1, M5 3.6.0). The only real
+  gap was the vendored verifiers' deps (`absl-py`/`langdetect`/`nltk`/`immutabledict`), which M5
+  already had and the driver box was missing; installed via `uv pip install --python
+  .venv-bench/bin/python` (the venvs are uv-managed and have no `pip`). **IFEval can now be RUN
+  — it is a named daily-role axis and its harness is functional.** Note the graceful-degrade
+  design is correct and was never at fault: `grade._load_ifeval_lib` raises by design and the
+  caller returns `acc:null` + a note rather than crashing the batch.
 - **LCB pass@1 grading** (diagnosed 2026-07-06): ROOT CAUSE = **`datasets 4.8.5` removed `trust_remote_code`**,
   and LCB `code_generation_lite` is a **script-based** dataset; `lcb_runner`'s `load_code_generation_dataset`
   calls `load_dataset(..., trust_remote_code=True)` → hard fail (`trust_remote_code is not supported anymore`).
