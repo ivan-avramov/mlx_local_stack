@@ -483,7 +483,37 @@ matched_tokens: 0   rejects: 0   rejects_by_reason: {}   resident_bytes: 0
 lookups means APC is never asked. And functionally, the same 9K-token prefix served three times shows
 no reuse at all — prefill **3.10 → 3.00 → 3.00 s** (~1.03×) against the recorded **34–147×**.
 
-### Three candidate mechanisms tested, all ELIMINATED
+### ✅ MECHANISM RESOLVED (2026-08-13, later the same day) — session caching SHADOWS APC by construction
+Earlier this entry recorded the mechanism as OPEN. It is not. `server/generation.py:2455-2464`:
+
+```python
+if prompt_cache_state is not None:
+    self._process_cached_request(...)      # session-cache path, runs inline
+    continue                               # <-- skips everything below
+if batch_gen is None:
+    batch_gen = BatchGenerator(..., apc_manager=self.apc_manager, ...)   # the ONLY apc call site
+```
+
+**`apc_manager` is passed at exactly one place — the BatchGenerator — and any request that resolves to
+a session `continue`s past it.** `_process_cached_request` never receives `apc_manager` at all. The
+fork's own comment says so: cached requests "run inline on this daemon thread … and skip continuous
+batching — single-chat semantics, snapshot rewind, prefix reuse."
+
+So APC and session caching are **mutually exclusive per request**, and session caching wins whenever a
+session exists. The measured 0 lookups were not a bug — they are the design. And since the campaign's
+own probe traffic all resolves to sessions (anonymous requests route by chained message hashes), APC
+was structurally unreachable throughout.
+
+**This also reconciles the two measurements that looked contradictory:**
+- *growing conversation* (append) → session cache hits → **incremental prefill, 17× cheaper per total
+  token** (measured; see the multi-turn design spec §1.1).
+- *identical repeated request* (my APC functional test) → after turn 1 the session's history is
+  `[user + assistant]`, so re-sending only `[user]` does not EXTEND it — it is a **rewind**, and
+  `PromptCacheState`'s docstring notes that for hybrid GatedDeltaNet models (Qwen 3.5/3.6, i.e. both
+  our winners) rewinds fall back to full re-prefill unless the snapshot ring restores them. Hence no
+  speed-up on the repeat, no APC lookups, and no contradiction.
+
+### Three candidate mechanisms tested, all ELIMINATED (superseded by the resolution above)
 1. **Env not reaching the worker** — ruled out: `APC_ENABLED=1`/`APC_NUM_BLOCKS=2048` are present in
    the *worker* process env (`ps -Eww` on the worker pid), not just the router's.
 2. **Suffix decoding conflicts with APC** — plausible from
@@ -494,11 +524,45 @@ no reuse at all — prefill **3.10 → 3.00 → 3.00 s** (~1.03×) against the r
 3. **The mlx-serve router mangles the request** — ruled out: calling the worker **directly on :8091**,
    router bypassed, also yields 0 lookups and no reuse (3.25 → 3.08 s).
 
-**Mechanism remains OPEN.** Not-yet-tested candidates: `kv_prealloc_tokens` (we pre-allocate the full
-KV cap as one contiguous buffer, which a paged block pool may have nothing to page into);
-`continuous_batching_enabled: true`; an APC path wired only for `/v1/completions` or for the
-tenant-header route (`server/app.py:189`). Deployed submodule was verified to match the parent fork
-on the relevant lines, so this is not fork/submodule skew.
+Those three were the right eliminations but the wrong family of hypothesis — see the resolution above.
+Deployed submodule was verified to match the parent fork on the relevant lines, so this was never
+fork/submodule skew.
+
+### 🔑 HOW APC AND SESSION CACHING COMPOSE — they don't, and that settles the config question
+| | **session caching** (`PromptCacheState`) | **APC** (`APCManager`) |
+|---|---|---|
+| what it holds | the LIVE KV cache + token history for one conversation | a pool of content-hashed KV *blocks* (16 tokens each), any-to-any |
+| keyed by | `chat_id`, or chained per-message sha256 for anonymous clients | hash of block content |
+| reuse case | the **same conversation growing** (turn N+1 extends turn N) | **different** requests sharing a prefix |
+| request path | inline handler, `continue`s past the batch generator | batch generator only |
+| can both serve one request? | **NO — mutually exclusive by construction** | |
+
+**Overlap:** they solve the same problem (skip re-prefill of a shared prefix) for *disjoint* traffic
+shapes. Session caching covers the growing conversation; APC covers cross-conversation sharing.
+**Coexist:** they can both be *enabled*, but never both *apply* — the session path always wins, so
+APC's reachable share of our traffic is only requests with **no** session match.
+
+**In our deployment, APC's entire remaining value is one narrow case:** a *new* conversation reusing
+the ~18K-token system prompt a previous conversation already paid for (opencode sends ~18,050 prompt
+tokens for a four-word request). At ~2,990 tok/s that is roughly **6 s saved per new conversation
+start**, and nothing at all within a conversation.
+
+**RECOMMENDATION — turn APC OFF for the daily driver too (`runserver.sh`), not just for benchmarks:**
+1. **Zero measured benefit today** (0 lookups, 0 stores) and, even repaired, a ceiling of ~6 s per new
+   conversation — while the mechanism that actually matters, session caching, is entirely independent
+   of it.
+2. **Non-zero demonstrated risk:** at the old `APC_NUM_BLOCKS=16384` it cost ~33GB and took the stack
+   to 54.2GB / 4.1GB free with a Metal OOM, and those failures were being scored as MODEL failures.
+   The pool is now bounded at 2048, but the risk class is real and the reward is ~6 s.
+3. **It collapses a documented measurement hazard.** `runserver.sh` setting `APC_ENABLED=1` while the
+   benchmark recipe omits it is exactly why "past benchmark runs silently differed from the daily
+   driver" is on the record. Turning it off in both places makes the served configuration and the
+   measured configuration **identical**, which is worth more than 6 s.
+4. Keep the code, the `/metrics` counters and the ≤4096 pool guard: the counters are precisely what
+   made the inertness provable, and a future multi-tenant deployment could want it.
+
+Operator instruction already stands that APC is never used for benchmarking; this extends the same
+conclusion to the daily driver on measured grounds rather than policy.
 
 ### What this means for the decision
 - **APC cannot cost any candidate its gate.** It consumes zero bytes, so the ≤46GB @256K admissibility
