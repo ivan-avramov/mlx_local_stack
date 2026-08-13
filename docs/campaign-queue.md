@@ -25,6 +25,87 @@ survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNN
 
 Last updated: 2026-08-11. **HARNESS V2 IS THE LIVE WORKSTREAM** (see below); **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
 
+## ▶ STATE 2026-08-12 — M1 SETTLED; CAMPAIGN V3 IS THE LIVE PLAN
+
+Plan: `docs/superpowers/plans/2026-08-12-campaign-v3-two-role-selection.md` (rev 2, after three
+adversarial reviews). **The campaign now targets TWO outputs, not one winner: a CODER and an
+interactive DAILY DRIVER.** Models (incl. quant technique/level/distillation) are the INPUT that
+changes over time; sampling config and KV quant are searched inputs; context reach and speed are
+MEASURED, not gated. **APC is OFF everywhere and out of scope** — not an axis, not discussed.
+
+### M1 GATE — SETTLED (run `m1f`, 2026-08-12). The coder role goes to the distill.
+Paired on **89 byte-identical items that BOTH arms actually ran** (python/javascript/go/rust
+complete; java recovered separately as `m1g`):
+
+| metric | Ornith-1.0-35B-mlx-uniform-4bit | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | delta | McNemar exact |
+|---|---|---|---|---|
+| **final (≤2 attempts)** | 46/89 = **51.7%** | 66/89 = **74.2%** | **+22.5pp** | **p = 8.8e-05** |
+| attempt-1 | 26/89 = 29.2% | 34/89 = 38.2% | +9.0pp | p = 0.15 (n.s.) |
+| **repair rate** | 28/83 = **33.7%** | 32/55 = **58.2%** | — | — |
+| mean/case | 2.17 min | 8.42 min (3.9×) | — | — |
+
+Exclusive solves: only-Ornith **3** (`python/forth`, `javascript/list-ops`, `go/counter`) vs
+only-distill **23**. **Mechanism: the distill is not much better first-try — it is ~1.7× better at
+REPAIRING its own failure when shown the failing test.** Config: APC off, `deployed` sampling,
+`max_kv_cache_size` 65536 (right-sized for this axis; memory/speed here are NOT comparable to a
+256K row), aider `diff`, tries=2, items pinned by name.
+
+⚠️ `final` is a **(model × scaffold × config)** composite, NOT a model property: the repair turn
+receives the pytest traceback INCLUDING the failing test's source and expected values. The paired
+design still licenses the comparison (scaffold held constant; well-formed 100% / 0 malformed for
+both, so `diff` handicaps neither) but it does **not transfer across scaffolds** — this is an
+*aider* result and the campaign still has ZERO opencode evidence.
+
+### FIVE CAMPAIGN CLAIMS FALSIFIED 2026-08-12 — check the record before trusting it
+| claimed | actual |
+|---|---|
+| aider 13.2pp gap decides the campaign | two unrelated UNSEEDED subsets with different language mixes — never a measured gap |
+| LCB 6.7pp differentiator | **three-way tie at 80%**; the gap was a grading bug (`-1`/`-2` sentinels truthy) |
+| LCB `by_difficulty` is broken | it was CORRECT; `acc` was the broken number. Quarantine lifted |
+| IFEval blocked by `datasets` "Feature type 'List'" | loads fine on BOTH boxes; the gap was 4 missing verifier deps |
+| runaway turns cost 31× (justifying `successes_per_hour`) | **0/284 turns** ran away at the current config; 0.0% wasted wall-clock |
+
+### Local fixes landed 2026-08-12 (no worker time)
+- `bench_heartbeat.sh` — harness-agnostic monitor (works for pi/opencode/aider); a broken
+  progress command REFUSES to print numbers rather than reporting 0.
+- `grade.py` — LCB `-1`/`-2` sentinels were scored as PASSES; `acc` inflated over the official
+  `pass@1`. Fixed + re-graded.
+- `bfcl_shim/local_handlers.py` — the request sent NONE of the tuned sampling and never asked for
+  thinking. **Not a complete repair:** it posts a pre-formatted prompt to `/v1/completions`, which
+  bypasses the chat template that `enable_thinking` normally drives; needs a live smoke.
+- `run_convergence.py` — used the DRIFTED `production` profile (presence_penalty 0.3 DISABLES
+  suffix decoding = different serving path) and accepted `--set` typos silently. Both fixed.
+- `judge_extract.py` — panel v3 extractor: RAN-filtered, reference-guided, counterbalanced.
+- IFEval verifier deps installed on the driver (`uv pip`, the venvs have no `pip`).
+
+### ⚠️ TRAP: a file count is NOT a progress metric
+aider writes `.aider.results.json` for every exercise it SETS UP, with `tests_outcomes: []` until
+the case runs. `distill/java` showed **22 files for a batch that ran 1**. Every progress metric and
+every extractor must filter on non-empty `tests_outcomes`.
+
+### Phases (campaign v3) — worker-gated unless noted
+| # | phase | state |
+|---|---|---|
+| P0 | `m1f` baseline | ✅ settled (above) |
+| — | `m1g`: recover `distill/java` (21 cases lost to a TCC failure) | ~ RUNNING |
+| P1a | pi + opencode go/no-go smokes — endpoint reach AND sampling actually landing | queued (gates ~24h) |
+| P1b/c | harness recon + agnostic monitor | ✅ |
+| P2 | Tier-0 grid, 9 configs (3 temp × 3 min_p) + TEST the 4D→2D collapse | queued |
+| P3 | proxy validation: Spearman ρ + **exact permutation p** on the Tier-0 grid | queued |
+| P4 | Tier-1 agentic tune @ `tries=4`, Tier-2 confirm on **held-out EXERCISES** (89 unused) | queued |
+| P5 | daily role: Ornith temp-ladder, IFEval (ready now), multi-turn chat eval (missing) | partly ready |
+| P6 | repo-level via **SWE-bench (built, never run)** + harness gradient | queued |
+| P7 | context curves (task-based), then KV squeeze via **TOST, three-state rule** | queued |
+| P8 | BFCL live smoke + judge panel v3 (meta-judge, anchoring control) | harness ready |
+
+Cost, re-derived from measured 2.2 / 6.3 min/case: **~185 worker-hours ≈ 8 days on one box**, split
+**~45h one-time infra + ~55–60h per additional model**.
+
+### ⚠️ WORKER PATHS MOVED 2026-08-12
+The worker workspace is now `~/ws/...`, no longer under `~/Documents` — TCC denies protected
+folders to publickey ssh sessions, which cost 21 java cases mid-run. `config.sh` updated. Do not
+put the repo, the aider clone or results back under Documents/Desktop/Downloads.
+
 ## HARNESS V2 — LIVE 2026-08-11 (build the harness before any more model runs)
 
 Plan: `docs/superpowers/plans/2026-08-11-harness-v2-reliability-and-agentic-axes.md`. A critical
