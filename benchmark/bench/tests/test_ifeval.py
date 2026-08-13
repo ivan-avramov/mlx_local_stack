@@ -241,3 +241,57 @@ def test_verifier_skips_are_COUNTED_not_silently_dropped(monkeypatch):
     out = G.grade_ifeval("ifeval", "M")
     assert out["n_verifier_skipped"] == 1, "a dropped item must be counted"
     assert "1" in str(out.get("note", "")), "and surfaced in the note"
+
+
+# ---------------------------------------------------------------- nltk corpora must fail LOUD
+def test_missing_nltk_corpora_RAISES_instead_of_silently_dropping_items(monkeypatch):
+    """Measured 2026-08-13 on the live IFEval run: 8 of 38 completions (21%) were dropped by
+    `LookupError: Resource 'punkt_tab' not found`, and acc was reported over the surviving subset.
+
+    The excluded items were HARDER than average: re-grading after downloading the corpora moved acc
+    from 93.3% (n=30) to 90.2% (n=41). So a silent skip does not just shrink n, it BIASES the
+    headline upward.
+
+    _load_ifeval_lib already tried to ensure the tokenizer, but checked only `punkt` while modern
+    nltk needs `punkt_tab`, and its `except Exception: pass` was annotated "verifiers that need it
+    will fail closed" — they do not; they fail per item, inside the loop, where a bare `continue`
+    swallowed them. A whole-bench acc:null with an actionable note is strictly better than a
+    plausible-looking number over a biased 79% subset.
+    """
+    import bench.grade as G
+
+    class FakeNltkData:
+        @staticmethod
+        def find(path):
+            raise LookupError(f"Resource {path} not found")
+
+    fake_nltk = type("nltk", (), {"data": FakeNltkData,
+                                  "download": staticmethod(lambda *a, **k: False)})
+    monkeypatch.setitem(__import__("sys").modules, "nltk", fake_nltk)
+    with pytest.raises(Exception) as ei:
+        G._load_ifeval_lib()
+    msg = str(ei.value).lower()
+    assert "punkt" in msg, "the error must name the missing resource"
+    assert "nltk" in msg and "download" in msg, "and say how to fix it"
+
+
+def test_the_check_covers_punkt_tab_not_just_punkt(monkeypatch):
+    """`punkt` alone satisfied the old check while the verifiers needed `punkt_tab` — which is
+    exactly how this passed silently and then failed 21% of items at use time."""
+    import bench.grade as G
+    looked = []
+
+    class FakeNltkData:
+        @staticmethod
+        def find(path):
+            looked.append(path)
+            return "/fake"
+
+    fake_nltk = type("nltk", (), {"data": FakeNltkData,
+                                  "download": staticmethod(lambda *a, **k: True)})
+    monkeypatch.setitem(__import__("sys").modules, "nltk", fake_nltk)
+    try:
+        G._load_ifeval_lib()
+    except Exception:
+        pass
+    assert any("punkt_tab" in p for p in looked), f"punkt_tab never checked; looked at {looked}"

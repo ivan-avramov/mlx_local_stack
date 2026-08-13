@@ -438,22 +438,59 @@ def grade_lcb(name, model):
 def _load_ifeval_lib():
     """Lazy-import the vendored IFEval verifiers. Adds bench/vendor to sys.path so the
     package's absolute imports (`from instruction_following_eval import ...`) resolve, and
-    best-effort ensures the nltk 'punkt' tokenizer the verifiers need. Raises if the deps
-    (absl-py/langdetect/nltk/immutabledict) are absent — the caller degrades gracefully."""
+    ensures the nltk tokenizer corpora the verifiers need. Raises if the deps
+    (absl-py/langdetect/nltk/immutabledict) OR the corpora are absent — the caller degrades
+    gracefully to acc:null + a note.
+
+    THE CORPORA CHECK IS NOT BEST-EFFORT ANY MORE. It used to check only `tokenizers/punkt` and
+    swallow every failure with `except Exception: pass`, annotated "verifiers that need it will fail
+    closed". They do NOT fail closed: they raise per item, inside grade_ifeval's loop, where a bare
+    `continue` dropped them. Measured 2026-08-13 on the live run: modern nltk needs `punkt_tab`,
+    which was missing, so 8 of 38 completions (21%) were silently dropped — and the excluded items
+    were HARDER than average, moving acc from 93.3% (n=30) to 90.2% (n=41) once fixed. A biased 79%
+    subset reported as a clean number is worse than no number, so this now raises.
+    """
     import os
     vendor = os.path.join(os.path.dirname(__file__), "vendor")
     if vendor not in sys.path:
         sys.path.insert(0, vendor)
     from instruction_following_eval import evaluation_lib  # noqa: E402 — heavy optional deps
-    try:
-        import nltk
-        try:
-            nltk.data.find("tokenizers/punkt")
-        except LookupError:
-            nltk.download("punkt", quiet=True)
-    except Exception:  # noqa: BLE001 — tokenizer is best-effort; verifiers that need it will fail closed
-        pass
+    _ensure_nltk_corpora()
     return evaluation_lib
+
+
+# `punkt_tab` is the one that actually bit: nltk >= 3.8.2 looks for it, and having `punkt` alone
+# satisfied the old check while every sentence-tokenizing verifier still failed at use time.
+_NLTK_REQUIRED = ("tokenizers/punkt", "tokenizers/punkt_tab")
+
+
+def _ensure_nltk_corpora(required=_NLTK_REQUIRED) -> None:
+    """Verify (downloading once if needed) every nltk resource the IFEval verifiers require.
+
+    Raises LookupError naming the resource AND the command to fix it, so the failure is actionable
+    and whole-bench rather than a per-item silent drop.
+    """
+    import nltk
+    missing = []
+    for res in required:
+        try:
+            nltk.data.find(res)
+            continue
+        except LookupError:
+            pass
+        pkg = res.split("/")[-1]
+        try:
+            nltk.download(pkg, quiet=True)
+            nltk.data.find(res)
+        except Exception:  # noqa: BLE001 — offline, or the package name moved
+            missing.append(pkg)
+    if missing:
+        raise LookupError(
+            f"nltk corpora missing and not downloadable: {', '.join(missing)}. "
+            f"IFEval's sentence-tokenizing verifiers need them, and without them ~20% of items "
+            f"fail individually and would be dropped from the denominator, BIASING acc upward. "
+            f"Fix: python -c \"import nltk; [nltk.download(p) for p in "
+            f"['punkt','punkt_tab','averaged_perceptron_tagger','averaged_perceptron_tagger_eng']]\"")
 
 
 def _ifeval_aggregate(strict_outs, loose_outs) -> dict:
