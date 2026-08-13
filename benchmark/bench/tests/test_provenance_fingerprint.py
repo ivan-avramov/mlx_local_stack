@@ -141,20 +141,58 @@ def test_runtime_overrides_are_merged_into_the_manifest(monkeypatch):
     assert man["runtime"]["apc_enabled"] == "0"      # detection still present alongside
 
 
-# ------------------------------------------------------------------ APC pool sizing
-def test_runserver_apc_pool_fits_the_daily_driver():
-    """The APC pool is sized in 16-token blocks (`apc.py` DEFAULT_BLOCK_SIZE), and it is NOT
-    free: 16384 blocks (= a full 256K prefix) MEASURED ~33GB, which put the daily driver 4.1GB
-    from a Metal OOM with `Ornith-1.0-35B-mlx-uniform-4bit` resident (54.2GB footprint vs 20.8GB
-    with APC absent) and killed an M1 benchmark arm. The Phase-2 win that justifies APC at all was
-    measured at 7.5K-25K of shared prefix (54.5x-147x TTFT), so a 32K pool buys the whole
-    demonstrated benefit for ~4GB. Guard the size, not the flag: APC stays ON for the daily driver.
+# ------------------------------------------------------------------ APC policy (revised 2026-08-13)
+def _runserver_src():
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[3] / "runserver.sh").read_text()
+
+
+def test_runserver_does_NOT_enable_apc():
+    """APC is OFF everywhere — daily driver included (operator decision 2026-08-13, on measurement).
+
+    This REPLACES the previous guard, whose docstring read "guard the size, not the flag: APC stays ON
+    for the daily driver". That policy was based on a Phase-2 win (TTFT 54.5x-147x) which does not
+    reproduce on the current stack. Measured 2026-08-13: with `APC_ENABLED=1 APC_NUM_BLOCKS=2048` in
+    both router and worker env, the worker reports `enabled: true` but `pool_used 0, lookups_hit 0,
+    lookups_miss 0, stores 0, resident_bytes 0`, and a 9K prefix served three times shows no reuse
+    (prefill 3.10/3.00/3.00s).
+
+    The mechanism is structural, not a bug: `server/generation.py:2455-2464` dispatches any request
+    with a `prompt_cache_state` to `_process_cached_request` and `continue`s past the BatchGenerator,
+    which is the ONLY place `apc_manager` is passed. Session caching therefore SHADOWS APC on every
+    request that resolves to a session — and anonymous requests resolve by chained message hashes, so
+    that is all of our traffic. Session caching is also what actually makes multi-turn cheap (measured:
+    incremental prefill, 17x cheaper per total token).
+
+    Three reasons the flag comes off rather than staying on harmlessly:
+      1. zero benefit now, and a ~6s-per-new-conversation ceiling even if repaired;
+      2. a demonstrated OOM class — 16384 blocks measured ~33GB, leaving 4.1GB free with Ornith
+         resident, and those failures were being scored as MODEL failures;
+      3. it collapses the documented hazard that runserver.sh enabled APC while the benchmark recipe
+         omitted it, which is why past benchmark runs silently differed from what we serve. Served
+         config == measured config is worth more than 6s.
+    """
+    src = _runserver_src()
+    import re
+    enabled = re.findall(r"^[^#\n]*APC_ENABLED=([^\s]+)", src, re.MULTILINE)
+    assert not [v for v in enabled if v not in ("0", '"0"', "'0'")], (
+        f"runserver.sh enables APC ({enabled}). APC is off everywhere: session caching shadows it on "
+        f"every session-resolved request, so it buys nothing and re-introduces a served-vs-measured "
+        f"config difference."
+    )
+
+
+def test_if_apc_is_ever_re_enabled_its_pool_must_still_be_bounded():
+    """The size guard survives the policy change, so a future re-enable cannot bring back the 33GB pool.
+
+    Blocks are 16 tokens (`apc.py` DEFAULT_BLOCK_SIZE) at ~2MB each. 16384 blocks (a full 256K prefix)
+    MEASURED ~33GB and put the box 4.1GB from a Metal OOM; the win it was meant to buy was measured at
+    only 7.5K-25K of shared prefix, so nothing above a few thousand blocks was ever justified.
     """
     import re
-    from pathlib import Path
-    src = (Path(__file__).resolve().parents[3] / "runserver.sh").read_text()
-    m = re.search(r"APC_NUM_BLOCKS=(\d+)", src)
-    assert m, "runserver.sh no longer sets APC_NUM_BLOCKS — re-derive the pool cost before removing"
+    m = re.search(r"APC_NUM_BLOCKS=(\d+)", _runserver_src())
+    if m is None:
+        return          # not set at all — the expected state now that APC is off
     blocks = int(m.group(1))
     assert blocks <= 4096, (
         f"APC_NUM_BLOCKS={blocks} => {blocks * 16 // 1024}K cached tokens; at the measured "

@@ -66,18 +66,43 @@ uv run python -u -m mlx_vlm.server \
 TASK_MODEL_PID=$!
 
 # --- Start main multi- model server ---
-# APC (Automatic Prefix Caching) — Phase-2 #1, 2026-07-08. Lossless, exact KV reuse of the
-# shared prompt prefix across turns → agentic multi-turn TTFT collapses 34-147x (re-prefill ~0).
-# POOL SIZE IS NOT FREE (corrected 2026-08-11). Blocks are 16 tokens (apc.py DEFAULT_BLOCK_SIZE),
-# and the pool is allocated up front at ~2MB/block: the old 16384 blocks (a full 256K prefix)
-# MEASURED ~33GB, which left this box 4.1GB free with Ornith-1.0-35B-mlx-uniform-4bit resident
-# (54.2GB footprint vs 20.8GB with APC absent) and killed a benchmark arm on
-# [METAL] Insufficient Memory. The "no memory cost @256K" note above was about mx-peak with the
-# pool already charged, not about the pool itself. 2048 blocks = 32K cached tokens ≈ 4GB, and the
-# measured win was at 7.5K-25K of shared prefix, so this keeps the whole demonstrated benefit.
-# The mlx_vlm.server worker inherits this env (process_manager); disable by unsetting APC_ENABLED.
+# APC (Automatic Prefix Caching) is DELIBERATELY NOT ENABLED — operator decision 2026-08-13, on
+# measurement. Do not re-add `APC_ENABLED=1` without re-reading this.
+#
+# WHY IT IS OFF. Session caching already does the job, and it SHADOWS APC by construction.
+# `mlx_vlm/server/generation.py:2455-2464` dispatches any request carrying a `prompt_cache_state` to
+# `_process_cached_request` and `continue`s past the BatchGenerator — the ONLY place `apc_manager` is
+# ever passed. Anonymous requests resolve to a session by chained per-message hashes, so effectively
+# ALL traffic takes the session path and APC is never consulted. Measured with APC_ENABLED=1 and
+# APC_NUM_BLOCKS=2048 present in both router and worker env: the worker reports `enabled: true` but
+# `pool_used 0, lookups_hit 0, lookups_miss 0, stores 0, resident_bytes 0`, and one 9K-token prefix
+# served three times gave prefill 3.10 / 3.00 / 3.00s — no reuse. Peak memory was bit-identical to
+# APC-absent (22.957264336 GB both ways).
+#
+# The Phase-2 note that used to live here ("agentic multi-turn TTFT collapses 34-147x") does NOT
+# reproduce on the current stack and should be treated as unreliable until re-measured.
+#
+# WHAT ACTUALLY MAKES MULTI-TURN CHEAP: the fork's session cache (`PromptCacheState`,
+# `server/session_manager.py`), which prefills only the tokens after the common prefix and needs no
+# `chat_id` from the client. Measured on a growing conversation: cost per NEW token flat (0.82 ->
+# 0.91 ms) while cost per TOTAL token fell 17x (2.55 -> 0.15 ms). That is independent of APC.
+#
+# THREE REASONS THE FLAG IS GONE RATHER THAN LEFT ON HARMLESSLY:
+#  1. Zero benefit today, and only ~6s per NEW conversation even if repaired (its one reachable case
+#     is a fresh conversation reusing a previous one's ~18K-token system prompt).
+#  2. A demonstrated OOM class: APC_NUM_BLOCKS=16384 (a full 256K prefix) MEASURED ~33GB, leaving
+#     this box 4.1GB free with Ornith-1.0-35B-mlx-uniform-4bit resident (54.2GB vs 20.8GB with APC
+#     absent) and killing a benchmark arm on [METAL] Insufficient Memory — with those failures being
+#     scored as MODEL failures.
+#  3. It collapses a documented measurement hazard. This script enabling APC while the AGENTS.md
+#     benchmark recipe omitted it is exactly why past benchmark runs silently differed from what we
+#     serve. Served config == measured config is worth more than 6 seconds.
+#
+# The code, its `/metrics` counters and the <=4096 pool-size guard all stay: the counters are what
+# made the inertness provable, and a future multi-tenant deployment could want it. Guarded by
+# benchmark/bench/tests/test_provenance_fingerprint.py::test_runserver_does_NOT_enable_apc.
 echo "Starting main model (mlx_vlm, ${MAIN_MODEL_URL})..."
-APC_ENABLED=1 APC_NUM_BLOCKS=2048 MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start &>logs/main_model.log &
+MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start &>logs/main_model.log &
 MAIN_MODEL_PID=$!
 
 echo -n "Waiting for main model to be ready..."
