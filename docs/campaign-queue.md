@@ -32,32 +32,46 @@ the first axis in this campaign with real resolution (every other row is ±20–
 `prompt_loose` 92.2%, `conv` 99.3%, 0 errors, 0 verifier skips, `deployed` sampling, APC absent.
 ⚠️ **26 degenerate loops = 35% of wall-clock, 45% of tokens.**
 
-**`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: STOPPED at 145/541 by operator decision**, because the answer
+**`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: STOPPED at 148/541 by operator decision**, because the answer
 was already in hand and the remaining 396 items could only narrow it:
 
-| paired on the 145 items BOTH completed | |
+| paired on the 148 items BOTH completed | |
 |---|---|
-| `Ornith-1.0-35B-mlx-uniform-4bit` | **89.7%** |
-| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | **89.7%** |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | **89.9%** |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | **89.9%** |
 | gap | **+0.0pp** |
 | `stats.paired_delta` verdict | **`equivalent`** (CI inside the ±5pp TOST margin) |
 
-**⇒ THE TWO WINNERS ARE EQUIVALENT ON INSTRUCTION-FOLLOWING.** Not "close" — the same 130 of 145 items
-solved. This is a legitimate paired comparison: `benchmarks._subsample` shuffles deterministically
+**⇒ THE TWO WINNERS ARE EQUIVALENT ON INSTRUCTION-FOLLOWING.** Not "close" — the same items
+solved (133 of 148). This is a legitimate paired comparison: `benchmarks._subsample` shuffles deterministically
 (`random.Random(seed).shuffle`, seed 0) and is prefix-nested, so both models saw IDENTICAL items in
 IDENTICAL order, and a stop is a uniformly random subset rather than a difficulty-ordered prefix.
-**Verified empirically, not assumed:** instruction-type mix in the first 145 matches the full 541 within
+**Verified empirically, not assumed:** instruction-type mix in the first 148 matches the full 541 within
 ~2pp on every major type, so nothing systematic was dropped.
 
-Why stopping was right: the remaining 396 items existed only to move the detectable gap from ±10.6pp to
+Why stopping was right: the remaining 396 items existed only to move the detectable gap from ±10.3pp to
 ±5.4pp, which matters ONLY if the true gap lies between 5 and 9pp — and the point estimate is 0.0pp with
 `equivalent` already returned. Cost avoided: **~15.9h of the single worker**, of which ~59% was going
 into degenerate loops (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` decodes at 25–31 tok/s, so each loop is
 ~50 min).
 
+### ⚠️ TRAP FOUND WHILE STOPPING: a Bash-tool timeout kills the LOCAL ssh client, NOT the remote job
+Trying to *verify* the resume path, I ran a `run.py generate --chunks 0` probe over ssh. My tool timed
+out at 2 min and I read that as "the probe was killed". It was not: the remote python (pid 60574)
+survived its dead parent and kept generating **unmonitored for ~13 minutes**, completing 8 requests and
+appending 3 rows (145 → 148). It presented exactly like the orphaned-generation failure this session
+opened with — an open request in the router log with zero drivers alive — and the cause was my own
+probe, not the killed driver.
+**Rules:** (1) never treat a tool timeout as having stopped remote work — verify with `pgrep` and kill by
+pid; (2) launch anything that might outlive the call with `nohup … &` and a known pid file, so it can be
+found; (3) `--chunks 0` is NOT a dry run — it generates. To check resume state, read `done_ids` from the
+jsonl instead of invoking `generate`.
+The 3 extra rows are VALID data (same model, same `deployed` profile, same items) so they are kept and
+the numbers above are the n=148 figures; the gap is still **+0.0pp / `equivalent`**.
+
 ### ▶ RESUME PROCEDURE (state is fully preserved)
-145 rows + the manifest are intact on M5; `generate` resumes via `done_ids` (keyed on `(id, sample)`),
-so a relaunch continues at item 146 and re-does nothing:
+148 rows + the manifest are intact on M5; `generate` resumes via `done_ids` (keyed on `(id, sample)`),
+so a relaunch continues at item 149 and re-does nothing:
 
 ```bash
 cd ~/ws/mlx_local_stack        # REPO ROOT — run.py resolves paths from the module now, but the
@@ -66,7 +80,7 @@ PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate \
   --models Qwen3.6-27B-Opus-Distill-OptiQ-4bit --benches ifeval --sampling-profile deployed
 ```
 Do NOT pass `--clean-stale` unless the config changed — it DELETES rows whose fingerprint differs.
-MDE if resumed: n=200 → ±8.9pp · n=300 → ±7.2pp · n=541 → ±5.4pp.
+MDE at the stop: ±10.3pp. If resumed: n=200 → ±8.9pp · n=300 → ±7.2pp · n=541 → ±5.4pp.
 Worker was unloaded after the stop (`resident workers: 0`), so P4 has the box.
 
 ## ▶ NEW CANDIDATE SCAN 2026-08-13 (web research, operator-requested) — 3 viable, 2 categorically out

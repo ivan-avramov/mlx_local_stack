@@ -71,6 +71,11 @@ Five clients, all pointed at the mlx-serve router (`localhost:8000`, OpenAI-comp
     never `git checkout -- .` on faith, or unique work is destroyed silently; (3) remove untracked
     files the merge will deliver; (4) `git merge --ff-only`; (5) restore the registry backup and
     verify by md5; (6) `git submodule update --force` only if the pointers actually moved.
+  - ⚠️ **A TOOL/SSH TIMEOUT KILLS THE LOCAL CLIENT, NOT THE REMOTE JOB.** A `run.py generate` probe whose
+    ssh call timed out at 2 min kept running remotely for ~13 more minutes, appending rows unmonitored
+    and presenting as an orphaned generation. Never infer that remote work stopped — verify with `pgrep`
+    and kill BY PID. Launch anything that may outlive the call with `nohup … &`. And `--chunks 0` is NOT
+    a dry run: it generates. To inspect resume state, read `done_ids` from the jsonl.
   - ⚠️ zsh does NOT word-split unquoted variables, so `for f in $FILES` runs ONCE with the whole
     string. Iterate with `while IFS= read -r f; do … done < file`, and use `ssh -n` inside loops.
 - Syncing M5 (verified 2026-08-11): its `main_models.yaml` is **CLEAN and committed** — the distill resolves from the hub (`hf_path: caslca/…`), no local absolute path — so a sync is just `git fetch origin main && git merge --ff-only origin/main`, plus `git submodule update --force` when the submodule pointers actually moved. (HISTORICAL hazard, no longer live: M5 used to carry an UNCOMMITTED local registry entry, and with `pull.rebase=true` a plain `git pull` ABORTED on the dirty registry. If you ever re-add a local `hf_path`, that hazard returns — and never commit local paths.)
