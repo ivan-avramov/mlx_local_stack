@@ -11,6 +11,56 @@ must be re-run on M5. The M4 Pro driver hosts **NO campaign models at all** (~26
 AI session) and is a different chip class, so it is never a valid speed-comparison box — ALL model
 runs are M5 runs. See `AGENTS.md` → Operating rules.
 
+## ✅ FIRST `deployed`-PROFILE, CURRENT-BOX CODING ROW — and the runaway tax is REAL at a true budget (2026-08-14)
+
+`Ornith-1.0-35B-mlx-uniform-4bit / humanevalplus`, **n=100**, M5, `deployed`, `max_kv_cache_size`
+131072 so the declared **81,920 thinking budget is genuinely in force** (no clamp), APC absent,
+0 errors.
+
+| | |
+|---|---|
+| `acc` | **93.0%** [87,98], MDE ±13pp |
+| **`acc_strict`@81920** | **90.0%** |
+| `conv%` | **97%** — 3 non-converged, `nonconv_kinds = degenerate_repetition:3` |
+| self-terminating loops (`degen`) | 1 (wall 2%, tok 2%) |
+| latency | total 69 min · mean 42 s · median 18 s · p95 106 s · max 622 s |
+| decode | median **108 tok/s** · median 1,850 tokens · max 82,101 |
+
+**⇒ THE RUNAWAY TAX IS REAL, AND THIS IS THE FIRST CLEAN MEASUREMENT OF IT.**
+
+| non-self-terminating turns | |
+|---|---|
+| rate | **3 / 100 = 3%** |
+| **share of WALL-CLOCK** | **42%** (29 min of 69) |
+| share of tokens | **49%** (247K of 504K) |
+| the three items | `HumanEval/94` 10.4 min / 82,101 tok · `HumanEval/83` 9.5 min / 82,005 tok · `HumanEval/144` 9.1 min / 81,995 tok |
+
+All three ran to ~82,000 tokens against a **genuinely in-force** 81,920 budget and were classified
+`degenerate_repetition`. So this is NOT the clamp artifact that contaminated the IFEval measurement —
+it is 3% of items consuming 42% of wall-clock, measured at the config we intend.
+
+**This VINDICATES O11's cost claim while replacing its evidence.** O11 cited 42% of IFEval wall-clock,
+which turned out to be 39/40 external truncations at a clamped budget (see below). The tax is
+nevertheless real, it is the same ~42%, and here the mechanism is genuine.
+
+⚠️ **It also weakens O11's "prompt-triggered by COUNTING instructions" hypothesis.** The loops were
+concentrated on `change_case:capital_word_frequency` in IFEval, which suggested self-verification of a
+tally. But they appear on plain HumanEval code generation too, with no counting instruction in sight.
+That points at a model/sampling property rather than a prompt trigger — which is what the successor
+probe should test.
+
+**The successor probe is now WELL-POSED AND EXECUTABLE**, which it was not this morning:
+- the offending ids are known exactly (`HumanEval/94`, `HumanEval/83`, `HumanEval/144`);
+- `generate --ids` exists (`78de435`), so a ladder can vary ONE knob on EXACTLY those items;
+- the budget is genuinely in force, so a temperature ladder measures the MODEL, not the config.
+Cost: 3 items × 3 temps ≈ **90 min worst case**, far less if a rung converges (a fixed item drops from
+~10 min to ~20 s). **QUEUED** — not run, because it would evict the resident model mid-run.
+
+⚠️ **Cross-check, NOT a comparison:** the retired-M2 `official` row was `acc` 95.0% / strict 90.0% /
+conv 95%. The new row is 93.0% / 90.0% / 97%. Reassuringly close (−2pp on `acc`, well inside ±13pp;
+`acc_strict` identical) — but cross-box AND cross-profile, so per AGENTS.md it is not a valid
+comparison and must not be reported as one.
+
 ## 🚨 `kv_prealloc_tokens: 262144` DESTROYS DECODE THROUGHPUT — >47× on a MATCHED ITEM (2026-08-14)
 
 **This is the SHIPPED value for both winners**, and AGENTS.md states the rule as "Set equal to that
