@@ -130,6 +130,13 @@ docs.
 
 ## 7. WHAT TO DO NEXT
 
+0. **⭐ FIRST, PROPOSE: the degenerate-loop tax (O11).** 42% of Ornith's IFEval wall-clock and **57%** of
+   `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s went into verbatim loops that self-terminate and answer
+   CORRECTLY. **2.3h/6.0h and 3.4h/6.3h are recoverable if sampling fixes it** — potentially 1.6–2.2×,
+   larger than everything Phase 2 shipped, using tooling that already exists. It also makes P4 cheaper,
+   since P4's ~28h estimate is inflated by this same tax. Loop ids are in `degenerate_eosed_ids`; vary
+   sampling on those exact items, because the concentration on *counting* instructions means it may be
+   prompt-triggered rather than purely a sampling artifact.
 1. **P4 / Tier-1 agentic tune** (~28h, ratified next). Apply §2's three facts: no `min_p` cells below
    temp 0.4, never the untruncated config, temperature is the live knob.
 2. **Cheaper and arguably first: LCB at n≈100** on the three D1 candidates — it converts the

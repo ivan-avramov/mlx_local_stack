@@ -14,6 +14,40 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### O11. Investigate the degenerate-loop tax BEFORE P4? (largest unclaimed speed win on the board)
+Measured on IFEval 2026-08-13, and it is not a small effect:
+
+| | `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` |
+|---|---|---|
+| loops | 30/541 (5.5% of items) | 10/148 (6.8%) |
+| **share of wall-clock** | **42%** (2.5h of 6.0h) | **57%** (3.6h of 6.3h) |
+| healthy → loop, mean wall | 25s → 303s (**12×**) | 71s → 1,283s (**18×**) |
+| healthy → loop, mean tokens | 2,655 → 52,911 | 2,028 → 55,274 |
+| **recoverable if fixed** | **2.3h of 6.0h (~38%)** | **3.4h of 6.3h (~54%)** |
+
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is worse not because it loops more often (6.8% vs 5.5%) but
+because it decodes at **28 tok/s against Ornith's 106**, so the same ~53K-token loop costs ~21 min
+instead of ~5.
+
+**For scale:** every Phase-2 speed lever combined was ~1.27× (suffix) plus ~2–7% (GQA kernel). This is
+potentially **1.6–2.2× on real workloads** — larger than everything Phase 2 shipped, and the Tier-0
+machinery to test it already exists.
+
+**Mechanistic hint, which the test must respect:** loops concentrate on *counting* instructions
+(`change_case:capital_word_frequency` **33%** vs a 4.5% base rate) — the model enumerates candidates to
+verify its own output. That is the same pathology AGENTS.md records for the synthetic `aggregation`
+word-tally task, now seen on a published benchmark. So it may be **prompt-triggered rather than purely a
+sampling artifact**, and a temperature sweep alone cannot distinguish those. Design the probe to vary
+sampling on the SAME loop-triggering items (the 30 + 10 ids are recorded in `degenerate_eosed_ids`).
+
+⚠️ **Do not conflate with quality.** These answers are CORRECT — item 2849 passed both verifiers after
+52,503 tokens of a two-line cycle. This is a COST question; the ruling that they are not DNFs stands (M1).
+
+**Recommendation: yes, ahead of P4.** It is cheap, reuses existing tooling, targets the campaign's
+stated speed goal, and P4's own cost estimate (~28h) is inflated by exactly this tax — so fixing it first
+makes P4 cheaper too.
+
+
 ### O10. Should a budget-exceeded / externally-truncated row be EXCLUDED from `acc`, not just marked?
 Raised by the operator's instruction to "call it DNF and **not grade it**" (2026-08-13). Half of that is
 implemented, half is not:
