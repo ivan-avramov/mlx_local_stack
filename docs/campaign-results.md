@@ -11,41 +11,74 @@ must be re-run on M5. The M4 Pro driver hosts **NO campaign models at all** (~26
 AI session) and is a different chip class, so it is never a valid speed-comparison box — ALL model
 runs are M5 runs. See `AGENTS.md` → Operating rules.
 
-## ⚡ "ORNITH IS THE FAST ONE" IS STATISTIC- AND AXIS-DEPENDENT — PROVISIONAL, n=36 (2026-08-14)
+## 🏁 THE H2H — humanevalplus n=100, BOTH winners, matched items, `deployed`, current box (2026-08-14)
 
-On the **identical first 36 humanevalplus items** (verified: same id prefix, `--order model` with a
-fixed seed, same box, same session, `deployed`, cap 131072):
+The campaign's first matched, current-box, `deployed`-profile, execution-gated coding comparison.
+Same 100 items in the same order, same box, same session, cap 131072 so the declared 81,920 thinking
+budget is genuinely in force. Reported as AGENTS.md requires — four separately-interpretable numbers,
+no composites.
+
+### 1. Capability — INCONCLUSIVE
 
 | | `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` |
 |---|---|---|
-| **total wall-clock** | **34.5 min** | **19.2 min** |
-| mean / item | 57 s | **32 s** |
-| **median / item** | **17 s** | 23 s |
-| median completion tokens | 1,809 | **644** |
-| decode rate | ~108 tok/s | ~28.5 tok/s |
-| non-self-terminating | **2** | **0** |
+| `acc` | 93.0% [87,98] | **95.0%** [90,99] |
+| **`acc_strict`@81920** (ranking key) | 90.0% | **95.0%** |
+| `conv%` | 97% | **99%** |
+| `nonconv_kinds` | `degenerate_repetition:3` | `degenerate_repetition:1` |
 
-**⇒ `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` finishes the same 36 items in 1.8× LESS total wall-clock than Ornith — while decoding
-3.8× slower per token.** Two mechanisms, both measured: it emits **2.8× fewer tokens per item** (644 vs
-1,809 median), and it has **no runaway turns** where Ornith has 2 that dominate its total.
+**`compare` paired on all 100 items: delta −2.0pp, 95% CI [−5.0, +0.0]pp, VERDICT `INCONCLUSIVE`.**
+Not a tie — too little data. Resolving a 2pp difference needs **628 matched items**. Axis MDE ±13pp.
+⚠️ `compare` flags that temperature differs (0.4 vs 0.3) — expected, each model at its own tuned
+operating point, but it means this is a (model × tuned-config) comparison, not a pure model contrast.
 
-**Both of these are true and they answer different questions — do not collapse them:**
-- **Per TYPICAL item, Ornith is faster** (median 17 s vs 23 s). That is the interactive-feel number.
-- **Per BATCH, that model is faster** (34.5 → 19.2 min). That is the throughput number, and it is
-  driven by Ornith's tail, not by its typical case.
+**The `acc_strict` gap of 5.0pp is MECHANISTICALLY ATTRIBUTABLE, and it is the more decision-relevant
+number:** Ornith loses 3.0pp between `acc` and `acc_strict` because 3 of its passing items were
+externally truncated; `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` loses nothing, because its one degenerate
+item self-terminated. At a matched budget, Ornith forfeits capability to non-termination that the other
+model does not.
 
-⚠️ **PROVISIONAL, and likely to move.** n=36 with one distill item still in flight at 22+ min when this
-was written — if that is a budget-runner (~62 min at 28.5 tok/s) it alone changes that total by
-+3×. Re-derive at n=100.
+### 2. Edit competence
+0 errors, 0 harness failures, both arms. Not separable on this axis.
 
-⚠️ **This does NOT refute M1's "3.9× per case".** M1 measured the AGENTIC axis (aider, multi-turn,
-repair-driven); this is single-shot codegen. Different axis, different construct. What it does show is
-that the campaign's shorthand "Ornith = fast, distill = slow" is not a model property — it depends on
-the axis and on whether you quote the median or the mean.
+### 3. Latency
 
-⚠️ **It also means the runaway tax is so far an ORNITH-SPECIFIC pathology, not a general one**
-(0/36 for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` vs 3/100 + 2/50 for Ornith). That sharpens the successor probe: **target Ornith**, and treat
-"does it also loop?" as an open question rather than an assumption.
+| | Ornith | distill |
+|---|---|---|
+| **total wall-clock** | **69.4 min** | 85.1 min |
+| mean / item | **42 s** | 51 s |
+| median / item | **18 s** | 21 s |
+| p95 | **106 s** | 126 s |
+| max | 622 s | **1,999 s (33 min)** |
+| median completion tokens | 1,850 | **606** |
+| decode rate | **107.6 tok/s** | 28.6 tok/s |
+
+**⇒ Ornith is faster on EVERY latency statistic at n=100** — total, mean, median and p95 — despite
+emitting 3.1× more tokens per item, because it decodes 3.8× faster.
+
+### 4. Runaway tax — ~40% of wall-clock for BOTH, which is the headline
+
+| | Ornith | distill |
+|---|---|---|
+| non-self-terminating rate | 3/100 = **3%** | 1/100 = **1%** |
+| **share of WALL-CLOCK** | **42%** | **39%** |
+| share of tokens | 49% | 49% |
+| mechanism | 3 items × ~10 min | **1 item × 33 min** |
+
+**⇒ The tax is NOT model-specific: both winners lose ~40% of wall-clock to turns that never
+self-terminate.** The rates differ 3× but the cost lands in the same place, because
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` decodes 3.8× slower, so ONE runaway item costs it what three cost
+Ornith. This is the single largest performance lever the campaign has measured — larger than everything
+Phase 2 shipped (1.27× suffix + 2–7% GQA).
+
+### ⚠️ THIS SUPERSEDES A PROVISIONAL n=36 FINDING OF MINE THAT WAS WRONG
+At n=36 the prefix showed `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` finishing in 19.2 min against Ornith's
+34.5 — a 1.8× advantage — and I recorded that "Ornith is the fast one" is statistic-dependent. **It does
+not survive to n=100 and the direction reverses.** The stated caveat is exactly what happened: the item
+in flight at the time WAS a budget-runner, and at 1,999 s it single-handedly flipped the totals. Kept
+here as a record, because it is a clean demonstration that **a prefix of a run whose cost distribution
+is dominated by rare runaway items is not a reliable estimate of that run's total** — the tail is the
+measurement, not noise around it. Per-item medians were stable (17→18 s, 23→21 s); only the totals moved.
 
 ## ✅ FIRST `deployed`-PROFILE, CURRENT-BOX CODING ROW — and the runaway tax is REAL at a true budget (2026-08-14)
 
