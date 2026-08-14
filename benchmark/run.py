@@ -293,7 +293,7 @@ def main():
                     help="draws per item (k). Each draw gets its own seed — WITHOUT that the "
                          "server returns byte-identical text and reliability reads as perfect. "
                          "k buys RELIABILITY, not power: at N=15, k=1->5 shrinks the SD only "
-                         "12.7->10.8pp, while 5x the items gives -55%. Use k=2-3 and spend the "
+                         "12.7->10.8pp, while 5x the items gives -55%%. Use k=2-3 and spend the "
                          "rest on items.")
     sp.add_argument("--seed-base", dest="seed_base", type=int, default=0,
                     help="shift every draw's seed (for an independent replication of a run that "

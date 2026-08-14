@@ -21,8 +21,34 @@ CONV_GATE = 0.90
 _MAX_ERROR_SHARE = 0.20
 
 
+def _run_budget_config(model, bench):
+    """(context_limit, max_tokens) for a run, from its manifest — the two numbers needed to work out
+    the thinking budget that was ACTUALLY IN FORCE. Returns (None, None) when unknown.
+
+    The server silently clamps `thinking_budget` to 0.8 * (max_kv_cache_size - prompt) whenever
+    `max_tokens` doesn't fit the context (see `convergence.resolved_thinking_budget`), so grading
+    against the DECLARED budget scores every forced `</think>` as a clean stop. Measured on the
+    IFEval runs: 33 rows read as converged when they were externally truncated.
+    """
+    mp = generate.result_path(model, bench).with_suffix(".manifest.json")
+    if not mp.exists():
+        return None, None
+    try:
+        m = json.loads(mp.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None, None                 # graceful degrade: never crash the batch
+    kv = m.get("kv") or {}
+    sampling = m.get("sampling") or {}
+    return kv.get("max_kv_cache_size"), sampling.get("max_tokens")
+
+
 def _rows(model, bench):
-    """All rows, migrated to the v2 view (a v1 row becomes sample 0)."""
+    """All rows, migrated to the v2 view (a v1 row becomes sample 0), and annotated with the
+    RESOLVED thinking budget so convergence is judged against the budget that was in force.
+
+    This is the one seam every grader loads through, so annotating here makes conv%, nonconv_kinds
+    and acc_strict correct for all of them at once.
+    """
     p = generate.result_path(model, bench)
     if not p.exists():
         return []
@@ -32,6 +58,10 @@ def _rows(model, bench):
             out.append(rowschema.migrate(json.loads(line)))
         except json.JSONDecodeError:
             pass
+    context_limit, max_tokens = _run_budget_config(model, bench)
+    if context_limit and max_tokens:
+        convergence.backfill_resolved_budget(
+            out, context_limit=context_limit, max_tokens=max_tokens)
     return out
 
 

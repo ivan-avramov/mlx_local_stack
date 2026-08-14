@@ -31,9 +31,72 @@ def looks_like_loop(text, *, min_lines=20, max_repeat=20, min_unique_ratio=0.6) 
     return max_rep >= max_repeat and unique_ratio < min_unique_ratio
 
 
+# Mirrors mlx-vlm's server-side clamp: `THINKING_BUDGET_CLAMP_RATIO` in
+# `mlx_vlm/server/generation.py`. The server caps thinking_budget to this share of the effective
+# generation budget so a forced `</think>` still leaves room for a visible answer. Mirrored here
+# because the server does NOT log the capped value (its sibling max_tokens clamp does), so the
+# harness has no other way to know the budget that was actually in force. Keep the two in step.
+THINKING_BUDGET_CLAMP_RATIO = 0.8
+
+
+def resolved_thinking_budget(row: dict, *, context_limit=None, max_tokens=None):
+    """The thinking budget ACTUALLY IN FORCE for a row, or None if it can't be determined.
+
+    The server resolves a request's budget in two steps (both in `_apply_generation_budget`):
+
+        effective       = min(max_tokens, context_limit - prompt_tokens)
+        thinking_budget = min(thinking_budget, int(effective * THINKING_BUDGET_CLAMP_RATIO))
+
+    The first step logs a warning; the SECOND IS SILENT. So a run that declares
+    `thinking_budget: 81920` against `max_kv_cache_size: 65536` actually ran at ~52,390, and
+    comparing completions to 81,920 scores every forced-close as CONVERGED — the exact false pass
+    the convergence rule exists to prevent (AGENTS.md).
+
+    Returns None when `context_limit`/`max_tokens` are unknown, so callers keep the declared-budget
+    behaviour rather than guessing. That matters: rows from 262144-context runs are already correct
+    and must not be "corrected".
+    """
+    tb = row.get("thinking_budget")
+    if tb is None or context_limit is None or max_tokens is None:
+        return None
+    prompt = row.get("prompt_tokens")
+    if prompt is None:
+        return None
+    effective = min(int(max_tokens), int(context_limit) - int(prompt))
+    if effective <= 0:
+        return None
+    return min(int(tb), max(1, int(effective * THINKING_BUDGET_CLAMP_RATIO)))
+
+
+def backfill_resolved_budget(rows, *, context_limit, max_tokens):
+    """Annotate rows in place with `resolved_thinking_budget` from a run's config.
+
+    Historical rows are re-resolvable — they carry `prompt_tokens`, and the manifest carries
+    `kv.max_kv_cache_size` and `sampling.max_tokens` — so correcting convergence for an existing
+    run is a RE-GRADE at zero worker time, not a re-run (`docs/regrade-vs-rerun-guideline.md`).
+    """
+    for row in rows:
+        rb = resolved_thinking_budget(row, context_limit=context_limit, max_tokens=max_tokens)
+        if rb is not None:
+            row["resolved_thinking_budget"] = rb
+    return rows
+
+
+def effective_thinking_budget(row: dict):
+    """The budget `is_converged` should judge this row against: the resolved one when known,
+    otherwise the declared one."""
+    rb = row.get("resolved_thinking_budget")
+    return rb if rb is not None else row.get("thinking_budget")
+
+
 def is_converged(row: dict):
     """True/False for a generated item; None when the row isn't a usable generation
-    (error, or missing completion_tokens)."""
+    (error, or missing completion_tokens).
+
+    Judged against `effective_thinking_budget` — the RESOLVED budget when the row carries one,
+    because the server silently clamps the declared budget and a clamped forced-close otherwise
+    reads as a clean `finish_reason=="stop"`.
+    """
     if row.get("error"):
         return None
     ct = row.get("completion_tokens")
@@ -42,7 +105,7 @@ def is_converged(row: dict):
     fr = row.get("finish_reason")
     if fr == "length":
         return False                      # max_tokens truncation
-    tb = row.get("thinking_budget")
+    tb = effective_thinking_budget(row)
     if tb is not None and ct >= tb:
         return False                      # thinking-budget hit forced the stop
     return fr == "stop"
