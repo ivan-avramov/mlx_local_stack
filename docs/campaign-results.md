@@ -11,6 +11,42 @@ must be re-run on M5. The M4 Pro driver hosts **NO campaign models at all** (~26
 AI session) and is a different chip class, so it is never a valid speed-comparison box — ALL model
 runs are M5 runs. See `AGENTS.md` → Operating rules.
 
+## ⚡ "ORNITH IS THE FAST ONE" IS STATISTIC- AND AXIS-DEPENDENT — PROVISIONAL, n=36 (2026-08-14)
+
+On the **identical first 36 humanevalplus items** (verified: same id prefix, `--order model` with a
+fixed seed, same box, same session, `deployed`, cap 131072):
+
+| | `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` |
+|---|---|---|
+| **total wall-clock** | **34.5 min** | **19.2 min** |
+| mean / item | 57 s | **32 s** |
+| **median / item** | **17 s** | 23 s |
+| median completion tokens | 1,809 | **644** |
+| decode rate | ~108 tok/s | ~28.5 tok/s |
+| non-self-terminating | **2** | **0** |
+
+**⇒ `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` finishes the same 36 items in 1.8× LESS total wall-clock than Ornith — while decoding
+3.8× slower per token.** Two mechanisms, both measured: it emits **2.8× fewer tokens per item** (644 vs
+1,809 median), and it has **no runaway turns** where Ornith has 2 that dominate its total.
+
+**Both of these are true and they answer different questions — do not collapse them:**
+- **Per TYPICAL item, Ornith is faster** (median 17 s vs 23 s). That is the interactive-feel number.
+- **Per BATCH, that model is faster** (34.5 → 19.2 min). That is the throughput number, and it is
+  driven by Ornith's tail, not by its typical case.
+
+⚠️ **PROVISIONAL, and likely to move.** n=36 with one distill item still in flight at 22+ min when this
+was written — if that is a budget-runner (~62 min at 28.5 tok/s) it alone changes that total by
++3×. Re-derive at n=100.
+
+⚠️ **This does NOT refute M1's "3.9× per case".** M1 measured the AGENTIC axis (aider, multi-turn,
+repair-driven); this is single-shot codegen. Different axis, different construct. What it does show is
+that the campaign's shorthand "Ornith = fast, distill = slow" is not a model property — it depends on
+the axis and on whether you quote the median or the mean.
+
+⚠️ **It also means the runaway tax is so far an ORNITH-SPECIFIC pathology, not a general one**
+(0/36 for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` vs 3/100 + 2/50 for Ornith). That sharpens the successor probe: **target Ornith**, and treat
+"does it also loop?" as an open question rather than an assumption.
+
 ## ✅ FIRST `deployed`-PROFILE, CURRENT-BOX CODING ROW — and the runaway tax is REAL at a true budget (2026-08-14)
 
 `Ornith-1.0-35B-mlx-uniform-4bit / humanevalplus`, **n=100**, M5, `deployed`, `max_kv_cache_size`
