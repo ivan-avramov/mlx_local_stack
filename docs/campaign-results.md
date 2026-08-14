@@ -1,15 +1,71 @@
-# Campaign Results & Rankings (living)
+# Campaign Results — the USE-CASE LEADERBOARD (living)
 
-Tracks results and rankings for every candidate (model, config) in the local-LLM selection campaign: picking the best LOCAL LLM + config for 256K-context agentic coding on a 64GB Apple-Silicon Mac. Evaluation is breadth-first across escalating tiers — LIGHT (humanevalplus N=10, mbppplus N=10, aime N=5) across all archs → MID (livecodebench per-difficulty, ifeval, math500) on survivors → HEAVY (full sets, gpqa, agentic axes Aider / SWE-40, judge panel). Thinking is ENABLED for all tests. NO model/arch is pruned on partial results; ranking is decided only across the full suite.
+**WHAT THIS IS.** A **reusable benchmark suite** and its current standings. The deliverable is not a
+verdict about which model is best — it is apples-to-apples comparisons that stay valid as new models
+arrive. This is never "done": models ship constantly, get run through the same suite, and take their
+place in the table below. **Selection happens per USE CASE**, at the moment someone asks "what should I
+use for coding?" or "what should I use for deep research?" — so that is how the standings are organised.
 
-**Current phase: light-tier broad sweep.**
+Thinking is ENABLED for all tests. No model is pruned on partial results.
 
-**⚠️ BOX TOPOLOGY CHANGED 2026-08-11 — the M2 Max 64GB laptop is GONE**, replaced by an **M4 Pro,
-48GB**. Every `M2` row and note below is HISTORICAL and NOT re-measurable: the apples-to-apples rule
-bars cross-box baselines and that box no longer exists, so anything still needing a LIVE baseline
-must be re-run on M5. The M4 Pro driver hosts **NO campaign models at all** (~26GB headroom after the
-AI session) and is a different chip class, so it is never a valid speed-comparison box — ALL model
-runs are M5 runs. See `AGENTS.md` → Operating rules.
+---
+
+## ⭐ CURRENT STANDINGS BY USE CASE — updated 2026-08-14
+
+**How to read this.** A pick is a recommendation on CURRENT EVIDENCE at the stated n, not a claim of
+superiority. Where the capability comparison is unresolved, the pick is made on a secondary axis and
+that is stated. **NOT MEASURED means exactly that** — never inferred from a neighbouring axis.
+
+| use case | winner | runner-up | decided on | confidence |
+|---|---|---|---|---|
+| **Agentic coding** (multi-turn, edits a repo) | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | `Ornith-1.0-35B-mlx-uniform-4bit` | aider polyglot n=110: `final` **73.6% vs 50.0%**, McNemar **p=1.3e-05**; mechanism is REPAIR (60.8% vs 33.7%), not raw capability | **HIGH** — the campaign's only powered result. ⚠️ aider-scaffold-specific; ZERO opencode evidence |
+| **Single-shot code generation** (write one function) | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | `Ornith-1.0-35B-mlx-uniform-4bit` | humanevalplus n=100 matched: `acc_strict` **95.0% vs 90.0%**; `acc` delta −2.0pp CI [−5.0,+0.0] **INCONCLUSIVE** | **LOW** — capability unresolved (628 items needed). Picked on `acc_strict`, whose gap IS attributable: Ornith forfeits 3.0pp to truncation |
+| **Interactive daily driver** (chat, follows instructions) | **TIE — either** | — | IFEval paired n=148: 89.9% vs 89.9%, gap **+0.0pp**, `equivalent` | **MEDIUM** — a real equivalence verdict, not an inconclusive one. Pick on latency: Ornith is 3.8× faster to decode |
+| **Fast interactive feel** (lowest latency per turn) | `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | humanevalplus n=100: median **18 s vs 21 s**, p95 **106 s vs 126 s**, decode **107.6 vs 28.6 tok/s** | **HIGH** — same box, same session, matched items |
+| **Math / symbolic reasoning** | ⚠️ **UNRESOLVED** | — | math500 n=30: `acc` 83.3% vs 81.5% (tie) but `acc_strict` **60.0% vs 81.5%** at a matched budget — Ornith hits the budget on 9/30 | **LOW** — n=30 is ±23pp. The `acc_strict` split is large and mechanistic; needs n≈100 |
+| **Long-context work** (>128K prompts) | ⚠️ **NOT MEASURED as a task** | — | Capacity/retrieval ladders only. `Ornith-1.0-35B-mlx-uniform-4bit` 262K @32.4GB, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 262K @43.3GB — both CLEAR the memory gate | **NONE** for task quality. ⚠️ And see the thinking-budget clamp: at a 250K prompt the resolved budget collapses to 9,708 |
+| **Deep research** (long multi-source synthesis) | ⚠️ **NOT MEASURED** | — | no axis exists | **NONE** — needs a benchmark built. Nearest proxies: long-context retrieval + instruction retention, neither run at depth |
+| **Tool calling / function calling** | ⚠️ **NOT MEASURED** | — | BFCL harness repaired but NEVER RUN | **NONE** — cheapest powered axis available (0.94 vs 0.749 at n=1000 is ~12σ) |
+| **Repo-scale engineering** (SWE-bench-like) | ⚠️ **NOT MEASURED** | — | harness built, never run | **NONE** |
+
+### Cross-cutting cost finding that applies to EVERY use case
+**~40% of wall-clock is lost to turns that never self-terminate**, on BOTH models, measured at a
+genuinely-in-force budget: `Ornith-1.0-35B-mlx-uniform-4bit` 3/100 items = **42%** of wall-clock;
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 1/100 = **39%**. The rates differ 3× but the cost is the same,
+because the slower decoder loses as much to one 33-minute item as the faster one loses to three
+10-minute items. **This is the largest single lever the campaign has measured** — bigger than everything
+Phase 2 shipped (1.27× suffix + 2–7% GQA) — and it is not model-specific, so it is a property of the
+suite's operating point, not a tiebreaker between candidates.
+
+### What would move these standings, in order of value
+1. **The runaway-tax probe** (temperature ladder on the known runaway items) — ~40% of wall-clock, ~90 min.
+2. **BFCL** — fills an empty use case, and is the only powered axis the suite owns.
+3. **math500 at n≈100** — the `acc_strict` split is 21pp and currently unresolvable at ±23pp.
+4. **A deep-research axis** — an entire declared use case with no benchmark behind it.
+5. **opencode agentic evidence** — the agentic pick is aider-scaffold-specific.
+
+### ⚠️ COMPARABILITY RULES THAT GOVERN EVERY ROW ABOVE
+- **BOX TOPOLOGY CHANGED 2026-08-11 — the M2 Max 64GB is GONE**, replaced by an M4 Pro 48GB DRIVER
+  that hosts NO models. **All model runs are M5 Max runs.** Every `M2` row further down is HISTORICAL
+  and NOT re-measurable (apples-to-apples bars cross-box baselines and the box no longer exists), so
+  it can inform a hypothesis but never a use-case pick.
+- **A pick requires: same box, same session, matched items, matched `thinking_budget`, and the
+  `deployed` sampling profile.** `compare` mechanically refuses comparisons that differ in
+  `thinking_budget` or `max_tokens`.
+- **Every delta carries its interval and the axis MDE.** "Inconclusive" is a valid and expected
+  answer; it is NOT evidence of a tie.
+
+### Candidates measured so far
+17 model directories, but only three are measured beyond n=10:
+`Ornith-1.0-35B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `gemma-4-31B-it-qat-6bit`.
+Everything else is n=3–10 (±40–72pp) and cannot support any use-case pick. Per-model coverage:
+`PYTHONPATH=benchmark .venv-bench/bin/python benchmark/m1/scoreboard.py`.
+
+⚠️ **`gemma-4-31B-it-qat-6bit` is excluded from every pick above on comparability, not on quality:** it
+runs at `thinking_budget` 16384 vs the others' 81920, and `compare` refuses cross-budget comparisons.
+Its 192K context ceiling is a config fact, not a zero.
+
+---
 
 ## 🏁 THE H2H — humanevalplus n=100, BOTH winners, matched items, `deployed`, current box (2026-08-14)
 
