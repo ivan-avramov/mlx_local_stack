@@ -145,3 +145,48 @@ def test_kv_cap_absent_on_both_sides_is_still_compatible():
     del a["kv"]["max_kv_cache_size"]
     del b["kv"]["max_kv_cache_size"]
     assert provenance.is_compatible(a, b)
+
+
+# ------------------------------------- the DEPLOYED CODE SHA is output-determining too
+
+def _cfg_sha(vlm_sha, kv=131072):
+    return {
+        "kv": {"max_kv_cache_size": kv, "kv_bits": 0, "prefill_step_size": 512,
+               "hf_path": "x/y", "kv_quant_scheme": None, "quantized_kv_start": None},
+        "sampling": {"temperature": 0.4, "max_tokens": 102400, "thinking_budget": 81920},
+        "git": {"submodules": {"src/mlx-vlm": vlm_sha, "src/mlx-serve": "aaa"}},
+        "fingerprint_version": 1,
+    }
+
+
+def test_a_different_mlx_vlm_sha_is_INCOMPATIBLE():
+    """PROVEN 2026-08-14, the hard way. Bumping src/mlx-vlm 8b7100b8 -> 0c1c8b17 (an upstream merge)
+    changed generation on a MATCHED item: same prompt (161 tokens both), same sampling, deterministic
+    3/3 -- but 2475 -> 3526 completion tokens and 24.8s -> 34.3s. The model implementation
+    (qwen3_5_moe) and the sampler (sample_utils.py) were byte-unchanged; the divergence came from
+    server/generation.py, models/cache.py or utils.py.
+
+    Without the sha in the fingerprint, `--clean-stale` judged the pre-bump rows COMPATIBLE and
+    done_ids skipped all 200 items, so a re-baseline job reported DONE in seconds having generated
+    NOTHING -- and any partial run would have silently POOLED rows from two different code versions.
+    That is the same failure mode as the missing max_kv_cache_size, one layer down.
+    """
+    assert not provenance.is_compatible(_cfg_sha("8b7100b8"), _cfg_sha("0c1c8b17")), (
+        "rows from different mlx-vlm shas compared as COMPATIBLE — resume would pool outputs from "
+        "code versions that provably generate different token streams")
+    assert provenance.is_compatible(_cfg_sha("0c1c8b17"), _cfg_sha("0c1c8b17"))
+
+
+def test_absent_git_block_on_both_sides_stays_compatible():
+    """Pre-provenance rows carry no git block. Absent-on-both must not condemn historical results."""
+    a, b = _cfg_sha("x"), _cfg_sha("x")
+    del a["git"], b["git"]
+    assert provenance.is_compatible(a, b)
+
+
+def test_mlx_serve_sha_also_counts():
+    """mlx-serve builds the worker command line (kv flags, generation-defaults, draft-kind), so a
+    change there can alter what the worker is even asked to do."""
+    a, b = _cfg_sha("same"), _cfg_sha("same")
+    b["git"]["submodules"]["src/mlx-serve"] = "bbb"
+    assert not provenance.is_compatible(a, b)

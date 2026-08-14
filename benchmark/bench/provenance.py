@@ -89,6 +89,20 @@ def config_fingerprint(manifest, version: int | None = None):
         # silently POOL rows generated under different effective budgets. Absent on both sides
         # (pre-manifest-era rows) compares equal, so no historical result is condemned.
         "max_kv_cache_size": kv.get("max_kv_cache_size"),
+        # The DEPLOYED CODE is output-determining, proven 2026-08-14: bumping src/mlx-vlm
+        # 8b7100b8 -> 0c1c8b17 (an upstream merge) changed a matched item's generation from 2475 to
+        # 3526 completion tokens with an IDENTICAL prompt and sampling, deterministically (3/3). The
+        # model implementation and the sampler were byte-unchanged; server/generation.py,
+        # models/cache.py and utils.py were not.
+        #
+        # Without this, `--clean-stale` judged pre-bump rows compatible, done_ids skipped every item,
+        # and a re-baseline job reported DONE having generated nothing — while any partial run would
+        # have pooled two code versions silently. mlx-serve counts too: it builds the worker command
+        # line (kv flags, generation-defaults, draft-kind), so a change there alters what the worker
+        # is asked to do. Absent on both sides (pre-provenance rows) compares equal, so no historical
+        # result is condemned.
+        "code": {k: ((manifest.get("git") or {}).get("submodules") or {}).get(k)
+                 for k in ("src/mlx-vlm", "src/mlx-serve")},
     }
     if version >= 2:
         r = manifest.get("runtime") or {}
