@@ -186,42 +186,37 @@ conv 95%. The new row is 93.0% / 90.0% / 97%. Reassuringly close (−2pp on `acc
 `acc_strict` identical) — but cross-box AND cross-profile, so per AGENTS.md it is not a valid
 comparison and must not be reported as one.
 
-## 🚨 `kv_prealloc_tokens: 262144` DESTROYS DECODE THROUGHPUT — >47× on a MATCHED ITEM (2026-08-14)
+## ✅ RETRACTED — "`kv_prealloc_tokens: 262144` destroys decode throughput" DID NOT REPRODUCE (2026-08-14)
 
-**This is the SHIPPED value for both winners**, and AGENTS.md states the rule as "Set equal to that
-model's `max_kv_cache_size` so the KV cache is pre-allocated at the full cap and the stack never
-reallocs." At 256K that rule appears to cost essentially all throughput.
+**This section previously reported a >47× slowdown at the shipped `262144/262144` config. That was
+wrong and is retracted.** A 3-arm OFAT on the same item (`HumanEval/146`,
+`Ornith-1.0-35B-mlx-uniform-4bit`, `deployed`, router restarted per arm for a clean peak-memory mark):
 
-**Same-item comparison — the strongest form available.** `--order model` with a fixed seed gives an
-identical item order, so run 1 and run 2 both started on `HumanEval/146`, same model, same `deployed`
-sampling, same box (M5), minutes apart, worker cmdline verified as ground truth in both:
+| cap / prealloc | wall | decode | `mx.get_peak_memory` | pressure warns |
+|---|---|---|---|---|
+| 131072 / 131072 | 24.7 s | 98.5 tok/s | 25.35 GB | 0 |
+| 262144 / 131072 | 25.0 s | 103.1 tok/s | 25.50 GB | 0 |
+| **262144 / 262144** (shipped) | **27.8 s** | **104.5 tok/s** | 28.18 GB | 1 |
 
-| config | `HumanEval/146` | aggregate |
-|---|---|---|
-| `max_kv_cache_size`/`kv_prealloc_tokens` **262144** | **did not complete in 19.5 min** | 0 rows in 19.5 min; worker CPU ~102–109% throughout |
-| **131072** | **24.8 s @ 101 tok/s** | items 13.3 / 24.8 / 26.8 s @ 101–118 tok/s |
+**All three are fast**, peak memory is far under the 46GB gate in every arm, and the prealloc rule —
+which exists because growing a cache 128K→256K requires holding 384K of KV during the double-buffer,
+and that measurably OOMed — **stands unchallenged**.
 
-⇒ **>47× on one matched item.** The 131072 wall times match the retired-M2 baseline median of 23 s
-(n=100), so this is a return to normal rather than a speedup.
+**The original 19.5-minute non-completion is UNATTRIBUTED and treated as a transient.** Most likely
+environmental: that run started with ~21GB already held by other processes and swap already active
+(`System memory: 68.7GB total, 47.8GB available`, then `memory.pressure.warn ram_percent=76.9`),
+versus a cleaner box for the OFAT.
 
-**Health check that the run is genuinely tracking the baseline:** item 4 (`HumanEval/94`) took 622.5 s
-for **82,101 tokens at 132 tok/s** — a budget hit against the (now genuinely-in-force) 81,920 budget.
-The M2 baseline's longest humanevalplus item was **82,075 tokens**, almost certainly the same problem.
-So the long tail reproduces; the 262144 arm was pathological, not merely unlucky.
+⚠️ **What the OFAT DID surface, and it is now `docs/open-questions.md` O15:** doubling the prealloc
+moved peak memory by only **~2.8 GB**, not the ~16 GB that materialising twice the fp16 KV up front
+implies. So for a `kv_bits: 0` model the reservation looks lazy or unwired — and if it is not actually
+committed, it may not be preventing the OOM it exists to prevent. Untested either way; do not change
+prealloc before measuring.
 
-⚠️ **CONFOUNDED, and not yet disentangled.** `max_kv_cache_size` and `kv_prealloc_tokens` were changed
-TOGETHER (both 262144 → 131072), so "cap size" and "prealloc size" are not separated. The clean OFAT
-— cap 262144 with prealloc 131072, or prealloc absent — is now cheap (~20 s/item) and is QUEUED, not
-run. Do not attribute the effect to prealloc specifically until that cell exists.
-
-⚠️ **CONSEQUENCE FOR THE RECORD: any speed number measured at a 262144 prealloc is SUSPECT.** That
-includes anything in Phase 2 taken on the winners at the shipped registry values. Re-measure before
-citing.
-
-**Mechanistic hypothesis to test (not established):** decode cost scaling with ALLOCATED rather than
-USED KV length. The neighbouring precedent is already in AGENTS.md — `prefill_step_size` not threaded
-into generation gave 4× QK² scratch and a 256K OOM. Supporting datum: the 2026-08-13 IFEval run on
-this same box at `kv_prealloc_tokens: 65536` decoded healthily at ~97 tok/s.
+**Process note kept deliberately:** one dramatic observation, on one item, with two variables moved at
+once, is a hypothesis. It was written up as a finding, put into `AGENTS.md` as a warning against a rule
+that prevents a known OOM, and used to justify reducing the registry. The OFAT that falsified it took
+four minutes and should have come first.
 
 ## ⚠️ THE DECLARED THINKING BUDGET WAS NOT THE ONE IN FORCE — 33 IFEval rows were FALSE PASSES (2026-08-14)
 

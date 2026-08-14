@@ -14,44 +14,84 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-### O14. `kv_prealloc_tokens == max_kv_cache_size` is an AGENTS.md RULE and it costs >47× throughput. Change it?
-Measured 2026-08-14 on a matched item (`HumanEval/146`, same model/sampling/box, worker cmdline verified):
-**24.8 s @ 101 tok/s at 131072 vs NOT COMPLETING IN 19.5 MIN at 262144.** 262144 is the **shipped**
-value for both winners. Details in `campaign-results.md`.
+### O15. Is `kv_prealloc_tokens` ACTUALLY committing the cache it is supposed to reserve?
+Falls out of the O14 OFAT (below), and it matters because the whole point of prealloc is to avoid the
+128K→256K realloc double-buffer that MEASURABLY OOMed.
 
-Three things need your ruling, because they are not all the same question:
-1. **The rule itself.** AGENTS.md says to set prealloc equal to the cap "so the stack never reallocs."
-   That rationale is about avoiding reallocation, and it was presumably measured — but not, apparently,
-   against throughput at 256K. Does the rule stand at smaller caps and get an exception at large ones,
-   or is it retired?
-2. **The shipped registry.** Both winners ship `262144/262144`. If the effect holds, the daily driver
-   has been running at a fraction of its decode speed. That is a config change to a carrier, so it
-   needs your approval, not mine.
-3. **The historical record.** Any speed number measured at a 262144 prealloc is suspect, including
-   Phase-2 numbers on the winners. Which of those do you want re-measured, given one worker?
-⚠️ **The effect is CONFOUNDED** — cap and prealloc were changed together. The disentangling OFAT (cap
-262144, prealloc 131072) is cheap now (~20 s/item) and QUEUED. **Recommendation: run the OFAT first,
-then decide 1–3 on the result.** I did not touch the committed registry; M5 is locally at 131072 and
-that dirt is documented in `campaign-queue.md`.
+**Measured 2026-08-14**, `mx.get_peak_memory` on the same item, router restarted per arm:
 
-### O13. `max_tokens` (102400) EXCEEDS the usable context on every shipped model. Which way do we fix it?
-The server silently clamps `thinking_budget` to `0.8 * (max_kv_cache_size - prompt)`. With the shipped
-`max_kv_cache_size: 262144` and `max_tokens: 102400` this is harmless at short prompts — but the clamp
-begins firing past a ~160K prompt, and **at a 250K prompt the resolved thinking budget is 9,708**,
-silently. So the config advertises 256K context and an 81,920 thinking budget that cannot coexist.
-Options:
-1. **Lower `max_tokens`** to something that fits alongside a long prompt (e.g. 32768), on all four
-   carriers + the registry. Honest, but caps long single responses.
-2. **Lower `thinking_budget`** to a value that is never clamped at the deepest supported prompt.
-   Predictable, but wastes headroom at short prompts, which is where most traffic is.
-3. **Accept the clamp and DOCUMENT it** as "thinking budget degrades with context depth", now that the
-   harness records the resolved value.
-**Recommendation: option 3 plus a loud startup log**, because 1 and 2 both trade away capability at the
-prompt lengths that actually dominate use, to fix a case the harness can now report accurately. **I did
-NOT add the mechanical invariant test I proposed** — an honest `max_tokens <= cap - allowance` assertion
-FAILS against the shipped config, so landing it would encode this decision rather than surface it.
+| cap / prealloc | peak memory |
+|---|---|
+| 131072 / 131072 | 25.35 GB |
+| 262144 / 131072 | 25.50 GB |
+| **262144 / 262144** | **28.18 GB** |
 
-### O12. The M1 "not a DNF" ruling rests on a premise that measurement has falsified. Re-rule?
+Doubling the prealloc moved peak by **~2.8 GB**, not the ~16 GB that materialising twice the fp16 KV
+up front implies. So for a `kv_bits: 0` model the reservation looks **lazy or unwired**. Supporting
+hint: `KV_PREALLOC_TOKENS`'s other consumer is `apc.py`'s `_kv_prealloc_floor`, and APC is INERT
+(M2/M3) — so one of its two consumers is dead code.
+
+**Why this is not academic:** if the buffer is not actually committed at load, prealloc may not be
+preventing the OOM it was introduced for, and the protection the 256K configs depend on would be
+illusory. It could equally be that MLX reserves lazily but still avoids the double-buffer on growth —
+in which case everything is fine and this closes.
+**Test:** a single long-context run to the full cap, watching `mx.get_peak_memory` as the cache grows
+past 128K, prealloc ON vs OFF. That is the only thing that distinguishes "lazy but safe" from "not
+protecting us".
+**Recommendation: measure before touching anything.** Do NOT change prealloc meanwhile.
+
+### ~~O14~~ → CLOSED-BY-MEASUREMENT. The throughput concern DID NOT REPRODUCE; the rule stands
+I reported a **>47× slowdown** at `262144/262144` (a matched item not completing in 19.5 min vs 24.8 s
+at `131072/131072`) and wrote it into `AGENTS.md` as a challenge to the prealloc rule. **A 3-arm OFAT
+falsifies it.** Same item (`HumanEval/146`), same model/sampling, router restarted per arm:
+
+| cap / prealloc | wall | decode | peak mem | pressure warns |
+|---|---|---|---|---|
+| 131072 / 131072 | 24.7 s | 98.5 tok/s | 25.35 GB | 0 |
+| 262144 / 131072 | 25.0 s | 103.1 tok/s | 25.50 GB | 0 |
+| **262144 / 262144** (shipped) | **27.8 s** | **104.5 tok/s** | 28.18 GB | 1 |
+
+**All three are fast.** The shipped config is not slow, peak memory is far under the 46GB gate, and
+the operator's rationale — prealloc is what makes 256K reachable at all, because growing 128K→256K
+requires holding 384K of KV during the double-buffer — stands unchallenged.
+
+**The original 19.5-minute non-completion is UNATTRIBUTED and treated as a transient.** Most likely
+environmental: that run began with ~21GB already in use by other processes and swap already active
+(router logged `System memory: 68.7GB total, 47.8GB available`, then
+`memory.pressure.warn ram_percent=76.9`), against a cleaner box now.
+
+**Process lesson, worth more than the result:** one dramatic observation, on ONE item, with TWO
+variables moved at once, is a hypothesis. I wrote it up as a finding, put a warning into `AGENTS.md`
+against a rule that prevents a known OOM, and reduced the registry on that basis. The OFAT cost 4
+minutes and should have come first. (The registry change to 131072 is retained for an unrelated and
+VALID reason — it is the tightest cap that keeps the declared 81,920 thinking budget in force with no
+clamp — but the evalplus H2H therefore ran at a right-sized benchmark cap, not the shipped one, and
+peak memory shows there was never a memory reason to reduce it.)
+
+### ~~O13~~ → CLOSED (operator, 2026-08-14). My framing was WRONG; the config is self-consistent
+I claimed `max_tokens: 102400` "exceeds the usable context" because at a 250K prompt the resolved
+thinking budget collapses to 9,708. **Operator correction: 256K of context is a TOTAL budget — prompt
++ thinking + output — so a 250K prompt was never a supported configuration.**
+
+Working it through with the shipped numbers: `thinking_budget` 81920 is exactly `0.8 × 102400`, and the
+clamp yields the full budget while `0.8 × (262144 − prompt) ≥ 81920`, i.e. **prompt ≤ 159,744**. So
+~160K is the DESIGNED maximum prompt, `max_tokens` and the 0.8 ratio agree, and **the clamp firing above
+~160K is correct, intended behaviour rather than a defect.** Lowering `max_tokens` or `thinking_budget`
+(my options 1 and 2) would have solved a non-problem at the cost of capability.
+
+**What remains genuinely wrong is narrower — documentation and guard-rails, not the values:**
+1. **The per-model max prompt is written down nowhere.** 159,744 for
+   `Ornith-1.0-35B-mlx-uniform-4bit` is derivable but undocumented, and it is LOWER for
+   `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, which wants a bigger thinking budget. Nobody can respect a
+   limit they cannot look up. **→ record the derived max prompt per model in the registry.**
+2. **The clamp is silent** while its sibling `max_tokens` clamp logs a warning. That silence is what let
+   33 IFEval rows score as converged. **→ one-line fork fix to log it.**
+3. **Benchmarks have no preflight against it.** A long-context axis feeding a 200K prompt would silently
+   measure a shrunken thinking budget. **→ assert `prompt ≤ documented_max_prompt(model)`.** Unlike the
+   `max_tokens ≤ cap` invariant I withheld, this one does NOT fail against the shipped config, so it can
+   land honestly.
+
+### ~~O12~~ → CLOSED (operator, 2026-08-14): **RE-RULED AS BUDGET HITS — these are NOT converged responses.**
 M1 (2026-08-13) ruled the degenerate-loop rows "NOT a DNF... a valid converged response — converged as
 determined by the MODEL", turning on item 2849 sitting at **"64% of budget"** (52,503 / 81,920) with
 `finish_reason "stop"`.
@@ -135,7 +175,7 @@ stated speed goal, and P4's own cost estimate (~28h) is inflated by exactly this
 makes P4 cheaper too.
 
 
-### O10. Should a budget-exceeded / externally-truncated row be EXCLUDED from `acc`, not just marked?
+### ~~O10~~ → CLOSED (operator, 2026-08-14): **option 3.** `acc` keeps its historical meaning so published rows stay comparable; `acc_strict` carries the don't-grade-a-truncation semantics.
 Raised by the operator's instruction to "call it DNF and **not grade it**" (2026-08-13). Half of that is
 implemented, half is not:
 - `converged: False` ✓ — the row IS marked, and a budget hit already fails the ratified formula.
@@ -228,7 +268,7 @@ posts a pre-formatted prompt to `/v1/completions` and bypasses the chat template
 **Recommendation:** BFCL live smoke first — cheapest, and it is the only powered axis the campaign owns
 (0.94 vs 0.749 at n=1000 is ~12σ). Then judge panel v3. SWE-bench last; it is the largest build.
 
-### O9. Does the judge panel rate looped-then-correct answers differently? — HELD (delegated), see C18
+### ~~O9~~ → CLOSED (operator, 2026-08-14): **DROPPED.** After the O12 reclassification exactly ONE row is genuinely looped-then-correct, so there is nothing to compare and no panel time is warranted.
 Falls out of M1. Four rows on the IFEval run are execution-passing but reached the answer through a
 degenerate loop (ids 2849, 279, 3608 line/content-level; 3188 also truncated). They are eligible for
 the judge panel by the campaign's own rule — execution-passing outputs — and `is_degenerate` marks them
