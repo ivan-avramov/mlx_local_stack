@@ -223,6 +223,10 @@ def current_manifest_lite(model: str, profile: str = "production",
     return {"sampling_profile": profile,
             "sampling": sampling,
             "kv": registry_kv(model, registry_path) or {},
+            # The git block is REQUIRED here, not optional: the fingerprint now compares the deployed
+            # code sha, so a `current` manifest without it reads None and makes every existing row
+            # look stale forever — `--clean-stale` would delete the corpus on every run.
+            "git": _git_shas(),
             "fingerprint_version": FINGERPRINT_VERSION,
             "runtime": _runtime_block(runtime)}
 
@@ -248,9 +252,19 @@ def _box() -> str:
 
 
 def _git_shas() -> dict:
+    """Stack HEAD + submodule shas, resolved from the REPO ROOT rather than the CWD.
+
+    CWD-independent for the same reason bench/paths.py exists: run from `benchmark/` these commands
+    silently returned None, so the git block went missing and — now that the deployed code sha is part
+    of the fingerprint — every row would have compared as stale and `--clean-stale` would delete the
+    corpus.
+    """
+    root = str(paths.repo_root())
+
     def _run(args):
         try:
-            return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL).strip()
+            return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL,
+                                           cwd=root).strip()
         except Exception:  # noqa: BLE001
             return None
     subs = {}

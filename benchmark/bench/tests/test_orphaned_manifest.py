@@ -190,3 +190,25 @@ def test_mlx_serve_sha_also_counts():
     a, b = _cfg_sha("same"), _cfg_sha("same")
     b["git"]["submodules"]["src/mlx-serve"] = "bbb"
     assert not provenance.is_compatible(a, b)
+
+
+def test_current_manifest_lite_INCLUDES_the_git_block(monkeypatch):
+    """Otherwise the sha comparison is right by accident and destructive in practice.
+
+    Caught live 2026-08-14: after adding `code` to the fingerprint, `is_compatible(existing, current)`
+    returned False as desired -- but only because `current` had NO git block at all, so its shas read
+    None. That makes EVERY existing row look stale FOREVER, and `--clean-stale` would delete the whole
+    corpus on every run. The right answer for the wrong reason is still a bug.
+    """
+    from bench import provenance as P
+    monkeypatch.setattr(P.model_params, "params_for", lambda m, profile=None: {"temperature": 0.4})
+    monkeypatch.setattr(P, "registry_kv", lambda m, r=None: {"kv_bits": 0, "max_kv_cache_size": 131072})
+    monkeypatch.setattr(P, "_git_shas", lambda: {"stack_head": "abc",
+                                                "submodules": {"src/mlx-vlm": "0c1c8b17",
+                                                               "src/mlx-serve": "83412c8e"}})
+    lite = P.current_manifest_lite("M", "deployed")
+    assert (lite.get("git") or {}).get("submodules", {}).get("src/mlx-vlm") == "0c1c8b17", (
+        "current_manifest_lite has no git block — every row would compare as stale forever")
+    # ...and a row stamped with the SAME sha must still be resumable.
+    existing = dict(lite)
+    assert P.is_compatible(existing, lite)
