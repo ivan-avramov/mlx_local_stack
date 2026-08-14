@@ -1,0 +1,37 @@
+[
+ {
+  "name": "ARCHIVE the results tree before any --clean-stale",
+  "why": "Jobs below pass --clean-stale, which DELETES rows whose config differs -- and the livecodebench (n=15) and math500 (n=30) rows for both winners come from the RETIRED M2 Max box. They are NOT re-measurable at any price, so losing them is unrecoverable. Results are gitignored, so git is no safety net. This runs FIRST, every time, and is cheap (~15MB).",
+  "cmd": "D=$HOME/mlx_bench_snapshots/pre-queue-$(date +%Y-%m-%d-%H%M) && mkdir -p \"$D\" && cp -a benchmark/results/. \"$D\"/ && du -sh \"$D\" && ls \"$D\" | wc -l"
+ },
+ {
+  "name": "gemma-4-31B-it-qat-6bit evalplus n=100 deployed",
+  "why": "Fills the CODING use case for a third candidate at usable n. Its existing rows are n=10 (+/-40pp) from the retired M2 box at the `production` profile, so they cannot support a use-case pick. Runs at its OWN registry budget (16384) per operator decision D1 -- characterise each candidate at what it CAN do; the scoreboard shows the budget so acc_strict is never read across budgets.",
+  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models gemma-4-31B-it-qat-6bit --benches humanevalplus,mbppplus --limit humanevalplus=100,mbppplus=100 --sampling-profile deployed --order model --clean-stale --probe-timeout 3600"
+ },
+ {
+  "name": "gemma-4-26B-A4B-it-OptiQ-4bit evalplus n=100 deployed",
+  "why": "Fourth candidate on the coding axis. Existing rows are n=3. MoE/4-bit, so it also gives the suite a second architecture class at usable n.",
+  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models gemma-4-26B-A4B-it-OptiQ-4bit --benches humanevalplus,mbppplus --limit humanevalplus=100,mbppplus=100 --sampling-profile deployed --order model --clean-stale --probe-timeout 3600"
+ },
+ {
+  "name": "ifeval n=200 gemma-4-31B-it-qat-6bit",
+  "why": "The DAILY DRIVER use case has data for only two models. n=200 gives +/-8.9pp, enough to separate a candidate from the two winners' 89.9%.",
+  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models gemma-4-31B-it-qat-6bit --benches ifeval --limit ifeval=200 --sampling-profile deployed --order model --clean-stale --probe-timeout 3600"
+ },
+ {
+  "name": "livecodebench n=100 all four servable models",
+  "why": "The only coding axis with per-difficulty breakdown. Every existing LCB row is n=15 (+/-32pp) from the retired box at the `official` profile, so the recorded three-way tie at 80% rests on nothing usable. n=100 gives +/-12.5pp. Roundrobin so a stopped prefix stays balanced across models.",
+  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models Ornith-1.0-35B-mlx-uniform-4bit,Qwen3.6-27B-Opus-Distill-OptiQ-4bit,gemma-4-31B-it-qat-6bit,gemma-4-26B-A4B-it-OptiQ-4bit --benches livecodebench --limit livecodebench=100 --sampling-profile deployed --order roundrobin --clean-stale --probe-timeout 5400"
+ },
+ {
+  "name": "math500 n=100 both winners",
+  "why": "The REASONING use case is currently UNRESOLVED: at n=30 acc ties (83.3 vs 81.5) while acc_strict splits 60.0 vs 81.5 because Ornith-1.0-35B-mlx-uniform-4bit hits the budget on 9/30. +/-23pp cannot settle a 21pp split; n=100 gives +/-12.5pp.",
+  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models Ornith-1.0-35B-mlx-uniform-4bit,Qwen3.6-27B-Opus-Distill-OptiQ-4bit --benches math500 --limit math500=100 --sampling-profile deployed --order roundrobin --clean-stale --probe-timeout 5400"
+ },
+ {
+  "name": "grade everything generated so far",
+  "why": "Mechanical, no worker time. Writes per-pair .score.json files so the scoreboard shows acc/acc_strict for every row above. Runs last so it covers the whole batch.",
+  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py grade --models Ornith-1.0-35B-mlx-uniform-4bit,Qwen3.6-27B-Opus-Distill-OptiQ-4bit,gemma-4-31B-it-qat-6bit,gemma-4-26B-A4B-it-OptiQ-4bit --benches humanevalplus,mbppplus,livecodebench,ifeval,math500,aime"
+ }
+]

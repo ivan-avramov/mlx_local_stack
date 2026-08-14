@@ -14,31 +14,30 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-### O15. Is `kv_prealloc_tokens` ACTUALLY committing the cache it is supposed to reserve?
-Falls out of the O14 OFAT (below), and it matters because the whole point of prealloc is to avoid the
-128K→256K realloc double-buffer that MEASURABLY OOMed.
+### O15. Does prealloc actually reserve RAM? — MY EVIDENCE WAS INVALID; the question needs a DEPTH test
+⚠️ **I raised this on a measurement that cannot support it, and the operator caught it.** I compared
+`mx.get_peak_memory` across prealloc arms (25.35 / 25.50 / 28.18 GB) and inferred the reservation was
+"lazy or unwired". **But the probe item generated only ~2,868 tokens, so the KV cache never grew past
+~3K of a 131072/262144 capacity.** A virtual allocation that is never touched costs no resident pages,
+so those peaks measured weights-plus-a-tiny-cache in all three arms. The ~2.8 GB delta is not evidence
+of anything about the reservation.
 
-**Measured 2026-08-14**, `mx.get_peak_memory` on the same item, router restarted per arm:
+**Operator datum that outranks my inference: an actual OOM was hit in testing.** So the double-buffer
+growth spike is real and the protection matters in practice.
 
-| cap / prealloc | peak memory |
-|---|---|
-| 131072 / 131072 | 25.35 GB |
-| 262144 / 131072 | 25.50 GB |
-| **262144 / 262144** | **28.18 GB** |
+**The test that would actually answer it** — and the only one that should be cited on this — is a
+LONG-CONTEXT run that grows the cache to the full cap:
+- drive a prompt/generation to >128K so the 128K→256K growth boundary is crossed;
+- sample `mx.get_peak_memory` AND resident memory as it grows, prealloc ON vs OFF;
+- expect, if prealloc works: a large step at LOAD (or first touch) and NO spike at the boundary; if it
+  does not: a small load footprint and a ~1.5× spike at the boundary, i.e. the OOM path.
+**Recommendation: do NOT change prealloc, and do not cite peak-memory numbers from short-generation
+probes for anything memory-related.** The 46GB gate is defined on the prefill spike for exactly this
+reason — a short probe cannot see it.
 
-Doubling the prealloc moved peak by **~2.8 GB**, not the ~16 GB that materialising twice the fp16 KV
-up front implies. So for a `kv_bits: 0` model the reservation looks **lazy or unwired**. Supporting
-hint: `KV_PREALLOC_TOKENS`'s other consumer is `apc.py`'s `_kv_prealloc_floor`, and APC is INERT
-(M2/M3) — so one of its two consumers is dead code.
-
-**Why this is not academic:** if the buffer is not actually committed at load, prealloc may not be
-preventing the OOM it was introduced for, and the protection the 256K configs depend on would be
-illusory. It could equally be that MLX reserves lazily but still avoids the double-buffer on growth —
-in which case everything is fine and this closes.
-**Test:** a single long-context run to the full cap, watching `mx.get_peak_memory` as the cache grows
-past 128K, prealloc ON vs OFF. That is the only thing that distinguishes "lazy but safe" from "not
-protecting us".
-**Recommendation: measure before touching anything.** Do NOT change prealloc meanwhile.
+**Standing lesson: a memory measurement is only valid at the depth it claims.** Every arm of my OFAT
+was ~3K tokens deep, so it was a fair test of "is the shipped config slow on a short item" (which is
+what the retracted claim was about, and it answered it) and NOT a test of anything at capacity.
 
 ### ~~O14~~ → CLOSED-BY-MEASUREMENT. The throughput concern DID NOT REPRODUCE; the rule stands
 I reported a **>47× slowdown** at `262144/262144` (a matched item not completing in 19.5 min vs 24.8 s
