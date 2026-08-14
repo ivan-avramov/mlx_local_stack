@@ -128,3 +128,33 @@ def test_malformed_entry_is_recorded_and_skipped(tmp_path):
     assert entries[0]["state"] == "failed"
     assert "cmd" in (entries[0].get("note") or "")
     assert ran == ["ok"]
+
+
+def test_each_job_gets_its_own_output_log(tmp_path, monkeypatch):
+    """A job's stdout/stderr must be CAPTURED, not discarded.
+
+    Found immediately on first live use: the runner logged only START/DONE and an exit code, so a
+    `generate` job's driver output -- per-chunk progress, ETAs, provenance CLEANED/RESTAMPED lines,
+    and the reason for any failure -- went to /dev/null. An exit code alone cannot answer "why did
+    that fail", and on a single-worker campaign re-running a job to see its output costs hours.
+    """
+    q = tmp_path / "queue.json"
+    q.write_text(json.dumps([{"name": "job one", "cmd": "echo hello; echo oops 1>&2"}]))
+    workqueue.run(q, logdir=tmp_path)
+
+    logs = sorted(tmp_path.glob("*.joblog"))
+    assert logs, "no per-job log written"
+    text = logs[0].read_text()
+    assert "hello" in text and "oops" in text, "stdout and stderr must both be captured"
+    entry = json.loads(q.read_text())[0]
+    assert entry["log"] == logs[0].name, "the queue entry must point at its own log"
+
+
+def test_job_log_name_is_filesystem_safe(tmp_path):
+    """Job names are human-written and contain spaces, slashes and commas."""
+    q = tmp_path / "queue.json"
+    q.write_text(json.dumps([{"name": "a/b c,d=e n=100", "cmd": "true"}]))
+    workqueue.run(q, logdir=tmp_path)
+    name = json.loads(q.read_text())[0]["log"]
+    assert "/" not in name and " " not in name
+    assert (tmp_path / name).exists()

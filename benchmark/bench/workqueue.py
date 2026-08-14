@@ -31,6 +31,7 @@ Usage on the worker (detached, survives the ssh session):
 """
 import argparse
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -55,8 +56,25 @@ def _save(path: Path, entries: list) -> None:
     Path(path).write_text(json.dumps(entries, indent=1))
 
 
-def _shell(cmd: str) -> int:
-    return subprocess.run(cmd, shell=True).returncode
+def _safe_name(name: str) -> str:
+    """A filesystem-safe log basename. Job names are human-written and carry spaces, slashes,
+    commas and `=` (e.g. "livecodebench n=100 all four servable models")."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", (name or "job").strip())[:70].strip("_") or "job"
+
+
+def _shell(cmd: str, logfile=None) -> int:
+    """Run a job, capturing stdout AND stderr to `logfile`.
+
+    Capturing is not optional. Found on first live use: with output discarded, a `generate` job's
+    driver output — per-chunk progress and ETAs, provenance CLEANED/RESTAMPED lines, and the reason
+    for any failure — went nowhere, leaving only an exit code. An exit code cannot answer "why did
+    that fail", and on a single-worker campaign re-running a job to see its output costs hours.
+    """
+    if logfile is None:
+        return subprocess.run(cmd, shell=True).returncode
+    with open(logfile, "a", buffering=1) as fh:
+        fh.write(f"===== {_now()} $ {cmd}\n")
+        return subprocess.run(cmd, shell=True, stdout=fh, stderr=subprocess.STDOUT).returncode
 
 
 def _next_index(entries: list):
@@ -67,9 +85,12 @@ def _next_index(entries: list):
     return None
 
 
-def run(queue_path, *, runner=_shell, max_jobs: int = DEFAULT_MAX_JOBS, log=print) -> int:
+def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print, logdir=None) -> int:
     """Execute queued entries in order until none remain. Returns the number of jobs run."""
     queue_path = Path(queue_path)
+    logdir = Path(logdir) if logdir else None
+    if logdir:
+        logdir.mkdir(parents=True, exist_ok=True)
     ran = 0
     while ran < max_jobs:
         entries = _load(queue_path)             # re-read: work can be appended mid-run
@@ -83,11 +104,16 @@ def run(queue_path, *, runner=_shell, max_jobs: int = DEFAULT_MAX_JOBS, log=prin
             _save(queue_path, entries)
             log(f"[workqueue] SKIP {entry.get('name')!r}: no 'cmd'")
             continue                            # malformed != crash the queue
+        jobfile = None
+        if logdir:
+            jobfile = logdir / f"{idx:02d}-{_safe_name(entry.get('name'))}.joblog"
+            entry["log"] = jobfile.name
         entry.update(state="running", started_at=_now())
         _save(queue_path, entries)
         log(f"[workqueue] START {entry.get('name')!r}: {cmd}")
         try:
-            rc = runner(cmd)
+            rc = (runner(cmd) if runner is not None
+                  else _shell(cmd, logfile=jobfile))
         except Exception as e:                  # noqa: BLE001 — a runner crash is a job failure
             rc, note = 1, f"{type(e).__name__}: {str(e)[:120]}"
         else:
@@ -97,6 +123,8 @@ def run(queue_path, *, runner=_shell, max_jobs: int = DEFAULT_MAX_JOBS, log=prin
         if idx < len(entries):
             entries[idx].update(state="done" if rc == 0 else "failed", exit_code=rc,
                                 finished_at=_now())
+            if jobfile is not None:
+                entries[idx]["log"] = jobfile.name
             if note:
                 entries[idx]["note"] = note
             _save(queue_path, entries)
@@ -112,6 +140,8 @@ def main(argv=None) -> int:
     ap.add_argument("queue", help="path to the queue JSON file")
     ap.add_argument("--log", default=None, help="append progress here (default: stdout)")
     ap.add_argument("--max-jobs", type=int, default=DEFAULT_MAX_JOBS)
+    ap.add_argument("--logdir", default=None,
+                    help="directory for per-job output logs (default: alongside --log)")
     args = ap.parse_args(argv)
 
     if args.log:
@@ -121,7 +151,8 @@ def main(argv=None) -> int:
             fh.write(f"{_now()} {msg}\n")
     else:
         log = print
-    run(args.queue, max_jobs=args.max_jobs, log=log)
+    run(args.queue, max_jobs=args.max_jobs, log=log,
+        logdir=args.logdir or (Path(args.log).parent if args.log else None))
     return 0
 
 
