@@ -631,9 +631,35 @@ def grade_all(models, benches):
     scores = []
     for model in models:
         for b in benches:
-            scores.append(grade(b, model))
+            s = grade(b, model)
+            scores.append(s)
+            _write_pair_score(model, b, s)
     root = generate.results_root()          # NOT a second hardcoded literal — one seam (see
     root.mkdir(parents=True, exist_ok=True)  # generate.results_root)
     (root / "scores.json").write_text(
         json.dumps([{k: v for k, v in s.items() if k != "items"} for s in scores], indent=2))
     return scores
+
+
+def _write_pair_score(model, bench, score):
+    """Persist a graded result BESIDE ITS ROWS, one file per (model, bench).
+
+    `scores.json` holds only the pairs of the LAST `grade_all` call, so grading one model erases the
+    record for every other. Measured 2026-08-14: a 68-cell re-grade across 17 model dirs was reduced
+    to a single entry by the next single-arm grade. Those cells were not wrong, they were erased —
+    and evalplus cells cost docker time to produce.
+
+    One file per pair cannot be clobbered by an unrelated grade, and it is what lets
+    `m1/scoreboard.py` show `acc_strict` — THE RANKING KEY — without having to run the graders
+    itself (docker for evalplus, `lcb_runner` for LCB), which is why the scoreboard reads rows.
+
+    `items` is dropped: it is per-draw, can be thousands of entries, and is already recoverable from
+    the jsonl.
+    """
+    try:
+        p = generate.result_path(model, bench).with_suffix(".score.json")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({k: v for k, v in score.items() if k != "items"}, indent=2))
+    except Exception as e:  # noqa: BLE001 — never fail a grade over its own bookkeeping
+        print(f"  [score] could not persist {model}/{bench}: {type(e).__name__}: {str(e)[:60]}",
+              flush=True)

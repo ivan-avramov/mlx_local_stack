@@ -54,11 +54,23 @@ def collect() -> dict:
         degen = [r for r in live if traces.is_degenerate(r)]
         tw = sum(r.get("wall_s") or 0 for r in live) or 1
         budgets = {r.get("thinking_budget") for r in live if r.get("thinking_budget")}
+        # acc / acc_strict come from the per-pair score file that `grade_all` writes beside the rows.
+        # NOT from scores.json, which holds only the last grade call and so silently drops models.
+        # An UNGRADED pair reads None -> "ungraded" in the table, never a blank or a zero: the whole
+        # point of this scoreboard is that an unmeasured combination cannot be mistaken for a pass.
+        sp = f.with_suffix(".score.json")
+        sc = {}
+        if sp.exists():
+            try:
+                sc = json.loads(sp.read_text())
+            except (json.JSONDecodeError, OSError):
+                sc = {}
         rec = {"n": len(live), "errors": len(rows) - len(live),
                "conv_pct": 100 * len(conv) / len(live),
                "degen": len(degen),
                "degen_wall_pct": 100 * sum(r.get("wall_s") or 0 for r in degen) / tw,
-               "budget": sorted(budgets)[0] if len(budgets) == 1 else None}
+               "budget": sorted(budgets)[0] if len(budgets) == 1 else None,
+               "acc": sc.get("acc"), "acc_strict": sc.get("acc_strict")}
         m = out.setdefault(f.parent.name, {})
         prev = m.get(bench)
         if prev is None or rec["n"] > prev["n"]:   # keep the largest n across variants
@@ -89,19 +101,22 @@ def main(argv=None) -> int:
     ap.add_argument("--md", action="store_true", help="emit markdown")
     args = ap.parse_args(argv)
     data = collect()
-    hdr = ("model", "bench", "n", "conv%", "degen", "degenWall%", "budget")
+    hdr = ("model", "bench", "n", "acc", "strict", "conv%", "degen", "degenWall%", "budget")
     if args.md:
         print("| " + " | ".join(hdr) + " |")
         print("|" + "---|" * len(hdr))
     else:
-        print("%-40s %-15s %5s %6s %6s %11s %8s" % hdr)
+        print("%-40s %-15s %5s %7s %7s %6s %6s %11s %8s" % hdr)
     for model in sorted(data):
         for bench in sorted(data[model]):
             r = data[model][bench]
-            v = (model, bench, r["n"], f"{r['conv_pct']:.0f}", r["degen"] or "-",
+            # "ungraded" rather than a blank: the ranking key being absent is information.
+            acc_s = "ungraded" if r["acc"] is None else f"{r['acc'] * 100:.1f}%"
+            st_s = "ungraded" if r["acc_strict"] is None else f"{r['acc_strict'] * 100:.1f}%"
+            v = (model, bench, r["n"], acc_s, st_s, f"{r['conv_pct']:.0f}", r["degen"] or "-",
                  f"{r['degen_wall_pct']:.0f}" if r["degen"] else "-", r["budget"] or "-")
             print(("| " + " | ".join(str(x) for x in v) + " |") if args.md
-                  else "%-40s %-15s %5s %6s %6s %11s %8s" % v)
+                  else "%-40s %-15s %5s %7s %7s %6s %6s %11s %8s" % v)
     print("\n=== ROLE COVERAGE (what is measured, what is missing) ===")
     for model in sorted(data):
         print(f"\n{model}")
