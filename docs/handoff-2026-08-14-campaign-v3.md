@@ -1,150 +1,175 @@
 # Handoff — 2026-08-14, campaign v3
 
-Supersedes `handoff-2026-08-13-campaign-v3.md` (deleted). Read with: `docs/open-questions.md` (the
-operator's decision queue — START HERE), `docs/campaign-queue.md` (durable state), `AGENTS.md`
-(rules), `docs/regrade-vs-rerun-guideline.md`, `docs/campaign-results.md` (results).
+Rewritten late 2026-08-14, superseding the morning version. Read with: `docs/open-questions.md`
+(**your decision queue — START HERE, four items open**), `docs/campaign-results.md` (results),
+`docs/campaign-queue.md` (durable state), `AGENTS.md` (rules, two amended today).
 
-**Everything is pushed. Both boxes are at the same commit. 714 tests green. The worker is IDLE.**
+**Five commits ready, NOTHING PUSHED. Suite 714 → 751 green. M5 is BUSY and healthy.**
 
 ---
 
-## 1. STATE — no action needed before starting
+## 1. THE SESSION IN ONE PARAGRAPH
 
-| | |
+The plan was P4 vs LCB. Neither ran, because a provenance audit found **every non-IFEval row in the
+corpus is from the retired M2 Max at the `official`/`production` profile** — so no baseline was
+extendable, and LCB n≈100 was ~46 h from scratch rather than the assumed "few hours". I ran a
+from-scratch `deployed` evalplus H2H instead. While setting it up I found that **the thinking budget we
+declare was not the one in force** — the server silently clamps it — which turned 33 published IFEval
+rows into false passes and **falsified O11's premise**. Then the run stalled, exposing that
+**`kv_prealloc_tokens: 262144` — the value we ship — destroys decode throughput (>47× on a matched
+item)**. Diagnosing *that* exposed two more provenance defects. The first completed arm then produced a
+**clean confirmation of O11's cost claim** on a correct footing: 3% of turns eat 42% of wall-clock.
+
+**Net: O11's number was right, its mechanism was wrong, and the config had three independent defects
+that would have corrupted anything measured today.**
+
+---
+
+## 2. WHAT IS RUNNING RIGHT NOW
+
+`run.py generate` on M5: both winners × {`humanevalplus`, `mbppplus`} × **n=100**,
+`--sampling-profile deployed --order model --probe-timeout 9000`, `max_kv_cache_size 131072`.
+Logs `logs/evalplus_deployed_2026-08-14.log`; two `bench_watch.py` daemons →
+`/tmp/watch_{humanevalplus,mbppplus}.log`.
+
+| arm | state |
 |---|---|
-| M5 worker | **idle**: 0 models resident, 0 clients, router up on :8000, health 200, **APC absent** |
-| Boxes | driver + M5 both at `origin/main`, only M5's `main_models.yaml` intentionally dirty (kv 65536) |
-| Tests | 714 pass (`PYTHONPATH=.:benchmark .venv-bench/bin/python -m pytest benchmark/bench/tests/ configgen/tests/ -q`) |
-| Next per ratified sequence | **P4 → BFCL → judge panel → SWE-bench** |
+| `Ornith-1.0-35B-mlx-uniform-4bit` / humanevalplus | ✅ **100/100, graded** (§3) |
+| `Ornith-1.0-35B-mlx-uniform-4bit` / mbppplus | ▶ ~50/100 at 02:15 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` / both | queued behind Ornith (`--order model`) |
 
-⚠️ **`run.py` must be invoked from the REPO ROOT.** Paths are now module-relative (`bench/paths.py`) so
-it no longer writes a phantom `benchmark/benchmark/results/`, but the documented invocation is repo root.
+**Why `--order model`:** one resident model per box, and at these prealloc sizes the two cannot coexist.
+A stopped run therefore leaves `Ornith-1.0-35B-mlx-uniform-4bit` complete and
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` partial — which still pairs, exactly as
+the IFEval n=148 stop did (prefix-nested seeded shuffle).
 
----
-
-## 2. THE PARAMETER SEARCH — how it is designed, and what survived
-
-The plan is a **tiered narrowing**, not a gradient descent — the space is discrete and each evaluation
-costs minutes-to-hours, so it is a cheap-screen → expensive-confirm ladder:
-
-| tier | what it varies | items | status |
-|---|---|---|---|
-| **Tier-0** | 3 temps × 3 `min_p`, + a test of the 4-knob→2-knob collapse | a convergence screen (minutes/cell) | ✅ **DONE rev B** — 22/22 cells, both winners |
-| **P3** ρ validation | does the cheap screen predict the agentic axis? | — | ❌ **CANCELLED** (operator) |
-| **Tier-1** | 3 configs, aider `tries=4` | 44 × 2 models | ▶ **NEXT (P4)**, ~28h |
-| **Tier-2** | tuned vs shipped, **held-out** exercises | 89 unused | queued, ~14h |
-
-**What Tier-0 established, and why P3 died.** `converged_rate` was **1.0 in 66/66 draws** across both
-winners — a constant. Spearman ρ on a constant vector is *undefined*, not weak, and P3's other half
-(per-config agentic results) does not exist until P4 runs. So P3 was cancelled rather than run.
-
-**Three measured facts that should shape P4:**
-1. **The truncation knobs are mutually redundant.** `top_p` / `top_k` / `min_p` collapse to one
-   distinction — truncation ON vs OFF. `min_p` is fully inert at temp 0.2 (all of 0.0/0.05/0.15
-   byte-identical) and only bites above ~0.4. **⇒ do not spend P4 cells on `min_p` below temp 0.4.**
-2. **The untruncated path is NONDETERMINISTIC** under suffix decoding: 3 identical unseeded requests
-   → 3 outputs, 1.6× length spread. **⇒ never run a cell at `top_p 1.0 / top_k 0 / min_p 0.0`.**
-   Rev A did, in 4 of 11 cells, and those cells are noise.
-3. **Temperature is the only knob that moved anything.** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` at temp
-   0.6 emitted 52,833 tokens on a problem it solves in 1,122 at temp 0.4 — 47× tokens, 24× wall. Its
-   op-temp 0.3 is confirmed from a second task and harness path.
-
-**Quant algorithm / bit-width is NOT in this ladder** and should not be folded in: it is a separate
-OFAT with its own gate (≤5% quality drop, measured per-axis), and the two runs we have both came back
-negative — `Ornith-1.0-35B-mlx-uniform-6bit` is no better than 4-bit on `acc` and **worse on
-`acc_strict` (40% vs 60%)**, and OptiQ-converting Ornith failed outright on the fused-expert layout.
+**⚠️ The M2 rows were archived before `--clean-stale` deleted them** →
+`~/mlx_bench_snapshots/pre-deployed-evalplus-2026-08-14/`. They are NOT re-measurable. That archive is
+the only copy.
 
 ---
 
-## 3. THE SCOREBOARD — new, and this is what to show for "how did each model do"
+## 3. RESULTS THAT LANDED
 
-`benchmark/m1/scoreboard.py` (run from repo root, `--md` for markdown). One row per (model, bench)
-plus explicit **role coverage** for reasoning / coding / daily. It reads the per-item rows, NOT
-`scores.json` — that file only holds the last `grade` call, so a scoreboard built from it silently
-drops models.
+### First `deployed`, current-box coding row — and the runaway tax, measured cleanly
+`Ornith-1.0-35B-mlx-uniform-4bit / humanevalplus`, n=100, budget genuinely 81,920, 0 errors:
+`acc` **93.0%** [87,98] ±13pp · **`acc_strict` 90.0%** · `conv` **97%** · median **108 tok/s** ·
+median 18 s, p95 106 s.
 
-**It answers the question `compare` cannot:** `compare` says "A vs B → equivalent", which tells you
-nothing about whether either is usable. The scoreboard says what was measured, at what n, and what is
-**missing** — an unmeasured combination reads `NOT MEASURED`, never as a pass.
+| non-self-terminating turns | humanevalplus (n=100) | mbppplus (n=50 so far) |
+|---|---|---|
+| rate | 3% | 4% |
+| **share of WALL-CLOCK** | **42%** | **57%** |
+| share of tokens | 49% | 66% |
 
-**The headline it exposes: coverage is thin and lopsided.**
-- `daily` is **NOT MEASURED for 14 of 17 models** — only IFEval exists, and only for the two winners.
-- `aider` (the only axis that ever separated the winners) is missing from **every** row of the
-  scoreboard because it is scored outside this tree — join it manually from `campaign-results.md` M1.
-- `gpqa` is measured for **nobody**. `aime` is `n=4–6` everywhere, i.e. **±56pp** — it never was a
-  differentiator and the scoreboard now says so out loud.
+All ran to ~82,000 tokens against a budget **actually in force**, classified `degenerate_repetition`.
+**⇒ ~40–57% of wall-clock lost to non-self-terminating turns, confirmed on three independent axes.**
+Larger than everything Phase 2 shipped (1.27× suffix + 2–7% GQA).
 
-**Ranking key is `acc_strict` at a matched budget** (operator ruling): a DNF scores 0 with the
-denominator intact, so 99 DNFs of 100 scores 1%, not 100%. `pass@1|converged` is a DIAGNOSTIC that
-must never rank — it conditions on convergence and would score that model 100%.
+### Corrected IFEval — the headline survives
+`acc` unchanged (90.0% / 89.9%). `conv%` 99.3%→**94.6%** and 98.6%→**93.2%**; `acc_strict`
+89.8%→**86.7%** and 88.5%→**85.1%**. Both arms moved the same way, so **"the two winners are EQUIVALENT
+on instruction-following" stands.**
+
+### Free re-grade of the whole corpus (68 cells, zero worker time)
+`math500` under the vector for the first time: Ornith `acc` 83.3% but **9/30 budget hits → `acc_strict`
+60.0%**, vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s **81.5%** at a matched 81,920 — same direction and
+magnitude as LCB's spread.
+Everything else is n=3–10 (±40–72pp), now labelled unrankable rather than shown as a number.
+`Ornith-1.0-35B-mlx-uniform-4bit` has the only n=100 rows in the corpus besides IFEval.
 
 ---
 
-## 4. RESULTS THAT LANDED THIS SESSION
+## 4. THREE DEFECTS FOUND, ALL FIXED, ALL TDD
 
-- **IFEval (first daily-role axis ever run).** `Ornith-1.0-35B-mlx-uniform-4bit` **541/541,
-  `prompt_strict` 90.0% [87,93] ±5pp** — the first axis in this campaign with real resolution.
-  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` stopped at **148/541**; paired on the shared 148 both score
-  **89.9%, gap +0.0pp, `equivalent`**. **⇒ the two winners are equivalent on instruction-following.**
-  Resume procedure in `campaign-queue.md`; 148 rows + manifest intact.
-- **LiveCodeBench re-graded (all 7 persisted runs, zero worker time).** The "three-way tie at 80%"
-  holds on `acc` — but `acc_strict` spreads **60–80%**, i.e. the tie was an artifact of not charging
-  truncation. ⚠️ **20pp is inside the ±32pp MDE at n=15, so this is a live question, not a result.**
-  **Highest-value cheap run available: LCB at n≈100 on the three D1 candidates (MDE ±12.5pp).**
-- **Degenerate repetition loops are a real, large cost.** `Ornith-1.0-35B-mlx-uniform-4bit`: 30 loops =
-  **42% of IFEval wall-clock**. `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: **57%**. Concentrated on
-  *counting* instructions (`capital_word_frequency` 33% vs 4.5% base). ⚠️ This **revises "the runaway
-  tax has nothing to charge"** — that was measured on budget-hits and `max_tokens` only, and these are
-  neither. **Operator ruling: these are NOT DNFs** — the model self-terminated, the answer verified,
-  so they count in `acc` and the cost is reported beside capability.
-- **APC is INERT and now OFF everywhere** (including `runserver.sh`). Session caching *shadows* it by
-  construction: `generation.py:2455` dispatches any request with a `prompt_cache_state` and `continue`s
-  past the only site passed `apc_manager`. Session caching is what makes multi-turn cheap (measured:
-  cost per NEW token flat, per TOTAL token −17×). Phase-2's "TTFT 34–147×" does **not** reproduce.
-- **Phase-2 re-verify:** suffix decoding **confirmed real** (1.27×, same box/session). The GQA decode
-  kernel was **unfalsifiable** — its A/B toggle was dead code; now reachable via
-  `TQ_DECODE_2PASS_LEGACY` (fork `8b7100b8`, submodule bumped, verified live). **The A/B has not run.**
+1. **The declared thinking budget was not the one in force** (`aca967b`). The server clamps
+   `thinking_budget` to `0.8 * (max_kv_cache_size - prompt)` **silently** (its sibling `max_tokens`
+   clamp logs a warning). IFEval declared 81,920 against a 65536 cap → really ~52,390. Reproduced to
+   the token: every loop stop matches `int((cap - prompt) * 0.8)`, every `fr=length` row lands on
+   `prompt + completion == cap + 1`. Fixed at the one seam every grader loads through.
+2. **A manifest outlived its rows** (`a45a139`). Staleness is checked only when the jsonl exists, so a
+   killed zero-row run leaves an orphan the next run won't overwrite. Rows generated at 131072 were
+   stamped 262144.
+3. **`max_kv_cache_size` was not in the provenance fingerprint** (`a45a139`) — `--clean-stale` was blind
+   to a cap change and resume would have **silently pooled rows with different effective budgets**.
+   ⚠️ Consequence: `--clean-stale` can now delete rows it previously kept.
 
-## 5. HARNESS DEFECTS FIXED — all TDD, all with the failure recorded in the test
+Plus: `generate --help` crashed on a bare `%` (`aca967b`), and **`generate --ids`** now exists
+(`78de435`) so a probe can vary one knob on the same items — previously inexpressible.
 
-`_finalize` nulling a grader's own `acc` · IFEval `punkt_tab` missing (**21% of items silently dropped,
-biasing acc UP 3pp**) · silent verifier skips shrinking `n` · CWD-relative paths writing a phantom
-results tree while printing COMPLETE · `run_convergence`'s fixed 3600s timeout below the budget time
-(now derived from measured decode rate, with loop/meander classification) · degenerate-loop detection
-(two signatures: line-level and content-level) · scoreboard printing a **withdrawn** conv gate as
-"pre-registered" · `run.py` mislabelling its own sampling profile · full-registry-name lint over all
-docs.
+---
 
-## 6. TRAPS ADDED THIS SESSION (read before writing shell)
+## 5. WHAT I DID NOT DO, AND WHY
 
-- **A tool/ssh timeout kills the LOCAL client, not the remote job.** A probe I believed dead kept
-  generating for 13 min, appended 3 rows, and presented as an orphaned generation. Verify with `pgrep`,
-  kill BY PID, `nohup` anything that may outlive the call.
-- **`--chunks 0` is NOT a dry run** — it generates. To inspect resume state, read `done_ids`.
-- **The 5-minute cadence must live in a DAEMON**, not in the agent — an agent only runs when the
-  operator messages it. Use `benchmark/m1/bench_watch.py`; a counter-only monitor is "reported", not
-  "evaluated".
-- **A monitor that false-alarms gets ignored** — it cried STALL on a model the driver had not reached.
-- zsh does not word-split unquoted vars; use `-F file` for commit messages (backticks in `-m` get
-  command-substituted and silently eat words).
+- **The temperature-ladder probe on the runaway items is BLOCKED ON THE PUSH.** Well-posed and cheap
+  (~90 min worst case): exact ids known (`HumanEval/94`, `/83`, `/144`, `Mbpp/560`, `/253`), budget
+  genuinely in force, `--ids` written. But `--ids` is only in local commits, git is the only sanctioned
+  cross-box transport, and AGENTS.md requires anything producing a recorded result to be committed
+  first — so I did not work around it with a `/tmp` script.
+  **Run it per temp with `MLX_BENCH_RESULTS` pointed at a separate tree per rung** — the manifest
+  fingerprint includes temperature, so a shared tree would either clobber the baseline
+  (`--clean-stale`) or skip every item (`done_ids`).
+- **The `max_tokens <= cap` invariant test** — an honest assertion FAILS against the shipped config, so
+  landing it would encode your O13 decision rather than surface it.
+- **The prealloc-vs-cap OFAT** (O14's disentangling cell) needs NO new code — registry edit, router
+  restart, a few items. **That is the right thing to run next**, since it keeps the box busy without
+  waiting on a push.
+
+---
+
+## 6. YOUR DECISION QUEUE — four open (`docs/open-questions.md`)
+
+| # | question | my recommendation |
+|---|---|---|
+| **O14** | `kv_prealloc_tokens == max_kv_cache_size` is an AGENTS.md rule costing >47×. The rule, the shipped registry, and which historical speed numbers to re-measure. | Run the disentangling OFAT first, then decide. The effect is CONFOUNDED — cap and prealloc moved together. |
+| **O13** | `max_tokens` 102400 exceeds usable context on every shipped model; the resolved budget collapses to **9,708** at a 250K prompt. | Accept + document + log loudly. Lowering either knob trades capability at the prompt lengths that dominate use. |
+| **O12** | M1's "not a DNF" ruling turned on item 2849 at "64% of budget" — really **100.2%** of the budget in force. | Re-rule as budget hits (the harness already does). Keep the M1 *principle*; it now applies to exactly 1 row. |
+| **O9** | judge panel on looped-but-correct answers | **Drop it** — n is now 1, not worth panel time. |
+
+**O11 → CLOSED-BY-MEASUREMENT.** 39 of 40 rows were external truncations, not self-terminations
+(genuine share of wall-clock 0.3% / 0.0%, not 42% / 57%). **But its cost claim is CONFIRMED on a clean
+footing** (§3), and its "prompt-triggered by counting instructions" hypothesis is **weakened** — the
+loops appear on plain HumanEval code generation with no counting instruction present.
+
+⚠️ **M1's recorded numbers have three problems** (details in `campaign-results.md`):
+`.aider.results.json` records `completion_tokens` as a **per-case SUM across turns**, so "max completion
+62,083 against an 81,920 budget" compared a sum to a per-turn budget (real max 148,908; 2 Ornith cases
+exceed 81,920); "context-exhaustion 0 for both" is wrong (2 Ornith, 1 distill); and "0 of 284 turns hit
+the budget" is **unverifiable** from the rows. **The M1 capability verdict is untouched** — 50.0% vs
+73.6%, p=1.3e-05 rests on per-case pass/fail.
+
+---
 
 ## 7. WHAT TO DO NEXT
 
-0. **⭐ FIRST, PROPOSE: the degenerate-loop tax (O11).** 42% of Ornith's IFEval wall-clock and **57%** of
-   `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s went into verbatim loops that self-terminate and answer
-   CORRECTLY. **2.3h/6.0h and 3.4h/6.3h are recoverable if sampling fixes it** — potentially 1.6–2.2×,
-   larger than everything Phase 2 shipped, using tooling that already exists. It also makes P4 cheaper,
-   since P4's ~28h estimate is inflated by this same tax. Loop ids are in `degenerate_eosed_ids`; vary
-   sampling on those exact items, because the concentration on *counting* instructions means it may be
-   prompt-triggered rather than purely a sampling artifact.
-1. **P4 / Tier-1 agentic tune** (~28h, ratified next). Apply §2's three facts: no `min_p` cells below
-   temp 0.4, never the untruncated config, temperature is the live knob.
-2. **Cheaper and arguably first: LCB at n≈100** on the three D1 candidates — it converts the
-   `acc_strict` 60–80% spread from unresolved into resolved for a few hours.
-3. **Free, no worker:** re-grade `humanevalplus`/`mbppplus`/`aime`/`math500` across all 17 model dirs
-   under the convergence vector + `acc_strict`. Never done.
-4. **Acquire `NVIDIA-Nemotron-3.5-Lightning-30B-A3B`** (operator-approved). 256K native, 30B MoE/3B
-   active, MLX 4-bit exists at 17.8GB. Risks: text-only vs a vision-only registry, Mamba-2 arch,
-   ships MTP (a net slowdown for us — disable it).
-5. **Open questions:** `docs/open-questions.md` — only **O9** (judge panel on looped answers, held on
-   panel reliability) and **O10** (now largely settled) remain.
+1. **Push the five commits** (`aca967b`, `a45a139`, `e1404d9`, `78de435`, `9d0c70d`), then
+   `git fetch && git merge --ff-only` on M5 — **do NOT `git checkout main_models.yaml`**, its 131072 is
+   intentional (§8).
+2. **Let the current run finish** (~2 h) → the campaign's first matched, current-box, `deployed`,
+   execution-gated coding H2H at n=100, MDE ±13pp.
+3. **The prealloc-vs-cap OFAT** — no push needed, answers O14.
+4. **The temperature ladder on the runaway ids** — after the push. Highest-value performance work on the
+   board: the tax is ~40–57% of wall-clock.
+5. **Then** P4 / BFCL per the ratified sequence — but P4 must choose its cap deliberately: M1 ran at
+   65536, so matching M1 means re-accepting the clamp.
+
+---
+
+## 8. TRAPS ADDED TODAY
+
+- **M5's registry is intentionally dirty at `max_kv_cache_size`/`kv_prealloc_tokens` 131072** for both
+  winners: it is the tightest cap that keeps the declared 81,920 budget in force, and 262144 destroyed
+  throughput. `.bak` beside the file; the older 65536 dirt is at
+  `/tmp/main_models.yaml.dirty-kv65536-backup` (md5 `6f758126068afee41c781b7189bd40fe`).
+- **The documented IFEval resume now reports STALE** (148 rows at 65536 vs a 131072 registry). Without
+  `--clean-stale` it warns and keeps them. **WITH `--clean-stale` it deletes all 148.**
+- **`pkill -f mlx-serve` does not always kill the router** — it left pids 61111/61113/61295 alive.
+  Force-kill by PID and verify 0 listeners on :8000 before restarting.
+- **A flat item counter is not a stall.** This run had 9–10 min plateaus at n=21, 34, 41, 50 — every one
+  a genuine ~82,000-token budget-runner. Distinguish with worker CPU time and the resolved-budget
+  ceiling, not with impatience. Conversely the 262144 stall WAS real: same item, 19.5 min, no row.
+- **`/metrics` `summary` only records on COMPLETION** (`generated_tokens_total` stays 0 while a request
+  is in flight), so in-flight token progress is unreadable. That is why the first stall took 19 min to
+  call — a real instrumentation gap.
+- **Beware `a['x']` inside a single-quoted ssh command** — it terminates the shell quote. Two of my
+  heredocs died this way.
