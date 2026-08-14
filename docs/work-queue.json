@@ -5,9 +5,9 @@
   "cmd": "D=$HOME/mlx_bench_snapshots/pre-queue-$(date +%Y-%m-%d-%H%M) && mkdir -p \"$D\" && cp -a benchmark/results/. \"$D\"/ && du -sh \"$D\" && ls \"$D\" | wc -l"
  },
  {
-  "name": "gemma-4-31B-it-qat-6bit evalplus n=100 deployed",
-  "why": "Fills the CODING use case for a third candidate at usable n. Its existing rows are n=10 (+/-40pp) from the retired M2 box at the `production` profile, so they cannot support a use-case pick. Runs at its OWN registry budget (16384) per operator decision D1 -- characterise each candidate at what it CAN do; the scoreboard shows the budget so acc_strict is never read across budgets.",
-  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models gemma-4-31B-it-qat-6bit --benches humanevalplus,mbppplus --limit humanevalplus=100,mbppplus=100 --sampling-profile deployed --order model --clean-stale --probe-timeout 3600"
+  "name": "RE-BASELINE the evalplus H2H on src/mlx-vlm 0c1c8b17",
+  "why": "MEASURED 2026-08-14: the upstream merge CHANGED GENERATION for our models. Same item, same prompt (161 tokens both), same sampling, deterministic 3/3 -- but completion went 2475 -> 3526 tokens (+42%) and wall 24.8s -> 34.3s. Content stayed semantically equivalent (n vs num naming), so capability is probably unaffected, but the token stream diverged, so pre- and post-bump rows are NOT poolable. The existing n=100 evalplus H2H is the leaderboard's only coding row at usable n, so it is re-run FIRST on the new sha; every other queued job then produces rows on the same code and the corpus is internally consistent from here. Cost ~6.5h. Archive runs first (job 0) so the 8b7100b8 rows are preserved as the pre-merge record.",
+  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models Ornith-1.0-35B-mlx-uniform-4bit,Qwen3.6-27B-Opus-Distill-OptiQ-4bit --benches humanevalplus,mbppplus --limit humanevalplus=100,mbppplus=100 --sampling-profile deployed --order model --clean-stale --probe-timeout 5400"
  },
  {
   "name": "SMOKE: runaway-tax temperature ladder (Ornith, 3 known runaway ids)",
@@ -18,6 +18,11 @@
   "name": "SMOKE: BFCL live, tiny",
   "why": "BFCL fills an EMPTY use case (tool calling) and is the only POWERED axis the suite owns (0.94 vs 0.749 at n=1000 is ~12 sigma). It has NEVER run live. Its known risk is that the shim posts a pre-formatted prompt to /v1/completions, BYPASSING the chat template that enable_thinking drives -- so a 5-item smoke says in minutes whether the axis is even valid, instead of after hours. Trailing || true so a broken axis does not stall the queue.",
   "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models Ornith-1.0-35B-mlx-uniform-4bit --benches bfcl --limit bfcl=5 --sampling-profile deployed --probe-timeout 900 || true"
+ },
+ {
+  "name": "gemma-4-31B-it-qat-6bit evalplus n=40  [was n=100: measured ETA 36h]",
+  "why": "Third model on the CODING use case. RE-SCOPED from n=100 to n=40 (MDE +/-20pp) because the n=100 attempt measured an ETA of 36h26m, not the ~7.5h I estimated: gemma runs ~14 tok/s AND has its own runaway problem -- HumanEval/50 ran 57.2 min to 32,769 tokens (fr=length, i.e. it hit its 32768 max_tokens), so one runaway costs ~57 min and 1 of the first 6 items was one. n=40 buys a real-but-weak row for ~14h; raise it later if the row proves decision-relevant.",
+  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models gemma-4-31B-it-qat-6bit --benches humanevalplus,mbppplus --limit humanevalplus=40,mbppplus=40 --sampling-profile deployed --order model --clean-stale --probe-timeout 3600"
  },
  {
   "name": "gemma-4-26B-A4B-it-OptiQ-4bit evalplus n=100 deployed",
