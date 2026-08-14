@@ -117,12 +117,25 @@ The clamp fires only when `max_tokens` exceeds `max_kv_cache_size - prompt`. Ver
   262144 (or gemma's 196608), where 102,400 fits with room to spare, so their budget WAS the declared
   81,920 and their published convergence numbers stand. Ornith's `budget_hit:9` on math500 and
   `budget_hit:5` on humanevalplus are GENUINE hits.
-- **UNVERIFIED, and it matters: M1 also ran at `max_kv_cache_size: 65536`.** If its turns were
-  clamped the same way, the recorded "0 of 284 turns hit the budget, max completion 62,083 against an
-  81,920 budget, 0.0% wasted wall-clock" was measured against a budget that was not in force — and
-  that is the claim AGENTS.md cites for "the runaway tax has nothing to charge." M1's rows live in the
-  aider result dirs, so checking it is separate (free) work. **Do not carry the 0/284 figure forward
-  until checked.**
+- **M1 — CHECKED 2026-08-14, and its recorded numbers have three problems.** Raw rows found and read
+  (`~/ws/aider/benchmark/tmp.benchmarks/*m1{f,g}*`, 221 cases with non-empty `tests_outcomes`).
+  1. **`completion_tokens` in `.aider.results.json` is a PER-CASE SUM ACROSS TURNS, not per-turn.** So
+     the recorded "max completion 62,083 / 59,974 against an 81,920 budget" compared a multi-turn sum
+     to a per-turn budget. Actual max per-case sum: **148,908** (Ornith), 60,528 (distill) — and **2
+     Ornith cases exceed 81,920 outright**. This error is independent of the clamp.
+  2. **"context-exhaustion 0 for both, a genuine tie" is WRONG.** `num_exhausted_context_windows > 0`
+     in **2 Ornith and 1 distill** cases. Small, but it is one of the four ranked numbers.
+  3. **"0 of 284 turns hit the budget" is UNVERIFIABLE from the persisted data**, not merely wrong —
+     per-turn tokens are not recorded. And M1's resolved per-turn ceiling was
+     `0.8 * (65536 - prompt)` = **~46,600 at the median prompt, ~27,100 at the largest** — never
+     81,920. With ~1.75 turns/case, a 148,908-token case implies ~74K per turn, comfortably over even
+     the most generous resolved ceiling.
+  **⇒ "the runaway tax has nothing to charge" must not be relied on.** ⚠️ Turn counts also do not
+  reconcile: AGENTS.md says 284 (213 Ornith / 71 distill); `len(tests_outcomes)` gives 193 / 185. The
+  distill gap is probably the `m1g` java re-run now being counted, and `tests_outcomes` counts test
+  runs rather than LLM turns — so this needs the per-turn source to settle, and is FLAGGED rather than
+  corrected. **What is NOT affected: the M1 capability verdict.** `final` 50.0% vs 73.6%,
+  p=1.3e-05 rests on pass/fail per case, which none of this touches.
 
 ### Latent in the SHIPPED config too
 

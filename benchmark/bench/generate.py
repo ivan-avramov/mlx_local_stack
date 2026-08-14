@@ -212,8 +212,41 @@ def provenance_precheck(models, benches, profile="production", clean_stale=False
     return actions
 
 
-def build_queue(models, benches, limits, seed, order="roundrobin", samples: int = 1):
+def _apply_id_filter(cache, ids):
+    """Restrict each bench's item list to named ids, preserving the bench's own order.
+
+    Preserving order (rather than the order ids were listed in) keeps a filtered run a SUBSEQUENCE
+    of the unfiltered one, so its rows are directly comparable to the same items from a full run and
+    `--order roundrobin`'s balanced-prefix property still holds.
+
+    An unknown id RAISES. A targeted probe that silently runs a subset — or nothing — is how worker
+    time gets spent on a result that then reads as "inconclusive"; `run_convergence` accepting
+    `--set` typos silently is recorded in AGENTS.md as exactly this defect.
+    """
+    if not ids:
+        return cache
+    out = dict(cache)
+    for b, wanted in ids.items():
+        if b not in out:
+            continue                       # a filter for another bench must not empty this one
+        want = list(dict.fromkeys(str(x) for x in wanted))
+        have = {str(it["id"]) for it in out[b]}
+        missing = [x for x in want if x not in have]
+        if missing:
+            raise ValueError(
+                f"--ids: {len(missing)} id(s) not present in bench {b!r} at this --limit/--seed: "
+                f"{missing[:10]}. Widen --limit (the id set is drawn from the seeded shuffle's "
+                f"prefix) or check the ids.")
+        keep = set(want)
+        out[b] = [it for it in out[b] if str(it["id"]) in keep]
+    return out
+
+
+def build_queue(models, benches, limits, seed, order="roundrobin", samples: int = 1, ids=None):
     """Build the work queue of (model, bench, item, sample) entries.
+
+    `ids` is an optional {bench: [id, ...]} filter — see `_apply_id_filter`. It exists so a probe can
+    vary ONE knob on the SAME items, which selection-by-count cannot express.
 
     order='roundrobin' (default): item-major — every model gets item i of each bench
     before any model gets item i+1, so any stopping prefix is a balanced comparison.
@@ -232,7 +265,8 @@ def build_queue(models, benches, limits, seed, order="roundrobin", samples: int 
             cache[b] = benchmarks.load(b, limits.get(b), seed)
         except Exception as e:  # noqa: BLE001 — gated/missing dataset or package
             print(f"  [skip] benchmark {b!r} unavailable: {type(e).__name__}: {str(e)[:80]}", flush=True)
-    counts = {b: len(v) for b, v in cache.items()}
+    cache = _apply_id_filter(cache, ids)
+    counts = {b: len(v) for b, v in cache.items()}   # FILTERED counts, so the progress total is honest
     done = {(m, b): done_keys(m, b) for m in models for b in cache}
     queue = []
     if order == "model":
@@ -265,7 +299,7 @@ def _fmt_eta(seconds: float) -> str:
 
 def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overrides=None,
         order="roundrobin", restart_fn=None, sampling_profile="production", probe_timeout=3600,
-        clean_stale=False, samples: int = 1, seed_base: int = 0):
+        clean_stale=False, samples: int = 1, seed_base: int = 0, ids=None):
     overrides = overrides or {}  # global param overrides on top of each model's config params
     # Per-probe HTTP timeout, bound via a closure so probe_with_recovery's (model, msg, params)
     # call signature is unchanged. The default 3600s is too short for a slow dense model whose
@@ -277,7 +311,8 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # into done_ids. clean_stale deletes mismatched files; default just warns.
     provenance_precheck(models, benches, profile=sampling_profile, clean_stale=clean_stale,
                         overrides=overrides)
-    queue, counts = build_queue(models, benches, limits, seed, order=order, samples=samples)
+    queue, counts = build_queue(models, benches, limits, seed, order=order, samples=samples,
+                               ids=ids)
     total = sum(counts.values()) * len(models) * samples
     if not queue:
         print(f"[generate] nothing to do — all {total} items already generated.", flush=True)

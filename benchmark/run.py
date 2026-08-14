@@ -49,6 +49,26 @@ def _parse_kv(s):
     return out
 
 
+def _parse_ids(s):
+    """`--ids ifeval=2849:279,humanevalplus=HumanEval/94` -> {bench: [id, ...]}.
+
+    Colon separates ids because `--limit` already owns comma as its pair separator and ids can
+    themselves contain commas. Returns None when empty, so the default path is untouched.
+    """
+    if not s or not s.strip():
+        return None
+    out = {}
+    for part in s.split(","):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        bench, raw = part.split("=", 1)
+        vals = [v.strip() for v in raw.split(":") if v.strip()]
+        if vals:
+            out.setdefault(bench.strip(), []).extend(vals)
+    return out or None
+
+
 def _resolve(args):
     if getattr(args, "tier", None):
         benches, limits = TIERS[args.tier]
@@ -109,7 +129,8 @@ def cmd_generate(args):
     generate.run(models, benches, limits, seed=args.seed, chunk_minutes=args.chunk_minutes,
                  chunks=chunks, overrides=overrides, order=args.order, restart_fn=restart_fn,
                  sampling_profile=args.sampling_profile, probe_timeout=args.probe_timeout,
-                 clean_stale=args.clean_stale, samples=args.samples, seed_base=args.seed_base)
+                 clean_stale=args.clean_stale, samples=args.samples, seed_base=args.seed_base,
+                 ids=_parse_ids(getattr(args, "ids", None)))
 
 
 def cmd_grade(args):
@@ -273,6 +294,13 @@ def main():
     sp.add_argument("--max-tokens", dest="max_tokens", type=int, default=None,
                     help="override max_tokens for all models (default: each model's config value)")
     sp.add_argument("--temp", type=float, default=None, help="override temperature for all models")
+    sp.add_argument("--ids", default=None,
+                    help="restrict to NAMED items, per bench: 'ifeval=2849:279,humanevalplus=HumanEval/94'. "
+                         "Colon-separated (comma already separates bench pairs, and ids can contain "
+                         "commas). Ids are drawn from the seeded shuffle's prefix, so they must be "
+                         "within --limit; an unknown id fails LOUDLY rather than running a subset. Use "
+                         "this for a targeted probe that varies ONE knob on the SAME items -- which "
+                         "selection-by-count cannot express.")
     sp.add_argument("--thinking-budget", dest="thinking_budget", type=int, default=None,
                     help="override thinking_budget for all models (default: config value — "
                          "16384 Gemma / 49152 Qwen). Lower it to bound eval time.")
