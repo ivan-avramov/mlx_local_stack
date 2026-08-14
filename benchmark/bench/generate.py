@@ -126,6 +126,47 @@ def probe_with_recovery(model, messages, params, *, probe_fn, restart_fn=None, p
     return p, recovery, p2
 
 
+def stamp_manifests(pairs, *, profile="production", overrides=None):
+    """Stamp each (model, bench) with its exact config — when the manifest is ABSENT **or
+    describes a DIFFERENT config than this run**.
+
+    The "or incompatible" half exists because a manifest can OUTLIVE THE ROWS IT DESCRIBES.
+    Measured live 2026-08-14: a run started at `max_kv_cache_size` 262144, wrote its manifest,
+    generated zero rows and was killed; the next run started at 131072, and because
+    `provenance_precheck`'s staleness check is gated on `jsonl.exists()` (there was no jsonl) the
+    orphaned manifest was never re-validated, while this site declined to overwrite it. Rows
+    generated at 131072 were stamped 262144.
+
+    That is not cosmetic: the manifest decides whether a later run may resume these rows, what
+    config gets published with the result, and — via `grade._run_budget_config` — the RESOLVED
+    thinking budget used to detect the server's silent budget clamp. A wrong context limit there
+    produces a wrong convergence verdict.
+
+    Compatible manifests are left untouched, so a resumed run keeps its original timestamp and code
+    SHAs rather than re-stamping itself as of whenever it last resumed.
+    """
+    from . import provenance  # lazy (provenance imports generate)
+    cur_by_model = {}
+    for m, b in sorted(pairs):
+        mp = result_path(m, b).with_suffix(".manifest.json")
+        try:
+            if mp.exists():
+                if m not in cur_by_model:
+                    cur_by_model[m] = provenance.current_manifest_lite(
+                        m, profile, overrides=overrides)
+                try:
+                    existing = json.loads(mp.read_text())
+                except Exception:  # noqa: BLE001 — unparseable == unknown provenance == rewrite
+                    existing = None
+                if provenance.is_compatible(existing, cur_by_model[m]):
+                    continue
+                print(f"  [provenance] RESTAMPED {m}/{b} — the manifest on disk describes a "
+                      f"different config than this run", flush=True)
+            provenance.write(m, b, profile=profile, overrides=overrides)
+        except Exception as e:  # noqa: BLE001 — never block a run on provenance
+            print(f"  [provenance] skipped {m}/{b}: {type(e).__name__}: {str(e)[:60]}", flush=True)
+
+
 def provenance_precheck(models, benches, profile="production", clean_stale=False, overrides=None):
     """Guard against the stale-results contamination: an existing results file produced under
     a DIFFERENT config (sampling/profile/KV) than this run cannot be mixed in via done_ids
@@ -247,14 +288,8 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
 
     # Provenance: stamp every (model, bench) with its exact config (box, code SHAs, quant
     # effective-bits, KV config, sampling) so results are never silently cross-compared.
-    from . import provenance  # lazy (provenance imports generate)
-    for m, b, _it, _s in queue:
-        mp = result_path(m, b).with_suffix(".manifest.json")
-        if not mp.exists():
-            try:
-                provenance.write(m, b, profile=sampling_profile, overrides=overrides)
-            except Exception as e:  # noqa: BLE001 — never block a run on provenance
-                print(f"  [provenance] skipped {m}/{b}: {type(e).__name__}: {str(e)[:60]}", flush=True)
+    stamp_manifests({(m, b) for m, b, _it, _s in queue},
+                    profile=sampling_profile, overrides=overrides)
 
     per_item = {}                       # model -> list of per-item seconds (rolling)
     cur_model = None

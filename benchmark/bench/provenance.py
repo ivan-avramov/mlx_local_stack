@@ -74,10 +74,21 @@ def config_fingerprint(manifest, version: int | None = None):
     if version is None:
         version = manifest.get("fingerprint_version", 1)
     s = manifest.get("sampling") or {}
+    kv = manifest.get("kv") or {}
     fp = {
         "sampling_profile": manifest.get("sampling_profile"),
         "sampling": {k: s.get(k) for k in _FINGERPRINT_SAMPLING},
-        "kv_bits": (manifest.get("kv") or {}).get("kv_bits"),
+        "kv_bits": kv.get("kv_bits"),
+        # max_kv_cache_size is OUTPUT-DETERMINING, proven twice on 2026-08-14:
+        #  - it sets the effective thinking budget. The server clamps thinking_budget to
+        #    0.8 * (max_kv_cache_size - prompt), so at 65536 a declared 81920 budget was really
+        #    ~52390 and reasoning was externally cut short. Same request, different length limit.
+        #  - it changed throughput catastrophically (zero completions in 19.5 min at a 262144
+        #    prealloc vs ~107 tok/s at 131072, same box/model/sampling).
+        # Without it here, `--clean-stale` could not see a cap change and `done_ids` resume would
+        # silently POOL rows generated under different effective budgets. Absent on both sides
+        # (pre-manifest-era rows) compares equal, so no historical result is condemned.
+        "max_kv_cache_size": kv.get("max_kv_cache_size"),
     }
     if version >= 2:
         r = manifest.get("runtime") or {}

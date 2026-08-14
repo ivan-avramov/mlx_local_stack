@@ -11,6 +11,95 @@ must be re-run on M5. The M4 Pro driver hosts **NO campaign models at all** (~26
 AI session) and is a different chip class, so it is never a valid speed-comparison box — ALL model
 runs are M5 runs. See `AGENTS.md` → Operating rules.
 
+## ⚠️ THE DECLARED THINKING BUDGET WAS NOT THE ONE IN FORCE — 33 IFEval rows were FALSE PASSES (2026-08-14)
+
+**Mechanism, confirmed to the token, not inferred.** `mlx-vlm`'s `_apply_generation_budget`
+(`server/generation.py:585-601`) resolves a request's budget in two steps, and the second is
+**SILENT**:
+
+```
+effective       = min(max_tokens, context_limit - prompt_tokens)   # logs a WARNING
+thinking_budget = min(thinking_budget, int(effective * 0.8))       # logs NOTHING
+```
+(`THINKING_BUDGET_CLAMP_RATIO = 0.8` at `generation.py:535`.)
+
+The IFEval runs declared `max_tokens: 102400` and `thinking_budget: 81920` against
+`max_kv_cache_size: 65536`. So the budget ACTUALLY IN FORCE was `int((65536 - prompt) * 0.8)` ≈
+**52,390 — not 81,920**. `ThinkingBudgetCriteria` force-injected `\n</think>` at that cap, the model
+then wrote its (correct) answer, and `finish_reason` came back `"stop"`.
+
+`convergence.is_converged` compared `completion_tokens` to the **requested** 81,920, so it returned
+True. **That is precisely the FALSE PASS the convergence rule exists to catch** — AGENTS.md:
+"`finish=="stop"` alone is a FALSE PASS (budget-hits force an EOS)." It slipped through because the
+clamp is invisible to the harness, not because the rule was wrong.
+
+**Arithmetic reproduces every observed stop point exactly:**
+- 26 Ornith + 8 distill loop rows stop in a razor-thin band, each matching `int((65536 - prompt)*0.8)`
+  for its own prompt length — which is why the band was identical across two different architectures.
+- The six `finish_reason=="length"` rows land on `prompt + completion == 65537` **exactly**.
+
+### Corrected IFEval — `acc` unchanged, convergence and `acc_strict` were wrong
+
+| | `Ornith-1.0-35B-mlx-uniform-4bit` (n=541) | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (n=148) |
+|---|---|---|
+| `acc` (answers still verify) | 90.0% | 89.9% |
+| `conv%` published → **resolved** | 99.3% → **94.6%** | 98.6% → **93.2%** |
+| `acc_strict` published → **resolved** | 89.8% → **86.7%** | 88.5% → **85.1%** |
+| passing rows that were actually DNFs | **17** | **5** |
+
+**⇒ THE IFEVAL HEADLINE SURVIVES.** Both arms moved the same way, so "the two winners are
+EQUIVALENT on instruction-following" stands. The defect corrupted the convergence DIAGNOSTICS
+materially, not the comparative verdict. (The 86.7 vs 85.1 above is UNPAIRED — different n — so it is
+not itself a verdict; the paired-on-148 comparison is what ranks.)
+
+### It falsifies O11's premise: the loops are not self-terminating
+
+O11 described "verbatim repetition loops that SELF-TERMINATE under budget and answer CORRECTLY,"
+costing 42% / 57% of wall-clock. Reclassified against the resolved budget:
+
+| | Ornith | distill |
+|---|---|---|
+| flagged loops | 30 | 10 |
+| → clamped budget-hits (mis-scored as converged) | **25** | **8** |
+| → `max_tokens` truncations (`fr=length`) | 4 | 2 |
+| → **genuinely self-terminating** | **1** (id 3748, 8,228 tok) | **0** |
+| loop wall share | 42% | 57% |
+| — of which genuinely self-terminating | **0.3%** | **0.0%** |
+
+**The cost figure stands (2.5h and 3.6h are real); the attribution changes.** 39 of 40 items are
+external truncations, so this is AGENTS.md's standing "persistent budget hit → run the temperature
+ladder" case, NOT a "purely a cost" question. ⚠️ **The M1 ruling needs revisiting** — it turned on
+item 2849 sitting at "64% of budget" (52,503/81,920); against the budget in force that is **100.2%**,
+a budget hit. See `docs/open-questions.md` O12.
+
+### Scope: which rows are affected, and which are NOT
+
+The clamp fires only when `max_tokens` exceeds `max_kv_cache_size - prompt`. Verified per manifest:
+- **AFFECTED: the IFEval runs only** (`max_kv_cache_size: 65536`). 33 rows.
+- **NOT affected: every evalplus / math500 / aime / LCB row** — those ran at `max_kv_cache_size`
+  262144 (or gemma's 196608), where 102,400 fits with room to spare, so their budget WAS the declared
+  81,920 and their published convergence numbers stand. Ornith's `budget_hit:9` on math500 and
+  `budget_hit:5` on humanevalplus are GENUINE hits.
+- **UNVERIFIED, and it matters: M1 also ran at `max_kv_cache_size: 65536`.** If its turns were
+  clamped the same way, the recorded "0 of 284 turns hit the budget, max completion 62,083 against an
+  81,920 budget, 0.0% wasted wall-clock" was measured against a budget that was not in force — and
+  that is the claim AGENTS.md cites for "the runaway tax has nothing to charge." M1's rows live in the
+  aider result dirs, so checking it is separate (free) work. **Do not carry the 0/284 figure forward
+  until checked.**
+
+### Latent in the SHIPPED config too
+
+Committed registry pairs `max_kv_cache_size: 262144` with `max_tokens: 102400`. Fine at short
+prompts — but past a ~160K prompt the clamp starts firing, and at a 250K prompt the resolved thinking
+budget is **9,708**, silently. That directly undercuts any "256K agentic" claim: deep into a session
+the model's thinking allowance is a fraction of what every carrier declares.
+
+**Fix landed (`aca967b`, driver):** `convergence.resolved_thinking_budget` /
+`backfill_resolved_budget` mirror the fork constant; `grade._rows` annotates from the run manifest at
+the one seam every grader loads through, so `conv%` / `nonconv_kinds` / `acc_strict` are all corrected
+at once. Rows from unclamped runs keep their verdicts by construction (guarded by test). Real IFEval
+rows are pinned as a regression corpus in `benchmark/bench/tests/test_resolved_budget.py`.
+
 ## RE-GRADE UNDER THE CONVERGENCE VECTOR — M5, existing data, zero model time (2026-08-11)
 
 All 83 existing M5 result files re-graded with harness v2 (`grade` at `eddc082`). **No new
