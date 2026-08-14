@@ -91,7 +91,7 @@ Read alongside `AGENTS.md` and the memories `project-nonconvergence-and-quality-
 - **One model per box; preflight before every run; unload between.** Run from repo root.
 - **Box assignment:** M5 (idle, fast, 64GB) for the HEAVY dense models (Qwen-8bit 34.7GB, distill,
   gemma-31B). M2 throttles 34GB models to ~9 tps → **timeouts** (the probe cap is 3600s) → use M2 only
-  for the LIGHT/fast MoE or grading. The distill is M5-only.
+  for the LIGHT/fast MoE or grading. Qwen3.6-27B-Opus-Distill-OptiQ-4bit is M5-only.
 - Launch detached on the box (`nohup … </dev/null &`) + a LOCAL background poller (results jsonl +
   `pgrep`); generate prints per-chunk only. Cross-box speed comparisons are INVALID — accuracy is
   box-independent (fine to compare), speed/latency must be same-box/session.

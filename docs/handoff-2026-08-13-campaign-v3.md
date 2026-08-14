@@ -45,7 +45,7 @@ repo, aider clone or results back under Documents/Desktop/Downloads.
 
 ---
 
-## 4. M1 GATE — SETTLED. The coder role is the distill.
+## 4. M1 GATE — SETTLED. The coder role is Qwen3.6-27B-Opus-Distill-OptiQ-4bit.
 
 Paired on **110 byte-identical exercises** (5 languages × 22, both arms, RAN-filtered; `distill/java`
 from the `m1g` re-run):
@@ -57,7 +57,7 @@ from the `m1g` re-run):
 | **repair rate** | 33.7% | **60.8%** | — | — |
 | mean/case | 2.17 min | 8.42 min (3.9×) | — | — |
 
-Every language favours the distill (+13.6/+36.4/+13.6/+27.3/+27.3pp). Exclusive solves 31 vs 5.
+Every language favours Qwen3.6-27B-Opus-Distill-OptiQ-4bit (+13.6/+36.4/+13.6/+27.3/+27.3pp). Exclusive solves 31 vs 5.
 **Mechanism is REPAIR, not raw capability** — attempt-1 is not significant.
 
 Two limits recorded with the number: `final` is a **(model × scaffold × config)** composite (the
@@ -81,7 +81,7 @@ convergence knee to find for Ornith at these settings — an answer, not a null.
 - every later cell's `calibrate_cpt` (timeout **120s**) queued behind it and died at 2 min
 
 **Root design error:** the screen uses `aggregation`@8K for both models. Ornith emits ~39K tokens at
-~220 tok/s ≈ 3 min/sample; the distill emits comparable volume at ~28 tok/s ≈ **23 min/sample**. A
+~220 tok/s ≈ 3 min/sample; Qwen3.6-27B-Opus-Distill-OptiQ-4bit emits comparable volume at ~28 tok/s ≈ **23 min/sample**. A
 screen that is cheap for one model is an hour-long generation for the other. I sized it from
 Ornith's timing.
 
@@ -93,7 +93,7 @@ should be LOW.
 
 **Operator-approved fixes (do these, do NOT just raise the timeout):**
 1. clear the abandoned generation (§1)
-2. re-scope the distill screen so a cell is minutes: cap `max_tokens` for the screen only, or use
+2. re-scope Qwen3.6-27B-Opus-Distill-OptiQ-4bit screen so a cell is minutes: cap `max_tokens` for the screen only, or use
    the smaller `vartrack` task, or `--samples 1`. All are scope/sample reductions, never generation
    params — AGENTS.md forbids the latter.
 
@@ -153,7 +153,7 @@ that's evidence; if both diverge, suffix is exonerated and the cause is elsewher
 1. §1 clear the abandoned generation; verify one listener / APC absent / health 200.
 2. Copy `/tmp/tier0/*.json` off `/tmp` (volatile) and record the Ornith result in
    `campaign-results.md`.
-3. Re-scope + relaunch the distill Tier-0 arm per §5.
+3. Re-scope + relaunch Qwen3.6-27B-Opus-Distill-OptiQ-4bit Tier-0 arm per §5.
 4. Suffix isolation test (§5) before any config change.
 5. Then P3 (ρ + **exact permutation p**, n=9 per operator), P4, and the still-untouched
    **P1a pi/opencode go/no-go smokes** — which gate ~24h of harness-gradient work and must verify

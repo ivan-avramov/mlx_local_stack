@@ -6,7 +6,7 @@ Parent program: `docs/superpowers/specs/2026-07-07-phase2-optimization-program-d
 ## Goal & context
 
 Re-open **drafter-free suffix decoding** (n-gram / prompt-lookup speculative decoding — the
-fork's `--draft-kind suffix`) as a **decode-speed** lever for the distill, gated on
+fork's `--draft-kind suffix`) as a **decode-speed** lever for Qwen3.6-27B-Opus-Distill-OptiQ-4bit, gated on
 **quality preservation**. The selection campaign ran suffix OFF because it is not
 bit-identical to greedy autoregressive decode (bf16 verify-vs-decode kernel numerics flip
 argmaxes; *gemma* cascaded — see [[project_suffix_decoding_nonlossless]]) and explicitly

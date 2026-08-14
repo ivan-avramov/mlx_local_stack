@@ -25,6 +25,50 @@ survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNN
 
 Last updated: 2026-08-11. **HARNESS V2 IS THE LIVE WORKSTREAM** (see below); **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
 
+## ⏹ IFEVAL — Ornith arm COMPLETE, Qwen3.6-27B-Opus-Distill-OptiQ-4bit arm STOPPED at n=145 (2026-08-13)
+
+**`Ornith-1.0-35B-mlx-uniform-4bit`: DONE, all 541 items.** `prompt_strict` **90.0%** [87,93] **±5pp** —
+the first axis in this campaign with real resolution (every other row is ±20–32pp). `inst_strict` 93.0%,
+`prompt_loose` 92.2%, `conv` 99.3%, 0 errors, 0 verifier skips, `deployed` sampling, APC absent.
+⚠️ **26 degenerate loops = 35% of wall-clock, 45% of tokens.**
+
+**`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: STOPPED at 145/541 by operator decision**, because the answer
+was already in hand and the remaining 396 items could only narrow it:
+
+| paired on the 145 items BOTH completed | |
+|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` | **89.7%** |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | **89.7%** |
+| gap | **+0.0pp** |
+| `stats.paired_delta` verdict | **`equivalent`** (CI inside the ±5pp TOST margin) |
+
+**⇒ THE TWO WINNERS ARE EQUIVALENT ON INSTRUCTION-FOLLOWING.** Not "close" — the same 130 of 145 items
+solved. This is a legitimate paired comparison: `benchmarks._subsample` shuffles deterministically
+(`random.Random(seed).shuffle`, seed 0) and is prefix-nested, so both models saw IDENTICAL items in
+IDENTICAL order, and a stop is a uniformly random subset rather than a difficulty-ordered prefix.
+**Verified empirically, not assumed:** instruction-type mix in the first 145 matches the full 541 within
+~2pp on every major type, so nothing systematic was dropped.
+
+Why stopping was right: the remaining 396 items existed only to move the detectable gap from ±10.6pp to
+±5.4pp, which matters ONLY if the true gap lies between 5 and 9pp — and the point estimate is 0.0pp with
+`equivalent` already returned. Cost avoided: **~15.9h of the single worker**, of which ~59% was going
+into degenerate loops (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` decodes at 25–31 tok/s, so each loop is
+~50 min).
+
+### ▶ RESUME PROCEDURE (state is fully preserved)
+145 rows + the manifest are intact on M5; `generate` resumes via `done_ids` (keyed on `(id, sample)`),
+so a relaunch continues at item 146 and re-does nothing:
+
+```bash
+cd ~/ws/mlx_local_stack        # REPO ROOT — run.py resolves paths from the module now, but the
+                               # documented invocation stays repo-root
+PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate \
+  --models Qwen3.6-27B-Opus-Distill-OptiQ-4bit --benches ifeval --sampling-profile deployed
+```
+Do NOT pass `--clean-stale` unless the config changed — it DELETES rows whose fingerprint differs.
+MDE if resumed: n=200 → ±8.9pp · n=300 → ±7.2pp · n=541 → ±5.4pp.
+Worker was unloaded after the stop (`resident workers: 0`), so P4 has the box.
+
 ## ▶ NEW CANDIDATE SCAN 2026-08-13 (web research, operator-requested) — 3 viable, 2 categorically out
 
 ⚠️ **THE FRONTIER HAS LEFT OUR HARDWARE CLASS.** The current top open-weights agentic-coding models are
@@ -48,7 +92,7 @@ best model that FITS. State this in the write-up; it is a finding, not a caveat:
 
 **1. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B` — STRONGEST FIT, acquire first.**
 Released **2026-08-11** (two days ago), OpenMDW-1.1, free commercial use.
-- **262,144 (256K) NATIVE context** — only Ornith and the distill clear that today, and this is native
+- **262,144 (256K) NATIVE context** — only Ornith and Qwen3.6-27B-Opus-Distill-OptiQ-4bit clear that today, and this is native
   rather than extended.
 - **30B MoE with 3B ACTIVE** — the same fast-decode structure that is Ornith's differentiator.
   Reported ~80–100 tok/s at 4-bit on a 32–64GB Mac.
@@ -119,9 +163,9 @@ training loss rather than any capability number. Tempting only because it shares
 experiment is worth wanting, but not with this artifact.
 
 **Why lordx64 is CONDITIONAL rather than queued outright.** It is the only candidate that could beat our
-current coder on the actual tradeoff M1 exposed: the distill wins capability (73.6% vs 50.0%) but costs
+current coder on the actual tradeoff M1 exposed: Qwen3.6-27B-Opus-Distill-OptiQ-4bit wins capability (73.6% vs 50.0%) but costs
 **3.9× per case**, and a 35B model with **3B active** would keep the repair advantage while removing the
-speed penalty — i.e. Ornith's decode profile with the distill's reasoning. Against that:
+speed penalty — i.e. Ornith's decode profile with Qwen3.6-27B-Opus-Distill-OptiQ-4bit's reasoning. Against that:
 - **64K context, not 256K.** ⚠️ Note carefully: **M1 itself ran at `max_kv_cache_size` 65536**, so for the
   AGENTIC axis 64K is exactly what we already used and the comparison is directly valid. What 64K blocks
   is the **256K capacity claim** — so it may screen as a strong CODER while being ineligible for the
@@ -134,7 +178,7 @@ speed penalty — i.e. Ornith's decode profile with the distill's reasoning. Aga
 
 **Recommended handling:** screen it on the **agentic axis at 64K**, where it is directly comparable to the
 M1 rows, and record its context ceiling as a **config fact** (as the campaign already does for gemma's
-192K) rather than as a blank or a zero. If it matches the distill's repair rate at Ornith's speed, it
+192K) rather than as a blank or a zero. If it matches Qwen3.6-27B-Opus-Distill-OptiQ-4bit's repair rate at Ornith's speed, it
 supersedes both winners for the coder role — and that is worth the conversion work. If it does not, it
 cost one screen.
 
@@ -194,16 +238,16 @@ Full table in `docs/campaign-results.md`. Headlines:
   has a knee anywhere in temp 0.2–0.6 × min_p 0.0–0.15. **⇒ `conv%` is the wrong screen metric** —
   it has no variance for either winner, while cost varies **47×** within one model.
 - **Ornith is FLAT** (coding 2,921 → 2,016 tok, 31 → 24 s as temp rises; no instability anywhere).
-  **The distill is unstable at temp 0.6:** one draw ran **52,833 tok / 16.6 min** on the same problem
+  **Qwen3.6-27B-Opus-Distill-OptiQ-4bit is unstable at temp 0.6:** one draw ran **52,833 tok / 16.6 min** on the same problem
   it does in 1,122 tok / 41 s at temp 0.4 — and `conv%` scored it a clean pass. Independently
-  **confirms the distill's op-temp 0.3** from a new task and harness path.
+  **confirms Qwen3.6-27B-Opus-Distill-OptiQ-4bit's op-temp 0.3** from a new task and harness path.
 - **`min_p` is inert at low temp and only bites at high temp:** at 0.2 all three values are
   byte-identical; at 0.4 only 0.15 differs; at 0.6 all three differ. So a `min_p` axis is only
   meaningful above ~0.4 — rev A's inertness was not merely a spacing choice.
 - **Collapse test PASSES, properly specified** (genuine min_p-only comparator) ⇒ 4D→2D validated in
   the regime tested.
 - ⚠️ **HARNESS DEFECT:** `run_convergence` uses `driver.complete`'s default **3600 s** timeout while
-  `thinking_budget` is 81,920. At the distill's 10–16 tok/s on long prompts the budget needs
+  `thinking_budget` is 81,920. At Qwen3.6-27B-Opus-Distill-OptiQ-4bit's 10–16 tok/s on long prompts the budget needs
   **85–136 min**, so a genuine `budget_hit` is **UNOBSERVABLE** — the client abandons at ~37–58K
   tokens and the worker keeps generating. This IS the rev-A cascade mechanism (that cell ran 3,802 s
   vs the 3,600 s timeout). Fix proposed, NOT applied: derive the timeout from
@@ -229,8 +273,8 @@ pool's 32,768-tok capacity (forces the CEILING, not a light sample).
   get**, so Phase-2's "#1 APC → SHIP, TTFT 54.5×@7.5K → 147×@25K" is **UNRELIABLE until re-measured**.
   Keep the 2048-block pool (bounds the ceiling if repaired; guard test holds it ≤4096). Benchmark
   policy unaffected — APC-absent is now known to be indistinguishable from APC-present.
-- Ornith was the conservative choice: fp16 KV = the LARGER pool, while the distill has the tighter
-  headroom but ~4× smaller blocks. A zero on Ornith is a zero on the distill. If repaired, the ceiling
+- Ornith was the conservative choice: fp16 KV = the LARGER pool, while Qwen3.6-27B-Opus-Distill-OptiQ-4bit has the tighter
+  headroom but ~4× smaller blocks. A zero on Ornith is a zero on Qwen3.6-27B-Opus-Distill-OptiQ-4bit. If repaired, the ceiling
   to re-check is "the KV of 32,768 extra tokens for that model" — `kv_bits`-dependent, re-measure per
   model.
 
@@ -281,7 +325,7 @@ truncation, decode-rate-derived timeout).
 Launched 08:08. Three evidence-forced changes vs rev A, all scope/ordering — **no generation param
 was touched** (capping `max_tokens` was explicitly REJECTED: it would manufacture the
 non-convergence the screen measures, per AGENTS.md):
-1. **task = `vartrack`, not `aggregation`@8K.** Measured on the distill: aggregation = 39,479 tok /
+1. **task = `vartrack`, not `aggregation`@8K.** Measured on Qwen3.6-27B-Opus-Distill-OptiQ-4bit: aggregation = 39,479 tok /
    **63.4 min per sample**; vartrack = **550/558 tok / ~31 s**, converged, acc 1.0. Full cell
    **2m04s** instead of >2h — a ~60× cell-cost reduction, and it drops the synthetic word-tally
    that the handoff itself flagged as a poor agentic proxy.
@@ -326,7 +370,7 @@ interactive DAILY DRIVER.** Models (incl. quant technique/level/distillation) ar
 changes over time; sampling config and KV quant are searched inputs; context reach and speed are
 MEASURED, not gated. **APC is OFF everywhere and out of scope** — not an axis, not discussed.
 
-### M1 GATE — COMPLETE at n=110 (runs `m1f` + `m1g`, 2026-08-12). Coder role: the distill.
+### M1 GATE — COMPLETE at n=110 (runs `m1f` + `m1g`, 2026-08-12). Coder role: Qwen3.6-27B-Opus-Distill-OptiQ-4bit.
 All 5 languages x 22 pinned-by-name exercises, both arms, RAN-filtered. `distill/java` comes from
 the `m1g` re-run after a TCC failure truncated it in `m1f`; the truncated dir is excluded by the
 RAN filter (empty `tests_outcomes`), not by a hand-maintained skip list.
@@ -339,12 +383,12 @@ RAN filter (empty `tests_outcomes`), not by a hand-maintained skip list.
 | mean/case | 2.17 min (4.0h total) | 8.42 min (15.4h total) | 3.9x | — |
 
 Exclusive solves: only-Ornith **5** (`python/forth`, `javascript/list-ops`, `go/counter`,
-`java/bank-account`, `java/dominoes`) vs only-distill **31**. **Every language favours the distill**
+`java/bank-account`, `java/dominoes`) vs only-distill **31**. **Every language favours Qwen3.6-27B-Opus-Distill-OptiQ-4bit**
 (python +13.6, javascript +36.4, go +13.6, rust +27.3, java +27.3pp) — the result is not carried by
 one language.
 
 **MECHANISM: it is REPAIR, not raw capability.** Attempt-1 differs by only +8.2pp and is NOT
-significant (p=0.122); the distill's edge is that it fixes its own failure when shown the failing
+significant (p=0.122); Qwen3.6-27B-Opus-Distill-OptiQ-4bit's edge is that it fixes its own failure when shown the failing
 test 60.8% of the time vs 33.7%. Per-arm well-formed was 90.9-100% for Ornith and 100% for the
 distill, so `diff` handicaps neither.
 
@@ -437,7 +481,7 @@ likely answer** — if quality ties within resolution, Ornith's 4× decode + 5×
 
 Phases: **0** bootstrap (`.venv-bench`/`.venv-lcbgrade`/`config.sh` were all MISSING on the driver box; snapshot M5
 results before touching provenance) + results-root seam + **`model_params.py` drift fix** (QWEN is
-t0.7/min_p0.03/presence0.3 — none of it deployed, and the distill isn't even registered → every new
+t0.7/min_p0.03/presence0.3 — none of it deployed, and Qwen3.6-27B-Opus-Distill-OptiQ-4bit isn't even registered → every new
 axis would mis-measure) + **APC policy** (`runserver.sh:74` sets `APC_ENABLED=1`, the AGENTS.md
 benchmarking recipe omits it → past benchmark runs silently differed from the daily driver) · **1**
 stats core: items-first power, **cluster bootstrap** (pooled Wilson is ~2× too tight), graded outcomes,
@@ -505,7 +549,7 @@ candidates, router up on M5 `0.0.0.0:8000` with `APC_ENABLED=1`.
 
 **DONE, zero model time:** all 83 existing M5 result files re-graded under the convergence vector
 (table in `campaign-results.md`). This is Phase 1's committed row. Headlines: Ornith **fails the
-conv gate** on math500 (70%) / LCB (80%) / aime (80%) while the distill and gemma-qat-6bit clear it
+conv gate** on math500 (70%) / LCB (80%) / aime (80%) while Qwen3.6-27B-Opus-Distill-OptiQ-4bit and gemma-qat-6bit clear it
 everywhere; Ornith's evalplus data is **n=100 (±13pp), not the n=10 the scoreboard recorded**;
 "AIME 100% (5/5)" is ±56pp and never was a differentiator. Off-box backup at
 `~/mlx_bench_snapshots/m5-results-2026-08-11/` (closes the deferred P0 snapshot item).
@@ -518,7 +562,7 @@ sets" implied. aider does expose `--languages`/`--keywords`, so M1 runs **6 lang
 items). n=108 → MDE **±12.0pp**, and `n_for(13.2pp)=91`, so the gap that currently decides the
 campaign is RESOLVABLE; the originally-planned n=34 (±21.5pp) was guaranteed inconclusive.
 Driver: `/tmp/m1_driver.sh` on M5 (nohup, launcher `/tmp/m1_launch.sh` waits out the smoke), logs
-`/tmp/m1_run.log` + `/tmp/m1_<tag>_<lang>.log`. Ornith first (`diff`), then the distill (`diff`),
+`/tmp/m1_run.log` + `/tmp/m1_<tag>_<lang>.log`. Ornith first (`diff`), then Qwen3.6-27B-Opus-Distill-OptiQ-4bit (`diff`),
 with an unload between — ONE resident model.
 
 **~~SHIPPED-CONFIG BUG~~ — WITHDRAWN 2026-08-11, the shipped config is CORRECT. Read this before
@@ -632,7 +676,7 @@ quality; M2 = parallel he+/mbpp+ quality + APC.
   Closes the vscode/zed no-sampling gap — runtime-verified on M2+M5 (no-sampling distill request resolves
   to temp 0.3, not the checkpoint's 1.0). Spec: `docs/superpowers/specs/2026-07-09-registry-default-sampling-design.md`.
 - **FU-1 (distill-kv3 gate) = PARKED 2026-07-09 with a staged plan.** Question: adopt turboquant
-  **3-bit KV** on the distill? Saves **2.9 GB @256K, zero speed change**, on the *alternative* model
+  **3-bit KV** on Qwen3.6-27B-Opus-Distill-OptiQ-4bit? Saves **2.9 GB @256K, zero speed change**, on the *alternative* model
   (which already fits the 46 GB gate with headroom). Worry: 3-bit KV compounds attention error →
   degrades precise long-context retrieval + multi-step math; the he+ gate (96.5 vs 95.7) is too weak.
   **OFAT setup:** kv4 vs a `-kv3` registry variant (clone distill entry, `kv_bits: 4→3`, keep
@@ -671,7 +715,7 @@ split across both boxes. Both caffeinated (`caffeinate -i -s -w <pid>`) so idle-
   with `.venv-bench/bin` on PATH; the n=200 **0.94** stands + raw preserved. NB each failed run_bfcl clobbers
   `bfcl.json` to null — re-parse raw or ignore; scoreboard is truth.) **NOW RUNNING: distill CAPACITY ladder to
   256K** (`bash benchmark/run_capacity_seq.sh Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, grid 160/192/224/256K, log
-  `logs/distill_capacity.log`, watcher). KEY question: does the distill (qwen3_5 dense + linear-attn, kv_bits4)
+  `logs/distill_capacity.log`, watcher). KEY question: does Qwen3.6-27B-Opus-Distill-OptiQ-4bit (qwen3_5 dense + linear-attn, kv_bits4)
   clear 256K ≤46GB like Ornith? 160K already = 28.6GB/ret1.0 → very likely yes. On finish → record + it becomes
   a full 256K competitor (Ornith still pick on MoE decode speed). LCB pass@1 still blocked (datasets bug).
 - **M2 (RETIRED BOX — historical record; any `[RUNNING]` state here is dead, and its local `benchmark/results/` and `/tmp` logs are gone with the machine):** distill **LCB t0.4 DONE** = 9/15 (60%) conv (+1 err abc358_e) → confirms op-temp 0.3 (vs t0.3 15/15).

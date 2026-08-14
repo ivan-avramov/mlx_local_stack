@@ -8,7 +8,7 @@ Edit the parent fork `../mlx-vlm` (not `src/mlx-vlm`); measurement discipline in
 The TurboQuant KV cache **pre-allocates its buffer to the global `max_kv_size` (e.g. 256K) on first
 fill**, deliberately — to avoid the `mx.concatenate` double-buffer spike that incremental growth causes
 (you hold the old cache while the new, larger one is allocated). Cost: a **small-prompt request still
-grabs the full 256K KV buffer** (memory wasted on the turboquant models, e.g. the distill). The proposed
+grabs the full 256K KV buffer** (memory wasted on the turboquant models, e.g. Qwen3.6-27B-Opus-Distill-OptiQ-4bit). The proposed
 fix is to pre-allocate to the **request's own ceiling** — `min(prompt_tokens + effective_max_tokens,
 max_kv_size)` — keeping the anti-spike property while right-sizing per request.
 
@@ -25,7 +25,7 @@ max_kv_size)` — keeping the anti-spike property while right-sizing per request
   `generation.py:_resolve_generation_budget` (~:436) computes `remaining = MAX_KV_SIZE − prompt`,
   soft-clamps `max_tokens`, and caps `thinking_budget` to 0.8× effective. So `effective_max_tokens` is
   already known at request time — the input the fix needs.
-- **Data point (not pre-alloc at load):** M5 init log showed the distill at load `ram_used_gb=34.5,
+- **Data point (not pre-alloc at load):** M5 init log showed Qwen3.6-27B-Opus-Distill-OptiQ-4bit at load `ram_used_gb=34.5,
   subprocess_rss_mb≈17.5 GB` (weights); its 256K peak is ~43 GB. So the KV buffer is allocated per
   **request**, not at model load — a small request pre-allocs 256K on first token, not at startup.
 

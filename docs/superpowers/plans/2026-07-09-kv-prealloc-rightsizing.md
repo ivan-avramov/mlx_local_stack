@@ -1049,7 +1049,7 @@ Bump `src/mlx-vlm` and `src/mlx-serve` to the feature commits; commit the stack 
 
 - [ ] **Step 2: OFF baseline (same box, same session)**
 
-On M5, start the router with `kv_prealloc_tokens` UNSET for the distill (temporarily remove the field or export `KV_PREALLOC_TOKENS=0`). Fire a **small** (~1K) prompt and a **256K** prompt; record `peak_memory` (on the final `StreamingToken`) and count `Reallocating old:%d new:%d` lines in `logs/main_model.log`.
+On M5, start the router with `kv_prealloc_tokens` UNSET for Qwen3.6-27B-Opus-Distill-OptiQ-4bit (temporarily remove the field or export `KV_PREALLOC_TOKENS=0`). Fire a **small** (~1K) prompt and a **256K** prompt; record `peak_memory` (on the final `StreamingToken`) and count `Reallocating old:%d new:%d` lines in `logs/main_model.log`.
 Expected: reallocs **> 0**; peak includes a growth transient.
 
 - [ ] **Step 3: ON (right the deployed config)**

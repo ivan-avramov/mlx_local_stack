@@ -132,7 +132,7 @@ pass_rate_1 ≈ 28–33% rising to **final ≈ 67–71%** (the retry loop does o
    --router-log <log> --since "<run start>"` — it refuses a verdict when the arms' item sets differ.
 
 Design in force: 5 languages × 22 pinned-by-name exercises = **110 matched cases/arm**, MDE ±11.9pp
-(resolves the 13.2pp question; `n_for(13.2pp)=91`). Ornith `diff` then the distill `diff`, one
+(resolves the 13.2pp question; `n_for(13.2pp)=91`). Ornith `diff` then Qwen3.6-27B-Opus-Distill-OptiQ-4bit `diff`, one
 resident model, watchdog 25 min/case. cpp excluded from the headline. Ornith ~2.9 min/case → ~5h;
 distill slower.
 
@@ -149,7 +149,7 @@ distill slower.
    So every historical single-sample row is a fixed REPLAY — past "reproducibility" was never
    evidence of low variance. `--samples k` now sends `rowschema.sample_seed(item, sample)`.
 3. **The re-grade under the vector** (83 existing M5 files, zero model time) found: Ornith fails
-   convergence on math500 70% / LCB 80% / aime 80% while the distill and gemma-qat-6bit clear it
+   convergence on math500 70% / LCB 80% / aime 80% while Qwen3.6-27B-Opus-Distill-OptiQ-4bit and gemma-qat-6bit clear it
    everywhere; **Ornith's evalplus data is n=100, not the n=10 the scoreboard recorded** (95.0%
    [90,99] and 87.0% [80,93], ±13pp — the best-powered rows the campaign owns, previously
    unreported); "AIME 100% (5/5)" is ±56pp and never was a differentiator.
@@ -163,7 +163,7 @@ distill slower.
    `enable_thinking`, `thinking_budget` and all of top_p/top_k/min_p/presence_penalty, and
    `max_tokens` comes from bfcl_eval's min(4096) cap. That explains "3/400 traces carried `<think>`"
    on the campaign's only ~12σ axis. Repair = send `params_for(model,"deployed")` + raise max_tokens.
-6. **`model_params` had drifted** from the deployed config and the distill was unregistered; the new
+6. **`model_params` had drifted** from the deployed config and Qwen3.6-27B-Opus-Distill-OptiQ-4bit was unregistered; the new
    `deployed` profile reads `main_models.yaml` `generation_defaults`. Use it for all new axes.
 7. **APC's 16384-block pool costs ~33GB** — the daily driver (`runserver.sh`) was ~4GB from a Metal
    OOM with Ornith loaded. Independent of benchmarking. **FIXED 2026-08-11: pool is now 2048 blocks

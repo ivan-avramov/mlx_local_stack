@@ -60,7 +60,7 @@ Four spine requirements, each earned by a defect already paid for:
 3. **Turn-indexed, not session-aggregated.** The endpoint is *degradation vs depth* — a curve, not a
    scalar. A session score cannot distinguish "bad throughout" from "fine until turn 25".
 4. **A per-request timeout derived from `thinking_budget ÷ measured decode rate`.** Today's defect:
-   the 3600 s default is below the 85–136 min the distill needs to reach an 81,920 budget, so the
+   the 3600 s default is below the 85–136 min Qwen3.6-27B-Opus-Distill-OptiQ-4bit needs to reach an 81,920 budget, so the
    client abandons and the worker keeps generating. In a 40-turn session that orphans the whole
    session, not one cell.
 
@@ -101,7 +101,7 @@ cost per *total* token falls **17×**. Only new tokens are prefilled.
 
 **Consequence — this axis is CHEAP, and APC is irrelevant to it.** Per-turn prefill is ~2 s at
 12K context, so decode dominates. A 40-turn session at ~800 completion tokens/turn:
-Ornith (~140 tok/s) ≈ **6 min/session**; the distill (~28 tok/s) ≈ **21 min/session**. Three sessions
+Ornith (~140 tok/s) ≈ **6 min/session**; Qwen3.6-27B-Opus-Distill-OptiQ-4bit (~28 tok/s) ≈ **21 min/session**. Three sessions
 × both winners ≈ **1.5 h**. APC plays no part: it is a separate generic prefix cache, it is excluded
 from all benchmarking by standing operator instruction, and it is not what makes this work.
 

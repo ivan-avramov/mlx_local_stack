@@ -40,7 +40,7 @@ by 14%. Rev 2's primary purchase is **items**, plus graded outcomes (test-case p
 instead of binary), which cut required N by 2–4× for free.
 
 **Corollary, and it must be stated up front: "indistinguishable" is a valid, likely answer.** If
-Ornith and the distill tie on quality within a properly-powered interval, the 4× decode and 5× memory
+Ornith and Qwen3.6-27B-Opus-Distill-OptiQ-4bit tie on quality within a properly-powered interval, the 4× decode and 5× memory
 margins decide and the current pick stands. The harness exists to make that conclusion *defensible*,
 not to manufacture a winner.
 
@@ -186,7 +186,7 @@ real results tree.
 
 - [x] **Step 1 (test):** `test_model_params.py` extension — `params_for(<Ornith>, "deployed")` returns
       exactly the shipped `generation_defaults` from `main_models.yaml` (temp 0.4, presence_penalty
-      0.0, …); same for the distill (temp 0.3); an unregistered model raises rather than silently
+      0.0, …); same for Qwen3.6-27B-Opus-Distill-OptiQ-4bit (temp 0.3); an unregistered model raises rather than silently
       falling back; `presence_penalty` is 0.0 on every deployed profile (a nonzero one disables suffix
       decoding, i.e. measures a different serving config than production).
 - [x] **Step 2:** Add a `deployed` profile sourced **from `main_models.yaml` `generation_defaults`**
@@ -480,9 +480,9 @@ distill's 75% (n=16) — a 13pp gap *favouring the alternative*, dismissed on un
 - [ ] **Step 3:** Interpret honestly. At n=34 the resolution is **±16pp**, so 13pp will very likely
       come back `inconclusive`. **That is a result**: quality ties within resolution → the 4× decode
       and 5× memory margins decide → the Ornith pick stands, now defensibly. Closing 13pp to
-      significance would need ~110 matched exercises ≈ 133 days on the distill — **out of budget, and
+      significance would need ~110 matched exercises ≈ 133 days on Qwen3.6-27B-Opus-Distill-OptiQ-4bit — **out of budget, and
       the plan says so rather than pretending otherwise.**
-- [ ] **Step 4:** If the distill *does* separate upward beyond the CI, the pick is genuinely in play
+- [ ] **Step 4:** If Qwen3.6-27B-Opus-Distill-OptiQ-4bit *does* separate upward beyond the CI, the pick is genuinely in play
       and P4 (long-context) becomes the tiebreak.
 
 ---
@@ -504,7 +504,7 @@ diagnostic row.**
       send `params_for(model, "deployed")` explicitly (so op-temp, `presence_penalty 0.0` and
       `enable_thinking`/`thinking_budget` all reach the worker) and raise `max_tokens` so
       thinking + answer fit. Prereqs verified present on M5: `bfcl_eval` importable, the `bfcl`
-      entrypoint in `.venv-bench`, the shim, and prior `bfcl.json` rows for Ornith / the distill /
+      entrypoint in `.venv-bench`, the shim, and prior `bfcl.json` rows for Ornith / Qwen3.6-27B-Opus-Distill-OptiQ-4bit /
       `Qwen3.6-27B-OptiQ-4bit` to re-run against.
       Existing rows are **no-think** (3/400 traces
       carried `<think>`), violating AGENTS.md, and BFCL hard-caps generation at 4096 which cannot fit
@@ -550,7 +550,7 @@ The 256K claim currently rests on needle retrieval at n≈5. **That does not cle
       the two that reach it. A candidate's ceiling is recorded as a fact about its config, never as a
       missing value or a zero.
 - [ ] **Step 3:** APC is deliberately **on** here (fixed padding prefix + varying question is exactly
-      the prefix-reuse pattern, 54–147× warm TTFT) and recorded. Without it the distill's 124 tps
+      the prefix-reuse pattern, 54–147× warm TTFT) and recorded. Without it Qwen3.6-27B-Opus-Distill-OptiQ-4bit's 124 tps
       prefill makes 192K ≈ 26 min/item *before the first output token*, and the phase is infeasible.
 
 ### Task 4.2 — Haystack tasks (secondary, with the control that makes them valid)

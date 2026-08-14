@@ -45,7 +45,7 @@ not new infrastructure.
 ## Design
 
 **Target precedence:** **`request > main_models.yaml > checkpoint > hardcoded`** (A). Required, not
-just preferred: without the registry beating the checkpoint, the distill's baked `1.0` still wins.
+just preferred: without the registry beating the checkpoint, Qwen3.6-27B-Opus-Distill-OptiQ-4bit's baked `1.0` still wins.
 
 ### Partition (registry schema)
 Per-model config splits into two categories:

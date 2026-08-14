@@ -110,7 +110,7 @@ Pre-alloc can't be a swap inside `make_prompt_cache`, because for real models it
   caches untouched.
 
 **OOM-safety ordering (critical).** `maybe_preallocate` runs **after** `maybe_quantize` and touches
-only leftover fp16/uniform caches. Otherwise the distill would briefly pre-alloc full-fp16 256K KV
+only leftover fp16/uniform caches. Otherwise Qwen3.6-27B-Opus-Distill-OptiQ-4bit would briefly pre-alloc full-fp16 256K KV
 for all layers (~4× its TQ budget) before quantizing → OOM. Net: distill quantized layers pre-alloc
 on the TQ side; only the one intentionally-unquantized last layer (`common.py:307` skips it) gets
 fp16 pre-alloc (~0.5 GB). Ornith pre-allocs all layers fp16.

@@ -54,7 +54,7 @@ and Ornith's n=100 evalplus rows stand.
 **What the vector changes about the reading of this data:**
 
 1. **Ornith fails the convergence gate on three axes** — math500 (70%, 9 budget-hits), LCB (80%),
-   aime (80%) — while the distill and gemma-qat-6bit clear it everywhere. Under the old rule those
+   aime (80%) — while Qwen3.6-27B-Opus-Distill-OptiQ-4bit and gemma-qat-6bit clear it everywhere. Under the old rule those
    runs were "INVALID" and read anyway with asterisks; under the vector the statement is precise:
    *among items it converged on* Ornith is fine (math500 85.7%, LCB 91.7%), it just does not
    self-terminate reliably. That is a real, ranked deficiency for a daily driver, and it is the
@@ -63,9 +63,9 @@ and Ornith's n=100 evalplus rows stand.
    **n=100**, not the n=10 recorded below — 95.0% [90,99] and 87.0% [80,93] at ±13pp are the
    best-powered quality numbers the campaign owns, and they sat unreported.
 3. **"AIME 100% (5/5)" was never a differentiator.** At n=5 the MDE is ±56pp (n=4 → ±63pp). The
-   gemma-qat-6bit standout and the distill's 100% are indistinguishable from each other and from
+   gemma-qat-6bit standout and Qwen3.6-27B-Opus-Distill-OptiQ-4bit's 100% are indistinguishable from each other and from
    Ornith's 80%.
-4. **The distill's mbpp+ 60%** is n=10, ±40pp — also not a ranking, despite looking alarming next
+4. **Qwen3.6-27B-Opus-Distill-OptiQ-4bit's mbpp+ 60%** is n=10, ±40pp — also not a ranking, despite looking alarming next
    to Ornith's 87% (n=100). Note `compare` REFUSES this pair: different item sets and different n.
 5. LCB aggregate acc is the official evaluator's `pass@1`; see the by-difficulty bug below.
 
@@ -117,9 +117,9 @@ been read as proof that our POST-processing diverged from the evaluator — inst
 and doubting the breakdown, which is the number the evaluator hands over most directly.
 </details>
 
-## ▶M1 GATE — INTERIM (2026-08-12, run `m1f`, 3 of 5 languages): the distill wins, p=0.0042
+## ▶M1 GATE — INTERIM (2026-08-12, run `m1f`, 3 of 5 languages): Qwen3.6-27B-Opus-Distill-OptiQ-4bit wins, p=0.0042
 
-⚠️ **INTERIM — rust and java are still generating.** Ornith's arm is COMPLETE (110/110); the distill
+⚠️ **INTERIM — rust and java are still generating.** Ornith's arm is COMPLETE (110/110); Qwen3.6-27B-Opus-Distill-OptiQ-4bit
 has python + javascript complete plus part of go. Recorded now because the result already crosses
 significance and it REVERSES the campaign's standing pick. Config: run tag `m1f`, box M5, APC OFF,
 `deployed` sampling, **`max_kv_cache_size` 65536** (right-sized for this axis — see the handover;
@@ -151,8 +151,8 @@ final = attempt-1 + (1 − attempt-1) × repair_rate
 
 The identity is exact (Ornith 0.245+0.755×0.337=0.499; distill 0.396+0.604×0.655=0.792). **Repair
 rate — does it fix its own failure when shown the failing test — is the sharpest discriminator we
-own, and the distill is ~2× better on it.** Both models draw about half their `final` from repair, so
-the scaffold contributes about equally to both; the distill simply exploits it far better.
+own, and Qwen3.6-27B-Opus-Distill-OptiQ-4bit is ~2× better on it.** Both models draw about half their `final` from repair, so
+the scaffold contributes about equally to both; Qwen3.6-27B-Opus-Distill-OptiQ-4bit simply exploits it far better.
 
 **WHAT `final` MEASURES — a (model × scaffold × config) composite, not a model property.** Verified:
 the repair turn receives the pytest traceback, which INCLUDES the failing test's source lines and
@@ -282,7 +282,7 @@ decided pairs **two-sided p = 0.754**. Mean dimension scores over all 44 judgmen
 **Reading: NO code-quality difference detected — and this is INCONCLUSIVE, not a demonstrated tie.**
 A sign test on 10 decided pairs needs **9/10 (90%)** in one direction to reach p≤.05, so this panel
 could only ever have detected a landslide; 0.05 of a point on a 1–5 scale is noise. What it does
-establish is a **separation of concerns**: the distill's advantage over Ornith is in **how many**
+establish is a **separation of concerns**: Qwen3.6-27B-Opus-Distill-OptiQ-4bit's advantage over Ornith is in **how many**
 exercises it solves at all (exclusive-solve 7 vs 1, McNemar p=0.070), **not** in the quality of the
 code when both succeed. Also a useful sanity check on the whole pipeline: the panel independently
 flagged `javascript/binary` as a high-confidence tie because the two models emitted
@@ -368,13 +368,13 @@ But convergence being pinned at 1.0 hides an enormous cost spread, and only in o
 
 **Ornith is flat and mildly *decreasing* in temperature** (2,921 → ~2,016 tokens; 31 s → 24 s) — no
 instability anywhere, which extends rev A's "no knee" from one temp to the whole range.
-**The distill is stable at 0.2–0.4 and unstable at 0.6**: one draw ran **52,833 tokens / 16.6 min**
+**Qwen3.6-27B-Opus-Distill-OptiQ-4bit is stable at 0.2–0.4 and unstable at 0.6**: one draw ran **52,833 tokens / 16.6 min**
 on the *same* small meeting-rooms problem it solves in 1,122 tokens / 41 s at temp 0.4 — a **47×
 token and 24× wall-clock blowup** that `conv%` scores as a clean pass, because it did self-terminate
 under the 81,920 budget.
 
 Two conclusions:
-- **Independently confirms the distill's op-temp 0.3** and the recorded finding that its earlier LCB
+- **Independently confirms Qwen3.6-27B-Opus-Distill-OptiQ-4bit's op-temp 0.3** and the recorded finding that its earlier LCB
   "DNF" was a temperature artifact, from a different task and a different harness path.
 - **Rank the screen on reasoning-token cost, not `conv%`.** `conv%` has no variance to offer for
   either winner (66/66), while cost varies 47× within one model. This is the same lesson AGENTS.md
@@ -401,7 +401,7 @@ temp 0.6 where the knobs do separate.
 
 ### ⚠️ HARNESS DEFECT — on slow models a genuine `budget_hit` is UNOBSERVABLE
 `run_convergence.run_one` calls `driver.complete` at its **default 3600 s** timeout while
-`thinking_budget` is 81,920. On the distill's long-prompt cells decode is **10–16 tok/s**, so the
+`thinking_budget` is 81,920. On Qwen3.6-27B-Opus-Distill-OptiQ-4bit's long-prompt cells decode is **10–16 tok/s**, so the
 budget needs **85–136 min** to reach but the client abandons at 60 min (~37–58K tokens). The request
 can therefore never be scored as a budget hit — instead the client gives up and, as rev A proved,
 **the worker keeps generating**. That is not hypothetical: rev A's aggregation cell ran
@@ -537,7 +537,7 @@ was measurably inert.
 the toggle is reachable and the claim can be A/B'd same-box/same-session. Small change; without it the
 lever is permanently unauditable.
 **Note for the speed question:** since the kernel is already the default and its precondition holds,
-there is no *unbanked* speed win here. The distill remains the campaign's wall-clock bottleneck
+there is no *unbanked* speed win here. Qwen3.6-27B-Opus-Distill-OptiQ-4bit remains the campaign's wall-clock bottleneck
 (3.9× Ornith per aider case) with this lever already engaged.
 
 ### ⚠️ GENERAL LESSON — a perf lever with no runtime toggle is unauditable by construction
@@ -675,8 +675,8 @@ conclusion to the daily driver on measured grounds rather than policy.
 - **The benchmark policy is unaffected** — runs keep APC absent, which is now known to be
   indistinguishable from APC present anyway.
 - **Ornith was the right model to measure** as the conservative case: fp16 KV gives it the *larger*
-  per-block cost, while the distill (4-bit KV, ~4× smaller blocks) has the *tighter* headroom
-  (43.3GB vs the 46GB gate). A zero on Ornith is a zero on the distill. If APC is repaired, the
+  per-block cost, while Qwen3.6-27B-Opus-Distill-OptiQ-4bit (4-bit KV, ~4× smaller blocks) has the *tighter* headroom
+  (43.3GB vs the 46GB gate). A zero on Ornith is a zero on Qwen3.6-27B-Opus-Distill-OptiQ-4bit. If APC is repaired, the
   ceiling to re-check is "the KV of 32,768 extra tokens for that model" — blocks × block_size is a
   token capacity, so the cost is `kv_bits`-dependent and must be re-measured per model, not assumed.
 
@@ -833,7 +833,7 @@ Two consequences:
 made `main_models.yaml` `generation_defaults` the deployed truth. Audited: QWEN `production` =
 temp 0.7 / min_p 0.03 / **presence_penalty 0.3**, but deployed `Ornith-1.0-35B-mlx-uniform-4bit` =
 temp 0.4 and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` = temp 0.3, both at `presence_penalty 0.0` —
-and the distill was **not registered in PARAMS at all** (it reached QWEN by a name substring).
+and Qwen3.6-27B-Opus-Distill-OptiQ-4bit was **not registered in PARAMS at all** (it reached QWEN by a name substring).
 A nonzero `presence_penalty` also DISABLES suffix decoding, so the old profile would have measured
 a different serving path too. New `deployed` profile reads the registry; verified live (rows carry
 temperature 0.4). A drift-guard test now fails if a registry model is added without its sampling.
@@ -963,7 +963,7 @@ Per-model `generation_defaults` in `main_models.yaml` → mlx-serve forwards it 
 `--generation-defaults <json>` arg (no per-param names) → mlx-vlm applies each entry only when the
 request omits it (**precedence request > yaml > checkpoint > hardcoded**; unknown key fails loud at
 startup; resolved sampling logged at INFO). Closes the config hole where **vscode/zed carry no sampling**:
-they ran the distill at its checkpoint **temp 1.0** and Ornith at hardcoded **greedy 0.0**; now they get
+they ran Qwen3.6-27B-Opus-Distill-OptiQ-4bit at its checkpoint **temp 1.0** and Ornith at hardcoded **greedy 0.0**; now they get
 the tuned op-temps + `presence_penalty 0.0` (suffix engages). `enable_thinking` moved into the block.
 **Runtime-verified on M2+M5**: a no-sampling distill request resolves to `temperature=0.3 top_p=0.95
 top_k=20 min_p=0.0 presence_penalty=0.0 max_tokens=102400 thinking_budget=81920 enable_thinking=True`
@@ -1083,7 +1083,7 @@ Qwen's 90% vs gemma-MoE's 100% on HumanEval+ is an N=10, single-item difference,
 
 ### Qwen3.6-27B-OptiQ-4bit light — swap-overlap provenance (2026-06-25)
 
-During this run, a second 29GB model (gemma-4-31B-it-qat-6bit) was accidentally downloaded + briefly started on M5, co-resident with the live Qwen worker (~08:27) → a soft `memory.pressure.warn` (ram_available 16.2GB) + ~1.6GB swap; one in-flight item was swap-slowed. Verdict: **NOT tainted.** The worker never crashed/restarted (etime continuous), no allocation failure occurred (soft WARNING only), and swap is byte-identical on restore (deterministic compute → tokens unchanged, only latency). Confirmed empirically: HE+ and MBPP+ converged 100%, and the single AIME non-convergence (`aime25-14`) is a model-intrinsic hard item that also loops for gemma-31b-6bit and the distill — not swap-induced. A swap/memory event taints SPEED/latency/memory measurements, never QUALITY (pass@1/convergence).
+During this run, a second 29GB model (gemma-4-31B-it-qat-6bit) was accidentally downloaded + briefly started on M5, co-resident with the live Qwen worker (~08:27) → a soft `memory.pressure.warn` (ram_available 16.2GB) + ~1.6GB swap; one in-flight item was swap-slowed. Verdict: **NOT tainted.** The worker never crashed/restarted (etime continuous), no allocation failure occurred (soft WARNING only), and swap is byte-identical on restore (deterministic compute → tokens unchanged, only latency). Confirmed empirically: HE+ and MBPP+ converged 100%, and the single AIME non-convergence (`aime25-14`) is a model-intrinsic hard item that also loops for gemma-31b-6bit and Qwen3.6-27B-Opus-Distill-OptiQ-4bit — not swap-induced. A swap/memory event taints SPEED/latency/memory measurements, never QUALITY (pass@1/convergence).
 
 ### Temperature ladder — gemma-4-26B-A4B-it-OptiQ-4bit LCB (2026-06-25)
 
@@ -1239,31 +1239,31 @@ rescued its same-family cousin Ornith. Ran the ladder (same item set, budget 819
 | 0.6 (official) | 3/8 | >82K (budget-saturating) | DNF-meander (as recorded) |
 | 0.4 | **9/15 (60%)** (+1 sleep-error abc358_e) | 25,713 | shaky |
 | **0.3** | **15/15 (100%)** | **24,406** | **CLEAN — 0 runaway** |
-**The DNF was 100% a temperature artifact.** At t0.3 the distill converges perfectly (15/15, no runaways,
+**The DNF was 100% a temperature artifact.** At t0.3 Qwen3.6-27B-Opus-Distill-OptiQ-4bit converges perfectly (15/15, no runaways,
 healthy median) — same knee as Ornith, one notch lower (Ornith op-temp 0.4, distill 0.3; op-temp is
 model/quant-specific). **Distill op-temp = 0.3.** So it was prematurely dismissed. It is now a genuinely
 strong candidate: Opus-reasoning distillation + BFCL **0.94** (tool-calling, tied with the gemma-MoE leader) +
 clean LCB convergence. CAVEAT vs the pick: it's a DENSE 27B → slower decode than Ornith's sparse MoE, so for
-the 256K *agentic* goal Ornith's speed likely still wins; the distill is the strongest ALTERNATIVE / a
+the 256K *agentic* goal Ornith's speed likely still wins; Qwen3.6-27B-Opus-Distill-OptiQ-4bit is the strongest ALTERNATIVE / a
 single-shot-reasoning contender. LCB pass@1 pending the datasets-grade fix (convergence is decision-grade on
 its own here). Full characterization at t0.3 (light / math500 / BFCL n=1000) running.
 
 **AGENTIC (Aider, dockerized, diff @ t0.3, 2026-07-07):** distill = **80% pass_rate_2 (4/5, n=5)**, well-formed
 100%, **0 loops / 0 context-exhaustion**, ~14.5 min/case — a CLEAN, strong agentic run (contrast the gemma-MoE
-which over-reasoned to INVALID; the distill's diff-format edits apply fine, qwen-arch like Ornith). Provisional
+which over-reasoned to INVALID; Qwen3.6-27B-Opus-Distill-OptiQ-4bit's diff-format edits apply fine, qwen-arch like Ornith). Provisional
 agentic ranking: **distill 80% (n=5) > Ornith 61.8% (n=34) > dense-gemma 60% (n=5) ≫ gemma-MoE INVALID.** TWO
 big caveats before over-reading: (1) small-sample — but a higher-n re-run **CONFIRMED it HOLDS: 75% pass_rate_2
 @ n=16 (12/16), well-formed 100%** (the n=34 run stalled at case 17 on a router-timeout retry loop — harness, not
-model; cases 1–16 clean). So the distill did NOT regress to Ornith-like ~62%; it's genuinely ~75–80% agentic.
-NB the 75%@16 vs Ornith 61.8%@34 isn't fully matched-n (the distill's first-16 vs Ornith's harder 34-set), but
-the distill clearly holds a strong agentic score. (2) It's a DENSE 27B, so
+model; cases 1–16 clean). So Qwen3.6-27B-Opus-Distill-OptiQ-4bit did NOT regress to Ornith-like ~62%; it's genuinely ~75–80% agentic.
+NB the 75%@16 vs Ornith 61.8%@34 isn't fully matched-n (Qwen3.6-27B-Opus-Distill-OptiQ-4bit's first-16 vs Ornith's harder 34-set), but
+Qwen3.6-27B-Opus-Distill-OptiQ-4bit clearly holds a strong agentic score. (2) It's a DENSE 27B, so
 decode is slower than Ornith's sparse MoE — though ~14.5 min/case (diff + tight t0.3 convergence) is agentic-
-viable, NOT prohibitive (and faster than dense-gemma's ~56min/case whole-format). NET: the distill is a
+viable, NOT prohibitive (and faster than dense-gemma's ~56min/case whole-format). NET: Qwen3.6-27B-Opus-Distill-OptiQ-4bit is a
 genuinely strong agentic candidate we'd wrongly dismissed — but Ornith remains the pick on **validated (n=34)
-agentic + faster MoE decode + PROVEN 256K capacity** (distill 256K capacity unmeasured). If the distill holds
+agentic + faster MoE decode + PROVEN 256K capacity** (distill 256K capacity unmeasured). If Qwen3.6-27B-Opus-Distill-OptiQ-4bit holds
 ~70%+ at higher n, it becomes the top single-shot-reasoning + agentic ALTERNATIVE; worth a 256K-capacity probe.
 
-**256K CAPACITY (the capstone, 2026-07-07) — VALIDATES THE THESIS.** The distill CLEARS 256K: mx-peak ladder
+**256K CAPACITY (the capstone, 2026-07-07) — VALIDATES THE THESIS.** Qwen3.6-27B-Opus-Distill-OptiQ-4bit CLEARS 256K: mx-peak ladder
 160/192/224/256K = **31.9 / 35.3 / 39.8 / 43.3 GB**, retrieval **1.00 at every rung**, GATE_PASS (≤46). So a
 dense-27B qwen3_5 (linear-attn) IS 256K-viable. BUT the numbers decide the 256K-agentic goal for Ornith:
 - **Memory headroom:** distill **43.3GB @256K = only 2.7GB under the gate** (near the ceiling; no room for a
@@ -1271,14 +1271,14 @@ dense-27B qwen3_5 (linear-attn) IS 256K-viable. BUT the numbers decide the 256K-
   96K tokens vs Ornith's +4.2GB — the dense-27B's bigger full-attn KV (5120-hidden, 16 full-attn layers) vs
   the MoE's lighter footprint (2048-hidden, 10 full-attn).
 - **Decode speed:** distill **9.4 tps @256K** vs **Ornith 37 tps** — **~4× slower**. For the agentic loop
-  (decode-heavy over long context) this is decisive: a 24K-token reasoning turn is ~43 min on the distill vs
+  (decode-heavy over long context) this is decisive: a 24K-token reasoning turn is ~43 min on Qwen3.6-27B-Opus-Distill-OptiQ-4bit vs
   ~11 min on Ornith.
-**CONCLUSION — the distill exploration STRENGTHENS the verdict, it doesn't overturn it.** The distill is the
+**CONCLUSION — Qwen3.6-27B-Opus-Distill-OptiQ-4bit exploration STRENGTHENS the verdict, it doesn't overturn it.** Qwen3.6-27B-Opus-Distill-OptiQ-4bit is the
 stronger *raw-quality* model on several single-shot axes (he+ 100, aime 100, BFCL 0.94) and it clears 256K —
 yet for **256K AGENTIC coding** Ornith wins decisively on the two axes that matter at long context: **decode
 speed (4×) and memory headroom (5×)**. This is the campaign thesis fully evidenced: *sparse-MoE + linear-attn
 (Ornith) is the right architecture for local 256K agentic coding* — even a strong dense alternative that clears
-256K is too slow + too memory-tight there. `Ornith-1.0-35B-mlx-uniform-4bit` remains the pick; the distill is
+256K is too slow + too memory-tight there. `Ornith-1.0-35B-mlx-uniform-4bit` remains the pick; Qwen3.6-27B-Opus-Distill-OptiQ-4bit is
 the documented strongest ALTERNATIVE / best single-shot-reasoning+tool-calling option, not the agentic pick.
 (Caveat: distill capacity @ kv_bits4 vs Ornith @ kv_bits0/fp16 — different KV scheme; both clear the gate, and
 the speed gap is architecture-driven, not KV. Distill aider n=34 still confirming the 80%→? small-sample.)

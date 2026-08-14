@@ -41,7 +41,7 @@ framework → same wall.** EpiCache is orthogonal. Full detail: memory `project-
 |---|---|---|---|---|---|---|
 | **gemma-OptiQ-4bit** (MoE, ~4 B active) | 1.0 | 1.0 @192/224/256K (160 K=0.20 noise) | ✅ 30 GB peak (most headroom) | var-track 1.0/64K, latent 1.0/128K, **0 errors** | **24-35** | **fast daily-driver front-runner** |
 | **OptiQ-distill-4bit** (dense, Opus-distill) | accurate; coding 1.0 | 1.0 (0.80@224K dip) | ✅ 42 GB peak | **over-thinks** (49 K = budget cap; coding normal 1.9 K) | 10-13 | **dense 256K reasoner — the gap-filler** |
-| Qwen-6bit-UD (dense) | 1.0 | 1.0 →224 K | ❌ **192 K-capped** | effective 32 K (1 error@48K under mem pressure) | 15 | **SUPERSEDED by the distill** |
+| Qwen-6bit-UD (dense) | 1.0 | 1.0 →224 K | ❌ **192 K-capped** | effective 32 K (1 error@48K under mem pressure) | 15 | **SUPERSEDED by Qwen3.6-27B-Opus-Distill-OptiQ-4bit** |
 | vanilla `mlx-community` gemma-4bit | ✗ (rambles, acc 0.4) | — | — | — | — | **dropped** (quant-level non-converger) |
 
 ### ⚠️ CORRECTION (post-handoff) — reasoning "convergence" is a FALSE PASS for gemma + distill
@@ -97,7 +97,7 @@ Three small `mlx-vlm` `load_model` fixes make converted / MTP-packaged quants lo
 2. **EpiCache integration** — solve the RoPE-after-eviction problem first (the make-or-break), then
    wire `maybe_epicache_wrap`/per-chunk hook + flags, validate ≤5% on the needle harness. Speeds the
    256K OptiQ variants.
-3. **Distill over-thinking** — confirm with n>1; consider a tighter `thinking_budget` for the distill,
+3. **Distill over-thinking** — confirm with n>1; consider a tighter `thinking_budget` for Qwen3.6-27B-Opus-Distill-OptiQ-4bit,
    or a non-reasoning-distill variant, since it rambles reasoning to the cap (coding is fine).
 4. **Decide on the loader fixes / MTP plumbing** — now committed; keep (they're benign + useful) or
    revert MTP (dead end).

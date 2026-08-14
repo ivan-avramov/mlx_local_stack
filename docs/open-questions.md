@@ -74,7 +74,7 @@ strict comparability. **Needs:** a ruling on whether the campaign record keeps b
 ### ~~O4~~ → CLOSED (delegated), see C15
 40 matches your stated failure ("turn 40, 180K context"). Session cost is O(turns) — measured, since
 the session cache prefills only new tokens — so 40 turns is ~6 min/session on Ornith and ~21 min on
-the distill.
+Qwen3.6-27B-Opus-Distill-OptiQ-4bit.
 **Recommendation:** pilot at 12 turns, measure, then choose from data rather than from the prior.
 
 ### ~~O5~~ → CLOSED (delegated), see C16
