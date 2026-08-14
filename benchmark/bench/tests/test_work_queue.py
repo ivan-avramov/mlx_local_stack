@@ -158,3 +158,54 @@ def test_job_log_name_is_filesystem_safe(tmp_path):
     name = json.loads(q.read_text())[0]["log"]
     assert "/" not in name and " " not in name
     assert (tmp_path / name).exists()
+
+
+# ---------------------------------------------- plan vs state: the file must not be both
+
+def test_state_is_written_to_a_SEPARATE_file_and_the_plan_is_untouched(tmp_path):
+    """The queue file is COMMITTED CONFIG. Writing runtime state into it makes it permanent drift on
+    the worker box, means a reordered plan cannot be synced via git without colliding with state,
+    and makes the plan un-editable from the driver. Found live 2026-08-14 by editing the driver's
+    copy and discovering the runner reads the worker's, which had diverged.
+    """
+    plan = tmp_path / "plan.json"
+    original = json.dumps([{"name": "a", "cmd": "true"}], indent=1)
+    plan.write_text(original)
+    state = tmp_path / "state.json"
+
+    workqueue.run(plan, state_path=state, runner=lambda cmd: 0)
+
+    assert plan.read_text() == original, "the committed plan was MODIFIED"
+    st = json.loads(state.read_text())
+    assert st["a"]["state"] == "done" and st["a"]["exit_code"] == 0
+
+
+def test_state_is_keyed_by_NAME_so_the_plan_can_be_REORDERED(tmp_path):
+    """Keying by index would silently mis-attribute state after a reorder — and reordering is the
+    operator's main lever for getting data faster."""
+    plan = tmp_path / "plan.json"
+    state = tmp_path / "state.json"
+    plan.write_text(json.dumps([{"name": "first", "cmd": "1"}, {"name": "second", "cmd": "2"}]))
+    ran = []
+    workqueue.run(plan, state_path=state, runner=lambda c: ran.append(c) or 0, max_jobs=1)
+    assert ran == ["1"]
+
+    # operator reorders the plan; 'first' is now last
+    plan.write_text(json.dumps([{"name": "second", "cmd": "2"}, {"name": "first", "cmd": "1"}]))
+    workqueue.run(plan, state_path=state, runner=lambda c: ran.append(c) or 0)
+    assert ran == ["1", "2"], "reordering re-ran a completed job or skipped a pending one"
+
+
+def test_inline_state_in_an_OLD_plan_is_migrated_not_re_run(tmp_path):
+    """Backwards compatibility: plans already carry inline state from the first design. Those jobs
+    must not be re-run — a redone generate is hours of worker time."""
+    plan = tmp_path / "plan.json"
+    state = tmp_path / "state.json"
+    plan.write_text(json.dumps([
+        {"name": "old-done", "cmd": "x", "state": "done", "exit_code": 0},
+        {"name": "new", "cmd": "y"},
+    ]))
+    ran = []
+    workqueue.run(plan, state_path=state, runner=lambda c: ran.append(c) or 0)
+    assert ran == ["y"]
+    assert json.loads(state.read_text())["old-done"]["state"] == "done"

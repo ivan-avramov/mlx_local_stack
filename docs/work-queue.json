@@ -10,28 +10,38 @@
   "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models gemma-4-31B-it-qat-6bit --benches humanevalplus,mbppplus --limit humanevalplus=100,mbppplus=100 --sampling-profile deployed --order model --clean-stale --probe-timeout 3600"
  },
  {
+  "name": "SMOKE: runaway-tax temperature ladder (Ornith, 3 known runaway ids)",
+  "why": "CHEAPEST HIGH-VALUE ITEM ON THE BOARD, and it goes early per the operator's 'instruct early corrections'. The runaway tax is ~40% of wall-clock on BOTH winners -- larger than everything Phase 2 shipped. Uses --ids to vary ONE knob on EXACTLY the items that ran away, and MLX_BENCH_RESULTS to give each rung its own tree (a shared tree would either clobber the baseline via --clean-stale or skip every item via done_ids). Worst case 3 items x ~10 min per rung; a rung that FIXES the loop drops to ~20s/item, so success is cheap and failure is bounded.",
+  "cmd": "for T in 0.2 0.6; do MLX_BENCH_RESULTS=$HOME/ladder_t$T PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models Ornith-1.0-35B-mlx-uniform-4bit --benches humanevalplus --limit humanevalplus=100 --ids humanevalplus=HumanEval/94:HumanEval/83:HumanEval/144 --temp $T --sampling-profile deployed --probe-timeout 1200 || true; done"
+ },
+ {
+  "name": "SMOKE: BFCL live, tiny",
+  "why": "BFCL fills an EMPTY use case (tool calling) and is the only POWERED axis the suite owns (0.94 vs 0.749 at n=1000 is ~12 sigma). It has NEVER run live. Its known risk is that the shim posts a pre-formatted prompt to /v1/completions, BYPASSING the chat template that enable_thinking drives -- so a 5-item smoke says in minutes whether the axis is even valid, instead of after hours. Trailing || true so a broken axis does not stall the queue.",
+  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models Ornith-1.0-35B-mlx-uniform-4bit --benches bfcl --limit bfcl=5 --sampling-profile deployed --probe-timeout 900 || true"
+ },
+ {
   "name": "gemma-4-26B-A4B-it-OptiQ-4bit evalplus n=100 deployed",
   "why": "Fourth candidate on the coding axis. Existing rows are n=3. MoE/4-bit, so it also gives the suite a second architecture class at usable n.",
   "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models gemma-4-26B-A4B-it-OptiQ-4bit --benches humanevalplus,mbppplus --limit humanevalplus=100,mbppplus=100 --sampling-profile deployed --order model --clean-stale --probe-timeout 3600"
  },
  {
-  "name": "ifeval n=200 gemma-4-31B-it-qat-6bit",
-  "why": "The DAILY DRIVER use case has data for only two models. n=200 gives +/-8.9pp, enough to separate a candidate from the two winners' 89.9%.",
+  "name": "ifeval n=200 gemma-4-31B-it-qat-6bit  [~10h measured]",
+  "why": "The DAILY DRIVER use case has data for only two models. n=200 gives +/-8.9pp, enough to separate a candidate from the two winners' 89.9%. MEASURED COST: gemma runs ~14 tok/s and ifeval items are ~2.4K tokens median, so ~3 min/item => ~10h for 200.",
   "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models gemma-4-31B-it-qat-6bit --benches ifeval --limit ifeval=200 --sampling-profile deployed --order model --clean-stale --probe-timeout 3600"
  },
  {
-  "name": "livecodebench n=100 all four servable models",
-  "why": "The only coding axis with per-difficulty breakdown. Every existing LCB row is n=15 (+/-32pp) from the retired box at the `official` profile, so the recorded three-way tie at 80% rests on nothing usable. n=100 gives +/-12.5pp. Roundrobin so a stopped prefix stays balanced across models.",
-  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models Ornith-1.0-35B-mlx-uniform-4bit,Qwen3.6-27B-Opus-Distill-OptiQ-4bit,gemma-4-31B-it-qat-6bit,gemma-4-26B-A4B-it-OptiQ-4bit --benches livecodebench --limit livecodebench=100 --sampling-profile deployed --order roundrobin --clean-stale --probe-timeout 5400"
- },
- {
-  "name": "math500 n=100 both winners",
-  "why": "The REASONING use case is currently UNRESOLVED: at n=30 acc ties (83.3 vs 81.5) while acc_strict splits 60.0 vs 81.5 because Ornith-1.0-35B-mlx-uniform-4bit hits the budget on 9/30. +/-23pp cannot settle a 21pp split; n=100 gives +/-12.5pp.",
+  "name": "math500 n=100 both winners  [~35h measured -- REVIEW BEFORE IT RUNS]",
+  "why": "The REASONING use case is currently UNRESOLVED: at n=30 acc ties (83.3 vs 81.5) while acc_strict splits 60.0 vs 81.5 because Ornith-1.0-35B-mlx-uniform-4bit hits the budget on 9/30. +/-23pp cannot settle a 21pp split; n=100 gives +/-12.5pp. MEASURED COST: 8.3 min (Ornith) + 12.6 min (the other) = ~21 min per item-pair, so n=100 is ~35h of the single worker. My original queue understated this. Consider n=40 (+/-20pp) for ~14h.",
   "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models Ornith-1.0-35B-mlx-uniform-4bit,Qwen3.6-27B-Opus-Distill-OptiQ-4bit --benches math500 --limit math500=100 --sampling-profile deployed --order roundrobin --clean-stale --probe-timeout 5400"
  },
  {
+  "name": "livecodebench n=100 x4  [~55h+ measured -- LIKELY TOO EXPENSIVE AS SPECIFIED]",
+  "why": "The only coding axis with per-difficulty breakdown. Every existing LCB row is n=15 (+/-32pp) from the retired box at the `official` profile, so the recorded three-way tie at 80% rests on nothing usable. n=100 gives +/-12.5pp. Roundrobin so a stopped prefix stays balanced across models. MEASURED COST: 9.6 min (Ornith) and 23.1 min (the other) per item, so 100 items x 2 winners alone is ~55h before the gemmas. Either cut n to ~30 (+/-23pp), drop to two models, or skip -- the coding use case already has evalplus at n=100.",
+  "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py generate --models Ornith-1.0-35B-mlx-uniform-4bit,Qwen3.6-27B-Opus-Distill-OptiQ-4bit,gemma-4-31B-it-qat-6bit,gemma-4-26B-A4B-it-OptiQ-4bit --benches livecodebench --limit livecodebench=100 --sampling-profile deployed --order roundrobin --clean-stale --probe-timeout 5400"
+ },
+ {
   "name": "grade everything generated so far",
-  "why": "Mechanical, no worker time. Writes per-pair .score.json files so the scoreboard shows acc/acc_strict for every row above. Runs last so it covers the whole batch.",
+  "why": "Mechanical, no worker time. Writes per-pair .score.json files so the scoreboard shows acc/acc_strict for every row above. Runs last so it covers the whole batch. NOTE 2026-08-14: evalplus in docker PRINTS ITS RESULTS AND THEN NEVER EXITS, so subprocess.run waits out our 3600s timeout and a COMPUTED result is discarded as TimeoutExpired while a ~4.5GB container leaks. Expect mbppplus cells to fail until that is fixed.",
   "cmd": "PYTHONPATH=benchmark .venv-bench/bin/python benchmark/run.py grade --models Ornith-1.0-35B-mlx-uniform-4bit,Qwen3.6-27B-Opus-Distill-OptiQ-4bit,gemma-4-31B-it-qat-6bit,gemma-4-26B-A4B-it-OptiQ-4bit --benches humanevalplus,mbppplus,livecodebench,ifeval,math500,aime"
  }
 ]

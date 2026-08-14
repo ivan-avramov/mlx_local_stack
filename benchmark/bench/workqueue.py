@@ -77,15 +77,58 @@ def _shell(cmd: str, logfile=None) -> int:
         return subprocess.run(cmd, shell=True, stdout=fh, stderr=subprocess.STDOUT).returncode
 
 
-def _next_index(entries: list):
+TERMINAL = ("done", "failed")
+
+
+def _load_state(state_path, plan: list) -> dict:
+    """Runtime state, keyed by job NAME, from a file SEPARATE from the plan.
+
+    Separate because the plan is COMMITTED CONFIG: writing state into it makes the plan permanent
+    drift on the worker box, stops a reordered plan being synced via git without colliding with
+    state, and makes the plan un-editable from the driver box. Found live 2026-08-14.
+
+    Keyed by NAME, not index, so the operator can REORDER the plan freely — reordering is their main
+    lever for getting data sooner, and index-keying would silently mis-attribute outcomes.
+
+    Inline state from the original design is MIGRATED rather than ignored, so an already-completed
+    job is never re-run (a redone `generate` is hours of worker time).
+    """
+    st = {}
+    if state_path and Path(state_path).exists():
+        try:
+            loaded = json.loads(Path(state_path).read_text())
+            if isinstance(loaded, dict):
+                st = loaded
+        except (json.JSONDecodeError, OSError):
+            st = {}
+    for e in plan:                                  # migrate legacy inline state
+        n = e.get("name")
+        if n and n not in st and e.get("state"):
+            st[n] = {k: e[k] for k in ("state", "exit_code", "started_at", "finished_at", "note")
+                     if k in e}
+    return st
+
+
+def _save_state(state_path, st: dict) -> None:
+    if state_path:
+        Path(state_path).write_text(json.dumps(st, indent=1, sort_keys=True))
+
+
+def _next_index(entries: list, st: dict = None):
     """First entry with no terminal state. `failed` is terminal — see the no-auto-retry rule."""
+    st = st or {}
     for i, e in enumerate(entries):
-        if e.get("state") in (None, "", "queued"):
-            return i
+        rec = st.get(e.get("name")) or {}
+        if rec.get("state") in TERMINAL:
+            continue
+        if e.get("state") in TERMINAL and not st:
+            continue
+        return i
     return None
 
 
-def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print, logdir=None) -> int:
+def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print, logdir=None,
+        state_path=None) -> int:
     """Execute queued entries in order until none remain. Returns the number of jobs run."""
     queue_path = Path(queue_path)
     logdir = Path(logdir) if logdir else None
@@ -94,22 +137,34 @@ def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print,
     ran = 0
     while ran < max_jobs:
         entries = _load(queue_path)             # re-read: work can be appended mid-run
-        idx = _next_index(entries)
+        st = _load_state(state_path, entries)
+        idx = _next_index(entries, st)
         if idx is None:
             break
         entry = entries[idx]
+        name = entry.get("name") or f"job-{idx}"
         cmd = entry.get("cmd")
         if not cmd:
-            entry.update(state="failed", note="entry has no 'cmd'", finished_at=_now())
-            _save(queue_path, entries)
-            log(f"[workqueue] SKIP {entry.get('name')!r}: no 'cmd'")
+            if state_path:
+                st[name] = {"state": "failed", "note": "entry has no 'cmd'", "finished_at": _now()}
+                _save_state(state_path, st)
+            else:
+                entry.update(state="failed", note="entry has no 'cmd'", finished_at=_now())
+                _save(queue_path, entries)
+            log(f"[workqueue] SKIP {name!r}: no 'cmd'")
             continue                            # malformed != crash the queue
         jobfile = None
         if logdir:
-            jobfile = logdir / f"{idx:02d}-{_safe_name(entry.get('name'))}.joblog"
-            entry["log"] = jobfile.name
-        entry.update(state="running", started_at=_now())
-        _save(queue_path, entries)
+            jobfile = logdir / f"{_safe_name(name)}.joblog"
+        if state_path:
+            st[name] = {"state": "running", "started_at": _now(),
+                        **({"log": jobfile.name} if jobfile else {})}
+            _save_state(state_path, st)
+        else:
+            if jobfile:
+                entry["log"] = jobfile.name
+            entry.update(state="running", started_at=_now())
+            _save(queue_path, entries)
         log(f"[workqueue] START {entry.get('name')!r}: {cmd}")
         try:
             rc = (runner(cmd) if runner is not None
@@ -118,17 +173,23 @@ def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print,
             rc, note = 1, f"{type(e).__name__}: {str(e)[:120]}"
         else:
             note = None
-        # Re-read before writing back: the operator may have appended while this job ran.
-        entries = _load(queue_path)
-        if idx < len(entries):
-            entries[idx].update(state="done" if rc == 0 else "failed", exit_code=rc,
-                                finished_at=_now())
-            if jobfile is not None:
-                entries[idx]["log"] = jobfile.name
-            if note:
-                entries[idx]["note"] = note
-            _save(queue_path, entries)
-        log(f"[workqueue] {'DONE' if rc == 0 else 'FAILED'} {entry.get('name')!r} rc={rc}")
+        outcome = {"state": "done" if rc == 0 else "failed", "exit_code": rc,
+                   "finished_at": _now()}
+        if jobfile is not None:
+            outcome["log"] = jobfile.name
+        if note:
+            outcome["note"] = note
+        if state_path:
+            # Re-read state: nothing else writes it, but be consistent about not clobbering.
+            st = _load_state(state_path, entries)
+            st[name] = {**(st.get(name) or {}), **outcome}
+            _save_state(state_path, st)
+        else:
+            entries = _load(queue_path)         # operator may have appended while this ran
+            if idx < len(entries):
+                entries[idx].update(**outcome)
+                _save(queue_path, entries)
+        log(f"[workqueue] {'DONE' if rc == 0 else 'FAILED'} {name!r} rc={rc}")
         ran += 1
     log(f"[workqueue] queue drained after {ran} job(s)")
     return ran
@@ -140,6 +201,9 @@ def main(argv=None) -> int:
     ap.add_argument("queue", help="path to the queue JSON file")
     ap.add_argument("--log", default=None, help="append progress here (default: stdout)")
     ap.add_argument("--max-jobs", type=int, default=DEFAULT_MAX_JOBS)
+    ap.add_argument("--state", default=None,
+                    help="runtime state file, keyed by job name (RECOMMENDED: keeps the committed "
+                         "plan untouched so it can be reordered and synced via git)")
     ap.add_argument("--logdir", default=None,
                     help="directory for per-job output logs (default: alongside --log)")
     args = ap.parse_args(argv)
@@ -151,7 +215,7 @@ def main(argv=None) -> int:
             fh.write(f"{_now()} {msg}\n")
     else:
         log = print
-    run(args.queue, max_jobs=args.max_jobs, log=log,
+    run(args.queue, max_jobs=args.max_jobs, log=log, state_path=args.state,
         logdir=args.logdir or (Path(args.log).parent if args.log else None))
     return 0
 
