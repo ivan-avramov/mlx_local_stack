@@ -11,6 +11,43 @@ must be re-run on M5. The M4 Pro driver hosts **NO campaign models at all** (~26
 AI session) and is a different chip class, so it is never a valid speed-comparison box — ALL model
 runs are M5 runs. See `AGENTS.md` → Operating rules.
 
+## 🚨 `kv_prealloc_tokens: 262144` DESTROYS DECODE THROUGHPUT — >47× on a MATCHED ITEM (2026-08-14)
+
+**This is the SHIPPED value for both winners**, and AGENTS.md states the rule as "Set equal to that
+model's `max_kv_cache_size` so the KV cache is pre-allocated at the full cap and the stack never
+reallocs." At 256K that rule appears to cost essentially all throughput.
+
+**Same-item comparison — the strongest form available.** `--order model` with a fixed seed gives an
+identical item order, so run 1 and run 2 both started on `HumanEval/146`, same model, same `deployed`
+sampling, same box (M5), minutes apart, worker cmdline verified as ground truth in both:
+
+| config | `HumanEval/146` | aggregate |
+|---|---|---|
+| `max_kv_cache_size`/`kv_prealloc_tokens` **262144** | **did not complete in 19.5 min** | 0 rows in 19.5 min; worker CPU ~102–109% throughout |
+| **131072** | **24.8 s @ 101 tok/s** | items 13.3 / 24.8 / 26.8 s @ 101–118 tok/s |
+
+⇒ **>47× on one matched item.** The 131072 wall times match the retired-M2 baseline median of 23 s
+(n=100), so this is a return to normal rather than a speedup.
+
+**Health check that the run is genuinely tracking the baseline:** item 4 (`HumanEval/94`) took 622.5 s
+for **82,101 tokens at 132 tok/s** — a budget hit against the (now genuinely-in-force) 81,920 budget.
+The M2 baseline's longest humanevalplus item was **82,075 tokens**, almost certainly the same problem.
+So the long tail reproduces; the 262144 arm was pathological, not merely unlucky.
+
+⚠️ **CONFOUNDED, and not yet disentangled.** `max_kv_cache_size` and `kv_prealloc_tokens` were changed
+TOGETHER (both 262144 → 131072), so "cap size" and "prealloc size" are not separated. The clean OFAT
+— cap 262144 with prealloc 131072, or prealloc absent — is now cheap (~20 s/item) and is QUEUED, not
+run. Do not attribute the effect to prealloc specifically until that cell exists.
+
+⚠️ **CONSEQUENCE FOR THE RECORD: any speed number measured at a 262144 prealloc is SUSPECT.** That
+includes anything in Phase 2 taken on the winners at the shipped registry values. Re-measure before
+citing.
+
+**Mechanistic hypothesis to test (not established):** decode cost scaling with ALLOCATED rather than
+USED KV length. The neighbouring precedent is already in AGENTS.md — `prefill_step_size` not threaded
+into generation gave 4× QK² scratch and a 256K OOM. Supporting datum: the 2026-08-13 IFEval run on
+this same box at `kv_prealloc_tokens: 65536` decoded healthily at ~97 tok/s.
+
 ## ⚠️ THE DECLARED THINKING BUDGET WAS NOT THE ONE IN FORCE — 33 IFEval rows were FALSE PASSES (2026-08-14)
 
 **Mechanism, confirmed to the token, not inferred.** `mlx-vlm`'s `_apply_generation_budget`

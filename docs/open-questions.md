@@ -14,7 +14,94 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-### O11. Investigate the degenerate-loop tax BEFORE P4? (largest unclaimed speed win on the board)
+### O14. `kv_prealloc_tokens == max_kv_cache_size` is an AGENTS.md RULE and it costs >47× throughput. Change it?
+Measured 2026-08-14 on a matched item (`HumanEval/146`, same model/sampling/box, worker cmdline verified):
+**24.8 s @ 101 tok/s at 131072 vs NOT COMPLETING IN 19.5 MIN at 262144.** 262144 is the **shipped**
+value for both winners. Details in `campaign-results.md`.
+
+Three things need your ruling, because they are not all the same question:
+1. **The rule itself.** AGENTS.md says to set prealloc equal to the cap "so the stack never reallocs."
+   That rationale is about avoiding reallocation, and it was presumably measured — but not, apparently,
+   against throughput at 256K. Does the rule stand at smaller caps and get an exception at large ones,
+   or is it retired?
+2. **The shipped registry.** Both winners ship `262144/262144`. If the effect holds, the daily driver
+   has been running at a fraction of its decode speed. That is a config change to a carrier, so it
+   needs your approval, not mine.
+3. **The historical record.** Any speed number measured at a 262144 prealloc is suspect, including
+   Phase-2 numbers on the winners. Which of those do you want re-measured, given one worker?
+⚠️ **The effect is CONFOUNDED** — cap and prealloc were changed together. The disentangling OFAT (cap
+262144, prealloc 131072) is cheap now (~20 s/item) and QUEUED. **Recommendation: run the OFAT first,
+then decide 1–3 on the result.** I did not touch the committed registry; M5 is locally at 131072 and
+that dirt is documented in `campaign-queue.md`.
+
+### O13. `max_tokens` (102400) EXCEEDS the usable context on every shipped model. Which way do we fix it?
+The server silently clamps `thinking_budget` to `0.8 * (max_kv_cache_size - prompt)`. With the shipped
+`max_kv_cache_size: 262144` and `max_tokens: 102400` this is harmless at short prompts — but the clamp
+begins firing past a ~160K prompt, and **at a 250K prompt the resolved thinking budget is 9,708**,
+silently. So the config advertises 256K context and an 81,920 thinking budget that cannot coexist.
+Options:
+1. **Lower `max_tokens`** to something that fits alongside a long prompt (e.g. 32768), on all four
+   carriers + the registry. Honest, but caps long single responses.
+2. **Lower `thinking_budget`** to a value that is never clamped at the deepest supported prompt.
+   Predictable, but wastes headroom at short prompts, which is where most traffic is.
+3. **Accept the clamp and DOCUMENT it** as "thinking budget degrades with context depth", now that the
+   harness records the resolved value.
+**Recommendation: option 3 plus a loud startup log**, because 1 and 2 both trade away capability at the
+prompt lengths that actually dominate use, to fix a case the harness can now report accurately. **I did
+NOT add the mechanical invariant test I proposed** — an honest `max_tokens <= cap - allowance` assertion
+FAILS against the shipped config, so landing it would encode this decision rather than surface it.
+
+### O12. The M1 "not a DNF" ruling rests on a premise that measurement has falsified. Re-rule?
+M1 (2026-08-13) ruled the degenerate-loop rows "NOT a DNF... a valid converged response — converged as
+determined by the MODEL", turning on item 2849 sitting at **"64% of budget"** (52,503 / 81,920) with
+`finish_reason "stop"`.
+**Against the budget actually in force that row is at 100.2%** — `int((65536 - 42) * 0.8) = 52,395`. It
+is a budget hit. The model did not determine it was done; `ThinkingBudgetCriteria` force-injected
+`</think>` and the model then wrote its answer, which is exactly why `finish_reason` read `"stop"`.
+Reclassified: of 40 flagged loops, **25 + 8 are clamped budget hits, 4 + 2 are `max_tokens`
+truncations, and 1 is genuinely self-terminating** (Ornith id 3748, 8,228 tokens).
+**What is unchanged:** the answers still verify, so `acc` is unaffected (90.0% / 89.9%), and the IFEval
+"the two winners are EQUIVALENT" headline survives — both arms moved the same way.
+**What changes:** these rows are non-converged, so AGENTS.md's standing rule applies in full — a
+persistent budget hit is a FAIL SIGNAL and the knob is temperature. `acc_strict` drops 89.8% → 86.7%
+(Ornith) and 88.5% → 85.1% (distill).
+**Recommendation: re-rule them as budget hits** (which the harness now does automatically, `aca967b`),
+and keep the M1 *principle* — a genuinely self-terminating loop is not a DNF — since it was correct and
+now applies to exactly one row. **This also un-blocks O9 in a smaller form:** the judge-panel question
+about looped-but-correct answers now has an n of 1, so it is not worth panel time.
+
+### ~~O11~~ → CLOSED-BY-MEASUREMENT. Premise falsified: the loops do not self-terminate
+O11 asked whether to chase the degenerate-loop tax (42% / 57% of IFEval wall-clock) ahead of P4, on the
+basis that these were "verbatim repetition loops that SELF-TERMINATE under budget and answer
+CORRECTLY", i.e. a pure cost problem fixable by sampling.
+
+**Measured 2026-08-14: 39 of the 40 rows are EXTERNAL TRUNCATIONS, not self-terminations.** The server
+silently clamped the declared 81,920 thinking budget to ~52,390, and the harness compared against the
+declared value — so a forced `</think>` scored as a clean stop. Genuinely self-terminating share of
+wall-clock: **0.3% (Ornith) and 0.0% (distill)**, versus the 42% / 57% the item was raised on.
+
+| | Ornith | distill |
+|---|---|---|
+| clamped budget-hits | 25 | 8 |
+| `max_tokens` truncations | 4 | 2 |
+| **genuinely self-terminating** | **1** | **0** |
+
+**The cost is still real** (2.5h and 3.6h of wall-clock) — the *attribution* changed, and with it the
+intervention. This is no longer "find the sampling setting that stops a self-verification loop"; it is
+AGENTS.md's standing case: a model persistently hitting a generous budget → run the TEMPERATURE LADDER
+on the offending items. That is a different experiment with a different success criterion, so O11 as
+specified is answered rather than deferred. The design constraints attached to it (vary sampling on the
+SAME loop-triggering ids; never the untruncated config; no `min_p` cells below temp 0.4) all still hold
+for whatever replaces it. Successor questions: **O12** (the ruling), **O13** (the config), **O14** (the
+prealloc rule).
+⚠️ **Two blockers remain for any successor probe, both unbuilt:** `generate` has **no id filter**, so
+"vary sampling on the SAME items" is not executable; and there is no `presence_penalty` /
+`repetition_penalty` override (only `--max-tokens`, `--temp`, `--thinking-budget`). Both small, both
+free. Also unverified: AGENTS.md claims a nonzero `presence_penalty` disables suffix decoding — I found
+no such gate in the fork, only the structured-output one at `generation.py:1750`. Measure before
+designing a penalty cell.
+
+### ~~O11 (original text, retained)~~ Investigate the degenerate-loop tax BEFORE P4? (largest unclaimed speed win on the board)
 Measured on IFEval 2026-08-13, and it is not a small effect:
 
 | | `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` |

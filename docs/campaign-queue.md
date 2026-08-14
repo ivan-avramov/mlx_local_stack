@@ -25,6 +25,47 @@ survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNN
 
 Last updated: 2026-08-11. **HARNESS V2 IS THE LIVE WORKSTREAM** (see below); **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
 
+## ▶ RUNNING 2026-08-14 — EVALPLUS AT `deployed` ON M5, the first CURRENT-BOX coding H2H
+
+**What:** `Ornith-1.0-35B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ×
+{`humanevalplus`, `mbppplus`} × **n=100**, `--sampling-profile deployed`, `--order model`,
+`--probe-timeout 9000`, `--clean-stale`. Logs `logs/evalplus_deployed_2026-08-14.log`; monitors
+`benchmark/m1/bench_watch.py` → `/tmp/watch_humanevalplus.log`, `/tmp/watch_mbppplus.log`.
+
+**Why this and not P4 / LCB.** A provenance audit found that **EVERY non-IFEval row in the corpus is
+from the RETIRED M2 Max at the `official`/`production` profile** (2026-06-25 → 07-08). AGENTS.md bars
+cross-box baselines and requires `deployed` for new axes, so **no existing baseline was extendable** —
+LCB n≈100 would have been 100 items × 3 models from scratch (~46 h at measured per-item cost), not the
+85 the handoff assumed. evalplus buys a matched, current-box, `deployed`, execution-gated coding H2H at
+**n=100 (MDE ±13pp)** for ~5–6 h. Expected: ~2.7 h Ornith/humanevalplus (baseline mean 96 s/item),
+~0.6 h Ornith/mbppplus, distill's arms after.
+
+⚠️ **THE M2 ROWS WERE ARCHIVED BEFORE `--clean-stale` DELETED THEM** →
+`~/mlx_bench_snapshots/pre-deployed-evalplus-2026-08-14/` (13 MB, 24 files). They are NOT
+re-measurable — the box is gone — so this archive is the only copy. Never run `--clean-stale` against
+an un-archived tree.
+
+### ⚠️ M5 REGISTRY IS LOCALLY DIRTY AT 131072 — INTENTIONAL, DO NOT `git checkout` IT
+`main_models.yaml` on M5 has `max_kv_cache_size: 131072` + `kv_prealloc_tokens: 131072` for **both
+winners only** (gemma's 196608 and the other 262144 entry are untouched; `.bak` beside the file). Two
+reasons, both measured 2026-08-14:
+1. **131072 is the TIGHTEST cap that keeps the declared thinking budget in force.** `max_tokens` is
+   102400, and the server clamps `thinking_budget` to `0.8 * (cap - prompt)`. At 131072 the resolved
+   budget is exactly the declared **81920**; at 65536 it silently became ~52390 (which is what
+   corrupted the IFEval convergence numbers).
+2. **262144 destroyed throughput** — >47× on a matched item. See `campaign-results.md`.
+The earlier 65536 dirt is backed up at `/tmp/main_models.yaml.dirty-kv65536-backup` on M5 (md5
+`6f758126068afee41c781b7189bd40fe`). ⚠️ P4/Tier-1 must decide its own cap deliberately: M1 ran at
+65536, so matching M1 means re-accepting the clamp, and comparing to M1 at a different cap is invalid.
+
+### ⚠️ NEW HAZARD: the documented IFEVAL RESUME will now report STALE — do NOT add `--clean-stale`
+`max_kv_cache_size` is now part of the provenance fingerprint (`a45a139`), because it is
+output-determining. The 148 distill IFEval rows were generated at **65536**; M5's registry is now
+**131072**. So the resume command below will correctly warn that the existing rows are stale.
+**Without `--clean-stale` it warns and keeps them (safe). WITH `--clean-stale` it DELETES all 148.**
+To genuinely resume that arm, first restore the registry to 65536 for that model — and accept that the
+arm's thinking budget is really ~52390, not 81920.
+
 ## ⏹ IFEVAL — Ornith arm COMPLETE, Qwen3.6-27B-Opus-Distill-OptiQ-4bit arm STOPPED at n=145 (2026-08-13)
 
 **`Ornith-1.0-35B-mlx-uniform-4bit`: DONE, all 541 items.** `prompt_strict` **90.0%** [87,93] **±5pp** —
