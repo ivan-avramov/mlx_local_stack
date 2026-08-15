@@ -258,6 +258,32 @@ def _evalplus_all_ids(ds):
     return list(get_mbpp_plus().keys())
 
 
+# evalplus hangs in two distinct ways, BOTH leaving a complete results file on disk:
+#  (a) it prints results and never exits — so a long timeout burns wall-clock on finished work and
+#      the old code then DISCARDED the computed result as TimeoutExpired;
+#  (b) one sample's worker dies (observed: a rosetta `mmap_anonymous_rw` fault on Mbpp/255) and
+#      evalplus waits forever for that one, having already evaluated the other 377.
+# Measured 2026-08-14: a 19-dir batch wedged this way, container pinned at 0.00% CPU for 13 minutes
+# while the grade process accumulated 5 seconds of CPU. 900s is well above a healthy run.
+EVALPLUS_TIMEOUT_S = 900
+
+
+def _container_name(model: str, bench: str) -> str:
+    """Deterministic, docker-legal name so a wedged container can be killed by name."""
+    import re as _re
+    raw = f"evalplus-{model}-{bench}"
+    return _re.sub(r"[^A-Za-z0-9_.-]", "-", raw)[:60]
+
+
+def _kill_container(cname: str, runner) -> None:
+    """Best-effort kill. subprocess.run's timeout kills the docker CLIENT, not the container, so a
+    hung run otherwise leaks a ~4.5GB container (one was found up 7 hours)."""
+    try:
+        runner(["docker", "kill", cname], capture_output=True, text=True, timeout=60)
+    except Exception:  # noqa: BLE001 — the container may already be gone; never mask the real error
+        pass
+
+
 def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, all_ids=None):
     """Grade humanevalplus/mbppplus with the OFFICIAL evalplus evaluator run IN DOCKER.
     Docker (Linux) is required because evalplus's reliability_guard calls resource.setrlimit
@@ -302,14 +328,31 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
     rpath = sdir / f"{name}_samples_eval_results.json"
     if rpath.exists():
         rpath.unlink()                                            # don't read a stale result
-    cmd = ["docker", "run", "--rm", "--platform", "linux/amd64", "-v", f"{sdir}:/work",
+    # NAMED so a wedged container can be killed. Measured: a run that hangs leaks a ~4.5GB
+    # container (one was found up 7 hours), because `subprocess.run`'s timeout kills the local
+    # docker CLIENT, not the container it started.
+    cname = _container_name(model, name)
+    cmd = ["docker", "run", "--rm", "--name", cname,
+           "--platform", "linux/amd64", "-v", f"{sdir}:/work",
            image, "evalplus.evaluate", "--dataset", ds, "--samples", f"/work/{name}_samples.jsonl"]
+    timed_out = None
     try:
-        proc = runner(cmd, capture_output=True, text=True, timeout=3600)
+        proc = runner(cmd, capture_output=True, text=True, timeout=EVALPLUS_TIMEOUT_S)
     except Exception as e:  # noqa: BLE001 — docker missing / timeout
-        return {"benchmark": name, "model": model, "n": len(our), "acc": None,
-                "note": f"evalplus docker failed: {type(e).__name__}: {str(e)[:100]}"}
+        timed_out = f"{type(e).__name__}: {str(e)[:100]}"
+        proc = None
+        _kill_container(cname, runner)
+        # DO NOT return yet. evalplus has two hang modes that both leave a COMPLETE results file:
+        #  (a) it prints results and never exits, so subprocess.run raises TimeoutExpired on a run
+        #      that already finished the work — the old code discarded a computed result;
+        #  (b) one sample's worker dies (a rosetta mmap fault was observed on Mbpp/255) and evalplus
+        #      waits forever for it, having already evaluated the other 377.
+        # So fall through and read rpath; only report the timeout if there is genuinely no result.
     if not rpath.exists():
+        if timed_out:
+            return {"benchmark": name, "model": model, "n": len(our), "acc": None,
+                    "note": f"evalplus docker timed out with no results ({timed_out}); "
+                            f"container {cname} killed"}
         err = (getattr(proc, "stderr", "") or "")[-160:]
         return {"benchmark": name, "model": model, "n": len(our), "acc": None,
                 "note": f"evalplus produced no results (rc={getattr(proc, 'returncode', '?')}): {err}"}
@@ -333,10 +376,17 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
         return {"benchmark": name, "model": model, "n": 0, "acc": None,
                 "note": "no subset task_ids found in evalplus results"}
     n_items = len({i["id"] for i in items})
-    return {"benchmark": name, "model": model, "n": n_items, "items": items,
-            "acc": round(plus_hits / draws, 4),
-            "pass@1_base": round(base_hits / draws, 4),
-            "pass@1_plus": round(plus_hits / draws, 4)}
+    out = {"benchmark": name, "model": model, "n": n_items, "items": items,
+           "acc": round(plus_hits / draws, 4),
+           "pass@1_base": round(base_hits / draws, 4),
+           "pass@1_plus": round(plus_hits / draws, 4)}
+    if timed_out:
+        # The number is real — evalplus wrote it — but the run did not exit cleanly, so say so
+        # rather than presenting it as a clean grade.
+        out["note"] = (f"results RECOVERED from a timed-out run ({timed_out}); container killed. "
+                       f"evalplus had written {n_items} graded items before hanging.")
+        out["timed_out"] = True
+    return out
 
 
 def _lcb_eval_inputs(rows, sample_by_id):

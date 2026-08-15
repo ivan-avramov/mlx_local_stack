@@ -74,3 +74,70 @@ def test_grade_evalplus_degrades_when_no_results_file(tmp_path, monkeypatch):
 
     s = GR.grade_evalplus("humanevalplus", "m", runner=runner_no_output, all_ids=["HumanEval/0"])
     assert s["acc"] is None and s["note"]      # graceful: no crash, a note explaining it
+
+
+def test_a_timed_out_run_RECOVERS_results_that_evalplus_already_wrote(tmp_path, monkeypatch):
+    """evalplus hangs in two ways that BOTH leave a complete results file: it prints results and
+    never exits, or one sample's worker dies (a rosetta mmap fault on Mbpp/255) and it waits forever
+    for that one. The old code returned acc=None on TimeoutExpired, DISCARDING a computed result and
+    burning 3600s to do it."""
+    import subprocess
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    _write_rows(tmp_path, "m", "humanevalplus", [
+        {"id": "HumanEval/0", "content": "```python\ndef f():\n    return 1\n```"},
+    ])
+    killed = []
+
+    def runner(cmd, **kw):
+        if cmd[:2] == ["docker", "kill"]:
+            killed.append(cmd[2])
+            return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        # evalplus wrote its results, then hung instead of exiting
+        (tmp_path / "m" / "humanevalplus_samples_eval_results.json").write_text(json.dumps({"eval": {
+            "HumanEval/0": [{"base_status": "pass", "plus_status": "pass"}],
+        }}))
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+
+    s = GR.grade_evalplus("humanevalplus", "m", runner=runner, all_ids=["HumanEval/0"])
+    assert s["acc"] == 1.0, "a result evalplus already wrote must not be thrown away"
+    assert s["n"] == 1
+    assert s.get("timed_out") is True
+    assert "RECOVERED" in s["note"]
+    assert killed and killed[0].startswith("evalplus-"), "the wedged container must be killed"
+
+
+def test_a_timeout_with_NO_results_still_degrades_and_kills_the_container(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    _write_rows(tmp_path, "m", "humanevalplus", [
+        {"id": "HumanEval/0", "content": "```python\ndef f():\n    return 1\n```"},
+    ])
+    killed = []
+
+    def runner(cmd, **kw):
+        if cmd[:2] == ["docker", "kill"]:
+            killed.append(cmd[2]); return type("P", (), {"returncode": 0})()
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+
+    s = GR.grade_evalplus("humanevalplus", "m", runner=runner, all_ids=["HumanEval/0"])
+    assert s["acc"] is None
+    assert "timed out with no results" in s["note"]
+    assert killed, "container must still be killed when there is nothing to recover"
+
+
+def test_the_timeout_is_bounded_well_below_the_old_3600s(tmp_path, monkeypatch):
+    """A wedged container previously held the batch for a full hour; 900s is above a healthy run."""
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    _write_rows(tmp_path, "m", "humanevalplus", [
+        {"id": "HumanEval/0", "content": "```python\ndef f():\n    return 1\n```"},
+    ])
+    seen = {}
+
+    def runner(cmd, **kw):
+        seen["timeout"] = kw.get("timeout")
+        (tmp_path / "m" / "humanevalplus_samples_eval_results.json").write_text(json.dumps({"eval": {
+            "HumanEval/0": [{"base_status": "pass", "plus_status": "pass"}]}}))
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    GR.grade_evalplus("humanevalplus", "m", runner=runner, all_ids=["HumanEval/0"])
+    assert seen["timeout"] == GR.EVALPLUS_TIMEOUT_S <= 900
