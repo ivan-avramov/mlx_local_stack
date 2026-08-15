@@ -21,7 +21,14 @@ the PLAN had 10 — so three gemma jobs and two very large winner jobs were invi
 Reading runtime state and calling it the backlog is the same class of error as reading a run prefix and
 calling it the run. **Lesson: the plan is the backlog; the state file is only what has been attempted.**
 
-### O18. gemma CANNOT be compared to the winners at a matched budget — it is ARITHMETICALLY impossible
+### ~~O18 (a)~~ → CLOSED (operator, 2026-08-14): **`gemma-4-26B-A4B-it-OptiQ-4bit evalplus n=100` STOPPED.** Measured 201 s/item ⇒ ~11.2 h for an unpairable row, while blocking free grading. 11 rows kept; resumes via `done_ids`. Requeue at n=40 (~2.2 h) only if second-architecture-class coverage is wanted.
+⚠️ **My "it might be cheap, it's a fast MoE" caveat was WRONG, and measuring cost 17 minutes.** The plan
+entry carried no ETA, unlike its neighbours; the queue's own rule is SIZE EVERY JOB FROM A 5-ITEM PILOT,
+and this job had never been sized. 5 items in 16m47s ⇒ 201 s/item ⇒ ~11.2 h. **The runner was stopped
+too, not just the job** — otherwise it would have advanced straight into `ifeval n=200 gemma` (~10 h) and
+blocked grading all over again. `O18 (b)` below (the remaining queue) is still OPEN.
+
+### O18 (b). gemma CANNOT be compared to the winners at a matched budget — it is ARITHMETICALLY impossible
 Raised 2026-08-14 while executing O17, from the registry rather than from old rows:
 
 | model | `thinking_budget` | `max_tokens` | `max_kv_cache_size` |
