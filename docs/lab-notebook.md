@@ -1713,3 +1713,37 @@ judgement is PRODUCED — more items (n=24 is tiny), more raters or replicates p
 protocol that is less position-sensitive than pairwise A/B. That is model time, so it belongs in the
 queue as its own axis rather than as a free re-grade. **Until then C has no instrument, and the "TIE —
 either" line for the daily-driver pick rests on IFEval, which does not measure the C construct.**
+
+## 2026-08-15 — I DESTROYED THE H2H GRADES, and git is the only reason it was recoverable
+
+Ran `grade --benches humanevalplus,mbppplus` on the **driver**, which has **no docker**. Every
+`grade_evalplus` call returned `acc: None` with "evalplus dataset unavailable", and each one
+**overwrote the real `.score.json`**. Graded coding cells went **28 → 7**, taking out the entire
+three-model n=100 H2H — `Ornith-1.0-35B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` and
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, i.e. hours of worker time.
+
+**Recovered with `git checkout -- benchmark/results` + `git clean`.** Two hours earlier the corpus was
+gitignored and this would have been unrecoverable — the exact failure mode that lost the retired M2 Max
+corpus. The operator's instruction to track results is what saved it.
+
+### Three stacked failures, and the third is the durable one
+
+1. **I assumed the driver had docker.** `AGENTS.md` says "`grade_evalplus` can run on EITHER box", but
+   that sentence is about M5's docker supporting `linux/amd64` emulation — not about this machine having
+   docker at all. Reading a capability claim as a fact about the box in front of me: the same error as
+   the dirty-registry and Qwen3.8-KV mistakes.
+2. **I checked, and ignored the answer.** `driver docker: UNAVAILABLE` was line 1 of my own output — but
+   the check and the destructive action were in one un-gated script, so grading proceeded anyway.
+   A precondition that does not gate the action is decoration.
+3. **The grader replaced a good score with a failure.** `_write_pair_score`'s docstring claimed "one file
+   per pair cannot be clobbered by an unrelated grade" — true, and silent about a FAILED grade of the
+   SAME pair. Any unattended re-grade on a box missing a dependency would silently erase the corpus's
+   graded state. **Fixed: if the incoming score has no `acc` and the file on disk does, the write is
+   REFUSED and logged.** A genuine re-grade still updates; an ungraded pair with nothing to lose still
+   records why it is ungraded.
+
+### Rules this produces
+- **Grading is NOT box-portable.** evalplus needs docker (worker only); `lcb_runner` + its
+  irreplaceable dataset cache are on the driver. Check the dependency on the box you are standing on.
+- **Gate destructive steps on their preconditions in the same command**, with `&&` or an explicit exit —
+  printing a warning next to the action is not a guard.

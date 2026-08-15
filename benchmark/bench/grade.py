@@ -810,10 +810,26 @@ def _write_pair_score(model, bench, score):
 
     `items` is dropped: it is per-draw, can be thousands of entries, and is already recoverable from
     the jsonl.
+
+    ⚠️ A FAILED grade must never replace a good one. The clause above says an unrelated grade cannot
+    clobber a pair — but nothing stopped a FAILED grade of the SAME pair from doing it. Measured
+    2026-08-15: running `grade --benches humanevalplus,mbppplus` on a box WITHOUT docker returned
+    acc=None for every pair and overwrote the real scores, destroying the whole n=100 three-model H2H
+    (28 graded coding cells -> 7). It was recoverable only because the corpus is tracked in git.
+    So: if the incoming score has no `acc` and the file on disk does, KEEP the file and say so.
     """
     try:
         p = generate.result_path(model, bench).with_suffix(".score.json")
         p.parent.mkdir(parents=True, exist_ok=True)
+        if score.get("acc") is None and p.exists():
+            try:
+                prev = json.loads(p.read_text())
+            except (json.JSONDecodeError, OSError):
+                prev = {}
+            if prev.get("acc") is not None:
+                print(f"  [score] REFUSING to overwrite {model}/{bench}: incoming grade FAILED "
+                      f"({str(score.get('note'))[:60]}) — keeping acc={prev['acc']}", flush=True)
+                return
         p.write_text(json.dumps({k: v for k, v in score.items() if k != "items"}, indent=2))
     except Exception as e:  # noqa: BLE001 — never fail a grade over its own bookkeeping
         print(f"  [score] could not persist {model}/{bench}: {type(e).__name__}: {str(e)[:60]}",

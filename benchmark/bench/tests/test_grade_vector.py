@@ -342,3 +342,44 @@ def test_compare_still_refuses_a_CROSS_BUDGET_comparison():
     import bench.compare as C
     assert "thinking_budget" in C._MUST_MATCH_SAMPLING
     assert "max_tokens" in C._MUST_MATCH_SAMPLING
+
+
+def test_a_FAILED_grade_must_not_overwrite_a_good_score(tmp_path, monkeypatch):
+    """Measured 2026-08-15: running `grade --benches humanevalplus,mbppplus` on a box WITHOUT docker
+    returned acc=None for every pair and overwrote the real scores — destroying the whole n=100 H2H
+    (28 graded coding cells -> 7). Recoverable only because the corpus is in git.
+
+    A grading run that CANNOT grade must not replace a valid result with a failure."""
+    import bench.generate as GEN
+    monkeypatch.setattr(GEN, "RESULTS", tmp_path)
+    p = tmp_path / "m" / "humanevalplus.score.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"acc": 0.93, "acc_strict": 0.93, "n": 100}))
+
+    # a degraded grade: the dependency was missing, so there is no number
+    GR._write_pair_score("m", "humanevalplus",
+                         {"acc": None, "n": 100, "note": "evalplus dataset unavailable"})
+
+    kept = json.loads(p.read_text())
+    assert kept["acc"] == 0.93, "a failed grade overwrote a real score"
+    assert kept["n"] == 100
+
+
+def test_a_real_grade_DOES_replace_an_older_real_grade(tmp_path, monkeypatch):
+    """The guard must not freeze the corpus: a genuine re-grade still updates."""
+    import bench.generate as GEN
+    monkeypatch.setattr(GEN, "RESULTS", tmp_path)
+    p = tmp_path / "m" / "humanevalplus.score.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"acc": 0.90, "n": 100}))
+    GR._write_pair_score("m", "humanevalplus", {"acc": 0.92, "n": 100})
+    assert json.loads(p.read_text())["acc"] == 0.92
+
+
+def test_a_failed_grade_still_writes_when_there_is_nothing_to_lose(tmp_path, monkeypatch):
+    """An ungraded pair should still record WHY it is ungraded — that note is information."""
+    import bench.generate as GEN
+    monkeypatch.setattr(GEN, "RESULTS", tmp_path)
+    GR._write_pair_score("m", "humanevalplus", {"acc": None, "note": "no completions"})
+    p = tmp_path / "m" / "humanevalplus.score.json"
+    assert p.exists() and json.loads(p.read_text())["note"] == "no completions"
