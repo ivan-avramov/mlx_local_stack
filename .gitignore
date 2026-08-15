@@ -13,4 +13,28 @@ eval_results/
 memtest_prefill_exercise/
 benchmark/*.log
 benchmark/bfcl_runs/
-benchmark/results/
+
+# benchmark/results/ is DELIBERATELY TRACKED (operator instruction 2026-08-14): "we need to record
+# these in the repo so that we have history to compare".
+#
+# WHY IT USED TO BE IGNORED, AND WHY THAT WAS THE WRONG CALL. Ignoring it meant results existed on
+# exactly one box with no history, which cost us twice: (1) the retired M2 Max took its entire corpus
+# with it, and those rows are NOT re-measurable at any price; (2) `--clean-stale` DELETES rows whose
+# provenance fingerprint no longer matches, and with results untracked there was no way back. Tracking
+# them also makes the corpus visible from the DRIVER box, which is what the scoresheet generator needs
+# (before this, `scoreboard.py` on the driver reported NOT MEASURED for every dimension because the rows
+# were all on the worker).
+#
+# COST, measured 2026-08-14 rather than feared: 16 MB total — 14 MB across 93 append-only .jsonl, and
+# the largest single file is 7.2 MB (ifeval). Rows carry NO dataset prompt (verified: the schema has
+# `content`/`answer_gold` but no `prompt`), so tracking them publishes our own completions, not
+# benchmark prompts. jsonl appends diff and pack well.
+#
+# DISCIPLINE: rows are written by the WORKER only, so result commits originate there and the driver
+# only ever reads them — that keeps this from becoming a merge-conflict surface.
+benchmark/results/**/__pycache__/
+# ...EXCEPT the top-level aggregates. `scores.json` holds only the pairs of the LAST grade_all call, so
+# it differs between boxes by construction and would be a permanent merge-conflict surface. The durable
+# per-pair record is results/<model>/<bench>.score.json, which IS tracked. (scoreboard.py refuses to read
+# scores.json for the same reason: grading one model erases every other model's entry.)
+benchmark/results/scores*.json
