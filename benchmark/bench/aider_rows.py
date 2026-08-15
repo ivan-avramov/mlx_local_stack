@@ -42,14 +42,45 @@ SCHEMA_VERSION = 1
 M1F_LANGS = ("python", "javascript", "go", "rust", "java")
 
 
-def collect_arm_cases(bench_dir, arm: str, langs=M1F_LANGS, tag: str = "m1f") -> dict:
-    """{'<lang>/<exercise>': case} for one arm, keyed so arms pair item-by-item."""
+#: RECOVERY overlays: (tag, lang) runs that RE-RAN cases a prior run failed to EXECUTE.
+#:
+#: This is NOT pooling two complete runs of one model — that is the apples-to-apples violation
+#: `collect_case_results`' run_name guard exists to prevent, and it stays prevented. A recovery is
+#: the narrow case where infrastructure, not the model, stopped cases from running at all.
+#:
+#: MEASURED: `m1f-distill-java` lost 21 of 22 cases to a TCC failure — the files exist but carry no
+#: `tests_outcomes`, i.e. aider set the exercise up and never ran it. `m1g-distill-java` re-ran all
+#: 22 cleanly (46 requests, zero 500s). Commit a182a47 pooled them to reach the published n=110;
+#: without the overlay this bridge reproduces the SUPERSEDED interim figure (66/89 = 74.2%) instead
+#: of the published 81/110 = 73.6%, which is exactly what it did on first run.
+M1_RECOVERY = {"distill": (("m1g", "java"),)}
+
+
+def _ran(case: dict) -> bool:
+    """aider writes a results file for every exercise it SETS UP; only a non-empty
+    `tests_outcomes` means it actually ran. Counting set-up-but-never-run cases as failures would
+    silently move the denominator (the distill would read 60.0% instead of 73.6%)."""
+    return bool(case.get("tests_outcomes")) and bool(case.get("testcase"))
+
+
+def collect_arm_cases(bench_dir, arm: str, langs=M1F_LANGS, tag: str = "m1f",
+                      recovery=None) -> dict:
+    """{'<lang>/<exercise>': case} for one arm, keyed so arms pair item-by-item.
+
+    `recovery` defaults to M1_RECOVERY[arm]; pass () to disable. Overlay cases WIN over base ones,
+    because the overlay is the run that actually executed.
+    """
+    if recovery is None:
+        recovery = M1_RECOVERY.get(arm, ())
     cases = {}
     for lang in langs:
         for c in aider_adapter.collect_case_results(bench_dir, run_name=f"{tag}-{arm}-{lang}"):
-            name = c.get("testcase")
-            if name:
-                cases[f"{lang}/{name}"] = c
+            if _ran(c):
+                cases[f"{lang}/{c['testcase']}"] = c
+    for rtag, rlang in recovery:
+        for c in aider_adapter.collect_case_results(bench_dir, run_name=f"{rtag}-{arm}-{rlang}"):
+            if _ran(c):
+                cases[f"{rlang}/{c['testcase']}"] = c      # overlay wins
     return cases
 
 
@@ -78,9 +109,10 @@ def _row(item_id: str, model: str, case: dict) -> dict:
     }
 
 
-def build(bench_dir, arm: str, model: str, langs=M1F_LANGS, tag: str = "m1f") -> tuple[list, dict]:
+def build(bench_dir, arm: str, model: str, langs=M1F_LANGS, tag: str = "m1f",
+          recovery=None) -> tuple[list, dict]:
     """Return (rows, score) for one arm. `score` matches what grade_all writes per pair."""
-    cases = collect_arm_cases(bench_dir, arm, langs, tag)
+    cases = collect_arm_cases(bench_dir, arm, langs, tag, recovery)
     rows = [_row(k, model, cases[k]) for k in sorted(cases)]
     n = len(rows)
     passed = sum(1 for r in rows if r["passed"])
@@ -99,9 +131,9 @@ def build(bench_dir, arm: str, model: str, langs=M1F_LANGS, tag: str = "m1f") ->
 
 
 def write_arm(results_root, arm: str, model: str, bench_dir, manifest: dict | None = None,
-              langs=M1F_LANGS, tag: str = "m1f") -> dict:
+              langs=M1F_LANGS, tag: str = "m1f", recovery=None) -> dict:
     """Write results/<model>/aider.{jsonl,score.json,manifest.json}. Returns the score."""
-    rows, score = build(bench_dir, arm, model, langs, tag)
+    rows, score = build(bench_dir, arm, model, langs, tag, recovery)
     out = os.path.join(os.fspath(results_root), model)
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, f"{BENCH}.jsonl"), "w") as fh:

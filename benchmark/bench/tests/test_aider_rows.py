@@ -25,9 +25,9 @@ def _case(passed, *, duration=10.0, ctok=1000, exhausted=0, malformed=0):
     }
 
 
-def _mk(root, arm, lang, exercises):
+def _mk(root, arm, lang, exercises, tag="m1f", ts="2026-08-12-00-00-00"):
     """exercises: {name: case_dict}"""
-    base = os.path.join(root, f"2026-08-12-00-00-00--m1f-{arm}-{lang}", lang,
+    base = os.path.join(root, f"{ts}--{tag}-{arm}-{lang}", lang,
                         "exercises", "practice")
     for name, c in exercises.items():
         d = os.path.join(base, name)
@@ -104,3 +104,48 @@ def test_write_arm_emits_the_three_files_the_scoreboard_reads(tmp_path):
     first = json.loads(lines[0])
     assert first["bench"] == "aider" and first["model"] == "M"
     assert score["acc"] == 2 / 3
+
+
+def test_recovery_overlay_fills_cases_a_prior_run_never_EXECUTED(tmp_path):
+    """m1f-distill-java lost 21/22 cases to a TCC failure: the files exist but carry no
+    tests_outcomes (set up, never run). m1g-distill-java re-ran them. Without the overlay this
+    bridge reproduces the SUPERSEDED interim figure instead of the published one — which is exactly
+    what happened on first run (66/89 = 74.2% vs the published 81/110 = 73.6%)."""
+    root = str(tmp_path / "b")
+    # m1f: one java case ran; one was set up but NEVER ran (empty tests_outcomes) — the TCC failure
+    _mk(root, "distill", "java",
+        {"ok": _case(True), "lost": dict(_case(False), tests_outcomes=[])})
+    # m1g: the recovery run re-ran both cleanly, and "lost" now PASSES
+    _mk(root, "distill", "java", {"ok": _case(True), "lost": _case(True)},
+        tag="m1g", ts="2026-08-13-00-00-00")
+
+    # without the overlay the never-run case is simply absent => the superseded interim denominator
+    base = AR.collect_arm_cases(root, "distill", langs=("java",), recovery=())
+    assert set(base) == {"java/ok"}, "never-run case must be excluded from the base"
+
+    # with the overlay (the default for `distill`) it is recovered, and the overlay's outcome wins
+    full = AR.collect_arm_cases(root, "distill", langs=("java",))
+    assert set(full) == {"java/ok", "java/lost"}
+    assert full["java/lost"]["passed"] is True
+
+    _, score = AR.build(root, "distill", "M", langs=("java",))
+    assert score["n"] == 2 and score["acc"] == 1.0
+
+
+def test_recovery_is_opt_in_per_arm_so_it_cannot_silently_pool_other_models(tmp_path):
+    """Only `distill` has a recovery overlay. An arm without one must never pick up an m1g run —
+    that would be the pooling violation, not a recovery."""
+    root = str(tmp_path / "d")
+    _mk(root, "ornith", "java", {"a": _case(True)})
+    _mk(root, "ornith", "java", {"b": _case(True)}, tag="m1g", ts="2026-08-13-00-00-00")
+    assert set(AR.collect_arm_cases(root, "ornith", langs=("java",))) == {"java/a"}
+
+
+def test_never_run_cases_are_excluded_from_the_denominator(tmp_path):
+    """Counting set-up-but-never-run cases as failures would move the denominator: the distill
+    would read 60.0% (66/110) instead of 74.2% (66/89)."""
+    root = str(tmp_path / "c")
+    _mk(root, "ornith", "python", {"a": _case(True),
+                                   "b": dict(_case(False), tests_outcomes=[])})
+    rows, score = AR.build(root, "ornith", "M", langs=("python",), recovery=())
+    assert score["n"] == 1 and score["acc"] == 1.0
