@@ -45,24 +45,72 @@ both current winners**, so our fork is expected to load it. Multimodal (`vision_
 | vocab | 248320 |
 | bf16 weights | **55.6 GB** — must be quantised to serve at all |
 
-### 🚨 PREDICTION TO TEST FIRST, NOT A MEASUREMENT: the KV cache is FAT
-Per-token KV at bf16 = `2 × 64 layers × 4 kv_heads × 256 head_dim × 2 B` = **256 KiB/token**:
+### ✅ IT IS A HYBRID (3/4 LINEAR ATTENTION), SO THE KV CACHE IS SMALL — correcting my own first estimate
+The model card gives a layout that `config.json` does NOT expose:
+
+> `Hidden Layout: 16 × (3 × (Gated DeltaNet → FFN) → 1 × (Gated Attention → FFN))`
+
+**So only 16 of the 64 layers are full attention with a growing KV cache.** The other 48 are Gated
+DeltaNet — linear attention with a constant-size recurrent state (48 V heads / 16 QK heads, head_dim 128),
+which does not grow with context.
+
+Per-token KV at bf16 = `2 × 16 attn layers × 4 kv_heads × 256 head_dim × 2 B` = **64 KiB/token**:
 
 | context | KV alone | + 4-bit weights (16.1 GB) | vs the 46 GB gate |
 |---|---|---|---|
-| 262,144 | **68.7 GB** | 84.8 GB | ✗ exceeds the whole box |
-| 131,072 | 34.4 GB | 50.5 GB | ✗ over the gate |
-| 131,072 @ **4-bit KV** | 8.6 GB | ~24.7 GB | ✓ |
-| 262,144 @ **4-bit KV** | 17.2 GB | ~33.3 GB | ✓ |
+| 131,072 | 8.6 GB | ~24.7 GB | ✓ comfortable |
+| **262,144** | **17.2 GB** | **~33.3 GB** | ✓ **clears it at bf16 KV** |
 
-⇒ **`Qwen3.8-27B` probably REQUIRES KV quantisation to reach long context on our boxes.** This is
-arithmetic from the config, NOT a measurement — **run the capacity ladder before any quality axis**, and
-do not quote these numbers as results. (`mx.get_peak_memory` on the prefill spike is the metric; the
-campaign already tracks `-kv4` variants, so the machinery exists.)
-⚠️ **Budget-matching consequence:** to be comparable with the winners it must run at `thinking_budget`
-81920, which by O18's clamp arithmetic needs `max_kv_cache_size` ≳ 102400 + prompt. At 256 KiB/token
-bf16 that is ~25.6 GB of KV, so **a matched-budget comparison very likely requires 4-bit KV** — decide
-this when writing its registry entry, not after a run.
+⇒ **A matched-budget comparison needs NO KV quantisation.** `thinking_budget` 81920 requires
+`max_kv_cache_size` ≳ 102400 + prompt (O18's clamp arithmetic); at 64 KiB/token that is ~6.4 GB of KV, so
+131072 or even 262144 is affordable. This is still **arithmetic, not a measurement** — the capacity ladder
+on `mx.get_peak_memory` (prefill spike) remains the gate, and prefill scratch is not in the table above.
+
+⚠️ **THIS CORRECTS A WRONG NUMBER I PUSHED EARLIER TODAY** (commit `78d5c21`), which claimed 256 KiB/token
+and concluded the model "probably REQUIRES KV quantisation". **I computed from `config.json`'s
+`num_hidden_layers: 64` and never asked what those layers WERE.** The hybrid layout is stated plainly in
+the model card. **Lesson: for a memory estimate, read the ARCHITECTURE, not just the layer count — and
+read the model card before doing arithmetic on the config.** This also retro-explains how
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` reaches 262K at only 43.3 GB peak: same `qwen3_5` hybrid family.
+⚠️ **New load risk in exchange:** Gated DeltaNet needs hybrid-layer support in our fork. `qwen3_5` is
+already the family both winners use, so it is *expected* to work — verify with a load smoke, do not assume.
+
+### Vendor-recommended sampling, and a NEW first-class knob
+From the card (thinking mode): **`temperature=1.0`, `top_p=0.95`, `top_k=20`, `min_p=0.0`,
+`presence_penalty=0.0`, `repetition_penalty=1.0`.** Non-thinking: `temperature=0.7`, `top_p=0.80`,
+`presence_penalty=1.5`.
+- `presence_penalty=0.0` agrees with what we already ship (a nonzero one trips the suffix-decoding fallback).
+- ⚠️ **`temperature=1.0` is well above our tuned operating points** (Ornith 0.4, the Qwen3.6 distill 0.3),
+  and 1.0 is the exact temperature at which the gemma MoE degenerate-looped in this campaign. **Expect to
+  run the TEMPERATURE LADDER**; do not adopt 1.0 just because the vendor recommends it.
+
+**`reasoning_effort`: `xhigh` (default) | `medium` | `low`** — a native reasoning-depth control, which is
+new for us: every convergence lever we have is external (`thinking_budget` truncation) or sampling. This is
+a genuine additional axis and a candidate answer to the runaway tax. **The card warns against the naive
+read**, and it matches our own lexicographic rule: *"in multi-turn agentic tasks, lower reasoning effort
+does not always reduce overall task completion time … it can lead to insufficient analysis, more failures,
+and repeated retries, which may increase total latency and token consumption."*
+**`preserve_thinking` is on by default** (reasoning retained across turns) — interacts with the session
+cache and with multi-turn cost; note it before designing the agentic axis.
+**MTP is native here** ("trained with multiple steps"), not a third-party repack. AGENTS.md records MTP as
+a net slowdown on our stack, but that was measured on models where it was bolted on — worth ONE re-test.
+
+### Vendor benchmark claims vs `Qwen3.6-27B` (unverified, vendor-reported)
+The relevant column is `Qwen3.6-27B`, since our reigning winner is a distill of that generation.
+
+| benchmark | Qwen3.8-27B | Qwen3.6-27B |
+|---|---|---|
+| QwenSWEBench | **79.0** | 49.3 |
+| Terminal Bench 2.1 (Terminus) | **73.0** | 63.4 |
+| CoWorkBench (long-horizon) | **70.7** | 61.0 |
+| SWE-bench Pro | **61.7** | 53.5 |
+| DeepSWE 1.1 | **42.2** | 13.3 |
+| NL2Repo-Bench | **42.3** | 36.2 |
+
+Large claimed gains on exactly the axes goal B cares about. **Treat as a hypothesis, not evidence** — this
+campaign's standing rule is that when results contradict published rankings we suspect our harness, and the
+converse applies too: a vendor table is not a measurement we made. It does justify prioritising this
+candidate. Context: **262,144 native, "extensible up to 1,000,000"**; Qwen Cloud will serve 1M by default.
 
 ### Verified MLX quants (sizes from the tree API, so these repos DO contain weights)
 | repo | GB | note |
@@ -77,8 +125,15 @@ Also present: `mxfp4`, `mxfp8`, `nvfp4`, 5-bit, and mixed-bpw builds, plus `2bit
 ### Distills EXIST, and in safetensors — so we can self-convert as we did for Qwen3.6
 | repo | GB | verdict |
 |---|---|---|
-| `barozp/Qwen3.8-27B-Opus-Distill` | 55.6 (bf16, 3 shards) | **direct analogue of the reigning winner.** ⚠️ config declares `model_type: qwen3_5_text` yet ships a `vision_config` AND a `…ForConditionalGeneration` arch — a packaging inconsistency of exactly the class AGENTS.md warns about (mtp-key strip / vision-tower tolerance). **Needs a load smoke before anything else.** |
-| `armand0e/Qwen3.8-27B-Fable-Distill` | 55.6 (bf16, 18 shards) | `model_type qwen3_5`, internally consistent. A second distill lineage. A `-LoRA` variant also exists. |
+| `barozp/Qwen3.8-27B-Opus-Distill` | 55.6 (bf16, 3 shards) | ⚠️⚠️ **NO MODEL CARD AT ALL** — `README.md` returns "Entry not found". 55.6 GB of weights, zero documentation, 0 likes, uploaded hours after the base. The name is the ONLY evidence that any distillation happened. Also: config declares `model_type: qwen3_5_text` yet ships a `vision_config` AND a `…ForConditionalGeneration` arch — the packaging inconsistency class AGENTS.md warns about. |
+| `armand0e/Qwen3.8-27B-Fable-Distill` | 55.6 (bf16, 18 shards) | ⚠️ Unsloth **boilerplate** card: `base_model: unsloth/Qwen3.8-27B`, "trained 2x faster with Unsloth and TRL", and nothing else — no teacher named, no distillation data, no eval. A `-LoRA` variant exists, which suggests a light finetune rather than a distill. |
+
+⚠️ **I OVERSTATED THESE. Correcting myself:** I first called the Opus one "the direct analogue of the
+reigning winner". It is not — it is an **undocumented claim by an anonymous uploader**, where our incumbent
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is a checkpoint we self-converted and have measured at n=110. A repo
+NAME is not a lineage. **Neither of these belongs above a verified quant in the queue**; if we ever test
+them it is precisely because the suite, not the card, is the arbiter — but they should not displace work
+that can resolve something.
 
 ### Hazards — read before picking a repo
 - **Most third-party variants are MTP-packaged** (`qwen3_5_mtp`, `mtp`, `speculative-decoding` tags).
@@ -89,13 +144,20 @@ Also present: `mxfp4`, `mxfp8`, `nvfp4`, 5-bit, and mixed-bpw builds, plus `2bit
 - **Everything is hours old**: ~0 downloads, no independent evals, and both distill uploaders sit at 0
   likes. Treat quality claims in model cards as unverified — which is what the suite is for.
 
-### Recommended shortlist, in order (each needs a 5-item pilot before it gets an n)
-1. **`mlx-community/Qwen3.8-27B-4bit`** (16.1 GB) — capacity ladder first, then coding. Cheapest real row.
-2. **`barozp/Qwen3.8-27B-Opus-Distill` self-converted to OptiQ-4bit** — highest upside for the coding
-   pick, being the same recipe as the incumbent. Costs a 55.6 GB download plus conversion, and is gated
-   on the load smoke above.
-3. **`lmstudio-community/Qwen3.8-27B-MLX-6bit`** (22.8 GB) — quant-sensitivity arm; quant sensitivity is
-   measured-real on this campaign (gemma recall was quant-sensitive), so it is not a luxury.
+### Recommended shortlist, in order (each needs a 5-item pilot before it gets an n) — REVISED
+1. **`mlx-community/Qwen3.8-27B-4bit`** (16.1 GB, non-MTP) — load smoke → capacity ladder → coding.
+   Cheapest real row, and the KV correction above means it needs no KV quantisation to be budget-matched.
+2. **`lmstudio-community/Qwen3.8-27B-MLX-6bit`** (22.8 GB) — quant-sensitivity arm. Promoted above the
+   distills: quant sensitivity is measured-real here (gemma recall was quant-sensitive), and this repo at
+   least documents what it is.
+3. **The two "distills" — DEPRIORITISED to speculative.** Both are undocumented, hours-old, unevaluated
+   uploads (see the table above). Worth a cheap n=5 smoke someday; not worth a download-plus-conversion
+   ahead of anything that can resolve a question.
+
+**Additionally worth an axis of its own, and cheap:** `reasoning_effort` (`xhigh`/`medium`/`low`). It is the
+first NATIVE reasoning-depth control any candidate has offered us, and the runaway tax — ~40% of wall-clock
+on both current winners — is the campaign's largest measured cost. Test it OFAT on known runaway items, with
+pass@1 as the hard constraint per the temperature-ladder rule.
 
 **Not yet added to `main_models.yaml`** — a registry entry needs the KV decision above and a load smoke
 first. Disk is not a constraint (641 GB free on the worker).

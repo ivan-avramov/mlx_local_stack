@@ -30,6 +30,22 @@ paragraphs get rewritten.
 is not raw generation ability — it is **repair**: 60.8% vs 33.7% success on the second, test-informed
 attempt. That is exactly the ability an agentic coding loop consumes.
 
+**Single-shot coding now agrees in DIRECTION but cannot resolve the gap** — n=100 matched, `deployed`,
+same box/session, on the current `mlx-vlm` sha:
+
+| n=100 | humanevalplus | mbppplus |
+|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` `acc` / `acc_strict` | 92.0% / **90.0%** | 83.0% / **80.0%** |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` `acc` / `acc_strict` | **93.0%** / **93.0%** | **84.0%** / **84.0%** |
+| `compare` paired verdict on `acc` | −1.0pp, CI [−5.0,+3.0] **INCONCLUSIVE** | −1.0pp, CI [−6.0,+4.0] **INCONCLUSIVE** |
+
+**Raw `acc` is unresolved on both** (628 matched items would be needed) — so this is NOT independent
+confirmation of the agentic result. **What it does show, replicated on two benches, is the mechanism:**
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s `acc` and `acc_strict` are IDENTICAL — it forfeits nothing to
+truncation — while `Ornith-1.0-35B-mlx-uniform-4bit` loses **2.0pp** and **3.0pp** to turns that never
+self-terminate. At a matched budget that is capability the runner-up gives away, and it is the same
+pattern the earlier single-bench run showed.
+
 **Confidence: HIGH on capability. Two caveats that are not small:**
 1. **It is aider-scaffold-specific.** There is **zero** evidence from opencode, which is the primary
    agentic driver we actually ship. A scaffold change can plausibly move a repair-driven result.
@@ -106,10 +122,16 @@ model can no longer erase another's record.
 ### ⚠️ TWO THINGS TO KNOW BEFORE READING A CELL
 
 **1. `ungraded` is not a zero and not a blank — it means the grader has not been run for that pair.**
-Every `humanevalplus` / `mbppplus` / `livecodebench` cell is currently `ungraded`, for a deliberate
-reason: those graders need Docker (evalplus) or `lcb_runner`, both CPU-heavy, and **a timed generation
-run is in flight on the same box**. Running them now would contaminate the live latency and decode-rate
-measurements. They are graded once the run completes.
+As of 2026-08-14 the two winners' `humanevalplus` and `mbppplus` cells ARE graded (Docker evalplus, run
+after the generation finished and the model was unloaded, so no contention with a timed run). Still
+`ungraded`, with reasons:
+- **every `livecodebench` cell** — `lcb_runner` is not installed in `.venv-bench` on the worker, so the
+  grader degrades to `acc: null` with a note. Zero worker time to fix; pending an env change.
+- **every non-winner model dir** (`-suffix`, `-kv4`, `-6bit`, the gemma family) — the 19-dir grading batch
+  **hung** on a Rosetta fault (`mmap_anonymous_rw mmap failed`) with 377/378 MBPP problems done and one
+  sample (`Mbpp/255`) wedged, which evalplus waits on indefinitely. It is a flake, not deterministic.
+  **Docker grading needs a per-run timeout** so one wedged sample cannot block a batch; until then the
+  batch was re-scoped to the decision-relevant arm.
 
 **2. ✅ THE IFEVAL GRADER WAS NON-DETERMINISTIC — FOUND AND FIXED 2026-08-14 (`2a27d21`, `b04030c`).**
 Re-grades of *identical* rows returned different scores. **Two independent causes, and finding the
@@ -140,11 +162,11 @@ gives the same answer.
 |---|---|---|---|---|---|---|---|---|
 | Ornith-1.0-35B-mlx-uniform-4bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | capacity_ladder | 2 | ungraded | ungraded | 100 | - | - | - |
-| Ornith-1.0-35B-mlx-uniform-4bit | humanevalplus | 100 | ungraded | ungraded | 98 | 4 | 40 | 81920 |
+| Ornith-1.0-35B-mlx-uniform-4bit | humanevalplus | 100 | 92.0% | 90.0% | 98 | 4 | 40 | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | ifeval | 541 | 90.0% | 86.7% | 99 | 30 | 42 | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | livecodebench | 15 | ungraded | ungraded | 80 | - | - | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | math500 | 30 | 83.3% | 60.0% | 70 | - | - | 81920 |
-| Ornith-1.0-35B-mlx-uniform-4bit | mbppplus | 100 | ungraded | ungraded | 96 | 4 | 63 | 81920 |
+| Ornith-1.0-35B-mlx-uniform-4bit | mbppplus | 100 | 83.0% | 80.0% | 96 | 4 | 63 | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit-kv4 | capacity_ladder | 4 | ungraded | ungraded | 100 | - | - | - |
 | Ornith-1.0-35B-mlx-uniform-4bit-suffix | humanevalplus | 100 | ungraded | ungraded | 95 | - | - | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit-suffix | livecodebench | 15 | ungraded | ungraded | 87 | - | - | 81920 |
@@ -162,7 +184,8 @@ gives the same answer.
 | Qwen3.6-27B-OptiQ-4bit | mbppplus | 10 | ungraded | ungraded | 100 | - | - | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aime | 4 | 100.0% | 100.0% | 100 | - | - | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | capacity_ladder | 4 | ungraded | ungraded | 100 | - | - | - |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | humanevalplus | 64 | ungraded | ungraded | 98 | 1 | 54 | 81920 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | humanevalplus | 100 | 93.0% | 93.0% | 99 | 1 | 41 | 81920 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | mbppplus | 100 | 84.0% | 84.0% | 98 | 2 | 70 | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | ifeval | 148 | 89.9% | 85.1% | 99 | 10 | 57 | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | livecodebench | 15 | ungraded | ungraded | 100 | - | - | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | math500 | 27 | 81.5% | 81.5% | 100 | - | - | 81920 |
