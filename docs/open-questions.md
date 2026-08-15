@@ -14,6 +14,42 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### O17. `gemma-4-31B-it-qat-6bit` evalplus is queued at n=40 — but it is UNRANKABLE by construction
+The last queued job is `gemma-4-31B-it-qat-6bit evalplus n=40`, deferred earlier today with the note
+"10.4h projected for a ±20pp row, 83% of wall in runaways, 1 item lost to a 3600s timeout".
+
+**Two problems, and the second is the decisive one:**
+1. **±20pp at n=40** cannot resolve anything the campaign cares about. The winners differ by ~2–5pp on
+   coding; resolving that needs 628 matched items.
+2. **It runs at `thinking_budget` 16384 while both winners sit at 81920**, and `compare` MECHANICALLY
+   REFUSES cross-budget comparisons. So 10.4 h of the single worker buys a row that cannot legally be
+   compared to anything already measured. It would sit in the scoresheet as an unrankable cell.
+
+**Options:** (a) **drop it** — 10.4 h back for work that can resolve something; (b) **re-run it at a
+matched 81920 budget**, making it comparable but costing more than 10.4 h and re-opening whether gemma
+converges at that budget (its `conv%` is already 83% on humanevalplus at 16384); (c) run as-is and
+accept an uncomparable row.
+**Recommendation: (a) drop it now, and if gemma matters, requeue at a matched budget with an n chosen
+from a 5-item pilot.** A row that `compare` refuses is not evidence at any n.
+
+### O16. IFEval verifiers INVENT the criterion when a kwarg is absent — leave it, or stop grading those items?
+Found and partly fixed 2026-08-14 (`b04030c`). 24 sites in the vendored `instructions.py` fabricate an
+**absent kwarg** with `random.choice` / `random.randint` (e.g. `:1350`
+`self._frequency = random.randint(1, _LETTER_FREQUENCY)`). Seeding made this **reproducible**; it did not
+make it **valid** — for those items the grader checks the response against a threshold it made up.
+
+**Measured scope: 1 verdict of 541 (0.2%), `acc` spread 0.18pp across 8 RNG states.** So this is currently
+a hygiene question, not a live number — which is exactly when it is cheap to decide.
+
+**Options:** (a) **leave it** — deterministic, documented, 0.2%; (b) **count those items as verifier
+skips** so they leave the numerator AND are counted (the harness already counts skips visibly, so n
+would not shrink invisibly) — costs a little n and is the most honest reading; (c) supply the upstream
+IFEval defaults explicitly instead of drawing them, if upstream defines any.
+**Recommendation: (a) leave it, with the note standing in the lab notebook.** At 0.2% the cure costs more
+clarity than the disease, and (b) would make our `acc` non-comparable with published IFEval numbers.
+**Revisit if a future axis leans on the affected instruction types** (`keywords:letter_frequency`,
+`length_constraints:number_sentences`, and the other threshold-bearing ones).
+
 ### O15. Does prealloc actually reserve RAM? — MY EVIDENCE WAS INVALID; the question needs a DEPTH test
 ⚠️ **I raised this on a measurement that cannot support it, and the operator caught it.** I compared
 `mx.get_peak_memory` across prealloc arms (25.35 / 25.50 / 28.18 GB) and inferred the reservation was
