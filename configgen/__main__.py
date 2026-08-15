@@ -3,13 +3,17 @@ import sys
 from pathlib import Path
 
 from .source import Source, load_source
-from .targets import TARGETS
+from .targets import BENCH_TARGETS, TARGETS
 
 
 def _render(source: Source) -> list[tuple[str, str, str]]:
-    """Run every target's emitter and flatten to a list of (target_name, path, content)."""
+    """Run every target's emitter and flatten to a list of (target_name, path, content).
+
+    Covers BENCH_TARGETS as well as client TARGETS: a generated file that nothing regenerates or
+    drift-checks is a file that silently goes stale, which is the failure mode `check` exists for.
+    """
     rendered: list[tuple[str, str, str]] = []
-    for name, emit, paths in TARGETS:
+    for name, emit, paths in [*TARGETS, *BENCH_TARGETS]:
         output = emit(source)
         if isinstance(paths, dict):
             for key, path in paths.items():

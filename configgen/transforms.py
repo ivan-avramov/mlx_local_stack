@@ -20,7 +20,14 @@ def sampling_extra(m: ModelSpec) -> dict:
     elif m.family == "gemma":
         keys = _GEMMA_EXTRA
     else:
-        return {}
+        # No family: carry whatever non-OpenAI sampling the registry declares, rather than
+        # dropping it. Only role=main REQUIRES a family, so this is the candidate path — and a
+        # candidate is exactly what gets benchmarked, where sampling must be production-verbatim.
+        # Returning {} here silently discarded presence_penalty / thinking_budget / enable_thinking;
+        # mlx-serve would refill them from generation_defaults (FU-2), but then the effective
+        # config is absent from the file we keep as provenance. Whitelist-free by design: the
+        # registry is the source of truth, so an unknown-to-us key is carried, not swallowed.
+        keys = tuple(k for k in m.sampling if k not in _OPENAI_KEYS)
     return {k: m.sampling[k] for k in keys if k in m.sampling}
 
 def owui_meta(m: ModelSpec) -> dict:

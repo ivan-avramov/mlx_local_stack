@@ -1,5 +1,5 @@
 from .emitters.opencode import emit_opencode
-from .emitters.aider import emit_aider
+from .emitters.aider import emit_aider, emit_aider_bench
 from .emitters.vscode import emit_vscode
 from .emitters.zed import emit_zed
 from .emitters.owui import emit_owui
@@ -18,4 +18,12 @@ TARGETS: list[tuple[str, callable, str | dict]] = [
     ("vscode", emit_vscode, "vscode_config/chatLanguageModels.json"),
     ("zed", emit_zed, "zed_config/settings.snippet.jsonc"),
     ("owui", emit_owui, "openwebui-init/models_config.json"),
+]
+
+# BENCH targets are generated and drift-checked exactly like TARGETS, but are NOT client configs.
+# Kept in a separate list so "a role=candidate model never appears in TARGETS output" stays a
+# mechanically enforceable invariant (test_candidate_role_is_accepted_and_never_emitted_to_clients
+# loops TARGETS). The bench carrier exists precisely to include candidates.
+BENCH_TARGETS: list[tuple[str, callable, str | dict]] = [
+    ("aider-bench", emit_aider_bench, "benchmark/aider_bench.model.settings.yml"),
 ]
