@@ -403,7 +403,10 @@ def _lcb_by_difficulty(ids, diff_by_id, detail_pass):
 def grade_lcb(name, model):
     """Grade LiveCodeBench via the official lcb_runner executor (lazy, graceful-degrade).
     Re-loads the PINNED release to recover per-problem test cases, runs codegen_metrics
-    on the saved completions, and reports pass@1 (0–1) overall AND per difficulty."""
+    on the saved completions, and reports pass@1 (0–1) overall AND per difficulty.
+
+    The release is loaded through `_load_lcb_problems`, which tolerates the dataset CONFIG-NAME
+    drift described there. `lcb_dataset_config` in the result records which alias resolved."""
     rows = [r for r in _rows(model, name) if not r.get("error")]
     if not rows:
         return {"benchmark": name, "model": model, "n": 0, "acc": None, "note": "no completions"}
@@ -414,7 +417,7 @@ def grade_lcb(name, model):
         return {"benchmark": name, "model": model, "n": len(rows), "acc": None,
                 "note": f"lcb_runner not available ({type(e).__name__}: {str(e)[:80]}); see benchmark/README.md"}
     try:
-        problems = load_code_generation_dataset(release_version=benchmarks.LCB_RELEASE)
+        problems, lcb_cfg = _load_lcb_problems(benchmarks.LCB_RELEASE)
         sample_by_id = {}
         diff_by_id = {}
         for p in problems:
@@ -470,8 +473,64 @@ def grade_lcb(name, model):
             items.append(item)
     return {"benchmark": name, "model": model, "n": len(samples_list), "acc": acc,
             "pass@1": pass1, "release": benchmarks.LCB_RELEASE,
+            # WHICH config alias resolved. Recorded because the dataset can only be read from cache
+            # now (datasets>=5 dropped trust_remote_code), so a reader must be able to tell which
+            # cached configuration produced a number without re-deriving it.
+            "lcb_dataset_config": lcb_cfg,
             "by_difficulty": by_difficulty, "items": items,
             "matched": len(ids), "total_rows": len(rows)}
+
+
+# LiveCodeBench dataset CONFIG-NAME aliases, tried in order.
+#
+# WHY THIS EXISTS. `livecodebench/code_generation_lite` is a SCRIPT-BASED dataset, and
+# `datasets` >= 5 removed `trust_remote_code` entirely — so it can no longer be downloaded fresh at
+# any version. What remains is the local cache, and the cache key includes the CONFIG NAME the
+# caller used. The lcb_runner in use today calls `load_dataset(...)` with no name (=> "default"),
+# while the cache on this box was written by an older lcb_runner that passed "release_latest", so a
+# literal call fails with `Couldn't find cache ... Available configs: ['release_latest-...']` even
+# though the correct release IS present. Measured 2026-08-15: the cached
+# `release_latest-version_tag=release_v5` holds 880 problems and matches benchmarks.LCB_RELEASE.
+#
+# This was filed as a bug on 2026-07-06 ("blocks LCB pass@1 ... the jsonls persist, so pass@1 is
+# re-gradable once the loader is fixed") and sat unfixed because it was mis-attributed to a missing
+# lcb_runner. Both were true; the module was only the first of two blockers.
+#
+# ⚠️ CONSEQUENCE TO KNOW: every LCB number now depends on a cache blob that CANNOT be regenerated.
+# Losing it makes LCB permanently ungradable — the same irreversibility class as the retired M2
+# corpus. Archive the dataset cache alongside the results snapshots.
+_LCB_CONFIG_ALIASES = ("release_latest", "default")
+
+
+def _load_lcb_problems(release: str):
+    """Load the pinned LCB release, tolerating config-name drift. Returns (problems, config_used).
+
+    Raises RuntimeError naming every alias tried, so a failure is actionable rather than a bare
+    KeyError from deep inside `datasets`.
+    """
+    # FIRST try the official loader. It is the documented path, it is what the pinned lcb_runner
+    # supports, and it is the seam the existing grade_lcb tests patch — so the alias probing below
+    # is strictly a FALLBACK for the cache-key drift, never a replacement.
+    # Each import is scoped to the path that uses it: a combined top-of-function import would make a
+    # module missing EITHER name raise ImportError and skip the fallback entirely.
+    try:
+        from lcb_runner.benchmarks.code_generation import load_code_generation_dataset
+        return load_code_generation_dataset(release_version=release), "lcb_runner"
+    except Exception:  # noqa: BLE001 — fall through to alias probing; failures reported below
+        pass
+
+    from datasets import load_dataset
+    from lcb_runner.benchmarks.code_generation import CodeGenerationProblem
+    tried = []
+    for cfg in _LCB_CONFIG_ALIASES:
+        try:
+            ds = load_dataset("livecodebench/code_generation_lite", cfg,
+                              split="test", version_tag=release)
+            return [CodeGenerationProblem(**p) for p in ds], cfg
+        except Exception as e:  # noqa: BLE001 — alias probing; the last failure is reported below
+            tried.append(f"{cfg}: {type(e).__name__}: {str(e)[:60]}")
+    raise RuntimeError(
+        f"no LCB dataset config resolved for release {release!r}. Tried — " + " | ".join(tried))
 
 
 def _load_ifeval_lib():
