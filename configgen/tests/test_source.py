@@ -86,3 +86,57 @@ task_model:
     assert task_specs[0].port == 8092
     # still one main model from the `models:` block
     assert len(s.models) == 2
+
+
+def test_candidate_role_is_accepted_and_never_emitted_to_clients(tmp_path):
+    """A model registered for BENCHMARKING must not be advertised to the five clients.
+
+    The registry is the bench harness's source of truth, so a candidate has to be servable long
+    before it is a daily-driver option. Before `candidate` existed, the only legal roles were
+    {main, task} — so registering NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit for measurement
+    forced a choice between failing `configgen check` (which gates runserver.sh) and mislabelling
+    an unvetted model as `main`, which would publish it to opencode/aider/OWUI/vscode/zed.
+
+    All five emitters already filter on role == "main", so `candidate` needs no emitter changes —
+    this test pins that invariant so a future emitter cannot start leaking candidates.
+    """
+    import yaml
+    from configgen.source import load_source
+    from configgen import targets
+
+    reg = {
+        "task_model": {"name": "t", "hf_path": "x/t",
+                       "presentation": {"role": "task", "display_name": "t",
+                                        "context": 4096, "output": 512}},
+        "models": [
+            {"name": "shipped", "type": "vision", "hf_path": "x/shipped",
+             "max_kv_cache_size": 131072,
+             "generation_defaults": {"temperature": 0.3, "max_tokens": 1024,
+                                     "thinking_budget": 512},
+             "presentation": {"role": "main", "family": "qwen", "display_name": "shipped",
+                              "context": 131072, "output": 1024, "capabilities": ["tools"]}},
+            {"name": "under-test", "type": "vision", "hf_path": "x/under-test",
+             "max_kv_cache_size": 131072,
+             "generation_defaults": {"temperature": 1.0, "max_tokens": 1024,
+                                     "thinking_budget": 512},
+             "presentation": {"role": "candidate", "display_name": "under-test",
+                              "context": 131072, "output": 1024, "capabilities": ["tools"]}},
+        ],
+    }
+    p = tmp_path / "main_models.yaml"
+    p.write_text(yaml.safe_dump(reg))
+
+    src = load_source(str(p))                      # must not raise on role=candidate
+    # load_source includes the task model in .models, so it is present alongside the two entries
+    assert {m.name for m in src.models} == {"shipped", "t", "under-test"}
+    assert [m.name for m in src.models if m.role == "candidate"] == ["under-test"]
+
+    # Every emitter in TARGETS must exclude the candidate. aider returns a dict of several files.
+    checked = 0
+    for name, emit, _dest in targets.TARGETS:
+        out = emit(src)
+        parts = out.values() if isinstance(out, dict) else [out]
+        for text in parts:
+            assert "under-test" not in text, f"candidate leaked into {name}"
+            checked += 1
+    assert checked >= len(targets.TARGETS), "expected to inspect at least one file per target"

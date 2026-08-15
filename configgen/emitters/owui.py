@@ -41,6 +41,13 @@ def _meta(m) -> dict:
 def emit_owui(source: Source) -> str:
     out = []
     for m in source.models:
+        # OWUI intentionally carries BOTH main and task (it routes title/tag calls to the task
+        # model), so this excludes only `candidate` rather than filtering to role == "main" the
+        # way the other four emitters do. Candidates are registered so the bench harness can serve
+        # them; publishing an unvetted model into models_config.json — which AGENTS.md calls the
+        # SOURCE OF TRUTH pushed to OWUI — would put it in front of a human daily driver.
+        if m.role == "candidate":
+            continue
         capabilities = ["completion"] + (["vision"] if "vision" in m.capabilities else [])
         out.append({
             "id": m.name, "object": "model", "owned_by": "openai",
