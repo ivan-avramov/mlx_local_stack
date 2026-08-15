@@ -162,6 +162,42 @@ pass@1 as the hard constraint per the temperature-ladder rule.
 **Not yet added to `main_models.yaml`** — a registry entry needs the KV decision above and a load smoke
 first. Disk is not a constraint (641 GB free on the worker).
 
+### ⛔ THE OPTIQ CONVERSION CANNOT RUN ON THE DRIVER — measured 2026-08-14, moved to the worker
+I started `optiq convert unsloth/Qwen3.8-27B --target-bpw 4.0 --reference uniform_4bit` on the M4 Pro
+48 GB driver, on the reasoning that a quantised checkpoint is deterministic ARTIFACT production, so the
+box does not taint it (the same logic that puts `grade` on the driver). **The logic holds; the capacity
+does not.**
+
+Measured while it ran: **24 min elapsed for 1:49 of CPU (~6% CPU)**, 14 GB of baseline written at
+~10 MB/s, `PhysMem 45G used / 1.8G unused` on a 48 GB box, and **swap grown from 2 GB to 8 GB total with
+6994 MB in use**. Killing it recovered instantly to `22G used / 26G unused`, so the conversion itself was
+holding ~23 GB and spilling. **My pre-flight estimate of "plausible but tight, ~26 GB headroom" was wrong
+because it ignored that this AI session's own footprint grows** — actual free memory at the time was
+~1.8 GB. And the expensive phase (KL sensitivity: n_layers × n_bits × n_samples forward passes) had not
+even started.
+
+**Rule for next time: the driver hosts the session, so it cannot also host a 55.6 GB-source conversion.**
+Conversions go to the 64 GB worker, serialised behind whatever axis is running. The 14 GB partial baseline
+under `~/optiq_out` is retained but should be treated as scratch, not a resumable checkpoint.
+
+### ▶ NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit — REGISTERED AND MEASURED 2026-08-14
+The candidate you approved on 2026-08-13 and that then fell out of the executable queue. Now live.
+
+| check | result |
+|---|---|
+| load | 4.0 s cached, worker RSS ~17.4 GB, `nemotron_h` already in the fork, `mtp.*` stripped |
+| generation smoke | `finish_reason stop`, 867 tok, converged, **no stray `</think>`/`<|im_end|>`** (the handoff's worry does NOT reproduce through the chat path) |
+| **capacity @ 262144** | **`mx.get_peak_memory` 26.0 GB / 46 GB gate**, retrieval **1.00**, decode **70.3 tok/s**, `GATE_PASS=True` |
+| capacity @ 131072 | 23.7 GB, retrieval 1.00, decode 97.2 tok/s |
+| coding pilot (n=5) | mean 12.1 s/item, **146 tok/s**, 5/5 converged at vendor temp 1.0 |
+
+**⇒ It is the THIRD model to clear 256K, and by far the cheapest:** 26.0 GB against
+`Ornith-1.0-35B-mlx-uniform-4bit` 32.4 GB and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 43.3 GB.
+Registry set to `max_kv_cache_size = kv_prealloc_tokens = 262144` per the prealloc rule.
+⚠️ **Zero capability evidence yet** — `humanevalplus`/`mbppplus` n=100 at `deployed` in flight, budget
+matched to the winners so `compare` will pair rather than refuse. Retrieval and memory say nothing about
+whether it can code.
+
 ## ▶ RUNNING 2026-08-14 — EVALPLUS AT `deployed` ON M5, the first CURRENT-BOX coding H2H
 
 **What:** `Ornith-1.0-35B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ×

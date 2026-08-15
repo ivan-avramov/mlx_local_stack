@@ -125,7 +125,28 @@ clarity than the disease, and (b) would make our `acc` non-comparable with publi
 **Revisit if a future axis leans on the affected instruction types** (`keywords:letter_frequency`,
 `length_constraints:number_sentences`, and the other threshold-bearing ones).
 
-### O15. Does prealloc actually reserve RAM? — MY EVIDENCE WAS INVALID; the question needs a DEPTH test
+### O15 — NEW DATUM 2026-08-14 (still OPEN, but one wrong reading is now excluded)
+A DEPTH test at last, from the Nemotron ladder. Same model, same item set, **same context
+`ctx=131072`**, only `kv_prealloc_tokens` differing — and unlike my invalid probe, the cache genuinely
+grew to 131K:
+
+| prealloc | `mx.get_peak_memory` at ctx=131072 |
+|---|---|
+| 131072 | 25.5 GB |
+| 262144 | **23.7 GB** |
+
+**Peak did NOT rise when prealloc doubled — it fell 1.8 GB.** So "prealloc inflates peak memory" is
+EXCLUDED: peak is set by the prefill spike, not by the reservation. Two readings survive and this datum
+does not separate them: (1) the reservation genuinely costs nothing at peak, making prealloc free
+insurance; (2) the 1.8 GB is run-to-run variance — the two ladders had different idle baselines
+(32.39 vs 12.50 GB) and a fresh process.
+
+⚠️ **This does NOT answer what O15 actually asks** — whether prealloc PREVENTS the growth OOM — because
+prealloc was ON in both arms. That needs a prealloc-OFF arm at 262144, i.e. deliberately walking into the
+known OOM path, which the operator has ruled against. **So O15 stays open by design**, with the
+inflation hypothesis eliminated and the protection hypothesis untested.
+
+### O15 (original). Does prealloc actually reserve RAM? — MY EVIDENCE WAS INVALID; the question needs a DEPTH test
 ⚠️ **I raised this on a measurement that cannot support it, and the operator caught it.** I compared
 `mx.get_peak_memory` across prealloc arms (25.35 / 25.50 / 28.18 GB) and inferred the reservation was
 "lazy or unwired". **But the probe item generated only ~2,868 tokens, so the KV cache never grew past
