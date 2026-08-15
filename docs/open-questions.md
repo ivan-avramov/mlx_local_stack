@@ -38,11 +38,35 @@ Raised 2026-08-14 while executing O17, from the registry rather than from old ro
 | `gemma-4-31B-it-qat-6bit` | **16384** | 32768 | **49152** |
 | `gemma-4-26B-A4B-it-OptiQ-4bit` | **32768** | 49152 | **65536** |
 
-`compare` refuses any comparison differing in `thinking_budget` or `max_tokens`. **And gemma cannot be
-raised to match:** the server clamps the budget to `0.8 × (max_kv_cache_size − prompt)`, so
-`gemma-4-31B-it-qat-6bit`'s ceiling is `0.8 × 49152 ≈ 39,300` — **less than half** the winners' 81,920.
-Matching would require raising its KV cap, i.e. changing the config we ship for it, at which point we are
-no longer measuring the deployed model.
+`compare` refuses any comparison differing in `thinking_budget` or `max_tokens`.
+
+⚠️⚠️ **CORRECTION 2026-08-14 — MY "ARITHMETICALLY IMPOSSIBLE" CLAIM WAS WRONG, AND THE TABLE ABOVE READS
+A DIRTY FILE.** I wrote that `gemma-4-31B-it-qat-6bit`'s ceiling is `0.8 × 49152 ≈ 39,300`, less than half
+the winners' budget, so matching was impossible without changing what we ship. **49152 is M5's LOCAL DIRT,
+not the shipped value.** The committed registry has **196608**, whose ceiling is
+`0.8 × 196608 ≈ 157,286` — comfortably ABOVE 81,920.
+
+**Measured while merging the Nemotron entry** (`git diff -- main_models.yaml` on the worker): **all four**
+model entries are locally modified, not two —
+
+| model | committed | M5 local dirt |
+|---|---|---|
+| `gemma-4-31B-it-qat-6bit` | 196608 | **49152** |
+| `gemma-4-26B-A4B-it-OptiQ-4bit` | 262144 | **65536** |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 262144 | 131072 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 262144 | 131072 |
+
+**So the queue doc's claim that "gemma's 196608 and the other 262144 entry are untouched" is FALSE**, and
+I built an arithmetic argument on top of it without checking the file. Same error class as the Qwen3.8 KV
+estimate: I trusted a recorded description of the config instead of reading the config.
+
+**What is actually true:** gemma is unpairable because its **declared `thinking_budget` is 16384** (a
+CONFIG CHOICE in `generation_defaults`), not because of a KV wall. At the committed cap there is headroom
+to declare 81920. So the real options are:
+(a) leave gemma at its shipped 16384 and accept ABSOLUTE-ONLY rows — measures what we ship, never pairs;
+(b) declare 81920 for benchmark runs — pairs with the winners, but then we are no longer measuring gemma's
+    deployed config, and its `conv%` is already 83% at the smaller budget so it may simply loop longer.
+**Recommendation: (a), and stop describing it as impossible.** But it is now a genuine choice, not a wall.
 
 **Still queued against that constraint: ~34 h** — `gemma-4-26B-A4B-it-OptiQ-4bit` evalplus n=100,
 `ifeval n=200 gemma-4-31B-it-qat-6bit` (~10 h). Plus two large winner jobs whose own names flag them:

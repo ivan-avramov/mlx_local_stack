@@ -182,10 +182,24 @@ LCB n≈100 would have been 100 items × 3 models from scratch (~46 h at measure
 re-measurable — the box is gone — so this archive is the only copy. Never run `--clean-stale` against
 an un-archived tree.
 
-### ⚠️ M5 REGISTRY IS LOCALLY DIRTY AT 131072 — INTENTIONAL, DO NOT `git checkout` IT
-`main_models.yaml` on M5 has `max_kv_cache_size: 131072` + `kv_prealloc_tokens: 131072` for **both
-winners only** (gemma's 196608 and the other 262144 entry are untouched; `.bak` beside the file). Two
-reasons, both measured 2026-08-14:
+### ⚠️ M5 REGISTRY IS LOCALLY DIRTY — INTENTIONAL, DO NOT `git checkout` IT WITHOUT SAVING THE PATCH
+⚠️ **CORRECTED 2026-08-14: this section previously said "both winners ONLY (gemma's 196608 and the other
+262144 entry are untouched)". THAT WAS FALSE.** `git diff -- main_models.yaml` on the worker shows **all
+four** entries modified, and an O18 argument was built on the wrong numbers before anyone checked:
+
+| model | committed | M5 local |
+|---|---|---|
+| `gemma-4-31B-it-qat-6bit` | 196608 | **49152** |
+| `gemma-4-26B-A4B-it-OptiQ-4bit` | 262144 | **65536** |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 262144 | 131072 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 262144 | 131072 |
+
+**SAFE PROCEDURE when an incoming commit touches `main_models.yaml`** (used successfully for the Nemotron
+entry, 2026-08-14): `git diff -- main_models.yaml > /tmp/registry_dirt.patch` → `cp -p` a timestamped
+backup → `git checkout -- main_models.yaml` → `git merge --ff-only` → `git apply
+/tmp/registry_dirt.patch` → verify by PARSING the yaml, not by eyeballing. Do NOT hand-re-edit the values.
+
+Reasons for the winners' 131072 (one measured 2026-08-14, one since RETRACTED):
 1. **131072 is the TIGHTEST cap that keeps the declared thinking budget in force.** `max_tokens` is
    102400, and the server clamps `thinking_budget` to `0.8 * (cap - prompt)`. At 131072 the resolved
    budget is exactly the declared **81920**; at 65536 it silently became ~52390 (which is what
