@@ -149,3 +149,20 @@ def test_never_run_cases_are_excluded_from_the_denominator(tmp_path):
                                    "b": dict(_case(False), tests_outcomes=[])})
     rows, score = AR.build(root, "ornith", "M", langs=("python",), recovery=())
     assert score["n"] == 1 and score["acc"] == 1.0
+
+
+def test_scoresheet_renders_conv_as_n_a_not_a_fabricated_100pct(tmp_path, monkeypatch):
+    """converged=None means UNDETERMINABLE, not converged. `is_converged(r) is not False` counted
+    None as a pass and printed conv 100% for both aider arms — a fabricated column."""
+    import importlib, sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "m1"))
+    sb = importlib.import_module("scoreboard")
+
+    root = tmp_path / "results" / "M"
+    root.mkdir(parents=True)
+    (root / "aider.jsonl").write_text(
+        json.dumps({"id": "python/a", "bench": "aider", "converged": None, "wall_s": 1.0}) + "\n")
+    (root / "aider.score.json").write_text(json.dumps({"acc": 0.5, "acc_strict": 0.5}))
+    monkeypatch.setattr(sb.paths, "default_results_root", lambda: tmp_path / "results")
+    data = sb.collect()
+    assert data["M"]["aider"]["conv_pct"] is None, "undeterminable convergence must not be a number"

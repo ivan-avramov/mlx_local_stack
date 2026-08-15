@@ -50,7 +50,12 @@ def collect() -> dict:
         live = [r for r in rows if not r.get("error")]
         if not live:
             continue
-        conv = [r for r in live if convergence.is_converged(r) is not False]
+        # Convergence is only DEFINED for rows that expose per-turn generation. The aider agentic
+        # rows carry converged=None on purpose (aider gives a per-CASE view across turns, so there is
+        # no per-turn finish_reason/completion_tokens to judge). Counting None as converged — which
+        # `is not False` does — printed a fabricated conv 100% for both aider arms.
+        det = [r for r in live if convergence.is_converged(r) is not None]
+        conv = [r for r in det if convergence.is_converged(r) is not False]
         degen = [r for r in live if traces.is_degenerate(r)]
         tw = sum(r.get("wall_s") or 0 for r in live) or 1
         budgets = {r.get("thinking_budget") for r in live if r.get("thinking_budget")}
@@ -66,7 +71,8 @@ def collect() -> dict:
             except (json.JSONDecodeError, OSError):
                 sc = {}
         rec = {"n": len(live), "errors": len(rows) - len(live),
-               "conv_pct": 100 * len(conv) / len(live),
+               # None => UNDETERMINABLE, rendered "n/a". Never 100.
+               "conv_pct": (100 * len(conv) / len(det)) if det else None,
                "degen": len(degen),
                "degen_wall_pct": 100 * sum(r.get("wall_s") or 0 for r in degen) / tw,
                "budget": sorted(budgets)[0] if len(budgets) == 1 else None,
@@ -90,8 +96,9 @@ def verdict(benches: dict, role: str) -> str:
     missing = [b for b in ROLES[role] if b not in benches]
     if missing:
         parts.append(f"missing {','.join(missing)}")
-    worst = min(r["conv_pct"] for _, r in have)
-    if worst < 90:
+    convs = [r["conv_pct"] for _, r in have if r["conv_pct"] is not None]
+    worst = min(convs) if convs else None
+    if worst is not None and worst < 90:
         parts.append(f"conv {worst:.0f}% — investigate mechanism")
     return "; ".join(parts)
 
@@ -113,7 +120,7 @@ def main(argv=None) -> int:
             # "ungraded" rather than a blank: the ranking key being absent is information.
             acc_s = "ungraded" if r["acc"] is None else f"{r['acc'] * 100:.1f}%"
             st_s = "ungraded" if r["acc_strict"] is None else f"{r['acc_strict'] * 100:.1f}%"
-            v = (model, bench, r["n"], acc_s, st_s, f"{r['conv_pct']:.0f}", r["degen"] or "-",
+            v = (model, bench, r["n"], acc_s, st_s, ("n/a" if r["conv_pct"] is None else f"{r['conv_pct']:.0f}"), r["degen"] or "-",
                  f"{r['degen_wall_pct']:.0f}" if r["degen"] else "-", r["budget"] or "-")
             print(("| " + " | ".join(str(x) for x in v) + " |") if args.md
                   else "%-40s %-15s %5s %7s %7s %6s %6s %11s %8s" % v)
