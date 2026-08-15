@@ -1663,3 +1663,53 @@ over-reasoning makes it unsuitable for the whole-format agentic loop at the stan
 ### Provenance
 
 Grading detail and the stale-router / temp-1.0 root cause live in git history (commits through acad470) and `AGENTS.md`.
+
+## 2026-08-15 — JUDGE PANEL RELIABILITY: located precisely, and one plausible fix FALSIFIED
+
+Goal C (everyday driver) has **no valid instrument**: its only evidence is IFEval, which scores short
+mechanical constraint compliance, not research/brainstorming/design quality. The judge panel is the only
+instrument that could speak to C, and it is on record as "NOT RELIABLE ENOUGH TO RANK". The `_judge/` and
+`_judge2/` verdicts are now in the corpus, so this was analysable with **zero worker time**.
+
+### Where the unreliability actually is
+
+| judge role | order consistency (fwd vs rev) | hard reversals |
+|---|---|---|
+| holistic | 17/24 (71%) | 4 |
+| **maintainability** | **10/24 (42%)** | **8** |
+| architecture | 15/24 (62%) | 4 |
+
+**Maintainability flips its A/B answer more often than it keeps it when the positions are swapped** — it
+is a coin, not a judge. Krippendorff **α = 0.517** (ordinal, 15 units, 3 raters), below the 0.667 floor
+usually required for even tentative conclusions. Panel verdict over order-consistent calls:
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 9 / `Ornith-1.0-35B-mlx-uniform-4bit` 7, 4 no-majority, 2 tie —
+**sign test p = 0.80**. The panel says nothing.
+
+Secondary: the panel picked the **longer** solution in 10/16 decided items (62%), against a 50% null, so
+verbosity bias is not excluded (mean solution length is nearly identical: 1149 vs 1157 chars, so this is
+a per-item effect rather than a systematic length gap).
+
+### The fix I expected to work, and it does NOT
+
+Per-dimension 1–5 scores look more trustworthy than a pairwise winner: they are internally coherent
+(`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` nominally ahead on 7 of 9 dimensions, deltas +0.08…+0.21) and a
+graded scale should be less position-sensitive than a forced binary choice. **Measured: it is not.**
+
+| role | winner-vote order agreement | SCORE-SIGN order agreement |
+|---|---|---|
+| holistic | 17/24 (71%) | 16/24 (67%) |
+| maintainability | 10/24 (42%) | 10/24 (42%) |
+| architecture | 15/24 (62%) | 16/24 (67%) |
+| **POOLED** | **42/72 (58%)** | **42/72 (58%)** |
+
+Identical pooled agreement, and per-role within one item. **The instability is in the JUDGEMENT, not in
+the readout** — re-aggregating the same verdicts on scores instead of winners changes nothing. Recorded
+because it is exactly the kind of plausible fix that would have shipped as "panel reliability improved"
+without moving a single number.
+
+### What this implies for C
+Reliability cannot be recovered by re-reading the existing verdicts. It needs a change to how the
+judgement is PRODUCED — more items (n=24 is tiny), more raters or replicates per rater, and/or a judging
+protocol that is less position-sensitive than pairwise A/B. That is model time, so it belongs in the
+queue as its own axis rather than as a free re-grade. **Until then C has no instrument, and the "TIE —
+either" line for the daily-driver pick rests on IFEval, which does not measure the C construct.**
