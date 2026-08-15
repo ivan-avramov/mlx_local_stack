@@ -14,7 +14,50 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-### O17. `gemma-4-31B-it-qat-6bit` evalplus is queued at n=40 — but it is UNRANKABLE by construction
+### ~~O17~~ → PARTLY CLOSED (operator, 2026-08-14): **drop the n=40 evalplus job — DONE.** But my scoping was WRONG and the residue is bigger; see O18.
+The approved job is removed from `docs/work-queue.json`. ⚠️ **I described it as "the last queued job".
+It was not.** The runtime state file only lists jobs the runner has already touched (5 of them), while
+the PLAN had 10 — so three gemma jobs and two very large winner jobs were invisible to the check I ran.
+Reading runtime state and calling it the backlog is the same class of error as reading a run prefix and
+calling it the run. **Lesson: the plan is the backlog; the state file is only what has been attempted.**
+
+### O18. gemma CANNOT be compared to the winners at a matched budget — it is ARITHMETICALLY impossible
+Raised 2026-08-14 while executing O17, from the registry rather than from old rows:
+
+| model | `thinking_budget` | `max_tokens` | `max_kv_cache_size` |
+|---|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 81920 | 102400 | 131072 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 81920 | 102400 | 131072 |
+| `gemma-4-31B-it-qat-6bit` | **16384** | 32768 | **49152** |
+| `gemma-4-26B-A4B-it-OptiQ-4bit` | **32768** | 49152 | **65536** |
+
+`compare` refuses any comparison differing in `thinking_budget` or `max_tokens`. **And gemma cannot be
+raised to match:** the server clamps the budget to `0.8 × (max_kv_cache_size − prompt)`, so
+`gemma-4-31B-it-qat-6bit`'s ceiling is `0.8 × 49152 ≈ 39,300` — **less than half** the winners' 81,920.
+Matching would require raising its KV cap, i.e. changing the config we ship for it, at which point we are
+no longer measuring the deployed model.
+
+**Still queued against that constraint: ~34 h** — `gemma-4-26B-A4B-it-OptiQ-4bit` evalplus n=100,
+`ifeval n=200 gemma-4-31B-it-qat-6bit` (~10 h). Plus two large winner jobs whose own names flag them:
+`math500 n=100 both winners` (~35 h) and `livecodebench n=100 ×4` (~55 h, "LIKELY TOO EXPENSIVE AS
+SPECIFIED").
+
+**The counter-argument, which I think is right and which cuts against a blanket drop:** goal A is to
+MEASURE models on dimensions, and a gemma row at gemma's own deployed config measures gemma **as it would
+actually be used**. That is legitimate, useful data — it just yields an ABSOLUTE capability number and a
+usability verdict, never a paired delta. The refusal is a property of paired statistics, not of the
+measurement.
+
+**Options:** (a) **keep the gemma jobs, labelled ABSOLUTE-ONLY** — report them in the scoresheet, never
+pair them, and size n from a 5-item pilot; (b) **drop gemma from the coding axis** and spend the ~34 h on
+the axes that can resolve something (BFCL, judge-panel reliability, an opencode row for the B pick);
+(c) re-run the winners at gemma's budget — rejected, it would misrepresent the winners and cost more.
+**Recommendation: (a) for `ifeval n=200`, (b) for `gemma-4-26B-A4B-it-OptiQ-4bit evalplus n=100`.** The
+daily-driver dimension has only two models and an absolute third is genuinely informative; the coding
+dimension already has an unresolved 2–5pp question between the winners that a ±20pp uncomparable row
+cannot help with. **Needs your ruling; nothing is dropped beyond the one job you already approved.**
+
+### ~~O17 (original text, retained)~~ `gemma-4-31B-it-qat-6bit` evalplus is queued at n=40 — but it is UNRANKABLE by construction
 The last queued job is `gemma-4-31B-it-qat-6bit evalplus n=40`, deferred earlier today with the note
 "10.4h projected for a ±20pp row, 83% of wall in runaways, 1 item lost to a 3600s timeout".
 
@@ -32,7 +75,8 @@ accept an uncomparable row.
 **Recommendation: (a) drop it now, and if gemma matters, requeue at a matched budget with an n chosen
 from a 5-item pilot.** A row that `compare` refuses is not evidence at any n.
 
-### O16. IFEval verifiers INVENT the criterion when a kwarg is absent — leave it, or stop grading those items?
+### ~~O16~~ → CLOSED (operator, 2026-08-14): **LEAVE IT.** Deterministic, documented, 0.2% of items. Revisit only if a future axis leans on the affected instruction types.
+### O16 (original text, retained). IFEval verifiers INVENT the criterion when a kwarg is absent — leave it, or stop grading those items?
 Found and partly fixed 2026-08-14 (`b04030c`). 24 sites in the vendored `instructions.py` fabricate an
 **absent kwarg** with `random.choice` / `random.randint` (e.g. `:1350`
 `self._frequency = random.randint(1, _LETTER_FREQUENCY)`). Seeding made this **reproducible**; it did not
