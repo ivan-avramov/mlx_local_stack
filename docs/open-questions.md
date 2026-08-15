@@ -14,6 +14,34 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### ~~O19~~ → CLOSED-BY-ARITHMETIC (2026-08-14): the Nemotron 4→6-bit ceiling probe cannot answer its own question
+**Pre-registered design** (operator, 2026-08-14): 4-bit as baseline → uniform 6-bit as CEILING → and only
+if the 4→6 gain is significant, evaluate OptiQ ("~6-bit quality at ~5-bit perf") as the cheaper way to
+capture it. Decision rule fixed in advance: **a paired 4→6 delta under ~10pp = "no gain worth buying"**,
+since 6-bit costs ~8 GB and ~30% of decode speed.
+
+**The baseline landed before the ceiling was run, and it closes the question:**
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` scores `acc` 89.0% (humanevalplus) / 81.0% (mbppplus)
+against the best measured model's 93.0% / 84.0%. **So the ENTIRE headroom to the leader is ~4pp.** A 4→6
+delta clearing the 10pp bar would put it at ~99% / ~91%, far above every model in the corpus. **The rule
+we agreed therefore guarantees the verdict before the run: "no gain worth buying."**
+
+And resolving the effect that DOES matter (~4pp) needs **n≈628** matched items per the MDE table — for
+three models — which is unaffordable on one worker. At n=100 the probe can only return a fifth
+INCONCLUSIVE row.
+
+⚠️ **The honest counter-argument, recorded rather than buried:** 4pp is not negligible *here*, because
+closing it would make Nemotron competitive with the winner while being ~2× faster per item and using
+26.0 GB at 256K vs the distill's 43.3 GB. But that is exactly the effect size n=100 cannot see, so the
+probe cannot settle it in either direction. **The instrument's resolution (±12.5pp at n=100) is larger
+than the entire remaining headroom (~4pp).**
+
+**Decision: skip the 6-bit arm; spend the worker on the AGENTIC axis instead** — the only axis where this
+campaign has ever resolved an effect (aider polyglot, +23.6pp, p=1.3e-05), and the one this model is
+explicitly built for. A 20pp-scale effect is decidable at feasible n; a 4pp one is not.
+**Generalisable rule: before running a probe, check that the effect it could plausibly find is larger
+than the instrument's MDE. If it is not, the probe is theatre.**
+
 ### ~~O17~~ → PARTLY CLOSED (operator, 2026-08-14): **drop the n=40 evalplus job — DONE.** But my scoping was WRONG and the residue is bigger; see O18.
 The approved job is removed from `docs/work-queue.json`. ⚠️ **I described it as "the last queued job".
 It was not.** The runtime state file only lists jobs the runner has already touched (5 of them), while

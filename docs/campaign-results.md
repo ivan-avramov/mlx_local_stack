@@ -91,6 +91,38 @@ measurement that would settle it is the depth condition listed under "what would
 on this page. Building a research/synthesis axis and making the judge panel reliable are prerequisites
 to C having an answer at all.
 
+## 🆕 A THIRD CANDIDATE IS NOW IN THE MATCHED COMPARISON — and it is not separable on capability
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, registered and measured 2026-08-14, same box, same session,
+matched items, `deployed`, budget matched so `compare` pairs rather than refuses.
+
+| paired vs Nemotron, n=100 | delta | 95% CI | verdict |
+|---|---|---|---|
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, humanevalplus | −4.0pp | [−10.0, +2.0] | INCONCLUSIVE |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, mbppplus | −3.0pp | [−10.0, +3.0] | INCONCLUSIVE |
+| `Ornith-1.0-35B-mlx-uniform-4bit`, humanevalplus | −3.0pp | [−8.0, +2.0] | INCONCLUSIVE |
+| `Ornith-1.0-35B-mlx-uniform-4bit`, mbppplus | −2.0pp | [−7.0, +3.0] | INCONCLUSIVE |
+
+**Every interval spans zero: it is not measurably worse than either winner on single-shot coding, and not
+measurably better.** Where it IS separable is on the numbers this suite reports beside capability:
+
+| | Nemotron 4-bit | Ornith | distill |
+|---|---|---|---|
+| **`mx.get_peak_memory` @ 262144** | **26.0 GB** | 32.4 GB | 43.3 GB |
+| retrieval @ 262144 | **1.00** | — | — |
+| decode @ 262144 / short ctx | **70.3 / 146** tok/s | — / ~107 | — / ~28.6 |
+| wall per item (hep / mbpp) | **28.8 s / 17.6 s** | 42 s / — | 51 s / — |
+| `conv%` (hep / mbpp) | **99 / 100** | 98 / 96 | 99 / 98 |
+| degenerate wall-share (hep) | **25%** | 40% | 41% |
+
+⚠️ **What this does NOT establish.** It has no agentic, reasoning or instruction-following row, and the B
+pick rests on the AGENTIC axis, not on these two benches. A third model that ties on single-shot coding
+while costing 17 GB less and running ~2× faster is a strong *candidate*, not a pick. **Next measurement is
+aider polyglot**, where the campaign's only powered result lives (+23.6pp, p=1.3e-05) and where effects are
+large enough to resolve at feasible n.
+⚠️ **The 4→6-bit quant ladder was CANCELLED by arithmetic, not skipped by preference** — the remaining
+headroom to the leader (~4pp) is smaller than the axis MDE (±12.5pp at n=100), so the probe could not
+answer its own question. See O19.
+
 ## What would change these picks, in order of value
 
 1. **Make the judge panel reliable, then run it.** It is the only instrument that can speak to C, and C
@@ -160,6 +192,8 @@ gives the same answer.
 
 | model | bench | n | acc | strict | conv% | degen | degenWall% | budget |
 |---|---|---|---|---|---|---|---|---|
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | humanevalplus | 100 | 89.0% | 88.0% | 99 | 1 | 25 | 81920 |
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | mbppplus | 100 | 81.0% | 81.0% | 100 | - | - | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | capacity_ladder | 2 | ungraded | ungraded | 100 | - | - | - |
 | Ornith-1.0-35B-mlx-uniform-4bit | humanevalplus | 100 | 92.0% | 90.0% | 98 | 4 | 40 | 81920 |
