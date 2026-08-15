@@ -67,6 +67,31 @@ QWEN_OFFICIAL = {
 # convergence is MEASURED, not the cap. Sampling stays at production temp 0.7 (the converging
 # config) -- NOT the loop-prone official temp 1.0. Qwen's coding config already meets its
 # documented ~81920 need, so QWEN_CODING = QWEN_OFFICIAL (temp 0.6 + 81920 budget).
+# NEMOTRON — added 2026-08-14 with the candidate registry entry. VENDOR-VERBATIM and deliberately
+# SPARSE: the nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16 card states "Recommended Sampling:
+# Temperature 1.0, Top_P 0.95" and specifies NOTHING else, so nothing else is asserted here. No
+# invented top_k/min_p — an absent key falls through to the checkpoint, which is honest; a guessed
+# one is a measurement of a config nobody chose.
+# `presence_penalty: 0.0` is the one addition and is a SERVING requirement, not a sampling opinion:
+# a nonzero value trips the suffix-decoding fallback on our stack.
+# Budget MATCHES both winners (102400 / 81920) so `compare` will not refuse the pairing.
+# ⚠️ temperature 1.0 is where the gemma MoE degenerate-looped, and is far above both winners' tuned
+# op-temps (0.4 / 0.3). This is the vendor BASELINE to start a temperature ladder from, not a tuned
+# operating point — do not read a convergence failure here as a capability verdict.
+NEMOTRON = {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "presence_penalty": 0.0,
+    "max_tokens": 102400,
+    "enable_thinking": True,
+    "thinking_budget": 81920,
+}
+# For this family the vendor recommendation IS the official one, and its budget already meets the
+# coding need, so all three profiles coincide. Kept as separate names so a future divergence has an
+# obvious home rather than being wedged into the shared dict.
+NEMOTRON_OFFICIAL = dict(NEMOTRON)
+NEMOTRON_CODING = dict(NEMOTRON)
+
 GEMMA_CODING = {**GEMMA, "max_tokens": 49152, "thinking_budget": 32768}
 QWEN_CODING = dict(QWEN_OFFICIAL)
 
@@ -88,11 +113,18 @@ PARAMS = {
     # not the gemma name-fallback ("qwen" isn't in the name).
     "Ornith-1.0-35B-mlx-uniform-4bit": QWEN,
     "Ornith-1.0-35B-mlx-uniform-6bit": QWEN,
+    # MUST be explicit: `_family`'s substring fallback is `"qwen" if "qwen" in name else "gemma"`,
+    # so an unregistered Nemotron would silently receive GEMMA sampling (temp 0.7, top_k 64,
+    # repetition_penalty 1.08) — a different arch's daily-driver config. That is the exact class of
+    # silent misassignment this table's drift guard exists to catch.
+    "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit": NEMOTRON,
 }
 
 _PROFILES = {
     "gemma": {"production": GEMMA, "official": GEMMA_OFFICIAL, "coding": GEMMA_CODING},
     "qwen": {"production": QWEN, "official": QWEN_OFFICIAL, "coding": QWEN_CODING},
+    "nemotron": {"production": NEMOTRON, "official": NEMOTRON_OFFICIAL,
+                 "coding": NEMOTRON_CODING},
 }
 
 # The `deployed` profile is NOT in _PROFILES: it is per-MODEL, not per-family, and it is not
@@ -146,6 +178,8 @@ def _family(model: str) -> str:
         return "qwen"
     if base is GEMMA:
         return "gemma"
+    if base is NEMOTRON:
+        return "nemotron"
     return "qwen" if "qwen" in model.lower() else "gemma"
 
 

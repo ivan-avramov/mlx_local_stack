@@ -185,3 +185,53 @@ models:
     draft_kind: suffix
     draft_block_size: 16
     suffix_min_match: 2
+
+  # ── CANDIDATE, added 2026-08-14. Operator-approved in the 2026-08-13 candidate scan
+  # (docs/campaign-queue.md) and then LOST from the executable queue — this entry lands it.
+  # Already acquired and validated: 17.8 GB (4 shards), loads in 5 s cached, peak 16.56 GB.
+  # `nemotron_h` was ALREADY in our fork; `sanitize` strips `mtp.*`, so the model's native MTP
+  # layers are OFF BY CONSTRUCTION (AGENTS.md records MTP as a net slowdown for us).
+  #
+  # `type: vision` is the BACKEND SELECTOR, not a claim about the model — Nemotron is TEXT-ONLY,
+  # and the vision backend is the path whose calling convention was verified working
+  # (`get_input_embeddings` → `inputs_embeds`-only prefill + decode).
+  #
+  # SAMPLING IS VENDOR-VERBATIM, per the campaign rule against invented defaults:
+  # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16 card states "Recommended Sampling:
+  # Temperature 1.0, Top_P 0.95" and nothing else, so nothing else is set here (an omitted key
+  # falls through to the checkpoint under FU-2 precedence). `presence_penalty: 0.0` is the one
+  # exception and is a SERVING requirement, not a sampling choice: a nonzero value trips the
+  # suffix-decoding fallback.
+  # ⚠️ temperature 1.0 is where the gemma MoE degenerate-looped in this campaign, and is far
+  # above both winners' tuned op-temps (0.4 / 0.3). EXPECT TO RUN THE TEMPERATURE LADDER; this
+  # is the vendor baseline to start from, not a tuned operating point.
+  #
+  # ⚠️ KV CAP IS DELIBERATELY CONSERVATIVE FOR THE FIRST SMOKE. Native context is 262144 (the
+  # card says 1M, "for single H100 deployment we use 256K"), but the KV shape of a Mamba-2 +
+  # MoE + select-attention hybrid is unmeasured here. AGENTS.md's prealloc rule presumes the
+  # usable context has been IDENTIFIED first, so: smoke and capacity-ladder at 131072, then set
+  # cap == prealloc at the measured ceiling. At 131072 the declared 81920 thinking budget is in
+  # force with no clamp for prompts <= 28,672 (0.8 * (131072 - prompt) >= 81920).
+  # max_tokens/thinking_budget MATCH both winners so `compare` will not refuse the pairing.
+  - name: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit
+    type: vision
+    on_demand: true
+    hf_path: mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit
+    max_kv_cache_size: 131072
+    kv_prealloc_tokens: 131072
+    kv_bits: 0
+    prefill_step_size: 512
+    generation_defaults:
+      temperature: 1.0
+      top_p: 0.95
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+    presentation:
+      role: candidate
+      family: nemotron
+      display_name: "NVIDIA Nemotron 3.5 Lightning 30B-A3B (candidate)"
+      context: 131072
+      output: 102400
+      capabilities: [tools, thinking]

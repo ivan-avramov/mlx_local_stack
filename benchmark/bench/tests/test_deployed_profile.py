@@ -144,3 +144,19 @@ def test_historical_profiles_are_unchanged():
     g = MP.params_for("gemma-4-31B-it-qat-6bit", "production")
     assert (g["temperature"], g["top_k"], g["repetition_penalty"], g["thinking_budget"]) == \
         (0.7, 64, 1.08, 16384)
+
+
+def test_nemotron_does_NOT_fall_through_to_gemma_sampling():
+    """The substring fallback is `"qwen" if "qwen" in name else "gemma"`, so an unregistered
+    Nemotron silently receives GEMMA's daily-driver config — a different arch's sampling. This
+    pins the family AND the vendor-verbatim values (card: "Temperature 1.0, Top_P 0.95")."""
+    name = "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit"
+    assert MP._family(name) == "nemotron"
+    p = MP.params_for(name, "production")
+    assert (p["temperature"], p["top_p"]) == (1.0, 0.95)
+    assert p["presence_penalty"] == 0.0, "nonzero presence_penalty trips suffix decoding"
+    # No invented knobs: the card specifies neither, so neither is asserted into the request.
+    assert "top_k" not in p and "min_p" not in p
+    # Budget matches both winners so `compare` will pair it rather than refuse.
+    assert (p["max_tokens"], p["thinking_budget"]) == (102400, 81920)
+    assert p != MP.params_for("gemma-4-31B-it-qat-6bit", "production")
