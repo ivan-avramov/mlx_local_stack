@@ -15,6 +15,69 @@ settled.** Read `campaign-results.md` when you need the number itself.
 
 ---
 
+## 2026-08-14 — THE IFEVAL GRADER COULD NOT REPRODUCE ITSELF. Two causes; the first masked the second
+
+**How it was found, which is the part worth keeping.** Not by an audit — by *using* the newly generated
+scoresheet. Two `grade` calls made minutes apart produced different `acc` for the same 148 rows, and the
+generated table showed it because both numbers came from the same command. A hand-copied figure would
+have hidden this indefinitely: whoever transcribed it would have copied one draw and moved on. **The
+generated scoresheet paid for itself within the hour.**
+
+### Cause 1 — `langdetect` unseeded (`2a27d21`)
+Three verifiers call `langdetect.detect()`: `instructions.py:158` (`response_language`), `:1416`
+(`english_capital`), `:1448` (`english_lowercase`). langdetect's `Detector` seeds its RNG from
+`DetectorFactory.seed`, which defaults to `None` — it **samples randomly**. Nothing in this repo set it.
+Evidence: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` `acc` 0.8986 / 0.8986 / **0.8919** over three re-grades
+of identical rows, one item flipping, while `Ornith-1.0-35B-mlx-uniform-4bit`'s 541 rows were stable.
+
+### Cause 2 — the verifiers' own `random`, revealed only after Cause 1 was fixed (`b04030c`)
+After seeding langdetect, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` went rock-stable (0.8986 × 4) **and
+`Ornith-1.0-35B-mlx-uniform-4bit` started wobbling**:
+0.9002 / 0.9002 / 0.8983 / 0.9020. **I nearly recorded Cause 1 as "the fix".** It was half of one.
+
+24 sites in the vendored `instructions.py` fabricate an **absent kwarg** with `random.choice` /
+`random.randint` — e.g. `:1350` `self._frequency = random.randint(1, _LETTER_FREQUENCY)`,
+`:190` `self._num_sentences_threshold = random.randint(1, _MAX_NUM_SENTENCES)`. Nothing seeds `random`.
+So for those items **the grader is not checking the instruction; it invents the threshold it checks
+against.** That is a validity problem as well as a reproducibility one — it just happens to be tiny here.
+
+**Scope, measured over 8 RNG states rather than asserted:** 1 verdict of 541 (**0.2%**), `acc` spread
+90.02–90.20% (**0.18pp**). The affected item carries `keywords:letter_frequency`.
+**Alternatives ruled out by measurement, not by argument:** `PYTHONHASHSEED` (pinned to 0, still
+wobbled), grader concurrency (`grade.py` has none), and a moving denominator (`n=541` in every run —
+so it was one verdict flipping, not items being dropped).
+
+### The fix, and why per-item
+langdetect seeded at `_load_ifeval_lib` (the seam every IFEval grade loads through, where the `punkt_tab`
+fix also lives), and the verifiers reseeded **per item** from `crc32(item_id)`. A single batch seed would
+make one run reproducible while leaving each verdict dependent on how many RNG draws preceded it — so a
+resume, a different `--limit`, or a reordered queue would silently change verdicts. Keying on the item id
+also makes the seed identical across models (common random numbers) and independent of queue order.
+`crc32`, not builtin `hash()`, because `hash()` of a `str` is salted by `PYTHONHASHSEED` — the exact bug
+class being fixed. **Verified: six independent processes, both arms, bit-identical.**
+
+### What it changed about the published numbers: NOTHING
+Canonical: `Ornith-1.0-35B-mlx-uniform-4bit` **90.0% / 86.7%**,
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` **89.9% / 85.1%** — exactly what was already published, and the
+`equivalent` verdict stands. **The broken thing was never the value; it was the guarantee that reading it
+twice gives the same answer.** Worth stating plainly, because "we found a grader bug" invites the
+assumption that results moved, and they did not.
+
+### Process lessons
+1. **A green light after one fix is a hypothesis.** Cause 1's fix produced a perfectly stable distill arm
+   — and I would have written "fixed" if I had not re-run *both* arms. Re-run the full matrix, not the
+   arm that was failing.
+2. **Measure the scope before proposing the remedy.** "The grader invents its criteria" sounds
+   catastrophic; it is 1 item in 541 and 0.18pp. Both facts are true and only the pair is honest.
+3. **Verify constants instead of writing them from memory.** I pinned `crc32("HumanEval/94")` in a test
+   as `1734880314`. It is `1784974312`. Had I not computed it, a fabricated number would have gone into
+   a test asserting reproducibility.
+4. **The residual validity gap is recorded, not fixed:** for items whose kwargs are absent, the criterion
+   is still invented (now deterministically). At n=1 of 541 that is not worth surgery, but it should not
+   be forgotten if a future axis leans on those instruction types.
+
+---
+
 ---
 
 ## 🏁 THE H2H — humanevalplus n=100, BOTH winners, matched items, `deployed`, current box (2026-08-14)

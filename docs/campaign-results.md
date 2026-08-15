@@ -60,7 +60,8 @@ measurement that would settle it is the depth condition listed under "what would
   ("all caps", "exactly 3 bullets", "use word X four times"). It is close to worthless as a proxy for
   whether a model is a good research or design partner. **Reporting it as C's basis overstates what is
   known**, which earlier revisions of this doc did at MEDIUM confidence.
-  ⚠️ **And its grader is non-deterministic — see the defect banner on the scoresheet.**
+  ✅ Its grader was non-deterministic until 2026-08-14 and is now reproducible; the verdict did not
+  change (see defect note 2 on the scoresheet).
 - **math500** (supporting, reasoning): at a matched 81,920 budget, `acc` is a tie (83.3% vs 81.5%) but
   **`acc_strict` splits 60.0% vs 81.5%**, because `Ornith-1.0-35B-mlx-uniform-4bit` hits the thinking
   budget on **9 of 30** items. Suggestive and mechanistically attributable — but n=30/27, unmatched
@@ -110,20 +111,30 @@ reason: those graders need Docker (evalplus) or `lcb_runner`, both CPU-heavy, an
 run is in flight on the same box**. Running them now would contaminate the live latency and decode-rate
 measurements. They are graded once the run completes.
 
-**2. 🚨 THE IFEVAL GRADER IS NON-DETERMINISTIC — OPEN DEFECT, found 2026-08-14.**
-Three re-grades of the *identical* 148 distill rows returned `acc` **0.8986 / 0.8986 / 0.8919**
-(`acc_strict` 0.8514 / 0.8514 / 0.8446) — exactly one item flipping.
-`Ornith-1.0-35B-mlx-uniform-4bit`'s 541 rows were stable across all three, so it is item-specific.
-**Mechanism:** the vendored verifier calls `langdetect.detect()` at three sites
-(`instructions.py:158` `response_language`, `:1416` `english_capital`, `:1448` `english_lowercase`) and
-**`langdetect.DetectorFactory.seed` is set nowhere in the repo** — langdetect samples randomly unless
-seeded. **Impact:** ±0.7pp on one arm, which does NOT overturn the `equivalent` verdict (±5pp TOST
-margin), but it does mean the published "89.9% vs 89.9%, exactly +0.0pp" was partly a function of which
-grading run got copied into a doc. The honest figure for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is
-**89.2–89.9%**. Fix is one line plus a determinism test; re-grading is free.
-**The `ifeval` row below shows whichever value the last grade produced — that is the defect, visible.**
-It is deliberately NOT hand-annotated: patching a generated cell would be reverted by the next
-regeneration and would read as a regression.
+**2. ✅ THE IFEVAL GRADER WAS NON-DETERMINISTIC — FOUND AND FIXED 2026-08-14 (`2a27d21`, `b04030c`).**
+Re-grades of *identical* rows returned different scores. **Two independent causes, and finding the
+first one masked the second:**
+
+| # | mechanism | evidence |
+|---|---|---|
+| 1 | **`langdetect` unseeded.** Three verifiers call `langdetect.detect()` (`instructions.py:158` `response_language`, `:1416` `english_capital`, `:1448` `english_lowercase`); `DetectorFactory.seed` was set nowhere, so it samples randomly. | distill `acc` 0.8986 / 0.8986 / **0.8919** over 3 re-grades |
+| 2 | **`random` unseeded in the verifiers.** 24 sites in `instructions.py` fabricate an **absent kwarg** with `random.choice`/`random.randint` (e.g. `:1350` `self._frequency = random.randint(1, _LETTER_FREQUENCY)`) — so for those items the grader **invents the threshold it checks against**. | after fixing #1, Ornith began wobbling: 0.9002 / 0.9002 / **0.8983** / **0.9020** |
+
+**Scope of #2, measured over 8 RNG states rather than assumed: 1 verdict of 541 (0.2%), `acc` spread
+90.02–90.20% = 0.18pp.** Immaterial to every published verdict; fatal to reproducibility. Ruled out by
+measurement: `PYTHONHASHSEED` (pinning to 0 still wobbled) and concurrency (`grade.py` has none).
+
+**Fixes:** langdetect seeded at `_load_ifeval_lib`, the one seam every IFEval grade loads through; and
+the verifiers reseeded **per item** from a `crc32` of the item id — not once per batch, because a batch
+seed leaves each verdict dependent on how many draws preceded it, so a resume, a different `--limit` or
+a reordered queue would silently change verdicts. **Verified: six independent processes, both arms,
+bit-identical.**
+
+⚠️ **What this changed about the published numbers: nothing, and that is the point.** The canonical
+figures are `Ornith-1.0-35B-mlx-uniform-4bit` **90.0% / 86.7%** and
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` **89.9% / 85.1%** — i.e. exactly what was already published. The
+`equivalent` verdict stands. What was broken was not the value but the *guarantee* that reading it twice
+gives the same answer.
 
 | model | bench | n | acc | strict | conv% | degen | degenWall% | budget |
 |---|---|---|---|---|---|---|---|---|
@@ -152,7 +163,7 @@ regeneration and would read as a regression.
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aime | 4 | 100.0% | 100.0% | 100 | - | - | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | capacity_ladder | 4 | ungraded | ungraded | 100 | - | - | - |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | humanevalplus | 64 | ungraded | ungraded | 98 | 1 | 54 | 81920 |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | ifeval | 148 | 89.2% | 84.5% | 99 | 10 | 57 | 81920 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | ifeval | 148 | 89.9% | 85.1% | 99 | 10 | 57 | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | livecodebench | 15 | ungraded | ungraded | 100 | - | - | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | math500 | 27 | 81.5% | 81.5% | 100 | - | - | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit-kv3 | capacity_ladder | 5 | ungraded | ungraded | 100 | - | - | - |
