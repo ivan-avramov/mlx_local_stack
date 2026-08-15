@@ -399,3 +399,60 @@ def test_load_ifeval_lib_seeds_langdetect():
     except LookupError as e:
         pytest.skip(f"nltk corpora absent in this env: {e}")
     assert langdetect.DetectorFactory.seed == 0
+
+
+def _rng_ev():
+    """A fake lib whose verdict depends on the global RNG — exactly how the REAL verifiers behave.
+
+    24 sites in the vendored instructions.py fabricate an ABSENT kwarg with random.choice /
+    random.randint (e.g. instructions.py:1350 `self._frequency = random.randint(1, _LETTER_FREQUENCY)`),
+    so for those items the criterion being checked is INVENTED at grade time.
+    """
+    import random as _r
+    mod = types.SimpleNamespace()
+
+    class InputExample:
+        def __init__(self, key, instruction_id_list, prompt, kwargs):
+            self.key = key; self.instruction_id_list = instruction_id_list
+            self.prompt = prompt; self.kwargs = kwargs
+    mod.InputExample = InputExample
+    mod.test_instruction_following_strict = lambda inp, p2r: _Out(_r.random() < 0.5, [True])
+    mod.test_instruction_following_loose = lambda inp, p2r: _Out(True, [True])
+    return mod
+
+
+def _grade_with_order(monkeypatch, rows):
+    meta = [{"id": i, "prompt": "P%d" % i, "meta": {"instruction_id_list": ["a"], "kwargs": [{}]}}
+            for i in (1, 2, 3, 4, 5, 6, 7, 8)]
+    monkeypatch.setattr(G, "_rows", lambda m, n: rows)
+    monkeypatch.setattr(G, "_load_ifeval_lib", lambda: _rng_ev())
+    monkeypatch.setattr(G.benchmarks, "load", lambda *a, **k: meta)
+    out = G.grade_ifeval("ifeval", "m")
+    return {it["id"]: it["score"] for it in out["items"]}
+
+
+def test_ifeval_grading_is_reproducible(monkeypatch):
+    """The same rows must grade to the same scores every time. Measured 2026-08-14: they did not."""
+    rows = [{"id": i, "content": "x"} for i in range(1, 9)]
+    assert _grade_with_order(monkeypatch, rows) == _grade_with_order(monkeypatch, list(rows))
+
+
+def test_ifeval_grading_is_INDEPENDENT_of_item_order(monkeypatch):
+    """A per-item seed, not one seed for the batch.
+
+    Seeding once at the start of the batch would make the run reproducible but leave each verdict
+    dependent on how many RNG draws preceded it — so a resumed run, a different --limit, or a
+    reordered queue would silently change verdicts. Seeding per item removes that coupling.
+    """
+    rows = [{"id": i, "content": "x"} for i in range(1, 9)]
+    forward = _grade_with_order(monkeypatch, rows)
+    reverse = _grade_with_order(monkeypatch, list(reversed(rows)))
+    assert forward == reverse, "verdicts changed when the item order changed"
+
+
+def test_stable_item_seed_is_not_pythons_salted_hash():
+    """Must be stable ACROSS PROCESSES: builtin hash() of a str is salted by PYTHONHASHSEED."""
+    assert G._stable_item_seed("HumanEval/94") == G._stable_item_seed("HumanEval/94")
+    assert G._stable_item_seed(2849) == G._stable_item_seed(2849)
+    assert G._stable_item_seed("a") != G._stable_item_seed("b")
+    assert G._stable_item_seed("HumanEval/94") == 1784974312   # pinned: crc32, not hash()

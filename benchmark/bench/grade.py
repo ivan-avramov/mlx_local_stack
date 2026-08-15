@@ -5,8 +5,10 @@ Coding (humanevalplus/mbppplus): shell out to the official `evalplus` evaluator 
 saved completions. (livecodebench: see grade_lcb — needs lcb_runner.)
 """
 import json
+import random
 import subprocess
 import sys
+import zlib
 
 from . import benchmarks, convergence, extract, generate, rowschema, stats, traces
 
@@ -521,6 +523,15 @@ def _ensure_langdetect_determinism() -> None:
     langdetect.DetectorFactory.seed = 0
 
 
+def _stable_item_seed(item_id) -> int:
+    """A per-item RNG seed that is stable ACROSS PROCESSES.
+
+    NOT builtin `hash()`: it is salted by PYTHONHASHSEED for str, so it differs run to run — which is
+    the very failure mode being fixed here.
+    """
+    return zlib.crc32(str(item_id).encode())
+
+
 # `punkt_tab` is the one that actually bit: nltk >= 3.8.2 looks for it, and having `punkt` alone
 # satisfied the old check while every sentence-tokenizing verifier still failed at use time.
 _NLTK_REQUIRED = ("tokenizers/punkt", "tokenizers/punkt_tab")
@@ -601,6 +612,16 @@ def grade_ifeval(name, model):
         inp = ev.InputExample(key=it["id"], instruction_id_list=it["meta"]["instruction_id_list"],
                               prompt=it["prompt"], kwargs=it["meta"]["kwargs"])
         p2r = {it["prompt"]: r.get("content", "")}
+        # RESEED PER ITEM, not once per batch. 24 sites in the vendored instructions.py fabricate an
+        # ABSENT kwarg with random.choice/random.randint (e.g. :1350 letter_frequency), so for those
+        # items the criterion being checked is invented at grade time from the global RNG. Measured
+        # 2026-08-14 on Ornith-1.0-35B-mlx-uniform-4bit/ifeval: 1 of 541 verdicts (0.2%) flipped with
+        # the RNG state, moving acc over 90.02–90.20% (0.18pp) across 8 seeds — immaterial to any
+        # verdict, but it meant the grader could not reproduce its own number.
+        # PER ITEM rather than once per run, because a single batch seed leaves each verdict dependent
+        # on how many draws preceded it: a resume, a different --limit or a reordered queue would then
+        # silently change verdicts. Keyed on the item id, so it is also identical across models.
+        random.seed(_stable_item_seed(r.get("id")))
         try:
             s_out = ev.test_instruction_following_strict(inp, p2r)
             l_out = ev.test_instruction_following_loose(inp, p2r)
