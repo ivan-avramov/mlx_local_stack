@@ -426,7 +426,7 @@ All ready, none run: **judge panel v3** (`judge_extract.py`, dry-run clean at 43
 posts a pre-formatted prompt to `/v1/completions` and bypasses the chat template), **SWE-bench**
 (built, never run). Plus P4/Tier-1 agentic tuning.
 **Recommendation:** BFCL live smoke first — cheapest, and it is the only powered axis the campaign owns
-(0.94 vs 0.749 at n=1000 is ~12σ). Then judge panel v3. SWE-bench last; it is the largest build.
+(0.94 vs 0.749). ⚠️ **CORRECTED 2026-08-15: that pair is NOT both at n=1000** — `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` scored **0.94 at n=200** and `Ornith-1.0-35B-mlx-uniform-4bit` **0.749 at n=1000**, so the "~12σ" figure conflates two different sample sizes and should not be quoted as-is. The GAP is large enough to be the most resolvable effect the suite owns, which is the real argument; the sigma value is not sound. (The distill's 0.94 is filed under the `Qwen3.6-27B-OptiQ-4bit` HANDLER KEY because bfcl only accepts model names from its own MODEL_CONFIG_MAPPING — the served weights were the distill's. Its own bfcl.json reads acc=null purely from the clobber bug now fixed.) Then judge panel v3. SWE-bench last; it is the largest build.
 
 ### ~~O9~~ → CLOSED (operator, 2026-08-14): **DROPPED.** After the O12 reclassification exactly ONE row is genuinely looped-then-correct, so there is nothing to compare and no panel time is warranted.
 Falls out of M1. Four rows on the IFEval run are execution-passing but reached the answer through a

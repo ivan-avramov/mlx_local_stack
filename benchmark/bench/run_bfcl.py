@@ -37,9 +37,28 @@ def main(argv=None) -> int:
 
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "bfcl.json"), "w") as f:
+    path = os.path.join(out_dir, "bfcl.json")
+
+    # ⚠️ A FAILED run must not null out a real score. This is a DOCUMENTED loss:
+    # campaign-queue.md records "each failed run_bfcl clobbers bfcl.json to null — re-parse raw or
+    # ignore", which is why Qwen3.6-27B-Opus-Distill-OptiQ-4bit's file reads acc=null with an
+    # rc=1 traceback even though its real BFCL result (n=200, acc 0.94) had already been measured.
+    # Same defect class as _write_pair_score overwriting a graded evalplus score with acc=None.
+    if result.get("acc") is None and os.path.exists(path):
+        try:
+            with open(path) as f:
+                prev = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            prev = {}
+        if prev.get("acc") is not None:
+            print(f"[bfcl] REFUSING to overwrite {path}: this run produced no acc "
+                  f"({str(result.get('note'))[:70]}) — keeping acc={prev['acc']} "
+                  f"n={prev.get('n')}", flush=True)
+            return 0
+
+    with open(path, "w") as f:
         json.dump(result, f, indent=2)
-    print(f"[bfcl] wrote {os.path.join(out_dir, 'bfcl.json')}", flush=True)
+    print(f"[bfcl] wrote {path}", flush=True)
     return 0
 
 
