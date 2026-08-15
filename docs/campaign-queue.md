@@ -25,6 +25,81 @@ survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNN
 
 Last updated: 2026-08-11. **HARNESS V2 IS THE LIVE WORKSTREAM** (see below); **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
 
+## 🆕 CANDIDATE SCAN — `Qwen3.8-27B`, released 2026-08-14 (scanned the same day, hours after release)
+
+Operator request. Scanned via the HF Hub API (`WebSearch`/`WebFetch` are unavailable this session; the
+`api/models` + `api/models/<id>/tree/main` endpoints are reachable with `curl` and give authoritative
+file sizes).
+
+### The base model
+`Qwen/Qwen3.8-27B` — apache-2.0, last modified **2026-08-14T15:00Z**, 9.1k likes, `downloads=2`
+(i.e. hours old). **`model_type: qwen3_5`, arch `Qwen3_5ForConditionalGeneration` — the SAME family as
+both current winners**, so our fork is expected to load it. Multimodal (`vision_config` present).
+
+| config | value |
+|---|---|
+| `max_position_embeddings` | **262144** (native 256K) |
+| layers / hidden | 64 / 5120 |
+| attn heads / **KV heads** | 24 / **4** (`n_repeats` = 6, EVEN, so the fused GQA kernel precondition holds) |
+| `head_dim` | **256** |
+| vocab | 248320 |
+| bf16 weights | **55.6 GB** — must be quantised to serve at all |
+
+### 🚨 PREDICTION TO TEST FIRST, NOT A MEASUREMENT: the KV cache is FAT
+Per-token KV at bf16 = `2 × 64 layers × 4 kv_heads × 256 head_dim × 2 B` = **256 KiB/token**:
+
+| context | KV alone | + 4-bit weights (16.1 GB) | vs the 46 GB gate |
+|---|---|---|---|
+| 262,144 | **68.7 GB** | 84.8 GB | ✗ exceeds the whole box |
+| 131,072 | 34.4 GB | 50.5 GB | ✗ over the gate |
+| 131,072 @ **4-bit KV** | 8.6 GB | ~24.7 GB | ✓ |
+| 262,144 @ **4-bit KV** | 17.2 GB | ~33.3 GB | ✓ |
+
+⇒ **`Qwen3.8-27B` probably REQUIRES KV quantisation to reach long context on our boxes.** This is
+arithmetic from the config, NOT a measurement — **run the capacity ladder before any quality axis**, and
+do not quote these numbers as results. (`mx.get_peak_memory` on the prefill spike is the metric; the
+campaign already tracks `-kv4` variants, so the machinery exists.)
+⚠️ **Budget-matching consequence:** to be comparable with the winners it must run at `thinking_budget`
+81920, which by O18's clamp arithmetic needs `max_kv_cache_size` ≳ 102400 + prompt. At 256 KiB/token
+bf16 that is ~25.6 GB of KV, so **a matched-budget comparison very likely requires 4-bit KV** — decide
+this when writing its registry entry, not after a run.
+
+### Verified MLX quants (sizes from the tree API, so these repos DO contain weights)
+| repo | GB | note |
+|---|---|---|
+| `mlx-community/Qwen3.8-27B-4bit` | **16.1** | `bits 4, group_size 64, mode affine`; non-MTP |
+| `lmstudio-community/Qwen3.8-27B-MLX-6bit` | 22.8 | quant-sensitivity arm |
+| `lukaskremla/Qwen3.8-27B-8bit-MLX-TextOnly` | 28.6 | vision tower stripped (no 4-bit TextOnly exists) |
+| `mlx-community/Qwen3.8-27B-8bit` | 29.5 | |
+
+Also present: `mxfp4`, `mxfp8`, `nvfp4`, 5-bit, and mixed-bpw builds, plus `2bit`/`3bit` TextOnly.
+
+### Distills EXIST, and in safetensors — so we can self-convert as we did for Qwen3.6
+| repo | GB | verdict |
+|---|---|---|
+| `barozp/Qwen3.8-27B-Opus-Distill` | 55.6 (bf16, 3 shards) | **direct analogue of the reigning winner.** ⚠️ config declares `model_type: qwen3_5_text` yet ships a `vision_config` AND a `…ForConditionalGeneration` arch — a packaging inconsistency of exactly the class AGENTS.md warns about (mtp-key strip / vision-tower tolerance). **Needs a load smoke before anything else.** |
+| `armand0e/Qwen3.8-27B-Fable-Distill` | 55.6 (bf16, 18 shards) | `model_type qwen3_5`, internally consistent. A second distill lineage. A `-LoRA` variant also exists. |
+
+### Hazards — read before picking a repo
+- **Most third-party variants are MTP-packaged** (`qwen3_5_mtp`, `mtp`, `speculative-decoding` tags).
+  AGENTS.md: MTP is a **net slowdown** and inherently non-lossless, and MTP-packaged quants need the
+  mtp-key strip. **Prefer non-MTP** unless the MTP path is itself the experiment.
+- **`oQ*` / `omlx` repos are a DIFFERENT quantiser family**, not our `mlx_optiq`. Do not read `oQ4e` as
+  our `OptiQ-4bit`. Prefer self-conversion, which we control and have already done for the Qwen3.6 distill.
+- **Everything is hours old**: ~0 downloads, no independent evals, and both distill uploaders sit at 0
+  likes. Treat quality claims in model cards as unverified — which is what the suite is for.
+
+### Recommended shortlist, in order (each needs a 5-item pilot before it gets an n)
+1. **`mlx-community/Qwen3.8-27B-4bit`** (16.1 GB) — capacity ladder first, then coding. Cheapest real row.
+2. **`barozp/Qwen3.8-27B-Opus-Distill` self-converted to OptiQ-4bit** — highest upside for the coding
+   pick, being the same recipe as the incumbent. Costs a 55.6 GB download plus conversion, and is gated
+   on the load smoke above.
+3. **`lmstudio-community/Qwen3.8-27B-MLX-6bit`** (22.8 GB) — quant-sensitivity arm; quant sensitivity is
+   measured-real on this campaign (gemma recall was quant-sensitive), so it is not a luxury.
+
+**Not yet added to `main_models.yaml`** — a registry entry needs the KV decision above and a load smoke
+first. Disk is not a constraint (641 GB free on the worker).
+
 ## ▶ RUNNING 2026-08-14 — EVALPLUS AT `deployed` ON M5, the first CURRENT-BOX coding H2H
 
 **What:** `Ornith-1.0-35B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ×
