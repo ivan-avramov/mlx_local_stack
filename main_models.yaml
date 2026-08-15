@@ -206,19 +206,32 @@ models:
   # above both winners' tuned op-temps (0.4 / 0.3). EXPECT TO RUN THE TEMPERATURE LADDER; this
   # is the vendor baseline to start from, not a tuned operating point.
   #
-  # ⚠️ KV CAP IS DELIBERATELY CONSERVATIVE FOR THE FIRST SMOKE. Native context is 262144 (the
-  # card says 1M, "for single H100 deployment we use 256K"), but the KV shape of a Mamba-2 +
-  # MoE + select-attention hybrid is unmeasured here. AGENTS.md's prealloc rule presumes the
-  # usable context has been IDENTIFIED first, so: smoke and capacity-ladder at 131072, then set
-  # cap == prealloc at the measured ceiling. At 131072 the declared 81920 thinking budget is in
-  # force with no clamp for prompts <= 28,672 (0.8 * (131072 - prompt) >= 81920).
+  # KV CAP RAISED 131072 -> 262144 ON MEASUREMENT (capacity ladder, 2026-08-14). The first entry
+  # was deliberately conservative because the KV shape of a Mamba-2 + MoE + select-attention
+  # hybrid was unmeasured; AGENTS.md's prealloc rule presumes the usable context has been
+  # IDENTIFIED first, and now it has been:
+  #   ctx    8192 -> MLX peak 22.2 GB, KV 3.2 GB, decode 143.2 tok/s, retrieval 1.00
+  #   ctx  32768 -> 23.2 GB, 4.2 GB, 129.3 tok/s, 1.00
+  #   ctx  65536 -> 24.3 GB, 5.2 GB, 115.3 tok/s, 1.00
+  #   ctx 131072 -> 25.5 GB, 6.4 GB,  97.5 tok/s, 1.00
+  # KV grows only ~1.1 GB per 65K tokens (the hybrid behaving as advertised), so 262144 projects
+  # to ~28 GB against the 46 GB gate. The ladder at 262144 is the confirming measurement.
+  # (The 8192 rung first scored retrieval 0.00; a re-run of the identical rung scored 1.00 with
+  # all 5 needles, so that was a single-sample miss at temperature 1.0, not a capability limit.
+  # The ladder is n=1 per rung at temp 1.0 — do not read one rung as a verdict.)
+  #
+  # PREALLOC == CAP, deliberately, per the standing rule: growing a cache from 128K to 256K
+  # requires holding 384K of KV during the double-buffer and has MEASURABLY OOMed. Pre-allocating
+  # at the full cap is what makes 256K work in practice, so it is set here rather than discovered.
+  # At 262144 the declared 81920 thinking budget is in force with no clamp for prompts <= 159,744
+  # (0.8 * (262144 - prompt) >= 81920) — a far wider no-clamp window than 131072 gave.
   # max_tokens/thinking_budget MATCH both winners so `compare` will not refuse the pairing.
   - name: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit
     type: vision
     on_demand: true
     hf_path: mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit
-    max_kv_cache_size: 131072
-    kv_prealloc_tokens: 131072
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144
     kv_bits: 0
     prefill_step_size: 512
     generation_defaults:
@@ -232,6 +245,6 @@ models:
       role: candidate
       family: nemotron
       display_name: "NVIDIA Nemotron 3.5 Lightning 30B-A3B (candidate)"
-      context: 131072
+      context: 262144
       output: 102400
       capabilities: [tools, thinking]
