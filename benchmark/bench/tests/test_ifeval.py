@@ -360,3 +360,42 @@ def test_ifeval_items_carry_the_row_sample_index(monkeypatch):
     monkeypatch.setattr(G.benchmarks, "load", lambda *a, **k: [
         {"id": 7, "prompt": "p", "meta": {"instruction_id_list": ["a"], "kwargs": [{}]}}])
     assert G.grade_ifeval("ifeval", "M")["items"][0]["sample"] == 3
+
+
+# ---------------------------------------------------------------------------
+# GRADER DETERMINISM. Measured 2026-08-14: three re-grades of the IDENTICAL 148
+# Qwen3.6-27B-Opus-Distill-OptiQ-4bit ifeval rows returned acc 0.8986 / 0.8986 / 0.8919
+# (acc_strict 0.8514 / 0.8514 / 0.8446) -- exactly one item flipping, while
+# Ornith-1.0-35B-mlx-uniform-4bit's 541 rows were stable. Cause: three verifiers call
+# langdetect.detect() (instructions.py response_language / english_capital / english_lowercase)
+# and langdetect samples RANDOMLY unless DetectorFactory.seed is set, which nothing set.
+# A grader that returns a different number for the same rows makes every published figure
+# depend on which run got read, so this is pinned at the seam every ifeval grade loads through.
+def test_langdetect_is_seeded_for_determinism():
+    """The ifeval seam must seed langdetect, or the same rows grade to different scores."""
+    langdetect = pytest.importorskip("langdetect")
+    langdetect.DetectorFactory.seed = None          # simulate a fresh, unseeded import
+    G._ensure_langdetect_determinism()
+    assert langdetect.DetectorFactory.seed == 0, (
+        "langdetect.DetectorFactory.seed must be 0 — unseeded, langdetect.detect() samples "
+        "randomly and IFEval scores vary run to run on the same rows")
+
+
+def test_langdetect_detect_is_stable_once_seeded():
+    """Behavioural guard: the same short ambiguous text must detect identically every call."""
+    langdetect = pytest.importorskip("langdetect")
+    G._ensure_langdetect_determinism()
+    text = "Sono un test."                          # short + ambiguous = where langdetect wobbles
+    assert len({langdetect.detect(text) for _ in range(25)}) == 1
+
+
+def test_load_ifeval_lib_seeds_langdetect():
+    """The seed must be applied by the real load path, not only by the helper."""
+    langdetect = pytest.importorskip("langdetect")
+    pytest.importorskip("immutabledict")
+    langdetect.DetectorFactory.seed = None
+    try:
+        G._load_ifeval_lib()
+    except LookupError as e:
+        pytest.skip(f"nltk corpora absent in this env: {e}")
+    assert langdetect.DetectorFactory.seed == 0

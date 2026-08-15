@@ -493,7 +493,32 @@ def _load_ifeval_lib():
         sys.path.insert(0, vendor)
     from instruction_following_eval import evaluation_lib  # noqa: E402 — heavy optional deps
     _ensure_nltk_corpora()
+    _ensure_langdetect_determinism()
     return evaluation_lib
+
+
+def _ensure_langdetect_determinism() -> None:
+    """Seed langdetect, or the SAME rows grade to DIFFERENT scores.
+
+    MEASURED 2026-08-14 — three re-grades of the identical 148
+    `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ifeval rows returned `acc` 0.8986 / 0.8986 / 0.8919 and
+    `acc_strict` 0.8514 / 0.8514 / 0.8446: exactly one item flipping, while
+    `Ornith-1.0-35B-mlx-uniform-4bit`'s 541 rows were stable (so it is item-specific, not global).
+
+    MECHANISM: three verifiers call `langdetect.detect()` — `instructions.py` `response_language`,
+    `english_capital`, `english_lowercase` — and langdetect's `Detector` seeds its RNG from
+    `DetectorFactory.seed`, which defaults to None, i.e. it SAMPLES RANDOMLY. Nothing in this repo set
+    it. Short or ambiguous responses are where it wobbles.
+
+    WHY IT MATTERS MORE THAN 0.7pp: a grader that returns a different number for identical rows makes
+    every published figure depend on which grading run someone happened to read, which is exactly how
+    "89.9% vs 89.9%, exactly +0.0pp" got recorded as an exact tie. The `equivalent` verdict itself
+    survives (the wobble is far inside the ±5pp TOST margin) — reproducibility is the casualty.
+
+    Set at the seam every ifeval grade loads through, so no caller can forget it. Re-grading is free.
+    """
+    import langdetect
+    langdetect.DetectorFactory.seed = 0
 
 
 # `punkt_tab` is the one that actually bit: nltk >= 3.8.2 looks for it, and having `punkt` alone
