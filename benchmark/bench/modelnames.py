@@ -49,6 +49,30 @@ EXEMPT_PATHS = (
     "benchmark/bench/tests/test_model_name_check.py",
 )
 
+# GENERATED configs are not prose. Their content is emitted from main_models.yaml, and their
+# human-facing `display_name` labels ("NVIDIA Nemotron 3.5 Lightning 30B-A3B (candidate)") come from
+# the registry's `presentation` block on purpose — they are UI labels, not identifiers, and cannot be
+# "fixed" here without making the UI unreadable. Flagging them would mean no generated config could
+# ever be committed. Kept in step with configgen by
+# test_model_name_check.py::test_generated_paths_cover_every_configgen_target.
+GENERATED_PATHS = (
+    "opencode_config/opencode.json",
+    "aider_config/aider.model.settings.yml",
+    "aider_config/aider.model.metadata.json",
+    "aider_config/aider.conf.yml",
+    "vscode_config/chatLanguageModels.json",
+    "zed_config/settings.snippet.jsonc",
+    "openwebui-init/models_config.json",
+    "benchmark/aider_bench.model.settings.yml",
+    "benchmark/opencode_bench.json",
+)
+
+# Version/size-only fragments. `1.0` is a segment of a model name, but a bare `1.0` in a diff is
+# overwhelmingly a number — `"temperature": 1.0` was flagged as a model shorthand, which would fire
+# on essentially every sampling change in the repo. Sizes are still caught in PROSE by the
+# attribute-for-instance rule below ("the 35B model"), where there is a determiner to disambiguate.
+_VERSIONISH = re.compile(r"^\d+(?:\.\d+)*[Bb]?$", re.IGNORECASE)
+
 # Namespaces/orgs are legal to write but are not model names; kept out of the "did you mean" list.
 _NAMESPACES = {"mlx-community", "caslca", "nvidia", "google", "Qwen"}
 
@@ -68,12 +92,12 @@ _GENERIC = {
 #       "the hybrid MoE candidate". This is a generic linguistic shape — an attribute used to pick
 #       out an instance — so it needs no per-model list and covers models not yet registered.
 # "the MoE architecture" is deliberately NOT matched: that discusses a class, not an instance.
-_ATTR = r"(?:MoE|dense|hybrid|qat|optiq|distill|uniform|\d+ ?-?bit|quant(?:ised|ized)?)"
+_ATTR = r"(?:MoE|dense|hybrid|qat|optiq|distill|uniform|\d+ ?-?bit|\d+(?:\.\d+)?B|quant(?:ised|ized)?)"
 _NOUN = r"(?:model|variant|arm|candidate|checkpoint|build|one)"
 # A CLASS noun after the attribute means the sentence discusses the category itself, which is
 # legitimate: "the MoE architecture", "the 4-bit quantization". Only an INSTANCE reading violates.
 _CLASS = (r"(?:architectures?|quantis|quantiz|formats?|layers?|experts?|paths?|kernels?|schemes?|"
-          r"routing|designs?|families|family|protocols?|encodings?)")
+          r"routing|designs?|families|family|protocols?|encodings?|parameters?|params?)")
 _CATEGORY_STANDINS = re.compile(
     rf"\bthe\s+(?:{_ATTR}\b(?![-/\w])(?!\s+{_CLASS})"        # (a) bare category word
     rf"|(?:\w+\s+)?{_ATTR}\s+{_NOUN}\b)", re.IGNORECASE)     # (b) attribute + instance noun
@@ -149,7 +173,8 @@ def _index(root: str | None = None):
                 frag = "-".join(run).lower()
                 # A single generic segment (`mlx`, `it`, `4bit`) is ordinary technical prose; a
                 # MULTI-segment run is distinctive even when its pieces are generic.
-                if len(run) == 1 and (frag in _GENERIC or len(frag) < 3 or frag.isdigit()):
+                if len(run) == 1 and (frag in _GENERIC or len(frag) < 3 or frag.isdigit()
+                                      or _VERSIONISH.match(frag)):
                     continue
                 fragments.add(frag)
     prefixes -= {n.lower() for n in allowed}
@@ -206,7 +231,7 @@ def diff_violations(diff: str, *, root: str | None = None) -> list[Violation]:
             new_line = int(m.group(1)) if m else 0
             continue
         if raw.startswith("+"):
-            if not path.endswith(EXEMPT_PATHS):
+            if not path.endswith(EXEMPT_PATHS + GENERATED_PATHS):
                 out.extend(violations(raw[1:], path=path, line=new_line, root=root))
             new_line += 1
         elif raw.startswith("-"):

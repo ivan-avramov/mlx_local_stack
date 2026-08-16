@@ -2,8 +2,25 @@ import json
 from ..source import Source
 from ..transforms import sampling_openai, sampling_extra, input_limit
 
+def emit_opencode_bench(source: Source) -> str:
+    """opencode config for BENCHMARKING: shipped models AND `role: candidate` models.
+
+    Same gap as the aider bench carrier. The client config filters on role == "main", so a candidate
+    under test is absent — and an absent model cannot be selected with `opencode run --model`, let
+    alone at its tuned sampling. P1a established that opencode DOES forward both standard params and
+    non-standard extras (`thinking_budget`, `enable_thinking`), so the options block below is the
+    carrier that makes a candidate's agentic row measured at `deployed` rather than at opencode's
+    defaults. Deliberately NOT in TARGETS — see configgen/tests/test_opencode_bench.py.
+    """
+    return _emit(source, roles=("main", "candidate"))
+
+
 def emit_opencode(source: Source) -> str:
-    main = [m for m in source.models if m.role == "main"]
+    return _emit(source, roles=("main",))
+
+
+def _emit(source: Source, *, roles: tuple[str, ...]) -> str:
+    main = [m for m in source.models if m.role in roles]
     task = next((m for m in source.models if m.role == "task"), None)
     local_models = {}
     for m in main:

@@ -1,4 +1,4 @@
-from .emitters.opencode import emit_opencode
+from .emitters.opencode import emit_opencode, emit_opencode_bench
 from .emitters.aider import emit_aider, emit_aider_bench
 from .emitters.vscode import emit_vscode
 from .emitters.zed import emit_zed
@@ -26,4 +26,5 @@ TARGETS: list[tuple[str, callable, str | dict]] = [
 # loops TARGETS). The bench carrier exists precisely to include candidates.
 BENCH_TARGETS: list[tuple[str, callable, str | dict]] = [
     ("aider-bench", emit_aider_bench, "benchmark/aider_bench.model.settings.yml"),
+    ("opencode-bench", emit_opencode_bench, "benchmark/opencode_bench.json"),
 ]

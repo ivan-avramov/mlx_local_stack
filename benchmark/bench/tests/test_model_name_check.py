@@ -99,6 +99,36 @@ def test_this_module_and_its_test_are_exempt_by_path():
     assert MN.diff_violations(other) != []
 
 
+def test_generated_paths_cover_every_configgen_target():
+    """A new generated config must not silently become uncommittable.
+
+    Generated files carry the registry's human-facing `display_name` labels, which are UI text and
+    not identifiers, so they are exempt. If someone adds a configgen target without adding it here,
+    the first commit that regenerates it gets blocked for content it does not control — so this
+    fails loudly instead.
+    """
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(MN.__file__).resolve().parents[2]))
+    from configgen.targets import BENCH_TARGETS, TARGETS
+
+    declared = set(MN.GENERATED_PATHS)
+    emitted = set()
+    for _n, _e, dest in [*TARGETS, *BENCH_TARGETS]:
+        emitted.update(dest.values() if isinstance(dest, dict) else [dest])
+    assert emitted <= declared, f"configgen targets missing from GENERATED_PATHS: {emitted - declared}"
+
+
+def test_a_number_is_not_a_model_shorthand():
+    """`"temperature": 1.0` was flagged, because 1.0 is a segment of a real model name.
+
+    That would have fired on essentially every sampling change in the repo — the kind of
+    false positive that gets a pre-commit hook deleted rather than fixed.
+    """
+    for text in ['"temperature": 1.0', '"top_p": 0.95', "effective_bits 4.9835",
+                 "opencode 1.18.15", "mlx-optiq 0.4.21"]:
+        assert MN.violations(text) == [], f"false positive on a number: {text!r}"
+
+
 def test_does_not_flag_run_tags():
     """Run tags like m1f-distill-java are provenance labels, not model references."""
     assert MN.violations("m1f-distill-java and m1g-distill-java recovered 21 cases") == []
