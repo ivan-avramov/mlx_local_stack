@@ -90,7 +90,7 @@ measurement that would settle it is the depth condition listed under "what would
   to `/v1/completions` with a prompt pre-formatted by the *registered* handler's template, and NONE
   of our four registry names exist in bfcl's 175-key `MODEL_CONFIG_MAPPING` — so every run borrows
   a foreign handler and any existing number is a **(model × foreign template)** composite. The
-  stock local keys also default to **prompt mode**, which AGENTS.md explicitly forbids. Nemotron has
+  stock local keys also default to **prompt mode**, which AGENTS.md explicitly forbids. NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit has
   no suitable handler at all. The fix is a vendored handler posting raw `messages` + `tools` to
   `/v1/chat/completions`; it is driver work, not worker time.
   Note `bfcl_eval` is installed on the **worker only** (2026.3.23), not the driver, despite
@@ -111,7 +111,7 @@ to C having an answer at all.
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, registered and measured 2026-08-14, same box, same session,
 matched items, `deployed`, budget matched so `compare` pairs rather than refuses.
 
-| paired vs Nemotron, n=100 | delta | 95% CI | verdict |
+| paired vs NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit, n=100 | delta | 95% CI | verdict |
 |---|---|---|---|
 | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, humanevalplus | −4.0pp | [−10.0, +2.0] | INCONCLUSIVE |
 | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, mbppplus | −3.0pp | [−10.0, +3.0] | INCONCLUSIVE |
@@ -124,14 +124,14 @@ matched items, `deployed`, budget matched so `compare` pairs rather than refuses
 **90.5%**, `acc_strict` **90.5%** — identical, so like `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` it forfeits nothing to truncation,
 whereas `Ornith-1.0-35B-mlx-uniform-4bit` loses 3.3pp and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 4.8pp on their own ifeval rows. Both pairings needed
 `compare --intersect`, because the three ifeval runs cover 541 / 200 / 148 items with each set nested
-in the last; the deltas above are on the shared items, dropping 341 Ornith-only and 52 Nemotron-only
+in the last; the deltas above are on the shared items, dropping 341 Ornith-1.0-35B-mlx-uniform-4bit-only and 52 NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit-only
 respectively. This makes **all three models statistically indistinguishable on every capability axis
 measured so far** — the daily-driver axis is now a three-way inconclusive, not a two-way one.
 
 **Every interval spans zero: it is not measurably worse than either winner on single-shot coding, and not
 measurably better.** Where it IS separable is on the numbers this suite reports beside capability:
 
-| | Nemotron 4-bit | Ornith | distill |
+| | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | Ornith-1.0-35B-mlx-uniform-4bit | Qwen3.6-27B-Opus-Distill-OptiQ-4bit |
 |---|---|---|---|
 | **`mx.get_peak_memory` @ 262144** | **26.0 GB** | 32.4 GB | 43.3 GB |
 | retrieval @ 262144 | **1.00** | — | — |
@@ -140,7 +140,31 @@ measurably better.** Where it IS separable is on the numbers this suite reports 
 | `conv%` (hep / mbpp) | **99 / 100** | 98 / 96 | 99 / 98 |
 | degenerate wall-share (hep) | **25%** | 40% | 41% |
 
-⚠️ **What this does NOT establish.** It has no agentic, reasoning or instruction-following row, and the B
+### 🆕 AGENTIC 2026-08-16: the EDIT PROTOCOL is the limitation, not agentic coding
+
+One box, one session, `deployed` sampling, cap 65536 (matched to the aider rows):
+
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | edit-protocol failures | passed |
+|---|---|---|
+| aider `diff` (byte-exact SEARCH/REPLACE), n=4 go | **3.75 malformed per case** | 0/4 |
+| aider `whole` (full-file rewrite), n=4 go | 0 | 1/4 |
+| **opencode (tool-call edits), n=4 python** | **0** | **4/4** |
+
+For scale, the winners' malformed rates over all 110 aider cases are **0.036**
+(`Ornith-1.0-35B-mlx-uniform-4bit`) and **0.009** (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`) per case — so
+under `diff` this candidate is ~100× worse, and under two other protocols not measurably worse at all.
+A temperature OFAT rules sampling out (temp 0.4 made malformed WORSE, 21 vs 15 on the same items).
+
+**Had the original 110-case aider run been allowed to finish it would have produced a near-zero row and
+the verdict "unsuitable for agentic work", which is false.** The true statement is narrower: unsuitable
+for aider's `diff` protocol.
+
+⚠️ **What the agentic rows do NOT support:** n=4, and both winners pass all four python items, so they
+are easy items that do not discriminate; the opencode rows are **first-attempt only** while aider's
+`final` allows a second test-informed attempt, so 4/4 must not be set against 50.0% / 73.6%; and the
+aider-vs-opencode contrast is **not item-matched** (go vs python), so only the direction is trustworthy.
+
+⚠️ **What this does NOT establish.** It has no reasoning row beyond ifeval, and the B
 pick rests on the AGENTIC axis, not on these two benches. A third model that ties on single-shot coding
 while costing 17 GB less and running ~2× faster is a strong *candidate*, not a pick. **Next measurement is
 aider polyglot**, where the campaign's only powered result lives (+23.6pp, p=1.3e-05) and where effects are
@@ -192,9 +216,9 @@ after the generation finished and the model was unloaded, so no contention with 
   "is not installed, pending an env change" described work that was already done: `lcb_runner`
   imports and runs on the DRIVER (from a `third_party/LiveCodeBench` checkout, with a 4.1 GB dataset
   cache), and grading is driver-side work anyway. A re-grade reproduced every cell identically, which
-  is also a determinism check. Cells: Ornith 80.0/60.0, Ornith-suffix 93.3/80.0, Ornith-6bit
+  is also a determinism check. Cells: Ornith-1.0-35B-mlx-uniform-4bit 80.0/60.0, Ornith-1.0-35B-mlx-uniform-4bit-suffix 93.3/80.0, Ornith-1.0-35B-mlx-uniform-6bit
   86.7/40.0, distill 80.0/80.0.
-- **every non-winner model dir** (`-suffix`, `-kv4`, `-6bit`, the gemma family) — the 19-dir grading batch
+- **every non-winner model dir** (`-suffix`, `-kv4`, `-6bit`, the gemma-4 family) — the 19-dir grading batch
   **hung** on a Rosetta fault (`mmap_anonymous_rw mmap failed`) with 377/378 MBPP problems done and one
   sample (`Mbpp/255`) wedged, which evalplus waits on indefinitely. It is a flake, not deterministic.
   **Docker grading needs a per-run timeout** so one wedged sample cannot block a batch; until then the
@@ -207,7 +231,7 @@ first one masked the second:**
 | # | mechanism | evidence |
 |---|---|---|
 | 1 | **`langdetect` unseeded.** Three verifiers call `langdetect.detect()` (`instructions.py:158` `response_language`, `:1416` `english_capital`, `:1448` `english_lowercase`); `DetectorFactory.seed` was set nowhere, so it samples randomly. | distill `acc` 0.8986 / 0.8986 / **0.8919** over 3 re-grades |
-| 2 | **`random` unseeded in the verifiers.** 24 sites in `instructions.py` fabricate an **absent kwarg** with `random.choice`/`random.randint` (e.g. `:1350` `self._frequency = random.randint(1, _LETTER_FREQUENCY)`) — so for those items the grader **invents the threshold it checks against**. | after fixing #1, Ornith began wobbling: 0.9002 / 0.9002 / **0.8983** / **0.9020** |
+| 2 | **`random` unseeded in the verifiers.** 24 sites in `instructions.py` fabricate an **absent kwarg** with `random.choice`/`random.randint` (e.g. `:1350` `self._frequency = random.randint(1, _LETTER_FREQUENCY)`) — so for those items the grader **invents the threshold it checks against**. | after fixing #1, Ornith-1.0-35B-mlx-uniform-4bit began wobbling: 0.9002 / 0.9002 / **0.8983** / **0.9020** |
 
 **Scope of #2, measured over 8 RNG states rather than assumed: 1 verdict of 541 (0.2%), `acc` spread
 90.02–90.20% = 0.18pp.** Immaterial to every published verdict; fatal to reproducibility. Ruled out by

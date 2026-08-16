@@ -118,6 +118,19 @@ def test_generated_paths_cover_every_configgen_target():
     assert emitted <= declared, f"configgen targets missing from GENERATED_PATHS: {emitted - declared}"
 
 
+def test_a_family_reference_is_not_an_under_specified_instance():
+    """"the gemma-4 family" names a GROUP on purpose — there is no single full name to substitute.
+
+    Same class-vs-instance distinction the category rule already makes. Without this, any doc
+    discussing a model family becomes uncommittable, which is how a checker earns a --no-verify
+    habit.
+    """
+    assert MN.violations("the gemma-4 family shares a tokenizer") == []
+    assert MN.violations("across the Qwen3.6-27B family") == []
+    # ...but naming one member incompletely is still a violation.
+    assert MN.violations("gemma-4 was slower") != []
+
+
 def test_a_number_is_not_a_model_shorthand():
     """`"temperature": 1.0` was flagged, because 1.0 is a segment of a real model name.
 

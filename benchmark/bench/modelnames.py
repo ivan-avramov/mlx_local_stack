@@ -203,6 +203,13 @@ def violations(text: str, *, path: str = "<text>", line: int = 0,
             continue
         # a longer allowed name containing this token as a substring means it is part of a full name
         if any(low in a and low != a for a in allowed_lower) and low in prefixes:
+            # A prefix followed by a CLASS noun is a family reference, not an under-specified
+            # instance: "the gemma-4 family" names a group of models on purpose and there is no
+            # single full name to substitute. Same class-vs-instance distinction as the category
+            # rule below, so it belongs here rather than being reworded around in every doc.
+            rest = text[m.end():]
+            if re.match(rf"\s+{_CLASS}", rest, re.IGNORECASE):
+                continue
             out.append(Violation(path, line, f"under-specified model name {tok!r}", text))
             seen.add(low)
         elif low in fragments:

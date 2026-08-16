@@ -33,7 +33,22 @@ commit message, against all six shorthands; plus a one-time fix of the two NORMA
 (AGENTS.md, `campaign-results.md`, ~34 sites), leaving the narrative history alone.
 **Needs a ruling** — it is the only part that makes the rule mechanical rather than agent-carried.
 
-### O23. `math500` at the current config costs ~35 h and CANNOT reuse the existing 30 rows
+### ~~O23~~ → CLOSED (operator, 2026-08-16): **do NOT buy the ~35 h.** The mechanism is already significant; only a confirmatory accuracy number was missing.
+Decided on the arithmetic below plus one measurement made while scoping it: the DNF-rate difference
+that DRIVES the 21pp `acc_strict` split is **already statistically established at n=30** —
+`Ornith-1.0-35B-mlx-uniform-4bit` **9/30** budget-hits vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+**0/27**, Fisher exact two-sided **p = 0.00211**. A count endpoint carries far more information per
+item than a binary pass, which is why n=30 resolves it while `acc_strict` needs ~100.
+
+So the 35 h would have bought a confirmatory accuracy figure for a mechanism already significant, and
+whose accuracy COST is already measured at n=100 on two other benches (Ornith-1.0-35B-mlx-uniform-4bit
+forfeits 2.0pp and 3.0pp to truncation on humanevalplus and mbppplus). **Report the DNF-rate result as
+the finding; leave the reasoning axis at its July-config numbers, labelled with that config.**
+Also corrected while scoping: the 21.5pp figure is computed across DIFFERENT item sets (30 vs 27) and
+**2 of the 3 excluded items are ones Ornith-1.0-35B-mlx-uniform-4bit also DNF'd**, so on the matched
+27 the gap is ≈**14.8pp**, not 21.5pp.
+
+### O23 (original text, retained). `math500` at the current config costs ~35 h and CANNOT reuse the existing 30 rows
 Raised 2026-08-16 from the manifests, not from the doc.
 
 Both winners' math500 rows are `sampling_profile: **official**`, `max_kv_cache_size: **262144**`,
