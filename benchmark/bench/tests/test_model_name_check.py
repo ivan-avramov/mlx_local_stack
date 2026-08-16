@@ -209,3 +209,22 @@ def test_verbose_commit_diff_is_ignored():
            "diff --git a/x.md b/x.md\n"
            "+Ornith was here\n")
     assert MN.message_violations(msg) == []
+
+
+def test_attribution_trailers_are_ignored():
+    """A `Co-Authored-By:` trailer names a person or tool, never a campaign model — and one of
+    those names collides with a registry segment: `Claude Opus 5` contains `Opus`, a segment of
+    `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. Measured, not hypothetical: this blocked a real commit,
+    and since the trailer is mandatory on every commit here, it blocked ALL of them.
+    """
+    msg = ("fix(repo): something real\n\n"
+           "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n")
+    assert MN.message_violations(msg) == []
+
+
+def test_a_trailer_does_not_launder_prose():
+    """Only recognised attribution trailers are skipped — a shorthand elsewhere still fails, so
+    the exemption cannot be used to smuggle a model reference past the check."""
+    msg = ("fix: x\n\nOrnith regressed\n\n"
+           "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n")
+    assert len(MN.message_violations(msg)) == 1

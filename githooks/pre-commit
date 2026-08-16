@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# AGENTS.md model-naming rule, enforced on ADDED lines only (O24).
+# Two AGENTS.md rules, both enforced on ADDED lines only:
+#   - model naming must use COMPLETE registry names (O24)
+#   - no PII in a PUBLIC repo (added after 11 tracked manifests leaked a username)
 # Install per clone:  git config core.hooksPath githooks
 # Bypass once:        git commit --no-verify
 set -uo pipefail
@@ -8,4 +10,9 @@ PY="$ROOT/.venv-bench/bin/python"
 # Fail OPEN if the venv is absent: a missing interpreter must not block committing, and a hook that
 # breaks on a fresh clone is a hook people delete.
 [ -x "$PY" ] || exit 0
-PYTHONPATH="$ROOT/benchmark" "$PY" -m bench.modelnames
+# Run BOTH checks before failing, so one commit attempt reports every problem rather than
+# surfacing the second only after the first is fixed.
+RC=0
+PYTHONPATH="$ROOT/benchmark" "$PY" -m bench.modelnames || RC=1
+PYTHONPATH="$ROOT/benchmark" "$PY" -m bench.piicheck || RC=1
+exit "$RC"

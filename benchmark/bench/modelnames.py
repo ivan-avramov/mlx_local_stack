@@ -254,13 +254,25 @@ def diff_violations(diff: str, *, root: str | None = None) -> list[Violation]:
     return out
 
 
+# Attribution trailers name a person or a tool, never a campaign model — and one such name
+# COLLIDES with a registry segment: `Claude Opus 5` contains `Opus`, a segment of
+# `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. Since a `Co-Authored-By:` trailer is mandatory on every
+# commit in this repo, treating it as prose blocked EVERY commit, which is how it was found.
+# Only these exact trailer keys are skipped, so the exemption cannot launder a reference in the body.
+_ATTRIBUTION_TRAILERS = ("co-authored-by:", "signed-off-by:", "reported-by:", "reviewed-by:",
+                         "acked-by:", "tested-by:", "suggested-by:")
+
+
 def message_violations(msg: str, *, root: str | None = None) -> list[Violation]:
-    """Violations in a commit message, ignoring git's comments and the `git commit -v` diff."""
+    """Violations in a commit message, ignoring git's comments, the `git commit -v` diff, and
+    attribution trailers."""
     out: list[Violation] = []
     for i, raw in enumerate(msg.splitlines(), start=1):
         if raw.startswith("#"):
             if ">8" in raw:
                 break
+            continue
+        if raw.lower().startswith(_ATTRIBUTION_TRAILERS):
             continue
         out.extend(violations(raw, path="COMMIT_MSG", line=i, root=root))
     return out
