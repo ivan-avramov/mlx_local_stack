@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# AGENTS.md model-naming rule, enforced on ADDED lines only (O24).
+# Install per clone:  git config core.hooksPath githooks
+# Bypass once:        git commit --no-verify
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+PY="$ROOT/.venv-bench/bin/python"
+# Fail OPEN if the venv is absent: a missing interpreter must not block committing, and a hook that
+# breaks on a fresh clone is a hook people delete.
+[ -x "$PY" ] || exit 0
+PYTHONPATH="$ROOT/benchmark" "$PY" -m bench.modelnames
