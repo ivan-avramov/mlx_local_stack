@@ -61,7 +61,13 @@ def _solution_and_test(d: Path, lang: str) -> tuple[Path, Path]:
 
 
 def _run_opencode(model: str, cwd: Path, prompt: str, timeout: int, pure: bool) -> tuple[int, str, float]:
-    cmd = ["opencode", "run", "--model", f"mlx-local/{model}"]
+    # `--dir` is REQUIRED, not a nicety: subprocess cwd does NOT set opencode's project root. The
+    # first run of this probe passed cwd=<scratch> and opencode resolved its project to the STACK
+    # REPO instead, wrote affine_cipher.py and affine_cipher_test.py into the repo root, and ran the
+    # tests there. The row said file_changed=False (true of the scratch copy) and would have been
+    # read as "the model cannot operate the edit protocol" — the exact opposite of what happened,
+    # since the log shows it wrote the file and self-verified successfully.
+    cmd = ["opencode", "run", "--dir", str(cwd), "--model", f"mlx-local/{model}"]
     if pure:
         # opencode's own flag for "no external plugins". The shipped config references a plugin
         # fetched over git; loading it adds a network dependency that is not part of the model's
@@ -113,6 +119,7 @@ def main() -> int:
             _prepare(src, work)
             sol, test = _solution_and_test(work, a.lang)
             before = sol.read_text(errors="replace")
+            test_before = test.read_text(errors="replace")
             prompt = (
                 f"Implement the solution in {sol.name} so that the tests in {test.name} pass. "
                 f"The specification is in .docs/instructions.md — read it first. "
@@ -121,13 +128,21 @@ def main() -> int:
             rc, log, dur = _run_opencode(a.model, work, prompt, a.timeout, not a.no_pure)
             after = sol.read_text(errors="replace")
             changed = after != before
-            passed, tail = (False, "solution file untouched")
-            if changed:
+            # A rewritten test file invalidates the grade: the model can make any suite pass by
+            # replacing it. Observed for real on the first run, which overwrote the test file
+            # despite the prompt forbidding it — so this is a measured hazard, not a precaution.
+            test_modified = test.read_text(errors="replace") != test_before
+            if test_modified:
+                passed, tail = False, "TEST FILE MODIFIED — grade invalid, scored as a failure"
+            elif changed:
                 passed, tail = _grade_python(work, test)
+            else:
+                passed, tail = False, "solution file untouched"
             row = {
                 "bench": "opencode", "id": f"{a.lang}/{name}", "model": a.model, "sample": 0,
                 "schema_version": 2, "scaffold": "opencode", "attempts": 1,
-                "passed": passed, "file_changed": changed, "opencode_rc": rc,
+                "passed": passed, "file_changed": changed, "test_modified": test_modified,
+                "opencode_rc": rc,
                 "wall_s": round(dur, 1), "timed_out": rc == 124,
                 "note": "FIRST-ATTEMPT only — not comparable to aider `final`, which allows a "
                         "second test-informed attempt",
