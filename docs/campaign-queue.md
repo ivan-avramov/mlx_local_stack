@@ -23,7 +23,45 @@ tracked per model: production-KV (4-bit, daily-driver) and the `-kv16` (bf16-KV)
 survive — the nohup'd drivers + monitors. After a reboot, relaunch each `[RUNNING]` driver per
 **Reboot recovery**. (Full registry names only — per the AGENTS.md rule; no shorthands.)
 
-Last updated: 2026-08-11. **HARNESS V2 IS THE LIVE WORKSTREAM** (see below); **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq` = `mlx_optiq` 0.2.6, CLI `optiq`; we already self-converted the Opus-distill).
+Last updated: **2026-08-16** (see the STATE block immediately below). Earlier: 2026-08-11, **HARNESS V2 IS THE LIVE WORKSTREAM** (see below); **AGENTIC AXIS LIVE**; **local OptiQ self-convert capability CONFIRMED** (`.venv-optiq`, CLI `optiq`; we already self-converted the Opus-distill). ⚠️ That line said `mlx_optiq` 0.2.6; **measured 2026-08-16 both boxes carry 0.4.21**, import name `optiq`. Note these uv venvs have **no `pip` binary**, so `pip show mlx-optiq` prints nothing and looks like an absent package — verify with `python -c "import optiq"` instead.
+
+## ▶ STATE 2026-08-16 — M5 worker on the `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` agentic axis
+
+**DONE this session.** `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` **ifeval n=200 COMPLETE + graded**
+(`acc` 90.5%, `acc_strict` 90.5%, **200/200 converged**, 0 budget-hits, 0 degenerate, 98 min, commit
+`c5fe1aa`). Verified OUTSIDE the silent-clamp regime: at cap 262144 the declared 81920 budget is
+genuinely in force. Paired via the new `compare --intersect` against both winners — **both
+INCONCLUSIVE**, so all three models are now indistinguishable on every capability axis measured.
+Coding-bench grade tail finished: ungraded coding cells **21 → 3**.
+
+**[RUNNING]** aider `whole`-edit-format probe, 4 matched go items, prefix `m1h-probe-whole`, log
+`logs/nemo_probe_whole.log`, `t0` in `/tmp/nemo_whole.t0`.
+
+**⛔ STOPPED — and this is the live finding.** The full `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
+aider run was killed after 4 of 110 cases: **0/4 passed with 15 malformed responses**, against
+`Ornith-1.0-35B-mlx-uniform-4bit` 0.036 and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 0.009 malformed per
+case on the SAME items (which they solve 2/4 and 4/4). A matched temperature OFAT (only temperature
+varied, n=4) says the cause is **NOT sampling**: temp 1.0 → 0/4 pass / 15 malformed; temp 0.4 → 1/4 /
+**21** malformed and slower (244 s → 385 s mean). Two hypotheses are dead: MTP is off by construction,
+and "3B active params is too small for byte-exact SEARCH/REPLACE" is falsified by our own corpus —
+`Ornith-1.0-35B-mlx-uniform-4bit` is a **256-expert MoE with 8 active (≈1.0B active routed params,
+~3.1M per expert per layer, ~126M per expert across 40 layers)** and handles `diff` fine. NOT yet
+established: whether this is aider-`diff`-specific or general to agentic edit protocols.
+
+**Provenance trap for any new aider arm.** The n=110 rows were produced at **`max_kv_cache_size`
+65536** (resolved thinking budget ~52,390, NOT the declared 81,920). To pair, a new arm must match
+that cap — done deliberately here: the registry entry for
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is locally set to **65536 / prealloc 65536** on M5. That
+is INTENTIONAL DIRT on top of the four pre-existing local cap reductions; do not `git checkout` it.
+
+**Defect fixed that invalidates history.** `--num-tests` is an **unseeded random sample**, so **every
+aider arm before 2026-08-16 was unpairable by construction**. `benchmark/run_aider_matched.sh` now
+derives the item set from a reference run's rows. Also new: `benchmark/aider_bench.model.settings.yml`
+(generated), because the bench harness previously mounted a CLIENT config, which excludes
+`role: candidate` models — so a candidate silently ran at aider's default sampling.
+
+**Blocked on an operator ruling:** `math500` (~35 h, rows not extendable — `O23`) and the naming-rule
+pre-commit hook (`O24`). gemma jobs ruled on: see `O20`.
 
 ## 🆕 CANDIDATE SCAN — `Qwen3.8-27B`, released 2026-08-14 (scanned the same day, hours after release)
 
