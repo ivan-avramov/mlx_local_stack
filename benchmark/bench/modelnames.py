@@ -202,6 +202,12 @@ def violations(text: str, *, path: str = "<text>", line: int = 0,
         if low in seen or low in allowed_lower:
             continue
         # a longer allowed name containing this token as a substring means it is part of a full name
+        # A single GENERIC segment is never an under-specified model name either, even when it
+        # happens to prefix one: `mlx` prefixes `mlx-community`, so without this `/mlx start`,
+        # `../mlx-vlm` and "mlx+pytest" are all flagged. The generic list applied only to the
+        # fragment rule, which left the prefix rule firing on ordinary prose.
+        if low in _GENERIC:
+            continue
         if any(low in a and low != a for a in allowed_lower) and low in prefixes:
             # A prefix followed by a CLASS noun is a family reference, not an under-specified
             # instance: "the gemma-4 family" names a group of models on purpose and there is no
