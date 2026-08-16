@@ -82,9 +82,25 @@ measurement that would settle it is the depth condition listed under "what would
   **`acc_strict` splits 60.0% vs 81.5%**, because `Ornith-1.0-35B-mlx-uniform-4bit` hits the thinking
   budget on **9 of 30** items. Suggestive and mechanistically attributable — but n=30/27, unmatched
   items, MDE ±23pp, so the 21pp gap is at the edge of resolvable. Not a verdict.
-- **BFCL** (tool calling): harness repaired, smoke passed, **never run at n**.
+- **BFCL** (tool calling): **NOT RUN, AND THE SMOKE NEVER RAN EITHER.** ⚠️ Earlier revisions said
+  "harness repaired, smoke passed" — that is FALSE. The queue's BFCL smoke job failed with
+  `unknown benchmark 'bfcl'`, masked by a `|| true`, so nothing was ever exercised. Treat any
+  "smoke passed" claim about BFCL as unsupported.
+  **And the blocker is a TEMPLATE CONFOUND, not missing infrastructure:** bfcl's OSS handler posts
+  to `/v1/completions` with a prompt pre-formatted by the *registered* handler's template, and NONE
+  of our four registry names exist in bfcl's 175-key `MODEL_CONFIG_MAPPING` — so every run borrows
+  a foreign handler and any existing number is a **(model × foreign template)** composite. The
+  stock local keys also default to **prompt mode**, which AGENTS.md explicitly forbids. Nemotron has
+  no suitable handler at all. The fix is a vendored handler posting raw `messages` + `tools` to
+  `/v1/chat/completions`; it is driver work, not worker time.
+  Note `bfcl_eval` is installed on the **worker only** (2026.3.23), not the driver, despite
+  AGENTS.md saying both boxes.
 - **The judge panel** — the only instrument that could measure C's actual construct — is on record as
-  **NOT RELIABLE ENOUGH TO RANK** (55% self-consistent at v2). A v3 extractor is built and never run.
+  **NOT RELIABLE ENOUGH TO RANK**. Measured 2026-08-15: order consistency **71% / 42% / 62%** by
+  role, Krippendorff **α = 0.517**, panel p = 0.80. **Score-based aggregation was tested and
+  FALSIFIED** (identical 58% pooled), which locates the instability in the JUDGEMENT, not in the
+  readout — so it cannot be fixed by changing how votes are counted. (An earlier "55%
+  self-consistent at v2" is superseded by these figures.)
 - **No deep-research axis exists at all.**
 
 **So C is blocked on instrumentation, not on worker time**, and that is the single most important thing
@@ -101,6 +117,16 @@ matched items, `deployed`, budget matched so `compare` pairs rather than refuses
 | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, mbppplus | −3.0pp | [−10.0, +3.0] | INCONCLUSIVE |
 | `Ornith-1.0-35B-mlx-uniform-4bit`, humanevalplus | −3.0pp | [−8.0, +2.0] | INCONCLUSIVE |
 | `Ornith-1.0-35B-mlx-uniform-4bit`, mbppplus | −2.0pp | [−7.0, +3.0] | INCONCLUSIVE |
+| `Ornith-1.0-35B-mlx-uniform-4bit`, **ifeval** (n=200) | −0.5pp | [−5.5, +4.5] | INCONCLUSIVE |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, **ifeval** (n=148) | +0.0pp | [−5.4, +4.7] | INCONCLUSIVE |
+
+**IFEval added 2026-08-16** (n=200, 200/200 converged, 0 budget-hits, 0 degenerate, 98 min): `acc`
+**90.5%**, `acc_strict` **90.5%** — identical, so like `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` it forfeits nothing to truncation,
+whereas `Ornith-1.0-35B-mlx-uniform-4bit` loses 3.3pp and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 4.8pp on their own ifeval rows. Both pairings needed
+`compare --intersect`, because the three ifeval runs cover 541 / 200 / 148 items with each set nested
+in the last; the deltas above are on the shared items, dropping 341 Ornith-only and 52 Nemotron-only
+respectively. This makes **all three models statistically indistinguishable on every capability axis
+measured so far** — the daily-driver axis is now a three-way inconclusive, not a two-way one.
 
 **Every interval spans zero: it is not measurably worse than either winner on single-shot coding, and not
 measurably better.** Where it IS separable is on the numbers this suite reports beside capability:
@@ -126,7 +152,10 @@ answer its own question. See O19.
 ## What would change these picks, in order of value
 
 1. **Make the judge panel reliable, then run it.** It is the only instrument that can speak to C, and C
-   currently has none. Cheap in model time.
+   currently has none. ⚠️ **NO LONGER "cheap in model time"** (revised 2026-08-15): score-based
+   aggregation was tested and falsified, so the instability is in the judgement rather than the
+   readout. Fixing it needs PRODUCTION changes — more than 24 items, more raters/replicates, a less
+   position-sensitive protocol — all of which cost model time. The cheap readout fix is spent.
 2. **A depth condition on B** — re-run a coding subset with a realistic repo-sized prompt (~128K, inside
    the no-clamp regime for both). Turns B's context requirement from an assumption into a measurement.
 3. **opencode agentic evidence.** The B pick is aider-specific and opencode is what we ship.
@@ -140,14 +169,16 @@ answer its own question. See O19.
 
 # 📋 THE SCORESHEET — generated, do not hand-edit
 
-**Regenerate with** (must run where the rows live — currently the M5 worker):
+**Regenerate with** (runs on EITHER box — `benchmark/results` is tracked in git, so both boxes carry
+the rows once synced; the driver is the normal place, since grading is driver-side work):
 
 ```bash
 PYTHONPATH=benchmark .venv-bench/bin/python benchmark/m1/scoreboard.py --md
 ```
 
-**Provenance of the table below:** generated 2026-08-14 on the **M5 Max 64GB worker** at repo HEAD
-`1ce8178`, over 19 result directories. `acc` / `acc_strict` are read from the per-pair
+**Provenance of the table below:** generated 2026-08-16 on the **M4 Pro 48GB driver** at repo HEAD
+`64f7883`, over 20 result directories. (The previous note said "2026-08-14, worker, `1ce8178`, 19
+directories, must run where the rows live" — the must-run-on-worker part was never true.) `acc` / `acc_strict` are read from the per-pair
 `results/<model>/<bench>.score.json` written by `grade_all` — one file per (model, bench), so grading one
 model can no longer erase another's record.
 
@@ -157,8 +188,12 @@ model can no longer erase another's record.
 As of 2026-08-14 the two winners' `humanevalplus` and `mbppplus` cells ARE graded (Docker evalplus, run
 after the generation finished and the model was unloaded, so no contention with a timed run). Still
 `ungraded`, with reasons:
-- **every `livecodebench` cell** — `lcb_runner` is not installed in `.venv-bench` on the worker, so the
-  grader degrades to `acc: null` with a note. Zero worker time to fix; pending an env change.
+- ✅ **`livecodebench` is GRADED, not blocked** (corrected 2026-08-15). The claim that `lcb_runner`
+  "is not installed, pending an env change" described work that was already done: `lcb_runner`
+  imports and runs on the DRIVER (from a `third_party/LiveCodeBench` checkout, with a 4.1 GB dataset
+  cache), and grading is driver-side work anyway. A re-grade reproduced every cell identically, which
+  is also a determinism check. Cells: Ornith 80.0/60.0, Ornith-suffix 93.3/80.0, Ornith-6bit
+  86.7/40.0, distill 80.0/80.0.
 - **every non-winner model dir** (`-suffix`, `-kv4`, `-6bit`, the gemma family) — the 19-dir grading batch
   **hung** on a Rosetta fault (`mmap_anonymous_rw mmap failed`) with 377/378 MBPP problems done and one
   sample (`Mbpp/255`) wedged, which evalplus waits on indefinitely. It is a flake, not deterministic.
@@ -192,70 +227,73 @@ gives the same answer.
 
 | model | bench | n | acc | strict | conv% | degen | degenWall% | budget |
 |---|---|---|---|---|---|---|---|---|
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | capacity_ladder | 2 | ungraded | ungraded | n/a | - | - | - |
 | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | humanevalplus | 100 | 89.0% | 88.0% | 99 | 1 | 25 | 81920 |
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | ifeval | 200 | ungraded | ungraded | 100 | - | - | 81920 |
 | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | mbppplus | 100 | 81.0% | 81.0% | 100 | - | - | 81920 |
+| Ornith-1.0-35B-mlx-uniform-4bit | aider | 110 | 50.0% | 50.0% | n/a | - | - | - |
 | Ornith-1.0-35B-mlx-uniform-4bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 81920 |
-| Ornith-1.0-35B-mlx-uniform-4bit | capacity_ladder | 2 | ungraded | ungraded | 100 | - | - | - |
+| Ornith-1.0-35B-mlx-uniform-4bit | capacity_ladder | 2 | ungraded | ungraded | n/a | - | - | - |
 | Ornith-1.0-35B-mlx-uniform-4bit | humanevalplus | 100 | 92.0% | 90.0% | 98 | 4 | 40 | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | ifeval | 541 | 90.0% | 86.7% | 99 | 30 | 42 | 81920 |
-| Ornith-1.0-35B-mlx-uniform-4bit | livecodebench | 15 | ungraded | ungraded | 80 | - | - | 81920 |
+| Ornith-1.0-35B-mlx-uniform-4bit | livecodebench | 15 | 80.0% | 60.0% | 80 | - | - | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | math500 | 30 | 83.3% | 60.0% | 70 | - | - | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | mbppplus | 100 | 83.0% | 80.0% | 96 | 4 | 63 | 81920 |
-| Ornith-1.0-35B-mlx-uniform-4bit-kv4 | capacity_ladder | 4 | ungraded | ungraded | 100 | - | - | - |
-| Ornith-1.0-35B-mlx-uniform-4bit-suffix | humanevalplus | 100 | ungraded | ungraded | 95 | - | - | 81920 |
-| Ornith-1.0-35B-mlx-uniform-4bit-suffix | livecodebench | 15 | ungraded | ungraded | 87 | - | - | 81920 |
-| Ornith-1.0-35B-mlx-uniform-4bit-suffix | mbppplus | 100 | ungraded | ungraded | 99 | - | - | 81920 |
-| Ornith-1.0-35B-mlx-uniform-6bit | humanevalplus | 10 | ungraded | ungraded | 90 | - | - | 81920 |
-| Ornith-1.0-35B-mlx-uniform-6bit | livecodebench | 15 | ungraded | ungraded | 47 | - | - | 81920 |
-| Ornith-1.0-35B-mlx-uniform-6bit | mbppplus | 10 | ungraded | ungraded | 100 | - | - | 81920 |
+| Ornith-1.0-35B-mlx-uniform-4bit-kv4 | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | - |
+| Ornith-1.0-35B-mlx-uniform-4bit-suffix | humanevalplus | 100 | 93.0% | 88.0% | 95 | - | - | 81920 |
+| Ornith-1.0-35B-mlx-uniform-4bit-suffix | livecodebench | 15 | 93.3% | 80.0% | 87 | - | - | 81920 |
+| Ornith-1.0-35B-mlx-uniform-4bit-suffix | mbppplus | 100 | 86.0% | 85.0% | 99 | - | - | 81920 |
+| Ornith-1.0-35B-mlx-uniform-6bit | humanevalplus | 10 | 90.0% | 80.0% | 90 | - | - | 81920 |
+| Ornith-1.0-35B-mlx-uniform-6bit | livecodebench | 15 | 86.7% | 40.0% | 47 | - | - | 81920 |
+| Ornith-1.0-35B-mlx-uniform-6bit | mbppplus | 10 | 80.0% | 80.0% | 100 | - | - | 81920 |
 | Qwen3.6-27B-MLX-8bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 81920 |
-| Qwen3.6-27B-MLX-8bit | humanevalplus | 6 | ungraded | ungraded | 100 | - | - | 81920 |
-| Qwen3.6-27B-MLX-8bit | mbppplus | 6 | ungraded | ungraded | 67 | - | - | 81920 |
+| Qwen3.6-27B-MLX-8bit | humanevalplus | 6 | 100.0% | 100.0% | 100 | - | - | 81920 |
+| Qwen3.6-27B-MLX-8bit | mbppplus | 6 | 83.3% | 50.0% | 67 | - | - | 81920 |
 | Qwen3.6-27B-OptiQ-4bit | aime | 5 | 80.0% | 80.0% | 80 | - | - | 81920 |
-| Qwen3.6-27B-OptiQ-4bit | capacity_ladder | 1 | ungraded | ungraded | 100 | - | - | - |
-| Qwen3.6-27B-OptiQ-4bit | humanevalplus | 10 | ungraded | ungraded | 100 | - | - | 81920 |
-| Qwen3.6-27B-OptiQ-4bit | livecodebench | 1 | ungraded | ungraded | 0 | - | - | 49152 |
-| Qwen3.6-27B-OptiQ-4bit | mbppplus | 10 | ungraded | ungraded | 100 | - | - | 81920 |
+| Qwen3.6-27B-OptiQ-4bit | capacity_ladder | 1 | ungraded | ungraded | n/a | - | - | - |
+| Qwen3.6-27B-OptiQ-4bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 81920 |
+| Qwen3.6-27B-OptiQ-4bit | livecodebench | 1 | 100.0% | 0.0% | 0 | - | - | 49152 |
+| Qwen3.6-27B-OptiQ-4bit | mbppplus | 10 | 80.0% | 80.0% | 100 | - | - | 81920 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aider | 110 | 73.6% | 73.6% | n/a | - | - | - |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aime | 4 | 100.0% | 100.0% | 100 | - | - | 81920 |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | capacity_ladder | 4 | ungraded | ungraded | 100 | - | - | - |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | - |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | humanevalplus | 100 | 93.0% | 93.0% | 99 | 1 | 41 | 81920 |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | mbppplus | 100 | 84.0% | 84.0% | 98 | 2 | 70 | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | ifeval | 148 | 89.9% | 85.1% | 99 | 10 | 57 | 81920 |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | livecodebench | 15 | ungraded | ungraded | 100 | - | - | 81920 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | livecodebench | 15 | 80.0% | 80.0% | 100 | - | - | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | math500 | 27 | 81.5% | 81.5% | 100 | - | - | 81920 |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit-kv3 | capacity_ladder | 5 | ungraded | ungraded | 100 | - | - | - |
-| Qwen3.6-27B-UD-MLX-6bit | capacity_ladder | 4 | ungraded | ungraded | 100 | - | - | - |
-| Qwen3.6-27B-UD-MLX-6bit | humanevalplus | 3 | ungraded | ungraded | 100 | - | - | 49152 |
-| Qwen3.6-27B-UD-MLX-6bit | livecodebench | 1 | ungraded | ungraded | 0 | - | - | 81920 |
-| Qwen3.6-27B-UD-MLX-6bit | mbppplus | 3 | ungraded | ungraded | 100 | - | - | 49152 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | mbppplus | 100 | 84.0% | 84.0% | 98 | 2 | 70 | 81920 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit-kv3 | capacity_ladder | 5 | ungraded | ungraded | n/a | - | - | - |
+| Qwen3.6-27B-UD-MLX-6bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | - |
+| Qwen3.6-27B-UD-MLX-6bit | humanevalplus | 3 | 100.0% | 100.0% | 100 | - | - | 49152 |
+| Qwen3.6-27B-UD-MLX-6bit | livecodebench | 1 | 100.0% | 0.0% | 0 | - | - | 81920 |
+| Qwen3.6-27B-UD-MLX-6bit | mbppplus | 3 | 66.7% | 66.7% | 100 | - | - | 49152 |
 | Qwen3.6-27B-UD-MLX-6bit-kv16 | aime | 5 | 80.0% | 60.0% | 80 | - | - | 81920 |
-| Qwen3.6-27B-UD-MLX-6bit-kv16 | humanevalplus | 10 | ungraded | ungraded | 100 | - | - | 81920 |
-| Qwen3.6-27B-UD-MLX-6bit-kv16 | livecodebench | 3 | ungraded | ungraded | 67 | - | - | 49152 |
+| Qwen3.6-27B-UD-MLX-6bit-kv16 | humanevalplus | 10 | 90.0% | 90.0% | 100 | - | - | 81920 |
+| Qwen3.6-27B-UD-MLX-6bit-kv16 | livecodebench | 3 | 100.0% | 66.7% | 67 | - | - | 49152 |
 | Qwen3.6-27B-UD-MLX-6bit-kv16 | mbppplus | 10 | ungraded | ungraded | 100 | - | - | 81920 |
 | gemma-4-26B-A4B-it-OptiQ-4bit | aime | 3 | 66.7% | 66.7% | 67 | - | - | 16384 |
-| gemma-4-26B-A4B-it-OptiQ-4bit | capacity_ladder | 1 | ungraded | ungraded | 100 | - | - | - |
-| gemma-4-26B-A4B-it-OptiQ-4bit | humanevalplus | 3 | ungraded | ungraded | 100 | - | - | 16384 |
-| gemma-4-26B-A4B-it-OptiQ-4bit | mbppplus | 3 | ungraded | ungraded | 100 | - | - | 16384 |
+| gemma-4-26B-A4B-it-OptiQ-4bit | capacity_ladder | 1 | ungraded | ungraded | n/a | - | - | - |
+| gemma-4-26B-A4B-it-OptiQ-4bit | humanevalplus | 11 | 100.0% | 72.7% | 73 | 2 | 57 | 32768 |
 | gemma-4-26B-A4B-it-QAT-MLX-4bit | aime | 3 | 66.7% | 33.3% | 33 | - | - | 16384 |
-| gemma-4-26B-A4B-it-QAT-MLX-4bit | capacity_ladder | 4 | ungraded | ungraded | 100 | - | - | - |
-| gemma-4-26B-A4B-it-QAT-MLX-4bit | humanevalplus | 3 | ungraded | ungraded | 100 | - | - | 16384 |
+| gemma-4-26B-A4B-it-QAT-MLX-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | - |
+| gemma-4-26B-A4B-it-QAT-MLX-4bit | humanevalplus | 3 | 100.0% | 100.0% | 100 | - | - | 16384 |
 | gemma-4-26B-A4B-it-QAT-MLX-4bit | mbppplus | 3 | ungraded | ungraded | 100 | - | - | 16384 |
 | gemma-4-26b-a4b-it-8bit | aime | 3 | 100.0% | 33.3% | 33 | - | - | 16384 |
-| gemma-4-26b-a4b-it-8bit | capacity_ladder | 4 | ungraded | ungraded | 100 | - | - | - |
-| gemma-4-26b-a4b-it-8bit | humanevalplus | 4 | ungraded | ungraded | 100 | - | - | 16384 |
+| gemma-4-26b-a4b-it-8bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | - |
+| gemma-4-26b-a4b-it-8bit | humanevalplus | 4 | 100.0% | 100.0% | 100 | - | - | 16384 |
 | gemma-4-26b-a4b-it-8bit | mbppplus | 4 | ungraded | ungraded | 75 | - | - | 16384 |
 | gemma-4-31B-it-qat-6bit | aime | 5 | 100.0% | 100.0% | 100 | - | - | 16384 |
-| gemma-4-31B-it-qat-6bit | humanevalplus | 12 | ungraded | ungraded | 83 | - | - | 16384 |
-| gemma-4-31B-it-qat-6bit | livecodebench | 15 | ungraded | ungraded | 93 | - | - | 16384 |
+| gemma-4-31B-it-qat-6bit | humanevalplus | 12 | 91.7% | 83.3% | 83 | - | - | 16384 |
+| gemma-4-31B-it-qat-6bit | livecodebench | 15 | 80.0% | 73.3% | 93 | - | - | 16384 |
 | gemma-4-31B-it-qat-6bit | math500 | 30 | 83.3% | 83.3% | 100 | - | - | 16384 |
 | gemma-4-31b-it-6bit | aime | 5 | 80.0% | 80.0% | 80 | - | - | 16384 |
-| gemma-4-31b-it-6bit | humanevalplus | 10 | ungraded | ungraded | 100 | - | - | 16384 |
-| gemma-4-31b-it-6bit | mbppplus | 10 | ungraded | ungraded | 90 | - | - | 16384 |
-| gemma-4-31b-it-6bit-kv16 | livecodebench | 20 | ungraded | ungraded | 75 | - | - | 16384 |
+| gemma-4-31b-it-6bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 16384 |
+| gemma-4-31b-it-6bit | mbppplus | 10 | 70.0% | 70.0% | 90 | - | - | 16384 |
+| gemma-4-31b-it-6bit-kv16 | livecodebench | 20 | 90.0% | 70.0% | 75 | - | - | 16384 |
 | gemma-4-31b-it-UD-MLX-4bit | aime | 5 | 60.0% | 60.0% | 100 | - | - | 16384 |
-| gemma-4-31b-it-UD-MLX-4bit | capacity_ladder | 1 | ungraded | ungraded | 100 | - | - | - |
-| gemma-4-31b-it-UD-MLX-4bit | humanevalplus | 10 | ungraded | ungraded | 100 | - | - | 16384 |
-| gemma-4-31b-it-UD-MLX-4bit | mbppplus | 10 | ungraded | ungraded | 100 | - | - | 16384 |
+| gemma-4-31b-it-UD-MLX-4bit | capacity_ladder | 1 | ungraded | ungraded | n/a | - | - | - |
+| gemma-4-31b-it-UD-MLX-4bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 16384 |
+| gemma-4-31b-it-UD-MLX-4bit | mbppplus | 10 | 80.0% | 80.0% | 100 | - | - | 16384 |
 
 ## Dimension coverage — what is measured and what is missing
 
@@ -274,10 +312,14 @@ table above. The headline gaps:
 - **`gpqa` has NEVER been run** for any model — reasoning is 2/3 axes at best.
 - **`bfcl` has never been run at n** — `daily` is 1/2 axes for the two winners, `NOT MEASURED` for
   everything else.
-- **`aider` is missing from every row of this table**, because it runs through a separate scaffold
-  (`benchmark/run_aider_docker.sh`) and does not write into this results tree. **The n=110 result that
-  the B pick rests on is therefore NOT in the scoresheet** — a real gap in the record, and the next
-  thing to wire into the generator.
+- ✅ **`aider` IS now in the scoresheet** (fixed 2026-08-15, commit `738e3a9`): both arms appear as
+  `aider | 110 | 50.0% / 73.6%`, reproducing the published result exactly. The earlier statement that
+  it "is missing from every row" is superseded. Its `conv%` is deliberately `n/a` — aider gives a
+  per-CASE view across turns, so there is no per-turn `finish_reason` to judge, and counting `None`
+  as converged had printed a fabricated 100%.
+  ⚠️ The n=110 set is **`m1f` plus the `m1g` java recovery overlay** for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, and the rows
+  were produced at **`max_kv_cache_size` 65536**, where the resolved thinking budget was ~52,390 and
+  NOT the declared 81,920. Any new arm must match that cap to pair.
 - **`gemma-4-31B-it-qat-6bit` cannot be compared to the winners at all**: it runs at `thinking_budget`
   16384 vs their 81920, and `compare` mechanically refuses cross-budget comparisons. Its 192K context
   ceiling is a config fact, not a zero.
