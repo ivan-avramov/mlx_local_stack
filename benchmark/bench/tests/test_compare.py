@@ -50,6 +50,58 @@ def test_refuses_when_item_sets_differ(write_rows, tmp_results):
     assert "item" in r["reason"] and ("c" in r["reason"] or "d" in r["reason"])
 
 
+def test_intersect_pairs_a_nested_item_set_instead_of_refusing(write_rows, tmp_results):
+    """Opt-in `intersect` for the NESTED case, which the campaign actually hit.
+
+    Nemotron's ifeval run covers 200 items; Ornith's covers those 200 plus 341 more, and the
+    distill's 148 are a subset of Nemotron's. So three completed, individually valid runs produced
+    ZERO usable head-to-heads: the refusal is correct by default (an unmatched comparison is the
+    defect it exists to prevent) but there is a genuine matched comparison available on the
+    intersection, and AGENTS.md already REQUIRES intersection pairing for the converged metric.
+    Without this, hours of worker time sit unusable for want of a set operation.
+    """
+    write_rows("A", "math500", _rows(["a", "b", "c", "d"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500"); _manifest(tmp_results, "B", "math500")
+
+    assert CMP.compare("A", "B", "math500")["comparable"] is False   # default stays a refusal
+
+    r = CMP.compare("A", "B", "math500", intersect=True)
+    assert r["comparable"] is True
+    assert r["n_items"] == 2, "must pair on the 2 shared items, not 4"
+    assert r["mde"] == __import__("bench.stats", fromlist=["x"]).mde(2)
+    joined = " ".join(r["warnings"])
+    assert "intersect" in joined.lower()
+    assert "2" in joined and "c" not in r.get("reason", "")
+    # The dropped count must be stated, or a reader cannot tell how much was discarded.
+    assert "dropped" in joined.lower()
+
+
+def test_intersect_still_refuses_a_budget_mismatch(write_rows, tmp_results):
+    """`intersect` relaxes ONE rule. It must not become a general override.
+
+    The budget guard is what keeps acc_strict honest across rows, and the campaign holds rows at
+    16384/32768/81920 — so an `intersect` that also waived it would silently enable exactly the
+    cross-budget comparison acc_strict's ranking status depends on being impossible.
+    """
+    write_rows("A", "math500", _rows(["a", "b"], budget=16384))
+    write_rows("B", "math500", _rows(["a", "b"], budget=81920))
+    _manifest(tmp_results, "A", "math500", budget=16384)
+    _manifest(tmp_results, "B", "math500", budget=81920)
+    r = CMP.compare("A", "B", "math500", intersect=True)
+    assert r["comparable"] is False
+    assert "budget" in r["reason"]
+
+
+def test_intersect_refuses_when_there_is_no_overlap(write_rows, tmp_results):
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["c", "d"]))
+    _manifest(tmp_results, "A", "math500"); _manifest(tmp_results, "B", "math500")
+    r = CMP.compare("A", "B", "math500", intersect=True)
+    assert r["comparable"] is False
+    assert "no shared items" in r["reason"].lower() or "shared" in r["reason"].lower()
+
+
 def test_refuses_when_thinking_budget_differs(write_rows, tmp_results):
     write_rows("A", "math500", _rows(["a", "b"], budget=16384))
     write_rows("B", "math500", _rows(["a", "b"], budget=81920))

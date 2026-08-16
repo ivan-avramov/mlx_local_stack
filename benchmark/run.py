@@ -235,7 +235,8 @@ def cmd_compare(args):
     if len(models) != 2:
         print("compare needs exactly two --models"); return
     for b in benches:
-        r = CMP.compare(models[0], models[1], b, margin=args.margin)
+        r = CMP.compare(models[0], models[1], b, margin=args.margin,
+                        intersect=getattr(args, "intersect", False))
         print(f"\n=== {b}: {models[0]}  vs  {models[1]}")
         if not r["comparable"]:
             print(f"  NOT COMPARABLE — {r['reason']}")
@@ -335,6 +336,10 @@ def main():
     sp = sub.add_parser("status"); common(sp); sp.set_defaults(func=cmd_status)
 
     sp = sub.add_parser("compare"); common(sp); sp.set_defaults(func=cmd_compare)
+    sp.add_argument("--intersect", action="store_true",
+                    help="if the item sets differ, pair on the SHARED items instead of refusing. "
+                         "For nested sets (one run a subset of another) this recovers a genuine "
+                         "matched comparison; the output names how many items were dropped.")
     sp.add_argument("--margin", type=float, default=0.05,
                     help="equivalence margin for the TOST verdict (default 5pp)")
 

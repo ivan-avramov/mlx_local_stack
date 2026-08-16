@@ -56,7 +56,8 @@ def _per_item(score, converged_only=False, rows=None):
     return out
 
 
-def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, seed=0):
+def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, seed=0,
+            intersect=False):
     """Compare two models on one bench. Returns either a refusal or a paired verdict.
 
     `metric` is "acc" (correctness over generated items), "pass_at_1_converged" (which pairs on
@@ -110,11 +111,29 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
                         f"convergence conditions on a model-dependent subset")
         pa = {k: v for k, v in pa.items() if k in shared}
         pb = {k: v for k, v in pb.items() if k in shared}
+    elif (only_a or only_b) and intersect:
+        # OPT-IN. The refusal below is right by default, but it also blocks the NESTED case, where
+        # one model's items are a subset of the other's and a genuine matched comparison exists.
+        # That case is not hypothetical: three valid ifeval runs (541 / 200 / 148 items, each set
+        # nested in the last) yielded zero usable head-to-heads for want of a set operation.
+        # Caller must ask for it, and the warning names what was dropped so the reader can judge
+        # whether the intersection is a fair subset or a biased one — this cannot verify that.
+        shared = set(pa) & set(pb)
+        if not shared:
+            return _refuse(f"intersect requested but there are no shared items "
+                           f"({len(only_a)} only in {model_a}, {len(only_b)} only in {model_b})")
+        warnings.append(f"INTERSECT: paired on the {len(shared)} shared items (dropped "
+                        f"{len(only_a)} {model_a}-only, {len(only_b)} {model_b}-only). Sound only "
+                        f"if the shared set is not an easier or harder subset than the whole; the "
+                        f"item sets are nested by construction when one run is a prefix of another")
+        pa = {k: v for k, v in pa.items() if k in shared}
+        pb = {k: v for k, v in pb.items() if k in shared}
     elif only_a or only_b:
         diff = sorted(only_a | only_b)[:6]
         return _refuse(f"item sets differ ({len(only_a)} only in {model_a}, {len(only_b)} only in "
                        f"{model_b}; e.g. {diff}) — an unmatched comparison is the defect this "
-                       f"refusal exists to prevent")
+                       f"refusal exists to prevent. Pass intersect=True (--intersect) to pair on "
+                       f"the shared items if the sets are nested")
     if not pa:
         return _refuse("no shared items with scores")
 
