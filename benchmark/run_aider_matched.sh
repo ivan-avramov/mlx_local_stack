@@ -70,6 +70,7 @@ docker image inspect aider-benchmark >/dev/null 2>&1 \
 [ -d "$AIDER_REPO_CHECK/benchmark" ] || preflight_fail "no aider clone at $AIDER_REPO_CHECK (set AIDER_REPO)"
 [ -d "$POLYGLOT_CHECK" ] || preflight_fail "no polyglot exercises at $POLYGLOT_CHECK (set POLYGLOT_DIR)"
 [ -f "$SETTINGS_CHECK" ] || preflight_fail "settings file not found: $SETTINGS_CHECK"
+[ -r "$HERE/run_aider_docker.sh" ] || preflight_fail "cannot read $HERE/run_aider_docker.sh"
 # The settings file is what carries our tuned sampling. Without an entry for THIS model, aider
 # silently falls back to litellm defaults and the row measures a config we never chose.
 grep -q -- "$MODEL" "$SETTINGS_CHECK" \
@@ -94,8 +95,11 @@ _container_name() { printf 'aider-%s' "$(printf '%s' "$1" | tr '/:.' '___')"; }
 run_one_language() {  # lang keywords num_tests -> exit status of the run (124 if watchdog fired)
   local lang="$1" kw="$2" n="$3" child waited=0 rc=0
   # num-tests == n: keywords already fixed the set, so the shuffle only reorders it.
+  # Invoked through `bash` on purpose: run_aider_docker.sh is committed mode 100644, so calling it
+  # directly fails rc=126 (Permission denied). Relying on the exec bit would make this script's
+  # behaviour depend on a file mode that git is not carrying.
   AIDER_LANGUAGES="$lang" AIDER_KEYWORDS="$kw" \
-    "$HERE/run_aider_docker.sh" "$MODEL" "$n" diff "$PREFIX-$lang" &
+    bash "$HERE/run_aider_docker.sh" "$MODEL" "$n" diff "$PREFIX-$lang" &
   child=$!
   while kill -0 "$child" 2>/dev/null; do
     if [ "$waited" -ge "$PER_LANG_TIMEOUT" ]; then
