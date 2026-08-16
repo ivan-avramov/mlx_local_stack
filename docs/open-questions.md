@@ -14,6 +14,74 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### O24. Should the model-naming rule be enforced on CHANGED LINES by a pre-commit hook?
+Raised 2026-08-16, after the operator had to give the same correction twice in one session.
+
+The rule ("full registry name, in reports, results, docs AND commits") is now explicit in AGENTS.md
+with the banned shorthands enumerated. **What is missing is enforcement.** Measured that day:
+`test_docs_full_model_names.py` covers only `docs/*.md` and only ONE two-word shorthand for
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (the one its own assertion names) — not AGENTS.md, not commit
+messages, not `Nemotron` / `Ornith` / `gemma` / `the MoE` / `the OptiQ`. Bare
+shorthand appeared in **4 of 5 commit messages** and throughout the agent's replies.
+
+A repo-wide assertion is not viable: bare-shorthand counts are AGENTS.md 23, `lab-notebook` 156,
+`campaign-queue` 86, `open-questions` 30, `campaign-results` 11 — ~300 sites, so it would fail
+instantly and be disabled.
+
+**Proposal:** a pre-commit hook checking (a) added/changed lines in the staged diff and (b) the
+commit message, against all six shorthands; plus a one-time fix of the two NORMATIVE docs only
+(AGENTS.md, `campaign-results.md`, ~34 sites), leaving the narrative history alone.
+**Needs a ruling** — it is the only part that makes the rule mechanical rather than agent-carried.
+
+### O23. `math500` at the current config costs ~35 h and CANNOT reuse the existing 30 rows
+Raised 2026-08-16 from the manifests, not from the doc.
+
+Both winners' math500 rows are `sampling_profile: **official**`, `max_kv_cache_size: **262144**`,
+`fingerprint_version: None`, generated ~2026-07-05 from local model paths — and
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s rows come from a **different quantization** of the weights
+(effective_bits 4.9701 vs today's 4.9835). They are internally consistent with EACH OTHER, so the
+21pp `acc_strict` split is a valid comparison **at a config we no longer serve**; they are not
+extendable at `deployed`.
+
+Consequences: the cheap fix (retry the 3 timed-out rows) is **unavailable** — the provenance guard
+correctly blocked it as mixing. A current-config n=100 is ~100 × (499 s + 756 s) ≈ **35 h**, from
+scratch. Mechanism worth noting: Ornith-1.0-35B-mlx-uniform-4bit has 0 errors but **9/30
+budget-hits**, while Qwen3.6-27B-Opus-Distill-OptiQ-4bit has 0 budget-hits but 3 timeouts — and two
+of those timed-out items are ones Ornith also DNF'd, so the 21pp gap is computed on sets that
+exclude two Ornith failures and the true matched gap is likely SMALLER.
+**Needs a ruling: spend ~35 h, or leave the reasoning axis at its July-config result?**
+
+### ~~O22~~ → CLOSED (agent proposal WITHDRAWN by its author, 2026-08-16): a "config epoch freeze"
+Proposed after math500 turned out unextendable: declare the current fingerprint frozen and finish
+every axis inside it. **Withdrawn the same day, before any ruling, because the evidence did not
+support it.** The operator's challenge was the right one — does this help the goal, or is it
+ceremony against the *appearance* of tail-chasing?
+
+Tally: the campaign IS progressing (ifeval n=200 completed + graded; two head-to-head verdicts
+recovered that were previously impossible; coding cells graded 21 → 3; the aider item-set defect
+fixed — `--num-tests` is an unseeded sample, so **every aider arm before 2026-08-16 was unpairable
+by construction**). The thrash was the AGENT's execution hygiene: three bugs in one runner, two
+reports made from run prefixes. And math500's invalidation is July config debt already paid, not an
+ongoing pattern. **A freeze would not have prevented any of it.** The rule that would — "size every
+job from a pilot, precondition-check before launching" — already exists in `campaign-queue.md`.
+Recorded as CLOSED rather than deleted so it is not re-proposed as if new.
+
+### ~~O21~~ → CLOSED (operator, 2026-08-16): **no interim prompt-mode BFCL number.** Build the vendored handler.
+An interim run with a borrowed handler, labelled "prompt-mode, borrowed template", was offered and
+declined. Rationale accepted: it is inadmissible under the campaign's own tool-calling rule, and a
+labelled-inadmissible number in the corpus is exactly the thing that later gets quoted without its
+label. The vendored handler (raw `messages` + `tools` to `/v1/chat/completions`, registered under our
+served names) is DRIVER work and does not compete for worker time.
+⚠️ Note before starting it: `bfcl_eval` is installed on the **worker only** (2026.3.23), not the
+driver, despite AGENTS.md claiming both boxes.
+
+### ~~O20~~ → CLOSED (operator, 2026-08-16): gemma coding job DROPPED, gemma ifeval DEFERRED behind math500.
+The O18(b) ruling. `gemma-4-26B-A4B-it-OptiQ-4bit evalplus n=100` is dropped — the coding axis's open
+question is a 2–5pp gap between the winners, which an unpairable ±20pp row cannot inform.
+`ifeval n=200 gemma-4-31B-it-qat-6bit` is KEPT as ABSOLUTE-ONLY but deferred behind math500: ~10 h of
+a single worker for an absolute row on the one axis where the two winners already returned a clean
+`equivalent`.
+
 ### ~~O19~~ → CLOSED-BY-ARITHMETIC (2026-08-14): the Nemotron 4→6-bit ceiling probe cannot answer its own question
 **Pre-registered design** (operator, 2026-08-14): 4-bit as baseline → uniform 6-bit as CEILING → and only
 if the 4→6 gain is significant, evaluate OptiQ ("~6-bit quality at ~5-bit perf") as the cheaper way to
@@ -57,6 +125,7 @@ and this job had never been sized. 5 items in 16m47s ⇒ 201 s/item ⇒ ~11.2 h.
 too, not just the job** — otherwise it would have advanced straight into `ifeval n=200 gemma` (~10 h) and
 blocked grading all over again. `O18 (b)` below (the remaining queue) is still OPEN.
 
+### ~~O18 (b)~~ → CLOSED (operator, 2026-08-16); see O20 above for the ruling. Original text retained below.
 ### O18 (b). gemma CANNOT be compared to the winners at a matched budget — it is ARITHMETICALLY impossible
 Raised 2026-08-14 while executing O17, from the registry rather than from old rows:
 
