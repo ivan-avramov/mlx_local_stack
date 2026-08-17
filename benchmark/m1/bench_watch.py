@@ -32,6 +32,7 @@ Reads only persisted results, so it never perturbs the run.
 """
 import argparse
 import json
+import os
 import statistics as st
 import subprocess
 import time
@@ -42,8 +43,14 @@ from bench import paths, traces
 FLAT_TICKS_TO_ESCALATE = 3
 
 
+def _results_root() -> Path:
+    """Same override generate.py honors, so a probe tree ($MLX_BENCH_RESULTS) is watchable."""
+    env = os.environ.get("MLX_BENCH_RESULTS")
+    return Path(env) if env else paths.default_results_root()
+
+
 def _rows(model: str, bench: str) -> list:
-    p = paths.default_results_root() / model / f"{bench}.jsonl"
+    p = _results_root() / model / f"{bench}.jsonl"
     if not p.exists():
         return []
     out = []
