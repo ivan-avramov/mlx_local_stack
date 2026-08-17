@@ -14,6 +14,66 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### O27. Does the GitHub remote still need a `gc` to finish the PII scrub?
+Raised 2026-08-16, during the scrub itself.
+
+11 tracked files carried an absolute home path with a real username into this PUBLIC repo (the
+`hf_path` field of 10 provenance manifests plus one `bfcl.json` traceback), all introduced by the
+bulk import of 286 result files. History was rewritten with `git filter-repo --replace-text` and
+force-pushed; a mirror clone confirms the branch-reachable history is clean.
+
+**But the pre-scrub commit is STILL FETCHABLE from the remote by explicit sha** — `git fetch --depth=1
+origin <old-sha>` returns rc=0 and the old tree. Unreachable objects survive a force-push until
+GitHub garbage-collects, so the leaked blobs remain retrievable by anyone holding the sha.
+
+**Two ways to finish it:** (a) a GitHub Support request asking them to run `gc` on the repository —
+cheap, non-destructive, and the standard remedy; or (b) delete and recreate the remote repository —
+instant and total, but discards stars/watchers/issues. **Recommendation: (a).**
+Guard against recurrence is already in place: `bench.piicheck` in `githooks/pre-commit`, validated
+end-to-end against a staged leak, plus a corpus-wide test asserting every tracked file is clean.
+
+### O26. "degenerate wall-share" NAMES TWO DIFFERENT QUANTITIES that differ by up to ~10x
+Raised 2026-08-16 from the score files, not from the doc.
+
+`grade.py:122` persists `degenerate_wall_share` from `traces.summarize`, computed over the **EOS'd
+degenerate rows only**. The published scoreboard row in `docs/campaign-results.md` uses a **broader**
+definition — every row with `nonconv_kind == degenerate_repetition`. Both are defensible; the
+collision is the hazard. Measured on the same rows:
+
+| model | bench | narrow (persisted) | broad (published) |
+|---|---|---|---|
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | humanevalplus | 0.0% | 24.6% |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | humanevalplus | 4.8% | 34.9% |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | mbppplus | **0.0%** | **63.1%** |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | humanevalplus | 0.0% | 41.1% |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | mbppplus | 0.0% | 70.4% |
+
+The published figures are right under the broad definition (the doc's "40%" for
+`Ornith-1.0-35B-mlx-uniform-4bit` humanevalplus is 34.9%, a loose rounding). **The problem is that
+the scoreboard is generated from the score files, which carry only the NARROW number** — so
+regenerating that row yields values ~10x smaller than the prose, with no warning.
+**Needs a ruling: rename one of them** (e.g. `degenerate_eosed_wall_share` for the narrow one), or
+persist both. `bench/m1/suffix_ofat.py` already reports both, labelled, as an interim measure.
+
+### O25. Suffix decoding is withdrawn — on what evidence does it come back?
+Raised 2026-08-16. **The withdrawal itself is CLOSED** (operator, 2026-08-16): suffix is OFF for all
+five models, verified at the worker command line, and `compare` now refuses across draft state
+(fingerprint v3). What is open is the return condition.
+
+Suffix was ON for exactly `Ornith-1.0-35B-mlx-uniform-4bit` and
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` and OFF for every other candidate, on a "quality-neutral"
+claim that the campaign's own ≤5% gate never supported — those arms resolve ±12.5pp (n=100) and
+±32pp (n=15). Measured cost of removal on `Ornith-1.0-35B-mlx-uniform-4bit`: decode ~100 → 77 tok/s,
+wall 23.8 → 30.3 s on a matched prompt. That is a real daily-driver loss, so the return condition
+matters.
+
+**Proposed condition:** re-enable for SERVING ONLY (never for measurement, where per-model uniformity
+outranks 1.27×) if the paired ON/OFF OFAT puts the accuracy delta inside ±5pp. **Why that is now
+affordable:** the "628 items" figure that made the gate look unreachable comes from `stats.mde`'s
+DEFAULT `p_d = 0.20`, a between-MODELS guess. Within-model paired, at p_d = 0.05 the gate needs 157
+items and at 0.02 it needs 63. The OFAT measures p_d first and sizes itself on the measurement.
+**Needs a ruling on the return condition**, not on the withdrawal.
+
 ### O24. Should the model-naming rule be enforced on CHANGED LINES by a pre-commit hook?
 Raised 2026-08-16, after the operator had to give the same correction twice in one session.
 
