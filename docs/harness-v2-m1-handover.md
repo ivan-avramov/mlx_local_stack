@@ -1,5 +1,17 @@
 # Handover — harness v2 + the M1 agentic gate (2026-08-11, end of session)
 
+> ## ⚠️ HISTORICAL SNAPSHOT — 2026-08-11. DO NOT READ AS CURRENT STATE.
+>
+> Kept verbatim as the dated record of what was believed that day; nothing below has been rewritten.
+> **Current state lives in `docs/PLAN.md` (the plan) · `docs/open-questions.md` (decisions) · `AGENTS.md` (rules).**
+>
+> Load-bearing claims below that are now FALSE:
+> - **"RUNNING as of 2026-08-11 23:43 — tag `m1f`" is stale.** That run finished long ago (n=110 matched per arm); nothing is running. Results are in `docs/campaign-results.md` and `docs/PLAN.md` §1.
+> - **The `max_kv_cache_size` / `kv_prealloc_tokens` = 65536 described here was uncommitted worker-local dirt, and it has moved twice since.** The **committed** registry carries **262144** for both winners; the worker's hand-managed registry has since carried 131072. `max_kv_cache_size` is OUTPUT-DETERMINING (it sets the resolved thinking budget), so never pool rows generated at different caps — and check the cap existing rows were generated at before resuming an arm.
+> - **Two code citations have drifted, and one of the defects they name is FIXED.** `bfcl_shim/local_handlers.py:77-78` (finding #5) no longer holds the no-think bug: the shim now sends `params_for(model,"deployed")` plus `enable_thinking`/`thinking_budget` (around :97-111). `configgen/emitters/aider.py:20-24` (finding #8) is now a docstring; the task-model emission it describes sits around :37-43. Locate by symbol, not by line.
+> - **The "Open decisions" proposal to rank on `successes_per_hour` was NOT ratified — it is now explicitly rejected.** `AGENTS.md` says do not rank on it; rank on capability and report four separately-interpretable numbers beside it.
+> - **Finding #7's "APC stays ENABLED for the daily driver" is superseded:** APC is OFF everywhere as of 2026-08-13, `runserver.sh` included.
+
 Read with: `docs/superpowers/plans/2026-08-11-harness-v2-reliability-and-agentic-axes.md` (the plan),
 `docs/campaign-results.md` (results, incl. the new HARNESS V2 + re-grade sections),
 `docs/campaign-queue.md` (live worklist), `benchmark/m1/README.md` (runner scripts + their traps).

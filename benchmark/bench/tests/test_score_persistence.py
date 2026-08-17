@@ -18,6 +18,8 @@ of a different pair cannot clobber it, and the scoreboard can read the ranking k
 """
 import json
 
+import pytest
+
 from bench import generate, grade
 
 
@@ -110,3 +112,87 @@ def test_scoreboard_marks_an_UNGRADED_pair_rather_than_blanking_it(tmp_path, mon
 
     rec = sb.collect()["M"]["aime"]
     assert rec["acc"] is None and rec["acc_strict"] is None
+
+
+# --------------------------------------------------------------- the two DEGENERACY definitions
+#
+# The corpus contains TWO measures of degenerate-loop cost and they collide under one name:
+#   * `grade.py` persists `degenerate_wall_share` over the SELF-TERMINATING (EOS'd) degenerate rows
+#     ONLY — the class the convergence formula scores as CONVERGED (bench/traces.summarize).
+#   * the scoreboard's own column covered EVERY row whose trace shows a verbatim loop.
+# Both are defensible; publishing either as `degenWall%` is not. Measured 2026-08-16 on mbppplus:
+# `Ornith-1.0-35B-mlx-uniform-4bit` reads 63.1% broad vs 0.0% narrow, and
+# `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 70.4% vs 0.0%. So the column NAMES must say which is which.
+
+def _load_sb():
+    from bench import paths
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sb_degen", paths.BENCHMARK_DIR / "m1" / "scoreboard.py")
+    sb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sb)
+    return sb
+
+
+_LOOP_STATS = {"chars": 30000, "lines": 24, "unique_line_ratio": 1.0, "max_line_repeat": 1,
+               "ngram8_unique": 0.01, "ngram20_unique": 0.01}   # content-level loop (traces.py)
+
+
+def _degen_pair(tmp_path):
+    """One EOS'd loop (10s), one truncated loop (80s), one clean row (10s), 100s total.
+    Broad share = 90%; the narrow, persisted share = 10%."""
+    mdir = tmp_path / "M"
+    mdir.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {"id": 1, "sample": 0, "prompt_tokens": 48, "completion_tokens": 2400,
+         "finish_reason": "stop", "thinking_budget": 81920, "wall_s": 10.0,
+         "reasoning_stats": _LOOP_STATS},
+        {"id": 2, "sample": 0, "prompt_tokens": 48, "completion_tokens": 65489,
+         "finish_reason": "length", "thinking_budget": 81920, "wall_s": 80.0,
+         "reasoning_stats": _LOOP_STATS},
+        {"id": 3, "sample": 0, "prompt_tokens": 48, "completion_tokens": 300,
+         "finish_reason": "stop", "thinking_budget": 81920, "wall_s": 10.0},
+    ]
+    (mdir / "mbppplus.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+    (mdir / "mbppplus.score.json").write_text(json.dumps({
+        "acc": 0.66, "acc_strict": 0.33, "conv_rate": 2 / 3, "loop_ids": [2],
+        "n_degenerate_eosed": 1, "degenerate_wall_share": 0.10}))
+    return mdir
+
+
+def test_scoreboard_reports_BOTH_degeneracy_definitions_under_distinct_keys(tmp_path, monkeypatch):
+    sb = _load_sb()
+    _degen_pair(tmp_path)
+    monkeypatch.setattr(sb.paths, "default_results_root", lambda: tmp_path)
+
+    rec = sb.collect()["M"]["mbppplus"]
+    assert rec["degen_all"] == 2, "the broad count is every row with a loop trace"
+    assert rec["degen_all_wall_pct"] == pytest.approx(90.0)
+    assert rec["degen_eosed_wall_pct"] == pytest.approx(10.0), (
+        "the narrow, PERSISTED share must be reported as itself, not recomputed or dropped")
+
+
+def test_scoreboard_COLUMN_NAMES_say_which_degeneracy_definition_they_are(tmp_path, monkeypatch,
+                                                                         capsys):
+    """A cell is read on its header. `degenWall%` alone gave two ~10x-apart measures one name."""
+    sb = _load_sb()
+    _degen_pair(tmp_path)
+    monkeypatch.setattr(sb.paths, "default_results_root", lambda: tmp_path)
+
+    sb.main(["--md"])
+    header = capsys.readouterr().out.splitlines()[0]
+    assert "degenAllWall%" in header and "degenEosedWall%" in header
+    assert "| degenWall% |" not in header, "the ambiguous name must be gone, not duplicated"
+
+
+def test_scoreboard_states_what_each_degeneracy_column_MEANS(tmp_path, monkeypatch, capsys):
+    """The names are short; the definitions are not. The emitted sheet is pasted into
+    `docs/campaign-results.md`, so the legend has to travel with it."""
+    sb = _load_sb()
+    _degen_pair(tmp_path)
+    monkeypatch.setattr(sb.paths, "default_results_root", lambda: tmp_path)
+
+    sb.main(["--md"])
+    out = capsys.readouterr().out
+    assert "degenAllWall%" in out and "degenEosedWall%" in out
+    assert "EOS" in out and "every row" in out.lower()

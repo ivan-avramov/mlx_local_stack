@@ -5,11 +5,16 @@ order, so "how did model X do on everything, and is it good enough for MY use ca
 greps. And `compare` answers a different question ("is A better than B?"), returning verdicts like
 `equivalent` that say nothing about whether either model is USABLE.
 
-This reads the persisted per-item rows directly and emits one row per (model, bench), then a per-model
+This walks the persisted per-item rows and emits one row per (model, bench), then a per-model
 coverage verdict against each stated goal — REASONING, CODING, DAILY DRIVER.
 
-Built from the jsonl rows rather than scores.json, because scores.json only holds whatever the LAST
-`grade` invocation covered, so a scoreboard built from it silently drops every model not in that call.
+It DISCOVERS pairs from the jsonl rows rather than from scores.json, because scores.json only holds
+whatever the LAST `grade` invocation covered, so a scoreboard built from it silently drops every model
+not in that call. But every GRADED NUMBER — `acc`, `acc_strict`, `conv%`, `degenEosedWall%` — is read
+from the per-pair `<bench>.score.json` beside those rows, never recomputed here. This module is a
+PRESENTER; `grade` is the one place metrics are defined. Recomputing convergence here is exactly how
+the scoresheet came to publish ifeval conv 99 / 99 for the two winners after `grade` had corrected
+them to 95 / 93 (see `collect`).
 
   PYTHONPATH=benchmark .venv-bench/bin/python benchmark/m1/scoreboard.py [--md]
 """
@@ -50,12 +55,6 @@ def collect() -> dict:
         live = [r for r in rows if not r.get("error")]
         if not live:
             continue
-        # Convergence is only DEFINED for rows that expose per-turn generation. The aider agentic
-        # rows carry converged=None on purpose (aider gives a per-CASE view across turns, so there is
-        # no per-turn finish_reason/completion_tokens to judge). Counting None as converged — which
-        # `is not False` does — printed a fabricated conv 100% for both aider arms.
-        det = [r for r in live if convergence.is_converged(r) is not None]
-        conv = [r for r in det if convergence.is_converged(r) is not False]
         degen = [r for r in live if traces.is_degenerate(r)]
         tw = sum(r.get("wall_s") or 0 for r in live) or 1
         budgets = {r.get("thinking_budget") for r in live if r.get("thinking_budget")}
@@ -70,11 +69,56 @@ def collect() -> dict:
                 sc = json.loads(sp.read_text())
             except (json.JSONDecodeError, OSError):
                 sc = {}
+        # ⚠️ conv% IS READ FROM THE SCORE FILE, NEVER RE-DERIVED HERE. This module used to recompute
+        # it from the rows, and that silently UNDID the resolved-thinking-budget correction: the
+        # server clamps thinking_budget to 0.8*(max_kv_cache_size - prompt) without logging it, so
+        # `grade._rows` annotates `resolved_thinking_budget` from the run MANIFEST — and the rows on
+        # disk carry no such field (0 of 541 and 0 of 148 on the two ifeval runs). Re-deriving from
+        # rows alone therefore judged against the DECLARED 81,920 and published ifeval conv 99 / 99
+        # for `Ornith-1.0-35B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` while their
+        # score files said 0.9464 / 0.9324 (95 / 93) — the scoresheet printed the left-hand side of
+        # its own retraction (AGENTS.md, measurement discipline).
+        #
+        # WHY THIS SEAM AND NOT PERSISTING THE FIELD IN THE ROWS: a row-level field only helps rows
+        # generated from here on, so the 689 already-measured ifeval rows would stay wrong until
+        # re-generated (hours of single-worker time for a number that is a FREE re-grade). And a
+        # second copy of the clamp arithmetic is a second place to forget the next correction —
+        # exactly this defect. `grade` is the ONE place metrics are defined; this module is a
+        # PRESENTER of what was graded. Cost: an ungraded pair reads `n/a` instead of a number
+        # nobody audited, which is the convention `acc`/`acc_strict` already follow. Fixing a cell
+        # means running `grade` (zero worker time), not recomputing here.
+        conv_rate = sc.get("conv_rate")
+        # Convergence is only DEFINED for rows that expose per-turn generation. The aider agentic
+        # rows carry converged=None on purpose (aider gives a per-CASE view across turns, so there is
+        # no per-turn finish_reason/completion_tokens to judge), and `aider_rows` writes no
+        # `conv_rate` — so those cells stay `n/a` rather than the fabricated 100% they once printed.
+        # `det` is used ONLY as the denominator for the staleness check below: determinability does
+        # not depend on the budget, so it is safe to derive here; the VERDICT is not.
+        det = [r for r in live if convergence.is_converged(r) is not None]
+        # STALE-GRADE detector — the one cost of reading the graded number. A resumed run appends
+        # rows, and the score file then predates them. `loop_ids` is the exact non-converged set the
+        # grade covered and `conv_rate` is stored at full precision, so (1 - conv_rate) * today's
+        # denominator must reproduce its size EXACTLY (to float noise); verified 2026-08-16 to hold
+        # for all 54 pairs in the corpus that carry a graded `conv_rate` (0 flagged). A mismatch is
+        # MARKED (`*`), so a stale cell says so instead of reading as current.
+        loop_ids = sc.get("loop_ids")
+        expect_loops = None if conv_rate is None else (1 - conv_rate) * len(det)
         rec = {"n": len(live), "errors": len(rows) - len(live),
-               # None => UNDETERMINABLE, rendered "n/a". Never 100.
-               "conv_pct": (100 * len(conv) / len(det)) if det else None,
-               "degen": len(degen),
-               "degen_wall_pct": 100 * sum(r.get("wall_s") or 0 for r in degen) / tw,
+               # None => UNGRADED/UNDETERMINABLE, rendered "n/a". Never 100.
+               "conv_pct": None if conv_rate is None else 100 * conv_rate,
+               "conv_stale": bool(expect_loops is not None and loop_ids is not None
+                                  and abs(expect_loops - len(loop_ids)) > 1e-6),
+               # TWO degeneracy definitions are in use and they differ by up to ~10x on the SAME
+               # rows, so each carries its definition in its NAME (see the legend in main()):
+               #   degen_all*   — EVERY row whose trace shows a verbatim loop, however it ended.
+               #   degen_eosed* — `grade`'s persisted `degenerate_wall_share`: the SELF-TERMINATING
+               #                  (EOS'd) degenerate rows only, i.e. the loops the convergence
+               #                  formula scores as CONVERGED. Read, not recomputed — it depends on
+               #                  the resolved budget, for the reasons above.
+               "degen_all": len(degen),
+               "degen_all_wall_pct": 100 * sum(r.get("wall_s") or 0 for r in degen) / tw,
+               "degen_eosed_wall_pct": (None if sc.get("degenerate_wall_share") is None
+                                        else 100 * sc["degenerate_wall_share"]),
                "budget": sorted(budgets)[0] if len(budgets) == 1 else None,
                "acc": sc.get("acc"), "acc_strict": sc.get("acc_strict")}
         m = out.setdefault(f.parent.name, {})
@@ -108,22 +152,43 @@ def main(argv=None) -> int:
     ap.add_argument("--md", action="store_true", help="emit markdown")
     args = ap.parse_args(argv)
     data = collect()
-    hdr = ("model", "bench", "n", "acc", "strict", "conv%", "degen", "degenWall%", "budget")
+    hdr = ("model", "bench", "n", "acc", "strict", "conv%", "degenAll", "degenAllWall%",
+           "degenEosedWall%", "budget")
+    fmt = "%-40s %-15s %5s %7s %7s %6s %8s %13s %15s %8s"
     if args.md:
         print("| " + " | ".join(hdr) + " |")
         print("|" + "---|" * len(hdr))
     else:
-        print("%-40s %-15s %5s %7s %7s %6s %6s %11s %8s" % hdr)
+        print(fmt % hdr)
+    stale = False
     for model in sorted(data):
         for bench in sorted(data[model]):
             r = data[model][bench]
             # "ungraded" rather than a blank: the ranking key being absent is information.
             acc_s = "ungraded" if r["acc"] is None else f"{r['acc'] * 100:.1f}%"
             st_s = "ungraded" if r["acc_strict"] is None else f"{r['acc_strict'] * 100:.1f}%"
-            v = (model, bench, r["n"], acc_s, st_s, ("n/a" if r["conv_pct"] is None else f"{r['conv_pct']:.0f}"), r["degen"] or "-",
-                 f"{r['degen_wall_pct']:.0f}" if r["degen"] else "-", r["budget"] or "-")
-            print(("| " + " | ".join(str(x) for x in v) + " |") if args.md
-                  else "%-40s %-15s %5s %7s %7s %6s %6s %11s %8s" % v)
+            # conv% is the GRADED number (see collect). "*" = the grade predates the rows on disk.
+            conv_s = "n/a" if r["conv_pct"] is None else f"{r['conv_pct']:.0f}"
+            if r["conv_stale"]:
+                conv_s += "*"
+                stale = True
+            v = (model, bench, r["n"], acc_s, st_s, conv_s, r["degen_all"] or "-",
+                 f"{r['degen_all_wall_pct']:.0f}" if r["degen_all"] else "-",
+                 "n/a" if r["degen_eosed_wall_pct"] is None else f"{r['degen_eosed_wall_pct']:.0f}",
+                 r["budget"] or "-")
+            print(("| " + " | ".join(str(x) for x in v) + " |") if args.md else fmt % v)
+    # The legend TRAVELS WITH THE SHEET, because the sheet gets pasted into campaign-results.md and a
+    # cell is read on its header. One name for both degeneracy measures is how a 63%-vs-0% ambiguity
+    # spreads (`Ornith-1.0-35B-mlx-uniform-4bit` mbppplus).
+    print("\nconv% = the GRADED convergence rate read from <bench>.score.json (judged against the "
+          "SERVER-RESOLVED thinking budget); n/a = ungraded or undeterminable. "
+          "degenAllWall% = wall-clock share of EVERY row whose trace shows a verbatim loop, however "
+          "it ended (derived here). degenEosedWall% = the persisted `degenerate_wall_share`: the "
+          "same share over the SELF-TERMINATING (EOS'd) degenerate rows ONLY — the loops the "
+          "convergence formula counts as CONVERGED. The two are NOT interchangeable.")
+    if stale:
+        print("* = the score file was graded over a different row count than is on disk now "
+              "(a resumed run). RE-GRADE (zero worker time); do not read the cell as current.")
     print("\n=== ROLE COVERAGE (what is measured, what is missing) ===")
     for model in sorted(data):
         print(f"\n{model}")

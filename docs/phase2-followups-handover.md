@@ -1,5 +1,18 @@
 # Phase-2 Follow-ups — Handover (2026-07-09)
 
+> ## ⚠️ HISTORICAL SNAPSHOT — 2026-07-09. DO NOT READ AS CURRENT STATE.
+>
+> Kept verbatim as the dated record of what was believed that day; nothing below has been rewritten.
+> **Current state lives in `docs/PLAN.md` (the plan) · `docs/open-questions.md` (decisions) · `AGENTS.md` (rules).**
+>
+> Load-bearing claims below that are now FALSE:
+> - **"#1 APC prefix caching — SHIPPED (`APC_ENABLED=1 APC_NUM_BLOCKS=16384`)" is false on every clause.** APC is **OFF everywhere** — benchmarks *and* the daily driver (operator decision, 2026-08-13). `runserver.sh` no longer sets it, guarded by `test_runserver_does_NOT_enable_apc` in `benchmark/bench/tests/test_provenance_fingerprint.py`.
+> - **The "34–147× agentic multi-turn TTFT" does NOT reproduce** and is withdrawn. Session caching SHADOWS APC by construction, so APC was never consulted; what actually makes multi-turn cheap is the session cache (cost per total token fell ~17×), independent of APC.
+> - **`APC_NUM_BLOCKS=16384` is the configuration that DEMONSTRATED an OOM**, not a shipped default: ~33 GB of pool, 54.2 GB total with `Ornith-1.0-35B-mlx-uniform-4bit` resident, generation dead on insufficient Metal memory. Pool size is now guarded at ≤4096. "No memory/speed cost" was wrong.
+> - **"#4 suffix decoding — SHIPPED both winners" is WITHDRAWN (2026-08-16).** Suffix is OFF for all five models; the "quality-neutral" claim was an aggregate at ±12.5pp/±32pp and never met the campaign's ≤5% lossy-lever gate. The return condition is open — O25.
+> - **"grade he+/mbpp+ on M2" cannot be followed.** The M2 Max box was retired 2026-08-11; `grade_evalplus` docker now runs on either surviving box.
+> - FU-2 shipping (registry-side default sampling) **does still hold**; FU-1 and FU-3 remain parked.
+
 Phase-2 (perf + KV-memory optimization on the two settled winners) is **complete and shipped**.
 This hands off the remaining follow-ups for a fresh session. Read `AGENTS.md` first for operating rules.
 

@@ -1,5 +1,17 @@
 # Campaign handover — 2026-07-06
 
+> ## ⚠️ HISTORICAL SNAPSHOT — 2026-07-06. DO NOT READ AS CURRENT STATE.
+>
+> Kept verbatim as the dated record of what was believed that day; nothing below has been rewritten.
+> **Current state lives in `docs/PLAN.md` (the plan) · `docs/open-questions.md` (decisions) · `AGENTS.md` (rules).**
+>
+> Load-bearing claims below that are now FALSE:
+> - **The TL;DR verdict is SUPERSEDED.** The current pick for the agentic-coding decision is `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, with `Ornith-1.0-35B-mlx-uniform-4bit` as runner-up (`docs/PLAN.md` §1).
+> - **"The core selection question is ANSWERED" is false** — see `docs/PLAN.md` §3 for the live queue, and note that the "256K" part of the goal has never been measured as a task.
+> - **The aider figure `61.8% (n=34)` is superseded by 50.0% at n=110** for `Ornith-1.0-35B-mlx-uniform-4bit` (`docs/campaign-results.md`). Worse, aider's `--num-tests` shuffles UNSEEDED, so the old n=34 and n=16 rows compared two unrelated random item subsets — that 13.2pp gap was never a measured gap.
+> - **"Currently RUNNING", and every M2 reference, is dead.** The M2 Max box was retired 2026-08-11 and its results are not re-measurable. All model runs go to the M5 Max worker; the driver laptop hosts no models.
+> - **aider is RETIRED as a harness** (2026-08-16): existing rows kept, no new arms. opencode is the primary agentic harness, so the whole "Aider agentic — HOW IT WORKS" section is reference-only.
+
 Session checkpoint for the 256K-agentic-coding local-LLM selection campaign. Companions:
 `docs/campaign-results.md` (full scoreboard) · `docs/campaign-queue.md` (durable worklist + recovery) · `AGENTS.md` (norms).
 

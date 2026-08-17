@@ -1,5 +1,16 @@
 # Handoff — 2026-08-14, campaign v3 (end of day)
 
+> ## ⚠️ HISTORICAL SNAPSHOT — 2026-08-14. DO NOT READ AS CURRENT STATE.
+>
+> Kept verbatim as the dated record of what was believed that day; nothing below has been rewritten.
+> **Current state lives in `docs/PLAN.md` (the plan) · `docs/open-questions.md` (decisions) · `AGENTS.md` (rules).**
+>
+> Load-bearing claims below that are now FALSE:
+> - **"only O15 open" is false.** Open as of 2026-08-16: **O15, O24, O25, O26, O27** (`docs/open-questions.md`). O15 itself is still open.
+> - **"Both boxes at" that SHA is stale.** The SHA still resolves, but HEAD has moved many commits on and neither box sits there. (Note separately that a PII history rewrite on 2026-08-16 invalidated *later* SHAs — cite dates and paths.)
+> - **§1's work-queue daemon is NOT running, and its plan file is stale.** `docs/PLAN.md` declares `docs/work-queue.json` stale as of 2026-08-14; every job state in the §1 table is historical. The ordered queue now lives in `docs/PLAN.md` §3.
+> - **The §2 result arms ran suffix-ON** (both winners carried `draft_kind: suffix` at the time). Suffix is now OFF for all five models and `compare` refuses across draft state, so those numbers are a (model × serving-path) composite.
+
 Read with: `docs/open-questions.md` (decision queue — **only O15 open**), `docs/campaign-results.md`
 (the USE-CASE LEADERBOARD, which now leads that file), `docs/campaign-queue.md` (durable state),
 `docs/work-queue.json` (the live job plan), `AGENTS.md` (rules — several amended today).

@@ -230,3 +230,107 @@ def test_grade_rows_survive_a_missing_manifest(tmp_path, monkeypatch):
     rows = grade._rows("M", "aime")
     assert "resolved_thinking_budget" not in rows[0]
     assert C.is_converged(rows[0]) is True
+
+
+# ------------------------------------------------- the SCOREBOARD must not undo the correction
+#
+# MEASURED 2026-08-16. `docs/campaign-results.md`'s generated scoresheet published ifeval conv% of
+# 99 / 99 for `Ornith-1.0-35B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — the
+# PRE-CORRECTION false-pass values — while the two `.score.json` files beside those rows carried
+# `conv_rate` 0.9464 and 0.9324 (95 / 93). Cause: `m1/scoreboard.py` RE-DERIVED convergence from the
+# raw jsonl, and the rows do not persist `resolved_thinking_budget` (0 of 541 and 0 of 148), so the
+# re-derivation judged against the DECLARED 81,920 and silently reproduced the exact false pass this
+# file exists to pin. The scoresheet was publishing the left-hand side of its own retraction.
+
+def _load_scoreboard():
+    """Load `m1/scoreboard.py` (not an importable package) the way the other scoreboard tests do."""
+    import importlib.util
+    from bench import paths
+    spec = importlib.util.spec_from_file_location(
+        "sb_resolved_budget", paths.BENCHMARK_DIR / "m1" / "scoreboard.py")
+    sb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sb)
+    return sb
+
+
+def _clamped_ifeval_pair(tmp_path, *, with_score=True):
+    """A (model, bench) pair that reproduces the clamp condition.
+
+    Two rows stop at 52,409 completion tokens: under the DECLARED 81,920 (so a declared-budget
+    reading calls them converged) but OVER the resolved int(0.8 * (65536 - 48)) = 52,390, i.e.
+    externally truncated. Eight rows self-terminate at 2,400. Corrected conv% = 8/10 = 80%; the
+    declared-budget reading gives 100%.
+    """
+    import json as _json
+    mdir = tmp_path / "M"
+    mdir.mkdir(parents=True, exist_ok=True)
+    rows = [{"id": i, "sample": 0, "prompt_tokens": 48, "completion_tokens": 52409,
+             "finish_reason": "stop", "thinking_budget": 81920, "wall_s": 100.0}
+            for i in range(2)]
+    rows += [{"id": 10 + i, "sample": 0, "prompt_tokens": 48, "completion_tokens": 2400,
+              "finish_reason": "stop", "thinking_budget": 81920, "wall_s": 10.0}
+             for i in range(8)]
+    # Trailing newline: the staleness test APPENDS, and without it the append would corrupt the
+    # last row into an undecodable line — silently shrinking the very denominator under test.
+    (mdir / "ifeval.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in rows))
+    (mdir / "ifeval.manifest.json").write_text(_json.dumps({
+        "kv": {"max_kv_cache_size": 65536},
+        "sampling": {"max_tokens": 102400, "thinking_budget": 81920}}))
+    if with_score:
+        (mdir / "ifeval.score.json").write_text(_json.dumps({
+            "acc": 0.9, "acc_strict": 0.85, "conv_rate": 0.8, "loop_ids": [0, 1],
+            "nonconv_kinds": {"budget_hit": 2}}))
+    return mdir
+
+
+def test_scoreboard_conv_pct_equals_the_GRADED_conv_rate(tmp_path, monkeypatch):
+    """The published defect, in one assertion: the scoresheet cell must be the corrected number the
+    grader persisted, not a fresh declared-budget re-derivation."""
+    sb = _load_scoreboard()
+    _clamped_ifeval_pair(tmp_path)
+    monkeypatch.setattr(sb.paths, "default_results_root", lambda: tmp_path)
+
+    rec = sb.collect()["M"]["ifeval"]
+    assert rec["conv_pct"] == pytest.approx(80.0), (
+        "the scoreboard re-derived convergence against the DECLARED budget and undid the "
+        "resolved-budget correction — this is the 99-vs-95 defect")
+
+
+def test_scoreboard_conv_pct_is_n_a_when_the_pair_was_NEVER_GRADED(tmp_path, monkeypatch):
+    """No score file => nobody has audited this pair's convergence. `n/a` is the honest cell; a
+    self-computed number is precisely how the presenter drifted from the grader in the first place
+    (and `acc`/`acc_strict` already read `ungraded` here)."""
+    sb = _load_scoreboard()
+    _clamped_ifeval_pair(tmp_path, with_score=False)
+    monkeypatch.setattr(sb.paths, "default_results_root", lambda: tmp_path)
+
+    rec = sb.collect()["M"]["ifeval"]
+    assert rec["conv_pct"] is None, "an ungraded pair must not get a scoreboard-invented conv%"
+
+
+def test_scoreboard_FLAGS_a_score_file_graded_over_a_different_row_count(tmp_path, monkeypatch):
+    """The one cost of reading the graded number: a resumed run appends rows, and the score file
+    then predates them. `loop_ids` is the exact non-converged set the grade covered, so
+    (1 - conv_rate) * today's denominator must reproduce its size — it does for every pair in the
+    corpus. A mismatch is marked, so a stale cell says so instead of reading as current."""
+    import json as _json
+    sb = _load_scoreboard()
+    mdir = _clamped_ifeval_pair(tmp_path)
+    with (mdir / "ifeval.jsonl").open("a", encoding="utf-8") as f:   # 3 rows appended post-grade
+        for i in range(3):
+            f.write(_json.dumps({"id": 100 + i, "sample": 0, "prompt_tokens": 48,
+                                 "completion_tokens": 300, "finish_reason": "stop",
+                                 "thinking_budget": 81920, "wall_s": 5.0}) + "\n")
+    monkeypatch.setattr(sb.paths, "default_results_root", lambda: tmp_path)
+
+    rec = sb.collect()["M"]["ifeval"]
+    assert rec["conv_stale"] is True, "a score file graded over 10 of 13 rows must be flagged"
+    assert rec["conv_pct"] == pytest.approx(80.0), "the flagged cell still reports the graded number"
+
+
+def test_scoreboard_conv_pct_is_unflagged_when_the_grade_covers_the_rows(tmp_path, monkeypatch):
+    """The staleness detector must not cry wolf on the normal case, or it will be ignored."""
+    sb = _load_scoreboard()
+    _clamped_ifeval_pair(tmp_path)
+    monkeypatch.setattr(sb.paths, "default_results_root", lambda: tmp_path)
+    assert sb.collect()["M"]["ifeval"]["conv_stale"] is False

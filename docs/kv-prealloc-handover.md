@@ -1,5 +1,16 @@
 # KV pre-allocation right-sizing — handoff (2026-07-09)
 
+> ## ⚠️ HISTORICAL SNAPSHOT — 2026-07-09. DO NOT READ AS CURRENT STATE.
+>
+> Kept verbatim as the dated record of what was believed that day; nothing below has been rewritten.
+> **Current state lives in `docs/PLAN.md` (the plan) · `docs/open-questions.md` (decisions) · `AGENTS.md` (rules).**
+>
+> Load-bearing claims below that are now FALSE or superseded:
+> - **The TL;DR's proposal — pre-allocate to the request's own ceiling instead of the cap — now runs against a STANDING RULE.** `kv_prealloc_tokens` is set EQUAL to that model's `max_kv_cache_size` precisely so the cache is reserved at the full cap and never reallocs; `AGENTS.md` states "**Do NOT remove or lower prealloc**", because growing 128K→256K requires holding 384K of KV live during the double-buffer and that MEASURABLY OOMed. Do not revive this without going through **O15**, which is still OPEN and names the depth test that would settle it.
+> - **Every line number here has drifted.** In `../mlx-vlm` today: `turboquant.py:5351` (`initial_alloc`) → ~5423 and `:5170` → `TurboQuantKVCache` at ~5207; `generate/common.py:262` (`maybe_quantize_kv_cache`) → ~287 and `:288/:292` → ~374; `server/generation.py:436` (`_resolve_generation_budget`) → ~542 and `:477` (`_apply_generation_budget`) → ~584; `apc.py:105` (`_pad_kv_for_capacity`) → ~292. Locate by symbol, not by line.
+> - **The "Multi-turn / APC growth" scope bullet is moot:** APC is OFF everywhere as of 2026-08-13, benchmarks and daily driver alike.
+> - **Do not paste the "Restart prompt" unchanged** — it would launch exactly the work the standing rule and O15 now govern.
+
 **Status:** investigation done, not yet designed. Hand-off for a **fresh session** where you'll
 **restart brainstorming and expand scope**. This captures what we found so a new session starts cold.
 Edit the parent fork `../mlx-vlm` (not `src/mlx-vlm`); measurement discipline in `AGENTS.md` applies.

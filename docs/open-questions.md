@@ -32,7 +32,39 @@ instant and total, but discards stars/watchers/issues. **Recommendation: (a).**
 Guard against recurrence is already in place: `bench.piicheck` in `githooks/pre-commit`, validated
 end-to-end against a staged leak, plus a corpus-wide test asserting every tracked file is clean.
 
-### O26. "degenerate wall-share" NAMES TWO DIFFERENT QUANTITIES that differ by up to ~10x
+### ~~O26~~ → CLOSED-BY-IMPLEMENTATION (2026-08-16): the columns are RENAMED and both are published.
+"degenerate wall-share" named **three** different quantities. My original entry (retained below) got two
+of them wrong, so the corrected measurement is here at the top:
+
+| pair | `degenAllWall%` (published; every row whose trace loops) | `degenEosedWall%` (persisted; SELF-TERMINATING loops only) |
+|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` humanevalplus | **39.66%** (4 rows) | **4.77%** (2 rows) |
+| `Ornith-1.0-35B-mlx-uniform-4bit` mbppplus | **63.07%** (4) | **0.00%** (0) |
+| `Ornith-1.0-35B-mlx-uniform-4bit` ifeval | **41.82%** (30) | **0.32%** (1) |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` humanevalplus | **41.08%** (1) | **0.00%** (0) |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` mbppplus | **70.44%** (2) | **0.00%** (0) |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ifeval | **56.79%** (10) | **0.00%** (0) |
+
+**TWO CORRECTIONS TO MY OWN ENTRY BELOW, both found by measuring instead of inferring:**
+1. I reported the broad figure for `Ornith-1.0-35B-mlx-uniform-4bit` humanevalplus as 34.9% and called
+   the published 40% "a loose rounding". **It is 39.66%, so the published figure was EXACT.** I had
+   filtered on `nonconv_kind == degenerate_repetition` (2 rows) — a THIRD definition that misses the
+   self-terminating loops, which score as CONVERGED and so carry no `nonconv_kind` at all. 2 + 2 = the 4
+   rows the scoreboard counts.
+2. I wrote that the scoreboard is generated from the score files and would therefore print values "~10x
+   smaller" than the prose. **Backwards.** The scoreboard DERIVES the broad share from the rows, so it
+   reproduces the published figures exactly; what is unrecoverable from the table is the PERSISTED narrow
+   number. And the narrow one is itself budget-dependent — without the manifest backfill of the resolved
+   thinking budget, `Ornith-1.0-35B-mlx-uniform-4bit` ifeval reports 26 self-terminating degenerate rows
+   instead of 1.
+
+**Implemented rather than ruled on**, because naming two measured quantities distinctly is not a
+judgement call: `benchmark/m1/scoreboard.py` now emits `degenAll` / `degenAllWall%` (derived) beside
+`degenEosedWall%` (persisted), with a legend stating that the two are NOT interchangeable.
+⚠️ **Residual, and it is real:** `benchmark/run.py`'s own summary still prints the NARROW quantity under
+the bare name `degen`, so the same ambiguity survives there.
+
+### O26 (original text, retained — see the corrections above before using any number in it). "degenerate wall-share" NAMES TWO DIFFERENT QUANTITIES that differ by up to ~10x
 Raised 2026-08-16 from the score files, not from the doc.
 
 `grade.py:122` persists `degenerate_wall_share` from `traces.summarize`, computed over the **EOS'd
