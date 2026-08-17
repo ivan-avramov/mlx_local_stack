@@ -25,7 +25,7 @@ import json
 
 import pytest
 
-from bench import workqueue
+from bench import paths, workqueue
 
 
 def _q(tmp_path, entries):
@@ -194,6 +194,189 @@ def test_state_is_keyed_by_NAME_so_the_plan_can_be_REORDERED(tmp_path):
     plan.write_text(json.dumps([{"name": "second", "cmd": "2"}, {"name": "first", "cmd": "1"}]))
     workqueue.run(plan, state_path=state, runner=lambda c: ran.append(c) or 0)
     assert ran == ["1", "2"], "reordering re-ran a completed job or skipped a pending one"
+
+
+# ---------------------------------------------- operator control files: STOP / SKIP / PAUSE
+#
+# Checked BETWEEN queue items (never mid-item) -- a running job is never interrupted; the runner
+# only consults these files at the same boundary it already re-reads the queue at. Each file is
+# CONSUMED (deleted) once acted on, so the next launch starts fresh. Precedence when several are
+# dropped at once: STOP > SKIP > PAUSE.
+
+
+def test_STOP_stops_the_queue_before_the_next_item_and_is_consumed(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    ran = []
+
+    def runner(cmd):
+        ran.append(cmd)
+        if cmd == "a":
+            (control / "STOP").touch()
+        return 0
+
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}])
+    workqueue.run(q, runner=runner, control_dir=control)
+    assert ran == ["a"], "STOP must take effect only between items, after 'a' finishes"
+    assert not (control / "STOP").exists(), "STOP must be consumed so the next launch starts fresh"
+
+
+def test_STOP_logs_how_many_items_remain(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "STOP").touch()
+    logged = []
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}])
+    workqueue.run(q, runner=lambda c: 0, control_dir=control, log=logged.append)
+    assert any("2" in m and "remain" in m for m in logged), logged
+
+
+def test_STOP_present_before_the_first_item_prevents_any_item_from_running(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "STOP").touch()
+    ran = []
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}])
+    workqueue.run(q, runner=lambda c: ran.append(c) or 0, control_dir=control)
+    assert ran == []
+
+
+def test_SKIP_marks_the_next_pending_item_skipped_with_operator_reason(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "SKIP").touch()
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}])
+    ran = []
+    workqueue.run(q, runner=lambda c: ran.append(c) or 0, control_dir=control)
+    entries = json.loads(q.read_text())
+    assert entries[0]["state"] == "skipped"
+    assert entries[0]["note"] == "operator SKIP"
+    assert ran == ["b"], "one SKIP file must skip exactly one item, then proceed to the next"
+
+
+def test_SKIP_is_consumed_after_use(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "SKIP").touch()
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}])
+    workqueue.run(q, runner=lambda c: 0, control_dir=control)
+    assert not (control / "SKIP").exists()
+
+
+def test_SKIP_records_into_the_state_file_when_state_path_is_used(tmp_path):
+    """SKIP must record the same way the runner records every other outcome: into the SEPARATE
+    state file when one is in use, leaving the committed plan untouched."""
+    plan = tmp_path / "plan.json"
+    original = json.dumps([{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}], indent=1)
+    plan.write_text(original)
+    state = tmp_path / "state.json"
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "SKIP").touch()
+    ran = []
+    workqueue.run(plan, state_path=state, runner=lambda c: ran.append(c) or 0, control_dir=control)
+    assert plan.read_text() == original, "the committed plan was modified"
+    st = json.loads(state.read_text())
+    assert st["a"]["state"] == "skipped" and st["a"]["note"] == "operator SKIP"
+    assert ran == ["b"]
+
+
+def test_SKIP_with_no_pending_items_is_a_no_op_but_still_consumed(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "SKIP").touch()
+    q = _q(tmp_path, [])
+    assert workqueue.run(q, runner=lambda c: 0, control_dir=control) == 0
+    assert not (control / "SKIP").exists()
+
+
+def test_PAUSE_blocks_between_items_polling_until_removed_then_resumes(tmp_path, monkeypatch):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "PAUSE").touch()
+    calls = []
+
+    def fake_sleep(secs):
+        calls.append(secs)
+        (control / "PAUSE").unlink()
+
+    monkeypatch.setattr(workqueue.time, "sleep", fake_sleep)
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}])
+    ran = []
+    workqueue.run(q, runner=lambda c: ran.append(c) or 0, control_dir=control, poll_interval=0.01)
+    assert ran == ["a"], "the item must still run once PAUSE is lifted"
+    assert calls == [0.01], "poll interval must be injectable, not a hardcoded 30s sleep"
+
+
+def test_PAUSE_logs_entering_and_leaving_the_paused_state(tmp_path, monkeypatch):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "PAUSE").touch()
+    monkeypatch.setattr(workqueue.time, "sleep",
+                         lambda secs: (control / "PAUSE").unlink(missing_ok=True))
+    logged = []
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}])
+    workqueue.run(q, runner=lambda c: 0, control_dir=control, poll_interval=0.01, log=logged.append)
+    assert any("PAUSE" in m and "wait" in m.lower() for m in logged), logged
+    assert any("PAUSE" in m and ("lift" in m.lower() or "resum" in m.lower()) for m in logged), logged
+
+
+def test_PAUSE_is_rechecked_after_each_completed_item(tmp_path, monkeypatch):
+    control = tmp_path / "control"
+    control.mkdir()
+    ran = []
+
+    def runner(cmd):
+        ran.append(cmd)
+        if cmd == "a":
+            (control / "PAUSE").touch()          # dropped mid-run, takes effect after 'a'
+        return 0
+
+    monkeypatch.setattr(workqueue.time, "sleep",
+                         lambda secs: (control / "PAUSE").unlink(missing_ok=True))
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}])
+    workqueue.run(q, runner=runner, control_dir=control, poll_interval=0.01)
+    assert ran == ["a", "b"]
+
+
+def test_control_precedence_STOP_beats_SKIP_and_PAUSE(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "STOP").touch()
+    (control / "SKIP").touch()
+    (control / "PAUSE").touch()
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}])
+    ran = []
+    workqueue.run(q, runner=lambda c: ran.append(c) or 0, control_dir=control)
+    assert ran == []
+    assert not (control / "STOP").exists()
+    assert (control / "SKIP").exists(), "STOP must win outright; SKIP must not also be consumed"
+    assert (control / "PAUSE").exists()
+
+
+def test_control_precedence_SKIP_beats_PAUSE(tmp_path, monkeypatch):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "SKIP").touch()
+    (control / "PAUSE").touch()
+    monkeypatch.setattr(workqueue.time, "sleep",
+                         lambda secs: (control / "PAUSE").unlink(missing_ok=True))
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}])
+    ran = []
+    workqueue.run(q, runner=lambda c: ran.append(c) or 0, control_dir=control, poll_interval=0.01)
+    entries = json.loads(q.read_text())
+    assert entries[0]["state"] == "skipped", "SKIP must be actioned before PAUSE is even consulted"
+    assert ran == ["b"]
+
+
+def test_control_dir_defaults_to_repo_benchmark_control(monkeypatch):
+    monkeypatch.delenv("STACK_WORKDIR", raising=False)
+    assert workqueue._control_dir() == paths.repo_root() / "benchmark" / "control"
+
+
+def test_control_dir_honors_STACK_WORKDIR_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    assert workqueue._control_dir() == tmp_path / "control"
 
 
 def test_inline_state_in_an_OLD_plan_is_migrated_not_re_run(tmp_path):

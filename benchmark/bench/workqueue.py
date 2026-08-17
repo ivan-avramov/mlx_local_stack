@@ -23,21 +23,36 @@ Design decisions, each with a reason and a test:
 - **The queue is re-read before every entry**, so work can be appended mid-run.
 - **Entries are shell commands, not a DSL.** Everything worth queueing is already a committed CLI
   invocation; a job schema would only re-encode it.
+- **Operator control is three files, checked BETWEEN items, never mid-item.** A running job is
+  never interrupted -- the runner only consults ``STOP``/``SKIP``/``PAUSE`` at the same boundary
+  it already re-reads the queue at, and each file is CONSUMED (deleted) once acted on so the next
+  launch starts fresh. ``STOP`` finishes the current item then exits; ``SKIP`` marks the next
+  pending item skipped and moves on; ``PAUSE`` waits (polling) until removed. Precedence when
+  several are dropped at once: STOP > SKIP > PAUSE. Default location
+  ``<repo>/benchmark/control/``, or ``$STACK_WORKDIR/control/`` when that out-of-repo workdir is
+  set (see ``docs/PLAN.md``) -- a file, not the committed queue, because pause/stop/skip are
+  transient operator acts, not plan edits.
 
 Usage on the worker (detached, survives the ssh session):
 
     nohup .venv-bench/bin/python -m bench.workqueue docs/work-queue.json \\
         --log /tmp/workqueue.log >/dev/null 2>&1 &
+
+    touch benchmark/control/PAUSE   # or $STACK_WORKDIR/control/PAUSE
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import time
 from pathlib import Path
 
+from . import paths
+
 # Backstop: a malformed queue must not spin forever.
 DEFAULT_MAX_JOBS = 200
+DEFAULT_POLL_INTERVAL = 30
 
 
 def _now() -> str:
@@ -77,7 +92,7 @@ def _shell(cmd: str, logfile=None) -> int:
         return subprocess.run(cmd, shell=True, stdout=fh, stderr=subprocess.STDOUT).returncode
 
 
-TERMINAL = ("done", "failed")
+TERMINAL = ("done", "failed", "skipped")
 
 
 def _load_state(state_path, plan: list) -> dict:
@@ -114,30 +129,126 @@ def _save_state(state_path, st: dict) -> None:
         Path(state_path).write_text(json.dumps(st, indent=1, sort_keys=True))
 
 
+def _is_pending(e: dict, st: dict) -> bool:
+    """True if this entry has not yet reached a TERMINAL state (done/failed/skipped)."""
+    rec = st.get(e.get("name")) or {}
+    if rec.get("state") in TERMINAL:
+        return False
+    if e.get("state") in TERMINAL and not st:
+        return False
+    return True
+
+
 def _next_index(entries: list, st: dict = None):
     """First entry with no terminal state. `failed` is terminal — see the no-auto-retry rule."""
     st = st or {}
     for i, e in enumerate(entries):
-        rec = st.get(e.get("name")) or {}
-        if rec.get("state") in TERMINAL:
-            continue
-        if e.get("state") in TERMINAL and not st:
-            continue
-        return i
+        if _is_pending(e, st):
+            return i
     return None
 
 
+def _pending_count(entries: list, st: dict = None) -> int:
+    """How many entries `_next_index` would still work through — what a STOP reports as
+    'remaining'."""
+    st = st or {}
+    return sum(1 for e in entries if _is_pending(e, st))
+
+
+def _control_dir(override=None) -> Path:
+    """Where the operator drops STOP/SKIP/PAUSE files, checked BETWEEN queue items.
+
+    `$STACK_WORKDIR/control` when the worker's out-of-repo workdir is set (see docs/PLAN.md),
+    else `<repo>/benchmark/control`. A file, not the committed queue, because pausing/stopping/
+    skipping are transient operator acts, not plan edits — the queue stays reorderable and
+    git-syncable regardless of whether the worker is currently paused.
+    """
+    if override is not None:
+        return Path(override)
+    workdir = os.environ.get("STACK_WORKDIR")
+    if workdir:
+        return Path(workdir) / "control"
+    return paths.repo_root() / "benchmark" / "control"
+
+
+def _consume(path: Path) -> None:
+    """Delete a control file once acted on, so the next launch starts fresh. Missing is fine —
+    another process may have already cleared it."""
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def _check_control(cdir: Path, *, entries: list, st: dict, queue_path, state_path, log,
+                    poll_interval: float) -> str:
+    """Act on operator control files between items. Returns ``"stop"`` (caller must exit the
+    loop), ``"skipped"`` (an item was marked skipped; caller should re-read and continue), or
+    ``""`` (nothing to do, proceed to the next item).
+
+    Precedence when several files exist at once: STOP > SKIP > PAUSE — checked in that order every
+    time, so an operator dropping STOP need not first clear a SKIP or PAUSE they left earlier.
+    """
+    stop_path, skip_path, pause_path = cdir / "STOP", cdir / "SKIP", cdir / "PAUSE"
+
+    if stop_path.exists():
+        remaining = _pending_count(entries, st)
+        log(f"[workqueue] STOP requested: exiting with {remaining} item(s) remaining")
+        _consume(stop_path)
+        return "stop"
+
+    if skip_path.exists():
+        idx = _next_index(entries, st)
+        _consume(skip_path)
+        if idx is None:
+            log("[workqueue] SKIP requested but the queue has nothing pending; ignored")
+            return ""
+        entry = entries[idx]
+        name = entry.get("name") or f"job-{idx}"
+        outcome = {"state": "skipped", "note": "operator SKIP", "finished_at": _now()}
+        if state_path:
+            st[name] = {**(st.get(name) or {}), **outcome}
+            _save_state(state_path, st)
+        else:
+            entries[idx].update(**outcome)
+            _save(queue_path, entries)
+        log(f"[workqueue] SKIP {name!r}: operator SKIP")
+        return "skipped"
+
+    if pause_path.exists():
+        log(f"[workqueue] PAUSE: waiting for operator (polling every {poll_interval}s)")
+        while pause_path.exists():
+            time.sleep(poll_interval)
+        log("[workqueue] PAUSE lifted: resuming")
+        return ""
+
+    return ""
+
+
 def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print, logdir=None,
-        state_path=None) -> int:
-    """Execute queued entries in order until none remain. Returns the number of jobs run."""
+        state_path=None, control_dir=None, poll_interval: float = DEFAULT_POLL_INTERVAL) -> int:
+    """Execute queued entries in order until none remain. Returns the number of jobs run.
+
+    `control_dir` defaults to `_control_dir()` (see there); pass an explicit path in tests so a
+    run never consults the real operator control directory. `poll_interval` (seconds) governs the
+    PAUSE poll — injectable so tests never sleep the real 30s.
+    """
     queue_path = Path(queue_path)
     logdir = Path(logdir) if logdir else None
     if logdir:
         logdir.mkdir(parents=True, exist_ok=True)
+    cdir = Path(control_dir) if control_dir is not None else _control_dir()
+    cdir.mkdir(parents=True, exist_ok=True)      # lazy: only created once a run actually starts
     ran = 0
     while ran < max_jobs:
         entries = _load(queue_path)             # re-read: work can be appended mid-run
         st = _load_state(state_path, entries)
+        signal = _check_control(cdir, entries=entries, st=st, queue_path=queue_path,
+                                 state_path=state_path, log=log, poll_interval=poll_interval)
+        if signal == "stop":
+            break
+        if signal == "skipped":
+            continue                            # re-read; proceed to the following item
         idx = _next_index(entries, st)
         if idx is None:
             break
@@ -206,6 +317,11 @@ def main(argv=None) -> int:
                          "plan untouched so it can be reordered and synced via git)")
     ap.add_argument("--logdir", default=None,
                     help="directory for per-job output logs (default: alongside --log)")
+    ap.add_argument("--control-dir", default=None,
+                    help="where STOP/SKIP/PAUSE are checked, between items (default: "
+                         "$STACK_WORKDIR/control if set, else <repo>/benchmark/control)")
+    ap.add_argument("--poll-interval", type=float, default=DEFAULT_POLL_INTERVAL,
+                    help="seconds between PAUSE checks while paused (default: 30)")
     args = ap.parse_args(argv)
 
     if args.log:
@@ -216,7 +332,8 @@ def main(argv=None) -> int:
     else:
         log = print
     run(args.queue, max_jobs=args.max_jobs, log=log, state_path=args.state,
-        logdir=args.logdir or (Path(args.log).parent if args.log else None))
+        logdir=args.logdir or (Path(args.log).parent if args.log else None),
+        control_dir=args.control_dir, poll_interval=args.poll_interval)
     return 0
 
 
