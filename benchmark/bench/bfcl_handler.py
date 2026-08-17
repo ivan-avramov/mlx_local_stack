@@ -241,7 +241,12 @@ def register_model(name: str, host: str = "localhost", port: int = 8000):
         input_price=None,
         output_price=None,
         is_fc_model=True,
-        underscore_to_dot=False,
+        # True is REQUIRED for FC mode: OpenAI tool schemas forbid dots in function names, so
+        # bfcl renames `math.factorial` -> `math_factorial` on the wire and this flag tells the
+        # eval checker to map the model's call back. False cost the first smoke 3/5 items: the
+        # model called `math_factorial` exactly as the schema it received named it, and the
+        # checker looked for `math.factorial`.
+        underscore_to_dot=True,
     )
     MODEL_CONFIG_MAPPING[name] = cfg
     return cfg
