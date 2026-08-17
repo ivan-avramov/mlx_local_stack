@@ -14,6 +14,29 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### O28. The per-draw seed is INERT on the non-speculative serving path — fix the fork, or delete `--samples`?
+Raised 2026-08-17, from the M1 re-draw probe (full evidence in `docs/lab-notebook.md`, same date).
+
+Measured: two draws of HumanEval/71 (`Ornith-1.0-35B-mlx-uniform-4bit`, deployed profile,
+suffix-OFF) with different declared seeds came back **byte-identical over 82,169 tokens**.
+Mechanism: the fork's batched decode keys draws by `(batch-generator seed, row 0, position)` —
+one sampler per `BatchGenerator`, built from the FIRST request's args, `row_ids` always
+`[0]*B` — so `rowschema.sample_seed` is recorded per row and never in force. The 2026-08-11
+"seeds work" measurement certified the SUFFIX path, which the campaign no longer serves.
+
+No existing corpus row is invalidated (k=1 everywhere outside the OFAT, whose ON/OFF pairing
+is unaffected), but every multi-sample design (`--samples k`, pass^k, reliability) is void
+until one of:
+- **(a) Fix the fork** — thread each request's seed into its rows' keys in the batched decode;
+  submodule bump; re-verify with a 2-seed byte-difference probe. Real fork surgery on the
+  batching hot path.
+- **(b) Accept single-sample designs** — remove/refuse `--samples > 1` on this serving path so
+  the harness stops silently producing copies, and spend on ITEMS (which the power doctrine
+  prefers anyway).
+Recommendation: **(b) now** (one guard clause, honest immediately) **+ (a) when the fork is
+next opened** — multi-sample reliability is a stated future endpoint and (a) is the only route
+to it.
+
 ### O27. Does the GitHub remote still need a `gc` to finish the PII scrub?
 Raised 2026-08-16, during the scrub itself.
 

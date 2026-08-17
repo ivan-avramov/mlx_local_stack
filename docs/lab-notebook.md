@@ -1841,3 +1841,53 @@ Run by an unanchored verifier agent against the rows, manifests, guards and git 
 - Stray `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit/mbppplus.jsonl.bak-before-138-repair`
   in the tracked results tree; `provenance.py`'s docstring claims results are gitignored —
   they are tracked, and two manifests carry `box: worker-64gb` / `M5` labels.
+
+## 2026-08-17 — M1 re-draw probe: KILLED EARLY with a sharper verdict than it was designed for — THE PER-DRAW SEED IS INERT ON THE NON-SPECULATIVE SERVING PATH
+
+**What ran:** `Ornith-1.0-35B-mlx-uniform-4bit`, 10 humanevalplus discordant-degeneracy items,
+`--samples 3 --sampling-profile deployed`, suffix-OFF, results under the workdir
+`redraw-2026-08-17` tree. Killed at 11/39 draws; the jsonl persists and resumes.
+
+**Sample-0 sweep (complete, the probe's core question):** 5 of 10 canonically-degenerate items
+re-degenerated — HumanEval/71, /96, /157, /159, /38, every one clipping at ~82K completion
+tokens (~21 min each); 5 converged clean in 10–67 s — HumanEval/131, /86, /101, /109, /163.
+So degeneracy is neither purely item-intrinsic nor purely session-random: it reproduced
+deterministically for half the set and vanished for the other half.
+
+**The finding that killed the run:** HumanEval/71 sample 1 came back **byte-identical** to
+sample 0 — 82,169 tokens, `content` equal, `finish_reason` equal — despite the rows carrying
+different declared seeds (`sampler_seed` 1795116833 vs 455354293). Mechanism traced in the
+fork (`../mlx-vlm`):
+
+1. `_PositionedTargetSampler.sample_target` is the only seed-consuming path, and its call
+   sites pass `row_ids=[0] * B` — row identity never enters the key.
+2. The server constructs **one sampler per `BatchGenerator`**, from the args of whichever
+   request FIRST triggered its creation (`generation.py:2495-2500`); every later request in
+   that generator's lifetime draws from the first request's seed.
+3. The plain `__call__` fallback samples from global RNG with no key at all.
+
+Net: draws are keyed by `(batch-generator seed, 0, position)` — a function of process
+history, not of the row's declared seed. `rowschema.sample_seed` is faithfully RECORDED in
+every row and never in force. **The 2026-08-11 "every draw carries an explicit seed"
+measurement was taken when the winners served suffix-ON** — the speculative path is where the
+`(seed, row_id, position)` keying actually engages — so it certified the wrong serving path
+for today's suffix-OFF uniform config.
+
+**Consequences, enumerated:**
+- `--samples k` on the current serving path yields k byte-copies: pass^k collapses to pass@1
+  and every reliability endpoint reads perfect stability. No corpus row is harmed (the corpus
+  is k=1 outside the OFAT, which paired ON-vs-OFF on the same declared seeds and is unaffected
+  as a pairing), but the M1 design and any future multi-sample design are void until fixed.
+- The earlier "degeneracy is session-state-dependent" reading is now EXPLAINED, not refuted:
+  same-prompt re-draws reproduce within a server session (deterministic per-position keys) and
+  diverge across sessions (different batch-generator seed / arrival order). The 5/10
+  deterministic re-degeneration above is a within-session statement.
+- Killing the remaining 28 draws saved ~3.6 h of provably-duplicate generation; the
+  sample-0 evidence was already complete. The queued canonical `Mbpp/430` repair row for
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (the OFF-arm timed-out stub) died with the launcher —
+  still worth a targeted run someday; the OFAT analyser already excludes the stub either way.
+
+**Fix direction (O28, needs a ruling):** thread the REQUEST's seed into per-row keys in the
+fork's batched decode (row identity = the request's declared seed, not batch slot), or accept
+single-sample-only designs and delete `--samples` to stop it lying. Fork edit → submodule
+bump → re-verify with a 2-seed byte-difference probe.

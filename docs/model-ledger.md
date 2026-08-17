@@ -123,6 +123,12 @@ registry name, the suffix was the tune.
 
 ## 3. Standing caveats that govern reading any number here
 
+- **`--samples k` is k BYTE-COPIES on the current (suffix-OFF) serving path** (O28, measured
+  2026-08-17): the declared per-draw seed is recorded in every row and never in force — draws
+  key off the batch generator's first-request seed at row 0. No k=1 corpus row is harmed and
+  the suffix-OFAT pairing is unaffected, but no multi-sample reliability figure is valid until
+  O28 is ruled (fork fix vs single-sample-only guard).
+
 - **Guard-clean baseline inventory (PUBLISHED — parity enforced in code since `9675957`,
   2026-08-17):** fingerprint v4 + `compare` tier parity are live, with a pytest that reds the
   suite if a fingerprint key ever lacks a documented tier again. Under full parity, the leader
