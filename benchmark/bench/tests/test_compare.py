@@ -18,27 +18,35 @@ import bench.compare as CMP
 import bench.generate as G
 
 
-def _rows(ids, *, ok=True, samples=1, budget=16384, ct=100):
+def _rows(ids, *, ok=True, samples=1, budget=16384, ct=100, pt=500):
     out = []
     for i in ids:
         for s in range(samples):
             hit = ok if isinstance(ok, bool) else (i in ok)
             out.append({"id": i, "sample": s, "schema_version": 2,
                         "content": r"\boxed{42}" if hit else r"\boxed{7}",
-                        "answer_gold": "42", "completion_tokens": ct,
+                        "answer_gold": "42", "completion_tokens": ct, "prompt_tokens": pt,
                         "thinking_budget": budget, "finish_reason": "stop"})
     return out
 
 
-def _manifest(tmp, model, bench, *, temp=0.4, budget=16384, box="M2", apc="0", draft=None):
+def _manifest(tmp, model, bench, *, temp=0.4, budget=16384, box="M2", apc="0", draft=None,
+              sampling_extra=None, kv=None, git=None, runtime_extra=None):
     p = G.result_path(model, bench).with_suffix(".manifest.json")
     p.parent.mkdir(parents=True, exist_ok=True)
     import json
-    p.write_text(json.dumps({
+    sampling = {"temperature": temp, "thinking_budget": budget, "max_tokens": 102400}
+    if sampling_extra:
+        sampling.update(sampling_extra)
+    doc = {
         "box": box, "sampling_profile": "deployed", "fingerprint_version": 2,
-        "sampling": {"temperature": temp, "thinking_budget": budget, "max_tokens": 102400},
-        "kv": {"kv_bits": 4},
-        "runtime": {"apc_enabled": apc, **({"draft_kind": draft} if draft else {})}}))
+        "sampling": sampling,
+        "kv": kv if kv is not None else {"kv_bits": 4},
+        "runtime": {"apc_enabled": apc, **({"draft_kind": draft} if draft else {}),
+                    **(runtime_extra or {})}}
+    if git is not None:
+        doc["git"] = git
+    p.write_text(json.dumps(doc))
 
 
 # --------------------------------------------------------------------- refusals
@@ -257,3 +265,117 @@ def test_refuses_peak_mem_gb_as_a_paired_metric_outright(write_rows, tmp_results
     r = CMP.compare("A", "B", "math500", metric="peak_mem_gb")
     assert r["comparable"] is False
     assert "cumulative" in r["reason"] and "capacity" in r["reason"]
+
+
+# ----------------------------------------------------- V3 guard parity (2026-08-17)
+# The verifier's audit found 18 fingerprint keys `compare` never looked at. The fix is a
+# CLASSIFICATION, not a blanket must-match: under the (model, tune) taxonomy each model
+# legitimately runs its own tune (temperature, top_p, kv_bits...), so tune axes WARN;
+# harness/serving knobs that make a delta non-attributable REFUSE; box-bound structural
+# knobs refuse for HARDWARE metrics only. The parity test at the bottom pins the invariant
+# that every fingerprint key has exactly one documented home.
+
+def test_refuses_when_enable_thinking_differs(write_rows, tmp_results):
+    """Thinking ON is a RULED axis — a side that ran with it off measured a different regime."""
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", sampling_extra={"enable_thinking": True})
+    _manifest(tmp_results, "B", "math500", sampling_extra={"enable_thinking": False})
+    r = CMP.compare("A", "B", "math500")
+    assert r["comparable"] is False and "enable_thinking" in r["reason"]
+
+
+def test_tune_axes_warn_but_never_refuse(write_rows, tmp_results):
+    """top_p/top_k/min_p/penalties/kv_bits are per-model TUNE axes, same standing as
+    temperature: a rule demanding equality would refuse every comparison the campaign needs."""
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", sampling_extra={"top_p": 0.95, "top_k": 20},
+              kv={"kv_bits": 4})
+    _manifest(tmp_results, "B", "math500", sampling_extra={"top_p": 0.9, "top_k": 40},
+              kv={"kv_bits": 8})
+    r = CMP.compare("A", "B", "math500")
+    assert r["comparable"] is True
+    joined = " ".join(r["warnings"])
+    assert "top_p" in joined and "top_k" in joined and "kv_bits" in joined
+
+
+def test_refuses_across_OBSERVED_differing_code_shas_but_not_unrecorded_ones(write_rows, tmp_results):
+    """The deployed code is output-determining (measured: 2475 -> 3526 completion tokens on an
+    identical prompt across one src/mlx-vlm bump). Two OBSERVED, differing shas refuse; manifests
+    that never recorded a git block (the pre-provenance corpus) stay readable with a warning."""
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500",
+              git={"submodules": {"src/mlx-vlm": "aaa", "src/mlx-serve": "s1"}})
+    _manifest(tmp_results, "B", "math500",
+              git={"submodules": {"src/mlx-vlm": "bbb", "src/mlx-serve": "s1"}})
+    r = CMP.compare("A", "B", "math500")
+    assert r["comparable"] is False and "mlx-vlm" in r["reason"]
+    # unrecorded on both sides -> comparable, warned
+    _manifest(tmp_results, "A", "math500")
+    _manifest(tmp_results, "B", "math500")
+    r2 = CMP.compare("A", "B", "math500")
+    assert r2["comparable"] is True
+    assert any("code" in w.lower() or "sha" in w.lower() for w in r2["warnings"])
+
+
+def test_refuses_across_differing_agentic_scaffold_knobs(write_rows, tmp_results):
+    """client/edit_format/max_turns/deadline_s/loop_guard are harness knobs, not model tunes:
+    aider-diff vs opencode-tools rows measure different protocols (the 3.75-malformed lesson)."""
+    write_rows("A", "aider", _rows(["a", "b"]))
+    write_rows("B", "aider", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "aider", runtime_extra={"client": "aider", "edit_format": "diff"})
+    _manifest(tmp_results, "B", "aider", runtime_extra={"client": "opencode", "edit_format": "tools"})
+    r = CMP.compare("A", "B", "aider")
+    assert r["comparable"] is False and "client" in r["reason"]
+
+
+def test_prealloc_and_prefill_step_refuse_hardware_metrics_only(write_rows, tmp_results):
+    """kv_prealloc_tokens moved wall-clock measurably (24.7s vs 27.8s OFAT) but is text-invariant,
+    so it refuses speed/memory pairings and leaves quality pairings alone (warned for prefill)."""
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500",
+              kv={"kv_bits": 4, "kv_prealloc_tokens": 131072, "prefill_step_size": 512})
+    _manifest(tmp_results, "B", "math500",
+              kv={"kv_bits": 4, "kv_prealloc_tokens": 262144, "prefill_step_size": 512})
+    assert CMP.compare("A", "B", "math500", metric="wall_s")["comparable"] is False
+    assert CMP.compare("A", "B", "math500")["comparable"] is True
+
+
+def test_cap_difference_refuses_only_when_the_cap_could_have_BOUND(write_rows, tmp_results):
+    """Operator ruling 7: the cap is an EXTERNAL ceiling — rows whose generation never hit
+    `max_tokens > cap - prompt` are cap-invariant (the silent 0.8 clamp never engaged), so a
+    non-binding cap difference warns instead of refusing. A binding one refuses: the smaller-cap
+    side ran at a resolved thinking budget nobody chose."""
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    # binding: max_tokens 102400 > 65536 - prompt  -> refuse
+    _manifest(tmp_results, "A", "math500", kv={"kv_bits": 4, "max_kv_cache_size": 65536})
+    _manifest(tmp_results, "B", "math500", kv={"kv_bits": 4, "max_kv_cache_size": 131072})
+    r = CMP.compare("A", "B", "math500")
+    assert r["comparable"] is False and "cap" in r["reason"].lower()
+    # non-binding: max_tokens 16384 fits under both caps at these prompts -> warn only
+    _manifest(tmp_results, "A", "math500", kv={"kv_bits": 4, "max_kv_cache_size": 65536},
+              sampling_extra={"max_tokens": 16384})
+    _manifest(tmp_results, "B", "math500", kv={"kv_bits": 4, "max_kv_cache_size": 131072},
+              sampling_extra={"max_tokens": 16384})
+    r2 = CMP.compare("A", "B", "math500")
+    assert r2["comparable"] is True
+    assert any("cap" in w.lower() for w in r2["warnings"])
+
+
+def test_every_fingerprint_key_is_classified_in_compare_no_silent_gaps():
+    """THE parity invariant. `draft_kind` sat in the fingerprint for two versions while nothing
+    populated or guarded it — a declared-but-unenforced key reads as covered. This test makes the
+    next such gap a red suite instead of a corpus defect: every fingerprinted key must belong to
+    exactly one documented tier in `compare`."""
+    import bench.provenance as P
+    assert set(P._FINGERPRINT_SAMPLING) == set(CMP._MUST_MATCH_SAMPLING) | set(CMP._TUNE_SAMPLING_WARN)
+    assert set(CMP._MUST_MATCH_SAMPLING) & set(CMP._TUNE_SAMPLING_WARN) == set()
+    assert set(P._FINGERPRINT_RUNTIME) == set(CMP._MUST_MATCH_RUNTIME) | set(CMP._SERVING_PATH_RUNTIME)
+    kv_fingerprinted = {"kv_bits", "max_kv_cache_size"} | set(P._FINGERPRINT_KV_EXTRA)
+    kv_classified = (set(CMP._TUNE_KV_WARN) | set(CMP._CAP_BINDING_KV)
+                     | set(CMP._CROSS_MODEL_IDENTITY_KV))
+    assert kv_fingerprinted == kv_classified, (kv_fingerprinted, kv_classified)

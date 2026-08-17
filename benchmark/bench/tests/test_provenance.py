@@ -86,3 +86,67 @@ def test_build_manifest_assembles_full_config():
     assert m["kv"]["kv_bits"] == 0
     assert m["quant"]["effective_bits"] == 8.0
     assert m["sampling"]["temperature"] == 0.6
+
+
+# ----------------------------------------------------- v4 (2026-08-17, V3 guard parity)
+def test_v4_fingerprints_the_kv_extra_slice_and_v3_rows_still_compare_on_v3():
+    """v4 adds hf_path / kv_quant_scheme / quantized_kv_start / prefill_step_size to the resume
+    guard. Non-destructive by the min-version rule: a v3 manifest paired with a v4 one compares
+    on the v3 slice, so no historical row reads stale. Two v4 manifests differing only in a new
+    key ARE stale — that is the point."""
+    def man(v, scheme):
+        return {"sampling_profile": "deployed", "fingerprint_version": v,
+                "sampling": {"temperature": 0.4},
+                "kv": {"kv_bits": 4, "kv_quant_scheme": scheme, "hf_path": "org/m"},
+                "runtime": {}}
+    fp4 = P.config_fingerprint(man(4, "turboquant"))
+    assert fp4["kv_extra"]["kv_quant_scheme"] == "turboquant"
+    assert fp4["kv_extra"]["hf_path"] == "org/m"
+    assert "kv_extra" not in P.config_fingerprint(man(3, "turboquant"))
+    assert P.is_compatible(man(3, "uniform"), man(4, "turboquant")) is True   # min-version: v3 slice
+    assert P.is_compatible(man(4, "uniform"), man(4, "turboquant")) is False  # both v4: guarded
+
+
+def test_registry_kv_records_kv_prealloc_tokens_but_the_resume_fingerprint_ignores_it(tmp_path):
+    """Prealloc moved wall-clock (24.7 vs 27.8 s OFAT) but is text-invariant, so it must be
+    RECORDED (compare refuses hardware metrics across it) without joining the resume fingerprint
+    (a prealloc change must not let --clean-stale delete quality rows)."""
+    yml = tmp_path / "reg.yaml"
+    yml.write_text("models:\n  - name: m-4bit\n    hf_path: org/m\n    kv_bits: 4\n"
+                   "    kv_prealloc_tokens: 131072\n")
+    assert P.registry_kv("m-4bit", str(yml))["kv_prealloc_tokens"] == 131072
+    a = {"fingerprint_version": 4, "sampling": {}, "runtime": {},
+         "kv": {"kv_bits": 4, "kv_prealloc_tokens": 131072}}
+    b = {"fingerprint_version": 4, "sampling": {}, "runtime": {},
+         "kv": {"kv_bits": 4, "kv_prealloc_tokens": 262144}}
+    assert P.is_compatible(a, b) is True
+
+
+def test_gather_records_the_registry_hash_and_dirt_state(tmp_path):
+    """Operator ruling 5 (2026-08-17): the worker's registry is permanently dirty (caps), and a
+    manifest that cannot say WHICH registry bytes produced it has the same provenance gap the
+    dirty-registry scp era had. Record-only — never fingerprinted (the caps/sampling it could
+    change are fingerprinted directly)."""
+    yml = tmp_path / "reg.yaml"
+    yml.write_text("models:\n  - name: m-4bit\n    hf_path: org/m\n    kv_bits: 0\n")
+    man = P.gather("m-4bit", str(yml), profile="deployed")
+    reg = man["registry"]
+    import hashlib
+    assert reg["sha256"] == hashlib.sha256(yml.read_bytes()).hexdigest()
+    # a non-repo path cannot be git-checked: dirty must be "unknown", not a guess
+    assert reg["dirty"] == "unknown"
+
+
+def test_box_falls_back_to_config_sh_when_env_is_absent(tmp_path, monkeypatch):
+    """The box guard was ANTI-CORRELATED for the whole campaign (50/54 manifests said "local")
+    because MLX_BOX only exists in shells that sourced config.sh. The fallback reads the config
+    file directly so a bare `nohup python run.py` still stamps the right box."""
+    cfg_dir = tmp_path / "mlx_local_stack"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.sh").write_text('# machine-local\nexport MLX_BOX="m5max"\n')
+    monkeypatch.delenv("MLX_BOX", raising=False)
+    monkeypatch.delenv("HOSTNAME", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert P._box() == "m5max"
+    monkeypatch.setenv("MLX_BOX", "explicit-wins")
+    assert P._box() == "explicit-wins"

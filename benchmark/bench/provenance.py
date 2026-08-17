@@ -39,6 +39,11 @@ def registry_kv(model: str, registry_path: str | None = None):
                 "quantized_kv_start": e.get("quantized_kv_start"),
                 "prefill_step_size": e.get("prefill_step_size"),
                 "max_kv_cache_size": e.get("max_kv_cache_size"),
+                # RECORDED, never resume-fingerprinted: prealloc moved wall-clock measurably
+                # (24.7 vs 27.8 s in the 2026-08-14 OFAT) but is text-invariant, so `compare`
+                # refuses HARDWARE metrics across it while a prealloc change must not let
+                # --clean-stale delete quality rows.
+                "kv_prealloc_tokens": e.get("kv_prealloc_tokens"),
             }
     return None
 
@@ -93,8 +98,22 @@ _FINGERPRINT_SAMPLING = ("temperature", "top_p", "top_k", "min_p", "presence_pen
 _FINGERPRINT_RUNTIME = ("apc_enabled", "draft_kind", "max_turns", "deadline_s", "loop_guard",
                         "client", "edit_format")
 
+# v4 additions (2026-08-17, V3 guard parity): the kv/identity knobs the verifier's audit found
+# recorded-but-unfingerprinted. All resolve from the registry entry / manifest kv block:
+#   hf_path            — WEIGHTS IDENTITY. A changed path means changed weights; a same-weights
+#                        local->hub migration (the Qwen3.8-27B interim) deliberately reads stale,
+#                        which is the cheap direction (screening rows re-run in minutes).
+#   kv_quant_scheme    — uniform vs turboquant are different KV numerics -> different text.
+#   quantized_kv_start — same mechanism.
+#   prefill_step_size  — chunked-prefill numerics on Metal are not proven text-invariant (the
+#                        suffix lesson: kernel batch shape flips bf16 argmaxes), so resume is
+#                        strict about it; `compare` only WARNS for quality across it.
+# `kv_prealloc_tokens` is deliberately ABSENT (text-invariant; see registry_kv).
+_FINGERPRINT_KV_EXTRA = ("hf_path", "kv_quant_scheme", "quantized_kv_start", "prefill_step_size")
+
 # v3 (2026-08-16): draft/suffix state is POPULATED, not merely named. See registry_draft().
-FINGERPRINT_VERSION = 3
+# v4 (2026-08-17): the kv_extra slice above joins the resume guard.
+FINGERPRINT_VERSION = 4
 
 
 def config_fingerprint(manifest, version: int | None = None):
@@ -146,6 +165,8 @@ def config_fingerprint(manifest, version: int | None = None):
     if version >= 2:
         r = manifest.get("runtime") or {}
         fp["runtime"] = {k: r.get(k) for k in _FINGERPRINT_RUNTIME}
+    if version >= 4:
+        fp["kv_extra"] = {k: kv.get(k) for k in _FINGERPRINT_KV_EXTRA}
     return fp
 
 
@@ -295,7 +316,29 @@ def build_manifest(*, model, box, ts, git_shas, kv, quant, sampling, runtime=Non
 
 # --------------------------------------------------------------- real gatherers
 def _box() -> str:
-    return os.environ.get("MLX_BOX") or os.environ.get("HOSTNAME") or "local"
+    """Box label for the manifest. Env wins; else the machine-local config.sh is parsed directly.
+
+    The fallback exists because the box guard was ANTI-CORRELATED for the entire campaign:
+    50 of 54 manifests said "local" — MLX_BOX only existed in shells that happened to source
+    config.sh, so the one guard built for the apples-to-apples rule never fired. A bare
+    `nohup python run.py` must still stamp the right box.
+    """
+    env = os.environ.get("MLX_BOX") or os.environ.get("HOSTNAME")
+    if env:
+        return env
+    cfg = os.path.join(os.environ.get("XDG_CONFIG_HOME")
+                       or os.path.expanduser("~/.config"), "mlx_local_stack", "config.sh")
+    try:
+        with open(cfg) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("export MLX_BOX=") or line.startswith("MLX_BOX="):
+                    val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    if val:
+                        return val
+    except OSError:
+        pass
+    return "local"
 
 
 def _git_shas() -> dict:
@@ -321,6 +364,31 @@ def _git_shas() -> dict:
         if len(parts) >= 2:
             subs[parts[1]] = parts[0]
     return {"stack_head": _run(["git", "rev-parse", "HEAD"]), "submodules": subs}
+
+
+def _registry_state(registry_path: str) -> dict:
+    """Hash of the EXACT registry bytes this run resolved against, plus whether they match the
+    committed version (operator ruling 5, 2026-08-17). The worker's registry is permanently,
+    intentionally dirty (caps), so "which main_models.yaml produced this row" was unanswerable
+    from the manifest alone — the same provenance gap the scp era had. RECORD-ONLY: never part
+    of the fingerprint, because everything it could change (caps, sampling, kv, draft) is
+    fingerprinted directly, and hashing comments/whitespace into the guard would manufacture
+    false staleness."""
+    import hashlib
+    try:
+        sha = hashlib.sha256(open(registry_path, "rb").read()).hexdigest()
+    except OSError:
+        return {"sha256": None, "dirty": "unknown"}
+    dirty = "unknown"
+    try:
+        root = str(paths.repo_root())
+        if os.path.realpath(registry_path) == os.path.realpath(os.path.join(root, "main_models.yaml")):
+            rc = subprocess.run(["git", "diff", "--quiet", "--", "main_models.yaml"],
+                                cwd=root, stderr=subprocess.DEVNULL).returncode
+            dirty = bool(rc)
+    except Exception:  # noqa: BLE001 — never block a run on provenance
+        pass
+    return {"sha256": sha, "dirty": dirty}
 
 
 def _resolve_snapshot(hf_path):
@@ -365,6 +433,8 @@ def gather(model: str, registry_path: str | None = None,
                          runtime=_runtime_block(runtime, model=model,
                                                 registry_path=registry_path))
     man["sampling_profile"] = profile
+    man["registry"] = _registry_state(str(paths.registry_path())
+                                      if registry_path is None else registry_path)
     return man
 
 

@@ -265,6 +265,6 @@ def test_unknown_draft_state_stays_a_wildcard():
 def test_the_live_manifest_actually_carries_the_draft_state():
     """End-to-end: the bug was that nothing populated the key. Assert the real builder does."""
     man = P.current_manifest_lite("Ornith-1.0-35B-mlx-uniform-4bit", profile="deployed")
-    assert man["fingerprint_version"] == 3
+    assert man["fingerprint_version"] >= 3   # v3 introduced the populated draft state; v4 keeps it
     assert man["runtime"]["draft_kind"] in ("off", "suffix")
     assert P.config_fingerprint(man)["runtime"]["draft_kind"] is not None

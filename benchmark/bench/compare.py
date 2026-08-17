@@ -27,9 +27,42 @@ from . import generate, grade, provenance, rowschema, stats
 _HARDWARE_METRICS = ("decode_tps", "prefill_tps", "wall_s", "peak_mem_gb", "etts",
                      "successes_per_hour")
 
-# Sampling keys that MUST match for a comparison to mean anything. `temperature` is deliberately
-# absent (see the module docstring).
-_MUST_MATCH_SAMPLING = ("thinking_budget", "max_tokens")
+# ---- The V3 classification (2026-08-17). Every provenance fingerprint key lives in exactly one
+# tier below; test_every_fingerprint_key_is_classified_in_compare_no_silent_gaps enforces it, so
+# a key added to the fingerprint without a home here is a red suite, not a silent gap (which is
+# how draft_kind spent two fingerprint versions unguarded).
+
+# REFUSE for every metric: harness knobs that make a delta non-attributable. thinking_budget /
+# max_tokens move truncation-sensitive metrics; enable_thinking OFF is a different regime
+# entirely (thinking ON is a RULED axis).
+_MUST_MATCH_SAMPLING = ("thinking_budget", "max_tokens", "enable_thinking")
+
+# WARN only: per-model TUNE axes. Under the (model, tune) taxonomy each model legitimately runs
+# its own operating point — Ornith-1.0-35B-mlx-uniform-4bit t0.4 vs
+# Qwen3.6-27B-Opus-Distill-OptiQ-4bit t0.3 — and a rule demanding identical sampling would
+# refuse every comparison the campaign actually needs.
+_TUNE_SAMPLING_WARN = ("temperature", "top_p", "top_k", "min_p", "presence_penalty",
+                       "repetition_penalty")
+
+# REFUSE when OBSERVED differing: agentic scaffold knobs. aider-`diff` vs opencode-`tools` rows
+# measure different edit protocols (the 3.75-malformed-per-case lesson), not different models.
+_MUST_MATCH_RUNTIME = ("client", "edit_format", "max_turns", "deadline_s", "loop_guard")
+
+# Handled by dedicated logic below (draft: text-changing, refuse-with-unobserved-wildcard;
+# APC: latency-only cache, hardware metrics only).
+_SERVING_PATH_RUNTIME = ("apc_enabled", "draft_kind")
+
+# KV tune axes: WARN for quality (kv_bits/scheme are part of a model's tune; prefill_step_size
+# has no proven text effect), while prealloc/prefill REFUSE hardware metrics (prealloc moved
+# wall-clock 24.7 vs 27.8 s in the 2026-08-14 OFAT).
+_TUNE_KV_WARN = ("kv_bits", "kv_quant_scheme", "quantized_kv_start", "prefill_step_size")
+_HARDWARE_KV = ("kv_prealloc_tokens", "prefill_step_size")
+
+# max_kv_cache_size gets the ruling-7 binding rule in compare() (refuse only when the silent
+# 0.8 budget clamp could actually have engaged); hf_path differs across models by definition
+# (weights identity — it guards RESUME, not cross-model comparison).
+_CAP_BINDING_KV = ("max_kv_cache_size",)
+_CROSS_MODEL_IDENTITY_KV = ("hf_path",)
 
 
 def _manifest(model, bench):
@@ -82,9 +115,47 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
         if sa.get(k) != sb.get(k):
             return _refuse(f"{k} differs ({sa.get(k)} vs {sb.get(k)}) — truncation-sensitive "
                            f"metrics move with it, so the delta would not be attributable")
-    if sa.get("temperature") != sb.get("temperature"):
-        warnings.append(f"temperature differs ({sa.get('temperature')} vs {sb.get('temperature')}) "
-                        f"— expected when each model runs at its own tuned operating point")
+    for k in _TUNE_SAMPLING_WARN:
+        if sa.get(k) != sb.get(k):
+            warnings.append(f"{k} differs ({sa.get(k)} vs {sb.get(k)}) — a per-model tune axis; "
+                            f"expected when each model runs at its own tuned operating point")
+
+    kva, kvb = ma.get("kv") or {}, mb.get("kv") or {}
+    for k in _TUNE_KV_WARN:
+        if kva.get(k) != kvb.get(k):
+            warnings.append(f"{k} differs ({kva.get(k)} vs {kvb.get(k)}) — a per-model KV/tune "
+                            f"axis, recorded not refused")
+
+    # DEPLOYED CODE — refuse when OBSERVED differing. Output-determining, measured 2026-08-14:
+    # one src/mlx-vlm bump moved a matched item from 2475 to 3526 completion tokens on an
+    # identical prompt. Unrecorded on both sides (the pre-provenance corpus) warns instead.
+    ga = ((ma.get("git") or {}).get("submodules") or {})
+    gb = ((mb.get("git") or {}).get("submodules") or {})
+    if not ga and not gb:
+        warnings.append("deployed-code shas unrecorded on both sides — cannot rule out a code-"
+                        "version composite (pre-provenance rows)")
+    else:
+        for k in ("src/mlx-vlm", "src/mlx-serve"):
+            va, vb = ga.get(k), gb.get(k)
+            if va and vb and va != vb:
+                return _refuse(f"deployed code differs at {k} ({va[:12]} vs {vb[:12]}) — the "
+                               f"code sha is output-determining (measured: 2475 vs 3526 tokens "
+                               f"on an identical prompt across one bump), so the delta would be "
+                               f"a (model x code-version) composite")
+            if bool(va) != bool(vb):
+                warnings.append(f"{k} sha recorded on only one side — cannot rule out a "
+                                f"code-version composite")
+
+    ra_all = ma.get("runtime") or {}
+    rb_all = mb.get("runtime") or {}
+    for k in _MUST_MATCH_RUNTIME:
+        va, vb = ra_all.get(k), rb_all.get(k)
+        if va is not None and vb is not None and va != vb:
+            return _refuse(f"{k} differs ({va} vs {vb}) — an agentic scaffold knob: the rows "
+                           f"measure different harness protocols, not different models")
+        if (va is None) != (vb is None):
+            warnings.append(f"{k} recorded on only one side ({va} vs {vb}) — scaffold "
+                            f"provenance is one-sided")
 
     # DRAFT/SUFFIX STATE — fatal for EVERY metric, not just speed. This is the refusal whose absence
     # let the corpus's central defect through: suffix decoding was ON for exactly the two winners and
@@ -124,11 +195,47 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
         if apc_a != apc_b:
             return _refuse(f"{metric} is APC-sensitive (34-147x on TTFT) and APC state differs "
                            f"({apc_a} vs {apc_b})")
+        for k in _HARDWARE_KV:
+            va, vb = kva.get(k), kvb.get(k)
+            if va is not None and vb is not None and va != vb:
+                return _refuse(f"{metric} is hardware/serving-structure-dependent and {k} "
+                               f"differs ({va} vs {vb}) — prealloc alone moved wall-clock "
+                               f"24.7 vs 27.8 s in the 2026-08-14 OFAT")
 
     rows_a, rows_b = grade._rows(model_a, bench), grade._rows(model_b, bench)
     if not rows_a or not rows_b:
         empty = [m for m, r in ((model_a, rows_a), (model_b, rows_b)) if not r]
         return _refuse(f"no results for {', '.join(empty)}")
+
+    # max_kv_cache_size — the RULING-7 BINDING RULE (operator, 2026-08-17). The cap is an
+    # EXTERNAL ceiling: it changes text only through the silent 0.8 thinking-budget clamp,
+    # which engages iff max_tokens > cap - prompt. Rows where it never could have engaged are
+    # cap-invariant, so a non-binding cap difference warns; a binding one refuses, because the
+    # smaller-cap side ran at a resolved budget nobody chose. Checked against the rows' ACTUAL
+    # prompt lengths; rows too old to carry prompt_tokens cannot prove innocence -> refuse.
+    cap_a, cap_b = kva.get("max_kv_cache_size"), kvb.get("max_kv_cache_size")
+    if cap_a != cap_b:
+        if cap_a is None or cap_b is None:
+            warnings.append(f"max_kv_cache_size unrecorded on at least one side "
+                            f"({cap_a} vs {cap_b}) — cannot check the budget-clamp binding rule")
+        else:
+            binding = []
+            for mdl, rows, cap, s in ((model_a, rows_a, cap_a, sa), (model_b, rows_b, cap_b, sb)):
+                mt = s.get("max_tokens")
+                prompts = [r.get("prompt_tokens") for r in rows]
+                if mt is None or not prompts or any(p is None for p in prompts):
+                    binding.append(f"{mdl}: unknowable (rows missing prompt_tokens or manifest "
+                                   f"missing max_tokens)")
+                elif max(prompts) + mt > cap:
+                    binding.append(f"{mdl}: max prompt {max(prompts)} + max_tokens {mt} "
+                                   f"exceeds cap {cap}")
+            if binding:
+                return _refuse(f"max_kv_cache_size differs ({cap_a} vs {cap_b}) and the cap "
+                               f"could have BOUND — the silent 0.8 clamp resolves a thinking "
+                               f"budget nobody chose ({'; '.join(binding)})")
+            warnings.append(f"max_kv_cache_size differs ({cap_a} vs {cap_b}) but never bound "
+                            f"(max_tokens + every prompt fits under both caps) — rows are "
+                            f"cap-invariant per the 2026-08-17 ruling")
 
     score_a, score_b = grade.grade(bench, model_a), grade.grade(bench, model_b)
     conv_only = metric == "pass_at_1_converged"
