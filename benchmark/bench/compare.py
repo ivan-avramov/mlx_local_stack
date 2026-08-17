@@ -10,6 +10,11 @@ WHICH MISMATCHES ARE FATAL is a judgement, so it is written down rather than lef
 
   fatal always   different item-id sets (the defect this exists to stop); different
                  thinking_budget or max_tokens (truncation-sensitive metrics move with them)
+  fatal always   a different draft/suffix state. Unlike APC it changes the TEXT, not just the
+                 latency (ON and OFF are different fixed points at the deployed config), and its
+                 absence here is what let every winner-vs-candidate comparison in the corpus be a
+                 (model x serving-path) composite. UNOBSERVED on either side warns instead, because
+                 no pre-v3 row records it.
   fatal for      a different box, or a different APC state, when the metric is speed/memory
   speed only     (the apples-to-apples rule; APC is worth 34-147x on TTFT)
   NOT fatal      a different per-model temperature. Ornith runs t0.4 and the distill t0.3 because
@@ -80,6 +85,26 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
     if sa.get("temperature") != sb.get("temperature"):
         warnings.append(f"temperature differs ({sa.get('temperature')} vs {sb.get('temperature')}) "
                         f"— expected when each model runs at its own tuned operating point")
+
+    # DRAFT/SUFFIX STATE — fatal for EVERY metric, not just speed. This is the refusal whose absence
+    # let the corpus's central defect through: suffix decoding was ON for exactly the two winners and
+    # OFF for every other candidate, so every cross-model comparison was a (model x serving-path)
+    # composite and nothing objected. It differs from APC in kind: APC is a cache, so it moves only
+    # latency, while suffix CHANGES THE GENERATED TEXT — ON and OFF are different fixed points at the
+    # deployed config, measured byte-for-byte (bench/probe_determinism.py). An UNOBSERVED value
+    # (pre-v3 rows carry none) warns rather than refuses; refusing there would make the whole
+    # historical corpus incomparable overnight, which costs more than the composite it prevents.
+    da = (ma.get("runtime") or {}).get("draft_kind")
+    db = (mb.get("runtime") or {}).get("draft_kind")
+    _unobserved = {None, "unknown"}
+    if da in _unobserved or db in _unobserved:
+        warnings.append(f"draft/suffix state is UNOBSERVED on at least one side ({da} vs {db}) — "
+                        f"pre-v3 rows do not record it, so this comparison cannot rule out a "
+                        f"(model x serving-path) composite")
+    elif da != db:
+        return _refuse(f"draft/suffix decoding state differs ({da} vs {db}) — it changes the "
+                       f"generated text, not just latency, so the delta would be a "
+                       f"(model x serving-path) composite rather than a model comparison")
 
     if metric in _HARDWARE_METRICS:
         if ma.get("box") != mb.get("box"):

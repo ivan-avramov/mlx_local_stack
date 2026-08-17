@@ -43,6 +43,42 @@ def registry_kv(model: str, registry_path: str | None = None):
     return None
 
 
+def registry_draft(model: str, registry_path: str | None = None) -> dict:
+    """Speculative-decoding state for ``model``, NORMALISED so that "off" is an OBSERVATION.
+
+    That normalisation is the whole point of v3. `draft_kind` was already named in
+    _FINGERPRINT_RUNTIME from v2 on, and it was inert: nothing populated it, so every manifest
+    carried it as absent -> None, and `_runtime_compatible` treats None as an unobserved wildcard.
+    Measured 2026-08-16 across the 50 manifests on disk: 37 had no runtime block and 13 carried
+    exactly {apc_enabled, apc_source}. NONE carried draft_kind. Meanwhile suffix decoding was ON
+    for exactly the two winners and OFF for every other candidate, so every cross-model comparison
+    was a (model x serving-path) composite that nothing refused. A declared-but-never-populated
+    fingerprint key is worse than an absent one, because it reads as covered.
+
+    So: a registry entry with no `draft_kind` returns "off", never None. "unknown" is reserved for
+    genuine ignorance (model absent from the registry, or the registry unreadable), which stays a
+    wildcard on the same "never condemn on ignorance" grounds as APC detection.
+
+    `draft_block_size` / `suffix_min_match` are RECORDED for audit but deliberately NOT
+    fingerprinted: they are inert when draft_kind is "off", nothing in the campaign has ever varied
+    them, and adding them would widen the refusal surface with no measured lever behind it.
+    """
+    registry_path = str(paths.registry_path()) if registry_path is None else registry_path
+    try:
+        with open(registry_path) as f:
+            doc = yaml.safe_load(f)
+    except Exception:  # noqa: BLE001 — never block a run on provenance
+        return {"draft_kind": "unknown", "draft_source": "unreadable-registry"}
+    entries = doc.get("models", doc) if isinstance(doc, dict) else doc
+    for e in entries or []:
+        if isinstance(e, dict) and e.get("name") == model:
+            return {"draft_kind": e.get("draft_kind") or "off",
+                    "draft_block_size": e.get("draft_block_size"),
+                    "suffix_min_match": e.get("suffix_min_match"),
+                    "draft_source": "registry"}
+    return {"draft_kind": "unknown", "draft_source": "model-not-in-registry"}
+
+
 # The output-determining slice of a manifest. If any of these differ, existing results were
 # produced under a different distribution and CANNOT be mixed with new ones via resume.
 _FINGERPRINT_SAMPLING = ("temperature", "top_p", "top_k", "min_p", "presence_penalty",
@@ -57,7 +93,8 @@ _FINGERPRINT_SAMPLING = ("temperature", "top_p", "top_k", "min_p", "presence_pen
 _FINGERPRINT_RUNTIME = ("apc_enabled", "draft_kind", "max_turns", "deadline_s", "loop_guard",
                         "client", "edit_format")
 
-FINGERPRINT_VERSION = 2
+# v3 (2026-08-16): draft/suffix state is POPULATED, not merely named. See registry_draft().
+FINGERPRINT_VERSION = 3
 
 
 def config_fingerprint(manifest, version: int | None = None):
@@ -65,6 +102,8 @@ def config_fingerprint(manifest, version: int | None = None):
 
     v1 = sampling profile + key sampling params + KV bits (what the pre-v2 harness compared).
     v2 = v1 + the runtime block.
+    v3 = v2, with the runtime block's `draft_kind` actually populated from the registry (it was
+         declared in v2 and never written, which made it a wildcard on every row).
 
     `version=None` means "this manifest's own version". Returns None for a missing manifest
     (unknown provenance).
@@ -199,11 +238,19 @@ def apc_state(process_env_lookup=_router_env) -> dict:
     return {"apc_enabled": "unknown", "source": "unknown"}
 
 
-def _runtime_block(runtime: dict = None) -> dict:
-    """The v2 runtime block: detected APC state plus whatever knobs the caller declares (the
-    agentic axes pass max_turns/deadline_s/loop_guard/client/edit_format through here)."""
+def _runtime_block(runtime: dict = None, model: str = None,
+                   registry_path: str | None = None) -> dict:
+    """The runtime block: detected APC state, the registry's draft/suffix state, plus whatever knobs
+    the caller declares (the agentic axes pass max_turns/deadline_s/loop_guard/client/edit_format).
+
+    `model` is required to read the draft state and is threaded from every caller. A caller that
+    passes no model gets draft_kind "unknown" — honest, and a wildcard — rather than a guessed "off",
+    because guessing here would re-create exactly the silent-exoneration bug v3 fixes.
+    """
     st = apc_state()
     block = {"apc_enabled": st["apc_enabled"], "apc_source": st["source"]}
+    block.update(registry_draft(model, registry_path) if model
+                 else {"draft_kind": "unknown", "draft_source": "no-model-given"})
     if runtime:
         block.update(runtime)
     return block
@@ -228,7 +275,7 @@ def current_manifest_lite(model: str, profile: str = "production",
             # look stale forever — `--clean-stale` would delete the corpus on every run.
             "git": _git_shas(),
             "fingerprint_version": FINGERPRINT_VERSION,
-            "runtime": _runtime_block(runtime)}
+            "runtime": _runtime_block(runtime, model=model, registry_path=registry_path)}
 
 
 def build_manifest(*, model, box, ts, git_shas, kv, quant, sampling, runtime=None) -> dict:
@@ -315,7 +362,8 @@ def gather(model: str, registry_path: str | None = None,
         sampling.update(overrides)
     man = build_manifest(model=model, box=_box(), ts=int(time.time()),
                          git_shas=_git_shas(), kv=kv, quant=quant, sampling=sampling,
-                         runtime=_runtime_block(runtime))
+                         runtime=_runtime_block(runtime, model=model,
+                                                registry_path=registry_path))
     man["sampling_profile"] = profile
     return man
 

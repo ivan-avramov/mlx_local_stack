@@ -30,14 +30,15 @@ def _rows(ids, *, ok=True, samples=1, budget=16384, ct=100):
     return out
 
 
-def _manifest(tmp, model, bench, *, temp=0.4, budget=16384, box="M2", apc="0"):
+def _manifest(tmp, model, bench, *, temp=0.4, budget=16384, box="M2", apc="0", draft=None):
     p = G.result_path(model, bench).with_suffix(".manifest.json")
     p.parent.mkdir(parents=True, exist_ok=True)
     import json
     p.write_text(json.dumps({
         "box": box, "sampling_profile": "deployed", "fingerprint_version": 2,
         "sampling": {"temperature": temp, "thinking_budget": budget, "max_tokens": 102400},
-        "kv": {"kv_bits": 4}, "runtime": {"apc_enabled": apc}}))
+        "kv": {"kv_bits": 4},
+        "runtime": {"apc_enabled": apc, **({"draft_kind": draft} if draft else {})}}))
 
 
 # --------------------------------------------------------------------- refusals
@@ -154,6 +155,47 @@ def test_apc_difference_warns_for_quality_and_refuses_for_speed(write_rows, tmp_
     _manifest(tmp_results, "B", "math500", apc="1")
     assert CMP.compare("A", "B", "math500")["comparable"] is True
     assert CMP.compare("A", "B", "math500", metric="decode_tps")["comparable"] is False
+
+
+def test_refuses_across_DRAFT_STATE_for_quality_as_well_as_speed(write_rows, tmp_results):
+    """THE refusal that was missing, and the one that let the corpus's central defect through.
+
+    Suffix decoding was ON for exactly the two winners and OFF for every other candidate, so every
+    cross-model comparison was a (model x serving-path) composite — and `compare` never objected,
+    because it checks box and APC but nothing about draft state. Unlike APC (a cache, fatal only for
+    speed), suffix CHANGES THE GENERATED TEXT: ON and OFF are different fixed points at the deployed
+    config, measured byte-for-byte by bench/probe_determinism.py. So it is fatal for QUALITY metrics
+    too, not just speed.
+    """
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", draft="suffix")
+    _manifest(tmp_results, "B", "math500", draft="off")
+    r = CMP.compare("A", "B", "math500")
+    assert r["comparable"] is False, r
+    assert "draft" in r["reason"] or "suffix" in r["reason"], r["reason"]
+    assert CMP.compare("A", "B", "math500", metric="decode_tps")["comparable"] is False
+
+
+def test_matched_draft_state_compares_normally(write_rows, tmp_results):
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", draft="off")
+    _manifest(tmp_results, "B", "math500", draft="off")
+    assert CMP.compare("A", "B", "math500")["comparable"] is True
+
+
+def test_an_UNOBSERVED_draft_state_warns_instead_of_refusing(write_rows, tmp_results):
+    """Every pre-v3 row on disk has no draft_kind. Refusing on those would make the entire historical
+    corpus incomparable overnight — a bigger loss than the composite it would prevent, and the rows
+    can still be read with the warning attached. Two OBSERVED, differing values still refuse."""
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", draft="suffix")
+    _manifest(tmp_results, "B", "math500")          # pre-v3: no draft_kind at all
+    r = CMP.compare("A", "B", "math500")
+    assert r["comparable"] is True
+    assert any("draft" in w for w in r["warnings"]), r["warnings"]
 
 
 # --------------------------------------------------------------------- verdicts

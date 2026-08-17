@@ -121,13 +121,18 @@ def test_apc_state_survives_a_raising_lookup():
 
 
 # ------------------------------------------------------------------ manifest assembly
-def test_current_manifest_lite_is_v2_and_carries_runtime(monkeypatch):
+def test_current_manifest_lite_is_current_version_and_carries_runtime(monkeypatch):
+    """Asserts the CURRENT version rather than a hardcoded number, so a future bump does not fail a
+    test whose subject is "the runtime block is populated". The version itself is pinned once, by
+    test_the_live_manifest_actually_carries_the_draft_state, where the number is the point."""
     monkeypatch.setattr(P.model_params, "params_for", lambda m, profile, **k: {"temperature": 0.4})
     monkeypatch.setattr(P, "registry_kv", lambda m, path: {"kv_bits": 4})
     monkeypatch.setattr(P, "apc_state", lambda **k: {"apc_enabled": "1", "source": "env"})
+    monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "off"})
     man = P.current_manifest_lite("m", "deployed")
-    assert man["fingerprint_version"] == 2
+    assert man["fingerprint_version"] == P.FINGERPRINT_VERSION
     assert man["runtime"]["apc_enabled"] == "1"
+    assert man["runtime"]["draft_kind"] == "off"
 
 
 def test_runtime_overrides_are_merged_into_the_manifest(monkeypatch):
@@ -198,3 +203,68 @@ def test_if_apc_is_ever_re_enabled_its_pool_must_still_be_bounded():
         f"APC_NUM_BLOCKS={blocks} => {blocks * 16 // 1024}K cached tokens; at the measured "
         f"~2MB/block that is ~{blocks * 2 // 1024}GB of pool on a 48GB daily-driver box"
     )
+
+
+# ---------------------------------------------------------- v3: the DRAFT/SUFFIX state (2026-08-16)
+# WHY v3 EXISTS. `draft_kind` was already NAMED in _FINGERPRINT_RUNTIME from v2 on, and it was still
+# useless: nothing ever POPULATED it, so every manifest on disk carried it as absent -> None, and
+# _runtime_compatible treats None as an unobserved wildcard. Measured 2026-08-16: of 50 manifests,
+# 37 had no runtime block at all and 13 carried exactly {apc_enabled, apc_source}. ZERO carried
+# draft_kind. Meanwhile suffix decoding was ON for exactly the two winners and OFF for every other
+# candidate, which made every cross-model comparison in the corpus a (model x serving-path)
+# composite that nothing refused. A declared-but-unpopulated fingerprint key is worse than an
+# absent one: it reads as covered.
+def _v3(temp=0.7, profile="production", kv_bits=0, draft="off", **runtime):
+    m = _v1(temp, profile, kv_bits)
+    m["fingerprint_version"] = 3
+    m["runtime"] = {"apc_enabled": "0", "draft_kind": draft, **runtime}
+    return m
+
+
+def test_absent_suffix_is_recorded_as_off_not_as_unobserved():
+    """The load-bearing distinction. "off" must be an OBSERVATION, not a missing value — otherwise
+    the wildcard rule silently exonerates exactly the mismatch v3 exists to catch."""
+    st = P.registry_draft("Ornith-1.0-35B-mlx-uniform-4bit")
+    assert st["draft_kind"] in ("off", "suffix"), st
+    assert st["draft_kind"] is not None
+    missing = P.registry_draft("no-such-model-in-the-registry")
+    assert missing["draft_kind"] == "unknown", missing
+
+
+def test_two_v3_manifests_differing_only_in_draft_state_are_INCOMPATIBLE():
+    assert P.is_compatible(_v3(draft="suffix"), _v3(draft="off")) is False
+    assert P.is_compatible(_v3(draft="off"), _v3(draft="off")) is True
+
+
+def test_a_v3_current_does_NOT_condemn_the_REAL_corpus_on_disk():
+    """The same non-destructiveness requirement v2 had, tested against the ACTUAL manifests rather
+    than a synthetic one — because the synthetic `_v2()` above sets draft_kind and NO real manifest
+    does. Measured: 37 of 50 are v1, 13 are v2 carrying only {apc_enabled, apc_source}. For each,
+    adding the v3 draft key must not make it stale, or --clean-stale deletes the corpus."""
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[3] / "benchmark/results"
+    real = list(root.glob("*/*.manifest.json"))
+    assert real, "no manifests found — this test would vacuously pass"
+    for f in real:
+        existing = json.loads(f.read_text())
+        # `current` = the SAME config, re-fingerprinted by a v3 harness: only the version and the
+        # newly-populated draft key differ. Anything else differing would be a real config change.
+        current = dict(existing)
+        current["fingerprint_version"] = 3
+        current["runtime"] = {**(existing.get("runtime") or {}), "draft_kind": "off"}
+        assert P.is_compatible(existing, current) is True, f"v3 condemned {f.name}"
+
+
+def test_unknown_draft_state_stays_a_wildcard():
+    """If the registry could not be read we say so, and refuse to condemn on ignorance — the same
+    asymmetry APC detection uses, for the same reason."""
+    assert P.is_compatible(_v3(draft="unknown"), _v3(draft="suffix")) is True
+
+
+def test_the_live_manifest_actually_carries_the_draft_state():
+    """End-to-end: the bug was that nothing populated the key. Assert the real builder does."""
+    man = P.current_manifest_lite("Ornith-1.0-35B-mlx-uniform-4bit", profile="deployed")
+    assert man["fingerprint_version"] == 3
+    assert man["runtime"]["draft_kind"] in ("off", "suffix")
+    assert P.config_fingerprint(man)["runtime"]["draft_kind"] is not None

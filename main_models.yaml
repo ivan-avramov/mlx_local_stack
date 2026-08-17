@@ -140,13 +140,18 @@ models:
       context: 262144
       output: 102400
       capabilities: [tools, vision, thinking, web_search, code_interpreter]
-    # Suffix (drafter-free n-gram) decoding — Phase-2 #4, 2026-07-09. QUALITY-NEUTRAL on the MoE
-    # (vs OFF: he+ 93/95, mbpp+ 86/87, LCB 93.3/80 — all within N=100/15 single-sample noise; conv
-    # intact; loops item-intrinsic, not suffix). Speed-POSITIVE despite MoE verify (2.41x verbatim /
-    # 1.09x novel). NO draft_cooldown — phase-1 showed cooldown HURTS reuse (2.01x vs 2.41x).
-    draft_kind: suffix
-    draft_block_size: 16
-    suffix_min_match: 2
+    # Suffix (drafter-free n-gram) decoding — WITHDRAWN 2026-08-16, operator decision. Was ON here
+    # since 2026-07-09 on a "QUALITY-NEUTRAL" reading (vs OFF: he+ 93/95, mbpp+ 86/87, LCB 93.3/80)
+    # that the campaign's own ≤5% lossy-lever gate NEVER SUPPORTED: those arms resolve ±12.5pp
+    # (n=100) and ±32pp (n=15), and ON vs OFF is a MEASURED text change (different fixed points at
+    # the deployed config, bench/probe_determinism.py). Worse, it was set PER MODEL — ON for exactly
+    # the two winners, OFF for every other candidate — and is absent from what `compare` refuses
+    # across, so every cross-model comparison in the corpus was a (model x serving-path) composite.
+    # OFF for all measurement; re-enable for SERVING only if the paired ON/OFF OFAT puts the acc
+    # delta inside +/-5pp. Cost of removal, measured: decode ~100 -> 77 tok/s on this model.
+    #   draft_kind: suffix
+    #   draft_block_size: 16
+    #   suffix_min_match: 2
 
   # Distill = strongest single-shot ALTERNATIVE (Opus-reasoning distill, dense qwen3_5 +
   # linear-attn); clears 256K (mx-peak 43.3GB @ 4-bit KV). Coding op-temp 0.3.
@@ -179,12 +184,14 @@ models:
       context: 262144
       output: 102400
       capabilities: [tools, vision, thinking, web_search, code_interpreter]
-    # Suffix (drafter-free n-gram) decoding — Phase-2 #4, 2026-07-08. Quality-NEUTRAL
-    # (he+ 94.0%/mbpp+ 77.1% ≈ OFF, 100% conv; byte-identical @t0.3) + 1.2-2.7x edit-heavy
-    # decode (dense qwen3_5 → cheap verify). NO cooldown (validated faster; matches Ornith).
-    draft_kind: suffix
-    draft_block_size: 16
-    suffix_min_match: 2
+    # Suffix (drafter-free n-gram) decoding — WITHDRAWN 2026-08-16, operator decision. Same reasons
+    # as the entry above (see it for the full rationale): the "quality-neutral" claim was an
+    # AGGREGATE one at MDEs 6-25x wider than the ≤5% gate it was credited with clearing, the state
+    # was per-model so it confounded every cross-model comparison, and `compare` cannot see it.
+    # OFF for all measurement; re-enable for SERVING only if the paired OFAT clears the gate.
+    #   draft_kind: suffix
+    #   draft_block_size: 16
+    #   suffix_min_match: 2
 
   # ── CANDIDATE, added 2026-08-14. Operator-approved in the 2026-08-13 candidate scan
   # (docs/campaign-queue.md) and then LOST from the executable queue — this entry lands it.
