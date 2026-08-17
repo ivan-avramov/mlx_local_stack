@@ -53,7 +53,7 @@ The published figures are right under the broad definition (the doc's "40%" for
 the scoreboard is generated from the score files, which carry only the NARROW number** — so
 regenerating that row yields values ~10x smaller than the prose, with no warning.
 **Needs a ruling: rename one of them** (e.g. `degenerate_eosed_wall_share` for the narrow one), or
-persist both. `bench/m1/suffix_ofat.py` already reports both, labelled, as an interim measure.
+persist both. `benchmark/m1/suffix_ofat.py` already reports both, labelled, as an interim measure.
 
 ### O25. Suffix decoding is withdrawn — on what evidence does it come back?
 Raised 2026-08-16. **The withdrawal itself is CLOSED** (operator, 2026-08-16): suffix is OFF for all
@@ -74,7 +74,18 @@ DEFAULT `p_d = 0.20`, a between-MODELS guess. Within-model paired, at p_d = 0.05
 items and at 0.02 it needs 63. The OFAT measures p_d first and sizes itself on the measurement.
 **Needs a ruling on the return condition**, not on the withdrawal.
 
-### O24. Should the model-naming rule be enforced on CHANGED LINES by a pre-commit hook?
+### ~~O24~~ → CLOSED-BY-IMPLEMENTATION (2026-08-16): the hook is built, installed on the driver, and
+has blocked real commits. `githooks/pre-commit` runs `bench.modelnames` over ADDED lines plus
+`bench.piicheck`; `githooks/commit-msg` checks the message; enable per clone with
+`git config core.hooksPath githooks`. **Residual work, not a ruling:** install it on the worker, and
+two known gaps — it cannot see chat prose (where the rule actually failed), and its FAMILY-reference
+allowance does not fire when the model prefix sits inside backticks. One live defect was found BY
+being blocked: the checker treated the mandatory `Co-Authored-By:` trailer as prose, because that
+name collides with a registry segment, so it blocked EVERY commit until attribution trailers were
+exempted. The one-time fix of the normative docs proposed below was done for AGENTS.md on the same
+day. Original text retained:
+
+### O24 (original text, retained). Should the model-naming rule be enforced on CHANGED LINES by a pre-commit hook?
 Raised 2026-08-16, after the operator had to give the same correction twice in one session.
 
 The rule ("full registry name, in reports, results, docs AND commits") is now explicit in AGENTS.md
