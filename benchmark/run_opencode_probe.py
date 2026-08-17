@@ -37,12 +37,37 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+# The scaffold is part of the serving path (the suffix lesson): an unpinned client version is an
+# unrecorded output-determining knob. Bump this deliberately, never implicitly.
+PINNED_OPENCODE_VERSION = "1.18.15"
+
 
 def _polyglot_root() -> Path:
-    for c in (Path.home() / "ws/polyglot-benchmark", Path.home() / "polyglot-benchmark"):
+    env = os.environ.get("POLYGLOT_DIR")
+    candidates = ([Path(env)] if env else []) + [
+        Path.home() / "ws/mlx_local_stack_workdir/polyglot-benchmark",
+        Path.home() / "ws/polyglot-benchmark",
+        Path.home() / "polyglot-benchmark",
+    ]
+    for c in candidates:
         if c.is_dir():
             return c
-    sys.exit("polyglot exercises not found (set POLYGLOT_DIR)")
+    sys.exit("polyglot exercises not found (set POLYGLOT_DIR — see config.sh)")
+
+
+def _opencode_version() -> str:
+    try:
+        return subprocess.check_output(["opencode", "--version"], text=True, timeout=30).strip()
+    except Exception as e:  # noqa: BLE001
+        sys.exit(f"cannot determine opencode version ({e}); refusing to run unversioned")
+
+
+def _polyglot_sha(root: Path) -> str | None:
+    try:
+        return subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
+                                       text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _prepare(src: Path, dst: Path) -> None:
@@ -100,14 +125,38 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-pure", action="store_true", help="load external plugins too")
+    ap.add_argument("--allow-version-drift", action="store_true",
+                    help=f"run even if opencode != {PINNED_OPENCODE_VERSION} (drift is recorded)")
     a = ap.parse_args()
 
     if a.lang != "python":
         sys.exit(f"grading for {a.lang} is not wired (needs its toolchain); only python for now")
 
-    root = _polyglot_root() / a.lang / "exercises/practice"
+    oc_version = _opencode_version()
+    if oc_version != PINNED_OPENCODE_VERSION and not a.allow_version_drift:
+        sys.exit(f"opencode {oc_version} != pinned {PINNED_OPENCODE_VERSION}; a scaffold version "
+                 f"is output-determining. Bump PINNED_OPENCODE_VERSION deliberately or pass "
+                 f"--allow-version-drift to record the drift.")
+
+    polyglot = _polyglot_root()
+    poly_sha = _polyglot_sha(polyglot)
+    root = polyglot / a.lang / "exercises/practice"
     out = Path(a.out) if a.out else REPO / "benchmark/results" / a.model / "opencode.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    # Manifest beside the rows, same machinery as the two-phase harness, so compare/clean-stale
+    # see the sampling + code shas this run inherited — plus the scaffold identity in `runtime`.
+    try:
+        sys.path.insert(0, str(REPO / "benchmark"))
+        from bench import provenance
+        man = provenance.gather(a.model, profile="deployed",
+                                runtime={"client": "opencode", "edit_format": "tools",
+                                         "opencode_version": oc_version,
+                                         "polyglot_sha": poly_sha,
+                                         "deadline_s": a.timeout})
+        out.with_suffix(".manifest.json").write_text(json.dumps(man, indent=2))
+    except Exception as e:  # noqa: BLE001 — never block a run on provenance, but say so loudly
+        print(f"!! manifest not written: {e}", flush=True)
 
     for name in [s.strip() for s in a.items.split(",") if s.strip()]:
         src = root / name
@@ -142,7 +191,7 @@ def main() -> int:
                 "bench": "opencode", "id": f"{a.lang}/{name}", "model": a.model, "sample": 0,
                 "schema_version": 2, "scaffold": "opencode", "attempts": 1,
                 "passed": passed, "file_changed": changed, "test_modified": test_modified,
-                "opencode_rc": rc,
+                "opencode_rc": rc, "opencode_version": oc_version, "polyglot_sha": poly_sha,
                 "wall_s": round(dur, 1), "timed_out": rc == 124,
                 "note": "FIRST-ATTEMPT only — not comparable to aider `final`, which allows a "
                         "second test-informed attempt",
