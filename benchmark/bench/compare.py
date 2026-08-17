@@ -106,6 +106,15 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
                        f"generated text, not just latency, so the delta would be a "
                        f"(model x serving-path) composite rather than a model comparison")
 
+    if metric == "peak_mem_gb":
+        # Operator ruling 2026-08-17. The per-row field is the server's SESSION-CUMULATIVE
+        # mx.get_peak_memory (verified monotone non-decreasing across all 8 suffix-OFAT arms), so
+        # a paired per-item delta on it measures process history, not an effect. No pairing of
+        # this field is admissible, matched manifests or not.
+        return _refuse("peak_mem_gb is a session-cumulative running max (process history, not a "
+                       "per-item measurement) — memory questions go to the capacity ladder's "
+                       "per-rung server_peak_gb, measured on a fresh process")
+
     if metric in _HARDWARE_METRICS:
         if ma.get("box") != mb.get("box"):
             return _refuse(f"{metric} is hardware-dependent and the boxes differ "

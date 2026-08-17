@@ -112,9 +112,19 @@ def accuracy(on_per_item: dict, off_per_item: dict, iters=10000, seed=0, margin=
 
 
 def analyse(on_rows: list[dict], off_rows: list[dict], iters=10000, seed=0) -> dict:
-    """Every endpoint computable from the persisted rows alone (no grading, no model)."""
-    on = {_key(r): r for r in on_rows}
-    off = {_key(r): r for r in off_rows}
+    """Every endpoint computable from the persisted rows alone (no grading, no model).
+
+    ERROR STUBS ARE EXCLUDED FROM PAIRING AND NAMED (operator ruling 2026-08-17): a row whose
+    request never completed (`error` set — no content, no tokens) is not a draw, and zero-coercing
+    it charges the whole counterpart to the lever (Mbpp/430's `timed out` stub alone more than
+    doubled a cell's token delta). A DNF — budget_hit / max_tokens / degenerate_repetition — IS a
+    real draw and STAYS in every denominator: a model that converges on 1 of 100 items scores 1%,
+    never 100%.
+    """
+    on_err = sorted(_key(r)[0] for r in on_rows if r.get("error"))
+    off_err = sorted(_key(r)[0] for r in off_rows if r.get("error"))
+    on = {_key(r): r for r in on_rows if not r.get("error")}
+    off = {_key(r): r for r in off_rows if not r.get("error")}
     shared = sorted(set(on) & set(off))
     if not shared:
         raise ValueError("analyse: no paired items between the two arms")
@@ -153,6 +163,7 @@ def analyse(on_rows: list[dict], off_rows: list[dict], iters=10000, seed=0) -> d
 
     return {
         "n_paired": len(shared),
+        "excluded_error_rows": {"on": on_err, "off": off_err},
         "unpaired": {"on_only": [k[0] for k in sorted(set(on) - set(off))],
                      "off_only": [k[0] for k in sorted(set(off) - set(on))]},
         "divergence": {"rate": len(diverged) / len(shared),

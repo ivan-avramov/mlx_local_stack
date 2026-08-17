@@ -70,3 +70,25 @@ def test_main_passes_bounded_params_to_ladder(tmp_path, monkeypatch):
     base = params_for("gemma-4-26B-A4B-it-QAT-MLX-4bit")
     assert captured["params"]["temperature"] == base["temperature"]
     assert captured["params"]["top_p"] == base["top_p"]
+
+def test_main_writes_a_provenance_manifest_beside_the_ladder(tmp_path, monkeypatch):
+    """Operator-approved 2026-08-17: NO capacity artifact in the corpus had a manifest, so every
+    published memory-gate number had unrecorded provenance. The ladder now writes one through the
+    same machinery as every other bench."""
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
+    monkeypatch.setattr(R, "MemorySampler", FakeSampler)
+    monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
+    calls = {}
+    def fake_write(model, bench, **kw):
+        calls["args"] = (model, bench, kw)
+        return {}
+    import bench.provenance as P
+    monkeypatch.setattr(P, "write", fake_write)
+    rc = R.main(["--model", "m", "--grid", "160000"])
+    assert rc == 0
+    model, bench, kw = calls["args"]
+    assert (model, bench) == ("m", "capacity_ladder")
+    assert kw["runtime"]["probe"] == "capacity_ladder"
+    assert kw["overrides"] == {"max_tokens": 256, "thinking_budget": 256}

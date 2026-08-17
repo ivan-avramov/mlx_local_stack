@@ -102,3 +102,28 @@ def test_it_refuses_to_analyse_empty_input_rather_than_reporting_zeros():
         assert "no paired items" in str(e).lower()
     else:
         raise AssertionError("empty input silently produced a result")
+
+
+def test_an_ERROR_stub_is_excluded_from_pairing_and_NAMED_but_a_DNF_row_is_not():
+    """Operator ruling 2026-08-17. An error stub (the request never completed — no content, no
+    tokens) must not be zero-coerced into a paired delta: Mbpp/430's OFF-arm `timed out` stub was
+    charged against a 102,401-token ON truncation, which alone more than doubled that cell's token
+    delta. But a DNF (budget_hit / max_tokens / degenerate_repetition) IS a real draw and STAYS in
+    every denominator — a model that converges on 1 of 100 items scores 1%, not 100%.
+    """
+    on = _arm(6)
+    off = _arm(6)
+    # i0: OFF arm errored — no draw exists on that side.
+    off[0] = {"id": "i0", "sample": 0, "error": "timed out"}
+    # i1: OFF arm is a genuine DNF (real content, ran away) — a real draw, must stay paired.
+    off[1] = _row("i1", content="loop " * 500, ct=102401, wall=900.0, tps=90.0,
+                  kind="degenerate_repetition")
+    r = S.analyse(on, off, iters=200, seed=0)
+    assert r["n_paired"] == 5, "the error-stub pair is excluded, the DNF pair is not"
+    excl = r["excluded_error_rows"]
+    assert excl["off"] == ["i0"] and excl["on"] == []
+    # The DNF still counts: its degeneracy appears in the OFF arm's counts (denominator intact).
+    assert r["degeneracy"]["off"]["n_rows"] == 5
+    assert r["degeneracy"]["off"]["n_degenerate_repetition"] == 1
+    # And the token delta reflects the DNF pair but NOT the error stub's zero-coercion.
+    assert r["tokens"]["n"] == 5

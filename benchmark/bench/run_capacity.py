@@ -74,6 +74,19 @@ def main(argv=None) -> int:
             f.write(json.dumps(r) + "\n")
     with open(os.path.join(out_dir, "capacity_retrieval.json"), "w") as f:
         json.dump(sc, f, indent=2)
+    # Provenance beside the ladder (operator-approved 2026-08-17): before this, NO capacity
+    # artifact in the corpus carried a manifest, so every published memory-gate number had
+    # unrecorded box/sha/KV provenance. Profile "production" is what params_for defaults to
+    # above — recorded as used, with the probe's bounded-generation overrides.
+    try:
+        from . import provenance
+        provenance.write(args.model, "capacity_ladder", profile="production",
+                         overrides={"max_tokens": 256, "thinking_budget": 256},
+                         runtime={"probe": "capacity_ladder", "grid": list(grid),
+                                  "gate_gb": args.gate_gb,
+                                  "idle_baseline_gb": round(idle_baseline, 2)})
+    except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
+        print(f"[capacity] WARNING: manifest not written: {e}", flush=True)
     print(f"[capacity] GATE_PASS={sc['capacity_gate_pass']} "
           f"max_fitting_ctx={sc['max_fitting_ctx']} "
           f"retrieval_effective_ctx={sc['retrieval_effective_ctx']}", flush=True)

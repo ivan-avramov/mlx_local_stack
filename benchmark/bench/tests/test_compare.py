@@ -242,3 +242,18 @@ def test_pass_at_1_converged_pairs_on_the_intersection(write_rows, tmp_results):
     assert r["comparable"] is True
     assert r["n_items"] == 2, "paired on the convergence intersection {a, b}"
     assert any("converged" in w for w in r["warnings"])
+
+
+def test_refuses_peak_mem_gb_as_a_paired_metric_outright(write_rows, tmp_results):
+    """Operator ruling 2026-08-17. Rows persist peak_mem_gb as the server's SESSION-CUMULATIVE
+    mx.get_peak_memory (verified monotone non-decreasing across all 8 OFAT arms), so a paired
+    per-item delta on it measures process history, not an effect. The gate metric lives in the
+    capacity ladder's server_peak_gb, measured per rung on a fresh process. Refused on BOTH sides
+    matched or not — there is no admissible pairing of this field.
+    """
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500"); _manifest(tmp_results, "B", "math500")
+    r = CMP.compare("A", "B", "math500", metric="peak_mem_gb")
+    assert r["comparable"] is False
+    assert "cumulative" in r["reason"] and "capacity" in r["reason"]
