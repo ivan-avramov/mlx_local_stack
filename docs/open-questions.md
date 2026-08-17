@@ -29,9 +29,9 @@ GitHub garbage-collects, so the leaked blobs remain retrievable by anyone holdin
 **Two ways to finish it:** (a) a GitHub Support request asking them to run `gc` on the repository —
 cheap, non-destructive, and the standard remedy; or (b) delete and recreate the remote repository —
 instant and total, but discards stars/watchers/issues. **Recommendation: (a).**
-**RULED (operator, 2026-08-17): option (b) — delete/recreate — IF nothing on the GitHub repo
-(issues/PRs/stars) is worth keeping. Operator-executed action; tracked in `docs/model-ledger.md`
-until done.**
+**RULED (operator, 2026-08-17): option (b) — delete/recreate — if anything is worth keeping.
+LATER THAT DAY: operator dropped the item from tracking entirely ("don't care"). Not tracked
+anywhere; this entry is the record.**
 Guard against recurrence is already in place: `bench.piicheck` in `githooks/pre-commit`, validated
 end-to-end against a staged leak, plus a corpus-wide test asserting every tracked file is clean.
 
@@ -109,8 +109,9 @@ rule):**
 **Outcome: 3 of 4 CIs poke past ±5pp → the ruled condition is NOT met at n=100. Suffix stays OFF
 for serving.** `p_d` is 0.04–0.06 (not 0), so the gate is *demonstrable* — a powered test needs
 ~126–191 items per cell (humanevalplus has 164 total, mbppplus 378, so full-bench arms would do
-it). Whether that extension is worth the worker time for a 1.27× serving speedup is a NEW open
-question left with the operator; nothing is queued. Note also the direction: the point deltas are
+it). **Extension DECLINED (architect decision, operator-delegated, 2026-08-17):** ~6–8 h of worker
+time to certify a serving-only 1.27× lever fails quality-over-speed, and fresh suffix-ON arms
+would re-churn the serving path. Suffix stays OFF; revisit only on an operator latency complaint. Note also the direction: the point deltas are
 tiny and two lean ON-better — there is no evidence of ON harming accuracy, only insufficient
 precision to certify ±5pp. Analyser artifacts: `$STACK_WORKDIR/status/suffix_ofat_*.json`,
 `$STACK_WORKDIR/scratch/paired_accuracy.py`.

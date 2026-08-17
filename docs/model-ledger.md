@@ -83,8 +83,10 @@ candidate-per-stage (ruling 10).
 The ruled condition — paired ON/OFF accuracy CI inside ±5pp on both winners and both benches —
 is **NOT met at n=100**: measured `p_d` 0.04–0.06, deltas −1.0/0.0/+2.0/+2.0pp, three of four
 CIs poke past ±5pp (one cell `equivalent`). No evidence of harm, insufficient precision to
-certify. A powered demonstration needs ~126–191 items per cell; extending is an open operator
-call, nothing queued. Full table in `docs/open-questions.md` O25. Measurement stays suffix-OFF
+certify. Extension to full-bench arms was DECLINED (architect decision, delegated by the
+operator 2026-08-17): ~6–8 h of worker time to certify a serving-only 1.27× lever fails the
+quality-over-speed priority, and fresh suffix-ON arms would also churn the serving path the
+campaign just uniformised. Revisit only if daily-driver latency becomes an operator pain point. Full table in `docs/open-questions.md` O25. Measurement stays suffix-OFF
 forever regardless.
 
 ## 2. The ledger — every model ever considered
@@ -131,8 +133,6 @@ registry name, the suffix was the tune.
   attributed to a model. Pre-2026-08-17 speed/memory rows are cross-config vs post-move rows.
 - **O23 stays closed** (ruling 4b): no math500/lcb suffix-OFF re-runs — those winner rows are
   suffix-ON serving-path composites and are read as within-winner evidence only.
-- **O27 open (operator action):** the pre-PII-scrub commit is still fetchable by sha on the
-  GitHub remote; ruling = delete/recreate the repo if nothing there is worth keeping.
 - **Run A power note:** at n=22 the paired MDE is ±27pp against an aider `final` gap of
   23.6pp — Run A is DIRECTIONAL, with a pre-registered extension rule (extend to ~157 items
   iff the point delta exceeds +5pp for either model but the CI straddles zero).
