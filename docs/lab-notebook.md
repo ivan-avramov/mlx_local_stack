@@ -1747,3 +1747,31 @@ corpus. The operator's instruction to track results is what saved it.
   irreplaceable dataset cache are on the driver. Check the dependency on the box you are standing on.
 - **Gate destructive steps on their preconditions in the same command**, with `&&` or an explicit exit —
   printing a warning next to the action is not a guard.
+
+## 2026-08-17 — SUFFIX OFAT GRADED: the ≤5% gate is NOT met at n=100; suffix stays OFF (O25 ruled + measured)
+
+Single-box era begins (M5 Max is driver AND worker; all artifacts consolidated in the dedicated
+workdir). The four suffix-OFF arms (both winners × humanevalplus/mbppplus, n=100, cap 131072,
+`src/mlx-vlm 0c1c8b1`) were graded in docker and paired against the git-HEAD suffix-ON verdicts.
+
+- **Endpoints, `p_d` first:** `p_d` 0.04/0.04/0.06/0.061; Δacc (ON−OFF) −1.0 / 0.0 / +2.0 / +2.0pp;
+  CIs [−5,+3], [−4,+4] (**equivalent**), [−3,+7], [−3,+7]. **Three of four CIs exceed ±5pp → the
+  operator's ruled return condition fails at n=100. Suffix stays OFF for serving.** No evidence of
+  ON harming accuracy — the point deltas are tiny and two lean ON-better; the failure is precision,
+  not direction. A powered test needs ~126–191 items per cell (full-bench arms would suffice).
+- **The stale-score booby trap was real and is cleared:** until today, every base-named `score.json`
+  in the two winners' dirs was dated 08-14 and described the ON rows under the OFF filenames.
+- **One row gap:** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` `Mbpp/430` errored `timed out` in the OFF
+  generation → that arm grades n=99. Single-item regen queued with the first model job.
+- **The degeneracy story INVERTED on the anomalous cell:** `Ornith-1.0-35B-mlx-uniform-4bit`
+  humanevalplus shows OFF **11**/100 degenerate vs ON **2**/100 (conv 86% vs 95%) — suffix-OFF is
+  the MORE degenerate arm there, while `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` leans the other way
+  (ON 1v0, 2v0). Sign-inconsistent across models, consistent with the retraction under adversarial
+  verification. The 12-discordant-item re-draw test (`--samples 3`, suffix-OFF) is the queued probe.
+- Speed deltas reproduce the handoff exactly: decode +35.0/+28.1 tok/s (`Ornith-1.0-35B-mlx-uniform-4bit`)
+  vs +5.8/+3.7 (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`).
+
+### Rules this produces
+- **A renamed comparator arm must take its per-item eval artifacts with it.** The `.suffixon.*` rename
+  kept jsonl+manifest+score but NOT `*_samples_eval_results.json`, so today's re-grade overwrote the
+  ON per-item verdicts in place — recovered only because the files are git-tracked at HEAD.

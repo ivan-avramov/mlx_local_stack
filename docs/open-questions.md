@@ -29,6 +29,9 @@ GitHub garbage-collects, so the leaked blobs remain retrievable by anyone holdin
 **Two ways to finish it:** (a) a GitHub Support request asking them to run `gc` on the repository —
 cheap, non-destructive, and the standard remedy; or (b) delete and recreate the remote repository —
 instant and total, but discards stars/watchers/issues. **Recommendation: (a).**
+**RULED (operator, 2026-08-17): option (b) — delete/recreate — IF nothing on the GitHub repo
+(issues/PRs/stars) is worth keeping. Operator-executed action; tracked in `docs/model-ledger.md`
+until done.**
 Guard against recurrence is already in place: `bench.piicheck` in `githooks/pre-commit`, validated
 end-to-end against a staged leak, plus a corpus-wide test asserting every tracked file is clean.
 
@@ -87,7 +90,32 @@ regenerating that row yields values ~10x smaller than the prose, with no warning
 **Needs a ruling: rename one of them** (e.g. `degenerate_eosed_wall_share` for the narrow one), or
 persist both. `benchmark/m1/suffix_ofat.py` already reports both, labelled, as an interim measure.
 
-### O25. Suffix decoding is withdrawn — on what evidence does it come back?
+### ~~O25~~ → RULED + MEASURED (2026-08-17): condition set by the operator; the n=100 OFAT does NOT pass it — suffix stays OFF.
+**The ruling (operator, 2026-08-17):** re-enable for SERVING ONLY if the paired ON/OFF accuracy
+delta CI fits inside ±5pp on BOTH winners and BOTH benches; a measured `p_d` of 0 reads
+**UNDEMONSTRABLE, not passed**. Measurement stays suffix-OFF permanently.
+
+**The measurement (2026-08-17, all four OFF arms n=100 graded via docker evalplus, paired against
+the git-HEAD ON verdicts on the intersection of real completions; `p_d` FIRST per the standing
+rule):**
+
+| cell | p_d | n_disc | Δ acc (ON−OFF) | 95% CI | verdict | n for 5pp @ measured p_d |
+|---|---|---|---|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` / humanevalplus | 0.05 | 5 | −1.0pp | [−5, +3] | inconclusive | 157 |
+| `Ornith-1.0-35B-mlx-uniform-4bit` / mbppplus | 0.04 | 4 | 0.0pp | [−4, +4] | **equivalent** | 126 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` / humanevalplus | 0.06 | 6 | +2.0pp | [−3, +7] | inconclusive | 189 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` / mbppplus (n=99: `Mbpp/430` timed out in the OFF arm, regen queued) | 0.061 | 6 | +2.0pp | [−3, +7] | inconclusive | 191 |
+
+**Outcome: 3 of 4 CIs poke past ±5pp → the ruled condition is NOT met at n=100. Suffix stays OFF
+for serving.** `p_d` is 0.04–0.06 (not 0), so the gate is *demonstrable* — a powered test needs
+~126–191 items per cell (humanevalplus has 164 total, mbppplus 378, so full-bench arms would do
+it). Whether that extension is worth the worker time for a 1.27× serving speedup is a NEW open
+question left with the operator; nothing is queued. Note also the direction: the point deltas are
+tiny and two lean ON-better — there is no evidence of ON harming accuracy, only insufficient
+precision to certify ±5pp. Analyser artifacts: `$STACK_WORKDIR/status/suffix_ofat_*.json`,
+`$STACK_WORKDIR/scratch/paired_accuracy.py`.
+
+### O25 (original text, retained — the ruling above supersedes the "needs a ruling" line).
 Raised 2026-08-16. **The withdrawal itself is CLOSED** (operator, 2026-08-16): suffix is OFF for all
 five models, verified at the worker command line, and `compare` now refuses across draft state
 (fingerprint v3). What is open is the return condition.

@@ -149,7 +149,14 @@ def write_role_packets(pairs, out):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--bm", default=os.path.expanduser("~/ws/aider/benchmark/tmp.benchmarks"))
+    ap.add_argument(
+        "--bm",
+        default=os.path.join(
+            os.environ.get("AIDER_REPO", os.path.expanduser("~/ws/aider")),
+            "benchmark",
+            "tmp.benchmarks",
+        ),
+    )
     ap.add_argument("--tag", default="m1f")
     ap.add_argument("--out", default="/tmp/judge3")
     a = ap.parse_args()
