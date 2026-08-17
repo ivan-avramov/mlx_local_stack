@@ -54,7 +54,7 @@ pattern the earlier single-bench run showed.
    finishes first. For an interactive edit loop that is a real, measured argument for the runner-up.
 
 **On the "256K" part of B — NOT MEASURED as a task, and the shipped config cannot do 256K anyway.**
-Both models clear the memory gate at 262K context (32.4 GB / 43.3 GB peak), and retrieval ladders pass.
+Both models clear the memory gate at 262K context (32.4 GB / 37.6 GB peak — the previously published 43.3 GB was REFUTED under adversarial verification 2026-08-17: no artifact carries it; the on-disk capacity ladder says 37.58 GB `server_peak_gb` @262144, and 43.38 belongs to the DIFFERENT model `Qwen3.6-27B-OptiQ-4bit`), and retrieval ladders pass.
 But **no coding or reasoning quality has ever been measured at depth**, and the config imposes a
 ceiling well below 256K: `max_tokens` 102400 with a `0.8 × (cap − prompt)` thinking-budget clamp means
 the **designed maximum prompt is ~159,744 tokens** for `Ornith-1.0-35B-mlx-uniform-4bit`, and lower for
@@ -133,7 +133,7 @@ measurably better.** Where it IS separable is on the numbers this suite reports 
 
 | | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | Ornith-1.0-35B-mlx-uniform-4bit | Qwen3.6-27B-Opus-Distill-OptiQ-4bit |
 |---|---|---|---|
-| **`mx.get_peak_memory` @ 262144** | **26.0 GB** | 32.4 GB | 43.3 GB |
+| **`mx.get_peak_memory` @ 262144** | **26.0 GB** | 32.4 GB | 37.6 GB (corrected 2026-08-17; was published as 43.3, refuted — see `docs/lab-notebook.md`) |
 | retrieval @ 262144 | **1.00** | — | — |
 | decode @ 262144 / short ctx | **70.3 / 146** tok/s | — / ~107 | — / ~28.6 |
 | wall per item (hep / mbpp) | **28.8 s / 17.6 s** | 42 s / — | 51 s / — |

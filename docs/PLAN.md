@@ -31,9 +31,9 @@ the previous estimates off by 2–18×.
 
 | # | work | what it buys | cost | state |
 |---|---|---|---|---|
-| V1 | **Adversarial verification** of the 2026-08-16 session's claims (degeneracy retraction, arm matching, divergence/speed numbers, guard gaps, the 43.3 GB figure) | trust in the instrument | driver-only | **RUNNING** (adversarial verifier agent) |
+| V1 | ~~Adversarial verification~~ | **DONE 2026-08-17**: 43.3 GB REFUTED (37.58 on disk); retraction upheld but mislabelled (non-convergence, not degeneracy; the significant cell favours suffix-ON); divergence/speed confirmed exactly; ON-arm suffix state physics-corroborated but documentarily unverifiable; guard gap = 18 unguarded keys — full report in `docs/lab-notebook.md` | — | done |
 | V2 | ~~Grade the suffix OFAT~~ | **DONE 2026-08-17**: `p_d` 0.04–0.06; gate NOT met at n=100 (3/4 CIs past ±5pp); suffix stays OFF — see O25 | — | done |
-| V3 | **Guard-parity**: publish the guard-clean baseline inventory, then land the parity pytest (every output-determining fingerprint key gets a `compare` refusal) | no more suffix-shaped holes | driver-only | queued |
+| V3 | **Guard-parity**: publish the guard-clean baseline inventory, then land the parity pytest — scope from V1's audit: 18 unguarded fingerprint keys, the unfingerprinted set (`hf_path`, `kv_quant_scheme`, `prefill_step_size`, `quant`, `kv_prealloc_tokens`), the anti-correlated box label, and `peak_mem_gb`'s session-cumulative semantics | no more suffix-shaped holes | driver-only | queued |
 | V4 | **opencode provenance**: pin + record opencode version and container toolchain in every row | the new primary harness cannot repeat the suffix defect | driver-only | queued, gates M3/M4 |
 | M1 | **Re-draw test** — 12 discordant degeneracy items, suffix-OFF, `--samples 3` (`run.py --ids`) | bug-vs-variance verdict on the anomalous cell | ~30 min | queued (first model job) |
 | M2 | **`Qwen3.8-27B` recipes through funnel Stages 0–1** (load smoke incl. MTP-sidecar inertness, capacity ladder, convergence screen) | turns three stranded checkpoints into candidates; harness acceptance test begins | ~1–2 h | queued; hub upload **RUNNING** (ruling 5) |

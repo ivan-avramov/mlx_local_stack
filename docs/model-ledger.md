@@ -47,8 +47,9 @@ comparison — both winners are fluent under `diff` (0.036 and 0.009 malformed p
 malformed across all 22 go items each).
 
 **On the "256K" part: NOT measured as a task.** Both clear the memory gate at 262K (32.4 GB
-peak; the runner's-up companion figure of "43.3 GB" for the pick is UNDER VERIFICATION —
-it matches no field in its own capacity ladder) and retrieval ladders pass, but no coding or
+peak / 37.58 GB — the long-cited "43.3 GB" for the pick was REFUTED 2026-08-17: no artifact
+carries it, the on-disk ladder says 37.58, and 43.38 belongs to the different model
+`Qwen3.6-27B-OptiQ-4bit`; NOTE no capacity artifact in the corpus has a manifest) and retrieval ladders pass, but no coding or
 reasoning quality has ever been measured at depth, and the shipped config caps the designed
 maximum prompt near **~159,744 tokens** anyway. **B's context requirement is currently
 satisfied *by assumption*.**

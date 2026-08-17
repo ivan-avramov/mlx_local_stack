@@ -246,7 +246,7 @@ INCONCLUSIVE row.
 
 ⚠️ **The honest counter-argument, recorded rather than buried:** 4pp is not negligible *here*, because
 closing it would make Nemotron competitive with the winner while being ~2× faster per item and using
-26.0 GB at 256K vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s 43.3 GB. But that is exactly the effect size
+26.0 GB at 256K vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s 37.6 GB (corrected 2026-08-17; the 43.3 cited here originally was refuted). But that is exactly the effect size
 n=100 cannot see, so the
 probe cannot settle it in either direction. **The instrument's resolution (±12.5pp at n=100) is larger
 than the entire remaining headroom (~4pp).**

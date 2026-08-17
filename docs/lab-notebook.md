@@ -1775,3 +1775,69 @@ workdir). The four suffix-OFF arms (both winners × humanevalplus/mbppplus, n=10
 - **A renamed comparator arm must take its per-item eval artifacts with it.** The `.suffixon.*` rename
   kept jsonl+manifest+score but NOT `*_samples_eval_results.json`, so today's re-grade overwrote the
   ON per-item verdicts in place — recovered only because the files are git-tracked at HEAD.
+
+## 2026-08-17 — ADVERSARIAL VERIFICATION of the 2026-08-16 session: one REFUTED headline number, one mislabelled retraction, 18 unguarded fingerprint keys
+
+Run by an unanchored verifier agent against the rows, manifests, guards and git history
+(working files: `$STACK_WORKDIR/scratch/verify/`). Verdicts:
+
+1. **"43.3 GB peak @262K" for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — REFUTED.** No artifact
+   carries it. The on-disk ladder (`capacity_ladder.jsonl`, one commit, unchanged) says
+   **37.58 GB `server_peak_gb` @262144**, decode 9.80 tok/s, retrieval 1.00 — **8.4 GB of
+   headroom, not 2.7**. Likely seeds of the error: 43.15 = `system_peak_gb` (the REJECTED
+   metric) at the WRONG rung (131072), and 43.38 = `system_peak_gb` of the DIFFERENT model
+   `Qwen3.6-27B-OptiQ-4bit` — the exact near-collision the full-name rule exists for. The
+   lab notebook already recorded 43.3/37.9/30.8 as run-to-run spread and the MAXIMUM got
+   promoted to the headline. Corrected 2026-08-17 in `docs/campaign-results.md`,
+   `docs/model-ledger.md`, `docs/open-questions.md`, `main_models.yaml` comments.
+2. **The degeneracy retraction — numbers CONFIRMED, label REFUTED.** The handoff's
+   pooled p=0.078 and the Holm-surviving 0.002 cell reproduce ONLY under a NON-CONVERGENCE
+   indicator (loops + budget_hits); under the literal `degenerate_repetition` field the
+   pool is p=0.167 and the `Ornith-1.0-35B-mlx-uniform-4bit`/humanevalplus cell is
+   0.0117 raw / 0.0469 Holm — 24× weaker, one item from crossing .05, and the entire gap is
+   how ONE runaway trace (`HumanEval/83`, both arms ran to budget) got labelled. Sign
+   inconsistency across models CONFIRMED — and the one significant cell favours suffix-ON,
+   so the original "suffix→degeneracy" framing had its own sign backwards. Retraction
+   upheld, for stronger reasons than stated.
+3. **Divergence and speed — CONFIRMED to the decimal** (74/78/57/49% text divergence;
+   decode +35.0/+28.1 vs +5.8/+3.7 tok/s; medians track means; not a loop artifact).
+   Caveat: the arms are 2.2 days and two router processes apart, so as a SPEED claim this
+   is barred by apples-to-apples; quality endpoints stand (0/399 seed or prompt-token
+   mismatches — the inputs are genuinely matched).
+4. **"Only `draft_kind` moved" — REFUTED as stated.** Inputs matched; sessions did not
+   (fingerprint v2 vs v3, stack_head 12 commits apart, 2.2-day gap). **The ON arms are the
+   renamed pre-existing corpus rows, not fresh runs, and their suffix-ON state has ZERO
+   documentary support** — corroborated only by physics (decode ratios 1.42×/1.23×,
+   +2.55 GB session peak, 49–78% divergence). Any write-up must say: the ON arm cannot be
+   re-verified, only re-run.
+5. **Guard gaps — CONFIRMED and much larger than the handoff's list**: `compare` refuses
+   3 of the fingerprint's 21 keys (+2 hardware-only). **18 fingerprinted keys are
+   unguarded**, most output-determining (`sampling_profile`, `kv_bits`,
+   `max_kv_cache_size`, both `src/*` shas, the truncation set, `presence_penalty` — which
+   silently changes the serving path — `enable_thinking`, the agentic runtime block). Also
+   NOT fingerprinted at all: `kv.hf_path` (repoint weights, nothing notices),
+   `kv_quant_scheme`, `prefill_step_size`, the `quant` block, `kv_prealloc_tokens`.
+   Live consequences today: the two winners' ifeval rows ran on DIFFERENT `src/mlx-vlm`
+   shas and `compare --intersect` passed silently; winner-vs-`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
+   evalplus differs on cap/top_k/kv_bits unrefused; and the v3 `draft_kind` refusal has
+   never fired (only 4/54 manifests carry an observed value — unobserved ⇒ warning).
+   **The box guard is anti-correlated with truth**: 50/54 manifests say `local` from the
+   env fallback, so different machines pass and same-machine runs with different labels
+   refuse. `MLX_BOX=m5max` is now set in `config.sh`, fixing rows from today forward.
+
+**New defects surfaced (not yet fixed — proposals pending operator):**
+- `peak_mem_gb` is a SESSION-CUMULATIVE running max (monotone in file order in all 8 arms),
+  so any paired per-item peak-memory delta is process history, not an effect — and it sits
+  in `_HARDWARE_METRICS` where `compare` will bootstrap it.
+- `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` mbppplus suffix-ON peaked at **45.60 GB against the
+  46 GB gate at cap 131072** — half the shipped cap. Unexplained; not investigated.
+- `m1/suffix_ofat.py` treats an UNPAIRED item as paired: `Mbpp/430`'s OFF error stub is
+  zero-coerced against a 102,401-token ON truncation, which alone more than doubles that
+  cell's token delta (+1792.8 → +776.6 without it).
+- The analyser prints MEANS for heavy-tailed paired diffs and hides the medians it already
+  computes (he+ tokens: mean −9,281, median −13 — four runaway items, not a shift).
+- NO capacity artifact in the corpus has a manifest — every published memory-gate number
+  has unrecorded provenance.
+- Stray `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit/mbppplus.jsonl.bak-before-138-repair`
+  in the tracked results tree; `provenance.py`'s docstring claims results are gitignored —
+  they are tracked, and two manifests carry `box: worker-64gb` / `M5` labels.
