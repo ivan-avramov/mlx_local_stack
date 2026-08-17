@@ -123,10 +123,18 @@ registry name, the suffix was the tune.
 
 ## 3. Standing caveats that govern reading any number here
 
-- **Guard-clean baseline inventory (pending Phase-2 publication):** under full fingerprint
-  parity, the only leader baselines a new candidate can be DIRECTLY compared against are the
-  winners' humanevalplus/mbppplus n=100 suffix-OFF rows (cap 131072, `src/mlx-vlm 0c1c8b1`).
-  The ifeval corpus spans three fork shas and two caps — absolute readings only (ruling 3).
+- **Guard-clean baseline inventory (PUBLISHED — parity enforced in code since `9675957`,
+  2026-08-17):** fingerprint v4 + `compare` tier parity are live, with a pytest that reds the
+  suite if a fingerprint key ever lacks a documented tier again. Under full parity, the leader
+  baselines a new candidate can be DIRECTLY compared against are the winners'
+  humanevalplus/mbppplus n=100 suffix-OFF rows (cap 131072, `src/mlx-vlm 0c1c8b1`). The ifeval
+  corpus spans three fork shas and two caps — absolute readings only (ruling 3). Two rules
+  soften what "clean" demands: per-model TUNE axes (temperature, top_p/top_k/min_p, penalties,
+  kv_bits/scheme) WARN rather than refuse — a (model, tune) pair legitimately differs there —
+  and a cap difference refuses only when it could have BOUND (ruling 7's binding rule, checked
+  against actual row prompts; the winners-vs-`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
+  humanevalplus caps 131072 vs 262144 verified non-binding, so that pairing is now admissible
+  once its remaining draft-state warning is accepted as pre-v3 UNOBSERVED).
 - **The single box (M5 Max 64 GB) is the operator's daily machine** (ruling 8): capacity runs
   are scheduled for quiet moments, every peak-memory row records the concurrent-process
   baseline, and memory anomalies are suspected of co-residency stomping BEFORE being
