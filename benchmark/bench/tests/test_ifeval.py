@@ -297,6 +297,55 @@ def test_the_check_covers_punkt_tab_not_just_punkt(monkeypatch):
     assert any("punkt_tab" in p for p in looked), f"punkt_tab never checked; looked at {looked}"
 
 
+def test_download_without_NLTK_DATA_is_refused_not_written_to_home(monkeypatch):
+    """2026-08-17: a grade run without NLTK_DATA in its env let nltk.download fall back to its
+    default `~/nltk_data`, polluting $HOME outside the workdir (operator containment rule).
+    A missing redirect var must be a loud blocker, never a silent home-dir write."""
+    import bench.grade as G
+
+    downloaded = []
+
+    class FakeNltkData:
+        @staticmethod
+        def find(path):
+            raise LookupError(f"Resource {path} not found")
+
+    fake_nltk = type("nltk", (), {"data": FakeNltkData,
+                                  "download": staticmethod(lambda *a, **k: downloaded.append((a, k)) or True)})
+    monkeypatch.setitem(__import__("sys").modules, "nltk", fake_nltk)
+    monkeypatch.delenv("NLTK_DATA", raising=False)
+    with pytest.raises(Exception) as ei:
+        G._ensure_nltk_corpora()
+    assert not downloaded, "download must NOT be attempted when NLTK_DATA is unset"
+    msg = str(ei.value)
+    assert "NLTK_DATA" in msg and "config.sh" in msg, "the error must name the var and where it lives"
+
+
+def test_download_with_NLTK_DATA_targets_that_dir_explicitly(monkeypatch, tmp_path):
+    """When the redirect var IS set, pass download_dir explicitly — never trust nltk's own
+    default-dir resolution, which is what escaped to $HOME."""
+    import bench.grade as G
+
+    calls = []
+
+    class FakeNltkData:
+        @staticmethod
+        def find(path):
+            # missing until downloaded, then found
+            if not calls:
+                raise LookupError(f"Resource {path} not found")
+            return "/fake"
+
+    fake_nltk = type("nltk", (), {"data": FakeNltkData,
+                                  "download": staticmethod(lambda *a, **k: calls.append((a, k)) or True)})
+    monkeypatch.setitem(__import__("sys").modules, "nltk", fake_nltk)
+    monkeypatch.setenv("NLTK_DATA", str(tmp_path))
+    G._ensure_nltk_corpora()
+    assert calls, "download should have been attempted"
+    assert all(k.get("download_dir") == str(tmp_path) for _, k in calls), \
+        f"every download must carry download_dir=$NLTK_DATA; got {calls}"
+
+
 # ---------------------------------------------------------------- items, so the ranking key exists
 def test_grade_ifeval_emits_per_item_scores(monkeypatch):
     """Without `items`, the shared post-processor cannot compute acc_strict — the RANKING KEY — nor a

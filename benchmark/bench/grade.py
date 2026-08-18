@@ -5,6 +5,7 @@ Coding (humanevalplus/mbppplus): shell out to the official `evalplus` evaluator 
 saved completions. (livecodebench: see grade_lcb — needs lcb_runner.)
 """
 import json
+import os
 import random
 import subprocess
 import sys
@@ -683,9 +684,20 @@ def _ensure_nltk_corpora(required=_NLTK_REQUIRED) -> None:
             continue
         except LookupError:
             pass
+        # A download is about to write to disk. Without NLTK_DATA, nltk falls back to
+        # ~/nltk_data — outside $STACK_WORKDIR (operator containment rule; it bit 2026-08-17).
+        # Refuse loudly rather than pollute $HOME, and when the var IS set, pass the dir
+        # explicitly instead of trusting nltk's own resolution.
+        download_dir = os.environ.get("NLTK_DATA")
+        if not download_dir:
+            raise LookupError(
+                f"nltk resource '{res}' is missing and NLTK_DATA is not set — refusing to "
+                f"download to nltk's default ~/nltk_data (outside the workdir). "
+                f"Source ${{XDG_CONFIG_HOME:-$HOME/.config}}/mlx_local_stack/config.sh "
+                f"(exports NLTK_DATA=$STACK_WORKDIR/nltk_data) and re-run.")
         pkg = res.split("/")[-1]
         try:
-            nltk.download(pkg, quiet=True)
+            nltk.download(pkg, quiet=True, download_dir=download_dir)
             nltk.data.find(res)
         except Exception:  # noqa: BLE001 — offline, or the package name moved
             missing.append(pkg)
