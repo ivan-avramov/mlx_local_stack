@@ -1891,3 +1891,30 @@ for today's suffix-OFF uniform config.
 fork's batched decode (row identity = the request's declared seed, not batch slot), or accept
 single-sample-only designs and delete `--samples` to stop it lying. Fork edit → submodule
 bump → re-verify with a 2-seed byte-difference probe.
+
+## 2026-08-17 — the 53 GB worker: an ORPHANED LADDER PREFILL, not co-residency and not a config bug
+
+Operator observed the model runner at 53 GB during the M2 screens and challenged the agent's
+first "co-residency pressure" explanation. The challenge was right; the explanation was wrong.
+
+**What actually happened:** the capacity-ladder pipeline was killed mid-first-rung (deliberately,
+to avoid heavy rungs on a busy box) — but only the DRIVER was killed. The worker (pid 24107,
+`Qwen3.8-27B-mlx-uniform-4bit`, cap/prealloc 262144, kv_bits 0) kept executing the abandoned
+~160K-token bf16 prefill: ~10 GB KV + 14 GB weights + prefill scratch + MLX buffer-cache
+accumulation ≈ the observed 53 GB, driving RAM to 97.4% (router logged
+`memory.pressure.critical` 17:02:38) and the process into swap (its RSS later read 0.1 GB —
+swapped out, wedged). The subsequently launched screens forwarded requests to that wedged
+worker and hung. **This is the ⚠️ "a tool timeout kills the local client, NOT the remote job"
+lesson from AGENTS.md, re-learned locally: kill BY PID and verify, never assume a dead driver
+means a dead request.**
+
+**Clean measurements after a by-PID kill + router restart** (answering the operator's config
+question): fresh load of `Qwen3.8-27B-mlx-uniform-4bit` = **14.6 GB RSS** (exactly the
+weights); after a 183-token generation = **14.4 GB**. The 262144 `kv_prealloc_tokens` floor
+does NOT commit resident pages until tokens land (consistent with the recorded prealloc
+lesson). Config verdict: entries are sane — nothing extra loads, no hybrid-blind KV blowup
+(`maybe_preallocate_kv_cache` converts only the 16 full-attention layers; the 48
+linear-attention layers are untouched). The real standing constraint: with kv_bits 0 (the
+design intent — hybrid KV at 64 KiB/token fits the gate without quantization), a FULL-CAP
+prefill legitimately commits ~30 GB+, so the capacity ladder for these recipes runs on a
+QUIET box only. Steady screening traffic is weights-sized.
