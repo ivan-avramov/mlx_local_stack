@@ -2133,3 +2133,37 @@ a KV width.)
 a fork design hazard for DEPLOYED serving too — the daily driver at TQ4/131072 with the
 default session cap 8 can hold 8 × 2 GB of KV floors on top of weights. Audit and consider a
 floor-only-the-active-session fork fix.
+
+## 2026-08-18 — H1 Tier 1: the reference-model harness smoke PASSED, and the two bugs it caught were the smoke's own
+
+**Design** (spec: `docs/superpowers/specs/2026-08-18-h1-haiku-harness-smoke-design.md`): 23
+known-answer items (both winners pass each) across humanevalplus/mbppplus/math500/ifeval + 3
+depth-wrapped (d12k, exercising the new D9 axis), answered by `claude-haiku-4-5` subagents
+through the REAL prompt-assembly path, assembled into an isolated `MLX_BENCH_RESULTS` root
+(`ref-claude-haiku-4-5`, `runtime.client: claude-subagent`), graded by the real graders
+(docker evalplus + local). Plus free negative controls: a deliberately-wrong solution, an
+empty-content row, an error stub. ~250K plan tokens total, zero worker time, zero dollars.
+
+**Seam verdicts — all clean:** extraction 23/23; math500 5/5 and ifeval 5/5 (after fixing two
+bugs in the SMOKE'S OWN assembly script — `answer_gold` mapping and native id types — which the
+real generate path handles correctly, verified against real rows); depth d12k 3/3 (the D9 axis
+grades tune-suffixed depth rows end-to-end); every negative control behaved (wrong answer
+FAILED, empty content FAILED via the `_PAD_SOLUTION` seam, error stub counted per O31 and the
+>20% error-share flag tripped). Metric vector sane on a well-behaved model: conv 100%,
+degeneracy 0, CI/MDE emitted. Isolation held — the repo results tree untouched.
+
+**The 3 coding misses are GENUINE model failures, individually attributed** (the smoke's
+evidential contract: every unexpected failure gets inspected, not averaged): HumanEval/1 used
+`List[str]` without importing it (NameError under execution); HumanEval/101 fails the
+empty-string plus-test edge; Mbpp/123 mis-read the amicable-pair spec. Reference rates at n=5
+(±56pp — reference, never a ranking): he+ 60%, mbpp+ 80%, math500 100%, ifeval 100%, d12k 100%.
+
+**One harness observation worth keeping:** an id-type mismatch in the ifeval join grades 0 of
+N rows while reporting only a quiet "nothing graded" note — impossible via the real generate
+path (ids come from the same loader), but a loud refusal would be better manners. Noted, not
+fixed.
+
+**Calibration note:** the "~99% expected" prior was too strong for a cold no-thinking model on
+terse single-shot prompts — 20/23 with three explicable slips is consistent with a correct
+harness AND a fallible reference model. The procedure (inspect every miss, attribute it) is
+what carries the evidential weight, and it worked.

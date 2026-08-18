@@ -15,7 +15,7 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-**1 item (O15).** Everything else is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
+**2 items (O15, O32).** Everything else is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
 on 2026-08-16 (old driver box), O25 and O30 on 2026-08-17 (this box; merged 2026-08-18); nothing
 was deleted.
 
@@ -32,6 +32,31 @@ scoring it as a model failure conflates harness availability with capability. Ne
 (a) error rows count as failures in acc_strict (matches the DNF ruling's letter), or (b) they
 stay excluded but every published acc_strict must also quote the error count (status quo,
 made explicit). Either way the pilot's two numbers are both recorded in the results commit.
+
+### O32. Expand scope to a weak/strong ROUTER system (NVIDIA switchyard: local pick + cloud frontier)?
+Raised 2026-08-18 by the operator: test a routing layer that fronts the local B pick (weak/cheap)
+and a frontier cloud model (strong/expensive), routing per request — a way to make the SYSTEM
+(the daily coder) meaningfully better at small $ cost, usable as a daily option.
+
+**Architect assessment (recommendation: YES, in scope as a new SYSTEM track — parked behind the
+current B queue, entered via a cheap spike):**
+- **The harness points at it almost for free** if the router speaks OpenAI-compatible HTTP: our
+  axes drive an endpoint, so a router is just a new base URL. Provenance already separates it —
+  a router row is a different `client`/serving path, and `compare` refuses pooling with model rows;
+  it becomes a SYSTEM entry in the ledger under a (system, config) extension of the (model, tune)
+  taxonomy (config = routing policy + budget).
+- **The decisive instrument already exists**: matched-item paired runs + EXCLUSIVE-SOLVE SETS.
+  Three arms on the same seeded items — local-alone, router(local+frontier), frontier-alone —
+  answer the router's whole value question: does the composed system recover the items the local
+  pick misses, at what routed share, at what $ per task? Report quality + $/task + route-share;
+  rank on capability per the standing rule.
+- **New metrics needed (small)**: cost-per-task and route-share per row; a `system` ledger section.
+- **Real dollars enter** (frontier API on routed items) — bounded: n=100 coding at ~30% routed is
+  a few $ of Sonnet-class usage per arm. Pilot rule applies.
+- **Scope guard**: does NOT displace the current queue (Stage-2 screens, M11/M12, opencode Runs
+  A/B). Proposed entry: **S1 spike** — stand switchyard up, point the T1-style smoke at it (n=15),
+  record route-share/cost/latency mechanics; design the real three-arm eval only if the spike is
+  clean. Needs an operator go + which frontier arm (claude-sonnet vs claude-opus class) + an API budget cap. <!-- allow-shorthand -->
 
 ### O15 — NEW DATUM 2026-08-14 (still OPEN, but one wrong reading is now excluded)
 A DEPTH test at last, from the `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` ladder. Same model, same item set, **same context
