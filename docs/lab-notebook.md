@@ -1918,3 +1918,32 @@ linear-attention layers are untouched). The real standing constraint: with kv_bi
 design intent — hybrid KV at 64 KiB/token fits the gate without quantization), a FULL-CAP
 prefill legitimately commits ~30 GB+, so the capacity ladder for these recipes runs on a
 QUIET box only. Steady screening traffic is weights-sized.
+
+## 2026-08-17 — the 51 GB was REAL: prealloc floor × session retention × bf16 KV; ruling: measure at expected deployment only
+
+Continuation of the previous entry, which resolved too early. The operator re-observed 51 GB
+on the NEW worker (pid 33027) while `ps` read 14.4 GB. Both were right: `footprint` showed
+**51 GB dirty IOAccelerator (Metal) memory** — RSS is blind to Metal buffers, and the earlier
+"14.6 GB after load, config is sane" verdict measured the wrong metric (the exact RSS trap
+AGENTS.md documents for capacity work).
+
+**Mechanism, three factors multiplying:** (1) `PreallocKVCache` materializes the FULL
+262144-token floor at first append — with kv_bits 0 that is ~16 GB of bf16 KV arrays
+(64 KiB/token × 16 full-attention layers); (2) the session cache retains one such set PER
+CONVERSATION (LRU cap default 8, `MLX_VLM_CACHE_SESSION_MAX`); (3) two probe requests plus
+the active screen item = ~3 retained sessions. 14.5 GB weights + 2-3 × 16 GB ≈ 51 GB. The
+winners never showed this because their floor is 131072 AND TQ4-quantized ≈ 2 GB/session.
+
+**Operator ruling (2026-08-17): no bf16-KV measurement arms — limit experiments to the
+expected deployment.** TQ4 (turboquant kv4, `quantized_kv_start 0`) is the cross-model
+deployed convention (both winners ship it). The three `Qwen3.8-27B` family entries now carry it; <!-- allow-shorthand -->
+prealloc restored to cap per the standing rule (at TQ4 width the floor is ~4 GB/session,
+bounded by session cap 2 on the bench router). Verified at the worker cmdline; footprint
+under generation: **24 GB**. ("6-bit" in the corpus is WEIGHT quant —
+Ornith-1.0-35B-mlx-uniform-6bit, Qwen3.6-27B-UD-MLX-6bit, gemma-4-31b-it-qat-6bit — never
+a KV width.)
+
+**Standing implication filed (PLAN D6):** the prealloc floor applying PER RETAINED SESSION is
+a fork design hazard for DEPLOYED serving too — the daily driver at TQ4/131072 with the
+default session cap 8 can hold 8 × 2 GB of KV floors on top of weights. Audit and consider a
+floor-only-the-active-session fork fix.

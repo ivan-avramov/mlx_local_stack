@@ -19,8 +19,13 @@ Model picks are perpetual and revised as contenders arrive — there is no "done
   penalties), KV quant scheme/bits, cache cap, speculative decoding, thinking budget.
 - **RULED axes** (fixed by standing policy, never searched): thinking always ON; budget =
   generous fixed headroom, never a knob; APC off; suffix decoding OFF for all measurement
-  (return condition below); `presence_penalty 0.0`.
-- **TUNABLE axes**: temperature (per-model ladder), KV bits, cache cap.
+  (return condition below); `presence_penalty 0.0`; **measure at the EXPECTED DEPLOYMENT
+  only — no bf16-KV arms** (operator ruling 2026-08-17): the candidate KV convention is
+  **turboquant kv4, `quantized_kv_start 0`** (what both winners ship). Rationale: bf16 KV
+  is never the realistic deployment, and its prealloc floor cost 16 GB per retained session
+  on `Qwen3.8-27B-mlx-uniform-4bit` (measured 51 GB footprint — lab notebook 2026-08-17).
+- **TUNABLE axes**: temperature (per-model ladder), KV bits *within* quantized widths
+  (kv3/kv4/kv6 as OFAT arms, never bf16), cache cap.
 - Tune encoding (ruling 6): a `tune` field in the manifest + `--tune` filename suffix;
   result directories are pure registry names. Migration of the legacy encodings (`-kv4`-style
   directory suffixes, `.suffixon`/`.t03` file suffixes) is queued driver-side work.
