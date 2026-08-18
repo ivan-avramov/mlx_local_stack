@@ -2167,3 +2167,103 @@ fixed.
 terse single-shot prompts — 20/23 with three explicable slips is consistent with a correct
 harness AND a fallible reference model. The procedure (inspect every miss, attribute it) is
 what carries the evidential weight, and it worked.
+
+## 2026-08-18 — H1 Tier 2: the order anchor PASSED — the local field sits where it should
+
+**Question and design.** T2 asks one coarse question: does the instrument place a model of
+known public standing (`claude-haiku-4-5`) where expected relative to the local field? n=40
+humanevalplus on the seed-0 draw (verified nested inside both winners' n=100 coverage), prompts
+via the real `benchmarks.build_messages`, six reference subagents answering independently, rows
+assembled under the isolated `ref-claude-haiku-4-5` root and graded by the real docker evalplus
+path. Reference table only — these rows never touch the scoreboard, and `compare` refuses
+pooling by construction (`runtime.client: claude-subagent`).
+
+**Result (plus-pass on the SAME 40 items, k=1):**
+
+| model | pass@1 (plus) | base |
+|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 95.0% | — |
+| `claude-haiku-4-5` (reference) | 87.5% | 92.5% |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 85.0% | — |
+
+All three within 10pp of each other, inside the n=40 MDE (~±20pp) — statistically
+indistinguishable, which is itself the sane outcome: strong local ~27–35B 4-bit models ARE
+expected to sit in `claude-haiku-4-5`'s neighbourhood on short-form function completion. No
+gross instrument distortion in either direction (a reference score of ~40% would have indicted
+prompt assembly; ~100% with the winners far below would have indicted grading). Exclusive-solve
+on this draw: reference-only vs `Ornith-1.0-35B-mlx-uniform-4bit` = ∅ (the winner weakly
+dominates: it also solves HumanEval/83, /151, /132); reference-only vs
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` = {HumanEval/67, /108} against {HumanEval/83} the other way.
+
+**All 5 reference misses individually attributed as GENUINE** (the T1 evidential contract,
+applied again): extraction clean on every one (complete defs, no truncation). HumanEval/83 —
+combinatorics error in the counting formula; HumanEval/132 — logic error; HumanEval/32
+(`find_zero`) — genuinely hard numerical item; HumanEval/39 and /151 — base-pass/plus-fail
+edge-case misses. Zero seam residue.
+
+**Metric sanity:** conv 100%, degeneracy 0, errors 0, CI [0.775, 0.975] and MDE emitted.
+Cost: ~300K plan tokens actual (6 batch agents), zero worker time, zero dollars — again ~6×
+under the 2M estimate.
+
+**Verdict: T2 PASSED.** Questions 1 (mechanics) and 2 (construct order) now both have
+reference-model evidence. Remaining tier: T3 depth-axis anchor (n=10 at d64k, ~0.7M tokens),
+which gates M12 — awaiting operator go.
+
+## 2026-08-18 — H1 Tier 3: the depth-axis anchor PASSED — M12 is ungated
+
+**Question.** Before M12 spends worker hours running the winners on the D9 coding-at-depth
+axis, show that a long-context reference model does NOT collapse under the axis's own
+construction — if `claude-haiku-4-5` (200K context) failed at 64K depth, the suspect would be
+the axis (mangled task, contaminating padding, broken grading path), not any model.
+
+**Design.** n=10 humanevalplus items the reference PASSED at shallow depth in T2 (depth is the
+only moved variable), wrapped by the real `depth.wrap_messages` at 64,000 tokens (~225K chars
+each), one reference subagent per item, rows graded through the tune-suffixed d64k path by the
+real docker evalplus. Prompts were written as raw text, not JSON — a single-line JSON blob
+would have been line-truncated by the reading tool and the reference would never have ingested
+the padding at all (a T3-assembly seam caught before launch, same class as T1's two).
+
+**Result: base 10/10, plus 8/10.** Both plus-misses individually attributed and BENIGN:
+HumanEval/97 dropped the `abs()` guard on negative unit digits, HumanEval/6 used `split(' ')`
+instead of `split()` — in both, the depth solution is structurally the same correct algorithm
+as the shallow pass, failing only a plus edge case. That is the reference's KNOWN
+base-pass/plus-fail miss class (2/40 in T2), not a depth cliff. No solution referenced any
+padding symbol (the padding is behaviourally inert); every solution solved the right task
+(the task at the END of the context was located every time).
+
+**Caveats, stated honestly:** (1) selecting T2-passed items biases shallow to 100% by
+construction — the shallow-vs-depth delta is directional only at n=10; (2) the reference
+ingests the padding via chunked file reads, not one contiguous 64K-token window, so this
+anchors the AXIS CONSTRUCTION (task survivable, padding inert, d64k grading path end-to-end)
+more strongly than it anchors single-window attention-at-depth. The local models M12 measures
+get the TRUE single-window prompt — the harder condition — which is exactly what the axis
+exists to measure; the gate's job was only to prove the axis itself isn't broken. It isn't.
+
+**Verdict: T3 PASSED. H1 complete (T1+T2+T3, ~650K plan tokens total, zero worker time, zero
+dollars). M12 (coding-at-depth on the winners) is UNGATED and runs per queue order.**
+
+## 2026-08-18 — powermetrics decode probe: the `Qwen3.8-27B` slowness is KERNEL-INTERNAL, not dispatch starvation <!-- allow-shorthand -->
+
+**Setup.** The pre-registered discriminator from the ledger's 2026-08-18 narrowing: sample GPU
+idle% during a steady decode — high idle = dispatch/CPU-bound, busy = kernel-internal.
+Operator ran `sudo powermetrics --samplers cpu_power,gpu_power -i 1000 -n 30` while the
+t0.4 rung's item 8 was mid-decode on `Qwen3.8-27B-static-mixed-4bit` (~23 tok/s, verified
+live before and after the window; the probe is read-only so the run is untouched).
+
+**Result: GPU active residency 94.8–95.8% (median 95.4%), idle 4–5% — the GPU is occupied
+essentially continuously.** Dispatch starvation is DISCONFIRMED. The supporting signature says
+the busy time is cheap, though: mean GPU clock ~1.12 GHz with the 1.62 GHz top bin at 0%
+across all 30 samples, GPU power ~21 W, CPU ~3.3 W (P0 ~60% at ~1.5 GHz, P1 idle, ANE 0). A
+continuously-active GPU that never boosts and draws modest power is executing serialized
+small/latency-bound kernels — consistent with the 64-hybrid-layer per-token chain (conv1d
+update + projections + gating + custom kernel + norms on each of 48 linear-attention layers)
+costing latency ON the GPU rather than the CPU failing to feed it.
+
+**Consequence for the lever:** unchanged, arguably strengthened — M6's native-MTP probe
+amortizes the per-token fixed cost across speculated tokens regardless of which side owns
+that cost. What IS ruled out is hoping a future mlx dispatch optimization alone fixes it: the
+time is inside the kernels' execution, so fewer-tokens-per-weight-pass (MTP) or fused/batched
+layer kernels are the shapes of a fix. Checkpoint arch confirmed dense (no experts, 64
+layers, ~13 GB weights on disk at ~4 bpw). Caveats: one recipe, one item, co-resident session
+(read-only probe; CPU numbers include the session's own load, GPU numbers effectively don't —
+nothing else uses the GPU).

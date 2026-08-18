@@ -15,9 +15,9 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-**2 items (O15, O32).** Everything else is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
-on 2026-08-16 (old driver box), O25 and O30 on 2026-08-17 (this box; merged 2026-08-18); nothing
-was deleted.
+**1 item (O32).** Everything else is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
+on 2026-08-16 (old driver box), O25 and O30 on 2026-08-17 (this box; merged 2026-08-18), O15 on
+2026-08-18; nothing was deleted.
 
 ### ~~O31~~ → RULED (operator, 2026-08-18): **(a) — error rows count as FAILURES in acc_strict's denominator.** Shipped same day: `grade._postprocess` appends every error row as a 0-score strict item (TDD, `test_error_rows_count_as_FAILURES_in_acc_strict_never_exclusions`); the comparability audit found ALL 7 affected corpus score files had used the old exclusion consistently, so one re-grade pass restored comparability (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ifeval 0.9014→0.8649, math500 0.8148→0.7333, mbppplus 0.8283→0.82, aime 1.0→0.8; `gemma-4-31B-it-qat-6bit` humanevalplus strict →0.7692; `Qwen3.8-27B-mlx-uniform-4bit` t0.7 diagnostic →0.6); scoresheet regenerated under the new definition. `acc` keeps its historical generated-only meaning. Original text retained:
 
@@ -58,7 +58,18 @@ current B queue, entered via a cheap spike):**
   record route-share/cost/latency mechanics; design the real three-arm eval only if the spike is
   clean. Needs an operator go + which frontier arm (claude-sonnet vs claude-opus class) + an API budget cap. <!-- allow-shorthand -->
 
-### O15 — NEW DATUM 2026-08-14 (still OPEN, but one wrong reading is now excluded)
+### ~~O15~~ → CLOSED-BY-POLICY (operator, 2026-08-18)
+The operator confirmed the protection hypothesis from their OWN original measurement: they ran an
+actual prefill test and OBSERVED the OOM when realloc-based cache growth was used — that observation
+is what prompted adding `kv_prealloc_tokens` alongside the cap config in `main_models.yaml` in the
+first place. So both halves are now settled: **inflation excluded by measurement** (the 2026-08-14
+depth datum below: peak did not rise when prealloc doubled with the cache genuinely grown to 131K),
+**protection confirmed by the operator's observed OOM**. The discriminating re-test (a prealloc-OFF
+arm at 262144) would deliberately OOM the daily-driver box to re-demonstrate something already
+observed once, for zero actionable payoff — the rule (prealloc = cap) costs nothing at peak and
+stays. Closed; the two sections below are the record.
+
+### O15 — NEW DATUM 2026-08-14 (superseded by the closure above; one wrong reading excluded)
 A DEPTH test at last, from the `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` ladder. Same model, same item set, **same context
 `ctx=131072`**, only `kv_prealloc_tokens` differing — and unlike my invalid probe, the cache genuinely
 grew to 131K:
