@@ -15,9 +15,21 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-**1 item.** Everything else is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
+**2 items.** Everything else is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
 on 2026-08-16 (old driver box), O25 and O30 on 2026-08-17 (this box; merged 2026-08-18); nothing
 was deleted.
+
+### O31. A harness-error row (client timeout, no text) is EXCLUDED from acc_strict's denominator — is that the right reading of the DNF rule?
+Raised 2026-08-18, from the ifeval cap pilot. `grade` counts error-stub rows in a separate
+`errors` field and drops them from `n` (pilot: n=142 of 148, acc_strict 0.9014). The
+acc_strict ruling says a DNF counts as a FAILURE in the denominator, never an exclusion — and
+a row that decoded for 3600 s without self-terminating is behaviorally a DNF even though no
+text was persisted. Honest-denominator read of the same run: 128/148 = 0.8649. The
+counter-argument: an error stub is RETRYABLE harness state (a resume regenerates it), so
+scoring it as a model failure conflates harness availability with capability. Needs a ruling:
+(a) error rows count as failures in acc_strict (matches the DNF ruling's letter), or (b) they
+stay excluded but every published acc_strict must also quote the error count (status quo,
+made explicit). Either way the pilot's two numbers are both recorded in the results commit.
 
 ### O15 — NEW DATUM 2026-08-14 (still OPEN, but one wrong reading is now excluded)
 A DEPTH test at last, from the `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` ladder. Same model, same item set, **same context
