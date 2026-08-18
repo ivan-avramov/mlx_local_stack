@@ -14,7 +14,10 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-### O28. The per-draw seed is INERT on the non-speculative serving path — fix the fork, or delete `--samples`?
+### ~~O28~~ → RULED (2026-08-17): operator took the recommendation — (b) now, (a) when the fork is next opened.
+`run.py generate` now REFUSES `--samples > 1` with an O28 citation (guard + test landed same day). The fork fix (thread each request's seed into its rows' keys in the batched decode) is queued for the next fork-opening; the guard comes out when a 2-seed byte-difference probe passes.
+
+### O28 (original text, retained — the ruling above supersedes the question).
 Raised 2026-08-17, from the M1 re-draw probe (full evidence in `docs/lab-notebook.md`, same date).
 
 Measured: two draws of HumanEval/71 (`Ornith-1.0-35B-mlx-uniform-4bit`, deployed profile,

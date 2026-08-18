@@ -101,6 +101,18 @@ def cmd_list(args):
 
 
 def cmd_generate(args):
+    if args.samples > 1:
+        # O28 (operator-ruled 2026-08-17): the per-draw seed is INERT on the non-speculative
+        # serving path — measured byte-identical 82,169-token draws under different declared
+        # seeds (the batched decode keys off the FIRST request's seed at row 0). k>1 therefore
+        # produces k COPIES: pass^k collapses to pass@1 and reliability reads perfect. Refuse
+        # rather than manufacture fake reliability; remove this guard when the fork threads
+        # per-request seeds into per-row keys (O28's part (a)) and a 2-seed byte-difference
+        # probe passes.
+        print(f"[generate] REFUSED: --samples {args.samples} > 1 is inert on this serving path "
+              f"(O28: request seeds never reach the sampler; k draws are byte-copies). "
+              f"Spend on ITEMS instead; multi-sample designs return with the fork fix.")
+        raise SystemExit(2)
     models, benches, limits = _resolve(args)
     overrides = {}  # global params layered over each model's production config
     if args.thinking_budget is not None:
