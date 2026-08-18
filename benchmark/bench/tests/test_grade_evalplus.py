@@ -141,3 +141,57 @@ def test_the_timeout_is_bounded_well_below_the_old_3600s(tmp_path, monkeypatch):
 
     GR.grade_evalplus("humanevalplus", "m", runner=runner, all_ids=["HumanEval/0"])
     assert seen["timeout"] == GR.EVALPLUS_TIMEOUT_S <= 900
+
+
+def test_grade_evalplus_tuned_run_passes_the_tune_infixed_samples_path_to_docker(tmp_path, monkeypatch):
+    """Regression (2026-08-17, caught live on the t0.6 ladder rung): the samples file is written
+    with the tune infix (`humanevalplus.t0.6_samples.jsonl`) but the docker cmd passed the BARE
+    `--samples /work/humanevalplus_samples.jsonl` -> FileNotFoundError inside the container."""
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    p = tmp_path / "m" / "humanevalplus.t0.6.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(
+        {"id": "HumanEval/0", "content": "```python\ndef f():\n    return 1\n```"}))
+
+    captured = {}
+
+    def fake_runner(cmd, **kw):
+        captured["cmd"] = cmd
+        (tmp_path / "m" / "humanevalplus.t0.6_samples_eval_results.json").write_text(
+            json.dumps({"eval": {"HumanEval/0": [{"base_status": "pass", "plus_status": "pass"}]}}))
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    s = GR.grade_evalplus("humanevalplus", "m", runner=fake_runner,
+                          all_ids=["HumanEval/0"], tune="t0.6")
+    samples_arg = captured["cmd"][captured["cmd"].index("--samples") + 1]
+    assert samples_arg == "/work/humanevalplus.t0.6_samples.jsonl", \
+        "docker must be pointed at the SAME tune-infixed file the harness wrote"
+    assert (tmp_path / "m" / "humanevalplus.t0.6_samples.jsonl").exists()
+    assert s["acc"] == 1.0
+
+
+def test_grade_evalplus_unextractable_code_becomes_a_failing_string_not_null(tmp_path, monkeypatch):
+    """Regression (2026-08-17, t0.7 rung): a converged row whose content has no parseable code
+    block extracts to None, serialized as JSON null -> evalplus AssertionError('Solution must be
+    a string') and the WHOLE grade dies. Graceful-degrade rule: that row must become a failing
+    STRING solution so the rest of the run still grades."""
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    _write_rows(tmp_path, "m", "humanevalplus", [
+        {"id": "HumanEval/0", "content": "```python\ndef f():\n    return 1\n```"},
+        {"id": "HumanEval/1", "content": ""},   # converged with an EMPTY answer (all-reasoning row)
+    ])
+
+    def fake_runner(cmd, **kw):
+        samples = [json.loads(l) for l in
+                   (tmp_path / "m" / "humanevalplus_samples.jsonl").read_text().splitlines()]
+        assert all(isinstance(s["solution"], str) for s in samples), \
+            "every serialized solution must be a string (evalplus asserts on null)"
+        (tmp_path / "m" / "humanevalplus_samples_eval_results.json").write_text(json.dumps({"eval": {
+            "HumanEval/0": [{"base_status": "pass", "plus_status": "pass"}],
+            "HumanEval/1": [{"base_status": "fail", "plus_status": "fail"}],
+        }}))
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    s = GR.grade_evalplus("humanevalplus", "m", runner=fake_runner,
+                          all_ids=["HumanEval/0", "HumanEval/1"])
+    assert s["n"] == 2 and s["acc"] == 0.5

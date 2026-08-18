@@ -311,7 +311,10 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
     our: dict = {}
     for r in rows:
         if r.get("id"):
-            our.setdefault(r["id"], {})[r.get("sample", 0)] = extract.extract_code(r.get("content", ""))
+            # None (no extractable code — e.g. a converged row with an EMPTY answer) becomes a
+            # failing STRING: evalplus asserts on null and would kill the whole grade.
+            our.setdefault(r["id"], {})[r.get("sample", 0)] = (
+                extract.extract_code(r.get("content", "")) or _PAD_SOLUTION)
     if not our:
         return {"benchmark": name, "model": model, "n": 0, "acc": None, "note": "no completions"}
     try:
@@ -347,7 +350,7 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
     cname = _container_name(model, stem)
     cmd = ["docker", "run", "--rm", "--name", cname,
            "--platform", "linux/amd64", "-v", f"{sdir}:/work",
-           image, "evalplus.evaluate", "--dataset", ds, "--samples", f"/work/{name}_samples.jsonl"]
+           image, "evalplus.evaluate", "--dataset", ds, "--samples", f"/work/{stem}_samples.jsonl"]
     timed_out = None
     try:
         proc = runner(cmd, capture_output=True, text=True, timeout=EVALPLUS_TIMEOUT_S)
