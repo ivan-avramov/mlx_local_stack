@@ -133,6 +133,16 @@ def cmd_generate(args):
         overrides["repetition_penalty"] = args.repetition_penalty
     if args.max_tokens is not None:
         overrides["max_tokens"] = args.max_tokens
+    # depth_tokens (D9, coding-at-depth): prompt-side override, provenance-tracked via
+    # `overrides` like the rest. A depth run must carry a tune label so its rows never share
+    # a file with the shallow corpus (the fingerprint would catch the mix, but a separate
+    # file is the difference between a refused resume and a poisoned one).
+    if args.depth_tokens is not None:
+        if not args.tune:
+            print("[generate] REFUSED: --depth-tokens requires --tune (e.g. --tune d100k) so "
+                  "depth rows get their own files and never collide with the shallow corpus.")
+            raise SystemExit(2)
+        overrides["depth_tokens"] = args.depth_tokens
     chunks = "all" if args.chunks in ("all", "-1") else args.chunks
     tune = args.tune  # already grammar-validated by argparse's type=generate.validate_tune
     # Name the ACTUAL profile. This used to hardcode "production" and print immediately before
@@ -320,6 +330,9 @@ def build_parser():
     sp.add_argument("--max-tokens", dest="max_tokens", type=int, default=None,
                     help="override max_tokens for all models (default: each model's config value)")
     sp.add_argument("--temp", type=float, default=None, help="override temperature for all models")
+    sp.add_argument("--depth-tokens", dest="depth_tokens", type=int, default=None,
+                    help="coding-at-depth (D9): embed each item at the end of ~N tokens of "
+                         "deterministic repo context. Provenance-tracked; requires --tune")
     sp.add_argument("--presence-penalty", dest="presence_penalty", type=float, default=None,
                     help="override presence_penalty (provenance-tracked). NOTE: any nonzero penalty "
                          "also DISABLES suffix decoding for the request, so it changes the serving "

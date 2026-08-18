@@ -35,7 +35,10 @@ _HARDWARE_METRICS = ("decode_tps", "prefill_tps", "wall_s", "peak_mem_gb", "etts
 # REFUSE for every metric: harness knobs that make a delta non-attributable. thinking_budget /
 # max_tokens move truncation-sensitive metrics; enable_thinking OFF is a different regime
 # entirely (thinking ON is a RULED axis).
-_MUST_MATCH_SAMPLING = ("thinking_budget", "max_tokens", "enable_thinking")
+_MUST_MATCH_SAMPLING = ("thinking_budget", "max_tokens", "enable_thinking",
+                        # depth_tokens (D9): the arms answered different questions — a depth-vs-
+                        # shallow read is the axis's own PAIRED analysis, never a cross-model pool.
+                        "depth_tokens")
 
 # WARN only: per-model TUNE axes. Under the (model, tune) taxonomy each model legitimately runs
 # its own operating point — Ornith-1.0-35B-mlx-uniform-4bit t0.4 vs

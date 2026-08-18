@@ -12,7 +12,7 @@ import re
 import time
 from pathlib import Path
 
-from . import benchmarks, client, convergence, model_params, paths, rowschema, traces
+from . import benchmarks, client, convergence, depth, model_params, paths, rowschema, traces
 
 # ABSOLUTE, resolved from the module location. It was Path("benchmark/results") — CWD-relative, so
 # running from benchmark/ wrote a second invisible tree at benchmark/benchmark/results/. Same
@@ -380,6 +380,10 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
             try:
                 params = model_params.params_for(model, profile=sampling_profile)
                 params.update(overrides)
+                # depth_tokens (D9) is PROMPT-side: it must reach the manifest (it rides
+                # `overrides` into the fingerprint's sampling slice) but never the server —
+                # an unknown request field is at best ignored and at worst a 400.
+                depth_tokens = params.pop("depth_tokens", None)
                 # EVERY draw carries an explicit seed. Measured on the live server: with no
                 # seed, repeated identical requests return BYTE-IDENTICAL text (the sampler is
                 # keyed deterministically per request, DEFAULT_SEED=0, and the shipped
@@ -389,8 +393,10 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                 # the draws reproducible, which is what distinguishes a resume from a re-draw.
                 draw_seed = rowschema.sample_seed(it["id"], sample, base=seed_base)
                 params["seed"] = draw_seed
+                msgs = depth.wrap_messages(benchmarks.build_messages(b, it),
+                                           depth_tokens, it["id"])
                 p, recovery, retry = probe_with_recovery(
-                    model, benchmarks.build_messages(b, it), params,
+                    model, msgs, params,
                     probe_fn=_probe, restart_fn=restart_fn, preload_fn=client.preload)
                 if recovery:
                     print(f"  [loop-recovery] {model}/{b}/{it['id']}: {recovery}", flush=True)
