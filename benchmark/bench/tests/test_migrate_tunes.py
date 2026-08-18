@@ -84,9 +84,9 @@ def test_apply_rewrites_the_manifest_model_and_tune(tmp_path):
     M.apply_plan(tmp_path, actions)
 
     man = json.loads((tmp_path / "Ornith-1.0-35B-mlx-uniform-4bit" /
-                      "livecodebench.suffixon.manifest.json").read_text())
+                      "livecodebench.suffixon-phase2.manifest.json").read_text())
     assert man["model"] == "Ornith-1.0-35B-mlx-uniform-4bit"    # rewritten to the PURE name
-    assert man["tune"] == "suffixon"
+    assert man["tune"] == "suffixon-phase2"
     assert man["sampling"] == {"temperature": 0.4}               # rest of the manifest preserved
 
 
@@ -103,37 +103,39 @@ def test_apply_is_idempotent(tmp_path):
 
 # --------------------------------------------------------------------------- collision refusal
 def test_collision_is_refused_loudly_and_other_files_still_migrate(tmp_path):
-    """The REAL collision this migration exists to catch: a `-suffix` pseudo-dir row file whose
-    target name (`<bench>.suffixon.jsonl`) already exists as the ad-hoc 'keeper' encoding."""
-    _write(tmp_path, "Ornith-1.0-35B-mlx-uniform-4bit-suffix", "humanevalplus.jsonl", "OLD-DATA\n")
-    _write(tmp_path, "Ornith-1.0-35B-mlx-uniform-4bit-suffix", "aime.score.json", '{"acc":1}')
-    _write(tmp_path, "Ornith-1.0-35B-mlx-uniform-4bit", "humanevalplus.suffixon.jsonl", "KEEPER-DATA\n")
+    """A pseudo-dir row file whose target name already exists must be refused, never
+    overwritten. (The historical instance -- `-suffix` vs the `.suffixon` keepers -- was
+    RESOLVED 2026-08-17 by giving that dir its own `suffixon-phase2` label, so this test
+    manufactures the same shape with a kv4 collision.)"""
+    _write(tmp_path, "Ornith-1.0-35B-mlx-uniform-4bit-kv4", "humanevalplus.jsonl", "OLD-DATA\n")
+    _write(tmp_path, "Ornith-1.0-35B-mlx-uniform-4bit-kv4", "aime.score.json", '{"acc":1}')
+    _write(tmp_path, "Ornith-1.0-35B-mlx-uniform-4bit", "humanevalplus.kv4.jsonl", "KEEPER-DATA\n")
 
     actions = M.plan(tmp_path)
     collisions = [a for a in actions if a["type"] == "collision"]
     assert len(collisions) == 1
-    assert collisions[0]["dst"].name == "humanevalplus.suffixon.jsonl"
+    assert collisions[0]["dst"].name == "humanevalplus.kv4.jsonl"
 
     M.apply_plan(tmp_path, actions)
 
     # the pre-existing file must be UNCHANGED (never overwritten)
     assert (tmp_path / "Ornith-1.0-35B-mlx-uniform-4bit" /
-           "humanevalplus.suffixon.jsonl").read_text() == "KEEPER-DATA\n"
+           "humanevalplus.kv4.jsonl").read_text() == "KEEPER-DATA\n"
     # the source file must NOT have been deleted either -- a refused move leaves the source alone
-    assert (tmp_path / "Ornith-1.0-35B-mlx-uniform-4bit-suffix" / "humanevalplus.jsonl").exists()
+    assert (tmp_path / "Ornith-1.0-35B-mlx-uniform-4bit-kv4" / "humanevalplus.jsonl").exists()
     # the OTHER (non-colliding) file in the same pseudo dir still migrates
-    assert (tmp_path / "Ornith-1.0-35B-mlx-uniform-4bit" / "aime.suffixon.score.json").exists()
+    assert (tmp_path / "Ornith-1.0-35B-mlx-uniform-4bit" / "aime.kv4.score.json").exists()
     # a dir with a refused file is NOT deleted -- data must never be silently dropped
-    assert (tmp_path / "Ornith-1.0-35B-mlx-uniform-4bit-suffix").is_dir()
+    assert (tmp_path / "Ornith-1.0-35B-mlx-uniform-4bit-kv4").is_dir()
 
 
 def test_collision_refusal_is_reported_in_print_plan(tmp_path, capsys):
-    _write(tmp_path, "Ornith-1.0-35B-mlx-uniform-4bit-suffix", "humanevalplus.jsonl", "OLD-DATA\n")
-    _write(tmp_path, "Ornith-1.0-35B-mlx-uniform-4bit", "humanevalplus.suffixon.jsonl", "KEEPER\n")
+    _write(tmp_path, "Ornith-1.0-35B-mlx-uniform-4bit-kv4", "humanevalplus.jsonl", "OLD-DATA\n")
+    _write(tmp_path, "Ornith-1.0-35B-mlx-uniform-4bit", "humanevalplus.kv4.jsonl", "KEEPER\n")
     actions = M.plan(tmp_path)
     M.print_plan(actions, apply=False)
     out = capsys.readouterr().out
-    assert "REFUSED" in out and "humanevalplus.suffixon.jsonl" in out
+    assert "REFUSED" in out and "humanevalplus.kv4.jsonl" in out
 
 
 # --------------------------------------------------------------------------- unrecognized (leftover) files

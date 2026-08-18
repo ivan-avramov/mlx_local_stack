@@ -40,7 +40,12 @@ from . import benchmarks, paths
 # regex rule is not.
 PSEUDO_MODEL_DIRS = {
     "Ornith-1.0-35B-mlx-uniform-4bit-kv4": ("Ornith-1.0-35B-mlx-uniform-4bit", "kv4"),
-    "Ornith-1.0-35B-mlx-uniform-4bit-suffix": ("Ornith-1.0-35B-mlx-uniform-4bit", "suffixon"),
+    # NOT "suffixon": that label is taken by the 2026-08-14 OFAT ON comparators already living
+    # at Ornith-1.0-35B-mlx-uniform-4bit/<bench>.suffixon.*. This dir is a DIFFERENT run — the
+    # original Phase-2 suffix validation (ts 2026-07-09, cap 262144, src/mlx-vlm f0d50c90,
+    # pre-fingerprint) — so it gets its own label. Architect resolution 2026-08-17 of the 8
+    # collisions the first dry-run refused.
+    "Ornith-1.0-35B-mlx-uniform-4bit-suffix": ("Ornith-1.0-35B-mlx-uniform-4bit", "suffixon-phase2"),
     "Qwen3.6-27B-Opus-Distill-OptiQ-4bit-kv3": ("Qwen3.6-27B-Opus-Distill-OptiQ-4bit", "kv3"),
     "Qwen3.6-27B-MLX-8bit-kv16": ("Qwen3.6-27B-MLX-8bit", "kv16"),
     "Qwen3.6-27B-UD-MLX-6bit-kv16": ("Qwen3.6-27B-UD-MLX-6bit", "kv16"),
