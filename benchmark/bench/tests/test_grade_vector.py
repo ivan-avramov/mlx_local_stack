@@ -81,6 +81,25 @@ def test_valid_now_means_harness_clean_not_converged(write_rows):
     assert s["all_converged"] is False
 
 
+def test_error_rows_count_as_FAILURES_in_acc_strict_never_exclusions(write_rows):
+    """O31 ruled (a) by the operator, 2026-08-18: a harness-error row (client timeout, no text
+    persisted) is behaviorally a DNF — the ifeval pilot's six timeouts each decoded >3600 s
+    without self-terminating — and the acc_strict ruling says a DNF counts as a FAILURE in the
+    denominator, never an exclusion. `acc` keeps its historical generated-only meaning; only
+    the ranking key changes. Audited 2026-08-18: all 7 affected corpus score files used the
+    old exclusion consistently, so a single re-grade restores comparability."""
+    write_rows("m", "math500", [
+        _row("A", ok=True),
+        _row("B", ok=True),
+        {"id": "C", "sample": 0, "error": "timed out"},
+    ])
+    s = GR.grade("math500", "m")
+    assert s["acc"] == 1.0, "acc unchanged: correctness over GENERATED items"
+    assert s["acc_strict"] == pytest.approx(2 / 3, abs=1e-4), \
+        "acc_strict: the errored draw is a failed item in the denominator"
+    assert s["errors"] == 1
+
+
 def test_valid_is_false_when_the_harness_itself_failed(write_rows):
     write_rows("m", "math500", [{"id": "a", "sample": 0, "error": "connection reset"},
                                 {"id": "b", "sample": 0, "error": "connection reset"},

@@ -15,11 +15,13 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-**2 items.** Everything else is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
+**1 item (O15).** Everything else is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
 on 2026-08-16 (old driver box), O25 and O30 on 2026-08-17 (this box; merged 2026-08-18); nothing
 was deleted.
 
-### O31. A harness-error row (client timeout, no text) is EXCLUDED from acc_strict's denominator — is that the right reading of the DNF rule?
+### ~~O31~~ → RULED (operator, 2026-08-18): **(a) — error rows count as FAILURES in acc_strict's denominator.** Shipped same day: `grade._postprocess` appends every error row as a 0-score strict item (TDD, `test_error_rows_count_as_FAILURES_in_acc_strict_never_exclusions`); the comparability audit found ALL 7 affected corpus score files had used the old exclusion consistently, so one re-grade pass restored comparability (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ifeval 0.9014→0.8649, math500 0.8148→0.7333, mbppplus 0.8283→0.82, aime 1.0→0.8; `gemma-4-31B-it-qat-6bit` humanevalplus strict →0.7692; `Qwen3.8-27B-mlx-uniform-4bit` t0.7 diagnostic →0.6); scoresheet regenerated under the new definition. `acc` keeps its historical generated-only meaning. Original text retained:
+
+### O31 (original text, retained). A harness-error row (client timeout, no text) is EXCLUDED from acc_strict's denominator — is that the right reading of the DNF rule?
 Raised 2026-08-18, from the ifeval cap pilot. `grade` counts error-stub rows in a separate
 `errors` field and drops them from `n` (pilot: n=142 of 148, acc_strict 0.9014). The
 acc_strict ruling says a DNF counts as a FAILURE in the denominator, never an exclusion — and

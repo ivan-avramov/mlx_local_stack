@@ -200,8 +200,7 @@ the rows once synced; the driver is the normal place, since grading is driver-si
 PYTHONPATH=benchmark .venv-bench/bin/python benchmark/m1/scoreboard.py --md
 ```
 
-**Provenance of the table below:** generated 2026-08-16 on the **M4 Pro 48GB driver** at repo HEAD
-`64f7883`, over 20 result directories. (The previous note said "2026-08-14, worker, `1ce8178`, 19
+**Provenance of the table below:** regenerated 2026-08-18 on the **M5 Max** (single box) after the O31 ruling — error rows (harness timeouts) now count as FAILURES in `strict`, never exclusions; 7 affected score files were re-graded in the same pass, so every `strict` cell is under the same definition. Previous generation: 2026-08-16, M4 Pro driver, `64f7883`, 20 result directories. (The previous note said "2026-08-14, worker, `1ce8178`, 19
 directories, must run where the rows live" — the must-run-on-worker part was never true.) `acc` / `acc_strict` are read from the per-pair
 `results/<model>/<bench>.score.json` written by `grade_all` — one file per (model, bench), so grading one
 model can no longer erase another's record.
@@ -259,15 +258,12 @@ gives the same answer.
 | Ornith-1.0-35B-mlx-uniform-4bit | aider | 110 | 50.0% | 50.0% | n/a | - | - | n/a | - |
 | Ornith-1.0-35B-mlx-uniform-4bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 0 | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | capacity_ladder | 2 | ungraded | ungraded | n/a | - | - | n/a | - |
-| Ornith-1.0-35B-mlx-uniform-4bit | humanevalplus | 100 | 92.0% | 90.0% | 98 | 4 | 40 | 5 | 81920 |
+| Ornith-1.0-35B-mlx-uniform-4bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - |
 | Ornith-1.0-35B-mlx-uniform-4bit | ifeval | 541 | 90.0% | 86.7% | 95 | 30 | 42 | 0 | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | livecodebench | 15 | 80.0% | 60.0% | 80 | - | - | 0 | 81920 |
 | Ornith-1.0-35B-mlx-uniform-4bit | math500 | 30 | 83.3% | 60.0% | 70 | - | - | 0 | 81920 |
-| Ornith-1.0-35B-mlx-uniform-4bit | mbppplus | 100 | 83.0% | 80.0% | 96 | 4 | 63 | 0 | 81920 |
+| Ornith-1.0-35B-mlx-uniform-4bit | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - |
 | Ornith-1.0-35B-mlx-uniform-4bit-kv4 | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - |
-| Ornith-1.0-35B-mlx-uniform-4bit-suffix | humanevalplus | 100 | 93.0% | 88.0% | 95 | - | - | 0 | 81920 |
-| Ornith-1.0-35B-mlx-uniform-4bit-suffix | livecodebench | 15 | 93.3% | 80.0% | 87 | - | - | 0 | 81920 |
-| Ornith-1.0-35B-mlx-uniform-4bit-suffix | mbppplus | 100 | 86.0% | 85.0% | 99 | - | - | 0 | 81920 |
 | Ornith-1.0-35B-mlx-uniform-6bit | humanevalplus | 10 | 90.0% | 80.0% | 90 | - | - | 0 | 81920 |
 | Ornith-1.0-35B-mlx-uniform-6bit | livecodebench | 15 | 86.7% | 40.0% | 47 | - | - | 0 | 81920 |
 | Ornith-1.0-35B-mlx-uniform-6bit | mbppplus | 10 | 80.0% | 80.0% | 100 | - | - | 0 | 81920 |
@@ -280,22 +276,24 @@ gives the same answer.
 | Qwen3.6-27B-OptiQ-4bit | livecodebench | 1 | 100.0% | 0.0% | 0 | - | - | 0 | 49152 |
 | Qwen3.6-27B-OptiQ-4bit | mbppplus | 10 | 80.0% | 80.0% | 100 | - | - | 0 | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aider | 110 | 73.6% | 73.6% | n/a | - | - | n/a | - |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aime | 4 | 100.0% | 100.0% | 100 | - | - | 0 | 81920 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aime | 4 | 100.0% | 80.0% | 100 | - | - | 0 | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | humanevalplus | 100 | 93.0% | 93.0% | 99 | 1 | 41 | 0 | 81920 |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | ifeval | 148 | 89.9% | 85.1% | 93 | 10 | 57 | 0 | 81920 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | humanevalplus | 100 | 91.0% | 91.0% | 100 | - | - | 0 | 81920 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | ifeval | 142 | 90.1% | 86.5% | 100 | - | - | 0 | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | livecodebench | 15 | 80.0% | 80.0% | 100 | - | - | 0 | 81920 |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | math500 | 27 | 81.5% | 81.5% | 100 | - | - | 0 | 81920 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | math500 | 27 | 81.5% | 73.3% | 100 | - | - | 0 | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | mbppplus | 100 | 84.0% | 84.0% | 98 | 2 | 70 | 0 | 81920 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit-kv3 | capacity_ladder | 5 | ungraded | ungraded | n/a | - | - | n/a | - |
+| Qwen3.6-27B-UD-MLX-6bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 0 | 81920 |
 | Qwen3.6-27B-UD-MLX-6bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - |
-| Qwen3.6-27B-UD-MLX-6bit | humanevalplus | 3 | 100.0% | 100.0% | 100 | - | - | 0 | 49152 |
-| Qwen3.6-27B-UD-MLX-6bit | livecodebench | 1 | 100.0% | 0.0% | 0 | - | - | 0 | 81920 |
-| Qwen3.6-27B-UD-MLX-6bit | mbppplus | 3 | 66.7% | 66.7% | 100 | - | - | 0 | 49152 |
-| Qwen3.6-27B-UD-MLX-6bit-kv16 | aime | 5 | 80.0% | 60.0% | 80 | - | - | 0 | 81920 |
-| Qwen3.6-27B-UD-MLX-6bit-kv16 | humanevalplus | 10 | 90.0% | 90.0% | 100 | - | - | 0 | 81920 |
-| Qwen3.6-27B-UD-MLX-6bit-kv16 | livecodebench | 3 | 100.0% | 66.7% | 67 | - | - | 0 | 49152 |
-| Qwen3.6-27B-UD-MLX-6bit-kv16 | mbppplus | 10 | ungraded | ungraded | 100 | - | - | 0 | 81920 |
+| Qwen3.6-27B-UD-MLX-6bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - |
+| Qwen3.6-27B-UD-MLX-6bit | livecodebench | 3 | 100.0% | 66.7% | 67 | - | - | 0 | 49152 |
+| Qwen3.6-27B-UD-MLX-6bit | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - |
+| Qwen3.8-27B-OptiQ-4.5bpw-mixed | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - |
+| Qwen3.8-27B-OptiQ-4.5bpw-mixed | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - |
+| Qwen3.8-27B-mlx-uniform-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - |
+| Qwen3.8-27B-mlx-uniform-4bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - |
+| Qwen3.8-27B-static-mixed-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - |
 | gemma-4-26B-A4B-it-OptiQ-4bit | aime | 3 | 66.7% | 66.7% | 67 | - | - | 0 | 16384 |
 | gemma-4-26B-A4B-it-OptiQ-4bit | capacity_ladder | 1 | ungraded | ungraded | n/a | - | - | n/a | - |
 | gemma-4-26B-A4B-it-OptiQ-4bit | humanevalplus | 11 | 100.0% | 72.7% | 73 | 2 | 57 | 0 | 32768 |
@@ -308,13 +306,13 @@ gives the same answer.
 | gemma-4-26b-a4b-it-8bit | humanevalplus | 4 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 |
 | gemma-4-26b-a4b-it-8bit | mbppplus | 4 | ungraded | ungraded | 75 | - | - | 0 | 16384 |
 | gemma-4-31B-it-qat-6bit | aime | 5 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 |
-| gemma-4-31B-it-qat-6bit | humanevalplus | 12 | 91.7% | 83.3% | 83 | - | - | 0 | 16384 |
+| gemma-4-31B-it-qat-6bit | humanevalplus | 12 | 91.7% | 76.9% | 83 | - | - | 0 | 16384 |
 | gemma-4-31B-it-qat-6bit | livecodebench | 15 | 80.0% | 73.3% | 93 | - | - | 0 | 16384 |
 | gemma-4-31B-it-qat-6bit | math500 | 30 | 83.3% | 83.3% | 100 | - | - | 0 | 16384 |
 | gemma-4-31b-it-6bit | aime | 5 | 80.0% | 80.0% | 80 | - | - | 0 | 16384 |
 | gemma-4-31b-it-6bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 |
+| gemma-4-31b-it-6bit | livecodebench | 20 | 90.0% | 70.0% | 75 | - | - | 0 | 16384 |
 | gemma-4-31b-it-6bit | mbppplus | 10 | 70.0% | 70.0% | 90 | - | - | 0 | 16384 |
-| gemma-4-31b-it-6bit-kv16 | livecodebench | 20 | 90.0% | 70.0% | 75 | - | - | 0 | 16384 |
 | gemma-4-31b-it-UD-MLX-4bit | aime | 5 | 60.0% | 60.0% | 100 | - | - | 0 | 16384 |
 | gemma-4-31b-it-UD-MLX-4bit | capacity_ladder | 1 | ungraded | ungraded | n/a | - | - | n/a | - |
 | gemma-4-31b-it-UD-MLX-4bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 |

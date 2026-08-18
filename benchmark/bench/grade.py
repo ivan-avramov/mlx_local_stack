@@ -167,6 +167,13 @@ def _finalize(score: dict, rows: list) -> dict:
     # strict: a truncated draw scores 0 regardless of correctness
     strict_items = [{**i, "score": (0.0 if conv_by_key.get((i["id"], i["sample"])) is False
                                     else i["score"])} for i in scored]
+    # O31 ruled (a) (operator, 2026-08-18): a harness-error row (client timeout, no text) is a
+    # DNF and counts as a FAILURE in acc_strict's denominator, never an exclusion — the ifeval
+    # pilot's six timeouts each decoded >3600 s without self-terminating, which is exactly the
+    # behavior acc_strict exists to charge. `acc` keeps its generated-only meaning; `errors`
+    # still reports the count beside it.
+    strict_items += [{"id": r["id"], "sample": r.get("sample", 0), "score": 0.0}
+                     for r in rows if r.get("error")]
     strict_per_item = _per_item(strict_items)
     score["acc_strict"] = round(stats.pass_at_1(strict_per_item), 4) if strict_per_item else None
 
