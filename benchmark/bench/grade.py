@@ -23,7 +23,14 @@ CONV_GATE = 0.90
 _MAX_ERROR_SHARE = 0.20
 
 
-def _run_budget_config(model, bench):
+def _tune_kw(tune):
+    """Only pass `tune=` downstream when it is actually set, so an untuned call is BYTE-IDENTICAL
+    in shape to the pre-D3 call (no `tune` kwarg at all) — existing tests that monkeypatch a
+    grader or `_rows` with the old 2-positional-argument signature keep working unchanged."""
+    return {"tune": tune} if tune is not None else {}
+
+
+def _run_budget_config(model, bench, tune=None):
     """(context_limit, max_tokens) for a run, from its manifest — the two numbers needed to work out
     the thinking budget that was ACTUALLY IN FORCE. Returns (None, None) when unknown.
 
@@ -32,7 +39,7 @@ def _run_budget_config(model, bench):
     against the DECLARED budget scores every forced `</think>` as a clean stop. Measured on the
     IFEval runs: 33 rows read as converged when they were externally truncated.
     """
-    mp = generate.result_path(model, bench).with_suffix(".manifest.json")
+    mp = generate.result_path(model, bench, tune=tune).with_suffix(".manifest.json")
     if not mp.exists():
         return None, None
     try:
@@ -44,14 +51,16 @@ def _run_budget_config(model, bench):
     return kv.get("max_kv_cache_size"), sampling.get("max_tokens")
 
 
-def _rows(model, bench):
+def _rows(model, bench, tune=None):
     """All rows, migrated to the v2 view (a v1 row becomes sample 0), and annotated with the
     RESOLVED thinking budget so convergence is judged against the budget that was in force.
 
     This is the one seam every grader loads through, so annotating here makes conv%, nonconv_kinds
-    and acc_strict correct for all of them at once.
+    and acc_strict correct for all of them at once. `tune=None` (the default) reads ONLY the
+    deployed-tune file (`<bench>.jsonl`) — never a `<bench>.<tune>.jsonl` sibling (isolation
+    invariant, D3 spec item 6): `generate.result_path` is a single deterministic join, not a glob.
     """
-    p = generate.result_path(model, bench)
+    p = generate.result_path(model, bench, tune=tune)
     if not p.exists():
         return []
     out = []
@@ -60,7 +69,7 @@ def _rows(model, bench):
             out.append(rowschema.migrate(json.loads(line)))
         except json.JSONDecodeError:
             pass
-    context_limit, max_tokens = _run_budget_config(model, bench)
+    context_limit, max_tokens = _run_budget_config(model, bench, tune=tune)
     if context_limit and max_tokens:
         convergence.backfill_resolved_budget(
             out, context_limit=context_limit, max_tokens=max_tokens)
@@ -211,10 +220,10 @@ def _math_eq(pred, gold) -> bool:
         return _norm_math(pred) == _norm_math(gold)
 
 
-def grade_reasoning(name, model):
+def grade_reasoning(name, model, tune=None):
     spec = benchmarks.SPECS[name]
     at = spec["answer_type"]
-    rows = _rows(model, name)
+    rows = _rows(model, name, **_tune_kw(tune))
     n = correct = errors = saturated = 0
     items = []
     for r in rows:
@@ -284,7 +293,8 @@ def _kill_container(cname: str, runner) -> None:
         pass
 
 
-def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, all_ids=None):
+def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, all_ids=None,
+                   tune=None):
     """Grade humanevalplus/mbppplus with the OFFICIAL evalplus evaluator run IN DOCKER.
     Docker (Linux) is required because evalplus's reliability_guard calls resource.setrlimit
     in a way macOS rejects ('current limit exceeds maximum'); the container also isolates the
@@ -293,7 +303,7 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
     generated subset from the per-problem *_eval_results.json. Never raises; graceful-degrade
     with a note. `runner`/`all_ids` are injectable for tests."""
     ds = "humaneval" if name == "humanevalplus" else "mbpp"
-    rows = [r for r in _rows(model, name) if not r.get("error")]
+    rows = [r for r in _rows(model, name, **_tune_kw(tune)) if not r.get("error")]
     # {task_id: {sample: code}} — NOT {task_id: code}. Keying by id alone let the LAST sample
     # win, so with k samples pass@1 was computed from 1/k of the data while the CI and the
     # reliability histogram were reported over k. Sample order is preserved because evalplus
@@ -309,11 +319,14 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
     except Exception as e:  # noqa: BLE001 — evalplus not importable for the id list
         return {"benchmark": name, "model": model, "n": len(our), "acc": None,
                 "note": f"evalplus dataset unavailable for padding ({type(e).__name__}: {str(e)[:80]})"}
+    # `<bench>[.tune]` stem — same tune-infix convention as result_path, matching the
+    # already-shipped `.suffixon_samples_eval_results.json` naming exactly.
+    stem = name if tune is None else f"{name}.{tune}"
     # Absolute path: `docker run -v` treats a relative host path as a NAMED VOLUME (RESULTS is
     # relative), which would mount an empty /work and yield no results.
-    sdir = generate.result_path(model, name).parent.resolve()
+    sdir = generate.result_path(model, name, tune=tune).parent.resolve()
     sdir.mkdir(parents=True, exist_ok=True)
-    spath = sdir / f"{name}_samples.jsonl"
+    spath = sdir / f"{stem}_samples.jsonl"
     order: dict = {}                                              # task_id -> [sample, ...]
     with spath.open("w", encoding="utf-8") as f:                  # pad subset -> full set
         for tid in ids:
@@ -325,13 +338,13 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
                 # Padding exists only to satisfy evalplus's all-problems assertion — ONE failing
                 # dummy per absent task, never k of them.
                 f.write(json.dumps({"task_id": tid, "solution": _PAD_SOLUTION}) + "\n")
-    rpath = sdir / f"{name}_samples_eval_results.json"
+    rpath = sdir / f"{stem}_samples_eval_results.json"
     if rpath.exists():
         rpath.unlink()                                            # don't read a stale result
     # NAMED so a wedged container can be killed. Measured: a run that hangs leaks a ~4.5GB
     # container (one was found up 7 hours), because `subprocess.run`'s timeout kills the local
     # docker CLIENT, not the container it started.
-    cname = _container_name(model, name)
+    cname = _container_name(model, stem)
     cmd = ["docker", "run", "--rm", "--name", cname,
            "--platform", "linux/amd64", "-v", f"{sdir}:/work",
            image, "evalplus.evaluate", "--dataset", ds, "--samples", f"/work/{name}_samples.jsonl"]
@@ -450,14 +463,14 @@ def _lcb_by_difficulty(ids, diff_by_id, detail_pass):
     return {d: {"n": len(v), "pass@1": sum(v) / len(v)} for d, v in buckets.items()}
 
 
-def grade_lcb(name, model):
+def grade_lcb(name, model, tune=None):
     """Grade LiveCodeBench via the official lcb_runner executor (lazy, graceful-degrade).
     Re-loads the PINNED release to recover per-problem test cases, runs codegen_metrics
     on the saved completions, and reports pass@1 (0–1) overall AND per difficulty.
 
     The release is loaded through `_load_lcb_problems`, which tolerates the dataset CONFIG-NAME
     drift described there. `lcb_dataset_config` in the result records which alias resolved."""
-    rows = [r for r in _rows(model, name) if not r.get("error")]
+    rows = [r for r in _rows(model, name, **_tune_kw(tune)) if not r.get("error")]
     if not rows:
         return {"benchmark": name, "model": model, "n": 0, "acc": None, "note": "no completions"}
     try:
@@ -693,11 +706,11 @@ def _ifeval_aggregate(strict_outs, loose_outs) -> dict:
     }
 
 
-def grade_ifeval(name, model):
+def grade_ifeval(name, model, tune=None):
     """Grade IFEval with the vendored official verifiers (lazy, graceful-degrade). Re-loads
     the IFEval dataset to recover per-item instruction_id_list/kwargs, runs strict+loose, and
     aggregates. Headline acc = prompt-level strict."""
-    rows = [r for r in _rows(model, name) if not r.get("error")]
+    rows = [r for r in _rows(model, name, **_tune_kw(tune)) if not r.get("error")]
     if not rows:
         return {"benchmark": name, "model": model, "n": 0, "acc": None, "note": "no completions"}
     try:
@@ -764,31 +777,34 @@ def grade_ifeval(name, model):
     return out
 
 
-def grade(name, model):
+def grade(name, model, tune=None):
     kind = benchmarks.SPECS[name]["kind"]
     if kind == "reasoning":
-        score = grade_reasoning(name, model)
+        score = grade_reasoning(name, model, tune=tune)
     elif name in ("humanevalplus", "mbppplus"):
-        score = grade_evalplus(name, model)
+        score = grade_evalplus(name, model, tune=tune)
     elif name == "livecodebench":
-        score = grade_lcb(name, model)
+        score = grade_lcb(name, model, tune=tune)
     elif name == "ifeval":
-        score = grade_ifeval(name, model)
+        score = grade_ifeval(name, model, tune=tune)
     else:
         raise ValueError(name)
     # The convergence VECTOR + sampling statistics, attached in ONE place so no grader can
     # forget a field. Replaces the old run-level INVALID flag: non-convergence is now a reported
     # outcome with a mechanism, not a voided run. See _finalize.
-    return _finalize(score, _rows(model, name))
+    out = _finalize(score, _rows(model, name, **_tune_kw(tune)))
+    if tune is not None:
+        out["tune"] = tune
+    return out
 
 
-def grade_all(models, benches):
+def grade_all(models, benches, tune=None):
     scores = []
     for model in models:
         for b in benches:
-            s = grade(b, model)
+            s = grade(b, model, **_tune_kw(tune))
             scores.append(s)
-            _write_pair_score(model, b, s)
+            _write_pair_score(model, b, s, tune=tune)
     root = generate.results_root()          # NOT a second hardcoded literal — one seam (see
     root.mkdir(parents=True, exist_ok=True)  # generate.results_root)
     (root / "scores.json").write_text(
@@ -796,7 +812,7 @@ def grade_all(models, benches):
     return scores
 
 
-def _write_pair_score(model, bench, score):
+def _write_pair_score(model, bench, score, tune=None):
     """Persist a graded result BESIDE ITS ROWS, one file per (model, bench).
 
     `scores.json` holds only the pairs of the LAST `grade_all` call, so grading one model erases the
@@ -819,7 +835,7 @@ def _write_pair_score(model, bench, score):
     So: if the incoming score has no `acc` and the file on disk does, KEEP the file and say so.
     """
     try:
-        p = generate.result_path(model, bench).with_suffix(".score.json")
+        p = generate.result_path(model, bench, tune=tune).with_suffix(".score.json")
         p.parent.mkdir(parents=True, exist_ok=True)
         if score.get("acc") is None and p.exists():
             try:

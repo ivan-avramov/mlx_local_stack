@@ -110,6 +110,7 @@ def cmd_generate(args):
     if args.max_tokens is not None:
         overrides["max_tokens"] = args.max_tokens
     chunks = "all" if args.chunks in ("all", "-1") else args.chunks
+    tune = args.tune  # already grammar-validated by argparse's type=generate.validate_tune
     # Name the ACTUAL profile. This used to hardcode "production" and print immediately before
     # "[generate] sampling profile = deployed", i.e. it contradicted the next line. The manifest was
     # always right, but production-vs-deployed is exactly the distinction that decides whether a run
@@ -130,12 +131,12 @@ def cmd_generate(args):
                  chunks=chunks, overrides=overrides, order=args.order, restart_fn=restart_fn,
                  sampling_profile=args.sampling_profile, probe_timeout=args.probe_timeout,
                  clean_stale=args.clean_stale, samples=args.samples, seed_base=args.seed_base,
-                 ids=_parse_ids(getattr(args, "ids", None)))
+                 ids=_parse_ids(getattr(args, "ids", None)), tune=tune)
 
 
 def cmd_grade(args):
     models, benches, limits = _resolve(args)
-    scores = grade.grade_all(models, benches)
+    scores = grade.grade_all(models, benches, tune=args.tune)
     # 44, not 34: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is 35 chars and ran into the next column,
     # and these rows get pasted straight into campaign-results.md.
     hdr = (f"\n{'model':<44}{'benchmark':<14}{'n':>4}{'k':>3}{'acc':>8}{'95% CI':>16}"
@@ -273,7 +274,7 @@ def _safe_load(b):
         return False
 
 
-def main():
+def build_parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -331,8 +332,17 @@ def main():
                     help="delete + regenerate any existing results whose recorded config "
                          "(sampling/profile/KV) differs from this run, instead of resuming on "
                          "top of them (which would mix provenance). Default: warn + keep.")
+    sp.add_argument("--tune", type=generate.validate_tune, default=None,
+                    help="short label for a non-deployed config, e.g. kv4, t0.3, suffixon, "
+                         "cap16, or a +-composed kv4+t0.3. Encoded in filenames as "
+                         "<bench>.<tune>.jsonl and stamped as manifest['tune']; omit for the "
+                         "deployed tune (today's <bench>.jsonl, unchanged). Lowercase "
+                         "[a-z0-9._-]+ per +-separated component, no leading/trailing dot.")
 
     sp = sub.add_parser("grade"); common(sp); sp.set_defaults(func=cmd_grade)
+    sp.add_argument("--tune", type=generate.validate_tune, default=None,
+                    help="grade the run stamped with this tune label instead of the deployed "
+                         "baseline (see `generate --tune`); reads/writes <bench>.<tune>.*.")
     sp = sub.add_parser("status"); common(sp); sp.set_defaults(func=cmd_status)
 
     sp = sub.add_parser("compare"); common(sp); sp.set_defaults(func=cmd_compare)
@@ -343,7 +353,11 @@ def main():
     sp.add_argument("--margin", type=float, default=0.05,
                     help="equivalence margin for the TOST verdict (default 5pp)")
 
-    args = p.parse_args()
+    return p
+
+
+def main():
+    args = build_parser().parse_args()
     args.func(args)
 
 

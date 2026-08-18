@@ -80,11 +80,17 @@ def main(argv=None) -> int:
     # above — recorded as used, with the probe's bounded-generation overrides.
     try:
         from . import provenance
-        provenance.write(args.model, "capacity_ladder", profile="production",
-                         overrides={"max_tokens": 256, "thinking_budget": 256},
-                         runtime={"probe": "capacity_ladder", "grid": list(grid),
-                                  "gate_gb": args.gate_gb,
-                                  "idle_baseline_gb": round(idle_baseline, 2)})
+        # gather + write into THIS module's out_dir, not provenance.write (which resolves its
+        # own results root and therefore bypassed the RESULTS override — the full test suite
+        # was writing real files into benchmark/results/ on every run until the D3 worker
+        # caught it, 2026-08-17).
+        man = provenance.gather(args.model, profile="production",
+                                overrides={"max_tokens": 256, "thinking_budget": 256},
+                                runtime={"probe": "capacity_ladder", "grid": list(grid),
+                                         "gate_gb": args.gate_gb,
+                                         "idle_baseline_gb": round(idle_baseline, 2)})
+        with open(os.path.join(out_dir, "capacity_ladder.manifest.json"), "w") as f:
+            json.dump(man, f, indent=2)
     except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
         print(f"[capacity] WARNING: manifest not written: {e}", flush=True)
     print(f"[capacity] GATE_PASS={sc['capacity_gate_pass']} "

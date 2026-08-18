@@ -408,10 +408,16 @@ def _resolve_snapshot(hf_path):
 
 
 def gather(model: str, registry_path: str | None = None,
-           profile: str = "production", overrides: dict = None, runtime: dict = None) -> dict:
+           profile: str = "production", overrides: dict = None, runtime: dict = None,
+           tune: str | None = None) -> dict:
     """Assemble the real provenance manifest for ``model`` on this box. `overrides` are the
     CLI sampling overrides layered on the profile, recorded so the manifest matches what
-    generation actually used."""
+    generation actually used. `tune` (docs/superpowers/specs/2026-08-17-tune-encoding-migration-
+    design.md) is stamped as a top-level `tune` field when given; absent (None, the default)
+    means the `deployed` tune and the field is OMITTED entirely, rather than written as null, so
+    existing readers see no new key. `tune` is a KEY, never provenance: it is NOT part of the
+    fingerprint (config_fingerprint reads a fixed set of keys that does not include it) — the
+    resolved config it names a delta from is already fingerprinted."""
     kv = registry_kv(model, registry_path) or {}
     quant = {}
     snap = _resolve_snapshot(kv.get("hf_path"))
@@ -435,15 +441,18 @@ def gather(model: str, registry_path: str | None = None,
     man["sampling_profile"] = profile
     man["registry"] = _registry_state(str(paths.registry_path())
                                       if registry_path is None else registry_path)
+    if tune is not None:
+        man["tune"] = tune
     return man
 
 
 def write(model: str, bench: str, registry_path: str | None = None,
-          profile: str = "production", overrides: dict = None, runtime: dict = None) -> dict:
-    """Gather + write results/<model>/<bench>.manifest.json. Returns the manifest."""
+          profile: str = "production", overrides: dict = None, runtime: dict = None,
+          tune: str | None = None) -> dict:
+    """Gather + write results/<model>/<bench>[.tune].manifest.json. Returns the manifest."""
     man = gather(model, registry_path, profile=profile, overrides=overrides,
-                 runtime=runtime)
-    path = generate.result_path(model, bench).with_suffix(".manifest.json")
+                 runtime=runtime, tune=tune)
+    path = generate.result_path(model, bench, tune=tune).with_suffix(".manifest.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(man, indent=2))
     return man

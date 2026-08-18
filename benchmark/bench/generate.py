@@ -8,6 +8,7 @@
 """
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -40,12 +41,46 @@ def _safe(model: str) -> str:
     return model.replace("/", "__")
 
 
-def result_path(model: str, bench: str) -> Path:
-    return results_root() / _safe(model) / f"{bench}.jsonl"
+# A `tune` is a short label naming the delta from the `deployed` tune (registry
+# `generation_defaults` + registry KV block + registry suffix state) — e.g. `kv4` (KV quant),
+# `t0.3` (temperature override), `suffixon`/`suffixoff` (draft state), `cap16` (KV-cache cap
+# override), or a `+`-composed multi-axis label like `kv4+t0.3`. See
+# docs/superpowers/specs/2026-08-17-tune-encoding-migration-design.md (operator ruling 6,
+# 2026-08-17). Grammar per `+`-separated component: lowercase [a-z0-9._-]+, no leading/trailing
+# dot. The label is a KEY, never provenance — it is NOT part of the fingerprint (the resolved
+# config already is); see provenance.gather's `tune=` kwarg.
+_TUNE_COMPONENT_RE = re.compile(r"^[a-z0-9._-]+$")
 
 
-def _read_rows(model: str, bench: str) -> list:
-    p = result_path(model, bench)
+def validate_tune(label: str | None) -> str | None:
+    """Validate a tune label against the grammar. `None` means the `deployed` tune (unspecified)
+    and passes through unchanged. Raises ValueError on a malformed label — callers at the CLI
+    layer (run.py, via argparse `type=`) turn that into a clean usage error rather than a run
+    that silently writes to the wrong file."""
+    if label is None:
+        return None
+    for part in label.split("+"):
+        if (not part or not _TUNE_COMPONENT_RE.match(part)
+                or part.startswith(".") or part.endswith(".")):
+            raise ValueError(
+                f"invalid tune label {label!r}: each '+'-separated component must be lowercase "
+                f"[a-z0-9._-]+ with no leading/trailing dot (bad component: {part!r})")
+    return label
+
+
+def result_path(model: str, bench: str, tune: str | None = None) -> Path:
+    """Absolute path to a (model, bench) pair's row file. `tune=None` (the default) resolves to
+    today's byte-compatible `<bench>.jsonl` — the entire pre-existing corpus keeps its meaning
+    without a rewrite. A given `tune` infixes the label: `<bench>.<tune>.jsonl`, generalizing the
+    ad-hoc `.suffixon.jsonl` convention already on disk. Manifest/score/eval-artifact derivation
+    sites build on this via `.with_suffix(...)` (or, for the evalplus sidecars, the same
+    `<bench>[.tune]` stem) so a tuned run's secondary artifacts infix the label too."""
+    stem = bench if tune is None else f"{bench}.{tune}"
+    return results_root() / _safe(model) / f"{stem}.jsonl"
+
+
+def _read_rows(model: str, bench: str, tune: str | None = None) -> list:
+    p = result_path(model, bench, tune=tune)
     if not p.exists():
         return []
     out = []
@@ -57,21 +92,21 @@ def _read_rows(model: str, bench: str) -> list:
     return out
 
 
-def done_ids(model: str, bench: str) -> set:
+def done_ids(model: str, bench: str, tune: str | None = None) -> set:
     """IDs already generated without error (errors are retried on resume). Sample-blind — kept
     for existing callers; multi-sample resume uses done_keys()."""
-    return {r["id"] for r in _read_rows(model, bench)
+    return {r["id"] for r in _read_rows(model, bench, tune=tune)
             if r.get("id") is not None and not r.get("error")}
 
 
-def done_keys(model: str, bench: str) -> set:
+def done_keys(model: str, bench: str, tune: str | None = None) -> set:
     """(id, sample) pairs already generated without error.
 
     Resume identity must include the sample index: `done_ids` would consider an item finished
     after ONE of its k samples. A v1 row (no `sample` field) counts as sample 0 — that is how
     every result already on disk keeps resuming instead of regenerating.
     """
-    return {rowschema.row_key(r) for r in _read_rows(model, bench)
+    return {rowschema.row_key(r) for r in _read_rows(model, bench, tune=tune)
             if r.get("id") is not None and not r.get("error")}
 
 
@@ -126,7 +161,7 @@ def probe_with_recovery(model, messages, params, *, probe_fn, restart_fn=None, p
     return p, recovery, p2
 
 
-def stamp_manifests(pairs, *, profile="production", overrides=None):
+def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None):
     """Stamp each (model, bench) with its exact config — when the manifest is ABSENT **or
     describes a DIFFERENT config than this run**.
 
@@ -148,7 +183,7 @@ def stamp_manifests(pairs, *, profile="production", overrides=None):
     from . import provenance  # lazy (provenance imports generate)
     cur_by_model = {}
     for m, b in sorted(pairs):
-        mp = result_path(m, b).with_suffix(".manifest.json")
+        mp = result_path(m, b, tune=tune).with_suffix(".manifest.json")
         try:
             if mp.exists():
                 if m not in cur_by_model:
@@ -162,12 +197,13 @@ def stamp_manifests(pairs, *, profile="production", overrides=None):
                     continue
                 print(f"  [provenance] RESTAMPED {m}/{b} — the manifest on disk describes a "
                       f"different config than this run", flush=True)
-            provenance.write(m, b, profile=profile, overrides=overrides)
+            provenance.write(m, b, profile=profile, overrides=overrides, tune=tune)
         except Exception as e:  # noqa: BLE001 — never block a run on provenance
             print(f"  [provenance] skipped {m}/{b}: {type(e).__name__}: {str(e)[:60]}", flush=True)
 
 
-def provenance_precheck(models, benches, profile="production", clean_stale=False, overrides=None):
+def provenance_precheck(models, benches, profile="production", clean_stale=False, overrides=None,
+                        tune=None):
     """Guard against the stale-results contamination: an existing results file produced under
     a DIFFERENT config (sampling/profile/KV) than this run cannot be mixed in via done_ids
     resume. For each (model, bench) with existing results, compare its manifest to the current
@@ -185,7 +221,7 @@ def provenance_precheck(models, benches, profile="production", clean_stale=False
             print(f"  [provenance] precheck skipped {m}: {type(e).__name__}: {str(e)[:60]}", flush=True)
             continue
         for b in benches:
-            jsonl = result_path(m, b)
+            jsonl = result_path(m, b, tune=tune)
             if not jsonl.exists():
                 continue
             mp = jsonl.with_suffix(".manifest.json")
@@ -242,7 +278,8 @@ def _apply_id_filter(cache, ids):
     return out
 
 
-def build_queue(models, benches, limits, seed, order="roundrobin", samples: int = 1, ids=None):
+def build_queue(models, benches, limits, seed, order="roundrobin", samples: int = 1, ids=None,
+                tune=None):
     """Build the work queue of (model, bench, item, sample) entries.
 
     `ids` is an optional {bench: [id, ...]} filter — see `_apply_id_filter`. It exists so a probe can
@@ -267,7 +304,7 @@ def build_queue(models, benches, limits, seed, order="roundrobin", samples: int 
             print(f"  [skip] benchmark {b!r} unavailable: {type(e).__name__}: {str(e)[:80]}", flush=True)
     cache = _apply_id_filter(cache, ids)
     counts = {b: len(v) for b, v in cache.items()}   # FILTERED counts, so the progress total is honest
-    done = {(m, b): done_keys(m, b) for m in models for b in cache}
+    done = {(m, b): done_keys(m, b, tune=tune) for m in models for b in cache}
     queue = []
     if order == "model":
         for model in models:
@@ -299,7 +336,7 @@ def _fmt_eta(seconds: float) -> str:
 
 def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overrides=None,
         order="roundrobin", restart_fn=None, sampling_profile="production", probe_timeout=3600,
-        clean_stale=False, samples: int = 1, seed_base: int = 0, ids=None):
+        clean_stale=False, samples: int = 1, seed_base: int = 0, ids=None, tune=None):
     overrides = overrides or {}  # global param overrides on top of each model's config params
     # Per-probe HTTP timeout, bound via a closure so probe_with_recovery's (model, msg, params)
     # call signature is unchanged. The default 3600s is too short for a slow dense model whose
@@ -310,9 +347,9 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # (the stale-results contamination). Runs BEFORE build_queue so cleaned files don't leak
     # into done_ids. clean_stale deletes mismatched files; default just warns.
     provenance_precheck(models, benches, profile=sampling_profile, clean_stale=clean_stale,
-                        overrides=overrides)
+                        overrides=overrides, tune=tune)
     queue, counts = build_queue(models, benches, limits, seed, order=order, samples=samples,
-                               ids=ids)
+                               ids=ids, tune=tune)
     total = sum(counts.values()) * len(models) * samples
     if not queue:
         print(f"[generate] nothing to do — all {total} items already generated.", flush=True)
@@ -324,7 +361,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # Provenance: stamp every (model, bench) with its exact config (box, code SHAs, quant
     # effective-bits, KV config, sampling) so results are never silently cross-compared.
     stamp_manifests({(m, b) for m, b, _it, _s in queue},
-                    profile=sampling_profile, overrides=overrides)
+                    profile=sampling_profile, overrides=overrides, tune=tune)
 
     per_item = {}                       # model -> list of per-item seconds (rolling)
     cur_model = None
@@ -401,7 +438,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                        "sampler_seed": rowschema.sample_seed(it["id"], sample, base=seed_base),
                        "seed_base": seed_base,
                        "bench": b, "model": model, "error": str(e)[:200]}
-            _append(result_path(model, b), row)
+            _append(result_path(model, b, tune=tune), row)
             dt = time.perf_counter() - t0
             per_item.setdefault(model, []).append(dt)
             i += 1

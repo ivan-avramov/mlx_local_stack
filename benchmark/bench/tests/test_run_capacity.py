@@ -73,22 +73,34 @@ def test_main_passes_bounded_params_to_ladder(tmp_path, monkeypatch):
 
 def test_main_writes_a_provenance_manifest_beside_the_ladder(tmp_path, monkeypatch):
     """Operator-approved 2026-08-17: NO capacity artifact in the corpus had a manifest, so every
-    published memory-gate number had unrecorded provenance. The ladder now writes one through the
-    same machinery as every other bench."""
+    published memory-gate number had unrecorded provenance. The manifest must land BESIDE the
+    ladder in THIS module's results root — not via provenance.write, which resolves its own
+    root and polluted the real benchmark/results/ tree on every full-suite run until the D3
+    worker caught it (2026-08-17)."""
     monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
     monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
     calls = {}
-    def fake_write(model, bench, **kw):
-        calls["args"] = (model, bench, kw)
-        return {}
     import bench.provenance as P
-    monkeypatch.setattr(P, "write", fake_write)
+
+    def fake_gather(model, *a, **kw):
+        calls["args"] = (model, kw)
+        return {"model": model, "fake": True}
+    monkeypatch.setattr(P, "gather", fake_gather)
+
+    def boom(*a, **kw):
+        raise AssertionError("provenance.write must NOT be used here — it bypasses RESULTS")
+    monkeypatch.setattr(P, "write", boom)
+
     rc = R.main(["--model", "m", "--grid", "160000"])
     assert rc == 0
-    model, bench, kw = calls["args"]
-    assert (model, bench) == ("m", "capacity_ladder")
+    model, kw = calls["args"]
+    assert model == "m"
     assert kw["runtime"]["probe"] == "capacity_ladder"
     assert kw["overrides"] == {"max_tokens": 256, "thinking_budget": 256}
+    import json as _json
+    man_path = tmp_path / "m" / "capacity_ladder.manifest.json"
+    assert man_path.exists(), "manifest must land beside the ladder, inside RESULTS"
+    assert _json.loads(man_path.read_text())["fake"] is True

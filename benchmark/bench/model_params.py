@@ -118,6 +118,14 @@ PARAMS = {
     # repetition_penalty 1.08) — a different arch's daily-driver config. That is the exact class of
     # silent misassignment this table's drift guard exists to catch.
     "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit": NEMOTRON,
+    # The three Qwen3.8-27B candidate recipes below (M2, 2026-08-17): qwen3_5 family. <!-- allow-shorthand -->
+    # The `deployed`
+    # profile they actually screen under reads main_models.yaml generation_defaults
+    # (checkpoint-default temp 1.0); this legacy-production mapping exists so the
+    # every-registry-model-is-registered drift guard can vouch for the family.
+    "Qwen3.8-27B-mlx-uniform-4bit": QWEN,
+    "Qwen3.8-27B-static-mixed-4bit": QWEN,
+    "Qwen3.8-27B-OptiQ-4.5bpw-mixed": QWEN,
 }
 
 _PROFILES = {
