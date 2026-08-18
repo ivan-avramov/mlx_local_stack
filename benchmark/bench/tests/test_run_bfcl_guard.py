@@ -1,6 +1,6 @@
 """A failed BFCL run must not null out a real score.
 
-DOCUMENTED LOSS: campaign-queue.md records "each failed run_bfcl clobbers bfcl.json to null —
+DOCUMENTED LOSS: the retired campaign-queue.md recorded (now in docs/lab-notebook.md (2026-08-16 salvage section)) "each failed run_bfcl clobbers bfcl.json to null —
 re-parse raw or ignore", which is why Qwen3.6-27B-Opus-Distill-OptiQ-4bit's bfcl.json reads acc=null
 with an rc=1 traceback even though its real result (n=200, acc 0.94) had already been measured. Same
 defect class as a failed evalplus grade overwriting a graded score.

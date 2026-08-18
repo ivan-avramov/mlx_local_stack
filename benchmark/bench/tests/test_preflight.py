@@ -9,7 +9,7 @@ WHY THESE TESTS EXIST — both cases cost real campaign time.
    Two hours of a scarce 64GB box to learn something a 5-minute probe answers. It matters
    again right now: the three M1 candidates run two formats (qwen-arch pair on `diff`, gemma
    on `whole`), which CONFOUNDS the cross-family agentic comparison
-   (`docs/campaign-queue.md:64-65`), so the probe must decide each model's format on evidence
+   (`docs/lab-notebook.md (2026-08-16 salvage section)`), so the probe must decide each model's format on evidence
    BEFORE the head-to-head.
 
    The failure mode to distinguish is specifically `search_not_found`: a well-formed block
@@ -20,7 +20,7 @@ WHY THESE TESTS EXIST — both cases cost real campaign time.
    the `production` table. It did not hardcode a temperature — it IGNORED the run's profile,
    which is why an Ornith canary ran at production temp 0.7 and MEANDERED (ct=49221 > 49152
    budget = non-converged) while the same trivial prompt converged in 1369 tokens at temp 0.6
-   (`docs/campaign-queue.md:232-240`). A false-failed canary blocks a run that would have been
+   (`docs/lab-notebook.md (2026-08-16 salvage section)`). A false-failed canary blocks a run that would have been
    fine.
 
 Everything here runs against `FakeDriver` — a preflight probe that needed a live router to test

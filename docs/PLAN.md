@@ -12,9 +12,9 @@ carries them.
 | **`docs/model-ledger.md`** | CANONICAL: objective, picks, every model + status + dated reasoning | updated daily; nothing deleted |
 | `docs/open-questions.md` | the operator's decision queue | nothing is ever deleted |
 | `docs/campaign-results.md` | recommendations narrative + the GENERATED scoresheet (sole owner) | scoresheet is generated, never hand-edited |
-| `docs/campaign-queue.md` | HISTORY: per-session state, superseded plans | append-only; `[RUNNING]` markers are historical |
-| `docs/lab-notebook.md` | HISTORY: every retraction, defect, mechanism | append-only |
-| `docs/work-queue.json` | the EXECUTABLE form of the queue | regenerate when the queue changes — **stale (2026-08-14)** |
+| `docs/lab-notebook.md` | **THE** history: every retraction, defect, mechanism, and measured result | append-only. `docs/campaign-queue.md` was folded into it and deleted on 2026-08-16 (old driver box, merged 2026-08-18) — ONE history file |
+| `docs/work-queue.json` | the EXECUTABLE form of the queue, runnable by the `bench.workqueue` daemon | regenerate when the queue changes (last regenerated 2026-08-17) |
+| `docs/handoff.md` | **the ONE handoff** — last session's narrative only | rewritten in place each session; there is never a second one |
 
 ## Context (single-box era, 2026-08-17)
 
@@ -35,7 +35,7 @@ the previous estimates off by 2–18×.
 | V2 | ~~Grade the suffix OFAT~~ | **DONE 2026-08-17**: `p_d` 0.04–0.06; gate NOT met at n=100 (3/4 CIs past ±5pp); suffix stays OFF — see O25 | — | done |
 | V3 | ~~Guard-parity~~ | **DONE 2026-08-17** (`9675957`): fingerprint v4 (`hf_path`/`kv_quant_scheme`/`quantized_kv_start`/`prefill_step_size` join the resume guard; `kv_prealloc_tokens` recorded, hardware-refused only; registry sha256+dirty recorded per ruling 5; `_box()` reads config.sh so the box label finally lands); `compare` classifies every fingerprint key into REFUSE / tune-WARN / hardware-only tiers, cap gets ruling 7's binding rule (checked against actual row prompts), parity pytest reds the suite on any future unclassified key; `peak_mem_gb` refusal landed earlier same day. Corpus verified non-stale; guard-clean inventory published in the ledger §3 | — | done |
 | V4 | ~~opencode provenance~~ | **DONE 2026-08-17**: version pinned (1.18.15, refuses drift), recorded per row + in a real manifest (deployed profile, polyglot sha, `edit_format: tools`); `_polyglot_root` now honors `$POLYGLOT_DIR` (both old hardcoded paths were dead after the workdir move) | — | done; M3/M4 unblocked |
-| M1 | ~~Re-draw test~~ | **DONE-EARLY 2026-08-17, killed at 11/39 draws with a sharper verdict than designed**: sample-0 sweep complete — 5/10 canonically-degenerate items re-degenerate deterministically (~82K tok each), 5 converge clean; the remaining draws were byte-copies because **the per-draw seed is INERT on the non-speculative path** (O28 — `row_ids=[0]*B`, one sampler per BatchGenerator keyed by the FIRST request). Full entry in the lab notebook; `--samples` designs void until O28 is ruled | — | done; O28 opened |
+| M1 | ~~Re-draw test~~ | **DONE-EARLY 2026-08-17, killed at 11/39 draws with a sharper verdict than designed**: sample-0 sweep complete — 5/10 canonically-degenerate items re-degenerate deterministically (~82K tok each), 5 converge clean; the remaining draws were byte-copies because **the per-draw seed is INERT on the non-speculative path** (O30 — `row_ids=[0]*B`, one sampler per BatchGenerator keyed by the FIRST request). Full entry in the lab notebook; `--samples` designs void until O30 is ruled | — | done; O28 opened |
 | M2 | **`Qwen3.8-27B` recipes through funnel Stages 0–1** <!-- allow-shorthand --> (load smoke incl. MTP-sidecar inertness, capacity ladder, convergence screen) | turns three stranded checkpoints into candidates; harness acceptance test begins | ~1–2 h | **2026-08-17 evening: Stages 0–1 DONE for 2 of 3** — `Qwen3.8-27B-mlx-uniform-4bit` PASS (t0.6, conv 15/15, pass@1 1.00), `Qwen3.8-27B-OptiQ-4.5bpw-mixed` PASS (t0.6, conv 14/14 + 146 probe, pass@1 1.00), `Qwen3.8-27B-static-mixed-4bit` FAIL at t0.6 → capped scan gives candidate t0.4, n=15 rung pending. Capacity ladders run overnight (orchestrator armed). See model-ledger rows + the CAPPED FINE SCAN recipe in AGENTS.md. Next: Stage-2 paired screens (n≈30–50) for the two passers; the 24 tok/s decode mechanism (or M6) gates Stage 3 |
 | M3 | **opencode Run A** — 22 python × both winners, DIRECTIONAL, pre-registered extension rule | whether the B pick survives without aider | ~1.7 h | blocked on V4 |
 | M4 | **opencode Run B** — `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | third model on the agentic axis | ~0.7 h | blocked on M3 (registry cap restored 2026-08-17) |
@@ -50,6 +50,23 @@ the previous estimates off by 2–18×.
 
 **Removed by ruling (2026-08-17):** ifeval three-way re-runs (4a — `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
 ifeval stays absolute-only); math500/lcb suffix-OFF re-runs (4b — O23 stays closed).
+
+**Merged 2026-08-18 from the old driver box's queue (items its final session held that this box's
+queue did not):**
+
+| # | work | what it buys | cost | state |
+|---|---|---|---|---|
+| M7 | **presence_penalty mechanism check** — 5 reachable `Ornith-1.0-35B-mlx-uniform-4bit` ifeval runaways (cycle periods 2–11 tok, measured), via the merged `--presence-penalty` override; endpoints cycle-disappearance (`bench.cycles.describe`) → tokens/wall → `non_latin_rate` → pass@1 LAST | closes the "can the penalty break a verbatim cycle at all" question. NOTE: the old box's O28 close already rules the lever a deployment NO-GO on its merits — this is mechanism-only | ~40 min | queued, LOW priority |
+| M8 | **`reasoning_effort` OFAT** (`xhigh` default / `medium` / `low`) on known `Qwen3.8-27B` runaway items <!-- allow-shorthand --> — the first NATIVE reasoning-depth control any candidate has offered (every lever we have is external truncation or sampling); also settle **`preserve_thinking`** (ON by default — retains reasoning across turns; interacts with the session cache) before designing the agentic axis | a candidate answer to the runaway tax; pass@1 is the HARD constraint per the ladder rule | ~1 h | queued behind M2 Stage 2 |
+| M9 | **opencode Run C** — 88 items (4 non-python languages) × winners, five per-language rankings never one blended number; **blocked on multi-language grading inside the `aider-benchmark` container** (`run_opencode_probe.py` has only `_grade_python`) | the agentic axis beyond python | ~3.5 h/model + driver work | blocked on M3 + container grading |
+| M10 | **Re-open the `gemma-4-31B-it-qat-6bit` / `gemma-4-26B-A4B-it-OptiQ-4bit` agentic verdicts** (undoes two protocol artifacts) | fairness to two demoted candidates | ~2 h UNPILOTED | queued, LOW priority |
+| D7 | **Add `opencode` to `ROLES["coding"]`** in `benchmark/m1/scoreboard.py` (demote aider to a diagnostic column) + **progress-gated bound for opencode sessions** (replace the flat 900 s timeout; design in `docs/handoff.md`) | without these, Runs A/B/C publish under the wrong role and a wedged session burns an hour | driver-side | queued, gates M3 publication |
+| D8 | **Acquire the unfetched `Qwen3.8-27B` comparison arms** <!-- allow-shorthand -->: `WaveCut/Qwen3.8-27B-MLX-4bit-DWQ` (16.07 GB) for a matched A/B vs `Qwen3.8-27B-mlx-uniform-4bit`, plus the shortlisted `mlx-community/Qwen3.8-27B-4bit` / `lmstudio-community/Qwen3.8-27B-MLX-6bit` | external recipes vs our conversions on the same base | 16 GB+ downloads | queued, after M2 resolves |
+
+(The old box's other queue items are all executed or superseded here: suffix OFAT+grading = V2/O25,
+Qwen3.8 smokes/ladders = M2, cap-sensitive ifeval re-runs = M5's inventory+pilot, compare cap guard <!-- allow-shorthand -->
+= V3, BFCL = D1, judge panel = D2, opencode pinning = V4. Its vendor-temp-1.0 warning is confirmed
+by M2's ladder — 1.0 runs away — and its native-MTP note lives in M6.)
 
 ## The fail-fast funnel (how any new candidate is processed)
 
@@ -85,6 +102,5 @@ ifeval stays absolute-only); math500/lcb suffix-OFF re-runs (4b — O23 stays cl
 ## How to maintain this file
 
 When a queue row completes: change or delete the row; narrative goes to
-`docs/campaign-queue.md` / `docs/lab-notebook.md`; ledger updates go to
-`docs/model-ledger.md`. Regenerate `docs/work-queue.json` whenever the queue changes.
-Do not add narrative here.
+`docs/lab-notebook.md`; ledger updates go to `docs/model-ledger.md`. Regenerate
+`docs/work-queue.json` whenever the queue changes. Do not add narrative here.

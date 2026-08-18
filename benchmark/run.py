@@ -102,15 +102,16 @@ def cmd_list(args):
 
 def cmd_generate(args):
     if args.samples > 1:
-        # O28 (operator-ruled 2026-08-17): the per-draw seed is INERT on the non-speculative
+        # O30 (operator-ruled 2026-08-17; raised as "O28", renumbered in the 2026-08-18 merge —
+        # the old driver box had already taken O28): the per-draw seed is INERT on the non-speculative
         # serving path — measured byte-identical 82,169-token draws under different declared
         # seeds (the batched decode keys off the FIRST request's seed at row 0). k>1 therefore
         # produces k COPIES: pass^k collapses to pass@1 and reliability reads perfect. Refuse
         # rather than manufacture fake reliability; remove this guard when the fork threads
-        # per-request seeds into per-row keys (O28's part (a)) and a 2-seed byte-difference
+        # per-request seeds into per-row keys (O30's part (a)) and a 2-seed byte-difference
         # probe passes.
         print(f"[generate] REFUSED: --samples {args.samples} > 1 is inert on this serving path "
-              f"(O28: request seeds never reach the sampler; k draws are byte-copies). "
+              f"(O30: request seeds never reach the sampler; k draws are byte-copies). "
               f"Spend on ITEMS instead; multi-sample designs return with the fork fix.")
         raise SystemExit(2)
     models, benches, limits = _resolve(args)
@@ -119,6 +120,17 @@ def cmd_generate(args):
         overrides["thinking_budget"] = args.thinking_budget
     if args.temp is not None:
         overrides["temperature"] = args.temp
+    # The PENALTIES are provenance-tracked overrides like --temp, and they must be, for two reasons.
+    # (1) Without a flag the only way to vary one is the registry `generation_defaults`, which marks
+    # every existing row STALE and needs a router restart — unusable for an OFAT that varies ONE knob on
+    # a FIXED item set. (2) A nonzero penalty also turns SUFFIX DECODING OFF (mlx-vlm
+    # `generate/ar.py:163` — the block verify can apply no logits processor), so it changes the serving
+    # path as well as the distribution. `compare` refuses across it and it is in the fingerprint's
+    # sampling slice, so the override MUST reach the manifest, which it does via `overrides`.
+    if args.presence_penalty is not None:
+        overrides["presence_penalty"] = args.presence_penalty
+    if args.repetition_penalty is not None:
+        overrides["repetition_penalty"] = args.repetition_penalty
     if args.max_tokens is not None:
         overrides["max_tokens"] = args.max_tokens
     chunks = "all" if args.chunks in ("all", "-1") else args.chunks
@@ -308,6 +320,13 @@ def build_parser():
     sp.add_argument("--max-tokens", dest="max_tokens", type=int, default=None,
                     help="override max_tokens for all models (default: each model's config value)")
     sp.add_argument("--temp", type=float, default=None, help="override temperature for all models")
+    sp.add_argument("--presence-penalty", dest="presence_penalty", type=float, default=None,
+                    help="override presence_penalty (provenance-tracked). NOTE: any nonzero penalty "
+                         "also DISABLES suffix decoding for the request, so it changes the serving "
+                         "path as well as the sampling distribution")
+    sp.add_argument("--repetition-penalty", dest="repetition_penalty", type=float, default=None,
+                    help="override repetition_penalty (provenance-tracked). Same serving-path caveat "
+                         "as --presence-penalty")
     sp.add_argument("--ids", default=None,
                     help="restrict to NAMED items, per bench: 'ifeval=2849:279,humanevalplus=HumanEval/94'. "
                          "Colon-separated (comma already separates bench pairs, and ids can contain "

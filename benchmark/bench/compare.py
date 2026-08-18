@@ -64,6 +64,48 @@ _HARDWARE_KV = ("kv_prealloc_tokens", "prefill_step_size")
 _CAP_BINDING_KV = ("max_kv_cache_size",)
 _CROSS_MODEL_IDENTITY_KV = ("hf_path",)
 
+# NOTE on the penalties sitting in _TUNE_SAMPLING_WARN (merged 2026-08-18 from the old driver
+# box's O28 close): a nonzero repetition/presence penalty ALSO makes `logits_processors`
+# non-empty, and `_suffix_structured_fallback` (mlx-vlm `generate/ar.py:163`, called `:648`)
+# then skips speculation for that request — suffix's block verify samples raw target logits and
+# can apply no processor. With draft OFF everywhere (the current registry) that path difference
+# cannot arise and a penalty is a plain tune axis; under a NON-OFF draft state a penalty
+# mismatch is a hidden (model x serving-path) composite the registry-derived `draft_kind`
+# cannot see, so compare() escalates it to a refusal there (see the draft block).
+
+
+def cap_partition(rows, resolved_budget, margin=0.10):
+    """Split rows into those the KV cap CANNOT have touched and those it could have.
+
+    WHY THIS EXISTS, and it is the operator's point (2026-08-16): `max_kv_cache_size` is a CEILING
+    ENFORCED OUTSIDE THE MODEL, so it cannot have affected a row that finished well under it. A blanket
+    refusal on a cap mismatch therefore throws away most of a perfectly good corpus, when what is
+    actually needed is a TARGETED re-run of the rows that were near the ceiling.
+
+    `margin` is the judgement call and is deliberately a named parameter: a row at 99% of budget is
+    treated as sensitive even when `finish_reason == "stop"`, because a model steering into a ceiling it
+    can feel is not the same as one that stopped freely. Default 10%.
+
+    Returns the ids in each class, so a re-run can be scoped with `--ids` instead of re-running an axis.
+    """
+    # ⚠️ DO NOT consult the row's `truncated` field here. It records that the persisted REASONING TEXT
+    # was head/tail excerpted for storage (traces.py:111-116) — NOT that generation was truncated. Read
+    # as a truncation signal it classified 249 of 541 ifeval rows as cap-sensitive when the real figure
+    # is ~5%, because nearly half the rows simply have long reasoning traces. A field name is not a
+    # definition; the generation-side signals are `finish_reason` and the token count.
+    independent, sensitive = [], []
+    threshold = resolved_budget * (1.0 - margin) if resolved_budget else None
+    for r in rows:
+        ct = r.get("completion_tokens") or 0
+        truncated = r.get("finish_reason") == "length"
+        if threshold is None or truncated or ct >= threshold:
+            sensitive.append(r.get("id"))
+        else:
+            independent.append(r.get("id"))
+    return {"independent": independent, "sensitive": sensitive,
+            "n_independent": len(independent), "n_sensitive": len(sensitive),
+            "resolved_budget": resolved_budget, "margin": margin}
+
 
 def _manifest(model, bench):
     p = generate.result_path(model, bench).with_suffix(".manifest.json")
@@ -176,6 +218,20 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
         return _refuse(f"draft/suffix decoding state differs ({da} vs {db}) — it changes the "
                        f"generated text, not just latency, so the delta would be a "
                        f"(model x serving-path) composite rather than a model comparison")
+    elif da != "off":
+        # Matched, observed, and NON-OFF. One more trap (old-driver-box O28 close, 2026-08-16,
+        # merged 2026-08-18): a nonzero repetition/presence penalty makes `logits_processors`
+        # non-empty and `_suffix_structured_fallback` (mlx-vlm generate/ar.py:163) then skips
+        # speculation for THAT REQUEST — while the registry-derived draft_kind above still reads
+        # "suffix" for both arms. So under a non-off draft state a penalty mismatch is a hidden
+        # serving-path composite, and the _TUNE_SAMPLING_WARN treatment is escalated to refusal.
+        for k in ("presence_penalty", "repetition_penalty"):
+            va, vb = (sa.get(k) or 0), (sb.get(k) or 0)
+            if va != vb:
+                return _refuse(f"{k} differs ({va} vs {vb}) under draft_kind={da!r} — a nonzero "
+                               f"penalty silently disables suffix for its requests (mlx-vlm "
+                               f"generate/ar.py:163), so the arms ran different serving paths "
+                               f"even though the registry says both were {da!r}")
 
     if metric == "peak_mem_gb":
         # Operator ruling 2026-08-17. The per-row field is the server's SESSION-CUMULATIVE
@@ -232,7 +288,9 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
             if binding:
                 return _refuse(f"max_kv_cache_size differs ({cap_a} vs {cap_b}) and the cap "
                                f"could have BOUND — the silent 0.8 clamp resolves a thinking "
-                               f"budget nobody chose ({'; '.join(binding)})")
+                               f"budget nobody chose ({'; '.join(binding)}). Use "
+                               f"compare.cap_partition() to name the near-budget rows and "
+                               f"re-run only those with --ids")
             warnings.append(f"max_kv_cache_size differs ({cap_a} vs {cap_b}) but never bound "
                             f"(max_tokens + every prompt fits under both caps) — rows are "
                             f"cap-invariant per the 2026-08-17 ruling")

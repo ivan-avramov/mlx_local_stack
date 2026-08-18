@@ -1395,7 +1395,7 @@ Quant ladder still to run: Qwen MLX-8bit / OptiQ-4bit / oMLX-6bit; gemma dense q
 - N=10 / N=5 light samples carry variance; treat differences as relative signal, not leaderboard parity.
 - MoE quant sensitivity (light, production t0.7): OptiQ-4bit, 8bit, and vanilla-4bit all converge cleanly on easy coding (HumanEval+ 100% conv); **QAT-MLX-4bit is loop-prone** (HumanEval+ conv 60%, MBPP+ conv 40% — 4-6 loops) even at production temp — a quant-specific defect, not the temp-1.0 issue. ALL MoE quants loop on hard reasoning (aime conv 0-60%) — the 4B-active arch limit. Coding pass@1 is similar across the non-QAT MoE quants (HE+ 90-100% / MBPP+ 70-80%).
 - **DENSE converges where MoE loops (emerging differentiator).** The dense gemma-4-31B candidates converge cleanly on hard reasoning where every MoE quant loops: gemma-4-31B-it-**qat-6bit** is the leader — light HE+ 100% / MBPP+ 80% / **AIME 100% (5/5) at 100% convergence**, the best reasoning result + cleanest convergence in the campaign. dense 6bit & UD-4bit are also ~clean. And the dense BEATS the MoE on LCB itself — both gemma-4-31b-it-6bit and gemma-4-31b-it-UD-MLX-4bit score **86.7% (E100/M86/H80)** vs the MoE's 80% (E100/M86/**H60**), with the gap on HARD (80% vs 60%) AND cleaner convergence (UD-4bit 14/15=93%, 6bit 12/15=80% vs MoE 73–80%) — all at the SAME production budget 16384. Mechanism: the 4B-active MoE over-reasons/loops on hard items; the full-dense models reason concisely, self-terminate, and solve more. This favors the dense candidates on BOTH coding accuracy and convergence (the MoE's only edge is decode speed).
-- IFEval axis currently UNAVAILABLE: the `datasets` load fails with "Feature type 'List' not found" (a datasets-version incompatibility with the google/IFEval schema). Needs a fix before instruction-following can run; the sweep skips it gracefully (acc:null, no crash).
+- IFEval axis currently UNAVAILABLE ⚠️ [FALSIFIED 2026-08-12 — see the salvage section at the end of this file: `benchmarks.load("ifeval")` loads all 541 examples cleanly on both boxes; the only real gap was four vendored-verifier deps]: the `datasets` load fails with "Feature type 'List' not found" (a datasets-version incompatibility with the google/IFEval schema). Needs a fix before instruction-following can run; the sweep skips it gracefully (acc:null, no crash).
 - **MoE quant thinking-efficiency on LCB (apples-to-apples, all at production t0.7 / thinking_budget 16384 / max_tokens 32768):** the three MoE quants diverge sharply in *reasoning verbosity*, which drives both convergence and accuracy. 8bit is the most efficient (median 8031 thinking tokens, 12/15 converged), OptiQ-4bit close behind (median 11563, 11/15), but **vanilla-4bit's median (17116) EXCEEDS the budget** → 14/15 budget-hit, conv 1/15. The over-thinking costs accuracy precisely on the harder problems (pass@1 66.7% E100/M71/H40 vs 80% E100/M86/H60 for the calibrated quants) — truncated reasoning forces premature answers. This is a genuine quant defect (uncalibrated 4-bit degrades reasoning efficiency), confirmed apples-to-apples (identical budget/max_tokens/profile; not a harness artifact, not the sleep). Conclusion for the MoE: **OptiQ calibration is worth it — 8bit ≈ OptiQ-4bit ≫ vanilla-4bit**; lowering the budget would NOT "fix" vanilla-4bit (the discipline forbids it), the budget is appropriate (the better quants fit inside it).
 - LCB grading requires `PYTHONPATH=$HOME/.cache/livecodebench/LiveCodeBench` (the checkout); without it `grade_lcb` degrades gracefully to `lcb_runner not available` / acc:null (so a forgotten PYTHONPATH is a visible skip, not a silent wrong number). LCB grading (mid tier) runs via `lcb_runner` directly and DOES work on macOS (no docker needed — unlike evalplus); validated on the gemma-MoE-OptiQ-4bit LCB run. The per-difficulty breakdown (Easy/Medium/Hard) is where archs are expected to separate — light-tier coding clustered at ~70-100% with no separation, but LCB already shows a gradient (OptiQ-4bit: E100/M86/H60). LCB still flags loops on AtCoder/stdin (the over-thinking trigger) -> INVALID until investigated, but the converged per-difficulty pass@1 is the differentiating signal.
 
@@ -1748,6 +1748,192 @@ corpus. The operator's instruction to track results is what saved it.
 - **Gate destructive steps on their preconditions in the same command**, with `&&` or an explicit exit —
   printing a warning next to the action is not a guard.
 
+---
+
+## 2026-08-16 — history salvaged from the retired campaign-queue.md
+
+`docs/campaign-queue.md` (1,187 lines) was deleted on this date; its work-queue role moved to
+`docs/PLAN.md` §3 + `docs/work-queue.json`. Below is the part of its history that existed NOWHERE else.
+Line numbers refer to the deleted file at its final revision.
+
+### Operator decisions that still govern what gets measured (2026-08-11, L780-789, L900-914)
+
+- **"256K is a goal, NOT a mandate" — operator decision, overruling two adversarial reviewers** who
+  argued for cutting `gemma-4-31B-it-qat-6bit` (192K ceiling; ~56 min per aider case). Rejected:
+  **characterise each candidate at what it CAN do.** The mechanics, applicable to any sub-256K
+  candidate: per-candidate context rungs (`gemma-4-31B-it-qat-6bit` 0/64K/128K/192K, the `qwen3_5` pair
+  adds 256K); cross-model deltas at the **common rungs only**; the ceiling recorded as a **config fact —
+  never a blank and never a zero**; the short-context candidate **sequenced after** the winners so it
+  never blocks a verdict; and the edit-format confound measured FIRST, with every cross-family agentic
+  row carrying the confound label.
+- **The VISION axis is NOT PURSUED — no signal will be gathered at all.** Every registry entry
+  advertises `vision`, and the visual tower of every self-converted checkpoint is an **accepted untested
+  capability, not a measurement gap**. Do not re-raise.
+- **The anti-graveyard rule, stated:** harness-v2 phases 3-6 were deliberately NOT started until M1
+  produced a committed row — "building more axes before M1 produces a committed row is exactly the
+  pattern that left four axes built-and-never-run." Companion stop-building rule: had M1 come back
+  `inconclusive` AND the length axis shown no separation, the verdict was to be settled on speed and
+  memory margins and the campaign written up rather than extended.
+
+### Traps and procedures recorded nowhere else
+
+- **`runserver.sh` runs `git submodule update --remote`** (L903-906), MOVING the deployed submodule
+  pointers off their pinned SHAs. `/mlx` is therefore not a safe way to restore the stack during a
+  campaign — it silently changes the deployed-code sha that provenance pins — and a bare router restart
+  afterwards then collides with it on :8000.
+- **Merging when an incoming commit TOUCHES `main_models.yaml`** (L271-274; AGENTS.md documents only the
+  case where it does not). Used successfully for the `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` entry,
+  2026-08-14: `git diff -- main_models.yaml > /tmp/registry_dirt.patch` → timestamped `cp -p` backup →
+  `git checkout -- main_models.yaml` → `git merge --ff-only` → `git apply` the patch → **verify by
+  PARSING the yaml, not by eyeballing it.** Never hand-re-edit the values.
+- **A baseline is extendable only if BOX, PROFILE and CAP all match — check before sizing an axis**
+  (L250-256, 2026-08-14). A provenance audit found **every non-IFEval row in the corpus came from the
+  retired box at the `official`/`production` profile** (2026-06-25 → 07-08), so nothing was extendable:
+  LiveCodeBench at n≈100 meant 100 items × 3 models from scratch (**~46 h** measured), not the 85 items
+  a plan assumed. evalplus won the slot because it bought a matched, current-box, `deployed`,
+  execution-gated coding comparison at n=100 for ~5-6 h.
+- **A failed `run_bfcl` clobbers `bfcl.json` to null** — re-parse the raw artifacts, never the summary.
+  Also why `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s tool-calling row is n=200: the n=1000 re-run was
+  ABANDONED because `run_bfcl` could not find the `bfcl` CLI in the non-interactive ssh environment even
+  with `.venv-bench/bin` on `PATH`.
+- **`mlx_vlm.convert` cannot produce a mixed-precision quantisation** (`q_modes` are
+  affine/mxfp4/nvfp4/mxfp8 only), **QAT is unavailable to us** (training-time), and the bf16-KV
+  ("kv16") ceiling sub-study was **never finished** — `-kv16` LiveCodeBench rows exist for four models
+  and the intended comparison never ran, so those scoresheet rows are an abandoned sub-study.
+
+### The M1 aider gate, FINAL at n=110 (2026-08-12, L658-686) — this file records only the n=48 interim
+
+| metric | `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | delta | McNemar exact |
+|---|---|---|---|---|
+| **final (≤2 attempts)** | 55/110 = **50.0%** | 81/110 = **73.6%** | **+23.6pp** | **p = 1.3e-05** |
+| attempt-1 | 27/110 = 24.5% | 36/110 = 32.7% | +8.2pp | p = 0.122 (n.s.) |
+| repair rate | 28/83 = **33.7%** | 45/74 = **60.8%** | — | — |
+| mean per case | **2.17 min** (4.0 h total) | 8.42 min (15.4 h total) | **3.9×** | — |
+
+- **Exclusive solves: only-`Ornith-1.0-35B-mlx-uniform-4bit` 5** (`python/forth`,
+  `javascript/list-ops`, `go/counter`, `java/bank-account`, `java/dominoes`) vs
+  **only-`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 31** — NESTED, not crossed, at this n.
+- **Every language favours `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`** (python +13.6, javascript +36.4,
+  go +13.6, rust +27.3, java +27.3pp), so the result is not carried by one language.
+- Config: `deployed`, cap 65536, `diff`, `tries=2`, items pinned by name.
+
+### The IFEval stop at n=148 — the methodology that licensed it (2026-08-13, L301-349)
+
+Stopping the `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` arm at 148 of 541 still yielded **a legitimate paired
+comparison, and the reason is reusable**: `benchmarks._subsample` shuffles deterministically
+(`random.Random(0).shuffle`) and is **prefix-nested**, so both models saw identical items in identical
+order and a stop is a uniformly random subset, not a difficulty-ordered prefix. **Verified empirically,
+not assumed:** the instruction-type mix of the first 148 matches the full 541 within ~2pp on every major
+type. MDE at the stop was **±10.3pp** (n=200 → ±8.9, n=300 → ±7.2, n=541 → ±5.4), so the remaining 396
+items could only matter if the true gap lay between 5 and 9pp, against a point estimate of **0.0pp** with
+`equivalent` already returned. Cost avoided: **~15.9 h** of the single worker, ~59% of it going into
+degenerate loops (that model decodes at 25-31 tok/s, so one loop is ~50 min).
+
+### Screen-task choice dominates grid cost — and the "runaway worker" premise was wrong (2026-08-13, L475-481, L608-611)
+
+The abandoned request that opened that session did not need killing: it **completed on its own**
+(`completion=39,479`, `prompt=16,214`, 10.4 tok/s, 3,801,911 ms = **63.4 min**) and the model
+idle-unloaded cleanly after 14,412 s. It also **CONVERGED** (39,479 < 81,920), making that cell's cost a
+**task-scope** problem rather than a model pathology — which is exactly why Tier-0 rev B swapped the
+screen task: on `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `aggregation`@8K cost 39,479 tokens / 63.4 min
+per sample while `vartrack` cost **550/558 tokens / ~31 s** at acc 1.0 — a **~60× cell-cost reduction**,
+which is what turned a 22-cell grid into 50 minutes of worker time.
+
+### Two stale blockers, both falsified — and one is still asserted in this file
+
+- **IFEval was NOT blocked by `datasets`** (falsified 2026-08-12, L688-694, L1147-1155).
+  `benchmarks.load("ifeval")` loads all 541 examples cleanly on BOTH boxes (driver `datasets` 5.0.1,
+  worker 3.6.0). The only real gap was four vendored-verifier deps (`absl-py`, `langdetect`, `nltk`,
+  `immutabledict`), which the worker already had. ⚠️ **The 2026-06 methodology note above — "IFEval axis
+  currently UNAVAILABLE: the `datasets` load fails with 'Feature type List not found'" — is HISTORICAL
+  and must not be read as live.** The graceful-degrade design was never at fault.
+- **LiveCodeBench pass@1 grading, root cause** (L1156-1167): `datasets 4.8.5` REMOVED
+  `trust_remote_code` and LCB `code_generation_lite` is a **script-based** dataset, so `lcb_runner`'s
+  `load_code_generation_dataset` hard-failed. **Generation was never affected** (it reads the cached
+  prompts JSON) — only grading, which is why convergence still graded from the jsonl and every pass@1
+  stayed retroactively re-gradable.
+
+### Candidate scan verdicts, with reasons, so none is rediscovered
+
+**2026-08-13 — the frontier is out of this hardware class, arithmetically** (L360-361). `GLM-5.2` (MIT,
+2026-06-16; top open-weights SWE-bench Pro 62.1%, Terminal-Bench 81.0) is **744B total / 40B active ⇒
+~372 GB at 4-bit — 326 GB OVER the box**. `Kimi K3` (opened 2026-07-27; leads LiveBench Agentic Coding
+57.58) is **2.8T / 104B active, 1.56 TB MXFP4 — 1,514 GB over**. That is the arithmetic behind "we are
+not choosing the best open model, we are choosing the best model that FITS".
+
+**`prism-ml/Ternary-Bonsai-27B-mlx-2bit` — PARKED (operator, 2026-08-13), but keep the numbers**
+(L389-401): 262K context at **5.9 GB / 1.71 effective bits per weight** (≈40 GB of KV headroom, the
+largest of any candidate scanned), custom 2-bit hybrid-attention MLX kernels already exist, and it
+derives from the Qwen3.6 family, so our loader, thinking format and sampling carriers very likely work
+unchanged. Vendor claim **~95% of its base (80.5 vs 85.0 aggregate over 15 benchmarks)**.
+⚠️ **Its scientific interest: a claimed ~5% aggregate drop sits EXACTLY on the campaign's ≤5%
+lossy-lever gate**, over a benchmark mix we did not choose — making it the sharpest available test of
+that gate. It is parked because it buys back RAM we do not need, NOT because the quality question was
+answered.
+
+**`Jackrong/Qwen3.5-35B-A3B-Claude-4.6-Opus-Reasoning-Distilled` — REJECTED outright** (L436-443): an
+**8,192-token** context (1/32 of target) plus a **LoRA touching 1.31% of parameters (465M/35.6B)**,
+reporting training LOSS 0.384 and no capability number. Tempting only because it shares
+`Ornith-1.0-35B-mlx-uniform-4bit`'s exact base family, which would have made a clean
+RL-versus-distillation OFAT on an identical base — that experiment is still worth wanting, but not with
+this artifact.
+
+**Two `Qwen3.8-27B` "distills" — DEPRIORITISED to speculative, plus a self-correction** (L166-174, <!-- allow-shorthand -->
+scanned 2026-08-14). `barozp/Qwen3.8-27B-Opus-Distill`: 55.6 GB bf16, **no model card at all**
+(`README.md` returns "Entry not found"), 0 likes, uploaded hours after the base, config declaring
+`model_type: qwen3_5_text` while shipping BOTH a `vision_config` and a `…ForConditionalGeneration`
+arch — the packaging-inconsistency class. `armand0e/Qwen3.8-27B-Fable-Distill`: 55.6 GB, an Unsloth
+boilerplate card naming no teacher, no data and no eval, with a `-LoRA` sibling suggesting a light
+finetune. ⚠️ **I first called the former "the direct analogue of the reigning winner" — an
+overstatement. A repo NAME is not a lineage**, and neither belongs above a verified quantisation.
+
+### The `Qwen3.8-27B` KV estimate I got wrong, and the lesson (2026-08-14, L86-114) <!-- allow-shorthand -->
+
+Earlier that day (commit `78d5c21`) I published **256 KiB/token** of KV and concluded the model
+"probably REQUIRES KV quantisation". **Wrong: I computed from `config.json`'s `num_hidden_layers: 64`
+and never asked what those layers WERE.** The card states the layout plainly —
+`16 × (3 × (Gated DeltaNet → FFN) → 1 × (Gated Attention → FFN))` — so only **16 of 64 layers grow a KV
+cache**, giving 64 KiB/token and ~17.2 GB at 262,144. **Lesson: for a memory estimate read the
+ARCHITECTURE, not the layer count, and read the model card before doing arithmetic on the config.** The
+same arithmetic retro-explains why `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` reaches 262K at only 43.3 GB
+peak. Config facts for the load smoke: 64 layers / 5120 hidden, 24 attention heads / **4 KV heads** (so
+`n_repeats` = 6, EVEN, and the fused GQA decode kernel's `heads_per_group = 2` precondition holds),
+`head_dim` 256, vocab 248320, 55.6 GB bf16.
+
+### `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` — the registration smoke behind the 26.0 GB row (2026-08-14, L221-237)
+
+| check | result |
+|---|---|
+| load | **4.0 s** cached, worker RSS ~17.4 GB, `nemotron_h` already in the fork, `mtp.*` stripped |
+| generation smoke | `finish_reason stop`, 867 tokens, converged, **no stray `</think>` / `<\|im_end\|>`** — a documented worry that did NOT reproduce through the chat path |
+| capacity @ 131072 | **23.7 GB**, retrieval **1.00**, decode **97.2 tok/s** |
+| capacity @ 262144 | **26.0 GB** against the 46 GB gate, retrieval **1.00**, decode **70.3 tok/s**, `GATE_PASS` |
+| coding pilot n=5 | 12.1 s/item, **146 tok/s**, 5/5 converged at vendor temp 1.0 |
+
+⇒ the THIRD model to clear 256K and by far the cheapest (26.0 vs 32.4 vs 43.3 GB) — recorded at the time
+with the explicit caveat that **retrieval and memory say nothing about whether it can code**.
+
+### What the aider edit-protocol failure FALSIFIED (2026-08-16, L40-49)
+
+Two explanations for that candidate's malformed-`diff` rate are dead, and the second is the durable one:
+MTP was off by construction, and **"3B active parameters is too small for byte-exact SEARCH/REPLACE" is
+falsified by our own corpus** — `Ornith-1.0-35B-mlx-uniform-4bit` is a 256-expert mixture with 8 active
+(**≈1.0B active routed parameters, ~3.1M per expert per layer, ~126M per expert across 40 layers**) and
+handles `diff` fine. Still NOT established: whether the failure is specific to aider's `diff` or general
+to agentic edit protocols.
+
+### Parked designs kept for their thresholds
+
+- **FU-1, the kv3 quality gate for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`** (L958-974) — the staged,
+  fast-fail structure is the part worth keeping: **Tier 0** (~15 min) load + single needle @64K at
+  temp 0; **Tier 1** (~1.5-2 h) multi-needle 5×5 retrieval @{32K,64K,128K}, kv3 vs kv4, temp 0,
+  samples 3, and **any dropped needle ⇒ REJECT immediately**; **Tier 2** (overnight) multi-needle
+  @{192K,256K} + math500 n=30 + aime n=15, **adopt only if quality-neutral on BOTH retrieval and
+  reasoning**. Needs a `run_retrieval.py --temp` addition for a clean temp-0 fidelity read.
+- The cost model that sized campaign v3, from measured 2.2 / 6.3 min per aider case: **~185
+  worker-hours ≈ 8 days on one box**, split ~45 h one-time infrastructure + ~55-60 h per additional
+  model. A sanity check for any future multi-model plan.
+
 ## 2026-08-17 — SUFFIX OFAT GRADED: the ≤5% gate is NOT met at n=100; suffix stays OFF (O25 ruled + measured)
 
 Single-box era begins (M5 Max is driver AND worker; all artifacts consolidated in the dedicated
@@ -1887,7 +2073,7 @@ for today's suffix-OFF uniform config.
   `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (the OFF-arm timed-out stub) died with the launcher —
   still worth a targeted run someday; the OFAT analyser already excludes the stub either way.
 
-**Fix direction (O28, needs a ruling):** thread the REQUEST's seed into per-row keys in the
+**Fix direction (O30 — raised as O28, renumbered in the 2026-08-18 merge; needs a ruling):** thread the REQUEST's seed into per-row keys in the
 fork's batched decode (row identity = the request's declared seed, not batch slot), or accept
 single-sample-only designs and delete `--samples` to stop it lying. Fork edit → submodule
 bump → re-verify with a 2-seed byte-difference probe.

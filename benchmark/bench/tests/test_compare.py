@@ -379,3 +379,86 @@ def test_every_fingerprint_key_is_classified_in_compare_no_silent_gaps():
     kv_classified = (set(CMP._TUNE_KV_WARN) | set(CMP._CAP_BINDING_KV)
                      | set(CMP._CROSS_MODEL_IDENTITY_KV))
     assert kv_fingerprinted == kv_classified, (kv_fingerprinted, kv_classified)
+# ------------------------------------------------------- KV-CAP partition + penalty escalation
+# (merged 2026-08-18 from the old driver box's O29/O28 work). The cap-mismatch DECISION now lives
+# in the ruling-7 binding rule above (refuse iff the clamp could have engaged); what survives from
+# the O29 close is `cap_partition()` — the tool that names WHICH rows a smaller cap could have
+# touched, so a targeted `--ids` re-run replaces a whole-axis one (exactly the procedure the
+# 2026-08-18 ifeval pilot ran by hand).
+def _manifest_cap(tmp, model, bench, *, cap, budget=81920, temp=0.4):
+    p = G.result_path(model, bench).with_suffix(".manifest.json")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    import json
+    p.write_text(json.dumps({
+        "box": "M5", "sampling_profile": "deployed", "fingerprint_version": 3,
+        "sampling": {"temperature": temp, "thinking_budget": budget, "max_tokens": 102400},
+        "kv": {"kv_bits": 4, "max_kv_cache_size": cap},
+        "runtime": {"apc_enabled": "0", "draft_kind": "off"}}))
+
+
+def test_matched_caps_produce_no_cap_warning(write_rows, tmp_results):
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest_cap(tmp_results, "A", "math500", cap=131072)
+    _manifest_cap(tmp_results, "B", "math500", cap=131072)
+    r = CMP.compare("A", "B", "math500")
+    assert not any("max_kv_cache_size" in x for x in r["warnings"]), r["warnings"]
+
+
+def test_cap_partition_names_the_SENSITIVE_items_so_a_targeted_rerun_is_possible():
+    """The operator's point, mechanised: a row that finished well under the smaller arm's resolved
+    budget cannot have been touched by the cap. Only truncated / near-budget rows need re-running."""
+    rows = [
+        {"id": "safe", "sample": 0, "completion_tokens": 1200, "finish_reason": "stop"},
+        {"id": "near", "sample": 0, "completion_tokens": 52000, "finish_reason": "stop"},
+        {"id": "hit", "sample": 0, "completion_tokens": 52269, "finish_reason": "length"},
+    ]
+    part = CMP.cap_partition(rows, resolved_budget=52268)
+    assert part["independent"] == ["safe"], part
+    assert sorted(part["sensitive"]) == ["hit", "near"], part
+    assert part["n_independent"] == 1 and part["n_sensitive"] == 2
+
+
+def test_cap_partition_margin_is_explicit_and_defensible():
+    """`near` at 99% of budget is sensitive even though it says finish_reason=stop: the model was
+    steering into a ceiling it could feel. The margin is a JUDGEMENT and must be a named parameter,
+    not a magic number buried in a comparison."""
+    rows = [{"id": "x", "sample": 0, "completion_tokens": 40000, "finish_reason": "stop"}]
+    assert CMP.cap_partition(rows, resolved_budget=52268, margin=0.10)["independent"] == ["x"]
+    assert CMP.cap_partition(rows, resolved_budget=52268, margin=0.50)["sensitive"] == ["x"]
+
+
+def test_cap_partition_IGNORES_the_storage_truncation_flag():
+    """A row's `truncated` field means its persisted REASONING TEXT was head/tail excerpted for storage
+    (traces.py), NOT that generation was truncated. Reading it as a truncation signal classified 249 of
+    541 real ifeval rows as cap-sensitive when the true figure is ~5%. Pinned because the field name
+    invites exactly that misreading — and it caught me."""
+    rows = [{"id": "long_trace", "sample": 0, "completion_tokens": 2418,
+             "finish_reason": "stop", "truncated": True}]
+    part = CMP.cap_partition(rows, resolved_budget=52388)
+    assert part["independent"] == ["long_trace"], part
+    assert part["n_sensitive"] == 0
+
+
+def test_a_penalty_mismatch_ESCALATES_to_refusal_under_a_non_off_draft_state(write_rows, tmp_results):
+    """The synthesis of the two boxes' guards (merged 2026-08-18). Under the (model, tune) taxonomy
+    a penalty is a tune axis and WARNS (test_tune_axes_warn_but_never_refuse) — but a nonzero
+    penalty makes `logits_processors` non-empty and mlx-vlm's `_suffix_structured_fallback`
+    (generate/ar.py:163) then skips speculation for that request, while the registry-derived
+    `draft_kind` still reads 'suffix' for both arms. So with a NON-OFF draft state a penalty
+    mismatch is a hidden (model x serving-path) composite and must refuse."""
+    import json
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    for model, pen in (("A", 0.0), ("B", 0.3)):
+        p = G.result_path(model, "math500").with_suffix(".manifest.json")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({
+            "box": "M5", "sampling_profile": "deployed", "fingerprint_version": 3,
+            "sampling": {"temperature": 0.4, "thinking_budget": 81920, "max_tokens": 102400,
+                         "presence_penalty": pen},
+            "kv": {"kv_bits": 4, "max_kv_cache_size": 131072},
+            "runtime": {"apc_enabled": "0", "draft_kind": "suffix"}}))
+    r = CMP.compare("A", "B", "math500")
+    assert r["comparable"] is False, r
+    assert "presence_penalty" in r["reason"] and "suffix" in r["reason"], r["reason"]

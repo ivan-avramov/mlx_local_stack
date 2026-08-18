@@ -65,7 +65,7 @@ def run_canary(model: str, profile: str = "production", driver=None,
     canaried against the `production` table. That silently mismatches any run evaluated at
     another profile and FALSE-FAILS it: the Ornith canary at production temp 0.7 meandered past
     its budget on a trivial is_palindrome (ct=49221 > 49152 = non-converged) while the same
-    prompt at official temp 0.6 converged in 1369 tokens (docs/campaign-queue.md:232-240). The
+    prompt at official temp 0.6 converged in 1369 tokens (docs/lab-notebook.md (2026-08-16 salvage section)). The
     canary must be measured at the sampling the run will actually use, or its verdict is about a
     config nobody is running.
 
@@ -337,7 +337,7 @@ def check_edit_format(driver, model: str, params: dict, fixture=None) -> dict:
     scarce 64GB box to discover what these two probes answer in ~5 minutes.
 
     And it is live again: the M1 agentic head-to-head runs the qwen-arch pair on `diff` and gemma
-    on `whole`, which CONFOUNDS the cross-family comparison (docs/campaign-queue.md:64-65). So
+    on `whole`, which CONFOUNDS the cross-family comparison (docs/lab-notebook.md (2026-08-16 salvage section)). So
     this runs BEFORE the head-to-head and each model's format is set from ITS OWN evidence, not
     from a family assumption.
 

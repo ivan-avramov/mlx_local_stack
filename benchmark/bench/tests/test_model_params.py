@@ -98,3 +98,34 @@ def test_ornith_is_qwen_family_by_name_and_registry():
     assert off["temperature"] == 0.6
     assert off["thinking_budget"] == 81920
     assert off["presence_penalty"] == 0.0
+
+
+# ------------------------------------------------- penalty overrides (queued presence_penalty OFAT)
+def test_run_py_exposes_a_provenance_tracked_presence_penalty_override():
+    """Without this flag the ONLY way to vary `presence_penalty` is the registry, which marks every
+    existing row STALE and needs a router restart — unusable for an OFAT that must vary one knob on a
+    fixed item set. `--temp` and `--thinking-budget` already work this way; the penalties did not.
+
+    It must reach the MANIFEST, not just the request: `presence_penalty` is in _FINGERPRINT_SAMPLING and
+    in compare's must-match guard, so an override that did not land in provenance would produce rows
+    that silently pool with penalty-0 rows."""
+    import subprocess, sys, pathlib
+    run_py = pathlib.Path(__file__).resolve().parents[2] / "run.py"
+    out = subprocess.run([sys.executable, str(run_py), "generate", "--help"],
+                         capture_output=True, text=True).stdout
+    assert "--presence-penalty" in out, out[:400]
+    assert "--repetition-penalty" in out, out[:400]
+
+
+def test_penalty_overrides_land_in_the_provenance_manifest(monkeypatch, tmp_path):
+    """The override must appear in the fingerprint's sampling slice, or two arms differing only in a
+    penalty would compare as identical."""
+    from bench import provenance
+    monkeypatch.setattr(provenance.model_params, "params_for",
+                        lambda m, profile, **k: {"temperature": 0.4, "presence_penalty": 0.0})
+    monkeypatch.setattr(provenance, "registry_kv", lambda m, path: {"kv_bits": 0})
+    monkeypatch.setattr(provenance, "registry_draft", lambda m, path=None: {"draft_kind": "off"})
+    monkeypatch.setattr(provenance, "apc_state", lambda **k: {"apc_enabled": "0", "source": "env"})
+    man = provenance.current_manifest_lite("m", "deployed", overrides={"presence_penalty": 0.3})
+    fp = provenance.config_fingerprint(man)
+    assert fp["sampling"]["presence_penalty"] == 0.3, fp["sampling"]

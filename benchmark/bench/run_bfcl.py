@@ -40,7 +40,7 @@ def main(argv=None) -> int:
     path = os.path.join(out_dir, "bfcl.json")
 
     # ⚠️ A FAILED run must not null out a real score. This is a DOCUMENTED loss:
-    # campaign-queue.md records "each failed run_bfcl clobbers bfcl.json to null — re-parse raw or
+    # the retired campaign-queue.md recorded (now in docs/lab-notebook.md (2026-08-16 salvage section)) "each failed run_bfcl clobbers bfcl.json to null — re-parse raw or
     # ignore", which is why Qwen3.6-27B-Opus-Distill-OptiQ-4bit's file reads acc=null with an
     # rc=1 traceback even though its real BFCL result (n=200, acc 0.94) had already been measured.
     # Same defect class as _write_pair_score overwriting a graded evalplus score with acc=None.

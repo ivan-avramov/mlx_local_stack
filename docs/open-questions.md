@@ -2,7 +2,8 @@
 
 Created 2026-08-13 at operator request. **Purpose:** one place for things that need the operator's
 judgement, plus decisions already made so they are not re-litigated. Companions:
-`docs/campaign-queue.md` (work state), `docs/campaign-results.md` (results), `AGENTS.md` (rules).
+`docs/PLAN.md` (the plan + work queue), `docs/campaign-results.md` (results), `AGENTS.md` (rules),
+`docs/handoff.md` (last session).
 
 **Rules for this file.** An item is added the moment a judgement call is identified, not when it
 becomes urgent. An item is either **OPEN** (needs the operator), **CLOSED** (with the decision and
@@ -14,10 +15,79 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-### ~~O28~~ → RULED (2026-08-17): operator took the recommendation — (b) now, (a) when the fork is next opened.
+**1 item.** Everything else is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
+on 2026-08-16 (old driver box), O25 and O30 on 2026-08-17 (this box; merged 2026-08-18); nothing
+was deleted.
+
+### O15 — NEW DATUM 2026-08-14 (still OPEN, but one wrong reading is now excluded)
+A DEPTH test at last, from the `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` ladder. Same model, same item set, **same context
+`ctx=131072`**, only `kv_prealloc_tokens` differing — and unlike my invalid probe, the cache genuinely
+grew to 131K:
+
+| prealloc | `mx.get_peak_memory` at ctx=131072 |
+|---|---|
+| 131072 | 25.5 GB |
+| 262144 | **23.7 GB** |
+
+**Peak did NOT rise when prealloc doubled — it fell 1.8 GB.** So "prealloc inflates peak memory" is
+EXCLUDED: peak is set by the prefill spike, not by the reservation. Two readings survive and this datum
+does not separate them: (1) the reservation genuinely costs nothing at peak, making prealloc free
+insurance; (2) the 1.8 GB is run-to-run variance — the two ladders had different idle baselines
+(32.39 vs 12.50 GB) and a fresh process.
+
+⚠️ **This does NOT answer what O15 actually asks** — whether prealloc PREVENTS the growth OOM — because
+prealloc was ON in both arms. That needs a prealloc-OFF arm at 262144, i.e. deliberately walking into the
+known OOM path, which the operator has ruled against. **So O15 stays open by design**, with the
+inflation hypothesis eliminated and the protection hypothesis untested.
+
+### O15 (original). Does prealloc actually reserve RAM? — MY EVIDENCE WAS INVALID; the question needs a DEPTH test
+⚠️ **I raised this on a measurement that cannot support it, and the operator caught it.** I compared
+`mx.get_peak_memory` across prealloc arms (25.35 / 25.50 / 28.18 GB) and inferred the reservation was
+"lazy or unwired". **But the probe item generated only ~2,868 tokens, so the KV cache never grew past
+~3K of a 131072/262144 capacity.** A virtual allocation that is never touched costs no resident pages,
+so those peaks measured weights-plus-a-tiny-cache in all three arms. The ~2.8 GB delta is not evidence
+of anything about the reservation.
+
+**Operator datum that outranks my inference: an actual OOM was hit in testing.** So the double-buffer
+growth spike is real and the protection matters in practice.
+
+**The test that would actually answer it** — and the only one that should be cited on this — is a
+LONG-CONTEXT run that grows the cache to the full cap:
+- drive a prompt/generation to >128K so the 128K→256K growth boundary is crossed;
+- sample `mx.get_peak_memory` AND resident memory as it grows, prealloc ON vs OFF;
+- expect, if prealloc works: a large step at LOAD (or first touch) and NO spike at the boundary; if it
+  does not: a small load footprint and a ~1.5× spike at the boundary, i.e. the OOM path.
+**Recommendation: do NOT change prealloc, and do not cite peak-memory numbers from short-generation
+probes for anything memory-related.** The 46GB gate is defined on the prefill spike for exactly this
+reason — a short probe cannot see it.
+
+**Standing lesson: a memory measurement is only valid at the depth it claims.** Every arm of my OFAT
+was ~3K tokens deep, so it was a fair test of "is the shipped config slow on a short item" (which is
+what the retracted claim was about, and it answered it) and NOT a test of anything at capacity.
+
+
+---
+
+---
+
+## CLOSED — decisions and rulings, newest first
+
+**Nothing here needs action.** Kept verbatim, including the "original text retained" blocks, because
+the record of *why* something was decided is what stops it being re-litigated. (The OPEN/CLOSED split
+dates from the 2026-08-16 fold: 25 of the 37 blocks were already closed, so the decision queue had
+become two-thirds archive. Nothing was deleted.)
+
+### RENUMBERING NOTE (2026-08-18, merge of the two driver boxes' parallel sessions)
+Both boxes independently allocated **O28** on adjacent days: the old driver box for the
+presence_penalty/suffix gate (below, closed 2026-08-16), this box for the inert-seeds finding
+(raised 2026-08-17). First allocation keeps the number; the seeds item is **renumbered O30**.
+Citations of "O28" in code/commits from 2026-08-17 (the `run.py --samples` guard, the M1 row,
+the lab notebook) refer to **O30**.
+
+### ~~O30~~ → RULED (2026-08-17): operator took the recommendation — (b) now, (a) when the fork is next opened.
 `run.py generate` now REFUSES `--samples > 1` with an O28 citation (guard + test landed same day). The fork fix (thread each request's seed into its rows' keys in the batched decode) is queued for the next fork-opening; the guard comes out when a 2-seed byte-difference probe passes.
 
-### O28 (original text, retained — the ruling above supersedes the question).
+### O30 (original text, retained — the ruling above supersedes the question).
 Raised 2026-08-17, from the M1 re-draw probe (full evidence in `docs/lab-notebook.md`, same date).
 
 Measured: two draws of HumanEval/71 (`Ornith-1.0-35B-mlx-uniform-4bit`, deployed profile,
@@ -40,7 +110,72 @@ Recommendation: **(b) now** (one guard clause, honest immediately) **+ (a) when 
 next opened** — multi-sample reliability is a stated future endpoint and (a) is the only route
 to it.
 
-### O27. Does the GitHub remote still need a `gc` to finish the PII scrub?
+### ~~O28~~ → CLOSED-BY-CODE-READING (2026-08-16): **the gate EXISTS and AGENTS.md was RIGHT.** But the interesting finding is that the lever is not worth using anyway.
+`_suffix_structured_fallback` — `src/mlx-vlm/mlx_vlm/generate/ar.py:163`, called at `:648` to decide
+whether to enter `run_speculative_rounds` at all. Its docstring names the case outright: *"sampling
+penalties (repetition / presence / frequency / `logit_bias`) … would otherwise be silently dropped on
+the speculative path, changing the distribution."* Suffix's verify samples raw target logits over a
+whole draft block and can apply no processor, so the code chooses correctness over speed. **A better
+reason than the folklore version:** it is not that the penalty breaks suffix, it is that suffix cannot
+apply penalties. Missed previously because the function reads as structured-output-only while handling
+both cases through a generic `processors` list — searching near `presence_penalty` never reaches it.
+So `presence_penalty: 0.0` in all four carriers is load-bearing **while suffix is on**, and the two are
+STRICTLY MUTUALLY EXCLUSIVE per request.
+
+**AND THE LEVER IS A NO-GO ON ITS MERITS — measured, not argued** (full analysis in
+`docs/lab-notebook.md`):
+- **`make_presence_penalty` has `context_size` 20** (additive, binary-on-presence). It can only reach
+  verbatim cycles of period ≤ ~20 tokens; beyond that the prior occurrence is outside the window and the
+  penalty is not weakened but **exactly zero**.
+- **Of 54 classifiable nonconverged rows, 17 are reachable — and ALL 17 are on ifeval. ZERO on
+  humanevalplus or mbppplus**, where every measured cycle is 40–262 tokens per period.
+- **Crossing reachability against pass/fail leaves 6 items on ONE model** (`Ornith-1.0-35B-mlx-uniform-4bit`
+  ifeval) and **0 on the other**. A perfect fix is **1.1pp** of `acc_strict` against that arm's own MDE
+  of **±5.4pp** — while changing the sampling of 11 currently-PASSING rows too, so the expected accuracy
+  effect is plausibly negative.
+- **Loops cost TIME, not accuracy** (verified independently): **6 of 10** degenerate coding rows still
+  PASSED their plus-tests, and 18/29 and 7/10 of the nonconverged ifeval rows passed. The budget clamp
+  injects `</think>`, the model then writes a correct answer. The loop burned the budget, not the answer.
+- **The natural experiment has already run and is negative:** `gemma-4-31B-it-qat-6bit` and
+  `gemma-4-26B-A4B-it-OptiQ-4bit` ship `repetition_penalty: 1.08` and hold the corpus's **two worst**
+  convergence rates (0.727 / 0.833 vs ≥0.90 everywhere else), still producing 71- and 262-token cycles.
+- **The vendor pins 0.0 for THINKING mode specifically** (1.5 for non-thinking) and warns of "language
+  mixing and a slight decrease in model performance". Mechanism: chain-of-thought is structurally
+  re-entrant — it restates, re-derives, enumerates, checks — so a 20-token window taxes the working
+  vocabulary of a re-derivation. Under the lexicographic rule (pass@1 hard, convergence strictly within
+  it), a lever with a ≤1.1pp ceiling and a documented performance cost fails on its face.
+
+**Consequence recorded, not acted on:** with suffix OFF, `presence_penalty` is currently a FREE knob —
+it is just not a useful one for this failure mode. The lever this campaign has PROVEN for it is
+temperature. Original text retained:
+
+### O28 (original text, retained). `AGENTS.md` asserts that a nonzero `presence_penalty` disables suffix decoding — and nobody has found the gate
+Raised 2026-08-16 while retiring the handoff docs (the observation itself dates from the O11 work).
+
+`AGENTS.md` states this **three times**, and it is the stated REASON all four sampling carriers ship
+`presence_penalty: 0.0`. But a read of the fork found **no such gate** — only the structured-output one.
+So one of two things is true, and they have different consequences:
+
+- **The claim is right and the gate is somewhere we did not look.** Then `presence_penalty 0.0` is
+  load-bearing and must stay, and the gate should be cited by file:line so it stops being folklore.
+- **The claim is wrong.** Then `presence_penalty` is a free sampling knob we have been holding at 0.0 for
+  an imaginary reason — and since a nonzero penalty is one of the few untried levers against the runaway
+  tax (the campaign's largest measured cost), that is a real opportunity, not just a doc fix.
+
+Note this is now **lower stakes but not moot**: suffix is OFF everywhere as of 2026-08-16, so nothing is
+being disabled today. It matters for the O25 return condition and for any penalty cell.
+**Cheap to settle:** grep the fork for the gate; if absent, run one paired probe at
+`presence_penalty` 0.0 vs 0.3 with suffix ON and compare accepted-draft counts.
+**Needs a ruling only on whether to spend the probe** — the grep is free and should happen either way.
+
+### ~~O27~~ → CLOSED (operator, 2026-08-16): **WAIT for GitHub's own gc.** No Support request, no repo
+recreation. The leaked string is a username in a home path — real PII and correctly scrubbed from the
+branch-reachable history, but not credential-grade — and the unreachable objects expire on GitHub's own
+schedule. Accepted risk: until then the pre-scrub commit remains fetchable by anyone who knows the sha.
+Recurrence is already blocked by `bench.piicheck` in `githooks/pre-commit`. Original text retained:
+
+### O27 (original text, retained). Does the GitHub remote still need a `gc` to finish the PII scrub?
+
 Raised 2026-08-16, during the scrub itself.
 
 11 tracked files carried an absolute home path with a real username into this PUBLIC repo (the
@@ -60,6 +195,41 @@ LATER THAT DAY: operator dropped the item from tracking entirely ("don't care").
 anywhere; this entry is the record.**
 Guard against recurrence is already in place: `bench.piicheck` in `githooks/pre-commit`, validated
 end-to-end against a staged leak, plus a corpus-wide test asserting every tracked file is clean.
+
+### ~~O29~~ → CLOSED (operator, 2026-08-16): **WARN, do not refuse — and track the cap so failed cases can be re-run.** Shipped: `compare` warns and reports both RESOLVED budgets, and `compare.cap_partition()` names the rows the cap could have touched. The operator's reasoning is what made it useful: the cap is a ceiling enforced OUTSIDE the model, so it cannot have affected a row that finished well under it. Measured consequence — only **39 of 889** draws across the three IFEval arms are cap-sensitive (29 / 10 / 0), so the re-run is 22.8x cheaper than the axis re-run originally planned. Original text retained:
+
+### O29 (original text, retained). `compare` does not refuse across a KV-CAP mismatch — the same class of gap as the suffix one, and it bites the published three-way IFEval verdicts
+Raised 2026-08-16 while auditing per-model coverage.
+
+`max_kv_cache_size` is OUTPUT-DETERMINING and AGENTS.md says so explicitly: it sets the **resolved
+thinking budget** via the server's silent `0.8 × (cap − prompt)` clamp. It is in the provenance
+fingerprint, so `--clean-stale` and resume both see it. **But `compare` does not check it** —
+`_MUST_MATCH_SAMPLING` is `("thinking_budget", "max_tokens")`, i.e. the DECLARED values, which are
+identical across these runs while the RESOLVED ones are not.
+
+Measured on the rows we actually published:
+
+| arm | cap | resolved thinking budget |
+|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` ifeval (n=541) | 65536 | **~52,268** |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ifeval (n=148) | 65536 | **~52,268** |
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` ifeval (n=200) | 262144 | **81,920** |
+
+**So the two `--intersect` verdicts against the candidate compared models allowed 1.57× more thinking
+than the winners were** — on top of the suffix-state mismatch already recorded. Both verdicts are
+INCONCLUSIVE so nothing flips, but this is the second output-determining knob found unguarded in one
+day, by the same method: ask what differs between the rows rather than trusting the guard list.
+
+**Recommendation: fix the guard (cheap, driver-side, mirrors the `draft_kind` refusal added today) and
+re-run the winners' IFEval suffix-OFF at a MATCHED cap** — which is already queued as `docs/PLAN.md`
+§3 item #5, and should now specify the cap, not just the suffix state. **Needs a ruling only on
+whether the guard should refuse or warn** for a cap mismatch: refusing is stricter and correct in
+principle, but it will retroactively block some existing comparisons, so it is the same
+non-destructiveness question the v3 fingerprint had to answer.
+
+left a durable RULE, that rule has been copied into `AGENTS.md` — a rule buried in a closed decision
+is a rule nobody finds.
+
 
 ### ~~O26~~ → CLOSED-BY-IMPLEMENTATION (2026-08-16): the columns are RENAMED and both are published.
 "degenerate wall-share" named **three** different quantities. My original entry (retained below) got two
@@ -236,7 +406,7 @@ fixed — `--num-tests` is an unseeded sample, so **every aider arm before 2026-
 by construction**). The thrash was the AGENT's execution hygiene: three bugs in one runner, two
 reports made from run prefixes. And math500's invalidation is July config debt already paid, not an
 ongoing pattern. **A freeze would not have prevented any of it.** The rule that would — "size every
-job from a pilot, precondition-check before launching" — already exists in `campaign-queue.md`.
+job from a pilot, precondition-check before launching" — already existed in the retired campaign-queue.md; it is now in AGENTS.md as the 5-item pilot rule.
 Recorded as CLOSED rather than deleted so it is not re-proposed as if new.
 
 ### ~~O21~~ → CLOSED (operator, 2026-08-16): **no interim prompt-mode BFCL number.** Build the vendored handler.
@@ -395,52 +565,6 @@ IFEval defaults explicitly instead of drawing them, if upstream defines any.
 clarity than the disease, and (b) would make our `acc` non-comparable with published IFEval numbers.
 **Revisit if a future axis leans on the affected instruction types** (`keywords:letter_frequency`,
 `length_constraints:number_sentences`, and the other threshold-bearing ones).
-
-### O15 — NEW DATUM 2026-08-14 (still OPEN, but one wrong reading is now excluded)
-A DEPTH test at last, from the Nemotron ladder. Same model, same item set, **same context
-`ctx=131072`**, only `kv_prealloc_tokens` differing — and unlike my invalid probe, the cache genuinely
-grew to 131K:
-
-| prealloc | `mx.get_peak_memory` at ctx=131072 |
-|---|---|
-| 131072 | 25.5 GB |
-| 262144 | **23.7 GB** |
-
-**Peak did NOT rise when prealloc doubled — it fell 1.8 GB.** So "prealloc inflates peak memory" is
-EXCLUDED: peak is set by the prefill spike, not by the reservation. Two readings survive and this datum
-does not separate them: (1) the reservation genuinely costs nothing at peak, making prealloc free
-insurance; (2) the 1.8 GB is run-to-run variance — the two ladders had different idle baselines
-(32.39 vs 12.50 GB) and a fresh process.
-
-⚠️ **This does NOT answer what O15 actually asks** — whether prealloc PREVENTS the growth OOM — because
-prealloc was ON in both arms. That needs a prealloc-OFF arm at 262144, i.e. deliberately walking into the
-known OOM path, which the operator has ruled against. **So O15 stays open by design**, with the
-inflation hypothesis eliminated and the protection hypothesis untested.
-
-### O15 (original). Does prealloc actually reserve RAM? — MY EVIDENCE WAS INVALID; the question needs a DEPTH test
-⚠️ **I raised this on a measurement that cannot support it, and the operator caught it.** I compared
-`mx.get_peak_memory` across prealloc arms (25.35 / 25.50 / 28.18 GB) and inferred the reservation was
-"lazy or unwired". **But the probe item generated only ~2,868 tokens, so the KV cache never grew past
-~3K of a 131072/262144 capacity.** A virtual allocation that is never touched costs no resident pages,
-so those peaks measured weights-plus-a-tiny-cache in all three arms. The ~2.8 GB delta is not evidence
-of anything about the reservation.
-
-**Operator datum that outranks my inference: an actual OOM was hit in testing.** So the double-buffer
-growth spike is real and the protection matters in practice.
-
-**The test that would actually answer it** — and the only one that should be cited on this — is a
-LONG-CONTEXT run that grows the cache to the full cap:
-- drive a prompt/generation to >128K so the 128K→256K growth boundary is crossed;
-- sample `mx.get_peak_memory` AND resident memory as it grows, prealloc ON vs OFF;
-- expect, if prealloc works: a large step at LOAD (or first touch) and NO spike at the boundary; if it
-  does not: a small load footprint and a ~1.5× spike at the boundary, i.e. the OOM path.
-**Recommendation: do NOT change prealloc, and do not cite peak-memory numbers from short-generation
-probes for anything memory-related.** The 46GB gate is defined on the prefill spike for exactly this
-reason — a short probe cannot see it.
-
-**Standing lesson: a memory measurement is only valid at the depth it claims.** Every arm of my OFAT
-was ~3K tokens deep, so it was a fair test of "is the shipped config slow on a short item" (which is
-what the retracted claim was about, and it answered it) and NOT a test of anything at capacity.
 
 ### ~~O14~~ → CLOSED-BY-MEASUREMENT. The throughput concern DID NOT REPRODUCE; the rule stands
 I reported a **>47× slowdown** at `262144/262144` (a matched item not completing in 19.5 min vs 24.8 s
@@ -685,7 +809,14 @@ instrument cannot carry it.
 
 ---
 
+
 ## CLOSED-BY-MEASUREMENT
+
+**The verdicts are here; the measured detail lives in `docs/lab-notebook.md`** (the APC work, M2/M3,
+is written out at length there — byte-identical peak memory across arms, zero cache hits, and the
+session-cache shadowing that explains it). Kept as verdicts rather than re-transcribed, because
+"we decided" and "we measured" age differently and the measurement is the part that needs its
+full context.
 
 ### M1. Should `converged` absorb self-terminating repetition loops? — **NO** (2026-08-13, operator-confirmed)
 **Operator ruling: this is NOT a DNF. It is a valid converged response — converged as determined by the

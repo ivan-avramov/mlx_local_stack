@@ -72,8 +72,8 @@ def test_cmd_grade_threads_tune_to_grade_all(monkeypatch):
     assert captured.get("tune") == "suffixon"
 
 
-def test_samples_above_1_is_REFUSED_pending_the_O28_fork_fix(capsys):
-    """Operator ruling on O28 (2026-08-17): measured on HumanEval/71, two draws with different
+def test_samples_above_1_is_REFUSED_pending_the_O30_fork_fix(capsys):
+    """Operator ruling on O30 (2026-08-17; raised as O28, renumbered in the 2026-08-18 merge): measured on HumanEval/71, two draws with different
     declared seeds came back byte-identical over 82,169 tokens — the batched decode keys draws
     off the FIRST request's seed at row 0, so `--samples k` silently produces k COPIES on the
     non-speculative serving path. Until the fork threads per-request seeds, asking for k>1 must
@@ -87,6 +87,6 @@ def test_samples_above_1_is_REFUSED_pending_the_O28_fork_fix(capsys):
     except SystemExit as e:
         assert e.code not in (0, None)
     else:
-        raise AssertionError("--samples 3 must refuse until O28's fork fix lands")
+        raise AssertionError("--samples 3 must refuse until O30's fork fix lands")
     err = capsys.readouterr()
-    assert "O28" in (err.out + err.err)
+    assert "O30" in (err.out + err.err)
