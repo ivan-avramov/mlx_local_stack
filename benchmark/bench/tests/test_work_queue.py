@@ -392,3 +392,215 @@ def test_inline_state_in_an_OLD_plan_is_migrated_not_re_run(tmp_path):
     workqueue.run(plan, state_path=state, runner=lambda c: ran.append(c) or 0)
     assert ran == ["y"]
     assert json.loads(state.read_text())["old-done"]["state"] == "done"
+
+
+# ---------------------------------------------- per-item watcher: spawn/reap
+#
+# An entry with a "watch" dict ({"model", "bench", "total", "driver_pattern", "interval"?}) gets
+# its own benchmark/m1/bench_watch.py subprocess for the item's duration, per AGENTS.md's "report
+# AND critically evaluate every 5 minutes" rule -- and it must never outlive the item.
+
+
+class _FakeProc:
+    """Records terminate/wait/kill calls; stands in for subprocess.Popen in tests so no real
+    bench_watch.py process is ever spawned."""
+
+    def __init__(self, raise_on_terminate=False):
+        self.terminated = False
+        self.waited_timeout = None
+        self.killed = False
+        self._raise_on_terminate = raise_on_terminate
+
+    def terminate(self):
+        if self._raise_on_terminate:
+            raise OSError("already dead")
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        self.waited_timeout = timeout
+
+    def kill(self):
+        self.killed = True
+
+
+def test_watcher_is_spawned_with_the_right_argv_and_reaped_after_the_item_finishes(tmp_path):
+    spawned, procs = [], []
+
+    def spawn(cmd):
+        spawned.append(cmd)
+        p = _FakeProc()
+        procs.append(p)
+        return p
+
+    q = _q(tmp_path, [{"name": "a", "cmd": "true", "watch": {
+        "model": "Ornith-1.0-35B-mlx-uniform-4bit", "bench": "mbppplus", "total": 100,
+        "driver_pattern": "run_m2_screens",
+    }}])
+    status_dir = tmp_path / "status"
+    workqueue.run(q, runner=lambda c: 0, spawn_watcher=spawn, status_dir=status_dir)
+
+    assert len(spawned) == 1
+    cmd = spawned[0]
+    assert "--models" in cmd and "Ornith-1.0-35B-mlx-uniform-4bit" in cmd
+    assert "--bench" in cmd and "mbppplus" in cmd
+    assert "--total" in cmd and "100" in cmd
+    assert "--driver-pattern" in cmd and "run_m2_screens" in cmd
+    assert "--interval" in cmd and "300" in cmd
+    expect_out = str(status_dir / "watch_Ornith-1.0-35B-mlx-uniform-4bit_mbppplus.md")
+    assert "--out" in cmd and expect_out in cmd
+    assert procs[0].terminated, "the watcher must be terminated once the item finishes"
+
+
+def test_watcher_interval_is_overridable_per_item(tmp_path):
+    spawned = []
+    q = _q(tmp_path, [{"name": "a", "cmd": "true", "watch": {
+        "model": "m", "bench": "b", "total": 1, "driver_pattern": "p", "interval": 60,
+    }}])
+    workqueue.run(q, runner=lambda c: 0, spawn_watcher=lambda cmd: spawned.append(cmd) or _FakeProc(),
+                  status_dir=tmp_path / "status")
+    assert "60" in spawned[0]
+
+
+def test_watcher_is_reaped_even_when_the_runner_raises(tmp_path):
+    """try/finally: a runner exception must not orphan the watcher subprocess."""
+    procs = []
+
+    def spawn(cmd):
+        p = _FakeProc()
+        procs.append(p)
+        return p
+
+    def boom(cmd):
+        raise RuntimeError("boom")
+
+    q = _q(tmp_path, [{"name": "a", "cmd": "true", "watch": {
+        "model": "m", "bench": "b", "total": 5, "driver_pattern": "pat",
+    }}])
+    workqueue.run(q, runner=boom, spawn_watcher=spawn, status_dir=tmp_path / "status")
+    assert procs[0].terminated
+    entry = json.loads(q.read_text())[0]
+    assert entry["state"] == "failed"
+
+
+def test_watcher_that_wont_terminate_is_killed(tmp_path):
+    proc = _FakeProc(raise_on_terminate=True)
+    q = _q(tmp_path, [{"name": "a", "cmd": "true", "watch": {
+        "model": "m", "bench": "b", "total": 1, "driver_pattern": "p",
+    }}])
+    workqueue.run(q, runner=lambda c: 0, spawn_watcher=lambda cmd: proc, status_dir=tmp_path / "status")
+    assert proc.killed, "a watcher that raises on terminate() must fall back to kill()"
+
+
+def test_no_watcher_spawned_for_an_item_without_a_watch_dict(tmp_path):
+    called = []
+    q = _q(tmp_path, [{"name": "a", "cmd": "true"}])
+    workqueue.run(q, runner=lambda c: 0,
+                  spawn_watcher=lambda cmd: called.append(cmd) or _FakeProc(),
+                  status_dir=tmp_path / "status")
+    assert called == []
+    assert not (tmp_path / "status").exists(), "no status dir should be created without a watcher"
+
+
+def test_watch_dict_missing_a_required_key_skips_the_watcher_not_the_queue(tmp_path):
+    ran = []
+    q = _q(tmp_path, [{"name": "a", "cmd": "a", "watch": {"model": "m", "bench": "b"}}])  # no total
+    workqueue.run(q, runner=lambda c: ran.append(c) or 0,
+                  spawn_watcher=lambda cmd: (_ for _ in ()).throw(AssertionError("should not spawn")),
+                  status_dir=tmp_path / "status")
+    assert ran == ["a"], "a malformed 'watch' dict must not stop the job itself from running"
+    entry = json.loads(q.read_text())[0]
+    assert entry["state"] == "done"
+
+
+def test_default_spawn_goes_through_subprocess_Popen(tmp_path, monkeypatch):
+    """Even without an injected spawn_watcher, the real path must be mockable at the module
+    boundary (workqueue.subprocess.Popen) -- so a live run never actually needs a real one to be
+    testable."""
+    calls = []
+
+    def fake_popen(cmd, **kw):
+        calls.append(cmd)
+        return _FakeProc()
+
+    monkeypatch.setattr(workqueue.subprocess, "Popen", fake_popen)
+    q = _q(tmp_path, [{"name": "a", "cmd": "true", "watch": {
+        "model": "m", "bench": "b", "total": 1, "driver_pattern": "p",
+    }}])
+    workqueue.run(q, runner=lambda c: 0, status_dir=tmp_path / "status")
+    assert calls, "the default spawn path must call subprocess.Popen"
+
+
+def test_status_dir_defaults_to_repo_benchmark_status(monkeypatch):
+    monkeypatch.delenv("STACK_WORKDIR", raising=False)
+    assert workqueue._status_dir() == paths.repo_root() / "benchmark" / "status"
+
+
+def test_status_dir_honors_STACK_WORKDIR_env_var(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    assert workqueue._status_dir() == tmp_path / "status"
+
+
+# ---------------------------------------------- status aggregator
+#
+# `python -m bench.workqueue <queue> --aggregate` is the ONLY writer of <status_dir>/current.md.
+
+
+def test_aggregate_writes_one_row_per_queue_item_with_its_state(tmp_path):
+    status_dir = tmp_path / "status"
+    q = _q(tmp_path, [{"name": "a", "cmd": "true", "state": "done", "exit_code": 0},
+                       {"name": "b", "cmd": "true"}])
+    text = workqueue.aggregate(q, status_dir=status_dir)
+    assert "| a | done |" in text
+    assert "| b | pending |" in text
+    assert (status_dir / "current.md").read_text() == text
+
+
+def test_aggregate_prefers_the_separate_state_file_over_inline_plan_state(tmp_path):
+    status_dir = tmp_path / "status"
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps([{"name": "a", "cmd": "true"}]))
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"a": {"state": "running"}}))
+    text = workqueue.aggregate(plan, status_dir=status_dir, state_path=state)
+    assert "| a | running |" in text
+
+
+def test_aggregate_reads_the_last_line_of_the_items_watcher_file(tmp_path):
+    status_dir = tmp_path / "status"
+    status_dir.mkdir()
+    (status_dir / "watch_m_b.md").write_text("===== tick 1 =====\nsome line\nlast line\n")
+    q = _q(tmp_path, [{"name": "a", "cmd": "true", "watch": {
+        "model": "m", "bench": "b", "total": 1, "driver_pattern": "p",
+    }}])
+    text = workqueue.aggregate(q, status_dir=status_dir)
+    assert "last line" in text
+
+
+def test_aggregate_reports_dash_for_an_item_with_no_watcher_file_yet(tmp_path):
+    status_dir = tmp_path / "status"
+    q = _q(tmp_path, [{"name": "a", "cmd": "true", "watch": {
+        "model": "m", "bench": "b", "total": 1, "driver_pattern": "p",
+    }}])
+    text = workqueue.aggregate(q, status_dir=status_dir)
+    assert "| a | pending | - | - |" in text
+
+
+def test_aggregate_is_the_only_writer_repeated_calls_overwrite_stale_content(tmp_path):
+    status_dir = tmp_path / "status"
+    q = _q(tmp_path, [{"name": "a", "cmd": "true"}])
+    workqueue.aggregate(q, status_dir=status_dir)
+    (status_dir / "current.md").write_text("STALE-FROM-SOMEWHERE-ELSE\n")
+    text = workqueue.aggregate(q, status_dir=status_dir)
+    assert "STALE" not in text
+    assert (status_dir / "current.md").read_text() == text
+
+
+def test_cli_aggregate_flag_writes_current_md_without_running_any_jobs(tmp_path, monkeypatch):
+    q = _q(tmp_path, [{"name": "a", "cmd": "true"}])
+    status_dir = tmp_path / "status"
+    ran = []
+    monkeypatch.setattr(workqueue, "_shell", lambda *a, **k: ran.append(a) or 0)
+    rc = workqueue.main([str(q), "--aggregate", "--status-dir", str(status_dir)])
+    assert rc == 0
+    assert ran == [], "--aggregate must not run any queued job"
+    assert (status_dir / "current.md").exists()

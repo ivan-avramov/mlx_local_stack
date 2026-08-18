@@ -32,6 +32,20 @@ Design decisions, each with a reason and a test:
   ``<repo>/benchmark/control/``, or ``$STACK_WORKDIR/control/`` when that out-of-repo workdir is
   set (see ``docs/PLAN.md``) -- a file, not the committed queue, because pause/stop/skip are
   transient operator acts, not plan edits.
+- **A per-item watcher** answers AGENTS.md's "report + critically evaluate every 5 minutes" rule
+  without depending on the driving agent being awake. An entry that carries a ``"watch"`` dict
+  (``{"model", "bench", "total", "driver_pattern", "interval"?}``) gets its own
+  ``benchmark/m1/bench_watch.py`` subprocess for the duration of that item, writing ticks to
+  ``<status_dir>/watch_<model>_<bench>.md``; it is started right before the item runs and reaped
+  (terminate, then wait/kill) in a ``finally`` so it never outlives the item -- success, failure,
+  or a runner exception all reap it the same way. An entry with no ``"watch"`` key gets no
+  watcher (e.g. an archive/grade job). Status dir defaults to ``$STACK_WORKDIR/status`` when set,
+  else ``<repo>/benchmark/status`` (gitignored).
+- **The status aggregator** (``python -m bench.workqueue <queue> --aggregate``) is the ONLY writer
+  of ``<status_dir>/current.md``: one compact table -- item / state / last watcher line /
+  timestamp -- built by reading the queue, its state file, and every ``watch_*.md`` already on
+  disk. It never runs a job and never touches a watcher process, so it carries none of the
+  concurrent-writer hazard a live watcher tick would.
 
 Usage on the worker (detached, survives the ssh session):
 
@@ -45,6 +59,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -180,6 +195,70 @@ def _consume(path: Path) -> None:
         pass
 
 
+def _status_dir(override=None) -> Path:
+    """Where per-item watcher output and ``current.md`` live.
+
+    Same resolution rule as ``_control_dir``: ``$STACK_WORKDIR/status`` when the out-of-repo
+    workdir is set, else ``<repo>/benchmark/status`` (gitignored — this is runtime state, not
+    committed config).
+    """
+    if override is not None:
+        return Path(override)
+    workdir = os.environ.get("STACK_WORKDIR")
+    if workdir:
+        return Path(workdir) / "status"
+    return paths.repo_root() / "benchmark" / "status"
+
+
+def _watcher_cmd(watch: dict, status_dir: Path) -> list:
+    """Build the ``bench_watch.py`` argv for one queue item's ``"watch"`` dict.
+
+    Raises ``KeyError`` if a required key (``model``/``bench``/``total``/``driver_pattern``) is
+    missing — the caller turns that into a logged SKIP rather than a crashed queue, the same
+    tolerance already applied to a malformed ``"cmd"``.
+    """
+    model, bench, total = watch["model"], watch["bench"], watch["total"]
+    pattern = watch["driver_pattern"]
+    interval = watch.get("interval", 300)
+    out = Path(status_dir) / f"watch_{model}_{bench}.md"
+    script = paths.repo_root() / "benchmark" / "m1" / "bench_watch.py"
+    return [sys.executable, str(script),
+            "--models", model, "--bench", bench, "--total", str(total),
+            "--driver-pattern", pattern, "--out", str(out), "--interval", str(interval)]
+
+
+def _default_spawn(cmd: list):
+    """Real subprocess launch, used when the caller injects no ``spawn_watcher``. Going through
+    ``subprocess.Popen`` (not a bare call) keeps it mockable via ``monkeypatch`` on
+    ``workqueue.subprocess.Popen`` without requiring every caller to inject a fake."""
+    return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            stdin=subprocess.DEVNULL)
+
+
+def _reap_watcher(proc, log, name: str) -> None:
+    """Stop a per-item watcher no matter how the item ended. Called from a ``finally`` so a
+    watcher is never left running past its item — success, failure, and a runner exception all
+    reap it identically. Terminate first (clean exit, the watcher just appends one more tick at
+    most); fall back to kill if it does not exit within the wait."""
+    try:
+        proc.terminate()
+    except Exception:                               # noqa: BLE001 — terminate() itself failed;
+        try:                                         # the process may already be gone, or refusing
+            proc.kill()                              # a clean signal — go straight to kill().
+        except Exception:                            # noqa: BLE001
+            pass
+        log(f"[workqueue] watcher stopped for {name!r}")
+        return
+    try:
+        proc.wait(timeout=5)
+    except Exception:                               # noqa: BLE001 — didn't exit within the wait
+        try:
+            proc.kill()
+        except Exception:                           # noqa: BLE001
+            pass
+    log(f"[workqueue] watcher stopped for {name!r}")
+
+
 def _check_control(cdir: Path, *, entries: list, st: dict, queue_path, state_path, log,
                     poll_interval: float) -> str:
     """Act on operator control files between items. Returns ``"stop"`` (caller must exit the
@@ -226,12 +305,17 @@ def _check_control(cdir: Path, *, entries: list, st: dict, queue_path, state_pat
 
 
 def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print, logdir=None,
-        state_path=None, control_dir=None, poll_interval: float = DEFAULT_POLL_INTERVAL) -> int:
+        state_path=None, control_dir=None, poll_interval: float = DEFAULT_POLL_INTERVAL,
+        status_dir=None, spawn_watcher=None) -> int:
     """Execute queued entries in order until none remain. Returns the number of jobs run.
 
     `control_dir` defaults to `_control_dir()` (see there); pass an explicit path in tests so a
     run never consults the real operator control directory. `poll_interval` (seconds) governs the
     PAUSE poll — injectable so tests never sleep the real 30s.
+
+    `status_dir` defaults to `_status_dir()` (see there). `spawn_watcher` defaults to
+    `_default_spawn` (a real `subprocess.Popen`); inject a fake in tests so a run never spawns a
+    real `bench_watch.py` process. Only entries carrying a `"watch"` dict get a watcher.
     """
     queue_path = Path(queue_path)
     logdir = Path(logdir) if logdir else None
@@ -239,6 +323,8 @@ def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print,
         logdir.mkdir(parents=True, exist_ok=True)
     cdir = Path(control_dir) if control_dir is not None else _control_dir()
     cdir.mkdir(parents=True, exist_ok=True)      # lazy: only created once a run actually starts
+    sdir = Path(status_dir) if status_dir is not None else _status_dir()
+    spawn_fn = spawn_watcher if spawn_watcher is not None else _default_spawn
     ran = 0
     while ran < max_jobs:
         entries = _load(queue_path)             # re-read: work can be appended mid-run
@@ -276,6 +362,21 @@ def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print,
                 entry["log"] = jobfile.name
             entry.update(state="running", started_at=_now())
             _save(queue_path, entries)
+        watch = entry.get("watch")
+        proc = None
+        if watch:
+            sdir.mkdir(parents=True, exist_ok=True)  # lazy: only created once a watcher is due
+            try:
+                wcmd = _watcher_cmd(watch, sdir)
+            except KeyError as e:
+                log(f"[workqueue] watcher SKIPPED for {name!r}: 'watch' missing key {e}")
+            else:
+                try:
+                    proc = spawn_fn(wcmd)
+                    log(f"[workqueue] watcher started for {name!r}")
+                except Exception as e:          # noqa: BLE001 — a dead watcher must not fail the item
+                    log(f"[workqueue] watcher spawn FAILED for {name!r}: "
+                        f"{type(e).__name__}: {e}")
         log(f"[workqueue] START {entry.get('name')!r}: {cmd}")
         try:
             rc = (runner(cmd) if runner is not None
@@ -284,6 +385,9 @@ def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print,
             rc, note = 1, f"{type(e).__name__}: {str(e)[:120]}"
         else:
             note = None
+        finally:
+            if proc is not None:                # reaped on EVERY exit path, including the raise above
+                _reap_watcher(proc, log, name)
         outcome = {"state": "done" if rc == 0 else "failed", "exit_code": rc,
                    "finished_at": _now()}
         if jobfile is not None:
@@ -306,6 +410,56 @@ def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print,
     return ran
 
 
+def _watcher_tail(status_dir: Path, watch) -> tuple:
+    """Last non-blank line of one item's watcher file, plus the file's mtime as an ISO timestamp.
+
+    Returns ``("-", "-")`` when the item never got a watcher (no `"watch"` dict, e.g. an
+    archive/grade job) or the watcher hasn't written its first tick yet — both are normal states,
+    not errors.
+    """
+    if not watch:
+        return "-", "-"
+    model, bench = watch.get("model"), watch.get("bench")
+    if not model or not bench:
+        return "-", "-"
+    f = Path(status_dir) / f"watch_{model}_{bench}.md"
+    if not f.exists():
+        return "-", "-"
+    nonblank = [ln for ln in f.read_text(errors="replace").splitlines() if ln.strip()]
+    last = nonblank[-1] if nonblank else "-"
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(f.stat().st_mtime))
+    return last, ts
+
+
+def aggregate(queue_path, *, status_dir=None, state_path=None) -> str:
+    """Build the operator's one-page status table and write it to `<status_dir>/current.md`.
+
+    THE ONLY WRITER of `current.md` — nothing else in this module touches that filename, so
+    repeated `--aggregate` invocations (the only intended caller) simply overwrite it wholesale.
+    There is no concurrent-writer hazard to guard against because there is no second writer: the
+    live watcher subprocesses write only their own `watch_<model>_<bench>.md`, never this file.
+
+    Reads (never runs) the queue, its state file, and whatever `watch_*.md` files already exist —
+    so it is safe to call at any time, including against a queue that is currently running.
+    """
+    sdir = Path(status_dir) if status_dir is not None else _status_dir()
+    entries = _load(queue_path)
+    st = _load_state(state_path, entries)
+    lines = [f"<!-- generated by `python -m bench.workqueue --aggregate` at {_now()} -->", "",
+             "| item | state | last watcher line | timestamp |", "|---|---|---|---|"]
+    for e in entries:
+        name = e.get("name") or "?"
+        rec = st.get(name) or {}
+        state = rec.get("state") or e.get("state") or "pending"
+        last_line, ts = _watcher_tail(sdir, e.get("watch"))
+        last_line = (last_line or "-").replace("|", "\\|")
+        lines.append(f"| {name} | {state} | {last_line} | {ts} |")
+    text = "\n".join(lines) + "\n"
+    sdir.mkdir(parents=True, exist_ok=True)
+    (sdir / "current.md").write_text(text)
+    return text
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -322,7 +476,17 @@ def main(argv=None) -> int:
                          "$STACK_WORKDIR/control if set, else <repo>/benchmark/control)")
     ap.add_argument("--poll-interval", type=float, default=DEFAULT_POLL_INTERVAL,
                     help="seconds between PAUSE checks while paused (default: 30)")
+    ap.add_argument("--status-dir", default=None,
+                    help="where per-item watcher output and current.md live (default: "
+                         "$STACK_WORKDIR/status if set, else <repo>/benchmark/status)")
+    ap.add_argument("--aggregate", action="store_true",
+                    help="write <status_dir>/current.md from the queue/state and existing "
+                         "watch_*.md files, then exit without running any jobs")
     args = ap.parse_args(argv)
+
+    if args.aggregate:
+        aggregate(args.queue, status_dir=args.status_dir, state_path=args.state)
+        return 0
 
     if args.log:
         fh = open(args.log, "a", buffering=1)                      # noqa: SIM115 — daemon lifetime
@@ -333,7 +497,8 @@ def main(argv=None) -> int:
         log = print
     run(args.queue, max_jobs=args.max_jobs, log=log, state_path=args.state,
         logdir=args.logdir or (Path(args.log).parent if args.log else None),
-        control_dir=args.control_dir, poll_interval=args.poll_interval)
+        control_dir=args.control_dir, poll_interval=args.poll_interval,
+        status_dir=args.status_dir)
     return 0
 
 
