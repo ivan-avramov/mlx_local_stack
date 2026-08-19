@@ -58,6 +58,16 @@ current B queue, entered via a cheap spike):**
   record route-share/cost/latency mechanics; design the real three-arm eval only if the spike is
   clean. Needs an operator go + which frontier arm (claude-sonnet vs claude-opus class) + an API budget cap. <!-- allow-shorthand -->
 
+**UPDATE 2026-08-18 (discussion held; still OPEN pending the operator's go):** the track now has
+its own plan — **`docs/switchyard-plan.md`** — capturing the full design: Switchyard co-released
+with `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` making it the natural weak-tier candidate;
+escalation routing re-weighting weak-tier selection toward count/rate axes (convergence,
+malformed-edit rate) over pass@1; the operator's tune-certification prerequisite (certified tunes
+before any pairing — the M3/M4/BFCL block doubles as that certification); sequencing as a reorder
+(S1 spike + M3/M4/BFCL pulled ahead of M11/M12), not a queue-jump; and the four pending operator
+decisions with standing recommendations (go, Sonnet-class frontier arm, $10 spike cap, prebuilt
+binary under `$STACK_WORKDIR/switchyard/`).
+
 ### ~~O15~~ → CLOSED-BY-POLICY (operator, 2026-08-18)
 The operator confirmed the protection hypothesis from their OWN original measurement: they ran an
 actual prefill test and OBSERVED the OOM when realloc-based cache growth was used — that observation
