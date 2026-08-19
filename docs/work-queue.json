@@ -1,142 +1,170 @@
 [
-  {
-    "id": "V1",
-    "description": "Adversarial verification",
-    "cost": "—",
-    "state": "done",
-    "state_detail": "done"
-  },
-  {
-    "id": "V2",
-    "description": "Grade the suffix OFAT",
-    "cost": "—",
-    "state": "done",
-    "state_detail": "done"
-  },
-  {
-    "id": "V3",
-    "description": "Guard-parity",
-    "cost": "—",
-    "state": "done",
-    "state_detail": "done"
-  },
-  {
-    "id": "V4",
-    "description": "opencode provenance",
-    "cost": "—",
-    "state": "done",
-    "state_detail": "done; M3/M4 unblocked"
-  },
-  {
-    "id": "M1",
-    "description": "Re-draw test",
-    "cost": "—",
-    "state": "done",
-    "state_detail": "done; O30 opened (raised as O28, renumbered in the 2026-08-18 merge)"
-  },
-  {
-    "id": "M2",
-    "description": "Qwen3.8-27B-mlx-uniform-4bit / Qwen3.8-27B-static-mixed-4bit / Qwen3.8-27B-OptiQ-4.5bpw-mixed through funnel Stages 0–1 (load smoke incl. MTP-sidecar inertness, capacity ladder, convergence screen)",
-    "cost": "~1–2 h",
-    "state": "queued",
-    "state_detail": "queued; hub upload RUNNING (ruling 5)"
-  },
-  {
-    "id": "M3",
-    "description": "opencode Run A — 22 python × both winners, DIRECTIONAL, pre-registered extension rule",
-    "cost": "~1.7 h",
-    "state": "blocked",
-    "state_detail": "blocked on V4"
-  },
-  {
-    "id": "M4",
-    "description": "opencode Run B — `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`",
-    "cost": "~0.7 h",
-    "state": "blocked",
-    "state_detail": "blocked on M3 (registry cap restored 2026-08-17)"
-  },
-  {
-    "id": "M5",
-    "description": "DNF re-runs at shipped cap 262144 (ruling 7). INVENTORY DONE 2026-08-17 — 45 rows, dominated by the ifeval SILENT-CLAMP class the raw `nonconv_kind` cannot see (`Ornith-1.0-35B-mlx-uniform-4bit` ifeval 28 + `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ifeval 10, both at cap 65536; plus 6 coding budget-hits: `Ornith-1.0-35B-mlx-uniform-4bit` humanevalplus 3 @131072, `gemma-4-26B-A4B-it-OptiQ-4bit` humanevalplus 1 @65536, `gemma-4-31B-it-qat-6bit` humanevalplus 2 @49152). Over the n=40 pilot threshold and rows are LONG (~15 min each) → PILOT = the 6 coding rows + the 10 `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ifeval rows (~4 h); extend to the 28 only if the pilot's flip-rate is decision-relevant. Procedure per (model,bench): back up jsonl → delete the DNF rows → restore that model's registry cap to 262144 → resume WITHOUT `--clean-stale` (the 65536-manifest hazard) → restamp → re-grade → converged survivors marked promoted-to-shipped-cap.",
-    "cost": "pilot ~4 h, full ~11 h",
-    "state": "queued",
-    "state_detail": "inventory done; execution queued behind M2"
-  },
-  {
-    "id": "M6",
-    "description": "`Qwen3.8-27B` family native-MTP probe (operator-requested 2026-08-17): <!-- allow-shorthand --> the fork's `qwen3_5_mtp` drafter already discovers this checkpoint's sidecar (`mtp_file: optiq/mtp.safetensors`, 29 tensors, 1 layer, prequantized int4). Smoke `draft_kind: mtp` on one recipe (verify `--draft-kind mtp` at the worker cmdline), then a paired one-item ON/OFF speed probe for acceptance + tok/s. The \"MTP is a net slowdown\" pitfall was measured on bolt-on heads for other families — it does not pre-decide a NATIVE trained head. Serving-only lever: measurement stays MTP-OFF; a quality OFAT (O25-style ±5pp gate, measured-`p_d` sizing) only if the recipe survives the funnel AND the speedup is real",
-    "cost": "~15 min smoke; hours only if promoted",
-    "state": "queued",
-    "state_detail": "queued behind M2"
-  },
-  {
-    "id": "D1",
-    "description": "BFCL vendored handler",
-    "cost": "driver-side",
-    "state": "done",
-    "state_detail": "done"
-  },
-  {
-    "id": "D2",
-    "description": "Judge-panel reliability spec",
-    "cost": "—",
-    "state": "parked",
-    "state_detail": "spec done; execution parked"
-  },
-  {
-    "id": "D3",
-    "description": "Tune-encoding migration",
-    "cost": "driver-side",
-    "state": "done",
-    "state_detail": "done; apply held"
-  },
-  {
-    "id": "D4",
-    "description": "Registry-hash-into-manifest",
-    "cost": "—",
-    "state": "done",
-    "state_detail": "done"
-  },
-  {
-    "id": "D5",
-    "description": "Regenerate `docs/work-queue.json` from this table; extend `bench/workqueue.py` with PAUSE/STOP/SKIP; per-item `bench_watch` + status aggregator",
-    "cost": "driver-side",
-    "state": "queued",
-    "state_detail": "queued"
-  },
-  {
-    "id": "D6",
-    "description": "Session-cache × prealloc audit (from the 51 GB incident, 2026-08-17): the prealloc floor materializes full-cap KV arrays PER RETAINED SESSION (`MLX_VLM_CACHE_SESSION_MAX` default 8) — even the deployed winners at TQ4/131072 can hold 8 × 2 GB of floors on top of weights. Audit the daily-driver config; consider a fork fix flooring only the ACTIVE session; decide the right session cap for `runserver.sh`",
-    "cost": "driver-side + fork",
-    "state": "queued",
-    "state_detail": "queued"
-  },
-  {
-    "id": "M7",
-    "description": "presence_penalty MECHANISM CHECK (merged 2026-08-18 from the old driver box's queue) — 5 `Ornith-1.0-35B-mlx-uniform-4bit` ifeval items (279:1880:3084:3369:3478), diagnostic only. All five confirmed REACHABLE: cycle periods measured with the model's own tokenizer at 2/2/11/4/5 tokens, inside the penalty's 20-token window, so a null result is informative. Endpoints in order: does the exact cycle disappear (bench.cycles.describe), then completion_tokens/wall_s, then non_latin_rate, pass@1 LAST (degenerate rows pass more often than they fail). Uses the merged `--presence-penalty` provenance-tracked override. ~40 min (these items ARE the runaways by selection, 301-446 s each). NOTE the old box's own O28 close: the lever is a NO-GO for deployment on its merits (reaches only period<=20 cycles, all-ifeval, expected accuracy effect plausibly negative) — this run would answer the mechanism question only, so it is LOW priority.",
-    "cost": "~40 min",
-    "state": "queued",
-    "state_detail": "optional diagnostic; needs the model slot"
-  },
-  {
-    "id": "M11",
-    "description": "Reasoning-depth ladder for both winners + NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit — extend REASONING_GRID to 96/128/160K (cap-aware); never run on the winners",
-    "cost": "~1-2 h/model",
-    "state": "queued",
-    "state_detail": "operator-requested 2026-08-18"
-  },
-  {
-    "id": "D9",
-    "description": "Build the coding-at-depth axis: repair tasks embedded in ~100-160K repo context, execution-gated; spec first",
-    "cost": "driver-side",
-    "state": "done",
-    "state_detail": "done 2026-08-18; smoke passed (haiku subagent + docker grade)"
-  },
-  {
-    "id": "M12",
-    "description": "Run coding-at-depth on winners + survivors",
-    "cost": "sized by D9",
-    "state": "queued",
-    "state_detail": "unblocked by D9; size the depth grid + n before launch"
-  }
+ {
+  "id": "V1",
+  "description": "Adversarial verification",
+  "cost": "\u2014",
+  "state": "done",
+  "state_detail": "done"
+ },
+ {
+  "id": "V2",
+  "description": "Grade the suffix OFAT",
+  "cost": "\u2014",
+  "state": "done",
+  "state_detail": "done"
+ },
+ {
+  "id": "V3",
+  "description": "Guard-parity",
+  "cost": "\u2014",
+  "state": "done",
+  "state_detail": "done"
+ },
+ {
+  "id": "V4",
+  "description": "opencode provenance",
+  "cost": "\u2014",
+  "state": "done",
+  "state_detail": "done; M3/M4 unblocked"
+ },
+ {
+  "id": "M1",
+  "description": "Re-draw test",
+  "cost": "\u2014",
+  "state": "done",
+  "state_detail": "done; O30 opened (raised as O28, renumbered in the 2026-08-18 merge)"
+ },
+ {
+  "id": "M2",
+  "description": "Qwen3.8-27B-mlx-uniform-4bit / Qwen3.8-27B-static-mixed-4bit / Qwen3.8-27B-OptiQ-4.5bpw-mixed through funnel Stages 0\u20131 (load smoke incl. MTP-sidecar inertness, capacity ladder, convergence screen)",
+  "cost": "~1\u20132 h",
+  "state": "queued",
+  "state_detail": "queued; hub upload RUNNING (ruling 5)"
+ },
+ {
+  "id": "M3",
+  "description": "opencode Run A \u2014 22 python \u00d7 both winners, DIRECTIONAL, pre-registered extension rule",
+  "cost": "~1.7 h",
+  "state": "blocked",
+  "state_detail": "blocked on V4"
+ },
+ {
+  "id": "M4",
+  "description": "opencode Run B \u2014 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`",
+  "cost": "~0.7 h",
+  "state": "blocked",
+  "state_detail": "blocked on M3 (registry cap restored 2026-08-17)"
+ },
+ {
+  "id": "M5",
+  "description": "DNF re-runs at shipped cap 262144 (ruling 7). INVENTORY DONE 2026-08-17 \u2014 45 rows, dominated by the ifeval SILENT-CLAMP class the raw `nonconv_kind` cannot see (`Ornith-1.0-35B-mlx-uniform-4bit` ifeval 28 + `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ifeval 10, both at cap 65536; plus 6 coding budget-hits: `Ornith-1.0-35B-mlx-uniform-4bit` humanevalplus 3 @131072, `gemma-4-26B-A4B-it-OptiQ-4bit` humanevalplus 1 @65536, `gemma-4-31B-it-qat-6bit` humanevalplus 2 @49152). Over the n=40 pilot threshold and rows are LONG (~15 min each) \u2192 PILOT = the 6 coding rows + the 10 `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ifeval rows (~4 h); extend to the 28 only if the pilot's flip-rate is decision-relevant. Procedure per (model,bench): back up jsonl \u2192 delete the DNF rows \u2192 restore that model's registry cap to 262144 \u2192 resume WITHOUT `--clean-stale` (the 65536-manifest hazard) \u2192 restamp \u2192 re-grade \u2192 converged survivors marked promoted-to-shipped-cap.",
+  "cost": "pilot ~4 h, full ~11 h",
+  "state": "queued",
+  "state_detail": "inventory done; execution queued behind M2"
+ },
+ {
+  "id": "M6",
+  "description": "M6a: native-MTP smoke + paired one-item ON/OFF speed probe on Qwen3.6-27B-Opus-Distill-OptiQ-4bit AND Qwen3.8-27B-mlx-uniform-4bit (registry flip never mid-run; verify --draft-kind mtp at worker cmdline). Decision: <1.3x close, >=1.3x M6b",
+  "cost": "~15 min smoke; hours only if promoted",
+  "state": "queued",
+  "state_detail": "restructured 2026-08-18; M6a runs in the Stage-2 grading window"
+ },
+ {
+  "id": "D1",
+  "description": "BFCL vendored handler",
+  "cost": "driver-side",
+  "state": "done",
+  "state_detail": "done"
+ },
+ {
+  "id": "D2",
+  "description": "Judge-panel reliability spec",
+  "cost": "\u2014",
+  "state": "parked",
+  "state_detail": "spec done; execution parked"
+ },
+ {
+  "id": "D3",
+  "description": "Tune-encoding migration",
+  "cost": "driver-side",
+  "state": "done",
+  "state_detail": "done; apply held"
+ },
+ {
+  "id": "D4",
+  "description": "Registry-hash-into-manifest",
+  "cost": "\u2014",
+  "state": "done",
+  "state_detail": "done"
+ },
+ {
+  "id": "D5",
+  "description": "Regenerate `docs/work-queue.json` from this table; extend `bench/workqueue.py` with PAUSE/STOP/SKIP; per-item `bench_watch` + status aggregator",
+  "cost": "driver-side",
+  "state": "queued",
+  "state_detail": "queued"
+ },
+ {
+  "id": "D6",
+  "description": "Session-cache \u00d7 prealloc audit (from the 51 GB incident, 2026-08-17): the prealloc floor materializes full-cap KV arrays PER RETAINED SESSION (`MLX_VLM_CACHE_SESSION_MAX` default 8) \u2014 even the deployed winners at TQ4/131072 can hold 8 \u00d7 2 GB of floors on top of weights. Audit the daily-driver config; consider a fork fix flooring only the ACTIVE session; decide the right session cap for `runserver.sh`",
+  "cost": "driver-side + fork",
+  "state": "queued",
+  "state_detail": "queued"
+ },
+ {
+  "id": "M7",
+  "description": "presence_penalty MECHANISM CHECK (merged 2026-08-18 from the old driver box's queue) \u2014 5 `Ornith-1.0-35B-mlx-uniform-4bit` ifeval items (279:1880:3084:3369:3478), diagnostic only. All five confirmed REACHABLE: cycle periods measured with the model's own tokenizer at 2/2/11/4/5 tokens, inside the penalty's 20-token window, so a null result is informative. Endpoints in order: does the exact cycle disappear (bench.cycles.describe), then completion_tokens/wall_s, then non_latin_rate, pass@1 LAST (degenerate rows pass more often than they fail). Uses the merged `--presence-penalty` provenance-tracked override. ~40 min (these items ARE the runaways by selection, 301-446 s each). NOTE the old box's own O28 close: the lever is a NO-GO for deployment on its merits (reaches only period<=20 cycles, all-ifeval, expected accuracy effect plausibly negative) \u2014 this run would answer the mechanism question only, so it is LOW priority.",
+  "cost": "~40 min",
+  "state": "queued",
+  "state_detail": "optional diagnostic; needs the model slot"
+ },
+ {
+  "id": "M11",
+  "description": "Reasoning-depth ladder for both winners + NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit \u2014 extend REASONING_GRID to 96/128/160K (cap-aware); never run on the winners",
+  "cost": "~1-2 h/model",
+  "state": "queued",
+  "state_detail": "operator-requested 2026-08-18"
+ },
+ {
+  "id": "D9",
+  "description": "Build the coding-at-depth axis: repair tasks embedded in ~100-160K repo context, execution-gated; spec first",
+  "cost": "driver-side",
+  "state": "done",
+  "state_detail": "done 2026-08-18; smoke passed (haiku subagent + docker grade)"
+ },
+ {
+  "id": "M12",
+  "description": "Run coding-at-depth on winners + survivors",
+  "cost": "sized by D9",
+  "state": "queued",
+  "state_detail": "unblocked by D9; size the depth grid + n before launch"
+ },
+ {
+  "id": "M6b",
+  "description": "Conditional quality OFAT for native MTP (p_d-sized n~60-160, +/-5pp gate, suffix_ofat.py machinery); pass -> serve draft_kind mtp; measurement stays draft-OFF",
+  "cost": "~1 evening",
+  "state": "blocked",
+  "state_detail": "blocked on M6a >=1.3x; yields to M3/M4/BFCL unless >=2x (operator call)"
+ },
+ {
+  "id": "S1",
+  "description": "NVSY Switchyard system track (docs/switchyard-plan.md): mechanics spike then three-arm eval",
+  "cost": "spike ~$10; eval ~$15-25",
+  "state": "parked",
+  "state_detail": "awaiting operator go"
+ },
+ {
+  "id": "M13",
+  "description": "Ornith-1.0-35B-mlx-uniform-4bit MTP head: acquire from base + self-quantize sidecar via fork split.py; fork MoE-trunk load check; then M6a-style probe",
+  "cost": "driver-side + ~30 min box probe",
+  "state": "queued",
+  "state_detail": "steps 1-2 can start immediately; interleaves with running generations"
+ },
+ {
+  "id": "M14",
+  "description": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit MTP: head acquisition + new nemotron_h drafter (attention+moe block)",
+  "cost": "fork project",
+  "state": "parked",
+  "state_detail": "trigger: NVSY weak-tier selection OR M6a+M13 both large"
+ }
 ]
