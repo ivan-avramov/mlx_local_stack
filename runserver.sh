@@ -102,7 +102,12 @@ TASK_MODEL_PID=$!
 # made the inertness provable, and a future multi-tenant deployment could want it. Guarded by
 # benchmark/bench/tests/test_provenance_fingerprint.py::test_runserver_does_NOT_enable_apc.
 echo "Starting main model (mlx_vlm, ${MAIN_MODEL_URL})..."
-MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start &>logs/main_model.log &
+# Cap retained per-conversation KV caches (operator-approved 2026-08-18): with
+# kv_prealloc_tokens = cap, each retained session floors at the FULL cap (~4 GB TQ4 at
+# 262144), and the default of 8 puts both winners over the 46 GB gate on floors alone —
+# measured 58 GB + heavy swap. MLX's memory-limit backstop cannot reclaim these floors
+# (they are live referenced arrays, not pool buffers). See D6 audit.
+MLX_VLM_CACHE_SESSION_MAX=2 MLX_SERVE_CONFIG=main_models.yaml uv run mlx-serve start &>logs/main_model.log &
 MAIN_MODEL_PID=$!
 
 echo -n "Waiting for main model to be ready..."
