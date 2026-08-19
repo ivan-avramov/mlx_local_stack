@@ -2331,3 +2331,27 @@ known problem. The challenge was correct on the facts and exposed a stale-baseli
   `benchmark/m1/suffix_ofat.py`) — because MTP verify shares the batched-verify numerics that
   made suffix ON/OFF different fixed points, "lossless in distribution" is the hypothesis
   under test, never a waiver. Serving-only either way; measurement stays draft-OFF.
+
+### 2026-08-18 addendum 2 — MTP head acquisition audits (driver-side, hub-index reads only)
+
+- **`Ornith-1.0-35B-mlx-uniform-4bit` (M13): CLOSED-NEGATIVE.** Base repo identified from the
+  operator's model card: `deepreinforce-ai/Ornith-1.0-35B` (hub repo id; redirects to `ornith-ai/…`), <!-- allow-shorthand --> a
+  qwen3_5_moe hybrid (256 experts / 8 active + shared; 30/40 GatedDeltaNet + 10 full-attn).
+  Full index audit: 31,666 tensors, 49 distinct patterns, ALL trunk — zero head tensors under
+  any known naming (`mtp.`, draft, nextn). The converted config's `mtp_num_hidden_layers: 1`
+  is schema boilerplate. Nothing exists to self-quantize; the only route is TRAINING an
+  EAGLE3-style head (fork drafter exists), recorded as out-of-scope-unless-prioritized.
+- **`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (M14): FEASIBLE, two routes.** (1) The base
+  `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` ships the native MTP block: 270 tensors,
+  DeepSeek-style (`mtp.layers.N.eh_proj`/`enorm`/`hnorm` + attention mixer + MoE experts +
+  shared expert), ALL in `model-00014-of-00014` — one ~4–5 GB shard download, then extract +
+  self-quantize (the qwen3_5 `split.py` pattern generalizes; tool is family-specific). The
+  `mlx-community` 4-bit dropped the block, as community quants do. Needs a new `nemotron_h_mtp`
+  drafter — the fork has two MoE-MTP siblings to pattern from (`deepseek_v4_mtp`,
+  `glm4_moe_lite_mtp`). (2) NVIDIA also publishes a STANDALONE DFlash draft model
+  (`…-NVFP4-DFlash`, 1.18 GB single-file `DFlashDraftModel`, reads target hidden states from
+  layers [1,5,19,29,41,51]) — fork dflash drafters are per-family so this too needs a new
+  drafter, plus NVFP4 handling. Native-MTP route preferred.
+- Sidecar tensor naming (read from our shipped qwen3_5 sidecar header): `mtp.fc.weight` +
+  `mtp.layers.0.*` with `.weight/.scales/.biases` triplets — the pattern any new sidecar must
+  emit.
