@@ -25,10 +25,19 @@ from pathlib import Path
 from bench import convergence, paths, traces
 
 # Which benchmarks speak to which stated goal. A bench may serve more than one role.
+# `opencode` is the primary agentic harness for "coding" (opencode is what this stack ships;
+# see AGENTS.md client integrations table).
 ROLES = {
     "reasoning": ["aime", "math500", "gpqa"],
-    "coding": ["humanevalplus", "mbppplus", "livecodebench", "aider"],
+    "coding": ["humanevalplus", "mbppplus", "livecodebench", "opencode"],
     "daily": ["ifeval", "bfcl"],
+}
+# Benches kept on the sheet (rows are never dropped) but demoted OUT of the role's headline
+# coverage verdict. `aider` was RETIRED as a harness 2026-08-16 (`AGENTS.md` client integrations
+# table: "opencode is the primary agentic harness") -- its 110 rows stay for reference/diagnosis,
+# but they must not count toward, or be mistaken for, the "coding" role's verdict.
+DIAGNOSTIC_ROLES = {
+    "coding": ["aider"],
 }
 # Below this n, MDE exceeds ~32pp and a number cannot support a verdict.
 MIN_N_FOR_VERDICT = 10
@@ -160,6 +169,9 @@ def main(argv=None) -> int:
         print("|" + "---|" * len(hdr))
     else:
         print(fmt % hdr)
+    # Flat set of benches demoted to diagnostic status under ANY role, so the main sheet marks
+    # them inline rather than silently keeping them indistinguishable from headline rows.
+    diag_benches = {b for benches in DIAGNOSTIC_ROLES.values() for b in benches}
     stale = False
     for model in sorted(data):
         for bench in sorted(data[model]):
@@ -172,7 +184,8 @@ def main(argv=None) -> int:
             if r["conv_stale"]:
                 conv_s += "*"
                 stale = True
-            v = (model, bench, r["n"], acc_s, st_s, conv_s, r["degen_all"] or "-",
+            bench_s = f"{bench} [diag]" if bench in diag_benches else bench
+            v = (model, bench_s, r["n"], acc_s, st_s, conv_s, r["degen_all"] or "-",
                  f"{r['degen_all_wall_pct']:.0f}" if r["degen_all"] else "-",
                  "n/a" if r["degen_eosed_wall_pct"] is None else f"{r['degen_eosed_wall_pct']:.0f}",
                  r["budget"] or "-")
@@ -190,10 +203,23 @@ def main(argv=None) -> int:
         print("* = the score file was graded over a different row count than is on disk now "
               "(a resumed run). RE-GRADE (zero worker time); do not read the cell as current.")
     print("\n=== ROLE COVERAGE (what is measured, what is missing) ===")
+    print("[diag] rows are shown for reference but excluded from the role verdict below "
+          "(DIAGNOSTIC_ROLES) -- currently `aider`, retired as a harness 2026-08-16.")
     for model in sorted(data):
         print(f"\n{model}")
         for role in ROLES:
             print(f"   {role:10} {verdict(data[model], role)}")
+        for role, benches in DIAGNOSTIC_ROLES.items():
+            have = [b for b in benches if b in data[model]]
+            if not have:
+                continue
+            cells = []
+            for b in have:
+                r = data[model][b]
+                acc_s = "ungraded" if r["acc"] is None else f"{r['acc'] * 100:.1f}%"
+                st_s = "ungraded" if r["acc_strict"] is None else f"{r['acc_strict'] * 100:.1f}%"
+                cells.append(f"{b} (n={r['n']}, acc={acc_s}, strict={st_s})")
+            print(f"   {role + ' [diag]':10} " + "; ".join(cells))
     return 0
 
 
