@@ -1,55 +1,75 @@
-# Handoff — checkpointed 2026-08-18 for an operator OS upgrade + reboot
+# Handoff — rewritten 2026-08-18 late evening (pre-compaction checkpoint, session continuing)
 
-Single-box campaign (M5 Max 64GB, driver AND worker). Everything durable is committed and
-pushed at `7f1f4af`; the only uncommitted file is `main_models.yaml` (INTENTIONAL dirt — the
-three `Qwen3.8-27B` candidate entries <!-- allow-shorthand -->; backed up to
-`$STACK_WORKDIR/main_models.yaml.pre-os-upgrade-2026-08-18`, md5 `f57077…`). Nothing was
-generating at checkpoint time; no watchers or daemons were live. Git stash
-`m5_bfcl_preserve` predates this session and survives in `.git` — leave it.
+Single box (M5 Max 64 GB, driver AND worker). Stack pushed through `424276f`; fork pushed
+through `07ed59e` (both remotes current as of ~21:00). Local-only stack commits after the
+push: D11 queue row + this checkpoint. Intentional dirt unchanged: `main_models.yaml`
+(three `Qwen3.8-27B` candidate entries <!-- allow-shorthand -->) + the live rung's jsonl.
 
-## Resume procedure after the reboot
+## Live right now
 
-1. `cd ~/ws/mlx_local_stack` — confirm `git log --oneline -1` shows `7f1f4af` and
-   `git status` shows ONLY `main_models.yaml` modified (if the dirt is gone, restore from the
-   workdir backup and verify by md5).
-2. Restart the lean bench router when the next job needs it (no OWUI/docker for benchmarking):
-   `set -a; . ./.env 2>/dev/null; set +a; MLX_SERVE_CONFIG=main_models.yaml nohup uv run mlx-serve start >logs/main_model.log 2>&1 </dev/null &` → :8000.
-   Verify APC absent (`ps -Eww` on router AND worker pids) per standing rule.
-3. Resume the session: `claude --continue` in the repo directory (or start fresh — this file
-   plus `docs/PLAN.md` §3 is the full state).
+- **Stage-2, `Qwen3.8-27B-mlx-uniform-4bit` humanevalplus arm**: regenerating its last ~9
+  items (41/50 done, zero errors since the capped restart) under the rebuilt router
+  (`MLX_VLM_CACHE_SESSION_MAX=2`, APC absent, suffix off — all verified at the worker).
+  A background waiter fires on completion → next: **mbppplus 5-item pilot** (no wall-clock
+  data on that bench), size → n=50, then swap to `Qwen3.8-27B-OptiQ-4.5bpw-mixed` for the
+  same pair, then grade both (docker) with **M6a MTP speed probes in the grading window**.
+- **All three distill downloads DONE** <!-- allow-shorthand --> in the HF cache: `TeichAI/Qwen3.8-27B-Fable-Distill`
+  (M15), `barozp/Qwen3.8-27B-Opus-Distill-v2` (M16), `armand0e/Qwen3.6-35B-A3B-Fable-5-Distill`
+  (M17). Conversions = quiet-window/overnight work (RAM-heavy; never beside a served model).
+- Watcher + status files under `$STACK_WORKDIR/status/`; downloads log `distill_downloads.log`.
 
-## Where the campaign stands (2026-08-18 evening)
+## Today's completed work (details in lab notebook / ledger / PLAN rows)
 
-- **Winners unchanged**: `Ornith-1.0-35B-mlx-uniform-4bit` (B pick per repair result),
-  runner-up `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. Capacity is a GATE, not an axis
-  (operator rule); ranking = quality + daily usability.
-- **`Qwen3.8-27B` family**: <!-- allow-shorthand --> capacity/retrieval ladders all PASS (retrieval 1.0 through
-  256K). `Qwen3.8-27B-mlx-uniform-4bit` Stage-1 PASS (t0.6, conv 15/15, pass@1 1.00).
-  `Qwen3.8-27B-static-mixed-4bit` **PARKED** — Stage-1 FAIL on convergence (t0.4 rung:
-  conv 13/15, two >3600s DNFs, HumanEval/146 wrong at 66K tokens; temp moves the runaway
-  set rather than shrinking it). See the ledger rows for both.
-- **Decode mechanism SETTLED by powermetrics probe**: kernel-internal (GPU 95% active,
-  never boosts, ~21 W) — not CPU dispatch. Architecture-specific (48/64 linear-attention
-  layers), not quant-specific, not runtime-wide. M6 native-MTP probe is the lever.
-- **H1 reference smoke COMPLETE** (T1 seams / T2 order anchor / T3 depth anchor all
-  PASSED, ~650K plan tokens, zero worker time). D9 coding-at-depth axis is validated and
-  **M12 is READY** (pilot-first).
-- **O31 ruled + shipped** (error rows are strict failures; corpus re-graded, comparable).
-  **O15 closed by policy** (operator observed the realloc OOM firsthand; prealloc rule
-  stands). **The only open question is O32** (switchyard router-system scope) — operator
-  deferred, revisit when they raise it.
+1. **Resume after OS upgrade** verified; handoff checkpoint committed.
+2. **Workdir containment** hardened (AGENTS.md rule + memory + `grade.py` refuses nltk
+   downloads without `NLTK_DATA`; stray `~/nltk_data` deleted by operator).
+3. **qwen3_5 decode-rate attribution CORRECTED** (operator challenge): identical architecture
+   across `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` and the `Qwen3.8-27B` family <!-- allow-shorthand -->;
+   both ~24 tok/s suffix-OFF; only `Ornith-1.0-35B-mlx-uniform-4bit` (qwen3_5_moe, 76 tok/s)
+   is fast. Stale suffix-ON-era impression; ledger/notebook corrected.
+4. **MTP track created** (M6a/M6b/M13/M14): sidecars ship in BOTH qwen3_5 dense models
+   (300 MB, int4); M13 closed-negative (base repo ships no head); M14 feasible
+   (nvidia BF16 shard 14 has the 270-tensor block; DFlash alternative recorded).
+5. **NVSY Switchyard plan** written (`docs/switchyard-plan.md`, O32 pointer, parked S1 row).
+6. **Five Sonnet workers, all landed + architect-reviewed + committed**: D5 (workqueue
+   SKIP-by-id, bench_watch `--tune` + SUSPECT-WRONG-FILE, `m1/status.py`), D7 (opencode in
+   ROLES[coding], aider diagnostic tier, progress-gated session bound from the recovered
+   design), M9 blocker (go/rust/java/javascript container grading, tamper detection), O30
+   fork seed fix (fork `ab5273f`), D6 fork mitigations (fork `07ed59e`: shrink-on-retire +
+   headroom eviction, BOTH OFF by default; worker caught the lazy-re-floor bug).
+7. **H2 Haiku smoke PASSED 16/16** (all four languages incl. exercism-reference known-positives
+   after the first pass left js/java stub-only; progress-gate 7/7) — M3/M4/M18 + Run C
+   grading harness-validated.
+8. **58 GB swap incident** root-caused (session floors × default cap 8, D6 audit) → router
+   rebuilt capped, `runserver.sh` now sets cap=2 (operator-approved), 9 pressure-500 rows
+   dropped + regenerating. D6 audit + D3 lineage reports in `$STACK_WORKDIR/scratch/`.
 
-## Work queue (order per `docs/PLAN.md` §3 — that file is the backlog, this is a snapshot)
+## Fork state & CI
 
-1. **Stage-2 paired screens** for the two `Qwen3.8-27B` passers <!-- allow-shorthand --> vs the leader on the
-   guard-clean axes (humanevalplus/mbppplus, count/rate endpoints + honestly-sized pass@1).
-2. **M6 native-MTP smoke** (~15 min, worker) — the decode-speed lever; serving-only,
-   ±5pp OFAT gate if it works.
-3. **M12 coding-at-depth pilot** (5 items at d64k on a winner; long-prompt prefill
-   dominates cost — size the full run from the pilot).
-4. M11 reasoning-depth ladder; opencode Runs A/B (gated on D7/opencode pinning);
-   6 coding budget-hit re-runs at shipped cap; M7/M9/M10/D8 low priority.
+Fork at `07ed59e` (= `0c1c8b1` + O30 seeds + D6 mitigations), tree CLEAN, pushed.
+**Upstream-parity CI is RED and stays red — accepted**: upstream released v0.6.15 (21 new
+files / 174 symbols / 84 registry entries vs the fork's sync point); not caused by our
+commits. A partial restore was tried and REVERTED. **F1** (dedicated upstream-sync session)
+is queued post-cycle, explicitly SEPARATE from and after D10.
 
-Standing rules that bite: one resident model; full registry names everywhere (hooks
-enforce); never push without an explicit ask in that turn; artifacts only under
-`$STACK_WORKDIR`; `rm` is aliased interactive — use `rm -f` and verify.
+## Scheduled / gated
+
+- **D10**: submodule bump (`ab5273f`+`07ed59e`, features off by default) at the cycle
+  boundary — after Stage-2 arms + M15/M16 funnels/screens + M3/M4/M18, before M11/M12.
+  O30 seed fix is OUTPUT-DETERMINING for seeded runs; `--samples` valid only after.
+- **D6 enablement**: gated on the 4-point live probe (footprint drop, resume tax, re-floor
+  spike, eviction thrash) — code ships with D10, enabling is separate.
+- **D11**: card + flip-to-public for the two `Qwen3.8-27B` passers <!-- allow-shorthand -->
+  once Stage-2 n=50 numbers exist; `Qwen3.8-27B-static-mixed-4bit` stays private (Stage-1 FAIL).
+- **Operator decisions pending**: NVSY S1 go (Sonnet-class arm, $10 cap recommended);
+  fork push authority remains per-explicit-ask.
+
+## Standing traps refreshed today
+
+Watcher must be validated against a known row count (it silently reported QUEUED against a
+healthy tuned run — now `--tune` + a loud diagnostic exist); memory-pressure 500s are infra
+errors — drop + regenerate, never grade them into the denominator (O31); `rm` is aliased
+interactive; full model names in ALL prose and commits (hooks catch docs/commits only).
+
+**Order of resumption if context is lost: this file → `docs/PLAN.md` (queue) →
+`docs/work-queue.json` (states) → `$STACK_WORKDIR/status/` (live runs).**
