@@ -147,6 +147,17 @@ the lab notebook) refer to **O30**.
 ### ~~O30~~ → RULED (2026-08-17): operator took the recommendation — (b) now, (a) when the fork is next opened.
 `run.py generate` now REFUSES `--samples > 1` with an O28 citation (guard + test landed same day). The fork fix (thread each request's seed into its rows' keys in the batched decode) is queued for the next fork-opening; the guard comes out when a 2-seed byte-difference probe passes.
 
+**O30 UPDATE 2026-08-18 — THE FORK FIX IS BUILT, COMMITTED IN THE FORK (`ab5273f`), NOT YET
+DEPLOYED.** Sonnet worker, architect-verified (697 fork tests re-run green): per-request seeds
+now thread through `BatchGenerator.insert()` → `GenerationBatch`/`PromptProcessingBatch` →
+`_position_keys`, defaulting to the old single-shared-seed behavior when omitted; speculative
+path untouched. ⚠️ **Deployment is a deliberate decision, not a routine bump**: for seeded
+harness runs the fix is OUTPUT-DETERMINING (pre-fix, every row after the first decoded under
+the FIRST request's seed — so the entire seeded k=1 corpus was generated under first-request
+seeds), meaning the submodule bump splits the corpus at that sha exactly like the 8b7100b8 →
+0c1c8b17 split. Bump at a corpus boundary (e.g. after the current Stage-2/M3/M4 block), then
+`--samples` designs become valid.
+
 ### O30 (original text, retained — the ruling above supersedes the question).
 Raised 2026-08-17, from the M1 re-draw probe (full evidence in `docs/lab-notebook.md`, same date).
 
