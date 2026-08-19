@@ -2308,3 +2308,26 @@ known problem. The challenge was correct on the facts and exposed a stale-baseli
   `presence_penalty 0.0` is load-bearing for ANY drafter, not just suffix. Both are
   draft-then-verify: lossless in distribution under exact arithmetic, never token-identical,
   hence serving-only levers under the ±5pp OFAT gate; measurement stays draft-OFF.
+
+### 2026-08-18 addendum — MTP inventory across the field (driver-side config/shard reads)
+
+- The qwen3_5 MTP sidecar is **300 MB** (int4-prequantized; `ls -lhL` — the bare `ls -lh`
+  76–79 B figures are HF-cache symlink path lengths, a trap worth naming). OFF = not loaded
+  (Stage-0 verified inertness), so serving today pays nothing for it.
+- **`Ornith-1.0-35B-mlx-uniform-4bit` is `qwen3_5_moe`** — the MoE branch of the same family, <!-- allow-shorthand -->
+  which explains its 76 tok/s decode (few active params/token) far better than "different
+  architecture". Config declares `mtp_num_hidden_layers 1` but `mtp_file` null and ZERO mtp
+  tensors in the shards: the base model's trained head was dropped by the 4-bit packaging. <!-- allow-shorthand -->
+  MTP for it = acquisition (pull head from base, prequantize a sidecar) + possible fork work
+  (the `qwen3_5_mtp` drafter is dense). Parked behind M6.
+- **`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`** (`nemotron_h`) declares
+  `mtp_layers_block_type ['attention','moe']` — the family ships an MTP design — but our
+  4-bit artifact carries NO head weights, and that block shape needs new fork support.
+  Nothing to switch on; an acquisition+fork project only if it takes the NVSY weak-tier seat
+  and still needs liveliness.
+- **Testing scope for M6 ruled in discussion (operator + architect agreed):** speed smoke
+  first; below ~1.3× STOP (O25 precedent); if large, the ±5pp quality OFAT sized from
+  measured p_d (~60–160 paired items at the suffix-measured 0.04–0.06, machinery =
+  `benchmark/m1/suffix_ofat.py`) — because MTP verify shares the batched-verify numerics that
+  made suffix ON/OFF different fixed points, "lossless in distribution" is the hypothesis
+  under test, never a waiver. Serving-only either way; measurement stays draft-OFF.
