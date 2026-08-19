@@ -28,7 +28,9 @@ Design decisions, each with a reason and a test:
   it already re-reads the queue at, and each file is CONSUMED (deleted) once acted on so the next
   launch starts fresh. ``STOP`` finishes the current item then exits; ``SKIP`` marks the next
   pending item skipped and moves on; ``PAUSE`` waits (polling) until removed. Precedence when
-  several are dropped at once: STOP > SKIP > PAUSE. Default location
+  several are dropped at once: STOP > SKIP > PAUSE. ``SKIP`` may name a specific job
+  (``echo <job-id> > SKIP``) to skip that job even when it is not next-pending; an empty/blank
+  ``SKIP`` file falls back to skipping whichever job is next-pending. Default location
   ``<repo>/benchmark/control/``, or ``$STACK_WORKDIR/control/`` when that out-of-repo workdir is
   set (see ``docs/PLAN.md``) -- a file, not the committed queue, because pause/stop/skip are
   transient operator acts, not plan edits.
@@ -52,7 +54,9 @@ Usage on the worker (detached, survives the ssh session):
     nohup .venv-bench/bin/python -m bench.workqueue docs/work-queue.json \\
         --log /tmp/workqueue.log >/dev/null 2>&1 &
 
-    touch benchmark/control/PAUSE   # or $STACK_WORKDIR/control/PAUSE
+    touch benchmark/control/PAUSE            # or $STACK_WORKDIR/control/PAUSE
+    touch benchmark/control/STOP
+    echo <job-id> > benchmark/control/SKIP   # skip that job specifically; blank file = next-pending
 """
 import argparse
 import json
@@ -277,21 +281,34 @@ def _check_control(cdir: Path, *, entries: list, st: dict, queue_path, state_pat
         return "stop"
 
     if skip_path.exists():
-        idx = _next_index(entries, st)
+        target = skip_path.read_text(errors="replace").strip()
         _consume(skip_path)
-        if idx is None:
-            log("[workqueue] SKIP requested but the queue has nothing pending; ignored")
-            return ""
+        if target:
+            # Targeted form: 'echo <job-id> > SKIP' -- skips that job specifically, even when it
+            # is not the next-pending one, so a stuck job can be dropped without first waiting
+            # out everything queued ahead of it.
+            idx = next((i for i, e in enumerate(entries)
+                       if e.get("name") == target and _is_pending(e, st)), None)
+            if idx is None:
+                log(f"[workqueue] SKIP requested for {target!r} but it is not a pending job; ignored")
+                return ""
+            note = f"operator SKIP {target}"
+        else:
+            idx = _next_index(entries, st)
+            if idx is None:
+                log("[workqueue] SKIP requested but the queue has nothing pending; ignored")
+                return ""
+            note = "operator SKIP"
         entry = entries[idx]
         name = entry.get("name") or f"job-{idx}"
-        outcome = {"state": "skipped", "note": "operator SKIP", "finished_at": _now()}
+        outcome = {"state": "skipped", "note": note, "finished_at": _now()}
         if state_path:
             st[name] = {**(st.get(name) or {}), **outcome}
             _save_state(state_path, st)
         else:
             entries[idx].update(**outcome)
             _save(queue_path, entries)
-        log(f"[workqueue] SKIP {name!r}: operator SKIP")
+        log(f"[workqueue] SKIP {name!r}: {note}")
         return "skipped"
 
     if pause_path.exists():

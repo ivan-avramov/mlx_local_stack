@@ -29,6 +29,13 @@ Reads only persisted results, so it never perturbs the run.
       --models Ornith-1.0-35B-mlx-uniform-4bit,Qwen3.6-27B-Opus-Distill-OptiQ-4bit \
       --bench ifeval --total 541 --driver-pattern ifeval_run \
       --out /tmp/ifeval_watch.log &
+
+A run launched with `run.py --tune tX` writes `{bench}.{tune}.jsonl`, not `{bench}.jsonl` --
+pass the matching `--tune` here or this watcher polls the wrong file and reports a healthy run
+as QUEUED forever. Once a QUEUED reading survives 2+ ticks while a sibling `.jsonl` DOES exist
+in that model's results dir, it escalates to an explicit `SUSPECT WRONG FILE` line naming both
+the path being polled and the sibling file(s) found -- the instrument-validation rule: a monitor
+that cannot tell "healthy" from "not looking" is worse than none.
 """
 import argparse
 import json
@@ -49,8 +56,16 @@ def _results_root() -> Path:
     return Path(env) if env else paths.default_results_root()
 
 
-def _rows(model: str, bench: str) -> list:
-    p = _results_root() / model / f"{bench}.jsonl"
+def _row_path(model: str, bench: str, tune: str = None) -> Path:
+    """Same filename rule `run.py --tune` writes under: `{bench}.jsonl` normally, or
+    `{bench}.{tune}.jsonl` for a tuned run. A watcher given only `--bench` for a tuned run polls
+    the wrong file forever -- see `_sibling_jsonls` and the SUSPECT WRONG FILE diagnostic below."""
+    fname = f"{bench}.{tune}.jsonl" if tune else f"{bench}.jsonl"
+    return _results_root() / model / fname
+
+
+def _rows(model: str, bench: str, tune: str = None) -> list:
+    p = _row_path(model, bench, tune)
     if not p.exists():
         return []
     out = []
@@ -62,14 +77,27 @@ def _rows(model: str, bench: str) -> list:
     return out
 
 
+def _sibling_jsonls(model: str, exclude: Path) -> list:
+    """Other `.jsonl` files already sitting in this model's results dir, for the SUSPECT WRONG
+    FILE diagnostic. Their presence is exactly the evidence that separates a genuinely-not-started
+    model (no files at all) from a watcher polling the wrong filename (rows exist, just not where
+    this watcher is looking)."""
+    d = _results_root() / model
+    if not d.exists():
+        return []
+    return sorted(p.name for p in d.glob("*.jsonl") if p != exclude)
+
+
 def _alive(pattern: str) -> bool:
     return subprocess.run(["pgrep", "-f", pattern],
                           capture_output=True).returncode == 0
 
 
-def assess(model, bench, total, prev_n, flat_ticks, rate_hist, started=True) -> tuple[str, int, int, list]:
+def assess(model, bench, total, prev_n, flat_ticks, rate_hist, started=True, tune=None,
+          ticks=0) -> tuple[str, int, int, list]:
     """Return (report, n, flat_ticks, rate_hist). Pure enough to test with fake rows."""
-    rows = _rows(model, bench)
+    rows = _rows(model, bench, tune)
+    path = _row_path(model, bench, tune)
     live = [r for r in rows if not r.get("error")]
     n = len(rows)
     lines = []
@@ -81,6 +109,19 @@ def assess(model, bench, total, prev_n, flat_ticks, rate_hist, started=True) -> 
     # no earlier tick saw rows for it (rows VANISHING would be a real problem, not a queue).
     if not started and n == 0:
         lines.append(f"  1 PROGRESS  n=0/{total}  QUEUED — driver has not reached this model yet")
+        # SUSPECT WRONG FILE: a monitor that cannot tell "healthy" from "not looking" is worse
+        # than none (AGENTS.md instrument-validation rule). QUEUED is indistinguishable from
+        # "polling the wrong --bench/--tune" from n=0 alone -- give it a couple of ticks to rule
+        # out early-queue noise, then check whether the driver IS writing, just elsewhere.
+        if ticks >= 2:
+            siblings = _sibling_jsonls(model, path)
+            if siblings:
+                lines.append(f"  ⚠ SUSPECT WRONG FILE: polling {path} for {ticks} ticks with "
+                             f"nothing written, but sibling jsonl file(s) exist in that model dir: "
+                             f"{', '.join(siblings)} — check --bench/--tune")
+                lines.append("  4 CORRECTION ACT: verify --bench/--tune resolve to the file the "
+                             "driver is actually writing")
+                return "\n".join(lines), n, 0, rate_hist
         lines.append("  4 CORRECTION none (queued)")
         return "\n".join(lines), n, 0, rate_hist
 
@@ -138,18 +179,26 @@ def assess(model, bench, total, prev_n, flat_ticks, rate_hist, started=True) -> 
     return "\n".join(lines), n, flat_ticks, rate_hist
 
 
-def main(argv=None) -> int:
+def _parse_args(argv=None):
     ap = argparse.ArgumentParser(description="Self-evaluating benchmark monitor.")
     ap.add_argument("--models", required=True, help="comma list, assessed in order")
     ap.add_argument("--bench", required=True)
+    ap.add_argument("--tune", default=None,
+                    help="tune label a run was launched with (`run.py --tune tX`); composes "
+                         "`{bench}.{tune}.jsonl` instead of `{bench}.jsonl`. Omitting this for a "
+                         "tuned run silently polls the wrong file -- see SUSPECT WRONG FILE.")
     ap.add_argument("--total", type=int, required=True, help="items expected per model")
     ap.add_argument("--driver-pattern", required=True, help="pgrep pattern for the driver")
     ap.add_argument("--out", required=True)
     ap.add_argument("--interval", type=float, default=300.0)
-    args = ap.parse_args(argv)
+    return ap.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = _parse_args(argv)
 
     models = [m for m in args.models.split(",") if m]
-    state = {m: {"prev": None, "flat": 0, "rates": [], "started": False} for m in models}
+    state = {m: {"prev": None, "flat": 0, "rates": [], "started": False, "ticks": 0} for m in models}
     out = Path(args.out)
 
     while True:
@@ -157,10 +206,12 @@ def main(argv=None) -> int:
         blocks = [f"===== {time.strftime('%H:%M:%S')}  driver={'ALIVE' if alive else 'GONE'} ====="]
         for m in models:
             s = state[m]
+            ticks = s["ticks"] + 1
             rep, n, flat, rates = assess(m, args.bench, args.total, s["prev"], s["flat"],
-                                         s["rates"], started=s["started"])
+                                         s["rates"], started=s["started"], tune=args.tune,
+                                         ticks=ticks)
             state[m] = {"prev": n, "flat": flat, "rates": rates,
-                        "started": s["started"] or n > 0}
+                        "started": s["started"] or n > 0, "ticks": ticks}
             blocks.append(f"{m}")
             blocks.append(rep)
         with out.open("a") as f:

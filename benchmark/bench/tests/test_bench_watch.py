@@ -5,12 +5,15 @@ sends a message. So the four AGENTS.md questions are answered by the daemon, and
 parts that make a tick actionable rather than decorative.
 """
 import importlib.util
+import json
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
     "bench_watch", Path(__file__).resolve().parents[2] / "m1" / "bench_watch.py")
 BW = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(BW)
+_ORIGINAL_ROWS = BW._rows   # several tests below overwrite BW._rows with a fake; restore this to
+                            # exercise the real filesystem-reading implementation
 
 
 def _row(wall=25.0, ct=2000, conv=True, err=None, degen=False):
@@ -26,7 +29,7 @@ def _row(wall=25.0, ct=2000, conv=True, err=None, degen=False):
 
 
 def _assess(rows, prev, flat=0, rates=None, total=100, monkeypatch=None):
-    BW._rows = lambda m, b: rows
+    BW._rows = lambda m, b, *_: rows
     return BW.assess("M", "ifeval", total, prev, flat, rates or [])
 
 
@@ -99,7 +102,7 @@ def test_a_model_that_has_not_STARTED_is_queued_not_stalled():
     alert that fires on healthy state trains the reader to ignore it — which defeats the whole point
     of putting the cadence in a daemon.
     """
-    BW._rows = lambda m, b: []
+    BW._rows = lambda m, b, *_: []
     rep, n, flat, _ = BW.assess("M", "ifeval", 100, 0, 8, [], started=False)
     assert n == 0
     assert "QUEUED" in rep, "a not-yet-started model must say so"
@@ -108,13 +111,97 @@ def test_a_model_that_has_not_STARTED_is_queued_not_stalled():
 
 def test_a_started_model_that_goes_flat_STILL_escalates():
     """The fix must not silence the real signal."""
-    BW._rows = lambda m, b: [_row()] * 10
+    BW._rows = lambda m, b, *_: [_row()] * 10
     rep, _, flat, _ = BW.assess("M", "ifeval", 100, 10, 2, [], started=True)
     assert flat == 3 and "INVESTIGATE" in rep
 
 
 def test_a_model_at_zero_rows_is_treated_as_started_once_it_has_ever_had_rows():
     """started=True with n=0 would mean rows VANISHED — that is a real problem, not a queue."""
-    BW._rows = lambda m, b: []
+    BW._rows = lambda m, b, *_: []
     rep, *_ = BW.assess("M", "ifeval", 100, 5, 0, [], started=True)
     assert "QUEUED" not in rep
+
+
+# ------------------------------------------------------------ --tune: {bench}.{tune}.jsonl
+#
+# Runs launched with `--tune tX` write `{bench}.{tune}.jsonl`, not `{bench}.jsonl` -- a watcher
+# given only `--bench` polls the wrong file and silently reports n=0 QUEUED against a healthy run.
+
+
+def test_row_path_without_tune_is_plain_bench_dot_jsonl(monkeypatch, tmp_path):
+    monkeypatch.setenv("MLX_BENCH_RESULTS", str(tmp_path))
+    assert BW._row_path("M", "ifeval") == tmp_path / "M" / "ifeval.jsonl"
+
+
+def test_row_path_with_tune_composes_bench_dot_tune_dot_jsonl(monkeypatch, tmp_path):
+    monkeypatch.setenv("MLX_BENCH_RESULTS", str(tmp_path))
+    assert BW._row_path("M", "ifeval", "t0.6") == tmp_path / "M" / "ifeval.t0.6.jsonl"
+
+
+def test_assess_reads_the_tuned_file_when_tune_is_given(monkeypatch, tmp_path):
+    monkeypatch.setenv("MLX_BENCH_RESULTS", str(tmp_path))
+    BW._rows = _ORIGINAL_ROWS
+    d = tmp_path / "M"
+    d.mkdir()
+    (d / "ifeval.t0.6.jsonl").write_text(json.dumps(_row()) + "\n")
+    rep, n, *_ = BW.assess("M", "ifeval", 10, None, 0, [], started=False, tune="t0.6")
+    assert n == 1
+    assert "QUEUED" not in rep
+
+
+# ------------------------------------------------------------ SUSPECT WRONG FILE (loud failure)
+#
+# The instrument-validation rule: a monitor that cannot distinguish "healthy" from "not looking"
+# is worse than none. A genuinely-not-started model must stay QUEUED (no false alarm); a model
+# that IS being written to, just under a different filename (wrong --bench/--tune), must escalate
+# once the false "QUEUED" reading has had a couple of ticks to prove it isn't just early.
+
+
+def test_wrong_file_is_flagged_LOUD_once_a_sibling_jsonl_exists_and_ticks_have_passed(monkeypatch, tmp_path):
+    monkeypatch.setenv("MLX_BENCH_RESULTS", str(tmp_path))
+    BW._rows = _ORIGINAL_ROWS
+    d = tmp_path / "M"
+    d.mkdir()
+    (d / "ifeval.t0.6.jsonl").write_text(json.dumps(_row()) + "\n")   # driver IS writing here
+    # watcher polls WITHOUT --tune -- the wrong file
+    rep, n, flat, _ = BW.assess("M", "ifeval", 10, None, 0, [], started=False, ticks=2)
+    assert n == 0
+    assert "SUSPECT WRONG FILE" in rep
+    assert str(d / "ifeval.jsonl") in rep, "must name the exact path it is polling"
+    assert "ifeval.t0.6.jsonl" in rep, "must name the sibling file that DOES exist"
+
+
+def test_wrong_file_is_NOT_flagged_before_2_ticks_have_passed(monkeypatch, tmp_path):
+    monkeypatch.setenv("MLX_BENCH_RESULTS", str(tmp_path))
+    BW._rows = _ORIGINAL_ROWS
+    d = tmp_path / "M"
+    d.mkdir()
+    (d / "ifeval.t0.6.jsonl").write_text(json.dumps(_row()) + "\n")
+    rep, *_ = BW.assess("M", "ifeval", 10, None, 0, [], started=False, ticks=1)
+    assert "SUSPECT WRONG FILE" not in rep
+    assert "QUEUED" in rep
+
+
+def test_a_genuinely_queued_model_with_no_sibling_files_stays_QUEUED_not_suspect(monkeypatch, tmp_path):
+    """No sibling jsonl exists at all -- this really is just an unreached model, not a wrong path."""
+    monkeypatch.setenv("MLX_BENCH_RESULTS", str(tmp_path))
+    BW._rows = _ORIGINAL_ROWS
+    rep, *_ = BW.assess("NeverStarted", "ifeval", 10, None, 0, [], started=False, ticks=5)
+    assert "SUSPECT WRONG FILE" not in rep
+    assert "QUEUED" in rep
+
+
+# ------------------------------------------------------------ CLI: --tune argument
+
+
+def test_cli_accepts_a_tune_argument():
+    args = BW._parse_args(["--models", "M", "--bench", "ifeval", "--total", "10",
+                           "--driver-pattern", "p", "--out", "/tmp/x", "--tune", "t0.6"])
+    assert args.tune == "t0.6"
+
+
+def test_cli_tune_defaults_to_None():
+    args = BW._parse_args(["--models", "M", "--bench", "ifeval", "--total", "10",
+                           "--driver-pattern", "p", "--out", "/tmp/x"])
+    assert args.tune is None

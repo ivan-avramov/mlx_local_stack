@@ -254,6 +254,54 @@ def test_SKIP_marks_the_next_pending_item_skipped_with_operator_reason(tmp_path)
     assert ran == ["b"], "one SKIP file must skip exactly one item, then proceed to the next"
 
 
+def test_SKIP_with_a_job_id_in_the_file_skips_that_NAMED_job_even_if_not_next(tmp_path):
+    """D5 Part 1: 'SKIP <job-id>'. The bare touch()-only form (previous tests) must keep working
+    -- this is the targeted form, so an operator can skip a specific stuck job without first
+    letting every earlier pending job run."""
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "SKIP").write_text("b\n")
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}, {"name": "c", "cmd": "c"}])
+    ran = []
+    workqueue.run(q, runner=lambda c: ran.append(c) or 0, control_dir=control)
+    entries = json.loads(q.read_text())
+    assert entries[1]["state"] == "skipped"
+    assert entries[1]["note"] == "operator SKIP b"
+    assert ran == ["a", "c"], "named SKIP must target 'b' specifically, not merely the next pending item"
+
+
+def test_SKIP_with_an_unknown_job_id_is_a_no_op_but_still_consumed_and_logged(tmp_path):
+    control = tmp_path / "control"
+    control.mkdir()
+    (control / "SKIP").write_text("does-not-exist")
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}])
+    logged = []
+    ran = []
+    workqueue.run(q, runner=lambda c: ran.append(c) or 0, control_dir=control, log=logged.append)
+    assert ran == ["a"], "an unknown SKIP target must not skip anything else"
+    assert not (control / "SKIP").exists()
+    assert any("does-not-exist" in m for m in logged), logged
+
+
+def test_SKIP_by_id_targets_a_job_that_is_NOT_the_next_pending_one(tmp_path):
+    """The whole point of naming a job: skip it even while an earlier item is still running/next."""
+    control = tmp_path / "control"
+    control.mkdir()
+    q = _q(tmp_path, [{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}, {"name": "c", "cmd": "c"}])
+    ran = []
+
+    def runner(cmd):
+        ran.append(cmd)
+        if cmd == "a":
+            (control / "SKIP").write_text("c")   # skip 'c' while 'b' is still next-pending
+        return 0
+
+    workqueue.run(q, runner=runner, control_dir=control)
+    entries = json.loads(q.read_text())
+    assert entries[2]["state"] == "skipped" and entries[2]["note"] == "operator SKIP c"
+    assert ran == ["a", "b"]
+
+
 def test_SKIP_is_consumed_after_use(tmp_path):
     control = tmp_path / "control"
     control.mkdir()
