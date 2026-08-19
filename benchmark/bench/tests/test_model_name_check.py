@@ -228,3 +228,25 @@ def test_a_trailer_does_not_launder_prose():
     msg = ("fix: x\n\nOrnith regressed\n\n"
            "Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>\n")
     assert len(MN.message_violations(msg)) == 1
+
+
+def test_result_row_jsonl_content_is_DATA_not_prose():
+    """Model-generated row content must never trip the name check: rows under
+    benchmark/results/**.jsonl carry arbitrary model output (a row containing the
+    word 'static' blocked the mbppplus arm commit, 2026-08-19). Manifests and
+    score files in the same tree remain checked."""
+    from bench import modelnames as M
+    row_diff = (
+        "diff --git a/benchmark/results/SomeModel-4bit/mbppplus.t0.6.jsonl b/benchmark/results/SomeModel-4bit/mbppplus.t0.6.jsonl\n"
+        "+++ b/benchmark/results/SomeModel-4bit/mbppplus.t0.6.jsonl\n"
+        "@@ -0,0 +1 @@\n"
+        '+{"id": "Mbpp/780", "content": "use a static variable for the distill"}\n'
+    )
+    assert M.diff_violations(row_diff) == []
+    manifest_diff = (
+        "diff --git a/benchmark/results/SomeModel-4bit/mbppplus.t0.6.manifest.json b/benchmark/results/SomeModel-4bit/mbppplus.t0.6.manifest.json\n"
+        "+++ b/benchmark/results/SomeModel-4bit/mbppplus.t0.6.manifest.json\n"
+        "@@ -0,0 +1 @@\n"
+        '+{"note": "the distill run"}\n'
+    )
+    assert M.diff_violations(manifest_diff) != []

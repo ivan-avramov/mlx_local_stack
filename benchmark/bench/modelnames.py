@@ -244,7 +244,11 @@ def diff_violations(diff: str, *, root: str | None = None) -> list[Violation]:
             new_line = int(m.group(1)) if m else 0
             continue
         if raw.startswith("+"):
-            if not path.endswith(EXEMPT_PATHS + GENERATED_PATHS):
+            # Result ROWS are model OUTPUT, not prose — a generated program may contain
+            # any word ('static' blocked a real arm commit). Manifests/score .json in the
+            # same tree are our own metadata and stay checked.
+            is_result_rows = path.startswith("benchmark/results/") and path.endswith(".jsonl")
+            if not is_result_rows and not path.endswith(EXEMPT_PATHS + GENERATED_PATHS):
                 out.extend(violations(raw[1:], path=path, line=new_line, root=root))
             new_line += 1
         elif raw.startswith("-"):
