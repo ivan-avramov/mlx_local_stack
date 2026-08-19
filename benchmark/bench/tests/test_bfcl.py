@@ -206,9 +206,13 @@ def _load_shim(monkeypatch):
         monkeypatch.setitem(sys.modules, full, m)
     for pkg in ("bfcl_eval", "bfcl_eval.model_handler", "bfcl_eval.model_handler.local_inference"):
         monkeypatch.setitem(sys.modules, pkg, types.ModuleType(pkg))
-    monkeypatch.delitem(sys.modules, "benchmark.bfcl_shim.local_handlers", raising=False)
+    # Import the way production does: sitecustomize puts bfcl_shim/ itself on the
+    # path and imports top-level `local_handlers` — there is no `benchmark` package.
+    monkeypatch.delitem(sys.modules, "local_handlers", raising=False)
+    shim_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "bfcl_shim"))
+    monkeypatch.syspath_prepend(shim_dir)
     import importlib
-    return importlib.import_module("benchmark.bfcl_shim.local_handlers")
+    return importlib.import_module("local_handlers")
 
 
 def _capture_request(monkeypatch):
