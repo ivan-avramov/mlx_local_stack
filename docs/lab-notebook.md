@@ -2355,3 +2355,18 @@ known problem. The challenge was correct on the facts and exposed a stale-baseli
 - Sidecar tensor naming (read from our shipped qwen3_5 sidecar header): `mtp.fc.weight` +
   `mtp.layers.0.*` with `.weight/.scales/.biases` triplets — the pattern any new sidecar must
   emit.
+
+### Qwen3.8-27B family reasoning_effort: ALL runs are already at xhigh (verified 2026-08-18, operator question) <!-- allow-shorthand -->
+
+`Qwen3.8-27B-mlx-uniform-4bit`'s chat template (same in the unsloth base) resolves
+`reasoning_effort|default('xhigh')` whenever thinking is enabled; `'high'` aliases to
+`xhigh`, valid levels are xhigh/medium/low. The fork's server passes the template variable
+ONLY when a request sets it (`generation.py` template-kwargs, `reasoning_effort=None`
+default), and no carrier or bench request ever sends it — so the default fires on every
+request and the ENTIRE `Qwen3.8-27B` family corpus <!-- allow-shorthand --> (funnel, capacity ladders, temp scans, Stage-2) is
+at xhigh. Mechanism is prompt-level only: xhigh injects a "think carefully" instruction,
+medium injects NOTHING, low injects "keep it brief". Consequences: (1) the >1h runaway
+items occur AT xhigh — effort is not an untapped quality lever here; a medium/low arm is
+a potential runaway-tax OFAT lever instead; (2) if effort is ever varied it changes the
+rendered prompt and must join the provenance fingerprint; today it is uniformly xhigh so
+existing rows are internally consistent.
