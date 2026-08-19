@@ -35,7 +35,13 @@ Weak-tier shortlist:
 
 The `Qwen3.8-27B` family is excluded from the weak-tier role <!-- allow-shorthand --> on
 liveliness (11–24 tok/s decode, ~33 min prefill at 256K) regardless of tune; it remains a
-standalone-B candidate only.
+standalone-B candidate only. **So is `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`** (2026-08-18
+correction): same qwen3_5 hybrid architecture, measured 23.3 tok/s median suffix-OFF — its
+"fast" reputation was a suffix-ON-era impression. The liveliness candidates are
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` and `Ornith-1.0-35B-mlx-uniform-4bit` (76.2
+tok/s). A caveat cutting the other way: if M6 proves the native MTP head out (the qwen3_5
+checkpoints ship one; ±5pp OFAT gate), the qwen3_5 models' decode could improve — re-check
+the shortlist after M6.
 
 ## 3. Prerequisite: certified tunes (operator ruling 2026-08-18)
 

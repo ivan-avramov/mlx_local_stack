@@ -2267,3 +2267,44 @@ layer kernels are the shapes of a fix. Checkpoint arch confirmed dense (no exper
 layers, ~13 GB weights on disk at ~4 bpw). Caveats: one recipe, one item, co-resident session
 (read-only probe; CPU numbers include the session's own load, GPU numbers effectively don't —
 nothing else uses the GPU).
+
+## 2026-08-18 — the qwen3_5 decode-rate attribution corrected by an operator challenge
+
+The operator asked why the `Qwen3.8-27B` family's ~24 tok/s decode was attributed to <!-- allow-shorthand -->
+"architecture" when `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` shares that architecture without a
+known problem. The challenge was correct on the facts and exposed a stale-baseline error:
+
+- **Config diff (both checkpoints, full flatten):** structurally IDENTICAL — `qwen3_5_text`,
+  64 layers, `layer_types` 48 linear_attention + 16 full_attention, `full_attention_interval 4`,
+  same linear-attention head geometry, `mtp_num_hidden_layers 1` in both, `mtp.safetensors`
+  sidecar present in BOTH snapshots. The only substantive diff is the quant recipe: <!-- allow-shorthand -->
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is per-layer mixed (`linear_attn.in_proj_a`/`out_proj`,
+  `mlp.up_proj`, embed, lm_head at 8-bit; rest 4-bit, gs64) vs uniform `{4, gs64, affine}`.
+- **Matched-row rates** (same box m5max, humanevalplus, fork `0c1c8b1`, suffix-OFF, rows with
+  >200 completion tokens; effective rate = completion_tokens/wall_s, median):
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` **23.3 tok/s** (n=95), `Qwen3.8-27B-mlx-uniform-4bit`
+  **26.0** (n=21), `Ornith-1.0-35B-mlx-uniform-4bit` **76.2** (n=100).
+- **Corrected claim:** the family is ~3× slower than `Ornith-1.0-35B-mlx-uniform-4bit` ONLY.
+  "3–4× slower than both winners" was false — the qwen3_5-architecture winner decodes at the
+  SAME rate. The ~24 tok/s is the architecture's per-token cost on this runtime, invariant
+  across generations (3.6/3.8) and across quant recipes (uniform 4-bit vs OptiQ mixed <!-- allow-shorthand --> with
+  8-bit linear-attention projections: within 3 tok/s <!-- allow-shorthand --> — a cross-generation confirmation of
+  "not quant-specific" on top of the within-family three-recipe identity).
+- **How the error happened:** the winner's speed reputation was formed in the suffix-ON era
+  (withdrawn 2026-08-16); its suffix-OFF rate was never re-read, so the `Qwen3.8-27B` <!-- allow-shorthand -->
+  investigation compared against a stale impression. Cross-era comparison — the same class the
+  apples-to-apples rule bars, arriving through an impression instead of a number.
+- **Consequences:** (1) ledger rows corrected (family row + B-pick row); (2) M6 native-MTP is a
+  lever for the DEPLOYED winner too (same sidecar, int4-prequantized) — value raised; (3) the
+  NVSY weak-tier shortlist loses `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` on liveliness grounds
+  it was never really carrying (23 tok/s); (4) the `Qwen3.8-27B` Stage-3 speed question <!-- allow-shorthand -->
+  is reframed: the family matches the incumbent Qwen, it only trails `Ornith-1.0-35B-mlx-uniform-4bit`.
+- **Suffix vs native-MTP, recorded while fresh (fork read):** both levers are AVAILABLE to the
+  qwen3_5 checkpoints (suffix is model-agnostic; the MTP head is native, discovered by the
+  fork's `qwen3_5_mtp` drafter). They are EITHER-OR per served model — `draft_kind` is a single
+  registry key (`suffix` | `dflash` | `eagle3` | `mtp`), no cascade/composition exists in the
+  fork — and every speculative path shares the same structured/penalty fallback
+  (`_suffix_structured_fallback`, `ar.py:164`: any logits processor → plain decode), so
+  `presence_penalty 0.0` is load-bearing for ANY drafter, not just suffix. Both are
+  draft-then-verify: lossless in distribution under exact arithmetic, never token-identical,
+  hence serving-only levers under the ±5pp OFAT gate; measurement stays draft-OFF.
