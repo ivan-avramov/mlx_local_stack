@@ -108,8 +108,8 @@
   "id": "D6",
   "description": "Session-cache \u00d7 prealloc audit (from the 51 GB incident, 2026-08-17): the prealloc floor materializes full-cap KV arrays PER RETAINED SESSION (`MLX_VLM_CACHE_SESSION_MAX` default 8) \u2014 even the deployed winners at TQ4/131072 can hold 8 \u00d7 2 GB of floors on top of weights. Audit the daily-driver config; consider a fork fix flooring only the ACTIVE session; decide the right session cap for `runserver.sh`",
   "cost": "driver-side + fork",
-  "state": "audit-done",
-  "state_detail": "cap=2 recommendation; runserver.sh change awaiting operator; fork fix sketched"
+  "state": "implemented-pending-probe",
+  "state_detail": "fork fix BUILT 2026-08-18 (fork 07ed59e, on top of ab5273f): shrink-on-retire (MLX_VLM_SESSION_SHRINK_ON_RETIRE) + headroom eviction (MLX_VLM_SESSION_EVICT_HEADROOM_FRAC), both OFF by default; audit sketch bug caught (lazy re-floor would never fire - explicit _needs_refloor immediate allocate+copy instead). Enabling awaits the 4-point live probe: (1) footprint actually drops on shrink, (2) resume-prefill tax quantified, (3) re-floor transient double-buffer spike bounded, (4) no evict/recreate thrash at low frac. Deploys with the D10 bump; enablement is a separate config decision after the probe"
  },
  {
   "id": "M7",
@@ -207,6 +207,6 @@
   "description": "Deploy the O30 fork seed fix: fetch fork commit ab5273f into src/mlx-vlm from the LOCAL fork clone, bump the submodule pointer, restart router. TIMING (architect call, operator-delegated 2026-08-18): at the end of the current candidate cycle - after Stage-2 both arms, M15/M16 funnels+screens, and the M3/M4/M18 block (all pair against rows at fork sha 0c1c8b1) - and BEFORE M11/M12 (fresh axes, all rows born at the new sha). The fork push to origin waits for an explicit operator push instruction; local wiring does not need it. After the bump, --samples designs become valid",
   "cost": "minutes",
   "state": "scheduled",
-  "state_detail": "boundary: before M11/M12"
+  "state_detail": "boundary: before M11/M12; bump now carries ab5273f (O30 seeds) + 07ed59e (D6 mitigations, off by default)"
  }
 ]
