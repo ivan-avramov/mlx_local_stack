@@ -1,75 +1,65 @@
-# Handoff — rewritten 2026-08-18 late evening (pre-compaction checkpoint, session continuing)
+# Handoff — rewritten 2026-08-20 ~00:15 (pre-compaction checkpoint, session continuing)
 
-Single box (M5 Max 64 GB, driver AND worker). Stack pushed through `424276f`; fork pushed
-through `07ed59e` (both remotes current as of ~21:00). Local-only stack commits after the
-push: D11 queue row + this checkpoint. Intentional dirt unchanged: `main_models.yaml`
-(three `Qwen3.8-27B` candidate entries <!-- allow-shorthand -->) + the live rung's jsonl.
+Single box (M5 Max 64 GB). Stack pushed through `549f1e8`; local-only commits after: `9f34887`
+(incumbent hep t0.3 arm). Fork pushed through `d06ed84e` (M14); F1 branch `sync/upstream-v0.6.15`
+at `c1975b4c` (8/8 parity green, 93/93 test files) awaits post-D10 landing. Intentional dirt:
+`main_models.yaml` (six candidate entries now — three `Qwen3.8-27B` recipes + three distill conversions with <!-- allow-shorthand -->
+$HOME-local hf_paths) + live tune-stamped jsonls.
 
 ## Live right now
 
-- **Stage-2, `Qwen3.8-27B-mlx-uniform-4bit` humanevalplus arm**: regenerating its last ~9
-  items (41/50 done, zero errors since the capped restart) under the rebuilt router
-  (`MLX_VLM_CACHE_SESSION_MAX=2`, APC absent, suffix off — all verified at the worker).
-  A background waiter fires on completion → next: **mbppplus 5-item pilot** (no wall-clock
-  data on that bench), size → n=50, then swap to `Qwen3.8-27B-OptiQ-4.5bpw-mixed` for the
-  same pair, then grade both (docker) with **M6a MTP speed probes in the grading window**.
-- **All three distill downloads DONE** <!-- allow-shorthand --> in the HF cache: `TeichAI/Qwen3.8-27B-Fable-Distill`
-  (M15), `barozp/Qwen3.8-27B-Opus-Distill-v2` (M16), `armand0e/Qwen3.6-35B-A3B-Fable-5-Distill`
-  (M17). Conversions = quiet-window/overnight work (RAM-heavy; never beside a served model).
-- Watcher + status files under `$STACK_WORKDIR/status/`; downloads log `distill_downloads.log`.
+- **`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` mbppplus t0.3 5-item pilot** (fresh-cap-262144 arms
+  for the head-to-head; hep arm DONE n=50, committed `9f34887`). Waiter armed → on completion:
+  size and launch **mbppplus n=50 (`--tune t0.3`)** → morning: grade the pair (docker) →
+  `compare --models Qwen3.6-27B-Opus-Distill-OptiQ-4bit@t0.3,Qwen3.8-27B-OptiQ-4.5bpw-mixed@t0.6
+  --benches humanevalplus,mbppplus --intersect` = the FIRST admissible head-to-head, plus
+  distill-vs-base paired reads (M15/M16 rungs vs `Qwen3.8-27B-mlx-uniform-4bit@t0.6`).
+- Campaign lean router UP (:8000, MLX_VLM_CACHE_SESSION_MAX=2, APC absent, suffix off).
 
-## Today's completed work (details in lab notebook / ledger / PLAN rows)
+## Today's results (2026-08-19; details in notebook/ledger/queue)
 
-1. **Resume after OS upgrade** verified; handoff checkpoint committed.
-2. **Workdir containment** hardened (AGENTS.md rule + memory + `grade.py` refuses nltk
-   downloads without `NLTK_DATA`; stray `~/nltk_data` deleted by operator).
-3. **qwen3_5 decode-rate attribution CORRECTED** (operator challenge): identical architecture
-   across `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` and the `Qwen3.8-27B` family <!-- allow-shorthand -->;
-   both ~24 tok/s suffix-OFF; only `Ornith-1.0-35B-mlx-uniform-4bit` (qwen3_5_moe, 76 tok/s)
-   is fast. Stale suffix-ON-era impression; ledger/notebook corrected.
-4. **MTP track created** (M6a/M6b/M13/M14): sidecars ship in BOTH qwen3_5 dense models
-   (300 MB, int4); M13 closed-negative (base repo ships no head); M14 feasible
-   (nvidia BF16 shard 14 has the 270-tensor block; DFlash alternative recorded).
-5. **NVSY Switchyard plan** written (`docs/switchyard-plan.md`, O32 pointer, parked S1 row).
-6. **Five Sonnet workers, all landed + architect-reviewed + committed**: D5 (workqueue
-   SKIP-by-id, bench_watch `--tune` + SUSPECT-WRONG-FILE, `m1/status.py`), D7 (opencode in
-   ROLES[coding], aider diagnostic tier, progress-gated session bound from the recovered
-   design), M9 blocker (go/rust/java/javascript container grading, tamper detection), O30
-   fork seed fix (fork `ab5273f`), D6 fork mitigations (fork `07ed59e`: shrink-on-retire +
-   headroom eviction, BOTH OFF by default; worker caught the lazy-re-floor bug).
-7. **H2 Haiku smoke PASSED 16/16** (all four languages incl. exercism-reference known-positives
-   after the first pass left js/java stub-only; progress-gate 7/7) — M3/M4/M18 + Run C
-   grading harness-validated.
-8. **58 GB swap incident** root-caused (session floors × default cap 8, D6 audit) → router
-   rebuilt capped, `runserver.sh` now sets cap=2 (operator-approved), 9 pressure-500 rows
-   dropped + regenerating. D6 audit + D3 lineage reports in `$STACK_WORKDIR/scratch/`.
+1. **Stage-2 CLOSED for the `Qwen3.8-27B` family** <!-- allow-shorthand -->: acc_strict@81920
+   uniform 84/76 vs OptiQ-mixed 84/80 (hep/mbpp, n=50, t0.6/xhigh per O33); within-family paired
+   verdicts INCONCLUSIVE (±19pp MDE); runaway split 9-vs-2 DNFs → **representative =
+   `Qwen3.8-27B-OptiQ-4.5bpw-mixed`**.
+2. **Runaway tax is CROSS-FAMILY**: the incumbent's fresh hep arm (n=50, t0.3, cap 262144) has
+   2 timeout-DNFs incl. `HumanEval/32` — the same item `Qwen3.8-27B-mlx-uniform-4bit` DNF'd.
+   Rate-matched to the challenger (2/50). Fold into the ledger with the morning verdicts.
+3. **M6a CLOSED: STOP (0.99×)** on `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (engagement proven by
+   ON/OFF textual divergence); `Qwen3.8-27B-OptiQ-4.5bpw-mixed` probe inconclusive-by-meander;
+   family-level close. M6b not triggered. **Negative control caught a fork defect**: missing MTP
+   sidecar silently serves plain decode (F2 queued — fail-loud fix, ride the F1 landing).
+4. **M15/M16/M17 Stage-0+1 in one evening**: conversions real (8-s walls verified by working
+   models), all rungs conv 15/15, ZERO DNFs; pass@1 `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`
+   **1.00**, `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` 0.867 (max 734 tok — tightest traces
+   in corpus), `Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit` **1.00** at ~72 tok/s.
+   Operator's distillation hypothesis holding strongly. Next: Stage-2 screens vs the family
+   representative; M17 also NVSY-relevant someday (see below).
+5. **Harness fixes shipped (TDD)**: `compare` gained `Model@tune` addressing (Stage-2 verdicts
+   were unaddressable without it); evalplus grading REUSES fresh eval_results (docker eval is
+   flaky under rosetta — crash/hang/success on identical input; the hang sat on a PADDING dummy
+   `Mbpp/255`; deleting good results to re-roll destroyed the same artifact 3×). Plus earlier:
+   test_bfcl import fix (re-armed the M18-critical assertions), modelnames hook exempts result-row
+   jsonl (model output ≠ prose), manifests must be PII-sanitized ($HOME) when hf_path is local.
+6. **NVSY UNTRACKED** (operator): S1 shelved, O32 closed, `docs/switchyard-plan.md` kept for a
+   post-campaign revisit. **Open-questions queue is EMPTY.**
 
-## Fork state & CI
+## Queue after the incumbent pair (GPU-serial)
 
-Fork at `07ed59e` (= `0c1c8b1` + O30 seeds + D6 mitigations), tree CLEAN, pushed.
-**Upstream-parity CI is RED and stays red — accepted**: upstream released v0.6.15 (21 new
-files / 174 symbols / 84 registry entries vs the fork's sync point); not caused by our
-commits. A partial restore was tried and REVERTED. **F1** (dedicated upstream-sync session)
-is queued post-cycle, explicitly SEPARATE from and after D10.
-
-## Scheduled / gated
-
-- **D10**: submodule bump (`ab5273f`+`07ed59e`, features off by default) at the cycle
-  boundary — after Stage-2 arms + M15/M16 funnels/screens + M3/M4/M18, before M11/M12.
-  O30 seed fix is OUTPUT-DETERMINING for seeded runs; `--samples` valid only after.
-- **D6 enablement**: gated on the 4-point live probe (footprint drop, resume tax, re-floor
-  spike, eviction thrash) — code ships with D10, enabling is separate.
-- **D11**: card + flip-to-public for the two `Qwen3.8-27B` passers <!-- allow-shorthand -->
-  once Stage-2 n=50 numbers exist; `Qwen3.8-27B-static-mixed-4bit` stays private (Stage-1 FAIL).
-- **Operator decisions pending**: NVSY S1 go (Sonnet-class arm, $10 cap recommended);
-  fork push authority remains per-explicit-ask.
+Stage-2 screens for the three new distill conversions <!-- allow-shorthand --> (paired vs representative, n≈30–50) → M3/M4 (opencode runs) → M5 DNF
+re-runs (now includes the fresh-arm scope) → M18 (first BFCL) → M7 → D10 submodule bump
+(`ab5273f`+`07ed59e`+M14 `d06ed84e`, features off) → F1 landing + F2 → M11/M12 → D11 flip
+(cards) once Stage-2 numbers finalize → D6 enablement probe (script ready) → M14 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MTP
+probe (post-D10; `mtp_probe.py` ready, sidecar at `$STACK_WORKDIR/scratch/m14/`).
 
 ## Standing traps refreshed today
 
-Watcher must be validated against a known row count (it silently reported QUEUED against a
-healthy tuned run — now `--tune` + a loud diagnostic exist); memory-pressure 500s are infra
-errors — drop + regenerate, never grade them into the denominator (O31); `rm` is aliased
-interactive; full model names in ALL prose and commits (hooks catch docs/commits only).
+Verify every commit with `git log` (rtk prints "ok N files changed" even when the commit-msg hook
+REJECTS); never overlap two grades of one arm (container-name collision); a watcher without a
+timeout is not a watcher (3-h hung container); `bench_watch.py` needs cwd=benchmark AND
+PYTHONPATH=benchmark (silent nohup death otherwise — verify process + output file after EVERY
+detached launch); cwd resets between tool calls — use absolute paths; probe workers at deployed
+sampling outrun "1–3K token" item estimates (xhigh thinking) — size request timeouts accordingly.
 
-**Order of resumption if context is lost: this file → `docs/PLAN.md` (queue) →
-`docs/work-queue.json` (states) → `$STACK_WORKDIR/status/` (live runs).**
+**Order of resumption if context is lost: this file → `docs/PLAN.md` → `docs/work-queue.json` →
+`$STACK_WORKDIR/status/` (live runs).**
