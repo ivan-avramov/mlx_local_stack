@@ -2370,3 +2370,41 @@ items occur AT xhigh — effort is not an untapped quality lever here; a medium/
 a potential runaway-tax OFAT lever instead; (2) if effort is ever varied it changes the
 rendered prompt and must join the provenance fingerprint; today it is uniformly xhigh so
 existing rows are internally consistent.
+
+### Stage-2 close-out + M6a MTP gate + grading-flake arc (2026-08-19 evening)
+
+**Stage-2 generation + grading COMPLETE** for `Qwen3.8-27B-mlx-uniform-4bit` and
+`Qwen3.8-27B-OptiQ-4.5bpw-mixed` (humanevalplus + mbppplus, n=50 each, t0.6, xhigh per O33).
+`acc_strict@81920`: uniform **84.0 / 76.0**, OptiQ-mixed **84.0 / 80.0** (hep/mbpp). Paired
+within-family verdicts both INCONCLUSIVE at ±19pp MDE (hep −2.2pp CI [−11.1,+4.4] on 45 items;
+mbpp −2.3pp CI [−6.8,+0.0] on 44 — the intersect DROPS the 6 uniform DNF items `Qwen3.8-27B-OptiQ-4.5bpw-mixed` converged
+on, so the paired number understates `Qwen3.8-27B-OptiQ-4.5bpw-mixed`; acc_strict carries it). **The recipes separate on
+RUNAWAYS, not accuracy: uniform 9 timeout-DNFs across the pair vs `Qwen3.8-27B-OptiQ-4.5bpw-mixed` 2** — same weights, so
+quant recipe moves the meander boundary at n=50 within-family (cf. the parked
+`Qwen3.8-27B-static-mixed-4bit`). `Qwen3.8-27B-OptiQ-4.5bpw-mixed` is the family representative.
+The vs-incumbent verdict is REFUSED (incumbent coding rows at cap 131072, clamp-bindingness
+unprovable) → fresh `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` arms at cap 262144 queued (M5 scope).
+
+**M6a CLOSED: STOP.** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ON/OFF = 23.0/23.2 tok/s
+(**0.99×**). Engagement PROVEN by textual divergence (ON≠OFF text for identical unseeded
+requests — deterministic server, so a silent fallback would be byte-identical). The
+`Qwen3.8-27B-OptiQ-4.5bpw-mixed` probe was INCONCLUSIVE-by-meander (all 6 requests >1800s at
+xhigh on open-ended prompts); family-level close via shared architecture/runtime/drafter.
+M6b NOT TRIGGERED. MTP for qwen3_5 dense: closed-negative as a serving lever on this runtime.
+M14 (nemotron_h, different architecture) unaffected — probe post-D10.
+
+**Negative control caught a fork defect:** `draft_kind: mtp` on
+`Ornith-1.0-35B-mlx-uniform-4bit` (no head, M13) did NOT fail — the worker silently served
+plain decode at its normal ~75.9 tok/s. Missing-sidecar fallback violates fail-loud: a
+registry claiming MTP without a sidecar should refuse to load. Queued as fork work (F2);
+the probe's `no_mtp_head` load-crash assumption is corrected by the same finding.
+
+**Grading-flake arc (three artifacts destroyed, two fixes shipped):** the evalplus docker
+evaluation is FLAKY under rosetta — crash/hang/success on identical input; the observed hang
+sat on `Mbpp/255`, a PADDING DUMMY whose grade is discarded. grade deleted the eval_results
+unconditionally on every call, so compare (which re-grades internally) kept destroying good
+results and re-rolling. Fixes (TDD, committed): grade now REUSES an eval_results newer than
+the rows file (docker runs only when stale/absent), and compare gained `Model@tune` addressing
+(it could not read tune-stamped rows at all — every Stage-2 verdict was unaddressable).
+Operational lessons re-paid: never overlap two grades of one arm (container-name collision is
+a guard, not a bug); a watcher with no timeout is not a watcher (the hung container sat 3h).
