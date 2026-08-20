@@ -150,3 +150,35 @@ def test_box_falls_back_to_config_sh_when_env_is_absent(tmp_path, monkeypatch):
     assert P._box() == "m5max"
     monkeypatch.setenv("MLX_BOX", "explicit-wins")
     assert P._box() == "explicit-wins"
+
+
+# --- O34 (ruled 2026-08-20): manifests must carry $HOME-form hf_path, never the absolute home ---
+
+def test_registry_kv_normalizes_home_prefixed_hf_path_to_HOME_form(tmp_path, monkeypatch):
+    import os
+    home = os.path.expanduser("~")
+    yml = tmp_path / "reg.yaml"
+    yml.write_text(
+        "models:\n"
+        "  - name: local-4bit\n"
+        f"    hf_path: {home}/ws/models/local-4bit\n"
+        "    kv_bits: 4\n"
+        "  - name: hub-4bit\n"
+        "    hf_path: org/hub-4bit\n"
+        "    kv_bits: 4\n"
+    )
+    assert P.registry_kv("local-4bit", str(yml))["hf_path"] == "$HOME/ws/models/local-4bit"
+    # hub ids and non-home paths pass through untouched
+    assert P.registry_kv("hub-4bit", str(yml))["hf_path"] == "org/hub-4bit"
+
+
+def test_home_normalization_matches_the_hand_sanitized_committed_form(tmp_path):
+    # The committed corpus manifests were hand-sanitized to $HOME-form; the writer must
+    # produce the SAME string so a resume no longer sees a false config change (2026-08-20:
+    # a byte-identical relaunch was flagged STALE purely on $HOME vs absolute form).
+    import os
+    home = os.path.expanduser("~")
+    assert P._home_normalized(home + "/x") == "$HOME/x"
+    assert P._home_normalized(home) == "$HOME"
+    assert P._home_normalized("/opt/models/x") == "/opt/models/x"
+    assert P._home_normalized(None) is None

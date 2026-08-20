@@ -15,10 +15,13 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-**2 items.** (Previously 0; O24, O26, O27, O28 and O29 were closed on 2026-08-16 (old driver box),
-O25 and O30 on 2026-08-17 (this box; merged 2026-08-18), O15 on 2026-08-18; nothing was deleted.)
+**0 items.** (O24, O26, O27, O28 and O29 were closed on 2026-08-16 (old driver box),
+O25 and O30 on 2026-08-17 (this box; merged 2026-08-18), O15 on 2026-08-18, O34/O35 on
+2026-08-20; nothing was deleted.)
 
-### O34 — manifest writer should emit `$HOME`-form `hf_path` (recurring PII restamp + false STALE)
+### ~~O34~~ → RULED (operator, 2026-08-20): **approved as proposed — shipped same day (TDD).** `provenance._home_normalized` emits `$HOME`-form `hf_path` at manifest-write time; committed manifests (already hand-sanitized to that form) now match by construction. The four live-chain manifests stamped pre-fix were sed-sanitized in place. Original text:
+
+O34 — manifest writer should emit `$HOME`-form `hf_path` (recurring PII restamp + false STALE)
 
 Manifests for models with local `hf_path` record the absolute path. The committed copies are
 hand-sanitized to `$HOME`, so every resume restamps the live absolute path back in: (a) PII sits in
@@ -32,7 +35,9 @@ manifest-write time; existing sanitized manifests then match by construction. Ne
 it touches provenance strings mid-corpus (committed manifests already use `$HOME`-form, so the
 normalization CLOSES the gap rather than widening it).
 
-### O35 — resume rule: skip retrying an error row whose failure was a probe-timeout (deterministic runaway)
+### ~~O35~~ → RULED (operator, 2026-08-20): **approved as proposed — shipped same day (TDD).** Classification happens at WRITE time, where the context exists: error rows now record `wall_s`, and `generate.error_kind` stamps `error_kind: probe_timeout` when elapsed ≥ 0.9× the configured probe timeout. `done_keys`/`done_ids` count such rows as DONE (a DNF); fast failures (connect refused, transient network) carry no `error_kind` and stay retryable, as do all pre-existing error rows (no `error_kind` field — the field is the opt-in). `--samples k` fresh-seed draws unaffected. Original text:
+
+O35 — resume rule: skip retrying an error row whose failure was a probe-timeout (deterministic runaway)
 
 `generate` resume treats error rows as not-done and retries them. Seeds derive from (item, sample),
 so a probe-timeout runaway retries BYTE-IDENTICALLY: measured on `Mbpp/306`

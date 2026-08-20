@@ -135,3 +135,38 @@ def test_an_explicit_seed_override_wins_and_is_recorded(monkeypatch, tmp_results
     row = __import__("json").loads(G.result_path("m", "aime").read_text().splitlines()[0])
     assert row["sampler_seed"] == RS.sample_seed("i0", 0, base=99)
     assert row["seed_base"] == 99
+
+
+# --- O35 (ruled 2026-08-20): a probe-timeout error row is a DNF, counted DONE on resume ---
+# Seeds derive from (item, sample), so a runaway retries byte-identically: Mbpp/306 burned a
+# second full 3600s probe-timeout on resume plus ~13 min of server-side drain per abandonment.
+
+def _err_row(id_, sample=0, **extra):
+    row = {"id": id_, "sample": sample, "bench": "humanevalplus",
+           "model": "m-4bit", "error": "timed out"}
+    row.update(extra)
+    return row
+
+
+def test_probe_timeout_error_rows_count_as_done_on_resume(write_rows):
+    write_rows("m-4bit", "humanevalplus", [
+        _err_row("HumanEval/1"),                                   # plain error -> retried
+        _err_row("HumanEval/2", error_kind="probe_timeout", wall_s=3600.1),  # DNF -> done
+        {"id": "HumanEval/3", "sample": 0, "content": "ok"},       # normal row -> done
+    ])
+    keys = G.done_keys("m-4bit", "humanevalplus")
+    assert ("HumanEval/2", 0) in keys
+    assert ("HumanEval/3", 0) in keys
+    assert ("HumanEval/1", 0) not in keys
+    ids = G.done_ids("m-4bit", "humanevalplus")
+    assert ids == {"HumanEval/2", "HumanEval/3"}
+
+
+def test_error_kind_classifies_only_a_full_probe_timeout():
+    # threshold is 0.9x the configured probe timeout: a fast failure (connect refused,
+    # transient network) stays retryable; only an elapsed-to-the-cap probe is a DNF
+    assert G.error_kind(3600.0, 3600) == "probe_timeout"
+    assert G.error_kind(3240.0, 3600) == "probe_timeout"   # exactly 0.9x
+    assert G.error_kind(12.0, 3600) is None
+    assert G.error_kind(3600.0, None) is None
+    assert G.error_kind(3600.0, 0) is None

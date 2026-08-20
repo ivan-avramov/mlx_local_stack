@@ -17,6 +17,21 @@ from . import generate, model_params, quant_info
 from . import paths
 
 
+def _home_normalized(path):
+    """O34: emit hf_path in $HOME-form so manifests carry no absolute home path.
+
+    The committed corpus manifests are $HOME-form (hand-sanitized, pre-O34); the writer must
+    produce the same string, or every resume of a local-hf_path model restamps the absolute
+    path back in — a PII leak the pre-commit hook has to catch, and a false STALE (2026-08-20:
+    a byte-identical relaunch was flagged as a config change purely on path form)."""
+    if not isinstance(path, str):
+        return path
+    home = os.path.expanduser("~")
+    if path == home or path.startswith(home + os.sep):
+        return "$HOME" + path[len(home):]
+    return path
+
+
 def registry_kv(model: str, registry_path: str | None = None):
     """KV + path config for ``model`` from a main_models.yaml-style registry, or None.
 
@@ -33,7 +48,7 @@ def registry_kv(model: str, registry_path: str | None = None):
     for e in entries or []:
         if isinstance(e, dict) and e.get("name") == model:
             return {
-                "hf_path": e.get("hf_path"),
+                "hf_path": _home_normalized(e.get("hf_path")),
                 "kv_bits": e.get("kv_bits", 0),
                 "kv_quant_scheme": e.get("kv_quant_scheme"),
                 "quantized_kv_start": e.get("quantized_kv_start"),

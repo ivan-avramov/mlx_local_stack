@@ -92,22 +92,46 @@ def _read_rows(model: str, bench: str, tune: str | None = None) -> list:
     return out
 
 
+PROBE_TIMEOUT_DNF_RATIO = 0.9
+
+
+def error_kind(elapsed_s, probe_timeout_s):
+    """O35 (ruled 2026-08-20): classify an errored probe at WRITE time, where the context exists.
+
+    'probe_timeout' marks a draw that ran to (>=0.9x of) the configured probe timeout: seeds
+    derive from (item, sample), so retrying it reproduces the runaway byte-identically —
+    Mbpp/306 burned a second full 3600s timeout on resume, plus ~13 min of server-side drain
+    per client abandonment, ~2.4 GPU-hours for one already-known DNF, and left a duplicate
+    error row. A fast failure (connect refused, transient network) returns None and stays
+    retryable. `--samples k` draws with fresh seeds are unaffected — each (id, sample) keeps
+    its own row."""
+    if probe_timeout_s and elapsed_s >= PROBE_TIMEOUT_DNF_RATIO * probe_timeout_s:
+        return "probe_timeout"
+    return None
+
+
+def _row_resumable_done(r) -> bool:
+    return r.get("id") is not None and (
+        not r.get("error") or r.get("error_kind") == "probe_timeout")
+
+
 def done_ids(model: str, bench: str, tune: str | None = None) -> set:
-    """IDs already generated without error (errors are retried on resume). Sample-blind — kept
-    for existing callers; multi-sample resume uses done_keys()."""
-    return {r["id"] for r in _read_rows(model, bench, tune=tune)
-            if r.get("id") is not None and not r.get("error")}
+    """IDs already generated without a RETRYABLE error. Probe-timeout DNFs count as done (O35);
+    other errors are retried on resume. Sample-blind — kept for existing callers; multi-sample
+    resume uses done_keys()."""
+    return {r["id"] for r in _read_rows(model, bench, tune=tune) if _row_resumable_done(r)}
 
 
 def done_keys(model: str, bench: str, tune: str | None = None) -> set:
-    """(id, sample) pairs already generated without error.
+    """(id, sample) pairs already generated without a RETRYABLE error (probe-timeout DNFs are
+    done — O35, see error_kind).
 
     Resume identity must include the sample index: `done_ids` would consider an item finished
     after ONE of its k samples. A v1 row (no `sample` field) counts as sample 0 — that is how
     every result already on disk keeps resuming instead of regenerating.
     """
     return {rowschema.row_key(r) for r in _read_rows(model, bench, tune=tune)
-            if r.get("id") is not None and not r.get("error")}
+            if _row_resumable_done(r)}
 
 
 def _append(path: Path, row: dict) -> None:
@@ -438,12 +462,18 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                     row["contaminated"] = "stale_router"
             except Exception as e:  # noqa: BLE001 — network/OOM; record & continue
                 # An error row carries the same (id, sample) identity: resume retries errored
-                # rows, and without `sample` it could not tell which draw to redo.
+                # rows, and without `sample` it could not tell which draw to redo. A probe that
+                # ran to the timeout is classified error_kind=probe_timeout and is NOT retried
+                # (O35 — the seeded retry is byte-identical, so it is a DNF, not a transient).
+                elapsed = time.perf_counter() - t0
                 row = {"id": it["id"], "sample": sample,
                        "schema_version": rowschema.SCHEMA_VERSION,
                        "sampler_seed": rowschema.sample_seed(it["id"], sample, base=seed_base),
-                       "seed_base": seed_base,
+                       "seed_base": seed_base, "wall_s": round(elapsed, 3),
                        "bench": b, "model": model, "error": str(e)[:200]}
+                kind = error_kind(elapsed, probe_timeout)
+                if kind:
+                    row["error_kind"] = kind
             _append(result_path(model, b, tune=tune), row)
             dt = time.perf_counter() - t0
             per_item.setdefault(model, []).append(dt)
