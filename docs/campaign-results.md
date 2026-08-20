@@ -62,7 +62,32 @@ the **designed maximum prompt is ~159,744 tokens** for `Ornith-1.0-35B-mlx-unifo
 gets less room to think. So B's context requirement is currently satisfied *by assumption*, and the
 measurement that would settle it is the depth condition listed under "what would change these picks".
 
-## C — everyday driver for research, brainstorming and design
+### 2026-08-20 — the `Qwen3.8-27B` challenger does NOT displace the pick <!-- allow-shorthand -->
+
+First admissible head-to-head at each model's own tuned operating point, fresh same-cap (262144)
+arms, n=50, `--intersect`, `compare` refusals all clear:
+
+| paired vs `Qwen3.8-27B-OptiQ-4.5bpw-mixed@t0.6` | humanevalplus | mbppplus |
+|---|---|---|
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit@t0.3` acc | 95.7% vs 91.3% | 81.6% vs 81.6% |
+| delta (95% CI) | +4.3pp [−4.3,+13.0] | +0.0pp [−6.1,+6.1] |
+| verdict | **INCONCLUSIVE** | **INCONCLUSIVE** |
+
+At n=50 (axis MDE ±18pp) the challenger cannot be separated from the incumbent — and the point
+estimates lean toward the incumbent on humanevalplus. **The B pick stands.** The incumbent's
+fresh-cap rows: humanevalplus `acc` 93.75% / `acc_strict@81920` 90.0% (DNFs `HumanEval/32`,
+`HumanEval/132`); mbppplus 81.6% / 80.0% (DNF `Mbpp/306`).
+
+**The runaway tax is CROSS-FAMILY and item-anchored, not model-specific.** At cap 262144 the
+incumbent `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` DNF'd 3/100 items across the pair — including
+`HumanEval/32`, the same item `Qwen3.8-27B-mlx-uniform-4bit` ran away on — rate-matched to the
+challenger's 2/100. Each DNF is a deterministic runaway (seeded draws reproduce byte-identically:
+`Mbpp/306` burned its full 3600s probe-timeout twice, then ~13 min of server-side drain after each
+client abandonment — ~73 min of GPU per runaway occurrence, an argument for a skip-known-timeout
+resume rule). Meanwhile the Stage-1 rungs of `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`,
+`Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` and `Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit`
+all sit at **zero DNFs, conv 15/15** — the distillation-fixes-runaways hypothesis survives another
+contact; their n=50 Stage-2 screens are in flight.
 
 > ### No recommendation is supported by the evidence. Provisional lean only.
 > **If you want one today:** `Ornith-1.0-35B-mlx-uniform-4bit` for interactive feel (3.8× faster decode,
