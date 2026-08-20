@@ -15,7 +15,7 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-**1 item (O32).** Everything else is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
+**0 items.** Everything is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
 on 2026-08-16 (old driver box), O25 and O30 on 2026-08-17 (this box; merged 2026-08-18), O15 on
 2026-08-18; nothing was deleted.
 
@@ -35,7 +35,7 @@ scoring it as a model failure conflates harness availability with capability. Ne
 stay excluded but every published acc_strict must also quote the error count (status quo,
 made explicit). Either way the pilot's two numbers are both recorded in the results commit.
 
-### O32. Expand scope to a weak/strong ROUTER system (NVIDIA switchyard: local pick + cloud frontier)?
+### ~~O32~~ → CLOSED (operator, 2026-08-19): **NVSY is UNTRACKED — out of the campaign queue entirely.** The operator will revisit after the campaign establishes the local models; `docs/switchyard-plan.md` remains the ready-made plan for that day. Original text: Expand scope to a weak/strong ROUTER system (NVIDIA switchyard: local pick + cloud frontier)?
 Raised 2026-08-18 by the operator: test a routing layer that fronts the local B pick (weak/cheap)
 and a frontier cloud model (strong/expensive), routing per request — a way to make the SYSTEM
 (the daily coder) meaningfully better at small $ cost, usable as a daily option.
