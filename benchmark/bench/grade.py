@@ -350,36 +350,49 @@ def grade_evalplus(name, model, *, image=EVALPLUS_IMAGE, runner=subprocess.run, 
                 # dummy per absent task, never k of them.
                 f.write(json.dumps({"task_id": tid, "solution": _PAD_SOLUTION}) + "\n")
     rpath = sdir / f"{stem}_samples_eval_results.json"
-    if rpath.exists():
+    # REUSE a result newer than the rows file rather than deleting it: the docker evaluation
+    # is FLAKY under rosetta (crash / hang / success on identical input — 3 of 4 attempts on
+    # a real arm failed, the fault landing on a padding dummy), so a good result is precious.
+    # Deleting it to re-roll is how compare destroyed the same artifact three times on
+    # 2026-08-19. A result OLDER than the rows predates them and is deleted as before.
+    rows_path = generate.result_path(model, name, tune=tune)
+    reuse = (rpath.exists() and rows_path.exists()
+             and rpath.stat().st_mtime > rows_path.stat().st_mtime)
+    if rpath.exists() and not reuse:
         rpath.unlink()                                            # don't read a stale result
-    # NAMED so a wedged container can be killed. Measured: a run that hangs leaks a ~4.5GB
-    # container (one was found up 7 hours), because `subprocess.run`'s timeout kills the local
-    # docker CLIENT, not the container it started.
-    cname = _container_name(model, stem)
-    cmd = ["docker", "run", "--rm", "--name", cname,
-           "--platform", "linux/amd64", "-v", f"{sdir}:/work",
-           image, "evalplus.evaluate", "--dataset", ds, "--samples", f"/work/{stem}_samples.jsonl"]
     timed_out = None
-    try:
-        proc = runner(cmd, capture_output=True, text=True, timeout=EVALPLUS_TIMEOUT_S)
-    except Exception as e:  # noqa: BLE001 — docker missing / timeout
-        timed_out = f"{type(e).__name__}: {str(e)[:100]}"
-        proc = None
-        _kill_container(cname, runner)
-        # DO NOT return yet. evalplus has two hang modes that both leave a COMPLETE results file:
-        #  (a) it prints results and never exits, so subprocess.run raises TimeoutExpired on a run
-        #      that already finished the work — the old code discarded a computed result;
-        #  (b) one sample's worker dies (a rosetta mmap fault was observed on Mbpp/255) and evalplus
-        #      waits forever for it, having already evaluated the other 377.
-        # So fall through and read rpath; only report the timeout if there is genuinely no result.
-    if not rpath.exists():
-        if timed_out:
+    if not reuse:
+        # NAMED so a wedged container can be killed. Measured: a run that hangs leaks a ~4.5GB
+        # container (one was found up 7 hours), because `subprocess.run`'s timeout kills the local
+        # docker CLIENT, not the container it started.
+        cname = _container_name(model, stem)
+        cmd = ["docker", "run", "--rm", "--name", cname,
+               "--platform", "linux/amd64", "-v", f"{sdir}:/work",
+               image, "evalplus.evaluate", "--dataset", ds, "--samples",
+               f"/work/{stem}_samples.jsonl"]
+        try:
+            proc = runner(cmd, capture_output=True, text=True, timeout=EVALPLUS_TIMEOUT_S)
+        except Exception as e:  # noqa: BLE001 — docker missing / timeout
+            timed_out = f"{type(e).__name__}: {str(e)[:100]}"
+            proc = None
+            _kill_container(cname, runner)
+            # DO NOT return yet. evalplus has two hang modes that both leave a COMPLETE results
+            # file:
+            #  (a) it prints results and never exits, so subprocess.run raises TimeoutExpired on
+            #      a run that already finished the work — the old code discarded a computed result;
+            #  (b) one sample's worker dies (a rosetta mmap fault was observed on Mbpp/255) and
+            #      evalplus waits forever for it, having already evaluated the other 377.
+            # So fall through and read rpath; only report the timeout if there is genuinely no
+            # result.
+        if not rpath.exists():
+            if timed_out:
+                return {"benchmark": name, "model": model, "n": len(our), "acc": None,
+                        "note": f"evalplus docker timed out with no results ({timed_out}); "
+                                f"container {cname} killed"}
+            err = (getattr(proc, "stderr", "") or "")[-160:]
             return {"benchmark": name, "model": model, "n": len(our), "acc": None,
-                    "note": f"evalplus docker timed out with no results ({timed_out}); "
-                            f"container {cname} killed"}
-        err = (getattr(proc, "stderr", "") or "")[-160:]
-        return {"benchmark": name, "model": model, "n": len(our), "acc": None,
-                "note": f"evalplus produced no results (rc={getattr(proc, 'returncode', '?')}): {err}"}
+                    "note": f"evalplus produced no results "
+                            f"(rc={getattr(proc, 'returncode', '?')}): {err}"}
     ev = json.loads(rpath.read_text()).get("eval", {})
     items, base_hits, plus_hits, draws = [], 0, 0, 0
     for tid in our:                                               # subset only; padding ignored

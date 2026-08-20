@@ -462,3 +462,31 @@ def test_a_penalty_mismatch_ESCALATES_to_refusal_under_a_non_off_draft_state(wri
     r = CMP.compare("A", "B", "math500")
     assert r["comparable"] is False, r
     assert "presence_penalty" in r["reason"] and "suffix" in r["reason"], r["reason"]
+
+
+def test_model_at_tune_syntax_resolves_tuned_rows_and_manifest(write_rows, tmp_results):
+    """`Model@tune` must read that model's TUNE-stamped rows/manifest: under the
+    (model, tune) taxonomy a candidate's only certified rows may be tuned (the
+    Qwen3.8-27B family Stage-2 arms exist only at t0.6), and compare read only the  # allow-shorthand
+    untuned baseline paths — blocking the exact verdict Stage-2 exists to produce."""
+    import json as _json
+    ids = ["a", "b", "c"]
+    write_rows("A", "math500", _rows(ids))
+    _manifest(tmp_results, "A", "math500", temp=0.3, budget=81920)
+    # B exists ONLY at tune t0.6
+    pb = G.result_path("B", "math500", tune="t0.6")
+    pb.parent.mkdir(parents=True, exist_ok=True)
+    with pb.open("w", encoding="utf-8") as f:
+        for r in _rows(ids, budget=81920):
+            f.write(_json.dumps(r) + "\n")
+    mb = pb.with_suffix(".manifest.json")
+    mb.write_text(_json.dumps({
+        "box": "M2", "sampling_profile": "deployed", "fingerprint_version": 2,
+        "sampling": {"temperature": 0.6, "thinking_budget": 81920, "max_tokens": 102400},
+        "kv": {"kv_bits": 4}, "runtime": {"apc_enabled": "0"}}))
+    # untuned lookup refuses on missing provenance
+    r0 = CMP.compare("A", "B", "math500")
+    assert not r0["comparable"] and "manifest" in r0["reason"]
+    # @tune lookup finds the tuned rows + manifest and proceeds to a verdict
+    r1 = CMP.compare("A", "B@t0.6", "math500")
+    assert r1["comparable"], r1.get("reason")

@@ -110,8 +110,18 @@ def cap_partition(rows, resolved_budget, margin=0.10):
             "resolved_budget": resolved_budget, "margin": margin}
 
 
-def _manifest(model, bench):
-    p = generate.result_path(model, bench).with_suffix(".manifest.json")
+def _split_tune(model):
+    """`Model@tune` -> (name, tune). Under the (model, tune) taxonomy a candidate's only
+    certified rows may be tune-stamped (the Stage-2 arms exist only at their ladder temp),
+    so compare must be able to address them; a bare name keeps the deployed-baseline path."""
+    if "@" in model:
+        name, tune = model.split("@", 1)
+        return name, generate.validate_tune(tune)
+    return model, None
+
+
+def _manifest(model, bench, tune=None):
+    p = generate.result_path(model, bench, tune=tune).with_suffix(".manifest.json")
     if not p.exists():
         return None
     try:
@@ -149,7 +159,9 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
     box/APC checks.
     """
     warnings = []
-    ma, mb = _manifest(model_a, bench), _manifest(model_b, bench)
+    model_a, tune_a = _split_tune(model_a)
+    model_b, tune_b = _split_tune(model_b)
+    ma, mb = _manifest(model_a, bench, tune=tune_a), _manifest(model_b, bench, tune=tune_b)
     if ma is None or mb is None:
         missing = [m for m, man in ((model_a, ma), (model_b, mb)) if man is None]
         return _refuse(f"missing provenance manifest for {', '.join(missing)} — unknown "
@@ -261,7 +273,7 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
                                f"differs ({va} vs {vb}) — prealloc alone moved wall-clock "
                                f"24.7 vs 27.8 s in the 2026-08-14 OFAT")
 
-    rows_a, rows_b = grade._rows(model_a, bench), grade._rows(model_b, bench)
+    rows_a, rows_b = grade._rows(model_a, bench, tune=tune_a), grade._rows(model_b, bench, tune=tune_b)
     if not rows_a or not rows_b:
         empty = [m for m, r in ((model_a, rows_a), (model_b, rows_b)) if not r]
         return _refuse(f"no results for {', '.join(empty)}")
@@ -298,7 +310,7 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
                             f"(max_tokens + every prompt fits under both caps) — rows are "
                             f"cap-invariant per the 2026-08-17 ruling")
 
-    score_a, score_b = grade.grade(bench, model_a), grade.grade(bench, model_b)
+    score_a, score_b = grade.grade(bench, model_a, tune=tune_a), grade.grade(bench, model_b, tune=tune_b)
     conv_only = metric == "pass_at_1_converged"
     pa = _per_item(score_a, conv_only, rows_a)
     pb = _per_item(score_b, conv_only, rows_b)

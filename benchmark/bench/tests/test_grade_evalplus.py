@@ -195,3 +195,58 @@ def test_grade_evalplus_unextractable_code_becomes_a_failing_string_not_null(tmp
     s = GR.grade_evalplus("humanevalplus", "m", runner=fake_runner,
                           all_ids=["HumanEval/0", "HumanEval/1"])
     assert s["n"] == 2 and s["acc"] == 0.5
+
+
+def test_grade_evalplus_REUSES_fresh_eval_results_without_docker(tmp_path, monkeypatch):
+    """A fresh eval_results (newer than the rows file) must be READ, not deleted and
+    re-rolled: the docker evaluation is flaky under rosetta (crash/hang/success on the
+    same input — 3 of 4 attempts on a real arm failed), so deleting a good result and
+    re-running is how compare destroyed the same artifact three times on 2026-08-19."""
+    import time, os
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    rows_p = _write_rows(tmp_path, "m", "humanevalplus", [
+        {"id": "HumanEval/0", "content": "```python\ndef f():\n    return 1\n```"},
+    ])
+    sdir = tmp_path / "m"
+    rpath = sdir / "humanevalplus_samples_eval_results.json"
+    rpath.write_text(json.dumps({"eval": {
+        "HumanEval/0": [{"base_status": "pass", "plus_status": "pass"}],
+    }}))
+    # make it strictly newer than the rows file
+    st = os.stat(tmp_path / "m" / "humanevalplus.jsonl")
+    os.utime(rpath, (st.st_mtime + 5, st.st_mtime + 5))
+
+    def exploding_runner(cmd, **kw):
+        raise AssertionError("docker must NOT run when a fresh eval_results exists")
+
+    s = GR.grade_evalplus("humanevalplus", "m", runner=exploding_runner,
+                          all_ids=["HumanEval/0"])
+    assert s["acc"] == 1.0 and len(s["items"]) == 1
+
+
+def test_grade_evalplus_reruns_when_eval_results_is_STALE(tmp_path, monkeypatch):
+    """An eval_results OLDER than the rows file predates the current rows — it must be
+    deleted and docker re-run, exactly as before."""
+    import os
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    _write_rows(tmp_path, "m", "humanevalplus", [
+        {"id": "HumanEval/0", "content": "```python\ndef f():\n    return 1\n```"},
+    ])
+    sdir = tmp_path / "m"
+    rpath = sdir / "humanevalplus_samples_eval_results.json"
+    rpath.write_text(json.dumps({"eval": {
+        "HumanEval/0": [{"base_status": "fail", "plus_status": "fail"}],
+    }}))
+    st = os.stat(tmp_path / "m" / "humanevalplus.jsonl")
+    os.utime(rpath, (st.st_mtime - 5, st.st_mtime - 5))
+    ran = {}
+
+    def fake_runner(cmd, **kw):
+        ran["yes"] = True
+        rpath.write_text(json.dumps({"eval": {
+            "HumanEval/0": [{"base_status": "pass", "plus_status": "pass"}],
+        }}))
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    s = GR.grade_evalplus("humanevalplus", "m", runner=fake_runner, all_ids=["HumanEval/0"])
+    assert ran.get("yes") and s["acc"] == 1.0
