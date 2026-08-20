@@ -15,9 +15,35 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-**0 items.** Everything is CLOSED and lives below. O24, O26, O27, O28 and O29 were closed
-on 2026-08-16 (old driver box), O25 and O30 on 2026-08-17 (this box; merged 2026-08-18), O15 on
-2026-08-18; nothing was deleted.
+**2 items.** (Previously 0; O24, O26, O27, O28 and O29 were closed on 2026-08-16 (old driver box),
+O25 and O30 on 2026-08-17 (this box; merged 2026-08-18), O15 on 2026-08-18; nothing was deleted.)
+
+### O34 — manifest writer should emit `$HOME`-form `hf_path` (recurring PII restamp + false STALE)
+
+Manifests for models with local `hf_path` record the absolute path. The committed copies are
+hand-sanitized to `$HOME`, so every resume restamps the live absolute path back in: (a) PII sits in
+the working tree until someone re-sanitizes before commit (the hook is the only backstop), and
+(b) the provenance string-compare sees `$HOME/...` vs `/Users/.../...` as a CONFIG CHANGE — on
+2026-08-20 this flagged `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`/humanevalplus STALE and
+restamped both `Qwen3.8-27B` distill manifests <!-- allow-shorthand --> on a config that was
+byte-identical (verified: only timestamp/stack_head/hf_path-form differed; the run was killed,
+verified benign, relaunched). Proposed fix (small, TDD): normalize `hf_path` under `$HOME` at
+manifest-write time; existing sanitized manifests then match by construction. Needs approval —
+it touches provenance strings mid-corpus (committed manifests already use `$HOME`-form, so the
+normalization CLOSES the gap rather than widening it).
+
+### O35 — resume rule: skip retrying an error row whose failure was a probe-timeout (deterministic runaway)
+
+`generate` resume treats error rows as not-done and retries them. Seeds derive from (item, sample),
+so a probe-timeout runaway retries BYTE-IDENTICALLY: measured on `Mbpp/306`
+(`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` t0.3, 2026-08-20) — the retry burned a second full 3600s
+probe-timeout, plus ~13 min of server-side drain after EACH client abandonment (the server decodes
+to budget exhaustion; 82,123 tokens at 73 min for the first occurrence), ~2.4 GPU-hours total for
+one item, and left a duplicate error row (deduped by hand, backup in `$STACK_WORKDIR/status/`).
+Proposed rule: on resume, an existing error row whose kind is probe-timeout at the SAME
+(seed, sampling, cap) fingerprint counts as DONE (a DNF), not retryable; `--samples k` draws with
+fresh seeds are unaffected. Needs a ruling because it changes what a resume measures (a transient
+infra timeout would also stop being retried — possibly gate on `wall_s >= probe_timeout`).
 
 ### O33 → RULED AT CREATION (operator, 2026-08-18): **the `Qwen3.8-27B` family <!-- allow-shorthand --> is characterized at `reasoning_effort` xhigh — its best performance and how it ships.** Context: the checkpoint chat template defaults `reasoning_effort|default('xhigh')` whenever thinking is on, no carrier/bench request ever sets the variable, and the fork forwards it only when set — so the entire existing corpus is ALREADY xhigh and stays admissible unchanged (lab notebook 2026-08-18). Consequences: (1) no medium/low arms for ranking/characterization — the floated "effort as a runaway-tax lever" OFAT is NOT queued (the >1h runaways happen at xhigh and are handled by the temperature recipe + probe-timeout DNF accounting); (2) if effort is EVER varied for any future serving experiment it changes the rendered prompt and must join the provenance fingerprint first; (3) clients ship with no `reasoning_effort` set, so served config == measured config holds by default.
 
