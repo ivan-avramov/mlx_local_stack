@@ -1,65 +1,60 @@
-# Handoff — rewritten 2026-08-20 ~00:15 (pre-compaction checkpoint, session continuing)
+# Handoff — rewritten 2026-08-21 ~09:00 (M15/M16/M17 Stage-2 fold; session continuing)
 
-Single box (M5 Max 64 GB). Stack pushed through `549f1e8`; local-only commits after: `9f34887`
-(incumbent hep t0.3 arm). Fork pushed through `d06ed84e` (M14); F1 branch `sync/upstream-v0.6.15`
-at `c1975b4c` (8/8 parity green, 93/93 test files) awaits post-D10 landing. Intentional dirt:
-`main_models.yaml` (six candidate entries now — three `Qwen3.8-27B` recipes + three distill conversions with <!-- allow-shorthand -->
-$HOME-local hf_paths) + live tune-stamped jsonls.
+Single box (M5 Max 64 GB). Stack pushed through `df30685`; ~10 local-only commits after
+(results + grades, ledger folds, O34/O35 shipped, M19/M20 rulings, Stage-2 trees `4ce4159`).
+Intentional dirt: `main_models.yaml` (six candidate entries, $HOME-local hf_paths) + M19 probe
+artifacts in `$STACK_WORKDIR/status/m19_scan/`.
 
 ## Live right now
 
-- **`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` mbppplus t0.3 5-item pilot** (fresh-cap-262144 arms
-  for the head-to-head; hep arm DONE n=50, committed `9f34887`). Waiter armed → on completion:
-  size and launch **mbppplus n=50 (`--tune t0.3`)** → morning: grade the pair (docker) →
-  `compare --models Qwen3.6-27B-Opus-Distill-OptiQ-4bit@t0.3,Qwen3.8-27B-OptiQ-4.5bpw-mixed@t0.6
-  --benches humanevalplus,mbppplus --intersect` = the FIRST admissible head-to-head, plus
-  distill-vs-base paired reads (M15/M16 rungs vs `Qwen3.8-27B-mlx-uniform-4bit@t0.6`).
-- Campaign lean router UP (:8000, MLX_VLM_CACHE_SESSION_MAX=2, APC absent, suffix off).
+- **M19 DNF-first probes** (task in flight): all 10 `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`
+  DNF items at candidate knee **t0.5** under the 8192 cap. Scan verdicts on `HumanEval/2`:
+  t0.5 conv @437 tok, t0.4 clamp-hit (6654), t0.3 conv @924 — non-monotonic, knee = t0.5.
+  If the DNFs convert → n=15 rung at t0.5 (pass@1 hold) → full 2×50 re-screen (gates, below).
+  If they don't budge → prune, t0.6 stands, model wears 10% DNF.
 
-## Today's results (2026-08-19; details in notebook/ledger/queue)
+## The 2026-08-20→21 Stage-2 screens (all n=50, graded, committed `4ce4159`)
 
-1. **Stage-2 CLOSED for the `Qwen3.8-27B` family** <!-- allow-shorthand -->: acc_strict@81920
-   uniform 84/76 vs OptiQ-mixed 84/80 (hep/mbpp, n=50, t0.6/xhigh per O33); within-family paired
-   verdicts INCONCLUSIVE (±19pp MDE); runaway split 9-vs-2 DNFs → **representative =
-   `Qwen3.8-27B-OptiQ-4.5bpw-mixed`**.
-2. **Runaway tax is CROSS-FAMILY**: the incumbent's fresh hep arm (n=50, t0.3, cap 262144) has
-   2 timeout-DNFs incl. `HumanEval/32` — the same item `Qwen3.8-27B-mlx-uniform-4bit` DNF'd.
-   Rate-matched to the challenger (2/50). Fold into the ledger with the morning verdicts.
-3. **M6a CLOSED: STOP (0.99×)** on `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (engagement proven by
-   ON/OFF textual divergence); `Qwen3.8-27B-OptiQ-4.5bpw-mixed` probe inconclusive-by-meander;
-   family-level close. M6b not triggered. **Negative control caught a fork defect**: missing MTP
-   sidecar silently serves plain decode (F2 queued — fail-loud fix, ride the F1 landing).
-4. **M15/M16/M17 Stage-0+1 in one evening**: conversions real (8-s walls verified by working
-   models), all rungs conv 15/15, ZERO DNFs; pass@1 `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`
-   **1.00**, `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` 0.867 (max 734 tok — tightest traces
-   in corpus), `Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit` **1.00** at ~72 tok/s.
-   Operator's distillation hypothesis holding strongly. Next: Stage-2 screens vs the family
-   representative; M17 also NVSY-relevant someday (see below).
-5. **Harness fixes shipped (TDD)**: `compare` gained `Model@tune` addressing (Stage-2 verdicts
-   were unaddressable without it); evalplus grading REUSES fresh eval_results (docker eval is
-   flaky under rosetta — crash/hang/success on identical input; the hang sat on a PADDING dummy
-   `Mbpp/255`; deleting good results to re-roll destroyed the same artifact 3×). Plus earlier:
-   test_bfcl import fix (re-armed the M18-critical assertions), modelnames hook exempts result-row
-   jsonl (model output ≠ prose), manifests must be PII-sanitized ($HOME) when hf_path is local.
-6. **NVSY UNTRACKED** (operator): S1 shelved, O32 closed, `docs/switchyard-plan.md` kept for a
-   post-campaign revisit. **Open-questions queue is EMPTY.**
+| model @tune | hep acc/strict (DNF) | mbpp acc/strict (DNF) | paired vs representative |
+|---|---|---|---|
+| `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6 | 95.6/86 (5) | 86.7/78 (5) | hep **+2.3 [+0.0,+6.8]**, mbpp 0.0 — INCONCLUSIVE |
+| `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` @t0.6 | 88.4/76 (7) | 79.1/68 (7) | hep −4.9, mbpp −7.0 — INCONCLUSIVE, trailing |
+| `Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit` @t0.4 | 92.0/90 (0) | 74.0/74 (0) | hep **+6.2**, mbpp −6.0 — INCONCLUSIVE, 3× speed |
 
-## Queue after the incumbent pair (GPU-serial)
+Representative = `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6 (hep strict 84 / mbpp 80, 2+1 DNFs).
+Incumbent `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 fresh-cap: hep 93.75/90 (2), mbpp 81.6/80
+(1); head-to-head vs representative INCONCLUSIVE both benches — **B pick stands**.
 
-Stage-2 screens for the three new distill conversions <!-- allow-shorthand --> (paired vs representative, n≈30–50) → M3/M4 (opencode runs) → M5 DNF
-re-runs (now includes the fresh-arm scope) → M18 (first BFCL) → M7 → D10 submodule bump
-(`ab5273f`+`07ed59e`+M14 `d06ed84e`, features off) → F1 landing + F2 → M11/M12 → D11 flip
-(cards) once Stage-2 numbers finalize → D6 enablement probe (script ready) → M14 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MTP
-probe (post-D10; `mtp_probe.py` ready, sidecar at `$STACK_WORKDIR/scratch/m14/`).
+## Findings to carry (fold complete, in ledger)
 
-## Standing traps refreshed today
+1. **Runaways are item-anchored across families**: `HumanEval/32` beat 4 models / 2 families;
+   `HumanEval/132`, `/99`, `Mbpp/306` (3 models), `/440` each 2+. A DNF is an (item ×
+   thinking-mode) property more than a model property.
+2. **Quant-recipe DNF hypothesis (open question, do not act)**: OptiQ quants 4% DNF vs <!-- allow-shorthand -->
+   uniform-4bit 10–18% — but `Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit` is <!-- allow-shorthand -->
+   uniform-4bit AND 0% (MoE arch, t0.4 — arch/temp confound). Needs a designed test <!-- allow-shorthand -->
+   (e.g. an OptiQ conversion of one distilled candidate). <!-- allow-shorthand -->
+3. **Distillation ≠ runaway immunity** (Stage-1 zero-DNF was n=15 flattery), but
+   `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` hep accuracy leads the family and
+   `Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit` is clean + fast.
+4. O34/O35 SHIPPED (`daa622e`): $HOME-form manifests; probe-timeout rows = DNFs, not retried.
+5. M19/M20 sufficient-gated re-eval RULING (`ec3cb32`): contention on DNF-excluded acc →
+   DNF-first at knee (prune if unmoved) → n=15 rung (pass@1 hold) → ONE full 2×50; no
+   mixed-tune splicing. Recommendations only on shipped-config data.
 
-Verify every commit with `git log` (rtk prints "ok N files changed" even when the commit-msg hook
-REJECTS); never overlap two grades of one arm (container-name collision); a watcher without a
-timeout is not a watcher (3-h hung container); `bench_watch.py` needs cwd=benchmark AND
-PYTHONPATH=benchmark (silent nohup death otherwise — verify process + output file after EVERY
-detached launch); cwd resets between tool calls — use absolute paths; probe workers at deployed
-sampling outrun "1–3K token" item estimates (xhigh thinking) — size request timeouts accordingly.
+## Queue after M19/M20
 
-**Order of resumption if context is lost: this file → `docs/PLAN.md` → `docs/work-queue.json` →
+M20 (`Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` — gate 1 passed by the letter, trailing
+both point estimates; own scan + DNF-first) → M3/M4 (opencode) → M5 DNF re-runs → M18 (BFCL)
+→ M7 → D10 submodule bump → F1+F2 → M11/M12 → D11 cards (Stage-2 numbers now final) → D6 →
+M14 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MTP probe.
+
+## Standing traps (delta from last rewrite)
+
+zsh does NOT word-split `set -- $var` — six grades failed rc=2 silently green-looking; always
+explicit args. The commit-msg hook rejects bare "distill"; rtk "ok" still lies about <!-- allow-shorthand --> commits —
+verify with `git log`. Grading (CPU/docker) may overlap a token-verdict GPU probe, never a
+wall-clock-scored run. Probe artifacts go to `$STACK_WORKDIR/status/`, never the results tree.
+
+**Order of resumption: this file → `docs/PLAN.md` → `docs/work-queue.json` →
 `$STACK_WORKDIR/status/` (live runs).**
