@@ -15,7 +15,22 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-**0 items.** (O24, O26, O27, O28 and O29 were closed on 2026-08-16 (old driver box),
+### O36 — `run.py generate` defaults to the RETIRED `production` sampling profile; should `deployed` be the default (or the flag REQUIRED)?
+
+Filed 2026-08-22 after it burned a full pipeline: every M19/M20 t0.5 command (scan, DNF-first
+probes, both n=15 rungs, both gate-3 2×50 arms — ~20 h of GPU) omitted `--sampling-profile
+deployed`, so all of it silently ran at `production` (min_p 0.03, presence_penalty 0.3,
+max_tokens 81920 → resolved thinking_budget 49152) — four knobs moved at once instead of a
+temperature OFAT, and a nonzero presence_penalty also changes the serving path. **The
+fingerprint guard caught it** (compare REFUSED across thinking_budget) — the rows are
+quarantined under tune `t0.5prod` and the pipeline re-run at `deployed`. The footgun: the
+default profile is the one AGENTS.md says is kept only for historical rows and has DRIFTED
+from what we ship. Options: (a) default to `deployed`; (b) no default — make the flag
+required so every run states its profile; (c) keep `production` default (compat) + a loud
+warning. (b) is the safest against silent drift; (a) matches "served config == measured
+config". Needs a ruling before any code change (TDD once ruled).
+
+**1 item (O36).** (O24, O26, O27, O28 and O29 were closed on 2026-08-16 (old driver box),
 O25 and O30 on 2026-08-17 (this box; merged 2026-08-18), O15 on 2026-08-18, O34/O35 on
 2026-08-20; nothing was deleted.)
 

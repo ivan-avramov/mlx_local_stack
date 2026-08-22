@@ -1,4 +1,21 @@
-# Handoff — rewritten 2026-08-21 ~15:45 (pre-compaction checkpoint; gate-3 M16 leg live)
+# Handoff — rewritten 2026-08-22 ~10:20 (t0.5 RETRACTION + deployed-profile redo in flight)
+
+🚨 **RETRACTION (2026-08-22): every "t0.5" result below and in yesterday's ledger/handoff is
+WRONG-CONFIG.** All M19/M20 t0.5 commands omitted `--sampling-profile deployed` and silently
+ran the retired `production` profile (min_p 0.03, presence_penalty 0.3, resolved
+thinking_budget 49152) — four knobs at once, not a temperature OFAT. The fingerprint guard
+caught it (compare REFUSED). Rows quarantined under tune **`t0.5prod`** (real measurements at
+that config; the label is now truthful). Knee/DNF claims for t0.5 are UNSUPPORTED at the
+deployed config until the redo completes. What is still true: the t0.6 arms are clean
+(deployed, verified); the t0.5prod arms show the runaway class is CONFIG-SENSITIVE (some
+lever in {temp, min_p, presence_penalty, budget} collapses it — attribution pending);
+`Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` at t0.5prod collapses to strict 56/58 via
+budget-scale meanders (conv 66%) — its n=15 rung passed then the n=50 arm failed, validating
+gate 3. O36 filed (run.py default-profile footgun). **Redo in flight**: capped scan at
+deployed → DNF-first → rung → gate-3, all with explicit `--sampling-profile deployed`.
+
+--- (superseded checkpoint below, kept for the session narrative) ---
+
 
 Single box (M5 Max 64 GB). Stack pushed through `df30685`; ~16 local-only commits after —
 push awaits operator approval. Intentional dirt: `main_models.yaml` (six candidate entries,
