@@ -94,6 +94,36 @@ contact; their n=50 Stage-2 screens are in flight.
 > and the two are equivalent on the only axis measured); `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` for
 > reasoning-heavy sessions, where it does not burn its budget.
 
+### 2026-08-22 — 🚨 the "t0.5 knee" results are RETRACTED as shipped-config evidence (O36); deployed-profile redo in flight
+
+Every M19/M20 "t0.5" command (scans, DNF-first probes, n=15 rungs, and the full gate-3 2×50
+re-screens) omitted `--sampling-profile deployed` and silently ran the RETIRED `production`
+profile (`min_p 0.03`, `presence_penalty 0.3`, resolved `thinking_budget 49152`) — four knobs
+moved at once, not a temperature OFAT. The fingerprint guard caught it (`compare` refused
+across the profile mismatch). The rows are quarantined under tune **`t0.5prod`** — real,
+graded measurements of a config we do not ship: `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`
+humanevalplus `acc` 92.0% / `acc_strict@49152` 88.0% (conv 96%), mbppplus 85.7% / 84.0%
+(conv 100%, 1 DNF `Mbpp/440`); `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` humanevalplus
+78.0% / **56.0%** (conv 66%, 17 `degenerate_repetition`), mbppplus 77.5% / **58.0%** (conv
+67%, 16 loops + 1 DNF). The t0.6 arms are clean deployed rows and their story stands. What
+survives config-independently: (1) gate 3 works — the n=15 rung passed 15/15 where the n=50
+arm collapsed, so small rungs under-sample loop floors; (2) the runaway class is
+CONFIG-SENSITIVE — some lever in {temp, min_p, presence_penalty, budget} collapses it, and the
+deployed-profile redo (only temp moving) is the attribution instrument; (3) probe-set
+amendments: DNF-first-only probing has a non-monotonic blind spot (a lower temp converted 3
+old failures and minted 13 new loopers), so probes now carry ~5 previously-clean SENTINEL
+items, and capped-probe verdicts split "non-stop WITH a repetition signature" (trustworthy)
+from "without" (indeterminate — `HumanEval/32`/`Mbpp/306` failed the cap yet converged at
+full budget). Redo ladder (all rungs `--sampling-profile deployed`, explicit): capped scan
+DONE (`HumanEval/2` converges at t0.5 in 1,693 tokens; the t0.4/t0.3 rows are clamp
+false-passes by their own flag, treated indeterminate) → DNF-first probe in flight →
+sentinel probe → n=15 rung → gate-3 2×50. `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`
+follows with t0.55 as an operator-approved rung candidate. D13 (zero-GPU corpus sweep,
+`benchmark/m1/dnf_sweep.py`): family-matched cells on the same base weights at t0.6 —
+`Qwen3.8-27B-mlx-uniform-4bit` mbppplus 7/51 DNF vs `Qwen3.8-27B-OptiQ-4.5bpw-mixed` 0/50 —
+support precision-drives-runaways; pooled rollups are flagged non-evidential in the tool
+itself; M21 remains the causal test.
+
 **I am not going to dress this up: C's construct has never been measured.** What exists:
 
 - **IFEval, n=148 paired: `equivalent`** (89.9% vs 89.9%, CI inside the ±5pp TOST margin). This is a
