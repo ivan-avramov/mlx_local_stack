@@ -124,6 +124,33 @@ follows with t0.55 as an operator-approved rung candidate. D13 (zero-GPU corpus 
 support precision-drives-runaways; pooled rollups are flagged non-evidential in the tool
 itself; M21 remains the causal test.
 
+### 2026-08-22 (late) — M19 deployed redo COMPLETE: **t0.6 STANDS on both benches**; the "t0.5 knee" is closed as a production-profile artifact
+
+Gate-3 2×50 for `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`, all arms
+`--sampling-profile deployed` explicit, paired items/seeds, budget 81920, same deployed sha:
+
+- **humanevalplus**: t0.5 `acc` 89.1% [78.3, 97.8] / `acc_strict@81920` 82.0% / 4 DNFs
+  {`HumanEval/108`,`/32`,`/99`,`/132`} vs t0.6 `acc` 95.6% [89, 100] / 86.0% / 5 DNFs
+  {`/2`,`/82`,`/32`,`/99`,`/39`}.
+- **mbppplus**: t0.5 `acc` 82.6% [69.6, 93.5] / 76.0% / 4 DNFs
+  {`Mbpp/620`,`/306`,`/440`,`/472`} vs t0.6 `acc` 86.7% [75.6, 95.6] / 78.0% / 5 DNFs
+  {`/306`,`/593`,`/129`,`/440`,`/124`}. Both t0.6 mbpp grades re-certified zero-GPU
+  (evalplus flake pattern did not recur); t0.5 graded clean first pass.
+
+**Verdict: t0.6 stands as the certified tune.** At MDE ~±18–19pp per leg no single delta
+resolves, but t0.5 shows no advantage on ANY endpoint — `acc` point estimates sit 6.5pp
+(hep) and 4.1pp (mbpp) BELOW t0.6, `acc_strict` likewise (82.0<86.0, 76.0<78.0), DNF rate
+flat (4 vs 5 per leg), conv 100% on all four arms. The DNF sets churn non-monotonically on
+both benches (mbpp: kept hard core {`Mbpp/306`,`/440`}, fixed 3, minted 2 — same shape as
+hep), i.e. lowering temp reshuffles rather than removes the runaway set. **Attribution
+sealed:** the t0.5prod loop plague (17+16 `degenerate_repetition`/50) reproduces NOWHERE at
+deployed t0.5 — zero loops across all 96 generated rows both benches (one self-terminating
+degenerate each side, `Mbpp/265` t0.5 / `Mbpp/620` t0.6, scored converged per policy) — so
+the loops were production-knob effects (clamped 49152 budget and/or `min_p 0.03` /
+`presence_penalty 0.3`), not temperature. M19 CLOSED; M20 (`Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`
+deployed ladder, t0.55 rung candidate) is next and expectation transfers: its loop
+catastrophe should likewise evaporate at the deployed config.
+
 **I am not going to dress this up: C's construct has never been measured.** What exists:
 
 - **IFEval, n=148 paired: `equivalent`** (89.9% vs 89.9%, CI inside the ±5pp TOST margin). This is a
