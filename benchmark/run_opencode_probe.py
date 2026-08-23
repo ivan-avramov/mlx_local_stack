@@ -47,6 +47,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -84,6 +85,16 @@ def _polyglot_sha(root: Path) -> str | None:
                                        text=True, stderr=subprocess.DEVNULL).strip()
     except Exception:  # noqa: BLE001
         return None
+
+
+@contextmanager
+def _scratch_dir(name: str):
+    # macOS tempdirs live under /var -> /private/var; opencode registers the --dir project
+    # root by the given path STRING while its tools canonicalize, so a symlinked component
+    # makes every absolute tool path fail the project-boundary prefix check and auto-reject
+    # in non-interactive `run` mode (sessions "complete" in seconds with no edits).
+    with tempfile.TemporaryDirectory(prefix=f"oc-{name}-") as tmp:
+        yield Path(os.path.realpath(tmp))
 
 
 def _prepare(src: Path, dst: Path) -> None:
@@ -424,7 +435,7 @@ def main() -> int:
         if not src.is_dir():
             print(f"!! {name}: no such exercise at {src}", flush=True)
             continue
-        with tempfile.TemporaryDirectory(prefix=f"oc-{name}-") as tmp:
+        with _scratch_dir(name) as tmp:
             work = Path(tmp) / name
             _prepare(src, work)
             sol, test = _solution_and_test(work, src, a.lang)

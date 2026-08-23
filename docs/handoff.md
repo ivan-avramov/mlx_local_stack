@@ -50,6 +50,25 @@ Local-only commits (NO push without explicit in-turn operator approval): 495279a
 Verify pushes `git ls-remote`, commits `git log` — never rtk output. `transcript.md` is the
 operator's — never commit. NVSY stays untracked.
 
+## M3 — first run INVALIDATED by a harness environment bug; rerun in flight (2026-08-23 ~11:39)
+
+`run_opencode_probe.py`'s `TemporaryDirectory` under macOS `/var/folders` breaks opencode's
+project-boundary check (the `/var`→`/private/var` symlink alias defeats prefix matching):
+absolute-path tool calls get "user rejected permission" AUTO-REJECTS non-interactively, and
+sessions "complete" in ~10s having done nothing. It destroyed 12/22 `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+sessions, 6/22 `Ornith-1.0-35B-mlx-uniform-4bit`, 1/22 `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`.
+A/B-proven: same items pass with `TMPDIR` under the workdir. First-run rows QUARANTINED at
+`$STACK_WORKDIR/status/m3/invalid_tmpdir_run/`. Rerun (all 3 arms × 22 python) launched with
+`export TMPDIR=$STACK_WORKDIR/scratch/octmp` in `$STACK_WORKDIR/status/m3/run_m3.sh`; rows →
+`benchmark/results/<model>/opencode.jsonl` (probe APPENDS, no resume — dedupe before re-running
+a partial arm). **Proposed code fix awaiting operator approval: probe should realpath its temp
+root (or default it under `$STACK_WORKDIR`) + a test.** The roster addition is DONE:
+`Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` at t0.6 full sampling in
+`benchmark/opencode_bench.json` AND the installed `~/.config/opencode/opencode.json` (kept
+identical; uncommitted). ⚠️ Registry `generation_defaults` for that model still carries
+`temperature: 1.0` (candidate-era) — drift from the certified t0.6; operator to fix in
+`main_models.yaml` (opencode carries full sampling, so M3 rows are correct regardless).
+
 ## Traps refreshed
 
 evalplus-in-docker null-then-late flake (retry zero-GPU; hit again on mbpp t0.55).

@@ -15,7 +15,7 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-### O37 — certify t0.55 as the tune for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`?
+### O37 — CLOSED 2026-08-23 (ratified) — certify t0.55 as the tune for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`?
 
 Filed 2026-08-23. The M20 deployed ladder completed the full sequence (capped scan →
 DNF-first → n=15 rung → gate-3 2×50), every command `--sampling-profile deployed` explicit.
@@ -31,9 +31,12 @@ denominator-skewed: t0.6's `acc` excludes its 7 DNFs — the hard items — from
 denominator, which is exactly the conditioning pathology `acc_strict` exists to avoid.
 **Recommendation: certify t0.55** — it is the ladder's own decision rule (highest temp that
 converges without a pass@1 regression: the rung held 13/15 vs 13/15 paired; gate-3 shows no
-resolvable regression and a strict win). If ratified, the config change fans out to ALL
-FOUR sampling carriers + `main_models.yaml` `generation_defaults` (this model currently
-ships t0.6). OPEN — awaiting ruling.
+resolvable regression and a strict win). **CLOSED 2026-08-23 — operator RATIFIED: t0.55
+certified.** Fan-out audit: the model appears in NO client carrier (not a shipped model), so
+the certification is registry-only — `main_models.yaml` `generation_defaults` now records
+`temperature: 0.55` with the certification note. Same pass recorded the M19-certified t0.6
+for `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` and the 2026-08-17-certified t0.6 for
+`Qwen3.8-27B-mlx-uniform-4bit` (both had carried the checkpoint-default 1.0).
 
 ### O36 — `run.py generate` defaults to the RETIRED `production` sampling profile; should `deployed` be the default (or the flag REQUIRED)?
 
