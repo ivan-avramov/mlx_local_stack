@@ -13,7 +13,12 @@ below, never duplicated here). The work queue lives in `docs/PLAN.md`.
 new model and produce a defensible ranking with no hand-holding** (operator, 2026-08-17).
 Model picks are perpetual and revised as contenders arrive — there is no "done" for testing.
 
-**A recommendation is a (model, tune) pair, per goal — B and C separately.**
+**A recommendation is a (model, tune, predictor) TRIPLE, per goal — B and C separately**
+(predictor added by operator ruling 2026-08-23: the shipped form of a pick includes its
+certified speculative-decoding setting — `off`, `suffix`, `mtp` (native head, low k=2–3), or
+`draft` (separate drafter) — certified by the predictor stage in `docs/PLAN.md` M6; QUALITY
+MEASUREMENT stays predictor-OFF forever, the predictor is a serving-only layer, and
+`compare` refuses across differing draft state so the two can never be conflated).
 - **MODEL** = core weights + quantization + quant algorithm. A fine-tune is a separate model.
 - **CONFIG (tune)** = what the harness varies: sampling (temperature, top_p, top_k, min_p,
   penalties), KV quant scheme/bits, cache cap, speculative decoding, thinking budget.
