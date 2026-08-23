@@ -29,6 +29,10 @@ budget on 9/30 items), IFEval is a tie — but that split is n=30/27 unmatched a
 measured capability axis at 26.0 GB peak; its tune is NOT laddered — flagged in the registry).
 Uploads: `caslca/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` mirror +
 `caslca/Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` (circulation model) launched 2026-08-23.
+**REVISED same day: the operator adopted the session recommendation** ("mine was based on
+vibes") — provisional C picks are now `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` +
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`; `Ornith-1.0-35B-mlx-uniform-4bit` stands down
+to B-only. Both picks were already public on HF, so no new upload was triggered.
 
 ### O37 — CLOSED 2026-08-23 (ratified) — certify t0.55 as the tune for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`?
 
