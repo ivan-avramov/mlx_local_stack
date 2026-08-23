@@ -15,6 +15,21 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### O38 — CLOSED 2026-08-23 — provisional C picks recorded before C is instrumented
+
+Operator decision 2026-08-23: record `Ornith-1.0-35B-mlx-uniform-4bit` +
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` as PROVISIONAL C 1st/2nd in `main_models.yaml`,
+explicitly labelled provisional, to be revisited when M18 BFCL + the judge panel land. The
+session's dissent, recorded for the revisit: on today's C-relevant evidence
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` has the better claim than `Ornith-1.0-35B-mlx-uniform-4bit`
+— math500 at matched budget splits `acc_strict` 81.5% vs 60.0% (`Ornith-1.0-35B-mlx-uniform-4bit` hits the thinking
+budget on 9/30 items), IFEval is a tie — but that split is n=30/27 unmatched at MDE ±23pp
+(suggestive, not a verdict), and model-diversity across B/C favors the operator's pair.
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is uncontested as the other pick (ties every
+measured capability axis at 26.0 GB peak; its tune is NOT laddered — flagged in the registry).
+Uploads: `caslca/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` mirror +
+`caslca/Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` (circulation model) launched 2026-08-23.
+
 ### O37 — CLOSED 2026-08-23 (ratified) — certify t0.55 as the tune for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`?
 
 Filed 2026-08-23. The M20 deployed ladder completed the full sequence (capped scan →
