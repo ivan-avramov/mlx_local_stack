@@ -33,7 +33,19 @@ Model picks are perpetual and revised as contenders arrive — there is no "done
 **Goals:** **B** — coding across a repo-sized context (the 256K agentic-coding pick).
 **C** — everyday driver for research, brainstorming, design.
 
-## 1. Today's picks (2026-08-17)
+## 1. Today's picks (2026-08-17; C added 2026-08-23)
+
+### C (PROVISIONAL, operator 2026-08-23 adopting the session recommendation — O38) — `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @ `deployed`; 2nd `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (tune never laddered)
+
+C instrumentation is incomplete (BFCL unrun, judge panel unratified) — these are explicitly
+provisional until M18 + the panel land. Basis: math500 `acc_strict` 81.5 vs 60.0 over
+`Ornith-1.0-35B-mlx-uniform-4bit` at matched budget (suggestive, MDE ±23pp); IFEval a tie;
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` ties every measured capability axis at 26.0 GB
+peak. Known strikes for the revisit: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is TEXT-ONLY (operator prefers vision
+in daily models — O38) and is a uniform affine 4-bit quant with a never-laddered tune;
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s vision tower is unverified (VL arch, no
+`vision_config`; one-image probe owed). Public: both picks on HF; `caslca/` insurance mirror
+of `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` uploaded + verified 2026-08-23.
 
 ### B — `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @ tune `deployed`; runner-up `Ornith-1.0-35B-mlx-uniform-4bit` @ `deployed`
 
