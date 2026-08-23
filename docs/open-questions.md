@@ -15,6 +15,26 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### O37 — certify t0.55 as the tune for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`?
+
+Filed 2026-08-23. The M20 deployed ladder completed the full sequence (capped scan →
+DNF-first → n=15 rung → gate-3 2×50), every command `--sampling-profile deployed` explicit.
+Gate-3 vs the t0.6 baseline (paired items/seeds, budget 81920): humanevalplus t0.55
+`acc` 83.7% [73.5, 93.9] / `acc_strict` **82.0%** / **1 DNF** vs t0.6 88.4% [79.1, 97.7] /
+76.0% / **7 DNFs**; mbppplus t0.55 77.8% [64.4, 88.9] / **70.0%** / 5 DNFs vs t0.6 79.1%
+[67.4, 90.7] / 68.0% / 7 DNFs. The ranking key (`acc_strict@81920`) favors t0.55 on BOTH
+benches (+6.0pp hep, +2.0pp mbpp); DNF total 14→6 (hep 7→1; mbpp keeps hard core
+{306,620,739}, fixes 4, mints {793,806}); exclusive solves crossed 7 vs 3 favoring t0.55;
+zero loops either arm; conv 100% on all generated rows. `acc` over generated items has
+lower t0.55 point estimates (−4.7pp hep, −1.3pp mbpp, MDE ±18pp) but that comparison is
+denominator-skewed: t0.6's `acc` excludes its 7 DNFs — the hard items — from the
+denominator, which is exactly the conditioning pathology `acc_strict` exists to avoid.
+**Recommendation: certify t0.55** — it is the ladder's own decision rule (highest temp that
+converges without a pass@1 regression: the rung held 13/15 vs 13/15 paired; gate-3 shows no
+resolvable regression and a strict win). If ratified, the config change fans out to ALL
+FOUR sampling carriers + `main_models.yaml` `generation_defaults` (this model currently
+ships t0.6). OPEN — awaiting ruling.
+
 ### O36 — `run.py generate` defaults to the RETIRED `production` sampling profile; should `deployed` be the default (or the flag REQUIRED)?
 
 Filed 2026-08-22 after it burned a full pipeline: every M19/M20 t0.5 command (scan, DNF-first

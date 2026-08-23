@@ -151,6 +151,31 @@ the loops were production-knob effects (clamped 49152 budget and/or `min_p 0.03`
 deployed ladder, t0.55 rung candidate) is next and expectation transfers: its loop
 catastrophe should likewise evaporate at the deployed config.
 
+### 2026-08-23 — M20 deployed ladder COMPLETE: t0.55 beats t0.6 on the ranking key for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` (certification = O37, awaiting ruling)
+
+Full ladder at `--sampling-profile deployed` explicit throughout. Capped scan (t0.55, 8192
+cap): sentinels 5/5 CONV, 9/14 old t0.6 DNFs convert, zero repetition signatures — the
+t0.5prod loop catastrophe (17+16/50) does NOT exist at the deployed config, confirming the
+M19 production-knob attribution on the second model. DNF-first (full 81920 budget): 10/14
+convert (incl. `Mbpp/440`, 7,920 tok); holdouts {`HumanEval/86`,`Mbpp/306`,`/620`,`/739`}.
+n=15 rung: pass@1 HOLDS — paired 13/15 vs 13/15. Gate-3 2×50 (resume pooled the ladder's
+same-tune rows; the 4 known runaways did not re-burn):
+
+- **humanevalplus**: t0.55 `acc` 83.7% [73.5, 93.9] / `acc_strict@81920` **82.0%** / **1 DNF**
+  vs t0.6 88.4% [79.1, 97.7] / 76.0% / 7 DNFs.
+- **mbppplus**: t0.55 77.8% [64.4, 88.9] / **70.0%** / 5 DNFs
+  ({`306`,`620`,`739`} kept, {`793`,`806`} minted) vs t0.6 79.1% [67.4, 90.7] / 68.0% /
+  7 DNFs. (mbpp t0.55 first grade returned null — the evalplus late-file flake, third
+  occurrence — zero-GPU re-grade certified.)
+
+**Unlike the M19 sibling, t0.55 genuinely SHRINKS the runaway set (14→6 total) instead of
+churning it**, and `acc_strict` — the ranking key — favors t0.55 on both benches (+6.0pp
+hep, +2.0pp mbpp). Exclusive solves crossed 7 vs 3 favoring t0.55 (not resolvable at 10
+discordants). `acc`-on-generated dips are inside MDE and denominator-skewed (t0.6's `acc`
+excludes its own 7 hard DNF items). Zero loops in all 129 deployed-t0.55 rows across the
+ladder. **Recommendation: certify t0.55 (O37).** Scan/probe artifacts live at
+`$STACK_WORKDIR/status/m20_scan/`, never in `results/`.
+
 **I am not going to dress this up: C's construct has never been measured.** What exists:
 
 - **IFEval, n=148 paired: `equivalent`** (89.9% vs 89.9%, CI inside the ±5pp TOST margin). This is a
