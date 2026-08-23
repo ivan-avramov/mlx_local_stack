@@ -48,8 +48,11 @@ provisional until M18 + the panel land. Basis: math500 `acc_strict` 81.5 vs 60.0
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` ties every measured capability axis at 26.0 GB
 peak. Known strikes for the revisit: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is TEXT-ONLY (operator prefers vision
 in daily models — O38) and is a uniform affine 4-bit quant with a never-laddered tune;
-`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s vision tower is unverified (VL arch, no
-`vision_config`; one-image probe owed). Public: both picks on HF; `caslca/` insurance mirror
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is confirmed BLIND (one-image probe 2026-08-23,
+`benchmark/probe_vision.py`: HTTP 500, tower reshape crash `[reshape] Cannot reshape array of
+size 24576 into shape (20,3,2,14,14)` — preprocessing runs, tower weights absent; instrument
+validated same day against `Ornith-1.0-35B-mlx-uniform-4bit`, which answers "Red" = SEES;
+tower-graft restoration approved and staged). Public: both picks on HF; `caslca/` insurance mirror
 of `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` uploaded + verified 2026-08-23.
 
 ### B — `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @ tune `deployed`; runner-up `Ornith-1.0-35B-mlx-uniform-4bit` @ `deployed`
