@@ -33,6 +33,14 @@ Uploads: `caslca/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` mirror +
 vibes") — provisional C picks are now `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` +
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`; `Ornith-1.0-35B-mlx-uniform-4bit` stands down
 to B-only. Both picks were already public on HF, so no new upload was triggered.
+**Vision constraint for the M18-time revisit (operator preference 2026-08-23: daily models
+should ideally have vision):** `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is TEXT-ONLY
+(`NemotronHForCausalLM`, no vision tower) — a strike against it as a daily C pick.
+`Ornith-1.0-35B-mlx-uniform-4bit` HAS a vision tower (`vision_config` present).
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is AMBIGUOUS: VL architecture
+(`Qwen3_5ForConditionalGeneration`, vision start/end tokens) but no `vision_config` in the
+checkpoint — the tower may have been stripped from this checkpoint; settle with a one-image probe
+when the box is free. The `Qwen3.8-27B` family is natively VLM per its release. <!-- allow-shorthand -->
 
 ### O37 — CLOSED 2026-08-23 (ratified) — certify t0.55 as the tune for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`?
 
