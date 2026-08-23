@@ -15,6 +15,23 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### O39 — OPEN 2026-08-23 — does the M3 inversion trigger the M9 multi-language extension now?
+
+M3 (opencode Run A, n=22 python, DIRECTIONAL) inverted the aider-based B direction:
+`Ornith-1.0-35B-mlx-uniform-4bit` 19/22 vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 12/22,
+discordant 8:1, McNemar p=0.039 nominal (not Holm-surviving; MDE ±27pp). The mechanism is
+coherent with the ledger ("the pick is a repair result"): single-attempt sessions remove the
+repair loop the pick's aider edge rests on, and 5 of its 10 fails are absolute-path-infidelity
+give-ups (a scaffold-fluency deficiency, newly observed). The pre-registered M3 framing says
+DIRECTIONAL with an extension rule; the extension vehicle is M9 (~3.5 h/model × 3 models for
+the 88-item 4-language set — five per-language rankings, never one blended number). Decision
+needed: (a) run M9 now, ahead of M6/M18/M23/M24, because the B pick itself is in question on
+the axis that motivated the campaign (agentic coding); (b) keep M9 in its queued slot; or
+(c) a cheaper middle — one more python-adjacent language (go, ~40 min/model) as a directional
+replication before committing the full block. Session recommendation: **(c)** — the inversion
+is mechanism-backed, so a fast cross-language replication has high information value per hour,
+and a confirmed inversion at go n=44 would justify pulling the full M9 forward.
+
 ### O38 — CLOSED 2026-08-23 — provisional C picks recorded before C is instrumented
 
 Operator decision 2026-08-23: record `Ornith-1.0-35B-mlx-uniform-4bit` +

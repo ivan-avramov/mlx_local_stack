@@ -93,6 +93,23 @@ run at n under a valid handler; IFEval measures short mechanical compliance, a p
 no deep-research axis exists. C-tuning is deferred until the instrument exists — tuning
 against an unreliable judge optimizes noise (ruling, 2026-08-17).
 
+### opencode Run A (M3) — first agentic-axis result, 2026-08-23 (DIRECTIONAL, n=22 python)
+
+Three arms, 22 matched python exercism items, opencode 1.18.15, `deployed` profile, suffix-OFF,
+progress-gated (601 s effective stall bound), FIRST-ATTEMPT session outcome (`session_pass` —
+NOT comparable to aider `final`, which allows a test-informed second attempt):
+
+| model | pass | stop_reasons | failure taxonomy | wall mean/med (s) |
+|---|---|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` | **19/22 (86.4%)** | 20 completed / 1 looping / 1 stalled | 1 parent-dir glob overreach (`dominoes`), 1 loop (`connect`), 1 stall (`forth`) | 158 / 73 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | **12/22 (54.5%)** | 17 completed / 2 looping / 3 stalled | **5 path-infidelity give-ups** (~25 s sessions), 2 loops, 3 stalls | 248 / 105 |
+| `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` | **13/22 (59.1%)** | 13 completed / 9 stalled | ALL 9 fails = 601 s stall-kills (xhigh runaway thinking) | 372 / 358 |
+
+- Exclusive solves: `Ornith-1.0-35B-mlx-uniform-4bit` over `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` = 8 items vs 1 (`forth`); McNemar exact p=0.039 NOMINAL — does NOT survive Holm across the 3 pairwise tests; n=22 MDE ≈ ±27pp. Vs `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` the sets are NESTED (6 vs 0) — strict dominance on this sample. The two Qwen arms are crossed (4 vs 5). Solved-by-none: `connect`, `dominoes`.
+- **The direction INVERTS the aider-based B evidence** (aider `final` 73.6% vs 50.0% favoring the pick). Consistent with this ledger's own mechanism note — "the entire pick is a repair result" — opencode sessions are single-attempt with no test-informed repair loop, and there the runner-up dominates. Directional by design; NOT decisive at n=22. Extension vehicle is M9 (4 more languages); whether to trigger it on this inversion is an OPERATOR decision (queued in `docs/open-questions.md`).
+- **New failure mechanism, load-bearing for the pick**: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` reconstructs ABSOLUTE paths from memory and mis-copies the random scratch-dir suffix (`sa6gj2_o`→`sa6gj2.o`, `y4vd4k67`→`y4d64k67`) or substitutes underscore directories for hyphenated ones (`beer-song/`→`beer_song/`); the resulting nonexistent/out-of-boundary reads are CORRECTLY auto-rejected, and the model gives up in ~25 s without attempting recovery (5 of its 10 fails: `beer-song`, `book-store`, `connect`, `dominoes`, `phone-number`). This is scaffold path-fidelity — adjacent to aider's malformed-edit axis, where this model was near-perfect — so the deficiency is specific to absolute-path reconstruction of tokenizer-hostile random strings, not edit formatting. Harness EXONERATED: the `bcc6d37`-class TMPDIR/realpath fix is verified working (zero alias-class rejects; every rejected path was genuinely nonexistent or out-of-boundary — checked against the opencode session store). Zero `test_modified` in all 66 rows.
+- `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` shows zero path errors and zero loops — its ONLY failure mode is non-termination under the progress gate, i.e. the M24 xhigh-default finding manifesting in a live agentic harness.
+
 ### Promotion rule (ruling 2)
 
 Promotion to pick/runner-up is a **holistic architect judgement across all axes** — leader,
