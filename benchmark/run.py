@@ -10,11 +10,11 @@ Escalation workflow: run --tier light across all models, grade, see where you ar
 
 Examples:
   uv run python benchmark/run.py list
-  uv run python benchmark/run.py generate --tier light --chunks all     # first pass, all models
+  uv run python benchmark/run.py generate --sampling-profile deployed --tier light --chunks all
   uv run python benchmark/run.py grade    --tier light
-  uv run python benchmark/run.py generate --tier mid   --chunks all     # adds only new items
+  uv run python benchmark/run.py generate --sampling-profile deployed --tier mid --chunks all
   uv run python benchmark/run.py status   --tier mid
-  uv run python benchmark/run.py generate --models gemma-4-26B-A4B-it-QAT-MLX-4bit --benches aime --limit aime=5
+  uv run python benchmark/run.py generate --sampling-profile deployed --models gemma-4-26B-A4B-it-QAT-MLX-4bit --benches aime --limit aime=5
 """
 import argparse
 import sys
@@ -354,8 +354,11 @@ def build_parser():
                     help="on a looped/truncated item, restart the router + re-probe once; "
                          "classify recovered (stale router) vs loop_persisted (genuine quant loop)")
     sp.add_argument("--sampling-profile", dest="sampling_profile",
-                    choices=model_params.profile_names(), default="production",
-                    help="production = daily-driver opencode.json config (default); "
+                    choices=model_params.profile_names(), required=True,
+                    help="REQUIRED (O36): the old default `production` has drifted from what we "
+                         "ship and silently measured the wrong serving path. deployed = registry "
+                         "generation_defaults, the profile for ALL new axes; production = the "
+                         "frozen legacy table (old rows only); "
                          "official = each family's published recommended sampling (quality eval); "
                          "coding = converging sampling + a thinking_budget large enough to not "
                          "truncate hard-problem reasoning")

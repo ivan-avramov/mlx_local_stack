@@ -160,3 +160,18 @@ def test_nemotron_does_NOT_fall_through_to_gemma_sampling():
     # Budget matches both winners so `compare` will pair it rather than refuse.
     assert (p["max_tokens"], p["thinking_budget"]) == (102400, 81920)
     assert p != MP.params_for("gemma-4-31B-it-qat-6bit", "production")
+
+
+def test_generate_REFUSES_to_run_without_an_explicit_sampling_profile():
+    # O36: `generate` used to DEFAULT to the retired `production` profile, so an
+    # omitted flag silently measured a config we no longer ship. The flag is now
+    # required; the rule "every generate carries --sampling-profile explicitly"
+    # is enforced at the parser, not by memory.
+    import run as run_mod
+    p = run_mod.build_parser()
+    import pytest as _pytest
+    with _pytest.raises(SystemExit):
+        p.parse_args(["generate", "--benches", "ifeval"])
+    args = p.parse_args(["generate", "--benches", "ifeval",
+                         "--sampling-profile", "deployed"])
+    assert args.sampling_profile == "deployed"
