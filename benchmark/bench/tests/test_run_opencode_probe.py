@@ -345,3 +345,16 @@ def test_unsupported_lang_exits_with_clear_message(monkeypatch):
     assert raised
     assert "cobol" in msg
     assert "unsupported" in msg
+
+
+def test_scrub_pii_replaces_home_and_workdir(monkeypatch):
+    # The repo is PUBLIC: rows must not carry absolute home paths (the pre-commit
+    # piicheck rejects them — M3's first commit attempt was blocked by exactly this).
+    monkeypatch.setenv("STACK_WORKDIR", "/Users/someone/ws/mlx_local_stack_workdir")  # allow-pii-pattern
+    monkeypatch.setattr(P.os.path, "expanduser", lambda p: "/Users/someone" if p == "~" else p)  # allow-pii-pattern
+    raw = ("Read /Users/someone/ws/mlx_local_stack_workdir/scratch/octmp/oc-x/y failed; "  # allow-pii-pattern
+           "also /Users/someone/other/path")  # allow-pii-pattern
+    out = P._scrub_pii(raw)
+    assert "/Users/someone" not in out
+    assert "$STACK_WORKDIR/scratch/octmp/oc-x/y" in out
+    assert "$HOME/other/path" in out

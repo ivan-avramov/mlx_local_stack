@@ -87,6 +87,19 @@ def _polyglot_sha(root: Path) -> str | None:
         return None
 
 
+def _scrub_pii(s: str) -> str:
+    # The repo is PUBLIC: persisted rows must not carry absolute home paths. opencode's
+    # transcript echoes tool-call paths under the scratch workdir, so scrub the workdir
+    # first (keeps the more specific placeholder), then any remaining home prefix.
+    workdir = os.environ.get("STACK_WORKDIR")
+    if workdir:
+        s = s.replace(workdir, "$STACK_WORKDIR")
+    home = os.path.expanduser("~")
+    if home and home != "~":
+        s = s.replace(home, "$HOME")
+    return s
+
+
 @contextmanager
 def _scratch_dir(name: str):
     # macOS tempdirs live under /var -> /private/var; opencode registers the --dir project
@@ -472,7 +485,7 @@ def main() -> int:
                 "gate_effective_bound_s": round(gate_result.elapsed_s, 1),
                 "note": "FIRST-ATTEMPT only — not comparable to aider `final`, which allows a "
                         "second test-informed attempt",
-                "grade_tail": tail[-300:], "log_tail": log[-500:],
+                "grade_tail": _scrub_pii(tail[-300:]), "log_tail": _scrub_pii(log[-500:]),
             }
             with out.open("a") as f:
                 f.write(json.dumps(row) + "\n")
