@@ -73,6 +73,45 @@ from . import paths
 DEFAULT_MAX_JOBS = 200
 DEFAULT_POLL_INTERVAL = 30
 
+# AGENTS.md: "NO JOB AT n>=40 ENTERS THE QUEUE WITHOUT A 5-ITEM PILOT, AND SIZING COMES FROM
+# THE PILOT'S MEAN INCLUDING RUNAWAYS." Cost estimates were optimistically wrong four times;
+# on these benchmarks the tail IS the measurement. The gate is mechanical: a large generation
+# entry must carry a "pilot" field recording the pilot-derived sizing, or it is refused.
+PILOT_GATE_N = 40
+_GENERATIONISH = ("generate", "run_opencode_probe")
+
+
+def _estimated_n(cmd: str):
+    """Estimated item count for a GENERATION command; None = not a generation job (ungated).
+
+    Grading/archival/etc. never spend model time, so only commands that generate are gated.
+    A generation command with no limiting flag is a full bench -> treated as large.
+    """
+    if not any(tok in cmd for tok in _GENERATIONISH):
+        return None
+    if "generate" in cmd and "run.py" not in cmd and "run_opencode_probe" not in cmd:
+        return None  # some other tool's "generate"
+    for flag in ("--ids", "--items"):
+        m = re.search(re.escape(flag) + r"\s+(\S+)", cmd)
+        if m:
+            return len(m.group(1).split(","))
+    m = re.search(r"--limit\s+(\S+)", cmd)
+    if m:
+        nums = re.findall(r"=(\d+)", m.group(1))
+        if nums:
+            return sum(int(x) for x in nums)
+    return 10**6  # unlimited full-bench
+
+
+def _pilot_refusal(entry: dict):
+    """Refusal note if the entry is a large generation job without recorded pilot sizing."""
+    n = _estimated_n(entry.get("cmd") or "")
+    if n is not None and n >= PILOT_GATE_N and not entry.get("pilot"):
+        return (f"REFUSED by pilot gate: estimated n={min(n, 10**6)} >= {PILOT_GATE_N} and the "
+                "entry carries no 'pilot' field. Run a 5-item pilot, size from its MEAN "
+                "including runaways, and record that in a 'pilot' field on this entry.")
+    return None
+
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
@@ -367,6 +406,16 @@ def run(queue_path, *, runner=None, max_jobs: int = DEFAULT_MAX_JOBS, log=print,
                 _save(queue_path, entries)
             log(f"[workqueue] SKIP {name!r}: no 'cmd'")
             continue                            # malformed != crash the queue
+        refusal = _pilot_refusal(entry)
+        if refusal:
+            if state_path:
+                st[name] = {"state": "failed", "note": refusal, "finished_at": _now()}
+                _save_state(state_path, st)
+            else:
+                entry.update(state="failed", note=refusal, finished_at=_now())
+                _save(queue_path, entries)
+            log(f"[workqueue] REFUSE {name!r}: {refusal}")
+            continue                            # a refusal never stops the queue
         jobfile = None
         if logdir:
             jobfile = logdir / f"{_safe_name(name)}.joblog"

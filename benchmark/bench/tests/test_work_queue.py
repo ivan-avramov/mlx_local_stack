@@ -652,3 +652,47 @@ def test_cli_aggregate_flag_writes_current_md_without_running_any_jobs(tmp_path,
     assert rc == 0
     assert ran == [], "--aggregate must not run any queued job"
     assert (status_dir / "current.md").exists()
+
+
+# --- pilot gate (AGENTS.md: no job at n>=40 enters the queue without a 5-item pilot) ---
+
+def test_pilot_gate_estimates_n_from_cmd_forms():
+    est = workqueue._estimated_n
+    assert est("python run.py grade --benches ifeval") is None          # grading: ungated
+    assert est("echo hello") is None                                    # non-generation: ungated
+    assert est("run.py generate --sampling-profile deployed --ids a,b,c") == 3
+    assert est("run_opencode_probe.py --model M --items " + ",".join(f"i{k}" for k in range(22))) == 22
+    assert est("run.py generate --sampling-profile deployed --limit aime=20,gpqa=15") == 35
+    # no limiting flag at all = full bench = large
+    assert est("run.py generate --sampling-profile deployed --benches ifeval") >= 40
+
+
+def test_large_generation_entry_without_pilot_is_refused_not_run(tmp_path):
+    ran = []
+    q = _q(tmp_path, [
+        {"name": "big", "cmd": "run.py generate --sampling-profile deployed --benches ifeval"},
+        {"name": "after", "cmd": "true"},
+    ])
+    workqueue.run(q, runner=lambda cmd: ran.append(cmd) or 0)
+    entries = json.loads(q.read_text())
+    assert entries[0]["state"] == "failed"
+    assert "pilot" in entries[0]["note"]
+    assert ran == ["true"]                       # the queue moved on (a refusal never stops it)
+
+
+def test_large_generation_entry_WITH_pilot_note_runs(tmp_path):
+    ran = []
+    q = _q(tmp_path, [{
+        "name": "big", "cmd": "run.py generate --sampling-profile deployed --benches ifeval",
+        "pilot": "5-item pilot 2026-08-23: mean 210s incl. runaways -> ~31h full bench",
+    }])
+    workqueue.run(q, runner=lambda cmd: ran.append(cmd) or 0)
+    assert json.loads(q.read_text())[0]["state"] == "done"
+
+
+def test_small_generation_entry_needs_no_pilot(tmp_path):
+    ran = []
+    q = _q(tmp_path, [{"name": "smoke",
+                       "cmd": "run.py generate --sampling-profile deployed --ids a,b,c"}])
+    workqueue.run(q, runner=lambda cmd: ran.append(cmd) or 0)
+    assert json.loads(q.read_text())[0]["state"] == "done"
