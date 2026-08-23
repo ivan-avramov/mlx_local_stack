@@ -78,7 +78,7 @@ the shipped 262144. The cap is an external ceiling: every row that CONVERGED und
 resolved thinking budget is cap-invariant and is marked **promoted-to-shipped-cap**; only
 DNF/truncated rows need re-runs at 262144 (queued).
 
-### C — NO recommendation is supported by the evidence
+### C (SUPERSEDED 2026-08-23 by the PROVISIONAL picks above — kept for the instrumentation reasoning, which still holds) — NO recommendation is supported by the evidence
 
 Provisional lean only: `Ornith-1.0-35B-mlx-uniform-4bit` for interactive feel,
 `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` for reasoning-heavy sessions. **C is blocked on
