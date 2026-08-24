@@ -63,7 +63,15 @@ prompts over HTTP, old vs grafted) FAILED and was diagnosed as **cross-restart
 nondeterminism of the serving path** — a same-artifact control across router restarts also
 diverged (3 distinct outputs for one prompt across 3 sessions). The recorded
 "unseeded requests are byte-identical" fact holds WITHIN a server session only; certification
-therefore moved in-process (logit equality), which is the stronger test anyway. Public: both picks on HF; `caslca/` insurance mirror
+therefore moved in-process (logit equality), which is the stronger test anyway.
+
+**4b same day: `Qwen3.8-27B-mlx-uniform-4bit` + `Qwen3.8-27B-static-mixed-4bit` towers
+restored too** — bf16 grafts from the upstream base (graft chosen over re-conversion: trunk
+identity by FILE COPY beats identity by determinism assumption, at minutes instead of an
+hour). Same two-level certification (shards md5-identical; logits bit-identical), both probe
+SEES, uploaded revs `393413e9` / `be1aa462`, `pipeline_tag` → image-text-to-text.
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` remains architecturally text-only (not
+fixable). Every non-Nemotron model in the registry now serves vision. Public: both picks on HF; `caslca/` insurance mirror
 of `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` uploaded + verified 2026-08-23.
 
 ### B — `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @ tune `deployed`; runner-up `Ornith-1.0-35B-mlx-uniform-4bit` @ `deployed`
