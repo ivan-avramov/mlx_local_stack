@@ -166,6 +166,34 @@ def parse_scores(score_dir: str, model: str, categories=AST_CATEGORIES) -> dict:
     return {"per_category": per_category, "acc": acc, "n": total}
 
 
+def find_poisoned_rows(result_dir: str, model: str) -> dict:
+    """{category: [ids]} of raw result rows whose `result` is an inference-error STRING
+    (`"Error during inference: ..."`) — items that never produced a model answer because
+    the transport failed. Such rows grade as `ast_decoder:decoder_failed`, i.e. as wrong
+    ANSWERS, which is how 152 rows (dead-port window) and 2-per-runaway-episode (600 s
+    client timeout, O41.0) entered scored results in 2026-08-24's incidents. Grading
+    paths call this to REFUSE such trees (see run_bfcl_fc._apply_poison_guard);
+    generation-side, the O41.1 fail-loud handler prevents new ones."""
+    poisoned: dict = {}
+    model_root = os.path.join(result_dir, model)
+    for dirpath, _dirnames, filenames in os.walk(model_root):
+        for fn in sorted(filenames):
+            if not (fn.startswith("BFCL_v4_") and fn.endswith("_result.json")):
+                continue
+            cat = fn[len("BFCL_v4_"):-len("_result.json")]
+            with open(os.path.join(dirpath, fn)) as f:
+                for line in f:
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(row.get("result"), str) and row["result"].startswith(
+                        "Error during inference"
+                    ):
+                        poisoned.setdefault(cat, []).append(row.get("id"))
+    return poisoned
+
+
 def bfcl_available() -> bool:
     return shutil.which("bfcl") is not None
 

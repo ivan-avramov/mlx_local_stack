@@ -27,7 +27,12 @@ import os
 from types import SimpleNamespace
 
 from . import bfcl_handler as H
-from .bfcl_adapter import AST_CATEGORIES, _write_run_ids_file, parse_scores
+from .bfcl_adapter import (
+    AST_CATEGORIES,
+    _write_run_ids_file,
+    find_poisoned_rows,
+    parse_scores,
+)
 
 _DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "..", "bfcl_runs_fc")
 
@@ -54,6 +59,28 @@ def _write_result(out_root: str, result: dict) -> str:
     with open(path, "w") as f:
         json.dump(result, f, indent=2)
     return path
+
+
+def _apply_poison_guard(result: dict, result_dir: str, model: str) -> dict:
+    """O41 grader tripwire: refuse to summarize a tree containing inference-error rows.
+    Those items never reached the model — grading them as wrong answers is how the
+    2026-08-24 contaminations entered scored results. Nulls `acc`, names the ids (they
+    are surgically re-runnable via run_ids), and leaves everything else intact so the
+    per-category detail stays inspectable."""
+    poisoned = find_poisoned_rows(result_dir, model)
+    if not poisoned:
+        return result
+    n_bad = sum(len(v) for v in poisoned.values())
+    return {
+        **result,
+        "acc": None,
+        "poisoned_items": poisoned,
+        "note": (
+            f"REFUSED to grade: {n_bad} result row(s) are inference-error strings — the "
+            f"model was never asked. Re-run these ids via run_ids, then re-score. "
+            f"(O41; ids in poisoned_items)"
+        ),
+    }
 
 
 def main(argv=None) -> int:
@@ -126,6 +153,18 @@ def main(argv=None) -> int:
         generation_main(gen_args)
         evaluation_main([args.model], list(categories), result_dir, score_dir,
                          partial_eval=args.limit is not None)
+    except SystemExit:
+        # O41.1: the handler escalates transport failures as SystemExit (BaseException)
+        # precisely so no `except Exception` — bfcl_eval's or THIS one — can convert
+        # them into gradeable output. Name the situation for the operator and re-raise;
+        # deliberately NO bfcl.json write: a transport failure is not a result.
+        print(
+            f"[bfcl_fc] ABORTED by transport-failure escalation for {args.model} — see "
+            f"the TRANSPORT FAILURE line above. Nothing was graded; root-cause the "
+            f"harness/runner/server, then re-run the affected categories.",
+            flush=True,
+        )
+        raise
     except Exception as e:  # noqa: BLE001 — never crash the batch; degrade with a note
         note = f"bfcl_fc run raised: {type(e).__name__}: {str(e)[:200]}"
         print(f"[bfcl_fc] {note}", flush=True)
@@ -136,6 +175,7 @@ def main(argv=None) -> int:
 
     result = {"model": args.model, "axis": "tool_calling", "categories": list(categories),
               **parse_scores(score_dir, args.model, categories), "skipped": False}
+    result = _apply_poison_guard(result, result_dir, args.model)
     print(f"[bfcl_fc] {args.model} acc={result.get('acc')} n={result.get('n')} "
           f"per_category={result.get('per_category')}", flush=True)
     _write_result(out_root, result)

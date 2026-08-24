@@ -90,6 +90,22 @@ import sys
 _FALLBACK_MAX_TOKENS = 16384
 _FALLBACK_THINKING_BUDGET = 16384
 
+# O41.0 (operator-approved 2026-08-24): the client timeout is DERIVED from the deployed
+# profile, never inherited from the OpenAI SDK default (600 s read / 2 retries). Measured:
+# a full-budget generation takes 20.7 min on Ornith-1.0-35B-mlx-uniform-4bit and a
+# projected 66.3 min on Qwen3.6-27B-Opus-Distill-OptiQ-4bit (81920 tok at 20.6 tok/s) —
+# so the SDK default converts EVERY legitimate budget-hit into a timeout row that grades
+# as a wrong answer, while the worker (which does not cancel abandoned requests) grinds
+# ~95 min of discarded attempts per item and starves its neighbours (lab notebook
+# 2026-08-24). Rule C5: derive the timeout from the decode rate.
+#   floor = slowest measured campaign decode rate (20.6 tok/s) with ~2x margin;
+#   headroom covers prefill + router overhead. MLX_BFCL_TIMEOUT_S overrides (operator
+#   escape hatch); max_retries is ALWAYS 0 — a deterministic runaway retried cannot
+#   succeed and costs another full budget.
+_FLOOR_DECODE_TOK_S = 12.0
+_TIMEOUT_HEADROOM_S = 300.0
+_TRANSPORT_FAILURE_EXIT = 86  # distinct exit code: transport failure, NOT a model result
+
 _HANDLER_CLASS_CACHE = None
 
 
@@ -145,6 +161,27 @@ def _handler_class():
             # decision. Override unconditionally so a forgotten/wrong --temperature can
             # never silently under-measure this model at near-greedy.
             self.temperature = self._sampling.get("temperature", temperature)
+            # O41.0: the parent built self.client BEFORE self._sampling existed, so it
+            # carries a fallback-derived timeout. Rebuild it now that the real deployed
+            # profile is loaded — the timeout must cover THIS model's worst legitimate
+            # generation, not a guess.
+            from openai import OpenAI
+            self.client = OpenAI(**self._build_client_kwargs())
+
+        def _derive_timeout_s(self) -> float:
+            """Client timeout covering the worst LEGITIMATE generation: max_tokens (the
+            hard generation cap — thinking_budget only truncates thinking; the answer
+            continues after it) at the floor decode rate, plus fixed headroom. Derived
+            per O41.0; see the constants block for the measured incident behind it."""
+            env = os.environ.get("MLX_BFCL_TIMEOUT_S")
+            if env:
+                return float(env)
+            sampling = getattr(self, "_sampling", {})  # absent during parent __init__
+            gen_cap = max(
+                int(sampling.get("max_tokens") or _FALLBACK_MAX_TOKENS),
+                int(sampling.get("thinking_budget") or _FALLBACK_THINKING_BUDGET),
+            )
+            return gen_cap / _FLOOR_DECODE_TOK_S + _TIMEOUT_HEADROOM_S
 
         def _build_client_kwargs(self):
             """Point at OUR router via OUR OWN env vars (MLX_BFCL_*), never OPENAI_*  —
@@ -154,7 +191,14 @@ def _handler_class():
             port = os.environ.get("MLX_BFCL_PORT", "8000")
             base_url = os.environ.get("MLX_BFCL_BASE_URL") or f"http://{host}:{port}/v1"
             api_key = os.environ.get("MLX_BFCL_API_KEY", "not-needed-mlx-serve")
-            return {"base_url": base_url, "api_key": api_key}
+            # O41.0: derived timeout + zero retries, never the SDK defaults (600 s / 2
+            # retries — shorter than a legitimate full-budget generation on every pick).
+            return {
+                "base_url": base_url,
+                "api_key": api_key,
+                "timeout": self._derive_timeout_s(),
+                "max_retries": 0,
+            }
 
         def _max_tokens(self) -> int:
             mt = self._sampling.get("max_tokens")
@@ -203,6 +247,31 @@ def _handler_class():
                 kwargs["tools"] = tools      # RAW OpenAI tool schema — server applies its own template
 
             return self.generate_with_backoff(**kwargs)
+
+        def generate_with_backoff(self, **kwargs):
+            """O41.1 (operator directive 2026-08-24): a transport/API failure is a
+            HARNESS-OR-RUNNER problem to root-cause, never a model answer to grade.
+            bfcl_eval's `multi_threaded_inference` wraps `handler.inference` in
+            `except Exception` and writes the exception text INTO THE RESULT ROW, where
+            it grades as `ast_decoder:decoder_failed` — indistinguishable from a real
+            model failure (this poisoned 152 rows in one incident and 2-per-episode in
+            another). SystemExit is a BaseException, so it sails past that catch, is
+            re-raised in the main scheduler loop by `future.result()`, and aborts the
+            run with a named cause (guarded by
+            test_bfcl_failure_robustness.py::test_bfcl_eval_generation_loop_cannot_swallow_the_escalation)."""
+            import openai
+            try:
+                return super().generate_with_backoff(**kwargs)
+            except openai.APIError as e:
+                print(
+                    f"[bfcl_handler] TRANSPORT FAILURE — ESCALATING, NOT GRADING: "
+                    f"{type(e).__name__}: {e} (model={self.model_name}). This is a "
+                    f"harness/runner/server problem; the category is ABORTED so the "
+                    f"failure cannot enter a result row. Root-cause before re-running.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                raise SystemExit(_TRANSPORT_FAILURE_EXIT) from e
 
     _HANDLER_CLASS_CACHE = MlxServeFCHandler
     return MlxServeFCHandler
