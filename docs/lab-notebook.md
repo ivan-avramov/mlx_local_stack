@@ -2385,7 +2385,12 @@ quant recipe moves the meander boundary at n=50 within-family (cf. the parked
 The vs-incumbent verdict is REFUSED (incumbent coding rows at cap 131072, clamp-bindingness
 unprovable) → fresh `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` arms at cap 262144 queued (M5 scope).
 
-**M6a CLOSED: STOP.** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ON/OFF = 23.0/23.2 tok/s
+**M6a CLOSED: STOP.** ⚠️ **CORRECTION 2026-08-23 (operator challenge): this close is VOID —
+instrument failure. The arms never ran MTP** (`--draft-kind mtp` without `--draft-model`
+loads no drafter; see the 2026-08-23 "M6a instrument failure" entry: engaged MTP measures
+~2× at ~87% acceptance). The engagement "proof" below relied on cross-restart
+byte-determinism, refuted the same day it was cited here. Original text kept for the record:
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ON/OFF = 23.0/23.2 tok/s
 (**0.99×**). Engagement PROVEN by textual divergence (ON≠OFF text for identical unseeded
 requests — deterministic server, so a silent fallback would be byte-identical). The
 `Qwen3.8-27B-OptiQ-4.5bpw-mixed` probe was INCONCLUSIVE-by-meander (all 6 requests >1800s at
@@ -2408,3 +2413,242 @@ the rows file (docker runs only when stale/absent), and compare gained `Model@tu
 (it could not read tune-stamped rows at all — every Stage-2 verdict was unaddressable).
 Operational lessons re-paid: never overlap two grades of one arm (container-name collision is
 a guard, not a bug); a watcher with no timeout is not a watcher (the hung container sat 3h).
+
+## 2026-08-23 — M6a instrument failure found by an operator challenge: no MTP arm ever ran MTP; engaged head measures ~2×
+
+The operator challenged the accumulating ~1.0× MTP readings against the online consensus
+("doubt the tests"). The challenge was right, three layers deep, all verified in fork code
+(`server/generation.py` @ 0be496bf):
+
+1. **`--draft-kind mtp` without `--draft-model` loads NOTHING** (`:1481`: `if
+   draft_model_path: … elif draft_kind == "suffix": …` — mtp falls through both) and serves
+   plain decode. The `mtp_file` sidecar auto-discovery exists only in the SPLIT tooling
+   (`speculative/drafters/mtp_split.py`), never in the server. Every registry-flip MTP arm —
+   the 2026-08-18 "M6a CLOSED: STOP" (0.99×), today's pre-correction re-probes (0.97×,
+   1.00×) — was plain-vs-plain. Physical confirmation: worker RSS deltas ±~100 MB where the
+   drafter weighs 314 MB; with `--draft-model` the delta is +325 MB.
+2. **`thinking_budget` + a loaded drafter = hard 500** (guard at `:1595`) — the deployed
+   profile always carries a budget, so the corrected registry-level probe went 3/3 HTTP 500.
+3. **The session-cached path dispatches only `suffix`** (`:1805`), and `_resolve_session`'s
+   anonymous hash-chain routing (default on) gives essentially every chat request a
+   `prompt_cache_state` → the cached path. MTP lives only in the continuous-batching path.
+   Budget-free requests through the DEFAULT path still decode plain (counters null).
+
+The 08-18 close's "engagement PROVEN by textual divergence" was already void: it assumed
+cross-restart byte-determinism, which this campaign refuted the same day the correction
+landed (unseeded determinism holds within a server session only). The F2 "missing-sidecar
+fallback" reading of the Ornith-1.0-35B-mlx-uniform-4bit negative control is corrected too: there is no
+missing-sidecar case — NO model ever loaded a head via the registry flip.
+
+**Engaged-head diagnostic** (bare worker, `--cache-session-max 0`, `--draft-model` at the
+extracted drafter dirs, budget-free requests, deployed KV flags + temps, 2 coding items,
+max_tokens 6000, paired same-path OFF): <!-- allow-shorthand -->
+
+| model | OFF tok/s | ON tok/s | ratio | acceptance |
+|---|---|---|---|---|
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 24.8 / 26.0 | 51.1 / 49.5 | **2.06× / 1.90×** | 87.5% / 86.8% |
+| `Qwen3.8-27B-mlx-uniform-4bit` | 31.6 / 31.4 | 50.1 / 45.8 | **1.58× / 1.46×** | 75.8% / 68.3% |
+
+Counters from the fork's own timings block (`draft_rounds`/`draft_n`/`draft_n_accepted`,
+k=2/round). M6a GATE: **GO** on both — but deployment needs the three fork gaps closed
+(O40). Measurement stays draft-OFF regardless; M6b's ±5pp quality OFAT follows the fork
+work, not precedes it.
+
+**Side finding:** the batched path is faster than the cached inline path with draft OFF —
++22% for `Qwen3.8-27B-mlx-uniform-4bit` (31.5 vs 24.4 tok/s), +9% for
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (25.4 vs 23.0). The session cache buys multi-turn
+prefill reuse at a per-token decode cost on this fork revision — worth a targeted look
+when the O40 work opens that file anyway.
+
+**Instrument lesson re-paid**: "validate an instrument against a known-positive before
+trusting a zero" applies to RATIOS TOO — a speculative A/B needs an engagement tripwire
+(RSS delta ≈ drafter size + the fork's acceptance counters nonzero), not just a cmdline
+flag check. `m1/mtp_probe.py` gained `--draft-model` (verified at the worker cmdline) this
+session; its next revision should refuse to report a ratio when counters read null/zero.
+
+**NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit leg (M6c-2): BLOCKED one level deeper.** With the m14 extracted sidecar +
+`--draft-model`, the drafter LOADS ("Drafter ready") but the first generation 500s with
+`LanguageModel does not implement rollback_speculative_cache` — the nemotron_h TARGET model
+lacks the speculative rollback hook (present in qwen3_5, gemma4, deepseek_v4 + 5 others).
+Mechanism: hybrid Mamba/attention — SSM state cannot be trimmed like a KV cache, so rollback
+needs state snapshots. The 2026-08-22 drafter merge was drafter-side only. Folded into O40's
+fork-work scope; no acceptance number is obtainable for
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` until that lands.
+
+**Operator caught the box swapping during the first M18 BFCL pilot (~20:30):** worker at
+55.6GB, swapouts ~1.9M. Mechanism: the AGENTS.md lean-router recipe did not carry
+`MLX_VLM_CACHE_SESSION_MAX=2` (it lived only in `runserver.sh:110`), so the worker ran the
+fork default of 8 retained sessions — and BFCL's anonymous SINGLE-TURN items never match the
+hash-chain (≥2-turn prefix), so every item minted a fresh session with a full-cap ~4-5GB TQ4
+KV prealloc: 15GB weights + ~8×5GB = the observed 55GB. Fix: recipe line in AGENTS.md now
+carries the env var as MANDATORY; router restarted with it; pilot re-run. The M6a
+engaged-head diagnostics are unaffected (bare workers ran `--cache-session-max 0`;
+`m1/mtp_probe.py` sets session_max 2 in its own env). Note the standing prealloc-equals-cap
+rule interacts multiplicatively with SESSION COUNT — any anonymous-single-turn workload
+against a router without the bound will reproduce this.
+
+## 2026-08-24 — M18 BFCL: the worker WEDGED mid-run, and the progress ticker could not see it
+
+At ~22:55 (3.5 h into model 1) the worker stopped completing requests. It stayed alive,
+resident, 18 GB RSS, ~26% CPU — no crash, no 500s, no log error. The router kept accepting
+POSTs; BFCL's client timed out and retried on a 10-minute cadence (POSTs at 23:45:21,
+23:55:21, 00:05:21, all unanswered), so **75 minutes produced zero rows** while every
+liveness signal said "healthy". Cleared exactly as AGENTS.md prescribes for the 500s variant:
+kill worker + router BY PID, restart router → first request answered 4 min later. This is a
+new variant of that pitfall: **a wedge presents as HANGS, not 500s.**
+
+**Instrument failure, second one today, same root shape.** The 10-min ticker counted rows and
+DID show the stall (552→553→553→554), but the assessment explained it away as "item mix"
+using router log lines that were **already an hour stale** — the lines were real, their
+TIMESTAMPS were never checked. The campaign already has the rule for this ("never report from
+a run prefix; verify elapsed time from `ps -o etime`"); the missing piece is that a progress
+monitor must assert FRESHNESS, not just count. Corrective for the next run: alarm on
+"no `metrics … 200` line newer than N minutes", which distinguishes healthy-slow from wedged;
+a row counter alone cannot.
+
+**Cost accounting:** ~75 min of wedge + the 154-row `parallel_multiple` partial re-done on
+relaunch. Categories `parallel` (200) and `multiple` (200) survived on disk and were NOT
+regenerated.
+
+**Also corrected: the M18 sizing.** The 5-item pilot (mean ~8 s/item) projected ~2.2 h/model.
+Reality on model 1: 554 rows in 3.5 h (~23 s/item), because the pilot drew the FIRST 5 items
+of each category and the multi-function categories run 27–104 s/item with 546–2252-token
+completions. The 🚨 pilot rule was followed; the pilot was still unrepresentative because it
+was not a RANDOM draw. Revised: ~5 h/model, ~15 h for the three-model block.
+
+## 2026-08-24 — the wedge left a SECOND wound: 152 BFCL items scored as wrong answers the model never saw
+
+The 00:14 router restart that cleared the wedge (entry above) did not stop the driver. `bench.run_bfcl_fc`
+had been running `parallel_multiple` for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` since 00:06:24, and for the
+~8 minutes the port was dead it kept issuing requests and writing `"Error during inference: Connection
+error."` into `BFCL_v4_parallel_multiple_result.json` **as the model's response**. The evaluator scored
+those strings as `ast_decoder:decoder_failed`.
+
+Found during the mechanical 4-category re-score (which was itself queued because the detached relaunch
+summarized only 2 of 4 categories). The re-score produced:
+
+| category | acc | note |
+|---|---|---|
+| multiple | 0.970 | clean |
+| simple_python | 0.9475 | clean |
+| parallel | 0.895 | clean |
+| parallel_multiple | **0.215** | **152/200 poisoned** |
+
+A model at 0.970 on `multiple` and 0.895 on `parallel` does not collapse to 0.215 on their combination —
+AGENTS.md's "suspect OUR HARNESS FIRST" fired correctly. The error-type histogram was the tell: 152
+`ast_decoder:decoder_failed` vs 5 genuine checker failures. Arithmetic closes exactly: 152 poisoned + 43
+correct + 5 real failures = 200. **Over the 48 items that reached the model, `parallel_multiple` is
+43/48 = 0.896 — indistinguishable from `parallel`'s 0.895.** The 0.215 was an artifact end to end.
+
+**Re-grade cannot recover this** (`docs/regrade-vs-rerun-guideline.md`): there is no model output for the
+152 rows. The category needs a 200-item RE-RUN (~1 h, model must be resident again). Queued behind the
+running 3-model script rather than interrupting `Ornith-1.0-35B-mlx-uniform-4bit` mid-flight — the
+correction costs the same either way and interrupting adds a swap plus risk to a clean run.
+
+`bfcl.json` was rewritten with `acc: null` + `contaminated: true` and the per-category detail preserved
+(`reached_model`, `poisoned`, `accuracy_over_reached_only`), so no reader can pick up the contaminated
+0.795 four-category headline. The contaminated file is kept as `bfcl.contaminated-4cat.json.bak`.
+Provisional clean-item 4-category figure: 795/848 = **0.9375**.
+
+**THIRD instrument failure of the same shape in two sessions** — the MTP flag that landed but loaded no
+drafter; the row counter that watched a wedge and explained it away; now a driver that cannot tell "the
+model answered wrongly" from "the model was never asked". The standing rule now reads: assert freshness,
+engagement AND provenance-of-answer; never let a transport error become a datum. Raised as **O41**.
+Mitigation live in the M18 watcher: inference-error rows counted every tick, NEW ones alarm.
+
+## 2026-08-24 — the BFCL client timeout (600 s) is SHORTER than a legitimate full-budget generation on both pick families
+
+Follow-on from the poisoning entry above, and the more important half of it. At 02:21:25 the
+`Ornith-1.0-35B-mlx-uniform-4bit` run went silent for 13 min and the watcher raised WEDGE SUSPECTED.
+It was NOT a wedge: the router answered `/v1/models` in 9 ms and the worker was pinned at 94-96% CPU
+with RSS growing 19.4 -> 20.3 GB. The bound settled it before any kill decision — `thinking_budget:
+81920` at the measured ~66 tok/s is a ~20.7 min generation, and the item was 15 min in.
+
+It resolved at 02:42:10 exactly as predicted: **1,245,113 ms, completion=82008 tokens, 65.9 tok/s** —
+a clean budget-hit DNF. **The client never saw it.** `MlxServeFCHandler._build_client_kwargs` sets only
+`base_url`/`api_key`, so the OpenAI SDK defaults govern: read timeout 600 s, `max_retries=2` (verified
+in openai 2.43.0). POSTs landed at 02:21:25 / 02:31:25 / 02:41:26 — precisely 600 s apart — and the
+worker does not cancel on client disconnect, so it ground all three abandoned attempts.
+
+| model | thinking_budget ÷ measured tok/s | vs 600 s |
+|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 81920 ÷ 65.9 = **20.7 min** | guaranteed timeout |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 81920 ÷ 20.6 = **66.3 min** | guaranteed timeout |
+
+**On both pick families, a budget-hit item cannot be measured on this path at all** — it is structurally
+converted into `"Error during inference"`, scored as `ast_decoder:decoder_failed`, and counted as a
+capability failure. Cost per runaway: ~62 min of worker time (3 × 20.7) entirely discarded, one poisoned
+row, and every subsequent item queued behind abandoned work.
+
+The campaign requires the runaway tax as one of the FOUR ranking numbers and treats a budget-hit as a
+FAIL signal to INVESTIGATE. This path was deleting exactly that evidence and relabelling it a connection
+error. Rule C5 ("derive the request timeout from the decode rate") exists and was simply never applied
+here — the timeout was inherited, not chosen.
+
+Root fix proposed in **O41.0**: explicit timeout from `budget ÷ tok/s` with headroom, and `max_retries=0`
+(retrying a deterministic runaway cannot succeed and costs another full budget). NOT applied — the run is
+live and AGENTS.md forbids changing config mid-run; held for operator approval.
+
+Watcher gained the wedge/runaway discriminator (worker %CPU + RSS trend) this session: silent+idle =>
+wedge, kill by PID; silent+busy => runaway, do NOT kill. One "silent" reading, two opposite actions.
+
+### Resolution 03:24 — the cascade destroys HEALTHY items, and the damage is measured
+
+The open question from the entry above ("does this poison only runaway items, or innocent ones too?")
+resolved definitively when the backlog drained. Four completions landed within 25 s of each other at
+03:23:45-03:24:09, all starved behind the same runaway:
+
+| ms | tok/s | completion | what it was |
+|---|---|---|---|
+| 2,539,524 | 32.3 | 82008 | item 281 attempt #3 — the true runaway |
+| 1,947,530 | 0.3 | **585** | item 282 (`parallel_81`) attempt #1 |
+| 1,355,104 | 0.4 | **585** | item 282 attempt #2 |
+| 762,356 | 0.8 | **585** | item 282 attempt #3 |
+
+**`parallel_81` is an ordinary item — 585 completion tokens, ~8.1 s of work at the normal 72 tok/s.**
+It took 32.5 minutes of wall clock purely because it was starved behind the runaway, and the 0.3 tok/s
+figure is the starvation made visible. The model produced the SAME 585-token answer on all three
+attempts; the harness discarded all three and wrote `"Error during inference: Request timed out."` into
+the result row, where it scores as a WRONG ANSWER. **Accuracy is corrupted, not just coverage.**
+
+Incident cost: **162.3 min of worker occupancy for 2 items**, every attempt discarded, both recorded as
+failures — one of which the model answered correctly three times over. Wall clock 02:21:25 -> 03:24:30
+(~63 min; concurrency compressed it). Normal service resumed immediately after the drain (72-75 tok/s,
+4-15 s items), so the cascade IS self-limiting — it ends when the runaway's abandoned attempts finish.
+
+**Magnitude, honestly bounded:** at the observed 0.35% runaway rate, the remaining 910 items project to
+~3 more events, ~200 min of extra wall clock, and ~6 more poisoned rows of which roughly half are
+innocent. Left uncorrected that is **~0.32 pp on a 1000-item score — well inside the axis MDE**, so the
+ranking consequence is negligible; the real costs are the wasted hours and the destroyed DNF evidence.
+The poisoned rows are individually identifiable by id and surgically re-runnable via `run_ids`, so the
+innocent ones are exactly recoverable once O41.0 lands.
+
+## 2026-08-24 — M18 BFCL native-FC: all three models complete (generation); poisoned ids pending surgical re-run
+
+Run finished 10:27:42 (started 2026-08-23 ~21:00; wall ~13.5 h against the pilot's ~6 h — the
+first-items pilot bias, now an amended AGENTS.md rule). Scores as written by the harness, BEFORE
+the surgical re-runs of the 9 poisoned ids:
+
+| category | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | `Ornith-1.0-35B-mlx-uniform-4bit` | `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` |
+|---|---|---|---|
+| simple_python | 0.9475 | 0.935 | 0.8875 |
+| multiple | 0.970 | 0.945 | 0.895 |
+| parallel | 0.895 | 0.880 | 0.840 |
+| parallel_multiple | 0.896 (48 surviving items) | 0.845 | 0.785 |
+| **overall** | **0.9375 provisional (848 clean)** | **0.908 (bound 0.908–0.912)** | **0.859 (bound 0.859–0.860)** |
+
+- `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: `parallel_multiple` needs its full 200-item re-run
+  (152 rows were dead-port poisoned; `bfcl.json` refuses with acc null until then). Leads every
+  category on the current evidence, but the gap to `Ornith-1.0-35B-mlx-uniform-4bit` (~2.7 pp)
+  is INSIDE the axis MDE — inconclusive until the re-run makes the comparison apples-to-apples.
+- **Runaway tax (4th ranking number), measured per model**: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+  0/1000; `Ornith-1.0-35B-mlx-uniform-4bit` 4/1000 (all in the two parallel categories, each
+  taking one healthy neighbour with it under the pre-fix 600 s timeout);
+  `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 1/1000 (`parallel_169`, 11.7 min — missed
+  surviving the old timeout by ~100 s). At ~124 tok/s decode it pays ~2× less wall per runaway
+  than the dense 27B/35B picks. <!-- allow-shorthand -->
+- Poisoned-id ledger (surgical re-run, then re-score): `Ornith-1.0-35B-mlx-uniform-4bit`
+  `parallel_80/81`, `parallel_104/105`, `parallel_multiple_70/71`, `parallel_multiple_91/92`;
+  `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` `parallel_169`.
+- The O41 fix (derived timeout, retries=0, transport failures escalate, grader refuses poison)
+  landed before the re-runs — commit `ede38e6`; suite 1197 passed / 0 failed.

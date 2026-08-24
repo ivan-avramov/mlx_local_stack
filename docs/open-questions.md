@@ -15,7 +15,90 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-### O39 — OPEN 2026-08-23 — does the M3 inversion trigger the M9 multi-language extension now?
+### O41 — DECIDED 2026-08-24 (operator): FIX APPROVED AND LANDED (`ede38e6`) — derived timeout + retries=0 + fail-loud escalation + grader poison guard. Original entry kept below.
+
+`bench.run_bfcl_fc` inherits bfcl_eval's generation loop, which catches a failed request and
+writes the exception text into the result row as if it were the model's answer
+(`"Error during inference: Connection error."`). The evaluator then scores that string as
+`ast_decoder:decoder_failed` — INDISTINGUISHABLE from a genuine model failure in every
+downstream number.
+
+Measured cost, this session: model 1's `parallel_multiple` category ran from 00:06:24 against
+the port that was dead until the 00:14 router restart. 152 of 200 items were burned into
+error rows in that window. The category scored **0.215** — and would have entered the M18
+record as a capability finding — against 0.970 on `multiple` and 0.895 on `parallel`. Over the
+48 items that actually reached the model it is **43/48 = 0.896**, i.e. exactly in line with
+`parallel`. Re-grade cannot recover the 152: there is no model output to re-score.
+
+**ROOT CAUSE FOUND 02:45 — the client timeout is shorter than a LEGITIMATE generation.**
+`MlxServeFCHandler._build_client_kwargs` returns only `base_url`/`api_key`, so the OpenAI SDK
+defaults apply: **read timeout 600 s, max_retries 2** (verified, openai 2.43.0:
+`Timeout(connect=5.0, read=600, write=600, pool=600)`, `DEFAULT_MAX_RETRIES=2`). Campaign rule
+C5 ("derive the request timeout from the decode rate") was never applied on this path.
+
+Against the registry's own `thinking_budget: 81920`, a full-budget generation takes:
+
+| model | budget ÷ measured tok/s | vs 600 s timeout |
+|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 81920 ÷ 65.9 = **20.7 min** | **guaranteed timeout** |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 81920 ÷ 20.6 = **66.3 min** | **guaranteed timeout** |
+
+So on BOTH pick families a budget-hit item can NEVER be measured on this path — it is
+structurally converted into an error row. Observed live on `Ornith-1.0-35B-mlx-uniform-4bit`
+item 281: POSTs at 02:21:25 / 02:31:25 / 02:41:26 (exactly 600 s apart = 1 attempt + 2 SDK
+retries), while the worker — which does NOT cancel on client disconnect — ran attempt #1 to
+completion at 02:42:10: **1,245,113 ms, completion=82008 tokens** (the 81920 budget + preamble),
+delivered 10 minutes after the client had abandoned it. Cost per runaway item: ~62 min of
+worker time, all discarded, plus a poisoned row, plus every following item queued behind the
+abandoned work.
+
+This also means the campaign has been unable to observe its own `nonconv_kinds`/DNF data on
+BFCL: AGENTS.md requires reporting the runaway tax as one of the FOUR numbers, and a
+budget-hit is a FAIL signal to INVESTIGATE — but this path deletes the evidence and calls it a
+connection error.
+
+Two sub-decisions for the operator:
+
+0. **Timeout (NEW, the root fix)**: set an explicit per-model client timeout derived from
+   `thinking_budget ÷ measured tok/s` with headroom (C5's rule), and `max_retries=0` for a
+   deterministic long generation — a retry of a runaway is 20-66 min of pure waste and cannot
+   succeed where the first attempt could not. Recommended YES.
+1. **Harness**: abort the category (or refuse to write the row) on a transport error, instead
+   of persisting the error text as a response? Recommended YES — this is the same defect class
+   as the MTP flag that landed but loaded nothing, and the wedge that a row counter explained
+   away: an instrument that cannot tell "wrong" from "never asked". Interim mitigation is live
+   (the M18 watcher now counts inference-error rows every tick and alarms on NEW ones).
+2. **Sequencing**: the 200-item `parallel_multiple` re-run for
+   `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` costs ~1 h and needs that model resident again.
+   Recommended: APPEND it after the current 3-model script rather than interrupt
+   `Ornith-1.0-35B-mlx-uniform-4bit` mid-flight — the correction costs the same either way,
+   and interrupting adds a model swap plus risk to a clean run.
+
+### O40 — DECIDED 2026-08-24 (operator): GO — fund the fork work. Design plan to be presented before implementation (MTP path has produced silent no-ops twice). Original entry kept below.
+
+The operator's challenge ("online consensus says MTP helps; doubt the tests") was right:
+every prior MTP arm — including the 2026-08-18 "M6a CLOSED: STOP" — was an instrument
+failure (`--draft-kind mtp` without `--draft-model` silently serves plain decode; the
+sidecar auto-discovery exists only in the split tooling, never in the server). With the
+head actually engaged (extracted drafter dir + batched path + no thinking_budget), the
+paired diagnostic measured: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 51.1/49.5 tok/s vs
+24.8/26.0 OFF (**2.06×/1.90×**, acceptance 87.5%/86.8%); `Qwen3.8-27B-mlx-uniform-4bit`
+50.1/45.8 tok/s ON at 75.8%/68.3% acceptance (OFF baseline pending at write time).
+
+Deployment is gated on THREE fork blockers, all verified in code (`server/generation.py`):
+(1) no server-side sidecar discovery → mlx-serve must pass `--draft-model` (registry key
+exists) or the fork learns discovery; F2's fail-loud fix should cover the no-drafter case;
+(2) `thinking_budget` + drafter speculation is a hard 500 (guard at :1595) — our deployed
+profile ALWAYS sets a budget; (3) the session-cached path (which every chat request takes
+by default, and which is load-bearing for multi-turn cost) dispatches only `suffix`; MTP
+lives exclusively in the continuous-batching path. Question: fund the fork integration
+(cached-path MTP dispatch + thinking_budget support), est. payoff ~2× decode on BOTH pick
+families, followed by the M6b ±5pp quality OFAT before any registry flip? Measurement
+stays draft-OFF regardless.
+
+### O39 — DECIDED 2026-08-24 (operator, per session rec): go-language replication FIRST (~40 min/model); M9 only if the inversion replicates. Original entry kept below.
+
+### O39-orig — OPEN 2026-08-23 — does the M3 inversion trigger the M9 multi-language extension now?
 
 M3 (opencode Run A, n=22 python, DIRECTIONAL) inverted the aider-based B direction:
 `Ornith-1.0-35B-mlx-uniform-4bit` 19/22 vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 12/22,
@@ -1078,3 +1161,8 @@ It consumes nothing because it does nothing (see M2). Constraint satisfied, for 
 | C16 | Multi-turn A construct (O5)? | Delegated → **dependent-task sequence**, to keep a mechanical oracle; one realistic feature makes partial credit a judgement call the judge panel cannot yet carry | 2026-08-13 |
 | C17 | `vscode.py` `_generated` (O7)? | Delegated → **verify against the real consumer before changing anything.** A needless change to a working carrier is its own risk | 2026-08-13 |
 | C18 | Judge panel on looped answers (O9)? | Delegated → **HELD** until the panel is reliable ("NOT RELIABLE ENOUGH TO RANK" at v2). Do not spend model time on a comparison whose instrument cannot carry it | 2026-08-13 |
+| C19 | O40: fund the MTP fork work? | **GO** (2026-08-24). Cached-path MTP dispatch + thinking_budget support + fail-loud; design plan before code; M6b quality OFAT follows the fork work | 2026-08-24 |
+| C20 | O41: BFCL harness failure robustness | **Approved + landed** (`ede38e6`): client timeout derived from decode rate (C5), max_retries=0, transport failures ESCALATE (SystemExit, never graded), grader refuses poisoned trees. Surgical re-run of 9 poisoned ids + Qwen3.6-27B-Opus-Distill-OptiQ-4bit parallel_multiple full re-run sequenced next | 2026-08-24 |
+| C21 | O39: does the M3 inversion trigger M9? | **Replication first** — go-language arm (~40 min/model) before any M9 spend; M9 only if the inversion replicates | 2026-08-24 |
+| C22 | Two standing test failures | **Fixed** (`65d6730`): PARAMS drift entries added; pii test reads COMMITTED content per its own docstring. Suite 1197/0 | 2026-08-24 |
+| C23 | Pilot sizing rule | **Amended in AGENTS.md**: seeded random sample (never first items), size from mean AND max, estimate is a LOWER BOUND, known heavy tails budgeted explicitly | 2026-08-24 |
