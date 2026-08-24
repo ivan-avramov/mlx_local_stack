@@ -44,21 +44,38 @@ def test_removed_lines_are_never_flagged():
 
 
 def test_the_committed_corpus_is_clean():
-    """Regression: run the checker over every tracked file. It must be silent — otherwise the
-    scrub was incomplete, or the pattern is too broad to live in a blocking hook."""
+    """Regression: run the checker over every tracked file AS COMMITTED (HEAD content, not
+    the working tree). It must be silent — otherwise the scrub was incomplete, or the
+    pattern is too broad to live in a blocking hook.
+
+    Committed content is deliberate: the registry carries INTENTIONAL local `hf_path`
+    dirt in the working tree by design (swapped out at commit time by
+    scripts/registry_commit.sh), so reading the working tree kept this test permanently
+    red without guarding anything the pre-commit hook doesn't already guard. What this
+    test vouches for is HISTORY: a leak that reached HEAD still fails it."""
     import subprocess
     from pathlib import Path
     root = Path(__file__).resolve().parents[3]
     files = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True,
                            text=True).stdout.split()
+    # Only files that differ from HEAD need the (slower) committed-content read; the
+    # rest are byte-identical on disk.
+    dirty = set(subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=root,
+                               capture_output=True, text=True).stdout.split())
     hits = []
     for f in files:
         if piicheck.is_exempt(f):
             continue
-        p = root / f
-        try:
-            text = p.read_text(errors="replace")
-        except (OSError, IsADirectoryError):
-            continue
+        if f in dirty:
+            shown = subprocess.run(["git", "show", f"HEAD:{f}"], cwd=root,
+                                   capture_output=True, text=True)
+            if shown.returncode != 0:
+                continue  # tracked but new relative to HEAD — nothing committed to vouch for
+            text = shown.stdout
+        else:
+            try:
+                text = (root / f).read_text(errors="replace")
+            except (OSError, IsADirectoryError):
+                continue
         hits += piicheck.violations(text, path=f)
     assert hits == [], hits[:10]

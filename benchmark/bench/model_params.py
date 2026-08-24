@@ -126,6 +126,16 @@ PARAMS = {
     "Qwen3.8-27B-mlx-uniform-4bit": QWEN,
     "Qwen3.8-27B-static-mixed-4bit": QWEN,
     "Qwen3.8-27B-OptiQ-4.5bpw-mixed": QWEN,
+    # Registered when the drift guard flagged them (2026-08-24). Same rationale as the
+    # block above: `deployed` (the profile every new axis screens under) reads
+    # main_models.yaml generation_defaults; this mapping only vouches for the family so
+    # the guard can tell "registered" from "reached QWEN by substring luck".
+    # Qwen3.8-27B-4bit is the M23 official-quant reference (mlx-community checkpoint). <!-- allow-shorthand -->
+    "Qwen3.8-27B-4bit": QWEN,
+    "Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit": QWEN,
+    "Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit": QWEN,
+    # qwen3_6 MoE arch — Qwen sampling family, registered explicitly like the entries above.
+    "Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit": QWEN,
 }
 
 _PROFILES = {
