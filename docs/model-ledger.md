@@ -113,6 +113,21 @@ NOT comparable to aider `final`, which allows a test-informed second attempt):
 - **New failure mechanism, load-bearing for the pick**: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` reconstructs ABSOLUTE paths from memory and mis-copies the random scratch-dir suffix (`sa6gj2_o`→`sa6gj2.o`, `y4vd4k67`→`y4d64k67`) or substitutes underscore directories for hyphenated ones (`beer-song/`→`beer_song/`); the resulting nonexistent/out-of-boundary reads are CORRECTLY auto-rejected, and the model gives up in ~25 s without attempting recovery (5 of its 10 fails: `beer-song`, `book-store`, `connect`, `dominoes`, `phone-number`). This is scaffold path-fidelity — adjacent to aider's malformed-edit axis, where this model was near-perfect — so the deficiency is specific to absolute-path reconstruction of tokenizer-hostile random strings, not edit formatting. Harness EXONERATED: the `bcc6d37`-class TMPDIR/realpath fix is verified working (zero alias-class rejects; every rejected path was genuinely nonexistent or out-of-boundary — checked against the opencode session store). Zero `test_modified` in all 66 rows.
 - `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` shows zero path errors and zero loops — its ONLY failure mode is non-termination under the progress gate, i.e. the M24 xhigh-default finding manifesting in a live agentic harness.
 
+**Run B (M4), same day, same 22 items/harness:** `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
+**9/22 (40.9%)** — last place, and the FASTEST arm (45 min total; all 22 sessions "completed",
+zero stalls/loops; wall mean 123 s, median 15 s). **11 of its 13 fails are ≤15 s
+boundary-reject give-ups** — wrapper-level globs (`oc-<name>-<rand>/*`), dropped path components
+(`oc-connect-*/.docs/...` missing the `connect/` level), and one misspelled component
+(`octtmp` for `octmp`) — the SAME scaffold-discipline deficiency the aider harness measured as
+3.75 malformed edits/case, now reproduced on a matched suffix-OFF serving path (that old
+confound is resolved: the deficiency is the model's). Where it actually engaged it went 9/11,
+and it is the ONLY model to solve `dominoes` (0/3 in Run A). McNemar exact vs
+`Ornith-1.0-35B-mlx-uniform-4bit` discordant 1:11, **p=0.0063** (survives Holm across the six
+pairwise tests at α=.05); vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 3:6 p=0.51 and vs
+`Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` 5:9 p=0.42 — both inconclusive. C-pick relevance
+(O38): its 2nd-place C standing rests on capability-axis ties; on the agentic axis it is
+CONFIRMED weakest, for interface-discipline rather than capability reasons.
+
 ### Promotion rule (ruling 2)
 
 Promotion to pick/runner-up is a **holistic architect judgement across all axes** — leader,
