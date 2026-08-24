@@ -289,7 +289,10 @@ def test_teardown_reports_not_clean_when_a_listener_survives():
 
 # --------------------------------------------------------------------------- gate math
 def _row(id_, tps, error=None):
-    return {"id": id_, "decode_tps": tps, "error": error}
+    # Carries engagement counters by default: these fixtures model a drafter that actually
+    # ran (the tripwire refuses counter-less ON rows — see the engagement tests below).
+    return {"id": id_, "decode_tps": tps, "error": error,
+            "draft_kind": "mtp", "draft_n": 100, "draft_n_accepted": 60}
 
 
 def test_compute_gate_go_when_ratio_meets_threshold():
@@ -429,7 +432,10 @@ def test_main_both_arms_ok_computes_gate_and_writes_it(tmp_path, monkeypatch):
     def fake_run_arm(model, arm, *a, **kw):
         tps = 50.0 if arm == "off" else 70.0
         return {"arm": arm, "status": "ok",
-                "rows": [{"id": "lru_cache", "error": None, "decode_tps": tps}]}
+                "rows": [{"id": "lru_cache", "error": None, "decode_tps": tps,
+                          "draft_kind": "mtp" if arm == "on" else None,
+                          "draft_n": 100 if arm == "on" else None,
+                          "draft_n_accepted": 60 if arm == "on" else None}]}
     monkeypatch.setattr(M, "run_arm", fake_run_arm)
 
     rc = M.main(["--model", "M", "--workdir", str(tmp_path), "--gate-threshold", "1.3"])
@@ -447,3 +453,71 @@ def test_main_json_out_override(tmp_path, monkeypatch):
     rc = M.main(["--model", "M", "--workdir", str(tmp_path), "--json-out", str(custom)])
     assert rc == 0
     assert custom.exists()
+
+
+# --------------------------------------------------------------- external drafter dir (M6c)
+def test_edit_registry_copy_on_with_external_draft_model_dir(tmp_path):
+    """M6c NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit leg: the MTP head lives in a SEPARATE extracted sidecar dir (the m14
+    split), reached via `draft_model`, not discovered inside the checkpoint. Arm on must
+    carry both keys; arm off must strip draft_model even when requested."""
+    src = tmp_path / "main_models.yaml"
+    src.write_text(REGISTRY_YAML)
+    dest = tmp_path / "registry_on.yaml"
+    M.edit_registry_copy(src, dest, "TargetModel-4bit", "on", draft_model="/x/m14/sidecar")
+    data = yaml.safe_load(dest.read_text())
+    entry = next(m for m in data["models"] if m["name"] == "TargetModel-4bit")
+    assert entry["draft_kind"] == "mtp"
+    assert entry["draft_model"] == "/x/m14/sidecar"
+    dest_off = tmp_path / "registry_off.yaml"
+    M.edit_registry_copy(src, dest_off, "TargetModel-4bit", "off", draft_model="/x/m14/sidecar")
+    off = next(m for m in yaml.safe_load(dest_off.read_text())["models"]
+               if m["name"] == "TargetModel-4bit")
+    assert "draft_kind" not in off and "draft_model" not in off
+
+
+def test_verify_draft_flag_checks_draft_model_when_expected():
+    """The yaml-alone trap again: an external drafter that did not reach the worker cmdline
+    is a plain-decode arm mislabelled ON."""
+    on_with = "/v/mlx_vlm.server --model x --draft-kind mtp --draft-model /x/m14/sidecar"
+    on_without = "/v/mlx_vlm.server --model x --draft-kind mtp"
+    assert M.verify_draft_flag(on_with, "on", draft_model="/x/m14/sidecar") is True
+    assert M.verify_draft_flag(on_without, "on", draft_model="/x/m14/sidecar") is False
+    assert M.verify_draft_flag(on_without, "on") is True   # no external dir expected
+    assert M.verify_draft_flag("/v/mlx_vlm.server --model x", "off",
+                               draft_model="/x/m14/sidecar") is True
+
+
+# --------------------------------------------------------------- engagement tripwire (2026-08-23)
+def test_run_items_records_draft_counters_when_present():
+    """The instrument-failure lesson: a ratio without engagement evidence is not a ratio.
+    Rows must carry the fork's draft counters so the gate can see them."""
+    class FakeDriver:
+        def complete(self, model, messages, params, timeout=None):
+            return {"prompt_tokens": 10, "completion_tokens": 100, "wall_s": 5.0,
+                    "prefill_s": 0.1, "decode_tps": 20.0, "finish_reason": "stop",
+                    "raw_timings": {"draft_kind": "mtp", "draft_rounds": 50,
+                                     "draft_n": 100, "draft_n_accepted": 87}}
+    rows = M.run_items(FakeDriver(), "m", [{"id": "a", "messages": []}], 10.0)
+    assert rows[0]["draft_n_accepted"] == 87 and rows[0]["draft_kind"] == "mtp"
+
+
+def test_compute_gate_refuses_a_ratio_when_the_on_arm_never_engaged():
+    """ON rows whose counters are null/zero are plain decode mislabelled ON — the exact
+    failure that produced the VOID 08-18 close. The gate must say so, not emit ~1.0x."""
+    off = [{"id": "a", "decode_tps": 20.0}]
+    on_null = [{"id": "a", "decode_tps": 20.1, "draft_kind": None, "draft_n_accepted": None}]
+    g = M.compute_gate(off, on_null)
+    assert g["ratio"] is None
+    assert "ENGAGE" in g["verdict"].upper()
+    on_zero = [{"id": "a", "decode_tps": 20.1, "draft_kind": "mtp", "draft_n": 100,
+                "draft_n_accepted": 0}]
+    g2 = M.compute_gate(off, on_zero)
+    assert g2["ratio"] is not None   # zero acceptance IS engagement (a real, bad head)
+
+
+def test_compute_gate_still_works_when_counters_absent_from_off_rows():
+    off = [{"id": "a", "decode_tps": 20.0}]
+    on = [{"id": "a", "decode_tps": 41.0, "draft_kind": "mtp", "draft_n": 100,
+           "draft_n_accepted": 80}]
+    g = M.compute_gate(off, on)
+    assert g["verdict"].startswith("GO")

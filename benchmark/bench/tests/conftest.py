@@ -90,13 +90,15 @@ class FakeProbe:
 # --------------------------------------------------------------------------- Driver seam
 def complete_result(content="ok", *, reasoning="", tool_calls=None, prompt_tokens=100,
                     completion_tokens=10, decode_tps=50.0, prefill_s=0.5, prefill_tps=200,
-                    peak_mem_gb=20.0, wall_s=1.0, finish_reason="stop"):
+                    peak_mem_gb=20.0, wall_s=1.0, finish_reason="stop", raw_timings=None):
     """A COMPLETE `Driver.complete` return value (different shape from probe_result: it adds
-    prefill_s/prefill_tps and has no raw_timings)."""
+    prefill_s/prefill_tps; raw_timings passes the server timings block through — since
+    2026-08-23 it carries the speculative engagement counters)."""
     return {"content": content, "reasoning": reasoning, "tool_calls": tool_calls or [],
             "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
             "decode_tps": decode_tps, "prefill_s": prefill_s, "prefill_tps": prefill_tps,
-            "peak_mem_gb": peak_mem_gb, "wall_s": wall_s, "finish_reason": finish_reason}
+            "peak_mem_gb": peak_mem_gb, "wall_s": wall_s, "finish_reason": finish_reason,
+            "raw_timings": raw_timings or {}}
 
 
 class FakeDriver:

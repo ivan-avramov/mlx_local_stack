@@ -36,9 +36,12 @@ def test_complete_result_covers_every_key_driver_complete_returns():
 
 
 def test_the_two_shapes_are_genuinely_different():
-    """Guards the reason there are two fakes at all."""
-    assert "raw_timings" in probe_result() and "raw_timings" not in complete_result()
+    """Guards the reason there are two fakes at all. (raw_timings is in BOTH shapes since
+    2026-08-23 — complete passes the engagement counters through — so the distinguishing
+    keys are the derived prefill fields, which only complete computes.)"""
+    assert "raw_timings" in probe_result() and "raw_timings" in complete_result()
     assert "prefill_tps" in complete_result() and "prefill_tps" not in probe_result()
+    assert "prefill_s" in complete_result() and "prefill_s" not in probe_result()
     assert not hasattr(FakeDriver(), "probe"), "FakeDriver must not answer the probe contract"
 
 

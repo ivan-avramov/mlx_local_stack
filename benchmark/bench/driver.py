@@ -37,4 +37,8 @@ class MlxServeDriver:
             "peak_mem_gb": r.get("peak_mem_gb"),
             "wall_s": wall,
             "finish_reason": r.get("finish_reason"),
+            # Speculative engagement counters ride the server timings block (draft_kind /
+            # draft_rounds / draft_n / draft_n_accepted). Passed through raw so probes can
+            # verify a drafter actually engaged — a ratio without them is not a ratio.
+            "raw_timings": tm,
         }

@@ -97,10 +97,13 @@ DEFAULT_ITEMS = [
 
 
 # --------------------------------------------------------------------------------- registry copy
-def edit_registry_copy(src: Path, dest: Path, model: str, arm: str) -> Path:
+def edit_registry_copy(src: Path, dest: Path, model: str, arm: str,
+                       draft_model: str | None = None) -> Path:
     """Write a scratch copy of the registry with ONLY `model`'s draft state changed: arm "off"
-    strips draft_kind (and its suffix-only knobs) entirely; arm "on" sets draft_kind: mtp. Never
-    touches `src`. Raises if `model` is absent from the registry (fail loud, not silently no-op)."""
+    strips draft_kind (and its suffix-only knobs) entirely; arm "on" sets draft_kind: mtp — plus
+    `draft_model` when the MTP head lives in a separate extracted sidecar dir (the M6c
+    nemotron_h leg) rather than being discovered inside the checkpoint. Never touches `src`.
+    Raises if `model` is absent from the registry (fail loud, not silently no-op)."""
     import yaml  # lazy: this module must stay importable without pyyaml present
     data = yaml.safe_load(src.read_text(encoding="utf-8"))
     models = data.get("models") or []
@@ -113,6 +116,8 @@ def edit_registry_copy(src: Path, dest: Path, model: str, arm: str) -> Path:
         entry.pop(key, None)
     if arm == "on":
         entry["draft_kind"] = "mtp"
+        if draft_model:
+            entry["draft_model"] = draft_model
     dest.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return dest
 
@@ -129,16 +134,22 @@ def _original_cap(registry_src: Path, model: str):
 
 
 # --------------------------------------------------------------------------------- flag landing
-def verify_draft_flag(cmdline: str, arm: str) -> bool:
+def verify_draft_flag(cmdline: str, arm: str, draft_model: str | None = None) -> bool:
     """AGENTS.md rule: never trust the yaml alone. `cmdline` is the WORKER's actual `ps -o
-    command=` output. Returns whether the flag state matches what `arm` expects."""
+    command=` output. Returns whether the flag state matches what `arm` expects. When the ON
+    arm uses an external drafter dir, `--draft-model <dir>` must ALSO have landed — an MTP
+    kind without its sidecar is a plain-decode arm mislabelled ON."""
     tokens = cmdline.split()
     landed = False
+    model_landed = False
     for i, tok in enumerate(tokens):
         if tok == "--draft-kind" and i + 1 < len(tokens) and tokens[i + 1] == "mtp":
             landed = True
-            break
-    return landed if arm == "on" else not landed
+        if tok == "--draft-model" and i + 1 < len(tokens) and tokens[i + 1] == draft_model:
+            model_landed = True
+    if arm != "on":
+        return not landed
+    return landed and (model_landed if draft_model else True)
 
 
 # --------------------------------------------------------------------------------- process probes
@@ -266,6 +277,7 @@ def run_items(driver, model: str, items: list[dict], timeout: float) -> list[dic
         t0 = time.time()
         try:
             r = driver.complete(model, it["messages"], {}, timeout=timeout)
+            tm = r.get("raw_timings") or {}
             rows.append({
                 "id": it["id"], "error": None,
                 "prompt_tokens": r.get("prompt_tokens"),
@@ -274,6 +286,12 @@ def run_items(driver, model: str, items: list[dict], timeout: float) -> list[dic
                 "prefill_s": r.get("prefill_s"),
                 "decode_tps": r.get("decode_tps"),
                 "finish_reason": r.get("finish_reason"),
+                # Engagement evidence (2026-08-23 instrument-failure lesson): the fork's
+                # speculative counters, straight off the timings block.
+                "draft_kind": tm.get("draft_kind"),
+                "draft_rounds": tm.get("draft_rounds"),
+                "draft_n": tm.get("draft_n"),
+                "draft_n_accepted": tm.get("draft_n_accepted"),
             })
         except Exception as e:  # noqa: BLE001 — a failed/timed-out request is a DATA row
             rows.append({"id": it["id"], "error": f"{type(e).__name__}: {e}",
@@ -308,6 +326,16 @@ def compute_gate(off_rows: list[dict], on_rows: list[dict], threshold: float = G
         return {"n_matched": 0, "median_off": None, "median_on": None, "ratio": None,
                "threshold": threshold,
                "verdict": "INCONCLUSIVE (no item succeeded with decode_tps in both arms)"}
+    # Engagement tripwire (2026-08-23: the VOID 08-18 close emitted 0.99x from plain decode
+    # mislabelled ON). An ON row is ENGAGED iff the fork's counters name a drafter kind —
+    # zero ACCEPTED tokens still counts as engaged (a real, bad head is a valid result);
+    # a missing/None kind means the drafter never entered the decode loop.
+    unengaged = [i for i in shared if on_by_id[i].get("draft_kind") is None]
+    if unengaged:
+        return {"n_matched": len(shared), "median_off": None, "median_on": None,
+               "ratio": None, "threshold": threshold, "unengaged_items": unengaged,
+               "verdict": ("NOT ENGAGED (ON-arm rows carry no draft counters — plain decode "
+                           "mislabelled ON; no ratio reported)")}
     med_off = statistics.median(off_by_id[i]["decode_tps"] for i in shared)
     med_on = statistics.median(on_by_id[i]["decode_tps"] for i in shared)
     if not med_off:
@@ -324,6 +352,7 @@ def compute_gate(off_rows: list[dict], on_rows: list[dict], threshold: float = G
 def run_arm(model: str, arm: str, registry_src: Path, workdir: Path, repo_root: Path,
            items: list[dict], *, request_timeout: float = 900.0, router_wait_s: float = 180.0,
            load_timeout: float = 900.0, port: int = 8000, session_max: int = 2,
+           draft_model: str | None = None,
            driver_factory=MlxServeDriver, popen=subprocess.Popen, runner=subprocess.run,
            health_check=_http_health_ok, sleeper=time.sleep, clock=time.time) -> dict:
     """One arm end to end: temp registry copy -> fresh router -> verify the flag landed at the
@@ -331,7 +360,7 @@ def run_arm(model: str, arm: str, registry_src: Path, workdir: Path, repo_root: 
     arm's router is gone — refuses if a listener is already up (a caller bug, not this probe's
     to fix by killing an unknown process)."""
     registry_copy = workdir / f"registry_{arm}.yaml"
-    edit_registry_copy(registry_src, registry_copy, model, arm)
+    edit_registry_copy(registry_src, registry_copy, model, arm, draft_model=draft_model)
 
     pre = listener_pids(port, runner=runner)
     if pre:
@@ -376,7 +405,7 @@ def run_arm(model: str, arm: str, registry_src: Path, workdir: Path, repo_root: 
             return {"arm": arm, "status": "error", "log_path": str(log_path),
                    "message": f"expected exactly 1 mlx_vlm.server worker, found {wpids}"}
         cmdline = worker_cmdline(wpids[0], runner=runner)
-        if not verify_draft_flag(cmdline, arm):
+        if not verify_draft_flag(cmdline, arm, draft_model=draft_model):
             return {"arm": arm, "status": "error", "log_path": str(log_path),
                    "message": f"draft flag did NOT land as expected for arm={arm}: {cmdline}"}
 
@@ -475,6 +504,10 @@ def main(argv=None) -> int:
     ap.add_argument("--load-timeout", type=float, default=900.0)
     ap.add_argument("--gate-threshold", type=float, default=GATE_THRESHOLD)
     ap.add_argument("--session-max", type=int, default=2)
+    ap.add_argument("--draft-model", dest="draft_model", default=None,
+                    help="external extracted MTP sidecar dir for the ON arm (M6c nemotron_h "
+                         "leg: the head is NOT inside the checkpoint). Verified at the worker "
+                         "cmdline like --draft-kind.")
     ap.add_argument("--json-out", default=None)
     args = ap.parse_args(argv)
 
@@ -504,7 +537,8 @@ def main(argv=None) -> int:
         print(f"[mtp_probe] === arm={arm} ===", flush=True)
         res = run_arm(args.model, arm, registry_src, workdir, repo_root, items,
                       request_timeout=args.request_timeout, router_wait_s=args.router_wait_s,
-                      load_timeout=args.load_timeout, session_max=args.session_max)
+                      load_timeout=args.load_timeout, session_max=args.session_max,
+                      draft_model=args.draft_model)
         arm_results[arm] = res
         print(f"[mtp_probe] arm={arm} status={res['status']}", flush=True)
         if res["status"] in ("no_mtp_head", "error"):
