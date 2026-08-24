@@ -1,103 +1,85 @@
-# Handoff — rewritten 2026-08-23 ~15:00 (M19/M20 closed; C picks set; HF namespace audited; M3 rerun arm 3 LIVE; vision restoration approved & staged)
+# Handoff — rewritten 2026-08-23 ~18:15 (M3+M4 DONE & committed; vision restored on the pick; AGENTS.md slimmed + guards; O39 filed)
 
-Single box (M5 Max 64 GB), SINGLE attended session owns everything. If generate processes
-you didn't launch appear (`pgrep -f "run.py generate"` / `run_opencode_probe`), investigate
-ownership before acting.
+Single box (M5 Max 64 GB), SINGLE attended session owns everything. If generate/opencode
+processes you didn't launch appear, investigate ownership before acting.
 
-## Standing footguns
+## Where things stand (all committed unless noted)
 
-- `run.py generate` DEFAULTS to the retired `production` profile (O36) — EVERY generate
-  command carries `--sampling-profile deployed` EXPLICITLY.
-- `run_opencode_probe.py` scratch dirs are realpath-resolved as of `bcc6d37` (macOS
-  `/var`→`/private/var` alias broke opencode's project boundary → silent auto-rejects; the
-  first M3 run was invalidated by it, rows quarantined at
-  `$STACK_WORKDIR/status/m3/invalid_tmpdir_run/`). The M3 runner script ALSO exports
-  `TMPDIR=$STACK_WORKDIR/scratch/octmp` (belt+braces).
-- The opencode probe APPENDS rows (no resume) — dedupe before re-running a partial arm.
-- A background waiter whose `pgrep` pattern appears in its own cmdline never fires
-  (self-match) — quote-break the pattern or match the interpreter path.
-- `Qwen3.8-27B` family chat template defaults `reasoning_effort=xhigh` <!-- allow-shorthand -->
-  — the whole 3.8 corpus is measured at MAX effort (M24). The winners' templates lack the knob.
+- **M3 opencode Run A DONE + committed (`e3c682b`)**: `Ornith-1.0-35B-mlx-uniform-4bit` 19/22,
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 12/22, `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`
+  13/22 (all 9 fails = xhigh stall-kills). **Direction INVERTS the aider B evidence**
+  (single-attempt vs repair; McNemar 8:1 p=0.039 nominal, not Holm-surviving at n=22).
+  **O39 (OPEN)**: does the inversion trigger M9 now? Session recommends a go-language
+  replication first (~40 min/model). Mechanism finding: the B pick mis-copies random scratch
+  suffixes when reconstructing ABSOLUTE paths (5/10 fails were ~25 s reject-give-ups on
+  nonexistent paths). Harness exonerated — TMPDIR fix verified against the opencode session
+  store; rows born PII-clean now (`e883ebf`).
+- **M4 Run B DONE + committed (`3f0ef21`)**: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
+  9/22, last place; 11/13 fails are ≤15 s boundary give-ups — the aider malformed-edit
+  deficiency reproduced on a MATCHED serving path (old confound resolved). Only model to
+  solve `dominoes`. vs `Ornith-1.0-35B-mlx-uniform-4bit` p=0.0063, Holm-surviving.
+  Its rows APPEND after 4 legacy 2026-08-16 rows — segment by `opencode_version`.
+- **Vision restoration 4a DONE**: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` was BLIND
+  (tower reshape crash); `scripts/graft_vision_tower.py` grafted the parent's tower (8-bit
+  g64, 57 modules, +0.74 GB). **Trunk certified at two levels** (shards md5-identical;
+  `scripts/graft_logit_check.py` logit-BIT-identical). Post-graft probe SEES. Uploaded
+  `caslca` rev `eee677f5`; registry note committed (`0f10e97`). `benchmark/probe_vision.py`
+  is the standing SEES/BLIND probe (known-positive-validated against
+  `Ornith-1.0-35B-mlx-uniform-4bit`).
+- **4b IN FLIGHT**: bf16 tower grafts for `Qwen3.8-27B-mlx-uniform-4bit` +
+  `Qwen3.8-27B-static-mixed-4bit` from `unsloth/Qwen3.8-27B` (upstream repo) <!-- allow-shorthand --> (graft ≥ re-conversion: trunk
+  identity by file copy). Their checkpoints are DOWNLOADING to HF cache
+  (log: `$STACK_WORKDIR/status/vision_graft/downloads.log`). Then per model: graft
+  `--bits 16` → logit check → temp registry swap → probe SEES → upload → restore registry.
+  `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is architecturally text-only — NOT fixable.
+- **NEW MEASUREMENT FACT (recorded in `docs/metrics.md` seeds section)**: unseeded-request
+  byte-determinism holds WITHIN a server session only — a same-artifact control produced 3
+  distinct outputs across 3 router restarts. HTTP sentinels cannot certify cross-restart
+  equivalence; in-process logit comparison is the pattern. Mechanism attribution OPEN.
+- **AGENTS.md slimmed 124KB → 17KB** (`bf817bc`+`fb5e7f3`+`c9a99d6`): rules terse, rationale
+  moved to `docs/metrics.md`, `docs/serving-path.md`, `docs/box-notes.md`,
+  `docs/two-box-archive.md`; size-guard test (28KB). Codified guards: `run.py generate`
+  REQUIRES `--sampling-profile` (`2636af1`); `scripts/registry_commit.sh` mechanizes the
+  registry dance (`656eb06`, used for real in `0f10e97`); workqueue refuses n≥40 generation
+  entries without a `pilot` field (`a1c62c0`).
 
-## LIVE right now (restart-safe)
+## Next (per PLAN §3 and the approved sequence)
 
-**M3 opencode rerun**, driver pid 65405, nohup-detached, script
-`$STACK_WORKDIR/status/m3/run_m3.sh` (exports TMPDIR; 22 python items/arm; rows →
-`benchmark/results/<model>/opencode.jsonl`). Arm 1 `Ornith-1.0-35B-mlx-uniform-4bit` DONE
-22/22; arm 2 `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` was 21/22 at ~13:25; arm 3
-`Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` follows (~2.5 h; expect stall-kills — its
-xhigh thinking wedges sessions; the progress gate bounds them at ~601 s). Logs:
-`$STACK_WORKDIR/status/m3/arm_<model>.log`, driver2.log. **A fresh session must re-arm an
-exit-waiter on pid 65405** (session waiters die with the session).
+1. Finish 4b (downloads → grafts → probes → uploads).
+2. **Submodule bump** 0c1c8b17 → 0be496bf (operator: "soon"): pointer commit →
+   `git submodule update --force` → router restart → `--limit 5` smoke + resolved-sampling
+   readback (value ≠ registry default) + worker cmdline check. `THINKING_BUDGET_CLAMP_RATIO`
+   still 0.8.
+3. **M6a/M6c/M6d** predictor probes (nemotron_h_mtp + dspark need the bump) interleaved with
+   **M18 BFCL** → **M23** conversion-bias A/B → **M24** effort diagnostic (effort joins the
+   fingerprint FIRST) → M9 (pending O39 ruling).
 
-## On M3 completion (the sequence, all operator-approved)
+## Known pre-existing test failures (flagged, untouched — need operator ruling)
 
-1. **Score the 3 arms**: pass counts, stop_reasons, exclusive solves, per-arm wall stats;
-   classify failures (permission-rejects should now be ~zero; nonzero → investigate before
-   trusting). Ledger + PLAN M3 row; commit rows.
-2. **One-image probe** on `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (expect vision ABSENT —
-   tower stripped at conversion; confirms before surgery).
-3. **M4**: opencode arm for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (~40 min; same
-   runner pattern; its known defect is malformed edits — that rate is the headline).
-4. **Vision restoration (operator-approved plan, sources STAGED in HF cache: TeichAI +
-   unsloth, 52 G each)**: (a) pick = TOWER GRAFT — quantize ONLY the vision tower (8-bit,
-   operator-approved) from `TeichAI/Qwen3.6-27B-Claude-Opus-Reasoning-Distill-v2`, merge
-   into the existing checkpoint; text trunk must stay BIT-IDENTICAL (tensor checksums) or
-   STOP and report; (b) `Qwen3.8-27B-mlx-uniform-4bit` + `Qwen3.8-27B-static-mixed-4bit` =
-   re-convert via the vision-retaining `mlx_vlm` path; uniform quant is deterministic →
-   verify trunk bit-identity, mismatch → STOP. Per model: one-image smoke + 5-item text
-   sentinel (unseeded requests are byte-deterministic — a real test). Re-upload to caslca
-   with card note "text trunk bit-identical to the evaluated artifact; vision tower added".
-   `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is architecturally text-only — NOT fixable
-   (O38 revisit strike).
-5. **Submodule bump** (operator: "soon"): fork `0be496bf`, submodule `0c1c8b17`, 125
-   commits, output-determining. Recipe: pointer commit → `git submodule update --force` →
-   router restart → `--limit 5` smoke + resolved-sampling readback (value ≠ registry
-   default) + worker cmdline check (`ps -o command=`). `THINKING_BUDGET_CLAMP_RATIO` still
-   0.8 (`generation.py:537`).
-6. Then per PLAN §3: **M6a/M6c/M6d** predictor probes (nemotron_h_mtp + dspark need the
-   bump; suffix leg gated on the agentic acceptance probe) interleaved with **M18 BFCL** →
-   **M23** conversion-bias A/B → **M24** reasoning-effort diagnostic (effort must join the
-   fingerprint FIRST — O36-class hazard) → M9 multi-language.
+- `test_pii_check::test_the_committed_corpus_is_clean` reads the WORKING TREE, so the
+  intentional 3-line registry dirt keeps it permanently red on this box. Options: exempt
+  `main_models.yaml` working-tree state, or have it read `git show HEAD:`.
+- `test_deployed_profile::test_every_registry_model_is_registered_in_PARAMS`: the three <!-- allow-shorthand -->
+  committed registry entries of the `Qwen3.8-27B` family were never added to `model_params.py` <!-- allow-shorthand -->
+  PARAMS (fails on a clean checkout too).
 
-## Today's rulings (all executed, 2026-08-23)
+## Standing footguns (unchanged)
 
-- **O37 CLOSED**: t0.55 certified for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`
-  (registry-only fan-out — model in no client carrier).
-- **O38 CLOSED then REVISED**: provisional C picks = `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
-  (1st) + `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (2nd) — operator adopted the session
-  recommendation; `Ornith-1.0-35B-mlx-uniform-4bit` is B-runner-up only. Recorded in
-  registry comments + `docs/model-ledger.md` §1 (old "no C rec" section marked superseded).
-- **Registry rules (AGENTS.md)**: `main_models.yaml` is the registry of record for B/C
-  1st+2nd picks at certified params, updated in the SAME commit as any certification; picks
-  must be public on HF from any org + a `caslca/` insurance clone; a pick ships as a
-  **(model, tune, PREDICTOR) triple** — predictor certified by PLAN M6d, measurement stays
-  predictor-OFF forever.
-- **xhigh framing (M24)**: xhigh IS the target — best-quality reasoning with converging
-  token patterns; medium is a diagnostic reference only.
-- Certified tunes recorded in registry: `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` t0.6,
-  `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` t0.55, `Qwen3.8-27B-mlx-uniform-4bit` t0.6.
-
-## HF namespace (audited 2026-08-23, ALL DONE)
-
-All 8 `caslca/` repos PUBLIC with corrected cards (true param counts — HF's badge
-undercounts packed 4-bit ~6-8× and cannot be overridden; measured bpw from manifests —
-`Ornith-1.0-35B-mlx-uniform-4bit` card was wrong at 4.649, measured 4.019;
-`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` card was wrong at 3.97, measured 4.97; certified
-sampling on every card; the `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` mirror card created). `pipeline_tag` matches checkpoint
-truth: towers present → `image-text-to-text` (`Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`,
-`Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`, `Qwen3.8-27B-OptiQ-4.5bpw-mixed`); absent →
-`text-generation` (`Qwen3.8-27B-mlx-uniform-4bit`, `Qwen3.8-27B-static-mixed-4bit`).
-Weight uploads all complete + verified. Only `Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit`
-stays local-only (Stage-0; upload deferred).
+- The opencode probe APPENDS rows — dedupe/segment before re-running partial arms.
+- Background-waiter pgrep patterns must not self-match; `run_m3.sh`-style drivers +
+  `driver.pid` files under `$STACK_WORKDIR/status/<milestone>/`.
+- `Qwen3.8-27B` family templates default `reasoning_effort=xhigh` <!-- allow-shorthand --> —
+  the whole 3.8 corpus is at MAX effort (M24); xhigh is the TARGET, medium diagnostic only.
+- Full registry names EVERYWHERE incl. chat prose; hooks cover staged lines + commit msgs only.
+- zsh does not glob on variable expansion (`GLOB_SUBST` off) — `ls $VAR_WITH_STAR` fails
+  where python `glob` works.
 
 ## Push state
 
-origin/main = `bcc6d37` (verified via ls-remote). Local-only since: 43fb0ca, e8ea581,
-078b049, 46873cb, 608b1fc, 7621040, 9bc4233, 8f226a1, e2337bf, 9857308, 473fc85 + this
-checkpoint. NO push without explicit in-turn approval. Registry dirt = exactly 3 local
-`hf_path` lines (the committed file carries caslca paths). `transcript.md` + NVSY stay
-untracked. Commit dance for the registry: swap the 3 lines to their committed caslca form,
-stage, commit, restore (pattern used 4× today, in the git log).
+origin/main = `bcc6d37`. Local-only: 43fb0ca…715bbf9 (12 from before) + today's e3c682b,
+e883ebf, b7fbcd1, 3f0ef21, bf817bc, fb5e7f3, c9a99d6, 2636af1, 656eb06, a1c62c0, 04cc3de,
+0f10e97. **NO push without explicit in-turn approval.** Registry dirt = exactly 3 local
+`hf_path` lines (commit via `scripts/registry_commit.sh`). `transcript.md` + NVSY stay
+untracked.
 
 **Order of resumption: this file → `docs/PLAN.md` → `$STACK_WORKDIR/status/` (live runs).**

@@ -79,7 +79,10 @@ def graft(source: Path, pick: Path, out: Path, bits: int, group_size: int) -> in
     out_tensors: dict[str, mx.array] = {}
     n_q = 0
     for key, w in sorted(tensors.items()):
-        if (key.endswith(".weight") and w.ndim == 2
+        # --bits 16 keeps the tower bf16 (what the vision-retaining mlx_vlm convert produces:
+        # the family template `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` carries an
+        # unquantized tower). Lower bits quantize eligible Linear weights.
+        if (bits < 16 and key.endswith(".weight") and w.ndim == 2
                 and w.shape[0] % group_size == 0 and w.shape[1] % group_size == 0):
             wq, scales, biases = mx.quantize(w, group_size=group_size, bits=bits)
             mod = key[: -len(".weight")]
