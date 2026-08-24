@@ -59,7 +59,9 @@ should ideally have vision):** `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is T
 checkpoint — the tower may have been stripped from this checkpoint. **SETTLED 2026-08-23
 (`benchmark/probe_vision.py`): BLIND — HTTP 500 tower reshape crash; instrument validated
 against `Ornith-1.0-35B-mlx-uniform-4bit` (SEES) the same day. Tower-graft restoration is the
-approved fix.** The `Qwen3.8-27B` family is natively VLM per its release. <!-- allow-shorthand -->
+approved fix — EXECUTED same day: 8-bit g64 tower graft, trunk md5+logit bit-identical,
+post-graft probe SEES, uploaded rev `eee677f5`. The C-pick vision strike on this model is
+CLEARED.** The `Qwen3.8-27B` family is natively VLM per its release. <!-- allow-shorthand -->
 
 ### O37 — CLOSED 2026-08-23 (ratified) — certify t0.55 as the tune for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`?
 

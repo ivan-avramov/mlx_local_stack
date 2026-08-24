@@ -48,11 +48,22 @@ provisional until M18 + the panel land. Basis: math500 `acc_strict` 81.5 vs 60.0
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` ties every measured capability axis at 26.0 GB
 peak. Known strikes for the revisit: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is TEXT-ONLY (operator prefers vision
 in daily models — O38) and is a uniform affine 4-bit quant with a never-laddered tune;
-`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is confirmed BLIND (one-image probe 2026-08-23,
-`benchmark/probe_vision.py`: HTTP 500, tower reshape crash `[reshape] Cannot reshape array of
-size 24576 into shape (20,3,2,14,14)` — preprocessing runs, tower weights absent; instrument
-validated same day against `Ornith-1.0-35B-mlx-uniform-4bit`, which answers "Red" = SEES;
-tower-graft restoration approved and staged). Public: both picks on HF; `caslca/` insurance mirror
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` was confirmed BLIND (one-image probe 2026-08-23,
+`benchmark/probe_vision.py`: HTTP 500, tower reshape crash — preprocessing runs, tower weights
+absent; instrument validated same day against `Ornith-1.0-35B-mlx-uniform-4bit`, which answers
+"Red" = SEES). **VISION RESTORED same day** (`scripts/graft_vision_tower.py`): 333 tower
+tensors grafted from the parent `TeichAI/Qwen3.6-27B-Claude-Opus-Reasoning-Distill-v2`, tower
+Linears at 8-bit g64 (operator-approved), +0.74 GB. **Text trunk certified unaltered at TWO
+levels**: the 4 trunk shards are md5-identical byte-copies, and a fixed-token forward through
+the language model produces BIT-IDENTICAL logits pre/post graft
+(`scripts/graft_logit_check.py`). Post-graft one-image probe: SEES. Uploaded to
+`caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit` rev `eee677f5` (card notes trunk bit-identity;
+`pipeline_tag` → image-text-to-text). ⚠️ Method note: the first sentinel attempt (5 text
+prompts over HTTP, old vs grafted) FAILED and was diagnosed as **cross-restart
+nondeterminism of the serving path** — a same-artifact control across router restarts also
+diverged (3 distinct outputs for one prompt across 3 sessions). The recorded
+"unseeded requests are byte-identical" fact holds WITHIN a server session only; certification
+therefore moved in-process (logit equality), which is the stronger test anyway. Public: both picks on HF; `caslca/` insurance mirror
 of `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` uploaded + verified 2026-08-23.
 
 ### B — `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @ tune `deployed`; runner-up `Ornith-1.0-35B-mlx-uniform-4bit` @ `deployed`

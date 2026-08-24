@@ -56,6 +56,18 @@ Why the vector rather than one scalar: a wrong answer is CAPABILITY, external tr
 
 **EVERY DRAW CARRIES AN EXPLICIT SEED** (`rowschema.sample_seed(item_id, sample)`, recorded per row). MEASURED 2026-08-11: with no `seed` in the request the server returns **byte-identical** text for repeated identical requests (its sampler is keyed deterministically per request, `DEFAULT_SEED=0`, and the shipped suffix-decoding path keys off `(seed, row_id, position)`). So k unseeded samples are k COPIES — pass^k would collapse to pass@1 and reliability would report perfect stability for every model. Seeds derive from (item, sample) only, so they are identical across models (paired / common-random-numbers) and independent of queue order.
 
+⚠️ **SCOPE CORRECTION (measured 2026-08-23): the byte-identity above holds WITHIN a server
+session only — determinism is NOT guaranteed ACROSS router restarts.** During vision-graft
+validation, a same-artifact control (identical checkpoint, config, and 5 unseeded prompts)
+produced 3 distinct outputs for one prompt across 3 router sessions; short completions were
+stable, longer ones diverged mid-generation at near-tie sampling points. Consequences:
+(1) an HTTP-level "byte-identical output" test can only compare runs within one server
+session — cross-restart A/B needs in-process logit comparison (`scripts/graft_logit_check.py`
+is the pattern) or must tolerate textual divergence; (2) the k-copies hazard for unseeded
+`--samples` is unchanged (same session); (3) attribution of the divergence mechanism (batch
+composition, Metal reduction order, session-cache state) is OPEN — do not build anything on a
+specific mechanism until measured.
+
 ## Time-to-outcome (when throughput IS the question)
 
 Expected wall-clock to a success is `E[T_success] + ((1−p)/p)·E[T_fail]` (`stats.time_to_success`), reported as successes/hour. NOT `median/pass_rate` — the Wald expectation needs the MEAN, and these runs are heavily right-tailed (a ~14.5-min median case beside 2-hour loop cases), so a median-based figure systematically flatters the loop-prone models the metric exists to punish. (Ranking on this metric is refuted above; it survives only as a descriptive throughput figure.)
