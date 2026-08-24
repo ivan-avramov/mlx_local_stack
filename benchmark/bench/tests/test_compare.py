@@ -490,3 +490,15 @@ def test_model_at_tune_syntax_resolves_tuned_rows_and_manifest(write_rows, tmp_r
     # @tune lookup finds the tuned rows + manifest and proceeds to a verdict
     r1 = CMP.compare("A", "B@t0.6", "math500")
     assert r1["comparable"], r1.get("reason")
+
+
+def test_refuses_when_reasoning_effort_differs(write_rows, tmp_results):
+    """M24: the Qwen3.8-27B family's template effort knob changes the regime the same way
+    enable_thinking does — arms at different effort never pool, and absent (template default,
+    xhigh there) vs explicit is a difference."""
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", sampling_extra={"reasoning_effort": "xhigh"})
+    _manifest(tmp_results, "B", "math500", sampling_extra={"reasoning_effort": "medium"})
+    r = CMP.compare("A", "B", "math500")
+    assert r["comparable"] is False and "reasoning_effort" in r["reason"]

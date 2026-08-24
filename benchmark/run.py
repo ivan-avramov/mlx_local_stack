@@ -143,6 +143,18 @@ def cmd_generate(args):
                   "depth rows get their own files and never collide with the shallow corpus.")
             raise SystemExit(2)
         overrides["depth_tokens"] = args.depth_tokens
+    # reasoning_effort (M24): TEMPLATE-side knob — the Qwen3.8-27B family's chat template <!-- allow-shorthand -->
+    # injects an effort instruction (default xhigh; Qwen3.6-family templates lack the knob). <!-- allow-shorthand -->
+    # The server forwards it (mlx-vlm server/schemas.py), so it rides `overrides` into both
+    # the request and the fingerprint's sampling slice. Requires --tune so effort rows get
+    # their own files, never pooled with the template-default (xhigh) corpus.
+    if args.reasoning_effort is not None:
+        if not args.tune:
+            print("[generate] REFUSED: --reasoning-effort requires --tune (e.g. --tune "
+                  "t0.6-effmed) so effort rows get their own files and never collide with "
+                  "the template-default corpus.")
+            raise SystemExit(2)
+        overrides["reasoning_effort"] = args.reasoning_effort
     chunks = "all" if args.chunks in ("all", "-1") else args.chunks
     tune = args.tune  # already grammar-validated by argparse's type=generate.validate_tune
     # Name the ACTUAL profile. This used to hardcode "production" and print immediately before
@@ -340,6 +352,12 @@ def build_parser():
     sp.add_argument("--repetition-penalty", dest="repetition_penalty", type=float, default=None,
                     help="override repetition_penalty (provenance-tracked). Same serving-path caveat "
                          "as --presence-penalty")
+    sp.add_argument("--reasoning-effort", dest="reasoning_effort",
+                    choices=["xhigh", "medium", "low"], default=None,
+                    help="template effort knob (Qwen3.8-27B family; the template default is "
+                         "xhigh, and absent means that default). Provenance-tracked into the "
+                         "fingerprint's sampling slice; REQUIRES --tune (e.g. t0.6-effmed) "
+                         "so effort rows never pool with the template-default corpus (M24)")
     sp.add_argument("--ids", default=None,
                     help="restrict to NAMED items, per bench: 'ifeval=2849:279,humanevalplus=HumanEval/94'. "
                          "Colon-separated (comma already separates bench pairs, and ids can contain "

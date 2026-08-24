@@ -64,3 +64,9 @@ def test_no_bare_percent_in_any_help_string():
     assert not offenders, (
         "bare '%' in an argparse help string — escape it as '%%' or argparse's _expand_help "
         "raises at --help time:\n" + "\n".join(offenders))
+
+
+def test_generate_help_documents_reasoning_effort():
+    """M24: the effort arm must be launchable ONLY through a provenance-tracked flag."""
+    r = _help("generate")
+    assert "--reasoning-effort" in r.stdout

@@ -268,3 +268,29 @@ def test_the_live_manifest_actually_carries_the_draft_state():
     assert man["fingerprint_version"] >= 3   # v3 introduced the populated draft state; v4 keeps it
     assert man["runtime"]["draft_kind"] in ("off", "suffix")
     assert P.config_fingerprint(man)["runtime"]["draft_kind"] is not None
+
+
+# ------------------------------------------------------------------ reasoning_effort (M24)
+def test_reasoning_effort_is_fingerprinted_and_guarded():
+    """The depth_tokens invariant, applied again BEFORE the M24 arm runs: a knob that changes
+    what we asked (the template's effort instruction) must be in the fingerprint AND in
+    compare's must-match tier — an unrecorded effort is an O36-class hazard."""
+    import bench.compare as CMP
+    assert "reasoning_effort" in P._FINGERPRINT_SAMPLING
+    assert "reasoning_effort" in CMP._MUST_MATCH_SAMPLING
+
+
+def test_reasoning_effort_mismatch_is_incompatible_but_absent_on_both_is_fine():
+    """Absent means "the template's own default" (xhigh for the Qwen3.8-27B family) — every
+    existing row. Absent-on-both must compare equal so the corpus is not condemned; any
+    observed difference, including absent-vs-set, is a different regime and never resumes."""
+    med = _v3()
+    med["sampling"]["reasoning_effort"] = "medium"
+    med2 = _v3()
+    med2["sampling"]["reasoning_effort"] = "medium"
+    xh = _v3()
+    xh["sampling"]["reasoning_effort"] = "xhigh"
+    assert P.is_compatible(_v3(), _v3()) is True     # absent/absent: corpus stays live
+    assert P.is_compatible(_v3(), med) is False      # template default vs explicit medium
+    assert P.is_compatible(med, xh) is False         # observed differing
+    assert P.is_compatible(med, med2) is True        # matched explicit effort resumes

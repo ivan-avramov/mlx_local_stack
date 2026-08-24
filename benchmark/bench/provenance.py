@@ -105,7 +105,14 @@ _FINGERPRINT_SAMPLING = ("temperature", "top_p", "top_k", "min_p", "presence_pen
                          "repetition_penalty", "thinking_budget", "max_tokens", "enable_thinking",
                          # depth_tokens (D9, 2026-08-18) is prompt-side, not a server knob, but it
                          # is OUTPUT-DETERMINING in the strongest sense: it changes what we asked.
-                         "depth_tokens")
+                         "depth_tokens",
+                         # reasoning_effort (M24, 2026-08-23): the Qwen3.8-27B family's chat
+                         # template injects an effort instruction from it — it changes what we
+                         # asked, exactly like depth_tokens. Absent = the template's own default
+                         # (xhigh there), which is every pre-M24 row, so absent-on-both compares
+                         # equal and the corpus is not condemned (the depth_tokens precedent; no
+                         # version bump needed).
+                         "reasoning_effort")
 
 # v2 additions: RUNTIME knobs that change results without touching sampling.
 #   apc_enabled  — prefix caching (runserver.sh sets it; the AGENTS.md bench recipe does not)

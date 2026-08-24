@@ -38,7 +38,11 @@ _HARDWARE_METRICS = ("decode_tps", "prefill_tps", "wall_s", "peak_mem_gb", "etts
 _MUST_MATCH_SAMPLING = ("thinking_budget", "max_tokens", "enable_thinking",
                         # depth_tokens (D9): the arms answered different questions — a depth-vs-
                         # shallow read is the axis's own PAIRED analysis, never a cross-model pool.
-                        "depth_tokens")
+                        "depth_tokens",
+                        # reasoning_effort (M24): the template's effort instruction is a different
+                        # regime the same way enable_thinking OFF is — the medium arm is a
+                        # DIAGNOSTIC against the xhigh operating point, never a pooled ranking.
+                        "reasoning_effort")
 
 # WARN only: per-model TUNE axes. Under the (model, tune) taxonomy each model legitimately runs
 # its own operating point — Ornith-1.0-35B-mlx-uniform-4bit t0.4 vs
