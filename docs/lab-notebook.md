@@ -2819,3 +2819,55 @@ bench router start MUST use a draft-stripped overlay**
 (`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, generated from the working
 registry) — measurement stays predictor-OFF; fingerprint v3 + `compare` refusal police
 the boundary. Drafter upload to `caslca/` pending (operator action).
+
+---
+
+## 2026-08-25 — AN ABANDONED GENERATION BILLS ITS NEIGHBOUR: the probe-timeout starvation mechanism
+
+**How it was found.** Not by an audit — by the routine "is the output sane?" check on the
+M23 official arm (`Qwen3.8-27B-4bit`, 100 rows) before unloading for the second arm. Three <!-- allow-shorthand -->
+rows carried `finish_reason: null`; they turned out to be `error_kind=probe_timeout` at
+exactly 3600.002s. That alone is the known DNF taxonomy (O35). The finding is what sat
+NEXT to them.
+
+**The wall-clock residual is the instrument.** Computing `wall_s − completion_tokens/decode_tps`
+per row: the median residual is 0.4–0.6s (prefill on a ~200-token prompt), but three rows
+carry residuals of 573s, 685s and 2051s while decoding a perfectly ordinary ~300 tokens at
+a perfectly ordinary 26–27 tok/s. Their content is normal and `finish_reason=stop`. So the
+time was not spent generating — it was spent WAITING.
+
+**Mechanism, confirmed 3/3 with no false positives.** The client abandons at 3600s; the
+worker does not cancel the abandoned request and keeps generating it; the next item's
+request then queues behind the orphan. In file order every timeout is followed by exactly
+one starved row and nothing else in either bench shows the pattern:
+
+| orphan (timed out) | starved successor | successor's non-decode wait |
+|---|---|---|
+| `HumanEval/2` | `HumanEval/82` | 573s |
+| `HumanEval/132` | `HumanEval/7` | 685s |
+| `Mbpp/440` | `Mbpp/139` | 2051s |
+
+**Two consequences, and they differ.** The starved rows' ACCURACY is untouched — they
+generated normally — but their `wall_s` is pure queue artifact, so they must be excluded
+from latency-per-task while remaining in the accuracy denominators. The orphans' total
+runtimes (3600s + the successor's wait = 4173s / 4285s / 5651s) are what a
+max_tokens-ceiling generation costs at a context-declining decode rate, so all three were
+genuine runaways: DNF is substantively the right label, not a harness artifact.
+
+**The deeper defect is that the bound was never derived.** `run.py --probe-timeout`
+defaults to a hardcoded 3600s. The standing rule says client timeouts are DERIVED — at this
+arm's FLOOR decode rate (22.3 tok/s), max_tokens 102400 needs 4592s of decode plus prefill
+and headroom, ~5200s. The default is below the legitimate maximum, which is precisely the
+failure the rule warns about: it converts budget-hits into rows with no token count, so the
+loop taxonomy is destroyed for exactly the items that most need it.
+
+**What was NOT done, deliberately.** The timeout was left at 3600s for the second M23 arm.
+It is applied identically to both arms, so the pairing stays apples-to-apples; raising it
+mid-A/B would vary a second parameter and forfeit the comparison. The fix belongs to a
+future axis. Recorded as C28, with two asks: derive the default, and fund a worker-side
+cancel-on-disconnect so an abandoned request stops billing its neighbour.
+
+**Process lesson.** The residual `wall_s − tokens/rate` is a cheap, general tripwire for
+queue contamination that no per-row status field would have surfaced: every one of these
+rows self-reports `finish_reason=stop` and a healthy decode rate. Compute it on any run
+whose latency numbers will be quoted.
