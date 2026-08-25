@@ -58,15 +58,15 @@ overrides), tune label `m23`, `--order model`, one resident model with unload be
 arms, 5-item pilot per arm first (nested seeded draw → resume-clean). Official arm
 pilot first (model already in hf cache). Rows: `benchmark/results/<model>/<bench>.m23.*`.
 
-## Operator actions pending
+## Operator actions — ALL THREE RESOLVED 2026-08-25 (afternoon session)
 
-- **Upload the drafter** `caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter`
-  (source: `$STACK_WORKDIR/scratch/m6a/...-mtp-drafter`) to clear the NOT-YET-UPLOADED
-  registry note.
-- **Push**: local commits after pushed `a55d382`: `479fd37` (bench draft counters),
-  `e7831d1` (O39/O40/C26 docs), `ca4ed0f` (M6b registry certification), plus M6b/M23
-  docs commits as they land. Needs fresh in-turn approval.
-- C26 fork fix funding (cached-path seed plumbing) — queue position vs M24.
+- **Drafter UPLOADED**: `caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter` is
+  public (anonymous resolve 200, all four files). Registry note cleared in `fee1721`;
+  the box keeps its local workdir `draft_model` override in the working tree.
+- **Pushed** through `722e739` (operator-approved in turn); `fee1721` + docs commits
+  after it are LOCAL and need fresh approval as usual.
+- **C26 fork fix funded AHEAD of M24** (operator ruling): starts after the M23 arms
+  complete — no fork test runs against the box mid-measurement.
 
 ## Standing footguns (delta from 2026-08-24)
 
