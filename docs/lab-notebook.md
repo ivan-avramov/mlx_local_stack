@@ -2706,3 +2706,40 @@ draft-OFF, APC off, suffix off):
   tripped the home-path rule — `datasets` added to `PLACEHOLDER_USERS` with a TDD case
   (`d016b05`). Empty `bfcl_eval` `.file_locks/*.lock` runtime artifacts excluded from the data
   commit and gitignored.
+
+## 2026-08-24 — O40 engagement smoke: batched path PASSES; cached path ENGAGES but does not REPORT; two smoke-harness bugs fixed en route
+
+Smoke (`$STACK_WORKDIR/o40_smoke/smoke.py`, port 8093, overlay configs, submodule
+`05a41b1b`, drafter `Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter`, test-vector
+thinking_budget 64):
+
+- **Phase B (batched, `MLX_VLM_CACHE_SESSION_MAX=0`): PASS.** MTP engaged with real
+  counters — 148 rounds, 296 drafted, 257 accepted (87%); thinking closed under the
+  budget; answer produced. The O40 batched-path work is verified live.
+- **Phase C (cached/inline, `MLX_VLM_CACHE_SESSION_MAX=2`): HTTP 200, correct output,
+  ALL draft counters null.** NOT a silent no-op — a REPORTING gap. Code trace: the
+  batched path computes counters server-side via `speculative_stats_since`; cached-path
+  telemetry (`record_result`) reads `draft_*` off generation chunks, and no chunk in
+  `generate/` or `speculative/` carries those fields. Dispatch is real: `ar.py`'s
+  fallback gate is suffix-only, so mtp reaches `run_speculative_rounds` inline.
+- **Engagement probe (decisive, zero fork edits)**: same box/model/prompt/params,
+  SESSION_MAX=2, drafter-loaded vs no-drafter arms, 3 requests each. Decode
+  22.64–22.74 ms/token with the drafter vs 42.84–44.09 without = **1.93× — the cached
+  path IS speculating**; consistent with phase B's 87% acceptance.
+- **Phase A (fail-loud): inconclusive as written, likely a smoke bug.** The chat
+  correctly refuses (HTTPError — the model is not servable without a drafter), but the
+  smoke greps for `requires a drafter path` BEFORE the chat that spawns the doomed
+  worker, and initially in the wrong log (worker stderr goes to
+  `~/.mlx-serve/logs/<model>.log`, not the router log).
+- Smoke-harness bugs fixed en route: `mlx-serve start` takes the port as a CLI flag —
+  the overlay's yaml `port:` key is IGNORED; attempt 1 bound :8000 into the daily
+  router and phase A never ran. Plus the worker-stderr log-location fix above.
+- **New findings (open-questions C24–C26)**: cached-path counter reporting is REQUIRED
+  for M6b's engagement tripwire (benchmark traffic decodes on the cached path);
+  penalties + inline mtp silently drop the penalty (suffix-precedent violation, no live
+  impact at deployed params); seeds 11/12/13 produced length-identical outputs in both
+  arms — check whether `seed` is honored inline before any paired-draw M6b work.
+
+Verdict: **the O40 fork set is functionally live on both paths; fund C24 (reporting)
+before M6b**, since the M6b tripwire cannot certify engagement from a response that
+never carries the counters.
