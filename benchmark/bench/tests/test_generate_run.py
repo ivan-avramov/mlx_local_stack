@@ -88,3 +88,23 @@ def test_generate_run_default_probe_timeout_is_client_default(tmp_path, monkeypa
     monkeypatch.setattr(C, "probe", fake_probe)
     G.run(["m"], ["aime"], {})          # no override
     assert captured["timeout"] == 3600
+
+
+def test_generate_run_persists_draft_counters(tmp_path, monkeypatch):
+    """M6b engagement tripwire (C24): the server's per-request draft counters ride
+    the response timings block; every generated row must persist them compactly —
+    nulls under plain decode included, so an OFF arm is distinguishable from a
+    row generated before the field existed."""
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    monkeypatch.setattr(B, "load", lambda b, lim, seed: [{"id": "t1", "prompt": "p"}])
+    monkeypatch.setattr(C, "preload", lambda m, **k: 0.0)
+
+    r = _fake_probe_result()
+    r["raw_timings"] = {"draft_kind": "mtp", "draft_rounds": 3, "draft_n": 7,
+                        "draft_n_accepted": 5, "predicted_per_second": 44.0}
+    monkeypatch.setattr(C, "probe", lambda m, msgs, params, timeout=3600, tools=None: r)
+    G.run(["m"], ["aime"], {})
+    import json
+    row = json.loads((tmp_path / "m" / "aime.jsonl").read_text().splitlines()[0])
+    assert row["draft"] == {"draft_kind": "mtp", "draft_rounds": 3, "draft_n": 7,
+                            "draft_n_accepted": 5}

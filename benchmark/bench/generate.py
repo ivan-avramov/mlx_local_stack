@@ -434,6 +434,14 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                        "decode_tps": p["decode_tps"], "peak_mem_gb": p["peak_mem_gb"],
                        "finish_reason": p["finish_reason"], "wall_s": p["wall_s"],
                        "temperature": params.get("temperature"), "thinking_budget": params.get("thinking_budget")}
+                # Speculative engagement counters (M6b tripwire): the server attaches
+                # per-request draft stats to the response timings (nulls under plain
+                # decode). Persisted compactly so an OFAT arm can PROVE its draft state
+                # per row — a row generated before this field existed has no "draft" key,
+                # which is distinct from {"draft_kind": None, ...} under plain decode.
+                _tm = p.get("raw_timings") or {}
+                row["draft"] = {k: _tm.get(k) for k in
+                                ("draft_kind", "draft_rounds", "draft_n", "draft_n_accepted")}
                 # Convergence guard: a thinking-budget / max_tokens hit is NOT convergence
                 # even though finish_reason can be "stop". Recorded per item; a run with any
                 # non-converged item is flagged INVALID at grade time (never silently scored).
