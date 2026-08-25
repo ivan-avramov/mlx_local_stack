@@ -1,12 +1,46 @@
-# Handoff — rewritten 2026-08-24 ~10:45 (M18 GENERATION COMPLETE all 3 models; O41 fix LANDED; operator ratified O39/O40/O41 + sequencing; surgical re-runs are the next machine work)
+# Handoff — rewritten 2026-08-24 ~18:15 (M18 surgical re-runs IN FLIGHT at 195/200; O40 fork set PUSHED + submodule BUMPED; restart-safe checkpoint)
 
-Single box (M5 Max 64 GB), single attended session. **No benchmark is running at this checkpoint.**
-The lean router on :8000 (pid 21160, PPID 1, `MLX_VLM_CACHE_SESSION_MAX=2`, no APC) is UP and idle
-with `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` resident — kept deliberately: it is the first
-surgical-re-run target. Suite: **1197 passed, 0 failed.** `origin/main = bcc6d37`; local commits
-now include this session's six (M24 harness `de2d6d8`, mtp tripwire `042e402`, O41 fix `ede38e6`,
-test repairs `65d6730`, registry M23 entry `44589e7`, docs — see log). **NO push yet: needs the
-operator's explicit in-turn word.**
+Single box (M5 Max 64 GB). **WORK IS RUNNING, all PPID 1 (survives session restarts):**
+
+| what | pid | notes |
+|---|---|---|
+| lean router :8000 | 21160 | old code in memory (started 00:14); serves the surgical run |
+| surgical driver | 47134 (child 54373) | `$STACK_WORKDIR/bfcl_m18/surgical_all.sh`; log `…/surgical_all.log` |
+| M18 watcher | 57570 | busy-threshold fixed to >10% CPU (dense decode reads ~35%, NOT idle) |
+
+**RESUMING SESSION: (1) verify the table above; (2) re-arm the alert tail on
+`…/bfcl_m18/m18_watch.log` + `…/surgical_all.log` (grep SUSPECTED|POISONED|SURGICAL|RESCORE|
+Traceback); (3) WAIT for `=== SURGICAL ALL DONE ===` — the three rescores run inside the
+script, zero model time; (4) then run the O40 smoke: `$STACK_WORKDIR/o40_smoke/smoke.py`
+(port 8093, overlay configs, checks fail-loud + engagement on batched AND cached paths).**
+
+## State of the surgical leg (the last one)
+
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` full `parallel_multiple` (200 items): started 11:28,
+195/200 at 18:12. ~6 h, not ~1 h — because **the model's "0 runaways in 1000" was an artifact
+of the dead-port poisoning: this category runs ~2% full-budget runaways (4 in 197), each
+82K tokens at ~20 tok/s = 66-81 min wall.** That inverts the morning's runaway-tax comparison:
+similar RATE to `Ornith-1.0-35B-mlx-uniform-4bit` (~2% in parallel categories) but ~3.5x the
+per-event cost. Record this with the final scores. `Ornith-1.0-35B-mlx-uniform-4bit` and
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` result trees are already fully clean (0 poisoned).
+
+## O40: fork set PUSHED, submodule BUMPED (operator-directed, no cross-repo path hacks)
+
+`../mlx-vlm` pushed `0be496bf..05a41b1b` (3 commits: fail-loud drafter config; thinking_budget
+in `_mtp_rounds` inline; mtp on the cached path + scoped gate; thinking_budget on the batched
+path B==1). Fork suite 3269 passed. Stack bump committed `4c36a5f`; verified `.venv` imports
+`mlx_vlm` editable from `src/mlx-vlm` (the O40 symbols resolve). mlx-serve needed NO work
+(registry `draft_kind`/`draft_model` -> worker cmdline already plumbed). The in-flight leg's
+worker runs the NEW sha at plain decode — verified NO draft flags at the worker cmdline, and
+every O40 hunk is drafter-gated, so the serving path is unchanged for this measurement
+(mixed-sha justification; note it in the lab notebook with the scores).
+
+**After the smoke passes**: results-data commit (`data(bench)`; trees are clean of PII once
+poisoned rows are gone — VERIFY with bench.piicheck before staging), lab-notebook entry
+(final 3-model table + runaway-tax correction + watcher busy-threshold lesson), then M6b
+quality OFAT (mtp ON vs OFF at deployed params, engagement tripwire on every arm), M23
+(~4 h), M24. Stack is 2 commits ahead of pushed `493b24e` (the bump `4c36a5f` + docs) — push
+needs a fresh operator word.
 
 ## M18 BFCL native-FC — generation complete (10:27:42), scores pre-re-run
 
