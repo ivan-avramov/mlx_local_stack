@@ -250,3 +250,20 @@ def test_result_row_jsonl_content_is_DATA_not_prose():
         '+{"note": "the distill run"}\n'
     )
     assert M.diff_violations(manifest_diff) != []
+    # bfcl_eval writes its row files as result/**/BFCL_v4_*_result.json (not .jsonl);
+    # same DATA-not-prose rule (a row value "static" blocked the M18 data commit,
+    # 2026-08-24). bfcl.json + score/ in the same tree are our metadata, still checked.
+    bfcl_row_diff = (
+        "diff --git a/benchmark/results/SomeModel-4bit/bfcl_fc/result/SomeModel-4bit/non_live/BFCL_v4_parallel_multiple_result.json b/benchmark/results/SomeModel-4bit/bfcl_fc/result/SomeModel-4bit/non_live/BFCL_v4_parallel_multiple_result.json\n"
+        "+++ b/benchmark/results/SomeModel-4bit/bfcl_fc/result/SomeModel-4bit/non_live/BFCL_v4_parallel_multiple_result.json\n"
+        "@@ -0,0 +1 @@\n"
+        '+{"id": "parallel_multiple_184", "result": [{"analyze_structure": "{\\"mode\\": \\"static\\"}"}]}\n'
+    )
+    assert M.diff_violations(bfcl_row_diff) == []
+    bfcl_score_diff = (
+        "diff --git a/benchmark/results/SomeModel-4bit/bfcl_fc/bfcl.json b/benchmark/results/SomeModel-4bit/bfcl_fc/bfcl.json\n"
+        "+++ b/benchmark/results/SomeModel-4bit/bfcl_fc/bfcl.json\n"
+        "@@ -0,0 +1 @@\n"
+        '+{"note": "the distill run"}\n'
+    )
+    assert M.diff_violations(bfcl_score_diff) != []
