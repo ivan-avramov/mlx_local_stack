@@ -1,76 +1,70 @@
-# Handoff — rewritten 2026-08-24 ~19:45 (M18 COMPLETE + committed; O40 smoke verdict in; nothing running)
+# Handoff — rewritten 2026-08-25 (M6b PASSED + registry-certified; O39 no-replication; M23 IN FLIGHT)
 
-Single box (M5 Max 64 GB). **NO WORK RUNNING.** Daily lean router :8000 up (pid may
-recycle — verify with `lsof -nP -iTCP:8000 -sTCP:LISTEN`), NO resident model (unloaded
-for the smoke). M18 watcher and surgical driver are done and gone; smoke routers on
-:8093 stopped.
+Single box (M5 Max 64 GB). **WORK RUNNING: M23 conversion-bias A/B.** Bench router on
+:8000 (lean, **draft-OFF overlay** `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml` —
+REQUIRED for every bench start now, see below), `MLX_VLM_CACHE_SESSION_MAX=2`, APC off.
+Verify live pids with `lsof -nP -iTCP:8000 -sTCP:LISTEN` + `pgrep -f run.py`.
 
-## M18 BFCL native-FC — COMPLETE, FINAL, COMMITTED
+## New since 2026-08-24 evening (all committed; pushed through `a55d382`, LOCAL AFTER THAT)
 
-Trees committed `76f5017` (fully clean: 0 poisoned rows, 0 PII, 200/200 per category);
-docs committed `7a75a84`. Final overall (n=1000, budget 81920, deployed params,
-draft-OFF):
+1. **M6b PASSED — the pick ships its (model, tune, predictor) triple.**
+   `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` + t0.3 + `draft_kind: mtp` (native sidecar
+   drafter). Paired 63-item OFAT: acc 0.9524 vs 0.9365 (delta +1.6pp CI [0.0,+4.8],
+   TOST ±5pp EQUIVALENT, p_d=0.016, powered), 100% engagement @ 0.923 acceptance,
+   ~2× decode, 0 degeneracy. Registry commit `ca4ed0f` (drafter = `caslca/` placeholder,
+   NOT-YET-UPLOADED; local override in the working tree). Lab-notebook entry has the
+   full table.
+   **⚠️ STANDING CHANGE: bench router starts MUST strip draft fields** (the registry now
+   serves mtp for the pick; measurement stays predictor-OFF). Overlay generator output:
+   `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`; regenerate after any registry edit.
+2. **O39: the M3 inversion does NOT replicate on go** — 11/22 vs 12/22, McNemar p=1.0.
+   M9 NOT triggered (C21 rule); C27 records it. Mechanism: path-infidelity give-ups are
+   model-general (`Ornith-1.0-35B-mlx-uniform-4bit` shows them in go); TMPDIR prefix
+   shape is output-determining for that mode (raw `$TMPDIR` vs `scratch/octmp`: 0/5 →
+   2/5 same items). opencode pinned 1.18.15 via downloaded binary (brew drifted to
+   1.18.20; version guard caught it).
+3. **O40 COMPLETE at fork `61845457`**: batched PASS, cached PASS (C24 counters live),
+   fail-loud verified at the worker contract (rc=3; note worker stderr lands in
+   `$TMPDIR/mlx-manager-logs/<model>.log`, reopened per start). C25 fixed (penalties +
+   inline mtp now fall back to plain decode). Bench rows persist `draft` counters
+   (`479fd37`) — the engagement tripwire instrument.
+4. **C26 seed bug CONFIRMED**: per-request seeds IGNORED on the cached path (byte-identical
+   at t=1.0 across seeds). Single-sample runs unaffected; audit any multi-sample
+   cached-path run before trusting pass^k/reliability numbers. Fork fix QUEUED (not started).
 
-| model | overall | runaways /1000 | per-event |
-|---|---|---|---|
-| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | **0.929** | 4 | 78–81 min (~17 tok/s) |
-| `Ornith-1.0-35B-mlx-uniform-4bit` | **0.914** | 2 | ~21 min |
-| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | **0.860** | 1 | ~12 min |
+## M23 (IN FLIGHT): conversion-bias A/B, `Qwen3.8-27B-4bit` (official) vs `Qwen3.8-27B-mlx-uniform-4bit` <!-- allow-shorthand -->
 
-1.5 pp gap on accuracy is INSIDE the ~±4 pp MDE — inconclusive; **the runaway-tax
-ranking number favors `Ornith-1.0-35B-mlx-uniform-4bit`** (~3.8× cheaper per event at
-the same ~2% parallel-category rate). Full story + corrections: lab-notebook
-2026-08-24 entries.
+Gate-3 2×50 recipe (humanevalplus 50 + mbppplus 50, seed 0 — REPLICATES the O37-era
+draws), both arms fresh, t0.6 via registry `generation_defaults` (deployed profile, no
+overrides), tune label `m23`, `--order model`, one resident model with unload between
+arms, 5-item pilot per arm first (nested seeded draw → resume-clean). Official arm
+pilot first (model already in hf cache). Rows: `benchmark/results/<model>/<bench>.m23.*`.
 
-## O40 smoke verdict (lab-notebook entry + open-questions C24–C26)
+## Operator actions pending
 
-- **Batched path PASSES** (mtp engaged, 148 rounds / 87% acceptance, budget honored).
-- **Cached path ENGAGES** — probe measured 1.93× decode with the drafter — **but
-  reports NULL draft counters** (reporting gap: batched computes them via
-  `speculative_stats_since`; cached telemetry reads chunks that never carry them).
-  **M6b's engagement tripwire needs cached-path counters (benchmark traffic decodes
-  there) → C24 is the gate for M6b.**
-- Phase A (fail-loud) inconclusive: the refusal WORKS (model unservable, chat errors)
-  but the smoke greps the wrong log at the wrong time — smoke-harness bug, not fork.
-- NEW: C25 penalties + inline mtp silently drop the penalty (no live impact,
-  deployed profiles pin 0.0); C26 seeds may be ignored on the cached path
-  (length-identical outputs across 3 seeds — byte-compare check is seconds).
+- **Upload the drafter** `caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter`
+  (source: `$STACK_WORKDIR/scratch/m6a/...-mtp-drafter`) to clear the NOT-YET-UPLOADED
+  registry note.
+- **Push**: local commits after pushed `a55d382`: `479fd37` (bench draft counters),
+  `e7831d1` (O39/O40/C26 docs), `ca4ed0f` (M6b registry certification), plus M6b/M23
+  docs commits as they land. Needs fresh in-turn approval.
+- C26 fork fix funding (cached-path seed plumbing) — queue position vs M24.
 
-## Operator decisions PENDING (surface, don't act)
+## Standing footguns (delta from 2026-08-24)
 
-1. **PUSH**: the stack is 5 commits ahead of origin (`d016b05` piicheck corpus-path
-   fix, `5d4c3df` modelnames bfcl-row fix, `76f5017` M18 data, `7a75a84` M18 docs,
-   and the O40-smoke/handoff docs commit at HEAD — count verified with
-   `git status --short --branch`). Needs fresh in-turn approval.
-2. **C24** — fund cached-path draft-counter reporting in `../mlx-vlm` (blocks M6b's
-   tripwire). Design plan first per the O40 rule.
-3. **C25** — fix the penalties+inline-mtp gate alongside C24?
-4. **C26** — run the seed byte-compare check before M6b paired draws.
+- The mtp certification makes a **stale bench router the new top hazard**: a router
+  started from the raw registry serves the pick mtp-ON and poisons any measurement that
+  touches it. Always start bench routers from the draft-stripped overlay and verify
+  drafter-flag state at the worker cmdline per arm.
+- The evalplus per-item results file pads to the FULL corpus (164/378); restrict paired
+  analyses to the generated ids or the CI tightens artificially.
+- opencode brew updates silently; the probe's pin guard is the only defense — keep the
+  1.18.15 binary in `$STACK_WORKDIR/o39/opencode-1.18.15/` for replications.
+- A single-notification waiter must match FAILURE modes too, not only the success
+  string — a grep-until armed on a condition that can never occur idles the pipeline
+  silently (cost: ~9 h on 2026-08-24 night).
+- rtk condenses git output — verify `rc` + `git log -1` after every commit; both guard
+  hooks fired real rejections this session and the condensed output looked like success.
 
-## NEXT (C20 sequencing, updated)
-
-1. C24 fork work (after GO + design plan) → re-run the smoke (fix its phase A while
-   in there) → M6b quality OFAT (MTP ON vs OFF at deployed params, engagement
-   tripwire on every arm).
-2. O39 (C21): go-language M3 replication (~40 min/model) BEFORE any M9 spend.
-3. M23 (~4 h, both arms fresh), M24 (harness committed `de2d6d8`).
-
-## Standing footguns (unchanged + new)
-
-- **rtk condenses git output — a REJECTED commit prints what looks like success.**
-  Verify `rc` + `git log -1` after every commit. Both guard hooks fired real
-  rejections this session (piicheck: corpus `/user/home/datasets/` path; modelnames:
-  corpus row value + the fix's own commit message) — all false positives, all fixed
-  TDD rather than bypassed with `--no-verify`.
-- `mlx-serve start` takes `--port` as a CLI flag; a yaml `port:` key is silently
-  ignored. Worker stderr goes to `~/.mlx-serve/logs/<model>.log`, stdout to DEVNULL.
-- The M18 watcher did NOT self-exit when its driver died (ticked 7 min past the
-  death); killed by PID. If reusing `m18_watch.py`, fix its driver-death check.
-- `MLX_VLM_CACHE_SESSION_MAX=2` on every router start; APC off, verified at worker;
-  `os.setsid` for anything long-lived; one resident model; full registry names
-  everywhere incl. chat prose; never `git push` without explicit in-turn approval.
-- `main_models.yaml` working-tree diff (local hf_path overrides, `/Users/…`) is
-  INTENTIONAL and must never be committed.
-
-**Order of resumption: this file → `docs/PLAN.md` → `docs/open-questions.md`
-(C24–C26 are the fresh decision queue).**
+**Order of resumption: this file → `docs/PLAN.md` → `docs/open-questions.md` (C24–C27
+closed/recorded; C26 fix and the drafter upload are the open items).**

@@ -2789,3 +2789,33 @@ same fork push (`1c9c12e7`); bench rows now persist per-request draft counters
 11 and 12 byte-identical at temperature 1.0, same session). Impact: single-sample runs
 (M18, O39) unaffected; any multi-sample run on the cached path produced k copies —
 audit before trusting any pass^k or reliability figure from that path. Fork fix queued.
+
+## 2026-08-25 — M6b PASSED: the pick ships with its native-MTP predictor (registry-certified)
+
+Paired ON/OFF quality OFAT for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` on humanevalplus,
+seeded 63-item draw (seed 39, nested resume from the 5-item pilot), deployed profile,
+budget 81920, fork sha `61845457`, arms separated by router restart with the state
+verified at the worker cmdline; per-row engagement tripwire via the new `draft` row
+field (`479fd37`) — ON: 63/63 ENGAGED, mean acceptance 0.923; OFF: 63/63 nulls.
+
+| endpoint | mtp-ON | mtp-OFF |
+|---|---|---|
+| acc (evalplus pass@1) | **0.9524** | 0.9365 |
+| conv | 63/63 | 63/63 |
+| degeneracy | 0 | 0 |
+| wall mean / decode | 18 s / ~46 tok/s | 30 s / ~23 tok/s |
+
+Paired accuracy (restricted to the 63 generated items — the evalplus results file pads
+to 164 and the padding must be dropped or the CI tightens artificially): delta +1.6 pp
+IN ON'S FAVOR, CI [0.0, +4.8 pp], **TOST ±5 pp verdict EQUIVALENT**, p_d=0.016 (one
+discordant item, `HumanEval/113`, ON-pass/OFF-fail), `n_for_5pp` at measured p_d = 50 —
+the n=63 design is powered. Text diverges on 50.8% of items (expected under sampled
+verify), repetition endpoints null, degeneracy null.
+
+**Registry flip committed (`ca4ed0f`)**: `draft_kind: mtp` + drafter as the `caslca/`
+NOT-YET-UPLOADED placeholder (local override on this box), `# CERTIFIED M6b 2026-08-25`
+note. **Operational consequence: the registry now serves mtp for the pick, so every
+bench router start MUST use a draft-stripped overlay**
+(`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, generated from the working
+registry) — measurement stays predictor-OFF; fingerprint v3 + `compare` refusal police
+the boundary. Drafter upload to `caslca/` pending (operator action).
