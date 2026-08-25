@@ -2652,3 +2652,57 @@ the surgical re-runs of the 9 poisoned ids:
   `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` `parallel_169`.
 - The O41 fix (derived timeout, retries=0, transport failures escalate, grader refuses poison)
   landed before the re-runs — commit `ede38e6`; suite 1197 passed / 0 failed.
+
+## 2026-08-24 — M18 BFCL native-FC FINAL: surgical re-runs + rescores complete; the runaway-tax ranking inverts
+
+Surgical script finished 18:51:53 (`=== SURGICAL ALL DONE ===`), all legs and all three
+poison-guarded rescores rc=0. Every tree is fully clean: 0 `"Error during inference"` rows,
+0 poisoned ids, full 200/200 in every category. FINAL scores (budget 81920, deployed params,
+draft-OFF, APC off, suffix off):
+
+| category | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | `Ornith-1.0-35B-mlx-uniform-4bit` | `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` |
+|---|---|---|---|
+| simple_python | 0.9475 | 0.935 | 0.8875 |
+| multiple | 0.970 | 0.945 | 0.895 |
+| parallel | 0.895 | 0.895 | 0.845 |
+| parallel_multiple | 0.885 | 0.860 | 0.785 |
+| **overall (n=1000)** | **0.929** | **0.914** | **0.860** |
+
+- `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` leads overall by 1.5 pp over
+  `Ornith-1.0-35B-mlx-uniform-4bit` — INSIDE the axis MDE (~±4 pp paired at N=1000):
+  **inconclusive on accuracy alone**. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` trails by
+  6.9 pp — outside the interval, a real deficit on this axis.
+- **HEADLINE CORRECTION — the runaway tax inverts.** The morning's
+  "`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: 0 runaways in 1000" was an ARTIFACT of the dead-port
+  poisoning (its `parallel_multiple` block was 152/200 poisoned, exactly where its runaways
+  live). Final full-budget (≥97% of 81920) counts from the clean trees, with per-event cost
+  measured from the rows' own latency fields:
+
+  | model | runaways /1000 | per-event | decode in-episode | wall tax /1000 items |
+  |---|---|---|---|---|
+  | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 4 (all `parallel_multiple`) | 78–81 min | ~17 tok/s | ~5.3 h |
+  | `Ornith-1.0-35B-mlx-uniform-4bit` | 2 (`parallel_80`, `parallel_multiple_91`) | ~21 min | ~64 tok/s | ~0.7 h |
+  | `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | 1 (`parallel_169`) | ~12 min | ~115 tok/s | ~0.2 h |
+
+  Similar RATE in the parallel categories (2%/1%/0.5%) but ~3.8× the per-event cost for the
+  dense 27B: its 4 runaways consumed ~5.3 h of the 7.4 h `parallel_multiple` leg. On the
+  4th ranking number the order is now `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` <
+  `Ornith-1.0-35B-mlx-uniform-4bit` << `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. <!-- allow-shorthand -->
+- `Ornith-1.0-35B-mlx-uniform-4bit`'s earlier "4/1000" corrects to 2/1000: `parallel_104` and
+  `parallel_multiple_70` converged when re-run — cross-restart non-determinism is expected
+  (seeds section, `docs/metrics.md` 2026-08-23); the runaway RATE for borderline items is a
+  property of the (item, session) pair, not the item alone.
+- **Mixed-sha note (deliberate, operator-directed)**: the final
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` `parallel_multiple` leg ran on submodule `05a41b1b`
+  (the O40 fork set) while the earlier legs ran `0be496bf`. Justified: every O40 hunk is
+  drafter-gated and the worker cmdline was verified drafter-flag-free, so the plain-decode
+  serving path is byte-identical for this measurement.
+- **Watcher lesson (standing)**: busy thresholds are MODEL-SPECIFIC. Dense 27B decode reads
+  ~30–35% worker CPU on this box; the original 50% "busy" cut classified a healthy decode as a
+  wedge and nearly killed an 87-item leg. The discriminator that held: silent-but-BUSY
+  (>10% CPU) is a runaway — investigate, never kill; silent-and-IDLE is a wedge. <!-- allow-shorthand -->
+- piicheck false positive found while staging the trees: BFCL corpus fiction
+  `/user/home/datasets/finance.csv` (item `parallel_167`) quoted verbatim in correct answers
+  tripped the home-path rule — `datasets` added to `PLACEHOLDER_USERS` with a TDD case
+  (`d016b05`). Empty `bfcl_eval` `.file_locks/*.lock` runtime artifacts excluded from the data
+  commit and gitignored.

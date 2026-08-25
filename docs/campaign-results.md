@@ -189,19 +189,21 @@ ladder. **Recommendation: certify t0.55 (O37).** Scan/probe artifacts live at
   **`acc_strict` splits 60.0% vs 81.5%**, because `Ornith-1.0-35B-mlx-uniform-4bit` hits the thinking
   budget on **9 of 30** items. Suggestive and mechanistically attributable — but n=30/27, unmatched
   items, MDE ±23pp, so the 21pp gap is at the edge of resolvable. Not a verdict.
-- **BFCL** (tool calling): **NOT RUN, AND THE SMOKE NEVER RAN EITHER.** ⚠️ Earlier revisions said
-  "harness repaired, smoke passed" — that is FALSE. The queue's BFCL smoke job failed with
-  `unknown benchmark 'bfcl'`, masked by a `|| true`, so nothing was ever exercised. Treat any
-  "smoke passed" claim about BFCL as unsupported.
-  **And the blocker is a TEMPLATE CONFOUND, not missing infrastructure:** bfcl's OSS handler posts
-  to `/v1/completions` with a prompt pre-formatted by the *registered* handler's template, and NONE
-  of our four registry names exist in bfcl's 175-key `MODEL_CONFIG_MAPPING` — so every run borrows
-  a foreign handler and any existing number is a **(model × foreign template)** composite. The
-  stock local keys also default to **prompt mode**, which AGENTS.md explicitly forbids. NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit has
-  no suitable handler at all. The fix is a vendored handler posting raw `messages` + `tools` to
-  `/v1/chat/completions`; it is driver work, not worker time.
-  Note `bfcl_eval` is installed on the **worker only** (2026.3.23), not the driver, despite
-  AGENTS.md saying both boxes.
+- **BFCL native-FC (M18, tool calling): COMPLETE 2026-08-24, n=1000/model, all trees clean.**
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` **0.929** vs `Ornith-1.0-35B-mlx-uniform-4bit` **0.914**
+  (1.5 pp, INSIDE the ~±4 pp axis MDE — inconclusive on accuracy) vs
+  `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` **0.860** (real deficit). **Runaway tax inverts
+  the morning read**: 4/1000 at 78–81 min/event (~17 tok/s dense decode) vs 2/1000 at ~21 min vs
+  1/1000 at ~12 min — the 4th ranking number favors `Ornith-1.0-35B-mlx-uniform-4bit` over
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` despite the identical ~2% parallel-category rate.
+  Vendored native-FC handler posting raw `messages`+`tools` to `/v1/chat/completions` (the
+  template confound below is RESOLVED); O41 derived timeouts; poison-guarded rescore. Full story:
+  lab-notebook 2026-08-24 entries.
+  ⚠️ History note (kept): before 2026-08-24 this axis was NOT RUN and an earlier "smoke passed"
+  claim was false (a `|| true` masked `unknown benchmark 'bfcl'`); the original blocker was a
+  template confound — bfcl's OSS handler posts `/v1/completions` through a foreign registered
+  template, none of our registry names in its `MODEL_CONFIG_MAPPING`, stock keys in
+  forbidden prompt mode.
 - **The judge panel** — the only instrument that could measure C's actual construct — is on record as
   **NOT RELIABLE ENOUGH TO RANK**. Measured 2026-08-15: order consistency **71% / 42% / 62%** by
   role, Krippendorff **α = 0.517**, panel p = 0.80. **Score-based aggregation was tested and
@@ -290,7 +292,7 @@ answer its own question. See O19.
 2. **A depth condition on B** — re-run a coding subset with a realistic repo-sized prompt (~128K, inside
    the no-clamp regime for both). Turns B's context requirement from an assumption into a measurement.
 3. **opencode agentic evidence.** The B pick is aider-specific and opencode is what we ship.
-4. **BFCL at n.** Fills an empty dimension and is the cheapest powered axis the suite owns.
+4. ✅ **BFCL at n — DONE 2026-08-24 (M18, n=1000/model, 3 models).** See the BFCL bullet above.
 5. **math500 at n≈100.** The 21pp `acc_strict` split is real-looking and currently unresolvable.
 6. **The runaway-tax temperature ladder, measuring pass@1 alongside convergence.** ~40% of wall-clock on
    both models; a 3-item pilot showed temperature moves it, but **pass@1 is unmeasured** and AGENTS.md
@@ -442,8 +444,9 @@ models with a `daily` cell at all. Full per-model coverage verdicts come from th
 table above. The headline gaps:
 
 - **`gpqa` has NEVER been run** for any model — reasoning is 2/3 axes at best.
-- **`bfcl` has never been run at n** — `daily` is 1/2 axes for the two winners, `NOT MEASURED` for
-  everything else.
+- ✅ **`bfcl` IS now run at n** (M18, 2026-08-24: n=1000/model for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`,
+  `Ornith-1.0-35B-mlx-uniform-4bit`, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`) — the earlier
+  "never been run at n" statement is superseded; `daily` is 2/2 axes for those three.
 - ✅ **`aider` IS now in the scoresheet** (fixed 2026-08-15, commit `738e3a9`): both arms appear as
   `aider | 110 | 50.0% / 73.6%`, reproducing the published result exactly. The earlier statement that
   it "is missing from every row" is superseded. Its `conv%` is deliberately `n/a` — aider gives a
