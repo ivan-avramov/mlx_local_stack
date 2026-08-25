@@ -2743,3 +2743,49 @@ thinking_budget 64):
 Verdict: **the O40 fork set is functionally live on both paths; fund C24 (reporting)
 before M6b**, since the M6b tripwire cannot certify engagement from a response that
 never carries the counters.
+
+## 2026-08-25 — O39 go replication: the M3 inversion does NOT replicate; O40 verdict complete; C26 seed bug CONFIRMED
+
+**O39 (C21), go n=22/model, opencode 1.18.15 (pinned binary — brew had drifted to
+1.18.20 and the version guard caught it), TMPDIR matched to M3's short-prefix scratch,
+deployed params, draft-OFF verified at the worker cmdline, progress-gated:**
+
+| | `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` |
+|---|---|---|
+| session_pass | **11/22** | **12/22** |
+| gate-kills (>=590 s) | 5 | 7 |
+| fast give-ups (<60 s, no edit) | 4 | 2 |
+| wall total / mean | 64 min / 174 s | 131 min / 356 s |
+
+Discordant 4:5, McNemar exact **p=1.0** — a dead heat; python's 19-vs-12 (8:1, p=0.039)
+does not carry to go. **Per C21's pre-registered rule, M9 is NOT triggered** and stays in
+its queued slot. Exclusive-solve sets are crossed (`alphametics`,`food-chain`,`matrix`,
+`pig-latin` vs `dnd-character`,`dominoes`,`forth`,`ledger`,`octal`); solved-by-none:
+`book-store`,`bowling`,`connect`,`counter`,`markdown`,`paasio`. `counter` is a construct
+mismatch (exercism "design a test suite" exercise vs the probe's no-test-edit rule) —
+kept, symmetric across arms; excluding it moves nothing (11/21 vs 12/21).
+
+- **Path-infidelity is NOT Qwen-specific**: `Ornith-1.0-35B-mlx-uniform-4bit` produced
+  the M3 taxonomy's give-up shapes in go — a deterministically duplicated TMPDIR hash
+  token (twice, same duplication) and invented `octmp/opencode/` path levels — verified
+  model-side against the opencode session store (scaffold showed the correct cwd).
+- **TMPDIR is output-determining for this failure mode**: the first pilot ran under the
+  raw macOS `$TMPDIR` (30-char hash component) and scored 0/5 with two path give-ups
+  that VANISHED when re-run under M3's short `scratch/octmp` prefix (2/5, the give-up
+  items engaging or passing). Archived as `.confounded-tmpdir`; never compare
+  opencode runs across scratch-root shapes.
+- go stall rate is ~5× python's for `Ornith-1.0-35B-mlx-uniform-4bit` (5/22 vs 1/22).
+
+**O40 verdict COMPLETE (submodule `61845457`)**: batched PASS (148 rounds, 87%
+acceptance); cached PASS — the C24 fix verified live (150 rounds, 85% acceptance,
+counters in the response); fail-loud verified at the worker contract (`rc=3` + the
+refusal message in the worker's own log; the smoke's phase-A string check was reading
+the wrong log — mlx-serve writes worker stderr to `$TMPDIR/mlx-manager-logs/<model>.log`
+and reopens it per start). C25 (penalties + inline mtp silently dropped) fixed in the
+same fork push (`1c9c12e7`); bench rows now persist per-request draft counters
+(`479fd37`) — the M6b tripwire instrument.
+
+**C26 CONFIRMED — per-request seeds are IGNORED on the cached path** (measured: seeds
+11 and 12 byte-identical at temperature 1.0, same session). Impact: single-sample runs
+(M18, O39) unaffected; any multi-sample run on the cached path produced k copies —
+audit before trusting any pass^k or reliability figure from that path. Fork fix queued.
