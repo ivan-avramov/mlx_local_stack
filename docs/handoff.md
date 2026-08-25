@@ -1,9 +1,27 @@
-# Handoff — rewritten 2026-08-25 (M6b PASSED + registry-certified; O39 no-replication; M23 IN FLIGHT)
+# Handoff — rewritten 2026-08-25 ~12:00 (M6b PASSED + registry-certified; O39 no-replication; M23 official arm IN FLIGHT; restart-safe checkpoint)
 
-Single box (M5 Max 64 GB). **WORK RUNNING: M23 conversion-bias A/B.** Bench router on
-:8000 (lean, **draft-OFF overlay** `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml` —
-REQUIRED for every bench start now, see below), `MLX_VLM_CACHE_SESSION_MAX=2`, APC off.
-Verify live pids with `lsof -nP -iTCP:8000 -sTCP:LISTEN` + `pgrep -f run.py`.
+Single box (M5 Max 64 GB). **WORK RUNNING, all PPID 1 (survives session restarts):**
+
+| what | pid | notes |
+|---|---|---|
+| bench router :8000 | 34276 | lean, **draft-OFF overlay** `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC off |
+| M23 official arm | 38762 | `Qwen3.8-27B-4bit` gate-3 2×50 (tune `m23`, seed 0, deployed); log `$STACK_WORKDIR/m23/arm_official.log` | <!-- allow-shorthand -->
+| M23 watcher | 38763 | 5-min ticks -> `$STACK_WORKDIR/m23/watch_official.log`; exits when 38762 dies (by-PID check) |
+
+At 11:56: hep 25/50 done (mean 290 s), mbpp 5/50 (pilot rows) — on pace for the
+pilot-sized 4–6 h (NOT the row's ~2 h; mbpp tail items `Mbpp/306` 1432 s / `Mbpp/620`
+802 s dominate).
+
+**RESUMING SESSION: (1) verify the table above (`ps -o pid,ppid,etime -p 38762,38763,34276`);
+(2) re-arm the alert Monitor: `tail -f $STACK_WORKDIR/m23/watch_official.log`, grep
+`SUSPECTED|WATCH-EXIT|Traceback`, plus a waiter on pid 38762; (3) when the arm completes:
+`POST /v1/models/unload` for `Qwen3.8-27B-4bit`, then the SECOND ARM — <!-- allow-shorthand -->
+5-item pilot then full, SAME flags with `--models Qwen3.8-27B-mlx-uniform-4bit`:
+`run.py generate --benches humanevalplus,mbppplus --limit humanevalplus=5,mbppplus=5 --seed 0 --tune m23 --sampling-profile deployed --order model`
+(then limits 50,50; resume is seeded-nested); watcher: `python3 $STACK_WORKDIR/o39/o39_watch.py <pid> benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/humanevalplus.m23.jsonl 300`;
+(4) grade BOTH arms (`run.py grade --models <m> --benches humanevalplus,mbppplus --tune m23`);
+(5) score per the M23 row: DNF counts, `acc_strict@81920`, loop taxonomy, paired per-item;
+lab-notebook entry; PLAN row update.**
 
 ## New since 2026-08-24 evening (all committed; pushed through `a55d382`, LOCAL AFTER THAT)
 
