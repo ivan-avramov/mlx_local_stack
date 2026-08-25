@@ -41,7 +41,10 @@ EXEMPT_PATHS = (
 # `config.example.sh` ships `/home/remoteuser/...` on purpose, and the scrubbed manifests read
 # `$HOME/models/...`. Shell-variable forms never match the path patterns below at all (they do not
 # start with /Users or /home); this list covers the LITERAL placeholder usernames.
-PLACEHOLDER_USERS = frozenset({"remoteuser", "user", "username", "youruser", "me", "REDACTED"})
+PLACEHOLDER_USERS = frozenset({"remoteuser", "user", "username", "youruser", "me", "REDACTED",
+                               # BFCL corpus fiction (/user/home/datasets/…), quoted verbatim in
+                               # committed result rows — a dataset directory, not a person.
+                               "datasets"})
 
 _PATTERNS: tuple[tuple[str, str], ...] = (
     # An absolute home path. The username is captured so the message can name what leaked.

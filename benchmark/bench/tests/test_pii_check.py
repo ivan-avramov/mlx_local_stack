@@ -31,7 +31,10 @@ def test_placeholders_and_redactions_are_allowed():
     for added in ('export REMOTE_REPO="/home/remoteuser/path/to/mlx_local_stack"',
                   '    "hf_path": "$HOME/models/Ornith-1.0-35B-mlx-uniform-4bit",',
                   'cd $STACK_REPO && ls',
-                  'repo at $REMOTE_HOME/ws/stack'):
+                  'repo at $REMOTE_HOME/ws/stack',
+                  # BFCL corpus items ship fictional paths like /user/home/datasets/finance.csv;
+                  # result rows quote them verbatim (same class as the corpus's fake emails).
+                  '{"dataset_path": "/user/home/datasets/finance.csv"}'):
         assert piicheck.diff_violations(_diff("config.example.sh", added)) == [], added
 
 
