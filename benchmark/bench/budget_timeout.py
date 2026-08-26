@@ -54,6 +54,31 @@ _CYCLE_MAX = 200
 _TAIL_CHARS = 4000
 
 
+_MIN_ROWS_FOR_RATE = 5
+_FLOOR_PCT = 10
+
+
+def floor_decode_tps(rows, pct: int = _FLOOR_PCT,
+                     min_rows: int = _MIN_ROWS_FOR_RATE) -> Optional[float]:
+    """A model's SLOW-TAIL decode rate from its own rows, or None when the evidence is too thin.
+
+    A low percentile, not the mean: the draws at risk of abandonment are precisely the long ones,
+    and long draws decode SLOWER (the KV cache grows), so they sit in the bottom tail. Deriving the
+    client's patience from the typical rate makes the bound too short exactly where it must hold.
+    None means "no derivation" — `derive_timeout` then falls back to its ceiling and reports
+    `budget_observable=False` rather than inventing a number (C28).
+    """
+    tps = sorted(r["decode_tps"] for r in rows
+                 if not r.get("error") and isinstance(r.get("decode_tps"), (int, float))
+                 and r["decode_tps"] > 0)
+    if len(tps) < min_rows:
+        return None
+    # FLOOR, not nearest: rounding up would pick a FASTER row and shorten the bound, which is the
+    # wrong direction for a safety margin.
+    idx = max(0, min(len(tps) - 1, int((pct / 100.0) * (len(tps) - 1))))
+    return float(tps[idx])
+
+
 def derive_timeout(thinking_budget: Optional[int], decode_tps: Optional[float],
                    safety: float = SAFETY, floor_s: float = FLOOR_S,
                    ceiling_s: float = CEILING_S) -> dict:

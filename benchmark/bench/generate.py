@@ -185,7 +185,8 @@ def probe_with_recovery(model, messages, params, *, probe_fn, restart_fn=None, p
     return p, recovery, p2
 
 
-def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None):
+def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
+                    probe_timeout=None):
     """Stamp each (model, bench) with its exact config — when the manifest is ABSENT **or
     describes a DIFFERENT config than this run**.
 
@@ -221,7 +222,11 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None):
                     continue
                 print(f"  [provenance] RESTAMPED {m}/{b} — the manifest on disk describes a "
                       f"different config than this run", flush=True)
-            provenance.write(m, b, profile=profile, overrides=overrides, tune=tune)
+            # C28: the client bound travels WITH the rows. It is recorded, not fingerprinted:
+            # a bound that never bound leaves rows identical, so blanket staleness would condemn
+            # the corpus. `compare` decides per pair whether it COULD have bound.
+            provenance.write(m, b, profile=profile, overrides=overrides, tune=tune,
+                             runtime={"probe_timeout_s": probe_timeout} if probe_timeout else None)
         except Exception as e:  # noqa: BLE001 — never block a run on provenance
             print(f"  [provenance] skipped {m}/{b}: {type(e).__name__}: {str(e)[:60]}", flush=True)
 
@@ -385,7 +390,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # Provenance: stamp every (model, bench) with its exact config (box, code SHAs, quant
     # effective-bits, KV config, sampling) so results are never silently cross-compared.
     stamp_manifests({(m, b) for m, b, _it, _s in queue},
-                    profile=sampling_profile, overrides=overrides, tune=tune)
+                    profile=sampling_profile, overrides=overrides, tune=tune, probe_timeout=probe_timeout)
 
     per_item = {}                       # model -> list of per-item seconds (rolling)
     cur_model = None

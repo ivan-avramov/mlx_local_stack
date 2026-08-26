@@ -170,14 +170,58 @@ def cmd_generate(args):
         restart_fn = preflight.restart_router
         print("[generate] auto-restart-on-loop ENABLED (looped item -> fresh router + 1 retry)")
     print(f"[generate] sampling profile = {args.sampling_profile}")
-    print(f"[generate] per-probe HTTP timeout = {args.probe_timeout}s")
+    probe_timeout = _resolve_probe_timeout(args, models, benches, tune)
     if args.clean_stale:
         print("[generate] --clean-stale ENABLED (delete + regenerate any results whose config differs)")
     generate.run(models, benches, limits, seed=args.seed, chunk_minutes=args.chunk_minutes,
                  chunks=chunks, overrides=overrides, order=args.order, restart_fn=restart_fn,
-                 sampling_profile=args.sampling_profile, probe_timeout=args.probe_timeout,
+                 sampling_profile=args.sampling_profile, probe_timeout=probe_timeout,
                  clean_stale=args.clean_stale, samples=args.samples, seed_base=args.seed_base,
                  ids=_parse_ids(getattr(args, "ids", None)), tune=tune)
+
+
+def _resolve_probe_timeout(args, models, benches, tune):
+    """The client's patience, DERIVED (C28) unless the caller named it explicitly.
+
+    A hardcoded bound below full-budget generation time is not a conservative choice — it is an
+    active defect. The client gives up, the worker does NOT cancel, and the orphan starves the next
+    item into a false DNF, which adds another orphan: M23's mbppplus leg collapsed into six
+    consecutive false timeouts that way. A bound ABOVE the budget time means nothing is abandoned
+    in normal operation, so no orphan is ever created, and a runaway terminates at max_tokens with
+    a real token count instead of a contentless error row.
+
+    The rate is MEASURED from the model's own rows (slow-tail percentile) and the run takes the
+    most conservative bound across its models, since one bound covers the whole queue.
+    """
+    from bench import budget_timeout as BT, generate as G
+    if getattr(args, "probe_timeout", None):
+        print(f"[generate] per-probe HTTP timeout = {args.probe_timeout}s (EXPLICIT --probe-timeout)")
+        return args.probe_timeout
+    best, why = None, "no prior rows for these models"
+    for m in models:
+        rows = []
+        for b in benches:
+            try:
+                rows += G._read_rows(m, b, tune=tune)
+            except Exception:  # noqa: BLE001 — a missing/unreadable bench must not block the run
+                continue
+        tps = BT.floor_decode_tps(rows)
+        d = BT.derive_timeout(_thinking_budget_for(args, m), tps)
+        if best is None or d["timeout_s"] > best:
+            best, why = d["timeout_s"], f"{m}: {d['reason']}"
+    print(f"[generate] per-probe HTTP timeout = {best:.0f}s (DERIVED, C28) — {why}")
+    return int(best)
+
+
+def _thinking_budget_for(args, model):
+    """Resolved thinking budget for the model, so the bound is derived against the budget that will
+    actually be served rather than a constant."""
+    try:
+        from bench import model_params
+        return (model_params.params_for(model, profile=args.sampling_profile) or {}).get(
+            "thinking_budget")
+    except Exception:  # noqa: BLE001 — fall through to the ceiling rather than guess a budget
+        return None
 
 
 def cmd_grade(args):
@@ -380,10 +424,13 @@ def build_parser():
                          "official = each family's published recommended sampling (quality eval); "
                          "coding = converging sampling + a thinking_budget large enough to not "
                          "truncate hard-problem reasoning")
-    sp.add_argument("--probe-timeout", dest="probe_timeout", type=int, default=3600,
-                    help="per-item HTTP timeout (s). Raise for slow dense models whose thinking "
-                         "budget implies >60min generation (e.g. Qwen3.6-27B @ ~13.5 tok/s, 80K "
-                         "budget ~100min → use ~9000). Default 3600.")
+    sp.add_argument("--probe-timeout", dest="probe_timeout", type=int, default=None,
+                    help="per-item HTTP timeout (s). DEFAULT IS DERIVED (C28): thinking_budget / "
+                         "the model's measured slow-tail decode rate x safety, so the bound always "
+                         "clears full-budget generation. A bound BELOW it is an active defect - the "
+                         "client abandons, the worker does not cancel, and the orphan starves the "
+                         "next item into a false DNF (M23 lost a whole leg that way). Pass a value "
+                         "only to override the derivation.")
     sp.add_argument("--samples", type=int, default=1,
                     help="draws per item (k). Each draw gets its own seed — WITHOUT that the "
                          "server returns byte-identical text and reliability reads as perfect. "

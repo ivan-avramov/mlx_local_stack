@@ -530,3 +530,33 @@ def test_acc_strict_counts_DNFs_as_failures_in_the_paired_delta(write_rows, tmp_
     assert strict["a"] == 1.0
     assert strict["b"] == 0.5, "B DNF'd half its items; acc_strict charges them as failures"
     assert strict["delta"]["delta"] > 0
+
+
+# ------------------------------------------- probe_timeout as provenance (C28)
+def test_refuses_when_probe_timeout_differs_AND_could_have_bound(write_rows, tmp_results):
+    """C28: the client bound decides which draws become DNFs, so it is output-determining —
+    but only for runs that actually reached it. A row that ran to the bound proves it bound."""
+    ids = ["a", "b", "c"]
+    write_rows("A", "math500", _rows(ids))
+    rows_b = _rows(["a", "b"]) + [{"id": "c", "sample": 0, "schema_version": 2,
+                                   "error": "timed out", "error_kind": "probe_timeout",
+                                   "wall_s": 3600.0, "thinking_budget": 16384}]
+    write_rows("B", "math500", rows_b)
+    _manifest(tmp_results, "A", "math500", runtime_extra={"probe_timeout_s": 5400})
+    _manifest(tmp_results, "B", "math500", runtime_extra={"probe_timeout_s": 3600})
+    r = CMP.compare("A", "B", "math500", intersect=True)
+    assert r["comparable"] is False
+    assert "probe_timeout" in r["reason"]
+
+
+def test_allows_differing_probe_timeout_when_it_never_bound(write_rows, tmp_results):
+    """Bound-invariant rows must still pool, or the corpus is condemned by a knob that changed
+    nothing — the max_kv_cache_size ruling-7 precedent."""
+    ids = ["a", "b", "c"]
+    write_rows("A", "math500", _rows(ids))
+    write_rows("B", "math500", _rows(ids))
+    _manifest(tmp_results, "A", "math500", runtime_extra={"probe_timeout_s": 5400})
+    _manifest(tmp_results, "B", "math500", runtime_extra={"probe_timeout_s": 3600})
+    r = CMP.compare("A", "B", "math500")
+    assert r["comparable"] is True, r.get("reason")
+    assert any("probe_timeout" in w for w in r["warnings"])

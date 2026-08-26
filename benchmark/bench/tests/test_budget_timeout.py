@@ -133,3 +133,36 @@ def test_repeated_cycle_evidence_is_truncated_so_a_row_cannot_carry_a_50k_string
 
 def test_short_reasoning_is_never_classified_as_a_cycle():
     assert BT._longest_repeated_tail_cycle("tiny") is None
+
+
+# ----------------------------------------------------- floor_decode_tps (C28)
+def test_floor_decode_tps_uses_a_low_percentile_not_the_mean():
+    """C28: the client's patience must clear the SLOWEST plausible draw, not the typical one.
+
+    A mean-derived bound is too short exactly when it matters — long draws decode slower (bigger
+    KV), so the rows that risk abandonment are the ones pulling the rate DOWN.
+    """
+    from bench import budget_timeout as BT
+    rows = [{"decode_tps": 26.0} for _ in range(9)] + [{"decode_tps": 20.0}]
+    tps = BT.floor_decode_tps(rows)
+    assert tps is not None and tps <= 22.0, "must sit near the slow tail, not the ~25.4 mean"
+
+
+def test_floor_decode_tps_returns_None_without_enough_evidence():
+    """Too few rows -> no derivation. derive_timeout then falls back to the ceiling and reports
+    budget_observable=False, which is the honest answer rather than a made-up bound."""
+    from bench import budget_timeout as BT
+    assert BT.floor_decode_tps([{"decode_tps": 26.0}]) is None
+    assert BT.floor_decode_tps([]) is None
+    assert BT.floor_decode_tps([{"error": "timed out"} for _ in range(9)]) is None
+
+
+def test_derived_bound_exceeds_full_budget_time_so_nothing_is_abandoned():
+    """The M23 case: at the measured 22.3 tok/s floor and an 81920 budget, the derived bound must
+    EXCEED the time to generate the budget — otherwise a runaway is abandoned, the worker keeps
+    generating an uncancelled orphan, and that orphan starves the next item into a false DNF."""
+    from bench import budget_timeout as BT
+    d = BT.derive_timeout(81920, 22.3)
+    assert d["budget_observable"] is True
+    assert d["timeout_s"] > 81920 / 22.3, "bound must clear full-budget generation time"
+    assert d["timeout_s"] > 3600, "the old hardcoded default was BELOW it — that was the defect"

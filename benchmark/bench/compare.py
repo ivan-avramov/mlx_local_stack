@@ -24,6 +24,10 @@ WHICH MISMATCHES ARE FATAL is a judgement, so it is written down rather than lef
 from . import generate, grade, provenance, rowschema, stats
 
 # Metrics whose value depends on the machine and the serving configuration, not just the model.
+# A draw within this fraction of the client bound is treated as having REACHED it: the harness
+# classifies a probe_timeout at >=0.9x, so the same shoulder decides comparability.
+PROBE_BOUND_NEAR = 0.9
+
 _HARDWARE_METRICS = ("decode_tps", "prefill_tps", "wall_s", "peak_mem_gb", "etts",
                      "successes_per_hour")
 
@@ -319,6 +323,26 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
             warnings.append(f"max_kv_cache_size differs ({cap_a} vs {cap_b}) but never bound "
                             f"(max_tokens + every prompt fits under both caps) — rows are "
                             f"cap-invariant per the 2026-08-17 ruling")
+
+    # C28: the client's patience decides which draws become DNFs, so it is output-determining —
+    # but only for a run that actually REACHED it. Blanket refusal would condemn every row
+    # generated before the bound was derived, so this follows the max_kv_cache_size ruling-7
+    # shape: refuse only when the smaller bound COULD have bound.
+    pt_a = (ma.get("runtime") or {}).get("probe_timeout_s")
+    pt_b = (mb.get("runtime") or {}).get("probe_timeout_s")
+    if pt_a != pt_b:
+        smaller = min([p for p in (pt_a, pt_b) if p], default=None)
+        bound_rows = [f"{mdl}: {r.get('id')}"
+                      for mdl, rr in ((model_a, rows_a), (model_b, rows_b)) for r in rr
+                      if r.get("error_kind") == "probe_timeout"
+                      or (smaller and (r.get("wall_s") or 0) >= PROBE_BOUND_NEAR * smaller)]
+        if bound_rows:
+            return _refuse(f"probe_timeout_s differs ({pt_a} vs {pt_b}) and the smaller bound COULD "
+                           f"HAVE BOUND — draws that ran to it are recorded as DNFs, which is a "
+                           f"harness event, not a model property (e.g. {bound_rows[:3]}). Re-run "
+                           f"the affected ids at the larger bound")
+        warnings.append(f"probe_timeout_s differs ({pt_a} vs {pt_b}) but never bound (no draw came "
+                        f"near the smaller bound) — rows are bound-invariant")
 
     score_a, score_b = grade.grade(bench, model_a, tune=tune_a), grade.grade(bench, model_b, tune=tune_b)
     conv_only = metric == "pass_at_1_converged"
