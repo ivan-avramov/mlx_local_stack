@@ -1,12 +1,43 @@
-# Handoff — rewritten 2026-08-26 ~08:30 (M23 INVALIDATED by a C28 orphan cascade; C28 FIXED; M23b re-run IN FLIGHT)
+# Handoff — restart-safe checkpoint 2026-08-26 ~13:05 (M23 invalidated + review corrections done; C26 root cause found; m23b official arm IN FLIGHT; `Qwen3.8-27B-mlx-uniform-4bit` arm HELD)
 
 Single box (M5 Max 64 GB). **WORK RUNNING, all PPID 1 (survives session restarts):**
 
 | what | pid | notes |
 |---|---|---|
-| bench router :8000 | 34276 | lean, **draft-OFF overlay** `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC off |
+| bench router :8000 | 34276 | lean, **draft-OFF overlay** `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC off (verified at worker cmdline) |
 | M23b official arm | 11247 | `Qwen3.8-27B-4bit` 20/bench, tune `m23b`, **`--probe-timeout 5200` PINNED**; log `$STACK_WORKDIR/m23/arm_official_m23b.log` | <!-- allow-shorthand -->
-| M23b watcher | 19803 | 5-min ticks -> `$STACK_WORKDIR/m23/watch_official_m23b.log` |
+| M23b watcher | 19803 | 5-min ticks -> `$STACK_WORKDIR/m23/watch_official_m23b.log`; exits when 11247 dies |
+
+At 13:04: humanevalplus 20/20 DONE (0 DNFs, **2 budget-hits** `HumanEval/2`/`HumanEval/146` — a
+reclassification, never "recovery"); mbppplus 4/20, mean wall 512 s, worker BUSY ~30 %. ETA a
+couple of hours; mbppplus tail items dominate.
+
+**RESUMING SESSION — do these first:**
+1. Verify the table: `ps -o pid,ppid,etime -p 11247,19803,34276`.
+2. Re-arm alerts (Monitors are session-local and DIED with the old session):
+   (a) `tail -n 0 -f $STACK_WORKDIR/m23/watch_official_m23b.log | grep -E --line-buffered "SUSPECTED|WATCH-EXIT|Traceback|ERROR|stalls=[1-9]"`;
+   (b) a by-PID waiter on 11247 with BOTH failure and timeout arms (12 h bound; success-only
+   greps idled the box 9 h on 08-24). Silent+BUSY worker = runaway, never kill; silent+IDLE = wedge.
+3. When 11247 exits: unload `Qwen3.8-27B-4bit`, then **VERIFY `pgrep -f mlx_vlm.server` is <!-- allow-shorthand -->
+   EMPTY** — killing a driver does NOT stop the worker; an orphan poisons whatever runs next.
+4. Then follow the NEXT STEPS list below (grade m23b → C30 replicate extraction → C26 fork fix
+   → the 2-session byte-compare design gate). Do NOT launch the `Qwen3.8-27B-mlx-uniform-4bit`
+   arm before the gate.
+
+**Unpushed local commits (push needs fresh in-turn approval):** `5e6c96c` (08-26 handoff
+rewrite), `f4dbb8e` (C26 escalation — partially superseded by the correction), `b71eadf`
+(session review: C26 correction, C30 opened, arm held, process failures), `a80e448` (C26 root
+cause). Pushed through `673b65e`. Working tree: only the intentional `main_models.yaml` local
+overrides (NEVER commit).
+
+**C26 ROOT CAUSE (found 2026-08-26, code read):** cached path passes no `sampler=` →
+`generate/ar.py:generate_step` builds one, and its seeded branch requires `top_k == 0` (and
+min_p/top_n_sigma/p_less/typical_p at defaults). Every deployed profile sets `top_k: 20`, so the
+request seed is ALWAYS silently dropped into unseeded `make_sampler`. Batched path immune (server's
+extended `_PositionedTargetSampler` + `insert(seeds=…)`). Fix shape: port top_k/min_p into ar.py's
+narrow sampler twin (or de-duplicate the twins), widen the guard, verify the decode loop uses the
+KEYED draw (`sample_target` — the twin's plain `__call__` ignores keys, a second latent drop).
+TDD in `../mlx-vlm`; fork tests touch Metal → run only when no arm is live.
 
 ## 🛑 READ FIRST: the 2026-08-25 M23 result is INVALIDATED. Do not cite any M23 DNF rate.
 
