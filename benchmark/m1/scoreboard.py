@@ -224,9 +224,15 @@ def main(argv=None) -> int:
           "it ended (derived here). degenEosedWall% = the persisted `degenerate_wall_share`: the "
           "same share over the SELF-TERMINATING (EOS'd) degenerate rows ONLY — the loops the "
           "convergence formula counts as CONVERGED. The two are NOT interchangeable. "
-          "kv = KV-cache quantization the run was SERVED with, from the run manifest: scheme+bits "
-          "(TQ = turboquant, uniform = mlx uniform affine), fp16 = unquantized (kv_bits 0), "
-          "n/a = pre-provenance run. Rows differing in kv are different serving paths — do not pool.")
+          "kv = quantization of the GROWING attention-layer KV cache the run was SERVED with, from "
+          "the run manifest: scheme+bits (TQ = turboquant, uniform = mlx uniform affine), fp16 = "
+          "unquantized (kv_bits 0), n/a = pre-provenance run (NOT reconstructible from registry "
+          "history — local overrides never committed). Rows differing in kv are different serving "
+          "paths — do not pool. Hybrid archs carry ADDITIONAL constant-size recurrent state that no "
+          "kv scheme touches (fork quantizes only KVCache entries; ArraysCache passes through): "
+          "qwen3_5-family GatedDeltaNet state is fp32 and only 16/64 layers grow KV, nemotron_h "
+          "Mamba SSM state is fp32 — so the same kv label quantizes a different FRACTION of state "
+          "across archs; an arch constant, not a per-run knob.")
     if stale:
         print("* = the score file was graded over a different row count than is on disk now "
               "(a resumed run). RE-GRADE (zero worker time); do not read the cell as current.")
