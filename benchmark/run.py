@@ -202,7 +202,7 @@ def _resolve_probe_timeout(args, models, benches, tune):
         rows = []
         for b in benches:
             try:
-                rows += G._read_rows(m, b, tune=tune)
+                rows += G.rows_for_rate(m, b)
             except Exception:  # noqa: BLE001 — a missing/unreadable bench must not block the run
                 continue
         tps = BT.floor_decode_tps(rows)

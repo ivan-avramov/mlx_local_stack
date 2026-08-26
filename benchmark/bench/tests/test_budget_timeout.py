@@ -166,3 +166,19 @@ def test_derived_bound_exceeds_full_budget_time_so_nothing_is_abandoned():
     assert d["budget_observable"] is True
     assert d["timeout_s"] > 81920 / 22.3, "bound must clear full-budget generation time"
     assert d["timeout_s"] > 3600, "the old hardcoded default was BELOW it — that was the defect"
+
+
+def test_rate_evidence_spans_tunes_because_decode_rate_is_a_model_property(tmp_path, monkeypatch):
+    """C28 follow-up: a run under a NEW tune label has no rows of its own, so scoping the rate
+    lookup to the current tune derives nothing and silently falls back to the ceiling — which is
+    what happened on the first m23b launch. Decode rate is a property of the MODEL, not the tune.
+    """
+    from bench import generate as G
+    root = tmp_path / "results" / "M"
+    root.mkdir(parents=True)
+    import json
+    (root / "humanevalplus.oldtune.jsonl").write_text(
+        "\n".join(json.dumps({"id": f"i{i}", "decode_tps": 24.0}) for i in range(6)))
+    monkeypatch.setattr(G, "results_root", lambda: tmp_path / "results")
+    rows = G.rows_for_rate("M", "humanevalplus")
+    assert len(rows) == 6, "must find rows recorded under any tune label"

@@ -79,6 +79,32 @@ def result_path(model: str, bench: str, tune: str | None = None) -> Path:
     return results_root() / _safe(model) / f"{stem}.jsonl"
 
 
+def rows_for_rate(model: str, bench: str) -> list:
+    """Every row this model has on this bench, ACROSS TUNE LABELS, for decode-rate evidence.
+
+    Decode rate is a property of the model and its serving config, not of a tune label. Scoping the
+    lookup to the current tune means a run under a NEW label finds nothing and the C28 derivation
+    silently falls back to its ceiling — which is exactly what the first `m23b` launch did. Rows are
+    read for RATE ONLY, never for resume or scoring, so mixing tunes here is safe.
+    """
+    root = results_root() / model
+    if not root.is_dir():
+        return []
+    out = []
+    for p in sorted(root.glob(f"{bench}.jsonl")) + sorted(root.glob(f"{bench}.*.jsonl")):
+        if p.name.endswith(("_samples.jsonl",)):
+            continue
+        for line in p.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except Exception:  # noqa: BLE001 — a torn line must not block rate evidence
+                continue
+    return out
+
+
 def _read_rows(model: str, bench: str, tune: str | None = None) -> list:
     p = result_path(model, bench, tune=tune)
     if not p.exists():
