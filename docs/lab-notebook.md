@@ -2871,3 +2871,61 @@ cancel-on-disconnect so an abandoned request stops billing its neighbour.
 queue contamination that no per-row status field would have surfaced: every one of these
 rows self-reports `finish_reason=stop` and a healthy decode rate. Compute it on any run
 whose latency numbers will be quoted.
+
+---
+
+## 2026-08-26 — M23 INVALIDATED BY AN ORPHAN CASCADE. Two mechanisms, separated by controlled single-item re-runs
+
+**The claim this entry retracts.** During 2026-08-25 I reported `Qwen3.8-27B-mlx-uniform-4bit`
+as a "chronic runaway" against `Qwen3.8-27B-4bit`, quoting DNF rates of 33 % (n=9), then <!-- allow-shorthand -->
+25 % (n=12), then 12 % (n=34), then 25 % (n=40). **Every one of those rates is inflated by an
+unknown amount and none should be cited.** The qualitative claim survives in weakened form; the
+quantitative one does not.
+
+**What the arm looked like.** 40 items, 10 DNFs. But the mbppplus DNFs were not scattered — items
+34–39 were a PERFECTLY CONSECUTIVE block of six, all at exactly 3600 s, and the same six items are
+trivial on `Qwen3.8-27B-4bit`: 30.0 s, 171.3 s, 60.1 s, 562.2 s, 10.8 s, 16.0 s. `Mbpp/803` <!-- allow-shorthand -->
+produced 262 tokens in 10.8 s there and hit the ceiling here — 333×. Memory was FLAT at 29.20 GB
+throughout and decode held ~26 tok/s through item 33, so this was a step-change, not degradation.
+`grade` reached the same verdict independently via its own guard: **HARNESS-BROKEN, 7/20 rows are
+harness errors (35 % > 20 %), fix and re-run.**
+
+**The smoking gun.** After the driver exited and all 40 rows were persisted, the worker still sat at
+a steady 27 % CPU with NO benchmark process alive — an abandoned generation still burning the box
+six hours later. C28's mechanism, compounding: an abandoned request is never cancelled, it steals
+throughput from its successor, the successor times out and adds a SECOND orphan, and the run
+collapses into consecutive false DNFs. Timing corroborates: 6 × 3600 s ≈ the six hours 23:00→05:00.
+
+**Controlled separation (the part worth keeping).** Re-running the six items as a batch REPRODUCED
+six timeouts — but that test was worthless, because the relaunch reported the model "loaded (0.0 s)",
+i.e. still resident from a run I had killed seconds earlier, whose orphan was therefore still
+running. **I ran a cascade test inside a cascade.** The valid protocol is: unload → VERIFY zero
+workers resident → load fresh → ONE item. Under it:
+
+| item | in-arm | contended re-run | CLEAN single-item | `Qwen3.8-27B-4bit` | verdict | <!-- allow-shorthand -->
+|---|---|---|---|---|---|
+| `Mbpp/803` | DNF 3600 s | DNF 900 s | **CONVERGED 107.2 s, 2848 tok** | 10.8 s, 262 tok | **cascade ARTIFACT** |
+| `HumanEval/146` | DNF 3600 s | — | **DNF 1800 s** | 279 s, 7106 tok | **GENUINE runaway** |
+
+**Both mechanisms are real, and the current data cannot separate them at scale.** There IS a
+runaway mode in `Qwen3.8-27B-mlx-uniform-4bit` that `Qwen3.8-27B-4bit` does not show at a matched
+seed; and there IS a cascade that manufactures false DNFs on top of it. The observed rate is the sum.
+
+**Second-order finding.** On the clean run `Mbpp/803` emitted 2848 tokens against 262 for
+`Qwen3.8-27B-4bit` — ~10× the output, same prompt, same seed, converging normally. A VERBOSITY <!-- allow-shorthand -->
+difference, not a failure. Verbosity plus an uncancelled-orphan harness is what manufactured the
+appearance of catastrophic failure. And on generated items our conversion scores HIGHER
+(humanevalplus 94.1 % vs 87.5 %, mbppplus 84.6 % vs 79.6 %), so "the conversion suppresses quality"
+is NOT supported.
+
+**Process lessons.** (1) A consecutive block of failures is a TEMPORAL signature and must never be
+read as an item property — scattered failures are item-intrinsic, blocks are environmental.
+(2) "Fresh worker" is a claim requiring VERIFICATION (`pgrep` for zero workers), not an inference
+from having issued an unload or a kill; killing a driver does NOT stop the worker. (3) `wall_s −
+completion_tokens/decode_tps` remains the cheap tripwire that started this. (4) Interim rates on a
+nested prefix are not estimates — this one moved 33→25→12→25 % and was wrong at every point.
+
+**Consequence: M23 is NOT MEASURABLE on this harness as configured** and its rate must not be
+reported. It needs a bound ABOVE the full-budget generation time (~5400 s at the 22.3 tok/s floor),
+so a runaway TERMINATES at max_tokens with a real token count instead of being abandoned — which
+removes the taxonomy loss AND the cascade in one move, with no fork change.
