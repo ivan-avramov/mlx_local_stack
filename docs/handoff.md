@@ -1,27 +1,44 @@
-# Handoff — rewritten 2026-08-25 ~12:00 (M6b PASSED + registry-certified; O39 no-replication; M23 official arm IN FLIGHT; restart-safe checkpoint)
+# Handoff — updated 2026-08-25 ~21:00 (M23 official arm DONE; uniform arm is a CHRONIC RUNAWAY; C28 found; n CAPPED AT 40 by operator)
 
 Single box (M5 Max 64 GB). **WORK RUNNING, all PPID 1 (survives session restarts):**
 
 | what | pid | notes |
 |---|---|---|
 | bench router :8000 | 34276 | lean, **draft-OFF overlay** `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC off |
-| M23 official arm | 38762 | `Qwen3.8-27B-4bit` gate-3 2×50 (tune `m23`, seed 0, deployed); log `$STACK_WORKDIR/m23/arm_official.log` | <!-- allow-shorthand -->
-| M23 watcher | 38763 | 5-min ticks -> `$STACK_WORKDIR/m23/watch_official.log`; exits when 38762 dies (by-PID check) |
+| M23 uniform arm (pilot) | 90311 | `Qwen3.8-27B-mlx-uniform-4bit` 5-item pilot; log `$STACK_WORKDIR/m23/arm_uniform_pilot.log` |
+| M23 uniform watcher | 90654 | 5-min ticks -> `$STACK_WORKDIR/m23/watch_uniform.log` |
 
-At 11:56: hep 25/50 done (mean 290 s), mbpp 5/50 (pilot rows) — on pace for the
-pilot-sized 4–6 h (NOT the row's ~2 h; mbpp tail items `Mbpp/306` 1432 s / `Mbpp/620`
-802 s dominate).
+**M23 official arm `Qwen3.8-27B-4bit` is COMPLETE**: 100/100 rows, ~6.6 h, draft-OFF <!-- allow-shorthand -->
+verified per row, 3 DNFs (`HumanEval/2`, `HumanEval/132`, `Mbpp/440`). Model UNLOADED.
 
-**RESUMING SESSION: (1) verify the table above (`ps -o pid,ppid,etime -p 38762,38763,34276`);
-(2) re-arm the alert Monitor: `tail -f $STACK_WORKDIR/m23/watch_official.log`, grep
-`SUSPECTED|WATCH-EXIT|Traceback`, plus a waiter on pid 38762; (3) when the arm completes:
-`POST /v1/models/unload` for `Qwen3.8-27B-4bit`, then the SECOND ARM — <!-- allow-shorthand -->
-5-item pilot then full, SAME flags with `--models Qwen3.8-27B-mlx-uniform-4bit`:
-`run.py generate --benches humanevalplus,mbppplus --limit humanevalplus=5,mbppplus=5 --seed 0 --tune m23 --sampling-profile deployed --order model`
-(then limits 50,50; resume is seeded-nested); watcher: `python3 $STACK_WORKDIR/o39/o39_watch.py <pid> benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/humanevalplus.m23.jsonl 300`;
-(4) grade BOTH arms (`run.py grade --models <m> --benches humanevalplus,mbppplus --tune m23`);
-(5) score per the M23 row: DNF counts, `acc_strict@81920`, loop taxonomy, paired per-item;
-lab-notebook entry; PLAN row update.**
+**HEADLINE: `Qwen3.8-27B-mlx-uniform-4bit` is a chronic runaway.** Pilot 3/9 timed out (33%) vs
+3/100 (3%) official — on MATCHED ids AND matched seeds (`HumanEval/146` converged in 279 s
+official, hit the 3600 s ceiling uniform). Full 2×50 projects to **~44 h** (33 timeouts ×
+3600 s + starved successors + normal items) vs the official arm's 6.6 h.
+
+**OPERATOR RULING 2026-08-25: STOP AT n=20 PER BENCH (40 items, ~17 h), do NOT extend to
+100.** Rationale: `acc_strict@81920` counts DNFs in the denominator, so a 33 % DNF rate caps
+`Qwen3.8-27B-mlx-uniform-4bit` at ≤0.67 vs ~0.95 for `Qwen3.8-27B-4bit` — a ~28 pp gap clearing the ±20 pp MDE at <!-- allow-shorthand -->
+N=40; paired McNemar on DNF at 40 items is p≈0.0005. The remaining 60 items would only
+sharpen `pass@1` among converged items, which is near-moot when a third never finishes.
+The 26 h saved goes to the C26 fork fix. **The draw is a seeded shuffle of the FULL corpus,
+prefix-nested (`benchmarks.py:_subsample`) — verified in code AND empirically (hep ids span
+1–162 of 164, near-uniform quintiles), so the M18 easy-first pitfall does NOT apply.**
+Caveat to quote honestly: the tiers are nested, so the 9 pilot rows are 9 *of* the 40 — the
+33 % is not corroborated by an independent sample.
+
+**NEXT STEPS: (1) on pilot exit, launch the n=20 continuation (nested prefix, reuses the
+pilot rows):**
+`.venv-bench/bin/python benchmark/run.py generate --models Qwen3.8-27B-mlx-uniform-4bit --benches humanevalplus,mbppplus --limit humanevalplus=20,mbppplus=20 --seed 0 --tune m23 --sampling-profile deployed --order model`
+(detached, PPID 1, + `o39_watch.py` daemon; NEVER pass `--probe-timeout` — the 3600 s bound
+must stay symmetric with the official arm).
+**(2) grade BOTH arms** (`run.py grade --models <m> --benches humanevalplus,mbppplus --tune m23`).
+**(3) score: PAIRED ON THE 20 SHARED IDS PER BENCH ONLY** (the official arm's extra 30/bench
+are unpaired solo data); DNF counts, `acc_strict@81920`, loop taxonomy, cluster-bootstrap
+intervals; **exclude C28-starved rows from latency-per-task** (accuracy unaffected).
+**(4) lab-notebook + PLAN M23 row. (5) then C26 fork fix + the derived-timeout fix (C28).
+(6) then the approved censored-runaway diagnostic** (re-run both arms' timed-out ids under a
+separate tune label at ~5400 s, OUT of the A/B pool, to recover the loop taxonomy).
 
 ## New since 2026-08-24 evening (all committed; pushed through `a55d382`, LOCAL AFTER THAT)
 
