@@ -82,6 +82,59 @@ def test_diagnostic_bench_marked_in_main_table(monkeypatch, tmp_path, capsys):
     assert "opencode" in out and "opencode [diag]" not in out
 
 
+# --------------------------------------------------------------------------- kv column (operator 2026-08-26)
+def _write_pair(root: Path, model: str, stem: str, n: int, kv: dict | None):
+    """Rows + score + (optionally) a manifest carrying the kv provenance block."""
+    d = root / model
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"{stem}.jsonl"
+    with p.open("w") as f:
+        for r in _humaneval_rows(n):
+            f.write(json.dumps(r) + "\n")
+    p.with_suffix(".score.json").write_text(json.dumps({"acc": 0.5, "acc_strict": 0.5}))
+    if kv is not None:
+        p.with_name(f"{stem}.manifest.json").write_text(json.dumps({"kv": kv}))
+    return p
+
+
+def test_kv_label_rendering():
+    assert SB._kv_label({"kv_bits": 4, "kv_quant_scheme": "turboquant"}) == "TQ4"
+    assert SB._kv_label({"kv_bits": 4, "kv_quant_scheme": "uniform"}) == "uniform4"
+    assert SB._kv_label({"kv_bits": 0, "kv_quant_scheme": None}) == "fp16"
+    assert SB._kv_label({}) is None                      # pre-provenance manifest -> unknown, never fp16
+
+
+def test_kv_column_read_from_manifest(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(SB.paths, "default_results_root", lambda: tmp_path)
+    _write_pair(tmp_path, "modelX", "humanevalplus", 12,
+                kv={"kv_bits": 4, "kv_quant_scheme": "turboquant"})
+    SB.main(["--md"])
+    out = capsys.readouterr().out
+    assert "| kv |" in out.splitlines()[0] + out.splitlines()[0]
+    assert " TQ4 " in out.replace("|", " ")
+
+
+def test_kv_missing_manifest_reads_na(monkeypatch, tmp_path, capsys):
+    """No manifest (pre-manifest run) must render n/a — unknown is never mistaken for fp16."""
+    monkeypatch.setattr(SB.paths, "default_results_root", lambda: tmp_path)
+    _write_pair(tmp_path, "modelX", "humanevalplus", 12, kv=None)
+    SB.main(["--md"])
+    out = capsys.readouterr().out
+    row = [l for l in out.splitlines() if "humanevalplus" in l][0]
+    assert row.rstrip().endswith("n/a |")
+
+
+def test_kv_comes_from_the_selected_variant(monkeypatch, tmp_path, capsys):
+    """collect() keeps the largest-n variant; the kv cell must come from THAT file's manifest."""
+    monkeypatch.setattr(SB.paths, "default_results_root", lambda: tmp_path)
+    _write_pair(tmp_path, "modelX", "humanevalplus", 5,
+                kv={"kv_bits": 4, "kv_quant_scheme": "uniform"})
+    _write_pair(tmp_path, "modelX", "humanevalplus.big", 20,
+                kv={"kv_bits": 4, "kv_quant_scheme": "turboquant"})
+    data = SB.collect()
+    assert data["modelX"]["humanevalplus"]["kv"] == "TQ4"
+
+
 def test_role_coverage_section_shows_diagnostic_separately(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(SB.paths, "default_results_root", lambda: tmp_path)
     _write_rows(tmp_path, "modelX", "aider", _humaneval_rows(110),

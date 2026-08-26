@@ -43,6 +43,20 @@ DIAGNOSTIC_ROLES = {
 MIN_N_FOR_VERDICT = 10
 
 
+def _kv_label(kv: dict) -> str | None:
+    """Compact KV-cache provenance: 'TQ4' (turboquant 4-bit), 'uniform4', 'fp16' (kv_bits 0).
+    None (-> 'n/a') when the manifest predates kv provenance — unknown is never rendered as fp16.
+    The corpus genuinely mixes all three (54 TQ4 / 11 uniform4 / 25 fp16 pairs on 2026-08-26), so a
+    cell without this column silently pools across a lossy-lever change (operator 2026-08-26)."""
+    bits = kv.get("kv_bits")
+    if bits is None:
+        return None
+    if bits == 0:
+        return "fp16"
+    scheme = kv.get("kv_quant_scheme") or "kv"
+    return ("TQ" if scheme == "turboquant" else scheme) + str(bits)
+
+
 def _rows(path: Path) -> list:
     out = []
     for line in path.read_text(errors="replace").splitlines():
@@ -96,6 +110,15 @@ def collect() -> dict:
         # PRESENTER of what was graded. Cost: an ungraded pair reads `n/a` instead of a number
         # nobody audited, which is the convention `acc`/`acc_strict` already follow. Fixing a cell
         # means running `grade` (zero worker time), not recomputing here.
+        # KV provenance comes from THIS file's manifest, never the registry: the registry is
+        # current state, the manifest records what the run was actually served with.
+        mp = f.with_name(f.stem + ".manifest.json")
+        kv_label = None
+        if mp.exists():
+            try:
+                kv_label = _kv_label(json.loads(mp.read_text()).get("kv") or {})
+            except (json.JSONDecodeError, OSError):
+                kv_label = None
         conv_rate = sc.get("conv_rate")
         # Convergence is only DEFINED for rows that expose per-turn generation. The aider agentic
         # rows carry converged=None on purpose (aider gives a per-CASE view across turns, so there is
@@ -129,7 +152,8 @@ def collect() -> dict:
                "degen_eosed_wall_pct": (None if sc.get("degenerate_wall_share") is None
                                         else 100 * sc["degenerate_wall_share"]),
                "budget": sorted(budgets)[0] if len(budgets) == 1 else None,
-               "acc": sc.get("acc"), "acc_strict": sc.get("acc_strict")}
+               "acc": sc.get("acc"), "acc_strict": sc.get("acc_strict"),
+               "kv": kv_label}
         m = out.setdefault(f.parent.name, {})
         prev = m.get(bench)
         if prev is None or rec["n"] > prev["n"]:   # keep the largest n across variants
@@ -162,8 +186,8 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     data = collect()
     hdr = ("model", "bench", "n", "acc", "strict", "conv%", "degenAll", "degenAllWall%",
-           "degenEosedWall%", "budget")
-    fmt = "%-40s %-15s %5s %7s %7s %6s %8s %13s %15s %8s"
+           "degenEosedWall%", "budget", "kv")
+    fmt = "%-40s %-15s %5s %7s %7s %6s %8s %13s %15s %8s %8s"
     if args.md:
         print("| " + " | ".join(hdr) + " |")
         print("|" + "---|" * len(hdr))
@@ -188,7 +212,8 @@ def main(argv=None) -> int:
             v = (model, bench_s, r["n"], acc_s, st_s, conv_s, r["degen_all"] or "-",
                  f"{r['degen_all_wall_pct']:.0f}" if r["degen_all"] else "-",
                  "n/a" if r["degen_eosed_wall_pct"] is None else f"{r['degen_eosed_wall_pct']:.0f}",
-                 r["budget"] or "-")
+                 r["budget"] or "-",
+                 r["kv"] or "n/a")
             print(("| " + " | ".join(str(x) for x in v) + " |") if args.md else fmt % v)
     # The legend TRAVELS WITH THE SHEET, because the sheet gets pasted into campaign-results.md and a
     # cell is read on its header. One name for both degeneracy measures is how a 63%-vs-0% ambiguity
@@ -198,7 +223,10 @@ def main(argv=None) -> int:
           "degenAllWall% = wall-clock share of EVERY row whose trace shows a verbatim loop, however "
           "it ended (derived here). degenEosedWall% = the persisted `degenerate_wall_share`: the "
           "same share over the SELF-TERMINATING (EOS'd) degenerate rows ONLY — the loops the "
-          "convergence formula counts as CONVERGED. The two are NOT interchangeable.")
+          "convergence formula counts as CONVERGED. The two are NOT interchangeable. "
+          "kv = KV-cache quantization the run was SERVED with, from the run manifest: scheme+bits "
+          "(TQ = turboquant, uniform = mlx uniform affine), fp16 = unquantized (kv_bits 0), "
+          "n/a = pre-provenance run. Rows differing in kv are different serving paths — do not pool.")
     if stale:
         print("* = the score file was graded over a different row count than is on disk now "
               "(a resumed run). RE-GRADE (zero worker time); do not read the cell as current.")
