@@ -2985,3 +2985,39 @@ controlled protocol now in the handoff.
 **Standing lesson to carry:** budget-hit ≠ completed; a DNF that becomes a budget-hit under a
 longer bound is the instrument getting HONEST, not the model getting better. And any claim of
 the form "matched seed" must first survive `diff` on two draws.
+
+## 2026-08-26 evening — M23 CLOSED BY CONSTRUCTION: the "two" Qwen3.8 4-bit arms are the SAME MODEL <!-- allow-shorthand -->
+
+**Discovery chain.** After the C26 fork fix (seeds honored, fork `ab5708a5`) the m23c arms were
+launched per the confirmed paired design. The `Qwen3.8-27B-mlx-uniform-4bit` pilot returned
+token statistics IDENTICAL to the `Qwen3.8-27B-4bit` pilot (mean 7,619 / max 28,989). Escalating
+checks: (1) all 10 pilot outputs byte-identical across arms — including an 11,973-token
+generation at t0.6, astronomically improbable under any weight difference; (2) worker cmdline
+verified loading `caslca/Qwen3.8-27B-mlx-uniform-4bit` — not a routing error; (3) full-tensor
+md5 sweep over both HF snapshots: **2180/2180 tensors shared, 2179 IDENTICAL; the single
+differing tensor is `vision_tower.patch_embed.proj.weight`** (the 2026-08-23 bf16 vision graft;
+no text bench touches it).
+
+**Mechanism.** MLX uniform-affine quantization is deterministic. Our conversion recipe
+(uniform 4-bit gs64) applied to the same bf16 base is byte-for-byte the recipe mlx-community
+ran. Two independent conversions, one output. The registry's own graft note ("trunk md5+logit
+bit-identical") had already recorded the identity — read at the time as identity to our
+pre-graft conversion, not recognized as identity to the OFFICIAL quant.
+
+**Consequences.**
+1. **M23 answered: conversion bias = exactly 0.** No caveat, no M21/M22 re-prioritization,
+   no further arms. The `Qwen3.8-27B-mlx-uniform-4bit` full m23c arm was NOT launched.
+2. **Every cross-arm difference ever observed in m23/m23b was session noise between identical
+   models**: humanevalplus "94.1% vs 87.5%", the ~10× `Mbpp/803` verbosity gap at a "matched
+   seed" (seeds were dropped — C26), and the DNF asymmetry. These now become the campaign's
+   best session-variance replicates (C30): five sessions of one model over overlapping items.
+3. **m23c official (seeds honored): hep 20/20 acc 100% strict 100% conv 100%; mbpp 80%/80%
+   conv 100% — zero runaways**, where m23b (same model, unseeded) had 2 budget-hits and 85%
+   strict. Whether honored seeds systematically avoid runaway trajectories is a C30 question —
+   single session, no verdict.
+4. Registry consolidation + drafter reframe → C33 (operator).
+
+**Process note.** The identity was catchable on 2026-08-23 from the graft verification, and
+cheaply testable any time since (one md5 sweep). The campaign ran ~20 h of A/B arms against a
+mirror. Standing lesson: **before any conversion-vs-original A/B, hash the tensors first** —
+a 2-minute sweep bounds the maximum possible effect at zero or licenses the arm.

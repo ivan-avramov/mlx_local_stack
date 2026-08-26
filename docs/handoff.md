@@ -1,73 +1,74 @@
-# Handoff — 2026-08-26 evening (m23b DONE+graded; C26 FIXED, gate = EQUAL BYTES → paired m23c; box IDLE)
+# Handoff — 2026-08-26 night (M23 CLOSED BY CONSTRUCTION: the two 4-bit arms are the SAME MODEL; box IDLE)
 
-Single box (M5 Max 64 GB). **NOTHING RUNNING: no router, no worker, port 8000 clear** (verified
-by PID kill + `pgrep -f mlx_vlm.server` empty + 0 listeners). The m23b arm, its watcher and the
-bench router from the morning session are all finished/retired.
+Single box (M5 Max 64 GB). **NOTHING RUNNING except the bench router** (:8000, pid 89264, lean,
+draft-OFF overlay, SESSION_MAX=2, APC absent, NO models resident — verified `pgrep -f
+mlx_vlm.server` empty). Kill it by PID if the port is needed; it holds no state.
 
-## What happened today (all committed locally; NOTHING pushed since `1f4aac6`)
+## THE HEADLINE
 
-1. **m23b official arm COMPLETE + GRADED** (`2587beb`): `Qwen3.8-27B-4bit`, 20/bench, seed 0, <!-- allow-shorthand -->
-   deployed profile, probe-timeout **5200 PINNED**, draft-OFF overlay, clean exit, zero orphans.
-   n=20 (MDE ±28pp — diagnostics, never verdicts): humanevalplus acc 95.0% [85,100] /
-   strict@81920 85.0% / conv 90% (degenerate_repetition:2, 0 DNFs); mbppplus acc 80.0% [60,95] /
-   strict 75.0% / conv 90% (budget_hit:1, degenerate_repetition:1; 1 self-terminating degen, 12% wall).
-2. **C30 mbppplus session replicate extracted** (same commit): m23 vs m23b, same items/declared
-   seeds → 1/20 byte-identical, log-token rank corr **0.666** (vs 0.84 on humanevalplus), 11/20
-   items ≥2× token divergence (`Mbpp/300` 25×, `Mbpp/232` 20×), `Mbpp/306` 33,304→82,330 tok
-   converged→budget-hit with finish==stop BOTH times. Session noise on a 20-item mbppplus arm ≈
-   ±1–2 items of acc_strict. (Caveat: m23 side ran at the old 3600 s bound; no shared item errored.)
-3. **C26 FIXED in the fork** (`../mlx-vlm` commit `ab5708a5`, TDD, suite 3617/0):
-   `_PositionedTargetSampler` widened to the top_p/min_p/top_k filter chain and the two twins
-   DE-DUPLICATED (server/generation.py imports the ar.py class). Guard now excludes only
-   top_n_sigma/p_less/typical_p. Live verification at the deployed profile: same seed →
-   byte-identical, different seeds → different (the original repro inverted).
-   ⚠️ **Fork-local**: the stack submodule still points at `61845457` — any router started from
-   the submodule runs the UNFIXED sampler. Push fork + bump submodule = FIRST action after the
-   operator approves pushing.
-4. **DESIGN GATE RUN — EQUAL BYTES** (2 full router/worker restarts, PYTHONPATH-fork router,
-   draft-OFF overlay, deployed profile): seed 11 → 268=268 tok byte-identical; seed 12 →
-   570=570 byte-identical. Per the pre-registered rule: **the M23 redesign is the PAIRED m23c
-   re-run, both arms pinned 5200 s.** Caveat: probe = 2 seeds × 1 short prompt; 30k-token
-   generations have more room for kernel float nondeterminism. The 2026-08-23 "cross-restart
-   determinism NOT guaranteed" note predates the fix and is explained by it.
-5. **Scoresheet kv provenance** (`f7ef307`, `94f0701`, `ba828e7`): per-row kv cell
-   (TQ4/uniform4/fp16/n·a from the run MANIFEST) + `·attnK/N` hybrid marker (config-derived:
-   qwen3_5-family 16/64, nemotron_h 6/52, gemma4 10/60 — gemma4 sliding-window RotatingKVCache
-   stays UNQUANTIZED even at kv_bits 4, newly surfaced). n/a rows are NOT reconstructible from
-   registry history (operator agreed — no archaeology).
-6. **C31** (`70cd6b0`, strengthened in `94f0701`): M24 low arm REJECTED outright; medium arm
-   DEFERRED — re-evaluated only at work-evaluation points, never queued in between. Only the
-   effort→fingerprint provenance work stays live.
+**M23 is answered, not re-run: conversion bias = exactly 0, because
+`Qwen3.8-27B-mlx-uniform-4bit` and `mlx-community/Qwen3.8-27B-4bit` are the same model.**
+Full-tensor md5 sweep: 2180/2180 tensors shared, **2179 identical**; sole delta =
+`vision_tower.patch_embed.proj.weight` (our bf16 vision graft — text benches never touch it).
+MLX uniform 4-bit gs64 quantization is deterministic; our conversion reproduced the official
+quant byte-for-byte. Discovered when the post-C26-fix m23c pilots produced 10/10 byte-identical
+outputs across "both" arms (incl. an 11,973-token generation). Full chain: lab-notebook
+2026-08-26 evening. PLAN M23 row closed; ledger row re-headed IDENTITY; C33 opened (operator:
+registry consolidation, drafter reframe, row pooling).
 
-## NEXT SESSION, in order
+**Standing lesson (now in the lab notebook): before ANY conversion-vs-original A/B, hash the
+tensors first.** A 2-minute md5 sweep bounds the effect at zero or licenses the arm; we spent
+~20 h of arms against a mirror.
 
-1. **Ask the operator for push approval** (never push without in-turn approval). On approval:
-   push the stack (through `2587beb`+docs), push the fork (`ab5708a5`), then
-   `chore(stack): bump src/mlx-vlm -> ab5708a5` + `git submodule update --force` + verify.
-2. **m23c paired re-run** (OPERATOR DECISION (2) is now answerable — surface the gate result
-   first): both arms — `Qwen3.8-27B-4bit` AND the held `Qwen3.8-27B-mlx-uniform-4bit` — fresh <!-- allow-shorthand -->
-   sessions on the FIXED serving path, tune `m23c`, seed 0, `--probe-timeout 5200` pinned on
-   BOTH, draft-OFF overlay router (regenerate after any registry edit), 5-item seeded-random
-   pilot per arm first, one resident model, unload + `pgrep` verify between arms.
-   **Do NOT start m23c before the submodule bump lands** — a benchmark run must not depend on a
-   PYTHONPATH override.
-3. Then M24's provenance work / M9 / the rest of `docs/PLAN.md`.
+## Everything every m23/m23b "cross-arm difference" ever showed was SESSION NOISE
+
+…between identical models: the 94.1-vs-87.5 humanevalplus gap, the "10× verbosity at a matched
+seed" (seeds were dropped — C26), the DNF asymmetry. These are now C30's best replicate data:
+five sessions of one model on overlapping items. Note also m23c official (seeds honored,
+fork fix live): hep 100%/100% conv 100%, mbpp 80%/80% conv 100%, **zero runaways** — where
+m23b (same model, unseeded) had 2 budget-hits. Whether honored seeds systematically avoid
+runaway trajectories is an open C30 sub-question (n=1 session).
+
+## Today's other completions (see git log 1f4aac6..HEAD; pushed through 38d2601)
+
+- **C26 FIXED + PUSHED + BUMPED**: fork `ab5708a5` (sampler twins de-duplicated, guard widened,
+  TDD 3617/0), stack submodule bumped (`38d2601`), fix verified live in `.venv`. 2-session
+  byte-compare gate: EQUAL BYTES → paired design confirmed by operator (then mooted for M23 by
+  the identity discovery — the gate result still stands for any future paired axis).
+- **m23b + m23c official rows generated and graded** (tunes stay separate; m23c: hep 20/20
+  100%/100%, mbpp 20/20 80%/80%, conv 100% both). m23c uniform: 5+5 pilot rows only, graded;
+  full arm deliberately NOT launched (identity).
+- **C28 orphan discipline held twice today** (killed driver → unload → `pgrep` verify).
+- **C32 FIXED** (`e2946e3`): bare `--limit N` now broadcasts to all requested benches;
+  unparseable specs refuse. (It had silently meant NO CAP — caught live at m23c pilot launch.)
+- **Scoresheet kv provenance shipped** (`f7ef307`, `94f0701`, `ba828e7`): per-row
+  TQ4/uniform4/fp16 + `·attnK/N` hybrid marker; gemma4 sliding-window KV stays unquantized even
+  at kv_bits 4 (newly surfaced). C31: M24 low arm rejected; medium arm deferred to
+  work-evaluation.
+
+## NEXT SESSION
+
+1. **Surface C33 to the operator** (registry consolidation: proposal = keep
+   `caslca/Qwen3.8-27B-mlx-uniform-4bit` as canonical [restored vision tower + insurance-clone
+   rule], retire the `Qwen3.8-27B-4bit` M23-reference entry; drafter upload activates only if a
+   `Qwen3.8-27B` family recipe is ever picked; row-pooling question). <!-- allow-shorthand -->
+2. **Push approval** for the post-`38d2601` commits (C32 fix, M23-closure docs, scoresheet
+   regen if run).
+3. Re-emit the scoresheet (m23c rows now graded) and update `docs/campaign-results.md`
+   narrative where it cites m23-era cross-arm differences as model differences.
+4. Then the PLAN queue: M24 provenance work, M9/M2 Stage-2 remainder — with ~20 h of A/B budget
+   just refunded.
 
 ## Standing state
 
-- **Unpushed stack commits** (all after `1f4aac6`): `5e6c96c`, `f4dbb8e`, `b71eadf`, `a80e448`,
-  `f7ef307`, `70cd6b0`, `94f0701`, `ba828e7`, `2587beb`, + today's final docs commit.
-  Unpushed fork commit: `ab5708a5`.
-- Working tree: only the intentional `main_models.yaml` local overrides (NEVER commit) and
-  older untracked result dirs from previous sessions.
-- The 2026-08-25 M23 result stays INVALIDATED (C28 cascade) — never cite its DNF rates. The
-  m23 rows remain on disk as evidence under their own tune label; m23b/m23c never pool with them.
-- C30 stays OPEN: with seeds now honored, the session-replicate question changes shape —
-  paired designs absorb chaotic redraws; the variance bound deliverable still stands for
-  historical single-session rows.
-- Bench-router hazard unchanged: start from the draft-stripped overlay
-  (`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`), `MLX_VLM_CACHE_SESSION_MAX=2`, APC
-  absent — verify all three at the worker cmdline/env per arm.
+- Unpushed: everything after `38d2601` (C32 fix `e2946e3`+`5173b9d`, C32 row `1c12be1`,
+  M23-closure docs commit). Fork fully pushed (`ab5708a5`).
+- Working tree: only the intentional `main_models.yaml` local overrides (NEVER commit) + older
+  untracked result dirs.
+- The 2026-08-25 M23 INVALIDATION stands for its original reason (C28 cascade) AND is now
+  doubly moot (identity). Never cite m23 DNF rates; m23-era rows live on only as C30 replicates.
+- Bench-router hazard unchanged: draft-stripped overlay + SESSION_MAX=2 + APC absent, verified
+  at the worker per arm.
 
-**Order of resumption: this file → `docs/PLAN.md` → `docs/open-questions.md` (C26 row has the
-full fix + gate record; C30, C31 are the open items).**
+**Order of resumption: this file → `docs/PLAN.md` → `docs/open-questions.md` (C33 is the top
+operator item; C30, C31 open).**
