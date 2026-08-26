@@ -502,3 +502,31 @@ def test_refuses_when_reasoning_effort_differs(write_rows, tmp_results):
     _manifest(tmp_results, "B", "math500", sampling_extra={"reasoning_effort": "medium"})
     r = CMP.compare("A", "B", "math500")
     assert r["comparable"] is False and "reasoning_effort" in r["reason"]
+
+
+# ------------------------------------------------- acc_strict pairing (C29)
+def _err_rows(ids, *, budget=16384):
+    """DNF rows: a harness error with no text — what a probe_timeout writes."""
+    return [{"id": i, "sample": 0, "schema_version": 2, "error": "timed out",
+             "error_kind": "probe_timeout", "thinking_budget": budget} for i in ids]
+
+
+def test_acc_strict_counts_DNFs_as_failures_in_the_paired_delta(write_rows, tmp_results):
+    """C29: the paired strict delta must charge DNFs, not silently drop them.
+
+    A is clean; B solves the same items but DNFs on half of them. On `acc` (generated-only,
+    by design) the two are identical. On `acc_strict` a DNF is a failed item, so B must be
+    HALF of A. Reading the graded item list for a strict metric hides exactly the rows that
+    carry the effect — on a DNF-asymmetric axis that inverts the verdict.
+    """
+    ids = ["a", "b", "c", "d"]
+    write_rows("A", "math500", _rows(ids))
+    write_rows("B", "math500", _rows(["a", "b"]) + _err_rows(["c", "d"]))
+    _manifest(tmp_results, "A", "math500"); _manifest(tmp_results, "B", "math500")
+
+    strict = CMP.compare("A", "B", "math500", metric="acc_strict", intersect=True)
+    assert strict["comparable"] is True, strict.get("reason")
+    assert strict["n_items"] == 4, "strict pairs over ALL items, DNFs included"
+    assert strict["a"] == 1.0
+    assert strict["b"] == 0.5, "B DNF'd half its items; acc_strict charges them as failures"
+    assert strict["delta"]["delta"] > 0

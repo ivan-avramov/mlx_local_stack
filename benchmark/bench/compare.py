@@ -139,9 +139,15 @@ def _refuse(reason):
     return {"comparable": False, "reason": reason}
 
 
-def _per_item(score, converged_only=False, rows=None):
-    """{id: [score, ...]} from a grader's per-item results."""
-    items = score.get("items") or []
+def _per_item(score, converged_only=False, rows=None, strict=False):
+    """{id: [score, ...]} from a grader's per-item results.
+
+    `strict` reads the STRICT vector (`grade` zeroes non-converged draws and appends every DNF
+    at 0.0) instead of the graded-only one. C29: pairing a strict metric over the graded list
+    drops exactly the DNF items the metric exists to charge, which on a DNF-asymmetric axis
+    inverts the verdict. `grade` owns the strict semantics; this only chooses the vector.
+    """
+    items = score.get("strict_items" if strict else "items") or []
     items = [i for i in items if not i.get("contaminated")]
     if converged_only:
         from . import convergence
@@ -316,8 +322,19 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
 
     score_a, score_b = grade.grade(bench, model_a, tune=tune_a), grade.grade(bench, model_b, tune=tune_b)
     conv_only = metric == "pass_at_1_converged"
-    pa = _per_item(score_a, conv_only, rows_a)
-    pb = _per_item(score_b, conv_only, rows_b)
+    strict = metric == "acc_strict"
+    if strict:
+        # Refuse rather than fall back to the graded-only vector: a silent fallback here is the
+        # C29 defect itself, and it fails in the direction that looks like "no difference".
+        missing = [m for m, s in ((model_a, score_a), (model_b, score_b))
+                   if s.get("strict_items") is None]
+        if missing:
+            return _refuse(f"acc_strict requested but {', '.join(missing)} carries no strict "
+                           f"per-item vector (grader too old, or a cached score) — pairing the "
+                           f"graded-only vector would DROP the DNFs acc_strict exists to charge. "
+                           f"Re-grade to populate it")
+    pa = _per_item(score_a, conv_only, rows_a, strict=strict)
+    pb = _per_item(score_b, conv_only, rows_b, strict=strict)
 
     only_a, only_b = set(pa) - set(pb), set(pb) - set(pa)
     if conv_only and (only_a or only_b):

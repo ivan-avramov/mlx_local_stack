@@ -77,6 +77,11 @@ def _rows(model, bench, tune=None):
     return out
 
 
+# Per-item vectors: analysis-layer payload, never persisted. They are large, they are derivable
+# from the rows, and a score.json that carried them would drift from the rows it was graded off.
+_IN_MEMORY_ONLY = ("items", "strict_items")
+
+
 def _per_item(items):
     """[{id, sample, score}] -> {id: [score, ...]} for the stats layer. Items are the unit of
     analysis; pooling the N*k draws would understate variance by ignoring item clustering."""
@@ -177,6 +182,11 @@ def _finalize(score: dict, rows: list) -> dict:
                      for r in rows if r.get("error")]
     strict_per_item = _per_item(strict_items)
     score["acc_strict"] = round(stats.pass_at_1(strict_per_item), 4) if strict_per_item else None
+    # C29: `compare` pairs on whatever vector it is handed, so the strict vector has to LEAVE this
+    # function. Deriving it a second time inside compare is what let the two drift: compare read
+    # the graded-only `items` for every metric and silently dropped the DNFs that acc_strict exists
+    # to charge. In-memory only — stripped on persistence (_IN_MEMORY_ONLY).
+    score["strict_items"] = strict_items
 
     conv_items = [i for i in scored if conv_by_key.get((i["id"], i["sample"])) is not False]
     conv_per_item = _per_item(conv_items)
@@ -843,7 +853,8 @@ def grade_all(models, benches, tune=None):
     root = generate.results_root()          # NOT a second hardcoded literal — one seam (see
     root.mkdir(parents=True, exist_ok=True)  # generate.results_root)
     (root / "scores.json").write_text(
-        json.dumps([{k: v for k, v in s.items() if k != "items"} for s in scores], indent=2))
+        json.dumps([{k: v for k, v in s.items() if k not in _IN_MEMORY_ONLY} for s in scores],
+                   indent=2))
     return scores
 
 
@@ -881,7 +892,8 @@ def _write_pair_score(model, bench, score, tune=None):
                 print(f"  [score] REFUSING to overwrite {model}/{bench}: incoming grade FAILED "
                       f"({str(score.get('note'))[:60]}) — keeping acc={prev['acc']}", flush=True)
                 return
-        p.write_text(json.dumps({k: v for k, v in score.items() if k != "items"}, indent=2))
+        p.write_text(json.dumps({k: v for k, v in score.items() if k not in _IN_MEMORY_ONLY},
+                                indent=2))
     except Exception as e:  # noqa: BLE001 — never fail a grade over its own bookkeeping
         print(f"  [score] could not persist {model}/{bench}: {type(e).__name__}: {str(e)[:60]}",
               flush=True)
