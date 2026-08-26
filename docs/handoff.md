@@ -52,17 +52,24 @@ uses `--probe-timeout 5200` on BOTH arms.
 New tune label `m23b` so the invalidated `m23` rows stay as evidence and cannot pool. 20 items per
 bench, seed 0, deployed profile, `--order model`, one resident model with unload between arms.
 
-**NEXT STEPS: (1)** when 11247 exits, `POST /v1/models/unload` for `Qwen3.8-27B-4bit`, **VERIFY <!-- allow-shorthand -->
-`pgrep -f mlx_vlm.server` is EMPTY** (an orphan would poison the next arm), then launch the second:
-`.venv-bench/bin/python benchmark/run.py generate --models Qwen3.8-27B-mlx-uniform-4bit --benches humanevalplus,mbppplus --limit humanevalplus=20,mbppplus=20 --seed 0 --tune m23b --sampling-profile deployed --order model --probe-timeout 5200`
-(detached, PPID 1, + `o39_watch.py`). Expect ~7-9 h; runaways should now TERMINATE at max_tokens
-with real token counts instead of being abandoned.
-**(2)** grade both (`run.py grade --models <m> --benches humanevalplus,mbppplus --tune m23b`).
-**(3)** score: `compare(metric="acc_strict", intersect=True)` — the C29 fix (`e1774ac`) means the
-paired strict delta now CHARGES DNFs instead of dropping them; check `wall_s - ct/decode_tps` per
-row as the queue-contamination tripwire before quoting any latency.
-**(4)** lab-notebook + PLAN M23 row. **(5)** then C26 fork fix (funded ahead of M24), with
-cancel-on-disconnect still queued as defence-in-depth for interrupted runs.
+🛑 **SUPERSEDED 2026-08-26 ~13:00 (session review): the `Qwen3.8-27B-mlx-uniform-4bit` arm is HELD — do NOT launch it.**
+C26 escalated: same model, same items, same declared seeds, two sessions (m23 vs m23b official)
+→ **0/20 byte-identical**, `HumanEval/146` 7,106 → 82,168 tok (converged → budget-hit). Per-item
+PAIRING does not exist on this serving path; every matched-seed M23 contrast dissolves. Unpaired
+A/B remains valid (log-token rank corr across sessions 0.84 — chaotic tail redraws, not a session
+shift) but spending 8 h on that arm BEFORE the design gate would risk another unusable arm.
+Also note: m23b official humanevalplus has 0 DNFs but **2 budget-hits** — a reclassification
+(the instrument getting honest), never to be narrated as recovery; budget-hit ≠ completed.
+
+**NEXT STEPS: (1)** when 11247 exits: unload `Qwen3.8-27B-4bit`, **VERIFY `pgrep -f <!-- allow-shorthand -->
+mlx_vlm.server` EMPTY**, then STOP — no new arms. **(2)** grade the m23b official rows
+(`run.py grade --models Qwen3.8-27B-4bit --benches humanevalplus,mbppplus --tune m23b`) and <!-- allow-shorthand -->
+extract the mbppplus half of the m23/m23b session replicate for C30. **(3) C26 FORK FIX**
+(../mlx-vlm, TDD: per-request seeds must reach the cached-path sampler; C24's
+`speculative_stats_since` plumbing is the pattern for threading per-request state). **(4) the
+design gate**: one item, same seed, TWO sessions, byte-compare → equal: paired m23c re-run, both
+arms pinned 5200 s; different: unpaired, ≥2 sessions/arm, ABBA order, quote the ~√2-worse MDE.
+**(5)** then M24; cancel-on-disconnect stays queued as defence-in-depth.
 
 ## New since 2026-08-24 evening (all committed; pushed through `a55d382`, LOCAL AFTER THAT)
 

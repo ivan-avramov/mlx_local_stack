@@ -2929,3 +2929,59 @@ nested prefix are not estimates — this one moved 33→25→12→25 % and was w
 reported. It needs a bound ABOVE the full-budget generation time (~5400 s at the 22.3 tok/s floor),
 so a runaway TERMINATES at max_tokens with a real token count instead of being abandoned — which
 removes the taxonomy loss AND the cascade in one move, with no fork change.
+
+---
+
+## 2026-08-26 — SEEDS ARE INERT ACROSS SESSIONS: the m23/m23b replicate, what it kills, and what it doesn't. Plus a session review's corrections
+
+**How it was found.** Operator challenge, again — the pattern of this week. Reviewing the first
+m23b rows, the operator asked whether `HumanEval/2` ("recovered" under the new derived bound)
+had actually COMPLETED its thinking or been budget-capped. It was capped: 82,024 completion
+tokens against the resolved 81,920 budget, `finish_reason=stop`, `converged=False`. The session
+had narrated it as "completed" and reported "DNFs 1 → 0" as recovery — the exact
+`finish=="stop"` FALSE PASS the convergence rule names, and a RECLASSIFICATION (DNF →
+budget-hit) presented as an improvement. Correction recorded here; the harness itself was right
+throughout.
+
+**Pulling that thread produced the real finding.** m23 and m23b ran the SAME model
+(`Qwen3.8-27B-4bit`) on the SAME 20 humanevalplus items with the SAME declared seeds, in two <!-- allow-shorthand -->
+sessions. Result: **0/20 byte-identical outputs**. Four items diverged ≥2× in completion tokens;
+`HumanEval/146` went 7,106 → 82,168 (11.6×), converged in one session, budget-hit in the other.
+C26 (seeds ignored on the cached path) is therefore not a multi-sample nicety — it means
+**cross-arm per-item pairing does not exist on this serving path**, and every "matched seed"
+contrast quoted for M23 dissolves, including the flagship one: the official model itself
+runaway'd on `HumanEval/146` in another session, so "279 s official vs ceiling on ours" was
+session variance wearing a model-difference costume.
+
+**What the structure supports, measured rather than asserted.** Rank correlation of
+log(completion_tokens) across the two sessions is **0.84** — item difficulty is stable and the
+divergence concentrates in a few chaotic tail items. Same-model non-termination moved 1/20 →
+2/20. That is per-item chaotic redraw behaviour, not a coherent session-level shift. So the
+first escalation's "the A/B cannot work / n=1 batch effect no items can fix" OVERCLAIMED:
+unpaired A/B with item-level cluster bootstrap remains valid at ~√2 worse MDE. A session-level
+random effect remains a risk to BOUND (opened as C30) — the mbppplus half of the replicate, in
+flight, doubles the data for free.
+
+**Design gate for M23's re-run (decided, pending the C26 fork fix):** one item, same seed, two
+sessions, byte-compare. Equal → the paired design returns (m23c, both arms pinned 5200 s).
+Different — possible even with honored seeds; cross-restart nondeterminism was measured
+2026-08-23 and may be kernel-level — → unpaired with ≥2 sessions per arm, ABBA order, and the
+honest MDE.
+
+**Process failures this cycle, recorded per the campaign's own custom.** (1) Verdict language at
+n=9–12 ("chronic runaway"; the PLAN briefly carried "the pre-registered trigger FIRES" at
+McNemar p=0.375) — the no-delta-without-interval rule exists precisely for this; both were
+retracted same-day but should never have shipped. (2) A silent scope change: the approved plan
+was "re-run our arm + only the 6 affected official rows"; a FULL official re-run launched
+instead. The full arm was probably RIGHT — the new probe_timeout compare guard refuses
+m23-official (no recorded bound, bound-hitting rows) against any m23b arm, so a matched-bound
+official arm is needed — but the justification was never surfaced at the decision point.
+(3) That 40-item job entered the queue without a 5-item pilot (m23 cost data mitigates; the rule
+went unacknowledged). (4) Per-arm worker-cmdline draft verification was skipped for m23b
+(done retroactively: draft-OFF, SESSION_MAX=2, overlay). (5) A diagnostic ran on a dirty worker
+after C28's mechanism was already written down — self-caught, and the catch yielded the
+controlled protocol now in the handoff.
+
+**Standing lesson to carry:** budget-hit ≠ completed; a DNF that becomes a budget-hit under a
+longer bound is the instrument getting HONEST, not the model getting better. And any claim of
+the form "matched seed" must first survive `diff` on two draws.
