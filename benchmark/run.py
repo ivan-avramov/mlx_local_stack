@@ -39,13 +39,28 @@ TIERS = {
 }
 
 
-def _parse_kv(s):
+def _parse_kv(s, benches=()):
+    # C32: a part without "=" used to be SILENTLY DROPPED, so `--limit 5` meant
+    # NO CAP and launched the full corpus. Now a bare integer broadcasts to every
+    # requested bench (later `bench=N` parts override it), and anything else
+    # REFUSES with a nonzero exit — never a silent no-cap.
     out = {}
     for part in (s or "").split(","):
         part = part.strip()
+        if not part:
+            continue
         if "=" in part:
             k, v = part.split("=", 1)
             out[k.strip()] = int(v)
+        elif part.isdigit() and benches:
+            for b in benches:
+                out.setdefault(b, int(part))
+        else:
+            raise SystemExit(
+                f"[run] REFUSED: --limit part {part!r} is neither `bench=N` nor a "
+                "bare integer with a bench list to apply it to. A silently ignored "
+                "cap runs the FULL corpus (C32)."
+            )
     return out
 
 
@@ -77,7 +92,7 @@ def _resolve(args):
     else:
         benches = [b.strip() for b in args.benches.split(",")] if args.benches else list(benchmarks.SPECS)
         limits = {}
-    limits.update(_parse_kv(getattr(args, "limit", "")))
+    limits.update(_parse_kv(getattr(args, "limit", ""), benches=benches))
     models = [m.strip() for m in args.models.split(",")] if args.models else client.roster()
     return models, benches, limits
 
