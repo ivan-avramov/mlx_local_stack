@@ -41,6 +41,47 @@ DIAGNOSTIC_ROLES = {
 }
 # Below this n, MDE exceeds ~32pp and a number cannot support a verdict.
 MIN_N_FOR_VERDICT = 10
+# hf_path -> (attn, total) | None, memoized across rows (one config lookup per model).
+_ATTN_CACHE: dict = {}
+
+
+def _attn_layers(cfg: dict) -> tuple[int, int] | None:
+    """(quantizable-KV layers, total layers) from a model config, or None when every layer
+    grows quantizable KV (full-attention arch — no marker needed). The numerator counts only
+    layers whose cache the kv scheme can actually convert: qwen3_5-family `linear_attention`
+    (ArraysCache) and gemma4 `sliding_attention` (RotatingKVCache) are both skipped by the
+    fork's quantize_entry, nemotron_h mamba/moe blocks likewise. Encodings, verified against
+    every arch in the corpus 2026-08-26: `text_config.layer_types` (qwen3_5, qwen3_5_moe,
+    gemma4) and top-level `layers_block_type` (nemotron_h)."""
+    tc = cfg.get("text_config") or cfg
+    lt = tc.get("layer_types") or cfg.get("layers_block_type")
+    if not isinstance(lt, list) or not lt:
+        return None
+    attn = sum(1 for t in lt if t in ("full_attention", "attention"))
+    return (attn, len(lt))
+
+
+def _config_for(hf_path: str) -> dict | None:
+    """Resolve a model config.json: local snapshot dir, then the HF hub cache, then a
+    network fetch of ONLY config.json (lands in ~/.cache/huggingface, a pre-approved path).
+    Any failure returns None — the marker is a display nicety, never worth crashing the sheet."""
+    import glob
+    import os
+    try:
+        if hf_path.startswith(("/", "~", "$")):
+            p = os.path.expanduser(os.path.expandvars(hf_path))
+            cands = [os.path.join(p, "config.json")]
+        else:
+            cands = sorted(glob.glob(os.path.expanduser(
+                f"~/.cache/huggingface/hub/models--{hf_path.replace('/', '--')}"
+                "/snapshots/*/config.json")))
+            if not cands:
+                from huggingface_hub import hf_hub_download   # lazy: network path only
+                cands = [hf_hub_download(hf_path, "config.json")]
+        with open(cands[-1]) as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
 def _kv_label(kv: dict) -> str | None:
@@ -116,9 +157,20 @@ def collect() -> dict:
         kv_label = None
         if mp.exists():
             try:
-                kv_label = _kv_label(json.loads(mp.read_text()).get("kv") or {})
+                mkv = json.loads(mp.read_text()).get("kv") or {}
+                kv_label = _kv_label(mkv)
             except (json.JSONDecodeError, OSError):
-                kv_label = None
+                mkv, kv_label = {}, None
+            # ·attnK/N marker for hybrid/local-attention archs: K of N layers hold cache the
+            # kv scheme can quantize. Arch constant looked up per hf_path (memoized).
+            if kv_label is not None and mkv.get("hf_path"):
+                hp = mkv["hf_path"]
+                if hp not in _ATTN_CACHE:
+                    cfg = _config_for(hp)
+                    _ATTN_CACHE[hp] = None if cfg is None else _attn_layers(cfg)
+                frac = _ATTN_CACHE[hp]
+                if frac is not None and frac[0] < frac[1]:
+                    kv_label += f"·attn{frac[0]}/{frac[1]}"
         conv_rate = sc.get("conv_rate")
         # Convergence is only DEFINED for rows that expose per-turn generation. The aider agentic
         # rows carry converged=None on purpose (aider gives a per-CASE view across turns, so there is
@@ -187,7 +239,7 @@ def main(argv=None) -> int:
     data = collect()
     hdr = ("model", "bench", "n", "acc", "strict", "conv%", "degenAll", "degenAllWall%",
            "degenEosedWall%", "budget", "kv")
-    fmt = "%-40s %-15s %5s %7s %7s %6s %8s %13s %15s %8s %8s"
+    fmt = "%-40s %-15s %5s %7s %7s %6s %8s %13s %15s %8s %14s"
     if args.md:
         print("| " + " | ".join(hdr) + " |")
         print("|" + "---|" * len(hdr))
@@ -228,11 +280,12 @@ def main(argv=None) -> int:
           "the run manifest: scheme+bits (TQ = turboquant, uniform = mlx uniform affine), fp16 = "
           "unquantized (kv_bits 0), n/a = pre-provenance run (NOT reconstructible from registry "
           "history — local overrides never committed). Rows differing in kv are different serving "
-          "paths — do not pool. Hybrid archs carry ADDITIONAL constant-size recurrent state that no "
-          "kv scheme touches (fork quantizes only KVCache entries; ArraysCache passes through): "
-          "qwen3_5-family GatedDeltaNet state is fp32 and only 16/64 layers grow KV, nemotron_h "
-          "Mamba SSM state is fp32 — so the same kv label quantizes a different FRACTION of state "
-          "across archs; an arch constant, not a per-run knob.")
+          "paths — do not pool. The ·attnK/N marker (hybrid/local-attention archs only) counts the "
+          "K of N layers whose cache the kv scheme can actually quantize; the rest hold state the "
+          "fork never converts — qwen3_5-family GatedDeltaNet fp32 recurrent state, nemotron_h "
+          "fp32 Mamba SSM state, gemma4 sliding-window RotatingKVCache (stays UNQUANTIZED even at "
+          "kv_bits 4). An arch constant looked up from the model config, not a per-run knob; no "
+          "marker = every layer grows quantizable KV, or the config was unresolvable.")
     if stale:
         print("* = the score file was graded over a different row count than is on disk now "
               "(a resumed run). RE-GRADE (zero worker time); do not read the cell as current.")

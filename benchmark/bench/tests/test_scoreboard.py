@@ -135,6 +135,50 @@ def test_kv_comes_from_the_selected_variant(monkeypatch, tmp_path, capsys):
     assert data["modelX"]["humanevalplus"]["kv"] == "TQ4"
 
 
+# --------------------------------------------------------------------------- attn-fraction marker (operator 2026-08-26)
+def test_attn_layers_qwen3_5_style():
+    cfg = {"text_config": {"layer_types": ["linear_attention"] * 3 + ["full_attention"]}}
+    assert SB._attn_layers(cfg) == (1, 4)
+
+
+def test_attn_layers_gemma4_style():
+    """sliding_attention layers are RotatingKVCache — quantize_entry skips them, so they do
+    NOT count toward the quantizable-KV numerator."""
+    cfg = {"text_config": {"layer_types": ["sliding_attention"] * 5 + ["full_attention"]}}
+    assert SB._attn_layers(cfg) == (1, 6)
+
+
+def test_attn_layers_nemotron_h_style():
+    cfg = {"layers_block_type": ["mamba", "moe", "attention", "moe", "mamba"]}
+    assert SB._attn_layers(cfg) == (1, 5)
+
+
+def test_attn_layers_full_attention_arch_is_none():
+    """No layer typing => every layer grows quantizable KV => no marker."""
+    assert SB._attn_layers({"num_hidden_layers": 32}) is None
+
+
+def test_kv_marker_appended_for_hybrid(monkeypatch, tmp_path):
+    monkeypatch.setattr(SB.paths, "default_results_root", lambda: tmp_path)
+    SB._ATTN_CACHE.clear()
+    monkeypatch.setattr(SB, "_config_for", lambda hf: {
+        "text_config": {"layer_types": ["linear_attention"] * 48 + ["full_attention"] * 16}})
+    _write_pair(tmp_path, "modelX", "humanevalplus", 12,
+                kv={"kv_bits": 4, "kv_quant_scheme": "turboquant", "hf_path": "org/m"})
+    data = SB.collect()
+    assert data["modelX"]["humanevalplus"]["kv"] == "TQ4·attn16/64"
+
+
+def test_kv_marker_absent_when_config_unresolvable(monkeypatch, tmp_path):
+    monkeypatch.setattr(SB.paths, "default_results_root", lambda: tmp_path)
+    SB._ATTN_CACHE.clear()
+    monkeypatch.setattr(SB, "_config_for", lambda hf: None)
+    _write_pair(tmp_path, "modelX", "humanevalplus", 12,
+                kv={"kv_bits": 4, "kv_quant_scheme": "turboquant", "hf_path": "org/m"})
+    data = SB.collect()
+    assert data["modelX"]["humanevalplus"]["kv"] == "TQ4"
+
+
 def test_role_coverage_section_shows_diagnostic_separately(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(SB.paths, "default_results_root", lambda: tmp_path)
     _write_rows(tmp_path, "modelX", "aider", _humaneval_rows(110),

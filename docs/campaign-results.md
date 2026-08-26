@@ -360,45 +360,45 @@ gives the same answer.
 | model | bench | n | acc | strict | conv% | degenAll | degenAllWall% | degenEosedWall% | budget | kv |
 |---|---|---|---|---|---|---|---|---|---|---|
 | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | capacity_ladder | 2 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | humanevalplus | 100 | 89.0% | 88.0% | 99 | 1 | 25 | 0 | 81920 | fp16 |
-| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | ifeval | 200 | 90.5% | 90.5% | 100 | - | - | 0 | 81920 | fp16 |
-| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | mbppplus | 100 | 81.0% | 81.0% | 100 | - | - | 0 | 81920 | fp16 |
-| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | opencode | 26 | ungraded | ungraded | n/a | - | - | n/a | - | fp16 |
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | humanevalplus | 100 | 89.0% | 88.0% | 99 | 1 | 25 | 0 | 81920 | fp16·attn6/52 |
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | ifeval | 200 | 90.5% | 90.5% | 100 | - | - | 0 | 81920 | fp16·attn6/52 |
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | mbppplus | 100 | 81.0% | 81.0% | 100 | - | - | 0 | 81920 | fp16·attn6/52 |
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | opencode | 26 | ungraded | ungraded | n/a | - | - | n/a | - | fp16·attn6/52 |
 | Ornith-1.0-35B-mlx-uniform-4bit | aider [diag] | 110 | 50.0% | 50.0% | n/a | - | - | n/a | - | n/a |
 | Ornith-1.0-35B-mlx-uniform-4bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 0 | 81920 | fp16 |
 | Ornith-1.0-35B-mlx-uniform-4bit | capacity_ladder | 2 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Ornith-1.0-35B-mlx-uniform-4bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| Ornith-1.0-35B-mlx-uniform-4bit | ifeval | 541 | 90.0% | 86.7% | 95 | 30 | 42 | 0 | 81920 | fp16 |
+| Ornith-1.0-35B-mlx-uniform-4bit | ifeval | 541 | 90.0% | 86.7% | 95 | 30 | 42 | 0 | 81920 | fp16·attn10/40 |
 | Ornith-1.0-35B-mlx-uniform-4bit | livecodebench | 15 | 80.0% | 60.0% | 80 | - | - | 0 | 81920 | fp16 |
 | Ornith-1.0-35B-mlx-uniform-4bit | math500 | 30 | 83.3% | 60.0% | 70 | - | - | 0 | 81920 | fp16 |
 | Ornith-1.0-35B-mlx-uniform-4bit | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| Ornith-1.0-35B-mlx-uniform-4bit | opencode | 22 | ungraded | ungraded | n/a | - | - | n/a | - | fp16 |
+| Ornith-1.0-35B-mlx-uniform-4bit | opencode | 22 | ungraded | ungraded | n/a | - | - | n/a | - | fp16·attn10/40 |
 | Ornith-1.0-35B-mlx-uniform-4bit-kv4 | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Ornith-1.0-35B-mlx-uniform-6bit | humanevalplus | 10 | 90.0% | 80.0% | 90 | - | - | 0 | 81920 | fp16 |
 | Ornith-1.0-35B-mlx-uniform-6bit | livecodebench | 15 | 86.7% | 40.0% | 47 | - | - | 0 | 81920 | fp16 |
 | Ornith-1.0-35B-mlx-uniform-6bit | mbppplus | 10 | 80.0% | 80.0% | 100 | - | - | 0 | 81920 | fp16 |
-| Qwen3.6-27B-MLX-8bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 0 | 81920 | TQ4 |
-| Qwen3.6-27B-MLX-8bit | humanevalplus | 6 | 100.0% | 100.0% | 100 | - | - | 0 | 81920 | TQ4 |
-| Qwen3.6-27B-MLX-8bit | mbppplus | 6 | 83.3% | 50.0% | 67 | - | - | 0 | 81920 | TQ4 |
-| Qwen3.6-27B-OptiQ-4bit | aime | 5 | 80.0% | 80.0% | 80 | - | - | 0 | 81920 | TQ4 |
+| Qwen3.6-27B-MLX-8bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 0 | 81920 | TQ4·attn16/64 |
+| Qwen3.6-27B-MLX-8bit | humanevalplus | 6 | 100.0% | 100.0% | 100 | - | - | 0 | 81920 | TQ4·attn16/64 |
+| Qwen3.6-27B-MLX-8bit | mbppplus | 6 | 83.3% | 50.0% | 67 | - | - | 0 | 81920 | TQ4·attn16/64 |
+| Qwen3.6-27B-OptiQ-4bit | aime | 5 | 80.0% | 80.0% | 80 | - | - | 0 | 81920 | TQ4·attn16/64 |
 | Qwen3.6-27B-OptiQ-4bit | capacity_ladder | 1 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| Qwen3.6-27B-OptiQ-4bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 0 | 81920 | TQ4 |
+| Qwen3.6-27B-OptiQ-4bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 0 | 81920 | TQ4·attn16/64 |
 | Qwen3.6-27B-OptiQ-4bit | livecodebench | 1 | 100.0% | 0.0% | 0 | - | - | 0 | 49152 | n/a |
-| Qwen3.6-27B-OptiQ-4bit | mbppplus | 10 | 80.0% | 80.0% | 100 | - | - | 0 | 81920 | TQ4 |
+| Qwen3.6-27B-OptiQ-4bit | mbppplus | 10 | 80.0% | 80.0% | 100 | - | - | 0 | 81920 | TQ4·attn16/64 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aider [diag] | 110 | 73.6% | 73.6% | n/a | - | - | n/a | - | n/a |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | aime | 4 | 100.0% | 80.0% | 100 | - | - | 0 | 81920 | TQ4 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | ifeval | 142 | 90.1% | 86.5% | 100 | - | - | 0 | 81920 | TQ4 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | ifeval | 142 | 90.1% | 86.5% | 100 | - | - | 0 | 81920 | TQ4·attn16/64 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | livecodebench | 15 | 80.0% | 80.0% | 100 | - | - | 0 | 81920 | TQ4 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | math500 | 27 | 81.5% | 73.3% | 100 | - | - | 0 | 81920 | TQ4 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | opencode | 22 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | opencode | 22 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4·attn16/64 |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit-kv3 | capacity_ladder | 5 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| Qwen3.6-27B-UD-MLX-6bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 0 | 81920 | fp16 |
+| Qwen3.6-27B-UD-MLX-6bit | aime | 5 | 80.0% | 60.0% | 80 | - | - | 0 | 81920 | fp16·attn16/64 |
 | Qwen3.6-27B-UD-MLX-6bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Qwen3.6-27B-UD-MLX-6bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| Qwen3.6-27B-UD-MLX-6bit | livecodebench | 3 | 100.0% | 66.7% | 67 | - | - | 0 | 49152 | fp16 |
+| Qwen3.6-27B-UD-MLX-6bit | livecodebench | 3 | 100.0% | 66.7% | 67 | - | - | 0 | 49152 | fp16·attn16/64 |
 | Qwen3.6-27B-UD-MLX-6bit | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
@@ -406,20 +406,20 @@ gives the same answer.
 | Qwen3.8-27B-4bit | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit | opencode | 22 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4 |
-| Qwen3.8-27B-OptiQ-4.5bpw-mixed | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4 |
+| Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit | opencode | 22 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4·attn16/64 |
+| Qwen3.8-27B-OptiQ-4.5bpw-mixed | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4·attn16/64 |
 | Qwen3.8-27B-OptiQ-4.5bpw-mixed | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Qwen3.8-27B-OptiQ-4.5bpw-mixed | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| Qwen3.8-27B-mlx-uniform-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4 |
+| Qwen3.8-27B-mlx-uniform-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4·attn16/64 |
 | Qwen3.8-27B-mlx-uniform-4bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | Qwen3.8-27B-mlx-uniform-4bit | mbppplus | 378 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| Qwen3.8-27B-static-mixed-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4 |
+| Qwen3.8-27B-static-mixed-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4·attn16/64 |
 | Qwen3.8-27B-static-mixed-4bit | humanevalplus | 164 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | gemma-4-26B-A4B-it-OptiQ-4bit | aime | 3 | 66.7% | 66.7% | 67 | - | - | 0 | 16384 | n/a |
 | gemma-4-26B-A4B-it-OptiQ-4bit | capacity_ladder | 1 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| gemma-4-26B-A4B-it-OptiQ-4bit | humanevalplus | 11 | 100.0% | 72.7% | 73 | 2 | 57 | 0 | 32768 | uniform4 |
+| gemma-4-26B-A4B-it-OptiQ-4bit | humanevalplus | 11 | 100.0% | 72.7% | 73 | 2 | 57 | 0 | 32768 | uniform4·attn5/30 |
 | gemma-4-26B-A4B-it-QAT-MLX-4bit | aime | 3 | 66.7% | 33.3% | 33 | - | - | 0 | 16384 | n/a |
 | gemma-4-26B-A4B-it-QAT-MLX-4bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | gemma-4-26B-A4B-it-QAT-MLX-4bit | humanevalplus | 3 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 | n/a |
@@ -428,20 +428,20 @@ gives the same answer.
 | gemma-4-26b-a4b-it-8bit | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
 | gemma-4-26b-a4b-it-8bit | humanevalplus | 4 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 | n/a |
 | gemma-4-26b-a4b-it-8bit | mbppplus | 4 | ungraded | ungraded | 75 | - | - | 0 | 16384 | n/a |
-| gemma-4-31B-it-qat-6bit | aime | 5 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 | uniform4 |
-| gemma-4-31B-it-qat-6bit | humanevalplus | 12 | 91.7% | 76.9% | 83 | - | - | 0 | 16384 | uniform4 |
-| gemma-4-31B-it-qat-6bit | livecodebench | 15 | 80.0% | 73.3% | 93 | - | - | 0 | 16384 | uniform4 |
-| gemma-4-31B-it-qat-6bit | math500 | 30 | 83.3% | 83.3% | 100 | - | - | 0 | 16384 | uniform4 |
-| gemma-4-31b-it-6bit | aime | 5 | 80.0% | 80.0% | 80 | - | - | 0 | 16384 | uniform4 |
-| gemma-4-31b-it-6bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 | uniform4 |
-| gemma-4-31b-it-6bit | livecodebench | 20 | 90.0% | 70.0% | 75 | - | - | 0 | 16384 | fp16 |
-| gemma-4-31b-it-6bit | mbppplus | 10 | 70.0% | 70.0% | 90 | - | - | 0 | 16384 | uniform4 |
-| gemma-4-31b-it-UD-MLX-4bit | aime | 5 | 60.0% | 60.0% | 100 | - | - | 0 | 16384 | uniform4 |
+| gemma-4-31B-it-qat-6bit | aime | 5 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 | uniform4·attn10/60 |
+| gemma-4-31B-it-qat-6bit | humanevalplus | 12 | 91.7% | 76.9% | 83 | - | - | 0 | 16384 | uniform4·attn10/60 |
+| gemma-4-31B-it-qat-6bit | livecodebench | 15 | 80.0% | 73.3% | 93 | - | - | 0 | 16384 | uniform4·attn10/60 |
+| gemma-4-31B-it-qat-6bit | math500 | 30 | 83.3% | 83.3% | 100 | - | - | 0 | 16384 | uniform4·attn10/60 |
+| gemma-4-31b-it-6bit | aime | 5 | 80.0% | 80.0% | 80 | - | - | 0 | 16384 | uniform4·attn10/60 |
+| gemma-4-31b-it-6bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 | uniform4·attn10/60 |
+| gemma-4-31b-it-6bit | livecodebench | 20 | 90.0% | 70.0% | 75 | - | - | 0 | 16384 | fp16·attn10/60 |
+| gemma-4-31b-it-6bit | mbppplus | 10 | 70.0% | 70.0% | 90 | - | - | 0 | 16384 | uniform4·attn10/60 |
+| gemma-4-31b-it-UD-MLX-4bit | aime | 5 | 60.0% | 60.0% | 100 | - | - | 0 | 16384 | uniform4·attn10/60 |
 | gemma-4-31b-it-UD-MLX-4bit | capacity_ladder | 1 | ungraded | ungraded | n/a | - | - | n/a | - | n/a |
-| gemma-4-31b-it-UD-MLX-4bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 | uniform4 |
-| gemma-4-31b-it-UD-MLX-4bit | mbppplus | 10 | 80.0% | 80.0% | 100 | - | - | 0 | 16384 | uniform4 |
+| gemma-4-31b-it-UD-MLX-4bit | humanevalplus | 10 | 100.0% | 100.0% | 100 | - | - | 0 | 16384 | uniform4·attn10/60 |
+| gemma-4-31b-it-UD-MLX-4bit | mbppplus | 10 | 80.0% | 80.0% | 100 | - | - | 0 | 16384 | uniform4·attn10/60 |
 
-conv% = the GRADED convergence rate read from <bench>.score.json (judged against the SERVER-RESOLVED thinking budget); n/a = ungraded or undeterminable. degenAllWall% = wall-clock share of EVERY row whose trace shows a verbatim loop, however it ended (derived here). degenEosedWall% = the persisted `degenerate_wall_share`: the same share over the SELF-TERMINATING (EOS'd) degenerate rows ONLY — the loops the convergence formula counts as CONVERGED. The two are NOT interchangeable. kv = quantization of the GROWING attention-layer KV cache the run was SERVED with, from the run manifest: scheme+bits (TQ = turboquant, uniform = mlx uniform affine), fp16 = unquantized (kv_bits 0), n/a = pre-provenance run (NOT reconstructible from registry history — local overrides never committed). Rows differing in kv are different serving paths — do not pool. Hybrid archs carry ADDITIONAL constant-size recurrent state that no kv scheme touches (fork quantizes only KVCache entries; ArraysCache passes through): qwen3_5-family GatedDeltaNet state is fp32 and only 16/64 layers grow KV, nemotron_h Mamba SSM state is fp32 — so the same kv label quantizes a different FRACTION of state across archs; an arch constant, not a per-run knob.
+conv% = the GRADED convergence rate read from <bench>.score.json (judged against the SERVER-RESOLVED thinking budget); n/a = ungraded or undeterminable. degenAllWall% = wall-clock share of EVERY row whose trace shows a verbatim loop, however it ended (derived here). degenEosedWall% = the persisted `degenerate_wall_share`: the same share over the SELF-TERMINATING (EOS'd) degenerate rows ONLY — the loops the convergence formula counts as CONVERGED. The two are NOT interchangeable. kv = quantization of the GROWING attention-layer KV cache the run was SERVED with, from the run manifest: scheme+bits (TQ = turboquant, uniform = mlx uniform affine), fp16 = unquantized (kv_bits 0), n/a = pre-provenance run (NOT reconstructible from registry history — local overrides never committed). Rows differing in kv are different serving paths — do not pool. The ·attnK/N marker (hybrid/local-attention archs only) counts the K of N layers whose cache the kv scheme can actually quantize; the rest hold state the fork never converts — qwen3_5-family GatedDeltaNet fp32 recurrent state, nemotron_h fp32 Mamba SSM state, gemma4 sliding-window RotatingKVCache (stays UNQUANTIZED even at kv_bits 4). An arch constant looked up from the model config, not a per-run knob; no marker = every layer grows quantizable KV, or the config was unresolvable.
 
 ## Dimension coverage — what is measured and what is missing
 
