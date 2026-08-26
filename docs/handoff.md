@@ -1,44 +1,68 @@
-# Handoff — updated 2026-08-25 ~21:00 (M23 official arm DONE; uniform arm is a CHRONIC RUNAWAY; C28 found; n CAPPED AT 40 by operator)
+# Handoff — rewritten 2026-08-26 ~08:30 (M23 INVALIDATED by a C28 orphan cascade; C28 FIXED; M23b re-run IN FLIGHT)
 
 Single box (M5 Max 64 GB). **WORK RUNNING, all PPID 1 (survives session restarts):**
 
 | what | pid | notes |
 |---|---|---|
 | bench router :8000 | 34276 | lean, **draft-OFF overlay** `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC off |
-| M23 uniform arm (pilot) | 90311 | `Qwen3.8-27B-mlx-uniform-4bit` 5-item pilot; log `$STACK_WORKDIR/m23/arm_uniform_pilot.log` |
-| M23 uniform watcher | 90654 | 5-min ticks -> `$STACK_WORKDIR/m23/watch_uniform.log` |
+| M23b official arm | 11247 | `Qwen3.8-27B-4bit` 20/bench, tune `m23b`, **`--probe-timeout 5200` PINNED**; log `$STACK_WORKDIR/m23/arm_official_m23b.log` | <!-- allow-shorthand -->
+| M23b watcher | 19803 | 5-min ticks -> `$STACK_WORKDIR/m23/watch_official_m23b.log` |
 
-**M23 official arm `Qwen3.8-27B-4bit` is COMPLETE**: 100/100 rows, ~6.6 h, draft-OFF <!-- allow-shorthand -->
-verified per row, 3 DNFs (`HumanEval/2`, `HumanEval/132`, `Mbpp/440`). Model UNLOADED.
+## 🛑 READ FIRST: the 2026-08-25 M23 result is INVALIDATED. Do not cite any M23 DNF rate.
 
-**HEADLINE: `Qwen3.8-27B-mlx-uniform-4bit` is a chronic runaway.** Pilot 3/9 timed out (33%) vs
-3/100 (3%) official — on MATCHED ids AND matched seeds (`HumanEval/146` converged in 279 s
-official, hit the 3600 s ceiling uniform). Full 2×50 projects to **~44 h** (33 timeouts ×
-3600 s + starved successors + normal items) vs the official arm's 6.6 h.
+`Qwen3.8-27B-mlx-uniform-4bit`'s arm was corrupted by a **C28 orphan cascade**: an abandoned
+generation is never cancelled, so one runaway starves its successor into a false DNF, which adds
+another orphan. mbppplus items 34-39 were a CONSECUTIVE block of six false timeouts and `grade`
+failed the run on its own guard (HARNESS-BROKEN, 35 % > 20 % error rows). Every rate quoted that
+day (33 % / 25 % / 12 % / 25 %) is RETRACTED.
 
-**OPERATOR RULING 2026-08-25: STOP AT n=20 PER BENCH (40 items, ~17 h), do NOT extend to
-100.** Rationale: `acc_strict@81920` counts DNFs in the denominator, so a 33 % DNF rate caps
-`Qwen3.8-27B-mlx-uniform-4bit` at ≤0.67 vs ~0.95 for `Qwen3.8-27B-4bit` — a ~28 pp gap clearing the ±20 pp MDE at <!-- allow-shorthand -->
-N=40; paired McNemar on DNF at 40 items is p≈0.0005. The remaining 60 items would only
-sharpen `pass@1` among converged items, which is near-moot when a third never finishes.
-The 26 h saved goes to the C26 fork fix. **The draw is a seeded shuffle of the FULL corpus,
-prefix-nested (`benchmarks.py:_subsample`) — verified in code AND empirically (hep ids span
-1–162 of 164, near-uniform quintiles), so the M18 easy-first pitfall does NOT apply.**
-Caveat to quote honestly: the tiers are nested, so the 9 pilot rows are 9 *of* the 40 — the
-33 % is not corroborated by an independent sample.
+**Controlled protocol that separated the mechanisms** (reuse it — an uncontrolled re-run
+REPRODUCED the artifact and looked like confirmation): `unload` -> **`pgrep` to VERIFY zero workers
+resident** -> load fresh -> ONE item. Killing a driver does NOT stop the worker; a killed run's
+orphan contaminated the first diagnostic.
 
-**NEXT STEPS: (1) on pilot exit, launch the n=20 continuation (nested prefix, reuses the
-pilot rows):**
-`.venv-bench/bin/python benchmark/run.py generate --models Qwen3.8-27B-mlx-uniform-4bit --benches humanevalplus,mbppplus --limit humanevalplus=20,mbppplus=20 --seed 0 --tune m23 --sampling-profile deployed --order model`
-(detached, PPID 1, + `o39_watch.py` daemon; NEVER pass `--probe-timeout` — the 3600 s bound
-must stay symmetric with the official arm).
-**(2) grade BOTH arms** (`run.py grade --models <m> --benches humanevalplus,mbppplus --tune m23`).
-**(3) score: PAIRED ON THE 20 SHARED IDS PER BENCH ONLY** (the official arm's extra 30/bench
-are unpaired solo data); DNF counts, `acc_strict@81920`, loop taxonomy, cluster-bootstrap
-intervals; **exclude C28-starved rows from latency-per-task** (accuracy unaffected).
-**(4) lab-notebook + PLAN M23 row. (5) then C26 fork fix + the derived-timeout fix (C28).
-(6) then the approved censored-runaway diagnostic** (re-run both arms' timed-out ids under a
-separate tune label at ~5400 s, OUT of the A/B pool, to recover the loop taxonomy).
+| item | in-arm | contended re-run | CLEAN single | `Qwen3.8-27B-4bit` | verdict | <!-- allow-shorthand -->
+|---|---|---|---|---|---|
+| `Mbpp/803` | DNF 3600 s | DNF 900 s | **CONVERGED 107.2 s** | 10.8 s | cascade ARTIFACT |
+| `HumanEval/146` | DNF 3600 s | — | **DNF 1800 s** | 279 s | GENUINE runaway |
+
+**Both mechanisms are real; the observed rate is their sum and is uninterpretable.** Surviving
+findings: on GENERATED items `Qwen3.8-27B-mlx-uniform-4bit` scores HIGHER (humanevalplus 94.1 % vs
+87.5 %, mbppplus 84.6 % vs 79.6 %) and is ~10x more VERBOSE at a matched seed (`Mbpp/803` 2848 vs
+262 tokens). So "our conversion suppresses quality" is NOT supported; "it is verbose and sometimes
+fails to terminate" is. The M23 row's pre-registered caveat trigger is **NOT** met — do not apply
+the conversion-artifact caveat or re-prioritise M21/M22 until a valid rate exists.
+
+## C28 FIXED (`b2c3542`, `673b65e`) — and it changes how every run is launched
+
+`--probe-timeout` now DERIVES its default from the model's measured slow-tail decode rate
+(`budget_timeout.floor_decode_tps` + `derive_timeout`), so the bound always clears full-budget
+generation and **nothing is abandoned in normal operation — no orphan, no cascade**. `bench/
+budget_timeout.py` had documented this exact defect and had the derivation all along; the main
+generate path had simply never adopted it. `probe_timeout_s` now rides in the manifest runtime
+block, RECORDED but not blanket-fingerprinted, and `compare` refuses a mismatch only when the
+smaller bound COULD have bound (the `max_kv_cache_size` ruling-7 shape).
+
+⚠️ **For a PAIRED A/B, PIN the bound explicitly and identically on both arms.** Per-run derivation
+gave 5055 s vs 5134 s for the two models, which `compare`'s own new rule would then refuse. M23b
+uses `--probe-timeout 5200` on BOTH arms.
+
+## M23b (IN FLIGHT): the re-run
+
+New tune label `m23b` so the invalidated `m23` rows stay as evidence and cannot pool. 20 items per
+bench, seed 0, deployed profile, `--order model`, one resident model with unload between arms.
+
+**NEXT STEPS: (1)** when 11247 exits, `POST /v1/models/unload` for `Qwen3.8-27B-4bit`, **VERIFY <!-- allow-shorthand -->
+`pgrep -f mlx_vlm.server` is EMPTY** (an orphan would poison the next arm), then launch the second:
+`.venv-bench/bin/python benchmark/run.py generate --models Qwen3.8-27B-mlx-uniform-4bit --benches humanevalplus,mbppplus --limit humanevalplus=20,mbppplus=20 --seed 0 --tune m23b --sampling-profile deployed --order model --probe-timeout 5200`
+(detached, PPID 1, + `o39_watch.py`). Expect ~7-9 h; runaways should now TERMINATE at max_tokens
+with real token counts instead of being abandoned.
+**(2)** grade both (`run.py grade --models <m> --benches humanevalplus,mbppplus --tune m23b`).
+**(3)** score: `compare(metric="acc_strict", intersect=True)` — the C29 fix (`e1774ac`) means the
+paired strict delta now CHARGES DNFs instead of dropping them; check `wall_s - ct/decode_tps` per
+row as the queue-contamination tripwire before quoting any latency.
+**(4)** lab-notebook + PLAN M23 row. **(5)** then C26 fork fix (funded ahead of M24), with
+cancel-on-disconnect still queued as defence-in-depth for interrupted runs.
 
 ## New since 2026-08-24 evening (all committed; pushed through `a55d382`, LOCAL AFTER THAT)
 
