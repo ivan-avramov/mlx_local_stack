@@ -284,7 +284,11 @@ models:
   - name: Qwen3.8-27B-mlx-uniform-4bit
     type: vision
     on_demand: true
-    hf_path: caslca/Qwen3.8-27B-mlx-uniform-4bit  # vision tower RESTORED 2026-08-23 (bf16 graft rev 393413e9; trunk md5+logit bit-identical)
+    hf_path: caslca/Qwen3.8-27B-mlx-uniform-4bit  # IDENTICAL to the official mlx-community/Qwen3.8-27B-4bit
+    # (proven 2026-08-26, M23 closure: full-tensor md5 sweep, 2179/2180 tensors bit-identical — MLX uniform
+    # 4-bit gs64 quantization is deterministic, both quants derive from the same bf16 base). This copy is
+    # canonical because it ADDS the RESTORED bf16 vision tower (graft rev 393413e9, the one differing tensor)
+    # and satisfies the caslca insurance-clone rule. Text results under either name are the same model.
     max_kv_cache_size: 262144
     kv_prealloc_tokens: 262144   # restored to cap (standing rule) — at TQ4 width the floor is ~4GB/session, bounded by MLX_VLM_CACHE_SESSION_MAX=2
     # KV = deployed convention (operator ruling 2026-08-17: measure at expected deployment
@@ -327,32 +331,11 @@ models:
       thinking_budget: 81920
       enable_thinking: true
 
-  # M23 conversion-bias A/B reference (added 2026-08-23): the OFFICIAL mlx-community quant,
-  # served at the SAME kv/prealloc config as our self-conversions so the paired arm isolates
-  # the quantization recipe. t0.6 is BORROWED from Qwen3.8-27B-mlx-uniform-4bit's certified
-  # tune for the A/B pairing, not independently laddered — PROVISIONAL for any other use.
-  - name: Qwen3.8-27B-4bit
-    type: vision
-    on_demand: true
-    hf_path: mlx-community/Qwen3.8-27B-4bit
-    max_kv_cache_size: 262144
-    kv_prealloc_tokens: 262144   # standing rule: prealloc = cap
-    kv_quant_scheme: turboquant
-    kv_bits: 4
-    quantized_kv_start: 0
-    prefill_step_size: 512
-    generation_defaults:
-      temperature: 0.6  # borrowed from Qwen3.8-27B-mlx-uniform-4bit's certification (M23 pairing)
-      top_p: 0.95
-      top_k: 20
-      min_p: 0.0
-      presence_penalty: 0.0
-      max_tokens: 102400
-      thinking_budget: 81920
-      enable_thinking: true
-    presentation:
-      role: candidate
-      display_name: "Qwen3.8-27B-4bit official (M23 reference)" # <!-- allow-shorthand -->
+  # RETIRED 2026-08-26 (C33, operator): the M23 reference entry `Qwen3.8-27B-4bit`
+  # (hf_path mlx-community/Qwen3.8-27B-4bit) was REMOVED — a full-tensor md5 sweep proved it
+  # IDENTICAL to `Qwen3.8-27B-mlx-uniform-4bit` (2179/2180 tensors; sole delta = the bf16-grafted
+  # vision tower, which only the caslca copy restores). One model, one name. Its m23/m23b/m23c
+  # result rows remain on disk as same-model session replicates (C30).
 
   - name: Qwen3.8-27B-OptiQ-4.5bpw-mixed
     type: vision

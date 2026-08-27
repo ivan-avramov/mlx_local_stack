@@ -1,8 +1,7 @@
 # Handoff — 2026-08-26 night (M23 CLOSED BY CONSTRUCTION: the two 4-bit arms are the SAME MODEL; box IDLE)
 
-Single box (M5 Max 64 GB). **NOTHING RUNNING except the bench router** (:8000, pid 89264, lean,
-draft-OFF overlay, SESSION_MAX=2, APC absent, NO models resident — verified `pgrep -f
-mlx_vlm.server` empty). Kill it by PID if the port is needed; it holds no state.
+Single box (M5 Max 64 GB). **NOTHING RUNNING — no router, no worker, port 8000 clear**
+(session close verified by PID kill + `pgrep` + listener check).
 
 ## THE HEADLINE
 
@@ -46,17 +45,21 @@ runaway trajectories is an open C30 sub-question (n=1 session).
   at kv_bits 4 (newly surfaced). C31: M24 low arm rejected; medium arm deferred to
   work-evaluation.
 
+## SESSION CLOSED 2026-08-26 night — C33 RULED + EXECUTED, everything pushed
+
+- C33: `Qwen3.8-27B-4bit` registry entry RETIRED (tombstone comment in `main_models.yaml`);
+  `caslca/Qwen3.8-27B-mlx-uniform-4bit` canonical with the identity note in the entry comment
+  AND on the HF model card (card commit `cb0ad619` — also fixed the stale "vision tower was
+  not retained" intro). Drafter: no action unless a family recipe is picked. Row pooling:
+  YES for text benches (same model), per C30 replicate treatment.
+- Registry edit done against the COMMITTED file; local overrides re-applied after; the
+  draft-OFF overlay REGENERATED from the new registry. Bench router killed; box fully idle.
+
 ## NEXT SESSION
 
-1. **Surface C33 to the operator** (registry consolidation: proposal = keep
-   `caslca/Qwen3.8-27B-mlx-uniform-4bit` as canonical [restored vision tower + insurance-clone
-   rule], retire the `Qwen3.8-27B-4bit` M23-reference entry; drafter upload activates only if a
-   `Qwen3.8-27B` family recipe is ever picked; row-pooling question). <!-- allow-shorthand -->
-2. **Push approval** for the post-`38d2601` commits (C32 fix, M23-closure docs, scoresheet
-   regen if run).
-3. Re-emit the scoresheet (m23c rows now graded) and update `docs/campaign-results.md`
+1. Re-emit the scoresheet (m23c rows now graded) and update `docs/campaign-results.md`
    narrative where it cites m23-era cross-arm differences as model differences.
-4. Then the PLAN queue: M24 provenance work, M9/M2 Stage-2 remainder — with ~20 h of A/B budget
+2. Then the PLAN queue: M24 provenance work, M9/M2 Stage-2 remainder — with ~20 h of A/B budget
    just refunded.
 
 ## Standing state
