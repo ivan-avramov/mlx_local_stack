@@ -205,6 +205,29 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-27 — M12 coding-at-depth, first two arms: NO depth cliff on either model; the challenger leads the point estimate
+
+Setup: humanevalplus embedded at the end of ~65,536 tokens of deterministic repo padding
+(`bench/depth.py`), n=50 seed-0 prefix (pilot-first, 5+45 pooled by resume), each model at its
+certified deployed tune, probe-timeout pinned 9600 s both arms, draft-OFF overlay served AND
+fingerprinted (C35 rule — the pick's first arm was regenerated after the C35 provenance fix).
+
+| d64k, n=50 paired | `acc` | `acc_strict@81920` | conv | DNFs | wall |
+|---|---|---|---|---|---|
+| `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 | **92.0%** | **92.0%** | 100% | 0 | 5.0 h |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 | 88.0% | 88.0% | 100% | 0 | 3.2 h |
+
+Paired delta −4.0pp, 95% CI [−14.0, +6.0], **INCONCLUSIVE** (axis MDE ±18pp; temperature
+differs by design — per-model tunes). What IS clean: **neither model shows a depth cliff at
+64K** — both `acc`/`acc_strict` identical, conv 100% both, and the cross-family runaway items
+`HumanEval/32` and `HumanEval/146` **converged** on both models (on the challenger: 36,674 and
+15,675 tokens — expensive, self-terminating). The shallow-era runaway tax did not reproduce in
+these seeded post-C26 sessions. The challenger is 3× more verbose at depth (mean completion
+3,189 vs 1,013 tokens) and ~1.6× slower per arm. First evidence on the axis where the
+`Qwen3.8-27B` family's <!-- allow-shorthand --> outside reputation was earned; direction consistent with that
+reputation; does not displace the pick at this power. `Ornith-1.0-35B-mlx-uniform-4bit` arm
+next; verdict-grade power needs pooling with the M9/M12 continuation.
+
 **I am not going to dress this up: C's construct has never been measured.** What exists:
 
 - **IFEval, n=148 paired: `equivalent`** (89.9% vs 89.9%, CI inside the ±5pp TOST margin). This is a
