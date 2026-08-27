@@ -176,6 +176,35 @@ excludes its own 7 hard DNF items). Zero loops in all 129 deployed-t0.55 rows ac
 ladder. **Recommendation: certify t0.55 (O37).** Scan/probe artifacts live at
 `$STACK_WORKDIR/status/m20_scan/`, never in `results/`.
 
+### 2026-08-26 — M23 CLOSED BY CONSTRUCTION: the two `Qwen3.8-27B` 4-bit arms are the SAME MODEL <!-- allow-shorthand -->
+
+A full-tensor md5 sweep proved `Qwen3.8-27B-mlx-uniform-4bit` and the official
+`mlx-community/Qwen3.8-27B-4bit` identical on 2179/2180 tensors — the sole delta is the
+bf16-grafted vision tower, which text benches never touch. MLX uniform 4-bit gs64
+quantization is deterministic; our conversion reproduced the official quant byte-for-byte.
+`caslca/Qwen3.8-27B-mlx-uniform-4bit` is canonical (C33); the `Qwen3.8-27B-4bit` registry
+entry is retired.
+
+**Consequently every m23/m23b "cross-arm difference" ever reported — the 94.1%-vs-87.5%
+humanevalplus split, the "10× more verbose at a matched seed" contrast, the DNF asymmetry —
+was SESSION NOISE between identical models.** Those rows are re-purposed as same-model
+session replicates for C30 (the session-variance bound); they must never again be cited as
+model evidence. Conversion bias for this family is exactly zero, by construction.
+
+**m23c clean-session grades** (post-C26 fork fix, seeds honored, pinned probe-timeout;
+recorded under the retired dir name, pooling per C33 ruling 3): humanevalplus n=20 `acc`
+**100%** / `acc_strict@81920` **100%**, conv 100%; mbppplus n=20 **80% / 80%**, conv 100%
+— **zero runaways**, where the unseeded m23b session of the same model had 2 budget-hits.
+Whether honored seeds systematically avoid runaway trajectories is an open C30
+sub-question (n=1 session). The 5+5-item pilot under the canonical name (hep 100/100,
+mbpp 60/60, conv 100%) produced 10/10 byte-identical outputs vs the "other" arm — the
+observation that exposed the identity.
+
+⚠️ The generated scoresheet below does NOT yet display the m23c grades: tune-suffixed
+`*_samples.jsonl` evalplus sidecars (padded full-corpus, scoreless) shadow graded variants
+via the largest-n selection — root-caused 2026-08-26, fix pending approval (C34). The
+affected cells read `164 ungraded` / `378 ungraded` for pairs that DO have graded rows.
+
 **I am not going to dress this up: C's construct has never been measured.** What exists:
 
 - **IFEval, n=148 paired: `equivalent`** (89.9% vs 89.9%, CI inside the ±5pp TOST margin). This is a
