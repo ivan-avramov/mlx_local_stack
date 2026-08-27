@@ -216,6 +216,7 @@ fingerprinted (C35 rule — the pick's first arm was regenerated after the C35 p
 |---|---|---|---|---|---|
 | `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 | **92.0%** | **92.0%** | 100% | 0 | 5.0 h |
 | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 | 88.0% | 88.0% | 100% | 0 | 3.2 h |
+| `Ornith-1.0-35B-mlx-uniform-4bit` @t0.4 | 88.0% | 86.0% | 98% | 0 (1 budget-hit) | 1.4 h |
 
 Paired delta −4.0pp, 95% CI [−14.0, +6.0], **INCONCLUSIVE** (axis MDE ±18pp; temperature
 differs by design — per-model tunes). What IS clean: **neither model shows a depth cliff at
@@ -225,8 +226,12 @@ differs by design — per-model tunes). What IS clean: **neither model shows a d
 these seeded post-C26 sessions. The challenger is 3× more verbose at depth (mean completion
 3,189 vs 1,013 tokens) and ~1.6× slower per arm. First evidence on the axis where the
 `Qwen3.8-27B` family's <!-- allow-shorthand --> outside reputation was earned; direction consistent with that
-reputation; does not displace the pick at this power. `Ornith-1.0-35B-mlx-uniform-4bit` arm
-next; verdict-grade power needs pooling with the M9/M12 continuation.
+reputation; does not displace the pick at this power. **Third arm landed same day
+(2026-08-27):** `Ornith-1.0-35B-mlx-uniform-4bit` 88.0/86.0, conv 98% — its signature ~2pp
+truncation forfeit persists at depth (`HumanEval/154` hit the 81,920 budget), and it is by far
+the cheapest arm (mean 98 s/item, 1.4 h). All three pairwise d64k compares INCONCLUSIVE at
+n=50 (vs pick +0.0pp [−10,+10]; vs challenger −4.0pp [−14,+6]); verdict-grade power needs
+pooling with the M9/M12 continuation.
 
 **I am not going to dress this up: C's construct has never been measured.** What exists:
 
