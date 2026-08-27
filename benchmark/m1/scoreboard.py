@@ -113,8 +113,11 @@ def collect() -> dict:
     out = {}
     for f in sorted(root.glob("*/*.jsonl")):
         bench = f.stem.split(".")[0]              # livecodebench.t03 -> livecodebench
-        if bench.endswith("_samples"):
-            continue                             # multi-draw sidecars, not a separate axis
+        # The stem keeps any tune suffix, so this catches BOTH `humanevalplus_samples` and
+        # `humanevalplus.m23_samples` — the bench prefix alone misses the latter (C34: padded
+        # full-corpus scoreless sidecars then win largest-n selection and shadow graded cells).
+        if f.stem.endswith("_samples"):
+            continue                             # evalplus/multi-draw sidecars, not a separate axis
         rows = _rows(f)
         live = [r for r in rows if not r.get("error")]
         if not live:

@@ -188,3 +188,35 @@ def test_role_coverage_section_shows_diagnostic_separately(monkeypatch, tmp_path
     assert "coding" in out and "NOT MEASURED" in out
     assert "coding [diag]" in out
     assert "aider" in out.split("coding [diag]")[1].split("\n")[0]
+
+
+# --------------------------------------------------------------------------- C34: samples-sidecar shadowing
+
+
+def test_tune_suffixed_samples_sidecar_never_shadows_graded_variant(monkeypatch, tmp_path):
+    """C34 (2026-08-26): evalplus grading writes padded FULL-CORPUS `<bench>.<tune>_samples.jsonl`
+    sidecars (bare task_id+solution rows, no score file beside them). The `_samples` skip tested
+    only the bench prefix (`f.stem.split(".")[0]`), which catches `humanevalplus_samples.jsonl`
+    but NOT `humanevalplus.m23_samples.jsonl` — so the sidecar entered largest-n variant
+    selection and the pair printed `164 ungraded`, shadowing a genuinely graded variant."""
+    monkeypatch.setattr(SB.paths, "default_results_root", lambda: tmp_path)
+    _write_rows(tmp_path, "modelX", "humanevalplus.t06", _humaneval_rows(47),
+                {"acc": 0.894, "acc_strict": 0.84, "conv_rate": 1.0, "loop_ids": []})
+    _write_rows(tmp_path, "modelX", "humanevalplus.m23_samples",
+                [{"task_id": f"HumanEval/{i}", "solution": "pass"} for i in range(164)])
+    rec = SB.collect()["modelX"]["humanevalplus"]
+    assert rec["n"] == 47
+    assert rec["acc"] == 0.894
+
+
+def test_unsuffixed_samples_sidecar_still_skipped(monkeypatch, tmp_path):
+    """The pre-C34 behavior that DID work must keep working: a tune-less
+    `humanevalplus_samples.jsonl` sidecar never becomes a variant."""
+    monkeypatch.setattr(SB.paths, "default_results_root", lambda: tmp_path)
+    _write_rows(tmp_path, "modelX", "humanevalplus.t06", _humaneval_rows(10),
+                {"acc": 0.9, "acc_strict": 0.9, "conv_rate": 1.0, "loop_ids": []})
+    _write_rows(tmp_path, "modelX", "humanevalplus_samples",
+                [{"task_id": f"HumanEval/{i}", "solution": "pass"} for i in range(164)])
+    rec = SB.collect()["modelX"]["humanevalplus"]
+    assert rec["n"] == 10
+    assert rec["acc"] == 0.9
