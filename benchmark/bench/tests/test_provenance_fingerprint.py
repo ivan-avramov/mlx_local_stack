@@ -294,3 +294,72 @@ def test_reasoning_effort_mismatch_is_incompatible_but_absent_on_both_is_fine():
     assert P.is_compatible(_v3(), med) is False      # template default vs explicit medium
     assert P.is_compatible(med, xh) is False         # observed differing
     assert P.is_compatible(med, med2) is True        # matched explicit effort resumes
+
+
+# ---------------------------------------------------------- C35: served-vs-registry draft provenance
+import pytest
+
+
+def _c35_registry(tmp_path, draft=None):
+    import yaml as _yaml
+    entry = {"name": "modelX", "hf_path": "caslca/modelX-4bit"}
+    if draft:
+        entry["draft_kind"] = draft
+        entry["draft_model"] = "caslca/modelX-drafter"
+    p = tmp_path / "reg.yaml"
+    p.write_text(_yaml.safe_dump({"models": [entry]}))
+    return str(p)
+
+
+def test_c35_registry_path_honors_MLX_SERVE_CONFIG_absolute(monkeypatch, tmp_path):
+    from bench import paths
+    ov = tmp_path / "overlay.yaml"
+    ov.write_text("models: []")
+    monkeypatch.setenv("MLX_SERVE_CONFIG", str(ov))
+    assert paths.registry_path() == ov
+
+
+def test_c35_registry_path_relative_env_resolves_against_repo_root(monkeypatch):
+    from bench import paths
+    monkeypatch.setenv("MLX_SERVE_CONFIG", "main_models.yaml")
+    assert paths.registry_path() == paths.REPO_ROOT / "main_models.yaml"
+
+
+def test_c35_registry_path_default_unchanged(monkeypatch):
+    from bench import paths
+    monkeypatch.delenv("MLX_SERVE_CONFIG", raising=False)
+    assert paths.registry_path() == paths.REPO_ROOT / "main_models.yaml"
+
+
+def test_c35_tripwire_refuses_registry_worker_mismatch(tmp_path):
+    """The exact M12-pilot bug: registry certifies a drafter, worker verifiably serves draft-OFF.
+    Recording either answer would be false provenance — the run must REFUSE."""
+    reg = _c35_registry(tmp_path, draft="mtp")
+    cmd = "python mlx_vlm.server --model caslca/modelX-4bit --port 8091"
+    with pytest.raises(RuntimeError, match="C35"):
+        P.registry_draft("modelX", reg, worker_lookup=lambda: cmd)
+
+
+def test_c35_tripwire_confirms_on_match(tmp_path):
+    reg = _c35_registry(tmp_path, draft="mtp")
+    cmd = ("python mlx_vlm.server --model caslca/modelX-4bit "
+           "--draft-kind mtp --draft-model caslca/modelX-drafter")
+    st = P.registry_draft("modelX", reg, worker_lookup=lambda: cmd)
+    assert st["draft_kind"] == "mtp"
+    assert st["draft_source"] == "registry+worker"
+
+
+def test_c35_tripwire_skips_when_worker_serves_another_model(tmp_path):
+    """A live worker for a DIFFERENT model says nothing about this model's draft state."""
+    reg = _c35_registry(tmp_path, draft="mtp")
+    cmd = "python mlx_vlm.server --model caslca/some-other-model --port 8091"
+    st = P.registry_draft("modelX", reg, worker_lookup=lambda: cmd)
+    assert st["draft_kind"] == "mtp"
+    assert st["draft_source"] == "registry"
+
+
+def test_c35_tripwire_skips_when_no_worker_observable(tmp_path):
+    reg = _c35_registry(tmp_path)
+    st = P.registry_draft("modelX", reg, worker_lookup=lambda: None)
+    assert st["draft_kind"] == "off"
+    assert st["draft_source"] == "registry"

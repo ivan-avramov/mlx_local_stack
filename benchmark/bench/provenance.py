@@ -8,6 +8,7 @@ reaches the public repo; we still prefer an explicit MLX_BOX label over the raw 
 """
 import json
 import os
+import re
 import subprocess
 import time
 
@@ -63,7 +64,23 @@ def registry_kv(model: str, registry_path: str | None = None):
     return None
 
 
-def registry_draft(model: str, registry_path: str | None = None) -> dict:
+def _worker_cmdline() -> str | None:
+    """Best-effort cmdline of the live `mlx_vlm.server` worker — the SERVING truth for draft
+    flags (AGENTS.md: verify at the worker cmdline, never the yaml alone). None when no worker
+    is observable or the platform/permissions refuse."""
+    try:
+        import psutil
+        for p in psutil.process_iter(["pid", "cmdline"]):
+            cmd = " ".join(p.info.get("cmdline") or [])
+            if "mlx_vlm.server" in cmd:
+                return cmd
+    except Exception:  # noqa: BLE001 — best-effort; absent psutil / AccessDenied / gone
+        return None
+    return None
+
+
+def registry_draft(model: str, registry_path: str | None = None,
+                   worker_lookup=_worker_cmdline) -> dict:
     """Speculative-decoding state for ``model``, NORMALISED so that "off" is an OBSERVATION.
 
     That normalisation is the whole point of v3. `draft_kind` was already named in
@@ -92,10 +109,31 @@ def registry_draft(model: str, registry_path: str | None = None) -> dict:
     entries = doc.get("models", doc) if isinstance(doc, dict) else doc
     for e in entries or []:
         if isinstance(e, dict) and e.get("name") == model:
-            return {"draft_kind": e.get("draft_kind") or "off",
-                    "draft_block_size": e.get("draft_block_size"),
-                    "suffix_min_match": e.get("suffix_min_match"),
-                    "draft_source": "registry"}
+            ans = {"draft_kind": e.get("draft_kind") or "off",
+                   "draft_block_size": e.get("draft_block_size"),
+                   "suffix_min_match": e.get("suffix_min_match"),
+                   "draft_source": "registry"}
+            # C35 tripwire (2026-08-26): the registry of record and the SERVED config can
+            # legitimately diverge (bench routers run a draft-stripped overlay), and recording
+            # the yaml answer alone stamped `draft_kind: mtp` on a verified draft-OFF run.
+            # When a live worker is observably serving THIS model (its `--model` carries the
+            # entry's hf_path), its cmdline is the truth: a mismatch REFUSES the run rather
+            # than record false provenance on either side. A worker for another model, or no
+            # worker at all, says nothing — the yaml answer stands, source "registry".
+            cmd = worker_lookup() if worker_lookup else None
+            hf = e.get("hf_path") or ""
+            if cmd and hf and hf in cmd:
+                m = re.search(r"--draft-kind\s+(\S+)", cmd)
+                served = m.group(1) if m else "off"
+                if served != ans["draft_kind"]:
+                    raise RuntimeError(
+                        f"C35 tripwire: registry {registry_path!r} declares draft_kind="
+                        f"{ans['draft_kind']!r} for {model!r} but the live worker serves "
+                        f"draft_kind={served!r}. Launch the driver with MLX_SERVE_CONFIG "
+                        f"pointed at the served registry/overlay; refusing to record false "
+                        f"draft provenance.")
+                ans["draft_source"] = "registry+worker"
+            return ans
     return {"draft_kind": "unknown", "draft_source": "model-not-in-registry"}
 
 

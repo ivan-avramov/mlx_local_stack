@@ -23,6 +23,7 @@ or a run in flight.
 
 Layout assumption, asserted at import: this file is `<repo>/benchmark/bench/paths.py`.
 """
+import os
 from pathlib import Path
 
 # <repo>/benchmark/bench/paths.py -> parents[0]=bench, [1]=benchmark, [2]=<repo>
@@ -42,7 +43,17 @@ def registry_path() -> Path:
     This is the FU-2 source of truth that the `deployed` sampling profile reads, so a wrong answer
     here does not merely fail to find a file — it decides whether a run measures the sampling we
     actually ship.
+
+    C35 (2026-08-26): honors `MLX_SERVE_CONFIG` when set — the SAME variable the router reads —
+    so a bench driver launched with the draft-stripped overlay fingerprints (and samples) the
+    config actually SERVED. Without this, a bench run of a draft-certified pick recorded the
+    registry's `draft_kind` while the worker verifiably served draft-OFF. Relative values resolve
+    against the repo root, matching the router launch convention (`MLX_SERVE_CONFIG=main_models.yaml`).
     """
+    env = os.environ.get("MLX_SERVE_CONFIG")
+    if env:
+        p = Path(env).expanduser()
+        return p if p.is_absolute() else REPO_ROOT / p
     return REPO_ROOT / "main_models.yaml"
 
 
