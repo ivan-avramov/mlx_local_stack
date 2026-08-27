@@ -1,27 +1,30 @@
-# Handoff — 2026-08-27 (M12 first depth block COMPLETE, three arms; C34+C35 fixed; box IDLE)
+# Handoff — 2026-08-27 late (M12 d64k BLOCK COMPLETE — 6 arms; C34+C35 fixed; box IDLE)
 
 Single box (M5 Max 64 GB). **NOTHING RUNNING — no worker, no watchers, no drivers, port 8000
 router up but model UNLOADED** (verified by `pgrep` after the last unload).
 
 ## THE HEADLINE
 
-**M12 coding-at-depth ran its first full block: three n=50 arms at d64k (65,536-token padded
-prompts, seed-0 prefix, deployed tunes, probe-timeout 9600 s pinned), all graded, all
-committed.** NO depth cliff on any model; all pairwise compares INCONCLUSIVE at n=50 (MDE
-±18pp):
+**M12 coding-at-depth ran a COMPLETE d64k block: 6 n=50 arms (humanevalplus + mbppplus ×
+3 models) at 65,536-token padded prompts, seed-0 prefix, deployed tunes, probe-timeout 9600 s
+pinned, all graded, all committed.** NO depth cliff on any model; ALL SIX pairwise compares
+INCONCLUSIVE at n=50 (MDE ±18pp):
 
-| d64k n=50 | `acc` | `acc_strict@81920` | conv | wall |
+| d64k n=50 | hep `acc`/`strict` | mbpp `acc`/`strict` | conv (hep/mbpp) | wall both |
 |---|---|---|---|---|
-| `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 | 92.0 | 92.0 | 100% | 5.0 h |
-| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 | 88.0 | 88.0 | 100% | 3.2 h |
-| `Ornith-1.0-35B-mlx-uniform-4bit` @t0.4 | 88.0 | 86.0 | 98% | 1.4 h |
+| `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 | 92.0 / 92.0 | 80.0 / 80.0 | 100% / 98% | 11.9 h |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 | 88.0 / 88.0 | 78.0 / 78.0 | 100% / 100% | 6.1 h |
+| `Ornith-1.0-35B-mlx-uniform-4bit` @t0.4 | 88.0 / 86.0 | 76.0 / 76.0 | 98% / 98% | 2.6 h |
 
-Challenger leads the point estimate (−4.0pp vs pick, CI [−14,+6]) on the axis its outside
-reputation was earned on; runaway items `HumanEval/32`/`/146` CONVERGED on all models (the
-zero-runaway pattern of seeded post-C26 sessions continues); the pick stays 3× terser and
-1.6× faster than the challenger; `Ornith-1.0-35B-mlx-uniform-4bit` keeps its ~2pp truncation
-forfeit at depth (`HumanEval/154` budget-hit). Data: `e2812e5`, `4fd28ad`, `fc35b6c`. Dated
-entry: campaign-results 2026-08-27.
+**The challenger leads all six point estimates** — first axis in the campaign where the
+`Qwen3.8-27B` family has led <!-- allow-shorthand -->, and the axis its outside reputation was earned on — but
+nothing resolves at n=50 (628 matched items needed), so this is DIRECTION, not a verdict, and
+the B pick stands. It pays with time: 2–4× the wall-clock, 3–8× the completion tokens. Runaway
+tax changed SHAPE at depth: worst items converge but cost 30–45 min each. **Truncation-forfeit
+is MODEL-specific, not item-intrinsic**: `Mbpp/306` budget-hit on
+`Ornith-1.0-35B-mlx-uniform-4bit` while both qwen3_5-family models converged on it; `Mbpp/593`
+did the reverse on the challenger only. Data: `e2812e5`, `4fd28ad`, `fc35b6c`, `4da55dc`,
+`5a20061`, `4dd0356`. Dated entry: campaign-results 2026-08-27 (late).
 
 ## Instrument fixes this session (both TDD, suite 1230/0 green)
 
@@ -53,9 +56,10 @@ entry: campaign-results 2026-08-27.
 
 ## NEXT SESSION
 
-1. **M12 continuation** (the depth block wants power and breadth): mbppplus at d64k, deeper
-   rungs (d128k+ — mind the thinking-budget clamp window), and pooling; the three d64k arms
-   pair by construction (seed-0 prefix).
+1. **M12 continuation**: deeper rungs (d128k+ — mind the `0.8 × (cap − prompt)` clamp window;
+   at d128k the resolved budget starts shrinking) and pooling for power; the six d64k arms
+   pair by construction (seed-0 prefix). A d128k block costs ~25 h at observed rates — worth
+   an operator scope call against M9 first.
 2. **M9 opencode Run C** (multi-language agentic) — the other differentiating axis; grading
    container validated (H2). Operator framing 2026-08-26: the `Qwen3.8-27B` family's missing <!-- allow-shorthand -->
    evidence lives on exactly these axes.
@@ -64,8 +68,8 @@ entry: campaign-results 2026-08-27.
 
 ## Standing state
 
-- **UNPUSHED: everything after `f289a76`** (9 commits: `53e3d82`…`fc35b6c` — drafter docs, C34
-  fix, C35 fix, three data commits, docs). Push only on explicit in-turn approval.
+- **UNPUSHED: everything after `f289a76`** (13 commits: `53e3d82`…HEAD — drafter docs, C34
+  fix, C35 fix, six data commits, docs). Push only on explicit in-turn approval.
 - Working tree: intentional `main_models.yaml` local overrides (NEVER commit) + older
   untracked m23-era result files + `transcript.md`.
 - Bench-router invariants unchanged AND now enforced: draft-stripped overlay

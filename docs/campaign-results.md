@@ -205,6 +205,39 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-27 (late) — M12 d64k block COMPLETE: 6 arms, 2 benches, 3 models — no depth cliff anywhere, every pairwise compare INCONCLUSIVE
+
+Both benches at depth 65536, n=50 seed-0 prefix, deployed tunes, probe-timeout 9600 s pinned,
+draft-OFF overlay served AND fingerprinted (C35):
+
+| d64k n=50 | hep `acc`/`strict` | hep conv | mbpp `acc`/`strict` | mbpp conv | wall (hep+mbpp) |
+|---|---|---|---|---|---|
+| `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 | **92.0 / 92.0** | 100% | **80.0 / 80.0** | 98% | 11.9 h |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 | 88.0 / 88.0 | 100% | 78.0 / 78.0 | 100% | 6.1 h |
+| `Ornith-1.0-35B-mlx-uniform-4bit` @t0.4 | 88.0 / 86.0 | 98% | 76.0 / 76.0 | 98% | 2.6 h |
+
+**All six pairwise compares INCONCLUSIVE** (hep: 0.0/−4.0/−4.0pp; mbpp: −2.0/−2.0/−4.0pp; every
+CI spans 0 and exceeds the ±5pp margin at MDE ±18pp). What the block DOES establish:
+
+1. **No model has a depth cliff at 64K.** `acc` ≈ `acc_strict` everywhere, convergence 98–100%
+   on every arm — a 64K padded prompt does not degrade single-shot coding for any of the three.
+2. **`Qwen3.8-27B-mlx-uniform-4bit` leads every one of the six point estimates** — the first
+   time in this campaign the family has led on an axis, and it is the axis its outside
+   reputation was earned on. It is not resolvable at n=50 (628 matched items would be needed),
+   so this is DIRECTION, not a verdict, and it does not displace the B pick.
+3. **The challenger buys that lead with time.** 11.9 h vs 6.1 h vs 2.6 h for the same 100 items;
+   mean completion 3,189/5,086 tokens (hep/mbpp) vs the pick's 1,013/641 — 3–8× more verbose.
+   The runaway tax has changed SHAPE, not disappeared: at depth its worst items converge
+   (`Mbpp/306` 38K tok, `/620` 30K, `HumanEval/32` 37K) but cost 30–45 min each.
+4. **The truncation-forfeit signature is model-specific, not item-intrinsic.** `Mbpp/306` burned
+   the full 81,920 budget on `Ornith-1.0-35B-mlx-uniform-4bit` while BOTH qwen3_5-family models
+   converged on it; `Mbpp/593` did the reverse (budget-hit on the challenger only). Each model's
+   single budget-hit is its own — the shallow-era "cross-family item-anchored runaway" reading
+   does not survive at depth.
+
+Data: `e2812e5`, `4fd28ad`, `fc35b6c`, `4da55dc`, `5a20061`, `4dd0356`. Next for M12: deeper
+rungs (d128k+ — mind the `0.8 × (cap − prompt)` clamp window) and pooling for power.
+
 ### 2026-08-27 — M12 coding-at-depth, first two arms: NO depth cliff on either model; the challenger leads the point estimate
 
 Setup: humanevalplus embedded at the end of ~65,536 tokens of deterministic repo padding
