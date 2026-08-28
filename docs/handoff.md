@@ -1,7 +1,31 @@
-# Handoff — 2026-08-27 late (M12 d64k BLOCK COMPLETE — 6 arms; C34+C35 fixed; box IDLE)
+# Handoff — 2026-08-27 night (M9 STARTED, go pilot IN FLIGHT; M12 d64k block complete; 14 commits PUSHED)
 
-Single box (M5 Max 64 GB). **NOTHING RUNNING — no worker, no watchers, no drivers, port 8000
-router up but model UNLOADED** (verified by `pgrep` after the last unload).
+Single box (M5 Max 64 GB). **A RUN IS LIVE: M9 go pilot on `Qwen3.8-27B-mlx-uniform-4bit`**
+(nohup'd `run_opencode_probe.py`, launched ~22:02) — resuming session must CHECK IT FIRST:
+
+- Driver PID was 26948 (`pgrep -f run_opencode_probe`); log
+  `$STACK_WORKDIR/m9/pilot_q38_go.log`; rows
+  `$STACK_WORKDIR/m9/Qwen3.8-27B-mlx-uniform-4bit.opencode_go.jsonl` (5 items:
+  alphametics,beer-song,book-store,bottle-song,bowling — the O39 go set's first five).
+  Sessions are progress-gated (tick 300 s, ceiling 3600 s) so the pilot self-bounds ≤ ~1.5 h;
+  waiters from the launching session DIED WITH IT — poll the PID/log, nothing will notify you.
+- **M9 plan (operator "push and proceed", 2026-08-27 — supersedes C21's replication gate):**
+  roster = winners + `Qwen3.8-27B-mlx-uniform-4bit`; pairing-first order: (1) this pilot →
+  full 22-item go leg (O39 item set, pairs vs both winners' existing
+  `$STACK_WORKDIR/o39/*.opencode_go.jsonl` arms), (2) python leg on the M3 22-item set (pairs
+  vs `benchmark/results/*/opencode.jsonl`), (3) rust/java/javascript draws — NOT yet designed,
+  needs a seeded-draw rule decision. Protocol per O39: pinned opencode 1.18.15
+  (`$STACK_WORKDIR/o39/opencode-1.18.15` on PATH), TMPDIR `$STACK_WORKDIR/scratch/octmp`
+  (output-determining!), MLX_SERVE_CONFIG at the draft-stripped overlay, draft-OFF verified at
+  worker, `--pure`.
+- ⚠️ **UNCOMMITTED + not-yet-durable:** `benchmark/opencode_bench.json` hand-edit adds
+  `Qwen3.8-27B-mlx-uniform-4bit` (it was missing — no registry `presentation` block → configgen
+  never emitted it; first pilot attempt failed instantly rc=1 on the unknown model). The edit
+  is DEPLOYED to the live `~/.config/opencode/opencode.json` (which is the bench config — the
+  daily config backup is `$STACK_WORKDIR/opencode.json.probe-backup`). Durable fix at the next
+  idle boundary: registry `presentation: role: candidate` (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` precedent) → configgen
+  re-emit → verify it reproduces the hand-edit → regenerate the draft-OFF overlay → commit
+  registry + emitted config together. Never mid-run.
 
 ## THE HEADLINE
 
@@ -68,14 +92,16 @@ did the reverse on the challenger only. Data: `e2812e5`, `4fd28ad`, `fc35b6c`, `
 
 ## Standing state
 
-- **UNPUSHED: everything after `f289a76`** (13 commits: `53e3d82`…HEAD — drafter docs, C34
-  fix, C35 fix, six data commits, docs). Push only on explicit in-turn approval.
+- **PUSHED through `027dd38`** (2026-08-27, operator-approved). Local-only since: the
+  `benchmark/opencode_bench.json` hand-edit above (uncommitted by design until the configgen
+  route lands) and this handoff update.
 - Working tree: intentional `main_models.yaml` local overrides (NEVER commit) + older
   untracked m23-era result files + `transcript.md`.
 - Bench-router invariants unchanged AND now enforced: draft-stripped overlay
   (`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`) + `MLX_VLM_CACHE_SESSION_MAX=2` + APC
   absent, verified at the worker; C35 makes the DRIVER carry `MLX_SERVE_CONFIG` too, and the
   tripwire refuses on divergence.
-- Open operator items: C30, C31. Next O/C number: **C36**.
+- Open operator items: C30, C31; M9 rust/java/javascript draw rule needs a design decision
+  before those legs run. Next O/C number: **C36**.
 
 **Order of resumption: this file → `docs/PLAN.md` → `docs/open-questions.md`.**
