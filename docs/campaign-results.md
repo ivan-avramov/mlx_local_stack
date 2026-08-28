@@ -205,6 +205,42 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-28 — M9 go + python legs COMPLETE: `Qwen3.8-27B-mlx-uniform-4bit` leads the agentic axis, and the python result is the campaign's first Holm-order significant agentic delta
+
+Both legs under the O39 protocol (opencode 1.18.15 pinned, TMPDIR `scratch/octmp`,
+draft-OFF overlay served + fingerprinted, `deployed` profile, progress gate 300/3600/2),
+one session per arm, pairing against the existing winner arms by construction:
+
+| opencode n=22/lang | go (O39 set) | python (M3 set) |
+|---|---|---|
+| `Qwen3.8-27B-mlx-uniform-4bit` | **16/22** | **20/22** |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 11/22 | 19/22 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 12/22 | 12/22 |
+| `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` | — | 13/22 |
+
+1. **Python, challenger vs the B pick: discordant 8:0, McNemar exact p=0.0078** — the
+   challenger solves a strict superset of the pick's solves. Even Bonferroni across the five
+   pairwise tests run this session keeps it under α=.05 (0.039). The delta (+36.4pp) also
+   clears the n=22 MDE (~±27pp). This is the strongest single agentic result of the campaign.
+2. **Go: 16/22 beats both winners directionally** (6:1 vs the runner-up p=0.125; 5:1 vs the
+   pick p=0.219 — not significant at n=22). All six fails are `stalled` gate-kills with zero
+   file edits, and five of the six land on items at least one winner also fails (`ledger` is
+   the sole winner-passed miss). Zero fast give-ups, zero test tampering, zero of the
+   path-infidelity give-up class either leg.
+3. **Failure mode is uniform and honest**: the challenger either solves the item at
+   pick-class speed (python pass median well under 5 min; go passes 45 s–13 min) or thinks
+   past the 600 s progress gate without ever editing — the xhigh-effort stall class, but
+   unlike `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` (whose 9 python fails were ALL
+   stall-kills, several on items others pass) it stalls almost exclusively where the winners
+   fail too. Python wall 1.69 h; go 2.5 h incl. pilot.
+4. **Caveats**: single session per arm (C30: order ±1–2 items of session noise on a 22-item
+   arm); go rows live at `$STACK_WORKDIR/m9/` beside the winners' O39 arms, python rows
+   committed `1f6137a`. Rust/java/javascript legs await the seeded-draw rule (operator).
+
+Combined with the M12 d64k sweep (below), the pattern is now consistent across two
+independent axes: the challenger leads everywhere the campaign looks this week, decisively on
+agentic python, at the price of stall-tax on its hardest items.
+
 ### 2026-08-27 (late) — M12 d64k block COMPLETE: 6 arms, 2 benches, 3 models — no depth cliff anywhere, every pairwise compare INCONCLUSIVE
 
 Both benches at depth 65536, n=50 seed-0 prefix, deployed tunes, probe-timeout 9600 s pinned,

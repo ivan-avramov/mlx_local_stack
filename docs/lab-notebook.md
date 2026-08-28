@@ -3021,3 +3021,47 @@ pre-graft conversion, not recognized as identity to the OFFICIAL quant.
 cheaply testable any time since (one md5 sweep). The campaign ran ~20 h of A/B arms against a
 mirror. Standing lesson: **before any conversion-vs-original A/B, hash the tensors first** —
 a 2-minute sweep bounds the maximum possible effect at zero or licenses the arm.
+
+## 2026-08-28 — M9 go + python legs: the resumed-session mechanics, the numbers, and C36
+
+Resumed into a LIVE go pilot on `Qwen3.8-27B-mlx-uniform-4bit` (nohup survivor of the
+2026-08-27 session; its waiters had died with that session). Re-instrumented per the
+waiter-coverage rule (PID waiter with timeout arm + 5-min watch daemon), verified protocol
+provenance on the running process (env `MLX_SERVE_CONFIG` = the draft-OFF overlay whose
+sha256 equals the manifest's registry hash; `draft_source: registry+worker`; opencode
+1.18.15; TMPDIR octmp; deployed profile), and let it finish.
+
+**Pilot (5 items)**: 2/5 — beer-song 140 s, bottle-song 190 s PASS; alphametics,
+book-store, bowling stall-killed at ~601 s with `changed=False`. NOT the `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`
+pattern: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` fails the identical three items in its O39
+arm (two the same stall way, bowling as a 903 s loop-kill), and
+`Ornith-1.0-35B-mlx-uniform-4bit` fails two of them. Extended per the operator's
+"push and proceed".
+
+**Go leg (rest-17 → full 22, wall 2.12 h arm total)**: 16/22. vs
+`Ornith-1.0-35B-mlx-uniform-4bit` 11/22 discordant 6:1 p=0.125; vs
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 12/22 discordant 5:1 p=0.219. All 6 fails =
+`stalled`, no edit; 0 give-ups; 0 tampering; `ledger` the only winner-passed miss.
+
+**Python leg (M3 22-item set, wall 1.69 h)**: 20/22. vs the pick 12/22 **discordant 8:0,
+McNemar exact p=0.0078** — survives Bonferroni across this session's five pairwise tests;
++36.4pp clears the n=22 MDE. vs `Ornith-1.0-35B-mlx-uniform-4bit` 19/22 (3:2, p=1.0 —
+parity); vs `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` 13/22 (7:0, p=0.0156). Fails:
+book-store + paasio stall-kills. Rows committed `1f6137a`; go rows in
+`$STACK_WORKDIR/m9/` beside the winners' O39 arms. C30 single-session caveat on all arms.
+
+**C36 (found while landing the durable config fix)**: `configgen generate` silently DROPPED
+`Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` from `benchmark/opencode_bench.json` — its
+carrier entry had been hand-written in `bcc6d37` with no registry `presentation` block, so
+the committed carrier was drifted from emission. Fixed in-session with the same
+`role: candidate` treatment the handoff prescribed for `Qwen3.8-27B-mlx-uniform-4bit`
+(both blocks verified reproducing their hand-edits byte/semantically; client configs
+untouched; configgen 37/37; landed `bbbe365`). Fix applied WITHOUT prior proposal —
+ratification owed, recorded in open-questions C36. Local-path overrides were kept out of
+the commit by re-emitting from a clean HEAD checkout and re-applying the 4 override lines
+after; the draft-OFF overlay was regenerated from the restored working registry
+(header dated 2026-08-28, `# STRIPPED-FOR-BENCH` lines verified, 0 active draft keys).
+
+Box state at close: `caslca/Qwen3.8-27B-mlx-uniform-4bit` resident and idle; the live
+`~/.config/opencode/opencode.json` still carries the BENCH config (daily backup at
+`$STACK_WORKDIR/opencode.json.probe-backup`) pending the remaining M9 legs.
