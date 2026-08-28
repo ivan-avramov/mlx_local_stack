@@ -363,7 +363,13 @@ models:
     quantized_kv_start: 0
     prefill_step_size: 512
     generation_defaults:
-      temperature: 1.0
+      # 1.0 -> 0.6 (2026-08-28, M25 prep): 0.6 is this recipe's M2 Stage-1 SCREENED tune
+      # (conv 14/14 + the HumanEval/146 capped probe, pass@1 1.00 at t0.6) and the family's
+      # certified operating point on the sibling; t1.0 is the family's MEASURED-runaway temp
+      # (M2: checkpoint 1.0 AND 0.7 both ran away >3600 s). The 1.0 here was the checkpoint
+      # default the funnel screens FROM, never an operating point — updated before the
+      # first deployed-profile arm ever reads it.
+      temperature: 0.6
       top_p: 0.95
       top_k: 20
       min_p: 0.0
@@ -371,6 +377,16 @@ models:
       max_tokens: 102400
       thinking_budget: 81920
       enable_thinking: true
+    presentation:
+      # role: candidate => bench carriers only, never client configs. Added 2026-08-28
+      # (M25, operator-requested paces run): enables the paired opencode arms vs
+      # Qwen3.8-27B-mlx-uniform-4bit and the winners.
+      role: candidate
+      family: qwen
+      display_name: "Qwen3.8-27B (OptiQ 4.5bpw mixed)"  # UI label, allow-shorthand
+      context: 262144
+      output: 102400
+      capabilities: [tools, vision, thinking]
 
   - name: Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit
     type: vision
