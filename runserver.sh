@@ -42,6 +42,10 @@ git submodule update --init --recursive --remote
 echo "Bootstrapping uv..."
 uv sync
 
+echo "Rendering searxng/settings.generated.yml (fills free-tier API keys from .env)..."
+uv run python searxng/render_settings.py
+log_ok "SearXNG settings rendered.\n"
+
 # Drift guard: client configs (opencode/aider/vscode/zed/OWUI) are GENERATED from
 # main_models.yaml by configgen — if main_models.yaml changed without re-running
 # `configgen generate`, the checked-in configs are stale. Fail fast (set -e) rather

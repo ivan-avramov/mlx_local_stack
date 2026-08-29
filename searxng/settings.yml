@@ -16,3 +16,34 @@ engines:
     disabled: true
   - name: karmasearch
     disabled: true
+
+  # Free-tier official APIs, OFF (inactive) here by default. render_settings.py
+  # flips inactive:false and fills api_key only when BRAVE_SEARCH_API_KEY /
+  # WOLFRAM_APP_ID are set in .env, writing the result to the gitignored
+  # settings.generated.yml that docker-compose actually mounts. Never put a
+  # real key in this file — it's public.
+  - name: braveapi
+    inactive: true
+  - name: wolframalpha_api
+    inactive: true
+
+  # `general` pool widening, tested live 2026-08-28 (duckduckgo/brave/startpage/
+  # google-cse were all CAPTCHA'd or connection-dead from this network at the
+  # time). Verified individually via `engines=<name>` against a real query:
+  - name: google
+    disabled: false  # WORKS — real results, no error.
+  - name: duckduckgo web
+    disabled: false  # WORKS — real results (distinct scrape path from the
+    # already-enabled `duckduckgo` module, which is the one that's CAPTCHA'd).
+  - name: bing
+    disabled: true  # TLS handshake fails: "Basic Constraints of CA cert not
+    # marked critical" — bing.com's own cert chain, not a bot-block. Confirmed
+    # with a raw urllib fetch from inside the container, no SearXNG involved.
+    # Not fixable from our side; revisit if bing's chain changes.
+  - name: qwant
+    disabled: true  # CAPTCHA-blocked.
+  - name: mojeek
+    disabled: true  # Silently dead: raw fetch gets HTTP 403, but the mojeek.py
+    # engine module doesn't surface that as an error — it just returns zero
+    # results with no entry in /stats/errors. Left off rather than kept as
+    # silent dead weight.
