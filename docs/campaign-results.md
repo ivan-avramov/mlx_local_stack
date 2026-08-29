@@ -205,6 +205,20 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-29 (later) — M25 CLOSED: `Qwen3.8-27B-OptiQ-4.5bpw-mixed` ties its sibling — recipe choice is not the story
+
+Paired opencode legs at the screened t0.6 (registry fix `52acc22`): python 18/22, go 16/22.
+Against `Qwen3.8-27B-mlx-uniform-4bit`: discordant 0:2 (python), 1:1 (go), pooled 1:3
+p=.625 — a statistical tie with equivalent stall profiles (8 vs 8 gate-kills) and wall
+(3.6 vs 4.2 h). **Pre-registered gate verdict: WASH → no further quant variants for this
+family** (the ~6bpw mixed rung, official `mlx-community/Qwen3.8-27B-OptiQ-4bit`, and <!-- allow-shorthand --> the
+D8 DWQ all stay dormant; M21's int8 control remains the causal test for the stall tax).
+The informative secondary: the mixed recipe ALSO beats `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+directionally on both legs (7:1 python p=.07; 6:2 go) — two independent quantizations of
+the same base behaving identically means the M9/M12 challenger direction is a property of
+the BASE MODEL, not of any one quant artifact. Data: `75bdf65` (python, in-repo); go rows
+`$STACK_WORKDIR/m9/`.
+
 ### 2026-08-29 — M9 BLOCK COMPLETE (all 5 languages × 3 models): the challenger leads 3 of 5 languages and the pooled total, but rust/java flip against it and NOTHING survives Holm
 
 The C37 rust/java/javascript legs (pre-registered draw, O39 protocol, one orchestrator,

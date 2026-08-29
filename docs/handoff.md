@@ -1,25 +1,19 @@
-# Handoff — 2026-08-29 (M9 COMPLETE 5 languages; M25 OptiQ legs IN FLIGHT) <!-- allow-shorthand -->
+# Handoff — 2026-08-29 (M9 + M25 COMPLETE; NO run live; operator owes the scope call) <!-- allow-shorthand -->
 
-Single box (M5 Max 64 GB). **A RUN IS LIVE: M25 — `Qwen3.8-27B-OptiQ-4.5bpw-mixed`
-paired opencode legs** (python on the M3 22-item set, then go on the O39 22-item set),
-launched ~04:30 2026-08-29 by orchestrator `$STACK_WORKDIR/m9/m25_orchestrator.py`:
+Single box (M5 Max 64 GB). **No run is in flight.** Last resident model:
+`Qwen3.8-27B-OptiQ-4.5bpw-mixed` (router :8000 up on the 2026-08-29 overlay,
+SESSION_MAX=2, APC absent — verified at pid). Unload before serving anything else.
 
-- Driver `pgrep -f m25_orchestrator` (was pid 75079); log `$STACK_WORKDIR/m9/m25_orchestrator.log`;
-  watch `$STACK_WORKDIR/m9/m25_watch.log`; per-leg logs `m25_Qwen3.8-27B-OptiQ-4.5bpw-mixed.<lang>.log`.
-  Rows: python → `benchmark/results/Qwen3.8-27B-OptiQ-4.5bpw-mixed/opencode.jsonl` (in-repo),
-  go → `$STACK_WORKDIR/m9/Qwen3.8-27B-OptiQ-4.5bpw-mixed.opencode_go.jsonl`. Fail-loud
-  (rc≠0 aborts), per-leg 18000 s bound, expect ~5–6 h total. Waiters die with the launching
-  session — poll the PID/log on resume.
-- Runs at the recipe's screened **t0.6** (registry updated from checkpoint-default 1.0 in
-  `52acc22` — read the commit before questioning the tune). Router was restarted at the
-  idle boundary on the REGENERATED overlay (2026-08-29 header; SESSION_MAX=2 + APC-absent
-  verified on pid); the regenerated carrier is deployed to the live
-  `~/.config/opencode/opencode.json` (daily backup remains `$STACK_WORKDIR/opencode.json.probe-backup`).
-- When it lands: evaluate both legs (session_pass, gate-kills, completed-fails, wall),
-  pair vs `Qwen3.8-27B-mlx-uniform-4bit` + winners (same items/protocol by construction),
-  then the **gated second-variant decision** (PLAN M25): beat-uniform → OptiQ ~6bpw rung <!-- allow-shorthand -->
-  / official `mlx-community/Qwen3.8-27B-OptiQ-4bit` / D8 DWQ activate; wash → no more
-  quant variants (M21 int8 stays the causal stall-tax test).
+## M25 CLOSED (2026-08-29 ~08:00): recipe choice is a WASH — gate shut
+
+`Qwen3.8-27B-OptiQ-4.5bpw-mixed` at screened t0.6: python 18/22, go 16/22; vs
+`Qwen3.8-27B-mlx-uniform-4bit` pooled discordant 1:3 p=.625, equivalent stalls and wall.
+Pre-registered verdict: NO further quant variants for the family (6bpw / official
+`mlx-community/Qwen3.8-27B-OptiQ-4bit` / D8 DWQ stay dormant; M21 int8 = the causal test).
+Secondary: it also beats `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` directionally both legs
+(7:1, 6:2) — two quants of one base behaving identically makes the challenger direction a
+BASE-MODEL property. Entries: campaign-results 2026-08-29 (later); PLAN M25. Python rows
+committed `75bdf65`; go rows `$STACK_WORKDIR/m9/`.
 
 ## THE HEADLINE — M9 IS COMPLETE (5 languages × 3 models, C37 block closed 04:17)
 
@@ -48,9 +42,9 @@ on python+javascript (~4 h/model, doubles pooled discordants, doubles as C30 rep
 
 ## Standing state
 
-- **PUSHED through `9bdd444`**; rebased onto the operator's `5f85ef6` (searxng) 2026-08-28.
-  Local-only since: the 2026-08-29 docs commit(s) for the C37 closure. Never push without
-  in-turn approval.
+- **PUSHED through `9bdd444`** (then rebased onto the operator's `5f85ef6`). Local-only:
+  `53e1962` (C37 closure docs), `75bdf65` (M25 python data), + the M25-closure docs
+  commit. Never push without in-turn approval.
 - Working tree: the four intentional `main_models.yaml` local-path overrides (NEVER
   commit; stash-protect during rebases) + old untracked m23-era files + `transcript.md`.
 - C37 data lives in `$STACK_WORKDIR/m9/` (9 legs × jsonl+manifest); python-leg precedent
