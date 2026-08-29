@@ -3065,3 +3065,33 @@ after; the draft-OFF overlay was regenerated from the restored working registry
 Box state at close: `caslca/Qwen3.8-27B-mlx-uniform-4bit` resident and idle; the live
 `~/.config/opencode/opencode.json` still carries the BENCH config (daily backup at
 `$STACK_WORKDIR/opencode.json.probe-backup`) pending the remaining M9 legs.
+
+## 2026-08-29 — C37 block done (M9 complete, 5 languages); M25 launched; router restarted on the M25 overlay
+
+The 9-leg C37 orchestrator ran 2026-08-28 07:30 → 08-29 04:17 (~20.8 h) with zero
+harness faults: every leg rc=0, both model swaps unload-POSTed and pgrep-verified, the
+5-min watch logged throughout. Numbers and reading: campaign-results 2026-08-29 (headline:
+challenger 80/110 pooled vs 71/69, pooled 24:13 p=.099 vs the pick, NOTHING Holm-surviving,
+rust flips against the challenger, failure modes split slow-stall vs fast-wrong by
+architecture).
+
+Session-mechanics notes worth keeping:
+- The 2026-08-28 python-leg claim "8:0 survives Bonferroni across the session's five
+  tests" aged badly by design: the full block makes it a 10-test family and the python p
+  (.0078) misses Holm's .005 first rung. Recorded as a correction in the dated entry —
+  the multiplicity family is the DESIGN's tests, not the tests run so far.
+- macOS pgrep has no -c; the router teardown check used `pgrep -fl … ; RC` instead. Router
+  restart at the idle boundary: killed by PID (verified 0 listeners on :8000, 0
+  `mlx_vlm.server`), relaunched with `MLX_VLM_CACHE_SESSION_MAX=2`, APC absent, and
+  `MLX_SERVE_CONFIG` at the freshly regenerated overlay — regenerated AFTER the block so
+  no registry-sha change landed mid-block (the C35 lesson applied prospectively).
+- M25 idle-boundary steps executed in order: overlay regen (2026-08-29 header, 0 active
+  draft keys) → regenerated `benchmark/opencode_bench.json` deployed to the live
+  `~/.config/opencode/opencode.json` (now 8 models incl. `Qwen3.8-27B-OptiQ-4.5bpw-mixed`)
+  → router restart → M25 orchestrator (python leg then go leg, 22 items each, O39
+  protocol) launched with waiter + watch.
+- Operator rulings logged 2026-08-28: HF cache pruned to 253G (hand pass + delegated
+  deletions incl. both `unsloth/Qwen3.6-27B-UD-MLX-*` quants, the `unsloth/Qwen3.8-27B` <!-- hub repo ids, allow-shorthand -->
+  bf16 source, `unsloth/gemma-4-31b-it-UD-MLX-4bit`); the `Qwen3.6-27B-UD-MLX-6bit`
+  fairness re-try DECLINED; searxng change `5f85ef6` rebased in from a parallel session
+  (stash-protected the intentional registry overrides).

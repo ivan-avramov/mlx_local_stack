@@ -205,6 +205,55 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-29 — M9 BLOCK COMPLETE (all 5 languages × 3 models): the challenger leads 3 of 5 languages and the pooled total, but rust/java flip against it and NOTHING survives Holm
+
+The C37 rust/java/javascript legs (pre-registered draw, O39 protocol, one orchestrator,
+~20.8 h wall, all 9 legs rc=0) complete the five-language M9 design. Totals over the 110
+paired items:
+
+| n=22/lang | python | go | rust | java | javascript | **total** |
+|---|---|---|---|---|---|---|
+| `Qwen3.8-27B-mlx-uniform-4bit` | **20** | **16** | 13 | 12 | **19** | **80/110** |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 19 | 11 | **17** | 12 | 12 | 71/110 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 12 | 12 | 15 | **13** | 17 | 69/110 |
+
+Paired discordant splits (challenger : rival):
+
+| vs | python | go | rust | java | javascript | pooled (n=110) |
+|---|---|---|---|---|---|---|
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 8:0 p=.008 | 5:1 p=.22 | 3:5 p=.73 | 4:5 p=1.0 | 4:2 p=.69 | **24:13 p=.099** |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 3:2 p=1.0 | 6:1 p=.13 | 0:4 p=.13 | 4:4 p=1.0 | 7:0 p=.016 | **20:11 p=.150** |
+
+(`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` vs `Ornith-1.0-35B-mlx-uniform-4bit` pooled: 18:20,
+p=.87 — the winners are dead even across languages.)
+
+1. **The headline correction: the block does NOT confirm the python signal.** With the full
+   10-test family, Holm's smallest threshold is .005 and the python 8:0 (p=.0078) no longer
+   clears it; the 2026-08-28 entry's "survives Bonferroni across five tests" was true of the
+   tests run *at that time* and is superseded by the complete design. Pooled, the challenger
+   leads 24:13 (p=.099) — directional, unresolved at this n.
+2. **Per-language heterogeneity is the finding.** The challenger wins python/go/javascript,
+   loses rust to BOTH incumbents (3:5 and 0:4 — its only 0:x split anywhere), and java is a
+   three-way tie. Per the pre-registration these stay five per-language rankings; a blended
+   number would have hidden exactly this.
+3. **Failure modes split by architecture, and they price differently.**
+   The qwen3_5-family models <!-- allow-shorthand --> fail SLOW (stall-kills dominate: challenger 17, pick 19
+   across the three new legs — each a 600 s gate-kill with zero edits);
+   `Ornith-1.0-35B-mlx-uniform-4bit` fails FAST-AND-WRONG (16 completed-fails in java+js
+   alone vs 7 gate-kills total, legs at 1.0–2.0 h vs 2.6–3.0 h). Same acc_strict cost, very
+   different wall-clock and interactive feel. Two `test_modified` rows (one pick java, one
+   `Ornith-1.0-35B-mlx-uniform-4bit` javascript) were auto-scored as fails by the tamper guard.
+4. **Caveats**: single session per arm (C30 ±1–2 items/arm); rust's draw carried only 10
+   anchor items (corpus 30) so its item mix skews harder-novel than the other languages.
+   Rows: `$STACK_WORKDIR/m9/*.opencode_{rust,java,javascript}.jsonl` + manifests.
+
+**Standing read after M9 + M12: `Qwen3.8-27B-mlx-uniform-4bit` now leads the point estimate
+on BOTH differentiating axes (depth, multi-language agentic) without a single
+Holm-surviving win; the B pick stands on the letter of the rules, while the weight of
+direction keeps accumulating against it.** The power move, if wanted: a second session per
+arm on python+javascript (the two strongest splits) roughly doubles pooled discordants at
+~4 h/model — cheaper than any new axis (also doubles as C30 replicate data).
+
 ### 2026-08-28 — M9 go + python legs COMPLETE: `Qwen3.8-27B-mlx-uniform-4bit` leads the agentic axis, and the python result is the campaign's first Holm-order significant agentic delta
 
 Both legs under the O39 protocol (opencode 1.18.15 pinned, TMPDIR `scratch/octmp`,
