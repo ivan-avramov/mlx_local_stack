@@ -1,19 +1,27 @@
-# Handoff — 2026-08-29 (M9 + M25 COMPLETE; NO run live; operator owes the scope call) <!-- allow-shorthand -->
+# Handoff — 2026-08-29 (M26 power extension IN FLIGHT; M9+M25 closed) <!-- allow-shorthand -->
 
-Single box (M5 Max 64 GB). **No run is in flight.** Last resident model:
-`Qwen3.8-27B-OptiQ-4.5bpw-mixed` (router :8000 up on the 2026-08-29 overlay,
-SESSION_MAX=2, APC absent — verified at pid). Unload before serving anything else.
+Single box (M5 Max 64 GB). **A RUN IS LIVE: M26 — second-session (s2) opencode arms**,
+3 models × {python, javascript}, launched 09:40 2026-08-29 by
+`$STACK_WORKDIR/m9/m26_orchestrator.py` (was pid 77840) — resuming session must CHECK IT FIRST:
 
-## M25 CLOSED (2026-08-29 ~08:00): recipe choice is a WASH — gate shut
-
-`Qwen3.8-27B-OptiQ-4.5bpw-mixed` at screened t0.6: python 18/22, go 16/22; vs
-`Qwen3.8-27B-mlx-uniform-4bit` pooled discordant 1:3 p=.625, equivalent stalls and wall.
-Pre-registered verdict: NO further quant variants for the family (6bpw / official
-`mlx-community/Qwen3.8-27B-OptiQ-4bit` / D8 DWQ stay dormant; M21 int8 = the causal test).
-Secondary: it also beats `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` directionally both legs
-(7:1, 6:2) — two quants of one base behaving identically makes the challenger direction a
-BASE-MODEL property. Entries: campaign-results 2026-08-29 (later); PLAN M25. Python rows
-committed `75bdf65`; go rows `$STACK_WORKDIR/m9/`.
+- `pgrep -f m26_orchestrator`; log `$STACK_WORKDIR/m9/m26_orchestrator.log`; 5-min watch
+  `$STACK_WORKDIR/m9/m26_watch.log` (nohup'd, survives); per-leg logs `m26_<model>.<lang>.log`;
+  rows `$STACK_WORKDIR/m9/<model>.opencode_<lang>.s2.jsonl`. Leg order: `Qwen3.8-27B-mlx-uniform-4bit`
+  (py, js) → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` → `Ornith-1.0-35B-mlx-uniform-4bit`;
+  unload+pgrep-verified between models AND at start (fresh session per model). Fail-loud:
+  any leg rc≠0 aborts the orchestrator. Per-leg bound 18000 s; expect ~10–14 h total
+  (done ~20:00–24:00 08-29). Session waiters DIED with the launching session — poll PID/log.
+- Protocol = O39 verbatim: opencode 1.18.15 on PATH from `$STACK_WORKDIR/o39/`, TMPDIR
+  `$STACK_WORKDIR/scratch/octmp`, `MLX_SERVE_CONFIG` at the 2026-08-29 draft-OFF overlay,
+  deployed profile, gate 300/3600/2. Items: python = the M3 22-item set; javascript = the
+  C37 draw (`$STACK_WORKDIR/m9/c37_draws.json`).
+- **Pre-registered analysis (PLAN M26)**: pool discordants over (item, session) pairs
+  s1↔s1 / s2↔s2 for challenger-vs-each-rival on these two languages; s1/s2 same-model
+  deltas are C30 session-variance replicates. When it lands: evaluate each leg
+  (session_pass, gate-kills, completed-fails, wall), run the pooled McNemar, extract the
+  C30 material, write the dated results entry, and — if the pooled split resolves — put
+  the B-pick displacement question to the operator WITH the speed caveat (challenger is
+  ~24 tok/s / 33-min 256K prefill, same class as the pick; MTP drafter probe-only).
 
 ## THE HEADLINE — M9 IS COMPLETE (5 languages × 3 models, C37 block closed 04:17)
 
@@ -32,19 +40,17 @@ campaign-results 2026-08-29; mechanics: lab-notebook 2026-08-29.
 rules; the direction keeps accumulating.** Cheapest power move: a second session per arm
 on python+javascript (~4 h/model, doubles pooled discordants, doubles as C30 replicates).
 
-## Operator decisions now ripe
+## Operator decisions
 
-1. **Post-M9 scope call**: (a) power extension (second sessions, above), (b) M12 d128k
-   (~25 h, answers depth-cliff not differentiation), (c) neither — proceed to
-   consolidation. Session recommendation: (a) before (b).
-2. M25 second-variant gate — auto-resolves when the in-flight legs land.
-3. Standing: C30 bound (driver-side, material keeps growing), C31 deferred.
+- Scope call RESOLVED 2026-08-29: option (a) — M26 launched (this run). M12 d128k stays
+  deferred behind it; M25 gate CLOSED (wash). Standing open: C30 bound (material now
+  includes the coming s1/s2 replicates), C31 deferred. Nothing else blocks.
 
 ## Standing state
 
-- **PUSHED through `9bdd444`** (then rebased onto the operator's `5f85ef6`). Local-only:
-  `53e1962` (C37 closure docs), `75bdf65` (M25 python data), + the M25-closure docs
-  commit. Never push without in-turn approval.
+- **PUSHED through `df3ca80`** (operator-approved 2026-08-29; includes the C37 closure,
+  M25 data + closure). Local-only: `d30035e` (M26 PLAN row) + this handoff commit. Never
+  push without in-turn approval.
 - Working tree: the four intentional `main_models.yaml` local-path overrides (NEVER
   commit; stash-protect during rebases) + old untracked m23-era files + `transcript.md`.
 - C37 data lives in `$STACK_WORKDIR/m9/` (9 legs × jsonl+manifest); python-leg precedent
