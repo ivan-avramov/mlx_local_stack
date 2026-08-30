@@ -58,7 +58,8 @@ def _run_main(monkeypatch, tmp_path, canned_records, extra_argv=None):
     monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_reasoning_ladder",
                         lambda *a, **kw: canned_records)
-    argv = ["--model", "mymodel", "--grid", "8000,16000", "--no-preload"]
+    argv = ["--model", "mymodel", "--grid", "8000,16000", "--no-preload",
+            "--sampling-profile", "production"]
     if extra_argv:
         argv += extra_argv
     return R.main(argv)
@@ -131,7 +132,7 @@ def test_main_passes_params_to_ladder(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
     monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_reasoning_ladder", fake_ladder)
-    R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit",
+    R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit", "--sampling-profile", "production",
             "--grid", "8000,16000", "--no-preload"])
     assert captured["params"] is not None
     # Gemma model → GEMMA params set
@@ -155,7 +156,7 @@ def test_main_max_tokens_override(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
     monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_reasoning_ladder", fake_ladder)
-    R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit",
+    R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit", "--sampling-profile", "production",
             "--grid", "8000,16000", "--no-preload", "--max-tokens", "1234"])
     assert captured["params"]["max_tokens"] == 1234
 
@@ -174,6 +175,6 @@ def test_main_thinking_budget_override(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
     monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_reasoning_ladder", fake_ladder)
-    R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit",
+    R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit", "--sampling-profile", "production",
             "--grid", "8000,16000", "--no-preload", "--thinking-budget", "4096"])
     assert captured["params"]["thinking_budget"] == 4096

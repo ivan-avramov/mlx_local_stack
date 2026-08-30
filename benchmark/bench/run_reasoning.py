@@ -35,10 +35,16 @@ def main(argv=None) -> int:
     ap.add_argument("--samples", type=int, default=5)
     ap.add_argument("--chain-len", type=int, default=4)
     ap.add_argument("--threshold", type=float, default=0.85)
+    ap.add_argument("--sampling-profile", required=True,
+                    choices=["coding", "deployed", "official", "production"],
+                    help="params profile (O36: explicit on every run; 'deployed' for all new axes)")
     ap.add_argument("--max-tokens", type=int, default=None,
-                    help="Override production max_tokens (default: use model's production value)")
+                    help="Override profile max_tokens (default: use the profile's value)")
     ap.add_argument("--thinking-budget", type=int, default=None,
-                    help="Override production thinking_budget (default: use model's production value)")
+                    help="Override profile thinking_budget (default: use the profile's value)")
+    ap.add_argument("--request-timeout", type=float, default=9600.0,
+                    help="per-request HTTP timeout, DERIVED not SDK-default (O41): 81920-token "
+                         "budget at ~12 tok/s at depth + ~20 min prefill at 156K, with headroom")
     ap.add_argument("--no-preload", action="store_true")
     args = ap.parse_args(argv)
 
@@ -57,8 +63,8 @@ def main(argv=None) -> int:
 
     cpt = calibrate_cpt(driver, args.model)
 
-    # Build production params; apply any CLI overrides
-    params = params_for(args.model)
+    # Build profile params; apply any CLI overrides
+    params = params_for(args.model, profile=args.sampling_profile)
     if args.max_tokens is not None:
         params["max_tokens"] = args.max_tokens
     if args.thinking_budget is not None:
@@ -81,6 +87,7 @@ def main(argv=None) -> int:
         samples=args.samples,
         chain_len=args.chain_len,
         sampler_factory=MemorySampler,
+        request_timeout=args.request_timeout,
     )
 
     for r in records:

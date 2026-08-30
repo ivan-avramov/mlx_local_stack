@@ -124,6 +124,7 @@ def run_reasoning_ladder(
     samples: int = 5,
     chain_len: int = 4,
     sampler_factory=MemorySampler,
+    request_timeout: float = 3600,
 ) -> list[dict]:
     """CLIMB-TO-CLIFF: run the variable-tracking task at increasing context sizes.
 
@@ -153,7 +154,7 @@ def run_reasoning_ladder(
             ]
             with sampler_factory(pid=model_pid):
                 try:
-                    result = driver.complete(model, messages, params)
+                    result = driver.complete(model, messages, params, timeout=request_timeout)
                     content = result.get("content", "")
                     sc = score_vartrack(content, answer)
                 except Exception:
