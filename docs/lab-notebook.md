@@ -3177,3 +3177,20 @@ Mechanics worth keeping:
   rebases.
 - HF card debt: `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter` card still says
   PROBE-ONLY/UNCERTIFIED — update owed (outward-facing push, do deliberately, not silently).
+
+## 2026-08-30 (afternoon) — M11 first deep-rung sample: `Qwen3.8-27B-mlx-uniform-4bit` thinks to budget at 96K
+
+Router-log evidence (the ladder itself logs nothing per sample): rungs 8K→64K (30 requests
++ calibration) completed in 42.7 min, completions 160–641 tokens at 64K. The first 96K
+sample (prompt 94,619) ran **7,531 s (2 h 05 m), completion 82,033 tokens** — the
+budget-hit shape at the 81,920 resolved budget, ~10.9 tok/s at depth. That is the runaway
+tax on the reasoning-depth axis, and it sizes the design: at 5 samples/rung a
+budget-hitting rung costs ~10 h/model. Corrections landed the same afternoon (`50dd269`):
+per-rung persistence + `--resume` (the original run persisted nothing until the whole
+ladder ended, so its 6 h per-model bound would have discarded every rung), and transport
+errors escalate (O41). The original run was killed after this sample completed and
+relaunched under the v2 orchestrator (`--resume`, 12 h per-model bound); the killed run's
+≤64K rungs are redone (~43 min) — the scored 96K sample is lost as a score, its
+token/time signature kept here. Watch daemon v1 had died silently at launch (0-byte log);
+v2 counts the new per-rung `rung done` lines. Sizing question (deep-rung samples vs cost)
+put to the operator.
