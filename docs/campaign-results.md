@@ -205,6 +205,32 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-30 — M6d CERTIFIED: `Qwen3.8-27B-mlx-uniform-4bit` ships `draft_kind: mtp` — the B 3rd choice's triple is complete
+
+Paired ON/OFF quality OFAT on humanevalplus (seed-39 draw, `deployed` profile, arms
+separated by router restarts with draft state verified at the worker cmdline both ways,
+per-row engagement tripwire): **n=63 was INCONCLUSIVE** (delta 0.0pp but CI ±6.3pp vs the
+±5pp gate; measured p_d=0.063 = 4× the pick's M6b) and per O25 precedent certifies
+nothing, so both arms extended by nested resume to the **full 164-item corpus**:
+
+| endpoint | mtp-ON | mtp-OFF |
+|---|---|---|
+| acc / acc_strict (n=164) | **94.5 / 93.9** | 94.5 / 92.7 |
+| conv | 99% (2 budget-length) | 98% (4 budget-length) |
+| engagement | 164/164, acceptance 0.674 (k=2 → 2.35 emitted tok/round) | all null |
+| decode / corpus wall | **38.7 tok/s / 5.16 h** | 24.0 tok/s / 10.52 h |
+
+Paired accuracy: delta **0.0pp**, discordants 3:3 (`HumanEval/47`,`/95`,`/160` OFF-pass
+vs `/116`,`/122`,`/145` ON-pass), CI **[−3.0, +3.0] pp → TOST ±5pp EQUIVALENT**,
+p_d=0.037, powered (n_for=115 ≤ 164). Speed: **1.60× paired-mean decode** (median 1.58×,
+range 1.37–2.31×) — vs the pick's certified 2.06×; the gap is pure head–trunk acceptance
+(0.674 vs 0.923, same k=2 head design; deeper k=3 drafting would compound the low
+acceptance and is not worth a probe on THIS model). Registry flip `76dad59`
+(`# CERTIFIED M6d 2026-08-30`); serving-only, measurement stays draft-OFF. Follow-ups
+owed: the drafter's HF card still reads PROBE-ONLY (needs the certified update), and the
+M6b-precedent applies to row storage (OFAT rows live untracked in `benchmark/results/` +
+workdir logs/analysis in `$STACK_WORKDIR/m6b/q38_*`).
+
 ### 2026-08-29 (night) — M26 CLOSED: the python 8:0 does NOT replicate; pooled split still unresolved; session variance is ±5–6 items, not ±1–2
 
 Second sessions (s2) on python (M3 set) + javascript (C37 draw), 3 models × 2 languages,

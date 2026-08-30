@@ -3154,3 +3154,26 @@ Mechanics notes:
   items; text divergence 73% of items (sampled verify, expected).
 - Per-item accuracy driver: restrict eval[tid] to the generated ids AND drop
   `def __pad__` solutions before pairing — the results file pads to 164.
+
+## 2026-08-30 — M6d certification landed: extension to n=164 resolved the gate (EQUIVALENT)
+
+Both extensions ran clean (ON 3.5 h, OFF 6.7 h wall; 0 errors; watches + budget-aware
+waiters throughout; every router swap unload-POSTed, pgrep-verified, and draft state
+confirmed at the worker cmdline). Numbers of record: campaign-results 2026-08-30.
+
+Mechanics worth keeping:
+- **The n=63 → n=164 extension is the O25 lesson applied in reverse**: an inconclusive
+  TOST is not a soft pass, but with delta pinned at 0.0 and discordants balanced, the
+  realized CI shrinks ~√n and the SAME pre-registered design resolves at higher n; no new
+  tests, no design change, so no multiplicity cost.
+- The four extension discordants (2:2 beyond the pilot's 2:2) stayed balanced — p_d
+  dropped from 0.063 to 0.037 as n grew, i.e. the pilot overestimated discordance from
+  its small denominator, exactly the direction the M6b p_d (0.016) hinted.
+- OFF-arm waiters are sized from budget-length full-rate decode (~82 min/item), the
+  2026-08-30 (early) lesson; no false alarms after the resize.
+- Registry commit procedure now carries **FIVE intentional local overrides** (the new
+  one: the challenger's `draft_model` → local extracted drafter dir). The clean-checkout
+  + re-apply script asserts count==1 per replacement; stash-protect all five during
+  rebases.
+- HF card debt: `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter` card still says
+  PROBE-ONLY/UNCERTIFIED — update owed (outward-facing push, do deliberately, not silently).
