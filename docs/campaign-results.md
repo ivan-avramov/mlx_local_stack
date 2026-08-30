@@ -205,6 +205,55 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-29 (night) — M26 CLOSED: the python 8:0 does NOT replicate; pooled split still unresolved; session variance is ±5–6 items, not ±1–2
+
+Second sessions (s2) on python (M3 set) + javascript (C37 draw), 3 models × 2 languages,
+O39 protocol verbatim, one orchestrator, 6/6 legs rc=0, 9.7 h wall. Protocol parity with
+the s1 arms verified per-row (opencode 1.18.15, polyglot `7e0611e7`, deployed profile,
+same gate class) — the s1/s2 deltas are pure session variance.
+
+| pass/22 | py s1 | py s2 | js s1 | js s2 | total/88 |
+|---|---|---|---|---|---|
+| `Qwen3.8-27B-mlx-uniform-4bit` | **20** | 18 | **19** | **18** | **75** |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 12 | 18 | 17 | 16 | 63 |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 19 | 18 | 12 | 17 | 66 |
+
+**Pre-registered pooled McNemar** (discordants over (item, session), s1↔s1/s2↔s2,
+challenger vs each rival, Holm family = these 2 tests):
+
+| vs | py s1 | py s2 | js s1 | js s2 | pooled (88 pairs) | Holm |
+|---|---|---|---|---|---|---|
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 8:0 | 4:4 | 4:2 | 4:2 | **20:8 p=.036** | needs .025 — MISS |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 3:2 | 1:1 | 7:0 | 3:2 | **14:5 p=.064** | MISS |
+
+1. **The split did NOT resolve — the B pick stands.** Doubling the discordants moved
+   vs-pick from p=.099 to p=.036, but the pre-registered Holm rung is .025 and the second
+   contrast (p=.064) misses outright. No displacement case; the direction (challenger ahead
+   in every pooled cell, 75/88 vs 63 and 66) keeps accumulating without a significant win.
+2. **The python 8:0 was substantially session luck.** In s2 the same contrast is 4:4 —
+   dead even. Mechanism: the s1 pick python leg (12/22) was an outlier-BAD session; s2 put
+   `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` at 18/22 (+6, with 9 s1-fail→s2-pass flips against
+   3 reverse). The 2026-08-28 "strongest single agentic result of the campaign" is hereby
+   demoted to "one good session against one bad one".
+3. **C30 headline (the real finding): single-session variance on a 22-item opencode arm
+   reaches ±5–6 items, not the ±1–2 previously assumed.** Six same-model s1→s2 deltas:
+   pick python +6, `Ornith-1.0-35B-mlx-uniform-4bit` javascript +5 (12→17), the rest −1 to
+   −2. Item-level flips run up to 12 per leg-pair (9+3) even where the net delta is small.
+   `Qwen3.8-27B-mlx-uniform-4bit` is the most session-stable arm (−2, −1; ≤3 flips/leg).
+   Every single-session opencode cell in this document — the whole M9 five-language block
+   included — carries that error bar; per-language 22-item verdicts are directional only.
+4. **Failure modes unchanged in kind**: qwen3_5-family <!-- allow-shorthand --> fails are still dominated by
+   600 s stall-kills (challenger 7 of its 8 s2 fails); `Ornith-1.0-35B-mlx-uniform-4bit`
+   still fails fast (completed-fails at 10–120 s), though its javascript completed-fail
+   count improved 8→3 across sessions. `connect` and `forth` recur as challenger-favoring
+   discordants across cells — item clustering means the exact McNemar p-values (which treat
+   the 88 pairs as independent) are optimistic; the non-significant verdicts are therefore
+   conservative-safe.
+
+Rows: python s2 committed in-repo (`benchmark/results/<model>/opencode.s2.jsonl`, M25
+precedent); javascript s2 + all manifests `$STACK_WORKDIR/m9/`. Analysis script:
+session scratchpad `m26_analysis.py` (McNemar exact, eff-pass = `passed && !test_modified`).
+
 ### 2026-08-29 (later) — M25 CLOSED: `Qwen3.8-27B-OptiQ-4.5bpw-mixed` ties its sibling — recipe choice is not the story
 
 Paired opencode legs at the screened t0.6 (registry fix `52acc22`): python 18/22, go 16/22.

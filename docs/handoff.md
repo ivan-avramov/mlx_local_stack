@@ -1,63 +1,53 @@
-# Handoff — 2026-08-29 (M26 power extension IN FLIGHT; M9+M25 closed) <!-- allow-shorthand -->
+# Handoff — 2026-08-29 night (M26 CLOSED; box IDLE; B pick stands)
 
-Single box (M5 Max 64 GB). **A RUN IS LIVE: M26 — second-session (s2) opencode arms**,
-3 models × {python, javascript}, launched 09:40 2026-08-29 by
-`$STACK_WORKDIR/m9/m26_orchestrator.py` (was pid 77840) — resuming session must CHECK IT FIRST:
+Single box (M5 Max 64 GB). **No run is live.** The M26 second-session block finished clean
+19:22 2026-08-29 (6/6 legs rc=0, 9.7 h); analysis, docs and commits are DONE. The worker
+still holds the last M26 model — unload before any new work
+(`POST /v1/models/unload` + pgrep-verify `mlx_vlm.server` gone).
 
-- `pgrep -f m26_orchestrator`; log `$STACK_WORKDIR/m9/m26_orchestrator.log`; 5-min watch
-  `$STACK_WORKDIR/m9/m26_watch.log` (nohup'd, survives); per-leg logs `m26_<model>.<lang>.log`;
-  rows `$STACK_WORKDIR/m9/<model>.opencode_<lang>.s2.jsonl`. Leg order: `Qwen3.8-27B-mlx-uniform-4bit`
-  (py, js) → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` → `Ornith-1.0-35B-mlx-uniform-4bit`;
-  unload+pgrep-verified between models AND at start (fresh session per model). Fail-loud:
-  any leg rc≠0 aborts the orchestrator. Per-leg bound 18000 s; expect ~10–14 h total
-  (done ~20:00–24:00 08-29). Session waiters DIED with the launching session — poll PID/log.
-- Protocol = O39 verbatim: opencode 1.18.15 on PATH from `$STACK_WORKDIR/o39/`, TMPDIR
-  `$STACK_WORKDIR/scratch/octmp`, `MLX_SERVE_CONFIG` at the 2026-08-29 draft-OFF overlay,
-  deployed profile, gate 300/3600/2. Items: python = the M3 22-item set; javascript = the
-  C37 draw (`$STACK_WORKDIR/m9/c37_draws.json`).
-- **Pre-registered analysis (PLAN M26)**: pool discordants over (item, session) pairs
-  s1↔s1 / s2↔s2 for challenger-vs-each-rival on these two languages; s1/s2 same-model
-  deltas are C30 session-variance replicates. When it lands: evaluate each leg
-  (session_pass, gate-kills, completed-fails, wall), run the pooled McNemar, extract the
-  C30 material, write the dated results entry, and — if the pooled split resolves — put
-  the B-pick displacement question to the operator WITH the speed caveat (challenger is
-  ~24 tok/s / 33-min 256K prefill, same class as the pick; MTP drafter probe-only).
+## THE HEADLINE — M26: the pooled split did NOT resolve; the B pick STANDS
 
-## THE HEADLINE — M9 IS COMPLETE (5 languages × 3 models, C37 block closed 04:17)
+Pre-registered pooled McNemar (discordants over (item, session), s1↔s1/s2↔s2,
+python+javascript, Holm family = 2): `Qwen3.8-27B-mlx-uniform-4bit` vs
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` **20:8 p=.036** vs Holm rung .025 — MISS; vs
+`Ornith-1.0-35B-mlx-uniform-4bit` **14:5 p=.064** — MISS. No displacement case goes to the
+operator. The direction is unchanged (challenger 75/88 pooled vs 63 and 66, ahead in every
+pooled cell) but nothing is significant, and item clustering (`connect`/`forth` recur)
+makes the exact p-values optimistic in the challenger's favor.
 
-Totals over 110 paired items: **`Qwen3.8-27B-mlx-uniform-4bit` 80/110** (wins python 20,
-go 16, javascript 19) vs `Ornith-1.0-35B-mlx-uniform-4bit` 71/110 (wins rust 17) vs
-`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 69/110 (java 13). Pooled discordants: challenger vs
-pick **24:13 p=.099**; vs runner-up 20:11 p=.15; winners even (18:20). **NOTHING survives
-Holm across the 10-test family** — the python 8:0 (p=.0078) misses the .005 rung, and rust
-flips AGAINST the challenger (3:5 vs pick, 0:4 vs runner-up). Mechanism: qwen3_5-family <!-- allow-shorthand -->
-models fail SLOW (stall-kills, 600 s each), `Ornith-1.0-35B-mlx-uniform-4bit` fails
-FAST-AND-WRONG (16 completed-fails java+js, legs 1–2 h vs ~3 h). Full tables:
-campaign-results 2026-08-29; mechanics: lab-notebook 2026-08-29.
+**The bigger finding is methodological (C30): the python 8:0 replicated as 4:4** — the s1
+pick python leg (12/22) was an outlier-bad session (s2: 18/22, +6). Six same-model s1→s2
+replicate pairs give deltas +6, +5, −1, −1, −1, −2 with up to 9+3 item flips per pair:
+**single-session 22-item opencode arms carry ±5–6 items of session noise, not the ±1–2
+previously assumed.** Every single-session cell in campaign-results (the M9 five-language
+block included) is directional only. `Qwen3.8-27B-mlx-uniform-4bit` is the most
+session-stable arm. Full tables: campaign-results 2026-08-29 (night); mechanics:
+lab-notebook 2026-08-29 (night).
 
-**Standing read: the challenger leads the point estimate on BOTH differentiating axes
-(M12 depth, M9 multi-language) with zero Holm-surviving wins. The B pick stands on the
-rules; the direction keeps accumulating.** Cheapest power move: a second session per arm
-on python+javascript (~4 h/model, doubles pooled discordants, doubles as C30 replicates).
+## Operator decisions owed (none blocking)
 
-## Operator decisions
-
-- Scope call RESOLVED 2026-08-29: option (a) — M26 launched (this run). M12 d128k stays
-  deferred behind it; M25 gate CLOSED (wash). Standing open: C30 bound (material now
-  includes the coming s1/s2 replicates), C31 deferred. Nothing else blocks.
+- **C30 bound write-up** — now materially informed (six replicate pairs); should use flip
+  counts, not net deltas. Natural next doc task.
+- **M12 d128k call** — was deferred behind M26; M26 landed unresolved, so the question is
+  whether d128k is still worth the wall-clock given the C30 error bar.
+- C31 stays deferred. Queue behind: M11 reasoning ladder, M21 int8 causal test, M14
+  drafter (`nemotron_h_mtp` dev was in flight), M6c/M6d predictor probes, M17 funnel, D11
+  cards. Next O/C number: **C38**.
 
 ## Standing state
 
-- **PUSHED through `df3ca80`** (operator-approved 2026-08-29; includes the C37 closure,
-  M25 data + closure). Local-only: `d30035e` (M26 PLAN row) + this handoff commit. Never
-  push without in-turn approval.
-- Working tree: the four intentional `main_models.yaml` local-path overrides (NEVER
-  commit; stash-protect during rebases) + old untracked m23-era files + `transcript.md`.
-- C37 data lives in `$STACK_WORKDIR/m9/` (9 legs × jsonl+manifest); python-leg precedent
-  keeps repo commits for in-repo arms only.
-- Bench-router invariants: draft-OFF overlay (regenerated 2026-08-29) + SESSION_MAX=2 +
-  APC absent, verified at router pid after the restart; C35 tripwire live.
-- HF cache pruned to 253G (operator hand pass + delegated deletions, 2026-08-28).
-- Next O/C number: **C38**.
+- **PUSHED through `df3ca80`**; local-only commits after it: `d30035e` (M26 PLAN row),
+  `6ec0625` (prior handoff), plus tonight's M26 data + docs commits. Never push without
+  in-turn approval.
+- Working tree keeps the four intentional `main_models.yaml` local-path overrides (NEVER
+  commit; stash-protect during rebases) + old untracked m23-era files.
+- Data layout: python s2 rows committed in-repo
+  (`benchmark/results/<model>/opencode.s2.jsonl`, M25 precedent); javascript s2 rows + all
+  s2 manifests + every C37/M26 log stay in `$STACK_WORKDIR/m9/`.
+- Bench-router invariants unchanged: draft-OFF overlay (2026-08-29) + SESSION_MAX=2 + APC
+  absent; C35 tripwire live. Live `~/.config/opencode/opencode.json` is still the BENCH
+  carrier (backup `$STACK_WORKDIR/opencode.json.probe-backup`) — restore only when
+  opencode work fully closes.
+- HF cache pruned to 253G deliberately (2026-08-28) — don't "fix" it.
 
 **Order of resumption: this file → `docs/PLAN.md` → `docs/open-questions.md`.**

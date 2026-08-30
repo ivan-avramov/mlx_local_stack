@@ -3095,3 +3095,33 @@ Session-mechanics notes worth keeping:
   bf16 source, `unsloth/gemma-4-31b-it-UD-MLX-4bit`); the `Qwen3.6-27B-UD-MLX-6bit`
   fairness re-try DECLINED; searxng change `5f85ef6` rebased in from a parallel session
   (stash-protected the intentional registry overrides).
+
+## 2026-08-29 (night) — M26 done clean: 6 s2 legs, python 8:0 evaporates, session variance measured at ±6
+
+The M26 orchestrator (`$STACK_WORKDIR/m9/m26_orchestrator.py`, launched 09:40 by the
+previous session) ran 09:40 → 19:22 (9.7 h, inside the 10–14 h estimate) with zero harness
+faults: 6/6 legs rc=0, 22/22 rows each, both model swaps + the initial state unload-POSTed
+and pgrep-verified, 5-min watch logged throughout. The resuming session re-armed a PID
+waiter (failure + timeout arms) at 09:47; it fired on clean exit.
+
+Numbers and reading: campaign-results 2026-08-29 (night). Headline: pooled pre-registered
+McNemar vs the pick 20:8 p=.036 vs Holm .025 — MISS; vs the runner-up 14:5 p=.064 — MISS;
+B pick stands. The python 8:0 replicated as 4:4; the s1 pick python leg (12/22) was an
+outlier-bad session (s2 18/22).
+
+Mechanics worth keeping:
+- **Protocol-parity check before pooling**: per-row `opencode_version`, `polyglot_sha`,
+  gate bounds and manifest `sampling_profile` compared across all 12 legs BEFORE running
+  the pooled test — the s1 python arms predate the block and could have drifted. They had
+  not (all 1.18.15 / `7e0611e7` / deployed). Cheap, and it converts "session variance" from
+  an assumption into a measurement.
+- **C30 material is now real data**: six same-model s1→s2 replicate pairs, deltas
+  +6, +5, −1, −1, −1, −2 (details in the dated entry). The C30 bound write-up should use
+  flip counts (up to 9+3 per pair), not net deltas — nets mask most of the churn.
+- Discordant items cluster: `connect`, `forth`, `book-store` recur across cells; the exact
+  McNemar independence assumption is optimistic in the challenger's favor, which only
+  strengthens the "unresolved" verdict.
+- Timeout-arm sizing note: waiter armed 15 h from resume; run finished in 9.6. The
+  m26_watch daemon (nohup'd by the launcher) survived the launching session as designed —
+  the resume checklist's "re-arm if dead" branch was not needed for the watch, only for
+  the waiter.
