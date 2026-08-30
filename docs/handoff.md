@@ -1,9 +1,20 @@
 # Handoff — 2026-08-29 night (M26 CLOSED; box IDLE; B pick stands)
 
-Single box (M5 Max 64 GB). **No run is live.** The M26 second-session block finished clean
-19:22 2026-08-29 (6/6 legs rc=0, 9.7 h); analysis, docs and commits are DONE. The worker
-still holds the last M26 model — unload before any new work
-(`POST /v1/models/unload` + pgrep-verify `mlx_vlm.server` gone).
+Single box (M5 Max 64 GB). **A RUN IS LIVE: M6d quality OFAT, mtp-ON arm** for the new B
+3rd choice `Qwen3.8-27B-mlx-uniform-4bit` — launched ~21:00 2026-08-29. Resuming session
+checks FIRST: driver pid in `$STACK_WORKDIR/m6b/q38_tranche_on.pid`, log
+`q38_tranche_on.log`, 5-min watch `q38_watch_on.log`, rows
+`benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/humanevalplus.mtpon.jsonl` (seeded 63-item
+draw, seed 39; pilot 5/5 clean, acceptance ~0.69, ON-decode ~46 tok/s). Router :8000
+serves the mtp-ON overlay `$STACK_WORKDIR/m6b/overlay_q38_mtp_on.yaml` (worker cmdline
+verified `--draft-kind mtp`; SESSION_MAX=2, APC absent). NEXT STEPS when the arm exits:
+router restart onto `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml` (idle boundary,
+verify at worker), paired OFF arm same 63 items `--tune mtpoff`, evalplus grading both,
+`m1.suffix_ofat --on ... --off ...` paired analysis, ±5pp TOST gate; pass → CERTIFIED
+`draft_kind: mtp` registry flip for the 3rd choice. Then the
+`Ornith-1.0-35B-mlx-uniform-4bit` suffix-acceptance probe (~20 min, M6c) and the
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` sidecar extraction + probe (M14; fork
+drafter landed at `ab5708a`). M26 closed clean earlier tonight (below).
 
 ## THE HEADLINE — M26: the pooled split did NOT resolve; the B pick STANDS
 
@@ -32,13 +43,14 @@ lab-notebook 2026-08-29 (night).
   all five carriers via `configgen generate` (commit `5dc6699`), overrides re-applied.
   **OWUI publish PENDING the next compose bring-up** (was down at ruling time) — init.py
   seeds from `openwebui-init/models_config.json` automatically.
-- **M12 d128k call** — M26 landed unresolved; with the C30 error bar, single-session
-  d128k legs cannot differentiate — run it 2-session or drop it.
-- C31 stays deferred. Queue: **M6c/M6d drafter certification of the new 3rd choice is the
-  natural next box work** (its extracted native drafter `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter`
-  is public, probe-only 1.58×/1.46×; certification completes its triple); then M14
-  (`nemotron_h_mtp` dev was in flight), M11 reasoning ladder, M21 int8 causal test, M17
-  funnel, D11 cards. Next O/C number: **C39**.
+- **M12 d128k RULED 2026-08-29 (operator took the session rec): per-model CLIFF CHECK
+  only** — pre-registered design in the PLAN M12 row (n=25 seeded, 3 B-menu models,
+  >10pp-vs-own-d64k test, no pairwise; ~6–8 h).
+- **Queue order RULED (operator took the session rec)**: M6c/M6d block (IN FLIGHT) →
+  M11 reasoning ladder (roster now includes the B 3rd choice) → M21 int8 causal test →
+  M12 d128k cliff check → M17 funnel + D11 cards interleaved as no-box-time work. M14
+  `nemotron_h_mtp` probe rides the M6c block (fork code landed; sidecar extraction owed).
+  C31 stays deferred. Next O/C number: **C39**.
 
 ## Standing state
 
