@@ -26,16 +26,19 @@ lab-notebook 2026-08-29 (night).
 
 ## Operator decisions owed
 
-- **C38 (NEW, blocking the B-pick question): displacement standard.** The operator
-  challenged the Holm bar on the M26 result ("a model that scores higher in all
-  categories" vs "unresolved"). Full analysis + session recommendation (PROVISIONAL
-  promotion of `Qwen3.8-27B-mlx-uniform-4bit` + fund M6c/M6d drafter certification to
-  complete its triple) live in the C38 entry, `docs/open-questions.md`. Ruling owed.
+- **C38 RULED 2026-08-29: B MENU, not displacement** — 1st
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, 2nd `Ornith-1.0-35B-mlx-uniform-4bit`, 3rd
+  `Qwen3.8-27B-mlx-uniform-4bit` (NEW). Executed: registry role candidate→main + comments,
+  all five carriers via `configgen generate` (commit `5dc6699`), overrides re-applied.
+  **OWUI publish PENDING the next compose bring-up** (was down at ruling time) — init.py
+  seeds from `openwebui-init/models_config.json` automatically.
 - **M12 d128k call** — M26 landed unresolved; with the C30 error bar, single-session
   d128k legs cannot differentiate — run it 2-session or drop it.
-- C31 stays deferred. Queue behind: M11 reasoning ladder, M21 int8 causal test, M14
-  drafter (`nemotron_h_mtp` dev was in flight), M6c/M6d predictor probes, M17 funnel, D11
-  cards. Next O/C number: **C39**.
+- C31 stays deferred. Queue: **M6c/M6d drafter certification of the new 3rd choice is the
+  natural next box work** (its extracted native drafter `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter`
+  is public, probe-only 1.58×/1.46×; certification completes its triple); then M14
+  (`nemotron_h_mtp` dev was in flight), M11 reasoning ladder, M21 int8 causal test, M17
+  funnel, D11 cards. Next O/C number: **C39**.
 
 ## Standing state
 
@@ -44,7 +47,8 @@ lab-notebook 2026-08-29 (night).
   noise on a 22-item agentic arm = 1.1 / 1.6 / 2.2 items; quote q per-model beside every
   MDE; ≥2 sessions/arm for pick-affecting axes; single-session arms claim direction only.
 - **PUSHED through `00b0bba`** (operator-approved 2026-08-29 night — includes all M26
-  data + docs). Local-only: tonight's C30/C38/handoff docs commit. Never push without
+  data + docs). Local-only: `253999c` (C30 bound + C38 open), `5dc6699` (B 3rd-choice
+  promotion, registry + carriers), and the C38-ruling docs commit. Never push without
   in-turn approval.
 - Working tree keeps the four intentional `main_models.yaml` local-path overrides (NEVER
   commit; stash-protect during rebases) + old untracked m23-era files.

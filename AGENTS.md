@@ -36,7 +36,7 @@ Five clients, all pointed at the mlx-serve router (`localhost:8000`, OpenAI-comp
 - Goal: evidence-based pick of a local LLM for 256K-context agentic coding on a 64GB Mac, plus transferable methodology for future H200/B200 work. Phase 1 = Selection, Phase 2 = Optimization. Bias QUALITY over speed/cost.
 - Hard gates: memory ≤46GB MLX-peak @256K (metric = `mx.get_peak_memory`, prefill spike, NOT RSS). Every lossy lever ≤5% quality drop, measured OFAT. Effective-context threshold = accuracy ≥0.85; retrieval-depth and reasoning-depth curves stay SEPARATE. Report prefill-TTFT and decode-tok/s separately.
 - For every result, LOG THE BOTTLENECK/MECHANISM. Verdicts are HW-specific; mechanisms transfer.
-- **`docs/PLAN.md` is authoritative for what is live.** Current summary (2026-08-16): B pick `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, runner-up `Ornith-1.0-35B-mlx-uniform-4bit`; C has provisional picks (O38); coding is the open differentiator.
+- **`docs/PLAN.md` is authoritative for what is live.** Current summary (2026-08-29): B menu (C38) — 1st `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (certified MTP triple), 2nd `Ornith-1.0-35B-mlx-uniform-4bit`, 3rd `Qwen3.8-27B-mlx-uniform-4bit` (leads every pooled coding cell, nothing Holm-surviving; draft-OFF until M6c/M6d); C has provisional picks (O38).
 
 ## Operating rules
 
