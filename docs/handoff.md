@@ -1,24 +1,32 @@
 # Handoff — 2026-08-30 (M6d CERTIFIED; M26 closed; box idle between queue items)
 
-Single box (M5 Max 64 GB). **No run is live.** M6d CLOSED 2026-08-30:
-`Qwen3.8-27B-mlx-uniform-4bit` `draft_kind: mtp` **CERTIFIED** (n=164 TOST EQUIVALENT,
-delta 0.0pp CI ±3.0pp, acceptance 0.674, decode 1.60×; registry flip `76dad59`) — the B
-3rd choice ships a complete (model, tune, predictor) triple. Numbers: campaign-results
-2026-08-30. The worker holds `Qwen3.8-27B-mlx-uniform-4bit` (last OFF arm); router :8000
-serves the draft-OFF overlay `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`
-(SESSION_MAX=2, APC absent). Unload + pgrep-verify before new work.
+Single box (M5 Max 64 GB). **A RUN IS LIVE: M11 reasoning ladder** — launched 13:56
+2026-08-30 by `$STACK_WORKDIR/m11/m11_orchestrator.py` (pid in `m11_orchestrator.pid`;
+log `m11_orchestrator.log`; 5-min watch `m11_watch.log`; per-model logs
+`m11_<model>.log`; results `benchmark/results/<model>/reasoning.json`). Roster in order:
+`Qwen3.8-27B-mlx-uniform-4bit` → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` →
+`Ornith-1.0-35B-mlx-uniform-4bit` → `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`; full
+grid 8K…64K + 96K/128K/156K (cap-aware: 156000 < the 159744 max prompt, budget 81920
+unclamped), 5 samples/rung, chain 4, threshold 0.85, climb-to-cliff, `deployed` profile,
+request timeout 9600 s (derived), unload+pgrep-verified between models, per-model bound
+6 h, fail-loud. Expect ~9–11 h (dense models' deep-rung prefill dominates). Router :8000
+serves the draft-OFF overlay (SESSION_MAX=2, APC absent). Waiters die with the launching
+session — poll PID/log.
 
-**Registry now carries FIVE intentional local overrides** (new: the challenger's
-`draft_model` → `$STACK_WORKDIR/scratch/m6a/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter`);
-NEVER commit them; the clean-checkout + re-apply procedure (lab-notebook) asserts all five.
+**Closed today (2026-08-30)**: M6d CERTIFIED (`Qwen3.8-27B-mlx-uniform-4bit` mtp, n=164
+EQUIVALENT, 1.60×, `76dad59`); M6c `Ornith-1.0-35B-mlx-uniform-4bit` suffix leg CLOSED
+(1.20× on real opencode traffic < 1.3×); M14 BLOCKED on a real fork gap (`nemotron_h`
+lacks `rollback_speculative_cache`; PLAN row). Registry carries FIVE local overrides
+(NEVER commit). HF card debt: challenger's drafter card still says PROBE-ONLY.
 
-NEXT (C38-session queue order): (1) M6c `Ornith-1.0-35B-mlx-uniform-4bit`
-suffix-acceptance probe (~20 min agentic replay, ON vs OFF, read worker suffix counters;
-low acceptance closes the leg free); (2) M14 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
-sidecar extraction (`split_mtp.py`, fork `ab5708a`) + ON/OFF probe; (3) M11 reasoning
-ladder (grid 96/128/160K, roster = 3 B-menu models + `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`); (4) M21; (5) M12 d128k
-cliff check (pre-registered in PLAN M12); M17/D11 interleaved. HF card debt: the
-challenger's drafter card still says PROBE-ONLY — certified update owed (outward-facing).
+**⚠ Bench suite is RED by one test — operator ruling owed (see decisions):**
+`test_provenance_fingerprint.py::test_a_v3_current_does_NOT_condemn_the_REAL_corpus_on_disk`
+now fails on the honest M6d ON-arm manifest (`humanevalplus.mtpon.manifest.json`,
+`runtime.draft_kind: mtp`, genuinely served). The test's 08-26 premise ("no real manifest
+sets draft_kind") is stale, not the fingerprint: an ON-arm manifest SHOULD refuse a
+draft-off current. Proposed fix: the test keeps each manifest's own recorded draft_kind
+when building `current` (it tests v2→v3 non-destructiveness, not draft-state refusal).
+NOT touched pending ruling (C35 precedent: never adjust a red guard on session judgement).
 
 ## THE HEADLINE — M26: the pooled split did NOT resolve; the B pick STANDS
 
@@ -62,8 +70,9 @@ lab-notebook 2026-08-29 (night).
   discordance q = 0.114 / 0.227 / 0.432 (challenger / runner-up / pick); 1-sd session
   noise on a 22-item agentic arm = 1.1 / 1.6 / 2.2 items; quote q per-model beside every
   MDE; ≥2 sessions/arm for pick-affecting axes; single-session arms claim direction only.
-- **PUSHED through `9fa573a`** (operator-approved 2026-08-30). Local-only: `76dad59`
-  (M6d registry certification) + the M6d closure docs commit. Never push without in-turn
+- **PUSHED through `9fa573a`** (operator-approved 2026-08-30). Local-only since:
+  `76dad59` (M6d cert), `1b66e9b`, `1fcc68d` (M6c close), `a37159e` (M14 blocker),
+  `a17a134` (run_reasoning O36/O41 fixes), + this handoff. Never push without in-turn
   approval.
 - Working tree keeps the FIVE intentional `main_models.yaml` local-path overrides (NEVER
   commit; stash-protect during rebases) + old untracked m23-era files + the untracked
