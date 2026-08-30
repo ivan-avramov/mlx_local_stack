@@ -24,20 +24,27 @@ block included) is directional only. `Qwen3.8-27B-mlx-uniform-4bit` is the most
 session-stable arm. Full tables: campaign-results 2026-08-29 (night); mechanics:
 lab-notebook 2026-08-29 (night).
 
-## Operator decisions owed (none blocking)
+## Operator decisions owed
 
-- **C30 bound write-up** — now materially informed (six replicate pairs); should use flip
-  counts, not net deltas. Natural next doc task.
-- **M12 d128k call** — was deferred behind M26; M26 landed unresolved, so the question is
-  whether d128k is still worth the wall-clock given the C30 error bar.
+- **C38 (NEW, blocking the B-pick question): displacement standard.** The operator
+  challenged the Holm bar on the M26 result ("a model that scores higher in all
+  categories" vs "unresolved"). Full analysis + session recommendation (PROVISIONAL
+  promotion of `Qwen3.8-27B-mlx-uniform-4bit` + fund M6c/M6d drafter certification to
+  complete its triple) live in the C38 entry, `docs/open-questions.md`. Ruling owed.
+- **M12 d128k call** — M26 landed unresolved; with the C30 error bar, single-session
+  d128k legs cannot differentiate — run it 2-session or drop it.
 - C31 stays deferred. Queue behind: M11 reasoning ladder, M21 int8 causal test, M14
   drafter (`nemotron_h_mtp` dev was in flight), M6c/M6d predictor probes, M17 funnel, D11
-  cards. Next O/C number: **C38**.
+  cards. Next O/C number: **C39**.
 
 ## Standing state
 
-- **PUSHED through `df3ca80`**; local-only commits after it: `d30035e` (M26 PLAN row),
-  `6ec0625` (prior handoff), plus tonight's M26 data + docs commits. Never push without
+- **C30 BOUND DELIVERED 2026-08-29** (in the C30 entry): per-item cross-session
+  discordance q = 0.114 / 0.227 / 0.432 (challenger / runner-up / pick); 1-sd session
+  noise on a 22-item agentic arm = 1.1 / 1.6 / 2.2 items; quote q per-model beside every
+  MDE; ≥2 sessions/arm for pick-affecting axes; single-session arms claim direction only.
+- **PUSHED through `00b0bba`** (operator-approved 2026-08-29 night — includes all M26
+  data + docs). Local-only: tonight's C30/C38/handoff docs commit. Never push without
   in-turn approval.
 - Working tree keeps the four intentional `main_models.yaml` local-path overrides (NEVER
   commit; stash-protect during rebases) + old untracked m23-era files.
