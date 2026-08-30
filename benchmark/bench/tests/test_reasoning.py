@@ -279,19 +279,19 @@ def test_ladder_all_pass_runs_full_grid():
         assert r["accuracy"] == 1.0
 
 
-def test_ladder_exception_scores_zero():
-    """An exception in complete() scores 0.0 for that trial."""
+def test_ladder_exception_escalates():
+    """A transport/HTTP failure in complete() ESCALATES (O41, 2026-08-30) -- it is never
+    graded as a wrong answer, because a timed-out request is not a model failure."""
+    import pytest
     grid = (8000,)
     driver = ExplodingDriver()
-    records = R.run_reasoning_ladder(
-        driver, "model", chars_per_token=4.0, model_pid=99999,
-        params=_PROD_PARAMS,
-        grid=grid, threshold=0.85, samples=3, chain_len=4,
-        sampler_factory=FakeSampler,
-    )
-    assert len(records) == 1
-    assert records[0]["accuracy"] == 0.0
-    assert records[0]["errors"] == 3
+    with pytest.raises(Exception):
+        R.run_reasoning_ladder(
+            driver, "model", chars_per_token=4.0, model_pid=99999,
+            params=_PROD_PARAMS,
+            grid=grid, threshold=0.85, samples=3, chain_len=4,
+            sampler_factory=FakeSampler,
+        )
 
 
 def test_ladder_record_fields():

@@ -46,6 +46,9 @@ def main(argv=None) -> int:
                     help="per-request HTTP timeout, DERIVED not SDK-default (O41): 81920-token "
                          "budget at ~12 tok/s at depth + ~20 min prefill at 156K, with headroom")
     ap.add_argument("--no-preload", action="store_true")
+    ap.add_argument("--resume", action="store_true",
+                    help="reuse rungs persisted in reasoning.partial.jsonl by an earlier attempt of "
+                         "the SAME design (grid/profile/samples/chain/threshold/params key)")
     args = ap.parse_args(argv)
 
     grid = tuple(int(x) for x in args.grid.split(","))
@@ -78,6 +81,31 @@ def main(argv=None) -> int:
           f"thinking_budget={params.get('thinking_budget')} "
           f"max_tokens={params.get('max_tokens')}", flush=True)
 
+    out_dir = os.path.join(RESULTS, args.model)
+    os.makedirs(out_dir, exist_ok=True)
+    partial_path = os.path.join(out_dir, "reasoning.partial.jsonl")
+    design_key = json.dumps({
+        "grid": list(grid), "profile": args.sampling_profile, "samples": args.samples,
+        "chain_len": args.chain_len, "threshold": args.threshold,
+        "params": {k: params.get(k) for k in ("temperature", "top_p", "top_k", "min_p",
+                                              "max_tokens", "thinking_budget")},
+    }, sort_keys=True)
+    resume = None
+    if args.resume and os.path.exists(partial_path):
+        resume = {}
+        with open(partial_path) as f:
+            for line in f:
+                row = json.loads(line)
+                if row.get("key") == design_key:
+                    resume[row["record"]["ctx"]] = row["record"]
+        print(f"[reasoning] resume: {sorted(resume)} rungs persisted for this design", flush=True)
+
+    def persist(rec):
+        with open(partial_path, "a") as f:
+            f.write(json.dumps({"key": design_key, "record": rec}) + "\n")
+        print(f"[reasoning] rung done ctx={rec['ctx']} acc={rec['accuracy']} errors={rec['errors']}",
+              flush=True)
+
     records = run_reasoning_ladder(
         driver, args.model, cpt,
         model_pid=model_pid,
@@ -88,6 +116,8 @@ def main(argv=None) -> int:
         chain_len=args.chain_len,
         sampler_factory=MemorySampler,
         request_timeout=args.request_timeout,
+        on_rung=persist,
+        resume=resume,
     )
 
     for r in records:
@@ -111,8 +141,6 @@ def main(argv=None) -> int:
         "reasoning_effective_ctx": reasoning_effective_ctx,
     }
 
-    out_dir = os.path.join(RESULTS, args.model)
-    os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "reasoning.json"), "w") as f:
         json.dump(result, f, indent=2)
 

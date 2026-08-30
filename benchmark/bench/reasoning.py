@@ -125,6 +125,8 @@ def run_reasoning_ladder(
     chain_len: int = 4,
     sampler_factory=MemorySampler,
     request_timeout: float = 3600,
+    on_rung=None,
+    resume: dict | None = None,
 ) -> list[dict]:
     """CLIMB-TO-CLIFF: run the variable-tracking task at increasing context sizes.
 
@@ -142,6 +144,13 @@ def run_reasoning_ladder(
     """
     records = []
     for ctx_len in grid:
+        if resume and ctx_len in resume:
+            # Persisted rung from an earlier attempt of the SAME design: no requests re-spent.
+            rec = dict(resume[ctx_len])
+            records.append(rec)
+            if rec["accuracy"] < threshold:
+                break
+            continue
         scores = []
         errors = 0
         for trial in range(samples):
@@ -153,23 +162,24 @@ def run_reasoning_ladder(
                 {"role": "user", "content": context + "\n\n" + question}
             ]
             with sampler_factory(pid=model_pid):
-                try:
-                    result = driver.complete(model, messages, params, timeout=request_timeout)
-                    content = result.get("content", "")
-                    sc = score_vartrack(content, answer)
-                except Exception:
-                    sc = 0.0
-                    errors += 1
+                # Transport/HTTP failures ESCALATE (O41): a timed-out or refused request is never
+                # graded as a wrong answer -- it aborts the ladder so the operator investigates.
+                result = driver.complete(model, messages, params, timeout=request_timeout)
+                content = result.get("content", "")
+                sc = score_vartrack(content, answer)
             scores.append(sc)
 
         accuracy = sum(scores) / len(scores) if scores else 0.0
-        records.append({
+        rec = {
             "ctx": ctx_len,
             "accuracy": round(accuracy, 3),
             "samples": samples,
             "chain_len": chain_len,
             "errors": errors,
-        })
+        }
+        records.append(rec)
+        if on_rung is not None:
+            on_rung(rec)
         if accuracy < threshold:
             break
 
