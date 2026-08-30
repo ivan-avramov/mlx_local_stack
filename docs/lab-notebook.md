@@ -3125,3 +3125,32 @@ Mechanics worth keeping:
   m26_watch daemon (nohup'd by the launcher) survived the launching session as designed —
   the resume checklist's "re-arm if dead" branch was not needed for the watch, only for
   the waiter.
+
+## 2026-08-30 (early) — M6d OFAT for the B 3rd choice: n=63 INCONCLUSIVE, extended to n=164 in flight
+
+Both n=63 arms ran clean under the M6b protocol (seed-39 draw, `--tune mtpon|mtpoff`,
+arms separated by router restarts, worker cmdline verified each side, `deployed`
+profile, C35 fingerprinting via `MLX_SERVE_CONFIG` in the driver env):
+
+| endpoint | mtp-ON | mtp-OFF |
+|---|---|---|
+| acc / strict (n=63) | 93.7 / 93.7 | 93.7 / 92.1 |
+| conv | 63/63 | 62/63 (`HumanEval/39` budget-hit, 83402 tok) |
+| engagement | 63/63, acceptance mean 0.678 (min 0.526) | all draft fields null |
+| wall mean / decode | 84 s / ~39 tok/s | 190 s / ~17-21 tok/s |
+
+Paired accuracy (per-item from evalplus results, `__pad__` rows dropped): delta 0.0pp,
+discordants 2:2, CI [−6.3, +6.3] pp vs the ±5pp TOST gate → **INCONCLUSIVE — no
+certification at n=63** (O25 precedent: an unresolved gate leaves the lever OFF).
+Measured p_d = 0.063 — 4× the pick's M6b p_d (0.016); `n_for_5pp` = 200. Decision
+(within the pre-registered design, no new tests): extend BOTH arms to the full 164-item
+humanevalplus corpus by nested resume — at a balanced split the realized CI ≈ ±4pp.
+Mechanics notes:
+- The OFF waiter's first timeout arm (45 min) was undersized for full-rate decode: the
+  first draw item (`HumanEval/39`) legitimately ran 83402 tok / 69 min OFF vs 22535 tok
+  / 8 min ON. Silent-but-busy check (worker %CPU) correctly said "don't kill". Size OFF
+  waiters from budget-length decode (~82 min/item worst case), not from the ON arm.
+- Speed is mechanical and reported under its label: ON serves ~1.8–2.3× wall on thinky
+  items; text divergence 73% of items (sampled verify, expected).
+- Per-item accuracy driver: restrict eval[tid] to the generated ids AND drop
+  `def __pad__` solutions before pairing — the results file pads to 164.

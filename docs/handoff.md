@@ -1,20 +1,28 @@
 # Handoff — 2026-08-29 night (M26 CLOSED; box IDLE; B pick stands)
 
-Single box (M5 Max 64 GB). **A RUN IS LIVE: M6d quality OFAT, mtp-ON arm** for the new B
-3rd choice `Qwen3.8-27B-mlx-uniform-4bit` — launched ~21:00 2026-08-29. Resuming session
-checks FIRST: driver pid in `$STACK_WORKDIR/m6b/q38_tranche_on.pid`, log
-`q38_tranche_on.log`, 5-min watch `q38_watch_on.log`, rows
-`benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/humanevalplus.mtpon.jsonl` (seeded 63-item
-draw, seed 39; pilot 5/5 clean, acceptance ~0.69, ON-decode ~46 tok/s). Router :8000
-serves the mtp-ON overlay `$STACK_WORKDIR/m6b/overlay_q38_mtp_on.yaml` (worker cmdline
-verified `--draft-kind mtp`; SESSION_MAX=2, APC absent). NEXT STEPS when the arm exits:
-router restart onto `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml` (idle boundary,
-verify at worker), paired OFF arm same 63 items `--tune mtpoff`, evalplus grading both,
-`m1.suffix_ofat --on ... --off ...` paired analysis, ±5pp TOST gate; pass → CERTIFIED
-`draft_kind: mtp` registry flip for the 3rd choice. Then the
-`Ornith-1.0-35B-mlx-uniform-4bit` suffix-acceptance probe (~20 min, M6c) and the
-`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` sidecar extraction + probe (M14; fork
-drafter landed at `ab5708a`). M26 closed clean earlier tonight (below).
+Single box (M5 Max 64 GB). **A RUN IS LIVE: M6d OFAT EXTENSION, mtp-ON arm to n=164**
+for the B 3rd choice `Qwen3.8-27B-mlx-uniform-4bit` — launched 02:50 2026-08-30. WHY:
+the n=63 OFAT came back **INCONCLUSIVE** — delta 0.0pp, discordants 2:2
+(`HumanEval/47`,`/95` OFF-pass vs `/116`,`/122` ON-pass), CI ±6.3pp vs the ±5pp TOST
+gate, measured p_d=0.063 (4× M6b's), n_for=200 — so per O25 precedent NO certification
+at n=63; both arms extend to the full 164-item humanevalplus corpus (nested resume,
+same seed-39 protocol; balanced-split CI at n=164 ≈ ±4pp resolves the gate).
+n=63 interim: ON 93.7/93.7 strict conv 100%, acceptance 0.678 (63/63 engaged); OFF
+93.7/92.1 conv 98% (one budget-hit, `HumanEval/39` 83402 tok); speed ON +17.7 tok/s
+decode, wall −106 s/item; analysis `$STACK_WORKDIR/m6b/q38_ofat*.json`.
+Resuming session checks FIRST: driver pid `$STACK_WORKDIR/m6b/q38_ext_on.pid`, log
+`q38_ext_on.log`, watch `q38_watch_ext_on.log`, rows
+`benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/humanevalplus.mtpon.jsonl` (→164).
+Router :8000 serves `$STACK_WORKDIR/m6b/overlay_q38_mtp_on.yaml` (worker verified
+`--draft-kind mtp`; SESSION_MAX=2, APC absent). NEXT: when ON ext exits → router onto
+`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml` (verify draft-free at worker) → OFF
+extension `--limit humanevalplus=164 --tune mtpoff` → regrade both arms (`run.py grade
+--tune mtpon|mtpoff`) → rebuild per-item accuracy (script pattern in lab-notebook
+2026-08-30 entry, restrict to generated ids, drop `__pad__` rows) → TOST ±5pp; pass →
+CERTIFIED `draft_kind: mtp` registry flip. Then `Ornith-1.0-35B-mlx-uniform-4bit`
+suffix-acceptance probe (M6c) and `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
+extraction + probe (M14; fork drafter landed at `ab5708a`). M26 closed clean earlier
+tonight (below).
 
 ## THE HEADLINE — M26: the pooled split did NOT resolve; the B pick STANDS
 
