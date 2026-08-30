@@ -205,6 +205,30 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-30 (afternoon) — M6c: `Ornith-1.0-35B-mlx-uniform-4bit` suffix leg CLOSED — 1.20× on real agentic traffic, under the 1.3× bar
+
+The operator-gated acceptance probe (PLAN M6c leg 1): replay of 3 stable-pass python
+items (`list-ops`, `food-chain`, `go-counting`) through real opencode sessions, suffix-ON
+(`draft_block_size 16, suffix_min_match 2`, no cooldown, worker-verified) vs draft-OFF,
+both arms through a transparent logging proxy capturing per-request final-chunk
+`timings.predicted_per_second`. All 6 sessions passed their items; provenance
+`registry+worker` both arms (the C35 tripwire refused the first mis-enved launch —
+instrument working as designed).
+
+- **Decode on real toolcall traffic: 117.4 vs 97.6 tok/s median = 1.20×** (ON range
+  93–144 — per-turn verbatim share varies); wall dead-even (25–35 s both arms).
+- **Pre-registered rule: <1.3× → leg CLOSED, no OFAT.** The operator's 2026-08-23
+  skepticism is confirmed: real opencode traffic does not carry the verbatim share that
+  bench mode's 1.27× hinted at, let alone the 2.41× verbatim ceiling. Suffix stays OFF
+  for `Ornith-1.0-35B-mlx-uniform-4bit`; O25's return condition stays shut.
+- Instrument note (fork gap, cosmetic): suffix engagement is invisible to the per-request
+  draft counters — `SuffixDecodingProposer` never updates the `speculative_total_*`
+  attributes `speculative_stats_since` diffs, so suffix requests always report null
+  counters (null-not-zero reads as NOT engaged). Speed was the decision observable;
+  fix only if a suffix leg ever needs acceptance diagnostics again.
+- Data: `$STACK_WORKDIR/m6c/` (rows + manifests both arms, counters_on/counters
+  captures, proxy source).
+
 ### 2026-08-30 — M6d CERTIFIED: `Qwen3.8-27B-mlx-uniform-4bit` ships `draft_kind: mtp` — the B 3rd choice's triple is complete
 
 Paired ON/OFF quality OFAT on humanevalplus (seed-39 draw, `deployed` profile, arms
