@@ -252,7 +252,12 @@ def test_a_v3_current_does_NOT_condemn_the_REAL_corpus_on_disk():
         # newly-populated draft key differ. Anything else differing would be a real config change.
         current = dict(existing)
         current["fingerprint_version"] = 3
-        current["runtime"] = {**(existing.get("runtime") or {}), "draft_kind": "off"}
+        # A manifest that ALREADY records a served draft state (an honest ON-arm manifest, e.g. the
+        # M6b/M6d mtp-ON rows) keeps it: this test guards v2->v3 non-destructiveness, not draft-state
+        # refusal -- an ON-arm manifest SHOULD refuse a draft-off current (operator ruling 2026-08-30).
+        recorded = (existing.get("runtime") or {}).get("draft_kind")
+        current["runtime"] = {**(existing.get("runtime") or {}),
+                              "draft_kind": recorded if recorded else "off"}
         assert P.is_compatible(existing, current) is True, f"v3 condemned {f.name}"
 
 
