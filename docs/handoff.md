@@ -1,17 +1,30 @@
 # Handoff — 2026-08-30 (M6d CERTIFIED; M26 closed; box idle between queue items)
 
-Single box (M5 Max 64 GB). **A RUN IS LIVE: M11 reasoning ladder** — launched 13:56
-2026-08-30 by `$STACK_WORKDIR/m11/m11_orchestrator.py` (pid in `m11_orchestrator.pid`;
-log `m11_orchestrator.log`; 5-min watch `m11_watch.log`; per-model logs
-`m11_<model>.log`; results `benchmark/results/<model>/reasoning.json`). Roster in order:
-`Qwen3.8-27B-mlx-uniform-4bit` → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` →
-`Ornith-1.0-35B-mlx-uniform-4bit` → `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`; full
-grid 8K…64K + 96K/128K/156K (cap-aware: 156000 < the 159744 max prompt, budget 81920
-unclamped), 5 samples/rung, chain 4, threshold 0.85, climb-to-cliff, `deployed` profile,
-request timeout 9600 s (derived), unload+pgrep-verified between models, per-model bound
-6 h, fail-loud. Expect ~9–11 h (dense models' deep-rung prefill dominates). Router :8000
-serves the draft-OFF overlay (SESSION_MAX=2, APC absent). Waiters die with the launching
-session — poll PID/log.
+Single box (M5 Max 64 GB). **A RUN IS LIVE: M11 reasoning ladder (v2 orchestrator)** —
+relaunched 16:46 2026-08-30 by `$STACK_WORKDIR/m11/m11_orchestrator_v2.py` (pid in
+`m11_orchestrator_v2.pid`; log `m11_orchestrator.log`; 5-min watch `m11_watch.log` (v2,
+counts `rung done` lines); per-model logs `m11_<model>.log`; per-rung persistence
+`benchmark/results/<model>/reasoning.partial.jsonl` (design-keyed, `--resume`); final
+`reasoning.json`). Roster: `Qwen3.8-27B-mlx-uniform-4bit` → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+→ `Ornith-1.0-35B-mlx-uniform-4bit` → `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`; grid
+8K…64K + 96K/128K/156K, 5 samples/rung, threshold 0.85, climb-to-cliff, `deployed`,
+request timeout 9600 s, 12 h per-model bound, fail-loud. **Sizing finding**: the first 96K
+sample thought to budget (82,033 tok, 2 h 05 m) — a budget-hitting rung costs ~10 h/model
+at 5 samples; **P52 design question (3 deep samples + early stop vs full design vs drop
+128K/156K) is OPEN with the operator**; the v2 run executes the full design meanwhile and
+persisted rungs survive any redesign that keeps the ≤64K design. Router :8000 serves the
+draft-OFF overlay (SESSION_MAX=2, APC absent). Waiters die with the session — poll PID/log.
+
+**Fork work in flight (M14)**: branch `nemotron-h-rollback` in `../mlx-vlm` — `58cac341`
+(Sonnet: `RecurrentStateRollbackMixin` + minimal `# Fork:` hunks + 10 tests) then
+`86f352b6` (fixes for the verifier subagent's F1–F7: the BLOCKING F1 was a missing `norm_f`
+in `speculative_logits_from_hidden` — silent output corruption; now an overridable
+`speculative_final_norm` hook; mixin moved to `mlx_vlm/models/recurrent_rollback.py` to
+close an import cycle). Verifier re-check of `86f352b6` pending. NOT pushed; submodule
+NOT bumped; Metal smoke on the real checkpoint waits for the box. Inputs downloaded:
+the `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` drafter source shard (hub `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` <!-- hub repo id, allow-shorthand -->) and the
+`Ornith-1.0-35B-mlx-uniform-4bit` base MTP shards (hub `Qwen/Qwen3.5-35B-A3B` 13–14/14, M27) — both splits (MLX) wait
+for the quiet window.
 
 **Closed today (2026-08-30)**: M6d CERTIFIED (`Qwen3.8-27B-mlx-uniform-4bit` mtp, n=164
 EQUIVALENT, 1.60×, `76dad59`); M6c `Ornith-1.0-35B-mlx-uniform-4bit` suffix leg CLOSED
