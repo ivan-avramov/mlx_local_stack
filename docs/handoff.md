@@ -1,18 +1,18 @@
 # Handoff — 2026-08-30 (M6d CERTIFIED; M26 closed; box idle between queue items)
 
-Single box (M5 Max 64 GB). **A RUN IS LIVE: M11 reasoning ladder (v2 orchestrator)** —
-relaunched 16:46 2026-08-30 by `$STACK_WORKDIR/m11/m11_orchestrator_v2.py` (pid in
-`m11_orchestrator_v2.pid`; log `m11_orchestrator.log`; 5-min watch `m11_watch.log` (v2,
+Single box (M5 Max 64 GB). **A RUN IS LIVE: M11 reasoning ladder (v3 orchestrator = P52 option a design)** —
+relaunched ~17:20 2026-08-30 by `$STACK_WORKDIR/m11/m11_orchestrator_v3.py` (pid in
+`m11_orchestrator_v3.pid`; log `m11_orchestrator.log`; 5-min watch `m11_watch.log` (v2,
 counts `rung done` lines); per-model logs `m11_<model>.log`; per-rung persistence
 `benchmark/results/<model>/reasoning.partial.jsonl` (design-keyed, `--resume`); final
 `reasoning.json`). Roster: `Qwen3.8-27B-mlx-uniform-4bit` → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
 → `Ornith-1.0-35B-mlx-uniform-4bit` → `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`; grid
-8K…64K + 96K/128K/156K, 5 samples/rung, threshold 0.85, climb-to-cliff, `deployed`,
-request timeout 9600 s, 12 h per-model bound, fail-loud. **Sizing finding**: the first 96K
+8K…64K at 5 samples + 96K/128K/156K at 3 samples with the pre-registered early stop (first 2
+deep samples both budget-hit → rung scored from 2), threshold 0.85, climb-to-cliff,
+`deployed`, request timeout 9600 s, 12 h per-model bound, fail-loud. **Sizing finding**: the first 96K
 sample thought to budget (82,033 tok, 2 h 05 m) — a budget-hitting rung costs ~10 h/model
-at 5 samples; **P52 design question (3 deep samples + early stop vs full design vs drop
-128K/156K) is OPEN with the operator**; the v2 run executes the full design meanwhile and
-persisted rungs survive any redesign that keeps the ≤64K design. Router :8000 serves the
+at 5 samples; **P52 RULED (operator 2026-08-30): option (a)** — the design above; shallow rungs
+resumed under their base key. Router :8000 serves the
 draft-OFF overlay (SESSION_MAX=2, APC absent). Waiters die with the session — poll PID/log.
 
 **Fork work in flight (M14)**: branch `nemotron-h-rollback` in `../mlx-vlm` — `58cac341`
@@ -20,8 +20,9 @@ draft-OFF overlay (SESSION_MAX=2, APC absent). Waiters die with the session — 
 `86f352b6` (fixes for the verifier subagent's F1–F7: the BLOCKING F1 was a missing `norm_f`
 in `speculative_logits_from_hidden` — silent output corruption; now an overridable
 `speculative_final_norm` hook; mixin moved to `mlx_vlm/models/recurrent_rollback.py` to
-close an import cycle). Verifier re-check of `86f352b6` pending. NOT pushed; submodule
-NOT bumped; Metal smoke on the real checkpoint waits for the box. Inputs downloaded:
+close an import cycle). Verifier re-check of `86f352b6` pending. Branch PUSHED to the fork remote (operator-approved 2026-08-30; verifier SHIP at
+`d1d57955`); merge to fork main + submodule bump approved CONDITIONAL on the Metal smoke
+passing when the box frees up. Inputs downloaded:
 the `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` drafter source shard (hub `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` <!-- hub repo id, allow-shorthand -->) and the
 `Ornith-1.0-35B-mlx-uniform-4bit` base MTP shards (hub `Qwen/Qwen3.5-35B-A3B` 13–14/14, M27) — both splits (MLX) wait
 for the quiet window.
