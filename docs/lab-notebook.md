@@ -3235,3 +3235,41 @@ monitor (fired at 23:08:19 and 23:20:19). Rule reinforced: a waiter is not armed
 known-positive has fired. The earlier "noise" (5-min watch ticks re-matching the restated
 `rung done` substring) was real too; the per-model log is the only source of NEW rung
 events.
+
+## 2026-08-31 — M11 reasoning ladder COMPLETE: four legs, 13 h 57 m wall, one orchestrator swap, zero errors
+
+Timeline (router log = truth): `Qwen3.8-27B-mlx-uniform-4bit` 08-30 19:05 → 08-31 02:16
+(the adopted v3 child; v4 `END … ok=True` 02:16:50, unload, worker gone 02:16:55);
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 02:16 → 05:53; `Ornith-1.0-35B-mlx-uniform-4bit`
+05:53 → 07:04; `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 07:04 → 08:02 (climb stopped
+at 24K, lenient 0.8). `v4 M11 ALL 4 MODELS DONE` 08:02:15; rc=0 every leg, `errors=0` every
+rung, no transport escalation, no timeout arm fired. Every model switch unload-POSTed and
+pgrep-verified; each worker spawned with the registry tune and NO `--draft-*` flags
+(checked at the cmdline for legs 2 and 4; leg 4 also serves without kv-quant flags, as
+registered). The last worker (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, pid 39929)
+is left resident on :8000 — one resident model, unload before the M14 work.
+
+Per-draw evidence (rung aggregates in `reasoning.partial.jsonl`; draws from the router log):
+- Leg 1 deep: 96K 82,033 / 275 / 82,038 tokens (6,893 s / 281 s / 6,979 s); 128K 687 /
+  668 / 239 (~475 s each, prefill-dominated); 156K 332 / 411 / 82,033 (617 s / 623 s /
+  **9,052 s = 2 h 31 m at 9.1 tok/s**). Shallow (16:46 run, resumed): 30 draws, max
+  completion 687, zero hits. Runaway share of leg wall: 89 %.
+- Leg 2: the FIRST draw of the run (8K) ran 4,739 s to 82,073 tokens (17.3 tok/s) and
+  answered correctly; the other 38 draws: 668–1,652 tokens shallow, 816–1,562 deep; deep
+  TTFT ~345 / 500 / 680 s. `budget_hits` recorded 1 at 8K, 0 elsewhere.
+- Leg 3: hits at 24K (82,081) and 48K (82,108), ~19 min each at ~72 tok/s; converged draws
+  12–53 s shallow, 77–172 s deep (prefill ~1 / 2 / 2.7 min at 96 / 128 / 156K —
+  `Ornith-1.0-35B-mlx-uniform-4bit` prefills ~7× faster than `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` / `Qwen3.8-27B-mlx-uniform-4bit` at equal depth).
+- Leg 4: 8K clean (628–940 tokens, ~9 s each); 16K one hit (81,929 in 762 s ≈ 107 tok/s);
+  24K three hits of five — 81,929 / **102,401 (= `max_tokens`, the think never closed)** /
+  81,929 — lenient 0.8, strict 0.4. Which of the three budget draws was the wrong one is
+  NOT recoverable from the record (the per-sample persistence gap, C39 follow-up).
+
+Instrumentation that worked: the v4 adopt-then-continue orchestrator; the unbuffered
+`/usr/bin/tail | /usr/bin/grep --line-buffered` monitor validated by a known-positive
+(fired on all 27 rung completions, 4 transitions, and its own exit); the v4 watch daemon.
+Sizing lesson for the record: the block was budgeted at "4–6 h/model", ran 7 h 11 m /
+3 h 36 m / 1 h 11 m / 58 m — the heavy tail is entirely runaway draws, whose cost is decode
+speed × budget, so per-model bounds for any budget-hitting design must be sized as
+(draws per model) × (budget ÷ floor decode rate), not from converged-draw pace: for a 27B
+dense at 9 tok/s that is 2.5 h per draw, 39 draws → the 20 h bound was the right order.

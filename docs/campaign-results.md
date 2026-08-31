@@ -205,6 +205,59 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-31 — M11 REASONING-DEPTH LADDER COMPLETE (4 models): no reasoning cliff to 156K on the B menu; the axis's finding is the RUNAWAY TAX, and it is draw-dependent, not depth-dependent
+
+The reasoning-depth half of the effective-context methodology (vartrack chain-4, threshold
+0.85, climb-to-cliff; 8K–64K at 5 draws, 96K/128K/156K at 3 draws; `deployed` tunes,
+predictor-OFF, resolved budget 81,920 unclamped at every rung; one router session per
+model, unload+pgrep-verified between; 2026-08-30 19:05 → 08-31 08:02, orchestrator v3→v4
+swap mid-block without interrupting a request — lab-notebook). **Kept SEPARATE from the
+retrieval-depth curve (M8/capacity ladders) by rule.** Two curves per model per C39: the
+pre-registered LENIENT `accuracy` (a budget-truncated think that still lands the answer
+counts) climbs; `acc_strict@81920` (budget-hit = DNF) RANKS. Per-draw token/time detail
+is from the router log — the ladder persists rung aggregates only (per-sample rows are the
+C39 follow-up).
+
+| model (registry tune) | lenient `reasoning_effective_ctx` | strict acc by rung 8/16/24/32/48/64 · 96/128/156K | runaway draws (shallow 30 · deep 9) | leg wall · runaway share | decode at budget |
+|---|---|---|---|---|---|
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (t0.3) — B 1st | **156K** | **0.8**/1/1/1/1/1 · 1/1/1 | 1 · 0 | 3 h 36 m · 37 % (one 79-min draw at 8K) | 17.3 tok/s |
+| `Ornith-1.0-35B-mlx-uniform-4bit` — B 2nd | **156K** | 1/1/**0.8**/1/**0.8**/1 · 1/1/1 | 2 · 0 | 1 h 11 m · ~55 % (two ~19-min draws) | ~72 tok/s |
+| `Qwen3.8-27B-mlx-uniform-4bit` (t0.6) — B 3rd | **156K** | 1/1/1/1/1/1 · **0.33**/1/**0.67** | 0 · 3 | 7 h 11 m · 89 % (1 h 55 m, 1 h 56 m, 2 h 31 m) | 11.9 → 9.1 tok/s |
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (t1.0) | **16K** (cliff at 24K: lenient 0.8) | 1/**0.8**/**0.4** · — | 4 of 15 | 58 min · 96 % | ~105 tok/s |
+
+Lenient acc was 1.0 at every rung for all three B-menu models (39 draws each) — the deep
+draws that converged answered in 239–1,562 tokens, i.e. the chain-4 task itself never got
+harder with depth; prefill did (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` / `Qwen3.8-27B-mlx-uniform-4bit`: ~6/8.5/11.5 min TTFT at 96/128/156K;
+`Ornith-1.0-35B-mlx-uniform-4bit`: ~1/2/2.7 min).
+
+**Mechanism — the runaway is per-draw, not per-depth.** Budget-hits appear at 8K (the B 1st
+choice), 24K/48K (2nd), 96K/156K but not 128K (3rd), and 16K/24K (the 4th model): different
+seeded vartrack instances, no monotone trend, and every budget-hit draw but one still
+produced the right answer after truncation. This is the same item-level re-degeneration
+the HumanEval rows showed, now on a reasoning task. Two consequences: (1) strict acc dips
+to 0.67–0.8 wherever ONE draw of 3–5 runs away, so a "first strict failure" reading of
+effective context is meaningless at this n (it would put the B 1st choice below 8K) — the
+single-number strict definition goes to the operator as **C40**; (2) the axis's real output
+is the RUNAWAY TAX: draw rate ≈ 1/39–3/39 across the B menu (indistinguishable at this n),
+but the wall-clock share ranges from 37 % to 89 % because it is set by decode speed —
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` and `Qwen3.8-27B-mlx-uniform-4bit` pay 1.3–2.5 h per runaway at 9–17 tok/s,
+`Ornith-1.0-35B-mlx-uniform-4bit` ~19 min at ~72 tok/s.
+Temperature ordering matches the rate ordering (t0.3 → 1/39, t0.6 → 3/39, t1.0 → 4/15)
+— consistent with the temperature-is-the-lever rule, suggestive only at these counts.
+
+**`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`** is the only model with a reasoning cliff
+inside the range — and the cliff IS the runaway: 3 of 5 draws at 24K ran to the budget
+(one on to `max_tokens` 102,400), the wrong answer came from that set. At its registry
+t1.0 the model is unusable for this task past 16K; a temperature-ladder pass (0.7→0.5→0.3)
+before any conclusion about the architecture, per the standing recipe. Not a B-menu member.
+
+Verdict for the picks: **reasoning depth does not separate the B menu — all three carry
+chain-4 reasoning to 156K under the lenient curve, and none shows a depth trend on the
+strict curve.** Ranking between them on this axis is the runaway tax, which is a speed
+property already priced into the decode numbers. Files:
+`benchmark/results/<model>/reasoning.json` (+ `reasoning.partial.jsonl`); logs
+`$STACK_WORKDIR/m11/`.
+
 ### 2026-08-30 (afternoon) — M6c: `Ornith-1.0-35B-mlx-uniform-4bit` suffix leg CLOSED — 1.20× on real agentic traffic, under the 1.3× bar
 
 The operator-gated acceptance probe (PLAN M6c leg 1): replay of 3 stable-pass python
