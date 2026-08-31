@@ -21,9 +21,10 @@ at 9 tok/s vs ~19 min on `Ornith-1.0-35B-mlx-uniform-4bit`). Reasoning depth doe
 - **C40** — the strict single-number `reasoning_effective_ctx` definition (rec: largest
   passing rung on the strict curve, with runaway rate + wall share reported separately).
   Not blocking the box queue.
-- **P17 (in-session)** — merge `nemotron-h-rollback` → fork main + push: smoke passed so the
-  merge is handoff-pre-approved, push awaits the in-turn word. **C41** — qwen3_5 MTP
-  splitter fork fixes (rec: TDD the stacking + detection + fail-loud). **C42** — M14
+- ~~P17~~ **DONE 2026-08-31 (operator in-turn approval)**: `nemotron-h-rollback` ff-merged →
+  fork main (`ab5708a5 → d1d57955`) and PUSHED; `src/mlx-vlm` submodule bump deliberately
+  deferred to the next natural bump (nothing deployed uses the drafter). **C41** — qwen3_5
+  MTP splitter fork fixes (rec: TDD the stacking + detection + fail-loud). **C42** — M14
   block-size-3 retry (rec: NO).
 - Follow-up owed before ANY ladder rerun: persist per-sample rows (score, completion_tokens,
   budget_hit) in `bench/reasoning.py` (C39). Sizing rule for budget-hitting designs: bound =

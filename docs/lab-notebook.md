@@ -3313,3 +3313,10 @@ clean, 0 listeners). Next: M6b/M6d-protocol quality OFAT (5-item seeded pilot fi
 the standing rule). Overlay: `$STACK_WORKDIR/m27/overlay_ornith_mtp_on.yaml` (draft-off
 overlay + `draft_kind: mtp` + local `draft_model` path on the
 `Ornith-1.0-35B-mlx-uniform-4bit` entry only).
+
+- 2026-08-31 (P17, operator in-turn approval): `nemotron-h-rollback` ff-merged to fork main
+  (`ab5708a5 → d1d57955`, tree clean, ff-only) and pushed to the fork remote. The live M27
+  ON arm was verified isolated first (runner env carries no `PYTHONPATH` to `../mlx-vlm`;
+  the venv's editable install points at `src/mlx-vlm`). Submodule bump deferred to the next
+  natural bump — the merged code is inert while every registry entry is draft-OFF or uses
+  the deployed qwen3_5 path.
