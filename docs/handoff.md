@@ -1,7 +1,7 @@
 # Handoff — 2026-08-30 (M6d CERTIFIED; M26 closed; box idle between queue items)
 
 Single box (M5 Max 64 GB). **A RUN IS LIVE: M11 reasoning ladder (v3 orchestrator = P52 option a design)** —
-relaunched ~17:20 2026-08-30 by `$STACK_WORKDIR/m11/m11_orchestrator_v3.py` (pid in
+relaunched 19:05 2026-08-30 by `$STACK_WORKDIR/m11/m11_orchestrator_v3.py` (pid in
 `m11_orchestrator_v3.pid`; log `m11_orchestrator.log`; 5-min watch `m11_watch.log` (v2,
 counts `rung done` lines); per-model logs `m11_<model>.log`; per-rung persistence
 `benchmark/results/<model>/reasoning.partial.jsonl` (design-keyed, `--resume`); final
