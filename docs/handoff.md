@@ -1,11 +1,12 @@
-# Handoff — 2026-08-31 morning (M11 DONE, C40 owed; box FREE for M14) <!-- allow-shorthand -->
+# Handoff — 2026-08-31 evening (M11 DONE; M14 CLOSED; M27 OFAT PASSES — flip awaits operator go) <!-- allow-shorthand -->
 
-Single box (M5 Max 64 GB). **No run is live.** M11 finished 08:02 2026-08-31 (v4 orchestrator
-`M11 ALL 4 MODELS DONE`, rc=0 every leg, errors=0 every rung). Router :8000 still serves the
-draft-OFF bench overlay (`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2,
-APC absent) with the LAST worker resident: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
-(pid 39929). **Unload it (`POST /v1/models/unload` + pgrep-verify) before any other model
-work; one resident model.** The v4 watch daemon self-stops on orchestrator exit.
+Single box (M5 Max 64 GB). **No run is live.** Today: M11 finished 08:02 (4 legs, rc=0);
+M14 probe STOP 0.76× (closed); P17 fork merge+push done; M27 sidecar → probe GO 1.72× →
+quality OFAT n=164 EQUIVALENT on acc (details below and in campaign-results 2026-08-31).
+Router :8000 serves the draft-OFF bench overlay (`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`,
+SESSION_MAX=2, APC absent; router pid in `$STACK_WORKDIR/m27/router_off.pid`) with
+`Ornith-1.0-35B-mlx-uniform-4bit` resident from the OFF arm. **Unload before any other
+model work (`POST /v1/models/unload` + pgrep-verify); one resident model.**
 
 ## M11 result (campaign-results 2026-08-31; lab-notebook 2026-08-31)
 
@@ -30,7 +31,8 @@ at 9 tok/s vs ~19 min on `Ornith-1.0-35B-mlx-uniform-4bit`). Reasoning depth doe
   budget_hit) in `bench/reasoning.py` (C39). Sizing rule for budget-hitting designs: bound =
   draws × (budget ÷ floor decode), never converged-draw pace (lab-notebook 2026-08-31).
 - Standing debt: the `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter` HF card still says
-  PROBE-ONLY (outward-facing update, do deliberately). C31 deferred. Next O/C number: **C41**.
+  PROBE-ONLY (outward-facing update, do deliberately — bundle with the M27 drafter upload).
+  C31 deferred. Next O/C number: **C43**.
 
 ## THE BOX QUEUE — updated 2026-08-31
 
@@ -53,8 +55,9 @@ at 9 tok/s vs ~19 min on `Ornith-1.0-35B-mlx-uniform-4bit`). Reasoning depth doe
 
 ## Standing state
 
-- **PUSHED through `3c81c8d`**. LOCAL, not push-approved: `fc70784`, `0f48921`, and this
-  session's M11 close-out commit. Never push without in-turn approval.
+- **PUSHED through `3c81c8d`**. LOCAL, not push-approved: `fc70784` → `6f91567` (+ this
+  handoff refresh) — M11 close-out, M14/M27 records, P17 note. Fork `../mlx-vlm` main IS
+  pushed (`d1d57955`). Never push the stack without in-turn approval.
 - Working tree: the **FIVE** intentional `main_models.yaml` local-path overrides (NEVER
   commit; clean-checkout + re-apply procedure in lab-notebook 2026-08-30 asserts all five)
   + old untracked m23-era files + untracked M6b/M6d/M27 OFAT rows under `benchmark/results/`
