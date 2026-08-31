@@ -205,6 +205,37 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-31 (evening) — M27 quality OFAT: `Ornith-1.0-35B-mlx-uniform-4bit` mtp-ON is EQUIVALENT to OFF at n=164 (acc TOST ±5pp), 1.56× paired decode — the B 2nd choice's predictor passes the M6d bar
+
+Paired ON/OFF humanevalplus, seed-39 draw, n=164, `deployed` profile, arms separated by
+router restarts with draft state verified at the worker cmdline both ways, 5-item seeded
+pilots both arms, EvalPlus docker grading, paired two-stage bootstrap + TOST via the M6b
+analyser (mechanics: lab-notebook 2026-08-31 evening).
+
+| endpoint | mtp-ON | mtp-OFF | delta | CI | discordants | verdict |
+|---|---|---|---|---|---|---|
+| acc (pass@1 plus) | 92.07 | 92.68 | −0.61pp | [−4.3, +3.0] | 4:5 | **EQUIVALENT** (TOST ±5pp, p_d 0.055) |
+| `acc_strict@81920` | 85.98 | 86.59 | −0.61pp | [−6.7, +5.5] | 12:13 | inconclusive (p_d 0.152; runaway placement) |
+| conv / budget-hits | 151/164 · 13 | 152/164 · 12 | — | — | — | the predictor does not move the runaway rate |
+| engagement · acceptance | 164/164 · 0.778 (min 0.655) | 0/164 (null) | — | — | — | k=2 drafts/round |
+| decode tok/s · corpus wall | 160.5 · 3.28 h | 102.8 · 4.65 h | **1.56× paired** | — | — | speed reported under its own label |
+
+Reading: on the certification gate the campaign has used twice (M6b for
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, M6d for `Qwen3.8-27B-mlx-uniform-4bit` — acc TOST
+±5pp at n=164) this is a PASS with the same corpus and protocol. The strict endpoint is
+inconclusive for the reason the M11 ladder made visible this weekend: budget-hit draws are
+draw-dependent, so at equal rates (7.9 % vs 7.3 %) they land on different items per arm and
+inflate discordance without moving the point estimate (identical −0.61pp on both endpoints).
+Mechanism for the speed: a transplanted BASE-model head on a fine-tune accepts 0.78 of its
+drafts (vs 0.674 for the M6d dense sibling's own head and 0.86 on the probe's short prompts)
+— the tune moved the trunk's distribution a little, not a lot; M28 (head fine-tune) stays
+dormant at this margin. **Certification (registry `draft_kind: mtp` + sidecar
+`caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter`) is with the operator** — the flip
+completes the B 2nd choice's (model, tune, predictor) triple, leaving the B menu fully
+predictor-equipped. Measurement stays predictor-OFF by rule. Data:
+`benchmark/results/Ornith-1.0-35B-mlx-uniform-4bit/humanevalplus.mtpon.*|mtpoff.*`,
+analysis `$STACK_WORKDIR/m27/ofat_accuracy_n164.json`.
+
 ### 2026-08-31 — M14 probe STOP (0.76×): `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MTP transplant closed; M27 probe GO (1.72×): `Ornith-1.0-35B-mlx-uniform-4bit` advances to quality OFAT
 
 Both under the M6a protocol (temp registry copy, router restart per arm, flags verified at

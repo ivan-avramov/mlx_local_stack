@@ -38,14 +38,17 @@ at 9 tok/s vs ~19 min on `Ornith-1.0-35B-mlx-uniform-4bit`). Reasoning depth doe
    economics fail on a 138 tok/s target; campaign-results 2026-08-31). Sidecar + probe
    artifacts in `$STACK_WORKDIR/{scratch/m6a,m14}/`. Outstanding: the P17 merge/push
    answer; C42 (block-size retry) rec NO.
-2. **M27 `Ornith-1.0-35B-mlx-uniform-4bit` — probe GO 1.72×, NOW AT: quality OFAT**
-   (M6b/M6d protocol, operator-approved in the 2026-08-30 queue): 5-item seeded pilot
-   (`--seed`ed shuffle prefix), then n=164 humanevalplus `--tune mtpon` vs `--tune mtpoff`,
-   `--sampling-profile deployed`, arms separated by router restarts (ON overlay
-   `$STACK_WORKDIR/m27/overlay_ornith_mtp_on.yaml`, OFF = the draft-off overlay), worker
-   cmdline verified per arm, TOST ±5pp → EQUIVALENT ⇒ CERTIFIED registry flip (draft_kind
-   mtp + local sidecar override; upload `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter`
-   before any committed reference). Acceptance 0.86 > ~0.8 ⇒ M28 dormant.
+2. **M27 `Ornith-1.0-35B-mlx-uniform-4bit` — OFAT DONE 2026-08-31 evening: acc EQUIVALENT
+   (92.07 vs 92.68, CI [−4.3,+3.0], 4:5), strict inconclusive (runaway placement), 1.56×
+   paired, acceptance 0.778 — PASSES the M6d certification standard.** AWAITING OPERATOR
+   GO for the flip package: (a) upload the sidecar dir
+   `$STACK_WORKDIR/scratch/m6a/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter/` to HF as
+   `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter` (public, card states CERTIFIED M27
+   + numbers); (b) `main_models.yaml`: `draft_kind: mtp` + `draft_model: caslca/...` with the
+   `# CERTIFIED M27 2026-08-31` note on the `Ornith-1.0-35B-mlx-uniform-4bit` entry, committed
+   as `feat(stack): CERTIFIED M27 …` (M6d `76dad59` is the template); (c) SIXTH local
+   override (draft_model → local dir) added to the clean-checkout + re-apply procedure;
+   (d) campaign-results/PLAN/ledger flip lines. Measurement stays predictor-OFF. M28 dormant.
 3. Then M21 int8 causal test → M12 d128k cliff check (pre-registered, PLAN M12) → M17/D11.
 
 ## Standing state
@@ -54,7 +57,8 @@ at 9 tok/s vs ~19 min on `Ornith-1.0-35B-mlx-uniform-4bit`). Reasoning depth doe
   session's M11 close-out commit. Never push without in-turn approval.
 - Working tree: the **FIVE** intentional `main_models.yaml` local-path overrides (NEVER
   commit; clean-checkout + re-apply procedure in lab-notebook 2026-08-30 asserts all five)
-  + old untracked m23-era files + untracked M6b/M6d OFAT rows under `benchmark/results/`.
+  + old untracked m23-era files + untracked M6b/M6d/M27 OFAT rows under `benchmark/results/`
+  (M27: `Ornith-1.0-35B-mlx-uniform-4bit/humanevalplus.mtpon.*|mtpoff.*`, M6b storage precedent).
   Live `~/.config/opencode/opencode.json` = BENCH carrier on :8000.
 - Data: M11 `benchmark/results/<model>/reasoning.json` + `reasoning.partial.jsonl`
   (committed), logs/orchestrators `$STACK_WORKDIR/m11/`; M26 `$STACK_WORKDIR/m9/`; M6d

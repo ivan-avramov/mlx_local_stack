@@ -3320,3 +3320,35 @@ overlay + `draft_kind: mtp` + local `draft_model` path on the
   the venv's editable install points at `src/mlx-vlm`). Submodule bump deferred to the next
   natural bump — the merged code is inert while every registry entry is draft-OFF or uses
   the deployed qwen3_5 path.
+
+## 2026-08-31 (evening) — M27 quality OFAT n=164: `Ornith-1.0-35B-mlx-uniform-4bit` mtp-ON vs OFF EQUIVALENT on acc, 1.56× paired
+
+M6b/M6d protocol end to end: seed-39 draw, `--tune mtpon|mtpoff`, `deployed` profile,
+arms separated by ONE router restart each (ON overlay `$STACK_WORKDIR/m27/overlay_ornith_mtp_on.yaml`
+→ OFF = draft-off overlay), draft flags verified at the worker cmdline per arm (ON: `--draft-kind
+mtp --draft-model <sidecar>`; OFF: zero `--draft*` tokens), C35 fingerprinting via
+`MLX_SERVE_CONFIG` in the driver env, 5-item seeded pilots BOTH arms before n=164 (ON 40 s /
+5 items, OFF 100 s / 5 — mean 11.4 s vs 22.1 s, both lower bounds as the rule says).
+Wall: ON arm 197 min decode (3 h 17 m, 13 budget-hits incl. one `length` at 102,401 tok);
+OFF 279 min (4 h 39 m, 12 budget-hits, all `stop`); 0 errors, 0 transport escalations.
+Instrument notes: the ON waiter's first 3 h arm fired at 150/164 with the runner healthy
+(pilot mean 11.4 s → realized mean 72.1 s; 8 % runaway draws at ~8–11 min each ON) — re-armed,
+not killed (silent-but-busy); the OFF arm got a 5 h first arm from the same arithmetic and
+finished in 4 h 37 m. Grades: EvalPlus docker, both arms rc=0 in ~30 s each.
+Paired analysis (`$STACK_WORKDIR/m27/ofat_accuracy_n164.json`; per-item from the EvalPlus
+results file — `score.json` carries no per-item vector for this bench — plus-status as the
+score, strict = score × converged(finish==stop ∧ completion<81920); `m1.suffix_ofat.accuracy`
+for the paired bootstrap + TOST):
+- **acc: ON 92.07 vs OFF 92.68, delta −0.61pp, CI [−4.3, +3.0], discordants 4:5, TOST ±5pp
+  EQUIVALENT, p_d 0.055 (n_for_5pp 173 — resolved at 164 because the split is balanced).**
+- acc_strict@81920: 85.98 vs 86.59, delta −0.61pp, CI [−6.7, +5.5], discordants 12:13 —
+  INCONCLUSIVE; the extra discordance is the runaway draws landing on different items per
+  arm (13 vs 12 hits, 7.9 % vs 7.3 %); the predictor does not move the runaway rate.
+- Engagement 164/164 ON (0/164 OFF, all draft fields null), acceptance mean 0.778 (min
+  0.655, k=2 draft/round); decode 160.5 vs 102.8 tok/s mean, paired per-item ratio 1.56×,
+  corpus wall 3.28 h vs 4.65 h.
+Verdict against the M6b/M6d certification standard (acc TOST at n=164): **PASS — same bar,
+same corpus, same protocol as `Qwen3.8-27B-mlx-uniform-4bit`'s M6d.** Registry flip +
+`caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter` upload put to the operator (outward-facing).
+M28 stays dormant (acceptance 0.78 measured on the corpus vs the ~0.8 trigger — borderline;
+noted, not triggered: the speed already clears 1.3× with margin).
