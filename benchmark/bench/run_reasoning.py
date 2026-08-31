@@ -46,6 +46,13 @@ def main(argv=None) -> int:
                     help="per-request HTTP timeout, DERIVED not SDK-default (O41): 81920-token "
                          "budget at ~12 tok/s at depth + ~20 min prefill at 156K, with headroom")
     ap.add_argument("--no-preload", action="store_true")
+    ap.add_argument("--deep-from", type=int, default=None,
+                    help="ctx (tokens) from which the deep-rung design applies")
+    ap.add_argument("--deep-samples", type=int, default=None,
+                    help="samples per rung at ctx >= --deep-from (default: --samples)")
+    ap.add_argument("--early-stop-budget-hits", type=int, default=0,
+                    help="deep rungs only: if the first N samples ALL hit the thinking budget, score "
+                         "the rung from them and stop (0 = off)")
     ap.add_argument("--resume", action="store_true",
                     help="reuse rungs persisted in reasoning.partial.jsonl by an earlier attempt of "
                          "the SAME design (grid/profile/samples/chain/threshold/params key)")
@@ -84,25 +91,36 @@ def main(argv=None) -> int:
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
     partial_path = os.path.join(out_dir, "reasoning.partial.jsonl")
-    design_key = json.dumps({
+    base_design = {
         "grid": list(grid), "profile": args.sampling_profile, "samples": args.samples,
         "chain_len": args.chain_len, "threshold": args.threshold,
         "params": {k: params.get(k) for k in ("temperature", "top_p", "top_k", "min_p",
                                               "max_tokens", "thinking_budget")},
-    }, sort_keys=True)
+    }
+
+    def key_for(ctx: int) -> str:
+        # Rungs below --deep-from keep the base key, so shallow rungs persisted before a deep
+        # redesign still resume; deep rungs carry the deep-design fields.
+        d = dict(base_design)
+        if args.deep_from is not None and ctx >= args.deep_from:
+            d.update({"deep_from": args.deep_from, "deep_samples": args.deep_samples,
+                      "early_stop_budget_hits": args.early_stop_budget_hits})
+        return json.dumps(d, sort_keys=True)
+
     resume = None
     if args.resume and os.path.exists(partial_path):
         resume = {}
         with open(partial_path) as f:
             for line in f:
                 row = json.loads(line)
-                if row.get("key") == design_key:
-                    resume[row["record"]["ctx"]] = row["record"]
+                ctx = row["record"]["ctx"]
+                if row.get("key") == key_for(ctx):
+                    resume[ctx] = row["record"]
         print(f"[reasoning] resume: {sorted(resume)} rungs persisted for this design", flush=True)
 
     def persist(rec):
         with open(partial_path, "a") as f:
-            f.write(json.dumps({"key": design_key, "record": rec}) + "\n")
+            f.write(json.dumps({"key": key_for(rec["ctx"]), "record": rec}) + "\n")
         print(f"[reasoning] rung done ctx={rec['ctx']} acc={rec['accuracy']} errors={rec['errors']}",
               flush=True)
 
@@ -118,6 +136,9 @@ def main(argv=None) -> int:
         request_timeout=args.request_timeout,
         on_rung=persist,
         resume=resume,
+        deep_from=args.deep_from,
+        deep_samples=args.deep_samples,
+        early_stop_budget_hits=args.early_stop_budget_hits,
     )
 
     for r in records:

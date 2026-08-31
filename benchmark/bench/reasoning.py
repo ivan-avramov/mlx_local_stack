@@ -127,6 +127,9 @@ def run_reasoning_ladder(
     request_timeout: float = 3600,
     on_rung=None,
     resume: dict | None = None,
+    deep_from: int | None = None,
+    deep_samples: int | None = None,
+    early_stop_budget_hits: int = 0,
 ) -> list[dict]:
     """CLIMB-TO-CLIFF: run the variable-tracking task at increasing context sizes.
 
@@ -153,7 +156,12 @@ def run_reasoning_ladder(
             continue
         scores = []
         errors = 0
-        for trial in range(samples):
+        budget_hits = 0
+        early_stop = False
+        is_deep = deep_from is not None and ctx_len >= deep_from
+        n_samples = deep_samples if (is_deep and deep_samples) else samples
+        budget = params.get("thinking_budget")
+        for trial in range(n_samples):
             seed = ctx_len * 1000 + trial
             context, answer, question = build_vartrack(
                 ctx_len, chars_per_token, chain_len=chain_len, seed=seed
@@ -168,14 +176,25 @@ def run_reasoning_ladder(
                 content = result.get("content", "")
                 sc = score_vartrack(content, answer)
             scores.append(sc)
+            ct = result.get("completion_tokens")
+            if budget and ct is not None and ct >= budget:
+                budget_hits += 1
+            # Pre-registered deep-rung early stop (M11, 2026-08-30): when the first N deep samples
+            # ALL hit the thinking budget, the rung is scored from those N and the rest are skipped.
+            if (is_deep and early_stop_budget_hits and len(scores) == early_stop_budget_hits
+                    and budget_hits == early_stop_budget_hits and len(scores) < n_samples):
+                early_stop = True
+                break
 
         accuracy = sum(scores) / len(scores) if scores else 0.0
         rec = {
             "ctx": ctx_len,
             "accuracy": round(accuracy, 3),
-            "samples": samples,
+            "samples": len(scores),
             "chain_len": chain_len,
             "errors": errors,
+            "budget_hits": budget_hits,
+            "early_stop": early_stop,
         }
         records.append(rec)
         if on_rung is not None:
