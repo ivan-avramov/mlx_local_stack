@@ -3194,3 +3194,44 @@ relaunched under the v2 orchestrator (`--resume`, 12 h per-model bound); the kil
 token/time signature kept here. Watch daemon v1 had died silently at launch (0-byte log);
 v2 counts the new per-rung `rung done` lines. Sizing question (deep-rung samples vs cost)
 put to the operator.
+
+## 2026-08-30 (night) — M11 96K rung scored; orchestrator v3→v4 swap; a buffered-grep monitor
+
+**96K rung of `Qwen3.8-27B-mlx-uniform-4bit` (v3 run, 19:05→23:01, 3 h 56 m for the rung):**
+`accuracy=1.0, samples=3, budget_hits=2, early_stop=False`. Router log: samples 1 and 3
+thought to budget (82,033 / 82,038 completion tokens on a 94,619-token prompt, 6,893 s and
+6,979 s ≈ 11.9 tok/s); sample 2 answered in 275 tokens (281 s). Both budget-truncated
+samples still landed the right answer, so the LENIENT `accuracy` the ladder climbs on is
+1.0 while `acc_strict@81920` is 1/3. The pre-registered early stop needs the first TWO deep
+samples to hit; a hit-miss-hit pattern always runs all 3. Mechanism: at 96K this model
+thinks to budget on 2 of 3 draws — the reasoning-depth axis has found its runaway regime
+one rung above the shallow set (all 1.0, 160–641-token completions at 64K). Harness gap
+noted: per-sample scores/tokens are not persisted (rung aggregates only) — strict
+re-scoring from the record is exact only when `accuracy∈{0,1}` or `budget_hits=0`.
+**Ruling C39 (operator, 23:15): the pre-registered lenient climb stands for THIS run; both
+curves are reported; the strict curve RANKS; per-sample rows get persisted before the next
+ladder.**
+
+**Bound arithmetic and the swap (P7, approved 23:15).** 128K began 23:01:37; budget samples
+run ~2 h 10 m at 128K and ~2 h 20 m at 156K, so the 156K rung lands 08:00–10:30 on 08-31
+against the v3 per-model bound at 07:05:36. v3's `subprocess.run(timeout=)` would have
+KILLED the ladder child mid-sample (the in-flight ~2 h sample lost; persisted rungs
+survive) and aborted the block before models 2–4; the "4–6 h/model" estimate had assumed
+early stops, and at ~15–18 h/model the 12 h bound was structurally wrong for the re-sized
+design. Swap procedure (23:19): launched `m11_orchestrator_v4.py` (pid 36314), which
+verifies pid 32064's cmdline, ADOPTS it (waits on the pid, 12 h bound, then requires
+`REASONING_EFFECTIVE_CTX=` + `reasoning.json`), then runs models 2–4 with identical flags
+under a 20 h bound; SIGTERM'd the v3 parent only (SIGTERM does not forward to the child —
+SIGINT would have); verified 32064 alive (ppid 1, etime 4 h 14 m) and no request
+interrupted; swapped the watch daemon (v4 pid 36346, counts the same `rung done` lines);
+APC absent verified on v4's env. No serving config touched.
+
+**Instrument defect (monitor, not the run):** the session's first four PID-waiter/monitor
+pipelines were silent through the 23:01 `rung done` because the shell hook rewrites a bare
+`grep` to a token-filtering proxy that buffers to EOF — the event flushed only when the
+pipeline was torn down. Fix: absolute `/usr/bin/tail` + `/usr/bin/grep --line-buffered`,
+and a known-positive self-test line appended to a tailed scratch file before trusting the
+monitor (fired at 23:08:19 and 23:20:19). Rule reinforced: a waiter is not armed until its
+known-positive has fired. The earlier "noise" (5-min watch ticks re-matching the restated
+`rung done` substring) was real too; the per-model log is the only source of NEW rung
+events.

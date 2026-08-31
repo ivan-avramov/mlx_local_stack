@@ -1,23 +1,32 @@
-# Handoff — 2026-08-30 night (M11 v3 LIVE; M6d certified; Nemotron rollback SHIP on fork branch) <!-- allow-shorthand -->
+# Handoff — 2026-08-30 late night (M11 v4 LIVE, C39 ruled; M6d certified; Nemotron rollback SHIP on fork branch) <!-- allow-shorthand -->
 
-Single box (M5 Max 64 GB). **A RUN IS LIVE: M11 reasoning ladder, v3 orchestrator** —
-launched 19:05 2026-08-30 by `$STACK_WORKDIR/m11/m11_orchestrator_v3.py` (pid in
-`m11_orchestrator_v3.pid`; log `m11_orchestrator.log`; 5-min watch `m11_watch.log`
-(counts `rung done` lines); per-model logs `m11_<model>.log`; per-rung persistence
-`benchmark/results/<model>/reasoning.partial.jsonl` (design-keyed; `--resume`); final
-`reasoning.json` per model). Roster in order: `Qwen3.8-27B-mlx-uniform-4bit` →
-`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` → `Ornith-1.0-35B-mlx-uniform-4bit` →
+Single box (M5 Max 64 GB). **A RUN IS LIVE: M11 reasoning ladder, v4 orchestrator** —
+`$STACK_WORKDIR/m11/m11_orchestrator_v4.py`, pid 36314 (`m11_orchestrator_v4.pid`),
+launched 23:19 2026-08-30 to ADOPT the model-1 ladder child (pid 32064, started 19:05 by
+v3; v3 SIGTERM'd because its 12 h bound would have killed the child inside the 156K rung —
+lab-notebook 2026-08-30 (night)); log `m11_orchestrator.log` (v4 lines prefixed `v4`); 5-min
+watch `m11_watch_v4.py` pid 36346 → `m11_watch.log`; per-model logs `m11_<model>.log`
+(`rung done` = the only source of NEW rung events; `REASONING_EFFECTIVE_CTX=` = model
+finished); per-rung persistence `benchmark/results/<model>/reasoning.partial.jsonl`
+(design-keyed; `--resume`); final `reasoning.json` per model. Roster in order:
+`Qwen3.8-27B-mlx-uniform-4bit` (shallow 6 rungs 1.0; 96K done 23:01 `acc=1.0
+budget_hits=2/3` — strict 1/3; 128K began 23:01, expect 03:20–05:30; 156K then 08:00–10:30
+08-31) → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` → `Ornith-1.0-35B-mlx-uniform-4bit` →
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`. Design of record (PLAN M11, pre-registered):
 8K/16K/24K/32K/48K/64K at 5 samples; 96K/128K/156K at 3 samples with the early stop (first
 2 deep samples both hit the 81,920 budget → rung scored from those 2); threshold 0.85,
-climb-to-cliff, `deployed`, request timeout 9600 s, unload+pgrep-verified between models,
-12 h per-model bound, fail-loud (any rc≠0 aborts). Expect ~4–6 h/model worst case; the
-challenger's six shallow rungs are done (all acc 1.0) and its 96K rung began 19:05. Router
-:8000 serves `$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml` (SESSION_MAX=2, APC absent).
+climb on LENIENT accuracy (C39: report both curves, STRICT ranks), `deployed`, request
+timeout 9600 s, unload+pgrep-verified between models, **20 h per-model bound** (adopted
+child: 12 h from 23:19), fail-loud. Budget: ~15–18 h/model when deep rungs think to budget
+(~2 h 10 m per 128K sample, ~2 h 20 m at 156K). Router :8000 serves
+`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml` (SESSION_MAX=2, APC absent).
 **Session waiters die with the launching session — a resuming session re-arms a PID waiter
-(failure + timeout arms) and confirms the watch daemon is alive (`pgrep -f m11_watch_v3`).**
-Progress truth = router log request lines (`logs/main_model.log`, `metrics —` lines carry
-prompt/completion tokens + ms) plus the per-model `rung done` lines.
+on 36314 (failure + timeout arms), confirms `pgrep -f m11_watch_v4`, and MUST use
+`/usr/bin/tail`/`/usr/bin/grep --line-buffered` (the shell hook rewrites bare `grep` to a
+proxy that buffers to EOF — four monitors were silent through a rung completion tonight)
+and fire a known-positive self-test line before trusting it.** Progress truth = router log
+request lines (`logs/main_model.log`, `metrics —` lines carry prompt/completion tokens +
+ms) plus the per-model `rung done` lines.
 
 **When M11 lands** (or a leg aborts — diagnose first, never re-run over a poisoned tree):
 evaluate each model's `reasoning.json` (rung accuracies, `budget_hits`, `early_stop`,
@@ -59,9 +68,12 @@ state (operator ruling).
 
 ## Operator decisions owed
 
-- None blocking. Standing debt: the `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter` HF
-  card still says PROBE-ONLY (outward-facing update owed, do deliberately). C31 deferred.
-  Next O/C number: **C39**.
+- None blocking. C39 RULED 2026-08-30 23:15 (lenient climb stands for this run, both curves
+  reported, strict ranks; v3→v4 swap executed). Follow-up owed before the next ladder:
+  persist per-sample rows in `bench/reasoning.py` (score, completion_tokens, budget_hit per
+  draw) so strict re-scoring never needs the router log. Standing debt: the
+  `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter` HF card still says PROBE-ONLY
+  (outward-facing update owed, do deliberately). C31 deferred. Next O/C number: **C40**.
 
 ## Standing state
 
