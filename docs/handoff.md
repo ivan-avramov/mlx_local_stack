@@ -21,34 +21,30 @@ at 9 tok/s vs ~19 min on `Ornith-1.0-35B-mlx-uniform-4bit`). Reasoning depth doe
 - **C40** — the strict single-number `reasoning_effective_ctx` definition (rec: largest
   passing rung on the strict curve, with runaway rate + wall share reported separately).
   Not blocking the box queue.
+- **P17 (in-session)** — merge `nemotron-h-rollback` → fork main + push: smoke passed so the
+  merge is handoff-pre-approved, push awaits the in-turn word. **C41** — qwen3_5 MTP
+  splitter fork fixes (rec: TDD the stacking + detection + fail-loud). **C42** — M14
+  block-size-3 retry (rec: NO).
 - Follow-up owed before ANY ladder rerun: persist per-sample rows (score, completion_tokens,
   budget_hit) in `bench/reasoning.py` (C39). Sizing rule for budget-hitting designs: bound =
   draws × (budget ÷ floor decode), never converged-draw pace (lab-notebook 2026-08-31).
 - Standing debt: the `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter` HF card still says
   PROBE-ONLY (outward-facing update, do deliberately). C31 deferred. Next O/C number: **C41**.
 
-## THE BOX QUEUE (all operator-approved 2026-08-30) — start here
+## THE BOX QUEUE — updated 2026-08-31
 
-1. **M14 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` predictor** — fork branch `nemotron-h-rollback` (`../mlx-vlm`, PUSHED;
-   head `d1d57955` = `58cac341` impl + `86f352b6` verifier fixes + black; verifier verdict
-   SHIP; GPU-kernel exactness is the one thing CPU tests could not cover).
-   Steps: (a) `split_mtp` the downloaded BF16 source (hub
-   `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` <!-- hub repo id, allow-shorthand -->, in the HF cache, MTP
-   shard fetched) into an int4 sidecar dir under `$STACK_WORKDIR/scratch/m6a/` using the fork
-   branch (`PYTHONPATH=../mlx-vlm`); (b) Metal load smoke: serve
-   `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` with `--draft-kind mtp --draft-model <dir>`
-   via the fork branch on PYTHONPATH, verify flags at the worker cmdline, one request must
-   complete with non-null draft counters and coherent text; (c) `m1.mtp_probe --draft-model
-   <dir>` (it starts its own router — stop :8000 first, kill by PID, verify 0 listeners)
-   against the 1.3× bar; (d) on a passing smoke: merge branch → fork main, push fork, bump
-   `src/mlx-vlm` in the stack (`chore(stack): bump src/mlx-vlm -> <sha>`), `git submodule
-   update --force` — all pre-approved; (e) ≥1.3× → M6b/M6d-style quality OFAT n=164 →
-   CERTIFIED registry flip. Note from M11: at its registry t1.0 this model runs away on 4 of
-   15 reasoning draws — a temperature-ladder pass belongs before any quality OFAT.
-2. **M27 `Ornith-1.0-35B-mlx-uniform-4bit` MTP transplant** — base shards 13–14/14 of hub `Qwen/Qwen3.5-35B-A3B` are in
-   the HF cache; `split_mtp` (the `qwen3_5_mtp` splitter stacks MoE experts) → sidecar dir →
-   load smoke → `m1.mtp_probe --draft-model` (1.3× bar) → OFAT if it clears. M28 (head
-   fine-tune) gated on M27's acceptance (< ~0.8 triggers it).
+1. ~~M14~~ **CLOSED 2026-08-31: probe STOP 0.76×** (acceptance ≈0.90 — head healthy,
+   economics fail on a 138 tok/s target; campaign-results 2026-08-31). Sidecar + probe
+   artifacts in `$STACK_WORKDIR/{scratch/m6a,m14}/`. Outstanding: the P17 merge/push
+   answer; C42 (block-size retry) rec NO.
+2. **M27 `Ornith-1.0-35B-mlx-uniform-4bit` — probe GO 1.72×, NOW AT: quality OFAT**
+   (M6b/M6d protocol, operator-approved in the 2026-08-30 queue): 5-item seeded pilot
+   (`--seed`ed shuffle prefix), then n=164 humanevalplus `--tune mtpon` vs `--tune mtpoff`,
+   `--sampling-profile deployed`, arms separated by router restarts (ON overlay
+   `$STACK_WORKDIR/m27/overlay_ornith_mtp_on.yaml`, OFF = the draft-off overlay), worker
+   cmdline verified per arm, TOST ±5pp → EQUIVALENT ⇒ CERTIFIED registry flip (draft_kind
+   mtp + local sidecar override; upload `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter`
+   before any committed reference). Acceptance 0.86 > ~0.8 ⇒ M28 dormant.
 3. Then M21 int8 causal test → M12 d128k cliff check (pre-registered, PLAN M12) → M17/D11.
 
 ## Standing state

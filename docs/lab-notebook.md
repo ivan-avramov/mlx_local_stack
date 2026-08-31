@@ -3273,3 +3273,43 @@ Sizing lesson for the record: the block was budgeted at "4–6 h/model", ran 7 h
 speed × budget, so per-model bounds for any budget-hitting design must be sized as
 (draws per model) × (budget ÷ floor decode rate), not from converged-draw pace: for a 27B
 dense at 9 tok/s that is 2.5 h per draw, 39 draws → the 20 h bound was the right order.
+
+## 2026-08-31 — M14 probe STOP (0.76×, healthy head, bad economics); M27 probe GO (1.72×) after two splitter defects
+
+**M14 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`.** (a) `split_nemotron_h_mtp` (fork branch
+`nemotron-h-rollback` @ `d1d57955` on PYTHONPATH, `HF_HUB_OFFLINE=1`) extracted the 270
+`mtp.*` tensors from BF16 shard 14 into a 751 MB int4/g64 sidecar
+(`$STACK_WORKDIR/scratch/m6a/`, `model_type nemotron_h_mtp`, `block_size 2`; the family has
+its OWN CLI — the generic `MTP_SPLITTERS` registry has no `nemotron_h` entry). (b) Metal
+smoke PASS: worker loaded with `--draft-kind mtp --draft-model <dir>` (cmdline-verified),
+coherent text on an explicit request, non-null counters, clean teardown. GPU-kernel
+exactness concern (the one thing CPU tests couldn't cover) — no sign of trouble: acceptance
+0.90. (c) `m1.mtp_probe --arm both`: OFF median 137.8 tok/s, ON 104.4 → **0.76×, GATE STOP**
+— with acceptance 2282/2518 · 2883/3302 · 3200/3455 ≈ 0.90 at 1 draft/round. Mechanism: the
+head (1 attention + 128-expert MoE layer) plus the mamba2 recurrent-state rollback costs
+about a full target step per round on a target already at 138 tok/s — ≤1 extra token at
+p≈0.9 cannot pay for it. Deeper blocks add a head-step per extra draft token → worse (C42:
+rec NO retry). Provenance note: the probe json's `mlx_vlm_sha` reads `src/mlx-vlm`
+(`ab5708a5`) — the SERVING code was the branch `d1d57955` via PYTHONPATH, verified in the
+worker env. Per the pre-registered gate: no OFAT, no registry flip; M14 CLOSED. Merge of the
+verifier-SHIPPED, Metal-validated branch to fork main + push: operator answer pending (P17).
+
+**M27 `Ornith-1.0-35B-mlx-uniform-4bit`.** Two deployed-fork defects found and worked
+around, no code edited (C41 files the fix): (1) detection — `Qwen/Qwen3.5-35B-A3B` declares
+`text_config.model_type: qwen3_5_moe_text`, unregistered → `--model-type` must be forced;
+(2) **the `qwen3_5_moe → Qwen3_5MTPSplitter` mapping silently writes a BROKEN sidecar** for
+this source: the splitter only handles the fused `experts.gate_up_proj` layout, the source
+ships 256 separate per-expert `gate/up/down_proj` tensors, so the sidecar carried 2,304
+loose per-expert tensors, zero `switch_mlp`, and the drafter crashed the worker at load
+("Received 2304 parameters not in model", exit 3 in 4 s). Reproduced offline via
+`Qwen3_5MTPSplitter.transform` on fake tensors. `Qwen3NextMTPSplitter` is the correct tool
+(same `qwen3_5_mtp` output type, same shared zero-centered-norm `+1.0` convention, bespoke
+separate-expert stacking): re-split with `--model-type qwen3_next` → 44 tensors, 9 stacked
+`switch_mlp` int4/g64 triplets (256 experts), no leftovers. Probe: OFF median 102.2 tok/s,
+ON 176.0 → **1.72×, GATE GO** (acceptance 9223/10748 · 5292/6292 · 2903/3300 ≈ 0.86 at 2
+drafts/round, all finish=stop; above M28's ~0.8 trigger — M28 stays dormant). Coherent-text
+smoke on the ON registry copy: PASS (fluent hash-map answer, 330/222 counters, teardown
+clean, 0 listeners). Next: M6b/M6d-protocol quality OFAT (5-item seeded pilot first, per
+the standing rule). Overlay: `$STACK_WORKDIR/m27/overlay_ornith_mtp_on.yaml` (draft-off
+overlay + `draft_kind: mtp` + local `draft_model` path on the
+`Ornith-1.0-35B-mlx-uniform-4bit` entry only).

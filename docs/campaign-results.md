@@ -205,6 +205,35 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-31 — M14 probe STOP (0.76×): `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MTP transplant closed; M27 probe GO (1.72×): `Ornith-1.0-35B-mlx-uniform-4bit` advances to quality OFAT
+
+Both under the M6a protocol (temp registry copy, router restart per arm, flags verified at
+the worker cmdline, deployed sampling via registry `generation_defaults`, 3 fixed coding
+items, decode tok/s median, pre-registered 1.3× gate).
+
+- **M14 STOP.** Sidecar: 270 BF16 `mtp.*` tensors → int4/g64, 751 MB, via the fork branch
+  `nemotron-h-rollback` (`d1d57955` on PYTHONPATH — the probe json's `mlx_vlm_sha` field
+  reads the submodule and is wrong for this run). Metal smoke PASS (load, cmdline flags,
+  coherent text, non-null counters). Probe: OFF 137.8 / ON 104.4 tok/s = **0.76×** at
+  acceptance ≈0.90 (1 draft/round, block 2). Mechanism logged: head forward (attention +
+  128-expert MoE) + mamba2 recurrent-state rollback ≈ one full target step per round; on a
+  target already at 138 tok/s, ≤1 extra token at p≈0.9 cannot pay. The transferable rule:
+  **speculation pays on slow targets; a fast-decoding MoE target with an expensive head is
+  structurally hostile** (same shape as the M6c suffix close at 1.20×). No OFAT, no
+  registry flip; block-size retry declined (C42). The rollback CODE is validated on Metal —
+  merge/push question with the operator.
+- **M27 GO.** Sidecar: 785 `mtp.*` tensors from `Qwen/Qwen3.5-35B-A3B` shards 13–14 →
+  9 stacked `switch_mlp` int4/g64 triplets (256 experts) via `--model-type qwen3_next`
+  after two deployed-splitter defects (C41; the `qwen3_5_moe` mapping silently writes an
+  unstacked, unloadable sidecar). Probe: OFF 102.2 / ON 176.0 tok/s = **1.72×**,
+  acceptance ≈0.86 (2 drafts/round, block 3), all `finish=stop`; coherent-text smoke PASS.
+  Acceptance clears M28's ~0.8 fine-tune trigger — M28 stays dormant. **The B 2nd choice's
+  missing predictor is now plausible**: next is the M6b/M6d-protocol ±5pp quality OFAT
+  (5-item seeded pilot → n=164 humanevalplus, `--tune mtpon|mtpoff`) and, on EQUIVALENT,
+  the certified registry flip completing the (model, tune, predictor) triple.
+- Probe artifacts: `$STACK_WORKDIR/m14/mtp_probe_v2/`, `$STACK_WORKDIR/m27/mtp_probe_v2/`;
+  sidecars under `$STACK_WORKDIR/scratch/m6a/`.
+
 ### 2026-08-31 — M11 REASONING-DEPTH LADDER COMPLETE (4 models): no reasoning cliff to 156K on the B menu; the axis's finding is the RUNAWAY TAX, and it is draw-dependent, not depth-dependent
 
 The reasoning-depth half of the effective-context methodology (vartrack chain-4, threshold
