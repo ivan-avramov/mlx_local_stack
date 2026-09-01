@@ -79,3 +79,27 @@ def test_cli_writes_partial_per_rung_and_resumes(monkeypatch, tmp_path):
     R.main(["--model", "M", "--grid", "8000,16000,24000", "--no-preload", "--sampling-profile",
             "deployed", "--samples", "1", "--chain-len", "2", "--threshold", "0.0", "--resume"])
     assert calls["n"] > 1
+
+
+def test_cli_temp_override_is_in_the_design_key_and_out_tag_names_outputs(monkeypatch, tmp_path):
+    """NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit ladder (2026-08-31): a temperature OFAT on the reasoning axis must (a) carry the
+    override into the request params AND the persistence key (different temps never pool) and
+    (b) write to reasoning.<tag>.json / reasoning.<tag>.partial.jsonl so the deployed-tune
+    result is never overwritten."""
+    _patch_cli(monkeypatch, tmp_path)
+    seen = {}
+    class Spy(CountingDriver):
+        def complete(self, model, messages, params, timeout=3600, tools=None):
+            seen.setdefault("temps", []).append(params.get("temperature"))
+            return super().complete(model, messages, params, timeout)
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: Spy())
+    R.main(["--model", "M", "--grid", "8000", "--no-preload", "--sampling-profile", "deployed",
+            "--samples", "1", "--chain-len", "2", "--threshold", "0.0", "--temp", "0.7",
+            "--out-tag", "t07"])
+    assert 0.7 in seen["temps"]                      # the ladder requests carry the override
+    assert not (tmp_path / "M" / "reasoning.json").exists()
+    assert not (tmp_path / "M" / "reasoning.partial.jsonl").exists()
+    out = json.loads((tmp_path / "M" / "reasoning.t07.json").read_text())
+    assert out["records"][0]["ctx"] == 8000 and out["params"]["temperature"] == 0.7
+    partial = (tmp_path / "M" / "reasoning.t07.partial.jsonl").read_text().splitlines()
+    assert '"temperature": 0.7' in json.loads(partial[0])["key"]

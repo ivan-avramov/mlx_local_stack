@@ -40,6 +40,12 @@ def main(argv=None) -> int:
                     help="params profile (O36: explicit on every run; 'deployed' for all new axes)")
     ap.add_argument("--max-tokens", type=int, default=None,
                     help="Override profile max_tokens (default: use the profile's value)")
+    ap.add_argument("--temp", type=float, default=None,
+                    help="provenance-tracked temperature override (reasoning-axis temperature OFAT; "
+                         "enters the persistence key, so rungs at different temps never pool)")
+    ap.add_argument("--out-tag", default=None,
+                    help="write reasoning.<tag>.json / reasoning.<tag>.partial.jsonl instead of the "
+                         "untagged files (keeps the deployed-tune result intact)")
     ap.add_argument("--thinking-budget", type=int, default=None,
                     help="Override profile thinking_budget (default: use the profile's value)")
     ap.add_argument("--request-timeout", type=float, default=9600.0,
@@ -79,6 +85,8 @@ def main(argv=None) -> int:
         params["max_tokens"] = args.max_tokens
     if args.thinking_budget is not None:
         params["thinking_budget"] = args.thinking_budget
+    if args.temp is not None:
+        params["temperature"] = args.temp
 
     print(f"[reasoning] {args.model} cpt={cpt:.2f} grid={grid} "
           f"threshold={args.threshold} samples={args.samples} "
@@ -90,7 +98,8 @@ def main(argv=None) -> int:
 
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
-    partial_path = os.path.join(out_dir, "reasoning.partial.jsonl")
+    stem = "reasoning" if not args.out_tag else f"reasoning.{args.out_tag}"
+    partial_path = os.path.join(out_dir, f"{stem}.partial.jsonl")
     base_design = {
         "grid": list(grid), "profile": args.sampling_profile, "samples": args.samples,
         "chain_len": args.chain_len, "threshold": args.threshold,
@@ -158,11 +167,12 @@ def main(argv=None) -> int:
         "task": "vartrack",
         "threshold": args.threshold,
         "grid": list(grid),
+        "params": base_design["params"],
         "records": records,
         "reasoning_effective_ctx": reasoning_effective_ctx,
     }
 
-    with open(os.path.join(out_dir, "reasoning.json"), "w") as f:
+    with open(os.path.join(out_dir, f"{stem}.json"), "w") as f:
         json.dump(result, f, indent=2)
 
     print(f"[reasoning] REASONING_EFFECTIVE_CTX={reasoning_effective_ctx}", flush=True)
