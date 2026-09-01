@@ -3575,3 +3575,27 @@ for probes) and `mx.set_memory_limit` before touching a model; (2) the footprint
 never `ps` RSS; (3) watchdogs key on (2). With (1)–(3) bare-process probes are un-retired; without
 them they stay banned. Docker (`memvault-myvault` MCP container, 1.5 GiB) was a bystander — the
 OrbStack VM balloons under host pressure, which is what showed as >7 GB.
+
+## 2026-08-31 (night) — Prefill category split, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @ 32K (capped bare-process probe, safe run)
+
+`$STACK_WORKDIR/nax_probe/prefill_split.py` v3 (4 GB cache cap, attribute-replacement timers with an
+`mx.eval` per sub-layer call — the serialisation inflates small ops, so read the SPLIT, not the
+absolutes): 32,768 tokens in 512-token steps, 57.3 s → 572 tok/s (621 tok/s unserialised), peak 22.5 GB.
+
+| category | time | share | calls | per call |
+|---|---|---|---|---|
+| MLP (64 layers) | 24.9 s | 43.5 % | 4096 | 6.1 ms |
+| full attention (16 layers) | 15.2 s | 26.5 % | 1024 | 14.8 ms |
+| GatedDeltaNet (48 layers) | 12.5 s | 21.9 % | 3072 | 4.1 ms |
+| norms | 2.3 s | 4.0 % | 8192 | 0.28 ms |
+
+Reading: the MLP call runs ~274 GFLOP (512 tok × 2 × 3 × 5120 × 17408) in 6.1 ms ≈ **45 TFLOP/s —
+already at the NA-accelerated 4-bit `quantized_matmul` rate** measured by the discriminator (52.7
+at 4096³). So the GEMM share of prefill is on the accelerators today; the non-GEMM ~50 % is
+attention (SDPA over the growing KV — this share rises toward 256K) and the GDN chunked scan
+(custom kernel, fixed per token). A W8A8 tensor-ops path (JetBrains' approach, int8 rate 2× the
+fp16 NA rate) could lift only the MLP/projection share: ~1.15× at 32K, less at 256K where
+attention dominates. P14 conclusion: **no cheap large prefill lever remains on this hybrid; the
+attention share at depth (SDPA kernel path, KV dtype) is the only prefill target worth a probe,
+and it is a 256K-specific one.** Norm calls at 0.28 ms each are launch/eval overhead in this
+serialised harness, not real cost.
