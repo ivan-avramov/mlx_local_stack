@@ -205,6 +205,35 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-31 (night) — `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature OFAT on the reasoning cliff rung (24K): temperature is NOT the lever; budget-length thinking is prompt-intrinsic and still answers correctly
+
+Design (pre-registered, `$STACK_WORKDIR/nemo_ladder/`): vartrack 24K (the M11 cliff rung), 5 seeded
+draws per temperature, t1.0 (deployed) re-measured alongside 0.7 / 0.5 / 0.3 in one session,
+`deployed` profile otherwise, budget 81,920, per-draw rows persisted (`reasoning.a24k.t<T>.json`).
+Pick rule: highest temperature with acc ≥ 0.85 AND 0 budget hits; none → stop the axis.
+
+| temp | acc | budget hits | trials that hit | wall (min) | decode tok/s hit / converged |
+|---|---|---|---|---|---|
+| 1.0 | 0.8 | 3/5 | 1, 3, 4 (trial 1 ran to `max_tokens` 102,401 → wrong) | 43 | 105 / 121–133 |
+| 0.7 | 1.0 | 2/5 | 1, 4 | 27 | 106 / 125–127 |
+| 0.5 | 1.0 | 2/5 | 1, 4 | 27 | 106 / 126–127 |
+| 0.3 | 1.0 | 2/5 | 1, 2 | 27 | 105 / 124–126 |
+
+Reading: 20 draws, 9 budget hits (45 %), 19/20 correct — **8 of the 9 budget-hit draws answered
+correctly after the forced think-close**; the single wrong answer is the t1.0 draw that never
+closed (`finish=length` at 102,401). The hit RATE does not move with temperature (3/5 → 2/5 → 2/5
+→ 2/5; n=5 per cell, no interval excludes equality). Trial 1 (one fixed prompt, seed 24000001)
+hits at all four temperatures and trial 4 at three — the budget-length think is **prompt-intrinsic,
+not a sampling artefact**, so the campaign's temperature-ladder recipe has no purchase on this
+model's reasoning-axis runaways. **Axis STOPPED per pre-registration; no tune change**
+(deployed t1.0 stands; its coding convergence is already 99–100 % at n=100). Runaway tax: 9 ×
+~13 min = ~96 % of the 2 h wall, at ~105 tok/s vs ~125 converged (KV depth). Consequence for
+C40: the strict curve's dip on this model measures budget truncation of CORRECT reasoning
+(lenient 1.0 at 24K for every temperature ≤ 0.7); recommendation (a) — largest passing strict
+rung + runaway rate/wall share reported separately — is reinforced. Data:
+`benchmark/results/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit/reasoning.a24k.t*.json`;
+orchestrator/watch logs `$STACK_WORKDIR/nemo_ladder/`.
+
 ### 2026-08-31 (evening) — M27 quality OFAT: `Ornith-1.0-35B-mlx-uniform-4bit` mtp-ON is EQUIVALENT to OFF at n=164 (acc TOST ±5pp), 1.56× paired decode — the B 2nd choice's predictor passes the M6d bar
 
 Paired ON/OFF humanevalplus, seed-39 draw, n=164, `deployed` profile, arms separated by

@@ -3470,3 +3470,18 @@ Operator asked (during the M29/ladder wait) what else the fork could do for the 
   (1) `na_discriminator.py` on 0.32.0 release (1 min) — positive if fp16/fp32 ≥ 3× or qmm ≫ 50
   TFLOP/s; (2) `$STACK_WORKDIR/nax_probe/prefill_split.py` (per-category prefill split on the
   B 1st choice at 32K) to bound what any GEMM-side win can deliver on the hybrids.
+
+## 2026-08-31 (night) — M30 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature OFAT at 24K: STOPPED at Phase A (pre-registered), temperature is not the lever
+
+Orchestrator `$STACK_WORKDIR/nemo_ladder/orchestrator.py` (19:17–21:21), draft-OFF overlay, worker
+cmdline verified zero `--draft` tokens after every rung. Per-draw rows (the C39 persistence,
+landed tonight) made the reading possible without a rerun: trial 1 = seed 24000001 hits the
+budget at all four temperatures, trial 4 at three; 8/9 budget-hit draws answer correctly after
+the forced close; the only wrong draw is the t1.0 `finish=length` runaway at 102,401 tokens.
+Hit-draw decode ~105 tok/s vs ~125 converged (KV depth at 82K), ~13 min each → runaway wall share
+~96 %. Lenient acc 1.0 at every temperature ≤ 0.7, 0.8 at t1.0 (n=5, MDE far too wide to rank
+temperatures). Verdict: the reasoning-axis "cliff" on this model is budget truncation of correct
+long reasoning, prompt-intrinsic; the temperature-ladder recipe (a CONVERGENCE lever) has no
+purchase. Tune unchanged. Phases C/D (full ladder + humanevalplus screen at the pick) not run —
+nothing to run them at. Watcher instrument note: the first watcher's liveness check was wrong
+(pattern vs cmdline) and was replaced by a pid-file check with a self-test before re-arming.
