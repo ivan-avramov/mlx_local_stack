@@ -1,7 +1,13 @@
 # Handoff — 2026-08-31 night (M27 CERTIFIED + EXECUTED — `3a200a9`; B menu = three certified MTP triples; box queue next: M21 → M12 → M17/D11)
 
-Single box (M5 Max 64 GB). **A RUN IS LIVE (launched 2026-08-31 19:17): the
-`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder** — orchestrator
+Single box (M5 Max 64 GB). **No run is live (2026-08-31 ~21:30).** Router :8000 (pid 47739,
+draft-OFF overlay) is UP with NO worker resident (unloaded by the quiet-window chain). Tonight's
+box results: M30 ladder STOPPED at Phase A (temperature not the lever); NA discriminator +
+forced-non-NA control → **neural accelerators ARE active by default** (lab-notebook); fork-branch
+GPU equivalence 22 passed; M6a re-probe REFUSED (router must be stopped first) — pending operator
+go after a memory incident (bare-process model load in the split probe; fixed, `lazy=True`).
+**Rule: no bare-process full model loads while the operator is at the machine.** Earlier tonight
+(historical, keep for the artifacts): **the ladder (launched 19:17)** — orchestrator
 `$STACK_WORKDIR/nemo_ladder/orchestrator.py` (pid in `orchestrator.pid`, log `orchestrator.log`),
 watcher `watch.py` (pid `watch.pid`, `watch.log`, 5-min cadence, pid-file liveness + self-test).
 Phase A = temperature OFAT on the M11 24K cliff rung (t1.0 baseline re-measured alongside

@@ -205,6 +205,19 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-31 (night) — Methodology: the M5 GPU Neural Accelerators are ACTIVE by default in the installed mlx 0.32.0 (3.8× fp16 GEMM, 3.5× 4-bit quantized_matmul vs the forced non-NA path); the June "dead end" was an instrument error
+
+`benchmark/spikes/na_discriminator.py`, M5 Max, macOS 26.6.2, mlx 0.32.0 wheel (minos 26.2):
+default 4096³ fp16 55.9 / bf16 56.1 / fp32 41.2 TFLOP/s, quantized_matmul 4-bit 52.7; with the
+non-NA path forced (`MLX_METAL_GPU_ARCH=applegpu_g16s`, which fails upstream's gen ≥ 17 gate):
+fp16 14.9, fp32 14.4, 4-bit 14.9. The June verdict rested on the fp16/fp32 ratio, but fp32 GEMM is
+accelerated too on this wheel, so the ratio never moved. Every prefill figure in this record
+already includes the accelerators; the remaining prefill headroom on the four hybrid picks
+(`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `Qwen3.8-27B-mlx-uniform-4bit`, `Ornith-1.0-35B-mlx-uniform-4bit`,
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`) is the non-GEMM share (GatedDeltaNet / mamba2 scans, SDPA). AGENTS.md pitfall line to be corrected
+(architect edit, operator approval owed). Mechanism logged: `is_nax_available()` = macOS ≥ 26.2 ∧
+GPU generation ≥ 17 (`applegpu_g17s` here); dispatch is per-op, automatic, no Python flag.
+
 ### 2026-08-31 (night) — `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature OFAT on the reasoning cliff rung (24K): temperature is NOT the lever; budget-length thinking is prompt-intrinsic and still answers correctly
 
 Design (pre-registered, `$STACK_WORKDIR/nemo_ladder/`): vartrack 24K (the M11 cliff rung), 5 seeded

@@ -3485,3 +3485,42 @@ long reasoning, prompt-intrinsic; the temperature-ladder recipe (a CONVERGENCE l
 purchase. Tune unchanged. Phases C/D (full ladder + humanevalplus screen at the pick) not run —
 nothing to run them at. Watcher instrument note: the first watcher's liveness check was wrong
 (pattern vs cmdline) and was replaced by a pid-file check with a self-test before re-arming.
+
+## 2026-08-31 (night) — M5 Neural Accelerators ARE ACTIVE by default (the June "dead end" was a wrong instrument); prefill split probe bug; memory incident
+
+Quiet-window chain (`$STACK_WORKDIR/quiet_window/`) after the M30 ladder, one step at a time:
+- **`na_discriminator.py` on mlx 0.32.0 release (wheel `macosx_26_0_arm64`, `minos 26.2`, `sdk 26.5`):**
+  fp16 55.9 / bf16 56.1 / fp32 41.2 TFLOP/s at 4096³; quantized_matmul 4/6/8-bit 52.7 / 49.2 / 50.6.
+  Same as June → the June verdict "NA not active" would follow. **Decisive control (10 s):** force
+  the non-NA path with `MLX_METAL_GPU_ARCH=applegpu_g16s` (generation 16 fails upstream's
+  `is_nax_available()` gate of gen ≥ 17): fp16 **14.9**, bf16 14.9, fp32 14.4, quantized 4-bit
+  **14.9** TFLOP/s. So on this box, by default, **NA delivers 3.8× on fp16/bf16 GEMM and 3.5× on
+  4-bit `quantized_matmul`** — it has been active since at least the 0.31.2 wheel. The June
+  discriminator's premise (fp16/fp32 ratio ≥ 3×) was wrong because fp32 GEMM is ALSO accelerated
+  on this wheel (41 vs 14 TFLOP/s; `MLX_ENABLE_TF32=1` changes nothing — already on that path).
+  **AGENTS.md pitfall "M5 Neural Accelerators: dispatch never selects them — dead end" is FALSE and
+  needs the architect-only correction** (proposed text in the session summary; operator approval
+  owed). Consequence: every prefill number in the campaign already includes NA; there is no
+  untapped 3–4× prefill lever; remaining prefill headroom on the hybrids is the non-GEMM share
+  (GDN chunked scans, SDPA), to be quantified by the (fixed) split probe.
+- **`prefill_split.py` v1 was WRONG and HARMFUL**: (a) it assigned `mod.__call__` on instances,
+  which Python never uses for `obj(...)` (type lookup) → zero categories captured; only the total
+  printed (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 32,768 tokens in 52.8 s = 621 tok/s, GPU peak
+  23.4 GB — ~2× the 305 tok/s capacity-ladder rate at 64K, consistent with attention/scan cost
+  growing with depth); (b) `load(lazy=False)` in a bare process materialised the 17 GB weights
+  on top of the mmap'd file → the operator saw the laptop stutter (vm_stat: 3.48 M swapouts,
+  swap 7.3/8 GB used). Fixed both (attribute-replacement wrapper, `lazy=True`). **Rule going
+  forward: no bare-process full model loads while the operator is at the machine — probes go
+  through the router (one resident model) or are run one at a time with explicit go.** Nothing
+  ran concurrently (the chain is sequential); the load itself was the problem.
+- **Fork branch `nemotron-h-with-states` @ `dd2a2dcb`: GPU equivalence test PASSED** —
+  `MLX_VLM_GPU_TESTS=1 pytest mlx_vlm/tests/test_ssm_with_states.py` → **22 passed** on Metal
+  (with-states kernel == single-step kernel applied T times, incl. the masked variant). K is
+  complete and GPU-verified; only the speed re-probe remains.
+- **M6a re-probe did NOT run**: `m1.mtp_probe` correctly REFUSED because the campaign router
+  (pid 47739) still listens on :8000 ("never touches a router it did not start itself"). The
+  chain should have stopped the router first — fail-loud worked. To run: kill 47739 by PID,
+  verify 0 listeners, run the probe (it starts its own router per arm; normal server-path load
+  of the 17 GB `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` + its 751 MB drafter, the same footprint as the 2 h ladder), then
+  restart the bench router on the draft-OFF overlay. Held pending operator go after the memory
+  incident.
