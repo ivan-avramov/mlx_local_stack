@@ -64,8 +64,16 @@ the working registry before the next bench run (lab-notebook 2026-08-28) so its 
    make it "usable"; its coding rows at t1.0 already converge 99–100 %, the runaways are on the
    reasoning axis). Ladder CLI grew `--temp`/`--out-tag` (`40e088e`).
 4. **M29 (C44 RULED GO): one-pass MTP verify for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`** —
-   Sonnet worker on fork branch `nemotron-h-with-states` (K1–K4, CPU-pinned); after the ladder:
-   GPU equivalence test, H1 profile, M6a re-probe k=1/2/3 (1.3× gate). Original line: Nemotron-MTP work IF the analysis says ≥1.3× is reachable
+   **K DONE on fork branch `nemotron-h-with-states` = `dd2a2dcb`** (K1–K4 + verifier fixes N1–N9;
+   36 passed / 1 GPU-gated skip, CPU-pinned; verifier verdict MERGEABLE WITH FIXES → fixes applied;
+   `../mlx-vlm` is CHECKED OUT on that branch — the live worker imports `src/mlx-vlm` @ `d1d57955`,
+   unaffected). **QUIET-WINDOW CHAIN ARMED** (`$STACK_WORKDIR/quiet_window/chain.py`, pid in
+   `chain.pid`, log `chain.log`): waits for the ladder orchestrator pid, then unload →
+   `na_discriminator.py` (NA re-test on mlx 0.32.0) → `nax_probe/prefill_split.py` (B 1st
+   choice @32K) → fork-branch GPU equivalence test → M6a re-probe k=1 with the branch on
+   PYTHONPATH (`$STACK_WORKDIR/m29/probe_k1/`), 1.3× gate. The probe restarts :8000 on its own
+   temp registry per arm — after the chain, restart the bench router on the draft-OFF overlay
+   before any measurement. H1 head profile + k=2/3 only if the k=1 result lands in 1.1–1.3×. Original line: Nemotron-MTP work IF the analysis says ≥1.3× is reachable
    (lab-notebook 2026-08-31 night: mechanism = per-position verify replay + overhead-bound head,
    NOT the 4-bit quantization) → M12 coding-at-depth d128k cliff check** (pre-registered, PLAN M12). M21 / M17 /
    D11 after.
