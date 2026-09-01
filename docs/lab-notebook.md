@@ -3544,3 +3544,34 @@ Quiet-window chain (`$STACK_WORKDIR/quiet_window/`) after the M30 ladder, one st
   probe's own router — same footprint as normal serving, which has never caused pressure.
 - Chain 2 then restarted the bench router on the draft-OFF overlay (uv parent 68029, listener
   68032; `SESSION_MAX=2`, `APC_ENABLED` absent — verified with `ps -Eww`); no worker resident.
+
+## 2026-08-31 (night) — ROOT CAUSE of tonight's two swap incidents: MLX allocator-cache bloat in bare-process runs (default cache limit 65 GB on a 64 GB box); `get_peak_memory` and `ps` RSS are both blind to it
+
+Operator challenge: the probe process was seen at **49 GB** while weights + 32K KV account for ~23 GB.
+Controlled experiment (`$STACK_WORKDIR/nax_probe/memdebug.py`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`,
+16K prefill in 512-token steps, Docker stopped by the operator), logging `mx.get_active_memory` /
+`mx.get_cache_memory` / `mx.get_peak_memory` / `ps` RSS every 4 steps:
+
+| run | cache limit | active (GB) | cache pool (GB) | peak (GB) | ps RSS (GB) | tok/s |
+|---|---|---|---|---|---|---|
+| A | default (65.3 GB) | 19.2 → 21.2 | 0 → **24.1** (0.6, 1.3, 2.6, 4.6, 7.3, 10.8, 14.9, 19.9, 24.1 — quadratic) | 21.9 | 19.1 flat | 711 |
+| B | `mx.set_cache_limit(4 GB)` | 19.2 → 21.2 | **4.1 pinned** | 21.9 | 19.1 flat | 701 |
+
+Mechanism: each prefill step's attention-score / transient buffers are a NEW, larger size (the KV
+grows every step, no prealloc), so freed buffers cannot be reused and the pool accumulates them
+∝ n²: 24 GB of dead buffers by 16K → ~45 GB total, ~49+ GB by 32K → OS swap (the fork's own
+docstring, `server/cli.py:_apply_mlx_memory_limits`, describes exactly this: "the pool grows
+toward physical RAM and pages before MLX's default limit (~device size) evicts it"). Two
+instrument blind spots hid it: `mx.get_peak_memory` counts ACTIVE only (21.9 GB, the number I
+trusted), and `ps` RSS does not see Metal buffers at all (19.1 GB flat while the real footprint
+passed 45 GB) — so the RSS watchdog in the v2 probe could never fire. The server path is immune
+because `mlx_vlm.server` applies a derived cache cap (heads × prefill_step × max_kv × 2 B + 2 GB
+≈ 11 GB for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`) plus `--memory-limit-frac 0.85`; the standing full-cap KV prealloc rule
+removes the size churn on top. The cap costs nothing (701 vs 711 tok/s).
+
+**Rules (box-notes updated):** (1) every bare-process MLX run sets `mx.set_cache_limit` (≤ 4 GB
+for probes) and `mx.set_memory_limit` before touching a model; (2) the footprint metric is
+`active + cache` (or the IOAccelerator/phys_footprint figure), never `get_peak_memory` alone and
+never `ps` RSS; (3) watchdogs key on (2). With (1)–(3) bare-process probes are un-retired; without
+them they stay banned. Docker (`memvault-myvault` MCP container, 1.5 GiB) was a bystander — the
+OrbStack VM balloons under host pressure, which is what showed as >7 GB.
