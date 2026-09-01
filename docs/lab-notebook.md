@@ -3438,3 +3438,35 @@ better than the two native heads we certified (0.674, 0.923-class). The cost sid
   seed-39 screen. Instrument note: the first watcher pattern-matched `nemo_ladder/orchestrator.py`
   against a cmdline that reads `orchestrator.py` and declared the live run gone — replaced by a
   pid-file check with a known-positive self-test before re-arming.
+
+## 2026-08-31 (night) — M5 Neural Accelerators: the June "dead end" is STALE — mlx 0.32.0 release ships NAX quantized-matmul kernels and its gate admits this box
+
+Operator asked (during the M29/ladder wait) what else the fork could do for the other picks
+(kernel fusion, the M5 neural units). Findings, no GPU used (ladder live):
+- **Roofline (614 GB/s)**: the two dense picks (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `Qwen3.8-27B-mlx-uniform-4bit`) decode at ~60 % of the bandwidth floor
+  (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 23.3 vs ~38 tok/s ceiling from ~16 GB/token;
+  `Qwen3.8-27B-mlx-uniform-4bit` 26 vs ~44) — bandwidth-bound; the 2026-08-18 "ceiling near
+  80 tok/s" assumed ~1.2 TB/s and is corrected here. The powermetrics signature (95 % busy,
+  1.12 GHz, 21 W) is a memory-bound kernel, not "serialized small kernels". Fusion ceiling on
+  those two is therefore small (ZMLX-class +2–12 %). The two sparse-MoE picks sit at 33–46 % of
+  roofline (`Ornith-1.0-35B-mlx-uniform-4bit` 103 tok/s vs ~300;
+  `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 138 vs ~300) — overhead-bound, where fusion
+  and the MTP head loop (M29 H1) matter.
+- **Prefill** runs at a flat ~15–16 TFLOPS effective on every pick (capacity ladders: 305→121
+  tok/s over 64K→256K on the B 1st choice; 2224→1628 on `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`) vs ~50–57
+  TFLOP/s raw matmul measured by `benchmark/spikes/na_discriminator.py` in June — GEMMs are
+  only part of prefill on these hybrids (48/64 GatedDeltaNet layers, chunked scans).
+- **Neural accelerators**: the June result (`03f4546`: NA does not activate; fp16/fp32 1.35–1.42×
+  on the 0.31.2 wheel AND a 0.32.0.dev source build; "kernels exist for matmul2d, dispatch
+  never selects them") is OLDER than the installed **mlx 0.32.0 release**, whose `libmlx.dylib`
+  carries `qmm_n_nax`/`qmm_t_nax`/`gather_qmm_*_nax`/`steel_gemm_fused_nax_` symbols and 3,954
+  `nax` strings in `mlx.metallib`. Upstream `device.cpp` gates `is_nax_available()` on macOS
+  ≥ 26.2 AND architecture generation ≥ 17 for non-phone GPUs; this box reports
+  `applegpu_g17s` (gen 17, 's' = Max) on macOS 26.6.2 — **the gate admits it**. Env knob
+  `MLX_METAL_GPU_ARCH` exists (override only). Apple's own M5 numbers: prefill 3.3–4.1× vs M4,
+  decode 1.19–1.27× (bandwidth). Realistic here: 1.3–1.5× prefill on the hybrids (JetBrains
+  measured 1.37–1.41× TTFT @10–20K on a Qwen3.6-27B-4bit with a W8A8 tensor-ops path).
+- **Queued for the first quiet GPU window** (after the ladder, before the M6a re-probe):
+  (1) `na_discriminator.py` on 0.32.0 release (1 min) — positive if fp16/fp32 ≥ 3× or qmm ≫ 50
+  TFLOP/s; (2) `$STACK_WORKDIR/nax_probe/prefill_split.py` (per-category prefill split on the
+  B 1st choice at 32K) to bound what any GEMM-side win can deliver on the hybrids.
