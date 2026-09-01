@@ -63,7 +63,9 @@ the working registry before the next bench run (lab-notebook 2026-08-28) so its 
 3. **LIVE: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder** (operator 2026-08-31:
    make it "usable"; its coding rows at t1.0 already converge 99–100 %, the runaways are on the
    reasoning axis). Ladder CLI grew `--temp`/`--out-tag` (`40e088e`).
-4. **Then (operator order, no pause): Nemotron-MTP work IF the analysis says ≥1.3× is reachable
+4. **M29 (C44 RULED GO): one-pass MTP verify for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`** —
+   Sonnet worker on fork branch `nemotron-h-with-states` (K1–K4, CPU-pinned); after the ladder:
+   GPU equivalence test, H1 profile, M6a re-probe k=1/2/3 (1.3× gate). Original line: Nemotron-MTP work IF the analysis says ≥1.3× is reachable
    (lab-notebook 2026-08-31 night: mechanism = per-position verify replay + overhead-bound head,
    NOT the 4-bit quantization) → M12 coding-at-depth d128k cliff check** (pre-registered, PLAN M12). M21 / M17 /
    D11 after.
