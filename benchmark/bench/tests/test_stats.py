@@ -217,11 +217,29 @@ def test_bootstrap_more_items_narrows_the_ci():
 def test_bootstrap_strata_none_is_byte_identical_to_pre_strata_behaviour():
     """The regression pin: adding the `strata` parameter must not perturb the RNG sequence (or
     any other behaviour) of an unstrat call — every existing caller (grade.py, run_m1_report.py)
-    passes no `strata` and must see the SAME numbers as before this parameter existed."""
-    per_item = {f"i{i}": [1, 0, 1, 1, 0] for i in range(23)}
-    with_param = S.cluster_bootstrap(per_item, iters=1500, seed=5, strata=None)
-    without_param = S.cluster_bootstrap(per_item, iters=1500, seed=5)
-    assert with_param == without_param
+    passes no `strata` and must see the SAME numbers as before this parameter existed.
+
+    Pinned against LITERAL output captured from the PRE-change function (commit 5af51dc^,
+    `git show 5af51dc^:benchmark/bench/stats.py`, offline in /tmp, before `strata` existed at
+    all) rather than against `strata=None` on the CURRENT function: comparing the current
+    function to itself with the kwarg merely omitted is a tautology that survives any mutation
+    of the `strata is None` branch, since both calls run the exact same code path.
+
+    A HOMOGENEOUS per-item fixture (every item carrying the identical draw list) is a bad
+    mutation-catcher here even though it looks like a normal fixture: item-level (stage 1)
+    resampling cannot change the composition when every item's content is the same, so a
+    percentile CI computed over 1500 replicates can — and, checked empirically, DOES — land on
+    the exact same discrete `lo`/`hi` even when the RNG stream feeding stage 1 is perturbed.
+    This fixture is deliberately HETEROGENEOUS (each item's 3 draws differ by an id-derived
+    pattern) so a perturbed RNG stream provably moves `hi` (checked against a one-line mutation
+    that burns one extra `rng.random()` call in the `strata is None` branch before this pin was
+    written — see the M12 fix-round commit for the burn/revert transcript)."""
+    per_item = {f"i{i}": [1 if (i * 7 + j) % 5 < 3 else 0 for j in range(3)] for i in range(23)}
+    out = S.cluster_bootstrap(per_item, iters=2000, seed=3)
+    # captured via: git show 5af51dc^:benchmark/bench/stats.py -> cluster_bootstrap(per_item,
+    # iters=2000, seed=3), the function as it existed the commit before `strata` was added.
+    assert out == {"point": 0.6086956521739131, "lo": 0.46376811594202894,
+                   "hi": 0.753623188405797, "iters": 2000, "n_items": 23}
 
 
 def test_bootstrap_strata_preserves_each_stratum_n_on_every_draw():
@@ -437,11 +455,18 @@ def test_paired_delta_empty_shared_set_raises():
 
 # ------------------------------------------------------------- strata (M12, pooling-for-power)
 def test_paired_delta_strata_none_is_byte_identical_to_pre_strata_behaviour():
+    """Same pin, same reason, for `paired_delta`: LITERAL output captured from the PRE-change
+    function (commit 5af51dc^) via `git show 5af51dc^:benchmark/bench/stats.py`, offline in
+    /tmp, before `strata` existed. `strata=None` compared against itself with the kwarg omitted
+    is a tautology and survives any mutation of the `strata is None` branch."""
     a = {f"i{i}": [1, 0, 1] for i in range(12)}
     b = {f"i{i}": [0, 0, 1] for i in range(12)}
-    with_param = S.paired_delta(a, b, iters=800, seed=2, strata=None)
-    without_param = S.paired_delta(a, b, iters=800, seed=2)
-    assert with_param == without_param
+    out = S.paired_delta(a, b, iters=800, seed=2)
+    # captured via: git show 5af51dc^:benchmark/bench/stats.py -> paired_delta(a, b, iters=800,
+    # seed=2), the function as it existed the commit before `strata` was added.
+    assert out == {"delta": 0.3333333333333333, "lo": 0.11111111111111116,
+                   "hi": 0.5555555555555555, "verdict": "a_better", "n_items": 12,
+                   "mde": 0.3616830682661502}
 
 
 def test_paired_delta_pooled_n_and_delta_arithmetic():
