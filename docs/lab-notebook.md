@@ -3524,3 +3524,23 @@ Quiet-window chain (`$STACK_WORKDIR/quiet_window/`) after the M30 ladder, one st
   of the 17 GB `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` + its 751 MB drafter, the same footprint as the 2 h ladder), then
   restart the bench router on the draft-OFF overlay. Held pending operator go after the memory
   incident.
+
+## 2026-08-31 (night) — M29 re-probe 1.18× (STOP, k=1); second memory incident from the split probe → bare-process probes retired
+
+- Chain 2 (`$STACK_WORKDIR/quiet_window/chain2.py`, operator go): campaign router 47739 stopped by
+  pid (0 listeners verified) → `m1.mtp_probe --arm both` with `PYTHONPATH=<fork branch>:benchmark`
+  → OFF 143.8/138.0/137.4, ON 167.2/155.7/163.2 tok/s; **median ratio 1.18×**, acceptance
+  0.909/0.849/0.891; `rounds == n` (1 draft/round). Gate STOP (<1.3×). Result json
+  `$STACK_WORKDIR/m29/probe_k1/mtp_probe_result.json` (its `mlx_vlm_sha` reads the submodule and is
+  wrong for this run — the code was the branch on PYTHONPATH, as in M14).
+- **Second memory incident**: `prefill_split.py` v2 (`lazy=True`, attribute-replacement timing
+  wrapper) still drove >10 GB of swapping within ~80 s of starting the 32K prefill — the per-sublayer
+  `mx.eval` keeps every intermediate materialised alongside the 17 GB weights and the growing KV.
+  Operator flagged it; killed by pid (SIGTERM, rc=-15), memory back to 92 % free within seconds.
+  **Bare-process model-loading probes are RETIRED on this box** (two incidents in one hour). Any
+  future per-layer split or H1 profile goes through the SERVER path: add opt-in timing
+  instrumentation inside the fork (env-gated, e.g. `MLX_VLM_MTP_PROFILE=1` around draft_block /
+  verify / walk / rollback in `_mtp_rounds`, logged to the worker's stderr) and drive it with the
+  probe's own router — same footprint as normal serving, which has never caused pressure.
+- Chain 2 then restarted the bench router on the draft-OFF overlay (uv parent 68029, listener
+  68032; `SESSION_MAX=2`, `APC_ENABLED` absent — verified with `ps -Eww`); no worker resident.

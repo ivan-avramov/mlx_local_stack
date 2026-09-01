@@ -205,6 +205,29 @@ TDD) and the scoresheet is re-emitted — 15 graded cells surfaced. The m23c arm
 still out-selected in the table (n=20 vs the 50-row m23 arms, which are INVALIDATED — see the
 table's provenance caveats); the numbers of record for m23c are the ones in this section.
 
+### 2026-08-31 (night) — M29 re-probe: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MTP with the one-pass mamba2 verify goes from 0.76× to **1.18×** (STOP at the 1.3× gate, k=1); the head loop is now the binding term
+
+Fork branch `nemotron-h-with-states` @ `dd2a2dcb` (with-states Metal kernel + ops twin replacing the
+per-position verify replay; CPU suite 36 passed, **GPU equivalence 22 passed**) on PYTHONPATH; same
+M6a protocol as M14 (3 fixed coding items, deployed sampling via the temp registry, router restart
+per arm, draft flags verified at the worker cmdline; `$STACK_WORKDIR/m29/probe_k1/`).
+
+| arm | lru_cache | token_bucket | bst | median |
+|---|---|---|---|---|
+| OFF tok/s | 143.8 | 138.0 | 137.4 | 138.0 |
+| ON tok/s | 167.2 | 155.7 | 163.2 | 163.2 |
+| acceptance (ON) | 0.909 | 0.849 | 0.891 | — |
+
+**Ratio 1.18× (was 0.76× with the replay) — verdict STOP (< 1.3×) at one draft per round.** Round
+arithmetic: ~1.88 emitted tokens per round at 163 tok/s → 11.5 ms per round vs a 7.25 ms target
+step = 1.6 target steps per round (was 2.5). The verify is now one forward (≈8 ms for 2 tokens);
+the remaining ~3.5 ms per round is the drafter forward + per-round syncs/Python — ~0.5 target
+step for a 2-layer head, i.e. overhead, not compute. Deeper drafting cannot help at this head
+cost (k=2: ~2×3.5 + ~9 ms for ~2.65 tokens ≈ 165 tok/s; k=3 ≈ 161), so the pre-registered next
+step is the H1 head-loop profile, not k=2/3. The kernel change itself is a correctness-verified
+improvement to the fork and stays (any hybrid-recurrent target benefits). Measurement stays
+predictor-OFF; the registry entry stays draft-OFF.
+
 ### 2026-08-31 (night) — Methodology: the M5 GPU Neural Accelerators are ACTIVE by default in the installed mlx 0.32.0 (3.8× fp16 GEMM, 3.5× 4-bit quantized_matmul vs the forced non-NA path); the June "dead end" was an instrument error
 
 `benchmark/spikes/na_discriminator.py`, M5 Max, macOS 26.6.2, mlx 0.32.0 wheel (minos 26.2):

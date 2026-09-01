@@ -1,7 +1,10 @@
 # Handoff — 2026-08-31 night (M27 CERTIFIED + EXECUTED — `3a200a9`; B menu = three certified MTP triples; box queue next: M21 → M12 → M17/D11)
 
-Single box (M5 Max 64 GB). **No run is live (2026-08-31 ~21:30).** Router :8000 (pid 47739,
-draft-OFF overlay) is UP with NO worker resident (unloaded by the quiet-window chain). Tonight's
+Single box (M5 Max 64 GB). **No run is live (2026-08-31 ~21:45).** Router :8000 RESTARTED by
+chain 2 (listener pid 68032, uv parent 68029; `$STACK_WORKDIR/m29/router_off.pid`), draft-OFF
+overlay, SESSION_MAX=2, APC absent (verified), NO worker resident. **M29 re-probe DONE: 1.18×
+(from 0.76×), STOP at k=1; next = H1 profile via SERVER-path instrumentation (bare-process probes
+RETIRED after two swap incidents tonight).** Tonight's
 box results: M30 ladder STOPPED at Phase A (temperature not the lever); NA discriminator +
 forced-non-NA control → **neural accelerators ARE active by default** (lab-notebook); fork-branch
 GPU equivalence 22 passed; M6a re-probe REFUSED (router must be stopped first) — pending operator
