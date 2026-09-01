@@ -3654,3 +3654,22 @@ serialised harness, not real cost.
 - Watcher note: `bench_watch --order model` reports "SUSPECT WRONG FILE" / "flat for N ticks" for queued and
   completed arms — heuristics that assume roundrobin; harmless but noisy. `cut` in a monitor pipeline
   buffers (again) — dropped.
+
+## 2026-09-01 (day) — M12 d128k n=25 executed end-to-end; NO cliff; challenger's depth tax quantified
+
+- Honest-provenance run 01:32→14:59 (driver 99009, `MLX_SERVE_CONFIG` at the overlay verified on the
+  pid; watcher + monitor throughout; two mid-run stall checks resolved as busy — GPU 94–98 %,
+  cputime advancing, request open). 75/75 rows, zero errors, zero timeouts, swap flat (shrank
+  4.26→2.9 GB), peak 35.2 GB.
+- Scores + tests: campaign-results 2026-09-01. Headline: no >10pp cliff; `Qwen3.8-27B-mlx-uniform-4bit`
+  −8.0pp strict from one `meander` budget-hit (`HumanEval/2`, 82,025 tok, 8,749 s) — 29 % of its arm
+  wall; `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` +4.0pp (96.0); `Ornith-1.0-35B-mlx-uniform-4bit` flat 88.0.
+- Graded incrementally per arm while the next arm generated (EvalPlus docker, CPU-only — no GPU
+  contention); cliff test computed on the same-25-item d64k comparators extracted before the run.
+- Sidebar (operator question, 14:30): external YouTube claim of "Qwen 3.8 at 53 tok/s via Ollama on a
+  Mac" <!-- allow-shorthand --> reconciled without a probe: short-context serving number (Ollama default num_ctx truncates
+  agent histories) vs our predictor-OFF measurements at 68–135K prompts; our certified
+  (`Qwen3.8-27B-mlx-uniform-4bit`, t0.6, mtp 1.60×) triple serves ≈ 48–53 tok/s short-context on this
+  box; no software gap — NA-active MLX is at the qmm roofline. The video's own harness-traffic data
+  (438K–1.69M input tokens/week across harnesses) corroborates the prefill-bound mechanism and
+  motivates logging per-task input-token traffic in M17/M21.

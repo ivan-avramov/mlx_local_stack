@@ -1,16 +1,11 @@
-# Handoff — 2026-09-01 night checkpoint (M29 CLOSED at 1.18×; **M12 d128k n=25 RUN LIVE** since 01:32, honest provenance)
+# Handoff — 2026-09-01 afternoon checkpoint (M29 CLOSED 1.18×; **M12 d128k DONE — NO CLIFF on all three**; next = M12 pooling analysis, then M21/M17/D11)
 
-Single box (M5 Max 64 GB). **RUN LIVE: M12 d128k** — driver pid in `$STACK_WORKDIR/m12/full_d128k.pid`
-(launched 01:32 with `MLX_SERVE_CONFIG=<overlay>` in env), watcher pid in `watch_full.pid`, logs
-`full_d128k.log` / `watch_full.log`; 3 arms × 25 items, `--order model` (runner-up → pick → challenger),
-expected ≈ 10 h + tail. Router :8000 = draft-OFF bench overlay REGENERATED 2026-08-31 late night
-(`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC absent), listener pid in
-`$STACK_WORKDIR/m12/router_off.pid` (80387). Comparators for the cliff test: `$STACK_WORKDIR/m12/d64k_comparators.json`
-(d64k pass on the same 25 items: 22/25, 23/25, 23/25). When the driver exits: `run.py grade --tune d128k`
-(EvalPlus docker), per-model >10pp test with Holm(3), campaign-results + PLAN M12 + data commit.
-Fork `../mlx-vlm`: main = `f5fff9b5` (profiler merged, pushed; branch `nemotron-h-mtp-profile` pushed too);
-`src/mlx-vlm` bumped to it (`5f2f7d8`). Stack pushed through this checkpoint. Working tree: the SIX
-intentional `main_models.yaml` local-path overrides (NEVER commit).
+Single box (M5 Max 64 GB). **No run is live.** Router :8000 = draft-OFF bench overlay (REGENERATED
+2026-08-31 late night, sha `0f0598…`), listener pid in `$STACK_WORKDIR/m12/router_off.pid` (80387),
+last-served worker may be resident but idle (`Qwen3.8-27B-mlx-uniform-4bit`, unload before capacity
+work). Fork `../mlx-vlm` main = `f5fff9b5` (pushed); `src/mlx-vlm` bumped (`5f2f7d8`). Stack has
+unpushed commits: M12 data + docs (this checkpoint) and the two 2026-09-01-night docs commits —
+push awaits operator approval. Working tree: the SIX intentional `main_models.yaml` overrides.
 
 ## This session (all in campaign-results / lab-notebook "2026-08-31 late night")
 - **M29 H1 DONE**: env-gated MTP round profiler (`mlx_vlm/speculative/mtp_profile.py`;
@@ -34,9 +29,10 @@ intentional `main_models.yaml` local-path overrides (NEVER commit).
   Next O/C: **C45**.
 
 ## THE BOX QUEUE
-1. **M12 coding-at-depth d128k cliff check** (pre-registered, PLAN M12): pilot-first, 5 seeded random
-   items at d64k size the run; regenerate the bench overlay from the working registry FIRST (header
-   predates the M27 flip). Then M21 / M17 / D11.
+1. **M12 d128k DONE 2026-09-01** (campaign-results): NO cliff at the >10pp bar — Δ strict 0.0 /
+   +4.0 / −8.0pp for `Ornith-1.0-35B-mlx-uniform-4bit` / `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` /
+   `Qwen3.8-27B-mlx-uniform-4bit`; the challenger's −8 is one 82K-token meander (29 % of its 8.4 h
+   arm). Remaining M12 scope: **pooling-for-power analysis, no box time**. Then M21 / M17 / D11.
 2. **C41 fork fix** (engineering, no box): `Qwen3_5MTPSplitter` separate-expert `postprocess`, detection
    fallback to root `model_type`, fail-loud on per-expert sidecar keys — TDD, implementer + verifier, then
    bump. Propose the plan before writing files.

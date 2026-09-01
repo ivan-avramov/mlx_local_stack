@@ -277,6 +277,45 @@ predictor question. The with-states kernel itself stays (it turned 0.76× into 1
 any hybrid-recurrent target). H1's head-split switch (`MLX_VLM_MTP_PROFILE_HEAD`) is structurally
 empty at k=1 for seed-path drafters — use the `accept` bucket.
 
+### 2026-09-01 — M12 d128k cliff check COMPLETE: NO depth cliff on any B-menu model at the pre-registered >10pp bar; the challenger pays a growing runaway/verbosity tax at depth
+
+Pre-registered design (PLAN M12, ruled 2026-08-29): n=25 seeded humanevalplus draw (seed-0 prefix of
+the d64k n=50 draw → item-paired within model), depth 131072, all three B-menu models, deployed
+profile, draft-OFF overlay served AND fingerprinted (`MLX_SERVE_CONFIG` at the overlay; first launch
+without it re-triggered C35 and was archived + regenerated — lab-notebook 2026-09-01), probe-timeout
+12000 s. Prompts 135.3–135.7K tokens; `cap − prompt` ≈ 126K > `max_tokens` 102400 → resolved budget
+**81920, unclamped, every row**. ONE test per model: acc_strict drop > 10pp vs the SAME model's d64k
+on the SAME 25 items (Holm across the three).
+
+| n=25, same items | d64k acc/strict | d128k acc/strict | Δ strict | conv | nonconv | arm wall | s/item |
+|---|---|---|---|---|---|---|---|
+| `Ornith-1.0-35B-mlx-uniform-4bit` @t0.4 | 88.0 / 88.0 | **88.0 / 88.0** | 0.0pp | 100 % | — | 1.2 h | 166 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 | 92.0 / 92.0 | **96.0 / 96.0** | +4.0pp | 100 % | — | 3.9 h | 555 |
+| `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 | 92.0 / 92.0 | **88.0 / 84.0** | −8.0pp | 96 % | 1 meander | 8.4 h | 1213 |
+
+**Verdict: NO CLIFF, all three** (no Δ exceeds 10pp; Holm moot with zero rejections; at n=25 the
+per-model MDE is ≈ ±26pp, so these are cliff *checks*, not rankings — no pairwise compares, per the
+pre-registration). Paired fails: runner-up {9, 32, 97} vs {9, 29, 32} at d64k (one swap); pick
+{32} vs {32, 97} (97 recovered); challenger {32, 97, 99} vs {32, 99} (97 newly lost), plus the
+`HumanEval/2` budget-hit that only `acc_strict` sees (its answer passed `acc`).
+
+**Runaway tax at depth (challenger only).** `HumanEval/2`: 82,025 tokens, 8,749 s, `meander` — 4 %
+of items, **29 % of the arm's wall-clock**; `HumanEval/32` (37.7K, 63 min) and `HumanEval/99`
+(33.7K, 57 min) converged but heavy. The two 27B trunks decode ≈ 11.3–11.8 tok/s at 135K (15–16 at
+68K); `Ornith-1.0-35B-mlx-uniform-4bit` 55–61 (72 at 68K). Runaways remain draw-dependent, not
+depth-caused: `HumanEval/32` budget-hit at d64k on the runner-up but converged at d128k on all
+three; the challenger's d64k `HumanEval/32` marathon (36.7K) reproduced at d128k (37.7K).
+
+**Mechanism (HW-specific; logged).** The d128k wall is PREFILL-bound on the dense-trunk 27Bs:
+≈ 8 min at 135K vs ≈ 2 min at 68K (4× for 2× depth — quadratic attention dominates at this depth),
+vs ≈ 110 s on the 3B-active MoE. Peak memory ≤ 35.2 GB (gate 46), budget never clamped. Costs per
+arm are dominated by (prefill × 25) + the verbosity tail, which is why the challenger — 3× more
+verbose, plus the meander — is 7× the runner-up's wall at identical n.
+
+Data: `benchmark/results/<model>/humanevalplus.d128k.*` (fork `f5fff9b5`, honest `draft_kind: off`
+fingerprints, overlay sha `0f0598…`); comparators + archived false-provenance pilot in
+`$STACK_WORKDIR/m12/`. M12's remaining scope is the pooling-for-power analysis (no box time).
+
 ### 2026-08-31 (night) — Methodology: the M5 GPU Neural Accelerators are ACTIVE by default in the installed mlx 0.32.0 (3.8× fp16 GEMM, 3.5× 4-bit quantized_matmul vs the forced non-NA path); the June "dead end" was an instrument error
 
 `benchmark/spikes/na_discriminator.py`, M5 Max, macOS 26.6.2, mlx 0.32.0 wheel (minos 26.2):
