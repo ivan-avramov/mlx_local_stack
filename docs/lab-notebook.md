@@ -3392,7 +3392,10 @@ Box-free session task; no run live, router :8000 untouched (draft-OFF overlay, p
   draw (trial, seed, score, completion_tokens, finish_reason, budget_hit, decode_tps, wall_s) —
   via the existing `on_rung` persistence, so the partial jsonl and `reasoning.json` now hold
   every draw. TDD (two tests failed first; my first assertion assumed the test driver's canned
-  answer scores 1.0 — it is a dummy, fixed the test not the code). Suite: 1245 passed when run
-  with `MLX_SERVE_CONFIG` pointed at the served draft-OFF overlay; without it the two C35
-  tripwire tests refuse, correctly, because the registry of record now says mtp for the
-  resident `Ornith-1.0-35B-mlx-uniform-4bit` while the bench worker serves off.
+  answer scores 1.0 — it is a dummy, fixed the test not the code). Suite: 1246 tests; with a bench
+  router live under the draft-OFF overlay no single env is fully green — plain run: the two
+  C35 tripwire tests refuse (correctly: registry of record says mtp for the resident
+  `Ornith-1.0-35B-mlx-uniform-4bit`, worker serves off); with `MLX_SERVE_CONFIG` on the
+  overlay: `test_registry_default_is_CWD_INDEPENDENT` fails instead (asserts the default
+  basename). 1245 pass each way, union green; verified the tripwire failures are identical
+  at HEAD without the persistence change (stash check).
