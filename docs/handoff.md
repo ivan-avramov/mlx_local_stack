@@ -32,7 +32,7 @@ at 9 tok/s vs ~19 min on `Ornith-1.0-35B-mlx-uniform-4bit`). Reasoning depth doe
   draws × (budget ÷ floor decode), never converged-draw pace (lab-notebook 2026-08-31).
 - Standing debt: the `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter` HF card still says
   PROBE-ONLY (outward-facing update, do deliberately — bundle with the M27 drafter upload).
-  C31 deferred. Next O/C number: **C43**.
+  C31 deferred. Next O/C number: **C44**.
 
 ## THE BOX QUEUE — updated 2026-08-31
 
@@ -42,8 +42,8 @@ at 9 tok/s vs ~19 min on `Ornith-1.0-35B-mlx-uniform-4bit`). Reasoning depth doe
    answer; C42 (block-size retry) rec NO.
 2. **M27 `Ornith-1.0-35B-mlx-uniform-4bit` — OFAT DONE 2026-08-31 evening: acc EQUIVALENT
    (92.07 vs 92.68, CI [−4.3,+3.0], 4:5), strict inconclusive (runaway placement), 1.56×
-   paired, acceptance 0.778 — PASSES the M6d certification standard.** AWAITING OPERATOR
-   GO for the flip package: (a) upload the sidecar dir
+   paired, acceptance 0.778 — PASSES the M6d certification standard.** **RULED CERTIFY (C43). NEXT SESSION EXECUTES
+   the flip package (no box time needed for a–d): (a) upload the sidecar dir
    `$STACK_WORKDIR/scratch/m6a/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter/` to HF as
    `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter` (public, card states CERTIFIED M27
    + numbers); (b) `main_models.yaml`: `draft_kind: mtp` + `draft_model: caslca/...` with the

@@ -3352,3 +3352,7 @@ same corpus, same protocol as `Qwen3.8-27B-mlx-uniform-4bit`'s M6d.** Registry f
 `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter` upload put to the operator (outward-facing).
 M28 stays dormant (acceptance 0.78 measured on the corpus vs the ~0.8 trigger — borderline;
 noted, not triggered: the speed already clears 1.3× with margin).
+
+- 2026-08-31 (evening, C43): operator RULED CERTIFY for M27 on the OFAT above; execution
+  (HF upload of the sidecar, registry flip commit, ledger lines) deferred to the next session
+  by operator instruction ("don't run anything here"). Session checkpointed and pushed.
