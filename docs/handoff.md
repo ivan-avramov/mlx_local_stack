@@ -1,114 +1,60 @@
-# Handoff — 2026-08-31 night (M27 CERTIFIED + EXECUTED — `3a200a9`; B menu = three certified MTP triples; box queue next: M21 → M12 → M17/D11)
+# Handoff — 2026-08-31 late night checkpoint (M27 flipped; M30 ladder closed; M29 K merged + bumped, 1.18×; NA active; RCA of the swap incidents; NEXT = M29 H1 from a fresh session)
 
-Single box (M5 Max 64 GB). **No run is live (2026-08-31 ~21:45).** Router :8000 RESTARTED by
-chain 2 (listener pid 68032, uv parent 68029; `$STACK_WORKDIR/m29/router_off.pid`), draft-OFF
-overlay, SESSION_MAX=2, APC absent (verified), NO worker resident. **M29 re-probe DONE: 1.18×
-(from 0.76×), STOP at k=1; next = H1 profile via SERVER-path instrumentation (bare-process probes
-RETIRED after two swap incidents tonight).** Tonight's
-box results: M30 ladder STOPPED at Phase A (temperature not the lever); NA discriminator +
-forced-non-NA control → **neural accelerators ARE active by default** (lab-notebook); fork-branch
-GPU equivalence 22 passed; M6a re-probe REFUSED (router must be stopped first) — pending operator
-go after a memory incident (bare-process model load in the split probe; fixed, `lazy=True`).
-**Rule: no bare-process full model loads while the operator is at the machine.** Earlier tonight
-(historical, keep for the artifacts): **the ladder (launched 19:17)** — orchestrator
-`$STACK_WORKDIR/nemo_ladder/orchestrator.py` (pid in `orchestrator.pid`, log `orchestrator.log`),
-watcher `watch.py` (pid `watch.pid`, `watch.log`, 5-min cadence, pid-file liveness + self-test).
-Phase A = temperature OFAT on the M11 24K cliff rung (t1.0 baseline re-measured alongside
-0.7/0.5/0.3, 5 draws each, `reasoning.a24k.t<T>.json`); PRE-REGISTERED pick = highest temp with
-acc ≥ 0.85 AND 0 budget hits (none → axis stops, temperature is not the lever); Phase C = full
-ladder at the pick (M11 deep design, `reasoning.t<T>.json`); Phase D = humanevalplus n=15 seed-39
-draw at the pick (`--tune t<T>`), graded. Bounds 2 h / 12 h / 4 h. Router :8000 = draft-OFF
-bench overlay (`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC absent;
-router pid in `$STACK_WORKDIR/m27/router_off.pid`), worker verified zero `--draft` tokens.
-**Never change serving config while it runs; SIGTERM the orchestrator only (subprocess timeout
-kills its child); one resident model.** The M27 flip package landed earlier tonight (below).
-NOTE the bench overlay predates the flip — it strips draft keys anyway, but regenerate it from
-the working registry before the next bench run (lab-notebook 2026-08-28) so its header is current.
+Single box (M5 Max 64 GB). **No run is live.** Router :8000 = draft-OFF bench overlay
+(`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC absent — verified `ps -Eww`;
+listener pid in `$STACK_WORKDIR/m29/router_off.pid`, uv parent 68029), **no worker resident**.
+Fork `../mlx-vlm` main = `dd2a2dcb` (pushed; branch `nemotron-h-with-states` pushed too);
+`src/mlx-vlm` bumped to it (`14cfaa7`). Stack pushed through this checkpoint (see git log).
 
-## Done this session (2026-08-31 night; lab-notebook same date)
+## Tonight's results (all in campaign-results / lab-notebook 2026-08-31)
+- **M27 CERTIFIED + EXECUTED** (`3a200a9`): `Ornith-1.0-35B-mlx-uniform-4bit` ships `draft_kind: mtp`;
+  drafter `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter` public (sha-verified); the
+  `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter` card → CERTIFIED M6d. B menu = three certified
+  triples (2.06× / 1.56× / 1.60×). SIX local `main_models.yaml` overrides in the worktree (NEVER commit).
+- **C39 per-sample persistence** (`a38c476`) + ladder `--temp`/`--out-tag` (`40e088e`).
+- **M30** `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 24K temperature OFAT: STOPPED at Phase A per
+  pre-registration — budget hits 3/5→2/5→2/5→2/5 across t1.0→0.3, 8/9 budget-hit draws still
+  correct, same prompt hits at every temp. Temperature is not the lever; tune stays t1.0. C40 evidence.
+- **M29 (C44 GO)**: mamba2 with-states kernel + ops twin replaced the per-position verify replay
+  (K, `dd2a2dcb`; CPU 36 passed, GPU equivalence 22 passed). Re-probe **0.76× → 1.18×**
+  (OFF 138.0 / ON 163.2 tok/s, acceptance 0.85–0.91, k=1) — STOP at 1.3×. Remainder ≈ 3.5 ms/round
+  of drafter forward + syncs/Python → **H1 profile is next** (spec: `docs/specs/m29-h1-mtp-profile.md`).
+  Registry stays draft-OFF for this model.
+- **M5 Neural Accelerators ARE ACTIVE by default** (forced non-NA control `MLX_METAL_GPU_ARCH=applegpu_g16s`:
+  fp16 55.9→14.9, 4-bit qmm 52.7→14.9 TFLOP/s). June "dead end" was an instrument error; AGENTS.md
+  corrected (`1fafd43`). Prefill split @32K on the B 1st choice: MLP 43.5 % (already at the NA qmm
+  rate), attention 26.5 %, GDN 21.9 % → no cheap prefill lever left on the hybrids.
+- **RCA of two swap incidents (mine)**: bare-process MLX runs → allocator-cache bloat (default cache
+  limit 65 GB on a 64 GB box; pool grew ∝ n² to 24 GB by 16K); `get_peak_memory` and `ps` RSS both
+  blind. Rule in box-notes: bare-process MLX runs set `mx.set_cache_limit(≤4 GB)` +
+  `mx.set_memory_limit`; footprint = `active + cache`. Server path is immune. Docker was a bystander.
 
-- **M27 CERTIFIED & EXECUTED**: `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter` public
-  (7 files, safetensors sha256 verified vs the local sidecar, card CERTIFIED M27 incl. the
-  k=2-served / `block_size: 3`-declared note); `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter`
-  card PROBE-ONLY → CERTIFIED M6d; registry flip **`3a200a9`** (`draft_kind: mtp` + hub
-  `draft_model` + `# CERTIFIED M27 2026-08-31`, B-menu header comment brought current); docs
-  (campaign-results, PLAN M27 DONE / M6d row, ledger §1 B predictor paragraph — first time
-  M6b/M6d/M27 are all in the ledger — C43 executed, AGENTS.md summary line).
-- B menu now ships three certified (model, tune, mtp) triples: 2.06× / 1.56× / 1.60×.
-  Measurement stays predictor-OFF by rule. M28 dormant (acceptance 0.778 vs ~0.8 trigger).
-- **Working tree now carries SIX intentional `main_models.yaml` local-path overrides**
-  (NEVER commit): 3× `draft_model` → `$STACK_WORKDIR/scratch/m6a/<name>-mtp-drafter`
-  (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `Qwen3.8-27B-mlx-uniform-4bit`,
-  `Ornith-1.0-35B-mlx-uniform-4bit`) + 3× `hf_path` → `$STACK_WORKDIR/models/…`
-  (`Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`, `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`,
-  and `Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit` — the last still NOT-YET-UPLOADED).
-  Commit procedure that worked without stash: build the clean version from `git show
-  HEAD:main_models.yaml`, `git hash-object -w` + `git update-index --cacheinfo`, commit,
-  `/bin/cp -f` the worktree version back, assert `git diff` = exactly 6 override lines.
-- **New box trap:** `cp` is aliased interactive (like `rm`) — scripted `cp` over an existing
-  file hangs on the prompt. Use `/bin/cp -f` and verify.
+## Operator decisions owed
+- **C40** (strict single-number `reasoning_effective_ctx`; rec (a), reinforced by M30). **C41** (qwen3_5
+  splitter TDD fix; rec: fix). **C42** (M14 block-size retry; rec NO). C31 deferred. Next O/C: **C45**.
 
-## Operator decisions owed (none blocking the box queue)
+## THE BOX QUEUE
+1. **M29 H1 — run from a FRESH SESSION** (operator 2026-08-31): implement the env-gated MTP round
+   profiler per `docs/specs/m29-h1-mtp-profile.md` on fork branch `nemotron-h-mtp-profile` (Sonnet
+   implements, the verifier agent verifies, CPU-pinned tests), run it through `m1.mtp_probe --arm on` (server path;
+   stop router 68032 by pid first, restart on the overlay after), apply the pre-registered decision
+   rule (H2 → re-probe → k=2/3 only if head < 2 ms → OFAT if ≥ 1.3× → else close M29 → M12).
+2. **M12 coding-at-depth d128k cliff check** (pre-registered, PLAN M12). Then M21 / M17 / D11.
+3. Housekeeping: regenerate the bench overlay from the working registry before the next bench run
+   (header predates the M27 flip); the fork sha in new manifests is now `dd2a2dcb`.
 
-- **C40** — strict single-number `reasoning_effective_ctx` (rec: largest passing strict rung
-  + runaway rate / wall share reported separately).
-- **C41** — fork TDD fix for the qwen3_5 MTP splitter (rec: fix — stacking for separate-expert
-  sources, root-`model_type` detection fallback, fail-loud on per-expert keys).
-- **C42** — M14 block-size-3 retry (rec: NO). C31 deferred. Next O/C number: **C44**.
+## Standing rules that bit tonight
+Monitors: `/usr/bin/tail -F` + `/usr/bin/grep --line-buffered`, pid-file liveness with a known-positive
+self-test (the first ladder watcher pattern-matched a cmdline and declared a live run dead). `cp`/`rm`
+are interactive-aliased — `/bin/cp -f`, `rm -f`, verify. `mtp_probe` refuses to run while the campaign
+router listens on :8000 — stop it by pid first (fail-loud, correct). Bare-process model loads: cache
+cap + memory limit + `active+cache` watchdog, or don't. Full registry model names in commit messages too.
 
-## THE BOX QUEUE — updated 2026-08-31 night
+## Artifacts
+M27 `$STACK_WORKDIR/m27/` (+ `flip/` cards & registry versions); M30 `$STACK_WORKDIR/nemo_ladder/`
+(`phaseA.json`, per-temp logs) + `benchmark/results/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit/reasoning.a24k.t*.json`
+(committed); M29 `$STACK_WORKDIR/m29/probe_k1/`; chains `$STACK_WORKDIR/quiet_window/`; NA + memory
+probes `$STACK_WORKDIR/nax_probe/` (`memdebug_A/B.log`, `prefill_split_v3.log`); sidecars
+`$STACK_WORKDIR/scratch/m6a/`. HF cache 253G + deliberate MTP-source fetches — don't "fix" it.
 
-1. ~~M27~~ **DONE (certified + executed, `3a200a9`).**
-2. ~~Per-sample persistence~~ **DONE a38c476 (2026-08-31 night)**: every rung record now carries
-   `rows` (trial, seed, score, completion_tokens, finish_reason, budget_hit, decode_tps,
-   wall_s). Sizing rule for budget-hitting designs stands: bound = draws × (budget ÷ floor
-   decode), never converged-draw / pilot pace. **Test-suite note:** while a bench router is live under
-   the draft-OFF overlay, NO single env is fully green: without `MLX_SERVE_CONFIG` the two C35
-   tripwire tests correctly refuse (registry says mtp for the resident
-   `Ornith-1.0-35B-mlx-uniform-4bit`, worker serves off); with `MLX_SERVE_CONFIG` pointed at
-   the overlay `test_registry_default_is_CWD_INDEPENDENT` fails instead (it asserts the
-   default basename). 1245/1246 pass in each mode, union all green; with no router live the
-   plain run is green. Not a defect in either test — environment-conditional by design.
-3. **LIVE: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder** (operator 2026-08-31:
-   make it "usable"; its coding rows at t1.0 already converge 99–100 %, the runaways are on the
-   reasoning axis). Ladder CLI grew `--temp`/`--out-tag` (`40e088e`).
-4. **M29 (C44 RULED GO): one-pass MTP verify for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`** —
-   **K DONE on fork branch `nemotron-h-with-states` = `dd2a2dcb`** (K1–K4 + verifier fixes N1–N9;
-   36 passed / 1 GPU-gated skip, CPU-pinned; verifier verdict MERGEABLE WITH FIXES → fixes applied;
-   `../mlx-vlm` is CHECKED OUT on that branch — the live worker imports `src/mlx-vlm` @ `d1d57955`,
-   unaffected). **QUIET-WINDOW CHAIN ARMED** (`$STACK_WORKDIR/quiet_window/chain.py`, pid in
-   `chain.pid`, log `chain.log`): waits for the ladder orchestrator pid, then unload →
-   `na_discriminator.py` (NA re-test on mlx 0.32.0) → `nax_probe/prefill_split.py` (B 1st
-   choice @32K) → fork-branch GPU equivalence test → M6a re-probe k=1 with the branch on
-   PYTHONPATH (`$STACK_WORKDIR/m29/probe_k1/`), 1.3× gate. The probe restarts :8000 on its own
-   temp registry per arm — after the chain, restart the bench router on the draft-OFF overlay
-   before any measurement. H1 head profile + k=2/3 only if the k=1 result lands in 1.1–1.3×. Original line: Nemotron-MTP work IF the analysis says ≥1.3× is reachable
-   (lab-notebook 2026-08-31 night: mechanism = per-position verify replay + overhead-bound head,
-   NOT the 4-bit quantization) → M12 coding-at-depth d128k cliff check** (pre-registered, PLAN M12). M21 / M17 /
-   D11 after.
-   Every n≥40 job gets a 5-item SEEDED-RANDOM pilot first; monitors use `/usr/bin/tail -F` +
-   `/usr/bin/grep --line-buffered` with a known-positive self-test line.
-
-## Standing state
-
-- **NOT PUSHED**: `3a200a9` (registry flip) + this session's docs commit are local; `git log
-  origin/main..HEAD` lists them. Push only on explicit in-turn approval. Fork `../mlx-vlm`
-  main = `d1d57955` (pushed); `src/mlx-vlm` submodule bump still deferred to the next natural bump.
-- Untracked: M6b/M6d/M27 OFAT rows under `benchmark/results/` (M27:
-  `Ornith-1.0-35B-mlx-uniform-4bit/humanevalplus.mtpon.*|mtpoff.*`; M6b storage precedent) +
-  old m23-era files. Live `~/.config/opencode/opencode.json` = BENCH carrier on :8000.
-- Artifacts: M11 `$STACK_WORKDIR/m11/`; M14 `$STACK_WORKDIR/m14/`; M27 `$STACK_WORKDIR/m27/`
-  (overlay_ornith_mtp_on.yaml, ofat_accuracy_n164.json, probe/pilot/full logs, `flip/` = card
-  drafts + committed/worktree registry versions); sidecars `$STACK_WORKDIR/scratch/m6a/`;
-  pre-flip registry backup `$STACK_WORKDIR/scratch/main_models.local-overrides.backup3.yaml`.
-- Bench-router invariants: draft-OFF overlay + SESSION_MAX=2 + APC absent; C35 tripwire live.
-  Bench suite last GREEN at 1243 (not re-run this session — no bench code touched). HF cache
-  253G + ~20 GB deliberate MTP-source fetches — don't "fix" it.
-
-## Recently closed (2026-08-30/31)
-
-M11 DONE (lenient 156K/156K/156K B menu, 16K `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`);
-M14 CLOSED (probe STOP 0.76×); P17 fork merge+push; M6d CERTIFIED (`76dad59`); M6c suffix leg
-CLOSED (1.20×); C38 B menu of three; C39 ruled; C43 ruled + executed.
-
-**Order of resumption: this file → `docs/PLAN.md` → `docs/open-questions.md`.**
+**Order of resumption: this file → `docs/specs/m29-h1-mtp-profile.md` → `docs/PLAN.md` → `docs/open-questions.md`.**
