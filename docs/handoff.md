@@ -1,13 +1,20 @@
 # Handoff — 2026-08-31 night (M27 CERTIFIED + EXECUTED — `3a200a9`; B menu = three certified MTP triples; box queue next: M21 → M12 → M17/D11)
 
-Single box (M5 Max 64 GB). **No run is live.** This session was box-free: the M27 flip
-package landed in full (operator in-turn go on the outward-facing HF pass). Router :8000 still
-serves the draft-OFF bench overlay (`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`,
-SESSION_MAX=2, APC absent; router pid in `$STACK_WORKDIR/m27/router_off.pid`) with
-`Ornith-1.0-35B-mlx-uniform-4bit` resident from the M27 OFF arm. **Unload before any other
-model work (`POST /v1/models/unload` + pgrep-verify); one resident model.** NOTE the bench
-overlay predates the flip — it strips draft keys anyway, but regenerate it from the working
-registry before the next bench run (procedure: lab-notebook 2026-08-28) so its header is current.
+Single box (M5 Max 64 GB). **A RUN IS LIVE (launched 2026-08-31 19:17): the
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder** — orchestrator
+`$STACK_WORKDIR/nemo_ladder/orchestrator.py` (pid in `orchestrator.pid`, log `orchestrator.log`),
+watcher `watch.py` (pid `watch.pid`, `watch.log`, 5-min cadence, pid-file liveness + self-test).
+Phase A = temperature OFAT on the M11 24K cliff rung (t1.0 baseline re-measured alongside
+0.7/0.5/0.3, 5 draws each, `reasoning.a24k.t<T>.json`); PRE-REGISTERED pick = highest temp with
+acc ≥ 0.85 AND 0 budget hits (none → axis stops, temperature is not the lever); Phase C = full
+ladder at the pick (M11 deep design, `reasoning.t<T>.json`); Phase D = humanevalplus n=15 seed-39
+draw at the pick (`--tune t<T>`), graded. Bounds 2 h / 12 h / 4 h. Router :8000 = draft-OFF
+bench overlay (`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC absent;
+router pid in `$STACK_WORKDIR/m27/router_off.pid`), worker verified zero `--draft` tokens.
+**Never change serving config while it runs; SIGTERM the orchestrator only (subprocess timeout
+kills its child); one resident model.** The M27 flip package landed earlier tonight (below).
+NOTE the bench overlay predates the flip — it strips draft keys anyway, but regenerate it from
+the working registry before the next bench run (lab-notebook 2026-08-28) so its header is current.
 
 ## Done this session (2026-08-31 night; lab-notebook same date)
 
@@ -53,7 +60,13 @@ registry before the next bench run (procedure: lab-notebook 2026-08-28) so its h
    the overlay `test_registry_default_is_CWD_INDEPENDENT` fails instead (it asserts the
    default basename). 1245/1246 pass in each mode, union all green; with no router live the
    plain run is green. Not a defect in either test — environment-conditional by design.
-3. **M21 int8 causal test** → **M12 d128k cliff check** (pre-registered, PLAN M12) → **M17/D11**.
+3. **LIVE: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder** (operator 2026-08-31:
+   make it "usable"; its coding rows at t1.0 already converge 99–100 %, the runaways are on the
+   reasoning axis). Ladder CLI grew `--temp`/`--out-tag` (`40e088e`).
+4. **Then (operator order, no pause): Nemotron-MTP work IF the analysis says ≥1.3× is reachable
+   (lab-notebook 2026-08-31 night: mechanism = per-position verify replay + overhead-bound head,
+   NOT the 4-bit quantization) → M12 coding-at-depth d128k cliff check** (pre-registered, PLAN M12). M21 / M17 /
+   D11 after.
    Every n≥40 job gets a 5-item SEEDED-RANDOM pilot first; monitors use `/usr/bin/tail -F` +
    `/usr/bin/grep --line-buffered` with a known-positive self-test line.
 

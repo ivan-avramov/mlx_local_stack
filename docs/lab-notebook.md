@@ -3399,3 +3399,42 @@ Box-free session task; no run live, router :8000 untouched (draft-OFF overlay, p
   overlay: `test_registry_default_is_CWD_INDEPENDENT` fails instead (asserts the default
   basename). 1245 pass each way, union green; verified the tripwire failures are identical
   at HEAD without the persistence change (stash check).
+
+## 2026-08-31 (night) — WHY `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MTP ran at 0.76×: mechanism from the fork code + probe arithmetic (not the 4-bit quantization); ladder launched
+
+Operator question: online reports show MTP speedups on this model; is our 0.76× the 4-bit quantization?
+**No.** The quant-sensitive quantity is acceptance, and ours is 0.906 (2282/2518 probe draws) —
+better than the two native heads we certified (0.674, 0.923-class). The cost side is structural:
+
+- **Probe arithmetic** (`$STACK_WORKDIR/m14/mtp_probe_v2/`): ON arm `draft_rounds == draft_n`
+  (ONE draft token per round), emitted ≈ 1.91 tok/round, 104 tok/s → **18.3 ms per round vs a
+  7.25 ms single target step (138 tok/s) = 2.5 target steps per round** for <2 tokens.
+- **Where the 2.5 goes (fork `d1d57955`)**: (1) `nemotron_h/language.py` — when
+  `capture_recurrent_states` is set the backbone **replays the verify block one position at a
+  time through all 52 layers** (Python recursion over `t`) so each mamba2 layer's (conv, ssm)
+  state after every position can be snapshotted for rollback → a 2-token verify = 2 full
+  sequential target forwards, not one batched forward; (2) the head forward
+  (`nemotron_h_mtp`: attention + 128-expert MoE + shared expert + `eh_proj` + full 131K-vocab
+  `lm_head`) is ~3.8 ms by subtraction ≈ 0.5 target step for what is ~2/52 of the compute —
+  overhead-bound (small serialized kernels, per-position `mx.eval` syncs in the walk), the same
+  regime the `Qwen3.8-27B-mlx-uniform-4bit` decode profile showed; (3) rollback snapshot traffic on the 10 % of rounds
+  that reject. Speculation only pays on SLOW targets; a 138 tok/s target leaves no room.
+- **Why GPUs see gains**: vLLM verifies k+1 tokens in ONE forward with kernel-level mamba
+  state handling, drafts 3–6 tokens per round, and on a bandwidth-bound H100/5090 the head is
+  nearly free next to the target read. Field numbers: DGX Spark (273 GB/s, NVFP4, vLLM 0.27.1,
+  3 spec tokens) baseline 81 → MTP 111 tok/s (+37 %), DSpark 124; M4 Max MLX draft-OFF ~70
+  tok/s; RTX 5090 Ollama ~123 tok/s; 200–670 tok/s figures are H100 datacenter endpoints. Our
+  draft-OFF 138 tok/s is already above every single-stream consumer figure found, including
+  DGX Spark WITH speculation.
+- **What could make it pay here (modelled)**: batched single-forward verify with a
+  pre-round snapshot and replay-on-rejection only (≈1.1 target forwards/round instead of 2) +
+  a cheaper head → ~1.1–1.3× at k=1–3 by the arithmetic above; the head overhead is the
+  binding term, so a 30-min ON-overlay profile (head / verify / rollback / sync split) is the
+  gate before any fork work. Pre-registered: proceed to fork work only if the profile-modelled
+  ratio clears 1.3×; otherwise straight to M12.
+- **Ladder launched 19:17** (`$STACK_WORKDIR/nemo_ladder/`): Phase A 24K temperature OFAT
+  (t1.0 re-measured alongside 0.7/0.5/0.3, 5 draws; pre-registered pick = highest temp with
+  acc ≥ 0.85 and 0 budget hits) → Phase C full ladder at the pick → Phase D humanevalplus n=15
+  seed-39 screen. Instrument note: the first watcher pattern-matched `nemo_ladder/orchestrator.py`
+  against a cmdline that reads `orchestrator.py` and declared the live run gone — replaced by a
+  pid-file check with a known-positive self-test before re-arming.
