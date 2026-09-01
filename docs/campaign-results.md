@@ -316,6 +316,27 @@ Data: `benchmark/results/<model>/humanevalplus.d128k.*` (fork `f5fff9b5`, honest
 fingerprints, overlay sha `0f0598…`); comparators + archived false-provenance pilot in
 `$STACK_WORKDIR/m12/`. M12's remaining scope is the pooling-for-power analysis (no box time).
 
+### 2026-09-01 — M12 pooling-for-power: pooled hep+mbpp d64k compares (n=100 paired, stratified cluster bootstrap) — ALL THREE B-menu pairs remain INCONCLUSIVE after Holm; M12 CLOSED
+
+New instrument (`5af51dc`, verifier-passed with mutation checks): `run.py compare --pool` — pooled
+cross-bench paired compare on `acc_strict` over the union of (bench, item) clusters, CI from the
+two-stage cluster bootstrap STRATIFIED by bench (each bench's n preserved on every draw), refusals
+propagated per bench plus a new cross-bench budget gate. Run on the d64k block (humanevalplus +
+mbppplus, n=50 each, matched budgets 81920/102400):
+
+| pooled d64k, n=100 paired | acc_strict | delta | 95% CI | verdict |
+|---|---|---|---|---|
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` vs `Ornith-1.0-35B-mlx-uniform-4bit` | 83.0 vs 81.0 | +2.0pp | [−4.0, +8.0] | INCONCLUSIVE |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` vs `Qwen3.8-27B-mlx-uniform-4bit` | 83.0 vs 86.0 | −3.0pp | [−10.0, +4.0] | INCONCLUSIVE |
+| `Ornith-1.0-35B-mlx-uniform-4bit` vs `Qwen3.8-27B-mlx-uniform-4bit` | 81.0 vs 86.0 | −5.0pp | [−12.0, +1.0] | INCONCLUSIVE |
+
+Axis MDE ±13pp at n=100; Holm-adjusted percentile p = 0.997 / 0.997 / 0.527 (verifier re-derivation)
+— **no pick-ordering claim survives pooling**; `Qwen3.8-27B-mlx-uniform-4bit` keeps leading every
+point estimate, consistent with the C38 picture. ~628 pooled items would resolve a ±5pp margin — not
+worth the box time at the current spread. **M12 is CLOSED** (d64k block + d128k cliff check + pooling).
+Caveat recorded in the tool: pooling equal-weights items, so pooling very unequal bench sizes lets the
+larger bench dominate the delta (fine at 50/50).
+
 ### 2026-08-31 (night) — Methodology: the M5 GPU Neural Accelerators are ACTIVE by default in the installed mlx 0.32.0 (3.8× fp16 GEMM, 3.5× 4-bit quantized_matmul vs the forced non-NA path); the June "dead end" was an instrument error
 
 `benchmark/spikes/na_discriminator.py`, M5 Max, macOS 26.6.2, mlx 0.32.0 wheel (minos 26.2):
