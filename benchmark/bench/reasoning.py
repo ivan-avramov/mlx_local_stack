@@ -143,7 +143,10 @@ def run_reasoning_ladder(
     production params are used.
 
     Returns a list of per-rung dicts:
-      {"ctx": L, "accuracy": float, "samples": N, "chain_len": N, "errors": N}
+      {"ctx": L, "accuracy": float, "samples": N, "chain_len": N, "errors": N,
+       "budget_hits": N, "early_stop": bool,
+       "rows": [{"trial", "seed", "score", "completion_tokens", "finish_reason",
+                 "budget_hit", "decode_tps", "wall_s"} per draw]}
     """
     records = []
     for ctx_len in grid:
@@ -155,6 +158,7 @@ def run_reasoning_ladder(
                 break
             continue
         scores = []
+        rows = []
         errors = 0
         budget_hits = 0
         early_stop = False
@@ -177,8 +181,21 @@ def run_reasoning_ladder(
                 sc = score_vartrack(content, answer)
             scores.append(sc)
             ct = result.get("completion_tokens")
-            if budget and ct is not None and ct >= budget:
+            hit = bool(budget and ct is not None and ct >= budget)
+            if hit:
                 budget_hits += 1
+            # Per-sample row (C39 follow-up, 2026-08-31): the draw itself is the datum — persisted
+            # so strict re-scores / runaway audits / per-draw bootstraps never need a rerun.
+            rows.append({
+                "trial": trial,
+                "seed": seed,
+                "score": sc,
+                "completion_tokens": ct,
+                "finish_reason": result.get("finish_reason"),
+                "budget_hit": hit,
+                "decode_tps": result.get("decode_tps"),
+                "wall_s": result.get("wall_s"),
+            })
             # Pre-registered deep-rung early stop (M11, 2026-08-30): when the first N deep samples
             # ALL hit the thinking budget, the rung is scored from those N and the rest are skipped.
             if (is_deep and early_stop_budget_hits and len(scores) == early_stop_budget_hits
@@ -195,6 +212,7 @@ def run_reasoning_ladder(
             "errors": errors,
             "budget_hits": budget_hits,
             "early_stop": early_stop,
+            "rows": rows,
         }
         records.append(rec)
         if on_rung is not None:

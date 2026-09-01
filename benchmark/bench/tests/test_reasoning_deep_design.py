@@ -87,3 +87,28 @@ def test_cli_shallow_rows_resume_across_a_deep_redesign(monkeypatch, tmp_path):
     deep_keys = [json.loads(r["key"]) for r in rows if r["record"]["ctx"] == 96000]
     assert any("deep_samples" in k for k in deep_keys)
     assert all("deep_samples" not in json.loads(r["key"]) for r in rows if r["record"]["ctx"] < 96000)
+
+
+def test_rung_record_carries_per_sample_rows():
+    """C39 follow-up (2026-08-31): every draw is persisted, not just the rung aggregate — so a
+    strict re-score, a runaway audit, or a per-draw bootstrap never needs a rerun."""
+    d = TokDriver([100, 10, 100])
+    recs = _ladder(d, grid=(8000,), samples=3)
+    rows = recs[0]["rows"]
+    assert len(rows) == 3
+    assert [r["trial"] for r in rows] == [0, 1, 2]
+    assert [r["seed"] for r in rows] == [8000 * 1000 + 0, 8000 * 1000 + 1, 8000 * 1000 + 2]
+    assert [r["completion_tokens"] for r in rows] == [100, 10, 100]
+    assert [r["budget_hit"] for r in rows] == [True, False, True]
+    assert all(isinstance(r["score"], float) for r in rows)
+    assert round(sum(r["score"] for r in rows) / len(rows), 3) == recs[0]["accuracy"]
+    assert all(r["finish_reason"] == "stop" for r in rows)
+    assert all("decode_tps" in r and "wall_s" in r for r in rows)
+    assert recs[0]["budget_hits"] == sum(r["budget_hit"] for r in rows)
+
+
+def test_early_stopped_rung_rows_match_samples_taken():
+    d = TokDriver([100])
+    recs = _ladder(d, grid=(8000, 96000), deep_from=96000, deep_samples=3,
+                   early_stop_budget_hits=2)
+    assert len(recs[1]["rows"]) == 2 == recs[1]["samples"]
