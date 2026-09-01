@@ -3,10 +3,9 @@
 Single box (M5 Max 64 GB). **No run is live.** Router :8000 = draft-OFF bench overlay
 (`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC absent), listener pid in
 `$STACK_WORKDIR/m29/router_off.pid` (77916, uv parent 77914), **no worker resident**.
-Fork `../mlx-vlm`: main = `dd2a2dcb` (pushed); **working tree checked out on branch
-`nemotron-h-mtp-profile` @ `f5fff9b5` (2 commits on main, NOT pushed, NOT merged)**; `src/mlx-vlm` still
-at `dd2a2dcb`. Stack: working tree has the SIX intentional `main_models.yaml` local-path overrides
-(NEVER commit) + this checkpoint's docs commit (not pushed).
+Fork `../mlx-vlm`: main = `f5fff9b5` (profiler merged, pushed; branch `nemotron-h-mtp-profile` pushed too);
+`src/mlx-vlm` bumped to it (`5f2f7d8`). Stack pushed through this checkpoint. Working tree: the SIX
+intentional `main_models.yaml` local-path overrides (NEVER commit).
 
 ## This session (all in campaign-results / lab-notebook "2026-08-31 late night")
 - **M29 H1 DONE**: env-gated MTP round profiler (`mlx_vlm/speculative/mtp_profile.py`;
@@ -24,18 +23,19 @@ at `dd2a2dcb`. Stack: working tree has the SIX intentional `main_models.yaml` lo
   `$TMPDIR/mlx-manager-logs/<model>.log`; head-split is empty at k=1 for seed-path drafters; probe
   strips `draft_block_size`).
 
-## Operator decisions owed
-- **Push approval** for: fork `nemotron-h-mtp-profile` → merge to fork main + push + `src/mlx-vlm`
-  bump (`chore(stack): bump src/mlx-vlm -> f5fff9b5 (env-gated MTP round profiler)`), and the stack
-  docs commit. Recommendation: merge — it is a strict no-op when unset and the next hybrid target
-  will want it.
-- **C40** (rec a), **C41** (rec fix), **C42** (rec NO, now reinforced). C31 deferred. Next O/C: **C45**.
+## Operator decisions (RULED 2026-08-31 late night)
+- **C40 → (a)** largest-passing-rung on the strict curve + runaway-tax numbers (apply when M11 is next
+  reported). **C41 → fix on the fork** (TDD; queued below). **C42 → NO.** C31 deferred. Nothing owed.
+  Next O/C: **C45**.
 
 ## THE BOX QUEUE
 1. **M12 coding-at-depth d128k cliff check** (pre-registered, PLAN M12): pilot-first, 5 seeded random
    items at d64k size the run; regenerate the bench overlay from the working registry FIRST (header
    predates the M27 flip). Then M21 / M17 / D11.
-2. Housekeeping: the fork sha in new manifests is `dd2a2dcb` until the bump lands.
+2. **C41 fork fix** (engineering, no box): `Qwen3_5MTPSplitter` separate-expert `postprocess`, detection
+   fallback to root `model_type`, fail-loud on per-expert sidecar keys — TDD, implementer + verifier, then
+   bump. Propose the plan before writing files.
+3. Housekeeping: new manifests carry fork sha `f5fff9b5`.
 
 ## Standing rules that bit this session
 - **`cut` in a monitor pipeline buffers** (no line-buffer flag): the worker-line watch stayed silent
@@ -53,4 +53,4 @@ M29 H1 `$STACK_WORKDIR/m29/profile_k1/` (+ `brief_h1.md`, the implementer brief)
 `$STACK_WORKDIR/quiet_window/`; NA + memory probes `$STACK_WORKDIR/nax_probe/`; sidecars
 `$STACK_WORKDIR/scratch/m6a/`. HF cache 253G + deliberate MTP-source fetches — don't "fix" it.
 
-**Order of resumption: this file → `docs/PLAN.md` (M12) → `docs/open-questions.md`.**
+**Order of resumption: this file → `docs/PLAN.md` (M12) → `docs/open-questions.md` (C41).**
