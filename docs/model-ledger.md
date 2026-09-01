@@ -78,6 +78,16 @@ of `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` uploaded + verified 2026-08-23.
 
 Take the runner-up if turn latency matters more than task success rate.
 
+**Predictors (the third member of each triple) — all three B-menu entries CERTIFIED, registry
+`draft_kind: mtp`, each on a paired ON/OFF humanevalplus n=164 acc TOST ±5pp EQUIVALENT:**
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` M6b 2026-08-25 (own native head, acceptance 0.923,
+2.06×; `caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter`); `Qwen3.8-27B-mlx-uniform-4bit`
+M6d 2026-08-30 (own native head, 0.674, 1.60×, `76dad59`;
+`caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter`); `Ornith-1.0-35B-mlx-uniform-4bit` M27
+2026-08-31 (TRANSPLANTED `Qwen/Qwen3.5-35B-A3B` head — the fine-tune dropped its own —
+acceptance 0.778, 1.56×, `3a200a9`; `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter`).
+Serving-only: every quality number in this ledger is predictor-OFF and stays so.
+
 **What it rests on, stated precisely:** one harness. aider polyglot n=110 matched, `final`
 **73.6% vs 50.0%**, McNemar **p=1.3e-05**. **The mechanism is REPAIR, not raw generation**:
 matched on the 65 items *both* models failed at attempt 1, repair is **29.2% vs 56.9%,

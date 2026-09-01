@@ -229,10 +229,13 @@ inflate discordance without moving the point estimate (identical −0.61pp on bo
 Mechanism for the speed: a transplanted BASE-model head on a fine-tune accepts 0.78 of its
 drafts (vs 0.674 for the M6d dense sibling's own head and 0.86 on the probe's short prompts)
 — the tune moved the trunk's distribution a little, not a lot; M28 (head fine-tune) stays
-dormant at this margin. **Certification (registry `draft_kind: mtp` + sidecar
-`caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter`) is with the operator** — the flip
-completes the B 2nd choice's (model, tune, predictor) triple, leaving the B menu fully
-predictor-equipped. Measurement stays predictor-OFF by rule. Data:
+dormant at this margin. **CERTIFIED — operator ruled C43 (2026-08-31 evening); executed
+2026-08-31 night: drafter uploaded first as `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter`
+(public, card CERTIFIED M27, safetensors sha256 verified against the local sidecar), registry
+flip `3a200a9` (`draft_kind: mtp` + hub `draft_model` + `# CERTIFIED M27 2026-08-31`), and the
+`caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter` card moved PROBE-ONLY → CERTIFIED M6d in the
+same HF pass.** The B 2nd choice's (model, tune, predictor) triple is complete; the B menu is
+fully predictor-equipped (2.06× / 1.56× / 1.60×). Measurement stays predictor-OFF by rule. Data:
 `benchmark/results/Ornith-1.0-35B-mlx-uniform-4bit/humanevalplus.mtpon.*|mtpoff.*`,
 analysis `$STACK_WORKDIR/m27/ofat_accuracy_n164.json`.
 

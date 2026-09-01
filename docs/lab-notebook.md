@@ -3356,3 +3356,34 @@ noted, not triggered: the speed already clears 1.3× with margin).
 - 2026-08-31 (evening, C43): operator RULED CERTIFY for M27 on the OFAT above; execution
   (HF upload of the sidecar, registry flip commit, ledger lines) deferred to the next session
   by operator instruction ("don't run anything here"). Session checkpointed and pushed.
+
+## 2026-08-31 (night) — M27 CERTIFICATION EXECUTED: HF pass + registry flip `3a200a9`; local-override set is now SIX
+
+Box-free session task; no run live, router :8000 untouched (draft-OFF overlay, pid from
+`$STACK_WORKDIR/m27/router_off.pid`, `caslca/Ornith-1.0-35B-mlx-uniform-4bit` resident).
+
+- **HF pass (operator in-turn go, outward-facing):** `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter`
+  created public; sidecar dir uploaded (7 files incl. `vocab.json`; `model.safetensors` sha256
+  verified equal to the local `$STACK_WORKDIR/scratch/m6a/…` file via an anonymous
+  `HfApi(token=False)` listing); card = CERTIFIED M27 with the n=164 numbers, provenance
+  (shards 13–14 via `--model-type qwen3_next`, int4/g64) and an explicit note that the served
+  k was 2 (measured n/rounds = 2.00 in every probe row) although the sidecar `config.json`
+  declares `block_size: 3` (splitter metadata). License apache-2.0 (head weights are Qwen's;
+  trunk is MIT) with both `base_model`s listed. Same pass: the
+  `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter` card PROBE-ONLY → CERTIFIED M6d (n=164
+  numbers; the 2026-08-23 probe kept as history). Card drafts: `$STACK_WORKDIR/m27/flip/`.
+- **Registry flip without stash:** built the committed version from `git show HEAD:main_models.yaml`
+  + the flip, the worktree version from the live file + flip + local `draft_model`; asserted
+  count==1 on each anchor, YAML parse, `bench.modelnames`/`bench.piicheck` on the diff; then
+  `git hash-object -w` + `git update-index --cacheinfo` put the clean version straight into
+  the index and `git commit` (hooks green) → `3a200a9`; the worktree version copied over after.
+  Verified: `git diff` = exactly SIX `+    draft_model|hf_path:` lines, zero other added lines.
+  Also brought the B-menu header comment current (it still called the
+  `Qwen3.8-27B-mlx-uniform-4bit` drafter probe-only). Backup of the pre-flip worktree file:
+  `$STACK_WORKDIR/scratch/main_models.local-overrides.backup3.yaml`.
+- **Trap:** `cp` is aliased interactive on this box like `rm` — a scripted `cp` over an
+  existing file hangs on `overwrite? (y/n)` until the tool timeout kills it (file left
+  untouched). Use `/bin/cp -f` in scripts and verify the result.
+- Docs: campaign-results (certification executed), PLAN M27 DONE + M6d row, ledger §1 B
+  predictor paragraph (the ledger had no M6b/M6d record either — now all three), C43 executed.
+  M28 stays dormant (0.778 vs ~0.8 trigger — noted, not triggered).
