@@ -1,8 +1,13 @@
-# Handoff — 2026-08-31 late-night checkpoint #2 (M29 H1 DONE, M29 CLOSED at 1.18×; NEXT = M12)
+# Handoff — 2026-09-01 night checkpoint (M29 CLOSED at 1.18×; **M12 d128k n=25 RUN LIVE** since 01:32, honest provenance)
 
-Single box (M5 Max 64 GB). **No run is live.** Router :8000 = draft-OFF bench overlay
+Single box (M5 Max 64 GB). **RUN LIVE: M12 d128k** — driver pid in `$STACK_WORKDIR/m12/full_d128k.pid`
+(launched 01:32 with `MLX_SERVE_CONFIG=<overlay>` in env), watcher pid in `watch_full.pid`, logs
+`full_d128k.log` / `watch_full.log`; 3 arms × 25 items, `--order model` (runner-up → pick → challenger),
+expected ≈ 10 h + tail. Router :8000 = draft-OFF bench overlay REGENERATED 2026-08-31 late night
 (`$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml`, SESSION_MAX=2, APC absent), listener pid in
-`$STACK_WORKDIR/m29/router_off.pid` (77916, uv parent 77914), **no worker resident**.
+`$STACK_WORKDIR/m12/router_off.pid` (80387). Comparators for the cliff test: `$STACK_WORKDIR/m12/d64k_comparators.json`
+(d64k pass on the same 25 items: 22/25, 23/25, 23/25). When the driver exits: `run.py grade --tune d128k`
+(EvalPlus docker), per-model >10pp test with Holm(3), campaign-results + PLAN M12 + data commit.
 Fork `../mlx-vlm`: main = `f5fff9b5` (profiler merged, pushed; branch `nemotron-h-mtp-profile` pushed too);
 `src/mlx-vlm` bumped to it (`5f2f7d8`). Stack pushed through this checkpoint. Working tree: the SIX
 intentional `main_models.yaml` local-path overrides (NEVER commit).
@@ -38,6 +43,11 @@ intentional `main_models.yaml` local-path overrides (NEVER commit).
 3. Housekeeping: new manifests carry fork sha `f5fff9b5`.
 
 ## Standing rules that bit this session
+- **C35 again (mine)**: a bench driver launched without `MLX_SERVE_CONFIG=<overlay>` records the registry's
+  `draft_kind: mtp` as provenance while the worker serves draft-OFF; the tripwire catches only the model whose
+  worker is live at launch. 16 rows archived (`$STACK_WORKDIR/m12/false_provenance_2026-09-01/`), regenerated.
+  Proposed AGENTS.md line in the lab-notebook entry.
+- zsh does not word-split `${VAR//,/ }` either — loop over explicit names.
 - **`cut` in a monitor pipeline buffers** (no line-buffer flag): the worker-line watch stayed silent
   through 8,600 profiled rounds while its sibling chain-log branch worked. Use `awk '{...; fflush()}'`
   or nothing; every monitor gets a known-positive self-test line before it is trusted.

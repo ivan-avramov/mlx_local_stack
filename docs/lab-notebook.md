@@ -3624,3 +3624,33 @@ serialised harness, not real cost.
 - Numbers and the decision-rule application: campaign-results 2026-08-31 late night. Headline:
   verify 81 % of the round, head 1.27 ms, H2 trigger 11 % → not met; ceilings 1.37× / ≤ 1.23× (H2) /
   ≤ 1.29× (k=2/3) → CLOSED at 1.18×, registry draft-OFF, next M12.
+
+## 2026-09-01 (night) — M12 d128k cliff check: pilot sized the run, then a C35 recurrence (mine) forced a regenerate
+
+- Overlay regenerated from the working registry (post-M27: three `draft_kind: mtp` pairs stripped, verified
+  by non-comment diff); bench router restarted on it (pid 80387; `MLX_VLM_CACHE_SESSION_MAX=2`, APC absent,
+  verified on the pid).
+- **Pilot** (5 seed-0 items × 3 B-menu models, `--order model`, `--tune d128k`, `--depth-tokens 131072`,
+  `--probe-timeout 12000`, `.venv-bench` python — the `.venv` lacks `evalplus`): prompts 135.3–135.4K
+  tokens → `cap − prompt` 126.7K > `max_tokens` 102400 → resolved budget **81920, unclamped** on every row;
+  15/15 converged, 0 errors; peak 26.9–35.2 GB; swap flat. Rates at depth: `Ornith-1.0-35B-mlx-uniform-4bit`
+  55–61 tok/s, wall 140–172 s; `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 11.3 tok/s, wall 510–568 s;
+  `Qwen3.8-27B-mlx-uniform-4bit` 11.4–11.8 tok/s, wall 541–1760 s (`HumanEval/94` 14.5K tokens,
+  `HumanEval/146` 10.5K). **Prefill at 135K ≈ 8 min on both dense-trunk 27B picks (≈ 2 min at 68K: 4× for 2×
+  depth — attention-quadratic at this depth) and ≈ 110 s on the 3B-active MoE.** Sizing (mean-based lower
+  bounds): 1.1 h / 3.7 h / 5.3 h per arm → ≈ 10 h + the challenger's 36K-token tail items.
+- **C35 recurrence — my error.** The driver was launched WITHOUT `MLX_SERVE_CONFIG=<overlay>` in its env, so
+  `paths.registry_path()` read `main_models.yaml` (registry of record, `draft_kind: mtp` on all three) and
+  every d128k manifest recorded `draft_kind: mtp, draft_source: registry` while the worker verifiably served
+  draft-OFF (no `--draft` flag; every row's `draft` field None). The tripwire only fires when a live worker
+  serves the model being prechecked, so it caught only the model resident at launch (the challenger, on the
+  n=25 relaunch) and let the other two record false provenance silently — exactly the 2026-08-26 shape.
+  Per that precedent the 15 pilot rows + 1 continuation row are NOT graded: archived to
+  `$STACK_WORKDIR/m12/false_provenance_2026-09-01/`, worker unloaded, driver relaunched 01:32 with
+  `MLX_SERVE_CONFIG` at the overlay (verified on pid 99009), 75/75 items. Cost ≈ 2.2 h of box time.
+  **Proposed AGENTS.md line (operator to approve): "Every bench driver launch carries
+  `MLX_SERVE_CONFIG=<the served overlay>` in its env (C35) — verify on the driver pid, and check the first
+  manifest's `runtime.draft_kind` before the second item."**
+- Watcher note: `bench_watch --order model` reports "SUSPECT WRONG FILE" / "flat for N ticks" for queued and
+  completed arms — heuristics that assume roundrobin; harmless but noisy. `cut` in a monitor pipeline
+  buffers (again) — dropped.
