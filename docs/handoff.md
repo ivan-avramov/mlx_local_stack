@@ -1,4 +1,4 @@
-# Handoff — 2026-08-31 evening (M11 DONE; M14 CLOSED; M27 OFAT PASSES — flip awaits operator go) <!-- allow-shorthand -->
+# Handoff — 2026-08-31 evening (M11 DONE; M14 CLOSED; M27 CERTIFY RULED — flip package is the next session's first task) <!-- allow-shorthand -->
 
 Single box (M5 Max 64 GB). **No run is live.** Today: M11 finished 08:02 (4 legs, rc=0);
 M14 probe STOP 0.76× (closed); P17 fork merge+push done; M27 sidecar → probe GO 1.72× →
@@ -55,9 +55,9 @@ at 9 tok/s vs ~19 min on `Ornith-1.0-35B-mlx-uniform-4bit`). Reasoning depth doe
 
 ## Standing state
 
-- **PUSHED through `3c81c8d`**. LOCAL, not push-approved: `fc70784` → `6f91567` (+ this
-  handoff refresh) — M11 close-out, M14/M27 records, P17 note. Fork `../mlx-vlm` main IS
-  pushed (`d1d57955`). Never push the stack without in-turn approval.
+- **PUSHED through the 2026-08-31 evening checkpoint** (operator-approved in-turn; `git log
+  origin/main..HEAD` should be empty on resume). Fork `../mlx-vlm` main pushed (`d1d57955`).
+  Never push the stack without in-turn approval.
 - Working tree: the **FIVE** intentional `main_models.yaml` local-path overrides (NEVER
   commit; clean-checkout + re-apply procedure in lab-notebook 2026-08-30 asserts all five)
   + old untracked m23-era files + untracked M6b/M6d/M27 OFAT rows under `benchmark/results/`
