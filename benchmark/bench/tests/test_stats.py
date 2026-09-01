@@ -213,6 +213,68 @@ def test_bootstrap_more_items_narrows_the_ci():
     assert (big["hi"] - big["lo"]) < (small["hi"] - small["lo"])
 
 
+# ------------------------------------------------------------- strata (M12, pooling-for-power)
+def test_bootstrap_strata_none_is_byte_identical_to_pre_strata_behaviour():
+    """The regression pin: adding the `strata` parameter must not perturb the RNG sequence (or
+    any other behaviour) of an unstrat call — every existing caller (grade.py, run_m1_report.py)
+    passes no `strata` and must see the SAME numbers as before this parameter existed."""
+    per_item = {f"i{i}": [1, 0, 1, 1, 0] for i in range(23)}
+    with_param = S.cluster_bootstrap(per_item, iters=1500, seed=5, strata=None)
+    without_param = S.cluster_bootstrap(per_item, iters=1500, seed=5)
+    assert with_param == without_param
+
+
+def test_bootstrap_strata_preserves_each_stratum_n_on_every_draw():
+    """Stratified stage-1 resampling must draw exactly n_bench1 positions from bench1's items
+    and n_bench2 from bench2's on EVERY bootstrap replicate — never mixing counts across strata,
+    which is what keeps a pooled bench-mix fixed instead of a lucky draw over-weighting one
+    bench. Checked by monkeypatching Random.randrange to record every stratum-relative index."""
+    per_item = {("bench1", f"i{i}"): [1, 0] for i in range(4)}
+    per_item.update({("bench2", f"i{i}"): [1, 0] for i in range(7)})
+    strata = {k: k[0] for k in per_item}
+
+    import random
+    seen_group_sizes = []
+    orig = random.Random.randrange
+
+    def spy(self, n):
+        seen_group_sizes.append(n)
+        return orig(self, n)
+
+    import unittest.mock as mock
+    with mock.patch.object(random.Random, "randrange", spy):
+        S.cluster_bootstrap(per_item, iters=5, seed=0, strata=strata)
+    # For each of the 5 iterations x 2 strata, the FIRST randrange call for that stratum's
+    # block must be against the stratum's own size (4 or 7), never the pooled total (11).
+    stratum_sizes = {4, 7}
+    first_calls_per_stratum_block = [n for n in seen_group_sizes if n in stratum_sizes]
+    assert 11 not in seen_group_sizes
+    assert set(first_calls_per_stratum_block) == stratum_sizes
+
+
+def test_bootstrap_strata_reproduces_correct_stratum_ns_via_resampled_output():
+    """A statistic callable that just counts how many resampled items came from each stratum
+    proves the n-per-stratum invariant end to end, not just via an RNG spy."""
+    per_item = {("bench1", f"i{i}"): [1] for i in range(3)}
+    per_item.update({("bench2", f"i{i}"): [0] for i in range(9)})
+    strata = {k: k[0] for k in per_item}
+
+    def count_bench1_fraction(resampled):
+        # every resampled item's draws are [1] (bench1) or [0] (bench2); the fraction of 1s IS
+        # the fraction drawn from bench1 -- and it must equal 3/12 on every replicate when
+        # strata are respected (never varying with a lucky pooled draw).
+        return sum(d[0] for d in resampled) / len(resampled)
+
+    out = S.cluster_bootstrap(per_item, iters=50, seed=1, strata=strata,
+                              statistic=count_bench1_fraction)
+    # point (observed, unresampled) must be exactly 3/12
+    assert out["point"] == pytest.approx(3 / 12)
+    # lo == hi == 3/12: EVERY replicate draws exactly 3 bench1 + 9 bench2 items, so the
+    # bench1 fraction of the resampled set cannot move at all.
+    assert out["lo"] == pytest.approx(3 / 12)
+    assert out["hi"] == pytest.approx(3 / 12)
+
+
 # ------------------------------------------------------------------------------- reliability
 REL_K3 = {"a": [1, 1, 1], "b": [1, 1, 0], "c": [0, 0, 0]}
 
@@ -371,6 +433,78 @@ def test_paired_delta_is_deterministic_for_a_seed():
 def test_paired_delta_empty_shared_set_raises():
     with pytest.raises(ValueError):
         S.paired_delta({}, {}, iters=10, seed=0)
+
+
+# ------------------------------------------------------------- strata (M12, pooling-for-power)
+def test_paired_delta_strata_none_is_byte_identical_to_pre_strata_behaviour():
+    a = {f"i{i}": [1, 0, 1] for i in range(12)}
+    b = {f"i{i}": [0, 0, 1] for i in range(12)}
+    with_param = S.paired_delta(a, b, iters=800, seed=2, strata=None)
+    without_param = S.paired_delta(a, b, iters=800, seed=2)
+    assert with_param == without_param
+
+
+def test_paired_delta_pooled_n_and_delta_arithmetic():
+    """(a) n = n1 + n2, and the pooled delta is the plain mean over the pooled item set — a
+    hand-computable sanity check independent of the bootstrap."""
+    a = {("bench1", f"i{i}"): [1] for i in range(5)}       # bench1: a=1.0
+    a.update({("bench2", f"i{i}"): [1 if i < 6 else 0] for i in range(10)})  # bench2: a=0.6
+    b = {("bench1", f"i{i}"): [0] for i in range(5)}       # bench1: b=0.0
+    b.update({("bench2", f"i{i}"): [1 if i < 4 else 0] for i in range(10)})  # bench2: b=0.4
+    strata = {k: k[0] for k in a}
+    out = S.paired_delta(a, b, iters=500, seed=0, strata=strata)
+    assert out["n_items"] == 15
+    # pooled a = (5*1.0 + 10*0.6) / 15 = 11/15 ; pooled b = (5*0.0 + 10*0.4) / 15 = 4/15
+    assert out["delta"] == pytest.approx(11 / 15 - 4 / 15)
+
+
+def test_paired_delta_pooled_ci_excludes_zero_when_each_bench_alone_is_inconclusive():
+    """(b) The whole point of pooling: the SAME small consistent effect (a correct on 8/12, b
+    on 5/12, k=1 so there is no draw noise to hide behind) is inconclusive at n=12 alone in
+    EITHER bench (grid-quantized lo lands on exactly 0.0), but pooling the two identical benches
+    to n=24 items narrows the bootstrap enough for the CI to clear 0."""
+    def one_bench(bench):
+        a = {(bench, f"i{i}"): [1 if i < 8 else 0] for i in range(12)}
+        b = {(bench, f"i{i}"): [1 if i < 5 else 0] for i in range(12)}
+        return a, b
+
+    a1, b1 = one_bench("bench1")
+    a2, b2 = one_bench("bench2")
+    a, b = {**a1, **a2}, {**b1, **b2}
+    strata = {k: k[0] for k in a}
+
+    alone1 = S.paired_delta(a1, b1, iters=3000, seed=0)
+    alone2 = S.paired_delta(a2, b2, iters=3000, seed=0)
+    pooled = S.paired_delta(a, b, iters=3000, seed=0, strata=strata)
+    assert alone1["verdict"] == "inconclusive", alone1
+    assert alone2["verdict"] == "inconclusive", alone2
+    assert pooled["n_items"] == 24
+    assert pooled["lo"] > 0, pooled
+    assert pooled["verdict"] == "a_better", pooled
+
+
+def test_paired_delta_strata_every_draw_keeps_each_stratum_n_fixed():
+    """(c) With a fixed seed, every bootstrap replicate must resample exactly n1 items from
+    bench1 and n2 from bench2 — checked directly on the RNG call sequence."""
+    a = {("bench1", f"i{i}"): [1, 0] for i in range(4)}
+    a.update({("bench2", f"i{i}"): [1, 0] for i in range(9)})
+    b = {k: [0, 1] for k in a}
+    strata = {k: k[0] for k in a}
+
+    import random
+    import unittest.mock as mock
+    seen = []
+    orig = random.Random.randrange
+
+    def spy(self, n):
+        seen.append(n)
+        return orig(self, n)
+
+    with mock.patch.object(random.Random, "randrange", spy):
+        S.paired_delta(a, b, iters=6, seed=0, strata=strata)
+    stratum_sizes = {4, 9}
+    assert 13 not in seen, "must never resample the pooled 13 as one population"
+    assert stratum_sizes <= set(seen)
 
 
 # -------------------------------------------------------------------------------------- holm

@@ -163,14 +163,18 @@ def _per_item(score, converged_only=False, rows=None, strict=False):
     return out
 
 
-def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, seed=0,
-            intersect=False):
-    """Compare two models on one bench. Returns either a refusal or a paired verdict.
+def _bench_gate(model_a, model_b, bench, *, metric="acc", intersect=False):
+    """Every comparability check `compare()` runs for ONE bench, up to and including the paired
+    per-item pairing — everything the single-bench and pooled cross-bench paths share. Returns
+    a refusal dict (`_refuse(...)`, same shape `compare()` returns directly), or
+    `{"comparable": True, "pa", "pb", "warnings", "samples", "n_items",
+      "thinking_budget", "max_tokens"}` — the last two are the MATCHED (model_a == model_b
+    within this bench, enforced above) resolved sampling budget, so a caller pooling several
+    benches can check they match ACROSS benches too without re-reading manifests.
 
-    `metric` is "acc" (correctness over generated items), "pass_at_1_converged" (which pairs on
-    the items BOTH models converged on — conditioning on convergence conditions on a
-    model-dependent, easier subset), or the name of a hardware metric, which triggers the
-    box/APC checks.
+    Extracted for M12 (pooled cross-bench compare, 2026-09): pooling must run this SAME gate
+    once per bench — duplicating it would let the pooled path silently drift from what a lone
+    `compare()` call would have refused.
     """
     warnings = []
     model_a, tune_a = _split_tune(model_a)
@@ -401,10 +405,103 @@ def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, s
         warnings.append(f"ragged sample counts {sorted(ka)} — the bootstrap handles it, but the "
                         f"reliability figures are not comparable across items")
 
+    return {"comparable": True, "pa": pa, "pb": pb, "warnings": warnings,
+            "samples": max(ka) if ka else 0, "n_items": len(pa),
+            "thinking_budget": sa.get("thinking_budget"), "max_tokens": sa.get("max_tokens")}
+
+
+def compare(model_a, model_b, bench, *, metric="acc", margin=0.05, iters=4000, seed=0,
+            intersect=False):
+    """Compare two models on one bench. Returns either a refusal or a paired verdict.
+
+    `metric` is "acc" (correctness over generated items), "pass_at_1_converged" (which pairs on
+    the items BOTH models converged on — conditioning on convergence conditions on a
+    model-dependent, easier subset), or the name of a hardware metric, which triggers the
+    box/APC checks.
+    """
+    gate = _bench_gate(model_a, model_b, bench, metric=metric, intersect=intersect)
+    if not gate["comparable"]:
+        return gate
+    pa, pb = gate["pa"], gate["pb"]
     delta = stats.paired_delta(pa, pb, iters=iters, seed=seed, margin=margin)
     n_items = len(pa)
     return {"comparable": True, "metric": metric, "bench": bench,
             "a": stats.pass_at_1(pa), "b": stats.pass_at_1(pb),
+            "delta": delta, "n_items": n_items, "samples": gate["samples"],
+            "mde": stats.mde(n_items), "n_for_margin": stats.n_for(margin),
+            "warnings": gate["warnings"]}
+
+
+def pooled_compare(model_a, model_b, benches, *, margin=0.05, tune=None, intersect=False,
+                   iters=4000, seed=0):
+    """M12 'pooling for power': one paired verdict across MULTIPLE benches, on the campaign's
+    ranking metric (acc_strict at a matched budget — AGENTS.md 'Measurement discipline').
+
+    Runs the SAME per-bench comparability gate `compare()` uses, once per bench in `benches`; if
+    ANY bench refuses, the pooled compare refuses with that bench's reason (propagated, not
+    re-derived) — pooling must never launder a refusal a lone `compare()` call would have made.
+    The (thinking_budget, max_tokens) resolved for each bench must also match ACROSS benches:
+    within a bench the two models are already forced to match by `_bench_gate`'s
+    `_MUST_MATCH_SAMPLING` check, but two DIFFERENT benches could each be internally matched at
+    a DIFFERENT budget (e.g. one bench run at 16384, the other resumed later at 81920) — pooling
+    those would silently mix truncation regimes into one delta, so it refuses instead.
+
+    Pools the UNION of (bench, item) clusters — item ids are namespaced by bench, so identical
+    item ids across benches never collide — and runs `stats.paired_delta` STRATIFIED by bench
+    (`strata[(bench, id)] = bench`), so every bootstrap replicate keeps each bench's own item
+    count fixed; only within-bench item/draw noise is resampled. Reports the pooled verdict plus
+    each bench's own (unstratified, single-bench) sub-delta for transparency.
+
+    `tune`, applied to BOTH models identically (same as suffixing "@tune" onto a bare model
+    name — a caller that already passed "model@tune" is left alone): under the (model, tune)
+    taxonomy a candidate's certified rows may exist only at a tune label, same as `compare()`'s
+    `Model@tune` syntax.
+    """
+    benches = list(benches)
+    if len(benches) < 2:
+        return _refuse("pooled_compare needs at least 2 benches (that is the point of pooling — "
+                       f"got {benches})")
+    if tune:
+        model_a = model_a if "@" in model_a else f"{model_a}@{tune}"
+        model_b = model_b if "@" in model_b else f"{model_b}@{tune}"
+
+    metric = "acc_strict"          # AGENTS.md: THE ranking key at a matched budget.
+    per_bench, warnings, budgets = {}, [], {}
+    for bench in benches:
+        gate = _bench_gate(model_a, model_b, bench, metric=metric, intersect=intersect)
+        if not gate["comparable"]:
+            return _refuse(f"{bench}: {gate['reason']}")
+        per_bench[bench] = gate
+        budgets[bench] = (gate["thinking_budget"], gate["max_tokens"])
+        warnings.extend(f"[{bench}] {w}" for w in gate["warnings"])
+
+    if len(set(budgets.values())) > 1:
+        detail = "; ".join(f"{b}=(thinking_budget={v[0]}, max_tokens={v[1]})"
+                           for b, v in budgets.items())
+        return _refuse(f"(thinking_budget, max_tokens) differ ACROSS benches ({detail}) — a "
+                       f"pooled result spanning different truncation regimes would not be "
+                       f"attributable to the model; re-run the smaller-budget bench(es) at the "
+                       f"matched budget first")
+
+    pooled_a, pooled_b, strata, per_bench_summary = {}, {}, {}, {}
+    for bench, gate in per_bench.items():
+        pa, pb = gate["pa"], gate["pb"]
+        for item_id, draws in pa.items():
+            key = (bench, item_id)
+            pooled_a[key] = draws
+            pooled_b[key] = pb[item_id]
+            strata[key] = bench
+        per_bench_summary[bench] = {
+            "n_items": gate["n_items"], "samples": gate["samples"],
+            "a": stats.pass_at_1(pa), "b": stats.pass_at_1(pb),
+            "delta": stats.paired_delta(pa, pb, iters=iters, seed=seed, margin=margin)}
+
+    delta = stats.paired_delta(pooled_a, pooled_b, iters=iters, seed=seed, margin=margin,
+                               strata=strata)
+    n_items = len(pooled_a)
+    ka = {len(v) for v in pooled_a.values()} | {len(v) for v in pooled_b.values()}
+    return {"comparable": True, "metric": metric, "benches": benches,
+            "a": stats.pass_at_1(pooled_a), "b": stats.pass_at_1(pooled_b),
             "delta": delta, "n_items": n_items, "samples": max(ka) if ka else 0,
             "mde": stats.mde(n_items), "n_for_margin": stats.n_for(margin),
-            "warnings": warnings}
+            "warnings": warnings, "per_bench": per_bench_summary}

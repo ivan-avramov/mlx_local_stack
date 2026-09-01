@@ -333,29 +333,63 @@ def cmd_grade(args):
     print(f"Full scores -> {generate.results_root()}/scores.json")
 
 
+def _print_compare_verdict(label, model_a, model_b, r, margin):
+    """The delta/CI/verdict block shared by the single-bench and pooled (`--pool`) prints."""
+    print(f"\n=== {label}: {model_a}  vs  {model_b}")
+    if not r["comparable"]:
+        print(f"  NOT COMPARABLE — {r['reason']}")
+        return
+    d = r["delta"]
+    print(f"  matched items: {r['n_items']}   samples: {r['samples']}   axis MDE: ±{r['mde']*100:.0f}pp")
+    print(f"  {r['metric']}: {r['a']*100:.1f}% vs {r['b']*100:.1f}%")
+    print(f"  delta {d['delta']*100:+.1f}pp   95% CI [{d['lo']*100:+.1f}, {d['hi']*100:+.1f}]pp")
+    print(f"  VERDICT: {d['verdict'].upper()}")
+    if d["verdict"] == "inconclusive":
+        print(f"  (the interval spans 0 and is wider than the ±{margin*100:.0f}pp "
+              f"equivalence margin — this is NOT evidence of a tie; it is too little data. "
+              f"{r['n_for_margin']} matched items would be needed.)")
+
+
 def cmd_compare(args):
     """Paired head-to-head between two models on one bench, with a verdict that can be
-    'inconclusive'. Refuses any comparison the data cannot support rather than printing a delta."""
+    'inconclusive'. Refuses any comparison the data cannot support rather than printing a delta.
+
+    `--pool` (M12): one pooled paired verdict across >=2 --benches on acc_strict, instead of one
+    compare per bench — see bench/compare.py:pooled_compare for the comparability gate and the
+    stratified-bootstrap mechanism.
+    """
     from bench import compare as CMP
     models, benches, _ = _resolve(args)
     if len(models) != 2:
         print("compare needs exactly two --models"); return
+    tune = getattr(args, "tune", None)
+    intersect = getattr(args, "intersect", False)
+
+    if getattr(args, "pool", False):
+        if len(benches) < 2:
+            print("--pool needs at least two --benches"); return
+        r = CMP.pooled_compare(models[0], models[1], benches, margin=args.margin, tune=tune,
+                               intersect=intersect)
+        _print_compare_verdict(f"POOLED [{', '.join(benches)}]", models[0], models[1], r,
+                               args.margin)
+        if r["comparable"]:
+            print("  per-bench:")
+            for b, s in r["per_bench"].items():
+                bd = s["delta"]
+                print(f"    {b}: n={s['n_items']}  {r['metric']} {s['a']*100:.1f}% vs "
+                      f"{s['b']*100:.1f}%  delta {bd['delta']*100:+.1f}pp "
+                      f"[{bd['lo']*100:+.1f}, {bd['hi']*100:+.1f}]pp  {bd['verdict']}")
+            for w in r.get("warnings", []):
+                print(f"  ⚠️  {w}")
+        return
+
+    m0 = models[0] if (not tune or "@" in models[0]) else f"{models[0]}@{tune}"
+    m1 = models[1] if (not tune or "@" in models[1]) else f"{models[1]}@{tune}"
     for b in benches:
-        r = CMP.compare(models[0], models[1], b, margin=args.margin,
-                        intersect=getattr(args, "intersect", False))
-        print(f"\n=== {b}: {models[0]}  vs  {models[1]}")
+        r = CMP.compare(m0, m1, b, margin=args.margin, intersect=intersect)
+        _print_compare_verdict(b, m0, m1, r, args.margin)
         if not r["comparable"]:
-            print(f"  NOT COMPARABLE — {r['reason']}")
             continue
-        d = r["delta"]
-        print(f"  matched items: {r['n_items']}   samples: {r['samples']}   axis MDE: ±{r['mde']*100:.0f}pp")
-        print(f"  {r['metric']}: {r['a']*100:.1f}% vs {r['b']*100:.1f}%")
-        print(f"  delta {d['delta']*100:+.1f}pp   95% CI [{d['lo']*100:+.1f}, {d['hi']*100:+.1f}]pp")
-        print(f"  VERDICT: {d['verdict'].upper()}")
-        if d["verdict"] == "inconclusive":
-            print(f"  (the interval spans 0 and is wider than the ±{args.margin*100:.0f}pp "
-                  f"equivalence margin — this is NOT evidence of a tie; it is too little data. "
-                  f"{r['n_for_margin']} matched items would be needed.)")
         for w in r.get("warnings", []):
             print(f"  ⚠️  {w}")
 
@@ -479,6 +513,17 @@ def build_parser():
                          "matched comparison; the output names how many items were dropped.")
     sp.add_argument("--margin", type=float, default=0.05,
                     help="equivalence margin for the TOST verdict (default 5pp)")
+    sp.add_argument("--tune", type=generate.validate_tune, default=None,
+                    help="compare the tune-stamped rows for BOTH models (see `generate --tune`); "
+                         "same as suffixing '@tune' onto each --models entry, left alone if a "
+                         "model already carries its own '@tune'.")
+    sp.add_argument("--pool", action="store_true",
+                    help="M12 pooled cross-bench compare (needs >=2 --benches): runs the same "
+                         "per-bench comparability gate as the default per-bench compare, then "
+                         "pools paired acc_strict outcomes across benches into ONE verdict via a "
+                         "bootstrap STRATIFIED by bench (every draw keeps each bench's own item "
+                         "count fixed). Any bench refusing, or a mismatched (thinking_budget, "
+                         "max_tokens) ACROSS benches, refuses the whole pooled compare.")
 
     return p
 

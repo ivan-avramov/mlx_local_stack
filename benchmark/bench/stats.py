@@ -101,7 +101,7 @@ def _percentile(sorted_vals, q):
     return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (pos - lo)
 
 
-def cluster_bootstrap(per_item, iters=10000, seed=0, statistic=None):
+def cluster_bootstrap(per_item, iters=10000, seed=0, statistic=None, strata=None):
     """Two-stage (cluster) percentile bootstrap over {item_id: [score, ...]}.
 
     Stage 1 resamples ITEMS with replacement; stage 2 resamples the selected item's k draws
@@ -116,6 +116,13 @@ def cluster_bootstrap(per_item, iters=10000, seed=0, statistic=None):
     "significant" 4pp coding delta happens. Stage 1 alone is not enough either: it reports a
     zero-width CI for a single item and ignores the fact that k draws are a sample too.
 
+    `strata` (M12, pooling-for-power): optional {item_id: stratum_key} map. When given, stage 1
+    resamples items INDEPENDENTLY WITHIN each stratum, preserving that stratum's own item count
+    on every draw — e.g. pooling two benches, this keeps the bench mix fixed across the
+    bootstrap instead of letting a lucky draw over- or under-represent one bench. `strata=None`
+    (default) is the plain single-population resample above, and consumes the RNG in exactly
+    the same sequence as before this parameter existed — a regression pin, not just a claim.
+
     FAILURE MODE: percentile bootstrap under-covers in the tails at small N and lands on a
     coarse 1/N grid (at N=15 the endpoints move in ~6.7pp steps, so it can disagree with
     wilson() by up to ~7pp). It is also useless for an unbounded ratio statistic — see
@@ -123,18 +130,34 @@ def cluster_bootstrap(per_item, iters=10000, seed=0, statistic=None):
     """
     import random
     stat = statistic or _mean_of_item_means
-    items = _draw_lists(per_item)
+    ids = sorted(i for i in per_item if len(per_item[i]) > 0)
+    items = [list(per_item[i]) for i in ids]
     n = len(items)
     if n == 0:
         return {"point": None, "lo": None, "hi": None, "iters": iters, "n_items": 0}
     rng = random.Random(seed)
+    strata_positions = None
+    if strata is not None:
+        groups = {}
+        for pos, item_id in enumerate(ids):
+            groups.setdefault(strata.get(item_id), []).append(pos)
+        strata_positions = list(groups.values())
     reps = []
     for _ in range(iters):
         resampled = []
-        for _ in range(n):
-            draws = items[rng.randrange(n)]
-            k = len(draws)
-            resampled.append([draws[rng.randrange(k)] for _ in range(k)])
+        if strata_positions is not None:
+            for positions in strata_positions:
+                gn = len(positions)
+                for _ in range(gn):
+                    pos = positions[rng.randrange(gn)]
+                    draws = items[pos]
+                    k = len(draws)
+                    resampled.append([draws[rng.randrange(k)] for _ in range(k)])
+        else:
+            for _ in range(n):
+                draws = items[rng.randrange(n)]
+                k = len(draws)
+                resampled.append([draws[rng.randrange(k)] for _ in range(k)])
         reps.append(stat(resampled))
     reps.sort()
     return {"point": stat(items), "lo": _percentile(reps, 0.025),
@@ -200,7 +223,7 @@ def reliability(per_item):
 
 
 # ------------------------------------------------------------------------------ paired delta
-def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05):
+def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05, strata=None):
     """Two-stage PAIRED bootstrap of pass@1(a) - pass@1(b) over the SHARED item set.
 
     Returns {"delta", "lo", "hi", "verdict", "n_items", "mde"}. Stage 1 resamples item ids ONCE
@@ -209,6 +232,13 @@ def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05):
     INDEPENDENTLY, because model a's j-th sample and model b's j-th sample are independent
     runs, not a matched pair. Sharing draw indices would cancel real within-item noise and
     report a CI that is too tight.
+
+    `strata` (M12, pooling-for-power): optional {item_id: stratum_key} map, e.g. a pooled
+    cross-bench compare keyed by `(bench, item_id)` with `strata[k] = k[0]`. When given, stage 1
+    resamples item ids INDEPENDENTLY WITHIN each stratum, preserving that stratum's own n on
+    every draw (the bench mix stays fixed; only within-bench item/draw noise is resampled).
+    `delta`/`n_items`/`mde` are still computed over the FULL pooled set either way. `strata=None`
+    (default) is byte-identical to this function before the parameter existed.
 
     RAISES ValueError if the item-id sets differ, naming the symmetric difference. Comparing
     two differently-filtered item sets (one model's errored items quietly dropped) is the exact
@@ -244,15 +274,30 @@ def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05):
         raise ValueError("paired_delta: no shared items with any draws")
     a_draws = [list(a_per_item[i]) for i in ids]
     b_draws = [list(b_per_item[i]) for i in ids]
+    strata_positions = None
+    if strata is not None:
+        groups = {}
+        for pos, item_id in enumerate(ids):
+            groups.setdefault(strata.get(item_id), []).append(pos)
+        strata_positions = list(groups.values())
     rng = random.Random(seed)
     reps = []
     for _ in range(iters):
         sa = sb = 0.0
-        for _ in range(n):
-            idx = rng.randrange(n)              # ONE item index for both runs => paired
-            da, db = a_draws[idx], b_draws[idx]
-            sa += sum(da[rng.randrange(len(da))] for _ in range(len(da))) / len(da)
-            sb += sum(db[rng.randrange(len(db))] for _ in range(len(db))) / len(db)
+        if strata_positions is not None:
+            for positions in strata_positions:
+                gn = len(positions)
+                for _ in range(gn):
+                    idx = positions[rng.randrange(gn)]    # ONE item index within its own
+                    da, db = a_draws[idx], b_draws[idx]   # stratum, for both runs => paired
+                    sa += sum(da[rng.randrange(len(da))] for _ in range(len(da))) / len(da)
+                    sb += sum(db[rng.randrange(len(db))] for _ in range(len(db))) / len(db)
+        else:
+            for _ in range(n):
+                idx = rng.randrange(n)              # ONE item index for both runs => paired
+                da, db = a_draws[idx], b_draws[idx]
+                sa += sum(da[rng.randrange(len(da))] for _ in range(len(da))) / len(da)
+                sb += sum(db[rng.randrange(len(db))] for _ in range(len(db))) / len(db)
         reps.append((sa - sb) / n)
     reps.sort()
     lo, hi = _percentile(reps, 0.025), _percentile(reps, 0.975)

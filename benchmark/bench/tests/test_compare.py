@@ -14,6 +14,8 @@ The comparability rules encode which mismatches are FATAL and which are the inte
     t0.3 because those are each model's tuned operating point; a rule that demanded equal
     sampling would refuse every comparison the campaign actually needs.
 """
+import pytest
+
 import bench.compare as CMP
 import bench.generate as G
 
@@ -560,3 +562,161 @@ def test_allows_differing_probe_timeout_when_it_never_bound(write_rows, tmp_resu
     r = CMP.compare("A", "B", "math500")
     assert r["comparable"] is True, r.get("reason")
     assert any("probe_timeout" in w for w in r["warnings"])
+
+
+# =========================================================== pooled_compare (M12, 2026-09)
+# "Pooling for power": one paired compare across MULTIPLE benches on acc_strict at a matched
+# budget, running the SAME per-bench comparability gate compare() uses -- so a pooled result can
+# never be more permissive than the single-bench path, only more powerful (bigger N).
+def _acc_strict_bench(write_rows, tmp_results, bench, model_a, model_b, ids, *,
+                      a_ok=True, b_ok=True, a_err=(), b_err=(), budget=16384):
+    """Write a matched-budget, acc_strict-gradeable pair of runs for one bench: `a_ok`/`b_ok`
+    are the correct-answer id sets (True = all correct), `a_err`/`b_err` name ids that DNF
+    (a harness error row, no text) instead of generating."""
+    def build(ok, err):
+        good = [i for i in ids if i not in err]
+        rows = _rows(good, ok=ok, budget=budget)
+        rows += _err_rows(list(err), budget=budget)
+        return rows
+    write_rows(model_a, bench, build(a_ok, a_err))
+    write_rows(model_b, bench, build(b_ok, b_err))
+    _manifest(tmp_results, model_a, bench, budget=budget)
+    _manifest(tmp_results, model_b, bench, budget=budget)
+
+
+def test_pooled_n_and_delta_arithmetic(write_rows, tmp_results):
+    """(a) n = n1 + n2, and the pooled acc_strict means are the plain per-model average over
+    the FULL pooled item set (5 humanevalplus-style + 10 mbppplus-style items here)."""
+    ids1 = [f"h{i}" for i in range(5)]
+    ids2 = [f"m{i}" for i in range(10)]
+    # bench1: A all correct (5/5=1.0), B all wrong (0/5=0.0)
+    _acc_strict_bench(write_rows, tmp_results, "math500", "A", "B", ids1,
+                      a_ok=True, b_ok=set())
+    # bench2: A correct on 6/10, B correct on 4/10 (both clean, no DNFs)
+    _acc_strict_bench(write_rows, tmp_results, "aime", "A", "B", ids2,
+                      a_ok=set(ids2[:6]), b_ok=set(ids2[:4]))
+
+    r = CMP.pooled_compare("A", "B", ["math500", "aime"])
+    assert r["comparable"] is True, r.get("reason")
+    assert r["n_items"] == 15
+    # exact pooled means: A = (5*1.0 + 10*0.6)/15 = 11/15 ; B = (5*0.0 + 10*0.4)/15 = 4/15
+    assert r["a"] == pytest.approx(11 / 15)
+    assert r["b"] == pytest.approx(4 / 15)
+    assert r["delta"]["delta"] == pytest.approx(11 / 15 - 4 / 15)
+    assert set(r["per_bench"]) == {"math500", "aime"}
+    assert r["per_bench"]["math500"]["n_items"] == 5
+    assert r["per_bench"]["aime"]["n_items"] == 10
+
+
+def test_pooled_ci_excludes_zero_when_each_bench_alone_is_inconclusive(write_rows, tmp_results):
+    """(b) The exact stats-level fixture (test_stats.py's
+    test_paired_delta_pooled_ci_excludes_zero...), replayed through pooled_compare: A correct on
+    8/12, B on 5/12, in EACH of two 12-item benches. Alone that is inconclusive at n=12 (grid-
+    quantized lo lands on 0.0); pooled to n=24 the CI clears 0."""
+    for bench in ("math500", "aime"):
+        ids = [f"{bench[0]}{i}" for i in range(12)]
+        _acc_strict_bench(write_rows, tmp_results, bench, "A", "B", ids,
+                          a_ok=set(ids[:8]), b_ok=set(ids[:5]))
+
+    alone_math = CMP.compare("A", "B", "math500", metric="acc_strict")
+    alone_aime = CMP.compare("A", "B", "aime", metric="acc_strict")
+    assert alone_math["delta"]["verdict"] == "inconclusive", alone_math
+    assert alone_aime["delta"]["verdict"] == "inconclusive", alone_aime
+
+    pooled = CMP.pooled_compare("A", "B", ["math500", "aime"])
+    assert pooled["comparable"] is True, pooled.get("reason")
+    assert pooled["n_items"] == 24
+    assert pooled["delta"]["lo"] > 0, pooled["delta"]
+    assert pooled["delta"]["verdict"] == "a_better", pooled["delta"]
+
+
+def test_pooled_bootstrap_is_stratified_each_draw_keeps_each_benchs_n(write_rows, tmp_results):
+    """(c) With a fixed seed, `pooled_compare` must feed `stats.paired_delta` a `strata` map
+    that assigns every (bench, item_id) key to its OWN bench, at the ids' correct counts —
+    which is what forces every bootstrap replicate to keep n1 from bench1 and n2 from bench2
+    fixed (the mechanics of that are pinned directly in test_stats.py; this pins the WIRING)."""
+    ids1 = [f"h{i}" for i in range(4)]
+    ids2 = [f"m{i}" for i in range(9)]
+    _acc_strict_bench(write_rows, tmp_results, "math500", "A", "B", ids1, a_ok=True, b_ok=True)
+    _acc_strict_bench(write_rows, tmp_results, "aime", "A", "B", ids2, a_ok=True, b_ok=True)
+
+    captured = {}
+    real_paired_delta = CMP.stats.paired_delta
+
+    def spy(a_per_item, b_per_item, **kwargs):
+        if kwargs.get("strata") is not None:
+            captured["strata"] = kwargs["strata"]
+            captured["ids"] = set(a_per_item)
+        return real_paired_delta(a_per_item, b_per_item, **kwargs)
+
+    import unittest.mock as mock
+    with mock.patch.object(CMP.stats, "paired_delta", side_effect=spy):
+        r = CMP.pooled_compare("A", "B", ["math500", "aime"])
+    assert r["comparable"] is True, r.get("reason")
+    assert "strata" in captured, "pooled_compare must call paired_delta WITH strata"
+    strata = captured["strata"]
+    assert {k for k, v in strata.items() if v == "math500"} == {("math500", i) for i in ids1}
+    assert {k for k, v in strata.items() if v == "aime"} == {("aime", i) for i in ids2}
+    n_by_bench = {}
+    for k in captured["ids"]:
+        n_by_bench[strata[k]] = n_by_bench.get(strata[k], 0) + 1
+    assert n_by_bench == {"math500": 4, "aime": 9}
+
+
+def test_pooled_refuses_when_either_bench_refuses(write_rows, tmp_results):
+    """(d) refusal propagation: one bench with mismatched item id sets must refuse the WHOLE
+    pooled compare, naming that bench, even though the other bench is perfectly fine."""
+    _acc_strict_bench(write_rows, tmp_results, "math500", "A", "B",
+                      ["a", "b"], a_ok=True, b_ok=True)
+    # aime: item sets differ -> compare() would refuse this bench outright
+    write_rows("A", "aime", _rows(["x", "y"]))
+    write_rows("B", "aime", _rows(["x", "z"]))
+    _manifest(tmp_results, "A", "aime"); _manifest(tmp_results, "B", "aime")
+
+    r = CMP.pooled_compare("A", "B", ["math500", "aime"])
+    assert r["comparable"] is False
+    assert "aime" in r["reason"]
+    assert "item" in r["reason"]
+
+
+def test_pooled_refuses_a_cross_bench_budget_mismatch(write_rows, tmp_results):
+    """(e) Each bench is internally matched (A==B within it) but the two benches themselves ran
+    at different thinking_budget -- pooling those would mix truncation regimes into one delta."""
+    _acc_strict_bench(write_rows, tmp_results, "math500", "A", "B",
+                      ["a", "b"], a_ok=True, b_ok=True, budget=16384)
+    _acc_strict_bench(write_rows, tmp_results, "aime", "A", "B",
+                      ["x", "y"], a_ok=True, b_ok=True, budget=81920)
+    r = CMP.pooled_compare("A", "B", ["math500", "aime"])
+    assert r["comparable"] is False
+    assert "budget" in r["reason"] or "thinking_budget" in r["reason"]
+
+
+def test_pooled_needs_at_least_two_benches(write_rows, tmp_results):
+    _acc_strict_bench(write_rows, tmp_results, "math500", "A", "B", ["a"], a_ok=True, b_ok=True)
+    r = CMP.pooled_compare("A", "B", ["math500"])
+    assert r["comparable"] is False
+
+
+def test_pooled_accepts_tune_applied_to_both_models(write_rows, tmp_results):
+    """`tune=` behaves like suffixing '@tune' onto a bare model name for BOTH models, the same
+    resolution `Model@tune` already gets in the single-bench path."""
+    ids = ["a", "b", "c"]
+    for bench in ("math500", "aime"):
+        for model in ("A", "B"):
+            p = G.result_path(model, bench, tune="t0.6")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            import json as _json
+            with p.open("w", encoding="utf-8") as f:
+                for row in _rows(ids, budget=81920):
+                    f.write(_json.dumps(row) + "\n")
+            mp = p.with_suffix(".manifest.json")
+            mp.write_text(_json.dumps({
+                "box": "M5", "sampling_profile": "deployed", "fingerprint_version": 3,
+                "sampling": {"temperature": 0.4, "thinking_budget": 81920, "max_tokens": 102400},
+                "kv": {"kv_bits": 4}, "runtime": {"apc_enabled": "0", "draft_kind": "off"}}))
+    # untuned lookup has no rows at all -> refuses
+    r0 = CMP.pooled_compare("A", "B", ["math500", "aime"])
+    assert r0["comparable"] is False
+    r1 = CMP.pooled_compare("A", "B", ["math500", "aime"], tune="t0.6")
+    assert r1["comparable"] is True, r1.get("reason")
+    assert r1["n_items"] == 6
