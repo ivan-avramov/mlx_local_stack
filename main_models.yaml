@@ -112,9 +112,10 @@ models:
 
   # ── Campaign picks for 256K agentic coding (MLX quants, hosted on HF: caslca) ──
   # B MENU (operator C38 ruling 2026-08-29): 1st Qwen3.6-27B-Opus-Distill-OptiQ-4bit
-  # (certified MTP triple), 2nd Ornith-1.0-35B-mlx-uniform-4bit, 3rd
-  # Qwen3.8-27B-mlx-uniform-4bit (added on the M26 evidence — leads every pooled cell,
-  # nothing Holm-surviving; its drafter is probe-only, so it ships draft-OFF until M6c/M6d).
+  # (certified MTP triple, M6b), 2nd Ornith-1.0-35B-mlx-uniform-4bit (certified MTP triple,
+  # M27 2026-08-31), 3rd Qwen3.8-27B-mlx-uniform-4bit (added on the M26 evidence — leads every
+  # pooled cell, nothing Holm-surviving; certified MTP triple, M6d 2026-08-30). All three
+  # B-menu triples are predictor-equipped; MEASUREMENT STAYS DRAFT-OFF for every one of them.
   # Ornith-1.0-35B-mlx-uniform-4bit = B 2ND CHOICE: sparse-MoE (8/256 active) + hybrid
   # linear-attn; clears true 256K (mx-peak 32.4GB @ fp16 KV), fast decode (37 tok/s @256K).
   # Coding op-temp 0.4.
@@ -126,6 +127,17 @@ models:
     kv_prealloc_tokens: 262144     # pre-alloc full cap → never reallocs
     kv_bits: 0                     # fp16 KV — 256K peak 32.4GB (≤46GB gate, 13.6GB headroom)
     prefill_step_size: 512
+    # CERTIFIED M27 2026-08-31 — TRANSPLANTED native-MTP predictor (the B 2nd choice's shipped
+    # triple): the fine-tune dropped its base's MTP head, so the Qwen/Qwen3.5-35B-A3B head
+    # (1 layer, 256 experts + shared, shards 13–14) was split via --model-type qwen3_next,
+    # int4/g64. Paired ON/OFF humanevalplus n=164 (seed-39 draw), acc 92.07 vs 92.68, delta
+    # -0.61pp CI [-4.3,+3.0pp], TOST ±5pp verdict EQUIVALENT (p_d=0.055, 4:5); strict
+    # inconclusive 12:13 (runaway placement, rate unchanged 7.9 vs 7.3 %); engagement 164/164,
+    # mean acceptance 0.778 (k=2), decode 1.56× paired mean (160.5 vs 102.8 tok/s), corpus
+    # wall 3.28h vs 4.65h; probe GO 1.72×. Serving-only: MEASUREMENT STAYS DRAFT-OFF
+    # (fingerprint v3 + compare refusal police the boundary). Fork ab5708a5. M28 dormant.
+    draft_kind: mtp
+    draft_model: caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter  # UPLOADED 2026-08-31 (public); this box overrides with the local extracted dir
     # Registry-side generation defaults — the tuned sampling reaches ALL clients (incl.
     # vscode/zed, which carry no sampling). Applied only when a request omits the field.
     # Coding op-temp 0.4. presence_penalty 0.0 lets suffix engage. See docs FU-2.
