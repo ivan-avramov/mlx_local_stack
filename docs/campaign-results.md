@@ -228,6 +228,55 @@ step is the H1 head-loop profile, not k=2/3. The kernel change itself is a corre
 improvement to the fork and stays (any hybrid-recurrent target benefits). Measurement stays
 predictor-OFF; the registry entry stays draft-OFF.
 
+### 2026-08-31 (late night) — M29 H1 round profile: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MTP at k=1 is VERIFY-bound (81 % of the round); head 1.27 ms; **M29 CLOSED at 1.18×**, registry stays draft-OFF
+
+Instrument: env-gated round profiler in the fork (`mlx_vlm/speculative/mtp_profile.py`, branch
+`nemotron-h-mtp-profile` @ `f5fff9b5` on `dd2a2dcb`; `MLX_VLM_MTP_PROFILE=1` / `MLX_VLM_MTP_PROFILE_HEAD=1`;
+zero calls when unset — CPU suite 58 passed + 160 passed, mutation-checked known-positive: the tests
+FAIL when the marks are neutered or the eval/synchronize fence order is inverted). Phase marks are
+`mx.eval(outputs)` → `mx.synchronize()` at each boundary (MLX is lazy; without the eval every phase
+collapses into verify's eval). Run ONCE through the server path (`m1.mtp_probe --arm on`, same three
+M6a items, deployed sampling, draft flags verified at the worker cmdline; `$STACK_WORKDIR/m29/profile_k1/`,
+3.5 min wall, no memory event, swap flat).
+
+| item | rounds | draft | verify | walk | yield | accept | rollback | other | round ms | tok/rd | tok/s profiled / unprofiled (21:40) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| lru_cache | 2990 | 0.21 | 9.53 | 0.83 | 0.04 | 1.03 | 0.05 | 0.03 | 11.72 | 1.91 | 162.9 / 167.2 |
+| token_bucket | 9418 | 0.21 | 9.96 | 0.83 | 0.04 | 1.07 | 0.08 | 0.03 | 12.22 | 1.85 | 151.3 / 155.7 |
+| bst | 3171 | 0.22 | 10.10 | 0.87 | 0.05 | 1.07 | 0.06 | 0.03 | 12.40 | 1.89 | 152.6 / 163.2 |
+| **round-weighted** | 15579 | 0.21 | **9.91** | 0.84 | 0.04 | **1.06** | 0.07 | 0.03 | **12.16** | 1.87 | observer cost 3–7 % |
+
+(ms per round; `accept` = `accept_verified_tokens`, which at k=1 IS the drafter forward — the head
+seeds the next draft from the accepted hidden, so `draft_block`'s loop never runs and the head-split
+lines read `draft_tokens=0`; `yield` = consumer time between yields, paid by the draft-OFF path too.)
+
+**Reading.** Verify (one 2-token target forward) = 9.91 ms = 81 % of the round, against a 7.25 ms
+single-token step on the OFF arm (138 tok/s) → **the second verified token costs ≈ 2.7 ms, 37 % of a
+full step**. The non-verify remainder is 2.25 ms: head (`accept` + `draft`) 1.27 ms = 56 %, syncs/Python
+(`walk` + `rollback` + `yield` + `other`) 0.98 ms = 44 %. The head is close to its bandwidth floor
+(one MTP block + a 131072 × 2688 4-bit `lm_head` read ≈ 0.18 GB ≈ 0.4 ms; ≤ ~0.5 ms is recoverable by
+compile/async).
+
+**Pre-registered decision rule applied.** H2 trigger (`other + draft` ≥ 50 % of the non-verify
+remainder): 0.24 / 2.25 = **11 % — not met** (even crediting all of `accept` as "draft": 48 %, still
+under). Ceiling arithmetic makes the rest moot: with the ENTIRE remainder removed, k=1 = 1.87 tok /
+9.91 ms = 189 tok/s = **1.37×**; realistic H2 (≤ 0.5 ms) ≤ **1.23×**. k=2/3: each extra draft adds
+≈ 2.7 ms of verify plus ≈ 1 ms of recursed head forward (a depth-1-trained head applied to its own
+output) for ≤ 0.87 expected extra tokens — **≤ 1.29× even if the second draft were accepted as often
+as the first**; and `m1.mtp_probe` strips `draft_block_size` from its temp registry, so a k=2/3 probe
+needs new bench tooling on top (C42, rec NO stands). **Verdict: M29 CLOSED at its measured 1.18×;
+registry stays draft-OFF; next is M12.**
+
+**Mechanism (logged, not fully separated).** The binding term is the target's multi-token verify,
+not the head: +37 % per extra verified token. Candidates: (a) 128-expert/top-6 MoE fan-out at batch 1
+(up to 12 distinct experts per layer for 2 tokens); (b) the T > 1 mamba2 with-states kernel path
+(per-position state emission) vs the T = 1 single-step kernel. (a) alone cannot be it —
+`Ornith-1.0-35B-mlx-uniform-4bit` is also a 3B-active MoE and reaches 1.56× — so (b) is the prime suspect;
+separable by a per-layer-type T=1 vs T=2 forward micro-benchmark if this model ever returns to the
+predictor question. The with-states kernel itself stays (it turned 0.76× into 1.18× and transfers to
+any hybrid-recurrent target). H1's head-split switch (`MLX_VLM_MTP_PROFILE_HEAD`) is structurally
+empty at k=1 for seed-path drafters — use the `accept` bucket.
+
 ### 2026-08-31 (night) — Methodology: the M5 GPU Neural Accelerators are ACTIVE by default in the installed mlx 0.32.0 (3.8× fp16 GEMM, 3.5× 4-bit quantized_matmul vs the forced non-NA path); the June "dead end" was an instrument error
 
 `benchmark/spikes/na_discriminator.py`, M5 Max, macOS 26.6.2, mlx 0.32.0 wheel (minos 26.2):

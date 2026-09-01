@@ -3599,3 +3599,28 @@ attention dominates. P14 conclusion: **no cheap large prefill lever remains on t
 attention share at depth (SDPA kernel path, KV dtype) is the only prefill target worth a probe,
 and it is a 256K-specific one.** Norm calls at 0.28 ms each are launch/eval overhead in this
 serialised harness, not real cost.
+
+## 2026-08-31 (late night) — M29 H1: round profiler built, one server-path run, M29 CLOSED at 1.18×
+
+- Implementer agent built the env-gated profiler on fork branch `nemotron-h-mtp-profile` (`7a1e6d48`,
+  then fix commit `f5fff9b5` after the verifier agent's FIX-FIRST: `accept`/`yield` buckets so the
+  drafter forward inside `accept_verified_tokens` and the consumer's per-yield work stop landing in
+  `rollback`/`other`; partial-round `end_unit`; per-generation head-singleton reset; known-positive
+  tests — exact `mx.synchronize` count 20 for the 3-round fake, eval-before-synchronize order,
+  rollback-mark-fires-vs-accept-all). Verifier mutation runs: neutered marks → 3 tests fail; inverted
+  fence → 1 fails; reset reverted → 1 fails; yield mark dropped → 1 fails. 58 CPU-pinned + 160
+  `test_speculative.py` passed; `test_mtp_inline_dispatch.py` does not collect in `.venv-bench`
+  (`mlx_audio` absent — pre-existing, same on `main`). `_mtp_rounds_batch` byte-identical to main.
+- Run chain `$STACK_WORKDIR/m29/profile_k1/chain3.py`: campaign router 68032 stopped by pid (0
+  listeners verified) → `m1.mtp_probe --arm on` with `PYTHONPATH=<fork>:benchmark` and both env vars
+  → worker stderr copied from `$TMPDIR/mlx-manager-logs/<model>.log` (mlx-serve opens it "w" per
+  load — the spec's "under --workdir" was wrong, corrected in the spec) → bench router restarted on
+  the draft-OFF overlay (listener 77916, SESSION_MAX=2, APC absent). 22:44→22:47, rc=0, swap flat at
+  the pre-existing 4.26 GB, worker RSS 18.6 GB.
+- Monitor lesson (again): a `cut` stage in the worker-line pipeline buffered every `[mtp_profile]`
+  line — the chain branch of the same monitor worked, so the silence looked like "not started". Direct
+  read showed 8,600 rounds already profiled. `cut` has no line-buffer flag; drop it or use
+  `awk '{print substr($0,1,400); fflush()}'`. Known-positive self-test on the replacement passed.
+- Numbers and the decision-rule application: campaign-results 2026-08-31 late night. Headline:
+  verify 81 % of the round, head 1.27 ms, H2 trigger 11 % → not met; ceilings 1.37× / ≤ 1.23× (H2) /
+  ≤ 1.29× (k=2/3) → CLOSED at 1.18×, registry draft-OFF, next M12.

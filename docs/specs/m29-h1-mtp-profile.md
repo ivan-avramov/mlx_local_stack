@@ -37,3 +37,15 @@ Python. Gate to beat: 1.3× (M6a). Deeper drafting is pointless until the remain
 - Any re-probe ≥ 1.3× → M6d-protocol quality OFAT (5-item seeded pilot → n=164 paired) → registry
   flip on PASS. < 1.3× after H2 → close M29 at its measured ratio, registry stays draft-OFF, next
   is M12. Report: campaign-results entry, PLAN M29 status, C44 line.
+
+## Outcome and corrections (2026-08-31 late night)
+- DONE: fork branch `nemotron-h-mtp-profile` @ `f5fff9b5` (module `mlx_vlm/speculative/mtp_profile.py`);
+  run once via the server path; M29 CLOSED at 1.18× (campaign-results 2026-08-31 late night).
+- Correction: the worker's stderr is NOT under `--workdir`; mlx-serve writes it to
+  `$TMPDIR/mlx-manager-logs/<model>.log`, opened "w" on every load — copy it out before the next load.
+- Correction: at k=1 the drafter forward runs inside `accept_verified_tokens` (seed path), not in
+  `draft_block`; the profiler therefore has `accept` and `yield` phases in addition to the five above,
+  and `MLX_VLM_MTP_PROFILE_HEAD` reports `draft_tokens=0` for seed-path drafters at k=1. Set both env
+  vars together (the head singleton resets on the rounds path only).
+- Correction: `m1.mtp_probe` strips `draft_block_size` from its temp registry; a k=2/3 probe needs a
+  probe flag first (C42).
