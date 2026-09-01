@@ -43,9 +43,13 @@ registry before the next bench run (procedure: lab-notebook 2026-08-28) so its h
 ## THE BOX QUEUE — updated 2026-08-31 night
 
 1. ~~M27~~ **DONE (certified + executed, `3a200a9`).**
-2. **Before ANY ladder rerun:** persist per-sample rows (score, completion_tokens, budget_hit)
-   in `bench/reasoning.py` (C39 follow-up). Sizing rule for budget-hitting designs: bound =
-   draws × (budget ÷ floor decode), never converged-draw / pilot pace.
+2. ~~Per-sample persistence~~ **DONE a38c476 (2026-08-31 night)**: every rung record now carries
+   `rows` (trial, seed, score, completion_tokens, finish_reason, budget_hit, decode_tps,
+   wall_s). Sizing rule for budget-hitting designs stands: bound = draws × (budget ÷ floor
+   decode), never converged-draw / pilot pace. **Test-suite note:** with a bench router live,
+   run the suite as `MLX_SERVE_CONFIG=$STACK_WORKDIR/m6b/bench_overlay_draft_off.yaml pytest`
+   — otherwise the C35 tripwire tests correctly refuse (registry says mtp for the resident
+   `Ornith-1.0-35B-mlx-uniform-4bit`, worker serves off). 1245 GREEN that way.
 3. **M21 int8 causal test** → **M12 d128k cliff check** (pre-registered, PLAN M12) → **M17/D11**.
    Every n≥40 job gets a 5-item SEEDED-RANDOM pilot first; monitors use `/usr/bin/tail -F` +
    `/usr/bin/grep --line-buffered` with a known-positive self-test line.

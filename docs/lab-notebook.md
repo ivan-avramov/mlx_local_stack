@@ -3387,3 +3387,12 @@ Box-free session task; no run live, router :8000 untouched (draft-OFF overlay, p
 - Docs: campaign-results (certification executed), PLAN M27 DONE + M6d row, ledger §1 B
   predictor paragraph (the ledger had no M6b/M6d record either — now all three), C43 executed.
   M28 stays dormant (0.778 vs ~0.8 trigger — noted, not triggered).
+
+- **C39 follow-up landed (a38c476)**: `run_reasoning_ladder` rung records carry `rows` — one dict per
+  draw (trial, seed, score, completion_tokens, finish_reason, budget_hit, decode_tps, wall_s) —
+  via the existing `on_rung` persistence, so the partial jsonl and `reasoning.json` now hold
+  every draw. TDD (two tests failed first; my first assertion assumed the test driver's canned
+  answer scores 1.0 — it is a dummy, fixed the test not the code). Suite: 1245 passed when run
+  with `MLX_SERVE_CONFIG` pointed at the served draft-OFF overlay; without it the two C35
+  tripwire tests refuse, correctly, because the registry of record now says mtp for the
+  resident `Ornith-1.0-35B-mlx-uniform-4bit` while the bench worker serves off.
