@@ -116,19 +116,10 @@ def cmd_list(args):
 
 
 def cmd_generate(args):
-    if args.samples > 1:
-        # O30 (operator-ruled 2026-08-17; raised as "O28", renumbered in the 2026-08-18 merge —
-        # the old driver box had already taken O28): the per-draw seed is INERT on the non-speculative
-        # serving path — measured byte-identical 82,169-token draws under different declared
-        # seeds (the batched decode keys off the FIRST request's seed at row 0). k>1 therefore
-        # produces k COPIES: pass^k collapses to pass@1 and reliability reads perfect. Refuse
-        # rather than manufacture fake reliability; remove this guard when the fork threads
-        # per-request seeds into per-row keys (O30's part (a)) and a 2-seed byte-difference
-        # probe passes.
-        print(f"[generate] REFUSED: --samples {args.samples} > 1 is inert on this serving path "
-              f"(O30: request seeds never reach the sampler; k draws are byte-copies). "
-              f"Spend on ITEMS instead; multi-sample designs return with the fork fix.")
-        raise SystemExit(2)
+    # O30 guard LIFTED 2026-09-02: per-request seeds reach the sampler on the deployed fork
+    # (ab5273f + C26 ab5708a5 are ancestors of 57177a21) and the ruling's 2-seed byte-difference
+    # probe passed on the live router (seeds 11 vs 22 differ; seed 11 reproduces). k>1 draws are
+    # now genuine draws; seeds derive from (item, sample) so they stay paired across models.
     models, benches, limits = _resolve(args)
     overrides = {}  # global params layered over each model's production config
     if args.thinking_budget is not None:
