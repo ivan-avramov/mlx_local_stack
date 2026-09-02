@@ -3730,3 +3730,40 @@ serialised harness, not real cost.
   `m21/arms_chain.py`.
 - Pushes owed (approval per push): fork `57177a21` (must go first — the stack's submodule pointer
   references it), then stack `6ad8c9f` and this docs commit.
+
+## 2026-09-01 (night) — M21 arms COMPLETE (both 50/50, ZERO DNFs); reference re-measured overnight for the paired compare
+
+- Relaunch 19:50 after the operator's GPU window (an earlier 19:47 launch was ABORTED within 2 min:
+  the runner's artifact check globbed top-level shards only, the mixed artifact's index names its
+  vision sidecar at `optiq/optiq_vision.safetensors`, so the check rejected `optiq_mixed` and FELL <!-- allow-shorthand -->
+  THROUGH to the converter's `static_mixed` byproduct (3.966 bpw, no vision tower) — the worker was
+  verifiably serving the wrong recipe. Killed by pid, the two manifests quarantined under
+  `m21/wrong_artifact_2026-09-01/`, verifier fixed to resolve index names as paths and to admit ONLY
+  `optiq_mixed`. Lesson: a fallback list of candidate dirs is a wrong-artifact generator — name the
+  one admissible artifact.)
+- Pilot 5/5 + 5/5, C35 OK on both first manifests (draft off, overlay sha), explicit bound 7800 s
+  (int8 slowest decode 17 tok/s → 80 min full-budget draw × 1.5 exceeds the 7200 s ceiling).
+- **Result (n=50, t0.6, budget 81920, predictor OFF, same items/seeds):**
+
+  | arm | strict | conv | DNF | pass@1|conv | mean wall | max wall (item) | peak GB | decode tok/s |
+  |---|---|---|---|---|---|---|---|---|
+  | `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` (reference, fork `0c1c8b17`) | 43/50 = 86.0 | 45/50 | 5 timeouts | 95.6 | 102 s | timeout | — | 26.1 |
+  | `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (4.98 eff. bpw) | 44/50 = 88.0 | 50/50 | 0 | 88.0 | 79 s | 1268 s (HumanEval/32, 27.8K tok) | 30.2 | 24.6 |
+  | `Qwen3.8-27B-Fable-Distill-mlx-uniform-8bit` (8.63 bpw, DIAGNOSTIC) | 43/50 = 86.0 | 50/50 | 0 | 86.0 | 153 s | 2717 s (HumanEval/32, 41.5K tok) | 44.6 | 17.0 |
+
+- Per item, the two higher-precision arms AGREE on all five reference-DNF items: 2, 82, 39 converge
+  and PASS on both; 32 and 99 converge on both but are WRONG on both (32: 27.8K vs 41.5K tokens;
+  99: 5.3K vs 29.3K). Elsewhere the arms differ only on single-item noise (mixed loses 108, 22, 47,
+  gains 151; int8 loses 97, 95, 47). Mechanism read: at 4-bit the fine-tune's meanders on 32/99 run
+  past the budget; ANY added precision shortens them enough to terminate, but does not make them
+  correct — precision-on-sensitive-layers (152 layers at 8 bit) buys the same runaway suppression
+  as precision-everywhere at 4 % decode cost instead of 35 % and 30 GB instead of 44.6 GB peak.
+  Accuracy deltas are within the ±18pp MDE — inconclusive by construction.
+- `compare` REFUSED both pairs: reference rows carry fork `0c1c8b17`, the arms `57177a21`
+  (code-sha guard, output-determining). Per the apples-to-apples rule the reference is being
+  REGENERATED on the current code (`m21/ref_regen.py`, label `t0.6-r2`, same items/seeds/tune/bound
+  7800 s); grade + paired compares follow automatically. It also tests whether the motivating 10 %
+  DNF replicates under current code.
+- Harness gap found (P8, pending operator): `quant` block is `{}` for every LOCAL-PATH model since
+  O34 (`registry_kv` returns the `$HOME`-form path, `_resolve_snapshot` tests it literally). Rows
+  unaffected; manifests need a backfill.
