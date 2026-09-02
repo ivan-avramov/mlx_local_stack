@@ -3787,3 +3787,19 @@ serialised harness, not real cost.
   `$STACK_WORKDIR/{models,optiq_out}/` — deletable once the write-up is pushed (int8 is diagnostic-only;
   the mixed artifact could be uploaded as `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` only if
   the operator wants the row reproducible — no pick depends on it).
+
+## 2026-09-02 (afternoon) — M21b ladder complete (t0.4/0.5/0.6/0.7 all 88–90 strict, INCONCLUSIVE); O30 guard lifted after the 2-seed probe; k=3 confirmation launched
+
+- Ladder rows committed (`5dc5b1f`, `9c746f7`): strict 45/44/44/44 of 50 at t0.4/0.5/0.6/0.7; conv 49/50/50/49;
+  tokens over the 50 items 161K/90K/92K/180K. `HumanEval/99` is BIMODAL per draw (5K, <5K, 82K, 82K) —
+  the token total is dominated by which way the two meander items fall, not by temperature; t0.5 has the
+  best ordinary-item cost (median 408, p90 1628). Operator chose the k=3 confirmation at t0.5 vs the 4-bit <!-- allow-shorthand -->
+  at t0.6 (P30), with the P28 decision rule as a frame and a joint review before any registry change.
+- First k=3 launch REFUSED by the harness (`--samples 3` inert, O30). The O30 fork fix turned out to be
+  deployed (`ab5273f`, `ab5708a5` ⊂ `57177a21`); ran the ruling's exit probe on the live router: seeds 11 vs
+  22 differ, 11 reproduces → guard lifted (`run.py`, test flipped; commit below). Two runner false alarms
+  fixed: `ps -Eww` truncates the env block behind a long command line (env read is advisory now; the
+  manifest sha is the check), and a RESUMED run keeps its original manifest so the overlay-sha check is
+  skipped for non-fresh manifests (the int8-entry removal changed the M21 overlay sha).
+- Submodule worktree remains pinned at `57177a21` (stack HEAD points at `7330d3a6`, splitter-only) so the
+  k=3 rows pair with the ladder; RESTORE after the k=3 run (`git -C src/mlx-vlm checkout 7330d3a6`).

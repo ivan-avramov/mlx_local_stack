@@ -347,6 +347,14 @@ Citations of "O28" in code/commits from 2026-08-17 (the `run.py --samples` guard
 the lab notebook) refer to **O30**.
 
 ### ~~O30~~ → RULED (2026-08-17): operator took the recommendation — (b) now, (a) when the fork is next opened.
+
+**O30 CLOSED 2026-09-02 — guard LIFTED.** The fork fix is deployed (`ab5273f` batched path + C26 `ab5708a5`
+cached path are ancestors of the served submodule `57177a21`) and the ruling's exit condition passed on the
+live router: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, same prompt at t0.5, seed 11 → `a120818f`,
+seed 22 → `c66580ed`, seed 11 again → `a120818f` (different seeds differ, same seed reproduces within the
+session). `run.py generate --samples k` now proceeds (test flipped to acceptance). Corpus consequence: every
+seeded k=1 row generated on or after the fork's deployment of `ab5273f` was drawn under its OWN seed; the
+cross-restart nondeterminism (C26) is unchanged — pairing is per (item, sample) seed within a session.
 `run.py generate` now REFUSES `--samples > 1` with an O28 citation (guard + test landed same day). The fork fix (thread each request's seed into its rows' keys in the batched decode) is queued for the next fork-opening; the guard comes out when a 2-seed byte-difference probe passes.
 
 **O30 UPDATE 2026-08-18 — THE FORK FIX IS BUILT, COMMITTED IN THE FORK (`ab5273f`), NOT YET
