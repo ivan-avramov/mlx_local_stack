@@ -3767,3 +3767,23 @@ serialised harness, not real cost.
 - Harness gap found (P8, pending operator): `quant` block is `{}` for every LOCAL-PATH model since
   O34 (`registry_kv` returns the `$HOME`-form path, `_resolve_snapshot` tests it literally). Rows
   unaffected; manifests need a backfill.
+
+## 2026-09-02 (00:25) — M21 CLOSED: the reference re-measured on current code converges on all five of its 2026-08-20 "timeouts"
+
+- Reference regen (`t0.6-r2`, fork `57177a21`, bound 7800 s, paused once 23:1x→23:25 for the
+  operator's GPU window — resumable per item, 10 rows kept): 50/50 converged, 0 DNF, strict 44/50 =
+  88.0, decode 28.4 tok/s, peak 29.2 GB, 1.01 h wall. HumanEval/32 34,062 tok / 23 min; 99 14,167 tok;
+  2 / 82 / 39 converge in < 1 min. 44 of the 45 items the old row converged on get the same verdict
+  (97 flipped).
+- Paired: mixed +0.0pp [−10,+10]; int8 −2.0pp [−8,+4]; both INCONCLUSIVE at ±18pp MDE. `compare`
+  warned `probe_timeout_s` 7800 vs 7200 (the arms' manifests kept the pilot's derived 7200 because
+  resume keeps the first manifest) — never binding, rows bound-invariant.
+- The old DNFs cluster at seeded positions 16-17 and 22-24-25 → orphan cascade behind one long item
+  (O41 mechanism), pre-C28 client (default bound 3600 s then). M21's premise was a harness artifact;
+  the campaign-results entry records the caveat for other pre-2026-08-24 runaway counts.
+- Verdict recorded in campaign-results 2026-09-02 + PLAN M21: precision-everywhere = precision-on-
+  sensitive-layers = uniform 4-bit within noise on this checkpoint; registry unchanged. Router stopped
+  00:25; box quiet. int8 artifact (28 GB) and the three OptiQ outputs (45 GB) remain under <!-- allow-shorthand -->
+  `$STACK_WORKDIR/{models,optiq_out}/` — deletable once the write-up is pushed (int8 is diagnostic-only;
+  the mixed artifact could be uploaded as `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` only if
+  the operator wants the row reproducible — no pick depends on it).

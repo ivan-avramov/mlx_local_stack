@@ -337,6 +337,49 @@ worth the box time at the current spread. **M12 is CLOSED** (d64k block + d128k 
 Caveat recorded in the tool: pooling equal-weights items, so pooling very unequal bench sizes lets the
 larger bench dominate the delta (fine at 50/50).
 
+### 2026-09-02 — M21 CLOSED: quant precision is NOT the runaway driver on `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` — the motivating 10 % DNF was a pre-C28 client-timeout cascade, and all three precisions converge on all 50 items
+
+Design (PLAN M21): same `TeichAI/Qwen3.8-27B-Fable-Distill` bf16 source converted three ways and run on <!-- allow-shorthand -->
+the same 50 hep items/seeds at the certified t0.6 tune, budget 81920, cap 262144, predictor OFF,
+explicit 7800 s bound (derived: int8 at 17 tok/s needs 80 min × 1.5 for a full-budget draw), fork
+`57177a21` for all three arms (the 2026-08-20 reference row is on fork `0c1c8b17` — `compare`
+refused the cross-code pair, so the reference was RE-MEASURED as `t0.6-r2`).
+
+| arm (all @t0.6, n=50) | eff. bpw | strict | conv | DNF | pass@1\|conv | wall mean / median | longest item (share of arm wall) | items >10K tok (wall share) | decode | peak |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6-r2 (reference, re-measured) | 4.0 | **44/50 = 88.0** | 50/50 | 0 | 88.0 | 73 s / 19 s | 1404 s HumanEval/32 (39 %) | 3 (68 %) | 28.4 tok/s | 29.2 GB |
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (152 layers @8, 346 @4) | 4.98 | **44/50 = 88.0** | 50/50 | 0 | 88.0 | 79 s / 22 s | 1268 s HumanEval/32 (32 %) | 2 (48 %) | 24.6 tok/s | 30.2 GB |
+| `Qwen3.8-27B-Fable-Distill-mlx-uniform-8bit` (DIAGNOSTIC) | 8.63 | 43/50 = 86.0 | 50/50 | 0 | 86.0 | 154 s / 26 s | 2717 s HumanEval/32 (35 %) | 3 (73 %) | 17.0 tok/s | 44.6 GB |
+| (2026-08-20 reference row, fork `0c1c8b17`, pre-C28 client) | 4.0 | 43/50 = 86.0 | 45/50 | 5 "timed out" | 95.6 | — | — | — | 26.1 tok/s | — |
+
+Paired (`compare`, cluster bootstrap, axis MDE ±18pp): mixed vs re-measured reference **+0.0pp
+[−10, +10] INCONCLUSIVE**; int8 vs reference **−2.0pp [−8, +4] INCONCLUSIVE**. TOST ±5pp not met
+(628 matched items would be needed).
+
+**The premise did not survive re-measurement.** On current code with a bound above the budget time,
+the reference converges on ALL five items it "timed out" on 2026-08-20 — 32 in 34K tokens
+(23 min), 99 in 14K, and 2 / 82 / 39 in under a minute. The old DNFs sit at row positions 16-17 and
+22-24-25 of the seeded order, i.e. two clusters behind a long item: the O41 orphan-cascade signature
+(pre-C28 client abandons a long draw, the worker keeps generating, the next items starve into false
+timeouts), not five independent runaways. **Verdict: no runaway tax exists to attribute to 4-bit
+precision at the derived bound; the three precisions differ only in the LENGTH of the two genuine
+meanders (32: 28K / 34K / 42K tokens; 99: 5K / 14K / 29K) and all three get both WRONG.**
+Precision-everywhere (int8) buys nothing over precision-on-sensitive-layers, and the mixed recipe
+buys nothing measurable over uniform 4-bit on this checkpoint: −0 items strict, −4 % decode,
++1 GB peak. Per item the arms differ only on single-item flips (mixed loses 108, 22, 47, gains 39,
+151; int8 loses 97, 95, 47, gains 39). **Registry unchanged: `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`
+stays the shipped conversion.** Mechanism transferable: a "runaway tax" measured under a client bound
+below the budget time is a harness artifact until re-measured with C28 in force — the M12/M25 runaway
+counts predate or straddle C28 and should be read with that caveat (they were measured with bound ≥
+budget time from 2026-08-24 on; earlier rows are suspect).
+
+Side facts: the mixed conversion's KL sweep allocated the IDENTICAL 152-layer 8-bit set as the plain
+`Qwen3.8-27B-OptiQ-4.5bpw-mixed` build (same architecture, different fine-tune) — the sensitivity
+ranking is a property of the architecture. The int8 control peaks at 44.6 GB at short prompts (full-cap
+KV prealloc + 28 GB weights), 1.4 GB under the gate — not deployable headroom. The re-measured
+reference's strict 88.0 supersedes the 2026-08-20 row's 86.0 as this model's hep@t0.6 number on
+current code (`t0.6-r2`; the old row is retained, code-stale). Data: `benchmark/results/Qwen3.8-27B-Fable-Distill-{mlx-uniform-4bit/humanevalplus.t0.6-r2.*,OptiQ-4.5bpw-mixed,mlx-uniform-8bit}`; runner + logs `$STACK_WORKDIR/m21/`. <!-- allow-shorthand -->
+
 ### 2026-08-31 (night) — Methodology: the M5 GPU Neural Accelerators are ACTIVE by default in the installed mlx 0.32.0 (3.8× fp16 GEMM, 3.5× 4-bit quantized_matmul vs the forced non-NA path); the June "dead end" was an instrument error
 
 `benchmark/spikes/na_discriminator.py`, M5 Max, macOS 26.6.2, mlx 0.32.0 wheel (minos 26.2):
@@ -987,6 +1030,9 @@ gives the same answer.
 | Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit | opencode | 22 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4·attn16/64 |
 | Qwen3.8-27B-OptiQ-4.5bpw-mixed | capacity_ladder | 4 | ungraded | ungraded | n/a | - | - | n/a | - | TQ4·attn16/64 |
 | Qwen3.8-27B-OptiQ-4.5bpw-mixed | humanevalplus | 48 | 87.5% | 84.0% | 100 | 2 | 29 | 29 | 81920 | TQ4·attn16/64 |
+| Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit @t0.6-r2 (2026-09-02, fork 57177a21) | humanevalplus | 50 | 88.0% | 88.0% | 100 | 0 | 0 | 0 | 81920 | TQ4·attn16/64 |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | humanevalplus | 50 | 88.0% | 88.0% | 100 | 0 | 0 | 0 | 81920 | TQ4·attn16/64 |
+| Qwen3.8-27B-Fable-Distill-mlx-uniform-8bit (DIAGNOSTIC, M21) | humanevalplus | 50 | 86.0% | 86.0% | 100 | 0 | 0 | 0 | 81920 | TQ4·attn16/64 |
 | Qwen3.8-27B-OptiQ-4.5bpw-mixed | mbppplus | 50 | 80.0% | 80.0% | 100 | 1 | 29 | 29 | 81920 | TQ4·attn16/64 |
 | Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit | humanevalplus | 50 | 78.0% | 56.0% | 66 | 17 | 98 | 0 | 49152 | TQ4·attn16/64 |
 | Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit | mbppplus | 49 | 77.5% | 58.0% | 67 | 16 | 98 | 0 | 49152 | TQ4·attn16/64 |
