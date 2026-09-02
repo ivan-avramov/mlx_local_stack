@@ -3708,3 +3708,25 @@ serialised harness, not real cost.
   Cite the manifest's `effective_bits`, never the name. <!-- allow-shorthand -->
 - C41 fork-fix plan drafted (planning agent, read-only) — awaiting operator approval before any
   fork edit; see handoff.
+
+## 2026-09-01 (evening) — C41 fork fix LANDED (fork `57177a21`, stack bump `6ad8c9f`); operator GPU pause
+
+- Implementer (TDD, three files) then adversarial verifier (Claude Opus agent): SHIP-WITH-NOTES. Evidence: the <!-- allow-shorthand -->
+  fused-layout pin passes on the PRE-change code and the three defect tests fail there
+  (`3 failed, 11 passed`); post-change `14 passed`; full `tests/test_models.py` 363 passed; four
+  mutations (reverse stacking order, drop the guard, revert detection to `text or root`, no-op
+  `postprocess`) each caught by exactly one new test — the no-op case fails via guard (c), i.e. the
+  guard does what it is for. Fork markers clean on both source files (`check_fork_markers.py`
+  fails repo-wide on 318 pre-existing sites — debt, not ours); `check_body_divergence.py` OK.
+- Verifier notes filed as C45 (MLX-source path raises instead of stacking; guard blast radius
+  reaches other MoE families' quantized separate-expert sources — loud, not silent; missing tests
+  for inferred `num_experts` and stacking order in the qwen3_next test).
+- 18:01 operator asked for the GPU (embedding tests) "at the next convenient time": arms chain
+  killed while still idle-waiting (nothing lost; relaunch = one command), its monitor stopped; the
+  KL sweep was at 430/497 by its checkpoint file (the converter's stdout is block-buffered — the
+  log tail lagged 60 layers behind the checkpoint; read the checkpoint, not the log, for progress),
+  so it runs to completion and a waiter kills the chain's router the moment `DONE` appears
+  (verifies 0 listeners + no worker). Resume = restart router on the M21 overlay + relaunch
+  `m21/arms_chain.py`.
+- Pushes owed (approval per push): fork `57177a21` (must go first — the stack's submodule pointer
+  references it), then stack `6ad8c9f` and this docs commit.

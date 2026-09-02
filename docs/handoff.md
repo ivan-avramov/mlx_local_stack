@@ -1,13 +1,13 @@
-# Handoff — 2026-09-01 evening (M21 conversion chain IN FLIGHT + M21 ARMS CHAIN ARMED behind it; C41 plan awaiting approval)
+# Handoff — 2026-09-01 evening (M21 conversion finishing; ARMS CHAIN PAUSED for operator GPU use; C41 LANDED on the fork, pushes owed)
 
-Single box (M5 Max 64 GB). **TWO detached jobs are LIVE and must not be disturbed:**
+Single box (M5 Max 64 GB). **OPERATOR GPU PAUSE (18:01): the arms chain was killed while idle and must be RELAUNCHED after the operator's embedding tests; a waiter kills the router as soon as the conversion chain ends, leaving :8000 DOWN on purpose.** Jobs:
 1. the M21 conversion chain (`nohup`, pid in `$STACK_WORKDIR/m21/chain.pid`, logs
    `$STACK_WORKDIR/m21/{chain,download,convert_int8,convert_optiq,mem}.log`). int8 control DONE and
    verified (28 GB, 8.627 bpw, g64 affine, vision tower present). OptiQ-mixed KL sweep at 294/497
    17:26, ~76 layers/h → sweep ≈ 20:05, then allocation + write; the chain then restarts the bench
    router on the m6b draft-OFF overlay (that router is immediately replaced by job 2).
-2. **the M21 ARMS chain** (`$STACK_WORKDIR/m21/arms_chain.py`, pid `m21/arms.pid`, log `m21/arms.log`,
-   launched 17:35): waits for `chain DONE`, verifies both artifacts, restarts the router on the TEMP
+2. **the M21 ARMS chain** (`$STACK_WORKDIR/m21/arms_chain.py`, log `m21/arms.log`) — **NOT RUNNING (paused 18:01, never started work)**. Relaunch (after the operator releases the GPU):
+   `cd $STACK_REPO && set -a; . ./.env; set +a; unset APC_ENABLED; export STACK_WORKDIR STACK_REPO; nohup .venv-bench/bin/python $STACK_WORKDIR/m21/arms_chain.py > $STACK_WORKDIR/m21/arms.nohup 2>&1 </dev/null & echo $! > $STACK_WORKDIR/m21/arms.pid` (it re-checks `chain DONE`, then does everything below). When running it: waits for `chain DONE`, verifies both artifacts, restarts the router on the TEMP
    overlay `$STACK_WORKDIR/m21/bench_overlay_m21.yaml`, then pilot(5) → C35 gate → sizing → hep n=50
    → grade → compare for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` then
    `Qwen3.8-27B-Fable-Distill-mlx-uniform-8bit` (int8 DIAGNOSTIC-ONLY; watch `peak_mem_gb` in its
@@ -20,7 +20,7 @@ Single box (M5 Max 64 GB). **TWO detached jobs are LIVE and must not be disturbe
    New result dirs appear under `benchmark/results/Qwen3.8-27B-Fable-Distill-{OptiQ-4.5bpw-mixed,mlx-uniform-8bit}/` (to commit as `data(bench)` once graded). <!-- allow-shorthand -->
 
 Fork main = `f5fff9b5` (pushed, submodule bumped). Stack pushed through `93291ab`/`8a2146f`;
-**UNPUSHED: `e250df5`, `90a0bc3` and this session's commits** — push needs in-turn approval. Working tree: the SIX intentional `main_models.yaml` overrides (NEVER commit).
+Stack pushed through `ce5c4c8`. **UNPUSHED: fork `57177a21` (C41 — push FIRST), stack `6ad8c9f` (submodule bump) + this docs commit** — push needs in-turn approval. Working tree: the SIX intentional `main_models.yaml` overrides (NEVER commit).
 Test suite is fully green: 1261 passed, 0 failed (the two stale provenance tests widened to `mtp`,
 operator-approved).
 
@@ -42,17 +42,7 @@ operator-approved).
    share) per arm vs the `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` t0.6 reference (n=50, 5
    timeout-DNFs = the motivating 10 %), answer PRECISION-EVERYWHERE vs PRECISION-ON-SENSITIVE-LAYERS,
    record in campaign-results + PLAN M21 + lab-notebook, commit the result dirs.
-2. **C41 fork fix** — plan drafted 2026-09-01 evening (planning agent), AWAITING OPERATOR APPROVAL:
-   (0) regression test pinning the fused `experts.gate_up_proj` layout output; (a) hoist
-   `Qwen3NextMTPSplitter.postprocess`'s separate-expert stacking into a module-level helper and give
-   `Qwen3_5MTPSplitter` a `postprocess` that calls it (do NOT re-point `qwen3_5_moe` to the Next
-   class — it has `draft_model_cls=None` and would drop the fused split + fp8 conversion);
-   (b) `detect_mtp_splitter` tries `text_config.model_type` then root `model_type`, first REGISTERED
-   wins; (c) `MTPSplitter.split` raises before writing if any key matches `\.experts\.\d+\.`.
-   Files: `mlx_vlm/speculative/drafters/{mtp_split.py,qwen3_5_mtp/split.py}`, tests in
-   `mlx_vlm/tests/test_models.py::TestMTPSplit` (synthetic 2-expert (8,8) tensors, mirrors the
-   qwen3_next test). Fork markers required (`dev/check_fork_markers.py`). TDD, implementer + verifier,
-   then bump the submodule.
+2. **C41 fork fix — LANDED** (fork `57177a21`, stack `6ad8c9f`, verifier SHIP-WITH-NOTES; notes filed as **C45**: MLX-source path raises instead of stacking, guard blast radius on other MoE families' quantized sources, two missing tests — recommendation N1 yes / N2 accept / N3 yes as one small fork commit when the fork is next touched).
 3. Then M17 / D11 (blocked on Stage-2) / M18 (BFCL). NVSY/S1 stays parked per O32.
 
 ## Standing rules that bit today
@@ -70,4 +60,4 @@ M21 `$STACK_WORKDIR/m21/`; M12 `$STACK_WORKDIR/m12/` (comparators, false-provena
 `benchmark/results/*/humanevalplus.d128k.*`; M29 `$STACK_WORKDIR/m29/`. HF cache now also holds the
 re-downloaded `TeichAI/Qwen3.8-27B-Fable-Distill` bf16 source checkpoint <!-- allow-shorthand --> (~54 GB, needed it for the conversions — keep).
 
-**Order of resumption: this file → `$STACK_WORKDIR/m21/arms.log` (arms chain alive/where?) → `$STACK_WORKDIR/m21/chain.log` → `docs/PLAN.md` (M21 row) → `docs/open-questions.md`.**
+**Order of resumption: this file → `$STACK_WORKDIR/m21/arms.log` (arms chain: paused or where?) → `$STACK_WORKDIR/m21/chain.log` → `docs/PLAN.md` (M21 row) → `docs/open-questions.md`.**
