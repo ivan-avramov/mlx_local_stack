@@ -1,20 +1,26 @@
-# Handoff — 2026-09-01 evening checkpoint (M12 CLOSED; M21 conversions IN FLIGHT — chain survives the session restart)
+# Handoff — 2026-09-01 evening (M21 conversion chain IN FLIGHT + M21 ARMS CHAIN ARMED behind it; C41 plan awaiting approval)
 
-Single box (M5 Max 64 GB). **ONE detached job is LIVE and must not be disturbed:** the M21 conversion
-chain, `nohup`, pid in `$STACK_WORKDIR/m21/chain.pid`, logs `$STACK_WORKDIR/m21/{chain,download,convert_int8,convert_optiq,mem}.log`.
-It already produced the int8 control (`$STACK_WORKDIR/models/Qwen3.8-27B-Fable-Distill-mlx-uniform-8bit`,
-28G, 8.627 bpw, gs64 affine) and is now in the mixed-recipe KL sensitivity sweep <!-- allow-shorthand -->
-(~218/497 layers at 18:30, ~76 layers/h → sweep done ≈ 20:30 + allocation/write; output
-`$STACK_WORKDIR/optiq_out/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, recipe: target-bpw 4.0,
-candidate-bits 4,8, gs64 — the `Qwen3.8-27B-OptiQ-4.5bpw-mixed` recipe, ~4.5 effective bpw). **When it
-finishes it RESTARTS the bench router itself** on the draft-OFF overlay and writes the listener pid to
-`$STACK_WORKDIR/m12/router_off.pid`. :8000 is intentionally DOWN until then (quiet window). Swap-alarm
-sampler runs inside the chain (`mem.log`, ALARM lines at +8 GB); swap flat so far. Monitor by
-re-arming `tail -F` on `chain.log` — pid-file liveness + a known-positive line first.
+Single box (M5 Max 64 GB). **TWO detached jobs are LIVE and must not be disturbed:**
+1. the M21 conversion chain (`nohup`, pid in `$STACK_WORKDIR/m21/chain.pid`, logs
+   `$STACK_WORKDIR/m21/{chain,download,convert_int8,convert_optiq,mem}.log`). int8 control DONE and
+   verified (28 GB, 8.627 bpw, g64 affine, vision tower present). OptiQ-mixed KL sweep at 294/497
+   17:26, ~76 layers/h → sweep ≈ 20:05, then allocation + write; the chain then restarts the bench
+   router on the m6b draft-OFF overlay (that router is immediately replaced by job 2).
+2. **the M21 ARMS chain** (`$STACK_WORKDIR/m21/arms_chain.py`, pid `m21/arms.pid`, log `m21/arms.log`,
+   launched 17:35): waits for `chain DONE`, verifies both artifacts, restarts the router on the TEMP
+   overlay `$STACK_WORKDIR/m21/bench_overlay_m21.yaml`, then pilot(5) → C35 gate → sizing → hep n=50
+   → grade → compare for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` then
+   `Qwen3.8-27B-Fable-Distill-mlx-uniform-8bit` (int8 DIAGNOSTIC-ONLY; watch `peak_mem_gb` in its
+   rows, ~36–39 GB projected). Driver logs `m21/{pilot,full}.log`, watchers `m21/watch_*.log`,
+   grade/compare `m21/grade.log`, `m21/compare_*.log`. It STOPS (`FATAL` line) on: artifact
+   verification failure, router env wrong, C35 mismatch, pilot short/transport-error. Expected
+   wall: OptiQ arm ≈ 1.5–2.5 h, int8 arm ≈ 3–5 h + runaway tail; done ≈ 03:00–06:00 2026-09-02. <!-- allow-shorthand -->
+   Monitor by `tail -F m21/arms.log` (pid-file liveness first). After it finishes the router is left
+   UP on the M21 overlay — restart it on the m6b overlay (or the registry) before any other work.
+   New result dirs appear under `benchmark/results/Qwen3.8-27B-Fable-Distill-{OptiQ-4.5bpw-mixed,mlx-uniform-8bit}/` (to commit as `data(bench)` once graded). <!-- allow-shorthand -->
 
 Fork main = `f5fff9b5` (pushed, submodule bumped). Stack pushed through `93291ab`/`8a2146f`;
-**UNPUSHED: `e250df5`** (draft_kind test widening + PLAN D12) and this handoff commit — push needs
-in-turn approval. Working tree: the SIX intentional `main_models.yaml` overrides (NEVER commit).
+**UNPUSHED: `e250df5`, `90a0bc3` and this session's commits** — push needs in-turn approval. Working tree: the SIX intentional `main_models.yaml` overrides (NEVER commit).
 Test suite is fully green: 1261 passed, 0 failed (the two stale provenance tests widened to `mtp`,
 operator-approved).
 
@@ -31,27 +37,31 @@ operator-approved).
 - C35 recurrence (mine) on the first M12 launch: archived + regenerated; rule now in AGENTS.md.
 
 ## THE BOX QUEUE
-1. **M21 arms — when the chain finishes**: verify both artifacts (config.json + shards + bpw line in the
-   convert logs), register BOTH in a TEMP registry/overlay copy (never the committed registry; local
-   paths; `generation_defaults` from `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`'s certified t0.6 tune,
-   budget 81920, cap 262144, prealloc=cap), then per the M21 row: hep n=50 at t0.6, same items/seeds as
-   the `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` reference — 5-item seeded pilot first (standing rule), `--sampling-profile deployed`
-   requires the temp registry in `MLX_SERVE_CONFIG` (C35!), bench_watch + monitor alongside. int8 is
-   DIAGNOSTIC-ONLY (~36–39 GB peak projected — watch capacity); OptiQ-mixed is the deployable treatment.
-   Compare each vs `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`'s existing hep rows (t0.6, 10 % DNF was
-   the motivating signal); the question is PRECISION-EVERYWHERE vs PRECISION-ON-SENSITIVE-LAYERS as the
-   runaway driver — report the four numbers incl. runaway tax.
-2. **C41 fork fix** (engineering, no box): qwen3_5 MTP splitter — separate-expert `postprocess`,
-   detection fallback to root `model_type`, fail-loud on per-expert sidecar keys; TDD, implementer +
-   verifier, then bump. Propose the plan first.
-3. Then M17 / D11 (blocked on Stage-2) / M18 (BFCL). NVSY/S1 stays parked per O32 (operator re-affirmed
-   interest 2026-09-01 — `docs/switchyard-plan.md` is the ready plan for when it re-enters).
+1. **M21 arms — RUNNING via the arms chain (above).** When `=== m21 ARMS DONE ===` appears: read
+   `m21/grade.log` + `m21/compare_*.log`, write the four numbers incl. runaway tax (DNF rate + wall
+   share) per arm vs the `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` t0.6 reference (n=50, 5
+   timeout-DNFs = the motivating 10 %), answer PRECISION-EVERYWHERE vs PRECISION-ON-SENSITIVE-LAYERS,
+   record in campaign-results + PLAN M21 + lab-notebook, commit the result dirs.
+2. **C41 fork fix** — plan drafted 2026-09-01 evening (planning agent), AWAITING OPERATOR APPROVAL:
+   (0) regression test pinning the fused `experts.gate_up_proj` layout output; (a) hoist
+   `Qwen3NextMTPSplitter.postprocess`'s separate-expert stacking into a module-level helper and give
+   `Qwen3_5MTPSplitter` a `postprocess` that calls it (do NOT re-point `qwen3_5_moe` to the Next
+   class — it has `draft_model_cls=None` and would drop the fused split + fp8 conversion);
+   (b) `detect_mtp_splitter` tries `text_config.model_type` then root `model_type`, first REGISTERED
+   wins; (c) `MTPSplitter.split` raises before writing if any key matches `\.experts\.\d+\.`.
+   Files: `mlx_vlm/speculative/drafters/{mtp_split.py,qwen3_5_mtp/split.py}`, tests in
+   `mlx_vlm/tests/test_models.py::TestMTPSplit` (synthetic 2-expert (8,8) tensors, mirrors the
+   qwen3_next test). Fork markers required (`dev/check_fork_markers.py`). TDD, implementer + verifier,
+   then bump the submodule.
+3. Then M17 / D11 (blocked on Stage-2) / M18 (BFCL). NVSY/S1 stays parked per O32.
 
 ## Standing rules that bit today
 - C35 again → AGENTS.md rule (driver env carries `MLX_SERVE_CONFIG`; verify pid + first manifest).
 - `cut`/`head` buffer Monitor pipelines (memory file exists); zsh does not word-split `${VAR//,/ }`.
 - `.venv/bin/hf` does not exist — `hf` lives in `.venv-optiq/bin`. `.venv` lacks `evalplus` — bench
   drivers run on `.venv-bench`.
+- `optiq convert` logs a bpw line PER PHASE (uniform baseline first) and its reported bpw (5.485 for the <!-- allow-shorthand -->
+  precedent) is not the manifest's `effective_bits` (4.98); parse the `optiq_mixed` phase and cite the manifest.
 - `mlx_vlm.convert` int8 of a 27B is ~11 s (streaming cast at disk speed) — a fast rc=0 is NOT a skip;
   verify config.json + shards + the bpw line, never rc alone.
 
@@ -60,4 +70,4 @@ M21 `$STACK_WORKDIR/m21/`; M12 `$STACK_WORKDIR/m12/` (comparators, false-provena
 `benchmark/results/*/humanevalplus.d128k.*`; M29 `$STACK_WORKDIR/m29/`. HF cache now also holds the
 re-downloaded `TeichAI/Qwen3.8-27B-Fable-Distill` bf16 source checkpoint <!-- allow-shorthand --> (~54 GB, needed it for the conversions — keep).
 
-**Order of resumption: this file → `$STACK_WORKDIR/m21/chain.log` (is the chain alive/done?) → `docs/PLAN.md` (M21 row) → `docs/open-questions.md`.**
+**Order of resumption: this file → `$STACK_WORKDIR/m21/arms.log` (arms chain alive/where?) → `$STACK_WORKDIR/m21/chain.log` → `docs/PLAN.md` (M21 row) → `docs/open-questions.md`.**

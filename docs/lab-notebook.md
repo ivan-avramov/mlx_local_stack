@@ -3673,3 +3673,38 @@ serialised harness, not real cost.
   box; no software gap — NA-active MLX is at the qmm roofline. The video's own harness-traffic data
   (438K–1.69M input tokens/week across harnesses) corroborates the prefill-bound mechanism and
   motivates logging per-task input-token traffic in M17/M21.
+
+## 2026-09-01 (evening) — M21: conversion chain running to plan; arms chain ARMED behind it
+
+- 17:26 resume: conversion chain alive (pid 44009), OptiQ KL sweep 294/497 at ~76 layers/h → sweep <!-- allow-shorthand -->
+  ≈ 20:05, then allocation + write + the chain's own router restart (≈ 20:30–21:00). Swap flat
+  (2.73 GB vs 2.86 base, 0 ALARM lines). int8 control verified beyond rc: `config.json`
+  (`qwen3_5`, vision tower present, affine g64 bits 8), 6/6 shards per the index, 28 GB, bpw line
+  8.627.
+- Handoff typo corrected: the "218/497 at 18:30" sweep reading was 16:30 (the 76 layers/h rate
+  reproduces 294 at 17:26 from 218 at 16:30).
+- **`$STACK_WORKDIR/m21/bench_overlay_m21.yaml`** = the m6b draft-OFF overlay + the two arms cloned
+  from `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`'s entry (t0.6 tune, budget 81920, cap 262144,
+  prealloc=cap, TQ4 KV): `Qwen3.8-27B-Fable-Distill-mlx-uniform-8bit` (local `models/` dir) and
+  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (path rewritten by the runner from the `Done!
+  saved to` line). Never committed.
+- Item set verified: `_subsample(seed 0, limit 50)` reproduces the reference row's 50 ids exactly and
+  the 5-item pilot is its prefix (`HumanEval/146, 67, 68, 94, 54`) — pilot rows resume into the n=50.
+- **Arms chain `$STACK_WORKDIR/m21/arms_chain.py` launched 17:35 (pid in `m21/arms.pid`, log
+  `m21/arms.log`)**: waits for `chain DONE` → verifies both artifacts (config/shards/phase-aware bpw
+  line/size gate) → kills the chain's m6b router by pid, restarts on the M21 overlay
+  (`MLX_SERVE_CONFIG`, `MLX_VLM_CACHE_SESSION_MAX=2`, no APC — verified on the pid) → pilot
+  (`--limit humanevalplus=5 --seed 0 --order model --sampling-profile deployed --tune t0.6`, OptiQ arm <!-- allow-shorthand -->
+  first, then int8) with bench_watch + swap sampler → C35 gate on each model's FIRST manifest
+  (`runtime.draft_kind == off` AND `registry.sha256 == sha256(overlay)`, driver killed on mismatch)
+  → pilot gate (5 rows, no transport errors) → sizing from the pilot MEAN + explicit 10 %-DNF tail
+  allowance → n=50 with an explicit `--probe-timeout` only if the pilot's slowest decode rate puts a
+  full-budget draw × 1.5 above the 7200 s ceiling (int8 at ~half the 4-bit decode rate is expected <!-- allow-shorthand -->
+  to) → grade → `compare` vs `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit@t0.6` (plain + `--intersect`).
+- Precedent check on the recipe: `optiq convert` prints the bpw of EVERY phase (uniform baseline <!-- allow-shorthand -->
+  4.501 first); the `optiq_mixed` phase of the `Qwen3.8-27B-OptiQ-4.5bpw-mixed` build printed
+  **5.485** bpw / 17.6 GB, and its manifest records `effective_bits` 4.98 (152 layers at 8 bit, 346
+  at 4) — the "4.5bpw" in that registry name is a misnomer inherited by tonight's artifact name. <!-- allow-shorthand -->
+  Cite the manifest's `effective_bits`, never the name. <!-- allow-shorthand -->
+- C41 fork-fix plan drafted (planning agent, read-only) — awaiting operator approval before any
+  fork edit; see handoff.
