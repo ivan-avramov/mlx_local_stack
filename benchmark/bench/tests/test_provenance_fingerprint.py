@@ -225,7 +225,10 @@ def test_absent_suffix_is_recorded_as_off_not_as_unobserved():
     """The load-bearing distinction. "off" must be an OBSERVATION, not a missing value — otherwise
     the wildcard rule silently exonerates exactly the mismatch v3 exists to catch."""
     st = P.registry_draft("Ornith-1.0-35B-mlx-uniform-4bit")
-    assert st["draft_kind"] in ("off", "suffix"), st
+    # "mtp" added 2026-09-01: since M27 (3a200a9) the registry of record legitimately ships
+    # draft_kind: mtp for certified picks; the load-bearing claim is observation-vs-missing,
+    # not which drafter. Bench runs still measure draft-OFF via the stripped overlay (C35).
+    assert st["draft_kind"] in ("off", "suffix", "mtp"), st
     assert st["draft_kind"] is not None
     missing = P.registry_draft("no-such-model-in-the-registry")
     assert missing["draft_kind"] == "unknown", missing
@@ -271,7 +274,7 @@ def test_the_live_manifest_actually_carries_the_draft_state():
     """End-to-end: the bug was that nothing populated the key. Assert the real builder does."""
     man = P.current_manifest_lite("Ornith-1.0-35B-mlx-uniform-4bit", profile="deployed")
     assert man["fingerprint_version"] >= 3   # v3 introduced the populated draft state; v4 keeps it
-    assert man["runtime"]["draft_kind"] in ("off", "suffix")
+    assert man["runtime"]["draft_kind"] in ("off", "suffix", "mtp")  # mtp: certified picks since M27
     assert P.config_fingerprint(man)["runtime"]["draft_kind"] is not None
 
 
