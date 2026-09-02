@@ -182,3 +182,76 @@ def test_home_normalization_matches_the_hand_sanitized_committed_form(tmp_path):
     assert P._home_normalized(home) == "$HOME"
     assert P._home_normalized("/opt/models/x") == "/opt/models/x"
     assert P._home_normalized(None) is None
+
+
+# --- P8 (2026-09-02): $HOME-form hf_path must still resolve to the real dir for quant_info ---
+#
+# registry_kv() emits hf_path in $HOME-form (O34, correct for the WRITTEN manifest); gather()
+# then fed that literal string to _resolve_snapshot, whose os.path.isdir("$HOME/...") is False,
+# so every LOCAL-PATH model since 2026-08-20 was stamped `quant: {}` while hub ids were fine.
+
+import json as _json
+import os as _os
+import shutil as _shutil
+import struct as _struct
+import uuid as _uuid
+
+import pytest as _pytest
+
+
+def _write_min_safetensors(path):
+    """A valid header-only safetensors with one quantized module (scales -> params counted)."""
+    header = {
+        "layers.0.scales": {"dtype": "F16", "shape": [8, 1], "data_offsets": [0, 16]},
+        "layers.0.biases": {"dtype": "F16", "shape": [8, 1], "data_offsets": [16, 32]},
+        "layers.0.weight": {"dtype": "U32", "shape": [8, 8], "data_offsets": [32, 288]},
+    }
+    hj = _json.dumps(header).encode()
+    with open(path, "wb") as f:
+        f.write(_struct.pack("<Q", len(hj)))
+        f.write(hj)
+        f.write(b"\x00" * 288)
+
+
+@_pytest.fixture
+def home_snapshot_dir():
+    """A minimal MLX snapshot placed UNDER $HOME (pytest's tmp_path is under /private/var, which
+    _home_normalized leaves alone). ~/.cache is the pre-approved out-of-repo exception."""
+    base = _os.path.expanduser("~/.cache/mlx_local_stack_test_tmp")
+    d = _os.path.join(base, "snap-" + _uuid.uuid4().hex[:8])
+    _os.makedirs(d)
+    with open(_os.path.join(d, "config.json"), "w") as f:
+        _json.dump({"model_type": "test", "quantization": {"group_size": 64, "bits": 4}}, f)
+    _write_min_safetensors(_os.path.join(d, "model.safetensors"))
+    try:
+        yield d
+    finally:
+        _shutil.rmtree(base, ignore_errors=True)
+
+
+def test_resolve_snapshot_expands_home_form(home_snapshot_dir):
+    home_form = P._home_normalized(home_snapshot_dir)
+    assert home_form.startswith("$HOME/")          # precondition: it IS the O34 form
+    assert P._resolve_snapshot(home_form) == home_snapshot_dir
+    # absolute and ~-form still resolve; a bogus hub id still falls through to None
+    assert P._resolve_snapshot(home_snapshot_dir) == home_snapshot_dir
+    assert P._resolve_snapshot("~" + home_snapshot_dir[len(_os.path.expanduser("~")):]) \
+        == home_snapshot_dir
+    assert P._resolve_snapshot("org/definitely-not-cached-" + _uuid.uuid4().hex) is None
+
+
+def test_gather_stamps_quant_for_a_local_home_path_model(tmp_path, home_snapshot_dir):
+    yml = tmp_path / "reg.yaml"
+    yml.write_text(
+        "models:\n"
+        "  - name: local-4bit\n"
+        f"    hf_path: {home_snapshot_dir}\n"
+        "    kv_bits: 0\n"
+    )
+    man = P.gather("local-4bit", str(yml), profile="deployed")
+    # the WRITTEN form stays $HOME-form (O34) ...
+    assert man["kv"]["hf_path"] == P._home_normalized(home_snapshot_dir)
+    # ... but quant is computed from the real dir, not left as {}
+    assert man["quant"]["nominal_bits"] == 4
+    assert man["quant"]["effective_bits"] == 4.0
+    assert man["quant"]["mixed"] is False

@@ -455,11 +455,16 @@ def _registry_state(registry_path: str) -> dict:
 
 
 def _resolve_snapshot(hf_path):
-    """Resolve an hf_path (repo id or local dir) to a local snapshot dir for quant_info."""
-    if hf_path and os.path.isdir(hf_path):
-        return hf_path
+    """Resolve an hf_path (repo id or local dir) to a local snapshot dir for quant_info.
+
+    P8 (2026-09-02): registry_kv() hands us the O34 `$HOME/...` form; expand it (and `~`)
+    before the isdir test, else every local-path model resolves to None and is stamped
+    `quant: {}`. The manifest's WRITTEN hf_path stays $HOME-form — only the lookup expands."""
     if not hf_path:
         return None
+    local = os.path.expandvars(os.path.expanduser(hf_path))
+    if os.path.isdir(local):
+        return local
     import glob
     cache = os.path.expanduser(
         "~/.cache/huggingface/hub/models--" + hf_path.replace("/", "--"))
