@@ -1,75 +1,61 @@
-# Handoff — 2026-09-02 17:00 (M21 CLOSED negative; M21b k=3 confirmation IN FLIGHT; O30 guard lifted; C41/C45/P8 landed)
+# Handoff — 2026-09-03 11:10 (M21b hep k=3 DONE/PROVISIONAL; mbpp k=3 IN FLIGHT; C47 SHIPPED; docs reorganized)
 
-Single box (M5 Max 64 GB). **ONE detached job is LIVE:** the M21b k=3 chain (`$STACK_WORKDIR/m21/k3_chain.py`,
-pid `m21/k3.pid`, log `m21/k3.log`, driver logs `m21/k3_*.log`, launched 16:51): adds samples 1–2 to the
-existing k=1 rows of `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (then of
-`Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6-r2), same 50 hep items, seeds paired per (item, sample),
-bound 7800 s, predictor OFF, then grades both at k=3 and runs `compare REF@t0.6-r2,OPT@t0.5` (+ `--intersect`).
-ETA ≈ 2.5 h per arm + meander tail (`HumanEval/32`/`99` can run 80 min each) → done ≈ 22:00–01:00. Router
-is UP on the M21 overlay `$STACK_WORKDIR/m21/bench_overlay_m21.yaml` (int8 entry removed; overlay sha
-`90b3606c…`). Monitor: `tail -F m21/k3.log` (pid liveness first). **`src/mlx-vlm` WORKTREE IS PINNED at
-`57177a21`** (stack HEAD points at `7330d3a6` = C45, splitter-only) so k=3 rows pair with the ladder; the venv
-imports `src/mlx-vlm` editable. **RESTORE after the run: `git -C src/mlx-vlm checkout 7330d3a6`** (then
-`git status` shows the submodule clean).
+Single box (M5 Max 64 GB). **ONE detached job is LIVE:** the M21b mbpp chain (`$STACK_WORKDIR/m21/mbpp_chain.py`,
+pid `m21/mbpp.pid`, log `m21/mbpp.log`, driver logs `m21/mbpp_*.log`; relaunched 11:02 with `MBPP_SKIP_PILOT=1`
+after the 5-item pilot gate false-aborted at a 24.3 h projection — the seeded first-5 draw holds two heavy
+cores, `Mbpp/306` and `/620`; hep's actual k=3 cost was 102 s/draw). It runs mbppplus n=50 × k=3 on
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (15 pilot rows resume in place) then
+`Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6-r2, grades both, compares (+ `--intersect`), ends with
+`=== M21b MBPP DONE ===`. Expect 8–12 h. Router UP on the M21 overlay (`$STACK_WORKDIR/m21/bench_overlay_m21.yaml`,
+sha `90b3606c…`). **`src/mlx-vlm` WORKTREE IS PINNED at `57177a21`** (stack pointer `7330d3a6`); the chain refuses
+to start otherwise. Restore with `git -C src/mlx-vlm checkout 7330d3a6` only after M21b closes (with C47 landed
+the pin no longer matters for pairing — `57177a21` ≡ `7330d3a6` on the serving path — but keep it until then).
 
-Fork main = `7330d3a6` (pushed). Stack pushed through `94ac286` (17:05, operator-approved) plus the 17:15 batch
-below — push needs in-turn approval every time. Working tree: the SIX intentional `main_models.yaml` overrides
-(NEVER commit), the pinned submodule worktree (`M src/mlx-vlm`, NEVER commit) + the live k=3 rows file.
+Stack pushed through `b723bde`. **UNPUSHED: `6ae5772` (docs reorg), `19e6fbb` (C47), + this handoff commit** —
+push needs in-turn approval. Working tree: the SIX intentional `main_models.yaml` overrides (NEVER commit),
+`M src/mlx-vlm` (the pin, NEVER commit), the live mbpp rows.
 
-## Where M21/M21b stand (campaign-results 2026-09-02, PLAN M21 + M21b)
-- **M21 CLOSED, negative**: three precisions of the same checkpoint converge on all 50 items; strict 88.0
-  (uniform-4bit re-measured `t0.6-r2`) / 88.0 (mixed) / 86.0 (int8); paired deltas INCONCLUSIVE. The <!-- allow-shorthand -->
-  2026-08-20 "10 % DNF" was a pre-C28 client-timeout cascade (positions 16-17, 22-24-25), not runaways.
-- **M21b ladder DONE** (`5dc5b1f`, `9c746f7`): mixed @t0.4/0.5/0.6/0.7 → strict 45/44/44/44, all INCONCLUSIVE.
-  Tokens over 50 items 161K/90K/92K/180K, dominated by two BIMODAL items (`HumanEval/32`, `99`: 5K one draw,
-  82K the next). t0.5 has the best ordinary-item cost (median 408, p90 1628). Operator's decision axis is
-  TOKENS PER TASK at equal quality; the pre-registered frame is P28 (PLAN M21b row) with a joint review
-  before any registry change — **do not touch the registry on the k=3 result alone**.
-- When `=== M21b K3 DONE ===` appears: read `m21/grade_k3_*.log`, `m21/compare_k3*.log`; compute the
-  paired tokens-per-task ratio (mean over 3 samples per item, cluster bootstrap over items) and mean
-  strict per arm; present data + rule verdict + recommendation to the operator; then mbpp (step 4:
-  mixed at the chosen rung n=50 + the 4-bit's mbpp re-measured `t0.6-r2`, its existing row is pre-C28). <!-- allow-shorthand -->
+## When `=== M21b MBPP DONE ===` appears
+Run `.venv-bench/bin/python $STACK_WORKDIR/m21/k3_analysis.py` after pointing its `BENCH`/tune constants at
+mbppplus (it hard-codes `humanevalplus`; make `BENCH` a CLI arg), read `m21/grade_mbpp_*.log` and
+`m21/compare_mbpp*.log`, and apply P28 on the independent item set: mean strict ≥ ref − 1 item AND (paired
+tokens-per-task ratio < 1 with CI excluding 1 OR fewer meanders at equal accuracy). hep k=3 (campaign-results
+2026-09-03) met (2a) marginally (0.658, CI [0.39, 0.98], tail-driven; ordinary items 0.83 CI spans 1).
+**Decision rule agreed with the operator: mbpp confirms (ratio < 1, CI excluding 1) → the recipe is real →
+upload `optiq_mixed` to `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` + registry entry (this checkpoint
+is NOT a B-menu pick, so no menu change); mbpp near 1 → hep was three items' tails, recipe stays uncarried.**
+Present data + verdict + recommendation; joint review before any registry change. Then commit rows as
+`data(bench)`, campaign-results entry, PLAN M21b row → DONE, restore the submodule pin, delete
+`$STACK_WORKDIR/optiq_out/…/optiq_mixed` only if the recipe is NOT carried.
 
-## Landed this session
-- C41 (fork `57177a21`) and C45 (fork `7330d3a6`, submodule `1f4f80d`): qwen3_5 MTP splitter fixes, verified.
-- P8 (`9823a31` + backfill `c14aab6`, `5dc5b1f`): local-path manifests carry their quantization block again.
-- O30 CLOSED (`7df1be3`, `d84ecc5`): `--samples k` accepted; the 2-seed probe passed on the live router.
-- C47 filed: `compare`'s code-sha guard keys on the whole submodule commit — needs a ruling.
+## Landed this session (2026-09-02 evening → 2026-09-03 morning)
+- M21b hep k=3 (`c4216b9`): strict 44.67 vs 45.00 INCONCLUSIVE; tokens ratio 0.658 [0.39, 0.98]; PROVISIONAL.
+- Community-thread + JetBrains review (P43–P48): nothing contradicts the corpus; the one untested claim is
+  instruction following → **M31** (ifeval arm for `Qwen3.8-27B-mlx-uniform-4bit` @t0.6, paired with the
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` row) queued after mbpp + C46.
+- **C47 SHIPPED (`19e6fbb`)**: fingerprint v5 = serving-path tree hash (spec `docs/specs/c47-serving-path-fingerprint.md`;
+  exclusions in `provenance.py`); `compare` refuses on serving-path mismatch, warns on commit-sha mismatch;
+  older manifests derive the hash from their recorded sha. The mixed mbpp arm's manifest is v4, the reference
+  arm's will be v5 — derivation pairs them (same hash).
+- **Docs reorganized (`6ae5772`)**: `docs/superpowers/`, `docs/sketches/`, `docs/work-queue.json` DELETED (git
+  history is the archive, last present at `b723bde`); `docs/specs/` holds design docs; `docs/README.md` is the
+  index; PLAN.md is the ONLY queue.
+- Pre-session untracked rows committed (`5b8f4de` M27/M6d certification rows, `3ea3d9c` M23 rows); C46 filed.
 
-## THE BOX QUEUE (after k=3)
-1. M21b review + mbpp (above). 2. **C46**: re-measure pre-C28 timeout rows behind live rulings, in order
-   `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` hep+mbpp @t0.55/@t0.6 (O37), then
-   `Qwen3.8-27B-mlx-uniform-4bit` vs `Qwen3.8-27B-OptiQ-4.5bpw-mixed` hep+mbpp @t0.6 (M25). Full n=50 re-runs
-   (partial resume would mix code versions in one file). 3. M17 / D11 / M18.
-
-## Resolved 17:15 (operator took the session recommendations)
-- The pre-session untracked rows are COMMITTED: M27/M6d certification rows `5b8f4de`, M23 rows `3ea3d9c`
-  (DO-NOT-CITE caveat in the commit body). The root `transcript.md` was a third-party video transcript, moved
-  to `$STACK_WORKDIR/notes/`. Tree has zero untracked files.
-- **C46 FILED** (open-questions) as the pre-C28 timeout re-measurement queue item; box slot after M21b.
-- **C47**: session recommendation recorded in the row (adopt the serving-path tree hash as a v4 fingerprint
-  field beside the commit sha; historical rows stay pairable by derivation). Build after the k=3 review, not
-  before. Still needs the operator's ruling on the row itself.
-- The k=3 analysis script is `$STACK_WORKDIR/m21/k3_analysis.py` (P28 rule, paired tokens-per-task ratio
-  with a two-stage item bootstrap; warns on a stale evalplus result). `bench_watch` was launched with
-  `--total 50`, so its ETA line is meaningless at k=3 (rows > items) — progress is read from the rows file.
+## THE BOX QUEUE (after mbpp)
+1. M21b review (above). 2. **C46** pre-C28 timeout re-measurements (open-questions row; `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`
+first, then the M25 pair), full n=50 re-runs. 3. **M31** ifeval arm (~2 h). 4. M17 / D11 / M18.
 
 ## Standing rules that bit this session
-- A fallback LIST of candidate artifact dirs is a wrong-artifact generator (M21 runner served `static_mixed`
-  for 2 min): name the ONE admissible artifact; resolve safetensors-index names as paths (sidecars in subdirs).
-- `compare` refuses across fork shas; a reference older than the last fork bump must be re-measured before any
-  paired claim; a fork bump landing MID-A/B splits the arms — pin the worktree.
-- `ps -Eww` truncates the env block behind a long command line — verify `MLX_SERVE_CONFIG` via the
-  manifest's `registry.sha256`, not `ps`. A RESUMED run keeps its original manifest (sha of that day's overlay).
-- The converter's stdout is block-buffered; read `sensitivity_checkpoint.json` for progress. Its bpw line is
-  per phase and is not the manifest's `effective_bits`.
-- k=1 draws on meander-prone items are bimodal (5K vs 82K tokens on the same seed across sessions);
-  never read a single draw's token count as a recipe property.
+- A 5-item seeded pilot can OVER-project when the draw lands on heavy cores (2/5 here): size from the pilot
+  AND the nearest full-run actual; an abort gate on the pilot mean alone false-aborts. Relaunch = resume.
+- The commit-msg hook rejects family shorthand in commit bodies ("the uniform-4bit arm") — name the model. <!-- allow-shorthand -->
+- zsh: `for x in $VAR` does not word-split; `--include=*.py` needs quoting. Use arrays / quotes.
+- Chain scripts must read `BENCH` after `exec`-ing shared helpers (the mbpp chain sets it explicitly).
 
 ## Artifacts
-M21/M21b `$STACK_WORKDIR/m21/` (runners, logs, temp overlay, `wrong_artifact_2026-09-01/`); the mixed artifact
-`$STACK_WORKDIR/optiq_out/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/optiq_mixed` (18 GB, KEEP until M21b
-closes; upload to `caslca/` only if it becomes a pick); int8 + byproducts DELETED 2026-09-02. HF cache holds
-the `TeichAI/Qwen3.8-27B-Fable-Distill` bf16 source <!-- allow-shorthand --> (54 GB, deletable once no further conversion is planned).
+`$STACK_WORKDIR/m21/` (chains, logs, `k3_analysis.py`, overlay); `$STACK_WORKDIR/notes/` (the video transcript
+that was in the repo root); the mixed artifact `$STACK_WORKDIR/optiq_out/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/optiq_mixed`
+(18 GB, KEEP until M21b closes). HF cache: `TeichAI/Qwen3.8-27B-Fable-Distill` bf16 source <!-- allow-shorthand --> (54 GB, deletable).
 
-**Order of resumption: this file → `$STACK_WORKDIR/m21/k3.log` (alive? done?) → `docs/PLAN.md` (M21b) → `docs/open-questions.md` (C46, C47).**
+**Order of resumption: this file → `$STACK_WORKDIR/m21/mbpp.log` (alive? done?) → `docs/PLAN.md` (M21b, M31) → `docs/open-questions.md` (C46, C47).**
