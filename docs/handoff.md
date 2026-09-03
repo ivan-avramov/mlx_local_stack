@@ -12,9 +12,9 @@ is UP on the M21 overlay `$STACK_WORKDIR/m21/bench_overlay_m21.yaml` (int8 entry
 imports `src/mlx-vlm` editable. **RESTORE after the run: `git -C src/mlx-vlm checkout 7330d3a6`** (then
 `git status` shows the submodule clean).
 
-Fork main = `7330d3a6` (pushed). Stack pushed through `f6ad98b`. **UNPUSHED: `61e742d`, `5dc5b1f`, `9c746f7`,
-`7df1be3`, `d84ecc5` + this handoff commit** — push needs in-turn approval. Working tree: the SIX intentional
-`main_models.yaml` overrides (NEVER commit) + the live k=3 rows file.
+Fork main = `7330d3a6` (pushed). Stack pushed through `94ac286` (17:05, operator-approved) plus the 17:15 batch
+below — push needs in-turn approval every time. Working tree: the SIX intentional `main_models.yaml` overrides
+(NEVER commit), the pinned submodule worktree (`M src/mlx-vlm`, NEVER commit) + the live k=3 rows file.
 
 ## Where M21/M21b stand (campaign-results 2026-09-02, PLAN M21 + M21b)
 - **M21 CLOSED, negative**: three precisions of the same checkpoint converge on all 50 items; strict 88.0
@@ -42,14 +42,17 @@ Fork main = `7330d3a6` (pushed). Stack pushed through `f6ad98b`. **UNPUSHED: `61
    `Qwen3.8-27B-mlx-uniform-4bit` vs `Qwen3.8-27B-OptiQ-4.5bpw-mixed` hep+mbpp @t0.6 (M25). Full n=50 re-runs
    (partial resume would mix code versions in one file). 3. M17 / D11 / M18.
 
-## Outstanding items needing the operator
-- **Untracked result files predating this session** (never committed): M27 `humanevalplus.mtpoff/mtpon.*` for
-  `Ornith-1.0-35B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `Qwen3.8-27B-mlx-uniform-4bit`
-  (n=164 certification rows) and M23 `*.m23*.*` for `Qwen3.8-27B-4bit`, `Qwen3.8-27B-mlx-uniform-4bit`, plus
-  `benchmark/results/transcript.md`. Commit as `data(bench)` or archive? (PII check runs at commit.)
-- C47 ruling (serving-path sha for the compare guard). Until then: pin the submodule worktree during
-  multi-day A/Bs and record the pin.
-- Pushes (list above).
+## Resolved 17:15 (operator took the session recommendations)
+- The pre-session untracked rows are COMMITTED: M27/M6d certification rows `5b8f4de`, M23 rows `3ea3d9c`
+  (DO-NOT-CITE caveat in the commit body). The root `transcript.md` was a third-party video transcript, moved
+  to `$STACK_WORKDIR/notes/`. Tree has zero untracked files.
+- **C46 FILED** (open-questions) as the pre-C28 timeout re-measurement queue item; box slot after M21b.
+- **C47**: session recommendation recorded in the row (adopt the serving-path tree hash as a v4 fingerprint
+  field beside the commit sha; historical rows stay pairable by derivation). Build after the k=3 review, not
+  before. Still needs the operator's ruling on the row itself.
+- The k=3 analysis script is `$STACK_WORKDIR/m21/k3_analysis.py` (P28 rule, paired tokens-per-task ratio
+  with a two-stage item bootstrap; warns on a stale evalplus result). `bench_watch` was launched with
+  `--total 50`, so its ETA line is meaningless at k=3 (rows > items) — progress is read from the rows file.
 
 ## Standing rules that bit this session
 - A fallback LIST of candidate artifact dirs is a wrong-artifact generator (M21 runner served `static_mixed`
