@@ -1167,6 +1167,5 @@ table above. The headline gaps:
 | **`docs/lab-notebook.md`** | the full chronological record — mechanisms, retractions, defect write-ups, superseded findings, process lessons. Read it to learn WHY a number is what it is. |
 | **`docs/open-questions.md`** | the operator's decision queue: OPEN / CLOSED / CLOSED-BY-MEASUREMENT |
 | **`docs/PLAN.md`** | the plan: the two decisions, the model field, the ordered work queue |
-| **`docs/work-queue.json`** | the executable form of that queue, run by the `bench.workqueue` daemon |
 | **`docs/handoff.md`** | the ONE handoff — last session's narrative |
 | **`AGENTS.md`** | rules, gates, measurement discipline, traps |

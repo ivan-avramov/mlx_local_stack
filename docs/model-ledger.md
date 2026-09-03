@@ -1,4 +1,4 @@
-# THE MODEL LEDGER — canonical, live, updated daily
+# THE MODEL LEDGER — canonical; updated at every certification, pick change or demotion (not daily; picks of record live in `main_models.yaml`, scores in `docs/campaign-results.md`)
 
 **Created 2026-08-17 (operator ruling 11).** This is the single canonical record of the model
 competition: the objective, today's picks, every model ever considered with its status and the

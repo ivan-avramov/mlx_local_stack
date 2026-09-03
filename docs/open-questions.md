@@ -235,7 +235,7 @@ scoring it as a model failure conflates harness availability with capability. Ne
 stay excluded but every published acc_strict must also quote the error count (status quo,
 made explicit). Either way the pilot's two numbers are both recorded in the results commit.
 
-### ~~O32~~ → CLOSED (operator, 2026-08-19): **NVSY is UNTRACKED — out of the campaign queue entirely.** The operator will revisit after the campaign establishes the local models; `docs/switchyard-plan.md` remains the ready-made plan for that day. Original text: Expand scope to a weak/strong ROUTER system (NVIDIA switchyard: local pick + cloud frontier)?
+### ~~O32~~ → CLOSED (operator, 2026-08-19): **NVSY is UNTRACKED — out of the campaign queue entirely.** The operator will revisit after the campaign establishes the local models; `docs/specs/switchyard-nvsy-plan.md` remains the ready-made plan for that day. Original text: Expand scope to a weak/strong ROUTER system (NVIDIA switchyard: local pick + cloud frontier)?
 Raised 2026-08-18 by the operator: test a routing layer that fronts the local B pick (weak/cheap)
 and a frontier cloud model (strong/expensive), routing per request — a way to make the SYSTEM
 (the daily coder) meaningfully better at small $ cost, usable as a daily option.
@@ -261,7 +261,7 @@ current B queue, entered via a cheap spike):**
   clean. Needs an operator go + which frontier arm (claude-sonnet vs claude-opus class) + an API budget cap. <!-- allow-shorthand -->
 
 **UPDATE 2026-08-18 (discussion held; still OPEN pending the operator's go):** the track now has
-its own plan — **`docs/switchyard-plan.md`** — capturing the full design: Switchyard co-released
+its own plan — **`docs/specs/switchyard-nvsy-plan.md`** — capturing the full design: Switchyard co-released
 with `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` making it the natural weak-tier candidate;
 escalation routing re-weighting weak-tier selection toward count/rate axes (convergence,
 malformed-edit rate) over pass@1; the operator's tune-certification prerequisite (certified tunes

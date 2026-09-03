@@ -1,4 +1,5 @@
 # Lab notebook — the chronological measurement record
+> Paths under `docs/superpowers/` and `docs/sketches/` cited in this notebook were DELETED 2026-09-03 (operator: git history is the archive; last present at `b723bde`). `docs/work-queue.json` was retired the same day.
 
 Split out of `docs/campaign-results.md` on 2026-08-14. **Nothing here was deleted or edited** — this
 is the original narrative record from line 68 onward, in discovery order, including every retraction,

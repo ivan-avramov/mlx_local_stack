@@ -53,7 +53,7 @@ Five clients, all pointed at the mlx-serve router (`localhost:8000`, OpenAI-comp
 - TDD for features/bugfixes: failing test first, watch it fail, minimal code to pass.
 - Bench tooling: lazy-import heavy deps, graceful-degrade (`skipped/acc:null` + note, never crash the batch), mocked in tests. Venv facts: `docs/box-notes.md`.
 - Commit prefixes: `chore(stack): bump src/mlx-vlm -> <sha> (<summary>)`, `feat(bench)`/`fix`/`docs`/`data(bench)`.
-- **Docs registry:** `docs/PLAN.md` = the backlog (authoritative); `docs/work-queue.json` = only what has been ATTEMPTED (never call it the backlog); `docs/handoff.md` = THE one handoff, rewritten in place each session; `docs/open-questions.md` = operator decision queue (add items the MOMENT a judgement call is identified; never delete closed items); `docs/campaign-results.md` = living results record; `docs/lab-notebook.md` = history; `docs/regrade-vs-rerun-guideline.md`, `docs/metrics.md`, `docs/serving-path.md`, `docs/box-notes.md`, `docs/two-box-archive.md` = moved rationale.
+- **Docs registry (index: `docs/README.md`):** `docs/PLAN.md` = the backlog (authoritative; the ONLY queue — no JSON mirror); `docs/handoff.md` = THE one handoff, rewritten in place each session; `docs/open-questions.md` = operator decision queue (add items the MOMENT a judgement call is identified; never delete closed items); `docs/campaign-results.md` = living results record; `docs/lab-notebook.md` = history; `docs/regrade-vs-rerun-guideline.md`, `docs/metrics.md`, `docs/serving-path.md`, `docs/box-notes.md`, `docs/two-box-archive.md` = moved rationale.
 
 ## Measurement discipline (READ before any A/B — full derivations in `docs/metrics.md`)
 
