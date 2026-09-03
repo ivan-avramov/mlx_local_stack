@@ -6,6 +6,7 @@ KV configs. This enforces the apples-to-apples rule and powers the quality-vs-bi
 Manifests are written next to results (which are gitignored), so the box label here never
 reaches the public repo; we still prefer an explicit MLX_BOX label over the raw hostname.
 """
+import hashlib
 import json
 import os
 import re
@@ -137,6 +138,129 @@ def registry_draft(model: str, registry_path: str | None = None,
     return {"draft_kind": "unknown", "draft_source": "model-not-in-registry"}
 
 
+# --------------------------------------------------------- C47: serving-path tree hash (2026-09-03)
+# WHY THIS EXISTS. The fingerprint used to refuse on the raw submodule COMMIT sha (_git_shas below),
+# so every fork commit — including tool-only ones never imported by the server, e.g. the MTP
+# checkpoint splitter `split_mtp.py` — refused pairing with every earlier row. The fix hashes the
+# TREE of the paths the server actually imports, excluding the tool-only ones; the commit sha is
+# still recorded (compare.py downgrades a sha-only difference to a warning when the tree hash
+# matches).
+_SERVING_ROOTS = {"mlx-vlm": "mlx_vlm", "mlx-serve": "src"}
+
+# FIX-4 (2026-09-03 verifier round, operator-ruled): dependency PINS are output-relevant (e.g. the
+# pinned mlx version changes numerics/behavior exactly like a src change does) and must not be
+# hash-inert. Extra top-level ls-tree pathspecs per submodule, alongside its root above — passed
+# as-is; `git ls-tree` silently yields no line for one that doesn't exist at `commit`, so no
+# existence pre-check is needed. No exclusions apply to these (they are never under `mlx_vlm/`).
+_SERVING_EXTRA_PATHS = {
+    "mlx-vlm": ("pyproject.toml", "requirements.txt", "uv.lock"),
+    "mlx-serve": ("pyproject.toml", "uv.lock"),
+}
+
+# Excluded from the mlx-vlm hash — one line each, mechanism-first. mlx-serve has no exclusions.
+_SERVING_PATH_EXCLUDE_DIRS = (
+    "mlx_vlm/tests/",     # pytest suite; not imported by the server
+    "mlx_vlm/evals/",     # offline eval harness (math_vista, mmmu, ...); not imported by the server
+    "mlx_vlm/trainer/",   # LoRA/DoRA training code; not imported by the server
+)
+_SERVING_PATH_EXCLUDE_FILES = (
+    "mlx_vlm/lora.py",              # LoRA fine-tuning CLI entry point; not imported by the server
+    "mlx_vlm/split_mtp.py",         # MTP-checkpoint splitter tool; not imported by the server (the C47 trigger)
+    "mlx_vlm/convert.py",           # weight-conversion CLI; not imported by the server
+    "mlx_vlm/chat.py",              # interactive CLI chat tool; not imported by the server
+    "mlx_vlm/chat_ui.py",           # gradio chat UI tool; not imported by the server
+    "mlx_vlm/LORA.MD",              # docs, not code
+    # C47 follow-up (2026-09-03, operator-verified): conversion-time MTP splitter; imported only
+    # by convert.py/split_mtp.py (both already excluded above) and by each other — nothing under
+    # server/, generate/, models/, or the speculative RUNTIME imports it.
+    "mlx_vlm/speculative/drafters/mtp_split.py",
+)
+
+
+def _is_drafter_split_tool(path: str) -> bool:
+    """`mlx_vlm/speculative/drafters/<any-one-level>/split.py` — the per-drafter conversion-time
+    MTP splitter; imported only by convert.py/split_mtp.py, same as `drafters/mtp_split.py`
+    above (C47 follow-up, 2026-09-03, operator-verified). One level only: the drafter's other
+    files (e.g. its model.py) ARE the serving-time drafter head and must still move the hash."""
+    parts = path.split("/")
+    return (len(parts) == 5 and parts[0] == "mlx_vlm" and parts[1] == "speculative"
+            and parts[2] == "drafters" and parts[4] == "split.py")
+
+
+def _serving_path_excluded(path: str) -> bool:
+    """True for a path that is present in the submodule tree but never imported by the deployed
+    server — docs and mlx-vlm's own tool/eval/train surface. Any `*.md` is excluded too (docs),
+    everywhere under the root, not just the explicitly-named `LORA.MD`."""
+    if path.endswith(".md"):
+        return True
+    if path in _SERVING_PATH_EXCLUDE_FILES:
+        return True
+    if any(path.startswith(d) for d in _SERVING_PATH_EXCLUDE_DIRS):
+        return True
+    return _is_drafter_split_tool(path)
+
+
+def serving_path_hash(submodule_dir, commit) -> str | None:
+    """sha256 over the sorted `"<path>\\t<blob-sha>"` lines of the SERVING tree at `commit` —
+    `mlx_vlm/` for a `.../mlx-vlm` submodule_dir, `src/` for a `.../mlx-serve` one (matched on
+    `os.path.basename`; unknown name -> None), excluding the tool-only paths above, PLUS each
+    submodule's dependency-pin files (`_SERVING_EXTRA_PATHS`, FIX-4) — a pinned mlx version is
+    output-relevant exactly like a source change.
+
+    Invoked with an explicit `git -C <submodule_dir>`, never CWD (the caller may be running from
+    anywhere). Never raises: an unreadable submodule_dir, a missing/unknown `commit`, or no git on
+    PATH all return None — provenance gathering must not block a run.
+    """
+    name = os.path.basename(os.path.normpath(str(submodule_dir)))
+    root = _SERVING_ROOTS.get(name)
+    if root is None or not commit:
+        return None
+    pathspecs = [root, *_SERVING_EXTRA_PATHS.get(name, ())]
+    try:
+        # `git -C <dir>` happily WALKS UP to an enclosing repo when <dir> has no `.git` of its own
+        # (an uninitialized submodule directory) — silently resolving `commit`/pathspecs against
+        # the WRONG repo root instead of failing. Refuse that: submodule_dir must be its own
+        # top-level, exactly like a real (initialized) mlx-vlm/mlx-serve submodule always is.
+        top = subprocess.check_output(
+            ["git", "-C", str(submodule_dir), "rev-parse", "--show-toplevel"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+        if os.path.realpath(top) != os.path.realpath(str(submodule_dir)):
+            return None
+        out = subprocess.check_output(
+            ["git", "-C", str(submodule_dir), "ls-tree", "-r", commit, "--", *pathspecs],
+            text=True, stderr=subprocess.DEVNULL)
+    except Exception:  # noqa: BLE001 — bad commit / not a git dir / no git: never raise
+        return None
+    lines = []
+    for entry in out.splitlines():
+        meta, sep, path = entry.partition("\t")
+        if not sep or not path:
+            continue
+        if root == "mlx_vlm" and _serving_path_excluded(path):
+            continue
+        blob_sha = meta.split()[-1]
+        lines.append(f"{path}\t{blob_sha}")
+    lines.sort()
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def derive_serving_path(manifest, repo_root=None) -> dict:
+    """Serving-path hashes for a manifest whose `git` block predates v5 (no native
+    `git.serving_path`), recomputed from its recorded `git.submodules` commit shas.
+
+    `{key: hash|None}` for `src/mlx-vlm` and `src/mlx-serve`. A key is None when the manifest
+    never recorded a commit for it, or when `serving_path_hash` cannot resolve it locally (the
+    commit is not present in the local clone) — never raises.
+    """
+    root = str(paths.repo_root()) if repo_root is None else str(repo_root)
+    subs = ((manifest or {}).get("git") or {}).get("submodules") or {}
+    out = {}
+    for key in ("src/mlx-vlm", "src/mlx-serve"):
+        commit = subs.get(key)
+        out[key] = serving_path_hash(os.path.join(root, key), commit) if commit else None
+    return out
+
+
 # The output-determining slice of a manifest. If any of these differ, existing results were
 # produced under a different distribution and CANNOT be mixed with new ones via resume.
 _FINGERPRINT_SAMPLING = ("temperature", "top_p", "top_k", "min_p", "presence_penalty",
@@ -176,7 +300,11 @@ _FINGERPRINT_KV_EXTRA = ("hf_path", "kv_quant_scheme", "quantized_kv_start", "pr
 
 # v3 (2026-08-16): draft/suffix state is POPULATED, not merely named. See registry_draft().
 # v4 (2026-08-17): the kv_extra slice above joins the resume guard.
-FINGERPRINT_VERSION = 4
+# v5 (C47, 2026-09-03): the "code" key becomes the serving-path TREE hash (serving_path_hash)
+# instead of the raw submodule commit sha — a tool-only fork commit (never imported by the
+# server) no longer refuses pairing with earlier rows. See is_compatible for the cross-version
+# override that lets this apply even when the negotiated version is < 5.
+FINGERPRINT_VERSION = 5
 
 
 def config_fingerprint(manifest, version: int | None = None):
@@ -222,6 +350,9 @@ def config_fingerprint(manifest, version: int | None = None):
         # line (kv flags, generation-defaults, draft-kind), so a change there alters what the worker
         # is asked to do. Absent on both sides (pre-provenance rows) compares equal, so no historical
         # result is condemned.
+        #
+        # v5 (C47): at version >= 5 this becomes the serving-path TREE hash (below) instead of the
+        # raw commit sha — a tool-only fork commit (e.g. the MTP splitter) no longer differs here.
         "code": {k: ((manifest.get("git") or {}).get("submodules") or {}).get(k)
                  for k in ("src/mlx-vlm", "src/mlx-serve")},
     }
@@ -230,6 +361,9 @@ def config_fingerprint(manifest, version: int | None = None):
         fp["runtime"] = {k: r.get(k) for k in _FINGERPRINT_RUNTIME}
     if version >= 4:
         fp["kv_extra"] = {k: kv.get(k) for k in _FINGERPRINT_KV_EXTRA}
+    if version >= 5:
+        gsp = (manifest.get("git") or {}).get("serving_path") or {}
+        fp["code"] = {k: gsp.get(k) for k in ("src/mlx-vlm", "src/mlx-serve")}
     return fp
 
 
@@ -248,10 +382,45 @@ def is_compatible(existing, current) -> bool:
         return False
     v = min(existing.get("fingerprint_version", 1), current.get("fingerprint_version", 1))
     a, b = config_fingerprint(existing, v), config_fingerprint(current, v)
+    _overlay_serving_path_code(existing, current, a, b)
     if v < 2:
         return a == b
     ra, rb = a.pop("runtime", {}), b.pop("runtime", {})
     return a == b and _runtime_compatible(ra, rb)
+
+
+def serving_path_for(manifest: dict) -> dict:
+    """Native `git.serving_path` for a v5 manifest, else derived from its recorded commit shas."""
+    if (manifest.get("fingerprint_version") or 1) >= 5:
+        return (manifest.get("git") or {}).get("serving_path") or {}
+    return derive_serving_path(manifest)
+
+
+def _overlay_serving_path_code(existing: dict, current: dict, a: dict, b: dict) -> None:
+    """C47: prefer the serving-path hash for the `"code"` key whenever BOTH sides can produce
+    one for a given submodule (native v5, or derived from a recorded commit sha) — even when the
+    negotiated fingerprint version `v` above is < 5, which is exactly the mixed-version case an
+    old-vs-new comparison hits every day right after the bump. Mutates `a["code"]`/`b["code"]`
+    in place, per key.
+
+    When NEITHER side can produce a hash for a key, fall back to the raw recorded commit sha
+    (spec §3 last sentence; FIX-1, 2026-09-03 verifier round). Measured hole this closes: two
+    native v5 manifests with no hash on either side and DIFFERENT commit shas used to compare
+    "code" as None==None -> equal, while `compare.py`'s DEPLOYED CODE block refuses that exact
+    same pair via its own commit-sha fallback (spec §4) — the two seams disagreed on one manifest
+    pair. A key where exactly ONE side has a hash is left as `config_fingerprint` already set it
+    (genuinely asymmetric information, already incompatible there)."""
+    sa, sb = serving_path_for(existing), serving_path_for(current)
+    suba = ((existing.get("git") or {}).get("submodules") or {})
+    subb = ((current.get("git") or {}).get("submodules") or {})
+    for key in ("src/mlx-vlm", "src/mlx-serve"):
+        ha, hb = sa.get(key), sb.get(key)
+        if ha is not None and hb is not None:
+            a["code"][key] = ha
+            b["code"][key] = hb
+        elif ha is None and hb is None:
+            a["code"][key] = suba.get(key)
+            b["code"][key] = subb.get(key)
 
 
 def _unobserved(value) -> bool:
@@ -414,10 +583,10 @@ def _git_shas() -> dict:
     """
     root = str(paths.repo_root())
 
-    def _run(args):
+    def _run(args, cwd=None):
         try:
             return subprocess.check_output(args, text=True, stderr=subprocess.DEVNULL,
-                                           cwd=root).strip()
+                                           cwd=cwd or root).strip()
         except Exception:  # noqa: BLE001
             return None
     subs = {}
@@ -426,7 +595,24 @@ def _git_shas() -> dict:
         parts = line.strip().lstrip("+-U").split()
         if len(parts) >= 2:
             subs[parts[1]] = parts[0]
-    return {"stack_head": _run(["git", "rev-parse", "HEAD"]), "submodules": subs}
+
+    # C47 (2026-09-03): serving_path hashes the tree at each submodule's CHECKED-OUT worktree
+    # commit, read via a dedicated `git -C <sub> rev-parse HEAD` rather than reusing the `subs`
+    # dict above. `git submodule status` ALSO reports the checked-out worktree sha (not, as an
+    # earlier draft of this comment claimed, the parent's recorded pointer — that pointer is
+    # `git ls-tree HEAD -- <sub>` in the PARENT, a different, genuinely stale value when a
+    # worktree is pinned without a matching `git submodule update`). The dedicated call exists so
+    # this does not depend on `submodule status`'s prefix-char text format, and keeps working
+    # unchanged if a submodule is ever addressed without being a REGISTERED submodule of the
+    # parent (`submodule status` would report nothing for it at all).
+    serving_path = {}
+    for sub in ("src/mlx-vlm", "src/mlx-serve"):
+        sub_dir = os.path.join(root, sub)
+        head = _run(["git", "rev-parse", "HEAD"], cwd=sub_dir)
+        serving_path[sub] = serving_path_hash(sub_dir, head) if head else None
+
+    return {"stack_head": _run(["git", "rev-parse", "HEAD"]), "submodules": subs,
+            "serving_path": serving_path}
 
 
 def _registry_state(registry_path: str) -> dict:
@@ -437,7 +623,6 @@ def _registry_state(registry_path: str) -> dict:
     of the fingerprint, because everything it could change (caps, sampling, kv, draft) is
     fingerprinted directly, and hashing comments/whitespace into the guard would manufacture
     false staleness."""
-    import hashlib
     try:
         sha = hashlib.sha256(open(registry_path, "rb").read()).hexdigest()
     except OSError:

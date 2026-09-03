@@ -201,17 +201,37 @@ def _bench_gate(model_a, model_b, bench, *, metric="acc", intersect=False):
             warnings.append(f"{k} differs ({kva.get(k)} vs {kvb.get(k)}) — a per-model KV/tune "
                             f"axis, recorded not refused")
 
-    # DEPLOYED CODE — refuse when OBSERVED differing. Output-determining, measured 2026-08-14:
-    # one src/mlx-vlm bump moved a matched item from 2475 to 3526 completion tokens on an
-    # identical prompt. Unrecorded on both sides (the pre-provenance corpus) warns instead.
+    # DEPLOYED CODE — refuse when the SERVING PATH differs. C47 (2026-09-03): commit shas alone
+    # over-refused — a tool-only fork commit (e.g. the MTP splitter, never imported by the server)
+    # bumps every submodule sha and refused pairing with every earlier row even though nothing
+    # SERVED changed. The serving-path tree hash (provenance.serving_path_for: native
+    # git.serving_path at fingerprint_version>=5, else provenance.derive_serving_path from the
+    # recorded commit) is the refusal key now, per submodule. Commit shas stay recorded and, when
+    # a hash cannot be produced on either side, still decide it — exactly today's behaviour
+    # (output-determining, measured 2026-08-14: one bump moved a matched item from 2475 to 3526
+    # completion tokens on an identical prompt).
     ga = ((ma.get("git") or {}).get("submodules") or {})
     gb = ((mb.get("git") or {}).get("submodules") or {})
     if not ga and not gb:
         warnings.append("deployed-code shas unrecorded on both sides — cannot rule out a code-"
                         "version composite (pre-provenance rows)")
     else:
+        spa, spb = provenance.serving_path_for(ma), provenance.serving_path_for(mb)
         for k in ("src/mlx-vlm", "src/mlx-serve"):
             va, vb = ga.get(k), gb.get(k)
+            ha, hb = spa.get(k), spb.get(k)
+            if ha is not None and hb is not None:
+                if ha != hb:
+                    return _refuse(f"serving path differs at {k} ({ha[:12]} vs {hb[:12]}) — the "
+                                   f"deployed tree is output-determining (measured: 2475 vs 3526 "
+                                   f"tokens on an identical prompt across one bump), so the delta "
+                                   f"would be a (model x code-version) composite (C47)")
+                if va and vb and va != vb:
+                    warnings.append(f"commit shas differ ({va[:12]} vs {vb[:12]}) but the serving "
+                                    f"path is byte-identical — pairable (C47)")
+                continue
+            # a hash is unavailable on at least one side: fall back to the commit-sha comparison,
+            # unchanged from before C47.
             if va and vb and va != vb:
                 return _refuse(f"deployed code differs at {k} ({va[:12]} vs {vb[:12]}) — the "
                                f"code sha is output-determining (measured: 2475 vs 3526 tokens "
