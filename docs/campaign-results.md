@@ -380,6 +380,46 @@ KV prealloc + 28 GB weights), 1.4 GB under the gate — not deployable headroom.
 reference's strict 88.0 supersedes the 2026-08-20 row's 86.0 as this model's hep@t0.6 number on
 current code (`t0.6-r2`; the old row is retained, code-stale). Data: `benchmark/results/Qwen3.8-27B-Fable-Distill-{mlx-uniform-4bit/humanevalplus.t0.6-r2.*,OptiQ-4.5bpw-mixed,mlx-uniform-8bit}`; runner + logs `$STACK_WORKDIR/m21/`. <!-- allow-shorthand -->
 
+### 2026-09-03 — M21b k=3 COMPLETE (hep): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 ties `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6-r2 on strict and spends 0.66× the tokens per task — but the ratio is TAIL-DRIVEN; PROVISIONAL, mbpp decides
+
+Design (PLAN M21b, pre-registered P28 2026-09-02): same 50 hep items as the M21 arms, **k=3 seeded draws
+paired per (item, sample)** (O30 lifted the same day; the 2-seed probe passed on the live router), bound
+7800 s, predictor OFF, `deployed` profile, one fingerprint (submodule worktree pinned at `57177a21`),
+each arm at its OWN tune (mixed @t0.5 from the ladder below; the reference at its certified t0.6, row
+`t0.6-r2`). Rows `c4216b9`; analysis `humanevalplus.t0.5.k3_analysis.txt`.
+
+Ladder first (`5dc5b1f`, `9c746f7`; mixed @t0.4/0.5/0.6/0.7, k=1): strict 45/44/44/44, every pairing
+INCONCLUSIVE; tokens over 50 items 161K/90K/92K/180K, dominated by two BIMODAL items (`HumanEval/32`,
+`/99`: 5K one draw, 82K the next); t0.5 = best ordinary-item cost (median 408, p90 1628) → the rung.
+
+| arm (k=3, 150 draws) | mean strict | 95% CI | conv | budget hits | draws ≥32K | Σ item-mean tokens | median draw | p90 draw | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6-r2 | 0.900 (45.00/50) | [0.82, 0.97] | 149/150 | 1 | 3 | 143K | 516 | 4196 | 4.90 h |
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 | 0.893 (44.67/50) | [0.81, 0.97] | 150/150 | 0 | 2 | 94K | 516 | 1788 | 3.61 h |
+
+- **Accuracy: tie.** Paired strict delta mixed − ref −0.7pp, CI [−6.0, +4.7], INCONCLUSIVE (`compare`
+  agrees, axis MDE ±18pp); per-sample strict 44/44, 44/45, 46/46; reliability 41 vs 43 items solved 3/3,
+  3 vs 3 items 0/3 (`HumanEval/32`, `/132` and one more fail every draw on BOTH recipes).
+- **Tokens per task: ratio 0.658, CI [0.393, 0.979]** (per-item mean over 3 draws, ratio of sums, two-stage
+  item bootstrap) — the pre-registered (2a) condition holds, barely, and (1) holds (44.67 ≥ 45 − 1); (2b)
+  fails. **Mechanically the P28 rule says PICK MIXED.**
+- **Why it is provisional.** The ratio is a tail statistic: per sample 0.96 / 0.50 / 0.73, the 0.50 being
+  the reference's sample 1 (its only budget hit, `HumanEval/39` at 82,203 tokens, plus 20K on `/46`).
+  Ordinary items only (44 items, every draw < 8K): 0.83, CI [0.62, 1.12]. Drop the single heaviest item:
+  CI upper 0.99; drop three: 1.00; cap every draw at 32K: 0.75, CI [0.49, 1.01]. Median per-item ratio
+  0.961. The chronic meander (`HumanEval/32`, ~32K every draw) is identical on both recipes; what the
+  mixed recipe appears to shorten is the BIMODAL class (`/39`, `/46`, `/47`) — three draws per item is
+  still few draws of a bimodal variable. Temperature is confounded by design (each arm at its own tune).
+  Wall-clock ratio 0.74.
+- **Ruling (operator 2026-09-03, on the session recommendation):** record as rule-met-on-(2a),
+  tail-driven, PROVISIONAL; **mbpp n=50 × k=3 on both arms (M21b step 4) decides on an independent item
+  set**; no registry change on the hep result; the checkpoint is not on the B menu, so no menu
+  consequence either way. Upload to `caslca/` only if mbpp confirms.
+- Mechanism note: the `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` sensitivity-mixed recipe changes WHICH draws meander on bimodal items, not
+  whether the chronic item meanders — consistent with M21 (precision is not the runaway driver) and with
+  the temperature-is-the-lever rule; the 0.5-vs-0.6 tune difference is the more likely source of the
+  ordinary-item 0.83 than the bit allocation.
+
 ### 2026-08-31 (night) — Methodology: the M5 GPU Neural Accelerators are ACTIVE by default in the installed mlx 0.32.0 (3.8× fp16 GEMM, 3.5× 4-bit quantized_matmul vs the forced non-NA path); the June "dead end" was an instrument error
 
 `benchmark/spikes/na_discriminator.py`, M5 Max, macOS 26.6.2, mlx 0.32.0 wheel (minos 26.2):
