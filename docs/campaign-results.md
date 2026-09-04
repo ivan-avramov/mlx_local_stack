@@ -380,6 +380,43 @@ KV prealloc + 28 GB weights), 1.4 GB under the gate — not deployable headroom.
 reference's strict 88.0 supersedes the 2026-08-20 row's 86.0 as this model's hep@t0.6 number on
 current code (`t0.6-r2`; the old row is retained, code-stale). Data: `benchmark/results/Qwen3.8-27B-Fable-Distill-{mlx-uniform-4bit/humanevalplus.t0.6-r2.*,OptiQ-4.5bpw-mixed,mlx-uniform-8bit}`; runner + logs `$STACK_WORKDIR/m21/`. <!-- allow-shorthand -->
 
+### 2026-09-03 — M21b CLOSED: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 is CARRIED as this checkpoint's conversion — equal quality to `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6 at ~0.65× the tokens per task, replicated on an independent item set (mbpp) and pooled over 100 items
+
+Step 4 (pre-registered): mbppplus n=50 × k=3, same protocol as the hep k=3 (seeds paired per item/sample,
+bound 7800 s, predictor OFF, `deployed` profile, one fingerprint `57177a21`), 5-item seeded pilot first. The
+pilot's mean×300 projection (24.3 h) tripped the chain's own 24 h gate because the first-5 draw holds two heavy
+cores (`Mbpp/306`, `/620`); relaunched without the gate, actual cost 2.9 h + 4.4 h. The reference arm's first
+grade hit a dead docker daemon (OrbStack stopped with an operator workload) and was re-graded; reference draws
+after 16:36 ran beside that workload (wall contaminated, tokens not). Rows `e7810e8`, analysis
+`mbppplus.t0.5.k3_analysis.txt`.
+
+| arm (k=3, 150 draws) | mean strict | 95% CI | conv | budget hits | draws ≥32K | Σ item-mean tokens | median draw | p90 draw | wall |
+|---|---|---|---|---|---|---|---|---|---|
+| `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6-r2 | 0.793 (39.67/50) | [0.69, 0.89] | 149/150 | 1 (`Mbpp/440`, 84,188 tok) | 1 | 126K | 382 | 5778 | 4.38 h |
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 | 0.813 (40.67/50) | [0.70, 0.91] | 150/150 | 0 | 1 | 81K | 362 | 4268 | 2.92 h |
+
+- **Accuracy: tie.** Paired strict delta mixed − ref +2.0pp, CI [−2.7, +7.3], INCONCLUSIVE (per-sample 40/41,
+  42/38, 40/40). Chronic failures are shared: `Mbpp/306`, `/620`, `/739` fail on both recipes every draw
+  (`/306` 1/3 on the reference).
+- **Tokens per task: ratio 0.640, CI [0.398, 0.968]**; per-sample 0.74 / 0.76 / 0.50 (the direction holds on
+  EVERY sample this time; hep had one sample at 0.96); median per-item 0.88. **P28 met on all three
+  conditions** on the independent item set: (1) 40.67 ≥ 39.67 − 1; (2a) CI excludes 1; (2b) fewer meanders
+  at ≥ accuracy (1+0 vs 1+1).
+- **Still tail-influenced, but it replicates and pools.** Drop the heaviest item (`Mbpp/440`): CI upper 1.01;
+  ordinary items only (44 items, every draw < 8K): 0.86, CI [0.63, 1.19]. **POOLED hep+mbpp (100 items,
+  stratified item-cluster bootstrap): ratio 0.650, CI [0.455, 0.880]; strict delta +0.7pp, CI [−2.7, +4.3],
+  TOST EQUIVALENT at ±5pp.** Two independent item sets, 600 draws, same direction and size.
+- **Mechanism.** The sensitivity-mixed recipe (with its t0.5 tune — the pair is what is certified; the
+  temperature confound is by design, each arm at its own ladder-chosen tune) does not rescue the chronic
+  failure items; it shortens the verbose/bimodal tail consistently (`Mbpp/440` 34K → 11K mean tokens, `/739`
+  9K → 4K, `/124` 11K → 6K; hep `HumanEval/39`, `/46`, `/47`). Consistent with M21 (precision is not the
+  runaway driver) — this is a verbosity-tail effect, not a capability effect.
+- **Ruling (operator 2026-09-03, on the session recommendation): CARRY the recipe.** Uploaded to
+  `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (public); registry entry at t0.5, `# CERTIFIED M21b
+  2026-09-03`, predictor OFF (candidate role, not a B-menu pick — the triple rule does not apply; an M6d probe
+  is contingent on promotion; the artifact ships an MTP head sidecar, `mtp.safetensors`, a probe could try).
+  `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` stays the documented reference row. B menu unchanged.
+
 ### 2026-09-03 — M21b k=3 COMPLETE (hep): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 ties `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6-r2 on strict and spends 0.66× the tokens per task — but the ratio is TAIL-DRIVEN; PROVISIONAL, mbpp decides
 
 Design (PLAN M21b, pre-registered P28 2026-09-02): same 50 hep items as the M21 arms, **k=3 seeded draws
