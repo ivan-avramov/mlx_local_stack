@@ -61,7 +61,10 @@ def registry_kv(model: str, registry_path: str | None = None):
                 # refuses HARDWARE metrics across it while a prealloc change must not let
                 # --clean-stale delete quality rows.
                 "kv_prealloc_tokens": e.get("kv_prealloc_tokens"),
-                "moe_expand": e.get("moe_expand"),
+                # "" (an operator may write it to document 'off' explicitly -- it's also
+                # ModelConfig's own mlx-serve default) normalizes to None, matching an absent
+                # key, so a documented-off entry fingerprints identically to an undeclared one.
+                "moe_expand": e.get("moe_expand") or None,
             }
     return None
 

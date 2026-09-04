@@ -411,3 +411,31 @@ def test_registry_kv_extracts_moe_expand(tmp_path):
     )
     assert P.registry_kv("expanded", str(yml))["moe_expand"] == "27-39:20:0.8:0.5"
     assert P.registry_kv("plain", str(yml))["moe_expand"] is None
+
+
+def test_registry_kv_normalizes_empty_string_moe_expand_to_none(tmp_path):
+    """An operator may write `moe_expand: ""` in the registry to document 'off' explicitly.
+    registry_kv must normalize that to None -- ModelConfig's own default is "" (mlx-serve), so
+    without normalization a manifest built from this entry fingerprints as '' while an absent
+    key fingerprints as None, is_compatible(old-no-key, new-'') reads False, and --clean-stale
+    deletes rows that ran the exact same (native) routing (M34 verifier FIX-6)."""
+    yml = tmp_path / "reg.yaml"
+    yml.write_text(
+        "models:\n"
+        "  - name: documented-off\n"
+        "    hf_path: org/documented-off\n"
+        "    moe_expand: \"\"\n"
+    )
+    kv = P.registry_kv("documented-off", str(yml))
+    assert kv["moe_expand"] is None
+
+    old = {"sampling_profile": "deployed", "fingerprint_version": 5,
+           "sampling": {"temperature": 0.4},
+           "kv": {"kv_bits": 4, "hf_path": "org/m"},  # no moe_expand key at all
+           "runtime": {}}
+    new = {"sampling_profile": "deployed", "fingerprint_version": 5,
+           "sampling": {"temperature": 0.4},
+           # kv.moe_expand as registry_kv would actually stamp it for this entry
+           "kv": {"kv_bits": 4, "hf_path": "org/m", "moe_expand": kv["moe_expand"]},
+           "runtime": {}}
+    assert P.is_compatible(old, new) is True
