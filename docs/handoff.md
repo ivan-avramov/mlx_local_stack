@@ -37,9 +37,10 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 
 ## THE BOX QUEUE
 1. **M31 RUNNING** (see top). Review: prompt-level strict, pre-registered ≥5pp-deficit rule; no re-rank on its own.
-1b. **M33 QUEUED behind M31 by a waiter** (`$STACK_WORKDIR/m33/waiter.sh`, pid in `m33/waiter.pid`): math500 n=100 for the three C
-   candidates (PLAN M33; ~35–55 h). To put M32 first instead: kill the waiter by pid BEFORE M31 exits, run M32, then start
-   `m33_chain.py` by hand (same launch recipe as M31).
+1b. **M31b then M33, chained by `$STACK_WORKDIR/m33/waiter2.sh`** (pid in `m33/waiter2.pid`; the first waiter was killed 2026-09-04
+   09:35): after M31 exits → `m31/m31b_chain.py` = ifeval arm for `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6, tune `m31`, same
+   seed-0 draw, compares vs both M31 arms (operator 2026-09-04: the M25 tie deserves the same test; ~5 h) → then `m33_chain.py`
+   (math500 n=100 × 3 C candidates, ~35–55 h). To put M32 first: kill waiter2 by pid BEFORE M31 exits and re-chain by hand.
 2. **M32** (proposal to be drafted while M31 runs; ~2 h) opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; the mixed recipe has never run an agentic leg — the sibling's 13/22 is what excludes the checkpoint from B). 4. M17 / D11 / M18.
 
 ## Standing rules that bit today
