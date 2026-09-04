@@ -134,6 +134,8 @@ PARAMS = {
     "Qwen3.8-27B-4bit": QWEN,
     "Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit": QWEN,
     "Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit": QWEN,
+    # Registered 2026-09-03 when the drift guard flagged it (the M21b carried conversion, certified @t0.5).
+    "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed": QWEN,
     # qwen3_6 MoE arch — Qwen sampling family, registered explicitly like the entries above.
     "Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit": QWEN,
 }
