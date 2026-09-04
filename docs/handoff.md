@@ -34,7 +34,7 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 1. **C46** pre-C28 timeout re-measurements (open-questions row): `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` hep+mbpp
    @t0.55/@t0.6 first, then the M25 pair @t0.6; full n=50 re-runs, `--sampling-profile deployed`, overlay in env,
    predictor OFF, 5-item seeded pilot sized against the nearest full-run actual (see rule below).
-2. **M31** ifeval arm (~2 h). 3. M17 / D11 / M18.
+2. **M31** ifeval arm (~2 h). 3. **M32** opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; the mixed recipe has never run an agentic leg — the sibling's 13/22 is what excludes the checkpoint from B). 4. M17 / D11 / M18.
 
 ## Standing rules that bit today
 - A 5-item seeded pilot OVER-projects when the draw lands on heavy cores (2/5 today, 24.3 h projected vs 7.3 h actual):
