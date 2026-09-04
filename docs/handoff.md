@@ -11,7 +11,7 @@ PLAN said ~2 h; realistic 10–12 h (base ~150–200 s/item at 20–29 tok/s; 3.
 without running after verifying no pick, ranking or tune certification cites those rows (operator standard: skip only when KNOWN
 not to help a pick; verification text in campaign-results 2026-09-03).
 
-Stack PUSHED through `5788c4b`; UNPUSHED: `5a68763`, `24151f2`, `a70bf4e` (C46 leg-1 data), this checkpoint. Push needs
+Stack PUSHED through `5788c4b`; UNPUSHED: everything from `5a68763` on (C46 data, C46 closure, M33 row, M34 spec + build, PARAMS fix, handoffs). Push needs
 in-turn approval every time.
 Working tree: SEVEN intentional `main_models.yaml` local-path overrides (the six from before + the new
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` entry pointing at `$STACK_WORKDIR/optiq_out/.../optiq_mixed`) — NEVER commit;
@@ -52,6 +52,12 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 - evalplus grading silently returns `acc: None` with a note when docker is down (rc=0); `compare` then reports
   "item sets differ". Check the score note before trusting an empty compare.
 - zsh: `for x in $VAR` does not word-split; quote `--include='*.py'`.
+
+## M34 BUILT 2026-09-03 (box-free; unpushed in three repos)
+Layer-scoped expert-budget expansion (spec `docs/specs/m34-moe-expert-expansion.md`). Fork `../mlx-vlm` main: `b95130c9` (feature)
++ `420c01e1` (verifier fixes) — 2 ahead of origin. `../mlx-serve` main: `0ccc684` — 1 ahead. Stack: `674499c`, `0e1a29b`, `3493c34`
+(PARAMS drift-guard fix). NOT YET: fork pushes → `chore(stack): bump src/mlx-vlm` + `src/mlx-serve`; registry `moe_expand:` field on an
+M34 overlay entry; the OFAT (after M33). Verifier scripts kept at `$TMPDIR/m34verify/` (re-run `v3_identity.py` after any routing edit).
 
 ## Artifacts
 `$STACK_WORKDIR/m33/` (chain, waiter, `m33.log`; empty until the waiter fires).
