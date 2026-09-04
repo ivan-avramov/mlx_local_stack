@@ -37,7 +37,10 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 
 ## THE BOX QUEUE
 1. **M31 RUNNING** (see top). Review: prompt-level strict, pre-registered ≥5pp-deficit rule; no re-rank on its own.
-2. **M32** opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; the mixed recipe has never run an agentic leg — the sibling's 13/22 is what excludes the checkpoint from B). 4. M17 / D11 / M18.
+1b. **M33 QUEUED behind M31 by a waiter** (`$STACK_WORKDIR/m33/waiter.sh`, pid in `m33/waiter.pid`): math500 n=100 for the three C
+   candidates (PLAN M33; ~35–55 h). To put M32 first instead: kill the waiter by pid BEFORE M31 exits, run M32, then start
+   `m33_chain.py` by hand (same launch recipe as M31).
+2. **M32** (proposal to be drafted while M31 runs; ~2 h) opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; the mixed recipe has never run an agentic leg — the sibling's 13/22 is what excludes the checkpoint from B). 4. M17 / D11 / M18.
 
 ## Standing rules that bit today
 - A 5-item seeded pilot OVER-projects when the draw lands on heavy cores (2/5 today, 24.3 h projected vs 7.3 h actual):
@@ -51,6 +54,7 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 - zsh: `for x in $VAR` does not word-split; quote `--include='*.py'`.
 
 ## Artifacts
+`$STACK_WORKDIR/m33/` (chain, waiter, `m33.log`; empty until the waiter fires).
 `$STACK_WORKDIR/m31/` (chain, `m31.log`, driver + `watch_*` logs, grade + compare logs).
 `$STACK_WORKDIR/c46/` (chain, `c46.log`, per-run driver + `watch_*` logs, `mem_arms.log`, pilot/full pids, grade + compare logs).
 `$STACK_WORKDIR/m21/` (chains, logs, `k3_analysis.py --bench`, analyses, card draft, overlay);
