@@ -1,4 +1,4 @@
-# Handoff — 2026-09-03 18:10 (M21b CLOSED — recipe CARRIED + CERTIFIED; C47 shipped; docs reorganized; box IDLE)
+# Handoff — 2026-09-03 18:20 (M21b CLOSED — recipe CARRIED + CERTIFIED; C47 shipped; docs reorganized; box IDLE)
 
 Single box (M5 Max 64 GB). **NO detached job is live.** Router is still UP on the M21 overlay
 (`$STACK_WORKDIR/m21/bench_overlay_m21.yaml`, worker idle, last served `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`);
@@ -6,8 +6,8 @@ restart it on whatever overlay the next job needs. `src/mlx-vlm` worktree RESTOR
 (submodule clean). OrbStack must be running for evalplus grading (it went down once today with an operator workload;
 `open -a OrbStack` brings it back in ~6 s).
 
-Stack pushed through `b723bde`. **UNPUSHED: `6ae5772` (docs reorg), `19e6fbb` (C47), `3d08faa` (handoff), `e7810e8`
-(mbpp k=3 rows), `c95123f` (M21b certification + registry), + this handoff commit** — push needs in-turn approval.
+Stack PUSHED through `4002187` + this checkpoint (operator-approved 2026-09-03 18:20). Nothing unpushed. Push needs
+in-turn approval every time.
 Working tree: SEVEN intentional `main_models.yaml` local-path overrides (the six from before + the new
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` entry pointing at `$STACK_WORKDIR/optiq_out/.../optiq_mixed`) — NEVER commit;
 when the registry needs a committed edit, build the index blob from `git show HEAD:main_models.yaml` (done twice today).
@@ -50,7 +50,7 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 ## Artifacts
 `$STACK_WORKDIR/m21/` (chains, logs, `k3_analysis.py --bench`, analyses, card draft, overlay);
 `$STACK_WORKDIR/optiq_out/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/optiq_mixed` (18 GB, the served local copy of the
-uploaded repo — KEEP, it is the registry override target). HF cache: `TeichAI/Qwen3.8-27B-Fable-Distill` bf16 source <!-- allow-shorthand -->
-(54 GB) — no further conversion is planned (M22 is dead with M21 negative): DELETABLE on operator say-so.
+uploaded repo — KEEP, it is the registry override target). HF cache: the `TeichAI/Qwen3.8-27B-Fable-Distill` bf16 source <!-- allow-shorthand -->
+(52 GB) was DELETED 2026-09-03 18:20 (operator); re-download only if a new conversion is ever planned.
 
 **Order of resumption: this file → `docs/PLAN.md` (C46 row in open-questions, M31) → `docs/open-questions.md`.**
