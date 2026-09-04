@@ -1,18 +1,17 @@
-# Handoff — 2026-09-03 21:20 (C46 LEG 1 DONE — O37 stands on restated evidence; box IDLE; leg 2 ruling + M31 next)
+# Handoff — 2026-09-03 21:50 (M31 ifeval LIVE; C46 CLOSED — leg 1 restated O37, leg 2 closed under the operator's skip standard)
 
-Single box (M5 Max 64 GB). **NO detached job is live** (C46 leg-1 chain exited 21:07 by design). Router UP on the M21 draft-OFF
-overlay (`$STACK_WORKDIR/m21/bench_overlay_m21.yaml`, SESSION_MAX=2, APC absent; worker idle, last served
-`Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`). `src/mlx-vlm` worktree at the stack pointer `7330d3a6` (serving path `920efc38`).
-OrbStack up. **C46 leg 1 landed** (this checkpoint's data commit): all 20 pre-C28 DNF items re-drawn under the C28 bound — 18 converge in
-seconds, 2 are true degenerate-repetition budget hits (both at t0.6); t0.55 vs t0.6 strict 86/74 vs 86/70, budget hits 0 vs 2 per 100,
-Σ wall 0.38 h vs 2.69 h → **O37 (t0.55) STANDS on the runaway tax**; the cited "82/70 vs 76/68, DNFs 14→6" is withdrawn (campaign-results
-2026-09-03 entry + dated correction under the 2026-08-23 entry; registry comment corrected via the HEAD blob). Leg 1 took 3.2 h vs a
-9–26 h projection — pre-C28 DNF counts over-project by construction (cascade). **Leg 2 awaits the operator's ruling** (session
-recommendation: CLOSE WITHOUT RUNNING — no live pick depends on the `Qwen3.8-27B-mlx-uniform-4bit` / `Qwen3.8-27B-OptiQ-4.5bpw-mixed`
-hep+mbpp t0.6 rows; note the cascade caveat instead). Chain for leg 2 exists (`$STACK_WORKDIR/c46/c46_chain.py`, run with
-`C46_SKIP_LEG1`-style edit: comment out leg 1) if ruled GO, ~11–16 h revised.
+Single box (M5 Max 64 GB). **M31 IS LIVE** (launched 2026-09-03 21:44): chain `$STACK_WORKDIR/m31/m31_chain.py` (pid in `m31/m31.pid`,
+log `m31/m31.log`), router UP on the M21 draft-OFF overlay (`$STACK_WORKDIR/m21/bench_overlay_m21.yaml`, SESSION_MAX=2, APC absent),
+`src/mlx-vlm` worktree at the stack pointer `7330d3a6` (serving path `920efc38`). Order: `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 pilot
+(5 seeded items) → n=148 → grade → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 pilot → n=148 → grade → `compare` (tune `m31` on both;
+the 3.6 arm is a re-measure because its 2026-08-18 row is pre-C28 with 6 timeout DNFs and sits at serving path `17e0e5a7`). Sizing:
+PLAN said ~2 h; realistic 10–12 h (base ~150–200 s/item at 20–29 tok/s; 3.6 ~84 s/item) — the pilot lines in the log size it.
+`NLTK_DATA` verified under `$STACK_WORKDIR` on the driver pid (a stray `~/nltk_data` from before the redirect exists; harmless, not ours to delete).
+**C46 is CLOSED**: leg 1 restated the O37 evidence (t0.55 stands on the runaway tax; 18/20 pre-C28 DNFs were a cascade); leg 2 closed
+without running after verifying no pick, ranking or tune certification cites those rows (operator standard: skip only when KNOWN
+not to help a pick; verification text in campaign-results 2026-09-03).
 
-Stack PUSHED through `5788c4b`; UNPUSHED: `5a68763` (PLAN M32 row), `24151f2` (handoff), the C46 leg-1 data commit, this checkpoint. Push needs
+Stack PUSHED through `5788c4b`; UNPUSHED: `5a68763`, `24151f2`, `a70bf4e` (C46 leg-1 data), this checkpoint. Push needs
 in-turn approval every time.
 Working tree: SEVEN intentional `main_models.yaml` local-path overrides (the six from before + the new
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` entry pointing at `$STACK_WORKDIR/optiq_out/.../optiq_mixed`) — NEVER commit;
@@ -37,8 +36,8 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 - Pre-session untracked rows committed (`5b8f4de`, `3ea3d9c`); C46 filed.
 
 ## THE BOX QUEUE
-1. **C46 leg 2 — operator ruling owed** (recommend CLOSE without running; if GO ~11–16 h).
-2. **M31** ifeval arm (~2 h). 3. **M32** opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; the mixed recipe has never run an agentic leg — the sibling's 13/22 is what excludes the checkpoint from B). 4. M17 / D11 / M18.
+1. **M31 RUNNING** (see top). Review: prompt-level strict, pre-registered ≥5pp-deficit rule; no re-rank on its own.
+2. **M32** opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; the mixed recipe has never run an agentic leg — the sibling's 13/22 is what excludes the checkpoint from B). 4. M17 / D11 / M18.
 
 ## Standing rules that bit today
 - A 5-item seeded pilot OVER-projects when the draw lands on heavy cores (2/5 today, 24.3 h projected vs 7.3 h actual):
@@ -52,6 +51,7 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 - zsh: `for x in $VAR` does not word-split; quote `--include='*.py'`.
 
 ## Artifacts
+`$STACK_WORKDIR/m31/` (chain, `m31.log`, driver + `watch_*` logs, grade + compare logs).
 `$STACK_WORKDIR/c46/` (chain, `c46.log`, per-run driver + `watch_*` logs, `mem_arms.log`, pilot/full pids, grade + compare logs).
 `$STACK_WORKDIR/m21/` (chains, logs, `k3_analysis.py --bench`, analyses, card draft, overlay);
 `$STACK_WORKDIR/optiq_out/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/optiq_mixed` (18 GB, the served local copy of the

@@ -490,8 +490,15 @@ rows) — the same cascade M21 found on `Qwen3.8-27B-Fable-Distill-mlx-uniform-4
 tokens per task 387 vs 3,581 on mbpp. The originally cited "strict 82/70 vs 76/68, DNFs 14→6" is WITHDRAWN (dated note
 under the 2026-08-23 entry; registry comment corrected). Old rows stay in `results/` for the record (fingerprint v4,
 serving path `17e0e5a7`, pairable with nothing current; old-vs-new `compare` refuses by design). Rows: `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit/{humanevalplus,mbppplus}.{t0.55-r2,t0.6-r2}.*`.
-C46 leg 2 (`Qwen3.8-27B-mlx-uniform-4bit` vs `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6 hep+mbpp) awaits the operator's ruling; those
-four rows underpin no live pick and carry the same cascade signature (3+7 and 2+0 `wall_s: null` DNFs).
+**C46 leg 2 CLOSED WITHOUT RUNNING (2026-09-03, operator standard: skip a test only when it is KNOWN not to help a pick).**
+Verified against the docs and registry: the current B ranking (C38 analysis) cites M9 (n=110 opencode), M12 d64k/d128k, M26 and the
+M6d `mtpoff` n=164 rows — all post-C28; the two entries that cited the four `Qwen3.8-27B-mlx-uniform-4bit` /
+`Qwen3.8-27B-OptiQ-4.5bpw-mixed` hep+mbpp t0.6 rows (2026-08-20 "challenger does not displace", D13 "precision drives runaways")
+are superseded by M12/M26 and by M21's closure; `Qwen3.8-27B-OptiQ-4.5bpw-mixed` is closed as a WASH by M25 on post-C28 agentic
+legs and cannot enter a menu through a hep/mbpp row; the base's t0.6 tune was certified on a capped scan + n=15 rung, not on
+these rows; no B-menu tune certification cites pre-C28 DNF counts (registry comments checked). A re-run would add only a
+full-cap post-C28 mbpp row for the base that pairs with nothing on the menu. The four rows stay in the master table with this
+caveat: their DNF counts (3+7 and 2+0, `wall_s: null`) are cascade-inflated UPPER BOUNDS.
 
 ### 2026-08-31 (night) — Methodology: the M5 GPU Neural Accelerators are ACTIVE by default in the installed mlx 0.32.0 (3.8× fp16 GEMM, 3.5× 4-bit quantized_matmul vs the forced non-NA path); the June "dead end" was an instrument error
 
