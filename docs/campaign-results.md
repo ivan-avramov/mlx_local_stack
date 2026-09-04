@@ -176,6 +176,11 @@ excludes its own 7 hard DNF items). Zero loops in all 129 deployed-t0.55 rows ac
 ladder. **Recommendation: certify t0.55 (O37).** Scan/probe artifacts live at
 `$STACK_WORKDIR/status/m20_scan/`, never in `results/`.
 
+> **CORRECTION 2026-09-03 (C46 leg 1):** the DNF counts above (1+5 vs 7+7) and therefore the strict margins (82/70 vs 76/68) were a
+> pre-C28 client-timeout cascade, not model runaways — 18 of the 20 DNF items converge in seconds under the C28 bound, and the four
+> "holdouts" all converge at t0.55. Re-measured 2026-09-03: strict 86/74 (t0.55) vs 86/70 (t0.6), budget hits 0 vs 2 per 100.
+> The certification stands on the runaway tax; see the 2026-09-03 C46 entry.
+
 ### 2026-08-26 — M23 CLOSED BY CONSTRUCTION: the two `Qwen3.8-27B` 4-bit arms are the SAME MODEL <!-- allow-shorthand -->
 
 A full-tensor md5 sweep proved `Qwen3.8-27B-mlx-uniform-4bit` and the official
@@ -456,6 +461,37 @@ INCONCLUSIVE; tokens over 50 items 161K/90K/92K/180K, dominated by two BIMODAL i
   whether the chronic item meanders — consistent with M21 (precision is not the runaway driver) and with
   the temperature-is-the-lever rule; the 0.5-vs-0.6 tune difference is the more likely source of the
   ordinary-item 0.83 than the bit allocation.
+
+### 2026-09-03 — C46 leg 1: the O37 certification evidence for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` was a pre-C28 timeout cascade; t0.55 STANDS on the runaway tax, not on the strict margin
+
+Full n=50 re-measurements of the four pre-C28 rows (same seed-0 draw, k=1, `--sampling-profile deployed`, `--probe-timeout 7800`,
+predictor OFF, M21 draft-OFF overlay, fork `7330d3a6` / serving path `920efc38`; tunes `t0.55-r2` and `t0.6-r2`). Wall 3.2 h
+for all four arms against a 9–26 h projection — because 18 of the 20 old DNF items were FALSE.
+
+| `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` | hep acc / strict / non-conv | mbpp acc / strict / non-conv | tokens/task hep / mbpp | Σ wall |
+|---|---|---|---|---|
+| t0.55-r2 (deployed) | 86.0 / **86.0** / 0 | 74.0 / **74.0** / 0 | 385 / 387 | 0.38 h |
+| t0.6-r2 (`--temp 0.6`) | 86.0 / 86.0 / 0 | 72.0 / 70.0 / 2 budget hits | 310 / 3,581 (290 without the 2 runaways) | 2.69 h |
+| old t0.55 (pre-C28, 2026-08-23) | 83.7 / 82.0 / 1 DNF | 77.8 / 70.0 / 5 DNF | 280 / — | — |
+| old t0.6 (pre-C28, 2026-08-20) | 88.4 / 76.0 / 7 DNF | 79.1 / 68.0 / 7 DNF | 318 / — | — |
+
+`compare` (k=1, axis MDE ±18pp): hep +0.0pp CI [−6.0, +6.0] INCONCLUSIVE (discordant 1:1, `HumanEval/146` vs `/151`);
+mbpp +2.0pp CI [−4.0, +8.0] INCONCLUSIVE on `acc` (discordant 2:1, `Mbpp/306`, `/757` vs `/265`); `acc_strict@81920` +4.0pp on mbpp.
+**DNF follow-up (the C46 deliverable), paired per item:** all 20 old 'timed out' items were re-drawn under the C28 bound —
+18 converged in 5–106 s at 148–2,905 tokens; 2 (`Mbpp/306`, `Mbpp/429`, both at t0.6-r2) are TRUE budget hits, degenerate
+repetition to 82.4k tokens at 19 tok/s (~72 min each — over the old 3,600 s client bound). The M20 ladder's four "holdouts"
+(`HumanEval/86`, `Mbpp/306`, `/620`, `/739`: "did not converge at the full budget" in the DNF-first probe) ALL converge at
+t0.55-r2 in 10–33 s, and `Mbpp/306` converges at t0.55-r2 but loops at t0.6-r2 — the runaway is a per-DRAW stochastic
+event with a temperature-dependent rate, not an item property. Mechanism: one long draw exceeded the pre-C28 3,600 s
+bound, the worker kept decoding (no server-side cancel), and the items queued behind it timed out UNRUN (the `wall_s: null`
+rows) — the same cascade M21 found on `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` (2026-09-02).
+**Verdict: O37 (t0.55) STANDS, on restated evidence** — on the ranking key it ties hep (86.0 vs 86.0) and leads mbpp
+(74.0 vs 70.0, inside MDE), and it wins the runaway tax outright: 0/100 vs 2/100 budget hits, 0.38 h vs 2.69 h Σ wall, and
+tokens per task 387 vs 3,581 on mbpp. The originally cited "strict 82/70 vs 76/68, DNFs 14→6" is WITHDRAWN (dated note
+under the 2026-08-23 entry; registry comment corrected). Old rows stay in `results/` for the record (fingerprint v4,
+serving path `17e0e5a7`, pairable with nothing current; old-vs-new `compare` refuses by design). Rows: `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit/{humanevalplus,mbppplus}.{t0.55-r2,t0.6-r2}.*`.
+C46 leg 2 (`Qwen3.8-27B-mlx-uniform-4bit` vs `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6 hep+mbpp) awaits the operator's ruling; those
+four rows underpin no live pick and carry the same cascade signature (3+7 and 2+0 `wall_s: null` DNFs).
 
 ### 2026-08-31 (night) — Methodology: the M5 GPU Neural Accelerators are ACTIVE by default in the installed mlx 0.32.0 (3.8× fp16 GEMM, 3.5× 4-bit quantized_matmul vs the forced non-NA path); the June "dead end" was an instrument error
 

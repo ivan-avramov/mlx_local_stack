@@ -1,18 +1,18 @@
-# Handoff — 2026-09-03 18:00 (C46 LEG 1 LIVE — `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` pre-C28 timeout re-measurement; M21b CLOSED; C47 shipped)
+# Handoff — 2026-09-03 21:20 (C46 LEG 1 DONE — O37 stands on restated evidence; box IDLE; leg 2 ruling + M31 next)
 
-Single box (M5 Max 64 GB). **C46 LEG 1 IS LIVE** (launched 2026-09-03 17:57, operator GO "proceed with your recs: leg 1 then
-evaluate for leg 2"): chain `$STACK_WORKDIR/c46/c46_chain.py` (pid in `c46/c46.pid`, log `c46/c46.log`, `C46_STOP_AFTER_LEG1=1`),
-router UP on the M21 draft-OFF overlay (`$STACK_WORKDIR/m21/bench_overlay_m21.yaml`, SESSION_MAX=2, APC absent),
-`src/mlx-vlm` worktree at the stack pointer `7330d3a6` (serving path `920efc38`, ≡ the M21b arms). First C35 check OK
-(`draft_kind=off`, registry sha match). Order inside leg 1: pilot (5 seeded items hep+mbpp) → hep+mbpp n=50 @`t0.55-r2`
-(deployed) → hep+mbpp n=50 @`t0.6-r2` (`--temp 0.6`) → grade → `compare t0.55-r2 vs t0.6-r2` → chain EXITS. Projected 9–26 h
-(converged work ~5 h + up to 20 old-DNF items at ~1 h each if they are true budget hits). Per row the log carries a
-`DNF FOLLOW-UP` line (each old 'timed out' item and what it did under the 7800 s bound) — that IS the C46 deliverable.
-Leg 2 (`Qwen3.8-27B-mlx-uniform-4bit` vs `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @`t0.6-r2`, ~12–22 h) is a SEPARATE decision after
-the leg-1 review; it underpins no live pick (the B 3rd-choice certification rests on the post-C28 `mtpoff` n=164 rows + M9).
-OrbStack must be running for evalplus grading (the chain runs `open -a OrbStack` itself if `docker info` fails).
+Single box (M5 Max 64 GB). **NO detached job is live** (C46 leg-1 chain exited 21:07 by design). Router UP on the M21 draft-OFF
+overlay (`$STACK_WORKDIR/m21/bench_overlay_m21.yaml`, SESSION_MAX=2, APC absent; worker idle, last served
+`Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`). `src/mlx-vlm` worktree at the stack pointer `7330d3a6` (serving path `920efc38`).
+OrbStack up. **C46 leg 1 landed** (this checkpoint's data commit): all 20 pre-C28 DNF items re-drawn under the C28 bound — 18 converge in
+seconds, 2 are true degenerate-repetition budget hits (both at t0.6); t0.55 vs t0.6 strict 86/74 vs 86/70, budget hits 0 vs 2 per 100,
+Σ wall 0.38 h vs 2.69 h → **O37 (t0.55) STANDS on the runaway tax**; the cited "82/70 vs 76/68, DNFs 14→6" is withdrawn (campaign-results
+2026-09-03 entry + dated correction under the 2026-08-23 entry; registry comment corrected via the HEAD blob). Leg 1 took 3.2 h vs a
+9–26 h projection — pre-C28 DNF counts over-project by construction (cascade). **Leg 2 awaits the operator's ruling** (session
+recommendation: CLOSE WITHOUT RUNNING — no live pick depends on the `Qwen3.8-27B-mlx-uniform-4bit` / `Qwen3.8-27B-OptiQ-4.5bpw-mixed`
+hep+mbpp t0.6 rows; note the cascade caveat instead). Chain for leg 2 exists (`$STACK_WORKDIR/c46/c46_chain.py`, run with
+`C46_SKIP_LEG1`-style edit: comment out leg 1) if ruled GO, ~11–16 h revised.
 
-Stack PUSHED through `5788c4b`; UNPUSHED: `5a68763` (PLAN M32 row) + this checkpoint. Push needs
+Stack PUSHED through `5788c4b`; UNPUSHED: `5a68763` (PLAN M32 row), `24151f2` (handoff), the C46 leg-1 data commit, this checkpoint. Push needs
 in-turn approval every time.
 Working tree: SEVEN intentional `main_models.yaml` local-path overrides (the six from before + the new
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` entry pointing at `$STACK_WORKDIR/optiq_out/.../optiq_mixed`) — NEVER commit;
@@ -37,8 +37,7 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 - Pre-session untracked rows committed (`5b8f4de`, `3ea3d9c`); C46 filed.
 
 ## THE BOX QUEUE
-1. **C46 leg 1 RUNNING** (see top). Then the leg-1 review: does t0.55 still beat t0.6 on `acc_strict@81920` under the C28
-   bound (O37 stake)? Then decide leg 2 (the M25 reference pair; not a live-pick dependency).
+1. **C46 leg 2 — operator ruling owed** (recommend CLOSE without running; if GO ~11–16 h).
 2. **M31** ifeval arm (~2 h). 3. **M32** opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; the mixed recipe has never run an agentic leg — the sibling's 13/22 is what excludes the checkpoint from B). 4. M17 / D11 / M18.
 
 ## Standing rules that bit today
