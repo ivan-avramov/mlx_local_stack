@@ -371,3 +371,43 @@ def test_c35_tripwire_skips_when_no_worker_observable(tmp_path):
     st = P.registry_draft("modelX", reg, worker_lookup=lambda: None)
     assert st["draft_kind"] == "off"
     assert st["draft_source"] == "registry"
+
+
+# ----------------------------------------------------- M34 (moe_expand joins kv_extra)
+def _moe_man(v, expand):
+    return {"sampling_profile": "deployed", "fingerprint_version": v,
+            "sampling": {"temperature": 0.4},
+            "kv": {"kv_bits": 4, "hf_path": "org/m", "moe_expand": expand},
+            "runtime": {}}
+
+
+def test_moe_expand_difference_makes_two_v5_manifests_incompatible():
+    """kv.moe_expand is OUTPUT-DETERMINING (M34): a run with the routing lever on must never
+    resume/pool with the native-routing baseline."""
+    assert P.is_compatible(_moe_man(5, "27-39:20:0.8:0.5"), _moe_man(5, None)) is False
+
+
+def test_moe_expand_absent_key_compares_equal_to_explicit_none():
+    """An old manifest with no `moe_expand` key at all (pre-M34) must pair with a new manifest
+    that carries the key explicitly set to None (M34 build, lever unset) -- absent == None, or
+    every pre-M34 row on disk reads STALE the moment the key is introduced."""
+    old = {"sampling_profile": "deployed", "fingerprint_version": 5,
+           "sampling": {"temperature": 0.4},
+           "kv": {"kv_bits": 4, "hf_path": "org/m"},  # no moe_expand key at all
+           "runtime": {}}
+    new = _moe_man(5, None)
+    assert P.is_compatible(old, new) is True
+
+
+def test_registry_kv_extracts_moe_expand(tmp_path):
+    yml = tmp_path / "reg.yaml"
+    yml.write_text(
+        "models:\n"
+        "  - name: expanded\n"
+        "    hf_path: org/expanded\n"
+        "    moe_expand: \"27-39:20:0.8:0.5\"\n"
+        "  - name: plain\n"
+        "    hf_path: org/plain\n"
+    )
+    assert P.registry_kv("expanded", str(yml))["moe_expand"] == "27-39:20:0.8:0.5"
+    assert P.registry_kv("plain", str(yml))["moe_expand"] is None

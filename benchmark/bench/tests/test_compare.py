@@ -208,6 +208,40 @@ def test_an_UNOBSERVED_draft_state_warns_instead_of_refusing(write_rows, tmp_res
     assert any("draft" in w for w in r["warnings"]), r["warnings"]
 
 
+# --------------------------------------------------------------------- M34 moe_expand
+def test_moe_expand_difference_refuses_every_metric(write_rows, tmp_results):
+    """moe_expand changes the generated text (a different set of active experts per token), the
+    same way draft_kind does — fatal for quality AND speed, not just hardware metrics."""
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", kv={"kv_bits": 4, "moe_expand": "27-39:20:0.8:0.5"})
+    _manifest(tmp_results, "B", "math500", kv={"kv_bits": 4, "moe_expand": None})
+    r = CMP.compare("A", "B", "math500")
+    assert r["comparable"] is False, r
+    assert "moe_expand" in r["reason"], r["reason"]
+    assert CMP.compare("A", "B", "math500", metric="decode_tps")["comparable"] is False
+
+
+def test_matched_moe_expand_compares_normally(write_rows, tmp_results):
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", kv={"kv_bits": 4, "moe_expand": "27-39:20:0.8:0.5"})
+    _manifest(tmp_results, "B", "math500", kv={"kv_bits": 4, "moe_expand": "27-39:20:0.8:0.5"})
+    assert CMP.compare("A", "B", "math500")["comparable"] is True
+
+
+def test_moe_expand_absent_on_a_pre_M34_row_compares_equal_to_explicit_none(write_rows, tmp_results):
+    """Unlike draft_kind there is no unobserved wildcard here: the feature is brand new, so a
+    manifest with no `moe_expand` key at all (every pre-M34 row) genuinely ran native routing —
+    identical to an explicit `moe_expand: None` — and the two must compare equal, or the entire
+    historical corpus would read STALE/incomparable the moment the key is introduced."""
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", kv={"kv_bits": 4})  # pre-M34: no moe_expand at all
+    _manifest(tmp_results, "B", "math500", kv={"kv_bits": 4, "moe_expand": None})
+    assert CMP.compare("A", "B", "math500")["comparable"] is True
+
+
 # --------------------------------------------------------------------- verdicts
 def test_a_small_delta_at_n15_is_inconclusive_not_a_ranking(write_rows, tmp_results):
     """The exact situation that produced 'dense 86.7% vs MoE 80%': 1 item of 15."""
@@ -379,7 +413,7 @@ def test_every_fingerprint_key_is_classified_in_compare_no_silent_gaps():
     assert set(P._FINGERPRINT_RUNTIME) == set(CMP._MUST_MATCH_RUNTIME) | set(CMP._SERVING_PATH_RUNTIME)
     kv_fingerprinted = {"kv_bits", "max_kv_cache_size"} | set(P._FINGERPRINT_KV_EXTRA)
     kv_classified = (set(CMP._TUNE_KV_WARN) | set(CMP._CAP_BINDING_KV)
-                     | set(CMP._CROSS_MODEL_IDENTITY_KV))
+                     | set(CMP._CROSS_MODEL_IDENTITY_KV) | set(CMP._MUST_MATCH_KV))
     assert kv_fingerprinted == kv_classified, (kv_fingerprinted, kv_classified)
 # ------------------------------------------------------- KV-CAP partition + penalty escalation
 # (merged 2026-08-18 from the old driver box's O29/O28 work). The cap-mismatch DECISION now lives

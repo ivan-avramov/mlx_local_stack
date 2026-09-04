@@ -61,6 +61,7 @@ def registry_kv(model: str, registry_path: str | None = None):
                 # refuses HARDWARE metrics across it while a prealloc change must not let
                 # --clean-stale delete quality rows.
                 "kv_prealloc_tokens": e.get("kv_prealloc_tokens"),
+                "moe_expand": e.get("moe_expand"),
             }
     return None
 
@@ -296,7 +297,9 @@ _FINGERPRINT_RUNTIME = ("apc_enabled", "draft_kind", "max_turns", "deadline_s", 
 #                        suffix lesson: kernel batch shape flips bf16 argmaxes), so resume is
 #                        strict about it; `compare` only WARNS for quality across it.
 # `kv_prealloc_tokens` is deliberately ABSENT (text-invariant; see registry_kv).
-_FINGERPRINT_KV_EXTRA = ("hf_path", "kv_quant_scheme", "quantized_kv_start", "prefill_step_size")
+# moe_expand — MoE routing expansion (M34) changes the text.
+_FINGERPRINT_KV_EXTRA = ("hf_path", "kv_quant_scheme", "quantized_kv_start", "prefill_step_size",
+                         "moe_expand")
 
 # v3 (2026-08-16): draft/suffix state is POPULATED, not merely named. See registry_draft().
 # v4 (2026-08-17): the kv_extra slice above joins the resume guard.

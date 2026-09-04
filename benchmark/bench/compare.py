@@ -75,6 +75,13 @@ _HARDWARE_KV = ("kv_prealloc_tokens", "prefill_step_size")
 _CAP_BINDING_KV = ("max_kv_cache_size",)
 _CROSS_MODEL_IDENTITY_KV = ("hf_path",)
 
+# moe_expand (M34): layer-scoped MoE expert-budget expansion changes which experts a token
+# routes to, so it changes the generated TEXT the same way draft_kind does — fatal for every
+# metric on a difference. Unlike draft_kind there is no "unobserved" wildcard: the feature is
+# brand new, so a manifest with no `moe_expand` key (pre-M34 rows) is a KNOWN "off", identical to
+# an explicit None — every pre-M34 row genuinely ran native routing, it is not merely unrecorded.
+_MUST_MATCH_KV = ("moe_expand",)
+
 # NOTE on the penalties sitting in _TUNE_SAMPLING_WARN (merged 2026-08-18 from the old driver
 # box's O28 close): a nonzero repetition/presence penalty ALSO makes `logits_processors`
 # non-empty, and `_suffix_structured_fallback` (mlx-vlm `generate/ar.py:163`, called `:648`)
@@ -200,6 +207,13 @@ def _bench_gate(model_a, model_b, bench, *, metric="acc", intersect=False):
         if kva.get(k) != kvb.get(k):
             warnings.append(f"{k} differs ({kva.get(k)} vs {kvb.get(k)}) — a per-model KV/tune "
                             f"axis, recorded not refused")
+
+    for k in _MUST_MATCH_KV:
+        va, vb = kva.get(k), kvb.get(k)
+        if va != vb:
+            return _refuse(f"{k} differs ({va!r} vs {vb!r}) — it changes the generated text (a "
+                           f"different set of active experts per token), so the delta would be "
+                           f"a (model x routing) composite rather than a model comparison")
 
     # DEPLOYED CODE — refuse when the SERVING PATH differs. C47 (2026-09-03): commit shas alone
     # over-refused — a tool-only fork commit (e.g. the MTP splitter, never imported by the server)
