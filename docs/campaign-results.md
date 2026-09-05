@@ -481,7 +481,11 @@ fire — the opposite did. **The community claim "best solver, worst listener" i
 instead is a documented instruction-following runaway tax on the B 1st choice at its coding tune (13/148 = 8.8 % of instruction prompts loop
 to budget at t0.3; the base 1/148). B does NOT re-rank on this alone (PLAN M31), but it is one more point estimate the C38 ruling should see.
 Old-DNF follow-up on the 3.6 arm: 3 of 6 converged in 84–164 s, 3 looped to budget. Rows: `<model>/ifeval.m31.*`.
-M31b (the same arm for `Qwen3.8-27B-OptiQ-4.5bpw-mixed`, the M25 tie-breaker) runs next.
+**M31b (2026-09-05, the M25 tie-breaker):** `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6, same draw/session/fingerprint — prompt strict
+**91.9 %** = `acc_strict` (148/148 converged, ZERO loops, max 57.8k tokens), loose 92.6 %, tokens/task 2,278, Σ wall 4.2 h.
+`compare` vs `Qwen3.8-27B-mlx-uniform-4bit`: −1.4pp CI [−4.1, +1.4] **EQUIVALENT** (TOST ±5pp) — the M25 tie holds on the
+instruction-following axis too; vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: +2.0pp CI [−2.7, +6.8] inconclusive on generated strict,
++8.8pp on `acc_strict@81920`. The mixed recipe's only edge is 0 vs 1 loops (not resolvable at k=1). No pick changes. Rows: `Qwen3.8-27B-OptiQ-4.5bpw-mixed/ifeval.m31.*`.
 
 ### 2026-09-03 — C46 leg 1: the O37 certification evidence for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` was a pre-C28 timeout cascade; t0.55 STANDS on the runaway tax, not on the strict margin
 

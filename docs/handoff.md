@@ -1,8 +1,9 @@
-# Handoff — 2026-09-04 23:00 (M31 CLOSED — refuted the 'worst listener' claim; M31b then M33 running via waiter3; M34 built + pushed, submodule bump deferred)
+# Handoff — 2026-09-05 03:10 (M31 + M31b CLOSED; M33 math500 RUNNING via waiter3; M34 built + pushed, submodule bump deferred)
 
-Single box (M5 Max 64 GB). **waiter3 (`$STACK_WORKDIR/m33/waiter3.sh`, pid in `m33/waiter3.pid`) is driving the queue**: M31 exited
-22:45 → `m31_finish.py` (no-op, rows complete) → **M31b** (`m31/m31b_chain.py`: ifeval for `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6, tune
-`m31`, ~5 h, log `m31/m31b.log`) → **M33** (`m33/m33_chain.py`: math500 n=100 × the three C candidates, ~35–55 h, log `m33/m33.log`).
+Single box (M5 Max 64 GB). **M33 IS LIVE** (launched 2026-09-05 02:58 by waiter3; chain `$STACK_WORKDIR/m33/m33_chain.py`, pid in `m33/m33.pid`, log
+`m33/m33.log`): math500 n=100 seed-0 draw × `Ornith-1.0-35B-mlx-uniform-4bit` → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` →
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, tune `m33`, ~35–55 h; each arm pilot → n=50 → n=100 (two resumes under the 20 h driver bound).
+M31 + M31b CLOSED (campaign-results 2026-09-04/05).
 Router on the M21 draft-OFF overlay, `src/mlx-vlm` worktree at `7330d3a6` — **DO NOT bump the submodule until M33 ends** (the M34
 fork commits change the serving path; a bump would split the M31/M31b/M33 fingerprint). All three repos PUSHED 2026-09-04 (fork
 `420c01e1`, mlx-serve `0ccc684`, stack `0a6e241`); this checkpoint and the M31 data are unpushed.
@@ -34,8 +35,8 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 - Pre-session untracked rows committed (`5b8f4de`, `3ea3d9c`); C46 filed.
 
 ## THE BOX QUEUE
-1. **M31 DONE** (see top; campaign-results 2026-09-04).
-1b. **M31 finish → M31b → M33, chained by `$STACK_WORKDIR/m33/waiter3.sh`** (pid in `m33/waiter3.pid`; waiters 1–2 killed): after M31 exits →
+1. **M33 RUNNING** (see top). M31/M31b DONE.
+1b. (done) M31 finish → M31b → M33 were chained by `$STACK_WORKDIR/m33/waiter3.sh`** (pid in `m33/waiter3.pid`; waiters 1–2 killed): after M31 exits →
    `m31/m31_finish.py` (resumes the 3.6 arm if the chain's 20 h driver bound cut it short — projected finish ≈ the bound; re-grades + re-compares; no-op if complete) → `m31/m31b_chain.py` = ifeval arm for `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6, tune `m31`, same
    seed-0 draw, compares vs both M31 arms (operator 2026-09-04: the M25 tie deserves the same test; ~5 h) → then `m33_chain.py`
    (math500 n=100 × 3 C candidates, ~35–55 h). To put M32 first: kill waiter2 by pid BEFORE M31 exits and re-chain by hand.
