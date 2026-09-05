@@ -100,6 +100,15 @@ def _scrub_pii(s: str) -> str:
     return s
 
 
+def _scrub_then_tail(s: str, n: int) -> str:
+    """Scrub PII from the WHOLE string, then take the tail — never the reverse. Slicing first can
+    cut a `/Users/<name>/...` boundary in half, leaving a fragment `_scrub_pii` no longer
+    recognizes as a home path (measured 2026-09-05 by the M35 verifier: 21 of 399 slice widths
+    leaked the real username this way). Shared by both agentic probes (opencode, dsh) so the fix
+    lives in exactly one place."""
+    return _scrub_pii(s)[-n:]
+
+
 @contextmanager
 def _scratch_dir(name: str):
     # macOS tempdirs live under /var -> /private/var; opencode registers the --dir project
@@ -485,7 +494,7 @@ def main() -> int:
                 "gate_effective_bound_s": round(gate_result.elapsed_s, 1),
                 "note": "FIRST-ATTEMPT only — not comparable to aider `final`, which allows a "
                         "second test-informed attempt",
-                "grade_tail": _scrub_pii(tail[-300:]), "log_tail": _scrub_pii(log[-500:]),
+                "grade_tail": _scrub_then_tail(tail, 300), "log_tail": _scrub_then_tail(log, 500),
             }
             with out.open("a") as f:
                 f.write(json.dumps(row) + "\n")

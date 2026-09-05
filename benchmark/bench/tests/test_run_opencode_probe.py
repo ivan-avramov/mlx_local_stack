@@ -358,3 +358,46 @@ def test_scrub_pii_replaces_home_and_workdir(monkeypatch):
     assert "/Users/someone" not in out
     assert "$STACK_WORKDIR/scratch/octmp/oc-x/y" in out
     assert "$HOME/other/path" in out
+
+
+def test_scrub_then_tail_scrubs_before_truncating_not_after(monkeypatch):
+    """M2 (verifier, 2026-09-05): `_scrub_pii(tail[-300:])` slices BEFORE scrubbing, so a
+    `/Users/<name>/...` boundary cut in half leaves a fragment `_scrub_pii` can no longer
+    recognize (measured by the verifier: 21 of 399 slice widths leaked the username this way).
+    `_scrub_then_tail` must scrub the WHOLE string first, then tail it. This dynamically searches
+    for a prefix length that makes the naive (slice-then-scrub) order leak, the same methodology
+    the verifier used, so the test doesn't depend on a hand-picked magic width happening to still
+    reproduce the bug."""
+    monkeypatch.setenv("STACK_WORKDIR", "/Users/someone/ws/mlx_local_stack_workdir")  # allow-pii-pattern
+    monkeypatch.setattr(P.os.path, "expanduser", lambda p: "/Users/someone" if p == "~" else p)  # allow-pii-pattern
+    home_path = "/Users/someone/ws/mlx_local_stack_workdir/scratch/oc-x/y"  # allow-pii-pattern
+    # A genuine boundary straddle cuts THROUGH "someone" — the full marker can never survive a
+    # straddling slice (that's the whole bug: neither the workdir nor the home replacement can
+    # match a partial string), so the leak signal is the bare username fragment, not the full path.
+    # The straddle point depends on len(home_path) + len(suffix) relative to `n`, NOT on the
+    # prefix length (a longer prefix shifts the cut and the marker forward by the same amount) —
+    # so this varies the SUFFIX length to sweep the cut through the marker.
+    n = 300
+    prefix = "z" * 500  # long enough that the slice never dips into the prefix itself
+    leaked_naive = False
+    for suffix_len in range(0, 320):
+        text = prefix + home_path + ("s" * suffix_len)
+        naive = P._scrub_pii(text[-n:])
+        if "someone" in naive:  # allow-pii-pattern
+            leaked_naive = True
+            fixed = P._scrub_then_tail(text, n)
+            assert "someone" not in fixed  # allow-pii-pattern
+            assert len(fixed) <= n
+            break
+    assert leaked_naive, "test setup didn't reproduce a boundary straddle — adjust the suffix range"
+
+
+def test_row_assembly_uses_scrub_then_tail_not_the_broken_slice_then_scrub_order():
+    """Regression guard for the M2 call-site bug itself (not just the helper): the row-building
+    code in `main()` must call `_scrub_then_tail`, never the old `_scrub_pii(x[-n:])` shape."""
+    import inspect
+    src = inspect.getsource(P.main)
+    assert "_scrub_then_tail(tail, 300)" in src
+    assert "_scrub_then_tail(log, 500)" in src
+    assert "_scrub_pii(tail[-300:])" not in src
+    assert "_scrub_pii(log[-500:])" not in src

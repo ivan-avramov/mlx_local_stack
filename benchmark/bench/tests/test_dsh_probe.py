@@ -69,7 +69,8 @@ def test_dsh_version_check_failure_refuses_to_run_unversioned(monkeypatch):
 
 
 def test_main_refuses_version_drift_without_the_escape_hatch(monkeypatch, tmp_path):
-    monkeypatch.setattr(sys, "argv", ["run_dsh_probe.py", "--model", "m", "--items", "x"])
+    monkeypatch.setattr(sys, "argv",
+                        ["run_dsh_probe.py", "--model", "m", "--tune", "t0.5", "--items", "x"])
     monkeypatch.setattr(P, "_dsh_bin", lambda: Path("/x/dsh"))
     monkeypatch.setattr(P, "_dsh_version", lambda b: "9.9.9")
     with pytest.raises(SystemExit) as e:
@@ -92,6 +93,10 @@ def test_dsh_env_redirects_home_and_sets_provider_and_safety_vars(tmp_path, monk
     assert env["DEEPSEEK_API_KEY"] == "local"
     assert env["DSH_TELEMETRY_MODE"] == "DISABLED"
     assert env["DSH_PERMISSION_MODE"] == "danger-full-access"
+    # M1: DEEPSEEK_SEARCH_BASE_URL is a SEPARATE hard default (web_search's own base URL, not
+    # covered by DEEPSEEK_BASE_URL) -- must be redirected off the real DeepSeek endpoint too.
+    assert env["DEEPSEEK_SEARCH_BASE_URL"] != "https://api.deepseek.com/anthropic/v1"
+    assert "127.0.0.1" in env["DEEPSEEK_SEARCH_BASE_URL"]
     # the redirect target itself must exist for dsh to write into
     assert home.is_dir()
 
@@ -102,10 +107,13 @@ def test_dsh_env_inherits_path_from_the_caller(tmp_path, monkeypatch):
     assert env["PATH"] == "/some/marker/bin:/usr/bin"
 
 
-def test_dsh_env_honors_explicit_deepseek_api_key(tmp_path, monkeypatch):
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-real-not-actually")
+def test_dsh_env_hardcodes_api_key_ignoring_caller_env(tmp_path, monkeypatch):
+    """L5: this probe only ever talks to a fake or local router, never DeepSeek's real API -- a
+    real DEEPSEEK_API_KEY sitting in the caller's environment (e.g. exported for other tooling)
+    must NEVER be forwarded into this subprocess or its logs."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-a-real-looking-secret")  # allow-pii-pattern
     env = P._dsh_env(tmp_path / "h", "http://127.0.0.1:1/v1")
-    assert env["DEEPSEEK_API_KEY"] == "sk-real-not-actually"
+    assert env["DEEPSEEK_API_KEY"] == "local"
 
 
 # --------------------------------------------------------------------------- _write_model_patch
@@ -117,6 +125,17 @@ def test_write_model_patch_overrides_agent_default_model(tmp_path):
     assert "id: agent-default-model" in text
     assert "provider: deepseek-official" in text
     assert "model: Qwen3.8-27B-mlx-uniform-4bit" in text
+
+
+def test_write_model_patch_disables_web_and_subagent_and_ralph_tools(tmp_path):
+    """M1: web_search/web_fetch (network egress against public exercises) and
+    subagent/subagent_fork/ralph (parallel LLM fan-out against the single-worker router) must be
+    turned off in the SAME overlay that sets the model."""
+    patch = P._write_model_patch(tmp_path, "some-model")
+    text = patch.read_text()
+    for tool_id in ("tool-web", "tool-subagent", "tool-subagent-fork", "tool-ralph"):
+        assert f"id: {tool_id}" in text
+    assert text.count("disabled: true") == len(P._DISABLED_TOOL_IDS)
 
 
 # --------------------------------------------------------------------------- _ProcGroup
@@ -210,7 +229,7 @@ def test_run_dsh_writes_the_model_patch_and_targets_the_base_url(tmp_path, monke
     monkeypatch.setattr(P.subprocess, "Popen", _Capturing)
     work, sol, test = _mkfiles(tmp_path)
 
-    rc, log, dur, result = P._run_dsh(
+    rc, log, dur, result, session_log = P._run_dsh(
         Path("/x/dsh"), "served-model", work, "do the thing", sol, test,
         lambda w, t: (True, ""), sol.read_text(),
         base_url="http://127.0.0.1:9/v1", dsh_home=tmp_path / "home",
@@ -261,7 +280,7 @@ def test_run_dsh_stalls_and_kills_the_process_group(tmp_path, monkeypatch):
         raise AssertionError("nothing ever changes in this test — grade must not be called")
 
     t0 = time.time()
-    rc, log, dur, result = P._run_dsh(
+    rc, log, dur, result, session_log = P._run_dsh(
         Path("/x/dsh"), "m", work, "do the thing", sol, test, grade, sol.read_text(),
         base_url="http://127.0.0.1:9/v1", dsh_home=tmp_path / "home",
         tick_s=0.05, hard_ceiling_s=5.0, poll_s=0.01, stall_ticks=2, loop_repeats=3)
@@ -272,16 +291,249 @@ def test_run_dsh_stalls_and_kills_the_process_group(tmp_path, monkeypatch):
     assert killed == [(555, P.signal.SIGKILL)]
 
 
+def test_run_dsh_wires_the_session_log_aware_snapshot_fn(tmp_path, monkeypatch):
+    """H2 wiring check: `_run_dsh` must drive the progress gate through `_dsh_snapshot_fn` (the
+    session-log-aware wrapper), not the stock opencode `_tick_snapshot_fn` directly."""
+    monkeypatch.setattr(P.subprocess, "Popen", _FakePopenNeverExits)
+    monkeypatch.setattr(P.os, "getpgid", lambda pid: 1)
+    monkeypatch.setattr(P.os, "killpg", lambda pgid, sig: None)
+    work, sol, test = _mkfiles(tmp_path)
+    dsh_home = tmp_path / "home"
+    calls = []
+
+    def _fake_snapshot_fn(cwd, sol_, test_, before, grade, log_path, home):
+        calls.append((cwd, sol_, test_, before, log_path, home))
+
+        def _snap(elapsed_s):
+            return P.progress_gate.Tick(elapsed_s=elapsed_s, n_failing=0, solution_hash="h",
+                                        signature=f"sig{elapsed_s}", file_changed=True)
+        return _snap
+
+    monkeypatch.setattr(P, "_dsh_snapshot_fn", _fake_snapshot_fn)
+
+    rc, log, dur, result, session_log = P._run_dsh(
+        Path("/x/dsh"), "m", work, "task", sol, test, lambda w, t: (True, ""), sol.read_text(),
+        base_url="http://127.0.0.1:9/v1", dsh_home=dsh_home,
+        tick_s=0.05, hard_ceiling_s=0.2, poll_s=0.01, stall_ticks=2, loop_repeats=3)
+
+    assert result.stop_reason == "hard_ceiling"
+    assert calls, "the fake snapshot fn was never called -- _run_dsh did not wire it in"
+    assert calls[0][0] == work
+    assert calls[0][5] == dsh_home
+
+
 # --------------------------------------------------------------------------- CLI language gate (mirrors opencode)
 
 def test_unsupported_lang_exits_with_clear_message(monkeypatch):
     monkeypatch.setattr(sys, "argv",
-                        ["run_dsh_probe.py", "--model", "m", "--items", "x", "--lang", "cobol"])
+                        ["run_dsh_probe.py", "--model", "m", "--tune", "t0.5", "--items", "x",
+                         "--lang", "cobol"])
     with pytest.raises(SystemExit) as e:
         P.main()
     msg = str(e.value)
     assert "cobol" in msg
     assert "unsupported" in msg
+
+
+# --------------------------------------------------------------------------- H1: transport escalation
+
+def test_escalate_transport_failure_raises_naming_base_url_and_log(monkeypatch):
+    log = "some reasoning\ndsh: TRANSPORT: DeepSeek API request to http://x/v1 failed\n"
+    with pytest.raises(SystemExit) as e:
+        P._escalate_transport_failure(1, log, "http://x/v1")
+    msg = str(e.value)
+    assert "http://x/v1" in msg
+    assert "TRANSPORT" in msg
+
+
+def test_escalate_transport_failure_does_not_fire_on_success():
+    log = "some reasoning\ndsh: TRANSPORT: this text is here but rc is 0\n"
+    P._escalate_transport_failure(0, log, "http://x/v1")  # must not raise
+
+
+def test_escalate_transport_failure_does_not_fire_on_unrelated_errors():
+    log = "dsh: SOME_OTHER_ERROR: the model did something else wrong\n"
+    P._escalate_transport_failure(1, log, "http://x/v1")  # must not raise
+
+
+# --------------------------------------------------------------------------- H2: session-log-based signature
+
+def _mk_session_log(dsh_home: Path, content: str = "event1\n") -> Path:
+    session_dir = dsh_home / ".dsh/sessions/proj/session-abc"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    session_file = session_dir / "session.jsonl"
+    session_file.write_text(content)
+    return session_file
+
+
+def test_dsh_session_log_signature_changes_as_the_log_grows(tmp_path):
+    dsh_home = tmp_path / "home"
+    session_file = _mk_session_log(dsh_home)
+    sig1 = P._dsh_session_log_signature(dsh_home)
+    session_file.write_text(session_file.read_text() + "event2\n")
+    sig2 = P._dsh_session_log_signature(dsh_home)
+    assert sig1 != sig2
+
+
+def test_dsh_session_log_signature_stable_when_nothing_grows(tmp_path):
+    dsh_home = tmp_path / "home"
+    _mk_session_log(dsh_home)
+    assert P._dsh_session_log_signature(dsh_home) == P._dsh_session_log_signature(dsh_home)
+
+
+def test_dsh_session_log_signature_handles_missing_dir_gracefully(tmp_path):
+    sig = P._dsh_session_log_signature(tmp_path / "nonexistent")
+    assert isinstance(sig, str) and sig
+
+
+def test_dsh_snapshot_signature_tracks_growing_session_log_and_never_false_loops(tmp_path):
+    """THE H2 regression test. dsh writes NOTHING to stdout/stderr while streaming (measured), so
+    the stock opencode tick signature (a hash of the log tail) is constant every tick; feeding a
+    real `ProgressGate` a sequence of ticks built that way would report 'looping' at tick 3
+    regardless of genuine progress. `_dsh_snapshot_fn` must key the signature off the growing
+    session log instead, so a genuinely progressing session (file changes every tick) is never
+    falsely killed."""
+    work, sol, test = _mkfiles(tmp_path)
+    log_path = work / ".dsh_probe_log.txt"
+    log_path.write_text("")  # dsh writes nothing to stdout while streaming (measured 2026-09-05)
+    dsh_home = tmp_path / "home"
+    session_file = _mk_session_log(dsh_home)
+
+    def grade(w, t):
+        return True, "ok"
+
+    snap = P._dsh_snapshot_fn(work, sol, test, sol.read_text(), grade, log_path, dsh_home)
+    gate = P.progress_gate.ProgressGate(stall_ticks=2, loop_repeats=3)
+
+    for i in range(1, 6):
+        sol.write_text(f"changed {i}")
+        session_file.write_text(session_file.read_text() + f"event{i}\n")
+        tick = snap(300.0 * i)
+        reason = gate.observe(tick)
+        assert reason is None, (
+            f"tick {i}: false stop {reason!r} — the stock stdout-tail signature would have "
+            f"reported 'looping' by now despite genuine, ongoing progress")
+
+
+def test_dsh_snapshot_still_stops_a_genuinely_wedged_session(tmp_path):
+    """The other half of H2: a session whose session log ALSO stops growing (a real stall, not
+    just a quiet stdout) must still be stopped — the fix must not turn the gate into a no-op."""
+    work, sol, test = _mkfiles(tmp_path)
+    log_path = work / ".dsh_probe_log.txt"
+    log_path.write_text("")
+    dsh_home = tmp_path / "home"
+    _mk_session_log(dsh_home)  # never touched again below -- a genuinely flat session log
+
+    def grade(w, t):
+        raise AssertionError("solution never changes — must not grade")
+
+    snap = P._dsh_snapshot_fn(work, sol, test, sol.read_text(), grade, log_path, dsh_home)
+    gate = P.progress_gate.ProgressGate(stall_ticks=2, loop_repeats=3)
+
+    reasons = [gate.observe(snap(300.0 * i)) for i in range(1, 5)]
+    assert any(r is not None for r in reasons), (
+        "a wedged session (file AND session log both flat) must still stop somehow")
+
+
+# --------------------------------------------------------------------------- M3: shared-implementation identity
+
+def test_row_assembly_uses_scrub_then_tail_not_the_broken_slice_then_scrub_order():
+    """M2 call-site regression guard, dsh side (mirrors the same check added for opencode)."""
+    import inspect
+    src = inspect.getsource(P.main)
+    assert "_scrub_then_tail(tail, 300)" in src
+    assert "_scrub_then_tail(log, 500)" in src
+    assert "_scrub_pii(tail[-300:])" not in src
+    assert "_scrub_pii(log[-500:])" not in src
+
+
+def test_integrity_machinery_is_the_opencode_implementation_by_identity():
+    """An inlined copy of any of these would silently drift from opencode's (already-hardened)
+    behavior and fail loudly here instead of in some future audit."""
+    import run_opencode_probe as _oc
+    assert P._prepare is _oc._prepare
+    assert P._solution_and_test is _oc._solution_and_test
+    assert P._grade_result is _oc._grade_result
+    assert P._tick_snapshot_fn is _oc._tick_snapshot_fn
+    assert P._scrub_pii is _oc._scrub_pii
+    assert P._scrub_then_tail is _oc._scrub_then_tail
+    assert P._scratch_dir is _oc._scratch_dir
+
+
+# --------------------------------------------------------------------------- L1: default --out and dedup
+
+def test_default_out_path_includes_the_tune_label(monkeypatch, tmp_path):
+    poly = tmp_path / "polyglot"
+    ex = poly / "python/exercises/practice/affine-cipher"
+    ex.mkdir(parents=True)
+    (ex / "affine_cipher.py").write_text("def encode(): ...\n")
+    (ex / "affine_cipher_test.py").write_text("def test_encode(): assert True\n")
+
+    monkeypatch.setattr(P, "_polyglot_root", lambda: poly)
+    monkeypatch.setattr(P, "_dsh_bin", lambda: Path("/x/dsh"))
+    monkeypatch.setattr(P, "_dsh_version", lambda b: P.PINNED_DSH_VERSION)
+
+    def _fake_run_dsh(dsh_bin, model, cwd, prompt, sol, test, grade, before, **kw):
+        return (0, "", 1.0,
+                P.progress_gate.GateResult(stop_reason="completed", ticks=[], elapsed_s=1.0,
+                                           returncode=0),
+                None)
+
+    monkeypatch.setattr(P, "_run_dsh", _fake_run_dsh)
+    # Point REPO at tmp_path so the default --out path (never given here, on purpose) is
+    # verified WITHOUT ever writing under the real repo tree.
+    monkeypatch.setattr(P, "REPO", tmp_path)
+    monkeypatch.setattr(sys, "argv", [
+        "run_dsh_probe.py", "--model", "some-model", "--tune", "t0.7",
+        "--items", "affine-cipher", "--dsh-home", str(tmp_path / "home"),
+    ])
+
+    rc = P.main()
+
+    assert rc == 0
+    expected = tmp_path / "benchmark/results/some-model/dsh.t0.7.jsonl"
+    assert expected.exists()
+
+
+def test_main_skips_items_already_present_in_the_output_file(tmp_path, monkeypatch):
+    """L1: a retried/resumed invocation, or a duplicate name in --items, must not write a second
+    row for the same item id."""
+    poly = tmp_path / "polyglot"
+    ex = poly / "python/exercises/practice/affine-cipher"
+    ex.mkdir(parents=True)
+    (ex / "affine_cipher.py").write_text("def encode(): ...\n")
+    (ex / "affine_cipher_test.py").write_text("def test_encode(): assert True\n")
+
+    monkeypatch.setattr(P, "_polyglot_root", lambda: poly)
+    monkeypatch.setattr(P, "_dsh_bin", lambda: Path("/x/dsh"))
+    monkeypatch.setattr(P, "_dsh_version", lambda b: P.PINNED_DSH_VERSION)
+
+    calls = []
+
+    def _fake_run_dsh(dsh_bin, model, cwd, prompt, sol, test, grade, before, **kw):
+        calls.append(1)
+        return (0, "", 1.0,
+                P.progress_gate.GateResult(stop_reason="completed", ticks=[], elapsed_s=1.0,
+                                           returncode=0),
+                None)
+
+    monkeypatch.setattr(P, "_run_dsh", _fake_run_dsh)
+
+    out = tmp_path / "out.jsonl"
+    out.write_text(json.dumps({"id": "python/affine-cipher", "passed": True}) + "\n")
+
+    monkeypatch.setattr(sys, "argv", [
+        "run_dsh_probe.py", "--model", "m", "--tune", "t0.5",
+        "--items", "affine-cipher,affine-cipher", "--out", str(out),
+        "--dsh-home", str(tmp_path / "home"),
+    ])
+
+    rc = P.main()
+
+    assert rc == 0
+    assert calls == [], "an already-present item must never re-invoke _run_dsh"
+    lines = [ln for ln in out.read_text().splitlines() if ln.strip()]
+    assert len(lines) == 1, "no duplicate row may be appended"
 
 
 # =================================================================================================
@@ -311,6 +563,7 @@ class _ScriptedDeepSeekHandler(BaseHTTPRequestHandler):
     """
     target_path: str = ""
     new_content: str = ""
+    seen_tool_names: list = None  # set to a real list on the subclass to capture wire tool names
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):  # keep pytest -s output quiet
@@ -340,6 +593,9 @@ class _ScriptedDeepSeekHandler(BaseHTTPRequestHandler):
         messages = req.get("messages", [])
         has_tools = bool(req.get("tools"))
         n_tool_results = sum(1 for m in messages if m.get("role") == "tool")
+        if self.seen_tool_names is not None:
+            self.seen_tool_names.extend(
+                t["function"]["name"] for t in req.get("tools", []) if "function" in t)
 
         if not has_tools:
             chunks = [
@@ -382,7 +638,7 @@ class _ScriptedDeepSeekHandler(BaseHTTPRequestHandler):
 
 
 @pytestmark_skip_no_dsh
-def test_real_dsh_headless_edits_a_file_against_a_fake_endpoint_and_stays_out_of_real_home(tmp_path, monkeypatch):
+def test_real_dsh_headless_edits_a_file_disables_risky_tools_and_stays_out_of_real_home(tmp_path, monkeypatch):
     stack_workdir = os.environ.get("STACK_WORKDIR")
     if not stack_workdir:
         pytest.skip("STACK_WORKDIR not set")
@@ -397,8 +653,9 @@ def test_real_dsh_headless_edits_a_file_against_a_fake_endpoint_and_stays_out_of
     before = sol.read_text()
     new_content = "def add(a, b):\n    return a + b\n"
 
+    seen_tool_names = []
     handler = type("Handler", (_ScriptedDeepSeekHandler,), {
-        "target_path": str(sol), "new_content": new_content,
+        "target_path": str(sol), "new_content": new_content, "seen_tool_names": seen_tool_names,
     })
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     port = server.server_address[1]
@@ -415,7 +672,7 @@ def test_real_dsh_headless_edits_a_file_against_a_fake_endpoint_and_stays_out_of
 
     dsh_home = tmp_path / "dsh-home"  # NOT the real $HOME, NOT $STACK_WORKDIR/dsh/home (test isolation)
     try:
-        rc, log, dur, result = P._run_dsh(
+        rc, log, dur, result, session_log = P._run_dsh(
             P._dsh_bin(), "test-model", work,
             "Implement add() in sol.py so it returns a + b", sol, test,
             lambda w, t: (True, ""), before,
@@ -441,3 +698,46 @@ def test_real_dsh_headless_edits_a_file_against_a_fake_endpoint_and_stays_out_of
     # everything dsh wrote landed under our redirected home instead.
     assert dsh_home.is_dir()
     assert any(dsh_home.rglob("*")), "dsh_home has no content — the redirect may be a no-op"
+
+    # L2: the session log is discoverable and real.
+    assert session_log, "no session log discovered"
+    assert Path(session_log).exists()
+    assert str(dsh_home) in session_log
+
+    # M1: web_search/web_fetch/subagent/subagent_fork/ralph must never reach the wire.
+    assert seen_tool_names, "no request carried a tools array — test setup is broken"
+    banned = {"web_search", "web_fetch", "subagent", "subagent_fork", "ralph"}
+    leaked = banned & set(seen_tool_names)
+    assert not leaked, f"disabled tools still reached the wire: {leaked} (seen: {seen_tool_names})"
+    # the ordinary fs/bash tools this probe actually needs must still be present.
+    assert {"read", "write"} <= set(seen_tool_names)
+
+
+@pytestmark_skip_no_dsh
+def test_real_dsh_closed_port_escalates_transport_failure_and_writes_no_row(tmp_path, monkeypatch):
+    """H1, real-dsh evidence: a closed local port makes dsh retry (5x exponential backoff) and
+    finally exit 1 with `dsh: TRANSPORT: ...` — main() must escalate (SystemExit), not grade this
+    as an ordinary failed row. Takes ~15s wall (dsh's own retry backoff), not mocked, by design."""
+    if not os.environ.get("STACK_WORKDIR"):
+        pytest.skip("STACK_WORKDIR not set")
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    closed_port = s.getsockname()[1]
+    s.close()  # nothing listens here -- every connection attempt is refused
+
+    out = tmp_path / "out.jsonl"
+    monkeypatch.setattr(sys, "argv", [
+        "run_dsh_probe.py", "--model", "test-model", "--tune", "t0.5",
+        "--items", "affine-cipher", "--out", str(out),
+        "--dsh-home", str(tmp_path / "home"),
+        "--base-url", f"http://127.0.0.1:{closed_port}/v1",
+        "--hard-ceiling-s", "60",
+    ])
+
+    with pytest.raises(SystemExit) as e:
+        P.main()
+    msg = str(e.value)
+    assert "TRANSPORT" in msg
+    assert f"127.0.0.1:{closed_port}" in msg
+    assert not out.exists() or out.read_text().strip() == "", "no row may be written on a transport failure"

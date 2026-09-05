@@ -71,6 +71,19 @@ tree, and one real headless run against a throwaway fake OpenAI-compatible serve
       category entirely rather than relying on fail-closed-not-hang. This probe sets
       `DSH_PERMISSION_MODE=danger-full-access`.
 
+  VERIFIER FIXES (2026-09-05, against the same real pinned binary — see the functions named below
+  for the full reasoning): (H1) a closed port/unreachable router made dsh exit 1 with a
+  `TRANSPORT:` log line that main() graded as an ordinary failed row; `_escalate_transport_failure`
+  now aborts the whole run instead, per AGENTS.md's "transport failures escalate, never graded".
+  (H2) dsh writes nothing to stdout/stderr until it finishes, so the stock opencode tick signature
+  (a hash of the log tail) is CONSTANT and the loop-detector killed every unfinished dsh session at
+  tick 3 (900s) regardless of real progress; `_dsh_snapshot_fn`/`_dsh_session_log_signature` key
+  the signature off dsh's own growing session-log file instead. (M1) headless mounts `web_search`/
+  `web_fetch`/`subagent`/`subagent_fork`/`ralph` by default — network egress and parallel LLM
+  fan-out this probe never wants; `_DISABLED_TOOL_IDS` turns them off in the same patch overlay
+  that sets the model, plus `DEEPSEEK_SEARCH_BASE_URL` is independently redirected since it is a
+  separate hard default NOT covered by `DEEPSEEK_BASE_URL`.
+
   ROW/MANIFEST COMPARABILITY. `bench/compare.py`'s `_MUST_MATCH_RUNTIME` already includes `client`
   and REFUSES any comparison where the two sides' `runtime.client` differ (proved by the existing
   aider-vs-opencode test, `test_refuses_across_differing_agentic_scaffold_knobs`). Recording
@@ -79,13 +92,17 @@ tree, and one real headless run against a throwaway fake OpenAI-compatible serve
   `compare.py` was needed or made.
 
 Usage:
-  run_dsh_probe.py --model <served-name> --items affine-cipher,beer-song [--lang python]
+  run_dsh_probe.py --model <served-name> --tune t0.5 --items affine-cipher,beer-song [--lang python]
                    [--base-url http://127.0.0.1:8000/v1] [--dsh-home $STACK_WORKDIR/dsh/home]
-                   [--tick-s 300] [--hard-ceiling-s 3600] [--out benchmark/results/<model>/dsh.jsonl]
+                   [--tick-s 300] [--hard-ceiling-s 3600]
+                   [--out benchmark/results/<model>/dsh.<tune>.jsonl]
 """
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import glob
+import hashlib
 import json
 import os
 import signal
@@ -110,6 +127,7 @@ _solution_and_test = _oc._solution_and_test
 _tick_snapshot_fn = _oc._tick_snapshot_fn
 _grade_result = _oc._grade_result
 _scrub_pii = _oc._scrub_pii
+_scrub_then_tail = _oc._scrub_then_tail
 _polyglot_root = _oc._polyglot_root
 _polyglot_sha = _oc._polyglot_sha
 _docker_available = _oc._docker_available
@@ -146,14 +164,31 @@ def _dsh_version(dsh_bin: Path) -> str:
         sys.exit(f"cannot determine dsh version ({e}); refusing to run unversioned")
 
 
+# M1 (verifier, 2026-09-05): headless dsh ships tools this probe never wants to fire — web_search /
+# web_fetch (the polyglot exercises are public; unrestricted outbound HTTP is a contamination and
+# egress risk this probe has no business taking) and subagent / subagent_fork / ralph (parallel
+# LLM fan-out against our single-worker router, which the "ONE resident model, always" rule and
+# the MLX_VLM_CACHE_SESSION_MAX=2 discipline both assume never happens). Disabling by `id` in the
+# SAME `--patch` overlay that sets the model (verified: the model override still lands alongside
+# these) removes the category entirely rather than trusting the model not to reach for it.
+_DISABLED_TOOL_IDS = ("tool-web", "tool-subagent", "tool-subagent-fork", "tool-ralph")
+
+
 def _dsh_env(dsh_home: Path, base_url: str) -> dict:
     """Every dsh write lands under `$HOME` (DISCOVERY above), so redirecting HOME plus the three
     XDG roots under it is sufficient — there is no separate cache/data dir to chase down.
-    DEEPSEEK_BASE_URL/DEEPSEEK_API_KEY point the `deepseek-official` route at the fake or real
-    OpenAI-compatible endpoint; DSH_TELEMETRY_MODE/DSH_PERMISSION_MODE are the two knobs DISCOVERY
-    found necessary to avoid a silent network call or an approval-driven dead end. Inherits the
-    caller's full environment (PATH etc — dsh's bash tool needs a real PATH to do anything useful)
-    and overrides only these keys.
+    DEEPSEEK_BASE_URL points the `deepseek-official` route at the fake or real OpenAI-compatible
+    endpoint; DEEPSEEK_SEARCH_BASE_URL is a SEPARATE hard default
+    (`https://api.deepseek.com/anthropic/v1`, NOT redirected by DEEPSEEK_BASE_URL — verified in the
+    installed `dsh-web-search-deepseek` source) that `dsh-tool-web`'s search provider would
+    otherwise reach even with the base chat route redirected; it is pointed at an unused local
+    port as a second line of defense alongside disabling `tool-web` in the patch overlay.
+    DEEPSEEK_API_KEY is hard-coded to the literal "local" — this probe only ever talks to a fake
+    or local router, never DeepSeek's real API, so a real key must never be picked up from the
+    caller's environment and forwarded into a subprocess log. DSH_TELEMETRY_MODE/
+    DSH_PERMISSION_MODE are the two knobs DISCOVERY found necessary to avoid a silent network call
+    or an approval-driven dead end. Inherits the caller's full environment (PATH etc — dsh's bash
+    tool needs a real PATH to do anything useful) and overrides only these keys.
     """
     dsh_home = Path(dsh_home)
     dsh_home.mkdir(parents=True, exist_ok=True)
@@ -164,7 +199,8 @@ def _dsh_env(dsh_home: Path, base_url: str) -> dict:
         "XDG_DATA_HOME": str(dsh_home / ".local/share"),
         "XDG_CACHE_HOME": str(dsh_home / ".cache"),
         "DEEPSEEK_BASE_URL": base_url,
-        "DEEPSEEK_API_KEY": os.environ.get("DEEPSEEK_API_KEY", "local"),
+        "DEEPSEEK_SEARCH_BASE_URL": "http://127.0.0.1:1/disabled",
+        "DEEPSEEK_API_KEY": "local",
         "DSH_TELEMETRY_MODE": "DISABLED",
         "DSH_PERMISSION_MODE": "danger-full-access",
     })
@@ -175,15 +211,21 @@ def _write_model_patch(tmp_dir: Path, model: str) -> Path:
     """No `DSH_MODEL` env var exists (DISCOVERY above) — the served model name is pushed through
     a `--patch` overlay on the `agent-default-model` composition entry instead. YAML has no
     special characters to escape for a registry model name (alnum, `-`, `.`); this stays a plain
-    string substitution rather than pulling in a YAML writer for one field.
+    string substitution rather than pulling in a YAML writer for one field. The same overlay
+    disables `_DISABLED_TOOL_IDS` (M1) — web/subagent/ralph — so the model override and the tool
+    lockdown always travel together.
     """
+    lines = [
+        "- id: agent-default-model\n",
+        "  config:\n",
+        "    provider: deepseek-official\n",
+        f"    model: {model}\n",
+    ]
+    for tool_id in _DISABLED_TOOL_IDS:
+        lines.append(f"- id: {tool_id}\n")
+        lines.append("  disabled: true\n")
     patch = Path(tmp_dir) / "dsh-model-patch.yml"
-    patch.write_text(
-        "- id: agent-default-model\n"
-        "  config:\n"
-        "    provider: deepseek-official\n"
-        f"    model: {model}\n"
-    )
+    patch.write_text("".join(lines))
     return patch
 
 
@@ -220,34 +262,141 @@ class _ProcGroup:
                 pass
 
 
+def _dsh_session_log_signature(dsh_home: Path) -> str:
+    """H2 (verifier, 2026-09-05): dsh headless writes ZERO bytes to stdout/stderr until the whole
+    task completes (measured: 0 bytes over 32s of live streaming), so
+    `progress_gate.tail_signature` on that constant log tail is CONSTANT across every tick — and
+    `ProgressGate.observe()` checks the LOOP rule (identical signature `loop_repeats` times)
+    BEFORE the stall rule, so a session that is genuinely progressing (the file keeps changing,
+    which resets the STALL counter) still gets killed as "looping" at exactly tick `loop_repeats`
+    (900s at defaults) because its SIGNATURE never moves. That silently caps every unfinished dsh
+    session at a fraction of `hard_ceiling_s`, an unrecorded (harness x compute-budget) composite
+    against opencode (whose tool-call transcript DOES change the tail every tick).
+
+    dsh's own durable session log (`$HOME/.dsh/sessions/**/session.jsonl*`, its append-only event
+    log) DOES grow while a session streams (~2.5 KB / 4s measured) — hashing the (relative path,
+    size) of every `session.jsonl*` file under `dsh_home` gives a liveness signature that reflects
+    actual progress instead of dsh's stdout cadence. A session log that stops growing (a real
+    stall) still hashes to a repeated signature, so a genuinely wedged session is unaffected.
+    """
+    root = Path(dsh_home) / ".dsh" / "sessions"
+    if not root.is_dir():
+        return "no-session-dir"
+    entries = []
+    for name in sorted(glob.glob(str(root / "**" / "session.jsonl*"), recursive=True)):
+        try:
+            entries.append((os.path.relpath(name, root), os.path.getsize(name)))
+        except OSError:
+            continue
+    return hashlib.sha256(repr(entries).encode()).hexdigest()[:16]
+
+
+def _find_session_log(dsh_home: Path, before: set) -> str | None:
+    """Best-effort discovery of THIS run's session log (L2), for post-hoc diagnosis in the row.
+    `before` is the set of `session.jsonl*` paths that already existed when the run started;
+    picks the newest file among whatever is new, or (if nothing looks new — e.g. a resumed
+    session) the most recently modified file overall, so a row always names its best guess rather
+    than nothing."""
+    root = Path(dsh_home) / ".dsh" / "sessions"
+    if not root.is_dir():
+        return None
+    after = set(glob.glob(str(root / "**" / "session.jsonl*"), recursive=True))
+    candidates = (after - before) or after
+    if not candidates:
+        return None
+    try:
+        return max(candidates, key=lambda p: os.path.getmtime(p))
+    except OSError:
+        return None
+
+
+def _dsh_snapshot_fn(cwd: Path, sol: Path, test: Path, before_sol: str, grade, log_path: Path,
+                     dsh_home: Path):
+    """Wraps `_tick_snapshot_fn` (opencode's, reused verbatim) and overrides the tick's
+    `signature` with `_dsh_session_log_signature` (H2) — every OTHER field (file-changed
+    detection, grading, the neutral-on-race handling) stays exactly opencode's implementation.
+    `dataclasses.replace` keeps this a pure wrapper rather than a fork of `Tick` construction.
+    """
+    inner = _tick_snapshot_fn(cwd, sol, test, before_sol, grade, log_path)
+
+    def _snapshot(elapsed_s: float) -> "progress_gate.Tick":
+        tick = inner(elapsed_s)
+        return dataclasses.replace(tick, signature=_dsh_session_log_signature(dsh_home))
+
+    return _snapshot
+
+
 def _run_dsh(dsh_bin: Path, model: str, cwd: Path, prompt: str, sol: Path, test: Path, grade,
             before_sol: str, *, base_url: str, dsh_home: Path, tick_s: int, hard_ceiling_s: int,
             poll_s: float, stall_ticks: int, loop_repeats: int
-            ) -> tuple[int, str, float, "progress_gate.GateResult"]:
+            ) -> tuple[int, str, float, "progress_gate.GateResult", str | None]:
     """Run dsh headless under the SAME progress-gated bound as opencode (`bench/progress_gate.py`)
     — see that module's docstring. The policy is IDENTICAL across harnesses and models; only the
-    diagnosis timing can differ, never the compute budget.
+    diagnosis timing can differ, never the compute budget. Returns the session log path (L2) as a
+    5th element, best-effort, for post-hoc diagnosis.
     """
     patch = _write_model_patch(cwd.parent, model)
     cmd = [str(dsh_bin), "--profile", "headless", "--patch", str(patch), prompt]
     env = _dsh_env(dsh_home, base_url)
+
+    sessions_root = Path(dsh_home) / ".dsh" / "sessions"
+    before_sessions = (set(glob.glob(str(sessions_root / "**" / "session.jsonl*"), recursive=True))
+                       if sessions_root.is_dir() else set())
 
     log_path = cwd / ".dsh_probe_log.txt"
     with log_path.open("w") as log_f:
         proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=log_f, stderr=subprocess.STDOUT,
                                 text=True, start_new_session=True)
         wrapped = _ProcGroup(proc)
-        snapshot_fn = _tick_snapshot_fn(cwd, sol, test, before_sol, grade, log_path)
+        snapshot_fn = _dsh_snapshot_fn(cwd, sol, test, before_sol, grade, log_path, dsh_home)
         result = progress_gate.run_progress_gated(
             wrapped, snapshot_fn, tick_s=tick_s, hard_ceiling_s=hard_ceiling_s, poll_s=poll_s,
             stall_ticks=stall_ticks, loop_repeats=loop_repeats)
     log = log_path.read_text(errors="replace") if log_path.exists() else ""
-    return proc.returncode, log, result.elapsed_s, result
+    session_log = _find_session_log(dsh_home, before_sessions)
+    return proc.returncode, log, result.elapsed_s, result, session_log
+
+
+def _escalate_transport_failure(rc: int, log: str, base_url: str) -> None:
+    """H1 (verifier, 2026-09-05): a closed port / unreachable router exits dsh with rc=1 and a
+    `dsh: TRANSPORT: ...` log line (dsh-llm-deepseek, thrown after its 5-retry exponential backoff
+    is exhausted — measured: ~15s wall for a closed port). AGENTS.md is explicit: "Transport/HTTP
+    failures ESCALATE (abort, nonzero exit), they are NEVER graded" — grading this as
+    passed=False/file_changed=False would silently launder a router-down condition into a quality
+    result indistinguishable from the model actually failing the task. This must run BEFORE any
+    grading or row-write for the item.
+    """
+    if rc != 0 and "TRANSPORT:" in log:
+        sys.exit(f"dsh transport failure talking to {base_url} — ESCALATING, never graded "
+                 f"(AGENTS.md: transport failures escalate, are never graded). rc={rc}. "
+                 f"Log tail:\n{log[-800:]}")
+
+
+def _existing_row_ids(out: Path) -> set:
+    """L1: a retried/resumed invocation must not silently duplicate an item's row. Reads whatever
+    is already on disk (malformed lines are skipped, never fatal — this is a guard, not a parser)."""
+    ids = set()
+    if not out.exists():
+        return ids
+    for line in out.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "id" in row:
+            ids.add(row["id"])
+    return ids
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
+    ap.add_argument("--tune", required=True,
+                    help="tune label folded into the default --out path "
+                         "(benchmark/results/<model>/dsh.<tune>.jsonl), per the M35 spec's Rows section")
     ap.add_argument("--items", required=True, help="comma list of exercise names")
     ap.add_argument("--lang", default="python")
     ap.add_argument("--base-url", default="http://127.0.0.1:8000/v1",
@@ -297,8 +446,9 @@ def main() -> int:
     polyglot = _polyglot_root()
     poly_sha = _polyglot_sha(polyglot)
     root = polyglot / a.lang / "exercises/practice"
-    out = Path(a.out) if a.out else REPO / "benchmark/results" / a.model / "dsh.jsonl"
+    out = Path(a.out) if a.out else REPO / "benchmark/results" / a.model / f"dsh.{a.tune}.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
+    existing_ids = _existing_row_ids(out)
 
     try:
         from bench import provenance
@@ -315,6 +465,10 @@ def main() -> int:
         print(f"!! manifest not written: {e}", flush=True)
 
     for name in [s.strip() for s in a.items.split(",") if s.strip()]:
+        item_id = f"{a.lang}/{name}"
+        if item_id in existing_ids:
+            print(f"!! {item_id}: already in {out}, skipping (no duplicate row written)", flush=True)
+            continue
         src = root / name
         if not src.is_dir():
             print(f"!! {name}: no such exercise at {src}", flush=True)
@@ -330,20 +484,22 @@ def main() -> int:
                 f"The specification is in .docs/instructions.md — read it first. "
                 f"Do NOT modify {test.name}. Do not create new files unless required by the spec."
             )
-            rc, log, dur, gate_result = _run_dsh(
+            rc, log, dur, gate_result, session_log = _run_dsh(
                 dsh_bin, a.model, work, prompt, sol, test, grade, before,
                 base_url=a.base_url, dsh_home=dsh_home, tick_s=a.tick_s,
                 hard_ceiling_s=a.hard_ceiling_s, poll_s=a.poll_s,
                 stall_ticks=a.stall_ticks, loop_repeats=a.loop_repeats)
+            _escalate_transport_failure(rc, log, a.base_url)
             after = sol.read_text(errors="replace")
             changed = after != before
             passed, tail, test_modified = _grade_result(work, test, test_before, changed, grade)
             row = {
-                "bench": "dsh", "id": f"{a.lang}/{name}", "model": a.model, "sample": 0,
+                "bench": "dsh", "id": item_id, "model": a.model, "sample": 0,
                 "schema_version": 2, "scaffold": "dsh", "harness": "dsh",
                 "harness_version": dsh_version, "harness_profile": "headless", "attempts": 1,
                 "passed": passed, "file_changed": changed, "test_modified": test_modified,
                 "dsh_rc": rc, "polyglot_sha": poly_sha,
+                "dsh_session_log": _scrub_pii(session_log) if session_log else None,
                 "wall_s": round(dur, 1),
                 "stop_reason": gate_result.stop_reason,
                 "timed_out": gate_result.stop_reason != "completed",
@@ -352,10 +508,11 @@ def main() -> int:
                 "gate_effective_bound_s": round(gate_result.elapsed_s, 1),
                 "note": "FIRST-ATTEMPT only — not comparable to aider `final`, which allows a "
                         "second test-informed attempt",
-                "grade_tail": _scrub_pii(tail[-300:]), "log_tail": _scrub_pii(log[-500:]),
+                "grade_tail": _scrub_then_tail(tail, 300), "log_tail": _scrub_then_tail(log, 500),
             }
             with out.open("a") as f:
                 f.write(json.dumps(row) + "\n")
+            existing_ids.add(item_id)
             print(f"[{time.strftime('%H:%M:%S')}] {name:16s} changed={changed} passed={passed} "
                   f"rc={rc} {dur:.0f}s", flush=True)
     print(f"rows -> {out}", flush=True)
