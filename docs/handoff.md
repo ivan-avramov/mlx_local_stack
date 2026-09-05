@@ -1,15 +1,13 @@
-# Handoff — 2026-09-03 21:50 (M31 ifeval LIVE; C46 CLOSED — leg 1 restated O37, leg 2 closed under the operator's skip standard)
+# Handoff — 2026-09-04 23:00 (M31 CLOSED — refuted the 'worst listener' claim; M31b then M33 running via waiter3; M34 built + pushed, submodule bump deferred)
 
-Single box (M5 Max 64 GB). **M31 IS LIVE** (launched 2026-09-03 21:44): chain `$STACK_WORKDIR/m31/m31_chain.py` (pid in `m31/m31.pid`,
-log `m31/m31.log`), router UP on the M21 draft-OFF overlay (`$STACK_WORKDIR/m21/bench_overlay_m21.yaml`, SESSION_MAX=2, APC absent),
-`src/mlx-vlm` worktree at the stack pointer `7330d3a6` (serving path `920efc38`). Order: `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 pilot
-(5 seeded items) → n=148 → grade → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 pilot → n=148 → grade → `compare` (tune `m31` on both;
-the 3.6 arm is a re-measure because its 2026-08-18 row is pre-C28 with 6 timeout DNFs and sits at serving path `17e0e5a7`). Sizing:
-PLAN said ~2 h; realistic 10–12 h (base ~150–200 s/item at 20–29 tok/s; 3.6 ~84 s/item) — the pilot lines in the log size it.
-`NLTK_DATA` verified under `$STACK_WORKDIR` on the driver pid (a stray `~/nltk_data` from before the redirect exists; harmless, not ours to delete).
-**C46 is CLOSED**: leg 1 restated the O37 evidence (t0.55 stands on the runaway tax; 18/20 pre-C28 DNFs were a cascade); leg 2 closed
-without running after verifying no pick, ranking or tune certification cites those rows (operator standard: skip only when KNOWN
-not to help a pick; verification text in campaign-results 2026-09-03).
+Single box (M5 Max 64 GB). **waiter3 (`$STACK_WORKDIR/m33/waiter3.sh`, pid in `m33/waiter3.pid`) is driving the queue**: M31 exited
+22:45 → `m31_finish.py` (no-op, rows complete) → **M31b** (`m31/m31b_chain.py`: ifeval for `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6, tune
+`m31`, ~5 h, log `m31/m31b.log`) → **M33** (`m33/m33_chain.py`: math500 n=100 × the three C candidates, ~35–55 h, log `m33/m33.log`).
+Router on the M21 draft-OFF overlay, `src/mlx-vlm` worktree at `7330d3a6` — **DO NOT bump the submodule until M33 ends** (the M34
+fork commits change the serving path; a bump would split the M31/M31b/M33 fingerprint). All three repos PUSHED 2026-09-04 (fork
+`420c01e1`, mlx-serve `0ccc684`, stack `0a6e241`); this checkpoint and the M31 data are unpushed.
+**M31 CLOSED**: `Qwen3.8-27B-mlx-uniform-4bit` ifeval strict 93.2 % (1 loop) vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 89.9 % / acc_strict
+83.1 % (13 loops, 20.5 h) — the community "worst listener" claim is refuted; the B 1st choice pays an 8.8 % instruction-prompt runaway tax.
 
 Stack PUSHED through `5788c4b`; UNPUSHED: everything from `5a68763` on (C46 data, C46 closure, M33 row, M34 spec + build, PARAMS fix, handoffs). Push needs
 in-turn approval every time.
@@ -36,7 +34,7 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 - Pre-session untracked rows committed (`5b8f4de`, `3ea3d9c`); C46 filed.
 
 ## THE BOX QUEUE
-1. **M31 RUNNING** (see top). Review: prompt-level strict, pre-registered ≥5pp-deficit rule; no re-rank on its own.
+1. **M31 DONE** (see top; campaign-results 2026-09-04).
 1b. **M31 finish → M31b → M33, chained by `$STACK_WORKDIR/m33/waiter3.sh`** (pid in `m33/waiter3.pid`; waiters 1–2 killed): after M31 exits →
    `m31/m31_finish.py` (resumes the 3.6 arm if the chain's 20 h driver bound cut it short — projected finish ≈ the bound; re-grades + re-compares; no-op if complete) → `m31/m31b_chain.py` = ifeval arm for `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6, tune `m31`, same
    seed-0 draw, compares vs both M31 arms (operator 2026-09-04: the M25 tie deserves the same test; ~5 h) → then `m33_chain.py`

@@ -462,6 +462,27 @@ INCONCLUSIVE; tokens over 50 items 161K/90K/92K/180K, dominated by two BIMODAL i
   the temperature-is-the-lever rule; the 0.5-vs-0.6 tune difference is the more likely source of the
   ordinary-item 0.83 than the bit allocation.
 
+### 2026-09-04 — M31 CLOSED: `Qwen3.8-27B-mlx-uniform-4bit` is NOT the "worst listener" — it leads the B 1st choice on IFEval strict by +10pp, and the whole gap is the runaway tax
+
+ifeval n=148 (seed-0 draw, identical to the 2026-08-18 item set), k=1, `--sampling-profile deployed`, predictor OFF, M21 draft-OFF overlay,
+fork `7330d3a6` / serving path `920efc38`, tune `m31`, both arms in one session (the existing `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` row was
+pre-C28 with 6 timeout DNFs and sat at serving path `17e0e5a7`, so it was re-measured; `compare` old-vs-new refuses by design).
+
+| ifeval n=148 | prompt strict (generated) | `acc_strict@81920` | prompt loose | loops (degenerate repetition) | tokens/task (converged-only) | Σ wall |
+|---|---|---|---|---|---|---|
+| `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 (B 3rd) | **93.2 %** | **93.2 %** | 94.6 % | **1** | 2,760 (2,218) | **4.5 h** |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 (B 1st) | 89.9 % | 83.1 % | 91.9 % | 13 | 9,239 (2,209) | 20.5 h |
+| old 3.6 row (2026-08-18, pre-C28) | 90.1 % | 86.5 % | 91.6 % | 6 DNFs (3 were real loops, 3 false) | 1,957 | 3.3 h + DNFs |
+
+`compare` on prompt-level strict of generated: +3.4pp CI [−0.7, +7.4] INCONCLUSIVE (MDE ±10pp). On the ranking key `acc_strict@81920`
+(a loop counts as a fail) the B 3rd choice leads by **+10.1pp**. Converged-item token cost is IDENTICAL (2,218 vs 2,209); the 3.3× tokens-per-task
+and 4.5× wall gap is entirely the 13 loops at ~75 min each (82k tokens at 15–24 tok/s). Pre-registered read: the ≥5pp DEFICIT branch did not
+fire — the opposite did. **The community claim "best solver, worst listener" is refuted on this instrument**; what the B menu narrative gains
+instead is a documented instruction-following runaway tax on the B 1st choice at its coding tune (13/148 = 8.8 % of instruction prompts loop
+to budget at t0.3; the base 1/148). B does NOT re-rank on this alone (PLAN M31), but it is one more point estimate the C38 ruling should see.
+Old-DNF follow-up on the 3.6 arm: 3 of 6 converged in 84–164 s, 3 looped to budget. Rows: `<model>/ifeval.m31.*`.
+M31b (the same arm for `Qwen3.8-27B-OptiQ-4.5bpw-mixed`, the M25 tie-breaker) runs next.
+
 ### 2026-09-03 — C46 leg 1: the O37 certification evidence for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` was a pre-C28 timeout cascade; t0.55 STANDS on the runaway tax, not on the strict margin
 
 Full n=50 re-measurements of the four pre-C28 rows (same seed-0 draw, k=1, `--sampling-profile deployed`, `--probe-timeout 7800`,
