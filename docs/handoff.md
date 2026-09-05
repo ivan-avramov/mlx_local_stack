@@ -43,7 +43,7 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 2. **M32** opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; proposal to draft).
 3. **M24 medium arm** (revived 2026-09-05): `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 `reasoning_effort=medium`, tune `t0.6-effmed`, M21b recipe + opencode python leg; pre-registered read + the truncation confound in PLAN (~12 h).
 4. **M34 OFAT** on `Ornith-1.0-35B-mlx-uniform-4bit` (needs the submodule bumps + an M34 overlay entry first; ~15–20 h).
-5. **M35** dsh smoke + one python leg (~3 h box; the adapter build is box-free and starts now).
+5. **M35** dsh smoke + one python leg (~3 h box). Adapter BUILT (`4cf25d9` + `9e56a01`, verifier-fixed); smoke = `run_dsh_probe.py --model Qwen3.8-27B-mlx-uniform-4bit --items affine-cipher --lang python --tune m35` with `MLX_SERVE_CONFIG` on the driver, then a 5-item SEEDED pilot before the 22-item leg; must confirm: model name on the wire, file_changed via read→write, no FS_NOT_OBSERVED refusals, gate ticks vary on a long item, no web/subagent tools on the wire.
 6. M17 / D11 / M18.
 
 ## Standing rules that bit today
