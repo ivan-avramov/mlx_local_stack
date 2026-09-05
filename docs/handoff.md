@@ -40,7 +40,11 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
    `m31/m31_finish.py` (resumes the 3.6 arm if the chain's 20 h driver bound cut it short — projected finish ≈ the bound; re-grades + re-compares; no-op if complete) → `m31/m31b_chain.py` = ifeval arm for `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6, tune `m31`, same
    seed-0 draw, compares vs both M31 arms (operator 2026-09-04: the M25 tie deserves the same test; ~5 h) → then `m33_chain.py`
    (math500 n=100 × 3 C candidates, ~35–55 h). To put M32 first: kill waiter2 by pid BEFORE M31 exits and re-chain by hand.
-2. **M32** (proposal to be drafted while M31 runs; ~2 h) opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; the mixed recipe has never run an agentic leg — the sibling's 13/22 is what excludes the checkpoint from B). 4. M17 / D11 / M18.
+2. **M32** opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; proposal to draft).
+3. **M24 medium arm** (revived 2026-09-05): `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 `reasoning_effort=medium`, tune `t0.6-effmed`, M21b recipe + opencode python leg; pre-registered read + the truncation confound in PLAN (~12 h).
+4. **M34 OFAT** on `Ornith-1.0-35B-mlx-uniform-4bit` (needs the submodule bumps + an M34 overlay entry first; ~15–20 h).
+5. **M35** dsh smoke + one python leg (~3 h box; the adapter build is box-free and starts now).
+6. M17 / D11 / M18.
 
 ## Standing rules that bit today
 - A 5-item seeded pilot OVER-projects when the draw lands on heavy cores (2/5 today, 24.3 h projected vs 7.3 h actual):
