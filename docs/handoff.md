@@ -1,38 +1,48 @@
-# Handoff — 2026-09-05 19:55 (SESSION CHECKPOINT — M33 math500 RUNNING unattended; M31/M31b/C46 closed; M34 + M35 built; queue set)
+# Handoff — 2026-09-06 02:20 (M33 + M32 CLOSED; box IDLE; two rulings owed — C48 C order, C49 queue order)
 
-Single box (M5 Max 64 GB). **M33 IS LIVE and self-driving** (chain `$STACK_WORKDIR/m33/m33_chain.py`, pid in `m33/m33.pid`
-(2625 at checkpoint), log `m33/m33.log`, launched 2026-09-05 02:58): math500 n=100 seed-0 draw, tune `m33`, three arms in order —
-`Ornith-1.0-35B-mlx-uniform-4bit` DONE (acc 91.0 / strict 86.0, 6 budget hits, 4.7 h) → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
-IN FLIGHT (n=100 leg; 69/100 rows, 2 loops at 19:53; ~13 min/converged item, ~75 min/loop; ETA ~05:00 2026-09-06) →
-`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (pilot → 50 → 100; fast decoder, ~3–6 h) → grade → 3 pairwise compares → chain exits
-(`=== M33 DONE ===`). No waiter follows it; the box goes IDLE when it ends. Router UP on the M21 draft-OFF overlay
-(`$STACK_WORKDIR/m21/bench_overlay_m21.yaml`, pid 37747, SESSION_MAX=2, APC absent). `src/mlx-vlm` worktree at the stack pointer
-`7330d3a6` (serving path `920efc38`) — **DO NOT bump the submodules until M33 ends** (the M34 fork commits change the serving path).
-Working tree: SEVEN intentional `main_models.yaml` local-path overrides — NEVER commit (committed registry edits go via the HEAD blob).
-UNPUSHED: `46aa77b`..`76dc405` (8 commits: M31/M31b data, queue update, M35 spec + adapter + fixes, this checkpoint). Forks are pushed
-(mlx-vlm `420c01e1`, mlx-serve `0ccc684`). Push only on in-turn approval.
+Single box (M5 Max 64 GB). **Box IDLE.** Router UP on `$STACK_WORKDIR/m32/bench_overlay_m32.yaml` (generated from HEAD `main_models.yaml` +
+the seven local-path overrides, draft-OFF; SESSION_MAX=2, APC absent; pid in `m32/router.pid`), worker for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` resident/idle.
+Submodules BUMPED (`a08f933`): `src/mlx-vlm` 420c01e1, `src/mlx-serve` 0ccc6842 — every row from here carries the new serving-path hash; rows
+before it (`920efc38`) do not `compare` across (C47 by design). Working tree: SEVEN intentional `main_models.yaml` local-path overrides — NEVER
+commit (committed registry edits go via the HEAD blob; the C-pick comment restatement was done that way in `e4d3782`).
+UNPUSHED: `a08f933`, `e4d3782`, plus this session's M32 landing commit. Push only on in-turn approval.
 
-## Session 2026-09-05 20:15 resume (M33 still in flight — nothing landed)
-- M33 verified alive at resume (chain pid 2625, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` n=100 leg 69/100 at 19:55, bench_watch ticking, ETA ~01:30 for the leg, then `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`). Monitor re-armed on `m33.log` (SELFTEST fired).
-- **M32 chain DRAFTED, NOT LAUNCHED**: `$STACK_WORKDIR/m32/m32_chain.py` (compiles; needs `M32_OVERLAY` + `M32_PIN` in env, operator go). Seed-0 pilot draw = beer-song, food-chain, grep, hangman, phone-number; remaining 17 append to the same rows file; paired McNemar vs the four python reference arms; pre-registered read logged.
-- **Two M32 prerequisites found**: (1) the M21 overlay's `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` entry says t0.6 (record: t0.5, M21b) — under it the `deployed` manifest would record t0.6 while opencode sends t0.5; regenerate the bench overlay from HEAD `main_models.yaml` after the submodule bumps (also carries the M34 entry). The chain refuses any overlay whose entry is not t0.5. (2) `~/.config/opencode/opencode.json` is ABSENT since 2026-09-01 21:08 (brew opencode 1.18.20 re-initialised the dir; only a schema-only `opencode.jsonc` remains) — the chain installs `benchmark/opencode_bench.json` there for the leg and restores on exit; pinned 1.18.15 binary verified at `$STACK_WORKDIR/o39/opencode-1.18.15/`.
-- C38 is RULED (2026-08-29, B menu) in open-questions — no decision owed there; next O/C id is C48.
-- **20:13 — operator GO on M32 (P2), P3/P4 executed, pushed through `df1c5ce`.** Waiter `$STACK_WORKDIR/m32/waiter_m33.py` (pid in `m32/waiter.pid`, log `m32/waiter.log`) waits for the M33 chain pid, requires `=== M33 DONE ===`, checks out `src/mlx-vlm` 420c01e1 + `src/mlx-serve` 0ccc6842 (fetched into the submodules already), commits the bump, then launches `m32_chain.py` with `M32_OVERLAY=$STACK_WORKDIR/m32/bench_overlay_m32.yaml` (generated from HEAD `main_models.yaml` + the 7 overrides, 6 draft_* lines stripped, mixed entry t0.5 verified) and `M32_PIN=420c01e1`; the chain restarts the router on that overlay itself. Daily-driver `~/.config/opencode/opencode.json` restored from `opencode_config/opencode.json` (opencode 1.18.15 lists the 5 mlx-local models); the chain swaps in the bench carrier for the leg and restores on exit. Monitors armed on both `m33.log` and `m32/{waiter,m32}.log`. If M33 ends without DONE the waiter exits 1 and nothing launches.
+## Closed this session (details: campaign-results 2026-09-06 ×2, lab-notebook 2026-09-06)
+- **M33 CLOSED** — math500 n=100 `acc_strict@81920`: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 89 / `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 88 / `Ornith-1.0-35B-mlx-uniform-4bit` 86, every pair
+  inconclusive (MDE ±12.5pp), nothing Holm-surviving, zero exclusive solves; July 81.5-vs-60.0 was pre-C28. No reorder on the key; C stays
+  PROVISIONAL. Runaway tax 0.81 h / 16.4 h / 4.7 h per 100 → **C48 (swap C 1st/2nd on usability at tied quality? rec: yes, provisional).**
+- **M32 CLOSED** — `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 opencode python **21/22, 1 stall** (B 3rd 20/22, sibling 13/22; 8:0 vs the sibling on its stall items, p=.008).
+  Pre-registered read FIRES → B contest. Legs needed (each a proposal + seeded pilot + go): opencode go leg, humanevalplus n=164 @t0.5, M6d-style
+  predictor probe of its MTP sidecar. **C49: run them before M24 (rec) or after?**
 
 ## Resume checklist (new session)
-1. `pgrep -f m33_chain.py` / `kill -0 $(cat $STACK_WORKDIR/m33/m33.pid)`; `tail -5 $STACK_WORKDIR/m33/m33.log`; row counts in
-   `benchmark/results/<model>/math500.m33.jsonl`. Re-arm a Monitor on `m33.log` (tail -F | /usr/bin/grep --line-buffered on
-   `FATAL|WARN|ALARM|C35|PILOT SIZING|SUMMARY|SCORE|ROWS|END |DONE|Traceback`) with a pid-liveness loop and a known-positive SELFTEST
-   line — Monitors do not survive a session. bench_watch daemons are launched by the chain itself.
-2. When `=== M33 DONE ===`: pull `m33/compare_*.log`, write the C-menu review (acc_strict paired n=100, Holm over 3 pairs, runaway tax),
-   land rows + campaign-results entry + PLAN M33 DONE; C order stays PROVISIONAL (registry comment update via HEAD blob if reordered).
-3. Then the queue below, each with its own proposal, 5-item SEEDED pilot, and operator go.
+1. `lsof -nP -iTCP:8000 -sTCP:LISTEN` → router on the m32 overlay (verify `MLX_SERVE_CONFIG` on the pid with `ps -Eww`); no drivers live
+   (`pgrep -fl 'run.py generate|run_opencode_probe|run_dsh_probe'`). If the router is down: start it on the m32 overlay (AGENTS.md recipe with
+   `MLX_SERVE_CONFIG=$STACK_WORKDIR/m32/bench_overlay_m32.yaml`).
+2. Read the C48/C49 rulings (open-questions), then the queue below. New arms need an overlay entry only for M34 (`moe_expand:` on a SEPARATE
+   overlay — `compare` refuses across moe_expand, so the OFAT arm is its own row set under its own tune).
+3. Chains to copy from: `m32/m32_chain.py` (opencode leg pattern: pinned binary, bench-carrier swap with the `_installed` guard, C35 with
+   temperature readback, 5-min WATCH, paired McNemar), `m33/m33_chain.py` (generate/grade/compare pattern via `m21/arms_chain.py` helpers).
 
-Stack PUSHED through `5788c4b`; UNPUSHED: everything from `5a68763` on (C46 data, C46 closure, M33 row, M34 spec + build, PARAMS fix, handoffs). Push needs
-in-turn approval every time.
-Working tree: SEVEN intentional `main_models.yaml` local-path overrides (the six from before + the new
-`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` entry pointing at `$STACK_WORKDIR/optiq_out/.../optiq_mixed`) — NEVER commit;
-when the registry needs a committed edit, build the index blob from `git show HEAD:main_models.yaml` (done twice today).
+## THE BOX QUEUE (pending C49)
+1. **B-contest legs for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5** (if C49 = first): (a) opencode go leg 22 items (~1–2 h) → (b) humanevalplus n=164 @t0.5 (~3–4 h) →
+   (c) predictor probe (~1 h; the artifact carries an untested MTP head sidecar). Gate each on not falling below the B 3rd choice's cell.
+2. **M24 medium arm**: `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 `reasoning_effort=medium`, tune `t0.6-effmed`, M21b recipe + opencode python leg; pre-registered read + the
+   truncation confound in PLAN (~12 h).
+3. **M34 OFAT** on `Ornith-1.0-35B-mlx-uniform-4bit` (bumps DONE; needs its own overlay with `moe_expand: 27-39:20:0.8:0.5`; ~15–20 h).
+4. **M35** dsh smoke + one python leg (~3 h): smoke = `run_dsh_probe.py --model Qwen3.8-27B-mlx-uniform-4bit --items affine-cipher --lang python --tune m35` with `MLX_SERVE_CONFIG` on the driver, then a 5-item SEEDED pilot before the 22-item leg; must confirm: model name on the wire, file_changed via read→write, no FS_NOT_OBSERVED refusals, gate ticks vary on a long item, no web/subagent tools on the wire (8-point checklist in the PLAN M35 row / verifier report).
+5. M17 / D11 / M18 read; `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder if C48 promotes it (its t1.0 was never laddered).
+
+## Standing rules that bit this session
+- A chain's "another driver is live" pgrep must match PYTHON drivers only — a Monitor shell whose command line quotes the chain's name is not a driver
+  (M32's first launch refused itself on `pgrep -f m33_chain`).
+- An exit handler that restores/removes a third-party config must act ONLY if this run installed it (`_installed` guard) — the first M32 launch's
+  FATAL removed the operator's daily-driver opencode config.
+- `~/.config/opencode/opencode.json` is the file opencode actually reads; brew upgrades re-initialise that directory (2026-09-01 wiped it). Bench
+  legs swap the bench carrier in and restore after; verify with the pinned binary's `opencode models`.
+- A bench overlay is a FINGERPRINT INPUT: the `deployed` profile reads `MLX_SERVE_CONFIG`, so an overlay entry at the wrong temperature records a
+  wrong manifest even when the client sends the right value. Regenerate overlays from HEAD after every registry edit.
+- `compare` reports `acc`, not `acc_strict`; the ranking-key intervals were computed in `m33/review_strict.log` (a `--strict` switch is a small harness item).
 
 ## M21b CLOSED 2026-09-03 (campaign-results entry; PLAN row DONE)
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 vs `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6-r2, k=3 on
@@ -52,30 +62,7 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 - Community thread + JetBrains review (P43–P48) → **M31** ifeval arm for `Qwen3.8-27B-mlx-uniform-4bit` queued.
 - Pre-session untracked rows committed (`5b8f4de`, `3ea3d9c`); C46 filed.
 
-## THE BOX QUEUE
-1. **M33 RUNNING** (see top). After it: submodule bumps (`chore(stack): bump src/mlx-vlm -> 420c01e1`, `src/mlx-serve -> 0ccc684`) BEFORE any new arm, so every later row carries the new serving-path hash consistently.
-1b. (done) M31 finish → M31b → M33 were chained by `$STACK_WORKDIR/m33/waiter3.sh`** (pid in `m33/waiter3.pid`; waiters 1–2 killed): after M31 exits →
-   `m31/m31_finish.py` (resumes the 3.6 arm if the chain's 20 h driver bound cut it short — projected finish ≈ the bound; re-grades + re-compares; no-op if complete) → `m31/m31b_chain.py` = ifeval arm for `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6, tune `m31`, same
-   seed-0 draw, compares vs both M31 arms (operator 2026-09-04: the M25 tie deserves the same test; ~5 h) → then `m33_chain.py`
-   (math500 n=100 × 3 C candidates, ~35–55 h). To put M32 first: kill waiter2 by pid BEFORE M31 exits and re-chain by hand.
-2. **M32** opencode python leg for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~2 h; proposal to draft).
-3. **M24 medium arm** (revived 2026-09-05): `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 `reasoning_effort=medium`, tune `t0.6-effmed`, M21b recipe + opencode python leg; pre-registered read + the truncation confound in PLAN (~12 h).
-4. **M34 OFAT** on `Ornith-1.0-35B-mlx-uniform-4bit` (needs the submodule bumps + an M34 overlay entry first; ~15–20 h).
-5. **M35** dsh smoke + one python leg (~3 h box). Adapter BUILT (`4cf25d9` + `9e56a01`, verifier-fixed); smoke = `run_dsh_probe.py --model Qwen3.8-27B-mlx-uniform-4bit --items affine-cipher --lang python --tune m35` with `MLX_SERVE_CONFIG` on the driver, then a 5-item SEEDED pilot before the 22-item leg; must confirm: model name on the wire, file_changed via read→write, no FS_NOT_OBSERVED refusals, gate ticks vary on a long item, no web/subagent tools on the wire.
-6. M17 / D11 / M18.
-
-## Standing rules that bit today
-- A 5-item seeded pilot OVER-projects when the draw lands on heavy cores (2/5 today, 24.3 h projected vs 7.3 h actual):
-  size from the pilot AND the nearest full-run actual; never gate an abort on the pilot mean alone (chain has `MBPP_SKIP_PILOT`).
-- The commit-msg AND pre-commit hooks reject family shorthand in comments/docs ("the uniform-4bit sibling", "OptiQ") <!-- allow-shorthand -->
-  — write the full registry name, or mark the line `allow-shorthand` when it must quote one.
-- Co-resident workloads (an operator transcription job pushed swap to 11 GB) contaminate wall-clock, not tokens; log
-  the window, exclude it from latency, never kill the operator's process.
-- evalplus grading silently returns `acc: None` with a note when docker is down (rc=0); `compare` then reports
-  "item sets differ". Check the score note before trusting an empty compare.
-- zsh: `for x in $VAR` does not word-split; quote `--include='*.py'`.
-
-## M34 BUILT 2026-09-03 (box-free; unpushed in three repos)
+## M34 BUILT 2026-09-03 (forks pushed; submodule bumps landed 2026-09-06 `a08f933`)
 Layer-scoped expert-budget expansion (spec `docs/specs/m34-moe-expert-expansion.md`). Fork `../mlx-vlm` main: `b95130c9` (feature)
 + `420c01e1` (verifier fixes) — 2 ahead of origin. `../mlx-serve` main: `0ccc684` — 1 ahead. Stack: `674499c`, `0e1a29b`, `3493c34`
 (PARAMS drift-guard fix). NOT YET: fork pushes → `chore(stack): bump src/mlx-vlm` + `src/mlx-serve`; registry `moe_expand:` field on an

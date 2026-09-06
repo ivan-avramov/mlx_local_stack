@@ -487,6 +487,29 @@ Old-DNF follow-up on the 3.6 arm: 3 of 6 converged in 84–164 s, 3 looped to bu
 instruction-following axis too; vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: +2.0pp CI [−2.7, +6.8] inconclusive on generated strict,
 +8.8pp on `acc_strict@81920`. The mixed recipe's only edge is 0 vs 1 loops (not resolvable at k=1). No pick changes. Rows: `Qwen3.8-27B-OptiQ-4.5bpw-mixed/ifeval.m31.*`.
 
+### 2026-09-06 — M32 CLOSED: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 scores 21/22 on the opencode python leg — the best agentic python row in the corpus; it ENTERS the B contest
+
+opencode python (M3 22-item set), O39 protocol: opencode 1.18.15 pinned, TMPDIR `scratch/octmp`, progress gate 300/3600/2, `--sampling-profile deployed`
+(t0.5 on the wire AND in the manifest), predictor OFF, fresh worker session, fork `420c01e1` / mlx-serve `0ccc6842` (first rows on the post-M34-bump
+serving path), 5-item seeded pilot (beer-song, food-chain, grep, hangman, phone-number: 5/5) then the remaining 17. Wall 1.24 h (mean 203 s, max 601 s).
+
+| python n=22, session 1 | pass | stall-kills | fast give-ups | Σ wall |
+|---|---|---|---|---|
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 | **21/22** | 1 (paasio) | 0 | 1.24 h |
+| `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 (B 3rd) | 20/22 | 2 | 0 | 1.69 h |
+| `Ornith-1.0-35B-mlx-uniform-4bit` @t0.4 (B 2nd) | 19/22 | 1 | 2 | 0.96 h |
+| `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6 (sibling) | 13/22 | 9 | 0 | 2.27 h |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 (B 1st) | 12/22 | 3 | 6 | 1.52 h |
+
+Paired on items (exact McNemar, descriptive — only the pass/stall thresholds were pre-registered): vs `Qwen3.8-27B-mlx-uniform-4bit` 1:0 p=1.0 (only `book-store`
+differs); vs `Ornith-1.0-35B-mlx-uniform-4bit` 3:1 p=.625; vs the sibling `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` **8:0 p=.008** (`book-store`, `connect`, `dominoes`, `dot-dsl`, `forth`,
+`go-counting`, `hangman`, `pov` — all eight were the sibling's 601 s stall-kills); vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` **9:0 p=.004**. `paasio` is solved by
+`Ornith-1.0-35B-mlx-uniform-4bit` only. **Pre-registered read fires: ≥18/22 with ≤3 stall-kills → the checkpoint ENTERS the B contest** (PLAN M32: go leg, n=164,
+M6d-style predictor probe). Mechanism, consistent with M21b: the mixed recipe removes the sibling's stall behaviour on the very items where the
+sibling stalled (8 of 9), not a different set of solves — the "0.65× tokens per task" saving IS the runaway tax. Caveats that stand: one session
+(C30 puts session variance at ±5–6 items; the B 3rd choice's own two sessions were 20 and 18), and these rows sit on the new serving path while
+the reference rows are at `920efc38`/`17e0e5a7` (paired by item set, not by `compare`). Rows: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/opencode.*`.
+
 ### 2026-09-06 — M33 CLOSED: the C-menu math500 basis re-measured at n=100 is a THREE-WAY TIE on `acc_strict@81920`; the July 81.5-vs-60.0 split does not reproduce; the axis that separates the C candidates is the runaway tax
 
 math500 n=100 (seed-0 draw; the July 30 items nest in it), k=1, `--sampling-profile deployed` at each arm's registry tune, predictor OFF,

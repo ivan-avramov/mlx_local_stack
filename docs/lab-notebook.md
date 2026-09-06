@@ -3821,3 +3821,11 @@ serialised harness, not real cost.
   the name) — pattern narrowed to python drivers, relaunched. Its exit handler removed the restored daily-driver `~/.config/opencode/opencode.json`
   on that FATAL (it ran without having installed anything) — fixed for future runs (`_installed` guard) and a restore waiter follows the chain.
 
+## 2026-09-06 (02:15) — M32 COMPLETE: the mixed recipe removes the sibling's stalls (21/22); B-contest legs proposed (C49)
+
+- Chain `$STACK_WORKDIR/m32/m32_chain.py` (log `m32.log`), 1.24 h end to end, every C35 check OK with `sampling.temperature=0.5` read back
+  from the manifest (the reason the overlay was regenerated from HEAD). Pilot mean 157 s projected 1.0 h; actual 1.24 h — the single stall
+  (601 s) is the whole gap. `book-store` completed at 581 s, 19 s under the stall bound: the pass/stall boundary is wall-sensitive on that item.
+- Daily-driver `~/.config/opencode/opencode.json` restored by the follow-up waiter at 02:15:19 (byte-identical to `opencode_config/opencode.json`).
+- Router left UP on `m32/bench_overlay_m32.yaml` (serving path of `420c01e1`/`0ccc6842`), worker idle (3 h inactivity unload). Box IDLE.
+
