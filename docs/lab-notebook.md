@@ -3804,3 +3804,20 @@ serialised harness, not real cost.
   skipped for non-fresh manifests (the int8-entry removal changed the M21 overlay sha).
 - Submodule worktree remains pinned at `57177a21` (stack HEAD points at `7330d3a6`, splitter-only) so the
   k=3 rows pair with the ladder; RESTORE after the k=3 run (`git -C src/mlx-vlm checkout 7330d3a6`).
+
+## 2026-09-06 (01:00) — M33 COMPLETE: C-menu math500 at n=100 is a three-way tie; July basis superseded; M32 launched behind the submodule bumps
+
+- Chain ran unattended 22 h (`$STACK_WORKDIR/m33/`), zero transport errors, every C35 check OK, all three arms in one router session on the
+  M21 draft-OFF overlay at `7330d3a6`. Per-arm wall: `Ornith-1.0-35B-mlx-uniform-4bit` 4.7 h, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 16.4 h (pilot over-projected 33.8 h from 2/5 heavy draws — the
+  rule "size from pilot AND nearest actual, never abort on the pilot mean" held), `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 0.81 h (0.4 h projected).
+- Strict paired review in `m33/review_strict.log` (per-item strict recomputed from rows with the grader's `extract_boxed` + `_math_eq`,
+  `stats.paired_delta` + `holm`): numbers in campaign-results 2026-09-06. `compare` reports `acc`, not `acc_strict`, so the ranking-key
+  intervals were computed in the review script — worth a `--strict` switch on `compare` (small harness item, not queued).
+- The July `Ornith-1.0-35B-mlx-uniform-4bit` 9/30 budget hits vs 1 budget hit + 5 loops per 100 now on a superset of the same items: the old rows were pre-C28 (fork `f0d50c90`); the
+  mechanism is the serving discipline, not the checkpoint. `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s two loops both carried the right answer before looping (strict fails them).
+- M32 (operator GO 2026-09-05 P2) launched 00:59 after the bumps (`a08f933`: `src/mlx-vlm` 420c01e1, `src/mlx-serve` 0ccc6842) on a fresh
+  overlay from HEAD (`m32/bench_overlay_m32.yaml`, mixed entry t0.5; the M21 overlay had it at t0.6 and would have fingerprinted t0.6).
+  First launch refused itself: the chain's busy-check `pgrep -f m33_chain` matched the session's own Monitor shell (whose command line quotes
+  the name) — pattern narrowed to python drivers, relaunched. Its exit handler removed the restored daily-driver `~/.config/opencode/opencode.json`
+  on that FATAL (it ran without having installed anything) — fixed for future runs (`_installed` guard) and a restore waiter follows the chain.
+

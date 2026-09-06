@@ -487,6 +487,37 @@ Old-DNF follow-up on the 3.6 arm: 3 of 6 converged in 84–164 s, 3 looped to bu
 instruction-following axis too; vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: +2.0pp CI [−2.7, +6.8] inconclusive on generated strict,
 +8.8pp on `acc_strict@81920`. The mixed recipe's only edge is 0 vs 1 loops (not resolvable at k=1). No pick changes. Rows: `Qwen3.8-27B-OptiQ-4.5bpw-mixed/ifeval.m31.*`.
 
+### 2026-09-06 — M33 CLOSED: the C-menu math500 basis re-measured at n=100 is a THREE-WAY TIE on `acc_strict@81920`; the July 81.5-vs-60.0 split does not reproduce; the axis that separates the C candidates is the runaway tax
+
+math500 n=100 (seed-0 draw; the July 30 items nest in it), k=1, `--sampling-profile deployed` at each arm's registry tune, predictor OFF,
+M21 draft-OFF overlay, fork `7330d3a6` / serving path `920efc38`, tune `m33`, client bound 7800 s, all three arms in ONE router session
+(2026-09-05 02:58 → 2026-09-06 00:58; chain `$STACK_WORKDIR/m33/`). Zero transport errors on any arm.
+
+| math500 n=100 | acc | **`acc_strict@81920`** | non-converged | tokens/task mean (median) | Σ wall | wall share of non-converged | decode tok/s |
+|---|---|---|---|---|---|---|---|
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` @t1.0 (C 2nd) | 89 % | **89 %** | 0 | 3,849 (1,296) | **0.81 h** | 0 % | 138 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` @t0.3 (C 1st) | 90 % | 88 % | 2 (2 degenerate repetition; 2 of them had the right answer) | 12,842 (9,296) | 16.4 h | 15 % | 23 |
+| `Ornith-1.0-35B-mlx-uniform-4bit` @t0.4 | 91 % | 86 % | 6 (5 degenerate repetition, 1 budget hit; 5 of them had the right answer) | 15,788 (8,739) | 4.7 h | 35 % | 104 |
+
+Paired `acc_strict` (two-stage paired bootstrap, TOST ±5pp, axis MDE ±12.5pp; McNemar exact; Holm over the three pre-registered pairs —
+`$STACK_WORKDIR/m33/review_strict.log`): `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` vs `Ornith-1.0-35B-mlx-uniform-4bit` **+2.0pp CI [−3.0, +8.0]** inconclusive (discordant 5:3, p=.727);
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` vs `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` **−1.0pp CI [−5.0, +3.0]** inconclusive (2:3, p=1.0); `Ornith-1.0-35B-mlx-uniform-4bit` vs `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` **−3.0pp CI [−8.0, +2.0]** inconclusive
+(2:5, p=.453). Nothing survives Holm (all adjusted p = 1.0). **Zero exclusive strict solves for any arm**; 9 items are solved by none
+(`algebra/2780`, `algebra/518`, `geometry/686`, `intermediate_algebra/1994`, `intermediate_algebra/558`, `prealgebra/1834`, `precalculus/1199`, `precalculus/499`, `precalculus/697`).
+`compare` on `acc`: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` vs `Ornith-1.0-35B-mlx-uniform-4bit` −1.0pp CI [−3.0, +0.0] EQUIVALENT; the other two pairs INCONCLUSIVE.
+
+**The July basis is SUPERSEDED.** On the same 30 items the arms now score strict 23/30, 24/30, 25/30 (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `Ornith-1.0-35B-mlx-uniform-4bit`, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`)
+against the July 73.3 % (n=27 — 3 pre-C28 client-timeout rows dropped from the denominator) and 60.0 % (9/30 budget hits). Under the C28 bound and the
+current tunes `Ornith-1.0-35B-mlx-uniform-4bit` hits the budget on 1/100 (plus 5 loops), not 9/30; the 21pp split was the pre-C28 serving discipline, not the models. The July rows
+(`<model>/math500.jsonl`, fork `f0d50c90`) stay in the results tree as history and are cited nowhere live from here on.
+
+**Pre-registered read:** `acc_strict` at n=100 does NOT reorder the C menu — every pair is inconclusive, so the registry order stands and C stays
+PROVISIONAL (until M18's BFCL cells are read together with the judge panel). What the measurement DOES establish is the C usability axis: at tied
+quality `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` answers the 100 items in 0.81 h with no non-convergence at all, versus 16.4 h and 2 loops for the
+C 1st choice (20× wall, 3.3× tokens per task). Whether tied quality plus a 20× latency gap should swap the provisional C 1st/2nd is an operator
+call → **C48** (session recommendation: yes, PROVISIONAL, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 1st; caveats: its tune was never laddered — t1.0 is the checkpoint default — and
+the C axes still owed are the panel and the BFCL read). Rows: `<model>/math500.m33.*`.
+
 ### 2026-09-03 — C46 leg 1: the O37 certification evidence for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` was a pre-C28 timeout cascade; t0.55 STANDS on the runaway tax, not on the strict margin
 
 Full n=50 re-measurements of the four pre-C28 rows (same seed-0 draw, k=1, `--sampling-profile deployed`, `--probe-timeout 7800`,
@@ -951,7 +982,7 @@ pooling with the M9/M12 continuation.
   known**, which earlier revisions of this doc did at MEDIUM confidence.
   ✅ Its grader was non-deterministic until 2026-08-14 and is now reproducible; the verdict did not
   change (see defect note 2 on the scoresheet).
-- **math500** (supporting, reasoning): at a matched 81,920 budget, `acc` is a tie (83.3% vs 81.5%) but
+- **math500** (supporting, reasoning) — ⚠️ SUPERSEDED 2026-09-06 by M33 (n=100, three-way strict tie 88/86/89 incl. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`; see the dated entry). The July reading kept for history: at a matched 81,920 budget, `acc` is a tie (83.3% vs 81.5%) but
   **`acc_strict` splits 60.0% vs 81.5%**, because `Ornith-1.0-35B-mlx-uniform-4bit` hits the thinking
   budget on **9 of 30** items. Suggestive and mechanistically attributable — but n=30/27, unmatched
   items, MDE ±23pp, so the 21pp gap is at the edge of resolvable. Not a verdict.
@@ -1059,7 +1090,7 @@ answer its own question. See O19.
    the no-clamp regime for both). Turns B's context requirement from an assumption into a measurement.
 3. **opencode agentic evidence.** The B pick is aider-specific and opencode is what we ship.
 4. ✅ **BFCL at n — DONE 2026-08-24 (M18, n=1000/model, 3 models).** See the BFCL bullet above.
-5. **math500 at n≈100.** The 21pp `acc_strict` split is real-looking and currently unresolvable.
+5. ✅ **math500 at n≈100 — DONE 2026-09-06 (M33).** The 21pp split did NOT reproduce (three-way tie, MDE ±12.5pp); the C question is now the runaway tax (C48).
 6. **The runaway-tax temperature ladder, measuring pass@1 alongside convergence.** ~40% of wall-clock on
    both models; a 3-item pilot showed temperature moves it, but **pass@1 is unmeasured** and AGENTS.md
    makes pass@1 the hard constraint with convergence strictly secondary.
