@@ -36,7 +36,7 @@ Five clients, all pointed at the mlx-serve router (`localhost:8000`, OpenAI-comp
 - Goal: evidence-based pick of a local LLM for 256K-context agentic coding on a 64GB Mac, plus transferable methodology for future H200/B200 work. Phase 1 = Selection, Phase 2 = Optimization. Bias QUALITY over speed/cost.
 - Hard gates: memory ≤46GB MLX-peak @256K (metric = `mx.get_peak_memory`, prefill spike, NOT RSS). Every lossy lever ≤5% quality drop, measured OFAT. Effective-context threshold = accuracy ≥0.85; retrieval-depth and reasoning-depth curves stay SEPARATE. Report prefill-TTFT and decode-tok/s separately.
 - For every result, LOG THE BOTTLENECK/MECHANISM. Verdicts are HW-specific; mechanisms transfer.
-- **`docs/PLAN.md` is authoritative for what is live.** Current summary (2026-08-31): B menu (C38) — 1st `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (M6b), 2nd `Ornith-1.0-35B-mlx-uniform-4bit` (M27), 3rd `Qwen3.8-27B-mlx-uniform-4bit` (M6d; leads every pooled coding cell, nothing Holm-surviving) — all three are CERTIFIED (model, tune, mtp-predictor) triples; C has provisional picks (O38).
+- **`docs/PLAN.md` is authoritative for what is live.** Current summary (2026-08-31): B menu (C38) — 1st `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (M6b), 2nd `Ornith-1.0-35B-mlx-uniform-4bit` (M27), 3rd `Qwen3.8-27B-mlx-uniform-4bit` (M6d; leads every pooled coding cell, nothing Holm-surviving) — all three are CERTIFIED (model, tune, mtp-predictor) triples; C is PROVISIONAL (C48, 2026-09-06): 1st `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 2nd `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — tied on math500 n=100 (M33), ordered on the runaway tax.
 
 ## Operating rules
 

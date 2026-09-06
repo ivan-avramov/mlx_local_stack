@@ -1,6 +1,6 @@
-# Handoff — 2026-09-06 02:20 (M33 + M32 CLOSED; box IDLE; two rulings owed — C48 C order, C49 queue order)
+# Handoff — 2026-09-06 09:55 (C48 + C49 RULED; M32b B-contest chain RUNNING: go leg → hep n=164 ×2 → MTP probe; ~17 h)
 
-Single box (M5 Max 64 GB). **Box IDLE.** Router UP on `$STACK_WORKDIR/m32/bench_overlay_m32.yaml` (generated from HEAD `main_models.yaml` +
+Single box (M5 Max 64 GB). **M32b RUNNING** (chain `$STACK_WORKDIR/m32b/m32b_chain.py`, pid in `m32b/m32b.pid`, log `m32b/m32b.log`, launched 09:48; legs: go 22 → hep n=164 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~4 h) → hep n=164 `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 (~10 h) → compare → MTP speed probe with `scratch/m6a/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter` (built 09:55 from the sidecar; probe stops the router and leaves it DOWN) → `=== M32B DONE ===`). Bench opencode carrier is swapped in during the go leg only. **C48 RULED: C 1st `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 2nd `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (provisional; registry comments flipped). C49 RULED: contest legs first.** Router UP on `$STACK_WORKDIR/m32/bench_overlay_m32.yaml` (generated from HEAD `main_models.yaml` +
 the seven local-path overrides, draft-OFF; SESSION_MAX=2, APC absent; pid in `m32/router.pid`), worker for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` resident/idle.
 Submodules BUMPED (`a08f933`): `src/mlx-vlm` 420c01e1, `src/mlx-serve` 0ccc6842 — every row from here carries the new serving-path hash; rows
 before it (`920efc38`) do not `compare` across (C47 by design). Working tree: SEVEN intentional `main_models.yaml` local-path overrides — NEVER
@@ -24,9 +24,8 @@ UNPUSHED: `a08f933`, `e4d3782`, plus this session's M32 landing commit. Push onl
 3. Chains to copy from: `m32/m32_chain.py` (opencode leg pattern: pinned binary, bench-carrier swap with the `_installed` guard, C35 with
    temperature readback, 5-min WATCH, paired McNemar), `m33/m33_chain.py` (generate/grade/compare pattern via `m21/arms_chain.py` helpers).
 
-## THE BOX QUEUE (pending C49)
-1. **B-contest legs for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5** (if C49 = first): (a) opencode go leg 22 items (~1–2 h) → (b) humanevalplus n=164 @t0.5 (~3–4 h) →
-   (c) predictor probe (~1 h; the artifact carries an untested MTP head sidecar). Gate each on not falling below the B 3rd choice's cell.
+## THE BOX QUEUE
+1. **M32b RUNNING** (above). After it: if the MTP gate ≥1.3× → predictor quality OFAT (hep n=164 mtp-ON vs the `m32b` rows, draft-ON overlay entry, ~4 h); the B-contest read (go + hep + predictor vs the B 3rd choice's cells) → B-menu decision (C38 standard: Holm-surviving to DISPLACE; a menu slot is the pressure valve).
 2. **M24 medium arm**: `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 `reasoning_effort=medium`, tune `t0.6-effmed`, M21b recipe + opencode python leg; pre-registered read + the
    truncation confound in PLAN (~12 h).
 3. **M34 OFAT** on `Ornith-1.0-35B-mlx-uniform-4bit` (bumps DONE; needs its own overlay with `moe_expand: 27-39:20:0.8:0.5`; ~15–20 h).

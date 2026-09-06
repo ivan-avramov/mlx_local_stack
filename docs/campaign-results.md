@@ -540,6 +540,7 @@ quality `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` answers the 100 items in 0.
 C 1st choice (20× wall, 3.3× tokens per task). Whether tied quality plus a 20× latency gap should swap the provisional C 1st/2nd is an operator
 call → **C48** (session recommendation: yes, PROVISIONAL, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 1st; caveats: its tune was never laddered — t1.0 is the checkpoint default — and
 the C axes still owed are the panel and the BFCL read). Rows: `<model>/math500.m33.*`.
+**C48 RULED 2026-09-06: swapped, PROVISIONAL — `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` C 1st, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` C 2nd** (registry comments flipped, no sampling change; the `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder is queued).
 
 ### 2026-09-03 — C46 leg 1: the O37 certification evidence for `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` was a pre-C28 timeout cascade; t0.55 STANDS on the runaway tax, not on the strict margin
 
