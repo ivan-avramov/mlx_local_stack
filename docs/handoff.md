@@ -12,6 +12,12 @@ Working tree: SEVEN intentional `main_models.yaml` local-path overrides — NEVE
 UNPUSHED: `46aa77b`..`76dc405` (8 commits: M31/M31b data, queue update, M35 spec + adapter + fixes, this checkpoint). Forks are pushed
 (mlx-vlm `420c01e1`, mlx-serve `0ccc684`). Push only on in-turn approval.
 
+## Session 2026-09-05 20:15 resume (M33 still in flight — nothing landed)
+- M33 verified alive at resume (chain pid 2625, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` n=100 leg 69/100 at 19:55, bench_watch ticking, ETA ~01:30 for the leg, then `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`). Monitor re-armed on `m33.log` (SELFTEST fired).
+- **M32 chain DRAFTED, NOT LAUNCHED**: `$STACK_WORKDIR/m32/m32_chain.py` (compiles; needs `M32_OVERLAY` + `M32_PIN` in env, operator go). Seed-0 pilot draw = beer-song, food-chain, grep, hangman, phone-number; remaining 17 append to the same rows file; paired McNemar vs the four python reference arms; pre-registered read logged.
+- **Two M32 prerequisites found**: (1) the M21 overlay's `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` entry says t0.6 (record: t0.5, M21b) — under it the `deployed` manifest would record t0.6 while opencode sends t0.5; regenerate the bench overlay from HEAD `main_models.yaml` after the submodule bumps (also carries the M34 entry). The chain refuses any overlay whose entry is not t0.5. (2) `~/.config/opencode/opencode.json` is ABSENT since 2026-09-01 21:08 (brew opencode 1.18.20 re-initialised the dir; only a schema-only `opencode.jsonc` remains) — the chain installs `benchmark/opencode_bench.json` there for the leg and restores on exit; pinned 1.18.15 binary verified at `$STACK_WORKDIR/o39/opencode-1.18.15/`.
+- C38 is RULED (2026-08-29, B menu) in open-questions — no decision owed there; next O/C id is C48.
+
 ## Resume checklist (new session)
 1. `pgrep -f m33_chain.py` / `kill -0 $(cat $STACK_WORKDIR/m33/m33.pid)`; `tail -5 $STACK_WORKDIR/m33/m33.log`; row counts in
    `benchmark/results/<model>/math500.m33.jsonl`. Re-arm a Monitor on `m33.log` (tail -F | /usr/bin/grep --line-buffered on
