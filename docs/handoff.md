@@ -1,14 +1,25 @@
-# Handoff — 2026-09-05 03:10 (M31 + M31b CLOSED; M33 math500 RUNNING via waiter3; M34 built + pushed, submodule bump deferred)
+# Handoff — 2026-09-05 19:55 (SESSION CHECKPOINT — M33 math500 RUNNING unattended; M31/M31b/C46 closed; M34 + M35 built; queue set)
 
-Single box (M5 Max 64 GB). **M33 IS LIVE** (launched 2026-09-05 02:58 by waiter3; chain `$STACK_WORKDIR/m33/m33_chain.py`, pid in `m33/m33.pid`, log
-`m33/m33.log`): math500 n=100 seed-0 draw × `Ornith-1.0-35B-mlx-uniform-4bit` → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` →
-`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, tune `m33`, ~35–55 h; each arm pilot → n=50 → n=100 (two resumes under the 20 h driver bound).
-M31 + M31b CLOSED (campaign-results 2026-09-04/05).
-Router on the M21 draft-OFF overlay, `src/mlx-vlm` worktree at `7330d3a6` — **DO NOT bump the submodule until M33 ends** (the M34
-fork commits change the serving path; a bump would split the M31/M31b/M33 fingerprint). All three repos PUSHED 2026-09-04 (fork
-`420c01e1`, mlx-serve `0ccc684`, stack `0a6e241`); this checkpoint and the M31 data are unpushed.
-**M31 CLOSED**: `Qwen3.8-27B-mlx-uniform-4bit` ifeval strict 93.2 % (1 loop) vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 89.9 % / acc_strict
-83.1 % (13 loops, 20.5 h) — the community "worst listener" claim is refuted; the B 1st choice pays an 8.8 % instruction-prompt runaway tax.
+Single box (M5 Max 64 GB). **M33 IS LIVE and self-driving** (chain `$STACK_WORKDIR/m33/m33_chain.py`, pid in `m33/m33.pid`
+(2625 at checkpoint), log `m33/m33.log`, launched 2026-09-05 02:58): math500 n=100 seed-0 draw, tune `m33`, three arms in order —
+`Ornith-1.0-35B-mlx-uniform-4bit` DONE (acc 91.0 / strict 86.0, 6 budget hits, 4.7 h) → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+IN FLIGHT (n=100 leg; 69/100 rows, 2 loops at 19:53; ~13 min/converged item, ~75 min/loop; ETA ~05:00 2026-09-06) →
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (pilot → 50 → 100; fast decoder, ~3–6 h) → grade → 3 pairwise compares → chain exits
+(`=== M33 DONE ===`). No waiter follows it; the box goes IDLE when it ends. Router UP on the M21 draft-OFF overlay
+(`$STACK_WORKDIR/m21/bench_overlay_m21.yaml`, pid 37747, SESSION_MAX=2, APC absent). `src/mlx-vlm` worktree at the stack pointer
+`7330d3a6` (serving path `920efc38`) — **DO NOT bump the submodules until M33 ends** (the M34 fork commits change the serving path).
+Working tree: SEVEN intentional `main_models.yaml` local-path overrides — NEVER commit (committed registry edits go via the HEAD blob).
+UNPUSHED: `46aa77b`..`76dc405` (8 commits: M31/M31b data, queue update, M35 spec + adapter + fixes, this checkpoint). Forks are pushed
+(mlx-vlm `420c01e1`, mlx-serve `0ccc684`). Push only on in-turn approval.
+
+## Resume checklist (new session)
+1. `pgrep -f m33_chain.py` / `kill -0 $(cat $STACK_WORKDIR/m33/m33.pid)`; `tail -5 $STACK_WORKDIR/m33/m33.log`; row counts in
+   `benchmark/results/<model>/math500.m33.jsonl`. Re-arm a Monitor on `m33.log` (tail -F | /usr/bin/grep --line-buffered on
+   `FATAL|WARN|ALARM|C35|PILOT SIZING|SUMMARY|SCORE|ROWS|END |DONE|Traceback`) with a pid-liveness loop and a known-positive SELFTEST
+   line — Monitors do not survive a session. bench_watch daemons are launched by the chain itself.
+2. When `=== M33 DONE ===`: pull `m33/compare_*.log`, write the C-menu review (acc_strict paired n=100, Holm over 3 pairs, runaway tax),
+   land rows + campaign-results entry + PLAN M33 DONE; C order stays PROVISIONAL (registry comment update via HEAD blob if reordered).
+3. Then the queue below, each with its own proposal, 5-item SEEDED pilot, and operator go.
 
 Stack PUSHED through `5788c4b`; UNPUSHED: everything from `5a68763` on (C46 data, C46 closure, M33 row, M34 spec + build, PARAMS fix, handoffs). Push needs
 in-turn approval every time.
@@ -35,7 +46,7 @@ rule applies only on promotion; the artifact carries an MTP head sidecar, untest
 - Pre-session untracked rows committed (`5b8f4de`, `3ea3d9c`); C46 filed.
 
 ## THE BOX QUEUE
-1. **M33 RUNNING** (see top). M31/M31b DONE.
+1. **M33 RUNNING** (see top). After it: submodule bumps (`chore(stack): bump src/mlx-vlm -> 420c01e1`, `src/mlx-serve -> 0ccc684`) BEFORE any new arm, so every later row carries the new serving-path hash consistently.
 1b. (done) M31 finish → M31b → M33 were chained by `$STACK_WORKDIR/m33/waiter3.sh`** (pid in `m33/waiter3.pid`; waiters 1–2 killed): after M31 exits →
    `m31/m31_finish.py` (resumes the 3.6 arm if the chain's 20 h driver bound cut it short — projected finish ≈ the bound; re-grades + re-compares; no-op if complete) → `m31/m31b_chain.py` = ifeval arm for `Qwen3.8-27B-OptiQ-4.5bpw-mixed` @t0.6, tune `m31`, same
    seed-0 draw, compares vs both M31 arms (operator 2026-09-04: the M25 tie deserves the same test; ~5 h) → then `m33_chain.py`
