@@ -33,6 +33,7 @@ UNPUSHED: `a08f933`, `e4d3782`, plus this session's M32 landing commit. Push onl
 5. M17 / D11 / M18 read; `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder if C48 promotes it (its t1.0 was never laddered).
 
 ## Standing rules that bit this session
+- `open(f,'w').write(edit(open(f).read()))` TRUNCATES BEFORE READING — the 09:49 registry mirror wiped the worktree `main_models.yaml` to 0 bytes (rebuilt from HEAD + the seven overrides at 09:50; the router was on an overlay file, so nothing served changed). Read first, write second, always; and never edit the worktree registry and the HEAD blob in one expression.
 - A chain's "another driver is live" pgrep must match PYTHON drivers only — a Monitor shell whose command line quotes the chain's name is not a driver
   (M32's first launch refused itself on `pgrep -f m33_chain`).
 - An exit handler that restores/removes a third-party config must act ONLY if this run installed it (`_installed` guard) — the first M32 launch's

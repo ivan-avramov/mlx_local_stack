@@ -3829,3 +3829,17 @@ serialised harness, not real cost.
 - Daily-driver `~/.config/opencode/opencode.json` restored by the follow-up waiter at 02:15:19 (byte-identical to `opencode_config/opencode.json`).
 - Router left UP on `m32/bench_overlay_m32.yaml` (serving path of `420c01e1`/`0ccc6842`), worker idle (3 h inactivity unload). Box IDLE.
 
+## 2026-09-06 (09:50) — C48/C49 ruled and executed; M32b B-contest chain launched; worktree registry truncation incident
+
+- Operator: "push then go across the board with your recs". Pushed `a08f933..309c798`. C48: provisional C order swapped
+  (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 1st, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 2nd) — registry comments flipped via the HEAD
+  blob (`d663172`), AGENTS.md summary updated. C49: contest legs first — `$STACK_WORKDIR/m32b/m32b_chain.py` launched 09:48 (go leg →
+  hep n=164 for the mixed checkpoint AND the B 3rd choice re-measured on the bumped serving path → compare → MTP speed probe).
+- Drafter dir built from the checkpoint's own MTP sidecar file under its `optiq/` subdir (29 tensors, `mtp.` prefix stripped, config/tokenizer <!-- allow-shorthand -->
+  from the certified `Qwen3.8-27B-mlx-uniform-4bit` drafter): 22/29 tensors are byte-identical to that drafter's — `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+  kept most of the head unchanged; the 7 that differ are the ones the probe will exercise. `scratch/m6a/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter`.
+- INCIDENT: the worktree-mirror step `open(f,"w").write(edit(open(f).read()))` truncated `main_models.yaml` to 0 bytes before reading it
+  (the `"w"` open runs first). The HEAD blob edit had already landed, so the commit is correct; the worktree file was rebuilt from HEAD + the
+  seven local overrides (diff = 14 lines, YAML parses, every local dir present). The live router reads an overlay file, so nothing served
+  was affected. Rule added to the handoff.
+
