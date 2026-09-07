@@ -1,70 +1,62 @@
-# Handoff — 2026-09-07 13:20 (M32b + M24 CLOSED → C50 + C51 owed together after S2b; QUEUE RUNNER 2 in S2b → S2c low-effort legs <!-- allow-shorthand --> → S3 → S4; after_queue MTP control armed)
+# Handoff — 2026-09-07 14:05 (SESSION CHECKPOINT — QUEUE RUNNER 2 self-driving: S2b → S2c → S3 M34 → S4 M35 → after_queue MTP control; rulings owed C50 + C51)
 
-Single box (M5 Max 64 GB). **M32b RUNNING** (chain `$STACK_WORKDIR/m32b/m32b_chain.py`, pid in `m32b/m32b.pid`, log `m32b/m32b.log`, launched 09:48; legs: go 22 → hep n=164 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~4 h) → hep n=164 `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 (~10 h) → compare → MTP speed probe with `scratch/m6a/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter` (built 09:55 from the sidecar; probe stops the router and leaves it DOWN) → `=== M32B DONE ===`). Bench opencode carrier is swapped in during the go leg only. **C48 RULED: C 1st `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 2nd `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (provisional; registry comments flipped). C49 RULED: contest legs first.** Router UP on `$STACK_WORKDIR/m32/bench_overlay_m32.yaml` (generated from HEAD `main_models.yaml` +
-the seven local-path overrides, draft-OFF; SESSION_MAX=2, APC absent; pid in `m32/router.pid`), worker for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` resident/idle.
-Submodules BUMPED (`a08f933`): `src/mlx-vlm` 420c01e1, `src/mlx-serve` 0ccc6842 — every row from here carries the new serving-path hash; rows
-before it (`920efc38`) do not `compare` across (C47 by design). Working tree: SEVEN intentional `main_models.yaml` local-path overrides — NEVER
-commit (committed registry edits go via the HEAD blob; the C-pick comment restatement was done that way in `e4d3782`).
-UNPUSHED: `a08f933`, `e4d3782`, plus this session's M32 landing commit. Push only on in-turn approval.
+Single box (M5 Max 64 GB). **The box is BUSY and self-driving** (operator directive 2026-09-06: never idle; follow the queue). Router UP on
+`$STACK_WORKDIR/queue/bench_overlay_q.yaml` (pid 92167; runner 2 restarts it onto `queue/bench_overlay_q2.yaml` at the next stage boundary), SESSION_MAX=2,
+APC absent. Serving path = `src/mlx-vlm` 420c01e1 / `src/mlx-serve` 0ccc6842 (bumped `a08f933`); every row since carries it; older rows do not `compare`
+across (C47). Working tree: NINE intentional `main_models.yaml` local-path overrides (7 + the two mixed-checkpoint effort clones) — NEVER commit;
+committed registry edits go via the HEAD blob (`git show HEAD:main_models.yaml` → edit → `git hash-object -w` → `git update-index --cacheinfo`; then mirror
+the edit into the worktree — READ the worktree file BEFORE opening it for write). UNPUSHED: 8 commits (`93c79ca`..`3a5ac2a`). Push only on in-turn approval.
 
-## M24 CLOSED 2026-09-07 12:46 (campaign-results 2026-09-07): medium EQUIVALENT to xhigh at 0.13× tokens, zero loops, opencode 19/22 (3 stalls) → rule fired → C51 (adopt medium as the B 3rd choice's operating point? rec: yes after a predictor re-probe at medium; rule together with C50 after S2b).
-
-## M32b CLOSED 2026-09-07 01:49 (campaign-results 2026-09-07): contest gate met on every leg; C50 = B-menu slot (rec: 3rd choice). MTP sidecar probe 0.65× with ZERO acceptance → `queue/after_queue.py` (pid in `queue/after_queue.pid`) runs the known-positive control + re-probe when the runner exits and leaves the router DOWN.
-
-## Standing directive (operator 2026-09-06 20:55): keep the box busy — follow the queue; uncertainties are parked for the operator
-`$STACK_WORKDIR/queue/queue_chain.py` (pid in `queue/queue.pid`, log `queue/queue.log`) waits for M32b's pid, then runs S1–S4 in order,
-CONTINUING past any stage failure (router restored to the draft-OFF overlay between stages). Per-arm: 5-item seeded pilot, C35 with the
-expected draft state, worker cmdline verified for `--draft-kind`/`--moe-expand`, bench_watch alongside. Paired reads across axes that `compare`
-refuses (draft, effort, moe_expand) use `queue/paired_ofat.py` (validated: reproduces M27 and the M21b ratio exactly).
-- **S1** predictor quality OFAT for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` IF the M32b MTP probe says GO: hep n=164 `m32b-mtpon` vs `m32b`.
-- **S2 M24 (P23 route, `1abea0f`)**: `Qwen3.8-27B-mlx-uniform-4bit-MED` registry entry (reasoning_effort=medium in generation_defaults, role candidate) — hep n=164 `m24` vs the base `m32b` xhigh rows (EFFORT READBACK gate: prompt_tokens must differ on the pilot items), mbpp n=50 k=3 medium vs fresh xhigh `m24x`, opencode python leg on the same entry (no harness change: opencode omits the field, the worker applies the registry default). ~13 h.
-- **S2b (operator 2026-09-06 22:00)**: the same effort arm on `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED` (hep n=164 `m24` vs the base `m32b` rows, mbpp n=50 k=3 medium vs fresh base `m24x`, opencode python leg vs the base's 21/22). Same readback gate. ~6 h.
-- **S2c (operator 2026-09-07 13:00, C31 revised for ONE leg)**: hep n=164 at reasoning_effort=low <!-- allow-shorthand --> on `Qwen3.8-27B-mlx-uniform-4bit-LOW` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW` (registry entries `3f1233c`, overlay `queue/bench_overlay_q2.yaml`), paired vs the xhigh `m32b` and medium `m24` rows — the third point on the effort curve, never a candidate operating point. ~2.5 h.
-- **Runner handover 13:15**: runner 1 stopped WITHOUT touching its in-flight S2b hep driver; `queue/queue_chain2.py` waits on that driver's pid, then resumes S2b (arm skip/resume logic), then S2c, S3, S4. `after_queue.py` re-armed on the new pid.
-- **S3 M34**: `Ornith-1.0-35B-mlx-uniform-4bit` native `m34nat` vs `moe_expand 27-39:20:0.8:0.5` `m34exp` on hep n=50 k=3, mbpp n=50 k=3,
-  math500 n=100 (native re-run — the M33 row is on the pre-bump serving path). Overlays generated under `queue/overlay_*.yaml`.
-- **S4 M35**: dsh smoke (affine-cipher) → seeded pilot → rest, tune `m35`, on `Qwen3.8-27B-mlx-uniform-4bit`; the 8-point checklist must
-  be READ from `queue/S4_dsh_smoke.log` by the next session (the runner only gates on rc and file_changed).
-- Rough box time: S1 ~3 h (if GO), S2 ~13 h, S3 ~16 h, S4 ~3 h → through 2026-09-08. Results land as each stage's SCORE/PAIRED lines; docs
-  (campaign-results entries, PLAN rows) are written by the next session from `queue.log` + `paired_*.json`.
-- Unpushed: `93c79ca` (go rows) + this commit.
-
-## Closed this session (details: campaign-results 2026-09-06 ×2, lab-notebook 2026-09-06)
-- **M33 CLOSED** — math500 n=100 `acc_strict@81920`: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 89 / `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 88 / `Ornith-1.0-35B-mlx-uniform-4bit` 86, every pair
-  inconclusive (MDE ±12.5pp), nothing Holm-surviving, zero exclusive solves; July 81.5-vs-60.0 was pre-C28. No reorder on the key; C stays
-  PROVISIONAL. Runaway tax 0.81 h / 16.4 h / 4.7 h per 100 → **C48 (swap C 1st/2nd on usability at tied quality? rec: yes, provisional).**
-- **M32 CLOSED** — `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 opencode python **21/22, 1 stall** (B 3rd 20/22, sibling 13/22; 8:0 vs the sibling on its stall items, p=.008).
-  Pre-registered read FIRES → B contest. Legs needed (each a proposal + seeded pilot + go): opencode go leg, humanevalplus n=164 @t0.5, M6d-style
-  predictor probe of its MTP sidecar. **C49: run them before M24 (rec) or after?**
+## Live processes (verify by pid, never infer)
+- `queue/queue_chain2.py` pid in `queue/queue.pid` (7556), log `queue/queue.log`, launched 12:55. It is WAITING on the orphaned S2b hep driver
+  (pid in `queue/S2b_mxmed_hep_full.pid` = 6730, rows 155/164 at 14:04), then: S2b resume (mbpp k=3 medium + fresh xhigh `m24x`, opencode python leg on
+  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED`) → S2c (hep n=164 on `Qwen3.8-27B-mlx-uniform-4bit-LOW` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW`, paired vs xhigh `m32b` + medium `m24`) → S3 M34 (`Ornith-1.0-35B-mlx-uniform-4bit` `m34nat` vs `m34exp`
+  moe_expand 27-39:20:0.8:0.5 on hep/mbpp n=50 k=3 + math500 n=100; overlays `queue/overlay_*.yaml`) → S4 M35 (dsh smoke → pilot → 22 python on
+  `Qwen3.8-27B-mlx-uniform-4bit`, tune `m35`) → `=== QUEUE DONE ===`. Stages continue past a failure; router restored to the draft-OFF overlay between stages.
+- `queue/after_queue.py` pid in `queue/after_queue.pid` (7578): when the runner exits, stops the router and runs the KNOWN-POSITIVE MTP control
+  (`Qwen3.8-27B-mlx-uniform-4bit` + certified drafter, expect ≥1.3×/acceptance ~0.67) then re-probes the mixed sidecar; leaves the router DOWN (`queue/after_queue.log`).
+- Paired reads across axes `compare` refuses (draft, effort, moe_expand): `queue/paired_ofat.py` (validated vs M27 + M21b). bench opencode carrier is
+  swapped into `~/.config/opencode/opencode.json` only during agentic legs and restored after (guarded).
 
 ## Resume checklist (new session)
-1. `lsof -nP -iTCP:8000 -sTCP:LISTEN` → router on the m32 overlay (verify `MLX_SERVE_CONFIG` on the pid with `ps -Eww`); no drivers live
-   (`pgrep -fl 'run.py generate|run_opencode_probe|run_dsh_probe'`). If the router is down: start it on the m32 overlay (AGENTS.md recipe with
-   `MLX_SERVE_CONFIG=$STACK_WORKDIR/m32/bench_overlay_m32.yaml`).
-2. Read the C48/C49 rulings (open-questions), then the queue below. New arms need an overlay entry only for M34 (`moe_expand:` on a SEPARATE
-   overlay — `compare` refuses across moe_expand, so the OFAT arm is its own row set under its own tune).
-3. Chains to copy from: `m32/m32_chain.py` (opencode leg pattern: pinned binary, bench-carrier swap with the `_installed` guard, C35 with
-   temperature readback, 5-min WATCH, paired McNemar), `m33/m33_chain.py` (generate/grade/compare pattern via `m21/arms_chain.py` helpers).
+1. `kill -0 $(cat $STACK_WORKDIR/queue/queue.pid)`; `tail -20 $STACK_WORKDIR/queue/queue.log`; re-arm a Monitor on `queue/queue.log`
+   (`tail -F | /usr/bin/grep --line-buffered -E 'FATAL|WARN|ALARM|===|C35|PILOT SIZING|SUMMARY|PAIRED|SCORE|ROWS|EFFORT READBACK|DSH SMOKE|M35 READ|M24 READ|END |SKIP|TIMEOUT|Traceback'`)
+   with a pid-liveness loop + SELFTEST line. Also confirm `after_queue.py` is alive. Monitors do not survive a session.
+2. Land each finished stage from `queue.log` + `queue/paired_*.json`: campaign-results dated entry, PLAN row, rows commit (`data(bench)+docs`).
+   Untracked rows now: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED/humanevalplus.m24.*` (in flight — do NOT commit until S2b's SUMMARY line).
+3. Read the M35 smoke log (`queue/S4_dsh_smoke.log`) against the 8-point checklist in PLAN M35 before trusting the dsh leg.
+4. When `=== AFTER-QUEUE DONE ===`: if the control shows acceptance ~0.67 the mixed sidecar's zero is real (head incompatible → ships draft-OFF, record);
+   if the control ALSO shows zero acceptance, MTP is broken on the bumped serving path → C-item, urgent (the B 1st/2nd/3rd triples ship mtp).
+   Restart the router on `queue/bench_overlay_q2.yaml` before any new arm.
 
-## THE BOX QUEUE
-1. **M32b RUNNING** (above). After it: if the MTP gate ≥1.3× → predictor quality OFAT (hep n=164 mtp-ON vs the `m32b` rows, draft-ON overlay entry, ~4 h); the B-contest read (go + hep + predictor vs the B 3rd choice's cells) → B-menu decision (C38 standard: Holm-surviving to DISPLACE; a menu slot is the pressure valve).
-2. **M24 medium arm**: `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 `reasoning_effort=medium`, tune `t0.6-effmed`, M21b recipe + opencode python leg; pre-registered read + the
-   truncation confound in PLAN (~12 h).
-3. **M34 OFAT** on `Ornith-1.0-35B-mlx-uniform-4bit` (bumps DONE; needs its own overlay with `moe_expand: 27-39:20:0.8:0.5`; ~15–20 h).
-4. **M35** dsh smoke + one python leg (~3 h): smoke = `run_dsh_probe.py --model Qwen3.8-27B-mlx-uniform-4bit --items affine-cipher --lang python --tune m35` with `MLX_SERVE_CONFIG` on the driver, then a 5-item SEEDED pilot before the 22-item leg; must confirm: model name on the wire, file_changed via read→write, no FS_NOT_OBSERVED refusals, gate ticks vary on a long item, no web/subagent tools on the wire (8-point checklist in the PLAN M35 row / verifier report).
-5. M17 / D11 / M18 read; `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder if C48 promotes it (its t1.0 was never laddered).
+## Closed this session (campaign-results 2026-09-06 ×2, 2026-09-07 ×2; lab-notebook 2026-09-06/07)
+- **M33** math500 n=100: three-way tie (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 89 / `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 88 / `Ornith-1.0-35B-mlx-uniform-4bit` 86 strict), July basis superseded → **C48 RULED: C 1st `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 2nd `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (provisional)**.
+- **M32 + M32b** `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5: python 21/22, go 20/22, hep n=164 EQUIVALENT to the B 3rd choice at 0.26× tokens, 0 loops; MTP sidecar probe 0.65× with ZERO
+  acceptance (instrument control queued) → **C50 OPEN** (B-menu slot; rec: 3rd choice, base to 4th).
+- **M24** `Qwen3.8-27B-mlx-uniform-4bit` medium (registry-entry route `Qwen3.8-27B-mlx-uniform-4bit-MED`, operator P23): EQUIVALENT to xhigh (pooled n=214 strict +1.1pp CI [−1.7, +4.0]) at
+  0.13× tokens, 0 loops, opencode 19/22 (3 stalls, on the bound) → rule fired → **C51 OPEN** (adopt medium as the 3rd choice's operating point;
+  rec: yes after a predictor re-probe at medium). **Rule C50 and C51 TOGETHER after S2b** (if the base moves to medium its runaway tax vanishes,
+  which narrows the usability case for promoting the mixed checkpoint above it; S2b gives the medium-vs-medium cell).
+- Registry: medium- and low-effort entries for both checkpoints (role candidate, bench carriers only). No pick changed. <!-- allow-shorthand -->
+- Submodules bumped to the M34 forks (`a08f933`); `queue/paired_ofat.py` built; the model-name hook now treats the bare effort word as a shorthand (registry-name
+  component) — mark such prose `allow-shorthand`.
+
+## THE QUEUE AFTER THE RUNNER (operator)
+1. C50 + C51 rulings → registry/carrier changes in ONE commit each (a pick or tune change touches all five carriers; medium adoption also needs the
+   predictor re-probe at medium once the instrument is validated).
+2. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder (C 1st, t1.0 never laddered) — proposal + pilot.
+3. M17 / D11 / M18 read; C axes at medium (math500/ifeval) if C51 adopts medium.
 
 ## Standing rules that bit this session
-- `open(f,'w').write(edit(open(f).read()))` TRUNCATES BEFORE READING — the 09:49 registry mirror wiped the worktree `main_models.yaml` to 0 bytes (rebuilt from HEAD + the seven overrides at 09:50; the router was on an overlay file, so nothing served changed). Read first, write second, always; and never edit the worktree registry and the HEAD blob in one expression.
-- A chain's "another driver is live" pgrep must match PYTHON drivers only — a Monitor shell whose command line quotes the chain's name is not a driver
-  (M32's first launch refused itself on `pgrep -f m33_chain`).
-- An exit handler that restores/removes a third-party config must act ONLY if this run installed it (`_installed` guard) — the first M32 launch's
-  FATAL removed the operator's daily-driver opencode config.
-- `~/.config/opencode/opencode.json` is the file opencode actually reads; brew upgrades re-initialise that directory (2026-09-01 wiped it). Bench
-  legs swap the bench carrier in and restore after; verify with the pinned binary's `opencode models`.
-- A bench overlay is a FINGERPRINT INPUT: the `deployed` profile reads `MLX_SERVE_CONFIG`, so an overlay entry at the wrong temperature records a
-  wrong manifest even when the client sends the right value. Regenerate overlays from HEAD after every registry edit.
-- `compare` reports `acc`, not `acc_strict`; the ranking-key intervals were computed in `m33/review_strict.log` (a `--strict` switch is a small harness item).
+- A chain's "another driver is live" pgrep must match PYTHON drivers only — a Monitor shell whose command line quotes the chain's name is not a driver.
+- An exit handler that restores/removes a third-party config must act ONLY if this run installed it (`_installed` guard).
+- `~/.config/opencode/opencode.json` is the file opencode reads; brew upgrades re-initialise that directory. Bench legs swap the carrier in and restore.
+- A bench overlay is a FINGERPRINT INPUT (the `deployed` profile reads `MLX_SERVE_CONFIG`): regenerate overlays from HEAD after every registry edit.
+- `open(f,'w').write(edit(open(f).read()))` TRUNCATES BEFORE READING — read first, write second.
+- Validate an instrument against a known positive before trusting a zero (the MTP sidecar's 0/48k acceptance).
+- A running python runner cannot be edited: hand over by stopping the runner WITHOUT killing its in-flight driver, then a successor that waits on the
+  driver's pid and resumes via the arm() skip/resume logic (done 13:15 for the low-effort legs).
+- Killing a waiter that watches a runner pid BEFORE stopping the runner — otherwise it fires its post-queue actions mid-arm.
 
 ## M21b CLOSED 2026-09-03 (campaign-results entry; PLAN row DONE)
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 vs `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` @t0.6-r2, k=3 on
