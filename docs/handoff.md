@@ -13,9 +13,8 @@ CONTINUING past any stage failure (router restored to the draft-OFF overlay betw
 expected draft state, worker cmdline verified for `--draft-kind`/`--moe-expand`, bench_watch alongside. Paired reads across axes that `compare`
 refuses (draft, effort, moe_expand) use `queue/paired_ofat.py` (validated: reproduces M27 and the M21b ratio exactly).
 - **S1** predictor quality OFAT for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` IF the M32b MTP probe says GO: hep n=164 `m32b-mtpon` vs `m32b`.
-- **S2 M24**: `Qwen3.8-27B-mlx-uniform-4bit` hep n=164 `t0.6-effmed` (`--reasoning-effort medium`) vs the `m32b` xhigh rows; mbpp n=50 k=3
-  medium `t0.6-effmed` AND xhigh `m24x`. **PARKED for the operator: the opencode python leg at medium** — `run_opencode_probe.py` has no
-  effort knob or manifest field (O36-class hazard); needs a small harness build (flag → carrier override → manifest) before it can run.
+- **S2 M24 (P23 route, `1abea0f`)**: `Qwen3.8-27B-mlx-uniform-4bit-MED` registry entry (reasoning_effort=medium in generation_defaults, role candidate) — hep n=164 `m24` vs the base `m32b` xhigh rows (EFFORT READBACK gate: prompt_tokens must differ on the pilot items), mbpp n=50 k=3 medium vs fresh xhigh `m24x`, opencode python leg on the same entry (no harness change: opencode omits the field, the worker applies the registry default). ~13 h.
+- **S2b (operator 2026-09-06 22:00)**: the same effort arm on `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED` (hep n=164 `m24` vs the base `m32b` rows, mbpp n=50 k=3 medium vs fresh base `m24x`, opencode python leg vs the base's 21/22). Same readback gate. ~6 h.
 - **S3 M34**: `Ornith-1.0-35B-mlx-uniform-4bit` native `m34nat` vs `moe_expand 27-39:20:0.8:0.5` `m34exp` on hep n=50 k=3, mbpp n=50 k=3,
   math500 n=100 (native re-run — the M33 row is on the pre-bump serving path). Overlays generated under `queue/overlay_*.yaml`.
 - **S4 M35**: dsh smoke (affine-cipher) → seeded pilot → rest, tune `m35`, on `Qwen3.8-27B-mlx-uniform-4bit`; the 8-point checklist must
