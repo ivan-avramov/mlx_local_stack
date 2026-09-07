@@ -487,6 +487,24 @@ Old-DNF follow-up on the 3.6 arm: 3 of 6 converged in 84–164 s, 3 looped to bu
 instruction-following axis too; vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: +2.0pp CI [−2.7, +6.8] inconclusive on generated strict,
 +8.8pp on `acc_strict@81920`. The mixed recipe's only edge is 0 vs 1 loops (not resolvable at k=1). No pick changes. Rows: `Qwen3.8-27B-OptiQ-4.5bpw-mixed/ifeval.m31.*`.
 
+### 2026-09-07 — S2b hep leg (M24 medium on the MIXED checkpoint): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED` is EQUIVALENT to its own xhigh on hep n=164 at 0.42× the tokens, and EQUIVALENT to `Qwen3.8-27B-mlx-uniform-4bit-MED` at 0.79× the tokens with IDENTICAL wall — the medium-vs-medium cell C50 was waiting for (mbpp k=3 + opencode legs in flight, entry extended when they land)
+
+Queue runner 2 (`$STACK_WORKDIR/queue/`), bumped serving path, `deployed`, predictor OFF, tune `m24`, seed-0 n=164 k=1; xhigh reference = the M32b
+`m32b` rows (same serving path, same session family). Effort readback passed on all 164 items (medium template 42 prompt tokens shorter). Pilot sized
+1.4 h from the seeded mean; actual 1.35 h (max item 408 s, max 7,751 tokens, ZERO non-converged).
+
+| hep n=164, `acc_strict@81920` | A | B | paired |
+|---|---|---|---|
+| mixed medium `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED` vs mixed xhigh `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (`m32b`) | **95.1** | 93.9 | +1.2pp CI [−1.8, +4.9] **EQUIVALENT** (5:3); tokens ratio **0.424 CI [0.31, 0.62]** (598 vs 1,410); non-conv 0 / 0; Σ wall 1.35 h / 2.79 h |
+| mixed medium vs base medium `Qwen3.8-27B-mlx-uniform-4bit-MED` (`m24`) | **95.1** | 93.9 | +1.2pp CI [−1.2, +3.7] **EQUIVALENT** (3:1); tokens ratio **0.789 CI [0.65, 0.94]** (598 vs 758); non-conv 0 / 0; Σ wall **1.35 h / 1.27 h** |
+
+Read: (1) medium is EQUIVALENT to xhigh on the mixed checkpoint too, at 0.42× tokens (the mixed checkpoint's xhigh was already lean — 1,410 tokens,
+no loops — so the medium saving is smaller than the base's 0.14×). (2) **At medium-vs-medium the mixed checkpoint's token edge shrinks from 0.26× to
+0.79× and its WALL edge vanishes** (1.35 h vs 1.27 h: the 4.98-bit `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` layout decodes slower than `Qwen3.8-27B-mlx-uniform-4bit` and gives back the token saving).
+The usability case for promoting the mixed checkpoint above the base (C50 option a) therefore rests on the AGENTIC legs (go 20 vs 16, python 21 vs 20,
+3 vs 8 stall-kills — all measured at the base's xhigh), not on hep; whether that gap survives the base at medium is exactly what S2b's opencode
+leg on `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED` vs the `Qwen3.8-27B-mlx-uniform-4bit-MED` 19/22 row answers. Discordant items in the xhigh cell (medium only): `HumanEval/151, /160, /47, /95, /99`; xhigh only: `/154, /39, /97`. Rows: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED/humanevalplus.m24.*`; paired JSON `queue/paired_S2b_mxmed_hep_med_vs_xhigh.json`, `queue/paired_S2b_mxmed_vs_u4med_hep.json`.
+
 ### 2026-09-07 — M24 CLOSED: `reasoning_effort=medium` on `Qwen3.8-27B-mlx-uniform-4bit` is EQUIVALENT to xhigh on hep n=164 and pooled hep+mbpp (n=214) at 0.13× the tokens with ZERO loops, and holds the agentic leg — the pre-registered rule fires: medium is a CANDIDATE operating point for the B 3rd choice
 
 Route (operator 2026-09-06 P23): a registry entry `Qwen3.8-27B-mlx-uniform-4bit-MED` — same checkpoint, KV and t0.6 tune, `reasoning_effort: medium` in `generation_defaults`
