@@ -1,4 +1,4 @@
-# Handoff — 2026-09-06 21:05 (M32b RUNNING → QUEUE RUNNER armed behind it: S1 predictor OFAT → S2 M24 → S3 M34 → S4 M35; operator: never idle)
+# Handoff — 2026-09-07 02:10 (M32b CLOSED → C50 owed; QUEUE RUNNER in S2 M24; after_queue MTP control armed; operator: never idle)
 
 Single box (M5 Max 64 GB). **M32b RUNNING** (chain `$STACK_WORKDIR/m32b/m32b_chain.py`, pid in `m32b/m32b.pid`, log `m32b/m32b.log`, launched 09:48; legs: go 22 → hep n=164 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~4 h) → hep n=164 `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 (~10 h) → compare → MTP speed probe with `scratch/m6a/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter` (built 09:55 from the sidecar; probe stops the router and leaves it DOWN) → `=== M32B DONE ===`). Bench opencode carrier is swapped in during the go leg only. **C48 RULED: C 1st `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 2nd `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (provisional; registry comments flipped). C49 RULED: contest legs first.** Router UP on `$STACK_WORKDIR/m32/bench_overlay_m32.yaml` (generated from HEAD `main_models.yaml` +
 the seven local-path overrides, draft-OFF; SESSION_MAX=2, APC absent; pid in `m32/router.pid`), worker for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` resident/idle.
@@ -6,6 +6,8 @@ Submodules BUMPED (`a08f933`): `src/mlx-vlm` 420c01e1, `src/mlx-serve` 0ccc6842 
 before it (`920efc38`) do not `compare` across (C47 by design). Working tree: SEVEN intentional `main_models.yaml` local-path overrides — NEVER
 commit (committed registry edits go via the HEAD blob; the C-pick comment restatement was done that way in `e4d3782`).
 UNPUSHED: `a08f933`, `e4d3782`, plus this session's M32 landing commit. Push only on in-turn approval.
+
+## M32b CLOSED 2026-09-07 01:49 (campaign-results 2026-09-07): contest gate met on every leg; C50 = B-menu slot (rec: 3rd choice). MTP sidecar probe 0.65× with ZERO acceptance → `queue/after_queue.py` (pid in `queue/after_queue.pid`) runs the known-positive control + re-probe when the runner exits and leaves the router DOWN.
 
 ## Standing directive (operator 2026-09-06 20:55): keep the box busy — follow the queue; uncertainties are parked for the operator
 `$STACK_WORKDIR/queue/queue_chain.py` (pid in `queue/queue.pid`, log `queue/queue.log`) waits for M32b's pid, then runs S1–S4 in order,

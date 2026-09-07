@@ -487,6 +487,32 @@ Old-DNF follow-up on the 3.6 arm: 3 of 6 converged in 84–164 s, 3 looped to bu
 instruction-following axis too; vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: +2.0pp CI [−2.7, +6.8] inconclusive on generated strict,
 +8.8pp on `acc_strict@81920`. The mixed recipe's only edge is 0 vs 1 loops (not resolvable at k=1). No pick changes. Rows: `Qwen3.8-27B-OptiQ-4.5bpw-mixed/ifeval.m31.*`.
 
+### 2026-09-07 — M32b B-CONTEST LEGS COMPLETE: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 is EQUIVALENT to the B 3rd choice on hep n=164 at 0.26× the tokens, leads both agentic legs, and never loops; its own MTP sidecar probes at 0.65× with ZERO acceptance (instrument unvalidated on the bumped serving path)
+
+Chain `$STACK_WORKDIR/m32b/` (2026-09-06 09:48 → 09-07 01:49), all arms on the bumped serving path (`src/mlx-vlm` 420c01e1 / `src/mlx-serve` 0ccc6842),
+`deployed`, predictor OFF, one router session for the go leg and both hep arms; the B 3rd choice's hep n=164 was RE-MEASURED in the same session because its
+existing n=164 row sits on the pre-bump serving path (`compare` refuses across, C47).
+
+| leg | `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 | `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 (B 3rd) | paired read |
+|---|---|---|---|
+| opencode python (M3 22, 2026-09-06) | **21/22**, 1 stall | 20/22, 2 stalls | 1:0 (only `book-store`) |
+| opencode go (O39 22) | **20/22**, 2 stalls | 16/22, 6 stalls | 5:1 p=.219; vs `Ornith-1.0-35B-mlx-uniform-4bit` 11/22 9:0 p=.004; vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 12/22 10:2 p=.039 |
+| humanevalplus n=164 `m32b`, acc | 93.9 % | 94.5 % | −0.6pp CI [−3.7, +1.8] **EQUIVALENT** (2:3) |
+| humanevalplus n=164 `m32b`, `acc_strict@81920` | **93.9 %** | 92.7 % | +1.2pp CI [−2.4, +4.9] **EQUIVALENT** (5:3) |
+| non-converged / Σ wall / tokens per task | 0 / 2.8 h / 1,410 | 4 meander loops / 10.6 h / 5,356 | tokens ratio **0.263 CI [0.18, 0.38]** |
+
+Go items solved by no reference arm before: `book-store`, `connect`, `markdown`. The go leg's two stall-kills were `forth` and `ledger`; `connect` ran past 600 s under the progress gate and passed. Across the two agentic legs (44 items) the checkpoint has 3 stall-kills against the B 3rd choice's 8.
+**Pre-registered contest gate (PLAN M32): not below the B 3rd choice's cell on any leg — met on all three.** Nothing here is Holm-surviving (the largest agentic
+split, go 5:1, is p=.219), so under the C38 standard nothing is DISPLACED; the menu is the pressure valve → **C50** (session recommendation: B 3rd choice
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit` to 4th — equal quality at a quarter of the tokens and no loops in 208 items; even against the 3rd choice's certified 1.60×
+predictor the per-task wall is ~2.4× shorter draft-OFF).
+
+**Predictor probe (M6a gate, own sidecar re-packed as a drafter dir):** ON 15.5 tok/s vs OFF 24.0 → **0.65×, STOP**, but with **0 of 47,980 draft tokens accepted**
+across the three items (`draft_rounds` = every token; k=2). A zero acceptance is not "a weak head": the certified `Qwen3.8-27B-mlx-uniform-4bit` drafter (22/29 tensors byte-identical
+to this sidecar) accepts 0.674. The instrument has NOT been validated on the bumped serving path — a known-positive control (`Qwen3.8-27B-mlx-uniform-4bit` + its certified drafter)
+and a re-probe are queued behind the runner (`queue/after_queue.py`); until then the mixed checkpoint ships draft-OFF and the 0.65× is NOT a verdict on the head.
+Rows: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/opencode_go.*`, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/humanevalplus.m32b.*`, `Qwen3.8-27B-mlx-uniform-4bit/humanevalplus.m32b.*`; probe `m32b/mtp_probe.json`.
+
 ### 2026-09-06 — M32 CLOSED: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 scores 21/22 on the opencode python leg — the best agentic python row in the corpus; it ENTERS the B contest
 
 opencode python (M3 22-item set), O39 protocol: opencode 1.18.15 pinned, TMPDIR `scratch/octmp`, progress gate 300/3600/2, `--sampling-profile deployed`
