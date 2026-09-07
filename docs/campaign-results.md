@@ -487,6 +487,31 @@ Old-DNF follow-up on the 3.6 arm: 3 of 6 converged in 84–164 s, 3 looped to bu
 instruction-following axis too; vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: +2.0pp CI [−2.7, +6.8] inconclusive on generated strict,
 +8.8pp on `acc_strict@81920`. The mixed recipe's only edge is 0 vs 1 loops (not resolvable at k=1). No pick changes. Rows: `Qwen3.8-27B-OptiQ-4.5bpw-mixed/ifeval.m31.*`.
 
+### 2026-09-07 — M24 CLOSED: `reasoning_effort=medium` on `Qwen3.8-27B-mlx-uniform-4bit` is EQUIVALENT to xhigh on hep n=164 and pooled hep+mbpp (n=214) at 0.13× the tokens with ZERO loops, and holds the agentic leg — the pre-registered rule fires: medium is a CANDIDATE operating point for the B 3rd choice
+
+Route (operator 2026-09-06 P23): a registry entry `Qwen3.8-27B-mlx-uniform-4bit-MED` — same checkpoint, KV and t0.6 tune, `reasoning_effort: medium` in `generation_defaults`
+(role candidate, bench carriers only) — so every client measures medium unchanged; the worker applies the default when a request omits the field, and
+the `deployed` profile copies it into the manifest. xhigh = the base entry. All arms on the bumped serving path, `deployed`, predictor OFF, one router session
+(2026-09-07 01:50 → 12:46). **Effort readback passed before the arm was spent:** the medium template is 42 prompt tokens shorter on every pilot item.
+
+| medium vs xhigh | medium `Qwen3.8-27B-mlx-uniform-4bit-MED` | xhigh `Qwen3.8-27B-mlx-uniform-4bit` | paired |
+|---|---|---|---|
+| hep n=164 k=1, acc / `acc_strict@81920` | 93.9 / **93.9** | 94.5 / 92.7 | acc −0.6pp CI [−3.7, +2.4] EQUIVALENT; strict **+1.2pp CI [−1.8, +4.9] EQUIVALENT** |
+| hep tokens per task / non-converged / Σ wall | 758 / 0 / 1.3 h | 5,356 / 4 loops / 10.6 h | tokens ratio **0.142 CI [0.10, 0.22]** |
+| mbpp n=50 k=3 (`m24` vs fresh xhigh `m24x`), strict | 80.7 | 80.0 | +0.7pp CI [−4.7, +6.0] inconclusive (4:2) |
+| mbpp tokens per row / non-converged / Σ wall | 527 / 0 / 0.8 h | 4,279 / 1 loop / 7.3 h | tokens ratio **0.123 CI [0.08, 0.24]** |
+| **pooled hep+mbpp strict (stratified two-stage bootstrap, n=214)** | | | **+1.1pp CI [−1.7, +4.0] EQUIVALENT** (MDE ±8.6pp) |
+| opencode python (M3 22, first attempt) | **19/22**, 3 stall-kills (`book-store`, `connect`, `paasio`), 1.5 h | 20/22 (s1) / 18/22 (s2) | 0:1 vs s1, 1:0 vs s2 — inside session variance |
+
+**Pre-registered read (PLAN M24): strict EQUIVALENT ✓ (hep alone and pooled), tokens-per-task ratio CI < 1 ✓ (0.14 / 0.12), opencode ≥ 18/22 with ≤ 3
+stall-kills ✓ (19/22, 3 — exactly on the bound) → medium becomes a CANDIDATE operating point for the B 3rd choice.** The pre-registered confound is
+answered: the win is on converged `acc_strict` and tokens, not wall — the community "xhigh overthinks" reports were truncation artifacts, but the
+converged measurement says the same thing for a different reason: the extra 6× tokens at xhigh buy nothing on these axes and carry the whole runaway tax
+(4 + 1 loops at xhigh, 0 at medium across 314 rows). Caveats that stand: the agentic leg is exactly on the stall bound (3), one session; the mbpp read is
+n=50; the certified MTP predictor was certified at xhigh (acceptance 0.674) and must be re-probed at medium before the triple can carry it (the probe
+instrument itself is pending its known-positive control, see M32b). Decision → **C51**. Rows: `Qwen3.8-27B-mlx-uniform-4bit-MED/humanevalplus.m24.*`, `Qwen3.8-27B-mlx-uniform-4bit-MED/mbppplus.m24.*`,
+`Qwen3.8-27B-mlx-uniform-4bit/mbppplus.m24x.*`, `Qwen3.8-27B-mlx-uniform-4bit-MED/opencode.*`; hep xhigh reference `Qwen3.8-27B-mlx-uniform-4bit/humanevalplus.m32b.*`.
+
 ### 2026-09-07 — M32b B-CONTEST LEGS COMPLETE: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 is EQUIVALENT to the B 3rd choice on hep n=164 at 0.26× the tokens, leads both agentic legs, and never loops; its own MTP sidecar probes at 0.65× with ZERO acceptance (instrument unvalidated on the bumped serving path)
 
 Chain `$STACK_WORKDIR/m32b/` (2026-09-06 09:48 → 09-07 01:49), all arms on the bumped serving path (`src/mlx-vlm` 420c01e1 / `src/mlx-serve` 0ccc6842),
