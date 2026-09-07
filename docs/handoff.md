@@ -1,4 +1,4 @@
-# Handoff — 2026-09-06 09:55 (C48 + C49 RULED; M32b B-contest chain RUNNING: go leg → hep n=164 ×2 → MTP probe; ~17 h)
+# Handoff — 2026-09-06 21:05 (M32b RUNNING → QUEUE RUNNER armed behind it: S1 predictor OFAT → S2 M24 → S3 M34 → S4 M35; operator: never idle)
 
 Single box (M5 Max 64 GB). **M32b RUNNING** (chain `$STACK_WORKDIR/m32b/m32b_chain.py`, pid in `m32b/m32b.pid`, log `m32b/m32b.log`, launched 09:48; legs: go 22 → hep n=164 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @t0.5 (~4 h) → hep n=164 `Qwen3.8-27B-mlx-uniform-4bit` @t0.6 (~10 h) → compare → MTP speed probe with `scratch/m6a/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter` (built 09:55 from the sidecar; probe stops the router and leaves it DOWN) → `=== M32B DONE ===`). Bench opencode carrier is swapped in during the go leg only. **C48 RULED: C 1st `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 2nd `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (provisional; registry comments flipped). C49 RULED: contest legs first.** Router UP on `$STACK_WORKDIR/m32/bench_overlay_m32.yaml` (generated from HEAD `main_models.yaml` +
 the seven local-path overrides, draft-OFF; SESSION_MAX=2, APC absent; pid in `m32/router.pid`), worker for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` resident/idle.
@@ -6,6 +6,23 @@ Submodules BUMPED (`a08f933`): `src/mlx-vlm` 420c01e1, `src/mlx-serve` 0ccc6842 
 before it (`920efc38`) do not `compare` across (C47 by design). Working tree: SEVEN intentional `main_models.yaml` local-path overrides — NEVER
 commit (committed registry edits go via the HEAD blob; the C-pick comment restatement was done that way in `e4d3782`).
 UNPUSHED: `a08f933`, `e4d3782`, plus this session's M32 landing commit. Push only on in-turn approval.
+
+## Standing directive (operator 2026-09-06 20:55): keep the box busy — follow the queue; uncertainties are parked for the operator
+`$STACK_WORKDIR/queue/queue_chain.py` (pid in `queue/queue.pid`, log `queue/queue.log`) waits for M32b's pid, then runs S1–S4 in order,
+CONTINUING past any stage failure (router restored to the draft-OFF overlay between stages). Per-arm: 5-item seeded pilot, C35 with the
+expected draft state, worker cmdline verified for `--draft-kind`/`--moe-expand`, bench_watch alongside. Paired reads across axes that `compare`
+refuses (draft, effort, moe_expand) use `queue/paired_ofat.py` (validated: reproduces M27 and the M21b ratio exactly).
+- **S1** predictor quality OFAT for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` IF the M32b MTP probe says GO: hep n=164 `m32b-mtpon` vs `m32b`.
+- **S2 M24**: `Qwen3.8-27B-mlx-uniform-4bit` hep n=164 `t0.6-effmed` (`--reasoning-effort medium`) vs the `m32b` xhigh rows; mbpp n=50 k=3
+  medium `t0.6-effmed` AND xhigh `m24x`. **PARKED for the operator: the opencode python leg at medium** — `run_opencode_probe.py` has no
+  effort knob or manifest field (O36-class hazard); needs a small harness build (flag → carrier override → manifest) before it can run.
+- **S3 M34**: `Ornith-1.0-35B-mlx-uniform-4bit` native `m34nat` vs `moe_expand 27-39:20:0.8:0.5` `m34exp` on hep n=50 k=3, mbpp n=50 k=3,
+  math500 n=100 (native re-run — the M33 row is on the pre-bump serving path). Overlays generated under `queue/overlay_*.yaml`.
+- **S4 M35**: dsh smoke (affine-cipher) → seeded pilot → rest, tune `m35`, on `Qwen3.8-27B-mlx-uniform-4bit`; the 8-point checklist must
+  be READ from `queue/S4_dsh_smoke.log` by the next session (the runner only gates on rc and file_changed).
+- Rough box time: S1 ~3 h (if GO), S2 ~13 h, S3 ~16 h, S4 ~3 h → through 2026-09-08. Results land as each stage's SCORE/PAIRED lines; docs
+  (campaign-results entries, PLAN rows) are written by the next session from `queue.log` + `paired_*.json`.
+- Unpushed: `93c79ca` (go rows) + this commit.
 
 ## Closed this session (details: campaign-results 2026-09-06 ×2, lab-notebook 2026-09-06)
 - **M33 CLOSED** — math500 n=100 `acc_strict@81920`: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 89 / `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 88 / `Ornith-1.0-35B-mlx-uniform-4bit` 86, every pair
