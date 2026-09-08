@@ -487,6 +487,25 @@ Old-DNF follow-up on the 3.6 arm: 3 of 6 converged in 84–164 s, 3 looped to bu
 instruction-following axis too; vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: +2.0pp CI [−2.7, +6.8] inconclusive on generated strict,
 +8.8pp on `acc_strict@81920`. The mixed recipe's only edge is 0 vs 1 loops (not resolvable at k=1). No pick changes. Rows: `Qwen3.8-27B-OptiQ-4.5bpw-mixed/ifeval.m31.*`.
 
+### 2026-09-07 — S2c CLOSED: `reasoning_effort=low` is the WRONG side of the effort curve's knee — on `Qwen3.8-27B-mlx-uniform-4bit` low LOSES to medium (−2.4pp CI [−4.9, −0.6], discordant 0:4) for a 17 % token saving; on `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` low is equivalent to medium but saves only 13 %. Low is CLOSED as an operating point (C31 stands); both `-LOW` bench entries retired <!-- allow-shorthand -->
+
+Queue runner 2 S2c (19:41 → 21:52), bumped serving path, `deployed`, predictor OFF, hep n=164 k=1 seed-0, tune `m24` on the two `-LOW` bench clones <!-- allow-shorthand -->
+(`reasoning_effort: low` in `generation_defaults`; effort READBACK passed: the low template's prompt is 30 tokens longer than medium and 12 shorter than <!-- allow-shorthand -->
+xhigh on every pilot item). References: xhigh = `m32b` rows, medium = `m24` rows of the `-MED` clones — all in the same overlay family. Zero non-converged rows in 328. <!-- allow-shorthand -->
+
+| hep n=164, `acc_strict@81920` | low | vs xhigh | vs medium | <!-- allow-shorthand -->
+|---|---|---|---|
+| `Qwen3.8-27B-mlx-uniform-4bit-LOW` (xhigh 92.7, medium 93.9) | 91.5 | −1.2pp CI [−5.5, +3.0] inconclusive (5:7); tokens **0.117** CI [0.08, 0.18] (625 vs 5,356); loops 0 vs 4; Σ wall 1.07 h vs 10.63 h | **−2.4pp CI [−4.9, −0.6] MEDIUM BETTER (0:4)**; tokens **0.825** CI [0.73, 0.91] (625 vs 758); Σ wall 1.07 h vs 1.27 h | <!-- allow-shorthand -->
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW` (xhigh 93.9, medium 95.1) | 93.3 | −0.6pp CI [−4.3, +3.0] EQUIVALENT (5:6); tokens **0.369** CI [0.26, 0.55] (520 vs 1,410); loops 0 vs 0; Σ wall 1.05 h vs 2.79 h | −1.8pp CI [−4.9, +1.2] equivalent (2:5); tokens **0.869** CI [0.74, 0.99] (520 vs 598); Σ wall 1.05 h vs 1.35 h | <!-- allow-shorthand -->
+
+Read: the effort curve on this family has its knee at MEDIUM. From xhigh to medium the token cost drops 7× (base) / 2.4× (mixed) at unchanged strict
+accuracy and the runaway tax vanishes; from medium to low the remaining saving is 13–17 % and it is paid for in accuracy — on the base the loss is <!-- allow-shorthand -->
+significant and one-sided (low solves nothing medium misses, medium solves four items low misses), the first significant effort delta in the corpus. <!-- allow-shorthand -->
+The mixed checkpoint degrades more gracefully (2:5, equivalent) but gains nothing worth having. This also resolves the community "low wins" reports the <!-- allow-shorthand -->
+same way M24 resolved "xhigh overthinks": under small output caps the ranking is truncation-driven; at a converged 81,920 budget medium dominates both
+neighbours. **No pick or tune changes; C31's rejection of low stands as measured, not as policy.** Registry: both `-LOW` clones retired (rows stay). Rows: <!-- allow-shorthand -->
+`Qwen3.8-27B-mlx-uniform-4bit-LOW/humanevalplus.m24.*`, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW/humanevalplus.m24.*`; paired JSON `queue/paired_S2c_*.json`. <!-- allow-shorthand -->
+
 ### 2026-09-07 — S2b CLOSED (M24 medium on the MIXED checkpoint): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED` is EQUIVALENT to its own xhigh on pooled hep+mbpp n=214 at 0.42×/0.32× the tokens, EQUIVALENT to `Qwen3.8-27B-mlx-uniform-4bit-MED` at 0.79×/0.98× the tokens with NO wall edge, and posts the first PERFECT agentic row in the corpus — opencode python 22/22, zero stall-kills — the medium-vs-medium cells C50 was waiting for
 
 Queue runner 2 (`$STACK_WORKDIR/queue/`), bumped serving path, `deployed`, predictor OFF, tune `m24`, seed-0 n=164 k=1; xhigh reference = the M32b
