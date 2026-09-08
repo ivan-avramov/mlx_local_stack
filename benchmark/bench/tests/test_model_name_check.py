@@ -22,6 +22,27 @@ import pytest
 from bench import modelnames as MN
 
 
+@pytest.mark.parametrize("path,text", [
+    ("benchmark/results/example/run.manifest.json", '  "reasoning_effort": "low",'),
+    ("main_models.yaml", "    reasoning_effort: low"),
+    ("main_models.yaml", "    reasoning_effort: 'low'"),
+])
+def test_effort_value_is_not_a_model_reference(path, text):
+    assert MN.violations(text, path=path) == []
+    assert MN.violations(text + ' # Ornith', path=path)
+
+
+@pytest.mark.parametrize("path,text", [
+    ("docs/notes.md", '"reasoning_effort": "low"'),
+    ("benchmark/results/example/run.score.json", '"reasoning_effort": "low"'),
+    ("main_models.yaml", "reasoning_effort: Ornith"),
+    ("main_models.yaml", "reasoning_effort: low # Ornith"),
+    ("benchmark/results/example/run.manifest.json", '"model": "low"'),
+])
+def test_effort_exemption_does_not_hide_model_references(path, text):
+    assert MN.violations(text, path=path)
+
+
 # ------------------------------------------------------------------ it catches the real thing
 @pytest.mark.parametrize("text", [
     "Nemotron ifeval n=200 completed",

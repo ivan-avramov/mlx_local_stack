@@ -187,6 +187,13 @@ def violations(text: str, *, path: str = "<text>", line: int = 0,
     """Model references in one string that are not a complete registry name."""
     if ALLOW_MARKER in text:
         return []
+    # C52: template-knob values are not model references; keep adjacent prose checked.
+    scan_text = text
+    if path == "main_models.yaml" or (path.startswith("benchmark/results/")
+                                       and path.endswith(".manifest.json")):
+        scan_text = re.sub(
+            r'''(^\s*["']?reasoning_effort["']?\s*:\s*)["']?(?:low|medium|high|xhigh)["']?(?=\s*(?:[,}#]|$))''',
+            r"\1", text)
     allowed, prefixes, fragments = _index(root)
     allowed_lower = {n.lower() for n in allowed}
     out: list[Violation] = []
@@ -196,7 +203,7 @@ def violations(text: str, *, path: str = "<text>", line: int = 0,
         m = _CATEGORY_STANDINS.search(text)
         out.append(Violation(path, line, f"category stand-in {m.group(0)!r} used for a model", text))
 
-    for m in _TOKEN.finditer(text):
+    for m in _TOKEN.finditer(scan_text):
         tok = m.group(0)
         low = tok.lower().strip(".")
         if low in seen or low in allowed_lower:
@@ -213,7 +220,7 @@ def violations(text: str, *, path: str = "<text>", line: int = 0,
             # instance: "the gemma-4 family" names a group of models on purpose and there is no
             # single full name to substitute. Same class-vs-instance distinction as the category
             # rule below, so it belongs here rather than being reworded around in every doc.
-            rest = text[m.end():]
+            rest = scan_text[m.end():]
             if re.match(rf"\s+{_CLASS}", rest, re.IGNORECASE):
                 continue
             out.append(Violation(path, line, f"under-specified model name {tok!r}", text))
