@@ -247,9 +247,12 @@ def diff_violations(diff: str, *, root: str | None = None) -> list[Violation]:
             # Result ROWS are model OUTPUT, not prose — a generated program may contain
             # any word ('static' blocked a real arm commit). Manifests/score .json in the
             # same tree are our own metadata and stay checked. bfcl_eval stores its rows
-            # as result/**/*_result.json rather than .jsonl — same rule.
+            # as result/**/*_result.json rather than .jsonl — same rule; so does the
+            # EvalPlus grader output *_samples_eval_results.json, which embeds the
+            # model's solution code ('low' blocked the S2b mbpp commit, 2026-09-07).
             is_result_rows = path.startswith("benchmark/results/") and (
                 path.endswith(".jsonl")
+                or path.endswith("_samples_eval_results.json")
                 or ("/result/" in path and path.endswith("_result.json"))
             )
             if not is_result_rows and not path.endswith(EXEMPT_PATHS + GENERATED_PATHS):

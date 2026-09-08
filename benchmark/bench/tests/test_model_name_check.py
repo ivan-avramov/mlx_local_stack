@@ -260,6 +260,17 @@ def test_result_row_jsonl_content_is_DATA_not_prose():
         '+{"id": "parallel_multiple_184", "result": [{"analyze_structure": "{\\"mode\\": \\"static\\"}"}]}\n'
     )
     assert M.diff_violations(bfcl_row_diff) == []
+    # EvalPlus grader output (*_samples_eval_results.json) embeds the model's SOLUTION
+    # code — same DATA-not-prose rule (a `low` variable in a binary search blocked the
+    # S2b mbpp data commit, 2026-09-07, once the -LOW registry entries made `low` a
+    # name fragment). The .score.json / .manifest.json beside it stay checked.
+    eval_results_diff = (
+        "diff --git a/benchmark/results/SomeModel-4bit/mbppplus.m24_samples_eval_results.json b/benchmark/results/SomeModel-4bit/mbppplus.m24_samples_eval_results.json\n"
+        "+++ b/benchmark/results/SomeModel-4bit/mbppplus.m24_samples_eval_results.json\n"
+        "@@ -0,0 +1 @@\n"
+        '+{"eval": {"Mbpp/793": [{"solution": "def last(arr):\\n    low, high = 0, 1\\n    static = distill", "plus_status": "pass"}]}}\n'
+    )
+    assert M.diff_violations(eval_results_diff) == []
     bfcl_score_diff = (
         "diff --git a/benchmark/results/SomeModel-4bit/bfcl_fc/bfcl.json b/benchmark/results/SomeModel-4bit/bfcl_fc/bfcl.json\n"
         "+++ b/benchmark/results/SomeModel-4bit/bfcl_fc/bfcl.json\n"
