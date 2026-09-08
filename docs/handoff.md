@@ -19,6 +19,12 @@ the edit into the worktree — READ the worktree file BEFORE opening it for writ
 - Regression: `$STACK_WORKDIR/queue/test_queue_watch_total.py`; run with the bench interpreter. Extracts only `run_generate` via AST, mocks subprocesses and file writes. 50x3 and 5x3 failed first; all three cases (including 164x1) now pass.
 - Live runner SHA256 `1328513360513df09b95bd0e819552f16c063b0e96cc7979a0a93b79526df7cd`; corrected copy SHA256 `494b721826ea7cbae3e8c6ed11b18a672fd786312dc3df4b754ffcbb2ed61213`. Live runner and waiter verified alive after the fix.
 
+## Queue update 2026-09-08 — M34 follow-ups authorized
+- Operator superseded M34's original close rule. Initial OFAT is complete; native production routing remains unchanged.
+- PLAN M34a (held-out coding, MBPPPlus first) and M34b (production MTP interaction with matched OFF controls) are authorized, after current M35, after-queue controls and owed C51 certification. Sample counts/runtime require pilot sizing before launch.
+- PLAN M34c is a proposed bounded expert-expansion pilot for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, not yet approved. Map its actual MoE layers before selecting the expansion range.
+- These are PLAN queue entries, not appended executable stages. Current runner/waiter are unchanged; after_queue still leaves the router DOWN. A successor must use fresh q3 overlays.
+
 ## Live processes (verify by pid, never infer)
 - `queue/queue_chain2.py` pid in `queue/queue.pid` (7556), log `queue/queue.log`, launched 12:55. The orphaned S2b hep driver exited 14:08; router moved to
   `bench_overlay_q2.yaml` (pid 82020) 14:09; **S2b DONE 19:41 and landed** (`9414861`, `ccf45e0`, `bbda2c1`); **S2c DONE 21:52, docs/registry landed `25257b6`, ROWS UNTRACKED (C52)**. NOW IN S3 M34 (started 21:52; hep native pilot 14/15 converged, 1 degenerate loop, sized 4.6 h for n=50 k=3 lower bound). S2c was: (hep n=164 on `Qwen3.8-27B-mlx-uniform-4bit-LOW` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW`, paired vs xhigh `m32b` + medium `m24`) → S3 M34 (`Ornith-1.0-35B-mlx-uniform-4bit` `m34nat` vs `m34exp`
