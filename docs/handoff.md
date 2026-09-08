@@ -1,16 +1,15 @@
-# Handoff — 2026-09-07 14:30 (SESSION CHECKPOINT — QUEUE RUNNER 2 self-driving: S2b (hep leg LANDED `9414861`; mbpp/opencode legs in flight) → S2c → S3 M34 → S4 M35 → after_queue MTP control; rulings owed C50 + C51)
+# Handoff — 2026-09-07 20:30 (SESSION CHECKPOINT — C50 + C51 RULED AND SHIPPED `85db045`; QUEUE RUNNER 2 self-driving: S2b DONE → S2c (running) → S3 M34 → S4 M35 → after_queue MTP control; owed: base predictor re-probe at medium → second commit)
 
 Single box (M5 Max 64 GB). **The box is BUSY and self-driving** (operator directive 2026-09-06: never idle; follow the queue). Router UP on
 `$STACK_WORKDIR/queue/bench_overlay_q2.yaml` (pid 82020, on `queue/bench_overlay_q2.yaml` since 14:09), SESSION_MAX=2,
 APC absent. Serving path = `src/mlx-vlm` 420c01e1 / `src/mlx-serve` 0ccc6842 (bumped `a08f933`); every row since carries it; older rows do not `compare`
 across (C47). Working tree: NINE intentional `main_models.yaml` local-path overrides (7 + the two mixed-checkpoint effort clones) — NEVER commit;
 committed registry edits go via the HEAD blob (`git show HEAD:main_models.yaml` → edit → `git hash-object -w` → `git update-index --cacheinfo`; then mirror
-the edit into the worktree — READ the worktree file BEFORE opening it for write). origin/main = `4acefd2` (operator pushed 2026-09-07 14:10); UNPUSHED since: `9414861` (S2b hep leg). Push only on in-turn approval.
+the edit into the worktree — READ the worktree file BEFORE opening it for write). origin/main = `4acefd2` (operator pushed 2026-09-07 14:10); UNPUSHED since: `9414861`, `878d720`, `ccf45e0`, `c03f610`, `bbda2c1`, `bc21b99`, `85db045`, `f689608` + this handoff. Push only on in-turn approval. **Worktree overrides are now EIGHT** (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED` was retired from the registry).
 
 ## Live processes (verify by pid, never infer)
 - `queue/queue_chain2.py` pid in `queue/queue.pid` (7556), log `queue/queue.log`, launched 12:55. The orphaned S2b hep driver exited 14:08; router moved to
-  `bench_overlay_q2.yaml` (pid 82020) 14:09; hep leg graded + paired + LANDED (`9414861`). Now: S2b resume (mbpp k=3 medium [pilot started 14:10] + fresh xhigh `m24x`, opencode python leg on
-  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED`) → S2c (hep n=164 on `Qwen3.8-27B-mlx-uniform-4bit-LOW` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW`, paired vs xhigh `m32b` + medium `m24`) → S3 M34 (`Ornith-1.0-35B-mlx-uniform-4bit` `m34nat` vs `m34exp`
+  `bench_overlay_q2.yaml` (pid 82020) 14:09; **S2b DONE 19:41 and fully landed** (`9414861`, `ccf45e0`, `bbda2c1`). Now: S2c (started 19:41; hep n=164 on `Qwen3.8-27B-mlx-uniform-4bit-LOW` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW`, paired vs xhigh `m32b` + medium `m24`) → S3 M34 (`Ornith-1.0-35B-mlx-uniform-4bit` `m34nat` vs `m34exp`
   moe_expand 27-39:20:0.8:0.5 on hep/mbpp n=50 k=3 + math500 n=100; overlays `queue/overlay_*.yaml`) → S4 M35 (dsh smoke → pilot → 22 python on
   `Qwen3.8-27B-mlx-uniform-4bit`, tune `m35`) → `=== QUEUE DONE ===`. Stages continue past a failure; router restored to the draft-OFF overlay between stages.
 - `queue/after_queue.py` pid in `queue/after_queue.pid` (7578): when the runner exits, stops the router and runs the KNOWN-POSITIVE MTP control
@@ -23,17 +22,28 @@ the edit into the worktree — READ the worktree file BEFORE opening it for writ
    (`tail -F | /usr/bin/grep --line-buffered -E 'FATAL|WARN|ALARM|===|C35|PILOT SIZING|SUMMARY|PAIRED|SCORE|ROWS|EFFORT READBACK|DSH SMOKE|M35 READ|M24 READ|END |SKIP|TIMEOUT|Traceback'`)
    with a pid-liveness loop + SELFTEST line. Also confirm `after_queue.py` is alive. Monitors do not survive a session.
 2. Land each finished stage from `queue.log` + `queue/paired_*.json`: campaign-results dated entry, PLAN row, rows commit (`data(bench)+docs`).
-   Untracked rows now: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED/mbppplus.m24.*` (in flight — do NOT commit until the `S2b_mxmed_mbpp_med_full` SUMMARY line); then `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/mbppplus.m24x.*` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED/opencode.jsonl`. Extend the campaign-results 2026-09-07 S2b entry (currently hep-only) when they land.
+   Untracked rows now: `Qwen3.8-27B-mlx-uniform-4bit-LOW/humanevalplus.m24.*` (S2c, in flight — do NOT commit until its SUMMARY line), then `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW/…`. S2c lands as ONE campaign-results entry (the third point on the effort curve; NEVER a candidate operating point — C31); then retire `Qwen3.8-27B-mlx-uniform-4bit-LOW` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW` from the registry (HEAD-blob technique, carriers regenerated).
+   **Every overlay in `queue/` (q, q2, overlay_*) predates `85db045` — they are fingerprint inputs and stay valid for the RUNNING arms only. Before any NEW arm, regenerate a `bench_overlay_q3.yaml` from HEAD (`git show HEAD:main_models.yaml` + the local-path overrides + draft-OFF edits, same recipe as q2) and restart the router on it.**
 3. Read the M35 smoke log (`queue/S4_dsh_smoke.log`) against the 8-point checklist in PLAN M35 before trusting the dsh leg.
 4. When `=== AFTER-QUEUE DONE ===`: if the control shows acceptance ~0.67 the mixed sidecar's zero is real (head incompatible → ships draft-OFF, record);
    if the control ALSO shows zero acceptance, MTP is broken on the bumped serving path → C-item, urgent (the B 1st/2nd/3rd triples ship mtp).
    Restart the router on `queue/bench_overlay_q2.yaml` before any new arm.
 
-## Landed 2026-09-07 14:30 — S2b hep leg (campaign-results 2026-09-07 S2b entry, PLAN M24 row)
+## RULED + SHIPPED 2026-09-07 20:00 — C50 + C51 (operator P10/P11): `85db045` registry + all carriers, `f689608` docs
+B menu: 1st `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, 2nd `Ornith-1.0-35B-mlx-uniform-4bit`, **3rd `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @ t0.5 + `reasoning_effort: medium`, DRAFT-OFF, role main**,
+4th `Qwen3.8-27B-mlx-uniform-4bit` (certified xhigh + mtp triple ships UNTIL its predictor is re-probed at medium; C51 ruled medium). `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED` is
+retired (rows stay). **OWED, in order:** (1) after `=== AFTER-QUEUE DONE ===` validates the probe instrument, re-probe the `Qwen3.8-27B-mlx-uniform-4bit` MTP predictor at
+medium (~30 min; acceptance was 0.674 at xhigh; bar ≥1.3×) → second complete commit: base `reasoning_effort: medium` + `# CERTIFIED` note, retire
+`Qwen3.8-27B-mlx-uniform-4bit-MED`, all carriers; if the re-probe FAILS the bar, C-item (medium draft-OFF vs xhigh + mtp is the operator's call). (2) go leg at medium on both
+checkpoints (not a gate). (3) `configgen` has NO `reasoning_effort` emitter — carriers rely on the registry default (FU-2); an emitter is a small feature if the operator wants the field explicit in `opencode.json`.
+
+## Landed 2026-09-07 — S2b (campaign-results 2026-09-07 S2b entry, PLAN M24 row)
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED` hep n=164 strict 95.1, 0 loops, 1.35 h: vs own xhigh (`m32b` 93.9) +1.2pp CI [−1.8, +4.9] EQUIVALENT, tokens 0.42×;
 vs `Qwen3.8-27B-mlx-uniform-4bit-MED` (93.9) +1.2pp CI [−1.2, +3.7] EQUIVALENT, tokens 0.79× CI [0.65, 0.94], wall 1.35 h vs 1.27 h. **At medium-vs-medium the
 mixed checkpoint's hep wall edge is GONE** (slower decode at 4.98 bits eats the token saving) → C50's usability case now rests on the agentic legs; S2b's
-opencode leg (mixed at medium vs the base-medium 19/22) is the deciding cell. Extra paired JSON: `queue/paired_S2b_mxmed_vs_u4med_hep.json` (run `paired_ofat.py` from `benchmark/` with `PYTHONPATH=.`).
+opencode leg decided it: **22/22, 0 stall-kills** (vs base-medium 19/22 with 3, discordant 3:0 on its stall items, p=.25); mbpp k=3 medium 80.0 vs own xhigh 81.3 / base-medium 80.7 (both inconclusive), tokens 0.32× / 0.98×;
+pooled n=214 EQUIVALENT on both cells (+0.6pp / +0.8pp). Extra paired JSON: `queue/paired_S2b_mxmed_vs_u4med_{hep,mbpp}.json` (run `paired_ofat.py` from `benchmark/` with `PYTHONPATH=.`; pooled read = `load_arm` + `stats.paired_delta(strata=bench)`).
+**Hook fix `c03f610`:** `bench.modelnames` now exempts `*_samples_eval_results.json` (EvalPlus grader output embeds model code; a variable named after an effort fragment blocked a data commit). The commit-msg hook treats the bare effort words as shorthands too — write around them.
 
 ## Closed this session (campaign-results 2026-09-06 ×2, 2026-09-07 ×2; lab-notebook 2026-09-06/07)
 - **M33** math500 n=100: three-way tie (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 89 / `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 88 / `Ornith-1.0-35B-mlx-uniform-4bit` 86 strict), July basis superseded → **C48 RULED: C 1st `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 2nd `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (provisional)**.
@@ -48,8 +58,7 @@ opencode leg (mixed at medium vs the base-medium 19/22) is the deciding cell. Ex
   component) — mark such prose `allow-shorthand`.
 
 ## THE QUEUE AFTER THE RUNNER (operator)
-1. C50 + C51 rulings → registry/carrier changes in ONE commit each (a pick or tune change touches all five carriers; medium adoption also needs the
-   predictor re-probe at medium once the instrument is validated).
+1. ~~C50 + C51 rulings~~ DONE `85db045`; remaining: the base's predictor re-probe at medium → second commit (see RULED section).
 2. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` temperature ladder (C 1st, t1.0 never laddered) — proposal + pilot.
 3. M17 / D11 / M18 read; C axes at medium (math500/ifeval) if C51 adopts medium.
 
