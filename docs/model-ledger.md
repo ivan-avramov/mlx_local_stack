@@ -78,6 +78,10 @@ of `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` uploaded + verified 2026-08-23.
 
 Take the runner-up if turn latency matters more than task success rate.
 
+**Menu update 2026-09-07 (C50 + C51, `85db045`):** 3rd `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` @ t0.5 + `reasoning_effort=medium`, draft-OFF
+(M32b + S2b: tied quality at medium-vs-medium, opencode python 22/22 with zero stall-kills, go 20/22; nothing Holm-surviving — a menu-order call);
+4th `Qwen3.8-27B-mlx-uniform-4bit` (certified xhigh + mtp triple; moves to medium after its predictor is re-probed at medium).
+
 **Predictors (the third member of each triple) — all three B-menu entries CERTIFIED, registry
 `draft_kind: mtp`, each on a paired ON/OFF humanevalplus n=164 acc TOST ±5pp EQUIVALENT:**
 `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` M6b 2026-08-25 (own native head, acceptance 0.923,
