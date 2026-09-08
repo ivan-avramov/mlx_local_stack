@@ -7,6 +7,13 @@ across (C47). Working tree: NINE intentional `main_models.yaml` local-path overr
 committed registry edits go via the HEAD blob (`git show HEAD:main_models.yaml` → edit → `git hash-object -w` → `git update-index --cacheinfo`; then mirror
 the edit into the worktree — READ the worktree file BEFORE opening it for write). origin/main = `4acefd2` (operator pushed 2026-09-07 14:10); UNPUSHED since: `9414861` … `25257b6` + this handoff (12 commits). Push only on in-turn approval. **Worktree overrides are now SEVEN** (the `-MED` and both `-LOW` bench clones of the two `Qwen3.8-27B` checkpoints were retired from the registry; `Qwen3.8-27B-mlx-uniform-4bit-MED` remains until the base moves to medium). <!-- allow-shorthand -->
 
+## Resumed 2026-09-07 — C52 resolved (supersedes C52 blockers below)
+- Operator approved C52(a); hook fix committed `76272a1`, 55 tests pass after failing regression cases.
+- The two completed S2c result directories are landed with this checkpoint (164 rows each; SUMMARY/SCORE and paired evidence verified). No S3 rows landed.
+- Runner 7556, waiter 7578 and router 82020 verified alive; detached monitor pid in `queue/codex_resume_monitor.pid`, log `queue/codex_resume_monitor.log`; event-filter and pid-loop SELFTEST passed.
+- S3 watchdog total is 50 but counts sample rows: this arm expects 150 (50 x 3). Its zero-remaining ETA is invalid; preserve the running runner. C53 records the correction proposal.
+- Before any new arm, use regenerated q3 from current HEAD as required by checklist item 2; older q2 restart advice below is superseded.
+
 ## Live processes (verify by pid, never infer)
 - `queue/queue_chain2.py` pid in `queue/queue.pid` (7556), log `queue/queue.log`, launched 12:55. The orphaned S2b hep driver exited 14:08; router moved to
   `bench_overlay_q2.yaml` (pid 82020) 14:09; **S2b DONE 19:41 and landed** (`9414861`, `ccf45e0`, `bbda2c1`); **S2c DONE 21:52, docs/registry landed `25257b6`, ROWS UNTRACKED (C52)**. NOW IN S3 M34 (started 21:52; hep native pilot 14/15 converged, 1 degenerate loop, sized 4.6 h for n=50 k=3 lower bound). S2c was: (hep n=164 on `Qwen3.8-27B-mlx-uniform-4bit-LOW` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW`, paired vs xhigh `m32b` + medium `m24`) → S3 M34 (`Ornith-1.0-35B-mlx-uniform-4bit` `m34nat` vs `m34exp`
