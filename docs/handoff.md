@@ -11,8 +11,13 @@ the edit into the worktree — READ the worktree file BEFORE opening it for writ
 - Operator approved C52(a); hook fix committed `76272a1`, 55 tests pass after failing regression cases.
 - The two completed S2c result directories are landed with this checkpoint (164 rows each; SUMMARY/SCORE and paired evidence verified). No S3 rows landed.
 - Runner 7556, waiter 7578 and router 82020 verified alive; detached monitor pid in `queue/codex_resume_monitor.pid`, log `queue/codex_resume_monitor.log`; event-filter and pid-loop SELFTEST passed.
-- S3 watchdog total is 50 but counts sample rows: this arm expects 150 (50 x 3). Its zero-remaining ETA is invalid; preserve the running runner. C53 records the correction proposal.
+- S3 watchdog total is 50 but counts sample rows: this arm expects 150 (50 x 3). Its zero-remaining ETA is invalid; preserve the running runner. C53 approved and fixed in the inactive next-runner copy; see below.
 - Before any new arm, use regenerated q3 from current HEAD as required by checklist item 2; older q2 restart advice below is superseded.
+
+## C53 implemented 2026-09-07 (operator P18)
+- Inactive `$STACK_WORKDIR/queue/queue_chain3.py` changes only watchdog `--total` to `limit * samples`; NOT launched. Refresh queue stages and overlay from current HEAD before using this copy.
+- Regression: `$STACK_WORKDIR/queue/test_queue_watch_total.py`; run with the bench interpreter. Extracts only `run_generate` via AST, mocks subprocesses and file writes. 50x3 and 5x3 failed first; all three cases (including 164x1) now pass.
+- Live runner SHA256 `1328513360513df09b95bd0e819552f16c063b0e96cc7979a0a93b79526df7cd`; corrected copy SHA256 `494b721826ea7cbae3e8c6ed11b18a672fd786312dc3df4b754ffcbb2ed61213`. Live runner and waiter verified alive after the fix.
 
 ## Live processes (verify by pid, never infer)
 - `queue/queue_chain2.py` pid in `queue/queue.pid` (7556), log `queue/queue.log`, launched 12:55. The orphaned S2b hep driver exited 14:08; router moved to
