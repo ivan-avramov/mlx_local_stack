@@ -22,7 +22,7 @@ the edit into the worktree — READ the worktree file BEFORE opening it for writ
 ## Queue update 2026-09-08 — M34 follow-ups authorized
 - Operator superseded M34's original close rule. Initial OFAT is complete; native production routing remains unchanged.
 - PLAN M34a (held-out coding, MBPPPlus first) and M34b (production MTP interaction with matched OFF controls) are authorized, after current M35, after-queue controls and owed C51 certification. Sample counts/runtime require pilot sizing before launch.
-- PLAN M34c is a proposed bounded expert-expansion pilot for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, not yet approved. Map its actual MoE layers before selecting the expansion range.
+- PLAN M34c is an approved bounded expert-expansion pilot for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (operator P70, 2026-09-08), queued after M34a/M34b. Five seeded random cases each on MBPPPlus and Math500, both native and expanded routing, predictor OFF; review before any full campaign. Map its actual MoE layers before selecting the expansion range.
 - These are PLAN queue entries, not appended executable stages. Current runner/waiter are unchanged; after_queue still leaves the router DOWN. A successor must use fresh q3 overlays.
 
 ## Live processes (verify by pid, never infer)
