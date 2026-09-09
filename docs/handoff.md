@@ -25,6 +25,11 @@ the edit into the worktree — READ the worktree file BEFORE opening it for writ
 - PLAN M34c is an approved bounded expert-expansion pilot for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (operator P70, 2026-09-08), queued after M34a/M34b. Five seeded random cases each on MBPPPlus and Math500, both native and expanded routing, predictor OFF; review before any full campaign. Map its actual MoE layers before selecting the expansion range.
 - These are PLAN queue entries, not appended executable stages. Current runner/waiter are unchanged; after_queue still leaves the router DOWN. A successor must use fresh q3 overlays.
 
+## M35 decision 2026-09-08 (operator agrees with P80)
+- Planned dsh executions complete: `Qwen3.8-27B-mlx-uniform-4bit` 19/22, three stalls, 2.15 h; opencode reference sessions 20/22 and 18/22 in 1.69 h and 1.59 h.
+- Keep opencode primary; no further dsh expansion queued. Retain the adapter as an alternative.
+- Outstanding closeout: full eight-point smoke audit and final results/data commit. Do not describe the instrument as fully validated before that audit.
+
 ## Live processes (verify by pid, never infer)
 - `queue/queue_chain2.py` pid in `queue/queue.pid` (7556), log `queue/queue.log`, launched 12:55. The orphaned S2b hep driver exited 14:08; router moved to
   `bench_overlay_q2.yaml` (pid 82020) 14:09; **S2b DONE 19:41 and landed** (`9414861`, `ccf45e0`, `bbda2c1`); **S2c DONE 21:52, docs/registry landed `25257b6`, ROWS UNTRACKED (C52)**. NOW IN S3 M34 (started 21:52; hep native pilot 14/15 converged, 1 degenerate loop, sized 4.6 h for n=50 k=3 lower bound). S2c was: (hep n=164 on `Qwen3.8-27B-mlx-uniform-4bit-LOW` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-LOW`, paired vs xhigh `m32b` + medium `m24`) → S3 M34 (`Ornith-1.0-35B-mlx-uniform-4bit` `m34nat` vs `m34exp`
