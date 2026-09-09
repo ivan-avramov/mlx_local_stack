@@ -5,6 +5,7 @@ Live, in reading order for a cold start:
 | file | role |
 |---|---|
 | `handoff.md` | THE one handoff, rewritten in place each session — read first |
+| `campaign-supervision.md` | recurring Codex review authority, recovery boundaries and local scheduler operation |
 | `PLAN.md` | the backlog / queue (authoritative for what is live); rows M*, D*, C*, H*, S* |
 | `open-questions.md` | operator decision queue (O*/C* items; closed items are never deleted) |
 | `campaign-results.md` | living results record: dated entries + the scoreboard + comparability rules |
