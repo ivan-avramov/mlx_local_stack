@@ -1,4 +1,13 @@
-# Handoff — 2026-09-07 22:30 (SESSION CHECKPOINT — C50 + C51 RULED AND SHIPPED `85db045`; S2b + S2c DONE; QUEUE RUNNER 2 self-driving S3 M34 (started 21:52, ~16 h) → S4 M35 → after_queue MTP control; owed: C52 hook ruling + the two S2c row dirs, base predictor re-probe at medium → second commit)
+# Handoff — 2026-09-08 19:02 (C51 medium predictor running; automatic M34a held-out pilots armed)
+
+## CURRENT LIVE CHECKPOINT — supersedes historical process/queue notes below
+- C51 medium predictor check for `Qwen3.8-27B-mlx-uniform-4bit` launched 18:59:31: PID in `$STACK_WORKDIR/queue/c51_medium/run.pid` (89319), log `queue/c51_medium/run.log`, per-item `progress.jsonl`, final `result.json`. Explicit paired seeds, request timeout 7800 s, per-item persistence and five-minute assessments. Medium effort, draft-OFF first arm, SESSION_MAX=2 and APC absent verified on worker PID 89331. ON arm follows automatically. Gate is a speed screen, not new quality evidence.
+- Fresh `queue/bench_overlay_q3.yaml` derives from HEAD with four local checkpoint paths and draft-OFF; the three local drafter paths are stripped from this OFF overlay. `queue/c51_medium/overlay.yaml` changes only the target effort to medium. Registry-of-record worktree untouched.
+- Automatic successor `$STACK_WORKDIR/queue/queue_followups.py`, PID in `queue/followups.pid` (89361), log `queue/followups.log`, launcher errors `queue/followups_launcher.log`: waits for C51 PID exit AND a successful result, then runs M34a held-out pilots on `Ornith-1.0-35B-mlx-uniform-4bit`. MBPPPlus first, then HumanEvalPlus; native and expanded each, 5 seeded random cases x 3 samples. IDs in `queue/m34a_heldout_pilots.json`, seed 3401; all original 50-case sets excluded. Distinct `overlay_q3_*` file preserves old overlays. No production certification changes are automated; review C51 separately while pilots run.
+- Full M34a sizing awaits these pilots. M34b/M34c remain authorized backlog entries, not executable stages. Pilot runner ends with `M34a PILOTS DONE`, leaving its router up; prepare the next continuation before then.
+- Earlier queue and after_queue finished normally. Known-positive MTP control: 1.525x, acceptance 68.6%. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` re-probe: 0.613x, 0/47980 accepted; keep draft-OFF. Both earlier probes used the historical effort setting; do not label the mixed result a medium-effort measurement.
+- M34 initial six arms complete; M35 execution complete (19/22, three stalls). Their final data/results landing and M35 instrument audit remain owed. No live serving files or runners may be edited. These daemons record progress but do not wake a dormant conversation.
+
 
 Single box (M5 Max 64 GB). **The box is BUSY and self-driving** (operator directive 2026-09-06: never idle; follow the queue). Router UP on
 `$STACK_WORKDIR/queue/bench_overlay_q2.yaml` (pid 82020, on `queue/bench_overlay_q2.yaml` since 14:09), SESSION_MAX=2,
