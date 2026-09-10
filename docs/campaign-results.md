@@ -1,5 +1,26 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-09 — C57 approved; Math500 scorer correction; MTP packaging diagnosis
+
+Operator approved the trend-based provisional B order now shown in README and the registry, plus C51 medium-effort adoption. Cross-session scores are descriptive; incomplete language coverage is not silently pooled or treated as failure. Expanded routing remains a candidate, never automatically promoted.
+
+**C58, corrected measurement:** math_verify received extracted bare expressions and misparsed intervals, tuples and fraction variants. Enclosing both expressions in math delimiters recovers correct answers without generation. TDD: four actual false-negative pairs failed before the change; nine regression/negative-control cases passed after it. Saved pre-correction scores are archived under `$STACK_WORKDIR/queue/math_grade_recovery/`.
+
+| Model / tune | n | Ordinary correct | Strict correct |
+|---|---:|---:|---:|
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit / m33 | 100 | 99 | 99 |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit / m33 | 100 | 99 | 97 |
+| Ornith-1.0-35B-mlx-uniform-4bit / m33 and m34nat (each) | 100 | 99 | 93 |
+| Ornith-1.0-35B-mlx-uniform-4bit / m34exp | 100 | 100 | 96 |
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit / m34cpnat and m34cpexp (each) | 5 | 5 | 5 |
+
+These supersede earlier accuracy counts and associated accuracy intervals, including the M33 narrative below. Tokens, timings and convergence classifications do not change. The C leader retains the favorable strict-quality and runaway trend; all three models solve nearly every item ordinarily. M34 expansion's mathematical quality trend is more favorable after correction. The five-case transfer pilot is at ceiling in both routing arms, not a near-zero model failure. Corrected paired strict deltas (descriptive, before family multiplicity adjustment): C first versus second +2pp CI [-2,+6]; C first versus `Ornith-1.0-35B-mlx-uniform-4bit` +6pp CI [+1,+12]. Expanded versus native routing on `Ornith-1.0-35B-mlx-uniform-4bit`: +3pp CI [-1,+8], token ratio 0.835 CI [0.669,1.028]. Analyses: `$STACK_WORKDIR/queue/math_grade_recovery/{M33_C1_C2,M33_C1_C3,M34_math_corrected}.json`; n=100 nominal axis MDE is 12.5pp and n=5 cannot establish quality equivalence. Wider historical Math500 regrade coverage remains owed.
+
+**C59, mechanism isolated offline:** the original `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` sidecar has 22 matrix/quant tensors identical to the positive base sidecar, but seven norm vectors remain in HF offset convention after their `mtp.` key prefixes were stripped. The loader's +1 conversion only applies to prefixed keys. Applying +1 with BF16 rounding to those seven vectors makes all 29 tensor payloads identical to the known-positive sidecar. Separate candidate and audit live at `$STACK_WORKDIR/queue/mtp_recovery/`; original artifact unchanged. This explains a plausible failure mechanism, not yet a live speed/quality result. Production remains predictor OFF. M36 queues current-path control, original, corrected, then quality OFAT if the screen passes.
+
+**Expansion implementation review:** 47 CPU-compatible tests passed. Eleven remaining tests could not be validated in that environment: seven require GPU Metal kernels and four require serving CLI dependencies (`mlx_audio`). This is not evidence of eleven routing defects. Full tests with serving dependencies are queued after model unload. Signed-score floor, BF16 preservation, layer scoping and unchanged native path were reviewed; no new routing defect demonstrated. Rosetta MBPPPlus evaluation faults remain separate from generation quality; repeat saved-output grading before deciding whether any regeneration is necessary. M34r queues larger quality resolution with fresh controls and seeded pilots.
+
+
 **Structure of this doc, and why.** The top section is **my recommendations** — judgement, hand-written,
 for the two picks the campaign exists to make. Below it is **the scoresheet** — pure measurement,
 **generated from the persisted rows by a command**, never hand-maintained. The narrative record (every
