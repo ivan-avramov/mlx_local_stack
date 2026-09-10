@@ -1,5 +1,14 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 14:35 — C48 t0.3 coding complete; long request resolved without restart
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MBPPPlus t0.3 ordinary/strict87%, paired t1.0 control84%; +3pp CI[−1,+8], n100×1, nominal MDE12.5pp, exclusive solves4:1. Convergence98% versus100%, two repetition non-convergences, zero transport errors. Token ratio2.230 CI[1.174,3.156], means3874/1737; generation0.998/0.367h. Analysis: `benchmark/results/paired_c48t03_mbppplus.json`.
+
+The stalled-looking request resolved as Mbpp/260:102,401 completion tokens/1082.3s, recorded non-converged; the earlier Mbpp/468 used82,036tokens/815.6s. Completed rows then advanced77→100 and native grading succeeded. Waiting rather than killing the busy worker preserved the valid measurement and its tail cost.
+
+Recommendation: t0.3 ties t0.5's coding point estimate87% but has worse repetition/time cost (two versus one non-converged;0.998 versus0.582h). Keep t0.5 as provisional preferred fully measured setting; complete t0.3 Math500 before final tune choice, because a mathematical quality gain could alter the tradeoff. No production changes or B/C reorder. Queue automatically started final t0.3 Math500 at14:34:38; medium C successor remains waiting safely.
+
+
 ## 2026-09-10 13:37 — C48 t0.5 completed; provisional quality-first choice
 
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` Math500 t0.5 ordinary/strict97%, t1.0 control96%; +1pp CI[0,+3], n100×1, nominal MDE12.5pp, exclusive solves1:0. Both100% converged, no errors. Token ratio1.159 CI[0.919,1.480], means3820/3296; generation0.826/0.716h. Analysis: `benchmark/results/paired_c48t05_math500.json`.
