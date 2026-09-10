@@ -6,7 +6,7 @@
 2. Verify `queue/go_medium.pid` and `queue/resolution.pid` against command lines and logs, not PID existence alone. Check per-item row advancement. Never edit either running script, carrier or overlay. Kill a waiting successor BEFORE stopping its predecessor.
 3. Keep the approved queue working. Check independent Rosetta regrade (`queue/resolution/regrade.pid`, serial evaluation logs and diff files). A repeated infrastructure fault is not a model failure. No regeneration until saved-answer recovery is exhausted.
 4. On EVERY completed test/regrade, update README's B/C ranking AND evidence tables, report learnings, trends, non-convergence and proposed movers. Quality first; inconclusive does not mean discard. Promotions require approval.
-5. Preserve SEVEN local `main_models.yaml` path overrides. Stage registry changes from the HEAD blob plus intended edits, never `git add main_models.yaml`. No push without explicit in-turn approval. Next discussion point P154; next C id C61.
+5. Preserve SEVEN local `main_models.yaml` path overrides. Stage registry changes from the HEAD blob plus intended edits, never `git add main_models.yaml`. No push without explicit in-turn approval. Next discussion point P155; next C id C61.
 
 ## Approved decisions and landed work
 
@@ -37,7 +37,7 @@
 
 - Review/land finished M34a/M34b/M34c and dsh result artifacts; dsh eight-point checklist remains separate. Standard opencode remains preferred.
 - Larger language coverage for the new B first choice; medium C axes, temperature ladder, M17/judge work remain PLAN items. Do not substitute this checklist for PLAN.
-- Upload/certify repaired sidecar only after validation and operator approval. Future pushes require fresh in-turn approval; publication was authorized for this turn.
+- **M36u upload explicitly queued/authorized 2026-09-09:** after M36 repair validation, stage and upload the exact corrected sidecar to `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter`; include checksums, repair provenance and measured medium-effort results, preserve existing revisions, verify anonymous download and SHA256, record HF revision. Do this as soon as validation finishes, without waiting for the expansion campaign. Production activation/certification still requires operator approval. Future git pushes require fresh in-turn approval; the previous stack push completed at `b668bc9`.
 
 ## Pasteable continuation
 
