@@ -1,5 +1,12 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-09 20:34 — M24g base medium Go complete; paired arm running
+
+`Qwen3.8-27B-mlx-uniform-4bit` at medium effort, t0.6 and predictor OFF completed22 Go tasks at19:03:46:16 passed, six stopped by the stall gate, total generation2.039h. Stalled tasks: bowling, alphametics, book-store, connect, dominoes, ledger. No transport-failure substitution: these are recorded agentic stall outcomes. Mechanism remains failure to make test progress, rather than a claim about standalone code generation capability.
+
+Learning/recommendation: medium effort reproduces the historical16/22 Go pass count; the Python efficiency finding has not produced an observed Go pass-count gain. Retain the approved B order and the model's Python/JavaScript recommendation, with Go weakness explicit. This single session does not establish equivalence across efforts or isolate causality. C has no new evidence or proposed mover from this coding arm. The matched `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` arm is still running; at20:34 it has16 completed tasks, all passing, zero stalls. Promising partial behavior is not a final score or basis for a new promotion. Finish the pair and report paired uncertainty, exclusive solves and latency before recommending changes.
+
+
 ## 2026-09-09 — Rosetta recovery: native evaluator validated, both model regrades complete
 
 Serial amd64 evaluation reproduced `rosetta error: mmap_anonymous_rw mmap failed` at329/578 padded MBPPPlus entries. Reduced concurrency did not resolve it. The faulting evaluator container was stopped, original grades restored, and Go generation preserved. Native ARM64 image uses the exact installed EvalPlus0.4.0.dev2 Python source, identical cached dataset files and pinned evaluation dependencies. Python remains3.11, but patch/base OS differ; this is a verified alternative evaluation environment, not bit-identical runtime. Audit hashes live in `benchmark/results/evalplus_arm64_recovery.audit.json`.
