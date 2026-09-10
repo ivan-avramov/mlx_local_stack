@@ -1,5 +1,57 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 10:39 — M34r transfer complete; successor blocked on process control
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` Math500 n100×1: expanded ordinary/strict98%, native96%; difference+2pp CI[0,+5], nominal MDE12.5pp, exclusive solves2:0. All200 responses converge with no errors. Output-token ratio1.277 CI[1.053,1.591], means4210/3296; generation1.023h expanded versus0.716h native. Analysis: `benchmark/results/paired_m34cr_math500.json`.
+
+Combined interpretation: expansion improves this math sample while reducing MBPPPlus from84% to82% (−2pp CI[−8,+4], nominal MDE12.5pp); both datasets cost more tokens/time. The aggregate count is unchanged across the two equal-sized datasets, but that aggregate must not hide the task-specific tradeoff. Recommendation:retain native as the general-purpose C recipe and preserve expanded routing as a math-oriented candidate if the operator values the extra mathematical solves over the runtime cost and coding tradeoff. Inconclusiveness is not a reason to discard the mathematical trend; neither is that trend permission for automatic promotion. No B/C order or production routing change.
+
+The full resolution chain completed10:35:05 and explicitly stopped its router/worker. C48 temperature successor remains prepared but unstarted: no PID/start log. Current sandbox denies process inspection/control, so it cannot be safely armed here; one-time normal-terminal command supplied in P203, or broader process-control access, is still required. Do not describe the machine as continuously benchmarking after this endpoint.
+
+
+## 2026-09-10 10:27 — M34r native Math500 control complete
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, native routing/predictor OFF, deployed t1.0, n100×1: ordinary/strict96%,100% convergence, zero errors/non-convergence. Generation0.716h, mean25.765s/task and3296 output tokens. This is a different seeded100-item set from M33's99% result; those point scores are not a paired estimate of regression. Its no-non-convergence pattern remains favorable, including longer converged responses.
+
+Recommendation:retain provisional C first choice/native routing and finish the matched expanded arm before the transfer verdict. No B/C reorder or new configuration change from this baseline alone. Expanded arm91/100 at10:27, no errors/non-convergence, mean35.5s implies about5minutes remaining before tails. The current queue is still advancing. C48 successor is prepared but has no PID/start log; process-control permission or the one-time terminal start already supplied in P203 remains necessary before it can take over.
+
+
+## 2026-09-10 08:57 — M34r transfer MBPPPlus pair complete; native Math500 running
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, deployed t1.0, predictor OFF, n100×1 each: expanded ordinary/strict82%, native84%; difference−2pp CI[−8,+4], nominal axis MDE12.5pp. Paired exclusive solves4:6. Both arms100% converged with no errors. Output-token ratio1.198 CI[0.890,1.506], means2081 expanded/1737 native; generation0.508/0.367h. Paired analysis: `benchmark/results/paired_m34cr_mbppplus.json`.
+
+Recommendation:retain native routing on the completed coding evidence: quality, tokens and wall-time point estimates all favor it. The earlier five-case expanded advantage did not persist at n100; this is not a rejection merely for statistical inconclusiveness. Expansion has no non-convergence reduction to buy in this dataset and instead adds routing/token cost. Finish the Math500 pair before the overall transfer verdict; C first choice and B rankings remain unchanged.
+
+Native Math500 pilot5/5 converged, mean6.6s/max13.8s; full14/100 at08:56, no errors/non-convergence, mean14.9s gives approximately21minutes remaining plus tails. Queue advancing normally; expanded Math500 follows. These are the last two stages of the current executable chain, so prepare the next already-authorized PLAN work before it finishes rather than leaving the box idle.
+
+
+## 2026-09-10 08:24 — M34r transfer native MBPPPlus complete
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, native routing, predictor OFF, deployed t1.0, n100×1: ordinary/strict84%,100% convergence, no non-convergence or transport errors. Generation0.367h, mean13.22s/task and1737 output tokens; maximum25,507tokens still converged. This extends its favorable non-convergence evidence beyond Math500, but standalone coding does not establish agentic edit quality or a new B ranking.
+
+Recommendation:retain its provisional C first-choice/native recipe and complete the matched expansion pair before changing routing. No B/C reorder from this baseline alone. Expanded pilot5/5 converged, mean15.1s/max35.7s; expanded full31/100 by08:23, zero errors/non-convergence, approximately14minutes remaining by observed mean before tails. The queue transitioned automatically and needs no correction; paired Math500 remains next.
+
+
+## 2026-09-10 08:00 — M34r four-cell interaction complete; transfer resolution advancing
+
+`Ornith-1.0-35B-mlx-uniform-4bit`, paired MBPPPlus100 items, one seeded response each, unchanged tune/budget:
+
+| Routing / predictor | Ordinary | Strict | Non-converged /100 | Generation hours | Mean output tokens |
+|---|---:|---:|---:|---:|---:|
+| Native OFF | 83% | 81% | 2 | 1.059 | 3503 |
+| Native MTP | 83% | 78% | 6 | 1.467 | 6794 |
+| Expanded OFF | 82% | 77% | 7 | 2.630 | 7379 |
+| Expanded MTP | 82% | 78% | 5 | 1.372 | 5842 |
+
+Zero transport errors in all400 responses. Expanded-minus-native with MTP: strict0pp CI[−6,+6], ordinary−1pp CI[−5,+3], token ratio0.860 CI[0.425,1.673]. Without MTP: strict−4pp CI[−11,+3], token ratio2.106 CI[0.850,5.045]. Nominal axis MDE12.5pp; descriptive paired intervals before family adjustment. All three pair analyses are persisted under `benchmark/results/paired_m34r_*.json`.
+
+Mechanism/trends: expanding routing at predictor-OFF increases repetition/non-convergence and token cost; MTP partly changes that tail distribution, yielding equal strict success and a modest performance point-estimate benefit versus native MTP. It does not improve ordinary correctness, and native OFF has the best quality/time point estimates in this set. Prior M27 HumanEvalPlus n164 recorded MTP strict85.98% versus86.59% OFF (−0.61pp CI[−6.7,+5.5], nominal MDE9.8pp), with3.28h versus4.65h and1.56x paired decode. Keep those different serving-session and dataset results separate, not pooled into a convenient verdict.
+
+Recommendation:retain native routing overall; no expanded configuration promotion. This is a quality-first choice across conflicting trends, not rejection merely for inconclusiveness. Existing certified MTP remains the daily-driver setting given its broader HumanEvalPlus evidence; the new MBPPPlus tail tax qualifies that choice and warrants continued observation rather than an automatic withdrawal. Earlier expansion benefits on HumanEvalPlus/Math500 remain real evidence but do not outweigh the inconsistent cross-dataset quality trend here. B/C order unchanged.
+
+Queue automatically transitioned to `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` native MBPPPlus:pilot5/5 converged, mean14.2s/max20.2s; full arm38/100 by08:00, no errors/non-convergence, mean9.8s and approximately10minutes remaining before tails. Next expanded MBPPPlus and paired Math500 remain authorized. No intervention needed.
+
+
 ## 2026-09-10 07:36 — M34r three cells complete, fourth progressing
 
 `Ornith-1.0-35B-mlx-uniform-4bit` MBPPPlus n100×1, matching item set/seed/tune: native MTP ordinary/strict83%/78%,6 non-converged,1.47h; native OFF83%/81%,2 non-converged,1.06h; expanded OFF82%/77%,7 non-converged,2.63h. All completed arms have zero transport errors. Expanded MTP is still in flight,75/100 by07:36, four non-converged and no transport errors; its final quality is not yet available.
