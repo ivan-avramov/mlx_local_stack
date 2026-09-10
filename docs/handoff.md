@@ -1,16 +1,16 @@
 # Handoff — 2026-09-09 18:07 (Go running; native grader validated; successor rearmed)
 
 
-## Latest live assessment — 2026-09-09 23:46
+## Latest live assessment — 2026-09-10 00:05 PDT (first automatic review)
 
-- Resolution runner25346 alive. Corrected MTP screen COMPLETE21:19:24:1.836x decode,3843/4548 acceptance (84.5%),6/6 converged. Known-positive control1.785x/84.8%; original mixed sidecar0.620x/zero acceptance. Repair mechanism supported; production remains OFF pending quality review, M36u upload queued.
-- Quality OFAT:HumanEvalPlus OFF150/150 generated and graded23:14:43,50 tasks×3 samples,92% ordinary/strict,100% convergence, no errors. Generation1.898h; longest response2409.2s/48,353 tokens but converged. ON116/150 by23:46, no errors or non-convergence, worker43469/driver43546. Monitor43547 writes `queue/watch_m36on_humanevalplus_full.json` (plain text despite extension):106 rows at23:43,+15 in five minutes; mean15.8s. ON final accuracy still pending.
-- Next complete ON and grade, then MBPPPlus OFF/ON, expansion integration tests and M34r. Do not modify running scripts/overlays. Both deferred bench carriers activated correctly; seven registry path overrides remain intentional. B first choice strengthened by Go22/22 versus16/22, no new ranking or C evidence this checkpoint.
+- Desktop heartbeat actually dispatched00:03:55.797 PDT, verified by injected heartbeat and scheduler database last-run timestamp; next scheduled00:08:55.792. First dispatch was3m55s later than originally displayed midnight; do not promise exact wall-clock dispatch. Verification complete. Assessment log: `$STACK_WORKDIR/queue/desktop_reviews.log`.
+- HumanEvalPlus repaired MTP ON COMPLETE150/150 and graded: ordinary/strict90.67% versus OFF92.0%, paired difference−1.33pp CI[−5.33,+2.0], n50×3, nominal MDE17.7pp. All300 responses converge; no errors. ON/OFF generation0.710/1.898h; output-token ratio0.687 CI[0.347,1.099]. Retain production OFF pending MBPPPlus, keep candidate for its strong performance trend; no B/C reorder.
+- Runner25346 automatically advanced to MBPPPlus OFF. Seeded pilot15/15 completed00:04:09:mean19.0s,max36.3s; full driver50111, watcher50112, sole worker49468. Current24/150, zero errors/non-convergence; mean16.2s gives remaining34.0minutes before tail allowance. No correction needed. Then MBPPPlus ON, expansion tests/resolution. M36u upload remains queued after validation.
 
 ## Desktop scheduled supervision — 2026-09-09 23:55 PDT
 
 - ACTIVE same-chat heartbeat saved through the desktop automation tool: `keep-local-stack-campaign-progressing`, name `Keep local stack campaign progressing`, every five minutes. Target is the existing campaign conversation. All work explicitly uses `$STACK_REPO`, not the desktop task's temporary cwd or a new worktree.
-- Scheduler database readback: next execution2026-09-10 00:00 PDT; no first automatic run recorded at setup. FIRST AUTOMATIC RUN MUST verify actual scheduler dispatch/start and observed item counts, report that evidence to the operator, and update this checkpoint. A saved schedule alone is not proof it executed.
+- First automatic execution VERIFIED2026-09-10 00:03:55 PDT by delivered heartbeat, matching database last-run timestamp and live item-count assessment. Subsequent next-run readback00:08:55 PDT. Original displayed midnight time was not exact dispatch.
 - Each scheduled review must inspect progress delta, mean-based ETA, errors/convergence/output sanity, perform authorized recovery and continue approved PLAN work after exits. Preserve live scripts/overlays and local registry overrides; no duplicate model or driver; no automatic promotion or git push. Report completed-test learnings and B/C implications; update README evidence/rankings and handoff. Keep app running and machine awake for local scheduled work.
 - This replaces the earlier absence of agent wakeups. Existing detached runner and five-minute diagnostic daemon continue; no AppleScript or launchd supervisor added. Schedule survives as saved desktop configuration; verify its next run after app restarts.
 
@@ -20,7 +20,7 @@
 2. Verify `queue/go_medium.pid` and `queue/resolution.pid` against command lines and logs, not PID existence alone. Check per-item row advancement. Never edit either running script, carrier or overlay. Kill a waiting successor BEFORE stopping its predecessor.
 3. Keep the approved queue working. Check independent Rosetta regrade (`queue/resolution/regrade.pid`, serial evaluation logs and diff files). A repeated infrastructure fault is not a model failure. No regeneration until saved-answer recovery is exhausted.
 4. On EVERY completed test/regrade, update README's B/C ranking AND evidence tables, report learnings, trends, non-convergence and proposed movers. Quality first; inconclusive does not mean discard. Promotions require approval.
-5. Preserve SEVEN local `main_models.yaml` path overrides. Stage registry changes from the HEAD blob plus intended edits, never `git add main_models.yaml`. No push without explicit in-turn approval. Next discussion point P173; next C id C61.
+5. Preserve SEVEN local `main_models.yaml` path overrides. Stage registry changes from the HEAD blob plus intended edits, never `git add main_models.yaml`. No push without explicit in-turn approval. Next discussion point P177; next C id C61.
 
 ## Approved decisions and landed work
 

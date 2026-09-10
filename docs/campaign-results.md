@@ -1,5 +1,14 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 00:05 — M36 first quality pair complete; automatic desktop review verified
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` HumanEvalPlus, medium t0.5, n50×3 each: repaired MTP ON ordinary/strict90.67%, OFF92.0%; paired delta−1.33pp CI[−5.33,+2.0], nominal MDE17.7pp, descriptive interval before campaign multiplicity adjustment. Two items favor OFF in per-item success fractions, none favor ON. Both150-response arms have100% convergence and no errors. ON/OFF generation0.710/1.898h; output-token ratio0.687 CI[0.347,1.099], means700/1020 tokens. Analysis: `benchmark/results/paired_m36_humanevalplus.json`.
+
+Mechanism/tradeoff: useful draft acceptance improves decode, while changed sampling trajectories alter outputs and tail lengths; the OFF arm contained a48,353-token converged answer, ON maximum5143. The observed wall benefit includes this tail difference and must not be attributed entirely to decode acceleration. Quality trends slightly against ON and its interval extends below the−5pp margin. Recommendation: continue the authorized MBPPPlus pair, retain production OFF until combined review, keep the repaired predictor as a promising candidate rather than reject it for inconclusiveness. B order remains approved; C receives no new ranking evidence.
+
+First desktop scheduled review delivered00:03:55 PDT, verified against scheduler last-run timestamp. It observed completed HumanEvalPlus and automatic transition to the MBPPPlus OFF full arm after15/15 pilot responses. No idle gap requiring recovery; one model worker verified. Next schedule readback00:08:55. Review details persist in the workdir log and handoff.
+
+
 ## 2026-09-09 23:46 — M36 repaired sidecar passed screening; first quality baseline complete
 
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` corrected sidecar completed its three-task OFF/ON screen21:19:24:median decode24.162→44.351tok/s, ratio1.836; accepted3843/4548 (84.5%);6/6 responses converged, no errors. This screening ratio has no powered interval. The original sidecar had zero acceptance after the known-positive instrument control passed. Repairing the seven normalization vectors restored useful speculative predictions, supporting the packaging diagnosis.
