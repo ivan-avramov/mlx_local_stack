@@ -1,11 +1,12 @@
 # Handoff — 2026-09-09 18:07 (Go running; native grader validated; successor rearmed)
 
 
-## Latest live assessment — 2026-09-09 20:34
+## Latest live assessment — 2026-09-09 21:00
 
-- Go runner59406 and resolution successor25346 alive. Base medium Go completed19:03:46:16/22 passes, six stalls,2.039h. README/PLAN/results updated; retain B order, no new C evidence.
-- `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` medium Go:16/22 completed,16 passes, zero stalls; worker16542 and driver17855 verified. Last five-minute log advanced+1, mean306.6s/task. Approximately31minutes remaining from mean at16 rows, heavy-tail uncertainty; do not treat partial score as final.
-- Successor still waiting correctly; MTP controls/repair and resolution have not started. M36u upload remains queued after validation. No intervention needed from this assessment. Earlier launch identities below are historical.
+- Go COMPLETE20:46:23. Mixed medium22/22, zero stalls,1.697h versus base16/22, six stalls,2.039h. Paired success difference+27.3pp CI[+9.1,+45.5], nominal MDE26.7pp; exclusive solves6:0. README/evidence updated; strengthens approved B first choice for Python/Go, no C movement or new promotion.
+- Successor25346 advanced automatically20:51:14, shut down old router/worker, activated both deferred bench carriers and passed configgen check. Those carriers now match committed state; seven registry path overrides remain intentional.
+- M36 known-positive control running: base medium OFF3/3 completed; ON started20:57:38,2/3 complete by21:00:12; all five responses converge, no errors, accepted drafts positive. Worker40042 is the only model worker, verified medium+MTP. Next original mixed sidecar, then corrected sidecar, then conditional quality and expansion resolution. M36u upload remains queued.
+- Operator noticed ~5% memory bump shortly before20:59. Timing matches20:57 MTP ON reload; additional drafter/runtime buffers are plausible. No before/after allocator trace exists, so exact attribution is unproven. One worker verified; no inference from RSS about MLX capacity. No intervention indicated.
 
 ## Resume checklist
 
@@ -13,7 +14,7 @@
 2. Verify `queue/go_medium.pid` and `queue/resolution.pid` against command lines and logs, not PID existence alone. Check per-item row advancement. Never edit either running script, carrier or overlay. Kill a waiting successor BEFORE stopping its predecessor.
 3. Keep the approved queue working. Check independent Rosetta regrade (`queue/resolution/regrade.pid`, serial evaluation logs and diff files). A repeated infrastructure fault is not a model failure. No regeneration until saved-answer recovery is exhausted.
 4. On EVERY completed test/regrade, update README's B/C ranking AND evidence tables, report learnings, trends, non-convergence and proposed movers. Quality first; inconclusive does not mean discard. Promotions require approval.
-5. Preserve SEVEN local `main_models.yaml` path overrides. Stage registry changes from the HEAD blob plus intended edits, never `git add main_models.yaml`. No push without explicit in-turn approval. Next discussion point P158; next C id C61.
+5. Preserve SEVEN local `main_models.yaml` path overrides. Stage registry changes from the HEAD blob plus intended edits, never `git add main_models.yaml`. No push without explicit in-turn approval. Next discussion point P161; next C id C61.
 
 ## Approved decisions and landed work
 

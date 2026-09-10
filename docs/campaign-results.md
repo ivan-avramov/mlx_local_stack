@@ -1,5 +1,17 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-09 21:00 — M24g complete: matched medium Go supports the approved B leader
+
+| Model | Passes /22 | Stalls | Generation hours |
+|---|---:|---:|---:|
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | 22 | 0 | 1.697 |
+| Qwen3.8-27B-mlx-uniform-4bit | 16 | 6 | 2.039 |
+
+Same22 Go tasks, opencode1.18.15, medium effort, predictor OFF and each model's deployed temperature. Mixed checkpoint minus base success difference+27.3pp, paired bootstrap95% CI[+9.1,+45.5], nominal axis MDE26.7pp; exact paired two-sided p=.03125 before campaign multiplicity adjustment. Exclusive solves6:0: bowling, alphametics, book-store, connect, dominoes, ledger. Wall-time ratio0.832 CI[0.614,1.064]. Persisted analysis: `benchmark/results/paired_go_medium.json`.
+
+Learning/mechanism: the six extra successes correspond to the base model's six stall-gate terminations. The leader completed them through continuing test progress; this does not prove a per-token decode advantage. Its zero-stall22/22 result now holds on both medium Python and Go. Recommendation: retain and strengthen confidence in the already-approved B first choice for these languages; prioritize its MTP recovery to address decode performance. Missing Rust/Java/JavaScript coverage and single-session uncertainty remain. No C ranking change: agentic Go is not new research/design evidence. No automatic promotion or predictor activation.
+
+
 ## 2026-09-09 20:34 — M24g base medium Go complete; paired arm running
 
 `Qwen3.8-27B-mlx-uniform-4bit` at medium effort, t0.6 and predictor OFF completed22 Go tasks at19:03:46:16 passed, six stopped by the stall gate, total generation2.039h. Stalled tasks: bowling, alphametics, book-store, connect, dominoes, ledger. No transport-failure substitution: these are recorded agentic stall outcomes. Mechanism remains failure to make test progress, rather than a claim about standalone code generation capability.
