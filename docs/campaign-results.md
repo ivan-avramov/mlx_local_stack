@@ -1,5 +1,12 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-09 21:12 — M36 original mixed sidecar failure reproduced
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` at medium completed all six OFF/ON probe responses, with convergence and no errors. Original sidecar accepted0/12,516 tokens. Median decode OFF24.254tok/s, ON15.048tok/s, ratio0.620. This three-task screening ratio has no powered speed interval; do not turn it into a general latency claim. The immediately preceding base known-positive control accepted84.8%, validating that the zero is observable and specific to this sidecar pairing.
+
+Mechanism/recommendation: rejected speculative tokens add verification work without useful draft progress. Keep the approved B leader predictor OFF while testing the norm-corrected artifact; zero acceptance is not a reason to discard its otherwise strong Python/Go quality. No B/C rank change. Corrected probe began21:12:38; three OFF baselines complete and ON arm started by21:17. Portable original probe rows: `benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/mtp.m36original.json`.
+
+
 ## 2026-09-09 21:01 — M36 known-positive control passed
 
 `Qwen3.8-27B-mlx-uniform-4bit` medium OFF/ON control completed all six responses with convergence and no errors. Median decode28.713→51.245tok/s, ratio1.785; accepted7387/8712 draft tokens (84.8%). This three-task speed screen validates the current serving instrument; it is not a powered quality result or evidence that speed improved over the earlier1.644x certification probe. B/C ranks unchanged; proceed to original and repaired mixed sidecars. Portable control rows: `benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/mtp.m36control.json`.
