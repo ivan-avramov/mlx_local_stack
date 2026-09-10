@@ -30,6 +30,8 @@ Matched medium-effort Go COMPLETE: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
 
 M34a MBPPPlus native-evaluator confirmation for `Ornith-1.0-35B-mlx-uniform-4bit`: expanded-minus-native strict **−2.0pp, 95% CI [−6.7,+2.7]**, output-token ratio **1.545, CI [0.867,2.668]**, n=100 k=3 (nominal MDE12.5pp). The poorer MBPPPlus trend conflicts with favorable HumanEvalPlus/Math500 trends. Keep native routing while the queued resolution measures the tradeoff with and without the certified predictor.
 
+M34r interim MBPPPlus evidence for `Ornith-1.0-35B-mlx-uniform-4bit`, n100×1 per completed arm: native OFF81% strict, native MTP78%, expanded OFF77%. Expanded-minus-native OFF is−4pp CI[−11,+3], token ratio2.106 CI[0.850,5.045]; native MTP-minus-OFF is−3pp CI[−8,+2], token ratio1.939 CI[0.970,4.149]. Nominal MDE12.5pp. Repetition/non-convergence explains much of the adverse token/time trend. Expanded MTP is still running; retain native routing and review the completed interaction before another configuration decision. These trends reinforce caution rather than automatic rejection or promotion.
+
 ## C: approved picks and evaluation shortlist (up to four)
 
 Only ranks 1–2 are approved C picks. The remaining two entries are a research shortlist, not promotions; their placement does not imply measured superiority in subjective research/design quality.

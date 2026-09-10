@@ -1,5 +1,12 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 07:36 — M34r three cells complete, fourth progressing
+
+`Ornith-1.0-35B-mlx-uniform-4bit` MBPPPlus n100×1, matching item set/seed/tune: native MTP ordinary/strict83%/78%,6 non-converged,1.47h; native OFF83%/81%,2 non-converged,1.06h; expanded OFF82%/77%,7 non-converged,2.63h. All completed arms have zero transport errors. Expanded MTP is still in flight,75/100 by07:36, four non-converged and no transport errors; its final quality is not yet available.
+
+Expanded-minus-native OFF strict−4pp CI[−11,+3], token ratio2.106 CI[0.850,5.045]. Native MTP-minus-OFF strict−3pp CI[−8,+2], token ratio1.939 CI[0.970,4.149]. Nominal MDE12.5pp per axis; descriptive paired intervals before family adjustment. Mechanism is increased repetition/non-convergence and token tails, not evaluator failure; the complete native ARM64 grades are valid. Recommendation: retain native routing and finish the fourth cell before judging the interaction; these adverse MBPPPlus trends further qualify earlier favorable HumanEvalPlus/Math500 expansion evidence. No B/C reorder or automatic predictor change. The native predictor's adverse point estimate warrants reviewing the full interaction alongside its existing certification, not silently withdrawing it from one session.
+
+
 ## 2026-09-10 07:35 — C61 approved; repaired MTP published and registry-enabled
 
 Operator accepted the M36 recommendation and explicitly approved upload. Published `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter` at revision `74bb2bc1feb60dbb8302bc8e6021d0be01f8f18d`. All four artifact files were downloaded anonymously and SHA256-verified; tensor-file hash `ff4d5cfc53e8de65afc6bf2b0734ede4b32c7a4b9e7ac5d5b047413630cc0353` matches the tested candidate. Public card records repair provenance, per-dataset quality, uncertainty and timing caveats.
