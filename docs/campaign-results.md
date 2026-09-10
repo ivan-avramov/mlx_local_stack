@@ -1,5 +1,14 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 12:52 — C48 t0.5 coding complete; quality gain with a tail cost
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MBPPPlus t0.5 ordinary/strict87%, paired t1.0 control84%; +3pp CI[−1,+8], n100×1, nominal MDE12.5pp, exclusive solves4:1. Convergence99% versus100%, one degenerate-repetition response and zero transport errors. The failed non-convergent response is included in the strict denominator. Output-token ratio1.528 CI[1.067,2.003], means2654/1737; generation0.582/0.367h. Analysis: `benchmark/results/paired_c48t05_mbppplus.json`.
+
+Recommendation: t0.5 is the leading coding candidate on observed strict quality (87%, versus85% t0.7 and84% t1.0). Extra reasoning and one repetition tail are real costs, but quality-first selection does not discard its favorable solve trend merely for those costs or statistical inconclusiveness. t0.7 remains the leading fully measured setting until t0.5 Math500 and t0.3 complete. No production tuning or B/C reorder yet.
+
+Queue advanced automatically to t0.5 Math500,21/100 at12:51 with no errors/non-convergence; mean20.4s implies27minutes remaining plus tails. Runner1165 alive, no intervention needed. README/PLAN updated.
+
+
 ## 2026-09-10 12:08 — C48 t0.7 complete on both datasets
 
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` Math500 t0.7 ordinary/strict97%, paired t1.0 control96%; +1pp CI[0,+3], n100×1, nominal MDE12.5pp, exclusive solves1:0. Both100% converged with no errors. Output-token ratio1.099 CI[0.940,1.299], means3621/3296; generation0.775/0.716h. Analysis: `benchmark/results/paired_c48t07_math500.json`.
