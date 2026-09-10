@@ -1,9 +1,12 @@
-# Handoff — 2026-09-10 12:52 PDT
+# Handoff — 2026-09-10 13:37 PDT
 
 ## Current checkpoint
 
+- Latest13:37: C48 t0.5 Math500 COMPLETE97% strict versus96% t1.0, +1pp CI[0,+3], n100×1, nominal MDE12.5pp; all converge, tokens1.159 CI[0.919,1.480]. With coding87%, t0.5 is the provisional quality-first choice among completed settings, retaining the coding-runaway/cost caveat. t0.3 still pending; no production change. README/PLAN/results updated.
+- t0.3 MBPPPlus pilot5/5 complete, no errors/non-convergence, mean28.8s/max83.7s; full arm began13:36:09. Pilot-mean remaining46minutes plus tails, then Math500. Runner1165 verified alive. Plan the next authorized quality work before this final temperature completes so the machine need not idle; do not edit the live runner.
+
 - Latest12:52: C48 t0.5 MBPPPlus COMPLETE87% strict versus84% t1.0, +3pp CI[−1,+8], n100×1, nominal MDE12.5pp; one repetition non-convergence, no errors. Tokens1.528 CI[1.067,2.003]; quality-first leading coding candidate despite added cost. t0.7 leads fully measured settings until remaining ladder; no production changes. README/PLAN/results updated.
-- Math500 t0.5 running21/100 at12:51, no errors/non-convergence, mean20.4s gives27minutes remaining plus tails. Runner1165 verified alive (2h00m28s); queue advancing, no correction needed. t0.3 follows.
+- Math500 t0.5 running91/100 at13:25, +26 since prior review, no errors/non-convergence, mean27.5s gives4.1minutes remaining plus tails; maximum completed output53,891tokens (converged). Runner1165 verified alive (2h33m57s), watcher13:23:48 advanced+19 in five minutes and reports ALIVE. Longer cases explain tail cost; queue advancing, no correction needed. t0.3 follows.
 
 - Latest12:08: C48 t0.7 Math500 COMPLETE97% strict versus96% t1.0 (+1pp CI[0,+3], n100×1, nominal MDE12.5pp), all converge; tokens1.099 CI[0.940,1.299]. Coding85% versus84% (+1pp CI[−4,+6], nominal MDE12.5pp). t0.7 is current quality-first candidate over t1.0, at more token/time cost; production unchanged pending remaining ladder/approval. README/PLAN/results updated.
 - Queue t0.5 MBPPPlus full running92/100 at12:40, +15 since last review, zero transport errors but ONE non-converged degenerate-repetition response (82,369tokens/718s). Mean22.0s gives2.9minutes remaining plus tails. Runner1165 verified alive (1h49m29s); progress resumed after the long response. Do not lower budget or kill active work; retain this convergence cost in the final quality comparison. Math500 then t0.3 follow; no correction indicated.
@@ -48,4 +51,4 @@
 - Desktop same-chat heartbeat `keep-local-stack-campaign-progressing` is ACTIVE every TEN minutes per P179. Simple context-based ping: do not reread handoff/PLAN/AGENTS every time; reread after context loss, changes or uncertainty. First real automatic run verified00:03:55 PDT. Dispatch may lag scheduled time; do not promise exact wall-clock cadence. The benchmark daemon independently checks every five minutes.
 - Use this existing checkout, not the desktop task's temporary cwd or a new worktree. Preserve live overlays, scripts and eight registry overrides. On completion update README ranking/evidence, results and handoff; report quality-first learnings and recommendations. No automatic promotions or git push.
 - Sandbox changed to granular permissions. Current-turn grant allowed network, writes to `queue/mtp_recovery/` and repository `.git`; do not assume it persists. `ps` was denied on earlier scheduled turns. Use current file advancement/daemon evidence honestly; request only needed permissions if recovery requires more. Upload cache is redirected with `HF_XET_CACHE` into `queue/mtp_recovery/hf_xet_cache`, avoiding default-cache write denial.
-- Next discussion point P224; next C id C62. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.
+- Next discussion point P229; next C id C62. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.

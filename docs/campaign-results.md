@@ -1,5 +1,14 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 13:37 — C48 t0.5 completed; provisional quality-first choice
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` Math500 t0.5 ordinary/strict97%, t1.0 control96%; +1pp CI[0,+3], n100×1, nominal MDE12.5pp, exclusive solves1:0. Both100% converged, no errors. Token ratio1.159 CI[0.919,1.480], means3820/3296; generation0.826/0.716h. Analysis: `benchmark/results/paired_c48t05_math500.json`.
+
+Completed point estimates now: t1.0 coding84/math96; t0.7 coding85/math97; t0.5 coding87/math97. Recommendation: t0.5 is the provisional quality-first choice among completed settings; its additional token/time cost and one coding repetition runaway remain explicit, but do not erase its better strict coding point estimate at tied mathematical quality. This is trend-based, not a claim of established superiority over t0.7. Wait for t0.3 and present the final proposed tune for operator approval; no production change or model-order movement yet.
+
+Queue transitioned automatically to t0.3 MBPPPlus; seeded pilot5/5 completed without errors/non-convergence, mean28.8s/max83.7s. Full arm started13:36:09; pilot-mean estimate about46minutes remaining plus tails. t0.3 Math500 follows. Runner1165 alive; no intervention needed.
+
+
 ## 2026-09-10 12:52 — C48 t0.5 coding complete; quality gain with a tail cost
 
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MBPPPlus t0.5 ordinary/strict87%, paired t1.0 control84%; +3pp CI[−1,+8], n100×1, nominal MDE12.5pp, exclusive solves4:1. Convergence99% versus100%, one degenerate-repetition response and zero transport errors. The failed non-convergent response is included in the strict denominator. Output-token ratio1.528 CI[1.067,2.003], means2654/1737; generation0.582/0.367h. Analysis: `benchmark/results/paired_c48t05_mbppplus.json`.
