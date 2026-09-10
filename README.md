@@ -11,7 +11,7 @@ Updated 2026-09-09. Rankings are operator-approved, provisional choices based on
 | 3 | Ornith-1.0-35B-mlx-uniform-4bit | t0.4, native expert routing, certified MTP | Rust and interactive coding: highest observed Rust score and short task latency. |
 | 4 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | deployed t0.3, certified MTP | Repair-oriented fallback: strong older multi-attempt repair evidence; retain despite weaker current agentic trends. |
 
-C57 approved this order on 2026-09-09. C51's medium predictor probe passed at 1.644x decode speed, 84.8% acceptance. Live benchmarks keep their immutable overlays; registry changes take effect at the next router transition. No expanded-routing configuration is promoted.
+C57 approved this order on 2026-09-09. Native evaluator recovery has not changed these ranks. C51's medium predictor probe passed at 1.644x decode speed, 84.8% acceptance. Live benchmarks keep their immutable overlays; registry changes take effect at the next router transition. No expanded-routing configuration is promoted.
 
 ### B evidence
 
@@ -21,10 +21,12 @@ Passes out of 22 per language/session. Commas indicate distinct sessions, not po
 |---|---|---|---|---|---|---|
 | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | 21; **22 at medium** | **20**, historical effort | Not measured | Not measured | Not measured | Python/Go: medium Python had zero stalls; missing three-language coverage limits generalization. |
 | Qwen3.8-27B-mlx-uniform-4bit | 20, 18; **19 at medium** | 16, historical effort | 13 | 12 | **19, 18** | Broad coverage: favorable Python/JavaScript repeats; Rust is weaker. |
-| Ornith-1.0-35B-mlx-uniform-4bit | 19, 18 | 11 | **17** | 12 | 12, 17 | Rust/latency: Rust leads; JavaScript varies markedly by session. |
+| Ornith-1.0-35B-mlx-uniform-4bit | 19, 18 | 11 | **17** | 12 | 12, 17 | Rust/latency: Rust leads; JavaScript varies markedly by session. ARM64 regrade confirms M34a MBPPPlus strict80.7% native versus78.7% expanded; native routing remains the recommendation. |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | 12, 18 | 12 | 15 | **13** | 17, 16 | Repair fallback: the 12-pass Python session did not repeat; do not rank from that outlier alone. |
 
 Medium-effort Go arms are running for the first two entries; no prefix is a final result. Individual 22-case sessions have shown swings of 5–6 cases. Some comparisons cross serving-path revisions. Missing results are not zeros. The leader's Python advantage over the base at medium is directional (3:0 discordant cases, exact p=.25). Medium-vs-medium pooled standalone coding strict difference is +0.8pp, 95% CI [-1.2,+3.0], n=214, nominal MDE 8.6pp; its smaller token count does not produce a wall-time advantage there. These limitations qualify the recommendation without erasing the observed trends.
+
+M34a MBPPPlus native-evaluator confirmation for `Ornith-1.0-35B-mlx-uniform-4bit`: expanded-minus-native strict **−2.0pp, 95% CI [−6.7,+2.7]**, output-token ratio **1.545, CI [0.867,2.668]**, n=100 k=3 (nominal MDE12.5pp). The poorer MBPPPlus trend conflicts with favorable HumanEvalPlus/Math500 trends. Keep native routing while the queued resolution measures the tradeoff with and without the certified predictor.
 
 ## C: approved picks and evaluation shortlist (up to four)
 
@@ -50,7 +52,7 @@ Math500: same 100 cases, deployed tune, predictor OFF, budget 81920. **2026-09-0
 
 Corrected paired strict deltas: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` versus `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: **+2pp, 95% CI [-2,+6]**; versus `Ornith-1.0-35B-mlx-uniform-4bit`: **+6pp, CI [+1,+12]**. These are descriptive pairwise intervals before family multiplicity adjustment; n=100 nominal axis MDE is 12.5pp. The recommendation rests on favorable strict-quality and token/time trends, not a blanket superiority claim.
 
-Math500 measures mathematical correctness, not brainstorming/design quality. BFCL has prior results (M18); subjective judge-panel work remains incomplete. C stays provisional. M34c's five-case Math500 pilot also regrades from 1/5 to **5/5 in both routing arms** after the parser correction. Its MBPPPlus pilot is native 4/5 vs expanded 5/5 at greater token/time cost: a candidate tradeoff, not a promotion. Expansion audits and resolution arms are tracked in PLAN.
+Math500 measures mathematical correctness, not brainstorming/design quality. BFCL has prior results (M18); subjective judge-panel work remains incomplete. C stays provisional. M34c's five-case Math500 pilot also regrades from 1/5 to **5/5 in both routing arms** after the parser correction. Its MBPPPlus pilot is native 4/5 vs expanded 5/5 at greater token/time cost: a candidate tradeoff, not a promotion. Rosetta evaluation failures were reproduced and removed by native ARM64 regrading of both M34a arms. Expanded ordinary MBPPPlus rose by one success; strict results were unchanged because that answer did not converge. Larger expansion resolution arms are queued in PLAN.
 
 
 # Getting started
