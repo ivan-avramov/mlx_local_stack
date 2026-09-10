@@ -1,5 +1,14 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-09 23:46 — M36 repaired sidecar passed screening; first quality baseline complete
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` corrected sidecar completed its three-task OFF/ON screen21:19:24:median decode24.162→44.351tok/s, ratio1.836; accepted3843/4548 (84.5%);6/6 responses converged, no errors. This screening ratio has no powered interval. The original sidecar had zero acceptance after the known-positive instrument control passed. Repairing the seven normalization vectors restored useful speculative predictions, supporting the packaging diagnosis.
+
+HumanEvalPlus quality baseline OFF completed23:14:43:50 tasks×3 samples, ordinary/strict92%,150/150 converged, no errors/non-convergence. Generation1.898h; mean45.552s, maximum2409.2s and48,353 completion tokens. That long but converged response demonstrates substantial tail latency even at medium effort; it is not a DNF. ON arm passed its seeded pilot and is running,116/150 responses by23:46 with no errors/non-convergence. Never compare this unfinished prefix with the full OFF baseline.
+
+Recommendation: retain the approved B leader, keep its production predictor OFF pending paired quality results, and complete the HumanEvalPlus/MBPPPlus OFAT. The main performance defect appears repaired; certification still needs quality evidence. No C movement or new B ordering is supported by this speed control. M36u upload remains queued after validation. README ranking/evidence updated.
+
+
 ## 2026-09-09 21:12 — M36 original mixed sidecar failure reproduced
 
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` at medium completed all six OFF/ON probe responses, with convergence and no errors. Original sidecar accepted0/12,516 tokens. Median decode OFF24.254tok/s, ON15.048tok/s, ratio0.620. This three-task screening ratio has no powered speed interval; do not turn it into a general latency claim. The immediately preceding base known-positive control accepted84.8%, validating that the zero is observable and specific to this sidecar pairing.
