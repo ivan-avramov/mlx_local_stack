@@ -49,7 +49,7 @@ Math500: same 100 cases, deployed tune, predictor OFF, budget 81920. **2026-09-0
 
 | Model | Ordinary / strict correct | Non-converged | Mean output tokens/task | Generation time /100 | Best for — evidence and limits |
 |---|---|---|---|---|---|
-| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | **99 / 99** | **0** | **3,849** | **0.81 h** | Fast text reasoning: favorable quality and token/time trends. M34r MBPPPlus native84% versus expanded82% strict;100% convergence both. Native general default retained. C48 t0.7 MBPPPlus85% versus84% at t1.0; Math50097% versus96% at t1.0 also favors t0.7; C48 complete: t0.3 recommended provisionally for87% coding/98% math, pending approval; t0.5 offers87%/97% with less runtime/repetition. Expansion math/coding tradeoff remains below. |
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | **99 / 99** | **0** | **3,849** | **0.81 h** | Fast text reasoning: favorable quality and token/time trends. M34r MBPPPlus native84% versus expanded82% strict;100% convergence both. Native general default retained. C48 t0.7 MBPPPlus85% versus84% at t1.0; Math50097% versus96% at t1.0 also favors t0.7; C48 complete: Operator prefers t0.5:87% coding/97% math with less runtime/repetition than t0.3. t0.4 test queued; production remains t1.0. Expansion math/coding tradeoff remains below. |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | 99 / 97 | 2 | 12,842 | 16.4 h | Vision-capable alternative; some correct answers incurred non-convergence. |
 | Ornith-1.0-35B-mlx-uniform-4bit | 99 / 93 | 6 | 15,788 | 4.7 h | Fast decoding, but more tokens and non-convergence on reasoning. |
 | Qwen3.8-27B-mlx-uniform-4bit | Matched medium run not measured | — | — | — | C evaluation candidate; do not substitute its coding scores for research/design evidence. |
@@ -64,10 +64,10 @@ C48 temperature ladder COMPLETE for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
 |---|---:|---:|---:|---:|
 | 1.0, current | 84% | 96% | 0 / 0 | 1.083h |
 | 0.7 | 85% | 97% | 0 / 0 | 1.210h |
-| 0.5 | 87% | 97% | 1 / 0 | 1.408h |
-| 0.3, recommended pending C62 | 87% | 98% | 2 / 0 | 1.868h |
+| 0.5, operator-preferred provisional | 87% | 97% | 1 / 0 | 1.408h |
+| 0.3 | 87% | 98% | 2 / 0 | 1.868h |
 
-Quality-first recommendation: provisional t0.3. Versus t0.5, coding difference0pp CI[−4,+4] and math+1pp CI[0,+3]; nominal MDE12.5pp per axis. Versus t1.0, t0.3 coding+3pp CI[−1,+8], math+2pp CI[0,+5]. These are descriptive paired intervals before correction across the temperature search. The gain is small and uncertain; retain the additional repetition/runtime cost explicitly. t0.5 remains the lower-latency alternative. **Production remains t1.0 until operator approval.** Ladder samples differ from the M33 table above; do not compare their raw percentages as matched results.
+C62 operator decision: prefer t0.5 provisionally and test t0.4 next. The earlier t0.3 recommendation over-weighted its single extra mathematical solve relative to the operator’s preferred repetition/token tradeoff. Versus t0.5, coding difference0pp CI[−4,+4] and math+1pp CI[0,+3]; nominal MDE12.5pp per axis. Versus t1.0, t0.3 coding+3pp CI[−1,+8], math+2pp CI[0,+5]. These are descriptive paired intervals before correction across the temperature search. The gain is small and uncertain; retain the additional repetition/runtime cost explicitly. t0.5 is the preferred balance of quality, token use and repetition; t0.4 is queued on the same cases before the final choice. **Production remains t1.0 until operator approval.** Ladder samples differ from the M33 table above; do not compare their raw percentages as matched results.
 
 Math500 measures mathematical correctness, not brainstorming/design quality. BFCL has prior results (M18); subjective judge-panel work remains incomplete. C stays provisional. M34c's five-case Math500 pilot also regrades from 1/5 to **5/5 in both routing arms** after the parser correction. Its MBPPPlus pilot is native 4/5 vs expanded 5/5 at greater token/time cost: a candidate tradeoff, not a promotion. Rosetta evaluation failures were reproduced and removed by native ARM64 regrading of both M34a arms. Expanded ordinary MBPPPlus rose by one success; strict results were unchanged because that answer did not converge. Larger expansion resolution arms are queued in PLAN.
 
