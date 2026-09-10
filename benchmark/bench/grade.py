@@ -233,7 +233,9 @@ def _math_eq(pred, gold) -> bool:
         return False
     try:
         from math_verify import parse, verify
-        return bool(verify(parse(gold), parse(pred)))
+        # Both inputs are extracted expressions, not prose. Delimit them so
+        # fractions, intervals and tuples use the LaTeX parser consistently.
+        return bool(verify(parse(f"${gold}$"), parse(f"${pred}$")))
     except Exception:
         return _norm_math(pred) == _norm_math(gold)
 
