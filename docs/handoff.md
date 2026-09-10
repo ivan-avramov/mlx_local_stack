@@ -7,13 +7,20 @@
 - Quality OFAT:HumanEvalPlus OFF150/150 generated and graded23:14:43,50 tasks×3 samples,92% ordinary/strict,100% convergence, no errors. Generation1.898h; longest response2409.2s/48,353 tokens but converged. ON116/150 by23:46, no errors or non-convergence, worker43469/driver43546. Monitor43547 writes `queue/watch_m36on_humanevalplus_full.json` (plain text despite extension):106 rows at23:43,+15 in five minutes; mean15.8s. ON final accuracy still pending.
 - Next complete ON and grade, then MBPPPlus OFF/ON, expansion integration tests and M34r. Do not modify running scripts/overlays. Both deferred bench carriers activated correctly; seven registry path overrides remain intentional. B first choice strengthened by Go22/22 versus16/22, no new ranking or C evidence this checkpoint.
 
+## Desktop scheduled supervision — 2026-09-09 23:55 PDT
+
+- ACTIVE same-chat heartbeat saved through the desktop automation tool: `keep-local-stack-campaign-progressing`, name `Keep local stack campaign progressing`, every five minutes. Target is the existing campaign conversation. All work explicitly uses `$STACK_REPO`, not the desktop task's temporary cwd or a new worktree.
+- Scheduler database readback: next execution2026-09-10 00:00 PDT; no first automatic run recorded at setup. FIRST AUTOMATIC RUN MUST verify actual scheduler dispatch/start and observed item counts, report that evidence to the operator, and update this checkpoint. A saved schedule alone is not proof it executed.
+- Each scheduled review must inspect progress delta, mean-based ETA, errors/convergence/output sanity, perform authorized recovery and continue approved PLAN work after exits. Preserve live scripts/overlays and local registry overrides; no duplicate model or driver; no automatic promotion or git push. Report completed-test learnings and B/C implications; update README evidence/rankings and handoff. Keep app running and machine awake for local scheduled work.
+- This replaces the earlier absence of agent wakeups. Existing detached runner and five-minute diagnostic daemon continue; no AppleScript or launchd supervisor added. Schedule survives as saved desktop configuration; verify its next run after app restarts.
+
 ## Resume checklist
 
 1. Read this checkpoint first, then PLAN's active execution order, README's ranking/evidence tables, and open questions C57–C59. This checkpoint supersedes previous B ordering and old Math500 accuracy scores.
 2. Verify `queue/go_medium.pid` and `queue/resolution.pid` against command lines and logs, not PID existence alone. Check per-item row advancement. Never edit either running script, carrier or overlay. Kill a waiting successor BEFORE stopping its predecessor.
 3. Keep the approved queue working. Check independent Rosetta regrade (`queue/resolution/regrade.pid`, serial evaluation logs and diff files). A repeated infrastructure fault is not a model failure. No regeneration until saved-answer recovery is exhausted.
 4. On EVERY completed test/regrade, update README's B/C ranking AND evidence tables, report learnings, trends, non-convergence and proposed movers. Quality first; inconclusive does not mean discard. Promotions require approval.
-5. Preserve SEVEN local `main_models.yaml` path overrides. Stage registry changes from the HEAD blob plus intended edits, never `git add main_models.yaml`. No push without explicit in-turn approval. Next discussion point P167; next C id C61.
+5. Preserve SEVEN local `main_models.yaml` path overrides. Stage registry changes from the HEAD blob plus intended edits, never `git add main_models.yaml`. No push without explicit in-turn approval. Next discussion point P173; next C id C61.
 
 ## Approved decisions and landed work
 

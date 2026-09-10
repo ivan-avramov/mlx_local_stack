@@ -27,6 +27,8 @@ machine, not a dedicated benchmarker. All out-of-repo artifacts live in the dedi
 
 ### Active execution order — approved 2026-09-09
 
+Desktop same-chat supervision is ACTIVE: `keep-local-stack-campaign-progressing`, every five minutes, starting2026-09-10 00:00 PDT. Verify first actual scheduled execution; saved schedule alone is insufficient. Reviews operate in the existing checkout and keep authorized work progressing, with no automatic promotions or git pushes.
+
 `queue/queue_go_medium.py` → `queue/resolution/run.py`. The successor waits for Go completion and both 22-row outputs, verifies no remaining driver, then transitions the router. PLAN remains the only queue of record. No automatic promotion.
 
 | Work | Concrete scope | State / interpretation |
