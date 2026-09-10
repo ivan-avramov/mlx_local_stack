@@ -1,3 +1,9 @@
+# APPROVED C57 2026-09-09: PROVISIONAL B order (model, tune, predictor):
+# 1 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed @t0.5 medium, draft-OFF.
+# 2 Qwen3.8-27B-mlx-uniform-4bit @t0.6 medium, certified MTP.
+# 3 Ornith-1.0-35B-mlx-uniform-4bit @t0.4 native routing, certified MTP.
+# 4 Qwen3.6-27B-Opus-Distill-OptiQ-4bit @deployed, certified MTP.
+# C retains its approved first two choices; README separates picks from evaluation shortlist.
 mlx_port: 8091                    # Internal port used by the active mlx subprocess
 manager_port: 8000                # Port the FastAPI manager listens on
 inactivity_timeout_seconds: 10800   # Unload model after x seconds of no requests
@@ -14,8 +20,8 @@ startup_timeout_seconds: 300      # Max wait for model to become READY
 #   forward them for type=vision models, and mlx-vlm auto-infers the tool parser.
 
 agent_defaults:
-  opencode: Ornith-1.0-35B-mlx-uniform-4bit
-  aider: Ornith-1.0-35B-mlx-uniform-4bit
+  opencode: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+  aider: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
 
 # The task model (mlx_vlm, :8092 — titles/summaries) is NOT a `models:` entry: that
 # would make the :8000 router serve it / OWUI auto-list it as a router model. It is a
@@ -338,16 +344,9 @@ models:
       max_tokens: 102400
       thinking_budget: 81920
       enable_thinking: true
+      reasoning_effort: medium  # CERTIFIED C51 2026-09-09: M24 quality + medium MTP 1.644x, acceptance 0.848
     presentation:
-      # B 4TH CHOICE since 2026-09-07 (operator C50 ruling: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed took 3rd on the
-      # agentic stall-kill axis at tied quality). C51 RULED 2026-09-07: this entry MOVES to reasoning_effort=medium
-      # (M24: pooled n=214 EQUIVALENT at 0.13x tokens, 0 loops, opencode 19/22) ONCE the certified MTP predictor is
-      # re-probed at medium (acceptance 0.674 was measured at xhigh) — until then the certified xhigh+mtp triple ships.
-      # PROMOTED candidate -> main 2026-08-29 (operator C38 ruling): B 3RD CHOICE on the
-      # M26 evidence (75/88 pooled vs 63/66, most session-stable arm q=0.114, nothing
-      # Holm-surviving). Ships draft-OFF: the native-MTP drafter
-      # (caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter) is PROBE-ONLY until M6c/M6d
-      # certifies it. Was role: candidate 2026-08-28 (M9 bench-carrier fix).
+      # PROVISIONAL B 2nd, C57 2026-09-09; quality-first trend-based menu.
       role: main
       family: qwen
       display_name: "Qwen3.8-27B (base, uniform 4-bit)"  # UI label, allow-shorthand
@@ -355,38 +354,7 @@ models:
       output: 102400
       capabilities: [tools, vision, thinking]
 
-  # M24 EFFORT ARM (operator 2026-09-06): the SAME checkpoint as Qwen3.8-27B-mlx-uniform-4bit with `reasoning_effort: medium` baked into
-  # generation_defaults (the Qwen3.8-27B family template knob; the base entry runs the template default xhigh). A separate <!-- allow-shorthand -->
-  # entry so every client — opencode included — measures it with NO harness change; effort is in the deployed fingerprint via
-  # generation_defaults. Bench-only (role candidate), draft-OFF. Never a pick by itself.
-  # (the reasoning_effort=low bench clone was RETIRED 2026-09-07 after S2c: the effort curve's knee is at medium — see campaign-results 2026-09-07 S2c)  # allow-shorthand
-  - name: Qwen3.8-27B-mlx-uniform-4bit-MED
-    type: vision
-    on_demand: true
-    hf_path: caslca/Qwen3.8-27B-mlx-uniform-4bit
-    max_kv_cache_size: 262144
-    kv_prealloc_tokens: 262144
-    kv_quant_scheme: turboquant
-    kv_bits: 4
-    quantized_kv_start: 0
-    prefill_step_size: 512
-    generation_defaults:
-      temperature: 0.6
-      top_p: 0.95
-      top_k: 20
-      min_p: 0.0
-      presence_penalty: 0.0
-      max_tokens: 102400
-      thinking_budget: 81920
-      enable_thinking: true
-      reasoning_effort: medium
-    presentation:
-      role: candidate
-      family: qwen
-      display_name: "Qwen3.8-27B-mlx-uniform-4bit (reasoning_effort=medium)"  # UI label, allow-shorthand
-      context: 262144
-      output: 102400
-      capabilities: [tools, vision, thinking]
+  # C51 2026-09-09: medium-effort bench clone retired; base entry now carries its certified tune.
 
   - name: Qwen3.8-27B-static-mixed-4bit
     type: vision

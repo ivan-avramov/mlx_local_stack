@@ -1,5 +1,12 @@
 # THE MODEL LEDGER — canonical; updated at every certification, pick change or demotion (not daily; picks of record live in `main_models.yaml`, scores in `docs/campaign-results.md`)
 
+## 2026-09-09 approved current picks (C57 supersedes older B ordering below)
+
+B: 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (t0.5, medium, OFF); 2nd `Qwen3.8-27B-mlx-uniform-4bit` (t0.6, medium, certified MTP); 3rd `Ornith-1.0-35B-mlx-uniform-4bit` (t0.4, native, certified MTP); 4th `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (deployed t0.3, certified MTP). Provisional trend-based selection approved by operator; missing language coverage and session variance remain explicit in README.
+
+C remains provisional: 1st `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 2nd `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. Math500 corrected strict counts are 99/100 versus 97/100 after C58 saved-answer regrade; older scores/accuracy intervals below are historical. README owns the compact top-four ranking/evidence view and must be updated for every test completion/regrade. C shortlist entries are not additional certified picks.
+
+
 **Created 2026-08-17 (operator ruling 11).** This is the single canonical record of the model
 competition: the objective, today's picks, every model ever considered with its status and the
 dated reasoning, and the queue of contenders. Nothing is ever deleted from the ledger — a
