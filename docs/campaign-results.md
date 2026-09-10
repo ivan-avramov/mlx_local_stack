@@ -1,5 +1,11 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-09 — Rosetta recovery: native evaluator validated, model regrade running
+
+Serial amd64 evaluation reproduced `rosetta error: mmap_anonymous_rw mmap failed` at329/578 padded MBPPPlus entries. Reduced concurrency did not resolve it. The faulting evaluator container was stopped, original grades restored, and Go generation preserved. Native ARM64 image uses the exact installed EvalPlus0.4.0.dev2 Python source, identical cached dataset files and pinned evaluation dependencies. Python remains3.11, but patch/base OS differ; this is a verified alternative evaluation environment, not bit-identical runtime. Audit hashes live in `benchmark/results/evalplus_arm64_recovery.audit.json`.
+
+Instrument check: five seeded canonical solutions passed;373 deliberate syntax errors failed. An initial negative control that raised an exception was unsuitable because a benchmark can expect exceptions; it was replaced with syntactically invalid code. Both M34a MBPPPlus arms are being regraded from saved responses, with per-item grade differences and native environment provenance retained. No model regeneration or expanded-routing promotion follows merely from infrastructure failure. Queue coding grades now use this native evaluator explicitly.
+
 ## 2026-09-09 — C57 approved; Math500 scorer correction; MTP packaging diagnosis
 
 Operator approved the trend-based provisional B order now shown in README and the registry, plus C51 medium-effort adoption. Cross-session scores are descriptive; incomplete language coverage is not silently pooled or treated as failure. Expanded routing remains a candidate, never automatically promoted.
