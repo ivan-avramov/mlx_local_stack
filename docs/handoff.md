@@ -1,6 +1,10 @@
-# Handoff — 2026-09-10 13:37 PDT
+# Handoff — 2026-09-10 13:49 PDT
 
 ## Current checkpoint
+
+- Latest13:49: t0.3 MBPPPlus55/100 (+50 since pilot), zero errors/non-convergence, mean11.2s gives8.4minutes remaining plus tails; temperature runner1165 alive. t0.3 Math500 follows. No correction needed.
+- M37 medium C successor ARMED, PID14933, `queue/c_medium/run.py`, PID file `queue/c_medium/queue.pid`, log `queue/c_medium/queue.log`, errors `start.log`. Verified alive and SELFTEST waiting on temperature runner1165. It waits for C48 DONE and no remaining model/driver/router before loading anything; no current script/overlay changed.
+- Successor runs Math500100×1 on `Qwen3.8-27B-mlx-uniform-4bit` then `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` at deployed medium, native/draft-OFF; same100 seeded items as current C reference, five seeded pilots each. Fresh overlay at handover; full preallocation retained, explicit deployed profile and medium/draft/fingerprint checks. Owed C reasoning-axis coverage, not a new tuning or promotion. See PLAN M37. Stop a waiting successor BEFORE intentionally stopping its predecessor.
 
 - Latest13:37: C48 t0.5 Math500 COMPLETE97% strict versus96% t1.0, +1pp CI[0,+3], n100×1, nominal MDE12.5pp; all converge, tokens1.159 CI[0.919,1.480]. With coding87%, t0.5 is the provisional quality-first choice among completed settings, retaining the coding-runaway/cost caveat. t0.3 still pending; no production change. README/PLAN/results updated.
 - t0.3 MBPPPlus pilot5/5 complete, no errors/non-convergence, mean28.8s/max83.7s; full arm began13:36:09. Pilot-mean remaining46minutes plus tails, then Math500. Runner1165 verified alive. Plan the next authorized quality work before this final temperature completes so the machine need not idle; do not edit the live runner.
@@ -51,4 +55,4 @@
 - Desktop same-chat heartbeat `keep-local-stack-campaign-progressing` is ACTIVE every TEN minutes per P179. Simple context-based ping: do not reread handoff/PLAN/AGENTS every time; reread after context loss, changes or uncertainty. First real automatic run verified00:03:55 PDT. Dispatch may lag scheduled time; do not promise exact wall-clock cadence. The benchmark daemon independently checks every five minutes.
 - Use this existing checkout, not the desktop task's temporary cwd or a new worktree. Preserve live overlays, scripts and eight registry overrides. On completion update README ranking/evidence, results and handoff; report quality-first learnings and recommendations. No automatic promotions or git push.
 - Sandbox changed to granular permissions. Current-turn grant allowed network, writes to `queue/mtp_recovery/` and repository `.git`; do not assume it persists. `ps` was denied on earlier scheduled turns. Use current file advancement/daemon evidence honestly; request only needed permissions if recovery requires more. Upload cache is redirected with `HF_XET_CACHE` into `queue/mtp_recovery/hf_xet_cache`, avoiding default-cache write denial.
-- Next discussion point P229; next C id C62. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.
+- Next discussion point P231; next C id C62. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.
