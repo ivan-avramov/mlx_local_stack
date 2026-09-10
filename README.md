@@ -49,7 +49,7 @@ Math500: same 100 cases, deployed tune, predictor OFF, budget 81920. **2026-09-0
 
 | Model | Ordinary / strict correct | Non-converged | Mean output tokens/task | Generation time /100 | Best for — evidence and limits |
 |---|---|---|---|---|---|
-| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | **99 / 99** | **0** | **3,849** | **0.81 h** | Fast text reasoning: favorable quality and token/time trends. M34r MBPPPlus native84% versus expanded82% strict;100% convergence both. Native general default retained. C48 t0.7 MBPPPlus85% versus84% at t1.0; Math50097% versus96% at t1.0 also favors t0.7; t0.5 leads fully measured settings:87% coding/97% math. t0.3 coding also87%, but two runaways and greater cost; its math arm pending. Expansion math/coding tradeoff remains below. |
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | **99 / 99** | **0** | **3,849** | **0.81 h** | Fast text reasoning: favorable quality and token/time trends. M34r MBPPPlus native84% versus expanded82% strict;100% convergence both. Native general default retained. C48 t0.7 MBPPPlus85% versus84% at t1.0; Math50097% versus96% at t1.0 also favors t0.7; C48 complete: t0.3 recommended provisionally for87% coding/98% math, pending approval; t0.5 offers87%/97% with less runtime/repetition. Expansion math/coding tradeoff remains below. |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | 99 / 97 | 2 | 12,842 | 16.4 h | Vision-capable alternative; some correct answers incurred non-convergence. |
 | Ornith-1.0-35B-mlx-uniform-4bit | 99 / 93 | 6 | 15,788 | 4.7 h | Fast decoding, but more tokens and non-convergence on reasoning. |
 | Qwen3.8-27B-mlx-uniform-4bit | Matched medium run not measured | — | — | — | C evaluation candidate; do not substitute its coding scores for research/design evidence. |
@@ -58,11 +58,16 @@ Corrected paired strict deltas: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` ver
 
 M34r MBPPPlus expansion-minus-native for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`:−2pp strict,95% CI[−8,+4], n100×1, nominal MDE12.5pp; output-token ratio1.198 CI[0.890,1.506], generation0.508h expanded versus0.367h native. No non-convergence in either arm. Native has the favorable coding quality and cost point estimates. Math500 expansion instead improves98% versus96%, +2pp CI[0,+5], n100×1, nominal MDE12.5pp; token ratio1.277 CI[1.053,1.591], wall1.023h expanded/0.716h native. Both arms fully converge. Retain native as the general default; keep expansion as a math-oriented candidate for operator review rather than discard its quality trend. No routing change approved.
 
-C48 temperature ladder, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`: t0.7 MBPPPlus85% strict versus84% t1.0, +1pp CI[−4,+6], n100×1, nominal MDE12.5pp; token ratio1.200 CI[1.008,1.447], no non-convergence either arm. Math500 t0.7 is97% versus96% t1.0, +1pp CI[0,+3], n100×1, nominal MDE12.5pp; token ratio1.099 CI[0.940,1.299],100% convergence both. These ladder samples differ from M33 above. With favorable quality point estimates on both datasets, t0.7 is the current quality-first candidate over t1.0; finish t0.5/t0.3 before production approval.
+C48 temperature ladder COMPLETE for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, native/predictor OFF, n100×1 per dataset:
 
-C48 t0.5 MBPPPlus reaches87% strict versus84% t1.0, +3pp CI[−1,+8], n100×1, nominal MDE12.5pp. One non-converged repetition response versus none at t1.0; token ratio1.528 CI[1.067,2.003]. Math500 t0.5 completed97% versus96% t1.0 (+1pp CI[0,+3], n100×1, nominal MDE12.5pp), token ratio1.159 CI[0.919,1.480],100% convergence. Quality-first, t0.5 is now the provisional choice among completed settings, with its coding runaway/cost caveat; finish t0.3 before production approval. Production tune unchanged.
+| Temperature | MBPPPlus strict | Math500 strict | Non-converged coding / math | Combined generation time |
+|---|---:|---:|---:|---:|
+| 1.0, current | 84% | 96% | 0 / 0 | 1.083h |
+| 0.7 | 85% | 97% | 0 / 0 | 1.210h |
+| 0.5 | 87% | 97% | 1 / 0 | 1.408h |
+| 0.3, recommended pending C62 | 87% | 98% | 2 / 0 | 1.868h |
 
-C48 t0.3 MBPPPlus completed87% strict versus84% t1.0 (+3pp CI[−1,+8], n100×1, nominal MDE12.5pp),98% convergence with two repetition runaways, token ratio2.230 CI[1.174,3.156]. Coding ties t0.5 by point estimate with worse time/tail cost; t0.5 remains preferred pending t0.3 Math500.
+Quality-first recommendation: provisional t0.3. Versus t0.5, coding difference0pp CI[−4,+4] and math+1pp CI[0,+3]; nominal MDE12.5pp per axis. Versus t1.0, t0.3 coding+3pp CI[−1,+8], math+2pp CI[0,+5]. These are descriptive paired intervals before correction across the temperature search. The gain is small and uncertain; retain the additional repetition/runtime cost explicitly. t0.5 remains the lower-latency alternative. **Production remains t1.0 until operator approval.** Ladder samples differ from the M33 table above; do not compare their raw percentages as matched results.
 
 Math500 measures mathematical correctness, not brainstorming/design quality. BFCL has prior results (M18); subjective judge-panel work remains incomplete. C stays provisional. M34c's five-case Math500 pilot also regrades from 1/5 to **5/5 in both routing arms** after the parser correction. Its MBPPPlus pilot is native 4/5 vs expanded 5/5 at greater token/time cost: a candidate tradeoff, not a promotion. Rosetta evaluation failures were reproduced and removed by native ARM64 regrading of both M34a arms. Expanded ordinary MBPPPlus rose by one success; strict results were unchanged because that answer did not converge. Larger expansion resolution arms are queued in PLAN.
 

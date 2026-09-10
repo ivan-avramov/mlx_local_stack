@@ -1,5 +1,16 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 15:38 — C48 COMPLETE; recommend provisional t0.3, medium C successor running
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` final Math500 t0.3 ordinary/strict98% versus96% t1.0: +2pp CI[0,+5], n100×1, nominal MDE12.5pp,2:0 exclusive solves. All math responses converge; token ratio1.139 CI[0.853,1.501], means3753/3296, wall0.870/0.716h.
+
+Versus t0.5, t0.3 math improves+1pp CI[0,+3],1:0 exclusive solves; coding ties87% with0pp CI[−4,+4],2:2 exclusive solves. Nominal MDE12.5pp per axis. t0.3 coding token ratio versus t0.5 is1.460 CI[0.942,2.244]. Two t0.3 coding non-convergences versus one at t0.5; combined generation1.868/1.408h. No transport errors. Both coding runaways count in the strict denominator.
+
+Final recommendation C62:provisional t0.3 under the operator's quality-first preference, replacing the earlier provisional t0.5 recommendation now that the final math result exists. It has the best math point estimate and ties the best coding point estimate. Extra repetition/time is a real downside; t0.5 remains the lower-latency alternative. Do not claim statistical proof of superiority or hide multiplicity/selection across tested temperatures. Production remains t1.0 pending approval; no B/C model-order change. Summary: `benchmark/results/c48_temperature_summary.json`; all per-dataset paired analyses retained.
+
+Temperature queue ended15:27:42 and stopped its router cleanly. M37 successor started automatically15:27:54: `Qwen3.8-27B-mlx-uniform-4bit` medium/native/draft-OFF Math500 pilot5/5 converged, full8/100 by15:37, no errors/non-convergence. Driver/manifest effort, draft and registry checks passed. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` follows. No idle recovery or user intervention needed for queued work.
+
+
 ## 2026-09-10 14:35 — C48 t0.3 coding complete; long request resolved without restart
 
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` MBPPPlus t0.3 ordinary/strict87%, paired t1.0 control84%; +3pp CI[−1,+8], n100×1, nominal MDE12.5pp, exclusive solves4:1. Convergence98% versus100%, two repetition non-convergences, zero transport errors. Token ratio2.230 CI[1.174,3.156], means3874/1737; generation0.998/0.367h. Analysis: `benchmark/results/paired_c48t03_mbppplus.json`.
