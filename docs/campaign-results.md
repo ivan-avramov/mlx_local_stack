@@ -1,5 +1,14 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 11:24 — C48 t0.7 MBPPPlus complete
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, native/draft-OFF, n100×1 paired against current t1.0 control: t0.7 ordinary/strict85% versus84%, difference+1pp CI[−4,+6], nominal MDE12.5pp, exclusive solves4:3. Both arms100% converged, no errors. Output-token ratio1.200 CI[1.008,1.447], means2085/1737; generation0.435/0.367h. Analysis: `benchmark/results/paired_c48t07_mbppplus.json`.
+
+Learning/recommendation: t0.7 has a small favorable quality point estimate with extra reasoning tokens/time, rather than a convergence benefit. Quality-first policy keeps it as a candidate despite inconclusiveness; do not reject it for the token cost, nor promote it from one dataset. Finish Math500 and t0.5/t0.3 before choosing the production tune. B/C rankings unchanged. Native routing remains the selected recipe.
+
+Queue automatically started t0.7 Math500; pilot5/5 converged, full14/100 at11:24, zero errors/non-convergence. Mean13.5s gives approximately19minutes remaining plus tails. Runner1165 alive; no correction required. README/PLAN updated.
+
+
 ## 2026-09-10 10:39 — M34r transfer complete; successor blocked on process control
 
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` Math500 n100×1: expanded ordinary/strict98%, native96%; difference+2pp CI[0,+5], nominal MDE12.5pp, exclusive solves2:0. All200 responses converge with no errors. Output-token ratio1.277 CI[1.053,1.591], means4210/3296; generation1.023h expanded versus0.716h native. Analysis: `benchmark/results/paired_m34cr_math500.json`.

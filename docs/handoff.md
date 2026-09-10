@@ -1,6 +1,10 @@
-# Handoff — 2026-09-10 10:51 PDT
+# Handoff — 2026-09-10 11:25 PDT
 
 ## Current checkpoint
+
+- Latest11:24 review: C48 t0.7 MBPPPlus COMPLETE85% strict versus84% t1.0, +1pp CI[−4,+6], n100×1, nominal MDE12.5pp; all converge, token ratio1.200 CI[1.008,1.447]. Retain t0.7 quality candidate despite extra cost; no production tune/rank change before full ladder. Math500 t0.7 running14/100, no errors/non-convergence, mean13.5s/remaining19minutes plus tails. Runner1165 verified alive. README/PLAN/results updated; `paired_c48t07_mbppplus.json` persisted.
+
+- Latest scheduled review11:13:42: C48 t0.7 MBPPPlus80/100, +27 since prior review53/100, zero errors/non-convergence; mean16.3s implies5.4minutes remaining plus tails. Runner1165 verified alive, elapsed22m28s. Seeded pilot5/5 converged (mean36.2s/max123.9s); full arm began10:54:46 and watcher advanced+33 rows by10:59:46. No intervention warranted; no completed quality result or tuning change yet. Math500 then t0.5/t0.3 remain queued automatically.
 
 - **C48 temperature queue RUNNING10:51 after operator granted Full access.** Process inspection now works. Runner1165, router1176, driver1203, watcher1204, sole model worker1337 verified. `queue/c48_temperature/queue.log`, PID file `queue/c48_temperature/queue.pid`, errors `start.log`. First t0.7 MBPPPlus seeded pilot started; actual worker temperature0.7/native/draft-OFF and manifest registry SHA match. Subsequent full MBPPPlus/Math500 then t0.5/t0.3 run automatically; all in original checkout. No duplicate work or production tune changes.
 - Previous process-control restrictions and NOT STARTED notes below are historical and superseded. User accepted native general routing with expansion retained as math-oriented candidate (P206). No git push authorization.
@@ -38,4 +42,4 @@
 - Desktop same-chat heartbeat `keep-local-stack-campaign-progressing` is ACTIVE every TEN minutes per P179. Simple context-based ping: do not reread handoff/PLAN/AGENTS every time; reread after context loss, changes or uncertainty. First real automatic run verified00:03:55 PDT. Dispatch may lag scheduled time; do not promise exact wall-clock cadence. The benchmark daemon independently checks every five minutes.
 - Use this existing checkout, not the desktop task's temporary cwd or a new worktree. Preserve live overlays, scripts and eight registry overrides. On completion update README ranking/evidence, results and handoff; report quality-first learnings and recommendations. No automatic promotions or git push.
 - Sandbox changed to granular permissions. Current-turn grant allowed network, writes to `queue/mtp_recovery/` and repository `.git`; do not assume it persists. `ps` was denied on earlier scheduled turns. Use current file advancement/daemon evidence honestly; request only needed permissions if recovery requires more. Upload cache is redirected with `HF_XET_CACHE` into `queue/mtp_recovery/hf_xet_cache`, avoiding default-cache write denial.
-- Next discussion point P211; next C id C62. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.
+- Next discussion point P214; next C id C62. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.
