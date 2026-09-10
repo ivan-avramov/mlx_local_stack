@@ -6,12 +6,14 @@ Updated 2026-09-09 (M24g matched medium Go complete). Rankings are operator-appr
 
 | Rank | Model | Recommended configuration | Best for — and why |
 |---|---|---|---|
-| 1 | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | t0.5, medium effort, predictor OFF | Python/Go agentic work:22/22 at medium on each, with zero stalls; strongest completion trend. Other languages remain unmeasured. |
+| 1 | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | t0.5, medium effort, certified repaired MTP | Python/Go agentic work:22/22 at medium on each, with zero stalls; strongest completion trend. Other languages remain unmeasured. |
 | 2 | Qwen3.8-27B-mlx-uniform-4bit | t0.6, medium effort, certified MTP | Broad coding coverage, especially Python/JavaScript: favorable repeats and efficient medium effort; Go remains16/22 with six stalls. |
 | 3 | Ornith-1.0-35B-mlx-uniform-4bit | t0.4, native expert routing, certified MTP | Rust and interactive coding: highest observed Rust score and short task latency. |
 | 4 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | deployed t0.3, certified MTP | Repair-oriented fallback: strong older multi-attempt repair evidence; retain despite weaker current agentic trends. |
 
-C57 approved this order on 2026-09-09. Native evaluator recovery has not changed these ranks. M36 original-sidecar recheck confirms the B leader must remain predictor OFF:0/12,516 accepted draft tokens,0.620x decode speed versus OFF on a three-task screen. The corrected sidecar passed its three-task screen at1.836x decode and84.5% acceptance, all six responses converged; paired quality validation is running. HumanEvalPlus pair complete:OFF92.0% strict versus repaired ON90.67%, delta−1.33pp CI[−5.33,+2.0],50 tasks×3 samples, nominal MDE17.7pp;100% convergence both. ON/OFF generation0.71/1.90h, output-token ratio0.687 CI[0.347,1.099]. MBPPPlus is running. Keep production OFF until quality review; no promotion from speed alone. C51's medium predictor probe passed at1.644x decode speed,84.8% acceptance; the M36 known-positive recheck completed21:01 at1.785x,84.8% acceptance, all six responses converged. This validates the instrument before the repair test, not new quality superiority. Live benchmarks keep their immutable overlays; registry changes take effect at the next router transition. No expanded-routing configuration is promoted.
+C57 approved this order on2026-09-09. C61/M36 approved repaired MTP for the first choice on2026-09-10. The [public sidecar](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter) is uploaded at revision `74bb2bc1feb60dbb8302bc8e6021d0be01f8f18d`; all four files passed anonymous download/checksum verification. Production registry now references it. Existing benchmark overlays remain immutable.
+
+M36 pooled strict accuracy is88.0% ON versus88.33% OFF, difference−0.33pp,95% CI[−3.0,+2.33], n100×3, nominal MDE12.5pp; all600 responses converged. Paired wall-time ratio0.417 CI[0.238,0.603]. HumanEvalPlus alone trends−1.33pp CI[−5.33,+2.0]; MBPPPlus+0.67pp CI[−2.0,+4.67], nominal MDE17.7pp each. The combined evidence supports quality equivalence at±5pp and a substantial time benefit; retain the dataset-specific caveat. Model rankings are unchanged. The base model's M36 positive control passed at1.785x decode and84.8% acceptance. No expanded routing is promoted.
 
 ### B evidence
 
@@ -19,7 +21,7 @@ Passes out of 22 per language/session. Commas indicate distinct sessions, not po
 
 | Model | Python | Go | Rust | Java | JavaScript | Best for — evidence and limits |
 |---|---|---|---|---|---|---|
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | 21; **22 at medium** | **20** historical; **22 at medium** | Not measured | Not measured | Not measured | Python/Go: both medium suites finished22/22 with zero stalls. Repaired MTP is faster in the completed HumanEvalPlus arm with a small adverse quality point estimate; MBPPPlus quality pending. Three languages remain unmeasured. |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | 21; **22 at medium** | **20** historical; **22 at medium** | Not measured | Not measured | Not measured | Python/Go: both medium suites finished22/22 with zero stalls. Repaired MTP is approved and registry-enabled after pooled quality equivalence and favorable speed. Three languages remain unmeasured. |
 | Qwen3.8-27B-mlx-uniform-4bit | 20, 18; **19 at medium** | 16 historical; **16 at medium** | 13 | 12 | **19, 18** | Broad coverage: favorable Python/JavaScript repeats; Rust is weaker. |
 | Ornith-1.0-35B-mlx-uniform-4bit | 19, 18 | 11 | **17** | 12 | 12, 17 | Rust/latency: Rust leads; JavaScript varies markedly by session. ARM64 regrade confirms M34a MBPPPlus strict80.7% native versus78.7% expanded; native routing remains the recommendation. |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | 12, 18 | 12 | 15 | **13** | 17, 16 | Repair fallback: the 12-pass Python session did not repeat; do not rank from that outlier alone. |

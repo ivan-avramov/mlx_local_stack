@@ -1,5 +1,40 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 07:35 — C61 approved; repaired MTP published and registry-enabled
+
+Operator accepted the M36 recommendation and explicitly approved upload. Published `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter` at revision `74bb2bc1feb60dbb8302bc8e6021d0be01f8f18d`. All four artifact files were downloaded anonymously and SHA256-verified; tensor-file hash `ff4d5cfc53e8de65afc6bf2b0734ede4b32c7a4b9e7ac5d5b047413630cc0353` matches the tested candidate. Public card records repair provenance, per-dataset quality, uncertainty and timing caveats.
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` now ships the approved medium tune with certified repaired MTP. No sampling, temperature, budget or model-order change. All generated client and benchmark carriers match configgen;37 configgen tests pass. The registry clean blob contains the public sidecar identifier; the worktree retains eight local path overrides (prior seven plus the new predictor). Running benchmark overlays remain unchanged, so this does not restart or retune the active expansion arm.
+
+Recommendation remains the approved B first choice with repaired predictor: pooled quality difference−0.33pp CI[−3.0,+2.33], n100×3, nominal MDE12.5pp, all600 converge; paired wall ratio0.417 CI[0.238,0.603]. HumanEvalPlus's small adverse point estimate remains visible; no C ladder movement or expanded-routing promotion follows from this certification.
+
+
+## 2026-09-10 01:25 — M36 COMPLETE; recommend repaired predictor activation after upload
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, medium t0.5, paired OFF/ON at unchanged budgets/seeds:
+
+| Dataset | n tasks × samples per arm | Strict OFF | Strict ON | ON minus OFF,95% CI |
+|---|---:|---:|---:|---|
+| HumanEvalPlus | 50×3 | 92.0% | 90.67% | −1.33pp [−5.33,+2.0] |
+| MBPPPlus | 50×3 | 84.67% | 85.33% | +0.67pp [−2.0,+4.67] |
+| Pooled, equal item weights | 100×3 | 88.33% | 88.0% | −0.33pp [−3.0,+2.33] |
+
+Ordinary accuracy equals strict throughout; all600 responses converged, zero transport errors. Nominal MDE17.7pp per dataset,12.5pp pooled. The pooled interval supports±5pp equivalence; HumanEvalPlus alone remains inconclusive with a small adverse trend. These descriptive intervals precede campaign-wide multiplicity correction; pooling is supporting evidence, not a reason to hide either dataset.
+
+ON/OFF total generation1.123/2.691h; paired wall ratio0.417 CI[0.238,0.603], output-token ratio0.778 CI[0.463,1.082]. MBPPPlus token ratio0.987 CI[0.859,1.190], so its time benefit is consistent with useful speculative acceptance at similar output length. HumanEvalPlus also shortened a long converged tail; not all wall savings are decode acceleration. Original sidecar zero acceptance and repaired84.5% speed-screen acceptance support the normalization-packaging diagnosis.
+
+Recommendation C61:approve the repaired predictor at medium after the already-authorized public upload. The best combined evidence supports quality preservation with a material performance benefit; retain the HumanEvalPlus caveat and continue observing agentic behavior. No model-order change or C promotion. Production remains OFF until operator approval. Artifact/card/checksums are staged; current sandbox publication permissions requested. Analyses: `benchmark/results/paired_m36_mbppplus.json` and `paired_m36_pooled.json`.
+
+Expansion validation also completed:58 tests passed in7.59s in the serving environment. Previously failing CPU-only/dependency checks were environmental; no new expansion implementation defect demonstrated. Queue automatically began M34r native+MTP pilot01:14:55; first3/5 responses completed, with a long fourth request under observation.
+
+
+## 2026-09-10 00:51 — M36 MBPPPlus OFF baseline complete; repaired ON underway
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, medium effort, draft OFF:50 tasks×3 responses, ordinary/strict84.67%,150/150 converged, zero errors/non-convergence. Mean19.02s/response, generation0.793h, maximum5189 output tokens. The execution failures therefore are not budget non-convergence or transport errors. This is the matched baseline, not yet an MTP quality comparison.
+
+Repaired ON seeded pilot completed15/15 without errors/non-convergence, mean7.8s and maximum14.0s; full arm started00:50:43. Pilot sizing gives approximately18minutes for remaining135 responses, a lower-bound planning estimate subject to tails. Recommendation: finish the ON arm and combine its paired quality evidence with HumanEvalPlus; retain production OFF and approved B/C ranks meanwhile. The pilot's speed is encouraging but cannot substitute for full quality results. No intervention needed; queue transitioned automatically.
+
+
 ## 2026-09-10 00:05 — M36 first quality pair complete; automatic desktop review verified
 
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` HumanEvalPlus, medium t0.5, n50×3 each: repaired MTP ON ordinary/strict90.67%, OFF92.0%; paired delta−1.33pp CI[−5.33,+2.0], nominal MDE17.7pp, descriptive interval before campaign multiplicity adjustment. Two items favor OFF in per-item success fractions, none favor ON. Both150-response arms have100% convergence and no errors. ON/OFF generation0.710/1.898h; output-token ratio0.687 CI[0.347,1.099], means700/1020 tokens. Analysis: `benchmark/results/paired_m36_humanevalplus.json`.

@@ -1,8 +1,10 @@
 # THE MODEL LEDGER — canonical; updated at every certification, pick change or demotion (not daily; picks of record live in `main_models.yaml`, scores in `docs/campaign-results.md`)
 
+**2026-09-10 C61/M36:** operator approved the repaired MTP predictor for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. Public sidecar `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter`, verified revision `74bb2bc1feb60dbb8302bc8e6021d0be01f8f18d`; all files anonymously downloaded and SHA256 checked. Registry enabled with medium tune unchanged; current benchmark overlays preserved. No model-order change.
+
 ## 2026-09-09 approved current picks (C57 supersedes older B ordering below)
 
-B: 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (t0.5, medium, OFF); 2nd `Qwen3.8-27B-mlx-uniform-4bit` (t0.6, medium, certified MTP); 3rd `Ornith-1.0-35B-mlx-uniform-4bit` (t0.4, native, certified MTP); 4th `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (deployed t0.3, certified MTP). Provisional trend-based selection approved by operator; missing language coverage and session variance remain explicit in README.
+B: 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (t0.5, medium, certified repaired MTP; C61/M36 2026-09-10); 2nd `Qwen3.8-27B-mlx-uniform-4bit` (t0.6, medium, certified MTP); 3rd `Ornith-1.0-35B-mlx-uniform-4bit` (t0.4, native, certified MTP); 4th `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (deployed t0.3, certified MTP). Provisional trend-based selection approved by operator; missing language coverage and session variance remain explicit in README.
 
 C remains provisional: 1st `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, 2nd `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. Math500 corrected strict counts are 99/100 versus 97/100 after C58 saved-answer regrade; older scores/accuracy intervals below are historical. README owns the compact top-four ranking/evidence view and must be updated for every test completion/regrade. C shortlist entries are not additional certified picks.
 
