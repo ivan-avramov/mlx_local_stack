@@ -1,5 +1,14 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 12:08 — C48 t0.7 complete on both datasets
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` Math500 t0.7 ordinary/strict97%, paired t1.0 control96%; +1pp CI[0,+3], n100×1, nominal MDE12.5pp, exclusive solves1:0. Both100% converged with no errors. Output-token ratio1.099 CI[0.940,1.299], means3621/3296; generation0.775/0.716h. Analysis: `benchmark/results/paired_c48t07_math500.json`.
+
+Together with MBPPPlus85% versus84% (+1pp CI[−4,+6], nominal MDE12.5pp), t0.7 has favorable quality point estimates on both datasets at greater token/time cost, without a convergence difference. Recommendation:prefer t0.7 provisionally over t1.0 for a quality-first choice among completed settings; finish t0.5/t0.3 before selecting the final tune and requesting activation. Do not dismiss the small quality trends for inconclusiveness, and do not automatically change production. C model order and B ranks unchanged.
+
+Queue automatically started t0.5 MBPPPlus at12:06:20. Pilot3/5 complete by12:07 with no errors/non-convergence; runner1165 alive and worker/manifest settings verified. Continue full coding/math arms then t0.3; no intervention needed.
+
+
 ## 2026-09-10 11:24 — C48 t0.7 MBPPPlus complete
 
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, native/draft-OFF, n100×1 paired against current t1.0 control: t0.7 ordinary/strict85% versus84%, difference+1pp CI[−4,+6], nominal MDE12.5pp, exclusive solves4:3. Both arms100% converged, no errors. Output-token ratio1.200 CI[1.008,1.447], means2085/1737; generation0.435/0.367h. Analysis: `benchmark/results/paired_c48t07_mbppplus.json`.
