@@ -1,5 +1,10 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-09 21:01 — M36 known-positive control passed
+
+`Qwen3.8-27B-mlx-uniform-4bit` medium OFF/ON control completed all six responses with convergence and no errors. Median decode28.713→51.245tok/s, ratio1.785; accepted7387/8712 draft tokens (84.8%). This three-task speed screen validates the current serving instrument; it is not a powered quality result or evidence that speed improved over the earlier1.644x certification probe. B/C ranks unchanged; proceed to original and repaired mixed sidecars. Portable control rows: `benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/mtp.m36control.json`.
+
+
 ## 2026-09-09 21:00 — M24g complete: matched medium Go supports the approved B leader
 
 | Model | Passes /22 | Stalls | Generation hours |

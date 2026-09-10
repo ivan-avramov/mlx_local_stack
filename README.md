@@ -11,7 +11,7 @@ Updated 2026-09-09 (M24g matched medium Go complete). Rankings are operator-appr
 | 3 | Ornith-1.0-35B-mlx-uniform-4bit | t0.4, native expert routing, certified MTP | Rust and interactive coding: highest observed Rust score and short task latency. |
 | 4 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | deployed t0.3, certified MTP | Repair-oriented fallback: strong older multi-attempt repair evidence; retain despite weaker current agentic trends. |
 
-C57 approved this order on 2026-09-09. Native evaluator recovery has not changed these ranks. C51's medium predictor probe passed at 1.644x decode speed, 84.8% acceptance. Live benchmarks keep their immutable overlays; registry changes take effect at the next router transition. No expanded-routing configuration is promoted.
+C57 approved this order on 2026-09-09. Native evaluator recovery has not changed these ranks. C51's medium predictor probe passed at1.644x decode speed,84.8% acceptance; the M36 known-positive recheck completed21:01 at1.785x,84.8% acceptance, all six responses converged. This validates the instrument before the repair test, not new quality superiority. Live benchmarks keep their immutable overlays; registry changes take effect at the next router transition. No expanded-routing configuration is promoted.
 
 ### B evidence
 

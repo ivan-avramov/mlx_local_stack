@@ -5,7 +5,7 @@
 
 - Go COMPLETE20:46:23. Mixed medium22/22, zero stalls,1.697h versus base16/22, six stalls,2.039h. Paired success difference+27.3pp CI[+9.1,+45.5], nominal MDE26.7pp; exclusive solves6:0. README/evidence updated; strengthens approved B first choice for Python/Go, no C movement or new promotion.
 - Successor25346 advanced automatically20:51:14, shut down old router/worker, activated both deferred bench carriers and passed configgen check. Those carriers now match committed state; seven registry path overrides remain intentional.
-- M36 known-positive control running: base medium OFF3/3 completed; ON started20:57:38,2/3 complete by21:00:12; all five responses converge, no errors, accepted drafts positive. Worker40042 is the only model worker, verified medium+MTP. Next original mixed sidecar, then corrected sidecar, then conditional quality and expansion resolution. M36u upload remains queued.
+- M36 known-positive control COMPLETE21:01:33:1.785x decode,7387/8712 accepted (84.8%),6/6 converged. Original mixed sidecar probe started21:01:33, PID40189; worker identities change between arms, reverify. Then corrected sidecar, conditional quality and expansion resolution. M36u upload remains queued. README/evidence updated; control validates the instrument, no B/C promotion.
 - Operator noticed ~5% memory bump shortly before20:59. Timing matches20:57 MTP ON reload; additional drafter/runtime buffers are plausible. No before/after allocator trace exists, so exact attribution is unproven. One worker verified; no inference from RSS about MLX capacity. No intervention indicated.
 
 ## Resume checklist
