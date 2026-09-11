@@ -12,6 +12,11 @@ false-positive rate or it gets bypassed, so this checks only patterns that are u
 
   * absolute home paths — `/Users/<name>/`, `/home/<name>/`. The placeholder vocabulary
     (`$HOME`, `$STACK_REPO`, `$REMOTE_REPO`, `remoteuser`, …) is allowed by name.
+  * dash-flattened absolute home paths — `-Users-<name>-`, `-home-<name>-`. Tools like dsh turn
+    an absolute path into a filename/session-log id by replacing every `/` with `-`; same
+    username whitelist. An ordinary hyphenated word that happens to fit the shape (`-home-page-`)
+    is accepted residual risk, same as the slash form already accepts `/home/page/` — use
+    `allow-pii-pattern` for a genuine false positive.
   * secret-shaped tokens — `hf_…`, `sk-…`, `ghp_…`, `AKIA…`.
   * mDNS hostnames — `<host>.local`.
 
@@ -49,6 +54,9 @@ PLACEHOLDER_USERS = frozenset({"remoteuser", "user", "username", "youruser", "me
 _PATTERNS: tuple[tuple[str, str], ...] = (
     # An absolute home path. The username is captured so the message can name what leaked.
     (r"/(?:Users|home)/([A-Za-z0-9_][A-Za-z0-9_.-]*)/", "absolute home path with a username"),
+    # The flattened form uses `-` as the (former) path separator, so the username capture must
+    # stop at the next `-` rather than allowing one through, unlike the slash form above.
+    (r"-(?:Users|home)-([A-Za-z0-9_.]+)-", "dash-flattened absolute home path with a username"),
     (r"\bhf_[A-Za-z0-9]{20,}", "Hugging Face token"),
     (r"\bsk-[A-Za-z0-9_-]{20,}", "API key"),
     (r"\bghp_[A-Za-z0-9]{20,}", "GitHub token"),

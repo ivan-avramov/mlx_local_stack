@@ -38,6 +38,31 @@ def test_placeholders_and_redactions_are_allowed():
         assert piicheck.diff_violations(_diff("config.example.sh", added)) == [], added
 
 
+def test_catches_dash_flattened_home_path():
+    """dsh (and similar tools) turn an absolute path into a filename by replacing `/` with `-`,
+    e.g. a session-log id derived from `/Users/alice/ws/project`. The slash-based pattern above
+    can't see this form at all."""
+    for added in ('"log": "--Users-alice-ws-project-session.jsonl.zstd"',
+                  'path=--home-bob-ws-project--'):
+        found = piicheck.diff_violations(_diff("x.jsonl", added))
+        assert found, added
+        assert "flattened" in str(found[0]), found
+
+
+def test_dash_flattened_placeholders_are_allowed():
+    for added in ('"log": "--Users-remoteuser-ws-project-session.jsonl.zstd"',
+                  '"log": "--home-datasets-ws-project-session.jsonl.zstd"'):
+        assert piicheck.diff_violations(_diff("x.jsonl", added)) == [], added
+
+
+def test_dash_flattened_ordinary_word_is_an_accepted_false_positive():
+    """`-home-page-` fits the same shape as a flattened `/home/<name>/` and isn't whitelisted, so
+    it DOES flag — same residual risk the slash form already carries for `/home/page/`. Documented
+    here rather than silently discovered; a real hit like this uses `allow-pii-pattern`."""
+    assert piicheck.diff_violations(_diff("x.sh", "url = site.example/a-home-page-b")), (
+        "if this starts passing, the pattern got narrower than the module doc claims")
+
+
 def test_removed_lines_are_never_flagged():
     """A commit that DELETES a leak must not be blocked, or the scrub itself is unmergeable."""
     d = ("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n"
