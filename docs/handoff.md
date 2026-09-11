@@ -1,87 +1,63 @@
-# Handoff — 2026-09-10 21:52 PDT
+# Handoff — 2026-09-11 09:35 PDT
 
-## Current checkpoint
+Rewritten in place this session (Claude Code; architect/worker/reviewer host-model split per the operator's workflow preference). The previous Codex-driven
+session ended 2026-09-11 05:26 PDT when its credits ran out mid-heartbeat; its raw log is kept
+out of the repo at `$STACK_WORKDIR/devthread_codex_2026-09-11.md`.
 
-- C62 t0.5 explicitly APPROVED and APPLIED for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`: production registry default + both existing benchmark carriers. All generated configurations audited and37 configgen tests passed. Native/draft-OFF unchanged; live C63 overlay SHA still matches manifest. Eight local registry path overrides preserved. No git push.
-- C64 OPEN: approved C first pick remains presentation role candidate, so daily-client model lists omit it; main registration requires family support in configgen. Tune change completed without silently altering registration or inventing family. OWUI is down, no DB publication. Keep separate from completed C62.
+## Resume checklist
 
-- C48b t0.4 COMPLETE21:48:00: coding85% strict versus87% t0.5, −2pp CI[−7,+3]; math95% versus97%, −2pp CI[−5,0]; n100×1 and nominal MDE12.5pp each. Same one coding non-convergence, all math converged, similar total runtime. Final recommendation C62:adopt operator-preferred t0.5 provisional default; **activation approval pending**, production remains t1.0. README/PLAN/results/summary updated, no ranking change.
-- C63 successor59156 took over automatically21:48:32. Model `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, t0.3/native/draft-OFF; seeded pilot1/5 completed by21:51, no errors/non-convergence, worker/provenance verified. Full100 on same M37/C48 item set follows. Logs `queue/c_second_reference/queue.log`, `start.log`, PID `queue.pid`; t0.4 runner ended, do not restart it. Historical mean predicts16.4h; revise from pilot and actual tails.
+1. `ps -eo pid,etime,command | grep -E 'run.py|mlx-serve|mlx_vlm.server|bench_watch'` — expect
+   runner 59156 (`queue/c_second_reference/run.py`), router 64537, worker 64649 serving
+   `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, watcher 71306. If the runner is gone, read
+   `queue/c_second_reference/queue.log` for `=== C63 REFERENCE QUEUE DONE ===` or `FATAL`.
+2. `wc -l benchmark/results/Qwen3.6-27B-Opus-Distill-OptiQ-4bit/math500.m37ref.jsonl` = C63 progress.
+3. Supervision is the DAEMON (`bench_watch.py`, 5-min ticks into
+   `queue/c_second_reference/watch_*_full.json`) plus one event-driven Monitor in the session
+   (fires on END/RESULT/DONE/FATAL, watcher errors, ≥24 flat ticks, runner exit). Do NOT
+   narrate ticks conversationally — that is what exhausted the previous session.
+4. `git status`: `main_models.yaml` carries EIGHT intentional local-path overrides — NEVER
+   stage it from the worktree (edit the HEAD blob for registry commits). Untracked
+   `benchmark/results/**` M34/M34a/M35 files are being audited for a data(bench) commit.
+5. No `git push` without in-turn approval. Unpushed commits: check `git log origin/main..main`.
 
-- C63 APPROVED by operator proceed: matched Math500100×1 control for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, deployed t0.3/native/draft-OFF, seeded pilot5, unchanged budgets/full preallocation. Same item set as M37/C48. Historical cost16.4h; pilot mean/max will update lower-bound estimate. No production changes.
-- C63 successor ARMED and verified waiting: PID59156, `queue/c_second_reference/run.py`; PID `queue.pid`, log `queue.log`, errors `start.log` in that folder. Waits for t0.4 runner34753 to exit with its DONE marker and verifies no live model/driver/router before starting. Syntax/deployed parameters/nested seeded item sets checked. Current t0.4 script/overlay untouched; no duplicate job.
+## Current checkpoint (C63)
 
-- Latest20:57: t0.4 MBPPPlus COMPLETE86% ordinary/85% strict,99% convergence, one meander, no errors. Versus t0.5 strict87%:−2pp CI[−7,+3], n100×1, nominal MDE12.5pp; token ratio0.972 CI[0.540,1.933], wall0.594/0.582h. Retain operator t0.5 preference pending math; no production/rank change. README/PLAN/results updated.
-- t0.4 Math500 running84/100 at21:39, +25 since previous review59/100, no errors/non-convergence; mean30.5s gives8.1minutes remaining plus tails, longest completed output42,348tokens/372s. Last row9seconds ago; watcher21:37:26 reports ALIVE and subsequent rows advanced72→84. Runner34753 and C63 successor59156 both verified alive, successor waiting; no correction needed. This is the final arm of current executable queue; no successor armed yet. M17 funnel acquisition row is stale (saved50-item Stage2 coding results already exist); select genuinely owed work, not duplicate conversion/tests.
+- C63 = matched Math500 100×1 control for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+  (approved C second choice), deployed t0.3, native routing, draft-OFF, same seeded 100-item set
+  as M37/C48, thinking budget 81920, max_tokens 102400. Seeded 5-item pilot passed
+  (1 degenerate_repetition, max 4827 s). Full arm started 2026-09-10 23:24:52.
+- 09:20 PDT: 59/100, 0 transport errors, 3 degenerate_repetition non-convergences (35 % of
+  wall), mean 693.6 s/item (median 289 s) → ~7.9 h remaining from the mean, plus tail
+  uncertainty (longest item 82,237 tok / 4827 s). Expected finish late afternoon 2026-09-11.
+- On completion the runner grades, logs `RESULT`, stops the router, logs the DONE marker.
+  Owed then: paired same-item comparison against M37 (`Qwen3.8-27B-mlx-uniform-4bit` medium
+  99 % strict; `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` medium 97 %) and C48
+  (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` t0.5 97 %), quality/tokens-per-task/latency/
+  runaway tax, README evidence tables + campaign-results + PLAN C63 row, and a B/C ladder
+  recommendation for operator approval (no automatic reorder).
+- Nothing is armed after C63. Successor selection is in progress this session (PLAN queue
+  candidates being extracted); the box must not idle.
 
-- Latest20:21: M37 COMPLETE. Mixed medium Math50097% ordinary/strict, all100 converge,1806 mean tokens,2.204h. Base99% gives mixed-minus-base−2pp CI[−5,0], nominal MDE12.5pp; mixed/base tokens0.745 CI[0.582,0.937], wall2.20/2.62h. Versus current C-first model's t0.5 candidate:97% tie CI[−3,+3], fewer tokens but slower wall. Base is accuracy-first math candidate, mixed token-efficient coding leader; no approved B/C reorder. Long response resolved, no restart required.
-- M37 runner14933 ended cleanly; t0.4 successor34753 started automatically20:19:13. Model `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, native/draft-OFF, t0.4 verified at worker53531 and manifest. Seeded MBPPPlus pilot completed5 cases with ONE meander non-convergence; full arm started20:32:58,65/100 by20:45, +56 since prior review9/100; zero transport errors, still one non-converged response (82,144tokens). Mean23.5s now gives13.7minutes remaining plus tails. Runner34753 verified alive; watcher20:42:58 advanced+23 and last row4seconds ago. No correction or budget change. Full MBPPPlus then Math500. Logs `queue/c48_t04/queue.log`, `start.log`, PID `queue.pid`. No successor after this two-arm queue is armed yet; select next authorized work before completion.
+## Recently landed (for context, details in campaign-results / PLAN)
 
-- Latest18:08: M37 base medium Math500 COMPLETE99% strict,100/100 converge, zero errors,2423 mean output tokens,2.619h. Versus matched C-first native t1.0 +3pp CI[0,+7], versus its t0.5 candidate +2pp CI[0,+5], nominal MDE12.5pp each. Fewer tokens but slower decode; base gains accuracy-first C consideration, no approved reorder pending mixed arm. README item sets now explicitly separated (M33 versus M37).
-- Runner14933 running `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` medium/native/draft-OFF full arm remains89/100 at20:09, no advancement this review; completed rows have zero errors/non-convergence. Current request approximately26minutes since last row (19:44:07 request start). Mean-only12minute remainder is not usable while this tail is unresolved. Worker activity and router log checked; no completed response/crash/transport failure observed. Both runners alive, t0.4 safely waiting. Preserve active generation within7800s request timeout; do not restart or shorten the budget. Medium/draft/fingerprint verified in runner log; t0.4 successor34753 also alive and waiting. No intervention required.
+- C62 RULED 2026-09-10: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` production default t0.5
+  (commit c01a0c5), applied to registry + both benchmark carriers. Temperature ladder C48/C48b
+  complete: coding strict 84/85/87/85/87 % and math 96/97/97/95/98 % at t1.0/0.7/0.5/0.4/0.3.
+- M37 complete 2026-09-10: medium-effort Math500 for `Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, 99 % and
+  97 % strict, all converge. No approved reorder.
+- C61/M36 2026-09-10: repaired MTP certified for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`.
 
-- Latest17:56:49: M37 `Qwen3.8-27B-mlx-uniform-4bit` medium Math500 still89/100, no advancement this review; all completed rows converged, zero errors. Current request approximately13minutes since last row; mean-only17minute remainder excludes unresolved tail and is unreliable. Worker activity checked; both runners alive and watcher17:55:45 reports ALIVE. Preserve active long generation; mixed-checkpoint arm not started. Runner14933 and C48b t0.4 successor34753 verified alive, successor waiting; no correction indicated. Preserve budgets and current run.
+## Open operator items
 
-- Latest operator decision: prefers t0.5 over t0.3 for fewer repetition runaways and lower token cost; explicitly requested t0.4 next. C62 updated; no production change. README and temperature summary now reflect this preference, superseding the earlier t0.3 recommendation.
-- C48b t0.4 successor ARMED, PID34753, `queue/c48_t04/run.py`; PID file `queue.pid`, log `queue.log`, errors `start.log` in that folder. Verified SELFTEST waiting for M37 runner14933. It waits for MEDIUM C DONE and no active worker/driver/router; then t0.4 native/draft-OFF MBPPPlus100×1 and Math500100×1, same cases, five seeded pilots each. Only temperature changes. No extra endpoint-reseed experiment authorized/queued. Current M37 script/overlay untouched.
+- C64 OPEN: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is presentation role `candidate`, so
+  the daily-client model lists omit the approved C first pick; main registration needs family
+  support in configgen. Being scoped this session as a worker-model dev task with a cold-context adversarial review.
+- Next discussion point P332; next C id C65.
 
-- C48 COMPLETE15:27:42. Final coding/math strict by temperature:1.0 84/96%,0.7 85/97%,0.5 87/97%,0.3 87/98%. Recommendation changed to provisional t0.3 for quality-first choice, **C62 superseded by operator t0.5 preference and t0.4 test request; production choice still pending**. Versus t0.5 coding0pp CI[−4,+4], math+1pp CI[0,+3], nominal MDE12.5pp each; t0.3 takes1.868h total versus1.408h and has2 versus1 coding non-convergences. Production remains t1.0, no model-order change. README/PLAN/results updated; summary `benchmark/results/c48_temperature_summary.json`.
-- M37 successor14933 took over automatically15:27:54 after clean router teardown. `Qwen3.8-27B-mlx-uniform-4bit` medium/native/draft-OFF Math500 pilot5/5 complete, mean26.0s/max46.6s; full14/100 at15:50 (+6 since prior review), no errors/non-convergence in completed rows, mean49.6s gives71minutes remaining before unresolved-tail allowance. Last row15:40:11; current request approximately11minutes. Worker30336 active29.1% CPU, runner14933 alive; no transport/crash evidence, leave active generation running. Watcher `queue/c_medium/watch_Qwen3.8-27B-mlx-uniform-4bit_full.json` reports ALIVE; completed count flat at its latest tick. Mixed checkpoint follows; no intervention needed. Temperature runner has ended, do not restart it.
+## Ladder of record (unchanged)
 
-- Latest14:35: t0.3 MBPPPlus COMPLETE87% ordinary/strict versus84% t1.0, +3pp CI[−1,+8], n100×1, nominal MDE12.5pp;98% convergence, two repetition runaways, no transport errors. Long request Mbpp/260 completed102,401tokens/1082.3s; progress resumed77→100 without restart. Tokens2.230 CI[1.174,3.156], wall0.998h. t0.5 remains preferred at same coding point estimate with less time/tail cost; t0.3 math pending.
-- Final t0.3 Math500 full running98/100 at15:26, +28 since previous review, no errors/non-convergence; mean31.3s givesapproximately1minute remaining before tail uncertainty. Watcher15:25:39 advanced+13, driver ALIVE. Runner1165 and successor14933 alive; next check should validate grading and automatic M37 handover. Runner1165 and successor14933 verified alive; no correction needed or operator decision blocking progress. Final temperature recommendation awaits completed t0.3 math; t0.5 remains provisional preference. README/PLAN/results updated. M37 successor waits for temperature DONE and clean worker/router transition; no duplicate jobs.
-
-- Latest14:24: t0.3 MBPPPlus remains77/100 (no advancement since prior review; last completed row14:08:28, current request approximately15minutes). Worker13313 verified active at56.8% CPU, driver13468 and runner1165 alive; successor14933 still waiting. Completed rows have zero transport errors and one repetition non-convergence; current long response is not yet classified. Router emits75% RAM-pressure warnings with16.8–17.1GB available; no crash/error evidence. Treat as active long generation/possible runaway, not idle wedge; do not kill or lower budget. Prior mean-only ETA is unreliable until it completes; inspect next tick for advancement. t0.3 Math500 follows. No correction needed.
-- M37 medium C successor ARMED, PID14933, `queue/c_medium/run.py`, PID file `queue/c_medium/queue.pid`, log `queue/c_medium/queue.log`, errors `start.log`. Verified alive and SELFTEST waiting on temperature runner1165. It waits for C48 DONE and no remaining model/driver/router before loading anything; no current script/overlay changed.
-- Successor runs Math500100×1 on `Qwen3.8-27B-mlx-uniform-4bit` then `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` at deployed medium, native/draft-OFF; same100 seeded items as current C reference, five seeded pilots each. Fresh overlay at handover; full preallocation retained, explicit deployed profile and medium/draft/fingerprint checks. Owed C reasoning-axis coverage, not a new tuning or promotion. See PLAN M37. Stop a waiting successor BEFORE intentionally stopping its predecessor.
-
-- Latest13:37: C48 t0.5 Math500 COMPLETE97% strict versus96% t1.0, +1pp CI[0,+3], n100×1, nominal MDE12.5pp; all converge, tokens1.159 CI[0.919,1.480]. With coding87%, t0.5 is the provisional quality-first choice among completed settings, retaining the coding-runaway/cost caveat. t0.3 still pending; no production change. README/PLAN/results updated.
-- t0.3 MBPPPlus pilot5/5 complete, no errors/non-convergence, mean28.8s/max83.7s; full arm began13:36:09. Pilot-mean remaining46minutes plus tails, then Math500. Runner1165 verified alive. Plan the next authorized quality work before this final temperature completes so the machine need not idle; do not edit the live runner.
-
-- Latest12:52: C48 t0.5 MBPPPlus COMPLETE87% strict versus84% t1.0, +3pp CI[−1,+8], n100×1, nominal MDE12.5pp; one repetition non-convergence, no errors. Tokens1.528 CI[1.067,2.003]; quality-first leading coding candidate despite added cost. t0.7 leads fully measured settings until remaining ladder; no production changes. README/PLAN/results updated.
-- Math500 t0.5 running91/100 at13:25, +26 since prior review, no errors/non-convergence, mean27.5s gives4.1minutes remaining plus tails; maximum completed output53,891tokens (converged). Runner1165 verified alive (2h33m57s), watcher13:23:48 advanced+19 in five minutes and reports ALIVE. Longer cases explain tail cost; queue advancing, no correction needed. t0.3 follows.
-
-- Latest12:08: C48 t0.7 Math500 COMPLETE97% strict versus96% t1.0 (+1pp CI[0,+3], n100×1, nominal MDE12.5pp), all converge; tokens1.099 CI[0.940,1.299]. Coding85% versus84% (+1pp CI[−4,+6], nominal MDE12.5pp). t0.7 is current quality-first candidate over t1.0, at more token/time cost; production unchanged pending remaining ladder/approval. README/PLAN/results updated.
-- Queue t0.5 MBPPPlus full running92/100 at12:40, +15 since last review, zero transport errors but ONE non-converged degenerate-repetition response (82,369tokens/718s). Mean22.0s gives2.9minutes remaining plus tails. Runner1165 verified alive (1h49m29s); progress resumed after the long response. Do not lower budget or kill active work; retain this convergence cost in the final quality comparison. Math500 then t0.3 follow; no correction indicated.
-
-- Latest11:24 review: C48 t0.7 MBPPPlus COMPLETE85% strict versus84% t1.0, +1pp CI[−4,+6], n100×1, nominal MDE12.5pp; all converge, token ratio1.200 CI[1.008,1.447]. Retain t0.7 quality candidate despite extra cost; no production tune/rank change before full ladder. Math500 t0.7 running92/100 at11:56, +27 since prior review, no errors/non-convergence, mean24.3s/remaining3.2minutes plus tails; maximum completed output30,115tokens. Pilot-based ETA was optimistic as longer cases arrived. Runner1165 verified alive (1h05m36s); watcher11:54:43 advanced+16 and reported ALIVE. No correction indicated. README/PLAN/results updated; `paired_c48t07_mbppplus.json` persisted.
-
-- Latest scheduled review11:13:42: C48 t0.7 MBPPPlus80/100, +27 since prior review53/100, zero errors/non-convergence; mean16.3s implies5.4minutes remaining plus tails. Runner1165 verified alive, elapsed22m28s. Seeded pilot5/5 converged (mean36.2s/max123.9s); full arm began10:54:46 and watcher advanced+33 rows by10:59:46. No intervention warranted; no completed quality result or tuning change yet. Math500 then t0.5/t0.3 remain queued automatically.
-
-- **C48 temperature queue RUNNING10:51 after operator granted Full access.** Process inspection now works. Runner1165, router1176, driver1203, watcher1204, sole model worker1337 verified. `queue/c48_temperature/queue.log`, PID file `queue/c48_temperature/queue.pid`, errors `start.log`. First t0.7 MBPPPlus seeded pilot started; actual worker temperature0.7/native/draft-OFF and manifest registry SHA match. Subsequent full MBPPPlus/Math500 then t0.5/t0.3 run automatically; all in original checkout. No duplicate work or production tune changes.
-- Previous process-control restrictions and NOT STARTED notes below are historical and superseded. User accepted native general routing with expansion retained as math-oriented candidate (P206). No git push authorization.
-
-- Operator accepted P206: retain native general-purpose routing; keep expansion as a math-oriented candidate. No new production routing change. Rechecked process inspection on the next user request: sandbox still denies `ps` with Operation not permitted; C48 successor needs a normal-terminal start or broader process-control access.
-
-- **C61/M36 approved and registry-enabled**, commit `cdff0dd`: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` now ships medium t0.5 with certified repaired MTP. Operator accepted P185 and approved P186 upload. No git push authorized in this turn.
-- Public sidecar `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter`, HF revision `74bb2bc1feb60dbb8302bc8e6021d0be01f8f18d`. All FOUR artifact files anonymously downloaded and SHA256 verified. Receipt: `benchmark/results/mtp_upload_manifest.json`; public card source in `docs/model-cards/`. M36u DONE. Tensor SHA `ff4d5cfc53e8de65afc6bf2b0734ede4b32c7a4b9e7ac5d5b047413630cc0353`.
-- **EIGHT intentional local registry path overrides** now: previous seven plus this repaired predictor. NEVER stage worktree `main_models.yaml`; use HEAD-blob editing. All generated carriers match configgen;37 configgen tests passed. MTP is registry/worker configuration; no client sampling changes were necessary. The active benchmark overlays were not changed or restarted by deployment.
-- Latest stack origin publication was `b668bc9`; subsequent commits remain local. Parent forks and submodule pointers already published at mlx-vlm `420c01e1`, mlx-serve `0ccc684`. Do not re-push without fresh in-turn approval.
-
-## Live queue
-
-- Next executable successor PREPARED but NOT RUNNING: `queue/c48_temperature/run.py`, with helper snapshot in that directory. Existing C48 temperature approval; t0.7/0.5/0.3, native/draft-OFF, MBPPPlus+Math500100×1, same sets as current t1.0 native control; five seeded pilots before full arms. OFAT configs and item sets checked. Requires normal process-control access: current sandbox rejects `ps` even after network and destination-folder write grant. Do NOT claim this successor is armed. A normal-terminal start can wait safely for current resolution DONE, no duplicate worker/driver. No live script was modified.
-
-- Detached runner `queue/resolution/run.py`, PID file `queue/resolution.pid`, log `queue/resolution.log`; launcher errors `queue/resolution_launcher.log`. Preserve running scripts and overlays. One resident model/driver; do not start duplicate work.
-- M36 speed and all600 quality responses COMPLETE. Full expansion integration **58/58 passed** in7.59s; earlier CPU/dependency failures were environmental.
-- M34r `Ornith-1.0-35B-mlx-uniform-4bit` four MBPPPlus cells COMPLETE100×1 each: ordinary/strict native MTP83/78%, native OFF83/81%, expanded OFF82/77%, expanded MTP82/78%; non-convergence6/2/7/5, zero transport errors. Expanded-minus-native MTP strict0pp CI[−6,+6], token ratio0.860 CI[0.425,1.673], nominal MDE12.5pp. Recommendation retain native routing and approved MTP pending broader evidence; no model-order change. Full four-cell analysis in campaign-results/README, paired ON file `benchmark/results/paired_m34r_on.json`.
-- Transfer MBPPPlus pair COMPLETE for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`: native84% versus expanded82% ordinary/strict, delta−2pp CI[−8,+4], n100×1, nominal MDE12.5pp; no errors/non-convergence. Token ratio1.198 CI[0.890,1.506]; generation0.508h expanded/0.367h native. Recommend native routing on coding evidence, await math pair before overall transfer verdict. README/results/PLAN updated.
-- Transfer Math500 COMPLETE100×1 per arm: expanded98% versus native96% ordinary/strict, +2pp CI[0,+5], nominal MDE12.5pp; no errors/non-convergence. Token ratio1.277 CI[1.053,1.591], wall1.023/0.716h. Across transfer datasets: Math500 favors expansion quality, MBPPPlus favors native quality; expansion costs more in both. Recommend native general default, retain math-oriented expansion candidate for operator review. No automatic routing/model-order change.
-- RESOLUTION QUEUE DONE10:35:05; log confirms router stopped, zero listeners and worker gone. Successor remains NOT STARTED (`queue/c48_temperature/{queue.pid,queue.log,start.log}` absent). Process inspection/control remains unavailable in this sandbox; normal-terminal start command was supplied in P203. No current benchmark progress to claim after the chain endpoint. Resolve that access/start requirement before promising further GPU work.
-- Latest scheduled review10:38:27. Earlier78-minute scheduling delay remains noted; configured10-minute cadence is not an exact dispatch guarantee. Preserve prepared scripts and all completed results.
-- Native ARM64 coding evaluator `mlx-evalplus-native:recovery`, explicit wrapper `queue/resolution/native_grade.py`; preserve archived grades. Original amd64 Rosetta mmap failures were reproduced, native control5 canonical positives/373 syntax negatives passed. M34a regrade completed without Rosetta failures. Do not use bare amd64 grading for new queue coding arms.
-
-## Evidence and recommendations
-
-- M36 repaired MTP on `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`: speed screen1.836x,84.5% acceptance; original sidecar0 acceptance/0.620x after positive control passed. Seven HF-offset normalization vectors were corrected; matrices unchanged. Repack and original artifact retained under `queue/mtp_recovery/`.
-- Quality ON/OFF: HumanEvalPlus90.67/92%, delta−1.33pp CI[−5.33,+2]; MBPPPlus85.33/84.67%, delta+0.67pp CI[−2,+4.67]; n50×3 each, nominal MDE17.7pp. Pooled88/88.33%, delta−0.33pp CI[−3,+2.33], n100×3, nominal MDE12.5pp; all600 converge. Paired wall ratio0.417 CI[0.238,0.603], total1.123/2.691h. Supporting pooled equivalence does not erase HumanEvalPlus's adverse point estimate. User approved the repaired triple on this combined evidence.
-- M34r interim: expanded-minus-native OFF strict−4pp CI[−11,+3], token ratio2.106 CI[0.850,5.045]; native MTP-minus-OFF strict−3pp CI[−8,+2], token ratio1.939 CI[0.970,4.149], nominal MDE12.5pp. Adverse MBPPPlus tails warrant caution; finish the fourth cell and weigh existing evidence. Keep native routing, no automatic model/predictor changes.
-- B order unchanged: first the mixed checkpoint above, second `Qwen3.8-27B-mlx-uniform-4bit` (medium, certified MTP), third `Ornith-1.0-35B-mlx-uniform-4bit` (native, certified MTP), fourth `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. C provisional first `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, second `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. README contains current ranking/evidence tables and Best for recommendations.
-- Medium Go complete: mixed checkpoint22/22, zero stalls,1.697h versus base16/22,six stalls,2.039h. Paired+27.3pp CI[+9.1,+45.5], nominal MDE26.7pp. Math500 corrected scorer evidence remains in campaign-results; older accuracy counts/intervals are superseded. Broader historical regrade audit and dsh eight-point closeout remain PLAN work.
-
-## Scheduled supervision and safeguards
-
-- Desktop same-chat heartbeat `keep-local-stack-campaign-progressing` is ACTIVE every TEN minutes per P179. Simple context-based ping: do not reread handoff/PLAN/AGENTS every time; reread after context loss, changes or uncertainty. First real automatic run verified00:03:55 PDT. Dispatch may lag scheduled time; do not promise exact wall-clock cadence. The benchmark daemon independently checks every five minutes.
-- Use this existing checkout, not the desktop task's temporary cwd or a new worktree. Preserve live overlays, scripts and eight registry overrides. On completion update README ranking/evidence, results and handoff; report quality-first learnings and recommendations. No automatic promotions or git push.
-- Sandbox changed to granular permissions. Current-turn grant allowed network, writes to `queue/mtp_recovery/` and repository `.git`; do not assume it persists. `ps` was denied on earlier scheduled turns. Use current file advancement/daemon evidence honestly; request only needed permissions if recovery requires more. Upload cache is redirected with `HF_XET_CACHE` into `queue/mtp_recovery/hf_xet_cache`, avoiding default-cache write denial.
-- Next discussion point P287; next C id C65. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.
+B: 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (t0.5, medium, repaired MTP), 2nd
+`Qwen3.8-27B-mlx-uniform-4bit` (t0.6, medium, MTP), 3rd `Ornith-1.0-35B-mlx-uniform-4bit`
+(native, MTP), 4th `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. C (provisional): 1st
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (t0.5, native, draft-OFF), 2nd
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. README holds the evidence tables.
