@@ -824,6 +824,18 @@ def grade_ifeval(name, model, tune=None):
     return out
 
 
+def grade_open(name, model, tune=None):
+    """`kind: open` (e.g. cjudge): no gold answer, no mechanical grading — the judge panel
+    (bench/judge_pairwise.py) scores these, not this grader. Graceful-degrade convention:
+    record n/errors and `acc: null` with a note, never crash the batch."""
+    rows = _rows(model, name, **_tune_kw(tune))
+    errors = sum(1 for r in rows if r.get("error"))
+    n = len(rows) - errors
+    return {"benchmark": name, "model": model, "n": n, "errors": errors, "acc": None,
+            "note": "kind=open: no mechanical grading; see the judge panel "
+                    "(bench/judge_pairwise.py, docs/judge-panel-c.md)"}
+
+
 def grade(name, model, tune=None):
     kind = benchmarks.SPECS[name]["kind"]
     if kind == "reasoning":
@@ -834,6 +846,8 @@ def grade(name, model, tune=None):
         score = grade_lcb(name, model, tune=tune)
     elif name == "ifeval":
         score = grade_ifeval(name, model, tune=tune)
+    elif kind == "open":
+        score = grade_open(name, model, tune=tune)
     else:
         raise ValueError(name)
     # The convergence VECTOR + sampling statistics, attached in ONE place so no grader can

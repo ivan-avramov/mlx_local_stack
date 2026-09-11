@@ -4,6 +4,8 @@ Reasoning benchmarks need only `datasets`. Coding benchmarks need the official
 evaluators (`evalplus`, `lcb_runner`) — imported lazily so reasoning works without them.
 An Item is: {"id", "prompt", "answer"?, "options"?, "meta"?}.
 """
+import json
+import os
 import random
 
 # Per-benchmark spec: kind, answer type, gated? Sampling/thinking params come from the
@@ -16,6 +18,7 @@ SPECS = {
     "mbppplus":      {"kind": "coding",    "answer_type": "code", "gated": False},
     "livecodebench": {"kind": "coding",    "answer_type": "code", "gated": False},
     "ifeval":        {"kind": "instruction", "answer_type": "programmatic", "gated": False},
+    "cjudge":        {"kind": "open", "answer_type": "none", "gated": False},
 }
 
 # Pinned LiveCodeBench release window for contamination control + reproducibility.
@@ -153,6 +156,28 @@ def _load_ifeval(limit, seed):
     return _subsample(items, limit, seed)
 
 
+# ----------------------------------------------------------------- open (judge-panel) loader
+_CJUDGE_PATH = os.path.join(os.path.dirname(__file__), "..", "corpora", "cjudge_v1.jsonl")
+
+
+def _load_cjudge(limit, seed):
+    """Role-C judge-panel corpus (docs/judge-panel-c.md 'Corpus cjudge'): 40 committed rows
+    (30 public arena-hard-auto prompts + 10 verbatim domain prompts), read from the repo — no
+    network, no HF dataset. `kind: open` has no gold answer; grading is a no-op (see grade.py)."""
+    items = []
+    with open(_CJUDGE_PATH, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            items.append({"id": row["id"], "prompt": row["prompt"],
+                          "meta": {"source": row.get("source"), "source_id": row.get("source_id"),
+                                   "category": row.get("category")},
+                          "source": row.get("source"), "category": row.get("category")})
+    return _subsample(items, limit, seed)
+
+
 def load(name: str, limit: int | None = None, seed: int = 0) -> list:
     if name == "aime":
         return _load_aime(limit, seed)
@@ -166,6 +191,8 @@ def load(name: str, limit: int | None = None, seed: int = 0) -> list:
         return _load_lcb(limit, seed)
     if name == "ifeval":
         return _load_ifeval(limit, seed)
+    if name == "cjudge":
+        return _load_cjudge(limit, seed)
     raise ValueError(f"unknown benchmark {name!r}; known: {list(SPECS)}")
 
 
@@ -225,6 +252,6 @@ def build_messages(name: str, item: dict) -> list:
         return [{"role": "user", "content":
                  "Complete the following task. Return the complete solution as a single "
                  "self-contained ```python code block, no explanation after it.\n\n" + item["prompt"]}]
-    if name == "ifeval":
+    if name in ("ifeval", "cjudge"):
         return [{"role": "user", "content": item["prompt"]}]
     raise ValueError(name)

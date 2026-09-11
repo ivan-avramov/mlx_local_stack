@@ -18,13 +18,15 @@ is admissible. Math500 stays a proxy; this is the role's real axis.
 
 ## Corpus `cjudge` (v1, 40 prompts, committed at `benchmark/corpora/cjudge_v1.jsonl`)
 
-- 30 public prompts: a permissively licensed pairwise-judged prompt set (Arena-Hard-style or
+- 18 public prompts (hand-curated from a seeded draw of 30): a permissively licensed pairwise-judged prompt set (Arena-Hard-style or
   WildBench), filtered to software/system design, ML/AI research, planning and brainstorming;
   English; text-only; no tool use; no images; prompt ≤ 1,500 tokens. Selection is seeded and
   recorded (`source`, `source_id`, `license`, `category`, `selection_seed`) in
   `benchmark/corpora/cjudge_v1.provenance.json` with the file sha256.
-- 10 domain prompts (`source: "operator-domain"`, ids `dom-01..10`), verbatim from the
-  "Domain prompts" section below.
+- 22 domain prompts (`source: "operator-domain"`, ids `dom-01..22`), verbatim from the
+  "Domain prompts" section below (dom-11..22 added 2026-09-11 after the first public draw
+  proved too generic for the role: the public pool is kept to the 18 prompts that are genuinely
+  design/research tasks).
 - Row schema: `{id, source, source_id, category, prompt}`. Loader: `bench/benchmarks.py`
   SPECS entry `"cjudge": {"kind": "open", "answer_type": "none", "gated": False}`; no
   system prompt suffix; `grade` records n/convergence only (no accuracy).
@@ -84,7 +86,7 @@ panel, re-run the gate only (anchors cost judge calls, not GPU).
 - Output `benchmark/results/judge_c_v1/{gate.json, ranking.json}`; campaign-results dated
   entry; README C table update; rank changes → operator approval (C67 pending).
 
-## Domain prompts (verbatim corpus text; ids dom-01..dom-10)
+## Domain prompts (verbatim corpus text; ids dom-01..dom-22)
 
 dom-01: You run a 64 GB Apple-silicon machine as the only inference host for a coding agent that needs 256K tokens of context. A lossy KV-cache quantization would free memory. Design the measurement protocol that decides whether it is acceptable: what to measure, on which tasks, with what sample sizes, how to separate retrieval depth from reasoning depth, and the pitfalls that would make a "no loss" result untrustworthy.
 
@@ -105,3 +107,27 @@ dom-08: Plan an evaluation of an agentic coding harness across five programming 
 dom-09: A proposed metric defines "effective context length" as the longest context at which a model still answers a retrieval question correctly. Critique it and propose a better definition that separates retrieval depth from reasoning depth, including how each curve should be measured and what threshold semantics to use.
 
 dom-10: Write a design document for a fail-fast funnel that evaluates new open-weight model releases each week on one machine: stages, the cheapest disqualifying test at each stage, what evidence promotes a candidate, how to avoid re-testing what is already known, and how to keep the process honest when a favourite candidate is failing.
+
+dom-11: A team wants retrieval-augmented generation over a corpus of internal engineering documents that changes daily. Design the system end to end: chunking, embedding refresh, retrieval strategy, how the model is grounded, how to evaluate answer faithfulness, and the three failure modes you would expect first in production.
+
+dom-12: Compare the main approaches to compressing or evicting the KV cache in long-context transformer inference. For each, explain the mechanism, what it costs in quality and where, and which workloads it suits. Finish with a recommendation for a coding agent that reads whole repositories.
+
+dom-13: Design a public HTTP API for a service that runs long, cancellable jobs on a single GPU host with a queue. Cover resource naming, job lifecycle and state machine, idempotency, cancellation semantics, back-pressure, observability, and versioning. Give the tradeoffs you rejected.
+
+dom-14: You must review a proposed A/B test of a new ranking model where the metric moved by 0.8 percent with a p-value of 0.03 after three weeks. Write the review: what would make you trust or distrust the result, what additional analyses you would demand, and how you would decide whether to ship.
+
+dom-15: Propose a research agenda for reducing hallucinated citations in language-model outputs. Structure it as three to five concrete experiments with hypotheses, datasets or how you would build them, metrics, expected outcomes, and what each result would change about the next step.
+
+dom-16: Design the data pipeline and storage layout for benchmark results produced by dozens of model-configuration runs per week, where any result may need to be regraded later without regeneration. Address provenance, immutability, schema evolution, deduplication and how a reader reconstructs exactly what was run.
+
+dom-17: Write a threat model for a local developer tool that lets an autonomous coding agent execute shell commands and edit files on a workstation. Enumerate assets, trust boundaries, realistic attackers, the highest-risk attack paths, and the mitigations you would ship first versus later, with reasoning.
+
+dom-18: A startup asks whether to fine-tune an open-weight model or rely on prompting and retrieval for a customer-support assistant. Lay out how you would reach a decision: the questions to answer first, the experiments that discriminate between the options, the cost model, and the conditions under which each answer is right.
+
+dom-19: Design an observability strategy for an inference server that runs one large model with speculative decoding, session caching and a memory cap. Say what to measure, at what granularity, which signals detect a stalled generation versus a legitimately long one, and how alerts avoid paging on healthy long requests.
+
+dom-20: Critique the practice of ranking models on a single aggregate leaderboard score. Then propose an alternative reporting design for a team choosing a model for a specific role, including how to present uncertainty and conflicting evidence so that the decision is defensible six months later.
+
+dom-21: Explain the tradeoffs between mixture-of-experts and dense transformer architectures for local inference on a memory-constrained device, covering memory, latency, quantization behaviour, and quality per parameter. Recommend how a practitioner should decide between them for an interactive assistant.
+
+dom-22: Plan the first ninety days of a technical program that migrates a research group from ad hoc notebooks to a reproducible experimentation platform. Include the sequencing, what you would deliberately not build, how you would measure adoption, and the organisational risks that usually sink such efforts.
