@@ -2,6 +2,9 @@
 
 ## Current checkpoint
 
+- C62 t0.5 explicitly APPROVED and APPLIED for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`: production registry default + both existing benchmark carriers. All generated configurations audited and37 configgen tests passed. Native/draft-OFF unchanged; live C63 overlay SHA still matches manifest. Eight local registry path overrides preserved. No git push.
+- C64 OPEN: approved C first pick remains presentation role candidate, so daily-client model lists omit it; main registration requires family support in configgen. Tune change completed without silently altering registration or inventing family. OWUI is down, no DB publication. Keep separate from completed C62.
+
 - C48b t0.4 COMPLETE21:48:00: coding85% strict versus87% t0.5, −2pp CI[−7,+3]; math95% versus97%, −2pp CI[−5,0]; n100×1 and nominal MDE12.5pp each. Same one coding non-convergence, all math converged, similar total runtime. Final recommendation C62:adopt operator-preferred t0.5 provisional default; **activation approval pending**, production remains t1.0. README/PLAN/results/summary updated, no ranking change.
 - C63 successor59156 took over automatically21:48:32. Model `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, t0.3/native/draft-OFF; seeded pilot1/5 completed by21:51, no errors/non-convergence, worker/provenance verified. Full100 on same M37/C48 item set follows. Logs `queue/c_second_reference/queue.log`, `start.log`, PID `queue.pid`; t0.4 runner ended, do not restart it. Historical mean predicts16.4h; revise from pilot and actual tails.
 
@@ -81,4 +84,4 @@
 - Desktop same-chat heartbeat `keep-local-stack-campaign-progressing` is ACTIVE every TEN minutes per P179. Simple context-based ping: do not reread handoff/PLAN/AGENTS every time; reread after context loss, changes or uncertainty. First real automatic run verified00:03:55 PDT. Dispatch may lag scheduled time; do not promise exact wall-clock cadence. The benchmark daemon independently checks every five minutes.
 - Use this existing checkout, not the desktop task's temporary cwd or a new worktree. Preserve live overlays, scripts and eight registry overrides. On completion update README ranking/evidence, results and handoff; report quality-first learnings and recommendations. No automatic promotions or git push.
 - Sandbox changed to granular permissions. Current-turn grant allowed network, writes to `queue/mtp_recovery/` and repository `.git`; do not assume it persists. `ps` was denied on earlier scheduled turns. Use current file advancement/daemon evidence honestly; request only needed permissions if recovery requires more. Upload cache is redirected with `HF_XET_CACHE` into `queue/mtp_recovery/hf_xet_cache`, avoiding default-cache write denial.
-- Next discussion point P285; next C id C64. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.
+- Next discussion point P287; next C id C65. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.

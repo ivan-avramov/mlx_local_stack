@@ -1,5 +1,12 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 — C62 t0.5 approved and applied
+
+Operator explicitly approved t0.5 for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`. Updated the production registry generation default and both existing benchmark sampling carriers; all generated targets audited,37 configgen tests passed. Native routing, predictor OFF and every other parameter are unchanged. The live C63 reference overlay still matches its manifest SHA256 and was not edited or restarted. Eight machine-local registry overrides remain uncommitted.
+
+Existing presentation-role limitation surfaced: this C first pick remains candidate in the registry, so daily-client configs omit it. No false family was assigned and no unapproved registration change made. C64 records the separate integration follow-up. OpenWebUI is not running; no database publication was attempted. The requested default-tune change is effective for future production-registry loads and requests omitting temperature.
+
+
 ## 2026-09-10 21:51 — C48b t0.4 complete; recommend t0.5 activation
 
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` t0.4 Math500 ordinary/strict95%, t0.5 97%; difference−2pp CI[−5,0], n100×1, nominal MDE12.5pp, exclusive solves0:2. Both100% converged, zero errors. Token ratio0.957 CI[0.735,1.209], means3658/3820; generation0.844/0.826h. Analysis: `benchmark/results/paired_c48t04_vs05_math500.json`.

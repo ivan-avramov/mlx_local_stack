@@ -1,5 +1,7 @@
 # THE MODEL LEDGER — canonical; updated at every certification, pick change or demotion (not daily; picks of record live in `main_models.yaml`, scores in `docs/campaign-results.md`)
 
+**2026-09-10 C62:** operator approved t0.5 for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`; native routing/predictor OFF unchanged. Router default and both benchmark sampling carriers updated. Daily-client list omission remains pre-existing candidate-role issue C64; no model-order change.
+
 **2026-09-10 C61/M36:** operator approved the repaired MTP predictor for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. Public sidecar `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter`, verified revision `74bb2bc1feb60dbb8302bc8e6021d0be01f8f18d`; all files anonymously downloaded and SHA256 checked. Registry enabled with medium tune unchanged; current benchmark overlays preserved. No model-order change.
 
 ## 2026-09-09 approved current picks (C57 supersedes older B ordering below)
