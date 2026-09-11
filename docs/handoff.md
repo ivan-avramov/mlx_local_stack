@@ -35,9 +35,9 @@ out of the repo at `$STACK_WORKDIR/devthread_codex_2026-09-11.md`.
   (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` t0.5 97 %), quality/tokens-per-task/latency/
   runaway tax, README evidence tables + campaign-results + PLAN C63 row, and a B/C ladder
   recommendation for operator approval (no automatic reorder).
-- SUCCESSOR ARMED: M38 judge-panel generation chain, runner pid 57189,
+- SUCCESSOR ARMED: M38 judge-panel generation chain, runner pid 77605 (five contenders + an Ornith-1.0-35B-mlx-uniform-4bit matched Math500 leg; arm with the stack config.sh sourced — STACK_WORKDIR must be in env),
   `$STACK_WORKDIR/queue/m38_cjudge/run.py` (queue.pid/queue.log/start.log there). Waits for
-  `=== C63 REFERENCE QUEUE DONE ===` + idle box, then per model (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`,
+  `=== C63 REFERENCE QUEUE DONE ===` + idle box, then per model (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`, `Ornith-1.0-35B-mlx-uniform-4bit` (+ its math500 m37ref leg), `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`):
   `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`,
   `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`): fresh draft-OFF overlay, seeded 5-item pilot, full 40 on
   `cjudge` (tune `m38`), grade (acc null by design), router stop; ends `=== M38 CJUDGE QUEUE DONE ===`.
