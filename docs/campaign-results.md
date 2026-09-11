@@ -1,5 +1,14 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 21:51 — C48b t0.4 complete; recommend t0.5 activation
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` t0.4 Math500 ordinary/strict95%, t0.5 97%; difference−2pp CI[−5,0], n100×1, nominal MDE12.5pp, exclusive solves0:2. Both100% converged, zero errors. Token ratio0.957 CI[0.735,1.209], means3658/3820; generation0.844/0.826h. Analysis: `benchmark/results/paired_c48t04_vs05_math500.json`.
+
+Together with coding strict85% versus87% (−2pp CI[−7,+3], nominal MDE12.5pp), t0.4 has weaker quality point estimates on both axes, nearly the same total wall cost, and one coding non-convergence in each setting. Temperature is not a smooth interpolation knob: the midpoint did not combine the endpoints' best behavior. Recommendation:adopt the operator-preferred t0.5 provisionally, retaining native routing/predictor OFF. This is based on the multi-axis quality/cost trend, not rejection for inconclusiveness. Final production activation still awaits operator approval; model orders unchanged.
+
+Queue t0.4 ended21:48:00 with clean router teardown. C63 reference successor59156 started21:48:32 for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, deployed t0.3/native/draft-OFF. First pilot response completed without error/non-convergence; full100 follows seeded pilot. Worker/provenance checks passed, no idle intervention required.
+
+
 ## 2026-09-10 20:57 — C48b t0.4 coding complete; t0.5 preference retained
 
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` t0.4 MBPPPlus n100×1: ordinary86%, strict85%,99% convergence, one meander non-convergence, no transport errors. Versus t0.5 ordinary/strict87%: ordinary−1pp CI[−5,+3], strict−2pp CI[−7,+3], nominal MDE12.5pp. Strict exclusive solves2:4. Token ratio0.972 CI[0.540,1.933], means2580/2654; generation0.594/0.582h. Analysis: `benchmark/results/paired_c48t04_vs05_mbppplus.json`.
