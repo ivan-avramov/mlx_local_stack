@@ -41,18 +41,20 @@ Only ranks 1–2 are approved C picks. The remaining two entries are a research 
 | 1, provisional pick | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | t1.0, native routing, predictor OFF | Text-only reasoning and rapid iteration: small token count, fast decode, no non-convergence in the matched Math500 run. |
 | 2, provisional pick | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | deployed t0.3, certified MTP | Research/design requiring vision or a repair-oriented alternative; slower reasoning in the recorded run. |
 | Shortlist, not ranked | Ornith-1.0-35B-mlx-uniform-4bit | t0.4, native routing, certified MTP | Fast vision-capable exploration; reasoning runs retain a larger runaway tax. |
-| Shortlist, not ranked | Qwen3.8-27B-mlx-uniform-4bit | t0.6, medium effort, certified MTP | Evaluate whether efficient medium-effort coding behavior transfers to C tasks; matched medium C evidence is still owed. |
+| Shortlist, not ranked | Qwen3.8-27B-mlx-uniform-4bit | t0.6, medium effort, certified MTP | Accuracy-first reasoning candidate:99/100 on matched medium Math500, fewer tokens but slower decode than the C first choice; broader C assessment pending. |
 
 ### C evidence
 
-Math500: same 100 cases, deployed tune, predictor OFF, budget 81920. **2026-09-09 scorer correction:** extracted LaTeX expressions are now parsed as math; earlier 89/88/86 strict scores were undercounts. Saved responses were regraded, not regenerated. Updated paired bootstrap intervals are below; do not reuse the old accuracy intervals. Timing/token measurements are unchanged.
+Math500: M33 rows share one100-case set; M37 uses the newer100-case set shared with the temperature ladder. Do not directly compare scores across these sets. All use deployed tunes, predictor OFF, budget81920. **2026-09-09 scorer correction:** extracted LaTeX expressions are now parsed as math; earlier 89/88/86 strict scores were undercounts. Saved responses were regraded, not regenerated. Updated paired bootstrap intervals are below; do not reuse the old accuracy intervals. Timing/token measurements are unchanged.
 
-| Model | Ordinary / strict correct | Non-converged | Mean output tokens/task | Generation time /100 | Best for — evidence and limits |
-|---|---|---|---|---|---|
-| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | **99 / 99** | **0** | **3,849** | **0.81 h** | Fast text reasoning: favorable quality and token/time trends. M34r MBPPPlus native84% versus expanded82% strict;100% convergence both. Native general default retained. C48 t0.7 MBPPPlus85% versus84% at t1.0; Math50097% versus96% at t1.0 also favors t0.7; C48 complete: Operator prefers t0.5:87% coding/97% math with less runtime/repetition than t0.3. t0.4 test queued; production remains t1.0. Expansion math/coding tradeoff remains below. |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | 99 / 97 | 2 | 12,842 | 16.4 h | Vision-capable alternative; some correct answers incurred non-convergence. |
-| Ornith-1.0-35B-mlx-uniform-4bit | 99 / 93 | 6 | 15,788 | 4.7 h | Fast decoding, but more tokens and non-convergence on reasoning. |
-| Qwen3.8-27B-mlx-uniform-4bit | Matched medium run not measured | — | — | — | C evaluation candidate; do not substitute its coding scores for research/design evidence. |
+| Model | Run / item set | Ordinary / strict correct | Non-converged | Mean output tokens/task | Generation time /100 | Best for — evidence and limits |
+|---|---|---|---|---|---|---|
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | M33 | **99 / 99** | **0** | **3,849** | **0.81 h** | Fast text reasoning: favorable quality and token/time trends. M34r MBPPPlus native84% versus expanded82% strict;100% convergence both. Native general default retained. C48 t0.7 MBPPPlus85% versus84% at t1.0; Math50097% versus96% at t1.0 also favors t0.7; C48 complete: Operator prefers t0.5:87% coding/97% math with less runtime/repetition than t0.3. t0.4 test queued; production remains t1.0. Expansion math/coding tradeoff remains below. |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | M33 | 99 / 97 | 2 | 12,842 | 16.4 h | Vision-capable alternative; some correct answers incurred non-convergence. |
+| Ornith-1.0-35B-mlx-uniform-4bit | M33 | 99 / 93 | 6 | 15,788 | 4.7 h | Fast decoding, but more tokens and non-convergence on reasoning. |
+| Qwen3.8-27B-mlx-uniform-4bit | M37, newer matched set | 99 / 99 | 0 | 2,423 | 2.62 h | Accuracy-first C candidate: fewer tokens but slower decode; no promotion pending the mixed-checkpoint comparison. |
+
+M37 same-item comparison: `Qwen3.8-27B-mlx-uniform-4bit` medium99% strict versus `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` native t1.0 96% (+3pp CI[0,+7]) or t0.5 97% (+2pp CI[0,+5]); n100×1, nominal MDE12.5pp. Output-token ratios0.735 CI[0.534,1.005] and0.634 CI[0.428,0.931], respectively, but wall2.62h versus0.72/0.83h. It gains accuracy-first C consideration; finish the mixed-checkpoint arm before a proposed reorder. Current C order unchanged.
 
 Corrected paired strict deltas: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` versus `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: **+2pp, 95% CI [-2,+6]**; versus `Ornith-1.0-35B-mlx-uniform-4bit`: **+6pp, CI [+1,+12]**. These are descriptive pairwise intervals before family multiplicity adjustment; n=100 nominal axis MDE is 12.5pp. The recommendation rests on favorable strict-quality and token/time trends, not a blanket superiority claim.
 

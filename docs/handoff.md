@@ -1,6 +1,11 @@
-# Handoff — 2026-09-10 15:55 PDT
+# Handoff — 2026-09-10 18:08 PDT
 
 ## Current checkpoint
+
+- Latest18:08: M37 base medium Math500 COMPLETE99% strict,100/100 converge, zero errors,2423 mean output tokens,2.619h. Versus matched C-first native t1.0 +3pp CI[0,+7], versus its t0.5 candidate +2pp CI[0,+5], nominal MDE12.5pp each. Fewer tokens but slower decode; base gains accuracy-first C consideration, no approved reorder pending mixed arm. README item sets now explicitly separated (M33 versus M37).
+- Runner14933 automatically began `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` medium/native/draft-OFF pilot18:05:49;4/5 complete by18:08 without errors/non-convergence. Worker46108 active, medium/draft/fingerprint verified in runner log. t0.4 successor34753 remains waiting; no intervention required.
+
+- Latest17:56:49: M37 `Qwen3.8-27B-mlx-uniform-4bit` medium Math500 still89/100, no advancement this review; all completed rows converged, zero errors. Current request approximately13minutes since last row; mean-only17minute remainder excludes unresolved tail and is unreliable. Worker activity checked; both runners alive and watcher17:55:45 reports ALIVE. Preserve active long generation; mixed-checkpoint arm not started. Runner14933 and C48b t0.4 successor34753 verified alive, successor waiting; no correction indicated. Preserve budgets and current run.
 
 - Latest operator decision: prefers t0.5 over t0.3 for fewer repetition runaways and lower token cost; explicitly requested t0.4 next. C62 updated; no production change. README and temperature summary now reflect this preference, superseding the earlier t0.3 recommendation.
 - C48b t0.4 successor ARMED, PID34753, `queue/c48_t04/run.py`; PID file `queue.pid`, log `queue.log`, errors `start.log` in that folder. Verified SELFTEST waiting for M37 runner14933. It waits for MEDIUM C DONE and no active worker/driver/router; then t0.4 native/draft-OFF MBPPPlus100×1 and Math500100×1, same cases, five seeded pilots each. Only temperature changes. No extra endpoint-reseed experiment authorized/queued. Current M37 script/overlay untouched.
@@ -64,4 +69,4 @@
 - Desktop same-chat heartbeat `keep-local-stack-campaign-progressing` is ACTIVE every TEN minutes per P179. Simple context-based ping: do not reread handoff/PLAN/AGENTS every time; reread after context loss, changes or uncertainty. First real automatic run verified00:03:55 PDT. Dispatch may lag scheduled time; do not promise exact wall-clock cadence. The benchmark daemon independently checks every five minutes.
 - Use this existing checkout, not the desktop task's temporary cwd or a new worktree. Preserve live overlays, scripts and eight registry overrides. On completion update README ranking/evidence, results and handoff; report quality-first learnings and recommendations. No automatic promotions or git push.
 - Sandbox changed to granular permissions. Current-turn grant allowed network, writes to `queue/mtp_recovery/` and repository `.git`; do not assume it persists. `ps` was denied on earlier scheduled turns. Use current file advancement/daemon evidence honestly; request only needed permissions if recovery requires more. Upload cache is redirected with `HF_XET_CACHE` into `queue/mtp_recovery/hf_xet_cache`, avoiding default-cache write denial.
-- Next discussion point P248; next C id C63. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.
+- Next discussion point P261; next C id C63. C61 is RULED and implemented. Retain all existing artifacts and original sidecar; no pending production activation for M36.

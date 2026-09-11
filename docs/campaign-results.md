@@ -1,5 +1,16 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 18:08 — M37 base medium Math500 complete, gains accuracy-first C consideration
+
+`Qwen3.8-27B-mlx-uniform-4bit`, deployed medium t0.6, native/predictor OFF, n100×1: ordinary/strict99%,100% convergence, no transport errors. Mean2423 output tokens, generation2.619h. Same-item comparison with `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`: current native t1.0 control96% (+3pp CI[0,+7], exclusive solves3:0); operator-preferred provisional t0.5 candidate97% (+2pp CI[0,+5], exclusive solves2:0). Nominal MDE12.5pp per axis, descriptive intervals before campaign multiplicity adjustment.
+
+Output-token ratios are0.735 CI[0.534,1.005] versus t1.0 and0.634 CI[0.428,0.931] versus t0.5; wall2.62h versus0.72/0.83h. Mechanism: `Qwen3.8-27B-mlx-uniform-4bit` produces fewer tokens but decodes slower, so this is an accuracy/token-efficiency versus wall-time tradeoff, not excess verbosity. All measurements predictor OFF; do not project exact served-MTP latency from these times.
+
+Recommendation:the base checkpoint gains ground as an accuracy-first C candidate and merits consideration over the current C first choice for math-sensitive tasks. Preserve current approved C order until the mixed-checkpoint arm finishes and the full tradeoff is presented; subjective research/design evidence remains separate. No B reorder or automatic promotion. The new M37 set differs from historical M33; README explicitly labels item sets instead of putting unmatched99% readings side by side without qualification.
+
+Queue advanced automatically at18:05:49 to `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` medium/native/draft-OFF; pilot4/5 by18:08 with no errors/non-convergence. t0.4 successor remains waiting after this pair. Analyses: `paired_m37_base_vs_c1.json` and `paired_m37_base_vs_c1_t05.json` under benchmark/results.
+
+
 ## 2026-09-10 15:38 — C48 COMPLETE; recommend provisional t0.3, medium C successor running
 
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` final Math500 t0.3 ordinary/strict98% versus96% t1.0: +2pp CI[0,+5], n100×1, nominal MDE12.5pp,2:0 exclusive solves. All math responses converge; token ratio1.139 CI[0.853,1.501], means3753/3296, wall0.870/0.716h.
