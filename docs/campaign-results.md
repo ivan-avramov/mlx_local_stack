@@ -1,5 +1,14 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 20:57 — C48b t0.4 coding complete; t0.5 preference retained
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` t0.4 MBPPPlus n100×1: ordinary86%, strict85%,99% convergence, one meander non-convergence, no transport errors. Versus t0.5 ordinary/strict87%: ordinary−1pp CI[−5,+3], strict−2pp CI[−7,+3], nominal MDE12.5pp. Strict exclusive solves2:4. Token ratio0.972 CI[0.540,1.933], means2580/2654; generation0.594/0.582h. Analysis: `benchmark/results/paired_c48t04_vs05_mbppplus.json`.
+
+Mechanism/recommendation: t0.4's non-converged response was ordinarily correct but fails the strict budget/convergence requirement; it cannot be counted as a usable success. Both settings have one non-converged response, and cost is similar, so the current coding evidence favors t0.5. Retain the operator's t0.5 provisional preference, finish Math500 before the final tune decision, and do not reject t0.4 merely for statistical inconclusiveness. No production change or B/C reorder.
+
+The queue automatically started t0.4 Math500 at20:56:26, with native/draft-OFF configuration and provenance verified. Runner34753 is healthy; no intervention needed. M17 acquisition/funnel row is stale: saved50-item coding scores already exist (HumanEvalPlus90% strict, MBPPPlus74%); inspect existing funnel completion before selecting future work, rather than re-downloading or blindly repeating it.
+
+
 ## 2026-09-10 20:21 — M37 complete; t0.4 successor took over
 
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` medium/native/draft-OFF Math500 n100×1: ordinary/strict97%,100% convergence, zero errors. Mean1806 output tokens; generation2.204h. The long request completed successfully (maximum32,564tokens); no restart was needed.
