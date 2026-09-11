@@ -197,6 +197,51 @@ def _expected_match_rate(anchor_pairs, verdicts_by_pair, judges):
     return hits / len(anchor_pairs)
 
 
+NULL_REASONS = ("max_tokens", "refusal", "unparseable")
+NULL_SHARE_WARN_THRESHOLD = 0.05
+
+
+def null_verdict_stats(anchors, verdict_rows, judges):
+    """Counts of `choice: null` ANCHOR verdict rows — per judge, per `null_reason`
+    (`max_tokens`, `refusal`, or `unparseable` when no `null_reason` was set), plus the null
+    share overall and per judge.
+
+    A truncated/refused judge call is graded as BOTH a tie (0.5, via `panel_verdict`) and an
+    order flip (via `order_is_flip`) — documented intent (AGENTS.md: a budget-hit is a FAIL
+    signal to investigate, never silently absorbed) — but that intent was previously invisible
+    in `gate.json`: a client-side `max_tokens`/`output_config` regression could silently drag
+    down `order_flip_rate`/kappa/alpha and nobody would know WHY. This block, plus `main()`'s
+    WARN line above `NULL_SHARE_WARN_THRESHOLD`, surfaces it.
+
+    Membership is by PAIR ID against `anchors` (like every other gate metric here), not by a
+    verdict row's own `anchor_type` field — consistent with `order_is_flip`/`per_judge_verdict`,
+    and robust to older verdict rows that predate that field."""
+    anchor_pair_ids = {p["pair_id"] for p in anchors}
+    anchor_rows = [r for r in verdict_rows if r.get("pair_id") in anchor_pair_ids]
+    total = len(anchor_rows)
+    by_judge, by_reason, per_judge_total = Counter(), Counter(), Counter()
+    null_total = 0
+    for r in anchor_rows:
+        j = r.get("judge")
+        per_judge_total[j] += 1
+        if r.get("choice") is None:
+            null_total += 1
+            by_judge[j] += 1
+            by_reason[r.get("null_reason") or "unparseable"] += 1
+    by_judge_share = {}
+    for j in judges:
+        pt = per_judge_total.get(j, 0)
+        by_judge_share[j] = (by_judge.get(j, 0) / pt) if pt else None
+    return {
+        "by_judge": {j: by_judge.get(j, 0) for j in judges},
+        "by_judge_share": by_judge_share,
+        "by_reason": {r: by_reason.get(r, 0) for r in NULL_REASONS},
+        "n_anchor_rows": total,
+        "n_null": null_total,
+        "share": (null_total / total) if total else None,
+    }
+
+
 def compute_gate(pairs, verdict_rows, judges):
     """All reliability-gate metrics + PASS/FAIL, computed from the ANCHOR pairs only."""
     verdicts_by_pair = group_verdicts_by_pair(verdict_rows)
@@ -262,7 +307,9 @@ def compute_gate(pairs, verdict_rows, judges):
                     and identity_tie_rate >= THRESHOLDS["identity_tie_rate"]},
     }
     overall = all(m["pass"] for m in metrics.values())
-    return {"metrics": metrics, "overall": "PASS" if overall else "FAIL", "judges": list(judges)}
+    null_verdicts = null_verdict_stats(anchors, verdict_rows, judges)
+    return {"metrics": metrics, "overall": "PASS" if overall else "FAIL", "judges": list(judges),
+            "null_verdicts": null_verdicts}
 
 
 # ------------------------------------------------------------------------------------ ranking
@@ -456,6 +503,13 @@ def main(argv=None):
     for name, m in gate["metrics"].items():
         print(f"  {name}: value={m['value']} threshold({m['op']})={m['threshold']} "
               f"pass={m['pass']} n={m['n']}", flush=True)
+    for name, share in gate["null_verdicts"]["by_judge_share"].items():
+        if share is not None and share > NULL_SHARE_WARN_THRESHOLD:
+            print(f"[judge_gate] WARN judge={name} null-verdict share {share:.1%} on anchors "
+                  f"exceeds {NULL_SHARE_WARN_THRESHOLD:.0%} — a client-side "
+                  "max_tokens/output_config truncation can silently fail order_flip_rate/"
+                  "kappa/alpha for this judge; investigate before trusting the gate.",
+                  flush=True)
 
     if gate["overall"] != "PASS":
         print("[judge_gate] REFUSING to rank: reliability gate FAILED. Revise the rubric or "

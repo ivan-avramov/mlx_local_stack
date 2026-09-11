@@ -462,3 +462,155 @@ def test_main_gate_fail_refuses_ranking(tmp_path):
     gate = json.load(open(out / "gate.json"))
     assert gate["overall"] == "FAIL"
     assert not (out / "ranking.json").exists()
+
+
+# ------------------------------------------------------------ null-verdict visibility follow-up
+# A truncated/refused judge call (choice:null with null_reason) is graded as BOTH a tie (0.5,
+# via panel_verdict) and an order flip (via order_is_flip) — documented intent, previously
+# invisible. null_verdict_stats + the gate's "null_verdicts" block + main()'s WARN line surface
+# it so a client-side max_tokens/output_config regression cannot silently fail the gate.
+def _null_row(pair_id, judge, order, null_reason=None):
+    return {"pair_id": pair_id, "order": order, "judge": judge, "choice": None,
+            "null_reason": null_reason}
+
+
+def test_null_verdict_stats_counts_by_judge_and_reason():
+    anchors = [_anchor_pair("d0", "degrade", "A"), _anchor_pair("d1", "degrade", "A")]
+    rows = (
+        _agree("d0", JUDGES, "A")                                   # all clean, no nulls
+        + [_null_row("d1", "j1", "AB", "max_tokens"), _null_row("d1", "j1", "BA", "max_tokens")]
+        + [_null_row("d1", "j2", "AB", "refusal"), _null_row("d1", "j2", "BA", "refusal")]
+        + [_null_row("d1", "j3", "AB"), _null_row("d1", "j3", "BA")]   # no reason -> unparseable
+    )
+    stats = G.null_verdict_stats(anchors, rows, JUDGES)
+    assert stats["by_judge"] == {"j1": 2, "j2": 2, "j3": 2}
+    assert stats["by_reason"] == {"max_tokens": 2, "refusal": 2, "unparseable": 2}
+    assert stats["n_null"] == 6
+
+
+def test_null_verdict_stats_share_overall_and_per_judge():
+    anchors = [_anchor_pair("d0", "degrade", "A")]
+    # 1 pair * 3 judges * 2 orders = 6 anchor verdict rows; only j1's BA call is null.
+    rows = _agree("d0", ["j2", "j3"], "A") + [
+        {"pair_id": "d0", "order": "AB", "judge": "j1", "choice": "A"},
+        _null_row("d0", "j1", "BA", "max_tokens"),
+    ]
+    stats = G.null_verdict_stats(anchors, rows, JUDGES)
+    assert stats["n_anchor_rows"] == 6
+    assert stats["n_null"] == 1
+    assert abs(stats["share"] - (1 / 6)) < 1e-9
+    assert stats["by_judge_share"]["j1"] == 0.5   # 1 of j1's 2 rows
+    assert stats["by_judge_share"]["j2"] == 0.0
+    assert stats["by_judge_share"]["j3"] == 0.0
+
+
+def test_null_verdict_stats_no_anchor_rows_is_none_share():
+    stats = G.null_verdict_stats([], [], JUDGES)
+    assert stats["n_anchor_rows"] == 0
+    assert stats["share"] is None
+    assert all(v is None for v in stats["by_judge_share"].values())
+
+
+def test_compute_gate_includes_null_verdicts_block():
+    pairs = [_anchor_pair(f"d{i}", "degrade", "A") for i in range(10)]
+    rows = []
+    for i, p in enumerate(pairs):
+        if i == 0:
+            rows += [{"pair_id": p["pair_id"], "order": "AB", "judge": "j1", "choice": "A"},
+                     _null_row(p["pair_id"], "j1", "BA", "max_tokens")]
+            rows += _agree(p["pair_id"], ["j2", "j3"], "A")
+        else:
+            rows += _agree(p["pair_id"], JUDGES, "A")
+    gate = G.compute_gate(pairs, rows, JUDGES)
+    nv = gate["null_verdicts"]
+    assert nv["by_judge"]["j1"] == 1
+    assert nv["by_reason"]["max_tokens"] == 1
+    assert nv["n_anchor_rows"] == 10 * 3 * 2
+
+
+# -------------------------------------------------------------------------- main() WARN on null
+def test_main_warns_when_judge_null_share_exceeds_5pct(tmp_path, capsys):
+    # 10 anchors * 2 orders = 20 rows for j1; null out 2 of them (10%) -> exceeds 5%.
+    degrade = [_anchor_pair(f"d{i}", "degrade", "A") for i in range(10)]
+    rows = []
+    for i, p in enumerate(degrade):
+        if i < 2:
+            rows += [_null_row(p["pair_id"], "j1", "AB", "max_tokens"),
+                     _null_row(p["pair_id"], "j1", "BA", "max_tokens")]
+            rows += _agree(p["pair_id"], ["j2", "j3"], "A")
+        else:
+            rows += _agree(p["pair_id"], JUDGES, "A")
+    pairs_path, verdicts_path = tmp_path / "pairs.jsonl", tmp_path / "verdicts.jsonl"
+    _write_jsonl(pairs_path, degrade)
+    _write_jsonl(verdicts_path, rows)
+    G.main(["--pairs", str(pairs_path), "--verdicts", str(verdicts_path),
+           "--judges", *JUDGES, "--out", str(tmp_path / "out")])
+    captured = capsys.readouterr()
+    assert "WARN" in captured.out
+    assert "j1" in captured.out
+
+
+def test_main_no_warn_when_null_share_under_threshold(tmp_path, capsys):
+    degrade = [_anchor_pair(f"d{i}", "degrade", "A") for i in range(10)]
+    rows = []
+    for p in degrade:
+        rows += _agree(p["pair_id"], JUDGES, "A")   # zero nulls anywhere
+    pairs_path, verdicts_path = tmp_path / "pairs.jsonl", tmp_path / "verdicts.jsonl"
+    _write_jsonl(pairs_path, degrade)
+    _write_jsonl(verdicts_path, rows)
+    G.main(["--pairs", str(pairs_path), "--verdicts", str(verdicts_path),
+           "--judges", *JUDGES, "--out", str(tmp_path / "out")])
+    captured = capsys.readouterr()
+    assert "WARN" not in captured.out
+
+
+# --------------------------------------------------------- reviewer follow-up: missing asserts
+def test_compute_ranking_p_value_method_present():
+    winners = ["A"] * 16 + ["tie"] * 2 + ["B"] * 2
+    pairs = [_candidate_pair(i, w) for i, w in enumerate(winners)]
+    rows = []
+    for p, w in zip(pairs, winners):
+        rows += _agree(p["pair_id"], JUDGES, w)
+    ranking = G.compute_ranking(pairs, rows, JUDGES, seed=0)
+    r = ranking["pairs"]["Alpha__Beta"]
+    assert r["p_value_method"] == G.P_VALUE_METHOD
+
+
+def test_main_gate_pass_writes_usage_into_ranking_via_models_flag(tmp_path):
+    degrade = [_anchor_pair(f"d{i}", "degrade", "A") for i in range(10)]
+    verbosity = [_anchor_pair(f"v{i}", "verbosity", "A") for i in range(10)]
+    identity = [_anchor_pair(f"t{i}", "identity", "tie") for i in range(10)]
+    winners = ["A"] * 16 + ["tie"] * 2 + ["B"] * 2
+    candidates = [_candidate_pair(i, w) for i, w in enumerate(winners)]
+    pairs = degrade + verbosity + identity + candidates
+    rows = []
+    for p in degrade:
+        rows += _agree(p["pair_id"], JUDGES, "A")
+    for p in verbosity:
+        rows += _agree(p["pair_id"], JUDGES, "A")
+    for p in identity:
+        rows += _agree(p["pair_id"], JUDGES, "tie")
+    for p, w in zip(candidates, winners):
+        rows += _agree(p["pair_id"], JUDGES, w)
+
+    results_dir = tmp_path / "results"
+    for model in ("Alpha", "Beta"):
+        d = results_dir / model
+        d.mkdir(parents=True)
+        with open(d / "cjudge.m38.jsonl", "w") as f:
+            f.write(json.dumps({"id": "dom-00", "completion_tokens": 100, "wall_s": 10.0,
+                                "nonconv_kind": None, "converged": True}) + "\n")
+
+    pairs_path, verdicts_path = tmp_path / "pairs.jsonl", tmp_path / "verdicts.jsonl"
+    _write_jsonl(pairs_path, pairs)
+    _write_jsonl(verdicts_path, rows)
+    out = tmp_path / "out"
+
+    rc = G.main(["--pairs", str(pairs_path), "--verdicts", str(verdicts_path),
+                "--judges", *JUDGES, "--out", str(out),
+                "--models", "Alpha", "Beta", "--results-dir", str(results_dir)])
+    assert rc == 0
+    ranking = json.load(open(out / "ranking.json"))
+    assert "usage" in ranking
+    assert ranking["usage"]["Alpha"]["tokens_per_task"] == 100
+    assert ranking["usage"]["Beta"]["n"] == 1
