@@ -1,6 +1,20 @@
 import json
 from configgen.emitters.owui import emit_owui
 
+def test_nemotron_family_params(nemotron_source_tainted):
+    # C64/F2-F3/F5: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit, role=main, family=nemotron.  # allow-shorthand
+    # Taint-based: nemotron_source_tainted injects top_k/repetition_penalty into sampling, which
+    # pre-F2/F3 leaked straight through (owui._params filtered m.sampling directly instead of
+    # routing through the family whitelist in sampling_openai/sampling_extra).
+    arr = json.loads(emit_owui(nemotron_source_tainted))
+    by = {m["id"]: m for m in arr}
+    m = by["NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit"]
+    assert m["params"]["function_calling"] == "native"
+    assert m["params"]["presence_penalty"] == 0.0
+    assert m["params"]["thinking_budget"] == 81920
+    assert "repeat_penalty" not in m["params"]
+    assert "top_k" not in m["params"] and "min_p" not in m["params"]
+
 def test_owui_params_and_meta(sample_source):
     arr = json.loads(emit_owui(sample_source))
     by = {m["id"]: m for m in arr}

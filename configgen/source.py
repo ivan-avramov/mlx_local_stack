@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import yaml
 
 _REQUIRED = ("role", "display_name", "context", "output")
-_FAMILIES = {"qwen", "gemma"}
+_FAMILIES = {"qwen", "gemma", "nemotron"}  # allow-shorthand
 # `candidate` = registered for BENCHMARKING but NOT advertised to any client. The registry is the
 # bench harness's source of truth, so a model must be servable long before it is a daily-driver
 # option; without this role the only choices were failing `configgen check` (which gates

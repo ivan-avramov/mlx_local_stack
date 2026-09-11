@@ -14,6 +14,20 @@ def test_opencode_structure(sample_source):
     assert ml["Qwen-A"]["limit"]["context"] == 262144 - 102400
 
 
+def test_nemotron_family_renders_as_main_with_vendor_sparse_extras(nemotron_source_tainted):
+    # C64/F5: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit, role=main, family=nemotron. Taint-based:  # allow-shorthand
+    # the fixture injects top_k/repetition_penalty, so the absence asserts below have teeth.
+    d = json.loads(emit_opencode(nemotron_source_tainted))
+    ml = d["provider"]["mlx-local"]["models"]
+    m = ml["NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit"]
+    assert m["options"]["temperature"] == 0.5
+    assert m["options"]["presence_penalty"] == 0.0
+    assert m["options"]["thinking_budget"] == 81920
+    assert m["options"]["enable_thinking"] is True
+    assert "top_k" not in m["options"] and "min_p" not in m["options"]
+    assert "repetition_penalty" not in m["options"]
+
+
 def test_no_unrecognized_top_level_keys(sample_source):
     """opencode validates its config STRICTLY and rejects the whole file on an unknown top-level key.
 

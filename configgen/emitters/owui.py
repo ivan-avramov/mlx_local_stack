@@ -1,6 +1,6 @@
 import json
 from ..source import Source
-from ..transforms import owui_meta
+from ..transforms import owui_meta, sampling_openai, sampling_extra
 
 # Base builtin tools always exposed for any model. web_search/image_generation
 # are added conditionally below (see _BUILTIN_OPTIONAL) so a capability-less
@@ -12,19 +12,25 @@ _BUILTIN_BASE = {"time": True, "memory": True, "chats": True, "notes": True,
                  "knowledge": True, "channels": True, "code_interpreter": True}
 _BUILTIN_OPTIONAL = ("web_search", "image_generation")
 
-_PARAM_KEYS = ("temperature", "top_p", "top_k", "min_p", "presence_penalty",
-               "max_tokens", "thinking_budget")
+# OWUI-supported sampling keys, independent of family. `enable_thinking` is deliberately absent
+# (pre-existing: OWUI/Ollama has no such field). The FAMILY whitelist itself is NOT reimplemented
+# here (C64/F2-F3 fix) -- `sampling_openai`/`sampling_extra` are the single source of truth for
+# which keys leave the registry for a given family, so this only picks OWUI's subset of THOSE,
+# rather than filtering `m.sampling` directly (which used to leak any stray family-mismatched key,
+# e.g. a top_k left on a nemotron entry, straight into openwebui-init/models_config.json).  # allow-shorthand
+_OWUI_SUPPORTED = ("temperature", "top_p", "top_k", "min_p", "presence_penalty",
+                   "max_tokens", "thinking_budget")
 
 
 def _params(m) -> dict:
-    s = m.sampling
+    allowed = {**sampling_openai(m), **sampling_extra(m)}
     p = {"function_calling": "native"}
-    for k in _PARAM_KEYS:
-        if k in s:
-            p[k] = s[k]
-    if "repetition_penalty" in s:
+    for k in _OWUI_SUPPORTED:
+        if k in allowed:
+            p[k] = allowed[k]
+    if "repetition_penalty" in allowed:
         # OWUI/Ollama use `repeat_penalty`, not the mlx-serve/HF name.
-        p["repeat_penalty"] = s["repetition_penalty"]
+        p["repeat_penalty"] = allowed["repetition_penalty"]
     return p
 
 

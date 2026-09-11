@@ -1,6 +1,21 @@
 import json, yaml
 from configgen.emitters.aider import emit_aider
 
+def test_nemotron_family_extra_body_is_vendor_sparse(nemotron_source_tainted):
+    # C64/F5: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit, role=main, family=nemotron. Taint-based:  # allow-shorthand
+    # the fixture injects top_k/repetition_penalty, so the absence asserts below have teeth.
+    out = emit_aider(nemotron_source_tainted)
+    settings = yaml.safe_load(out["settings"])
+    entry = next(e for e in settings
+                 if e["name"] == "openai/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit")
+    assert entry["edit_format"] == "diff"
+    assert entry["extra_params"]["temperature"] == 0.5
+    body = entry["extra_params"]["extra_body"]
+    assert body["presence_penalty"] == 0.0
+    assert body["thinking_budget"] == 81920
+    assert body["enable_thinking"] is True
+    assert "top_k" not in body and "min_p" not in body and "repetition_penalty" not in body
+
 def test_aider_three_files(sample_source):
     out = emit_aider(sample_source)
 

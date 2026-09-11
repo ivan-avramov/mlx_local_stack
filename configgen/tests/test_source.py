@@ -49,6 +49,13 @@ def test_unknown_family_raises(tmp_path):
     with pytest.raises(ValueError, match="family"):
         load_source(_write(tmp_path, body))
 
+def test_nemotron_family_is_accepted_for_role_main(tmp_path):
+    # C64: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit needs family=nemotron to register as  # allow-shorthand
+    # role=main without inventing an unsupported family (which previously broke `configgen check`).
+    body = VALID.replace("family: qwen", "family: nemotron")  # allow-shorthand
+    s = load_source(_write(tmp_path, body))
+    assert s.models[0].family == "nemotron"  # allow-shorthand
+
 def test_models_without_presentation_are_skipped(tmp_path):
     # a router-only entry with no presentation block is ignored by the generator
     body = VALID + "  - name: Router-Only\n    hf_path: ns/x\n    kv_bits: 4\n"

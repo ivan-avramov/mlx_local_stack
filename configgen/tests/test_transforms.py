@@ -43,6 +43,17 @@ def test_sampling_extra_drops_wrong_family_keys():
     assert extra["repetition_penalty"] == 1.08
     assert "presence_penalty" not in extra
 
+def test_nemotron_extra_is_vendor_sparse_and_ignores_stray_keys(nemotron_source_tainted):
+    # C64/F5: taint-based. nemotron_source_tainted injects top_k/repetition_penalty into
+    # sampling upstream of this call, so the absence assertions below have teeth -- they fail
+    # if this ever falls through to the family-less whitelist-free path (reserved for role !=
+    # main, since role=main REQUIRES a family), which carries every non-OpenAI key present.
+    extra = sampling_extra(nemotron_source_tainted.models[0])
+    assert extra["presence_penalty"] == 0.0
+    assert extra["thinking_budget"] == 81920
+    assert extra["enable_thinking"] is True
+    assert "top_k" not in extra and "min_p" not in extra and "repetition_penalty" not in extra
+
 def test_owui_meta_omits_absent_features(sample_source):
     meta = owui_meta(sample_source.models[2])  # Task model with empty capabilities
     assert "web_search" not in meta["defaultFeatureIds"]
