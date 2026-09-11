@@ -13,8 +13,10 @@ is admissible. Math500 stays a proxy; this is the role's real axis.
 ## Contenders (deployed tunes, thinking ON, predictor OFF, `--sampling-profile deployed`)
 
 `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`,
-`Qwen3.8-27B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. k=1, seeded per
-(item, sample). Budgets unchanged (thinking_budget 81920, max_tokens per registry).
+`Qwen3.8-27B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`,
+`Ornith-1.0-35B-mlx-uniform-4bit` (added under C67, 2026-09-11; deployed tune t0.4, native expert
+routing, draft-OFF). k=1, seeded per (item, sample). Budgets unchanged (thinking_budget 81920,
+max_tokens per registry).
 
 ## Corpus `cjudge` (v1, 40 prompts, committed at `benchmark/corpora/cjudge_v1.jsonl`)
 
@@ -78,13 +80,15 @@ panel, re-run the gate only (anchors cost judge calls, not GPU).
 
 ## Ranking (only after the gate passes)
 
-- Units: (item, A output, B output) over the 40 items, all 6 model pairs, both orders,
-  3 judges (≈1,440 calls + 180 anchor calls).
+- Units: (item, A output, B output) over the 40 items, all 10 model pairs (five contenders,
+  `Ornith-1.0-35B-mlx-uniform-4bit` added under C67), both orders, 3 judges
+  (40 × 10 × 2 × 3 = 2,400 calls + 180 anchor calls).
 - Endpoint: paired preference rate per pair with `stats.cluster_bootstrap` over items;
-  Holm across the 6 pairs; TOST ±5pp for `equivalent`; report tokens/task, latency and
+  Holm across the 10 pairs; TOST ±5pp for `equivalent`; report tokens/task, latency and
   runaway share alongside (the four numbers). MDE at n=40 ≈ ±20pp (`stats.mde(40)` = 19.8pp) — state it.
 - Output `benchmark/results/judge_c_v1/{gate.json, ranking.json}`; campaign-results dated
-  entry; README C table update; rank changes → operator approval (C67 pending).
+  entry; README C table update; rank changes → operator approval (C67, the contender-set/reorder
+  ruling, is closed 2026-09-11; M38's own ranking output is a separate approval).
 
 ## Domain prompts (verbatim corpus text; ids dom-01..dom-22)
 

@@ -1,6 +1,6 @@
 # Local model recommendations
 
-Updated 2026-09-09 (M24g matched medium Go complete). Rankings are operator-approved, provisional choices based on quality and observed trends, not claims of statistically proven superiority. B is agentic coding; C is research, brainstorming and design. Models ship as a model/tune/predictor combination. Confidence intervals and limitations remain part of the evidence. [Full results](docs/campaign-results.md), [queue](docs/PLAN.md), [decisions](docs/open-questions.md).
+Updated 2026-09-11 (C67: C ladder reordered with vision required for the C first pick; `Ornith-1.0-35B-mlx-uniform-4bit` added to the C contest). Rankings are operator-approved, provisional choices based on quality and observed trends, not claims of statistically proven superiority. B is agentic coding; C is research, brainstorming and design. Models ship as a model/tune/predictor combination. Confidence intervals and limitations remain part of the evidence. [Full results](docs/campaign-results.md), [queue](docs/PLAN.md), [decisions](docs/open-questions.md).
 
 ## B: top four for agentic coding
 
@@ -34,14 +34,16 @@ M34r four-cell MBPPPlus experiment COMPLETE for `Ornith-1.0-35B-mlx-uniform-4bit
 
 ## C: approved picks and evaluation shortlist (up to four)
 
-Only ranks 1–2 are approved C picks. The remaining two entries are a research shortlist, not promotions; their placement does not imply measured superiority in subjective research/design quality.
+Only ranks 1–2 are approved C picks. **C67 (operator, 2026-09-11) reordered this ladder with vision as a hard requirement for the C first pick** and brought `Ornith-1.0-35B-mlx-uniform-4bit` into the C contest; `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is text-only by architecture (no vision tower to graft) and drops to second. The remaining two entries are a research shortlist, not promotions; their placement does not imply measured superiority in subjective research/design quality. C ranking still rests on a math proxy (Math500) pending the M38 judge panel; vision quality is gate-only here, verified only by a one-image "sees" probe per model, not itself ranked.
 
 | Rank/status | Model | Recommended configuration | Best for — and why |
 |---|---|---|---|
-| 1, provisional pick | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | t0.5, native routing, predictor OFF | Text-only reasoning and rapid iteration: small token count, fast decode, no non-convergence in the matched Math500 run. |
-| 2, provisional pick | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | deployed t0.3, certified MTP | Research/design requiring vision or a repair-oriented alternative; slower reasoning in the recorded run. |
-| Shortlist, not ranked | Ornith-1.0-35B-mlx-uniform-4bit | t0.4, native routing, certified MTP | Fast vision-capable exploration; reasoning runs retain a larger runaway tax. |
-| Shortlist, not ranked | Qwen3.8-27B-mlx-uniform-4bit | t0.6, medium effort, certified MTP | Accuracy-first reasoning candidate:99/100 on matched medium Math500, fewer tokens but slower decode than the C first choice; broader C assessment pending. |
+| 1, provisional pick | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | t0.5, medium effort, certified repaired MTP | Vision-capable daily driver: sees via its bf16 vision sidecar (gate passed, not ranked); ties the prior C first choice on matched Math500 strict (97% vs 97%, CI [−3,+3]) at 0.63× the tokens; already the B first choice, so one resident model serves both roles. |
+| 2, provisional pick | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | t0.5, native routing, predictor OFF | Fastest text-only reasoning: 0.8h vs 2.2h per 100 Math500 items, 97% strict, no non-convergence in the matched run; no vision tower exists, so it cannot hold the vision-gated first pick. |
+| Shortlist, not ranked | Ornith-1.0-35B-mlx-uniform-4bit | t0.4, native expert routing, certified MTP | Native vision, fastest decode of the seeing models. Math500 99/93 strict with 6/100 non-converged on the OLD item set; a matched row on the new set is queued in the M38 judge-panel generation chain. |
+| Shortlist, not ranked | Qwen3.8-27B-mlx-uniform-4bit | t0.6, medium effort, certified MTP | Accuracy-first reasoning candidate: 99% strict on matched medium Math500, fewer tokens but the slowest decode of the seeing models; broader C assessment pending. |
+
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s matched Math500 reference row (C63) is still completing; it re-enters this table only on evidence.
 
 ### C evidence
 

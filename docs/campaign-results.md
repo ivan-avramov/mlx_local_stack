@@ -1,5 +1,23 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-11 — C67 — C ladder reorder (vision gate)
+
+Operator ruled C67: the C ladder is reordered with vision as a hard requirement for the C first pick, and `Ornith-1.0-35B-mlx-uniform-4bit` enters the C contest. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (bf16 vision sidecar, already the B first choice) becomes C 1st. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` drops to C 2nd — text-only by architecture, nothing to graft — retained for its speed. `Ornith-1.0-35B-mlx-uniform-4bit` (native vision) and `Qwen3.8-27B-mlx-uniform-4bit` fill the two shortlist slots. `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` moves out of the table: its C63 matched Math500 reference row is still running.
+
+Matched Math500 evidence (M37/C48 item set, deployed tunes, predictor OFF, budget 81920):
+
+| Model | Strict | Non-converged | Wall /100 |
+|---|---:|---:|---:|
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed (C 1st) | 97% | 0 | 2.204h |
+| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit (C 2nd, t0.5) | 97% | 0 | 0.826h |
+| Qwen3.8-27B-mlx-uniform-4bit (shortlist) | 99% | 0 | 2.62h |
+| Ornith-1.0-35B-mlx-uniform-4bit (shortlist) | 93% | 6 | 4.7h |
+
+`Ornith-1.0-35B-mlx-uniform-4bit`'s row is the OLD M33 item set, not the matched M37/C48 set — its matched row is queued in the M38 generation chain, not yet measured; do not compare its percentage directly against the other three. The 97-vs-97 tie between the new 1st and 2nd is within CI [−3,+3]; the promoted pick's advantage is 0.63× the tokens at a real wall-time cost (2.2h vs 0.8h) — bias to quality/vision, not speed, per the operator's stated reason for reopening this ladder.
+
+Pending: C63 (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` matched Math500 reference) is still generating — last check showed ≥3 repetition runaways at 72/100, ~12 min/item; it re-enters the table only on evidence. M38 (judge-panel role-C ranking) is in build; its contender set, pair count and call budget are updated to five contenders / 10 pairs / 2,400 + 180 anchor calls to include `Ornith-1.0-35B-mlx-uniform-4bit`. C ranking still rests on the Math500 proxy until the M38 panel lands; vision quality here is gate-only, verified by a one-image "sees" probe per model, not itself ranked. Docs-only change: README C table, `docs/open-questions.md`, `docs/PLAN.md` M38 row and `docs/judge-panel-c.md` updated; no registry or production change.
+
+
 ## 2026-09-10 — C62 t0.5 approved and applied
 
 Operator explicitly approved t0.5 for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`. Updated the production registry generation default and both existing benchmark sampling carriers; all generated targets audited,37 configgen tests passed. Native routing, predictor OFF and every other parameter are unchanged. The live C63 reference overlay still matches its manifest SHA256 and was not edited or restarted. Eight machine-local registry overrides remain uncommitted.
