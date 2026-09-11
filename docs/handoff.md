@@ -1,4 +1,4 @@
-# Handoff — 2026-09-11 09:35 PDT
+# Handoff — 2026-09-11 13:50 PDT
 
 Rewritten in place this session (Claude Code; architect/worker/reviewer host-model split per the operator's workflow preference). The previous Codex-driven
 session ended 2026-09-11 05:26 PDT when its credits ran out mid-heartbeat; its raw log is kept
@@ -35,8 +35,14 @@ out of the repo at `$STACK_WORKDIR/devthread_codex_2026-09-11.md`.
   (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` t0.5 97 %), quality/tokens-per-task/latency/
   runaway tax, README evidence tables + campaign-results + PLAN C63 row, and a B/C ladder
   recommendation for operator approval (no automatic reorder).
-- Nothing is armed after C63. Successor selection is in progress this session (PLAN queue
-  candidates being extracted); the box must not idle.
+- SUCCESSOR ARMED: M38 judge-panel generation chain, runner pid 57189,
+  `$STACK_WORKDIR/queue/m38_cjudge/run.py` (queue.pid/queue.log/start.log there). Waits for
+  `=== C63 REFERENCE QUEUE DONE ===` + idle box, then per model (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`,
+  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`,
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`): fresh draft-OFF overlay, seeded 5-item pilot, full 40 on
+  `cjudge` (tune `m38`), grade (acc null by design), router stop; ends `=== M38 CJUDGE QUEUE DONE ===`.
+  Lower-bound cost ~1–4 h each for the first three, ~13 h for the last. A session Monitor watches it.
+  Stop the waiting successor BEFORE intentionally stopping C63.
 
 ## Recently landed (for context, details in campaign-results / PLAN)
 
@@ -47,12 +53,23 @@ out of the repo at `$STACK_WORKDIR/devthread_codex_2026-09-11.md`.
   97 % strict, all converge. No approved reorder.
 - C61/M36 2026-09-10: repaired MTP certified for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`.
 
+## M38 judge panel (approved P334; spec `docs/judge-panel-c.md`)
+
+- Committed: corpus `benchmark/corpora/cjudge_v1.jsonl` (18 public + 22 domain), loader, spec.
+- Uncommitted, under final cold confirmation: `bench/judge_anchors.py`, `judge_pairwise.py`,
+  `run_judge_pairwise.py`, `judge_gate.py`, `judge.py` (ids `claude-opus-5`/`claude-sonnet-5`) +
+  tests (suite 1449 passed). Commit after the confirmation pass; if the session dies first, run the
+  suite and commit them as `feat(bench): M38 judge panel modules`.
+- After generation completes: build anchors (`judge_anchors.py`, seed 38) → `run_judge_pairwise.py`
+  (API judges; needs ANTHROPIC key in env + codex CLI) → `judge_gate.py` (gate FIRST; no ranking on
+  FAIL) → campaign-results entry, README C table, operator approval for any rank change (C67).
+
 ## Open operator items
 
-- C64 OPEN: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is presentation role `candidate`, so
-  the daily-client model lists omit the approved C first pick; main registration needs family
-  support in configgen. Being scoped this session as a worker-model dev task with a cold-context adversarial review.
-- Next discussion point P332; next C id C65.
+- C64 DONE (164f2a5). C65 RULED (M7 dropped; judge panel next). C67 PROPOSED: vision-gated C reorder
+  (first `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, second `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`) — awaiting ruling.
+- D11 DONE: three HF cards published 2026-09-11 (receipt in benchmark/results/).
+- Next discussion point P335; next C id C68.
 
 ## Ladder of record (unchanged)
 
