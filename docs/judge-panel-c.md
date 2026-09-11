@@ -82,7 +82,7 @@ panel, re-run the gate only (anchors cost judge calls, not GPU).
   3 judges (≈1,440 calls + 180 anchor calls).
 - Endpoint: paired preference rate per pair with `stats.cluster_bootstrap` over items;
   Holm across the 6 pairs; TOST ±5pp for `equivalent`; report tokens/task, latency and
-  runaway share alongside (the four numbers). MDE at n=40 ≈ ±16pp — state it.
+  runaway share alongside (the four numbers). MDE at n=40 ≈ ±20pp (`stats.mde(40)` = 19.8pp) — state it.
 - Output `benchmark/results/judge_c_v1/{gate.json, ranking.json}`; campaign-results dated
   entry; README C table update; rank changes → operator approval (C67 pending).
 
