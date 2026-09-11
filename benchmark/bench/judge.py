@@ -123,8 +123,8 @@ def codex_judge(system, user, runner=subprocess.run) -> str | None:
 
 
 DEFAULT_JUDGES = [
-    ("sonnet", lambda s, u: anthropic_judge("claude-sonnet-4-6", s, u)),
-    ("opus", lambda s, u: anthropic_judge("claude-opus-4-8", s, u)),
+    ("sonnet", lambda s, u: anthropic_judge("claude-sonnet-5", s, u)),
+    ("opus", lambda s, u: anthropic_judge("claude-opus-5", s, u)),  # allow-shorthand
     ("gpt-5.5", codex_judge),
 ]
 

@@ -224,3 +224,14 @@ def test_run_judge_cli_writes_json(tmp_path, monkeypatch):
     assert out["model"] == "mymodel" and out["axis"] == "code_quality"
     assert out["n_records"] == 2 and len(out["records"]) == 2
     assert out["per_axis"]["readability"] == 4.0
+
+
+# ── F9 (judge-panel-c review): pin the current model ids so a stale/rolled-back id in
+# DEFAULT_JUDGES is a red test, not a silent drift. Inspects the lambdas' compiled constants
+# (no network call) rather than invoking them — invoking would build a real anthropic.Anthropic
+# client when no `client=` override exists on this closure.
+def test_default_judges_pin_current_model_ids():
+    by_name = dict(J.DEFAULT_JUDGES)
+    assert set(by_name) == {"sonnet", "opus", "gpt-5.5"}  # allow-shorthand
+    assert "claude-sonnet-5" in by_name["sonnet"].__code__.co_consts
+    assert "claude-opus-5" in by_name["opus"].__code__.co_consts  # allow-shorthand
