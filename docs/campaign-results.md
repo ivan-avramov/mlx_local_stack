@@ -1,5 +1,16 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-10 20:21 — M37 complete; t0.4 successor took over
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` medium/native/draft-OFF Math500 n100×1: ordinary/strict97%,100% convergence, zero errors. Mean1806 output tokens; generation2.204h. The long request completed successfully (maximum32,564tokens); no restart was needed.
+
+Against matched `Qwen3.8-27B-mlx-uniform-4bit` medium99%: mixed-minus-base−2pp CI[−5,0],0:2 exclusive solves, nominal MDE12.5pp. Token ratio0.745 CI[0.582,0.937], wall2.20/2.62h. Against `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` operator-preferred provisional t0.5 at97%: difference0pp CI[−3,+3],1:1 exclusive solves, nominal MDE12.5pp; token ratio0.473 CI[0.299,0.746], but wall2.20/0.83h. All compared arms fully converged. Descriptive paired intervals precede campaign-wide multiplicity correction.
+
+Learning/recommendation: the mixed checkpoint is token-efficient and faster than the base, but loses two mathematical solves; the base is the accuracy-first math candidate. The current C first choice remains the fast-iteration option; subjective research/design and broader C coverage are not measured by this axis. Retain approved B/C orders while reporting these task-specific choices. Mixed remains the strong agentic Python/Go B leader; mathematical point estimates alone do not undo those task results. No automatic promotion or tune change.
+
+M37 runner completed its clean unload and t0.4 successor34753 started20:19:13. Native/draft-OFF worker53531 and temperature/provenance checks verified for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`; seeded MBPPPlus pilot3/5 complete by20:21, no errors/non-convergence. Full coding then Math500 follow. Operator preference remains t0.5 pending this requested t0.4 test.
+
+
 ## 2026-09-10 18:08 — M37 base medium Math500 complete, gains accuracy-first C consideration
 
 `Qwen3.8-27B-mlx-uniform-4bit`, deployed medium t0.6, native/predictor OFF, n100×1: ordinary/strict99%,100% convergence, no transport errors. Mean2423 output tokens, generation2.619h. Same-item comparison with `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`: current native t1.0 control96% (+3pp CI[0,+7], exclusive solves3:0); operator-preferred provisional t0.5 candidate97% (+2pp CI[0,+5], exclusive solves2:0). Nominal MDE12.5pp per axis, descriptive intervals before campaign multiplicity adjustment.
