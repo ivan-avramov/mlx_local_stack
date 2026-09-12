@@ -5,6 +5,7 @@ Live, in reading order for a cold start:
 | file | role |
 |---|---|
 | `handoff.md` | THE one handoff, rewritten in place each session — read first |
+| `qualify-a-model.md` | agent-facing playbook for qualifying a NEW model on this stack, stage by stage, commands + thresholds |
 | `campaign-supervision.md` | recurring Codex review authority, recovery boundaries and local scheduler operation |
 | `PLAN.md` | the backlog / queue (authoritative for what is live); rows M*, D*, C*, H*, S* |
 | `open-questions.md` | operator decision queue (O*/C* items; closed items are never deleted) |
@@ -19,6 +20,7 @@ Live, in reading order for a cold start:
 | `regrade-vs-rerun-guideline.md` | the decision rule for re-grading vs re-running |
 | `two-box-archive.md` | archived two-box procedures (live again only if a second box returns) |
 | `specs/` | design specs for harness/fork work that is queued or landed (`c47-…`, `m29-…`, `switchyard-nvsy-plan.md`) |
+| `model-cards/` | one HF-style card per shipped/certified checkpoint or drafter, with per-number source citations |
 
 Rules live in `AGENTS.md` (repo root). Deleted 2026-09-03 (git history is the archive, last present at
 `b723bde`): `docs/superpowers/{plans,specs}/` (June–August design docs), `docs/sketches/` (June session
