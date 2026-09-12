@@ -1,9 +1,28 @@
-# Vision smoke for the seeing contenders (M39) — spec of record
+# Vision GATE for the seeing contenders (M39) — spec of record
 
-Status: BUILD approved by the operator 2026-09-12 ("why not 1 now?"); GPU arm needs an explicit go.
-Closes the C67 gap: vision is a hard gate for the C first pick but is verified only by a one-image
-"sees" probe. Agent-facing: rules, not rationale.
+Status: RE-SCOPED by the operator 2026-09-12 ("I don't want any benchmarks for vision … I want a
+model that can do some vision"): a PASS/FAIL gate, not a ranking. The mechanically graded
+`visionqa` corpus/loader/grader below remain in the repo (committed 52425d3, 1055b6d) but are
+NOT run. Agent-facing: rules, not rationale.
 
+## Gate protocol (runs as `benchmark/vision_gate.py`)
+
+- 20 COCO val2017 photos with 5 human captions each (`benchmark/corpora/vision_gate_v1.jsonl`,
+  ids + captions only; images fetched at run time under `$STACK_WORKDIR/vision_gate_images/`).
+- Per image, two turns at the deployed tune with thinking ON: (1) "Describe this image in detail."
+  with the image; (2) the ground-truth captions shown, "Did your description correctly capture
+  what is in the image? Reply with exactly one word: PASS or FAIL."
+- Output per model: pass count / 20, fail, null (unparseable), raw descriptions kept for reading.
+  Self-grades are lenient by construction: the report pairs the count with a by-eye read of five
+  descriptions per model. Gate: a model "can do some vision" at ≥ 16/20 self-PASS with no
+  contradicted PASS in the by-eye read; below that, flag to the operator.
+- Chain `$STACK_WORKDIR/queue/m39_vision_gate/run.py`: per model fresh draft-OFF overlay, router,
+  `probe_vision.py --model` SEES gate, the script, RESULT line, router stop; DONE marker
+  `=== M39 VISION GATE QUEUE DONE ===`.
+
+---
+
+## (Retained, not run) Vision smoke — mechanically graded visual-QA
 ## Purpose
 
 Rank the four vision-capable contenders on mechanical visual-QA accuracy so vision can rank, not
