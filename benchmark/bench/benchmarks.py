@@ -182,15 +182,31 @@ def _load_cjudge(limit, seed):
 
 # ----------------------------------------------------------------- vision (visionqa) loader
 _VISIONQA_PATH = os.path.join(os.path.dirname(__file__), "..", "corpora", "visionqa_v1.jsonl")
-# Pre-approved out-of-repo location (AGENTS.md "NO FILESYSTEM POLLUTION OUTSIDE $STACK_WORKDIR" --
-# ~/.cache/huggingface is a listed exception). Materialized image files, never the repo: the
-# committed jsonl carries only `image_ref`, resolved here at LOAD time.
-_VISIONQA_IMAGE_CACHE = os.path.expanduser("~/.cache/huggingface/mlx_local_stack_visionqa_images")
+# Pre-workdir-rule fallback ONLY (AGENTS.md "NO FILESYSTEM POLLUTION OUTSIDE $STACK_WORKDIR"):
+# ~/.cache/huggingface is a listed exception, but a NEW artifact tree belongs under
+# $STACK_WORKDIR, not in it -- see `_visionqa_image_cache_dir`.
+_VISIONQA_IMAGE_CACHE_FALLBACK = os.path.expanduser(
+    "~/.cache/huggingface/mlx_local_stack_visionqa_images")
+
+
+def _visionqa_image_cache_dir() -> str:
+    """`$STACK_WORKDIR/visionqa_images` (the out-of-repo workdir rule). Falls back to the
+    pre-workdir-rule `~/.cache/huggingface` location ONLY when STACK_WORKDIR is unset, with a
+    loud warning -- that fallback is a pre-approved CACHE exception, not a home for new
+    artifacts, so this should never be the steady state."""
+    workdir = os.environ.get("STACK_WORKDIR")
+    if workdir:
+        return os.path.join(workdir, "visionqa_images")
+    import sys
+    print("WARNING: STACK_WORKDIR is not set; visionqa image cache falls back to "
+          f"{_VISIONQA_IMAGE_CACHE_FALLBACK} (set STACK_WORKDIR per the workdir rule, AGENTS.md)",
+          file=sys.stderr)
+    return _VISIONQA_IMAGE_CACHE_FALLBACK
 
 
 def _visionqa_image_cache_path(row: dict) -> str:
     ext = row["meta"]["image_format"].lower()
-    return os.path.join(_VISIONQA_IMAGE_CACHE, f"{row['id']}.{ext}")
+    return os.path.join(_visionqa_image_cache_dir(), f"{row['id']}.{ext}")
 
 
 def _resolve_visionqa_images(rows: list) -> None:
@@ -198,7 +214,9 @@ def _resolve_visionqa_images(rows: list) -> None:
     grouping by (dataset, split, revision) so each source dataset loads at most once per call.
 
     Graceful-degrade with a CLEAR error (not a raw huggingface_hub stack trace) when a dataset is
-    neither locally cached nor reachable -- this is the one place visionqa needs the network."""
+    neither locally cached nor reachable -- this is the one place visionqa needs the network.
+    Generation-time ONLY: `grade_visionqa` (bench/grade.py) reads the committed corpus directly
+    via `load_visionqa_meta` below and must never call this."""
     needed = [r for r in rows if not os.path.exists(_visionqa_image_cache_path(r))]
     for r in rows:
         r["meta"]["image_path"] = _visionqa_image_cache_path(r)
@@ -209,7 +227,7 @@ def _resolve_visionqa_images(rows: list) -> None:
     except ImportError as e:
         raise RuntimeError(
             "benchmark 'visionqa' needs the `datasets` package to resolve images") from e
-    os.makedirs(_VISIONQA_IMAGE_CACHE, exist_ok=True)
+    os.makedirs(_visionqa_image_cache_dir(), exist_ok=True)
     ds_cache: dict = {}
     for r in needed:
         ref = r["image_ref"]
@@ -232,18 +250,31 @@ def _resolve_visionqa_images(rows: list) -> None:
         os.replace(tmp, path)
 
 
-def _load_visionqa(limit, seed):
-    """visionqa_v1 (docs/vision-smoke-m39.md): 40 committed rows across four vision-QA sources
-    (ChartQA/RICO-ScreenQA-Short/AI2D/TextVQA). Images are never committed -- resolved here to a
-    local file via the HF cache (see `_resolve_visionqa_images`)."""
+def _read_visionqa_rows() -> list:
+    """Raw committed-jsonl rows, verbatim -- the one place both `_load_visionqa` (generation) and
+    `load_visionqa_meta` (grading) read from, so they can never drift on row shape."""
     rows = []
     with open(_VISIONQA_PATH, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if not line:
-                continue
-            rows.append(json.loads(line))
-    rows = _subsample(rows, limit, seed)
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def load_visionqa_meta(limit=None, seed=0) -> list:
+    """Grading-time metadata ONLY: id/question/answer/choices/source_kind straight from the
+    committed jsonl. Deliberately NEVER calls `_resolve_visionqa_images` -- grading must not need
+    the network or the HF cache (bench/grade.py::grade_visionqa is the only caller)."""
+    return _subsample(_read_visionqa_rows(), limit, seed)
+
+
+def _load_visionqa(limit, seed):
+    """visionqa_v1 (docs/vision-smoke-m39.md): 40 committed rows across four vision-QA sources
+    (ChartQA/RICO-ScreenQA-Short/AI2D/TextVQA). Images are never committed -- resolved here to a
+    local file via the HF cache (see `_resolve_visionqa_images`). Generation-time loader; grading
+    uses `load_visionqa_meta` instead."""
+    rows = _subsample(_read_visionqa_rows(), limit, seed)
     _resolve_visionqa_images(rows)
     items = []
     for row in rows:
@@ -321,17 +352,24 @@ def _lcb_messages(item: dict) -> list:
 
 
 _VISIONQA_SUFFIX = "\n\nAnswer with the final answer only, inside \\boxed{}."
+_VISIONQA_AI2D_LETTER_INSTRUCTION = " Answer with the option letter (A, B, C or D)."
 
 
 def _visionqa_messages(item: dict) -> list:
     """OpenAI content-list message: text part + a base64 `image_url` data URL, mirroring
-    `benchmark/probe_vision.py`. AI2D lists its options as `A) ... D) ...` (positional labels
-    over the row's own choice order -- the source's `answer` letter already matches that order)."""
+    `benchmark/probe_vision.py`. AI2D appends a letter-answer instruction to the question, THEN
+    lists the options as `A) ... D) ...` (positional labels over the row's own choice order --
+    the source's `answer` letter already matches that order), THEN the shared \\boxed{} suffix."""
     text = item["prompt"]
     if item["meta"]["source_kind"] == "ai2d" and item.get("options"):
+        text += _VISIONQA_AI2D_LETTER_INSTRUCTION
         opts = "\n".join(f"{'ABCD'[i]}) {o}" for i, o in enumerate(item["options"]))
         text = f"{text}\n\n{opts}"
     text += _VISIONQA_SUFFIX
+    if os.environ.get("VISIONQA_TEXT_ONLY"):
+        # M39 text-only CONTROL arm (tune m39txt): same prompt, image part dropped, so the
+        # vision signal = vision-arm accuracy minus this floor. Driver-env switch, never default.
+        return [{"role": "user", "content": text}]
     with open(item["meta"]["image_path"], "rb") as f:
         raw = f.read()
     mime = "image/jpeg" if item["meta"]["image_format"].upper() == "JPEG" else "image/png"

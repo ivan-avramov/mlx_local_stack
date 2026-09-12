@@ -8,13 +8,14 @@
     "answer non-empty (>=10 references kept for TextVQA)",
     "image <= 2000000 px (2 MP), checked via PIL .size (header-only, no full decode)",
     "no duplicate images within a source (natural id when the source has one -- RICO file_name, TextVQA image_id -- else sha256 of the decoded pixel bytes for ChartQA/AI2D, which carry no per-row id)",
+    "AI2D only: options must be gradeable -- no single-character option (letter/label collision with the grader's A/B/C/D vocabulary), no '{...}' placeholder, no duplicate option text (cold review, 2026-09-12)",
     "every FINAL selected row's image forced through PIL .load() as a real load check"
   ],
   "sources": [
     {
       "source_kind": "chartqa",
       "repo": "HuggingFaceM4/ChartQA",
-      "license": "GPL-3.0 (ids-only storage)",
+      "license": "question text + gold answer committed; images fetched at load (GPL-3.0 source)",
       "split": "val",
       "revision": "b605b6e08b57faf4359aeb2fe6a3ca595f99b6c5",
       "n": 15,
@@ -38,7 +39,9 @@
       "split": "test",
       "revision": "c83a9b9692933aff8349157c88a413df9d02c4e5",
       "n": 10,
-      "rejected": {}
+      "rejected": {
+        "ungradeable_options": 706
+      }
     },
     {
       "source_kind": "textvqa",
@@ -55,6 +58,47 @@
     "used_source": "lmms-lab/textvqa",
     "reason": "facebook/textvqa requires trust_remote_code=True (arbitrary script execution) and its loader downloads a ~20GB train+val image zip from dl.fbaipublicfiles.com; lmms-lab/textvqa is a parquet mirror of the identical official annotations (same license, same val split via set_name=='val', same 10 references/question), no custom code, no zip."
   },
-  "sha256_visionqa_v1_jsonl": "5646e09011d2eef6fdf51ad8f6bec4c1150f664e3ee194401a6b63e95fe75af2",
+  "notes": {
+    "answerable_without_image_flagged_2026-09-12": [
+      {
+        "source_kind": "ai2d",
+        "question": "Which leaf is shape of a top?",
+        "id": null,
+        "status": "no longer in the corpus after the 2026-09-12 AI2D options-quality rebuild"
+      },
+      {
+        "source_kind": "ai2d",
+        "question": "Identify the herbivore from the diagram provided below:",
+        "id": null,
+        "status": "no longer in the corpus after the 2026-09-12 AI2D options-quality rebuild"
+      },
+      {
+        "source_kind": "ai2d",
+        "question": "Which organ removes carbon dioxide from the blood and provides it with oxygen?",
+        "id": null,
+        "status": "no longer in the corpus after the 2026-09-12 AI2D options-quality rebuild"
+      },
+      {
+        "source_kind": "ai2d",
+        "question": "The diagram below shows the food web in a forest ecosystem. Which of the following organism shown in the diagram is a herbivore?",
+        "id": null,
+        "status": "no longer in the corpus after the 2026-09-12 AI2D options-quality rebuild"
+      },
+      {
+        "source_kind": "ai2d",
+        "question": "What is the star called that enables life on earth?",
+        "id": null,
+        "status": "no longer in the corpus after the 2026-09-12 AI2D options-quality rebuild"
+      },
+      {
+        "source_kind": "textvqa",
+        "question": "is that spider man?",
+        "id": "textvqa-002",
+        "status": "present"
+      }
+    ],
+    "answerable_without_image_meaning": "items a reviewer flagged as mechanically answerable WITHOUT the image (e.g. world-knowledge or purely-textual questions) -- not a correctness defect, just weak evidence for ranking vision capability specifically. Not mechanically filterable (docs/vision-smoke-m39.md), so recorded here for awareness rather than excluded."
+  },
+  "sha256_visionqa_v1_jsonl": "c161df2401cf662cf3a0f2fcc4cb7e538d32a36ca7b0528df3722060d73d92eb",
   "reproduce": "HF_HUB_OFFLINE= PYTHONPATH=benchmark .venv-bench/bin/python benchmark/corpora/build_visionqa_v1.py"
 }

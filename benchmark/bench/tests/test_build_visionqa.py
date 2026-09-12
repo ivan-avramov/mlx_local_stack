@@ -82,15 +82,22 @@ def _ai2d_rows(n=25):
     rows = []
     for i in range(n):
         q = f"ai2d question {i}"
-        opts, ans, img = ["a", "b", "c", "d"], "1", FakeImage((100, 100), "PNG", f"ai2d-{i}")
+        opts = ["cat", "dog", "bird", "fish"]
+        ans, img = "1", FakeImage((100, 100), "PNG", f"ai2d-{i}")
         if i == 5:
-            img = FakeImage((100, 100), "PNG", "ai2d-0")
+            img = FakeImage((100, 100), "PNG", "ai2d-0")   # duplicate image
         if i == 6:
             ans = "9"                                      # out of range -> filtered
         if i == 7:
             img = FakeImage((2000, 2000), "PNG", "ai2d-oversize")
         if i == 8:
             q = " ".join(["word"] * 61)
+        if i == 9:
+            opts = ["a", "b", "c", "d"]                    # single-char label collision
+        if i == 10:
+            opts = ["cat", "{}", "dog", "bird"]             # placeholder option
+        if i == 11:
+            opts = ["cat", "cat", "dog", "bird"]            # duplicate option text
         rows.append({"question": q, "options": opts, "answer": ans, "image": img})
     return FakeDataset(rows)
 
@@ -183,6 +190,59 @@ def test_builder_excludes_overlong_questions(monkeypatch, tmp_path):
         assert len(r["question"].split()) <= BUILD.MAX_QUESTION_WORDS
 
 
+def test_builder_excludes_ai2d_rows_with_ungradeable_options(monkeypatch, tmp_path):
+    """Cold-review finding: single-character options ('c'/'d'/'a'/'b') are a label/letter
+    collision with the grader's own letter vocabulary, and placeholder/duplicate option text
+    ('{}' repeated) is simply ungradeable. Candidate indices 9 (single-char), 10 (placeholder),
+    11 (duplicate) in `_ai2d_rows` must never appear among the chosen rows."""
+    rows, prov = _run_build(monkeypatch, tmp_path)
+    ai2d_rows = [r for r in rows if r["source_kind"] == "ai2d"]
+    assert len(ai2d_rows) == 10
+    for r in ai2d_rows:
+        texts = [str(c).strip() for c in r["choices"]]
+        assert all(len(t) > 1 for t in texts), r
+        assert all(t != "{}" for t in texts), r
+        assert len(set(t.casefold() for t in texts)) == len(texts), r
+    ai2d_prov = next(s for s in prov["sources"] if s["source_kind"] == "ai2d")
+    assert ai2d_prov["rejected"].get("ungradeable_options", 0) >= 3
+
+
+def test_chartqa_provenance_license_note_credits_committed_text_and_fetched_images(monkeypatch, tmp_path):
+    _, prov = _run_build(monkeypatch, tmp_path)
+    chartqa_prov = next(s for s in prov["sources"] if s["source_kind"] == "chartqa")
+    assert chartqa_prov["license"] == (
+        "question text + gold answer committed; images fetched at load (GPL-3.0 source)")
+
+
+def test_answerable_without_image_notes_re_derives_ids_by_question_text(monkeypatch):
+    """Reviewer finding (cold review, 2026-09-12): a handful of items look answerable without
+    the image. Recorded by ORIGINAL QUESTION TEXT (never a hand-typed id, which can silently rot
+    across a rebuild that reorders/replaces rows) and re-derived against the actual rows."""
+    all_rows = [
+        {"id": "textvqa-002", "source_kind": "textvqa", "question": "is that spider man?"},
+        {"id": "ai2d-003", "source_kind": "ai2d", "question": "some other question"},
+    ]
+    monkeypatch.setattr(BUILD, "_ANSWERABLE_WITHOUT_IMAGE_FLAGGED",
+                        [("textvqa", "is that spider man?"),
+                         ("ai2d", "this question does not exist anywhere")])
+    notes = BUILD._answerable_without_image_notes(all_rows)
+    by_q = {n["question"]: n for n in notes}
+    assert by_q["is that spider man?"]["id"] == "textvqa-002"
+    assert by_q["is that spider man?"]["status"] == "present"
+    assert by_q["this question does not exist anywhere"]["id"] is None
+    assert "no longer in the corpus" in by_q["this question does not exist anywhere"]["status"]
+
+
+def test_provenance_carries_answerable_without_image_notes_key(monkeypatch, tmp_path):
+    """Integration: the real build wires `_answerable_without_image_notes` into the provenance file."""
+    _, prov = _run_build(monkeypatch, tmp_path)
+    assert "answerable_without_image_flagged_2026-09-12" in prov["notes"]
+    entries = prov["notes"]["answerable_without_image_flagged_2026-09-12"]
+    assert len(entries) == len(BUILD._ANSWERABLE_WITHOUT_IMAGE_FLAGGED)
+    for e in entries:
+        assert set(e) == {"source_kind", "question", "id", "status"}
+
+
 def test_builder_rows_have_required_shape(monkeypatch, tmp_path):
     rows, _ = _run_build(monkeypatch, tmp_path)
     ids = [r["id"] for r in rows]
@@ -193,7 +253,8 @@ def test_builder_rows_have_required_shape(monkeypatch, tmp_path):
             assert key in r
         assert set(r["image_ref"]) == {"dataset", "revision", "split", "index"}
     ai2d_rows = [r for r in rows if r["source_kind"] == "ai2d"]
-    assert all(r["answer"] in "ABCD" and r["choices"] == ["a", "b", "c", "d"] for r in ai2d_rows)
+    assert all(r["answer"] in "ABCD" and r["choices"] == ["cat", "dog", "bird", "fish"]
+              for r in ai2d_rows)
     textvqa_rows = [r for r in rows if r["source_kind"] == "textvqa"]
     assert all(len(r["answer"]) == 10 for r in textvqa_rows)
     chartqa_rows = [r for r in rows if r["source_kind"] == "chartqa"]

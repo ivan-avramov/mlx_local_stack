@@ -36,6 +36,7 @@ Run: HF_HUB_OFFLINE= PYTHONPATH=benchmark .venv-bench/bin/python benchmark/corpo
 import hashlib
 import json
 import random
+import re
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -52,7 +53,8 @@ SUFFIX = "\n\nAnswer with the final answer only, inside \\boxed{}."
 
 # (source_kind, HF repo, license, split, target count, pinned revision)
 SOURCES = [
-    ("chartqa", "HuggingFaceM4/ChartQA", "GPL-3.0 (ids-only storage)", "val", 15,
+    ("chartqa", "HuggingFaceM4/ChartQA",
+     "question text + gold answer committed; images fetched at load (GPL-3.0 source)", "val", 15,
      "b605b6e08b57faf4359aeb2fe6a3ca595f99b6c5"),
     ("screenqa", "rootsautomation/RICO-ScreenQA-Short", "CC BY 4.0", "test", 10,
      "d432b8e9e191447b4d04d99e2740838d7319dac5"),
@@ -100,9 +102,28 @@ def _candidates_screenqa(ds):
     return out
 
 
+def _ai2d_options_gradeable(opts) -> bool:
+    """Cold-review finding (2026-09-12): AI2D's raw option order can itself be single letters
+    (e.g. ['c','d','a','b']), which collides with the grader's own A/B/C/D letter vocabulary, and
+    some rows use a literal '{}' placeholder for a missing option (duplicated across two slots).
+    Reject any item whose options contain a single-character string, a `{...}` placeholder, or a
+    duplicate (case-insensitive) -- all three make the item ungradeable by text."""
+    texts = [str(o).strip() for o in opts]
+    if any(len(t) <= 1 for t in texts):
+        return False
+    if any(re.fullmatch(r"\{.*\}", t) for t in texts):
+        return False
+    if len({t.casefold() for t in texts}) != len(texts):
+        return False
+    return True
+
+
 def _candidates_ai2d(ds):
+    """Returns (candidates, rejected) -- unlike the other `_candidates_*` functions, AI2D needs
+    to surface a NEW rejection reason (ungradeable options) in the provenance file, so it is
+    dispatched separately in `main()` instead of through `_CANDIDATE_FNS`."""
     questions, options, answers = ds["question"], ds["options"], ds["answer"]
-    out = []
+    out, rejected = [], Counter()
     for i, (q, opts, ans) in enumerate(zip(questions, options, answers)):
         q = (q or "").strip()
         try:
@@ -113,8 +134,11 @@ def _candidates_ai2d(ds):
             continue
         if _words(q) > MAX_QUESTION_WORDS:
             continue
+        if not _ai2d_options_gradeable(opts):
+            rejected["ungradeable_options"] += 1
+            continue
         out.append({"index": i, "question": q, "choices": list(opts), "answer": "ABCD"[idx]})
-    return out
+    return out, rejected
 
 
 def _candidates_textvqa(ds):
@@ -129,10 +153,10 @@ def _candidates_textvqa(ds):
     return out
 
 
+# AI2D is dispatched separately in main() -- it returns (candidates, rejected), not just candidates.
 _CANDIDATE_FNS = {
     "chartqa": _candidates_chartqa,
     "screenqa": _candidates_screenqa,
-    "ai2d": _candidates_ai2d,
     "textvqa": _candidates_textvqa,
 }
 
@@ -179,16 +203,49 @@ def _to_float(s):
         return None
 
 
+# Reviewer-flagged "answerable without looking at the image" items (cold review, 2026-09-12).
+# Recorded by ORIGINAL QUESTION TEXT, never a hand-typed id: AI2D row ids can shift whenever the
+# options-quality filter rejects an earlier candidate and the walk cascades (exactly what
+# happened to ai2d-001/007 in this same review). Re-derived against the ACTUAL rebuilt rows in
+# `_answerable_without_image_notes` below, so this list can never silently rot out of sync.
+_ANSWERABLE_WITHOUT_IMAGE_FLAGGED = [
+    ("ai2d", "Which leaf is shape of a top?"),
+    ("ai2d", "Identify the herbivore from the diagram provided below:"),
+    ("ai2d", "Which organ removes carbon dioxide from the blood and provides it with oxygen?"),
+    ("ai2d", "The diagram below shows the food web in a forest ecosystem. Which of the "
+             "following organism shown in the diagram is a herbivore?"),
+    ("ai2d", "What is the star called that enables life on earth?"),
+    ("textvqa", "is that spider man?"),
+]
+
+
+def _answerable_without_image_notes(all_rows):
+    by_kind_question = {(r["source_kind"], r["question"]): r["id"] for r in all_rows}
+    out = []
+    for source_kind, question in _ANSWERABLE_WITHOUT_IMAGE_FLAGGED:
+        rid = by_kind_question.get((source_kind, question))
+        out.append({
+            "source_kind": source_kind, "question": question, "id": rid,
+            "status": "present" if rid else
+                      "no longer in the corpus after the 2026-09-12 AI2D options-quality rebuild",
+        })
+    return out
+
+
 def main():
     from datasets import load_dataset
 
     all_rows, counts, rejected_counts = [], {}, {}
     for source_kind, repo, license_, split, n, revision in SOURCES:
         ds = load_dataset(repo, split=split, revision=revision)
-        candidates = _CANDIDATE_FNS[source_kind](ds)
+        if source_kind == "ai2d":
+            candidates, candidate_rejected = _candidates_ai2d(ds)
+        else:
+            candidates, candidate_rejected = _CANDIDATE_FNS[source_kind](ds), Counter()
         chosen, rejected = _select(source_kind, ds, candidates, n, SELECTION_SEED)
         counts[source_kind] = len(chosen)
         rejected_counts[source_kind] = dict(Counter(reason for _, reason in rejected))
+        rejected_counts[source_kind].update(candidate_rejected)
 
         for k, c in enumerate(chosen):
             img = _verify_loads(ds, c)
@@ -230,6 +287,9 @@ def main():
             "no duplicate images within a source (natural id when the source has one -- RICO "
             "file_name, TextVQA image_id -- else sha256 of the decoded pixel bytes for "
             "ChartQA/AI2D, which carry no per-row id)",
+            "AI2D only: options must be gradeable -- no single-character option (letter/label "
+            "collision with the grader's A/B/C/D vocabulary), no '{...}' placeholder, no "
+            "duplicate option text (cold review, 2026-09-12)",
             "every FINAL selected row's image forced through PIL .load() as a real load check",
         ],
         "sources": [
@@ -245,6 +305,14 @@ def main():
                       "dl.fbaipublicfiles.com; lmms-lab/textvqa is a parquet mirror of the "
                       "identical official annotations (same license, same val split via "
                       "set_name=='val', same 10 references/question), no custom code, no zip."),
+        },
+        "notes": {
+            "answerable_without_image_flagged_2026-09-12": _answerable_without_image_notes(all_rows),
+            "answerable_without_image_meaning": ("items a reviewer flagged as mechanically answerable "
+                "WITHOUT the image (e.g. world-knowledge or purely-textual questions) -- not a "
+                "correctness defect, just weak evidence for ranking vision capability "
+                "specifically. Not mechanically filterable (docs/vision-smoke-m39.md), so "
+                "recorded here for awareness rather than excluded."),
         },
         "sha256_visionqa_v1_jsonl": sha256,
         "reproduce": ("HF_HUB_OFFLINE= PYTHONPATH=benchmark .venv-bench/bin/python "

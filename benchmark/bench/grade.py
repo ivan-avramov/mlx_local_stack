@@ -884,30 +884,83 @@ def _visionqa_token_f1(pred, gold) -> float:
 
 
 def _visionqa_screenqa_ok(pred, golds) -> bool:
-    """RICO ScreenQA-Short: normalized exact match OR token-F1 >= 0.5 against ANY reference."""
+    """RICO ScreenQA-Short: normalized exact match against ANY reference; token-F1 >= 0.5 is a
+    partial-credit fallback that applies ONLY when that reference normalizes to >= 3 tokens
+    (operator ruling, cold review 2026-09-12) -- below 3 tokens, F1 is too easy to satisfy by
+    chance (e.g. sharing the one word two answers happen to have in common), so short gold
+    answers fall back to exact match only."""
     if not pred:
         return False
+    npred = _visionqa_norm(pred)
     for g in golds or []:
-        if _visionqa_norm(pred) == _visionqa_norm(g) or _visionqa_token_f1(pred, g) >= 0.5:
+        ng = _visionqa_norm(g)
+        if npred == ng:
+            return True
+        if len(ng.split()) >= 3 and _visionqa_token_f1(pred, g) >= 0.5:
             return True
     return False
 
 
-_VISIONQA_LETTER_RE = re.compile(r"^\(?\s*([A-Da-d])\s*\)?\.?$")
+_VISIONQA_AI2D_LABEL_PREFIX_RE = re.compile(r"^\(?[A-Da-d][\).:\s]\s*")
 
 
 def _visionqa_ai2d_ok(pred, gold_letter, choices) -> bool:
-    """AI2D: accept the bare letter ("B"), a parenthesized/dotted letter ("B)", "(B)", "B."),
-    case-insensitive, or the gold option's own text."""
+    """AI2D: `extract.extract_mc_letter` first (handles a bare letter, "B)"/"(B)"/"B.", or
+    "the answer is B" -- see extract.py); if it finds no letter, strip a residual leading label
+    (`^\\(?[A-Da-d][\\).:\\s]\\s*`) and fall back to the gold option's own text."""
     if not pred or not gold_letter:
         return False
-    m = _VISIONQA_LETTER_RE.match(pred.strip())
-    if m:
-        return m.group(1).upper() == gold_letter.upper()
+    n_options = len(choices) if choices else 4
+    letter = extract.extract_mc_letter(pred, n_options=n_options)
+    if letter:
+        return letter.upper() == gold_letter.upper()
+    stripped = _VISIONQA_AI2D_LABEL_PREFIX_RE.sub("", pred.strip(), count=1)
     idx = "ABCD".find(gold_letter.upper())
     if choices and 0 <= idx < len(choices):
-        return _visionqa_norm(pred) == _visionqa_norm(choices[idx])
+        return _visionqa_norm(stripped) == _visionqa_norm(choices[idx])
     return False
+
+
+# --------------------------------------------------------------------------- TextVQA (standard
+# VQA-eval normalization: GT-Vision-Lab/VQA vqaEval.py + the EvalAI/TextVQA m4c_evaluators.py
+# variant). Punctuation is REMOVED, never replaced with a space (simpler than the official
+# conditional space/removal branch); ':' is added to the official PUNCTUATIONS list so a
+# time-like answer normalizes consistently ("12:30" vs "1230"). Apostrophes are deliberately NOT
+# stripped -- the CONTRACTIONS map is what unifies "don't"/"dont", by canonicalizing the
+# no-apostrophe form TO the apostrophe'd one, exactly as the official evaluators do.
+_TEXTVQA_NUMBER_MAP = {"none": "0", "zero": "0", "one": "1", "two": "2", "three": "3",
+                       "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8",
+                       "nine": "9", "ten": "10"}
+_TEXTVQA_ARTICLES = {"a", "an", "the"}
+_TEXTVQA_CONTRACTIONS = {
+    "aint": "ain't", "arent": "aren't", "cant": "can't", "couldve": "could've",
+    "couldnt": "couldn't", "didnt": "didn't", "doesnt": "doesn't", "dont": "don't",
+    "hadnt": "hadn't", "hasnt": "hasn't", "havent": "haven't", "hes": "he's", "hows": "how's",
+    "im": "i'm", "ive": "i've", "isnt": "isn't", "itll": "it'll", "lets": "let's",
+    "maam": "ma'am", "mightnt": "mightn't", "mightve": "might've", "mustnt": "mustn't",
+    "mustve": "must've", "neednt": "needn't", "oclock": "o'clock", "oughtnt": "oughtn't",
+    "shant": "shan't", "shouldve": "should've", "shouldnt": "shouldn't", "thats": "that's",
+    "theres": "there's", "theyll": "they'll", "theyre": "they're", "theyve": "they've",
+    "wasnt": "wasn't", "weve": "we've", "werent": "weren't", "whats": "what's",
+    "whens": "when's", "wheres": "where's", "whos": "who's", "wont": "won't",
+    "wouldve": "would've", "wouldnt": "wouldn't", "youd": "you'd", "youll": "you'll",
+    "youre": "you're", "youve": "you've",
+}
+_TEXTVQA_PUNCT_RE = re.compile(r"[;/\[\]\"{}()=+\\_\-><@`,?!.:]")
+
+
+def _textvqa_norm(s) -> str:
+    """Standard VQA-eval normalization: number words -> digits, article removal, punctuation
+    REMOVED (incl. ':' for time-like answers), then the contractions map."""
+    s = (s or "").replace("\n", " ").replace("\t", " ").strip()
+    s = _TEXTVQA_PUNCT_RE.sub("", s)
+    words = []
+    for w in s.lower().split():
+        w = _TEXTVQA_NUMBER_MAP.get(w, w)
+        if w not in _TEXTVQA_ARTICLES:
+            words.append(w)
+    words = [_TEXTVQA_CONTRACTIONS.get(w, w) for w in words]
+    return " ".join(words)
 
 
 def _visionqa_textvqa_score(pred, refs) -> float:
@@ -916,8 +969,8 @@ def _visionqa_textvqa_score(pred, refs) -> float:
     matches already saturates the min at 1, so the two spec clauses are the same formula)."""
     if not pred or not refs:
         return 0.0
-    npred = _visionqa_norm(pred)
-    matches = sum(1 for r in refs if _visionqa_norm(r) == npred)
+    npred = _textvqa_norm(pred)
+    matches = sum(1 for r in refs if _textvqa_norm(r) == npred)
     return min(matches / 3.0, 1.0)
 
 
@@ -925,9 +978,13 @@ def grade_visionqa(name, model, tune=None):
     """visionqa (docs/vision-smoke-m39.md): per-source mechanical grading over the committed
     corpus (benchmark/corpora/visionqa_v1.jsonl). `items` carries a per-row score (bool sources
     are 0/1; TextVQA is a continuous 0..1 VQA-accuracy fraction) so `_finalize` derives
-    acc/acc_strict/ci95/mde generically, same as every other grader."""
+    acc/acc_strict/ci95/mde generically, same as every other grader.
+
+    Reads the committed jsonl DIRECTLY via `benchmarks.load_visionqa_meta` (cold review,
+    2026-09-12): grading must never resolve images or touch the network/HF cache -- that seam
+    (`benchmarks._resolve_visionqa_images`) is generation-time only."""
     rows = _rows(model, name, **_tune_kw(tune))
-    meta_by_id = {it["id"]: it for it in benchmarks.load("visionqa", None, 0)}
+    meta_by_id = {row["id"]: row for row in benchmarks.load_visionqa_meta(None, 0)}
     items = []
     errors = unmatched = 0
     per_source_scores: dict = {}
@@ -940,14 +997,14 @@ def grade_visionqa(name, model, tune=None):
             unmatched += 1
             continue
         pred = _visionqa_extract(r.get("content", ""))
-        src = it["meta"]["source_kind"]
+        src = it["source_kind"]
         gold = it["answer"]
         if src == "chartqa":
             score = float(_visionqa_chartqa_ok(pred, gold))
         elif src == "screenqa":
             score = float(_visionqa_screenqa_ok(pred, gold))
         elif src == "ai2d":
-            score = float(_visionqa_ai2d_ok(pred, gold, it.get("options")))
+            score = float(_visionqa_ai2d_ok(pred, gold, it.get("choices")))
         elif src == "textvqa":
             score = _visionqa_textvqa_score(pred, gold)
         else:

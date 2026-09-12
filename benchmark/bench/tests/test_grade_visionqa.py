@@ -1,9 +1,11 @@
-"""Grading rules for visionqa (M39, docs/vision-smoke-m39.md), per source:
+"""Grading rules for visionqa (M39, docs/vision-smoke-m39.md; cold-review fixes 2026-09-12), per
+source:
     ChartQA   relaxed: numeric within +-5% (after stripping %,$,commas), else normalized exact
-    ScreenQA  normalized exact match OR token-F1 >= 0.5
-    AI2D      option letter (accepts "B", "B)", or the option text)
-    TextVQA   VQA accuracy: min(matches/3, 1) over the 10 references
-Plus one end-to-end grade_visionqa() test wired through the shared convergence postprocessor.
+    ScreenQA  normalized exact match; token-F1 >= 0.5 ONLY when gold normalizes to >= 3 tokens
+    AI2D      extract.extract_mc_letter first, else the gold option's own text (label-stripped)
+    TextVQA   VQA accuracy: min(matches/3, 1) over the 10 references, standard VQA-eval normalization
+Plus grade_visionqa() end-to-end tests: it must read the committed corpus directly (never resolve
+images / touch the network) and wire correctly into the shared convergence postprocessor.
 """
 import bench.grade as GR
 
@@ -61,14 +63,27 @@ def test_screenqa_normalized_exact_match():
     assert GR._visionqa_screenqa_ok("THE 12 Exercises!", ["12 exercises"])  # case/article/punct
 
 
-def test_screenqa_token_f1_partial_credit_over_threshold():
-    # pred="12 total exercises" vs gold="a total of 12 exercises": common {total,12,exercises}=3
-    # over normalized pred len 3, gold len 4 -> P=1.0 R=0.75 F1=0.857 >= 0.5
-    assert GR._visionqa_screenqa_ok("12 total exercises", ["a total of 12 exercises"]) is True
+def test_screenqa_token_f1_applies_when_gold_has_3_or_more_tokens():
+    # gold "sign in to your account" normalizes to 4 tokens (article "your" is not stripped) ->
+    # F1 eligible. pred "sign in to account" shares {sign,in,to,account}: P=1.0 R=0.75 F1=0.857
+    assert GR._visionqa_screenqa_ok("sign in to account", ["sign in to your account"]) is True
+
+
+def test_screenqa_ruling_f1_never_applies_below_3_gold_tokens(monkeypatch=None):
+    """Operator ruling (cold review, 2026-09-12): token-F1 is a partial-credit mechanism for
+    multi-word answers; below 3 gold tokens it is too easy to satisfy by chance (e.g. any answer
+    sharing one of two words), so short gold answers fall back to EXACT match only."""
+    # gold "App Crawler" (2 tokens) vs pred "App Store": would share 1/2 tokens (F1=0.5) if F1
+    # applied, but must be WRONG under the <3-token exact-only rule.
+    assert GR._visionqa_screenqa_ok("App Store", ["App Crawler"]) is False
+    # gold "on" (1 token) vs pred "not on": shares the only token, but must be WRONG.
+    assert GR._visionqa_screenqa_ok("not on", ["on"]) is False
+    # gold "sign in to your account" (4 tokens, >=3) vs pred "sign in to account": CORRECT via F1.
+    assert GR._visionqa_screenqa_ok("sign in to account", ["sign in to your account"]) is True
 
 
 def test_screenqa_below_f1_threshold_and_no_exact_match_fails():
-    assert GR._visionqa_screenqa_ok("banana", ["12 exercises"]) is False
+    assert GR._visionqa_screenqa_ok("banana", ["a total of 12 exercises"]) is False
 
 
 def test_screenqa_empty_prediction_never_matches():
@@ -77,17 +92,31 @@ def test_screenqa_empty_prediction_never_matches():
 
 
 # --------------------------------------------------------------------------- AI2D
+_LEAF_CHOICES = ["Egg shaped", "Elliptic Leaf", "Oblong", "Top shaped"]
+
+
 def test_ai2d_bare_letter_matches_case_insensitively():
     assert GR._visionqa_ai2d_ok("B", "b", ["w", "x", "y", "z"]) is True
 
 
-def test_ai2d_letter_with_paren_matches():
-    assert GR._visionqa_ai2d_ok("B)", "B", ["w", "x", "y", "z"]) is True
-    assert GR._visionqa_ai2d_ok("(B)", "B", ["w", "x", "y", "z"]) is True
+def test_ai2d_letter_with_closing_paren_and_trailing_text():
+    assert GR._visionqa_ai2d_ok("D) Top shaped", "D", _LEAF_CHOICES) is True
 
 
-def test_ai2d_wrong_letter_fails():
-    assert GR._visionqa_ai2d_ok("A", "B", ["w", "x", "y", "z"]) is False
+def test_ai2d_letter_with_period_and_trailing_text():
+    assert GR._visionqa_ai2d_ok("D. Top shaped", "D", _LEAF_CHOICES) is True
+
+
+def test_ai2d_answer_is_phrasing():
+    assert GR._visionqa_ai2d_ok("The answer is D", "D", _LEAF_CHOICES) is True
+
+
+def test_ai2d_text_only_answer_matches_option_text():
+    assert GR._visionqa_ai2d_ok("top shaped", "D", _LEAF_CHOICES) is True
+
+
+def test_ai2d_bare_wrong_letter_fails():
+    assert GR._visionqa_ai2d_ok("A", "D", _LEAF_CHOICES) is False
 
 
 def test_ai2d_option_text_matches_when_letter_is_absent():
@@ -102,7 +131,28 @@ def test_ai2d_empty_prediction_never_matches():
     assert GR._visionqa_ai2d_ok("", "B", ["w", "x", "y", "z"]) is False
 
 
-# --------------------------------------------------------------------------- TextVQA
+# --------------------------------------------------------------------------- TextVQA normalization
+def test_textvqa_norm_number_words_to_digits():
+    assert GR._textvqa_norm("two") == GR._textvqa_norm("2") == "2"
+
+
+def test_textvqa_norm_handles_dotted_acronyms():
+    assert GR._textvqa_norm("U.S.A.") == GR._textvqa_norm("usa") == "usa"
+
+
+def test_textvqa_norm_strips_colon_in_time_like_answers():
+    assert GR._textvqa_norm("12:30") == GR._textvqa_norm("1230") == "1230"
+
+
+def test_textvqa_norm_contractions_map_unifies_apostrophe_forms():
+    assert GR._textvqa_norm("don't") == GR._textvqa_norm("dont") == "don't"
+
+
+def test_textvqa_norm_strips_articles():
+    assert GR._textvqa_norm("the dog") == "dog"
+
+
+# --------------------------------------------------------------------------- TextVQA scoring
 def test_textvqa_partial_credit_two_of_ten():
     refs = ["dakota"] * 2 + ["nope"] * 8
     assert round(GR._visionqa_textvqa_score("Dakota", refs), 3) == 0.667
@@ -125,10 +175,38 @@ def test_textvqa_empty_prediction_or_refs_scores_zero():
     assert GR._visionqa_textvqa_score("dakota", []) == 0.0
 
 
+def test_textvqa_score_uses_the_vqa_normalization_for_matching():
+    assert GR._visionqa_textvqa_score("two", ["2"] * 10) == 1.0
+    assert GR._visionqa_textvqa_score("dont", ["don't"] * 10) == 1.0
+
+
 # --------------------------------------------------------------------------- grade_visionqa (e2e)
-def _meta_item(id_, source_kind, answer, options=None):
-    return {"id": id_, "prompt": "q", "answer": answer, "options": options,
-            "meta": {"source_kind": source_kind}}
+def _meta_row(id_, source_kind, answer, choices=None):
+    """Shape of a raw committed-jsonl row, as `benchmarks.load_visionqa_meta` returns it --
+    `source_kind`/`choices` at the TOP level (NOT nested under "meta"/"options" the way the
+    generation-time `benchmarks.load` item shape does)."""
+    return {"id": id_, "question": "q", "source_kind": source_kind, "answer": answer,
+            "choices": choices}
+
+
+def test_grade_visionqa_never_touches_the_network_or_resolves_images(monkeypatch):
+    """Cold-review requirement: grade_visionqa must read the committed jsonl directly. Both the
+    image-resolution seam AND the underlying HF-cache seam are wired to explode if called."""
+    def boom_resolve(rows):
+        raise AssertionError("grade_visionqa must never call _resolve_visionqa_images")
+    monkeypatch.setattr(GR.benchmarks, "_resolve_visionqa_images", boom_resolve)
+
+    import datasets
+    def boom_ds(*a, **kw):
+        raise AssertionError("grade_visionqa must never call datasets.load_dataset")
+    monkeypatch.setattr(datasets, "load_dataset", boom_ds)
+
+    rows = [{"id": "chartqa-000", "content": "\\boxed{12}", "completion_tokens": 5,
+            "thinking_budget": 100, "finish_reason": "stop"}]
+    monkeypatch.setattr(GR, "_rows", lambda m, n, **kw: rows)
+    # Uses the REAL committed corpus (benchmarks.load_visionqa_meta reads the jsonl only).
+    out = GR.grade_visionqa("visionqa", "m")
+    assert out["n"] == 1
 
 
 def test_grade_visionqa_end_to_end(monkeypatch):
@@ -140,17 +218,17 @@ def test_grade_visionqa_end_to_end(monkeypatch):
         {"id": "textvqa-000", "content": "\\boxed{dakota}", "completion_tokens": 10,
          "thinking_budget": 1000, "finish_reason": "stop"},
         # a non-converged row (budget hit): acc_strict must charge this as 0 regardless of content
-        {"id": "screenqa-000", "content": "\\boxed{12 exercises}", "completion_tokens": 1000,
+        {"id": "screenqa-000", "content": "\\boxed{sign in to your account}", "completion_tokens": 1000,
          "thinking_budget": 1000, "finish_reason": "stop"},
     ]
     monkeypatch.setattr(GR, "_rows", lambda m, n, **kw: rows)
     meta = [
-        _meta_item("chartqa-000", "chartqa", "12"),
-        _meta_item("ai2d-000", "ai2d", "B", options=["w", "x", "y", "z"]),
-        _meta_item("textvqa-000", "textvqa", ["dakota"] * 10),
-        _meta_item("screenqa-000", "screenqa", ["12 exercises"]),
+        _meta_row("chartqa-000", "chartqa", "12"),
+        _meta_row("ai2d-000", "ai2d", "B", choices=["w", "x", "y", "z"]),
+        _meta_row("textvqa-000", "textvqa", ["dakota"] * 10),
+        _meta_row("screenqa-000", "screenqa", ["sign in to your account"]),
     ]
-    monkeypatch.setattr(GR.benchmarks, "load", lambda name, limit, seed: meta)
+    monkeypatch.setattr(GR.benchmarks, "load_visionqa_meta", lambda limit, seed: meta)
 
     out = GR.grade_visionqa("visionqa", "m")
     assert out["n"] == 4
