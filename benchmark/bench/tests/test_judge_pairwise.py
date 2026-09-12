@@ -766,9 +766,9 @@ def test_codex_call_pins_model_and_effort_and_names_the_judge_by_them():
         captured["argv"] = argv
         return P()
 
-    J._codex_call("sys", "usr", runner=runner, model="gpt-6-astra", effort="medium")
+    J._codex_call("sys", "usr", runner=runner, model="gpt-5.6-terra", effort="medium")
     argv = captured["argv"]
-    assert argv[:2] == ["codex", "exec"] and "-m" in argv and argv[argv.index("-m") + 1] == "gpt-6-astra"
+    assert argv[:2] == ["codex", "exec"] and "-m" in argv and argv[argv.index("-m") + 1] == "gpt-5.6-terra"
     assert "model_reasoning_effort=medium" in argv
     key = [k for k in J.default_judge_fns() if k.startswith("codex:")]
     assert key == [f"codex:{J.CODEX_MODEL}:{J.CODEX_EFFORT}"]

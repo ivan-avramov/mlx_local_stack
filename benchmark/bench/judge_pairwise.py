@@ -325,7 +325,7 @@ def _anthropic_call(model_id, system, user, client=None, max_tokens=_JUDGE_MAX_T
     return text, usage_dict, stop_reason
 
 
-CODEX_MODEL = os.environ.get("M38_CODEX_MODEL", "gpt-6-astra")
+CODEX_MODEL = os.environ.get("M38_CODEX_MODEL", "gpt-5.6-terra")  # operator choice 2026-09-12
 CODEX_EFFORT = os.environ.get("M38_CODEX_EFFORT", "medium")
 
 
