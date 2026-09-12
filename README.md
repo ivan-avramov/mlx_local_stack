@@ -43,7 +43,7 @@ Only ranks 1–2 are approved C picks. **C67 (operator, 2026-09-11) reordered th
 | Shortlist, not ranked | Ornith-1.0-35B-mlx-uniform-4bit | t0.4, native expert routing, certified MTP | Native vision, fastest decode of the seeing models. Math500 99/93 strict with 6/100 non-converged on the OLD item set; a matched row on the new set is queued in the M38 judge-panel generation chain. |
 | Shortlist, not ranked | Qwen3.8-27B-mlx-uniform-4bit | t0.6, medium effort, certified MTP | Accuracy-first reasoning candidate: 99% strict on matched medium Math500, fewer tokens but the slowest decode of the seeing models; broader C assessment pending. |
 
-`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s matched Math500 reference row (C63) is still completing; it re-enters this table only on evidence.
+C63 COMPLETE: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s matched Math500 reference row scores 93% strict / 99% ordinary, 6/100 non-converged (5 degenerate_repetition + 1 budget_hit), 21.72h/100 — the runaway tax accounts for the entire strict deficit (every non-converged item still landed the correct answer). At 8–26× the wall time of the other three matched-set models and with its only clean pairwise comparison (vs `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`) inconclusive, it stays on the C research shortlist; no reorder beyond C67 without operator approval. Full evidence: campaign-results.md 2026-09-11 (C63).
 
 ### C evidence
 
@@ -53,6 +53,7 @@ Math500: M33 rows share one100-case set; M37 uses the newer100-case set shared w
 |---|---|---|---|---|---|---|
 | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | M33 | **99 / 99** | **0** | **3,849** | **0.81 h** | Fast text reasoning: favorable quality and token/time trends. M34r MBPPPlus native84% versus expanded82% strict;100% convergence both. Native general default retained. C48 t0.7 MBPPPlus85% versus84% at t1.0; Math50097% versus96% at t1.0 also favors t0.7; C48 complete: Operator prefers t0.5:87% coding/97% math with less runtime/repetition than t0.3. t0.4 completed85% coding/95% math versus t0.5 87%/97%; t0.5 approved and router default updated under C62. Expansion math/coding tradeoff remains below. |
 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | M33 | 99 / 97 | 2 | 12,842 | 16.4 h | Vision-capable alternative; some correct answers incurred non-convergence. |
+| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | M37ref, newer matched set (C63) | 99 / 93 | 6 | 15,497 | 21.72 h | Runaway tax, not a quality gap: all 6 non-converged items still landed the correct answer, but at 8–26× the wall time of the other matched-set models; strict deltas vs the other three are inconclusive (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`) or diagnostic-only (`Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, reasoning_effort None vs medium). Stays on the shortlist; no reorder without operator approval. |
 | Ornith-1.0-35B-mlx-uniform-4bit | M33 | 99 / 93 | 6 | 15,788 | 4.7 h | Fast decoding, but more tokens and non-convergence on reasoning. |
 | Qwen3.8-27B-mlx-uniform-4bit | M37, newer matched set | 99 / 99 | 0 | 2,423 | 2.62 h | Accuracy-first C candidate: fewer tokens but slower decode; accuracy-first math candidate after M37 pair, no approved C reorder. |
 
