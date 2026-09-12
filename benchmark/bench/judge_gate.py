@@ -484,7 +484,7 @@ def main(argv=None):
         description="Compute the M38 judge-panel reliability gate, then (if it passes) rank.")
     ap.add_argument("--pairs", required=True)
     ap.add_argument("--verdicts", required=True)
-    ap.add_argument("--judges", nargs="+", default=["opus", "sonnet", "gpt-5.5"])  # allow-shorthand
+    ap.add_argument("--judges", nargs="+", default=None)  # None -> opus, sonnet, and the pinned codex judge (see judge_pairwise.CODEX_MODEL)  # allow-shorthand
     ap.add_argument("--out", default=os.path.join(RESULTS, "judge_c_v1"))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--models", nargs="+", default=None,
@@ -496,6 +496,8 @@ def main(argv=None):
 
     pairs = read_jsonl(args.pairs)
     verdict_rows = read_jsonl(args.verdicts)
+    if args.judges is None:
+        args.judges = sorted({r.get("judge") for r in verdict_rows if r.get("judge")})
     gate = compute_gate(pairs, verdict_rows, args.judges)
     gate_path = os.path.join(args.out, "gate.json")
     write_json(gate, gate_path)

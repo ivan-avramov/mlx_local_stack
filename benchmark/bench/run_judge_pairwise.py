@@ -113,7 +113,7 @@ def main(argv=None):
     ap.add_argument("--anchors", default=None, help="pairs.jsonl from judge_anchors")
     ap.add_argument("--results-dir", default=J.RESULTS)
     ap.add_argument("--corpus", default=DEFAULT_CORPUS)
-    ap.add_argument("--judges", nargs="+", default=["opus", "sonnet", "gpt-5.5"])  # allow-shorthand
+    ap.add_argument("--judges", nargs="+", default=None)  # None -> opus, sonnet, and the pinned codex judge (see judge_pairwise.CODEX_MODEL)  # allow-shorthand
     ap.add_argument("--out", default=None)
     ap.add_argument("--seed", type=int, default=38)
     ap.add_argument("--limit-pairs", type=int, default=None)
@@ -158,6 +158,8 @@ def main(argv=None):
     task_prompts = load_item_prompts(args.corpus)
 
     if args.export_packets:
+        if args.judges is None:
+            args.judges = list(J.default_judge_fns())
         manifest_rows = J.export_packets(pairs, args.judges, task_prompts, args.models,
                                          args.export_packets, batch_size=args.batch_size)
         print(f"[run_judge_pairwise] exported {len(manifest_rows)} packet(s) for "
@@ -172,6 +174,8 @@ def main(argv=None):
         return 0
 
     judge_fns_all = J.default_judge_fns()
+    if args.judges is None:
+        args.judges = list(judge_fns_all)
     unknown = [j for j in args.judges if j not in judge_fns_all]
     if unknown:
         print(f"[run_judge_pairwise] ERROR unknown judges {unknown}; choices are "

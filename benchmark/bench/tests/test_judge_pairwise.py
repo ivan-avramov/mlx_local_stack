@@ -749,3 +749,27 @@ def test_cli_ingest_packets_end_to_end_and_idempotent(tmp_path, monkeypatch):
     assert rc2 == 0
     rows2 = [json.loads(l) for l in verdicts_path.read_text().splitlines()]
     assert len(rows2) == len(manifest)
+
+
+def test_codex_call_pins_model_and_effort_and_names_the_judge_by_them():
+    """2026-09-12: the first codex run passed no `-m`, so it silently used the operator's codex
+    default under a wrong label. The call must pin model + effort and the judge key must name them."""
+    from bench import judge_pairwise as J
+    captured = {}
+
+    class P:
+        returncode = 0
+        stdout = '{"choice": "A", "rationale": "x"}'
+        stderr = ""
+
+    def runner(argv, **kw):
+        captured["argv"] = argv
+        return P()
+
+    J._codex_call("sys", "usr", runner=runner, model="gpt-6-astra", effort="medium")
+    argv = captured["argv"]
+    assert argv[:2] == ["codex", "exec"] and "-m" in argv and argv[argv.index("-m") + 1] == "gpt-6-astra"
+    assert "model_reasoning_effort=medium" in argv
+    key = [k for k in J.default_judge_fns() if k.startswith("codex:")]
+    assert key == [f"codex:{J.CODEX_MODEL}:{J.CODEX_EFFORT}"]
+    assert J.judge_families(key)[key[0]] == "openai"

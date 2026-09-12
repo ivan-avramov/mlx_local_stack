@@ -325,13 +325,23 @@ def _anthropic_call(model_id, system, user, client=None, max_tokens=_JUDGE_MAX_T
     return text, usage_dict, stop_reason
 
 
-def _codex_call(system, user, runner=subprocess.run):
+CODEX_MODEL = os.environ.get("M38_CODEX_MODEL", "gpt-6-astra")
+CODEX_EFFORT = os.environ.get("M38_CODEX_EFFORT", "medium")
+
+
+def _codex_call(system, user, runner=subprocess.run, model=None, effort=None):
     """Same call shape as `judge.codex_judge` (one-shot `codex exec`) — but RAISES on a
     nonzero exit / launch failure instead of degrading to None. No token usage and no
     stop_reason concept for this backend (both always None -> cost log records `null`,
-    never a fabricated 0)."""
+    never a fabricated 0). The model and reasoning effort are PINNED explicitly (`-m`,
+    `-c model_reasoning_effort=`): the 2026-09-12 first run passed neither and silently
+    used the operator's codex default (gpt-6-astra, high) under a "gpt-5.5" label."""
+    model = model or CODEX_MODEL
+    effort = effort or CODEX_EFFORT
     prompt = f"{system}\n\n{user}"
-    proc = runner(["codex", "exec", prompt], capture_output=True, text=True, timeout=300)
+    proc = runner(["codex", "exec", "-m", model, "-c", f"model_reasoning_effort={effort}",
+                   "--skip-git-repo-check", prompt],
+                  capture_output=True, text=True, timeout=300)
     if getattr(proc, "returncode", 1) != 0:
         raise RuntimeError(f"codex exec failed rc={getattr(proc, 'returncode', None)} "
                            f"stderr={getattr(proc, 'stderr', '')[:200]!r}")
@@ -345,7 +355,7 @@ def default_judge_fns():
     return {
         "opus": lambda s, u: _anthropic_call("claude-opus-5", s, u),  # allow-shorthand
         "sonnet": lambda s, u: _anthropic_call("claude-sonnet-5", s, u),
-        "gpt-5.5": _codex_call,
+        f"codex:{CODEX_MODEL}:{CODEX_EFFORT}": _codex_call,
     }
 
 
@@ -375,7 +385,10 @@ def judge_families(judges):
     code-quality panel uses to detect a mixed-family split) — shared here so the CLI's
     single-family guard and the ranking's per-family preference split use one source of
     truth for "which family is this judge in"."""
-    return {j: _judge._FAMILY.get(j) for j in judges}
+    fam = {}
+    for j in judges:
+        fam[j] = "openai" if j.startswith("codex:") else _judge._FAMILY.get(j)
+    return fam
 
 
 def iter_calls(pairs, judges):
