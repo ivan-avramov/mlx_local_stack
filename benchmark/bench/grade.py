@@ -7,9 +7,11 @@ saved completions. (livecodebench: see grade_lcb — needs lcb_runner.)
 import json
 import os
 import random
+import re
 import subprocess
 import sys
 import zlib
+from collections import Counter
 
 from . import benchmarks, convergence, extract, generate, rowschema, stats, traces
 
@@ -824,6 +826,146 @@ def grade_ifeval(name, model, tune=None):
     return out
 
 
+_VISIONQA_ARTICLES = {"a", "an", "the"}
+
+
+def _visionqa_norm(s) -> str:
+    """lowercase, strip punctuation/articles/whitespace -- the ChartQA/ScreenQA normalized-match
+    rule (docs/vision-smoke-m39.md), reused as TextVQA's 'standard normalization'."""
+    s = (s or "").lower().strip()
+    s = re.sub(r"[^\w\s]", " ", s)
+    return " ".join(w for w in s.split() if w not in _VISIONQA_ARTICLES)
+
+
+def _visionqa_extract(content: str):
+    """Final answer from \\boxed{} (reuses the math extractor); else the last non-empty line."""
+    b = extract.extract_boxed(content)
+    if b:
+        return b.strip()
+    for line in reversed((content or "").strip().splitlines()):
+        line = line.strip()
+        if line:
+            return line
+    return None
+
+
+def _visionqa_to_float(s):
+    if s is None:
+        return None
+    try:
+        return float(str(s).strip().replace("%", "").replace("$", "").replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _visionqa_chartqa_ok(pred, gold) -> bool:
+    """ChartQA relaxed accuracy: numeric within +-5% (after stripping %,$,commas -- NOT a
+    percent/fraction unit conversion: "42%" vs "0.42" is a deliberate MISMATCH), else normalized
+    exact match."""
+    if pred is None or gold is None:
+        return False
+    pf, gf = _visionqa_to_float(pred), _visionqa_to_float(gold)
+    if pf is not None and gf is not None:
+        if gf == 0:
+            return pf == 0
+        return abs(pf - gf) <= 0.05 * abs(gf)
+    return _visionqa_norm(pred) == _visionqa_norm(gold)
+
+
+def _visionqa_token_f1(pred, gold) -> float:
+    pt, gt = _visionqa_norm(pred).split(), _visionqa_norm(gold).split()
+    if not pt or not gt:
+        return 0.0
+    n_common = sum((Counter(pt) & Counter(gt)).values())
+    if n_common == 0:
+        return 0.0
+    precision, recall = n_common / len(pt), n_common / len(gt)
+    return 2 * precision * recall / (precision + recall)
+
+
+def _visionqa_screenqa_ok(pred, golds) -> bool:
+    """RICO ScreenQA-Short: normalized exact match OR token-F1 >= 0.5 against ANY reference."""
+    if not pred:
+        return False
+    for g in golds or []:
+        if _visionqa_norm(pred) == _visionqa_norm(g) or _visionqa_token_f1(pred, g) >= 0.5:
+            return True
+    return False
+
+
+_VISIONQA_LETTER_RE = re.compile(r"^\(?\s*([A-Da-d])\s*\)?\.?$")
+
+
+def _visionqa_ai2d_ok(pred, gold_letter, choices) -> bool:
+    """AI2D: accept the bare letter ("B"), a parenthesized/dotted letter ("B)", "(B)", "B."),
+    case-insensitive, or the gold option's own text."""
+    if not pred or not gold_letter:
+        return False
+    m = _VISIONQA_LETTER_RE.match(pred.strip())
+    if m:
+        return m.group(1).upper() == gold_letter.upper()
+    idx = "ABCD".find(gold_letter.upper())
+    if choices and 0 <= idx < len(choices):
+        return _visionqa_norm(pred) == _visionqa_norm(choices[idx])
+    return False
+
+
+def _visionqa_textvqa_score(pred, refs) -> float:
+    """Standard VQA accuracy, simplified per the 10-reference spec: min(matches/3, 1) where
+    `matches` counts references whose normalized form equals the normalized prediction (>=3
+    matches already saturates the min at 1, so the two spec clauses are the same formula)."""
+    if not pred or not refs:
+        return 0.0
+    npred = _visionqa_norm(pred)
+    matches = sum(1 for r in refs if _visionqa_norm(r) == npred)
+    return min(matches / 3.0, 1.0)
+
+
+def grade_visionqa(name, model, tune=None):
+    """visionqa (docs/vision-smoke-m39.md): per-source mechanical grading over the committed
+    corpus (benchmark/corpora/visionqa_v1.jsonl). `items` carries a per-row score (bool sources
+    are 0/1; TextVQA is a continuous 0..1 VQA-accuracy fraction) so `_finalize` derives
+    acc/acc_strict/ci95/mde generically, same as every other grader."""
+    rows = _rows(model, name, **_tune_kw(tune))
+    meta_by_id = {it["id"]: it for it in benchmarks.load("visionqa", None, 0)}
+    items = []
+    errors = unmatched = 0
+    per_source_scores: dict = {}
+    for r in rows:
+        if r.get("error"):
+            errors += 1
+            continue
+        it = meta_by_id.get(r.get("id"))
+        if it is None:
+            unmatched += 1
+            continue
+        pred = _visionqa_extract(r.get("content", ""))
+        src = it["meta"]["source_kind"]
+        gold = it["answer"]
+        if src == "chartqa":
+            score = float(_visionqa_chartqa_ok(pred, gold))
+        elif src == "screenqa":
+            score = float(_visionqa_screenqa_ok(pred, gold))
+        elif src == "ai2d":
+            score = float(_visionqa_ai2d_ok(pred, gold, it.get("options")))
+        elif src == "textvqa":
+            score = _visionqa_textvqa_score(pred, gold)
+        else:
+            raise ValueError(f"visionqa: unknown source_kind {src!r} for item {it['id']!r}")
+        items.append({"id": r["id"], "sample": r.get("sample", 0), "pred": pred, "gold": gold,
+                      "source": src, "ok": score >= 1.0, "score": score})
+        per_source_scores.setdefault(src, []).append(score)
+    per_source = {src: round(sum(v) / len(v), 4) for src, v in per_source_scores.items()}
+    n = len(items)
+    out = {"benchmark": name, "model": model, "n": n, "errors": errors,
+          "correct": sum(1 for i in items if i["ok"]),
+          "acc": round(sum(i["score"] for i in items) / n, 4) if n else None,
+          "per_source": per_source, "items": items}
+    if unmatched:
+        out["n_unmatched"] = unmatched
+    return out
+
+
 def grade_open(name, model, tune=None):
     """`kind: open` (e.g. cjudge): no gold answer, no mechanical grading — the judge panel
     (bench/judge_pairwise.py) scores these, not this grader. Graceful-degrade convention:
@@ -846,6 +988,8 @@ def grade(name, model, tune=None):
         score = grade_lcb(name, model, tune=tune)
     elif name == "ifeval":
         score = grade_ifeval(name, model, tune=tune)
+    elif name == "visionqa":
+        score = grade_visionqa(name, model, tune=tune)
     elif kind == "open":
         score = grade_open(name, model, tune=tune)
     else:

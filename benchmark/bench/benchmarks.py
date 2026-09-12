@@ -4,6 +4,7 @@ Reasoning benchmarks need only `datasets`. Coding benchmarks need the official
 evaluators (`evalplus`, `lcb_runner`) — imported lazily so reasoning works without them.
 An Item is: {"id", "prompt", "answer"?, "options"?, "meta"?}.
 """
+import base64
 import json
 import os
 import random
@@ -19,6 +20,7 @@ SPECS = {
     "livecodebench": {"kind": "coding",    "answer_type": "code", "gated": False},
     "ifeval":        {"kind": "instruction", "answer_type": "programmatic", "gated": False},
     "cjudge":        {"kind": "open", "answer_type": "none", "gated": False},
+    "visionqa":      {"kind": "vision", "answer_type": "visionqa", "gated": False},
 }
 
 # Pinned LiveCodeBench release window for contamination control + reproducibility.
@@ -178,6 +180,84 @@ def _load_cjudge(limit, seed):
     return _subsample(items, limit, seed)
 
 
+# ----------------------------------------------------------------- vision (visionqa) loader
+_VISIONQA_PATH = os.path.join(os.path.dirname(__file__), "..", "corpora", "visionqa_v1.jsonl")
+# Pre-approved out-of-repo location (AGENTS.md "NO FILESYSTEM POLLUTION OUTSIDE $STACK_WORKDIR" --
+# ~/.cache/huggingface is a listed exception). Materialized image files, never the repo: the
+# committed jsonl carries only `image_ref`, resolved here at LOAD time.
+_VISIONQA_IMAGE_CACHE = os.path.expanduser("~/.cache/huggingface/mlx_local_stack_visionqa_images")
+
+
+def _visionqa_image_cache_path(row: dict) -> str:
+    ext = row["meta"]["image_format"].lower()
+    return os.path.join(_VISIONQA_IMAGE_CACHE, f"{row['id']}.{ext}")
+
+
+def _resolve_visionqa_images(rows: list) -> None:
+    """Materialize each row's image to a local file (mutates row["meta"]["image_path"] in place),
+    grouping by (dataset, split, revision) so each source dataset loads at most once per call.
+
+    Graceful-degrade with a CLEAR error (not a raw huggingface_hub stack trace) when a dataset is
+    neither locally cached nor reachable -- this is the one place visionqa needs the network."""
+    needed = [r for r in rows if not os.path.exists(_visionqa_image_cache_path(r))]
+    for r in rows:
+        r["meta"]["image_path"] = _visionqa_image_cache_path(r)
+    if not needed:
+        return
+    try:
+        from datasets import load_dataset
+    except ImportError as e:
+        raise RuntimeError(
+            "benchmark 'visionqa' needs the `datasets` package to resolve images") from e
+    os.makedirs(_VISIONQA_IMAGE_CACHE, exist_ok=True)
+    ds_cache: dict = {}
+    for r in needed:
+        ref = r["image_ref"]
+        key = (ref["dataset"], ref["split"], ref["revision"])
+        if key not in ds_cache:
+            try:
+                ds_cache[key] = load_dataset(ref["dataset"], split=ref["split"],
+                                             revision=ref["revision"])
+            except Exception as e:  # noqa: BLE001 -- turn an opaque HF error into an actionable one
+                raise RuntimeError(
+                    f"visionqa: dataset {ref['dataset']!r} (split={ref['split']!r}, "
+                    f"revision={ref['revision']!r}) is not in the local HF cache and could not be "
+                    "fetched (offline / no network?). Run benchmark/corpora/build_visionqa_v1.py "
+                    "once with network access to populate ~/.cache/huggingface, or unset "
+                    f"HF_HUB_OFFLINE. ({type(e).__name__}: {str(e)[:200]})") from e
+        img = ds_cache[key][ref["index"]]["image"]
+        path = _visionqa_image_cache_path(r)
+        tmp = path + ".tmp"
+        img.save(tmp, format=r["meta"]["image_format"])
+        os.replace(tmp, path)
+
+
+def _load_visionqa(limit, seed):
+    """visionqa_v1 (docs/vision-smoke-m39.md): 40 committed rows across four vision-QA sources
+    (ChartQA/RICO-ScreenQA-Short/AI2D/TextVQA). Images are never committed -- resolved here to a
+    local file via the HF cache (see `_resolve_visionqa_images`)."""
+    rows = []
+    with open(_VISIONQA_PATH, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rows.append(json.loads(line))
+    rows = _subsample(rows, limit, seed)
+    _resolve_visionqa_images(rows)
+    items = []
+    for row in rows:
+        items.append({
+            "id": row["id"], "prompt": row["question"], "answer": row["answer"],
+            "options": row.get("choices"),
+            "meta": {"source": row["source"], "source_kind": row["source_kind"],
+                     "source_id": row["source_id"], "answer_numeric": row.get("answer_numeric"),
+                     "image_path": row["meta"]["image_path"],
+                     "image_format": row["meta"]["image_format"]},
+        })
+    return items
+
+
 def load(name: str, limit: int | None = None, seed: int = 0) -> list:
     if name == "aime":
         return _load_aime(limit, seed)
@@ -193,6 +273,8 @@ def load(name: str, limit: int | None = None, seed: int = 0) -> list:
         return _load_ifeval(limit, seed)
     if name == "cjudge":
         return _load_cjudge(limit, seed)
+    if name == "visionqa":
+        return _load_visionqa(limit, seed)
     raise ValueError(f"unknown benchmark {name!r}; known: {list(SPECS)}")
 
 
@@ -238,6 +320,28 @@ def _lcb_messages(item: dict) -> list:
             {"role": "user", "content": body}]
 
 
+_VISIONQA_SUFFIX = "\n\nAnswer with the final answer only, inside \\boxed{}."
+
+
+def _visionqa_messages(item: dict) -> list:
+    """OpenAI content-list message: text part + a base64 `image_url` data URL, mirroring
+    `benchmark/probe_vision.py`. AI2D lists its options as `A) ... D) ...` (positional labels
+    over the row's own choice order -- the source's `answer` letter already matches that order)."""
+    text = item["prompt"]
+    if item["meta"]["source_kind"] == "ai2d" and item.get("options"):
+        opts = "\n".join(f"{'ABCD'[i]}) {o}" for i, o in enumerate(item["options"]))
+        text = f"{text}\n\n{opts}"
+    text += _VISIONQA_SUFFIX
+    with open(item["meta"]["image_path"], "rb") as f:
+        raw = f.read()
+    mime = "image/jpeg" if item["meta"]["image_format"].upper() == "JPEG" else "image/png"
+    data_url = f"data:{mime};base64,{base64.b64encode(raw).decode()}"
+    return [{"role": "user", "content": [
+        {"type": "text", "text": text},
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ]}]
+
+
 def build_messages(name: str, item: dict) -> list:
     if name in ("aime", "math500"):
         return [{"role": "user", "content": item["prompt"] + _REASON_SUFFIX[name]}]
@@ -254,4 +358,6 @@ def build_messages(name: str, item: dict) -> list:
                  "self-contained ```python code block, no explanation after it.\n\n" + item["prompt"]}]
     if name in ("ifeval", "cjudge"):
         return [{"role": "user", "content": item["prompt"]}]
+    if name == "visionqa":
+        return _visionqa_messages(item)
     raise ValueError(name)

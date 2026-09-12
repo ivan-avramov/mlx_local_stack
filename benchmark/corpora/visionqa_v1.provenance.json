@@ -1,0 +1,60 @@
+{
+  "corpus": "visionqa_v1",
+  "rows": 40,
+  "build_date": "2026-09-12",
+  "selection_seed": 39,
+  "filters": [
+    "question <= 60 words",
+    "answer non-empty (>=10 references kept for TextVQA)",
+    "image <= 2000000 px (2 MP), checked via PIL .size (header-only, no full decode)",
+    "no duplicate images within a source (natural id when the source has one -- RICO file_name, TextVQA image_id -- else sha256 of the decoded pixel bytes for ChartQA/AI2D, which carry no per-row id)",
+    "every FINAL selected row's image forced through PIL .load() as a real load check"
+  ],
+  "sources": [
+    {
+      "source_kind": "chartqa",
+      "repo": "HuggingFaceM4/ChartQA",
+      "license": "GPL-3.0 (ids-only storage)",
+      "split": "val",
+      "revision": "b605b6e08b57faf4359aeb2fe6a3ca595f99b6c5",
+      "n": 15,
+      "rejected": {}
+    },
+    {
+      "source_kind": "screenqa",
+      "repo": "rootsautomation/RICO-ScreenQA-Short",
+      "license": "CC BY 4.0",
+      "split": "test",
+      "revision": "d432b8e9e191447b4d04d99e2740838d7319dac5",
+      "n": 10,
+      "rejected": {
+        "over_2mp": 29
+      }
+    },
+    {
+      "source_kind": "ai2d",
+      "repo": "lmms-lab/ai2d",
+      "license": "CC BY-SA",
+      "split": "test",
+      "revision": "c83a9b9692933aff8349157c88a413df9d02c4e5",
+      "n": 10,
+      "rejected": {}
+    },
+    {
+      "source_kind": "textvqa",
+      "repo": "lmms-lab/textvqa",
+      "license": "CC BY 4.0",
+      "split": "validation",
+      "revision": "9c0699cd19768ac5ab97568f6b3cbac4c0062884",
+      "n": 5,
+      "rejected": {}
+    }
+  ],
+  "deviation_textvqa": {
+    "spec_source": "facebook/textvqa",
+    "used_source": "lmms-lab/textvqa",
+    "reason": "facebook/textvqa requires trust_remote_code=True (arbitrary script execution) and its loader downloads a ~20GB train+val image zip from dl.fbaipublicfiles.com; lmms-lab/textvqa is a parquet mirror of the identical official annotations (same license, same val split via set_name=='val', same 10 references/question), no custom code, no zip."
+  },
+  "sha256_visionqa_v1_jsonl": "5646e09011d2eef6fdf51ad8f6bec4c1150f664e3ee194401a6b63e95fe75af2",
+  "reproduce": "HF_HUB_OFFLINE= PYTHONPATH=benchmark .venv-bench/bin/python benchmark/corpora/build_visionqa_v1.py"
+}

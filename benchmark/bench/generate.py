@@ -41,6 +41,22 @@ def _safe(model: str) -> str:
     return model.replace("/", "__")
 
 
+def _wrap_for_generation(bench_name: str, messages: list, depth_tokens, item_id: str) -> list:
+    """Apply the depth axis (D9) to a benchmark's messages -- except `kind == "vision"`.
+
+    A vision item's message content is an OpenAI content LIST (text part + an `image_url` data
+    URL, see `benchmarks._visionqa_messages`), not the single string `depth.wrap_messages`
+    prepends synthetic repo context to. Guarded here so a `--depth-tokens` run against `visionqa`
+    fails LOUD (this is provenance-relevant, not a silent no-op) instead of corrupting the
+    hand-built vision payload."""
+    if benchmarks.SPECS[bench_name]["kind"] == "vision":
+        if depth_tokens:
+            raise ValueError(
+                f"depth_tokens is not supported for kind=='vision' benchmark {bench_name!r}")
+        return messages
+    return depth.wrap_messages(messages, depth_tokens, item_id)
+
+
 # A `tune` is a short label naming the delta from the `deployed` tune (registry
 # `generation_defaults` + registry KV block + registry suffix state) — e.g. `kv4` (KV quant),
 # `t0.3` (temperature override), `suffixon`/`suffixoff` (draft state), `cap16` (KV-cache cap
@@ -448,7 +464,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                 # the draws reproducible, which is what distinguishes a resume from a re-draw.
                 draw_seed = rowschema.sample_seed(it["id"], sample, base=seed_base)
                 params["seed"] = draw_seed
-                msgs = depth.wrap_messages(benchmarks.build_messages(b, it),
+                msgs = _wrap_for_generation(b, benchmarks.build_messages(b, it),
                                            depth_tokens, it["id"])
                 p, recovery, retry = probe_with_recovery(
                     model, msgs, params,
