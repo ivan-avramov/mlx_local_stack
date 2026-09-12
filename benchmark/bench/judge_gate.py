@@ -23,7 +23,12 @@ THRESHOLDS = {
     "panel_kappa_between_orders": 0.60,   # >=
     "krippendorff_alpha": 0.50,           # >=
     "identity_tie_rate": 0.80,            # >=
-    # verbosity_shorter_preference_rate <= degrade_accuracy (dynamic, not a fixed constant)
+    # SPEC CORRECTION 2026-09-12: the original coupled rule (shorter-preference rate <=
+    # degrade accuracy) inverted the anchor's meaning — the padded copy is objectively worse,
+    # so preferring the shorter ORIGINAL is correct behaviour, and the rule could never pass
+    # once degrade accuracy dropped below 1.0. Length bias is now measured directly as the
+    # rate of preferring the PADDED (longer) copy.
+    "verbosity_longer_preference_rate": 0.10,  # <=
 }
 
 TOST_MARGIN = 0.05
@@ -182,6 +187,22 @@ def krippendorff_units_raw(anchors, verdicts_by_pair, judges):
     return units
 
 
+def _longer_preference_rate(verbosity_pairs, verdicts_by_pair, judges):
+    """Fraction of verbosity anchors whose PANEL verdict prefers the padded (longer) copy —
+    the direct length-bias measure. `expected` names the ORIGINAL side; preferring the other
+    side is the bias; ties are not counted as bias."""
+    if not verbosity_pairs:
+        return None
+    longer = {"A": "B", "B": "A"}
+    hits = 0
+    for pair in verbosity_pairs:
+        by_oj = verdicts_by_pair.get(pair["pair_id"], {})
+        pv = panel_verdict([per_judge_verdict(by_oj, j) for j in judges])
+        if pv == longer.get(pair["expected"]):
+            hits += 1
+    return hits / len(verbosity_pairs)
+
+
 def _expected_match_rate(anchor_pairs, verdicts_by_pair, judges):
     """Fraction of `anchor_pairs` whose panel verdict equals `expected`. Shared by degrade
     accuracy, verbosity shorter-preference rate, and identity tie rate — all three are exactly
@@ -251,7 +272,8 @@ def compute_gate(pairs, verdict_rows, judges):
     identity = _anchor_pairs_by_type(anchors, "identity")
 
     degrade_accuracy = _expected_match_rate(degrade, verdicts_by_pair, judges)
-    verbosity_rate = _expected_match_rate(verbosity, verdicts_by_pair, judges)
+    verbosity_rate = _expected_match_rate(verbosity, verdicts_by_pair, judges)  # diagnostic
+    longer_rate = _longer_preference_rate(verbosity, verdicts_by_pair, judges)
     identity_tie_rate = _expected_match_rate(identity, verdicts_by_pair, judges)
 
     flip_rates = {}
@@ -295,11 +317,12 @@ def compute_gate(pairs, verdict_rows, judges):
             "threshold": THRESHOLDS["krippendorff_alpha"], "op": ">=",
             "n": len(anchors),
             "pass": alpha_raw is not None and alpha_raw >= THRESHOLDS["krippendorff_alpha"]},
-        "verbosity_shorter_preference_rate": {
-            "value": verbosity_rate, "threshold": degrade_accuracy, "op": "<=",
-            "n": len(verbosity),
-            "pass": (verbosity_rate is not None and degrade_accuracy is not None
-                     and verbosity_rate <= degrade_accuracy)},
+        "verbosity_longer_preference_rate": {
+            "value": longer_rate, "threshold": THRESHOLDS["verbosity_longer_preference_rate"],
+            "op": "<=", "n": len(verbosity),
+            "pass": (longer_rate is not None
+                     and longer_rate <= THRESHOLDS["verbosity_longer_preference_rate"]),
+            "diagnostic_shorter_preference_rate": verbosity_rate},
         "identity_tie_rate": {
             "value": identity_tie_rate, "threshold": THRESHOLDS["identity_tie_rate"], "op": ">=",
             "n": len(identity),

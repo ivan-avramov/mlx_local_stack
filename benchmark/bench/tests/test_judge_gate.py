@@ -228,27 +228,30 @@ def test_krippendorff_units_raw_has_twice_the_raters_of_collapsed():
 
 
 # ---------------------------------------------------------------- verbosity / identity metrics
-def test_gate_verbosity_rate_relative_to_degrade_accuracy():
-    degrade_pairs = [_anchor_pair(f"d{i}", "degrade", "A") for i in range(10)]
+def test_gate_verbosity_longer_preference_rate_direct():
+    """Spec correction 2026-09-12: length bias = preferring the PADDED copy. Preferring the
+    original (expected side) is correct and must never fail the check; ties are not bias."""
     verbosity_pairs = [_anchor_pair(f"v{i}", "verbosity", "A") for i in range(10)]
     rows = []
-    for p in degrade_pairs:
-        rows += _agree(p["pair_id"], JUDGES, "A")           # degrade_accuracy = 1.0
-    for i, p in enumerate(verbosity_pairs):
-        rows += _agree(p["pair_id"], JUDGES, "A" if i < 7 else "B")  # rate = 0.7
-    gate = G.compute_gate(degrade_pairs + verbosity_pairs, rows, JUDGES)
-    m = gate["metrics"]["verbosity_shorter_preference_rate"]
-    assert m["value"] == 0.7 and m["threshold"] == 1.0 and m["pass"] is True   # 0.7 <= 1.0
-
-    # now push verbosity ABOVE degrade accuracy to fail it.
-    rows2 = []
-    for p in degrade_pairs:
-        rows2 += _agree(p["pair_id"], JUDGES, "B")           # degrade_accuracy drops to 0.0
     for p in verbosity_pairs:
-        rows2 += _agree(p["pair_id"], JUDGES, "A")           # verbosity rate = 1.0 > 0.0
-    gate2 = G.compute_gate(degrade_pairs + verbosity_pairs, rows2, JUDGES)
-    m2 = gate2["metrics"]["verbosity_shorter_preference_rate"]
-    assert m2["value"] == 1.0 and m2["threshold"] == 0.0 and m2["pass"] is False
+        rows += _agree(p["pair_id"], JUDGES, "A")            # always the original -> 0.0 bias
+    gate = G.compute_gate(verbosity_pairs, rows, JUDGES)
+    m = gate["metrics"]["verbosity_longer_preference_rate"]
+    assert m["value"] == 0.0 and m["threshold"] == 0.10 and m["pass"] is True
+    assert m["diagnostic_shorter_preference_rate"] == 1.0
+
+    rows2 = []
+    for i, p in enumerate(verbosity_pairs):
+        rows2 += _agree(p["pair_id"], JUDGES, "B" if i < 2 else "A")   # 2/10 prefer padded
+    gate2 = G.compute_gate(verbosity_pairs, rows2, JUDGES)
+    m2 = gate2["metrics"]["verbosity_longer_preference_rate"]
+    assert m2["value"] == 0.2 and m2["pass"] is False
+
+    rows3 = []
+    for i, p in enumerate(verbosity_pairs):
+        rows3 += _agree(p["pair_id"], JUDGES, "tie" if i < 5 else "A")  # ties are not bias
+    m3 = G.compute_gate(verbosity_pairs, rows3, JUDGES)["metrics"]["verbosity_longer_preference_rate"]
+    assert m3["value"] == 0.0 and m3["pass"] is True
 
 
 def test_gate_identity_tie_rate_pass_and_fail():

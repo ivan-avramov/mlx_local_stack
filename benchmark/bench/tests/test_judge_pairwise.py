@@ -783,3 +783,9 @@ def test_parse_verdict_recovers_choice_when_rationale_has_unescaped_quotes():
     r = parse_verdict(text)
     assert r["choice"] == "A" and r["rationale"] is None
     assert parse_verdict('{"choice": "maybe", "rationale": "x "y" z"}')["choice"] is None
+
+
+def test_parse_verdict_recovers_choice_from_unterminated_json():
+    from bench.judge_pairwise import parse_verdict
+    assert parse_verdict('{"choice":"B","rationale":"B is stronger because')["choice"] == "B"
+    assert parse_verdict('{"rationale":"no choice here')["choice"] is None

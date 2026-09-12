@@ -229,6 +229,11 @@ def parse_verdict(text):
                 end = i
                 break
     if end == -1:
+        # Unterminated object (truncated judge output): still recover an unambiguous choice.
+        m = _CHOICE_RE.search(text[start:])
+        if m:
+            v = m.group(1)
+            result["choice"] = "tie" if v.lower() == "tie" else v.upper()
         return result
     try:
         obj = json.loads(text[start:end + 1])

@@ -73,7 +73,11 @@ Anchor pairs are presented to the panel mixed with candidate pairs, blind.
 - Anchor accuracy on `degrade` ≥ 0.85.
 - Per-judge order flip rate ≤ 0.30; panel Cohen's kappa between orders ≥ 0.6.
 - Krippendorff's alpha across judges on anchors ≥ 0.5.
-- `verbosity`: shorter-preference rate ≤ `degrade` accuracy.
+- `verbosity`: rate of preferring the PADDED (longer) copy ≤ 0.10. (CORRECTED 2026-09-12: the
+  original "shorter-preference rate ≤ degrade accuracy" inverted the anchor — the padded copy is
+  objectively worse, so preferring the original is correct; the old rule could not pass once degrade
+  accuracy < 1.0. Correction made after the first gate run; it does not rescue that run, which fails
+  on degrade accuracy 0.80.)
 - `identity`: `tie` rate ≥ 0.80.
 Gate result is recorded in campaign-results whatever the outcome. On FAIL: revise rubric or
 panel, re-run the gate only (anchors cost judge calls, not GPU).
