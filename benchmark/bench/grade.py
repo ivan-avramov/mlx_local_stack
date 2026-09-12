@@ -911,11 +911,18 @@ def _visionqa_ai2d_ok(pred, gold_letter, choices) -> bool:
     if not pred or not gold_letter:
         return False
     n_options = len(choices) if choices else 4
+    idx = "ABCD".find(gold_letter.upper())
+    stripped = _VISIONQA_AI2D_LABEL_PREFIX_RE.sub("", pred.strip(), count=1)
+    nstr = _visionqa_norm(stripped)
+    if choices:
+        # Verbatim option text wins over letter scavenging: an option like "A,B and C" contains
+        # letter tokens that extract_mc_letter would otherwise misread (cold review 2026-09-12).
+        exact = [i for i, c in enumerate(choices) if _visionqa_norm(c) == nstr]
+        if len(exact) == 1:
+            return exact[0] == idx
     letter = extract.extract_mc_letter(pred, n_options=n_options)
     if letter:
         return letter.upper() == gold_letter.upper()
-    stripped = _VISIONQA_AI2D_LABEL_PREFIX_RE.sub("", pred.strip(), count=1)
-    idx = "ABCD".find(gold_letter.upper())
     if choices and 0 <= idx < len(choices):
         return _visionqa_norm(stripped) == _visionqa_norm(choices[idx])
     return False

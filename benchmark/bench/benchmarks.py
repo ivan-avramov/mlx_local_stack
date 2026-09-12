@@ -5,6 +5,7 @@ evaluators (`evalplus`, `lcb_runner`) — imported lazily so reasoning works wit
 An Item is: {"id", "prompt", "answer"?, "options"?, "meta"?}.
 """
 import base64
+import hashlib
 import json
 import os
 import random
@@ -206,7 +207,10 @@ def _visionqa_image_cache_dir() -> str:
 
 def _visionqa_image_cache_path(row: dict) -> str:
     ext = row["meta"]["image_format"].lower()
-    return os.path.join(_visionqa_image_cache_dir(), f"{row['id']}.{ext}")
+    # Key carries a digest of image_ref so a corpus rebuild that reuses an id can never hit a
+    # stale cached image (cold review 2026-09-12).
+    ref = hashlib.sha1(json.dumps(row.get("image_ref"), sort_keys=True).encode()).hexdigest()[:8]
+    return os.path.join(_visionqa_image_cache_dir(), f"{row['id']}-{ref}.{ext}")
 
 
 def _resolve_visionqa_images(rows: list) -> None:

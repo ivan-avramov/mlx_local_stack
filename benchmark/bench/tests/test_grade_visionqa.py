@@ -240,3 +240,13 @@ def test_grade_visionqa_end_to_end(monkeypatch):
     # the screenqa row hit its thinking_budget (completion_tokens >= thinking_budget) -> not
     # converged -> acc_strict charges it as 0 even though its raw answer was right
     assert full["acc_strict"] == 0.75
+
+
+def test_ai2d_option_text_containing_letters_is_not_misread_as_a_letter():
+    """Distractor text like "A,B and C" must grade by option identity, not by letter scavenging."""
+    from bench.grade import _visionqa_ai2d_ok
+    choices = ["A,B and C", "None", "All", "A and B"]
+    assert _visionqa_ai2d_ok("A,B and C", "C", choices) is False
+    assert _visionqa_ai2d_ok("\\boxed{A,B and C}", "C", choices) is False
+    assert _visionqa_ai2d_ok("All", "C", choices) is True
+    assert _visionqa_ai2d_ok("C", "C", choices) is True

@@ -221,3 +221,12 @@ def test_visionqa_text_only_control_drops_the_image_part(monkeypatch, tmp_path):
     monkeypatch.setenv("VISIONQA_TEXT_ONLY", "1")
     txt = B._visionqa_messages(item)[0]["content"]
     assert isinstance(txt, str) and "image_url" not in txt and txt == full[0]["text"]
+
+
+def test_visionqa_image_cache_key_includes_image_ref_digest(monkeypatch, tmp_path):
+    from bench import benchmarks as B
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    r1 = {"id": "ai2d-000", "image_ref": {"dataset": "x", "split": "test", "index": 1}, "meta": {"image_format": "PNG"}}
+    r2 = {"id": "ai2d-000", "image_ref": {"dataset": "x", "split": "test", "index": 2}, "meta": {"image_format": "PNG"}}
+    assert B._visionqa_image_cache_path(r1) != B._visionqa_image_cache_path(r2)
+    assert B._visionqa_image_cache_path(r1).startswith(str(tmp_path))
