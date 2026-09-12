@@ -773,3 +773,13 @@ def test_codex_call_pins_model_and_effort_and_names_the_judge_by_them():
     key = [k for k in J.default_judge_fns() if k.startswith("codex:")]
     assert key == [f"codex:{J.CODEX_MODEL}:{J.CODEX_EFFORT}"]
     assert J.judge_families(key)[key[0]] == "openai"
+
+
+def test_parse_verdict_recovers_choice_when_rationale_has_unescaped_quotes():
+    """Wave 2 of the M38 run: one Sonnet verdict had "15-25% revenue uplift" inside the
+    rationale, unescaped, so json.loads failed although the choice was unambiguous."""
+    from bench.judge_pairwise import parse_verdict
+    text = '{"choice": "A", "rationale": "claims of "15-25% uplift" are weak but A edges out B."}'
+    r = parse_verdict(text)
+    assert r["choice"] == "A" and r["rationale"] is None
+    assert parse_verdict('{"choice": "maybe", "rationale": "x "y" z"}')["choice"] is None

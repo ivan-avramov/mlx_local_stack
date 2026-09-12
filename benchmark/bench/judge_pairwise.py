@@ -205,6 +205,9 @@ def merge_and_shuffle(candidate_pairs, anchor_pairs, seed=38):
 
 
 # ------------------------------------------------------------------------------- verdict parse
+_CHOICE_RE = re.compile(r'"choice"\s*:\s*"(A|B|a|b|tie|Tie|TIE)"')
+
+
 def parse_verdict(text):
     """Brace-matched JSON parse of `{"choice": "A"|"B"|"tie", "rationale": ...}` (same
     brace-depth scan as `judge.parse_scores`, so trailing prose containing braces cannot
@@ -230,6 +233,14 @@ def parse_verdict(text):
     try:
         obj = json.loads(text[start:end + 1])
     except json.JSONDecodeError:
+        # Lenient fallback (2026-09-12, wave 2): a judge's rationale with UNESCAPED inner
+        # quotes breaks the JSON while the choice field itself is unambiguous. Recover only
+        # the choice (rationale stays None); the raw text is kept on the row either way.
+        m = _CHOICE_RE.search(text[start:end + 1])
+        if m:
+            v = m.group(1)
+            result["choice"] = "tie" if v.lower() == "tie" else v.upper()
+            result["rationale"] = None
         return result
     if not isinstance(obj, dict):
         return result
