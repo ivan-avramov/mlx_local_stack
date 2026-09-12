@@ -74,7 +74,7 @@ def _write_dry_run_prompts(out_dir, pairs, task_prompts, model_names):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Run the M38 blind pairwise judge panel.")
-    ap.add_argument("--models", required=True, nargs=4, metavar="MODEL")
+    ap.add_argument("--models", required=True, nargs="+", metavar="MODEL")  # >= 2 (C67: five contenders)
     ap.add_argument("--tune", default="m38")
     ap.add_argument("--anchors", required=True, help="pairs.jsonl from judge_anchors")
     ap.add_argument("--results-dir", default=J.RESULTS)

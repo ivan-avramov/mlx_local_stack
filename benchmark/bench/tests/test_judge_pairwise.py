@@ -147,11 +147,15 @@ def test_build_candidate_pairs_covers_all_six_pairs_and_items():
         assert model_a != model_b
 
 
-def test_build_candidate_pairs_requires_four_models():
+def test_build_candidate_pairs_requires_at_least_two_models():
+    """C67 widened the contest to five contenders: any n >= 2 builds C(n,2) pairs; one model
+    (or none) is a usage error."""
     rows_by_model = _rows_by_model(3)
-    del rows_by_model["ModelDelta"]
+    three = {k: v for k, v in list(rows_by_model.items())[:3]}
+    assert len(J.build_candidate_pairs(three, seed=38)) == 3 * len(J.shared_converged_items(three))
+    one = {k: v for k, v in list(rows_by_model.items())[:1]}
     with pytest.raises(ValueError):
-        J.build_candidate_pairs(rows_by_model, seed=38)
+        J.build_candidate_pairs(one, seed=38)
 
 
 def test_build_candidate_pairs_deterministic():

@@ -172,8 +172,8 @@ def build_candidate_pairs(rows_by_model, seed=38):
     exactly (`anchor_type`/`expected` are None for a real candidate pair — there is no ground
     truth to check it against)."""
     models = sorted(rows_by_model)
-    if len(models) != 4:
-        raise ValueError(f"build_candidate_pairs: need exactly 4 models, got {models}")
+    if len(models) < 2:
+        raise ValueError(f"build_candidate_pairs: need >= 2 models, got {models}")
     items = sorted(shared_converged_items(rows_by_model))
     lookup = {m: {r["id"]: r for r in rows} for m, rows in rows_by_model.items()}
     pairs = []
