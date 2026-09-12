@@ -195,6 +195,46 @@ report path/keys are wired and validated at the first real run. Start with `--n 
 GPQA is gated. Put `HF_TOKEN=hf_...` in `.env` (the stack already sources it) and accept the
 dataset terms once on the Hub. Until then `list` shows it UNAVAILABLE and it is skipped.
 
+## Vision gate (`benchmark/vision_gate.py`)
+
+Purpose: a pass/fail check of "can this model do some vision" — not a ranked benchmark. Per
+photo, two turns at the deployed tune with thinking ON: (1) "Describe this image in detail." with
+the image; (2) shown the ground-truth captions, self-grade PASS/FAIL. It is a **standalone probe**,
+not part of the `generate`/`grade` tier pipeline.
+
+Corpus: `benchmark/corpora/vision_gate_v1.jsonl` (20 COCO val2017 photo ids + 5 human captions
+each; images fetched at run time, never committed), built by
+`benchmark/corpora/build_vision_gate_v1.py`.
+
+Run it per model — `probe_vision.py` first as a known-positive "sees" check, then the gate,
+resumable by design (already-graded ids are skipped on rerun):
+
+```bash
+.venv-bench/bin/python benchmark/probe_vision.py --model <name>
+.venv-bench/bin/python benchmark/vision_gate.py --model <name> --resume
+```
+
+Outputs: `results/<model>/vision_gate.v1.jsonl` (per-item transcript + self-grade) and
+`.summary.json` (n, pass, fail, null, pass_rate, mean turn-1 tokens/wall, `fail_or_null_ids`).
+
+Gate rule: ≥16/20 self-PASS = "can do some vision". Self-grades are lenient by construction — the
+counts are floors on failure — so always pair the count with a by-eye read of a few descriptions
+against the ground-truth captions before trusting a pass.
+
+To add a model to a chain runner, follow the `$STACK_WORKDIR/queue/m39_vision_gate/run.py`
+pattern: per model, fresh draft-OFF overlay, start the router, `probe_vision.py --model` as the
+SEES precheck, then `vision_gate.py --model <name> --resume`, log the RESULT line, stop the router.
+
+**Retained, not run**: `visionqa` is a mechanically graded (no judge), 40-item visual-QA bench
+(ChartQA/ScreenQA/AI2D/TextVQA) wired into the normal two-phase harness for the four seeing
+contenders, meant to let vision RANK rather than gate — the operator re-scoped M39 to the gate
+above instead (2026-09-12). It stays in the repo, unrun, for if/when ranking is wanted:
+
+```bash
+uv run python benchmark/run.py generate --models <name> --benches visionqa --chunks all
+uv run python benchmark/run.py grade    --models <name> --benches visionqa
+```
+
 ## Retrieval probe (dedicated)
 
 `bench/run_retrieval.py` measures multi-needle NIAH retrieval as an

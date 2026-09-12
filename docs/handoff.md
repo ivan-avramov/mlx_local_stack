@@ -76,13 +76,20 @@ out of the repo at `$STACK_WORKDIR/devthread_codex_2026-09-11.md`.
   recommendation: run M39 first; if vision already separates the seeing C contenders, (c) is fine,
   otherwise (a).
 
-## M39 vision smoke — build status
+## M39 vision gate — DONE 2026-09-12
 
-Committed `52425d3` (fix(bench): M39 visionqa after cold review — AI2D option validation and
-letter-aware grading, ScreenQA F1 gated on gold length, VQA-eval normalization, image-free grader,
-workdir image cache, text-only control switch), on top of `2456ebf` (spec of record + PLAN row).
-Chain runner is still UNARMED; review is in progress. GPU arm needs an explicit operator go before
-launch (spec `docs/vision-smoke-m39.md`).
+Re-scoped by the operator to a pass/fail gate ("a model that can do some vision", not a ranked
+benchmark; spec `docs/vision-smoke-m39.md`). All four seeing contenders ran
+`benchmark/vision_gate.py` (harness registered in `benchmark/README.md`): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+20/20, `Ornith-1.0-35B-mlx-uniform-4bit` 20/20, `Qwen3.8-27B-mlx-uniform-4bit` 19/20,
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 18/20 — all ≥16/20, gate PASSED for all four;
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` untested (text-only). Results committed `04c097a`.
+Vision now gates, does not rank; full table `docs/campaign-results.md` 2026-09-12, PLAN M39 row
+DONE. The mechanically graded `visionqa` bench (committed `52425d3` on top of `2456ebf`) stays in
+the repo, retained but not run. M38's C68 decision (three-judge vs two-judge-amendment vs accept
+the gate FAIL) is still OPEN — vision no longer discriminates among the seeing C contenders, so it
+doesn't resolve C68 on its own. The qualify-a-model playbook (`docs/qualify-a-model.md`) remains
+under separate review; not touched here.
 
 ## Open operator items
 

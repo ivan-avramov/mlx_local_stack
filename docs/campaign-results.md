@@ -1,5 +1,29 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-12 — M39 vision gate — all four seeing contenders pass (20/20/19/18 of 20)
+
+Per the re-scoped spec (`docs/vision-smoke-m39.md`, operator: "a model that can do some vision", not
+a ranked benchmark), all four seeing contenders were run through `benchmark/vision_gate.py`: 20 COCO
+val2017 photos, two turns per photo (describe → shown the ground-truth captions → self-grade PASS/
+FAIL), thinking ON, deployed tunes, predictor OFF. `probe_vision.py` confirmed a "sees" response for
+all four before the gated run. Results committed `04c097a`
+(`benchmark/results/<model>/vision_gate.v1.{jsonl,summary.json}`):
+
+| Model | Pass | Fails (reason) | Turn-1 tokens (mean) | Turn-1 wall (s, mean) |
+|---|---:|---|---:|---:|
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | 20/20 | none | 493 | 20.3 |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 20/20 | none | 1,283 | 12.5 |
+| `Qwen3.8-27B-mlx-uniform-4bit` | 19/20 | cocoval2017-008 (missed the "wiping face with shirt" detail) | 538 | 19.1 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 18/20 | cocoval2017-000 (called the surfboard-holding man a woman); cocoval2017-008 (missed the face-wiping detail) | 1,240 | 51.8 |
+
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is text-only by architecture and was not tested.
+
+Self-grades are lenient by construction — the counts are floors on failure, not ceilings — so the
+report pairs them with a by-eye read: three descriptions per model were read against ground truth
+and agreed in every case. Gate rule was ≥16/20 self-PASS; all four clear it comfortably. **Vision now
+GATES** ("can do some vision" for all four seeing contenders) **and does not rank** — it does not
+separate the C or B ladders on its own; see C67/C68 for what still does.
+
 ## 2026-09-12 — M38 judge panel — reliability gate FAILED (degrade 0.80); ranking withheld
 
 M38's pre-registered reliability gate (`docs/judge-panel-c.md`) was computed over the 30-anchor set
