@@ -1,4 +1,4 @@
-# Handoff — 2026-09-11 13:50 PDT
+# Handoff — 2026-09-12 15:05 PDT
 
 Rewritten in place this session (Claude Code; architect/worker/reviewer host-model split per the operator's workflow preference). The previous Codex-driven
 session ended 2026-09-11 05:26 PDT when its credits ran out mid-heartbeat; its raw log is kept
@@ -90,6 +90,22 @@ the repo, retained but not run. M38's C68 decision (three-judge vs two-judge-ame
 the gate FAIL) is still OPEN — vision no longer discriminates among the seeing C contenders, so it
 doesn't resolve C68 on its own. The qualify-a-model playbook (`docs/qualify-a-model.md`) remains
 under separate review; not touched here.
+
+## Session close 2026-09-12 (state for the next session)
+
+- BOX IDLE by design: no GPU job armed. Router down (0 listeners). Every authorized GPU item is done
+  (C63, M38 generation, Ornith matched Math500, M39 vision gate). <!-- allow-shorthand -->
+- Open operator decisions: C68 (judge panel: third judge / two-judge amendment / accept FAIL);
+  nothing else blocks.
+- Landed today: C63 + Ornith matched Math500 analyses; C67 reorder; M38 panel (gate FAIL, ranking <!-- allow-shorthand -->
+  withheld, verdicts committed); M39 vision gate (all four seeing contenders pass; harness
+  `benchmark/vision_gate.py` registered in `benchmark/README.md`); `docs/qualify-a-model.md`
+  playbook (agent-facing, cold-verified). 66+ commits unpushed on main; push only on in-turn approval.
+- Monitors/agents: none live. Judge packets + verdict files remain under `$STACK_WORKDIR/m38_packets/`.
+- If the operator rules C68(a): export Opus packets exist already (`$STACK_WORKDIR/m38_packets/opus/`, <!-- allow-shorthand -->
+  82 batches); run them as Claude Code subagents (model opus) with the same batch prompt used for <!-- allow-shorthand -->
+  sonnet, ingest with `run_judge_pairwise.py --ingest-packets`, re-run `judge_gate` with
+  `--judges sonnet opus codex:gpt-5.6-terra:medium`. <!-- allow-shorthand -->
 
 ## Open operator items
 
