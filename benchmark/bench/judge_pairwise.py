@@ -459,6 +459,7 @@ def call_judge(pair, order, judge_name, judge_fns, task_prompt, model_names,
         "item_id": pair["item_id"], "a_key": pair["a_key"], "b_key": pair["b_key"],
         "order": order, "judge": judge_name, "prompt_sha": PROMPT_SHA,
         "raw": raw, "choice": choice, "null_reason": null_reason, "stop_reason": stop_reason,
+        "transport": "api",
     }
 
 
@@ -490,3 +491,180 @@ def run_pairwise(pairs, judges, judge_fns, task_prompts, model_names, verdicts_p
             f.flush()
             made += 1
     return made
+
+
+# ------------------------------------------------------------------- subagent packet export/ingest
+# Operator decision 2026-09-12: `opus`/`sonnet` are run as Claude Code SUBAGENTS, not API calls  # allow-shorthand
+# (GPT-5.5 stays on the in-process `codex exec` path above). These functions build the identical
+# blinded (pair, order) list the API path would run and hand it to a subagent as a markdown
+# packet instead of a live call; ingest reads the subagent's verdict file back and reshapes it
+# into the SAME row schema `call_judge`/`run_pairwise` write, plus `transport` distinguishing the
+# two paths (`"api"` vs `"subagent"`).
+VERDICT_JSON_INSTRUCTION = (
+    'Write your verdict to `{pkt}.verdict.json` in this SAME directory, as EXACTLY one JSON '
+    'object: {{"choice": "A"|"B"|"tie", "rationale": "<one paragraph>"}}. No other content in '
+    "that file, and do not open, read, or modify any other file (including `manifest.jsonl` — "
+    "it identifies the models and would un-blind you)."
+)
+
+
+def build_packet_markdown(system, user, pkt):
+    """The blind judge packet for one (pair, order, judge): a `# SYSTEM` block (rubric
+    verbatim), a `# USER` block (the rendered pairwise prompt — same `build_user_prompt` output
+    the API path sends), then a final instruction line naming the exact verdict filename to
+    write. Contains no pair_id/anchor_type/expected/model name — only `pkt` (an opaque id)."""
+    return (f"# SYSTEM\n{system}\n\n"
+            f"# USER\n{user}\n\n"
+            f"---\n{VERDICT_JSON_INSTRUCTION.format(pkt=pkt)}\n")
+
+
+def _pkt_id(counter, width):
+    return f"p{counter:0{width}d}"
+
+
+def _order_batches(pairs, batch_size):
+    """One order's (pair, order) entries chunked into `batch_size`-sized batches, in the given
+    pair order (already seeded via `merge_and_shuffle` — anchors and candidates arrive
+    pre-mixed)."""
+    return [pairs[i:i + batch_size] for i in range(0, len(pairs), batch_size)]
+
+
+def _judge_readme_text():
+    return (
+        "# Judge subagent instructions\n\n"
+        "You have been assigned one or more `batchNN/` directories under your judge directory, "
+        "each containing packet files named `pNNNN.md`.\n\n"
+        "For EACH `.md` packet file in your assigned batch directory:\n\n"
+        "1. Read ONLY that packet file. Never open, read, or modify any other file in this "
+        "directory tree — in particular, never read `manifest.jsonl` (it names the models and "
+        "would un-blind you), and never modify the packet `.md` file itself.\n"
+        "2. Use the `# SYSTEM` block as your rubric and the `# USER` block as the task; judge "
+        "exactly as instructed there.\n"
+        "3. Write your verdict to the `.verdict.json` file named at the bottom of the packet, "
+        "in the same directory, containing EXACTLY one JSON object: "
+        '{"choice": "A"|"B"|"tie", "rationale": "<one paragraph>"}. No other content.\n'
+    )
+
+
+def export_packets(pairs, judges, task_prompts, model_names, out_dir, batch_size=10):
+    """Write one markdown packet per (pair, order, judge) at
+    `out_dir/<judge>/batch<NN>/<pkt>.md`, plus `out_dir/manifest.jsonl` (private — never shown
+    to a judge) and `out_dir/README_JUDGE.md`. No judge is called.
+
+    Batching: AB entries and BA entries of the SAME judge are chunked into SEPARATE batch
+    sequences (all-AB batches first, then all-BA batches) — a pair's two orders can therefore
+    never land in the same batch regardless of how `len(pairs)` relates to `batch_size` (a
+    concatenate-then-chunk scheme fails this for small pair counts: with N pairs <= batch_size,
+    every AB AND BA entry would land in the single batch 0). Candidate and anchor pairs stay
+    mixed within each order's sequence because `pairs` is already seed-shuffled by the caller
+    (`merge_and_shuffle`). Returns the list of manifest rows written."""
+    total = len(judges) * len(pairs) * 2
+    width = max(4, len(str(max(total - 1, 0))))
+    counter = 0
+    manifest_rows = []
+    os.makedirs(out_dir, exist_ok=True)
+    for judge_name in judges:
+        ab_batches = _order_batches([(p, "AB") for p in pairs], batch_size)
+        ba_batches = _order_batches([(p, "BA") for p in pairs], batch_size)
+        for batch_idx, batch in enumerate(ab_batches + ba_batches):
+            batch_dir = os.path.join(out_dir, judge_name, f"batch{batch_idx:02d}")
+            os.makedirs(batch_dir, exist_ok=True)
+            for pair, order in batch:
+                pkt = _pkt_id(counter, width)
+                counter += 1
+                a_text = strip_model_names(pair["a_text"], model_names)
+                b_text = strip_model_names(pair["b_text"], model_names)
+                first, second = (a_text, b_text) if order == "AB" else (b_text, a_text)
+                task_prompt = task_prompts.get(pair["item_id"], "")
+                user = build_user_prompt(task_prompt, first, second)
+                pkt_path = os.path.join(batch_dir, f"{pkt}.md")
+                with open(pkt_path, "w", encoding="utf-8") as f:
+                    f.write(build_packet_markdown(RUBRIC_SYSTEM_PROMPT, user, pkt))
+                manifest_rows.append({
+                    "pkt": pkt, "judge": judge_name, "pair_id": pair["pair_id"],
+                    "order": order, "anchor_type": pair.get("anchor_type"),
+                    "expected": pair.get("expected"), "item_id": pair["item_id"],
+                    "a_key": pair["a_key"], "b_key": pair["b_key"],
+                    "prompt_sha": PROMPT_SHA, "path": pkt_path,
+                })
+    manifest_path = os.path.join(out_dir, "manifest.jsonl")
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        for row in manifest_rows:
+            f.write(json.dumps(row) + "\n")
+    with open(os.path.join(out_dir, "README_JUDGE.md"), "w", encoding="utf-8") as f:
+        f.write(_judge_readme_text())
+    return manifest_rows
+
+
+def load_manifest(out_dir):
+    """Read `out_dir/manifest.jsonl` written by `export_packets`."""
+    path = os.path.join(out_dir, "manifest.jsonl")
+    rows = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def ingest_packets(out_dir, now=None):
+    """Read every `<pkt>.verdict.json` the manifest points at (if present), validate via
+    `parse_verdict` (unparseable/garbage -> `choice: None, null_reason: "unparseable"`), and
+    return `(rows, report)`:
+
+      - `rows`: verdict rows in the SAME schema `call_judge`/`run_pairwise` write (pair_id,
+        anchor_type, item_id, a_key, b_key, order, judge, prompt_sha, raw, choice, null_reason,
+        stop_reason, transport, ts) — `stop_reason`/`transport` are the fixed literal
+        `"subagent"` for every row (there is no model-reported stop reason on this path).
+      - `report`: `{"judges": {judge: {batch_name: {"expected": n, "present": n}}},
+        "missing": [{"pkt", "judge", "path"}, ...]}` — a missing verdict file is counted and
+        skipped, never crashes the ingest.
+
+    Does NOT write to `verdicts.jsonl` itself (see `append_new_verdicts`) and does not consult
+    it for idempotency — callers combine the two."""
+    now = now or time.time
+    manifest_rows = load_manifest(out_dir)
+    report = {"judges": {}, "missing": []}
+    rows = []
+    for row in manifest_rows:
+        judge_name = row["judge"]
+        batch_name = os.path.basename(os.path.dirname(row["path"]))
+        brep = report["judges"].setdefault(judge_name, {}).setdefault(
+            batch_name, {"expected": 0, "present": 0})
+        brep["expected"] += 1
+        verdict_path = os.path.join(os.path.dirname(row["path"]), f"{row['pkt']}.verdict.json")
+        if not os.path.exists(verdict_path):
+            report["missing"].append({"pkt": row["pkt"], "judge": judge_name, "path": verdict_path})
+            continue
+        brep["present"] += 1
+        with open(verdict_path, encoding="utf-8") as f:
+            raw = f.read()
+        choice = parse_verdict(raw)["choice"]
+        rows.append({
+            "pair_id": row["pair_id"], "anchor_type": row["anchor_type"],
+            "item_id": row["item_id"], "a_key": row["a_key"], "b_key": row["b_key"],
+            "order": row["order"], "judge": judge_name, "prompt_sha": row["prompt_sha"],
+            "raw": raw, "choice": choice,
+            "null_reason": None if choice is not None else "unparseable",
+            "stop_reason": "subagent", "transport": "subagent", "ts": now(),
+        })
+    return rows, report
+
+
+def append_new_verdicts(rows, verdicts_path):
+    """Append `rows` to `verdicts_path`, skipping any whose (pair_id, order, judge) key is
+    already present (idempotent: re-ingesting after more verdict files land only adds the new
+    ones). Returns the count actually appended."""
+    done = load_done_keys(verdicts_path)
+    os.makedirs(os.path.dirname(verdicts_path) or ".", exist_ok=True)
+    appended = 0
+    with open(verdicts_path, "a", encoding="utf-8") as f:
+        for row in rows:
+            key = (row["pair_id"], row["order"], row["judge"])
+            if key in done:
+                continue
+            f.write(json.dumps(row) + "\n")
+            done.add(key)
+            appended += 1
+    return appended

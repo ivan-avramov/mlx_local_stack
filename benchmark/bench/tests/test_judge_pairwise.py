@@ -1,6 +1,7 @@
 """Tests for the M38 blind pairwise judge panel (bench.judge_pairwise + bench.run_judge_pairwise)."""
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -564,3 +565,187 @@ def test_strip_model_names_redacts_family_tokens_with_version_suffix():
         out = strip_model_names(f"a {tok}3 checkpoint and {tok}3-next at hf.co/{tok}3/repo", [])
         low = out.lower()  # allow-shorthand
         assert tok.lower() not in low and f"{tok.lower()}3" not in low, (tok, out)  # allow-shorthand
+
+
+# ============================================================ subagent packet export/ingest
+def _small_pairs():
+    """12 candidate pairs (C(4,2)=6 model pairs * 2 shared items) + 1 identity anchor pair,
+    merged and seed-shuffled exactly like the CLI does before either the API path or packet
+    export sees them."""
+    rows_by_model = _rows_by_model(2)
+    candidate_pairs = J.build_candidate_pairs(rows_by_model, seed=38)
+    anchor_pairs = [{"pair_id": "anchor-identity-00", "anchor_type": "identity",
+                     "item_id": "dom-00", "a_key": "x::orig", "b_key": "x::identity",
+                     "a_text": "same text", "b_text": "same text", "expected": "tie"}]
+    return J.merge_and_shuffle(candidate_pairs, anchor_pairs, seed=38)
+
+
+def _write_verdict(row, choice_json):
+    vpath = os.path.join(os.path.dirname(row["path"]), f"{row['pkt']}.verdict.json")
+    with open(vpath, "w", encoding="utf-8") as f:
+        f.write(choice_json)
+    return vpath
+
+
+def test_export_packets_no_identifying_info_in_body_or_filename(tmp_path):
+    pairs = _small_pairs()
+    out = tmp_path / "packets"
+    rows = J.export_packets(pairs, ["opus", "sonnet"], {}, MODELS, str(out), batch_size=5)  # allow-shorthand
+    assert rows
+    pair_ids = {p["pair_id"] for p in pairs}
+    for row in rows:
+        content = Path(row["path"]).read_text()
+        filename = Path(row["path"]).name
+        assert filename == f"{row['pkt']}.md"
+        for name in MODELS:
+            assert name not in content and name not in filename
+        for pid in pair_ids:
+            assert pid not in content and pid not in filename
+        assert "anchor_type" not in content
+        assert "expected" not in content
+
+
+def test_export_packets_ab_ba_land_in_different_batches(tmp_path):
+    pairs = _small_pairs()
+    out = tmp_path / "packets"
+    rows = J.export_packets(pairs, ["opus"], {}, MODELS, str(out), batch_size=3)  # allow-shorthand
+    batch_by = {(r["pair_id"], r["order"]): os.path.basename(os.path.dirname(r["path"]))
+                for r in rows}
+    for pair in pairs:
+        assert batch_by[(pair["pair_id"], "AB")] != batch_by[(pair["pair_id"], "BA")]
+
+
+def test_export_packets_ab_ba_different_batches_when_batch_size_exceeds_pair_count(tmp_path):
+    # N=2 pairs, batch_size=100: a naive concatenate-then-chunk scheme would put every AB AND
+    # BA entry in the single batch 0, colliding a pair with itself.
+    pairs = _small_pairs()[:2]
+    out = tmp_path / "packets"
+    rows = J.export_packets(pairs, ["opus"], {}, MODELS, str(out), batch_size=100)  # allow-shorthand
+    batch_by = {(r["pair_id"], r["order"]): os.path.basename(os.path.dirname(r["path"]))
+                for r in rows}
+    for pair in pairs:
+        assert batch_by[(pair["pair_id"], "AB")] != batch_by[(pair["pair_id"], "BA")]
+
+
+def test_export_packets_manifest_roundtrips(tmp_path):
+    pairs = _small_pairs()
+    out = tmp_path / "packets"
+    rows = J.export_packets(pairs, ["opus", "sonnet"], {}, MODELS, str(out), batch_size=4)  # allow-shorthand
+    assert J.load_manifest(str(out)) == rows
+
+
+def test_export_packets_writes_judge_readme(tmp_path):
+    pairs = _small_pairs()
+    out = tmp_path / "packets"
+    J.export_packets(pairs, ["opus"], {}, MODELS, str(out), batch_size=4)  # allow-shorthand
+    readme = (out / "README_JUDGE.md").read_text()
+    assert "manifest.jsonl" in readme
+    assert ".verdict.json" in readme
+
+
+def test_ingest_packets_schema_matches_api_path(tmp_path):
+    pairs = _small_pairs()
+    out = tmp_path / "packets"
+    rows = J.export_packets(pairs, ["opus"], {}, MODELS, str(out), batch_size=4)  # allow-shorthand
+    for r in rows:
+        _write_verdict(r, '{"choice": "A", "rationale": "fine"}')
+
+    ingested, report = J.ingest_packets(str(out))
+    assert len(ingested) == len(rows)
+    assert not report["missing"]
+
+    fn = lambda s, u: ('{"choice": "A"}', None)  # allow-shorthand
+    api_row = J.call_judge(_PAIR, "AB", "opus", {"opus": fn}, "t", MODELS)  # allow-shorthand
+    api_row["ts"] = 0
+    assert set(ingested[0].keys()) == set(api_row.keys())
+
+
+def test_ingest_packets_unparseable_verdict_is_null(tmp_path):
+    pairs = _small_pairs()[:1]
+    out = tmp_path / "packets"
+    rows = J.export_packets(pairs, ["opus"], {}, MODELS, str(out), batch_size=4)  # allow-shorthand
+    for r in rows:
+        _write_verdict(r, "not json at all")
+    ingested, report = J.ingest_packets(str(out))
+    assert len(ingested) == len(rows)
+    for row in ingested:
+        assert row["choice"] is None and row["null_reason"] == "unparseable"
+        assert row["transport"] == "subagent" and row["stop_reason"] == "subagent"
+
+
+def test_ingest_packets_missing_verdict_reported(tmp_path):
+    pairs = _small_pairs()[:1]   # one pair -> two packets (AB, BA) for one judge
+    out = tmp_path / "packets"
+    rows = J.export_packets(pairs, ["opus"], {}, MODELS, str(out), batch_size=4)  # allow-shorthand
+    _write_verdict(rows[0], '{"choice": "A"}')   # only the first packet gets a verdict
+
+    ingested, report = J.ingest_packets(str(out))
+    assert len(ingested) == 1
+    assert len(report["missing"]) == len(rows) - 1
+    missing_pkts = {m["pkt"] for m in report["missing"]}
+    assert missing_pkts == {r["pkt"] for r in rows[1:]}
+    batch_name = os.path.basename(os.path.dirname(rows[0]["path"]))
+    assert report["judges"]["opus"][batch_name]["expected"] >= 1  # allow-shorthand
+
+
+def test_append_new_verdicts_idempotent(tmp_path):
+    rows = [{"pair_id": "p1", "order": "AB", "judge": "opus", "anchor_type": None,  # allow-shorthand
+             "item_id": "dom-01", "a_key": "a", "b_key": "b", "prompt_sha": "x", "raw": "{}",
+             "choice": "A", "null_reason": None, "stop_reason": "subagent",
+             "transport": "subagent", "ts": 0}]
+    path = tmp_path / "verdicts.jsonl"
+    assert J.append_new_verdicts(rows, str(path)) == 1
+    assert J.append_new_verdicts(rows, str(path)) == 0
+    assert len(path.read_text().splitlines()) == 1
+
+
+# ------------------------------------------------------------------------------- CLI: packets
+def test_cli_export_packets_makes_no_judge_calls_and_writes_manifest(tmp_path, monkeypatch):
+    _write_model_rows(tmp_path)
+    anchors = tmp_path / "pairs.jsonl"
+    _write_anchor_pairs(anchors)
+    out = tmp_path / "packets"
+
+    def boom():
+        raise AssertionError("--export-packets must not build real judge backends")
+    monkeypatch.setattr(J, "default_judge_fns", boom)
+
+    rc = RJ.main(["--models", *MODELS, "--anchors", str(anchors),
+                 "--results-dir", str(tmp_path), "--corpus", str(tmp_path / "no_corpus.jsonl"),
+                 "--export-packets", str(out), "--judges", "opus", "sonnet"])  # allow-shorthand
+    assert rc == 0
+    manifest = J.load_manifest(str(out))
+    n_pairs = 6 * 2 + 2   # 6 model-pairs * 2 items + 2 anchors
+    assert len(manifest) == n_pairs * 2 * 2   # both orders * 2 judges
+    assert (out / "README_JUDGE.md").exists()
+
+
+def test_cli_ingest_packets_end_to_end_and_idempotent(tmp_path, monkeypatch):
+    _write_model_rows(tmp_path)
+    anchors = tmp_path / "pairs.jsonl"
+    _write_anchor_pairs(anchors)
+    pkt_dir = tmp_path / "out" / "packets"
+
+    def boom():
+        raise AssertionError("--export-packets must not build real judge backends")
+    monkeypatch.setattr(J, "default_judge_fns", boom)
+    rc = RJ.main(["--models", *MODELS, "--anchors", str(anchors),
+                 "--results-dir", str(tmp_path), "--corpus", str(tmp_path / "no_corpus.jsonl"),
+                 "--export-packets", str(pkt_dir), "--judges", "opus"])  # allow-shorthand
+    assert rc == 0
+
+    manifest = J.load_manifest(str(pkt_dir))
+    for row in manifest:
+        _write_verdict(row, '{"choice": "A", "rationale": "ok"}')
+
+    rc = RJ.main(["--ingest-packets", str(pkt_dir)])
+    assert rc == 0
+    verdicts_path = tmp_path / "out" / "verdicts.jsonl"
+    rows = [json.loads(l) for l in verdicts_path.read_text().splitlines()]
+    assert len(rows) == len(manifest)
+    assert all(r["transport"] == "subagent" for r in rows)  # allow-shorthand
+
+    rc2 = RJ.main(["--ingest-packets", str(pkt_dir)])   # idempotent re-ingest: no new rows
+    assert rc2 == 0
+    rows2 = [json.loads(l) for l in verdicts_path.read_text().splitlines()]
+    assert len(rows2) == len(manifest)
