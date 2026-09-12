@@ -1,5 +1,62 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-12 — M38 judge panel — reliability gate FAILED (degrade 0.80); ranking withheld
+
+M38's pre-registered reliability gate (`docs/judge-panel-c.md`) was computed over the 30-anchor set
+(`benchmark/results/judge_c_v1/gate.json`, committed `ec6555a`) before any candidate ranking was
+attempted, per the pre-registered "FAIL → no ranking" rule. Result: **FAIL**, on `degrade_accuracy`
+only; every other metric passed.
+
+| metric | value | threshold | op | n | result |
+|---|---:|---:|---|---:|---|
+| `degrade_accuracy` | 0.80 | 0.85 | ≥ | 10 | **FAIL** |
+| `order_flip_rate` (worst judge) | 0.067 (sonnet 0.00, `codex:gpt-5.6-terra:medium` 0.067) | 0.30 | ≤ | 30 | pass |
+| `panel_kappa_between_orders` | 0.900 | 0.6 | ≥ | 30 | pass |
+| `krippendorff_alpha` (raw / collapsed) | 0.950 / 0.901 | 0.5 | ≥ | 30 | pass |
+| `verbosity_longer_preference_rate` | 0.00 (diagnostic shorter-preference 1.00) | 0.10 | ≤ | 10 | pass |
+| `identity_tie_rate` | 1.00 | 0.80 | ≥ | 10 | pass |
+
+**Panel as run**: two judges, not the three the spec designed for. Claude Opus 5 was dropped from <!-- allow-shorthand -->
+the panel for cost (operator 2026-09-12), leaving `sonnet` (Claude Sonnet 5 run as Claude Code
+subagents, 82 batches of 10 blind packets, 820 verdicts, 0 null verdicts, ~12M tokens) and
+`codex:gpt-5.6-terra:medium` (820 in-process `codex exec` calls, 0 nulls after re-parsing 4 truncated
+outputs). With two judges, the pre-registered "majority over judges, else tie" rule collapses ANY
+judge disagreement straight to a tie — there is no tie-breaker.
+
+**Mechanism of the two degrade misses**: on anchor-degrade-06 and -degrade-07,
+`codex:gpt-5.6-terra:medium` answered "tie" in one presentation order and preferred the original in
+the other; per protocol (verdict per (pair, judge) = agreement of both orders, else tie) its own
+collapsed verdict is "tie" on both. The two-judge panel majority then also collapses to "tie" on both
+— counted as a miss against the anchor's "original wins" expectation, even though neither judge ever
+preferred the degraded copy. Per judge alone: `sonnet` scores 30/30 anchors (would pass every gate
+metric by itself); `codex:gpt-5.6-terra:medium` scores 28/30, missing only `degrade` at 8/10 via the
+two ties above — it never once preferred the degraded copy.
+
+**Spec correction (dated 2026-09-12, `docs/judge-panel-c.md`)**: the original verbosity rule
+("shorter-preference rate ≤ degrade accuracy") inverted its own anchor — the padded copy is
+objectively worse, so preferring the original is the CORRECT verdict, and the rule could never pass
+once degrade accuracy fell below 1.0. It is replaced by "rate of preferring the PADDED (longer) copy
+≤ 0.10" (this run: 0.00, pass). The correction is filed for the record; it does not rescue this run,
+which fails on `degrade_accuracy` regardless.
+
+**Ranking withheld**: per the pre-registered rule, `bench/judge_gate.py` refused to write
+`ranking.json` on gate FAIL. A Sonnet-only diagnostic ranking exists in the workdir and is
+deliberately not reported here — no ranking numbers accompany this entry.
+
+**Cost**: 820 `sonnet` verdicts (82 batches × 10 blind packets, ~12M tokens) + 820
+`codex:gpt-5.6-terra:medium` in-process calls (0 nulls after re-parsing 4 truncated outputs); 0 null
+verdicts overall. Verdicts, pair manifest, `gate.json` and the cost log are committed under
+`benchmark/results/judge_c_v1/`.
+
+**Operator options (filed as C68, `docs/open-questions.md`)**: (a) add Claude Opus 5 as a third judge <!-- allow-shorthand -->
+on all 820 packets, restoring the designed three-judge majority (~13M more tokens, ~2 h in waves of
+ten); (b) a pre-registration amendment for a two-judge panel — a single judge's "tie" would not veto
+the other judge's verdict on anchors; post-hoc this run would pass 10/10, and would be flagged as a
+post-hoc amendment; (c) accept the FAIL — no panel ranking this round, C ladder stays exactly as ruled
+in C67. Session recommendation: run M39 (mechanical vision smoke, GPU only, no judge tokens) FIRST —
+if vision quality already separates the seeing C contenders on its own, the panel ranking matters
+less and (c) is fine; otherwise (a).
+
 ## 2026-09-12 — Ornith-1.0-35B-mlx-uniform-4bit — matched Math500 row (M38 chain leg)
 
 New matched-set row for `Ornith-1.0-35B-mlx-uniform-4bit` @m37ref (deployed t0.4, native expert routing, draft-OFF, budget 81920, n=100×1) on the SAME M37/C48/C63 100-case Math500 set (its earlier M33 row uses the OLD item set and shares only 16 ids — not comparable). Five-model table on the same 100 items:

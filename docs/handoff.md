@@ -53,23 +53,43 @@ out of the repo at `$STACK_WORKDIR/devthread_codex_2026-09-11.md`.
   97 % strict, all converge. No approved reorder.
 - C61/M36 2026-09-10: repaired MTP certified for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`.
 
-## M38 judge panel (approved P334; spec `docs/judge-panel-c.md`)
+## M38 judge panel (approved P334; spec `docs/judge-panel-c.md`) — GATE FAIL 2026-09-12
 
-- Committed: corpus `benchmark/corpora/cjudge_v1.jsonl` (18 public + 22 domain), loader, spec.
-- Uncommitted, under final cold confirmation: `bench/judge_anchors.py`, `judge_pairwise.py`,
-  `run_judge_pairwise.py`, `judge_gate.py`, `judge.py` (ids `claude-opus-5`/`claude-sonnet-5`) +
-  tests (suite 1449 passed). Commit after the confirmation pass; if the session dies first, run the
-  suite and commit them as `feat(bench): M38 judge panel modules`.
-- After generation completes: build anchors (`judge_anchors.py`, seed 38) → `run_judge_pairwise.py`
-  (API judges; needs ANTHROPIC key in env + codex CLI) → `judge_gate.py` (gate FIRST; no ranking on
-  FAIL) → campaign-results entry, README C table, operator approval for any rank change (C67).
+- Generation, anchor build and the panel run are COMPLETE. Reliability gate FAILED
+  (`benchmark/results/judge_c_v1/gate.json`, commit `ec6555a`): `degrade_accuracy` 0.80 < 0.85;
+  every other metric (order flip, panel kappa, Krippendorff alpha, verbosity, identity tie) passes.
+  Panel ran with only TWO judges — Claude Opus 5 was dropped for cost (operator 2026-09-12), leaving <!-- allow-shorthand -->
+  `sonnet` (Claude Sonnet 5 as Claude Code subagents, 820 verdicts, ~12M tokens) and
+  `codex:gpt-5.6-terra:medium` (820 in-process calls) — so the majority-else-tie rule collapses any
+  disagreement to a tie; `sonnet` alone scores 30/30 anchors, `codex:gpt-5.6-terra:medium` alone
+  28/30 (misses only `degrade`, via two split-order ties, never a preference for the degraded copy).
+  Per the pre-registered rule, `bench/judge_gate.py` refused to write `ranking.json` — **no ranking
+  is reported**; a Sonnet-only diagnostic ranking exists in the workdir, not reported. Verdicts,
+  pair manifest, `gate.json` and cost log are committed under `benchmark/results/judge_c_v1/`. Full
+  table, mechanism and the verbosity-rule spec correction (dated 2026-09-12, does not rescue the
+  run): `docs/campaign-results.md` 2026-09-12; PLAN M38 row updated to gate FAIL / ranking withheld.
+- **C68 (OPEN, `docs/open-questions.md`)**: operator decision on (a) add Claude Opus 5 as a third <!-- allow-shorthand -->
+  judge on all 820 packets (restores the designed three-judge majority; ~13M more tokens, ~2 h in
+  waves of ten), (b) pre-registration amendment for a two-judge panel (a single judge's tie does not
+  veto the other's verdict on anchors — post-hoc this run would pass 10/10, flagged as such), or
+  (c) accept the FAIL, no panel ranking this round, C ladder stays as ruled in C67. Session
+  recommendation: run M39 first; if vision already separates the seeing C contenders, (c) is fine,
+  otherwise (a).
+
+## M39 vision smoke — build status
+
+Committed `52425d3` (fix(bench): M39 visionqa after cold review — AI2D option validation and
+letter-aware grading, ScreenQA F1 gated on gold length, VQA-eval normalization, image-free grader,
+workdir image cache, text-only control switch), on top of `2456ebf` (spec of record + PLAN row).
+Chain runner is still UNARMED; review is in progress. GPU arm needs an explicit operator go before
+launch (spec `docs/vision-smoke-m39.md`).
 
 ## Open operator items
 
 - C64 DONE (164f2a5). C65 RULED (M7 dropped; judge panel next). C67 PROPOSED: vision-gated C reorder
   (first `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, second `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`) — awaiting ruling.
 - D11 DONE: three HF cards published 2026-09-11 (receipt in benchmark/results/).
-- Next discussion point P335; next C id C68.
+- Next discussion point P335; next C id C69.
 
 ## Ladder of record (unchanged)
 
