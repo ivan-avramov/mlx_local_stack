@@ -1,5 +1,40 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-12 — M38 judge panel — three-judge gate on anchors PASSES (C68 stage 1); item verdicts pending
+
+C68 ruled (a)-staged (operator 2026-09-12, P336): restore the pre-registered three-judge panel by adding
+Claude Opus 5 (run as Claude Code subagents, model opus) — but judge the 60 anchor packets FIRST and <!-- allow-shorthand -->
+recompute the gate before spending on the 760 item packets. No GPU work: the five contenders' `cjudge`
+outputs are unchanged; this is judging only. The two existing judges' verdicts are kept verbatim.
+
+Stage 1 result over the same 30 anchors (`benchmark/results/judge_c_v1/gate.anchors3.json`;
+`--judges sonnet opus codex:gpt-5.6-terra:medium`): **PASS** on every metric. <!-- allow-shorthand -->
+
+| metric | value (3 judges) | value (2 judges, `ec6555a`) | threshold | op | n | result |
+|---|---:|---:|---:|---|---:|---|
+| `degrade_accuracy` | 1.00 | 0.80 | 0.85 | ≥ | 10 | **pass** |
+| `order_flip_rate` (worst judge) | 0.067 (sonnet 0.00, opus 0.00, `codex:gpt-5.6-terra:medium` 0.067) | 0.067 | 0.30 | ≤ | 30 | pass | <!-- allow-shorthand -->
+| `panel_kappa_between_orders` | 1.00 | 0.900 | 0.6 | ≥ | 30 | pass |
+| `krippendorff_alpha` | 0.967 | 0.950 | 0.5 | ≥ | 30 | pass |
+| `verbosity_longer_preference_rate` | 0.00 | 0.00 | 0.10 | ≤ | 10 | pass |
+| `identity_tie_rate` | 1.00 | 1.00 | 0.80 | ≥ | 10 | pass |
+
+Per judge alone: `sonnet` 30/30, `opus` 30/30, `codex:gpt-5.6-terra:medium` 28/30 (the same two <!-- allow-shorthand -->
+split-order degrade ties as before). With a third judge the majority rule now outvotes those two ties,
+which is exactly the mechanism the two-judge FAIL entry below diagnosed. 60 Opus anchor verdicts, <!-- allow-shorthand -->
+0 null, ~0.79M subagent tokens, ~2.5 min wall in one wave of ten agents (6 packets each).
+
+**Honesty note**: adding the third judge returns the panel to its pre-registered design, but the
+decision was taken after seeing the two-judge result. Anchors-first sequencing does not bias the
+item ranking (the gate is computed on anchors only; item packets are judged identically either way).
+
+**Ranking still withheld**: `judge_gate` wrote a scratch `ranking.json` on this pass, computed with
+Opus absent from every item pair (i.e. effectively the two-judge item verdicts); it was deleted <!-- allow-shorthand -->
+unread and is not reported. The committed `gate.json` remains the two-judge FAIL record. Stage 2
+(Opus on the 760 item packets, ~10M tokens estimated from stage 1's per-packet cost) is pending an <!-- allow-shorthand -->
+explicit operator go; only then is the gate re-run into `benchmark/results/judge_c_v1/` and a
+ranking reported.
+
 ## 2026-09-12 — M39 vision gate — all four seeing contenders pass (20/20/19/18 of 20)
 
 Per the re-scoped spec (`docs/vision-smoke-m39.md`, operator: "a model that can do some vision", not
