@@ -12,6 +12,7 @@ Live, in reading order for a cold start:
 | `lab-notebook.md` | dated history from 2026-08-14 (earlier history: git log) |
 | `model-ledger.md` | every model ever considered, status + dated reasoning |
 | `metrics.md` | measurement rules and derivations (convergence vector, MDE, bootstrap, seeds) |
+| `vision-smoke-m39.md` | M39 spec of record: mechanically graded visual-QA smoke for the seeing contenders (corpus, grading, chain) |
 | `judge-panel-c.md` | M38 spec of record: blind mixed-family pairwise judge panel for role C (corpus, anchors, gate, ranking, domain prompts) |
 | `serving-path.md` | how a request becomes a generation: registry → router → worker; provenance fingerprint |
 | `box-notes.md` | box administration, venvs, grading images, corpus facts |
