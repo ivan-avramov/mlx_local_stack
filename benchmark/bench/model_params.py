@@ -192,6 +192,18 @@ def registry_generation_defaults(model: str, registry_path: str | None = None):
     return dict(gd) if isinstance(gd, dict) else None
 
 
+def registry_context_limit(model: str, registry_path: str | None = None):
+    """The model's `max_kv_cache_size` (context length, tokens), or None if the model isn't a
+    served registry entry. This is the `context_limit` `convergence.resolved_thinking_budget`
+    needs — a sibling key of `generation_defaults`, not inside it (AGENTS.md: max_kv_cache_size
+    is OUTPUT-DETERMINING and sets the resolved thinking budget)."""
+    entry = _registry_models(registry_path).get(model)
+    if entry is None:
+        return None
+    limit = entry.get("max_kv_cache_size")
+    return int(limit) if isinstance(limit, (int, float)) else None
+
+
 def _family(model: str) -> str:
     base = PARAMS.get(model)
     if base is QWEN:

@@ -60,6 +60,18 @@ def test_unknown_model_returns_none():
     assert MP.registry_generation_defaults("no-such-model", REGISTRY) is None
 
 
+# --------------------------------------------------------------- registry_context_limit (M39
+# vision-gate: the `context_limit` `convergence.resolved_thinking_budget` needs, added as a
+# sibling of `registry_generation_defaults` since `max_kv_cache_size` sits next to
+# `generation_defaults` in the registry, not inside it)
+def test_registry_context_limit_reads_max_kv_cache_size():
+    assert MP.registry_context_limit("Ornith-1.0-35B-mlx-uniform-4bit", REGISTRY) == 262144
+
+
+def test_registry_context_limit_unknown_model_returns_none():
+    assert MP.registry_context_limit("no-such-model", REGISTRY) is None
+
+
 # --------------------------------------------------------------- the profile
 def test_deployed_profile_is_the_registry_block():
     for name in ("Ornith-1.0-35B-mlx-uniform-4bit", "Qwen3.6-27B-Opus-Distill-OptiQ-4bit",
