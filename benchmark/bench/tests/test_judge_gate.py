@@ -395,6 +395,29 @@ def test_compute_ranking_holm_adjusts_pvalues_across_pairs():
         assert r["p_holm"] >= r["p_value"]   # Holm never makes a p-value SMALLER
 
 
+# --------------------------------------------------------- M40: same-model tune-pair ranking
+def test_compute_ranking_treats_tune_pair_keys_as_distinct_models():
+    """`build_tune_pairs` (bench.judge_pairwise) emits a_key/b_key of the form
+    `<model>@<tune>::<item>` for a predictor ON/OFF judge pass. `compute_ranking` only splits
+    on '::' and sorts the first component — a bare '@' inside it must be opaque, so the two
+    tunes rank as ordinary distinct "models" with no code change needed here."""
+    winners = ["A"] * 8 + ["B"] * 2   # "A" == a_key model (M@m40on) wins
+    pairs, rows = [], []
+    for i, w in enumerate(winners):
+        p = _candidate_pair_named(f"cand-M@m40on__M@m37med-{i}", f"dom-{i:02d}",
+                                  "M@m40on", "M@m37med", w)
+        pairs.append(p)
+        rows += _agree(p["pair_id"], JUDGES, w)
+
+    ranking = G.compute_ranking(pairs, rows, JUDGES, seed=0)
+    assert set(ranking["pairs"]) == {"M@m37med__M@m40on"}
+    r = ranking["pairs"]["M@m37med__M@m40on"]
+    assert r["model_1"] == "M@m37med" and r["model_2"] == "M@m40on"
+    assert r["n_items"] == 10
+    # model_1 (m37med, the b_key side) wins the 2 "B" items -> preference_rate_model_1 = 0.2
+    assert abs(r["preference_rate_model_1"] - 0.2) < 1e-9
+
+
 # ------------------------------------------------------------------------------- usage_summary
 def test_usage_summary_computes_means_and_runaway_share():
     rows_by_model = {"Alpha": [

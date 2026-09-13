@@ -181,6 +181,64 @@ def test_build_candidate_pairs_balanced_ab_per_model_pair():
         assert n_first_in_a == 5, f"{key}: {n_first_in_a}/10 balanced expected"
 
 
+# ------------------------------------------------------------------- M40 same-model tune pairs
+def _tune_rows(n_items=3, converged=True, content_prefix="text"):
+    return [{"id": f"dom-{i:02d}", "content": f"{content_prefix} {i}", "converged": converged}
+           for i in range(n_items)]
+
+
+def test_build_tune_pairs_covers_every_shared_item():
+    rows_a, rows_b = _tune_rows(3, content_prefix="OFF"), _tune_rows(3, content_prefix="ON")
+    pairs = J.build_tune_pairs("M", "m37med", "m40on", rows_a, rows_b, seed=38)
+    assert len(pairs) == 3
+    for p in pairs:
+        assert p["anchor_type"] is None and p["expected"] is None
+        assert p["pair_id"].startswith("cand-M@m37med__M@m40on-")
+        assert {p["a_key"].split("::")[0], p["b_key"].split("::")[0]} == {"M@m37med", "M@m40on"}
+
+
+def test_build_tune_pairs_pair_id_keeps_caller_order_even_when_alphabetically_reversed():
+    """tune_a/tune_b naming reflects the CALLER's ON/OFF choice, not alphabetical sort — unlike
+    build_candidate_pairs' m1/m2, which canonicalizes an arbitrary pair of model names."""
+    rows_a, rows_b = _tune_rows(2), _tune_rows(2)
+    pairs = J.build_tune_pairs("M", "m40on", "m37med", rows_a, rows_b, seed=38)
+    for p in pairs:
+        assert p["pair_id"].startswith("cand-M@m40on__M@m37med-")
+
+
+def test_build_tune_pairs_a_key_b_key_carry_the_tune_not_bare_model():
+    rows_a, rows_b = _tune_rows(2), _tune_rows(2)
+    pairs = J.build_tune_pairs("M", "m37med", "m40on", rows_a, rows_b, seed=38)
+    for p in pairs:
+        a_model, item = p["a_key"].split("::")
+        b_model, _ = p["b_key"].split("::")
+        assert a_model in ("M@m37med", "M@m40on")
+        assert b_model in ("M@m37med", "M@m40on")
+        assert a_model != b_model
+
+
+def test_build_tune_pairs_only_shared_converged_items():
+    rows_a = _tune_rows(3)
+    rows_b = _tune_rows(3)
+    rows_b[0]["converged"] = False   # dom-00 not converged for tune b
+    pairs = J.build_tune_pairs("M", "m37med", "m40on", rows_a, rows_b, seed=38)
+    assert {p["item_id"] for p in pairs} == {"dom-01", "dom-02"}
+
+
+def test_build_tune_pairs_balanced_ab():
+    rows_a, rows_b = _tune_rows(10), _tune_rows(10)
+    pairs = J.build_tune_pairs("M", "m37med", "m40on", rows_a, rows_b, seed=38)
+    n_a_first = sum(1 for p in pairs if p["a_key"].split("::")[0] == "M@m37med")
+    assert n_a_first == 5
+
+
+def test_build_tune_pairs_deterministic():
+    rows_a, rows_b = _tune_rows(5), _tune_rows(5)
+    a = J.build_tune_pairs("M", "m37med", "m40on", rows_a, rows_b, seed=38)
+    b = J.build_tune_pairs("M", "m37med", "m40on", rows_a, rows_b, seed=38)
+    assert a == b
+
+
 # ------------------------------------------------------------------------------ judge families
 def test_judge_families_maps_anthropic_and_openai():
     fams = J.judge_families(["opus", "sonnet", "gpt-5.5"])  # allow-shorthand
@@ -480,6 +538,125 @@ def test_cli_dry_run_calls_no_judge_and_writes_manifest(tmp_path, monkeypatch):
     assert len(manifest) == 6 * 2 + 2   # 6 model-pairs * 2 items + 2 anchors
     assert (out / "dry_run_prompt.txt").exists()
     assert not (out / "verdicts.jsonl").exists()
+
+
+def _write_tune_rows(root, model, tune, n_items=2):
+    d = root / model
+    d.mkdir(exist_ok=True)
+    with open(d / f"cjudge.{tune}.jsonl", "w") as f:
+        for i in range(n_items):
+            f.write(json.dumps({"id": f"dom-{i:02d}", "content": f"{model}@{tune} says {i}",
+                                "converged": True}) + "\n")
+
+
+def test_cli_pair_tunes_builds_same_model_two_tune_pairs(tmp_path, monkeypatch):
+    """M40: `--models M --pair-tunes m37med m40on` pairs M@m37med vs M@m40on instead of
+    building C(n,2) pairs across distinct --models."""
+    _write_tune_rows(tmp_path, "M", "m37med", n_items=2)
+    _write_tune_rows(tmp_path, "M", "m40on", n_items=2)
+    anchors = tmp_path / "pairs.jsonl"
+    _write_anchor_pairs(anchors)
+    out = tmp_path / "out"
+
+    def boom():
+        raise AssertionError("dry-run must not build real judge backends")
+    monkeypatch.setattr(J, "default_judge_fns", boom)
+
+    rc = RJ.main(["--models", "M", "--pair-tunes", "m37med", "m40on",
+                 "--anchors", str(anchors), "--out", str(out),
+                 "--results-dir", str(tmp_path),
+                 "--corpus", str(tmp_path / "no_corpus.jsonl"), "--dry-run"])
+    assert rc == 0
+    manifest = [json.loads(l) for l in (out / "pair_manifest.jsonl").read_text().splitlines()]
+    candidates = [p for p in manifest if p["anchor_type"] is None]
+    assert len(candidates) == 2   # 2 shared converged items, one model pair
+    for p in candidates:
+        assert p["pair_id"].startswith("cand-M@m37med__M@m40on-")
+        assert {p["a_key"].split("::")[0], p["b_key"].split("::")[0]} == {"M@m37med", "M@m40on"}
+
+
+def test_cli_pair_tunes_requires_exactly_one_model(tmp_path):
+    anchors = tmp_path / "pairs.jsonl"
+    _write_anchor_pairs(anchors)
+    with pytest.raises(SystemExit):
+        RJ.main(["--models", "M1", "M2", "--pair-tunes", "m37med", "m40on",
+                "--anchors", str(anchors), "--out", str(tmp_path / "out"),
+                "--results-dir", str(tmp_path), "--dry-run"])
+
+
+def _write_tune_manifest(root, model, tune, *, draft_kind="off", temperature=0.4,
+                         reasoning_effort=None, max_tokens=102400, thinking_budget=16384,
+                         registry_sha=None):
+    d = root / model
+    d.mkdir(exist_ok=True)
+    doc = {"sampling": {"temperature": temperature, "reasoning_effort": reasoning_effort,
+                        "max_tokens": max_tokens, "thinking_budget": thinking_budget},
+          "runtime": {"draft_kind": draft_kind}}
+    if registry_sha is not None:
+        doc["registry"] = {"sha256": registry_sha}
+    with open(d / f"cjudge.{tune}.manifest.json", "w") as f:
+        json.dump(doc, f)
+
+
+# ------------------------------------------- cold-review fix 8: --pair-tunes guard rails
+def test_cli_pair_tunes_errors_on_zero_shared_converged_items(tmp_path, monkeypatch):
+    """A typo'd tune label used to silently exit 0 with only the anchors run — no candidate
+    pairs at all is a usage error, not a quiet no-op."""
+    _write_tune_rows(tmp_path, "M", "m37med", n_items=2)
+    d = (tmp_path / "M")
+    with open(d / "cjudge.m40on-typo.jsonl", "w") as f:   # wrong tune label: file never read
+        f.write(json.dumps({"id": "dom-00", "content": "x", "converged": True}) + "\n")
+    _write_tune_manifest(tmp_path, "M", "m37med")
+    _write_tune_manifest(tmp_path, "M", "m40on-typo", draft_kind="mtp")
+    anchors = tmp_path / "pairs.jsonl"
+    _write_anchor_pairs(anchors)
+
+    def boom():
+        raise AssertionError("must not reach judge calls")
+    monkeypatch.setattr(J, "default_judge_fns", boom)
+
+    with pytest.raises(SystemExit):
+        RJ.main(["--models", "M", "--pair-tunes", "m37med", "m40on",   # "m40on" != "m40on-typo"
+                "--anchors", str(anchors), "--out", str(tmp_path / "out"),
+                "--results-dir", str(tmp_path),
+                "--corpus", str(tmp_path / "no_corpus.jsonl"), "--dry-run"])
+
+
+def test_cli_pair_tunes_errors_when_sampling_differs_beyond_draft_kind(tmp_path):
+    _write_tune_rows(tmp_path, "M", "m37med", n_items=2)
+    _write_tune_rows(tmp_path, "M", "m40on", n_items=2)
+    _write_tune_manifest(tmp_path, "M", "m37med", draft_kind="off", max_tokens=102400)
+    _write_tune_manifest(tmp_path, "M", "m40on", draft_kind="mtp", max_tokens=81920)
+    anchors = tmp_path / "pairs.jsonl"
+    _write_anchor_pairs(anchors)
+    with pytest.raises(SystemExit):
+        RJ.main(["--models", "M", "--pair-tunes", "m37med", "m40on",
+                "--anchors", str(anchors), "--out", str(tmp_path / "out"),
+                "--results-dir", str(tmp_path),
+                "--corpus", str(tmp_path / "no_corpus.jsonl"), "--dry-run"])
+
+
+def test_cli_pair_tunes_prints_manifest_info_at_pair_build_time(tmp_path, capsys):
+    _write_tune_rows(tmp_path, "M", "m37med", n_items=2)
+    _write_tune_rows(tmp_path, "M", "m40on", n_items=2)
+    _write_tune_manifest(tmp_path, "M", "m37med", draft_kind="off", temperature=0.5,
+                        reasoning_effort="medium", registry_sha="deadbeef")
+    _write_tune_manifest(tmp_path, "M", "m40on", draft_kind="mtp", temperature=0.5,
+                        reasoning_effort="medium", registry_sha="cafef00d")
+    anchors = tmp_path / "pairs.jsonl"
+    _write_anchor_pairs(anchors)
+
+    rc = RJ.main(["--models", "M", "--pair-tunes", "m37med", "m40on",
+                 "--anchors", str(anchors), "--out", str(tmp_path / "out"),
+                 "--results-dir", str(tmp_path),
+                 "--corpus", str(tmp_path / "no_corpus.jsonl"), "--dry-run"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "m37med" in out and "m40on" in out
+    assert "off" in out and "mtp" in out
+    assert "0.5" in out
+    assert "medium" in out
+    assert "deadbeef" in out and "cafef00d" in out
 
 
 def test_cli_real_run_writes_verdicts_and_costlog(tmp_path, monkeypatch):

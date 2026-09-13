@@ -24,6 +24,12 @@ SUBAGENTS instead of API calls; GPT-5.5 stays on the in-process `codex exec` pat
       call's response is validated, and appends new rows (schema-identical to the API path, plus
       `transport`) to VERDICTS_DIR/verdicts.jsonl (default: DIR/../verdicts.jsonl). Idempotent on
       (pair_id, order, judge); reports expected-vs-present per judge/batch and any missing files.
+
+Same-model tune-pair path (M40, predictor ON vs OFF): `--models M --pair-tunes TUNE_A TUNE_B`
+(instead of two-or-more distinct `--models`) pairs `M@TUNE_A` against `M@TUNE_B` over their
+shared converged `cjudge` items; everything downstream (anchors, mixed-family guard,
+--export-packets, --ingest-packets, `bench/judge_gate.py compute_ranking`) is unchanged — it
+just sees `M@TUNE_A`/`M@TUNE_B` as two ordinary candidate identities.
 """
 import argparse
 import json
@@ -110,6 +116,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Run the M38 blind pairwise judge panel.")
     ap.add_argument("--models", nargs="+", metavar="MODEL", default=None)  # >= 2 (C67: five contenders)
     ap.add_argument("--tune", default="m38")
+    ap.add_argument("--pair-tunes", nargs=2, default=None, metavar=("TUNE_A", "TUNE_B"),
+                    help="M40: pair the SAME model (a single --models value) across two tunes "
+                         "(e.g. a predictor ON/OFF pass) instead of pairing distinct models")
     ap.add_argument("--anchors", default=None, help="pairs.jsonl from judge_anchors")
     ap.add_argument("--results-dir", default=J.RESULTS)
     ap.add_argument("--corpus", default=DEFAULT_CORPUS)
@@ -138,10 +147,46 @@ def main(argv=None):
 
     if not args.models or not args.anchors:
         ap.error("--models and --anchors are required unless --ingest-packets is given")
+    if args.pair_tunes and len(args.models) != 1:
+        ap.error("--pair-tunes requires exactly one --models value (the model being paired "
+                 "against itself at two tunes)")
     out_dir = args.out or DEFAULT_OUT
 
-    rows_by_model = J.load_model_rows(args.models, tune=args.tune, results_dir=args.results_dir)
-    candidate_pairs = J.build_candidate_pairs(rows_by_model, seed=args.seed)
+    if args.pair_tunes:
+        model = args.models[0]
+        tune_a, tune_b = args.pair_tunes
+        rows_a = J.load_model_rows([model], tune=tune_a, results_dir=args.results_dir)[model]
+        rows_b = J.load_model_rows([model], tune=tune_b, results_dir=args.results_dir)[model]
+        man_a = J.load_manifest_for(model, tune_a, results_dir=args.results_dir) or {}
+        man_b = J.load_manifest_for(model, tune_b, results_dir=args.results_dir) or {}
+        sa, sb = man_a.get("sampling") or {}, man_b.get("sampling") or {}
+        ra, rb = man_a.get("runtime") or {}, man_b.get("runtime") or {}
+        print(f"[run_judge_pairwise] pair-tunes {model}: "
+              f"{tune_a}(draft_kind={ra.get('draft_kind')!r}, "
+              f"temperature={sa.get('temperature')!r}, "
+              f"reasoning_effort={sa.get('reasoning_effort')!r}, "
+              f"registry.sha256={(man_a.get('registry') or {}).get('sha256')!r}) vs "
+              f"{tune_b}(draft_kind={rb.get('draft_kind')!r}, "
+              f"temperature={sb.get('temperature')!r}, "
+              f"reasoning_effort={sb.get('reasoning_effort')!r}, "
+              f"registry.sha256={(man_b.get('registry') or {}).get('sha256')!r})", flush=True)
+        mismatch = [k for k in ("temperature", "reasoning_effort", "max_tokens", "thinking_budget")
+                   if sa.get(k) != sb.get(k)]
+        if mismatch:
+            ap.error(f"--pair-tunes {tune_a} {tune_b}: {mismatch} differ between the two "
+                    f"tunes' manifests — not a clean predictor ON/OFF pair (first: "
+                    f"sampling.{mismatch[0]} {sa.get(mismatch[0])!r} vs "
+                    f"{sb.get(mismatch[0])!r})")
+        candidate_pairs = J.build_tune_pairs(model, tune_a, tune_b, rows_a, rows_b,
+                                             seed=args.seed)
+        if not candidate_pairs:
+            ap.error(f"--pair-tunes {tune_a} {tune_b}: 0 shared converged items between "
+                    f"{model}@{tune_a} ({len(rows_a)} rows) and {model}@{tune_b} "
+                    f"({len(rows_b)} rows) — check the tune labels")
+    else:
+        rows_by_model = J.load_model_rows(args.models, tune=args.tune,
+                                          results_dir=args.results_dir)
+        candidate_pairs = J.build_candidate_pairs(rows_by_model, seed=args.seed)
     anchor_pairs = read_pairs_jsonl(args.anchors)
     pairs = J.merge_and_shuffle(candidate_pairs, anchor_pairs, seed=args.seed)
     if args.limit_pairs is not None:

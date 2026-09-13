@@ -135,6 +135,20 @@ def load_model_rows(models, tune="m38", results_dir=RESULTS):
     return out
 
 
+def load_manifest_for(model, tune, results_dir=RESULTS):
+    """The generation manifest for one (model, tune)'s cjudge rows (M40 `--pair-tunes`
+    guard rails), or None if missing/unparseable — graceful-degrade, same convention as
+    `load_model_rows`: a CLI print/guard must not crash on an old run with no manifest."""
+    path = os.path.join(results_dir, model, f"cjudge.{tune}.manifest.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def shared_converged_items(rows_by_model):
     """Item ids CONVERGED in every model's rows (the only items eligible for a fair pairwise
     comparison — AGENTS.md apples-to-apples). Empty input -> empty set."""
@@ -193,6 +207,37 @@ def build_candidate_pairs(rows_by_model, seed=38):
                 "b_text": row_b.get("content", "") or "",
                 "expected": None,
             })
+    return pairs
+
+
+def build_tune_pairs(model, tune_a, tune_b, rows_a, rows_b, seed=38):
+    """One candidate pair per shared-converged item comparing the SAME model at two TUNES
+    (`--pair-tunes TUNE_A TUNE_B`, M40: a predictor ON-vs-OFF judge pass) instead of two
+    different models. Same balanced A/B slot assignment as `build_candidate_pairs` (exactly
+    half the items swapped, seeded on the two identities) — but keyed on `<model>@<tune>`
+    identities, and pair_id / a_key / b_key fix the CALLER's tune_a/tune_b order rather than
+    sorting alphabetically: which tune is "A" and which is "B" here is ON-vs-OFF, an
+    experiment design choice, not an arbitrary pair of model names to canonicalize."""
+    key_a, key_b = f"{model}@{tune_a}", f"{model}@{tune_b}"
+    items = sorted(shared_converged_items({key_a: rows_a, key_b: rows_b}))
+    lookup_a = {r["id"]: r for r in rows_a}
+    lookup_b = {r["id"]: r for r in rows_b}
+    flags = _balanced_flags(len(items), _sub_rng(seed, key_a, key_b))
+    pairs = []
+    for item_id, swap in zip(items, flags):
+        row_a, row_b = lookup_a[item_id], lookup_b[item_id]
+        model_a, model_b = (key_b, key_a) if swap else (key_a, key_b)
+        text_a, text_b = (row_b, row_a) if swap else (row_a, row_b)
+        pairs.append({
+            "pair_id": f"cand-{key_a}__{key_b}-{item_id}",
+            "anchor_type": None,
+            "item_id": item_id,
+            "a_key": f"{model_a}::{item_id}",
+            "b_key": f"{model_b}::{item_id}",
+            "a_text": text_a.get("content", "") or "",
+            "b_text": text_b.get("content", "") or "",
+            "expected": None,
+        })
     return pairs
 
 
