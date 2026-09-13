@@ -1,4 +1,4 @@
-# Handoff — 2026-09-13 ~15:15 PDT (M41 COMPLETE; box idle; M42 awaits a go)
+# Handoff — 2026-09-13 ~15:30 PDT (M40 + M41 COMPLETE; box idle; open decisions listed below)
 
 Rewritten in place. Phase 1 closed (B ladder C57, C ladder C70). Phase 2: **M40 COMPLETE** (both picks certified
 predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in the shipped ON state). Nothing is
@@ -13,7 +13,25 @@ running. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pi
    (HEAD-blob technique; `docs/qualify-a-model.md`). NOTE: the worktree copy predates the two `# CERTIFIED M40`
    comment lines at HEAD (comments only; harmless). No untracked result files should remain.
 3. Unpushed: `git log --oneline origin/main..main`. Push ONLY on explicit in-turn approval.
-4. Next discussion point P354; next C id C75. Nothing open for the operator except the M42 go.
+4. Next discussion point P357; next C id C75. `docs/open-questions.md` has NO OPEN rows (C74 RULED). The open
+   decisions are all in the next section — none is blocking; the box is idle until one of them is a go.
+
+## Open decisions for the operator (2026-09-13 15:30; nothing is armed)
+
+- **P354 — M42 KV-lever OFAT: go, reshape, or skip.** M41 prior: 4.9 GB headroom at 262144 under turboquant kv4; fp16 KV
+  on the 16 full-attention layers ≈ +12 GB → EXPECTED to fail the 46 GB gate at the cap. Recommendation: run the fp16
+  PEAK LADDER FIRST (131K/197K/262K, one prefill each, <1 h) under the pre-registered rule "gate FAIL at 262144 ⇒ OFAT
+  ends, kv4 stays"; spend the paired quality arms (hep/mbpp/Math500 item sets, decode/prefill @256K) only if fp16 fits.
+  Skipping M42 entirely on this prior is defensible; the PLAN row carries the proposed shape.
+- **P355 — coverage gap: `Qwen3.8-27B-mlx-uniform-4bit` (B/C 2nd) has NO capacity row.** Proposal: one capacity ladder
+  in its shipped ON state (131K/197K/262K, ~1 h, same M41 runner with the M40 `on_Qwen3.8-27B-mlx-uniform-4bit.yaml`
+  overlay, tag `m41on`). Its M11 depth rows exist (OFF, effort None — not the deployed medium tune).
+- **D14 transfer write-up** (PLAN row; zero GPU; can run while the box is busy): needs a go. Inputs are complete:
+  M40/M41 entries give the mechanism-vs-verdict split for the predictor and long-context axes.
+- **Push**: unpushed commits on `main` (`git log --oneline origin/main..main`) — push only on explicit in-turn approval.
+- **Daily-driver stack**: down since M40 started (2026-09-12 20:58). Bring up per AGENTS.md on request.
+- **P356 — docs debt**: pre-existing lint failure `test_no_bare_distill_shorthand[qualify-a-model.md]`; the worktree
+  `main_models.yaml` lacks the two committed `# CERTIFIED M40` comment lines (comments only). Both cosmetic.
 
 ## M41 result (full entry in campaign-results 2026-09-13)
 
