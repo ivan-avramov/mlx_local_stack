@@ -1,17 +1,18 @@
 """CLI: run the dedicated retrieval ladder (multi-needle NIAH) for one model on the box
-under test, at PRODUCTION params (full thinking budget — the clean retrieval curve, not
+under test, at the profile named by --sampling-profile (O36: `deployed` for new axes; full thinking budget — the clean retrieval curve, not
 the capacity probe's bounded co-signal).
 
-  cd benchmark && uv run python -m bench.run_retrieval --model Qwen3.6-27B-UD-MLX-6bit
+  cd benchmark && uv run python -m bench.run_retrieval --model Qwen3.6-27B-UD-MLX-6bit --sampling-profile deployed
 
 Writes benchmark/results/<model>/retrieval.json."""
 import argparse
 import json
 import os
 
+from . import provenance
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, await_model_pid, system_used_gb
-from .model_params import params_for
+from .model_params import params_for, profile_names
 from .retrieval import run_retrieval_ladder, RETRIEVAL_GRID, DEPTHS
 
 RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
@@ -34,10 +35,17 @@ def main(argv=None) -> int:
     ap.add_argument("--grid", default=",".join(str(g) for g in RETRIEVAL_GRID))
     ap.add_argument("--samples", type=int, default=5)
     ap.add_argument("--threshold", type=float, default=0.85)
+    ap.add_argument("--sampling-profile", required=True, choices=profile_names(),
+                    help="params profile (O36: explicit on every run; 'deployed' for all new axes)")
     ap.add_argument("--max-tokens", type=int, default=None,
-                    help="Override production max_tokens (default: model's production value)")
+                    help="Override profile max_tokens (default: use the profile's value)")
     ap.add_argument("--thinking-budget", type=int, default=None,
-                    help="Override production thinking_budget (default: model's production value)")
+                    help="Override profile thinking_budget (default: use the profile's value)")
+    ap.add_argument("--request-timeout", type=float, default=9600.0,
+                    help="per-request HTTP timeout, DERIVED not SDK-default (O41): 81920-token "
+                         "budget at ~12 tok/s at depth + ~20 min prefill at 156K, with headroom")
+    ap.add_argument("--out-tag", default=None,
+                    help="write retrieval.<tag>.json instead of retrieval.json")
     ap.add_argument("--no-preload", action="store_true")
     args = ap.parse_args(argv)
 
@@ -55,12 +63,15 @@ def main(argv=None) -> int:
 
     cpt = calibrate_cpt(driver, args.model)
 
-    # Production params verbatim; apply explicit CLI overrides only.
-    params = params_for(args.model)
+    # Profile params verbatim; apply explicit CLI overrides only.
+    params = params_for(args.model, profile=args.sampling_profile)
+    overrides = {}
     if args.max_tokens is not None:
         params["max_tokens"] = args.max_tokens
+        overrides["max_tokens"] = args.max_tokens
     if args.thinking_budget is not None:
         params["thinking_budget"] = args.thinking_budget
+        overrides["thinking_budget"] = args.thinking_budget
 
     print(f"[retrieval] {args.model} cpt={cpt:.2f} grid={grid} "
           f"threshold={args.threshold} samples={args.samples}", flush=True)
@@ -72,7 +83,7 @@ def main(argv=None) -> int:
     records = run_retrieval_ladder(
         driver, args.model, cpt, model_pid=model_pid, params=params,
         grid=grid, threshold=args.threshold, samples=args.samples,
-        sampler_factory=MemorySampler)
+        sampler_factory=MemorySampler, request_timeout=args.request_timeout)
 
     for r in records:
         print(f"[retrieval] ctx={r['ctx']} acc={r['accuracy']} "
@@ -94,8 +105,21 @@ def main(argv=None) -> int:
 
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "retrieval.json"), "w") as f:
+    stem = "retrieval" if not args.out_tag else f"retrieval.{args.out_tag}"
+    with open(os.path.join(out_dir, f"{stem}.json"), "w") as f:
         json.dump(result, f, indent=2)
+
+    # Provenance beside the ladder (same pattern as run_capacity.py, T1.6): best-effort,
+    # never lose a finished ladder to a provenance failure.
+    try:
+        man = provenance.gather(args.model, profile=args.sampling_profile,
+                                overrides=overrides,
+                                runtime={"probe": "retrieval", "grid": list(grid),
+                                         "samples": args.samples})
+        with open(os.path.join(out_dir, f"{stem}.manifest.json"), "w") as f:
+            json.dump(man, f, indent=2)
+    except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
+        print(f"[retrieval] WARNING: manifest not written: {e}", flush=True)
 
     print(f"[retrieval] RETRIEVAL_EFFECTIVE_CTX={retrieval_effective_ctx}", flush=True)
     return 0

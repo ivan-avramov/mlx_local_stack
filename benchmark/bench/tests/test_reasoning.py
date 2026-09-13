@@ -340,3 +340,79 @@ def test_ladder_params_forwarded_to_driver():
     assert received[0]["temperature"] == 0.7
     assert received[0]["max_tokens"] == 512
     assert received[0]["thinking_budget"] == 999
+
+
+# ---------------------------------------------------------------------------
+# M41 T3: per-draw prompt_tokens/prefill_s/prefill_tps/draft + rung means/pooled acceptance
+# ---------------------------------------------------------------------------
+
+class DraftDriver:
+    """Correct answers + speculative-decoding counters in raw_timings on every call."""
+    def complete(self, model, messages, params, timeout=3600):
+        user_content = messages[-1]["content"] if messages else ""
+        m = re.search(r'= (\d{5})\.', user_content)
+        val = m.group(1) if m else "99999"
+        return {"content": f"ANSWER: {val}", "prompt_tokens": 100,
+                "completion_tokens": 42, "finish_reason": "stop",
+                "prefill_s": 0.5, "prefill_tps": 200, "decode_tps": 50.0,
+                "peak_mem_gb": 20.0, "wall_s": 1.0,
+                "raw_timings": {"draft_kind": "mtp", "draft_rounds": 3,
+                                "draft_n": 10, "draft_n_accepted": 7}}
+
+
+def test_row_carries_prompt_tokens_prefill_and_draft():
+    records = R.run_reasoning_ladder(
+        DraftDriver(), "model", chars_per_token=4.0, model_pid=99999,
+        params=_PROD_PARAMS, grid=(8000,), threshold=0.85, samples=2, chain_len=4,
+        sampler_factory=FakeSampler,
+    )
+    rows = records[0]["rows"]
+    assert len(rows) == 2
+    assert rows[0]["prompt_tokens"] == 100
+    assert rows[0]["prefill_s"] == 0.5
+    assert rows[0]["prefill_tps"] == 200
+    assert rows[0]["draft"] == {"draft_kind": "mtp", "draft_rounds": 3,
+                                "draft_n": 10, "draft_n_accepted": 7}
+
+
+def test_rung_carries_decode_tps_mean_prefill_s_mean_and_acceptance_pooled():
+    records = R.run_reasoning_ladder(
+        DraftDriver(), "model", chars_per_token=4.0, model_pid=99999,
+        params=_PROD_PARAMS, grid=(8000,), threshold=0.85, samples=2, chain_len=4,
+        sampler_factory=FakeSampler,
+    )
+    rec = records[0]
+    assert rec["decode_tps_mean"] == 50.0
+    assert rec["prefill_s_mean"] == 0.5
+    assert rec["acceptance_pooled"] == round(7 / 10, 4)
+
+
+def test_no_draft_means_draft_none_and_acceptance_pooled_none():
+    records = R.run_reasoning_ladder(
+        AllCorrectDriver(), "model", chars_per_token=4.0, model_pid=99999,
+        params=_PROD_PARAMS, grid=(8000,), threshold=0.85, samples=2, chain_len=4,
+        sampler_factory=FakeSampler,
+    )
+    rec = records[0]
+    assert rec["rows"][0]["draft"] is None
+    assert rec["acceptance_pooled"] is None
+
+
+# ---------------------------------------------------------------------------
+# M41 FIX1 F1: one progress line per draw (review defect 1)
+# ---------------------------------------------------------------------------
+
+def test_ladder_prints_one_progress_line_per_draw(capsys):
+    R.run_reasoning_ladder(
+        AllCorrectDriver(), "model", chars_per_token=4.0, model_pid=99999,
+        params=_PROD_PARAMS, grid=(8000, 16000), threshold=0.0, samples=2, chain_len=4,
+        sampler_factory=FakeSampler,
+    )
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if ln.startswith("[reasoning] ")]
+    assert len(lines) == 2 * 2  # 2 rungs * 2 trials
+    assert "ctx=8000 trial=0" in lines[0]
+    assert "score=" in lines[0]
+    assert "completion_tokens=" in lines[0]
+    assert "budget_hit=" in lines[0]
+    assert "prefill_s=" in lines[0]

@@ -244,14 +244,17 @@ Five distinct codes are planted at depths {0.1, 0.3, 0.5, 0.7, 0.9}; the model i
 to list all of them; accuracy = fraction returned, with a per-depth breakdown.
 
 ```bash
-cd benchmark && uv run python -m bench.run_retrieval --model Qwen3.6-27B-UD-MLX-6bit
+cd benchmark && uv run python -m bench.run_retrieval --model Qwen3.6-27B-UD-MLX-6bit --sampling-profile deployed
 ```
 
 Writes `results/<model>/retrieval.json` with per-rung `accuracy` + `per_depth_acc` and a
 headline `retrieval_effective_ctx` (largest context length with accuracy ≥ 0.85). It is a
 full curve, not climb-to-cliff: a mid-context dip does not stop the ladder (retrieval can
-recover); only a hard OOM at a context length stops it. Run Qwen's 192K/256K rungs on the
-M5 (browser-closed/clean) profile.
+recover). CORRECTED 2026-09-13 (O41, M41 tooling): any transport failure (timeout / refused /
+OOM-disconnect) at a trial aborts the run with a traceback and no output file — never graded as a
+miss. `--sampling-profile` is REQUIRED (O36); `--out-tag` and `--request-timeout` (default 9600 s)
+exist. Per-trial rows now carry prefill_s / decode_tps / draft counters. Run 192K/256K rungs on a
+quiet box.
 
 ## Heavy reasoning (aggregation + latent)
 

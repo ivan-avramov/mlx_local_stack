@@ -27,7 +27,7 @@ def test_main_writes_results(tmp_path, monkeypatch):
     # idle=10GB; RSS=35 (gate metric, fits); system_peak=45 → sys_footprint=35 (secondary)
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
     monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
-    rc = R.main(["--model", "m", "--grid", "160000,192000"])
+    rc = R.main(["--model", "m", "--grid", "160000,192000", "--sampling-profile", "production"])
     assert rc == 0
     sc = json.load(open(os.path.join(tmp_path, "m", "capacity_retrieval.json")))
     assert sc["model"] == "m" and sc["axis"] == "capacity_retrieval"
@@ -61,7 +61,7 @@ def test_main_passes_bounded_params_to_ladder(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
     monkeypatch.setattr(R, "run_ladder", fake_ladder)
     R.main(["--model", "gemma-4-26B-A4B-it-QAT-MLX-4bit",
-            "--grid", "160000", "--no-preload"])
+            "--grid", "160000", "--no-preload", "--sampling-profile", "production"])
     assert captured["params"] is not None
     # Must be bounded regardless of model's production max_tokens
     assert captured["params"]["max_tokens"] == 256
@@ -94,13 +94,98 @@ def test_main_writes_a_provenance_manifest_beside_the_ladder(tmp_path, monkeypat
         raise AssertionError("provenance.write must NOT be used here — it bypasses RESULTS")
     monkeypatch.setattr(P, "write", boom)
 
-    rc = R.main(["--model", "m", "--grid", "160000"])
+    rc = R.main(["--model", "m", "--grid", "160000", "--sampling-profile", "production"])
     assert rc == 0
     model, kw = calls["args"]
     assert model == "m"
+    assert kw["profile"] == "production"
     assert kw["runtime"]["probe"] == "capacity_ladder"
     assert kw["overrides"] == {"max_tokens": 256, "thinking_budget": 256}
     import json as _json
     man_path = tmp_path / "m" / "capacity_ladder.manifest.json"
     assert man_path.exists(), "manifest must land beside the ladder, inside RESULTS"
     assert _json.loads(man_path.read_text())["fake"] is True
+
+
+def test_sampling_profile_is_required(tmp_path, monkeypatch):
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
+    monkeypatch.setattr(R, "MemorySampler", FakeSampler)
+    monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
+    import pytest
+    with pytest.raises(SystemExit) as e:
+        R.main(["--model", "m", "--grid", "160000", "--no-preload"])
+    assert e.value.code == 2
+
+
+def test_sampling_profile_reaches_params_for(tmp_path, monkeypatch):
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
+    monkeypatch.setattr(R, "MemorySampler", FakeSampler)
+    monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
+    seen = {}
+
+    def fake_params_for(model, profile="production", registry_path=None):
+        seen["profile"] = profile
+        return {"temperature": 0.5, "top_p": 0.95}
+
+    monkeypatch.setattr(R, "params_for", fake_params_for)
+    R.main(["--model", "m", "--grid", "160000", "--no-preload",
+            "--sampling-profile", "deployed"])
+    assert seen["profile"] == "deployed"
+
+
+def test_request_timeout_reaches_ladder(tmp_path, monkeypatch):
+    """M41 FIX1 F2: --request-timeout threads through to run_ladder."""
+    seen = {}
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
+    monkeypatch.setattr(R, "MemorySampler", FakeSampler)
+    monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
+
+    def fake_ladder(*a, **kw):
+        seen["request_timeout"] = kw.get("request_timeout")
+        return []
+
+    monkeypatch.setattr(R, "run_ladder", fake_ladder)
+    R.main(["--model", "m", "--grid", "160000", "--no-preload",
+            "--sampling-profile", "production", "--request-timeout", "1234"])
+    assert seen["request_timeout"] == 1234
+
+
+def test_request_timeout_default_is_derived_not_sdk(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
+    monkeypatch.setattr(R, "MemorySampler", FakeSampler)
+    monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
+
+    def fake_ladder(*a, **kw):
+        seen["request_timeout"] = kw.get("request_timeout")
+        return []
+
+    monkeypatch.setattr(R, "run_ladder", fake_ladder)
+    R.main(["--model", "m", "--grid", "160000", "--no-preload",
+            "--sampling-profile", "production"])
+    assert seen["request_timeout"] >= 7200.0
+
+
+def test_out_tag_changes_filenames(tmp_path, monkeypatch):
+    monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
+    monkeypatch.setattr(R, "MemorySampler", FakeSampler)
+    monkeypatch.setattr(R, "RESULTS", str(tmp_path))
+    monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
+    monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
+    rc = R.main(["--model", "m", "--grid", "160000", "--no-preload",
+                "--sampling-profile", "production", "--out-tag", "t07"])
+    assert rc == 0
+    assert not os.path.exists(os.path.join(tmp_path, "m", "capacity_retrieval.json"))
+    assert not os.path.exists(os.path.join(tmp_path, "m", "capacity_ladder.jsonl"))
+    assert not os.path.exists(os.path.join(tmp_path, "m", "capacity_ladder.manifest.json"))
+    assert os.path.exists(os.path.join(tmp_path, "m", "capacity_retrieval.t07.json"))
+    assert os.path.exists(os.path.join(tmp_path, "m", "capacity_ladder.t07.jsonl"))
+    assert os.path.exists(os.path.join(tmp_path, "m", "capacity_ladder.t07.manifest.json"))

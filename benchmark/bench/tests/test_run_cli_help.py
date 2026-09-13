@@ -70,3 +70,37 @@ def test_generate_help_documents_reasoning_effort():
     """M24: the effort arm must be launchable ONLY through a provenance-tracked flag."""
     r = _help("generate")
     assert "--reasoning-effort" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# M41 T4: the two new-axis ladder CLIs must import and print --help without a server,
+# and their now-REQUIRED --sampling-profile must fail loud (exit 2), not silently default.
+# ---------------------------------------------------------------------------
+
+LADDER_MODULES = ["bench.run_retrieval", "bench.run_capacity"]
+
+
+def _module_help(module, *argv):
+    return subprocess.run(
+        [sys.executable, "-m", module, *argv],
+        capture_output=True, text=True,
+        cwd=str(paths.repo_root()),
+        env={"PYTHONPATH": str(paths.BENCHMARK_DIR), "PATH": "/usr/bin:/bin"},
+    )
+
+
+def test_new_ladder_clis_help_exits_clean():
+    for module in LADDER_MODULES:
+        r = _module_help(module, "--help")
+        assert r.returncode == 0, (
+            f"`python -m {module} --help` exited {r.returncode}. stderr:\n{r.stderr[-800:]}")
+        assert "Traceback" not in r.stderr, f"`python -m {module} --help` traceback:\n{r.stderr[-800:]}"
+        assert "--sampling-profile" in r.stdout
+
+
+def test_new_ladder_clis_require_sampling_profile():
+    for module in LADDER_MODULES:
+        r = _module_help(module, "--model", "M", "--no-preload")
+        assert r.returncode == 2, (
+            f"`python -m {module} --model M --no-preload` (no profile) must exit 2, "
+            f"got {r.returncode}. stderr:\n{r.stderr[-400:]}")

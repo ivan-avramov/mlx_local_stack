@@ -50,7 +50,8 @@ def _run_main(monkeypatch, tmp_path, canned, extra_argv=None):
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
     monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_retrieval_ladder", lambda *a, **kw: canned)
-    argv = ["--model", "mymodel", "--grid", "8000,32000", "--no-preload"]
+    argv = ["--model", "mymodel", "--grid", "8000,32000", "--no-preload",
+            "--sampling-profile", "production"]
     if extra_argv:
         argv += extra_argv
     return R.main(argv)
@@ -113,7 +114,8 @@ def test_params_via_params_for(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
     monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_retrieval_ladder", fake_ladder)
-    R.main(["--model", "Qwen3.6-27B-UD-MLX-6bit", "--grid", "8000,32000", "--no-preload"])
+    R.main(["--model", "Qwen3.6-27B-UD-MLX-6bit", "--grid", "8000,32000", "--no-preload",
+            "--sampling-profile", "production"])
     expected = params_for("Qwen3.6-27B-UD-MLX-6bit")
     assert captured["params"]["thinking_budget"] == expected["thinking_budget"]
     assert captured["params"]["max_tokens"] == expected["max_tokens"]
@@ -133,5 +135,5 @@ def test_thinking_budget_override(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "await_model_pid", lambda: None)
     monkeypatch.setattr(R, "run_retrieval_ladder", fake_ladder)
     R.main(["--model", "Qwen3.6-27B-UD-MLX-6bit", "--grid", "8000", "--no-preload",
-            "--thinking-budget", "4096"])
+            "--sampling-profile", "production", "--thinking-budget", "4096"])
     assert captured["params"]["thinking_budget"] == 4096

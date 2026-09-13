@@ -175,6 +175,27 @@ def main(argv=None) -> int:
     with open(os.path.join(out_dir, f"{stem}.json"), "w") as f:
         json.dump(result, f, indent=2)
 
+    # Provenance beside the ladder (same pattern as run_retrieval.py T1.6 / run_capacity.py):
+    # best-effort, never lose a finished ladder to a provenance failure.
+    try:
+        from . import provenance
+        # F4 (review defect 10): overrides = CLI deltas only, not the full resolved params
+        # dict -- a run with only --temp 0.7 must not report top_p/top_k/etc as overridden.
+        manifest_overrides = {k: v for k, v in (
+            ("max_tokens", args.max_tokens),
+            ("thinking_budget", args.thinking_budget),
+            ("temperature", args.temp),
+        ) if v is not None}
+        man = provenance.gather(args.model, profile=args.sampling_profile,
+                                overrides=manifest_overrides,
+                                runtime={"probe": "reasoning", "grid": list(grid),
+                                         "samples": args.samples,
+                                         "chain_len": args.chain_len})
+        with open(os.path.join(out_dir, f"{stem}.manifest.json"), "w") as f:
+            json.dump(man, f, indent=2)
+    except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
+        print(f"[reasoning] WARNING: manifest not written: {e}", flush=True)
+
     print(f"[reasoning] REASONING_EFFECTIVE_CTX={reasoning_effective_ctx}", flush=True)
     return 0
 

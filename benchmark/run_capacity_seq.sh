@@ -8,7 +8,7 @@ cd "$(dirname "$0")"   # -> benchmark/ (where the `bench` package lives)
 
 for m in "$@"; do
   echo "=== START $m $(date '+%F %T') ==="
-  if uv run python -m bench.run_capacity --model "$m"; then
+  if uv run python -m bench.run_capacity --model "$m" --sampling-profile deployed; then
     echo "=== DONE $m $(date '+%F %T') ==="
   else
     echo "=== FAILED $m (exit $?) $(date '+%F %T') ==="

@@ -267,9 +267,11 @@ suspect co-residency before blaming the model).
 
 **Command:**
 ```
-cd benchmark && uv run python -m bench.run_capacity --model <full-registry-name> \
-    [--grid 160000,192000,224000,256000] [--gate-gb 46.0]
+cd benchmark && uv run python -m bench.run_capacity --model <full-registry-name> --sampling-profile deployed \
+    [--grid 160000,192000,224000,256000] [--gate-gb 46.0] [--out-tag <tag>] [--request-timeout 7200]
 ```
+(`--sampling-profile` is REQUIRED since 2026-09-13 (O36; M41 tooling) — `deployed` for every new axis; `--out-tag`
+writes `capacity_retrieval.<tag>.json` and friends; `--request-timeout` is the DERIVED per-request bound, O41.)
 Grid defaults to `160_000, 192_000, 224_000, 256_000`; gate defaults to `46.0` GB. Writes
 `results/<model>/capacity_retrieval.json`.
 
@@ -627,13 +629,14 @@ context" number.
 ### Retrieval-depth ladder
 
 ```
-cd benchmark && uv run python -m bench.run_retrieval --model <full-registry-name> \
-    [--grid <ctx-list>] [--samples N] [--threshold 0.85] \
+cd benchmark && uv run python -m bench.run_retrieval --model <full-registry-name> --sampling-profile deployed \
+    [--grid <ctx-list>] [--samples N] [--threshold 0.85] [--out-tag <tag>] [--request-timeout 9600] \
     [--max-tokens N] [--thinking-budget N] [--no-preload]
 ```
+(`--sampling-profile` REQUIRED since 2026-09-13, O36; `--request-timeout` default 9600 s, DERIVED, O41.)
 Five distinct codes planted at depths {0.1, 0.3, 0.5, 0.7, 0.9}; the model must list all of
 them; accuracy = fraction returned, with per-depth breakdown. This is a full CURVE, not a
-climb-to-cliff — a mid-context dip does not stop the ladder (only a hard OOM does). Writes
+climb-to-cliff — a mid-context dip does not stop the ladder. CORRECTED 2026-09-13 (O41, M41 tooling): a transport failure (timeout/refused/OOM-disconnect) at any trial ABORTS the whole run with a traceback and writes no output — it is never graded as a miss; re-run after fixing the cause. Writes
 `results/<model>/retrieval.json` with a headline `retrieval_effective_ctx`.
 
 ### Reasoning-depth ladder (vartrack — variable-tracking multi-hop)

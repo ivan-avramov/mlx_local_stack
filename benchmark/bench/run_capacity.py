@@ -1,6 +1,6 @@
 """CLI: run the capacity+retrieval ladder for one model on the box under test.
 
-  cd benchmark && uv run python -m bench.run_capacity --model Qwen3.6-27B-UD-MLX-6bit
+  cd benchmark && uv run python -m bench.run_capacity --model Qwen3.6-27B-UD-MLX-6bit --sampling-profile deployed
 
 Writes benchmark/results/<model>/capacity_retrieval.json (+ capacity_ladder.jsonl)."""
 import argparse
@@ -9,7 +9,7 @@ import os
 
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, await_model_pid, system_used_gb
-from .model_params import params_for
+from .model_params import params_for, profile_names
 from .capacity_ladder import run_ladder, DEFAULT_GRID, GATE_GB
 from .scorecard import capacity_retrieval_scorecard
 
@@ -30,6 +30,14 @@ def main(argv=None) -> int:
     ap.add_argument("--model", required=True)
     ap.add_argument("--grid", default=",".join(str(g) for g in DEFAULT_GRID))
     ap.add_argument("--gate-gb", type=float, default=GATE_GB)
+    ap.add_argument("--sampling-profile", required=True, choices=profile_names(),
+                    help="params profile (O36: explicit on every run; 'deployed' for all new axes)")
+    ap.add_argument("--out-tag", default=None,
+                    help="write capacity_retrieval.<tag>.json / capacity_ladder.<tag>.jsonl / "
+                         "capacity_ladder.<tag>.manifest.json instead of the untagged files")
+    ap.add_argument("--request-timeout", type=float, default=7200.0,
+                    help="per-request HTTP timeout, DERIVED not SDK-default (O41): 262K "
+                         "prefill precedent ~2200 s, with headroom")
     ap.add_argument("--no-preload", action="store_true")
     args = ap.parse_args(argv)
     grid = tuple(int(x) for x in args.grid.split(","))
@@ -51,11 +59,12 @@ def main(argv=None) -> int:
     # Build production sampling params, then bound generation for the memory probe.
     # The gate is the MLX prefill spike, which is independent of decode length;
     # we don't pay for a long thinking decode here.
-    params = {**params_for(args.model), "max_tokens": 256, "thinking_budget": 256}
+    params = {**params_for(args.model, profile=args.sampling_profile),
+             "max_tokens": 256, "thinking_budget": 256}
 
     records = run_ladder(driver, args.model, cpt, idle_baseline_gb=idle_baseline,
                          model_pid=model_pid, params=params, grid=grid, gate_gb=args.gate_gb,
-                         sampler_factory=MemorySampler)
+                         sampler_factory=MemorySampler, request_timeout=args.request_timeout)
     for r in records:
         mp = r.get("server_peak_gb")
         mp = round(mp, 1) if isinstance(mp, (int, float)) else mp
@@ -69,10 +78,12 @@ def main(argv=None) -> int:
     sc["idle_baseline_gb"] = round(idle_baseline, 2)
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
-    with open(os.path.join(out_dir, "capacity_ladder.jsonl"), "w") as f:
+    cl_stem = "capacity_ladder" if not args.out_tag else f"capacity_ladder.{args.out_tag}"
+    cr_stem = "capacity_retrieval" if not args.out_tag else f"capacity_retrieval.{args.out_tag}"
+    with open(os.path.join(out_dir, f"{cl_stem}.jsonl"), "w") as f:
         for r in records:
             f.write(json.dumps(r) + "\n")
-    with open(os.path.join(out_dir, "capacity_retrieval.json"), "w") as f:
+    with open(os.path.join(out_dir, f"{cr_stem}.json"), "w") as f:
         json.dump(sc, f, indent=2)
     # Provenance beside the ladder (operator-approved 2026-08-17): before this, NO capacity
     # artifact in the corpus carried a manifest, so every published memory-gate number had
@@ -84,12 +95,12 @@ def main(argv=None) -> int:
         # own results root and therefore bypassed the RESULTS override — the full test suite
         # was writing real files into benchmark/results/ on every run until the D3 worker
         # caught it, 2026-08-17).
-        man = provenance.gather(args.model, profile="production",
+        man = provenance.gather(args.model, profile=args.sampling_profile,
                                 overrides={"max_tokens": 256, "thinking_budget": 256},
                                 runtime={"probe": "capacity_ladder", "grid": list(grid),
                                          "gate_gb": args.gate_gb,
                                          "idle_baseline_gb": round(idle_baseline, 2)})
-        with open(os.path.join(out_dir, "capacity_ladder.manifest.json"), "w") as f:
+        with open(os.path.join(out_dir, f"{cl_stem}.manifest.json"), "w") as f:
             json.dump(man, f, indent=2)
     except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
         print(f"[capacity] WARNING: manifest not written: {e}", flush=True)

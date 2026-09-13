@@ -14,6 +14,33 @@ FILLER = "The quick brown fox jumps over the lazy dog near the riverbank at suns
 REASONING_GRID = (8000, 16000, 24000, 32000, 48000, 64000)
 
 
+def _draft_from_raw(raw_timings: dict) -> dict | None:
+    """Speculative-decoding engagement counters from `result["raw_timings"]`, or None when
+    the server reports no drafter (draft_kind absent -> suffix/MTP was not engaged)."""
+    if not raw_timings or raw_timings.get("draft_kind") is None:
+        return None
+    return {k: raw_timings.get(k) for k in
+            ("draft_kind", "draft_rounds", "draft_n", "draft_n_accepted")}
+
+
+def _pooled_acceptance(rows: list[dict]) -> float | None:
+    """sum(draft_n_accepted) / sum(draft_n) across rows carrying draft counters, else None."""
+    num = den = 0
+    have = False
+    for r in rows:
+        d = r.get("draft")
+        if d and d.get("draft_n") and d.get("draft_n_accepted") is not None:
+            num += d["draft_n_accepted"]
+            den += d["draft_n"]
+            have = True
+    return round(num / den, 4) if have and den else None
+
+
+def _mean(values: list) -> float | None:
+    vals = [v for v in values if v is not None]
+    return round(sum(vals) / len(vals), 3) if vals else None
+
+
 # ---------------------------------------------------------------------------
 # Context builder
 # ---------------------------------------------------------------------------
@@ -195,7 +222,14 @@ def run_reasoning_ladder(
                 "budget_hit": hit,
                 "decode_tps": result.get("decode_tps"),
                 "wall_s": result.get("wall_s"),
+                "prompt_tokens": result.get("prompt_tokens"),
+                "prefill_s": result.get("prefill_s"),
+                "prefill_tps": result.get("prefill_tps"),
+                "draft": _draft_from_raw(result.get("raw_timings") or {}),
             })
+            print(f"[reasoning] ctx={ctx_len} trial={trial} score={sc} "
+                  f"completion_tokens={ct} budget_hit={hit} "
+                  f"prefill_s={result.get('prefill_s')}", flush=True)
             # Pre-registered deep-rung early stop (M11, 2026-08-30): when the first N deep samples
             # ALL hit the thinking budget, the rung is scored from those N and the rest are skipped.
             if (is_deep and early_stop_budget_hits and len(scores) == early_stop_budget_hits
@@ -213,6 +247,9 @@ def run_reasoning_ladder(
             "budget_hits": budget_hits,
             "early_stop": early_stop,
             "rows": rows,
+            "decode_tps_mean": _mean([r["decode_tps"] for r in rows]),
+            "prefill_s_mean": _mean([r["prefill_s"] for r in rows]),
+            "acceptance_pooled": _pooled_acceptance(rows),
         }
         records.append(rec)
         if on_rung is not None:

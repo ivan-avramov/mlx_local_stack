@@ -60,6 +60,116 @@ def test_ladder_oom_recorded():
     assert recs[1]["fits"] is False and "error" in recs[1]
 
 
+class DraftDriver:
+    """Reports speculative-decoding counters in raw_timings on every completion."""
+    def complete(self, model, messages, params, timeout=3600):
+        found = re.findall(r"is ([A-Z0-9]{8})\.", messages[-1]["content"])
+        return {"content": ", ".join(found),
+                "prompt_tokens": 1000, "prefill_s": 5.0, "prefill_tps": 200,
+                "decode_tps": 9.5, "peak_mem_gb": 30.0,
+                "raw_timings": {"draft_kind": "mtp", "draft_rounds": 2,
+                                "draft_n": 20, "draft_n_accepted": 15}}
+
+
+def test_ladder_draft_and_acceptance_present_when_raw_timings_has_draft():
+    recs = L.run_ladder(DraftDriver(), "m", chars_per_token=4.0, idle_baseline_gb=0.0,
+                        model_pid=99999, params=_PARAMS, grid=(160000,),
+                        sampler_factory=FakeSampler)
+    assert recs[0]["draft"] == {"draft_kind": "mtp", "draft_rounds": 2,
+                                "draft_n": 20, "draft_n_accepted": 15}
+    assert recs[0]["acceptance"] == round(15 / 20, 4)
+
+
+def test_ladder_draft_and_acceptance_none_when_no_raw_timings():
+    recs = L.run_ladder(FakeDriver([30.0]), "m", chars_per_token=4.0, idle_baseline_gb=0.0,
+                        model_pid=99999, params=_PARAMS, grid=(160000,),
+                        sampler_factory=FakeSampler)
+    assert recs[0]["draft"] is None
+    assert recs[0]["acceptance"] is None
+
+
+def test_ladder_oom_rung_has_draft_and_acceptance_none():
+    class OOMDriver:
+        def complete(self, *a, **k):
+            raise RuntimeError("HTTP Error 500: Internal Server Error")
+    recs = L.run_ladder(OOMDriver(), "m", chars_per_token=4.0, idle_baseline_gb=0.0,
+                        model_pid=99999, params=_PARAMS, grid=(160000,),
+                        sampler_factory=FakeSampler)
+    assert recs[0]["fits"] is False
+    assert recs[0]["draft"] is None
+    assert recs[0]["acceptance"] is None
+
+
+# ---------------------------------------------------------------------------
+# M41 FIX1 F1: one progress line per rung (review defect 1)
+# ---------------------------------------------------------------------------
+
+def test_ladder_prints_one_progress_line_per_rung(capsys):
+    L.run_ladder(FakeDriver([30.0, 33.0, 36.0, 40.0]), "m", chars_per_token=4.0,
+                 idle_baseline_gb=0.0, model_pid=99999, params=_PARAMS,
+                 sampler_factory=FakeSampler)
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if ln.startswith("[capacity] rung ")]
+    assert len(lines) == 4
+    assert "ctx=160000" in lines[0]
+    assert "server_peak_gb=" in lines[0]
+    assert "fits=" in lines[0]
+    assert "prefill_s=" in lines[0]
+    assert "error=" in lines[0]
+
+
+def test_ladder_prints_progress_line_on_error_rung(capsys):
+    class OOMDriver:
+        def complete(self, *a, **k):
+            raise RuntimeError("HTTP Error 500: Internal Server Error")
+    L.run_ladder(OOMDriver(), "m", chars_per_token=4.0, idle_baseline_gb=0.0,
+                model_pid=99999, params=_PARAMS, grid=(160000,),
+                sampler_factory=FakeSampler)
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if ln.startswith("[capacity] rung ")]
+    assert len(lines) == 1
+    assert "error=RuntimeError" in lines[0]
+
+
+# ---------------------------------------------------------------------------
+# M41 FIX1 F2: request_timeout threading + error_kind on the OOM/disconnect row
+# ---------------------------------------------------------------------------
+
+def test_ladder_request_timeout_forwarded_to_driver():
+    seen = []
+
+    class TimeoutRecordingDriver:
+        def complete(self, model, messages, params, timeout=3600):
+            seen.append(timeout)
+            return {"content": "", "prompt_tokens": 1000, "prefill_s": 5.0,
+                    "prefill_tps": 200, "decode_tps": 9.5, "peak_mem_gb": 30.0}
+
+    L.run_ladder(TimeoutRecordingDriver(), "m", chars_per_token=4.0,
+                 idle_baseline_gb=0.0, model_pid=99999, params=_PARAMS,
+                 grid=(160000,), sampler_factory=FakeSampler, request_timeout=1234)
+    assert seen == [1234]
+
+
+def test_ladder_error_kind_timeout():
+    class TimeoutDriver:
+        def complete(self, *a, **k):
+            raise TimeoutError("timed out")
+    recs = L.run_ladder(TimeoutDriver(), "m", chars_per_token=4.0, idle_baseline_gb=0.0,
+                        model_pid=99999, params=_PARAMS, grid=(160000,),
+                        sampler_factory=FakeSampler)
+    assert recs[0]["error_kind"] == "timeout"
+
+
+def test_ladder_error_kind_oom_or_disconnect():
+    class OOMDriver:
+        def complete(self, *a, **k):
+            raise RuntimeError("HTTP Error 500: Internal Server Error")
+    recs = L.run_ladder(OOMDriver(), "m", chars_per_token=4.0, idle_baseline_gb=0.0,
+                        model_pid=99999, params=_PARAMS, grid=(160000,),
+                        sampler_factory=FakeSampler)
+    assert recs[0]["error_kind"] == "oom_or_disconnect"
+
+
 def test_ladder_params_forwarded_to_driver():
     """params dict is forwarded verbatim to driver.complete."""
     received = []
