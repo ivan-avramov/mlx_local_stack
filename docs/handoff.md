@@ -1,29 +1,27 @@
 # Handoff — 2026-09-13 (M43 upstream integration RUNNING; M40 + M41 COMPLETE)
 
 Rewritten in place. Phase 1 closed (B ladder C57, C ladder C70). Phase 2: **M40 COMPLETE** (both picks certified
-predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in the shipped ON state). No campaign benchmark is armed; isolated integration and baseline tests are running. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pick A).
+predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in the shipped ON state). M43 compatibility smokes have completed; numerical attribution and capacity validation remain in progress. Inspect the live-state files below before launching anything. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pick A).
 
 ## Active integration — C75 (operator approved P359–P363)
 
 - Specification: `docs/specs/upstream-2026-09-13.md`; M43 in PLAN precedes M42.
-- Original forks/environments unchanged. MLX-VLM integration branch `sync/upstream-2026-09-13` lives at
-  `$STACK_WORKDIR/upstream/2026-09-13/mlx-vlm`; upstream target `45d6e125`. Merge conflicts being resolved.
-- MLX-Serve integration worktree is detached at `0ccc684`; upstream already incorporated.
-- Environment: `$STACK_WORKDIR/upstream/2026-09-13/venv` (MLX/Metal 0.32.2); baseline inventories and registry
-  patch in `evidence/`. Full baseline suite log: `logs/baseline-tests.log`; supervisor records exit status.
+- Original stack submodules/serving environment unchanged. MLX-VLM integration branch `sync/upstream-2026-09-13` lives at
+  `$STACK_WORKDIR/upstream/2026-09-13/mlx-vlm`; upstream target `45d6e125`. Integration commit `c5a6f97b` is unit/audit validated; both models pass old/new five-case smokes. Summary: `docs/upstream-integration-2026-09-13.md`.
+- MLX-Serve upstream was already incorporated; standing-rule documentation commit `f8f1df4` is local and validated (75 tests).
+- Environments: `venv` (unit) and `runtime-venv` (serving pins except MLX/Metal 0.32.2), both under the integration directory. Both full suites pass: 5357 tests, 10 skips, 149 subtests. Eight source audits pass; cold code/cache reviews complete.
+- Live smoke state: `$STACK_WORKDIR/upstream/2026-09-13/{active-router,active-smoke}.json`; inspect PIDs before any launch. All four primary smoke arms and one old-runtime repeat have finished. JSON reasoning differs while final answers match; old-source/new-MLX control is next. Daemon/summary under `smokes/<runtime>/<model>/`. Runner does not resume/overwrite. Raw old/new smoke data and worker/source/version evidence remain separate.
+- Isolated stack-validation clone checks out integration commits for truthful driver provenance; original stack submodules and serving environment remain unchanged.
 - Approved next: integration audits/full suite/cold review, five-item real-model smokes, new-runtime capacity
   on both picks, M42 fp16 capacity-first, D14 and cosmetic cleanup. Expanded quality/judge waves remain gated.
 - No push authorized. No production environment/submodule activation until validation.
-- Discussion numbering continues at P366; C75 RULED; next C id C76.
+- Discussion numbering continues at P389; C75 RULED; C76 OPEN (M41 draw-count correction); next C id C77.
 
 ## Resume checklist
 
-1. **Box state**: expect NOTHING running (`pgrep -fl 'mlx_vlm.server|mlx-serve|run.py|bench.run_'` → empty). The
-   M41 runner exited cleanly at 14:59 (worker unloaded, 0 listeners). Daily-driver router: start per AGENTS.md if
-   the operator wants the stack up (it is down).
+1. **Box state**: M43 owns isolated validation processes as recorded above; inspect PIDs and ports before acting. M41 exited cleanly at 14:59. The daily-driver stack remains down; its startup is not part of C75.
 2. `git status`: `main_models.yaml` carries intentional local-path overrides — NEVER stage it from the worktree
-   (HEAD-blob technique; `docs/qualify-a-model.md`). NOTE: the worktree copy predates the two `# CERTIFIED M40`
-   comment lines at HEAD (comments only; harmless). No untracked result files should remain.
+   (HEAD-blob technique; `docs/qualify-a-model.md`). The two committed M40 comment blocks have been restored locally. M43 documentation and evidence may be pending a coherent checkpoint commit.
 3. Unpushed: `git log --oneline origin/main..main`. Push ONLY on explicit in-turn approval.
 4. C75 approves the integration and bounded resumption above. The previous checkpoint decisions below are retained as context; P354/P355/D14/P356 now have a go within C75 scope.
 
@@ -57,7 +55,7 @@ M44 in PLAN: full audit of all operator-published Hugging Face models against lo
 OFF decode collapses; prefill, not memory, is the depth-usability limit. Files `benchmark/results/<pick>/
 {capacity_retrieval,retrieval,reasoning}.m41on.*` (+ manifests, provenance; data commit 2d09326).
 
-## Next: M42 KV-lever OFAT on pick A (PLAN row; needs a go)
+## Next: M42 KV-lever OFAT on pick A (capacity-first approved C75)
 
 Prior from M41: fp16 KV on the 16 full-attention layers ≈ +12 GB at 262144 → EXPECTED to fail the 46 GB gate at the
 cap. Recommended shape: (1) fp16 peak ladder first (131K/197K/262K, one prefill each — minutes) with a pre-registered
@@ -88,4 +86,5 @@ B (C57): 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, 2nd `Qwen3.8-27B-ml
 
 ## Bookkeeping
 
-- Pre-existing unrelated lint failure: `test_no_bare_distill_shorthand[qualify-a-model.md]` (docs debt, not touched).
+- P356 cosmetic shorthand lint was corrected in `a45dc26`; local registry comments restored without staging local paths.
+- C76 remains OPEN: raw M41 reasoning rows contain 39 draws; older summaries say 42. D14 uses the verified 39 and flags the discrepancy.

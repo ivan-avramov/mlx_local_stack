@@ -2194,3 +2194,8 @@ table above. The headline gaps:
 | **`docs/PLAN.md`** | the plan: the two decisions, the model field, the ordered work queue |
 | **`docs/handoff.md`** | the ONE handoff — last session's narrative |
 | **`AGENTS.md`** | rules, gates, measurement discipline, traps |
+
+
+## 2026-09-13 — M43 paired runtime compatibility screen
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` and `Qwen3.8-27B-mlx-uniform-4bit` pass all five fixed cases on original and integrated runtimes: correctness/convergence, executable Python, JSON, native tool continuation and vision. MTP counters are positive. One explicit third-turn control reuses 1839 tokens. JSON reasoning changes for both models while final answers match; the original-runtime repeat reproduces the first model's six responses. Attribution control and capacity checks remain pending. This is a compatibility screen, not statistical equivalence or a benchmark ranking sample. No B/C ladder movement is supported. Recommendation: preserve deployed runtime pending validation and a scoped decision on affected quality evidence. [Report](upstream-integration-2026-09-13.md); [evidence](../benchmark/results/upstream_2026-09-13_smokes.json).
