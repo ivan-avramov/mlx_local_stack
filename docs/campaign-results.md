@@ -1,5 +1,49 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-12 — M38 length-controlled re-analysis (P342, zero GPU): uniform-over-mixed is NOT established at equal length; the rest of the C order is
+
+Question: how much of the judge-panel order is "writes more"? Method (`benchmark/bench/judge_length_diag.py`,
+output `benchmark/results/judge_c_v1/length_adjusted.json`): the same 380 candidate pairs and 2,460
+verdicts, response length = characters of the judged answer; (1) panel preference per model pair split by
+whether the row model was the SHORTER answer; (2) Bradley–Terry strengths with and without a log-length-ratio
+covariate, panel and per judge; (3) item-cluster bootstrap (B=300) of the length-adjusted uniform-minus-mixed
+strength.
+
+**Finding 1 — the top pair is perfectly confounded.** In all 38 `Qwen3.8-27B-mlx-uniform-4bit` vs
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` items the uniform answer was the longer one (there is no <!-- allow-shorthand -->
+"uniform shorter" stratum at all), so the raw 0.684 preference cannot separate model identity from length.
+
+**Finding 2 — with a length covariate the uniform's edge is inconclusive.** Length coefficient +1.00 per <!-- allow-shorthand -->
+log-ratio (a 2× longer answer doubles the odds). Bradley–Terry strengths (NVIDIA-Nemotron = 0): <!-- allow-shorthand -->
+
+| model | raw | length-adjusted |
+|---|---:|---:|
+| `Qwen3.8-27B-mlx-uniform-4bit` | +4.03 | +3.58 |
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | +3.28 | +3.33 |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | +1.82 | +1.88 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | +1.07 | +0.87 |
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | 0 | 0 |
+
+Adjusted uniform − mixed = +0.25, 95 % item-bootstrap CI [−0.76, +0.91], P(uniform > mixed | equal length)
+= 0.56 — **inconclusive**. Per judge, the two Anthropic judges keep the uniform ahead after adjustment <!-- allow-shorthand -->
+(+0.26, +0.46) while the GPT judge puts the mixed ahead (−0.35) with a length coefficient of −0.30 (it does
+not reward length). The full adjusted order reproduces in 69 % of resamples; the disagreement is entirely the
+top pair.
+
+**Finding 3 — the rest of the order is robust to length.** The mixed beats `Ornith-1.0-35B-mlx-uniform-4bit`
+even when it is the shorter answer (0.70, n=15) and beats the other two at ≥0.95 regardless of stratum; both
+`Qwen3.8-27B` checkpoints keep ≥0.88 adjusted margins over the rest; the adjusted gap between the mixed and <!-- allow-shorthand -->
+`Ornith-1.0-35B-mlx-uniform-4bit` is +1.45 (odds ≈4.3). The only other length-sensitive pair is
+`Ornith-1.0-35B-mlx-uniform-4bit` vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (0.52 when Ornith is shorter, n=24; <!-- allow-shorthand -->
+0.86 when longer, n=14) — already the weakest raw result (Holm p 0.031).
+
+**Implication (filed as C70, operator decision)**: C69's 1st/2nd is the one ordering the panel does not
+support at equal length. At equal length the two `Qwen3.8-27B` checkpoints are equivalent within this <!-- allow-shorthand -->
+design's power; the mixed checkpoint is 0.6× tokens/task, 0.7× latency, passes the vision gate 20/20 vs
+19/20, and is already the B first pick (one resident model for both roles). Recommendation: swap to mixed
+1st / uniform 2nd, with the note that the uniform is the pick when the operator wants the longer, more <!-- allow-shorthand -->
+elaborated answer by default. The C ladder below 2nd is unaffected.
+
 ## 2026-09-12 — M38 judge panel COMPLETE — three-judge gate PASS; C ranking (all ten pairs decisive)
 
 C68 stage 2 (operator "go" 2026-09-12): Claude Opus 5 judged the remaining 760 candidate packets as <!-- allow-shorthand -->
