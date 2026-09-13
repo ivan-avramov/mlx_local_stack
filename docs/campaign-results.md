@@ -81,7 +81,9 @@ materialised in `pairs_full.jsonl`. (3) Items are 38 not 40 because the design u
 items; the two dropped prompts are exactly the runaways of the fourth-placed model, so their
 exclusion cannot have helped the top of the order.
 
-**C ladder implication (recommendation, NOT applied — operator approval required, filed as C69)**:
+**C69 RULED 2026-09-12 (operator took the proposal below as written; registry/README/AGENTS.md updated in the same commit). Original recommendation text follows.**
+
+**C ladder implication (recommendation, filed as C69)**:
 the panel is the role's real axis and it separates the contenders where Math500 (93–99 % strict) and
 the vision gate (all four seeing models pass) could not. Proposed C ladder: 1st
 `Qwen3.8-27B-mlx-uniform-4bit` (t0.6, medium, certified MTP; vision gate 19/20; Math500 99 %
