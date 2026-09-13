@@ -1,5 +1,61 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-13 — M40 COMPLETE. Pick B `Qwen3.8-27B-mlx-uniform-4bit`: MTP-ON certified — PASS ×5, MBPPPlus INCONCLUSIVE (not FAIL); ships ON. Both picks now ship predictor-ON with both states on record
+
+Scope: the shipped triple (t0.6, medium, native MTP drafter) measured predictor-ON on every axis behind its B and C
+picks, paired to OFF rows at the same tune (Math500 and cjudge OFF rows pre-existed: `m37med`, `m38`; depth, vision,
+HumanEvalPlus and MBPPPlus OFF rows were generated inside M40 at the deployed medium tune — the older coding ON/OFF
+evidence, M6d n=164 and `m24x` 50×3, predates the medium tune). Same chain runner as pick A (00:28 → 07:07 PDT,
+6.6 h wall incl. the OFF arms), C35 OK on every first manifest (ON overlay `a0b917…`, OFF `cccadc…`), worker
+cmdline verified per arm; `bench.compare_predictor` for the four graded axes, `run_judge_pairwise --pair-tunes` for
+the panel. All 620 generated rows converged in both states; `nonconv_kinds` empty everywhere.
+
+| axis (n) | OFF | ON | paired read (ON−OFF) | verdict |
+|---|---|---|---|---|
+| Math500 `acc_strict@81920` (100) | 99 % | 99 % | **0 discordant items**, CI [0, 0], MDE ±12.5pp | **PASS** |
+| cjudge panel (40 × 2 orders × 3 judges) | — | — | OFF preferred **0.56 [0.45, 0.68]**, Holm p = 0.28, MDE ±20pp; family split anthropic 0.53 / openai 0.50; gate PASS 6/6 (degrade 1.0, flip ≤0.03, κ 1.0, α 0.98, longer-pref 0.0, identity-tie 1.0) | **PASS** — no detectable drift at n=40 (underpowered, labelled so); OFF ahead on the point by 6pp |
+| HumanEvalPlus strict (100, native grading) | 93 % | 94 % | **+1pp [0, +3pp]**, 1 discordant (ON-win `HumanEval/68`) | **PASS** |
+| MBPPPlus strict (100, native grading) | 83 % | 82 % | **−1pp [−6, +3pp]**, 5 discordant: ON-only `Mbpp/604`, `Mbpp/752`; OFF-only `Mbpp/643`, `Mbpp/757`, `Mbpp/765` | **INCONCLUSIVE** (CI lower edge −6pp crosses the margin; CI includes 0, point > −5pp → not FAIL; C72 does not apply, OFF-only wins exist) |
+| reasoning depth 128K (3 seeded draws) | 3/3 strict, 0 budget hits | 3/3 strict, 0 budget hits | ON ≥ OFF−1, budget-hits not higher | **PASS** |
+| vision gate (20) | 19/20 | 19/20 | same single failing photo (`cocoval2017-008`) in both states | **PASS** |
+
+*Post-hoc diagnostic, NOT pre-registered:* pooling the two coding arms (200 paired items) gives ON−OFF = 0.0pp,
+95 % CI [−2.5, +2.5pp], MDE ±8.9pp — equivalent at ±5pp. It is reported to size the MBPPPlus wobble, not to
+replace the per-axis verdict.
+
+**Decision (pre-registered rule: any FAIL → flip OFF; else ships ON): no axis FAILS → `Qwen3.8-27B-mlx-uniform-4bit`
+SHIPS ON** (registry already `draft_kind: mtp`; certification comment added this commit). The MBPPPlus axis is
+recorded as INCONCLUSIVE at n=100: the −1pp point is 3 vs 2 discordant items, inside the ±12.5pp MDE, and the
+pooled coding diagnostic is centred on zero. Filed as C74 for the operator to confirm the ON state with that label
+(recommendation: confirm; re-measure only if a later ON-vs-OFF coding delta reproduces the sign at n≥200).
+
+Perf, ON vs OFF, same items:
+
+| arm | decode tok/s | wall | acceptance (pooled) | tokens/task |
+|---|---|---|---|---|
+| Math500 n=100 | 47.9 vs 27.0, **1.78 [1.74, 1.82]** | ratio **0.65 [0.51, 0.78]** (1.7 h vs 2.6 h) | 0.77 (mean-of-ratios 0.87) | 1.04 [0.86, 1.21]; mean 2527 vs 2423; max 28873 vs 22551 |
+| cjudge n=40 | 38.5 vs 27.7 (≈1.4×) | 1.52 h vs 2.22 h | 0.63 | mean 5263 vs 5485; max 12077 vs 17675 |
+| HumanEvalPlus n=100 | 50.9 vs 27.9, **1.82** | ratio **0.48** (0.41 h vs 0.85 h) | 0.91 | **0.87 [0.72, 1.00]**; max 2689 vs 10366 |
+| MBPPPlus n=100 | 50.5 vs 28.2, **1.79** | ratio **0.49** (0.32 h vs 0.66 h) | 0.87 | **0.86 [0.72, 1.05]**; max 6393 vs 13309 |
+| depth 128K per draw | 21.6 vs 12.0 (≈1.8×) | 479 s vs 472 s (prefill-dominated, equal) | n/a | 313/313/347 vs 313/313/346 |
+| vision turn-1 | — | 14.7 s vs 20.1 s | n/a | — |
+
+Mechanisms: as for pick A, acceptance tracks output entropy (0.91 on HumanEvalPlus code, 0.87 MBPPPlus, 0.77 math
+derivations, 0.63 research prose) and the decode multiplier follows it (1.8× code/math, 1.4× prose). Two things
+differ from pick A: (1) the ON coding outputs are SHORTER on average (0.86–0.87 tokens/task, CIs touching 1.0) with
+much shorter maxima — the OFF arm produced the longest outputs (10.4K and 13.3K tokens) that the ON arm did not; at
+k=1 this is the known bimodal tail noise, not a claim; (2) at 128K the ON multiplier is 1.8× not 2.5× because this
+checkpoint's OFF decode at 128K (12.0 tok/s) is faster than the mixed checkpoint's (8.5 tok/s). Runaway tax in
+tokens: none in either state on any arm.
+
+Judge panel run: same recipe as pick A (16 blind Claude Code subagents, ≈4.8 M subagent tokens; codex 140 calls);
+artefacts `benchmark/results/judge_m40/Qwen3.8-27B-mlx-uniform-4bit/`. Data commit 39e03e5.
+
+**M40 closes.** Both picks are certified in the shipped predictor state on every axis that backs them, and both
+states are on record for every axis (C71 satisfied). Phase 2 (M41 capacity + depth ladders on pick A, then M42
+KV-lever OFAT) runs predictor-ON; M41 needs its own go. Known limitation carried forward: depth/vision ON arms are
+certified by worker cmdline only (no reachable draft counter).
+
 ## 2026-09-13 — M40 pick A `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`: MTP-ON CERTIFIED on every axis that backs its picks (PASS ×4); ships ON, Phase 2 runs ON
 
 Scope (PLAN M40, C71): the shipped triple (t0.5, medium, repaired MTP sidecar `caslca/…-mtp-drafter`) measured

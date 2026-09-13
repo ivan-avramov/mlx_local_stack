@@ -1,76 +1,59 @@
-# Handoff — 2026-09-13 ~00:45 PDT (M40 chain LIVE on pick B; pick A CERTIFIED ON)
+# Handoff — 2026-09-13 ~07:30 PDT (M40 COMPLETE; both picks certified predictor-ON; box idle; M41 awaits a go)
 
-Rewritten in place. Phase 1 closed (B ladder C57, C ladder C70). Phase 2: **M40 (MTP-ON certification of both
-picks) is RUNNING unattended** under the reviewed chain runner. **Pick A `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
-is DONE and CERTIFIED ON on all four axes** (entry `docs/campaign-results.md` 2026-09-13; registry comment
-`# CERTIFIED M40 2026-09-13`; data commit 018db56). Pick B `Qwen3.8-27B-mlx-uniform-4bit` started 00:28 PDT.
+Rewritten in place. Phase 1 closed (B ladder C57, C ladder C70). **M40 (MTP-ON certification of both picks) is
+COMPLETE** — queue DONE 2026-09-13 07:07 PDT, runner exited cleanly, no worker/router alive. Entries:
+`docs/campaign-results.md` 2026-09-13 (pick A, pick B). Data commits 018db56 (pick A) and 39e03e5 (pick B);
+registry carries `# CERTIFIED M40 2026-09-13` under both picks' `generation_defaults`.
 
-## Resume checklist (do these FIRST, in order)
+## Resume checklist
 
-1. **Runner alive?** `. ${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh; Q=$STACK_WORKDIR/queue/m40_mtp;
-   ps -o pid,etime,command -p $(cat $Q/queue.pid)` — expect `run.py` (pid 74875, started 2026-09-12 20:58 PDT).
-   If gone: `grep -E 'FATAL|=== M40' $Q/queue.log` — a FATAL preserves state; read the traceback before touching
-   anything. NEVER restart the runner while a `run.py generate`, `vision_gate.py` or `bench.run_reasoning` driver
-   or an `mlx_vlm.server` worker is alive (`pgrep -fl`). The three `=== M40 … DONE ===` lines stamped 20:52–20:57
-   are dry-runs; the live pick A DONE is stamped 2026-09-13 00:28:47.
-2. **Progress**: `grep -vE HEARTBEAT $Q/queue.log | tail -20` (grammar: RUN / C35 check / worker cmdline / PILOT /
-   END / SUMMARY / SCORE / RESULT / WARN / FATAL / `=== M40 <pick> DONE ===` / `=== M40 MTP QUEUE DONE ===`);
-   HEARTBEAT lines with `partial_bytes=0` are normal during a depth arm (the driver writes per completed rung).
-   Pick B order: ON overlay → math500 `m40on` (pilot projected 30 min for 100) → cjudge `m40on` → vision_gate
-   `m40on` → depth `m40on-d128k` → humanevalplus + mbppplus `m40on` → OFF overlay → depth `m40off-d128k` →
-   vision_gate `m40off` → humanevalplus + mbppplus `m40off` → DONE → `=== M40 MTP QUEUE DONE ===`. Verify the exact
-   order from the RUN lines, not from this note.
-3. **Re-arm supervision** — one event Monitor on `$Q/queue.log` (tail -F + `/usr/bin/grep --line-buffered`
-   alternation FATAL/TIMEOUT/WARN/MISMATCH/RESULT/DONE/Traceback/PILOT/`pass count` + a runner-exit loop on the pid
-   + a SELFTEST known-positive echo). Never narrate ticks. The `WARN … no reachable draft/speculative-decode counter`
-   line after every depth/vision arm is the known limitation, not a fault.
-4. `git status`: `main_models.yaml` carries intentional local-path overrides — NEVER stage it from the worktree
+1. **Box state**: expect NOTHING running (`pgrep -fl 'mlx_vlm.server|mlx-serve|run.py|bench.run_'` → empty). The M40
+   runner (pid 74875) is gone; `$STACK_WORKDIR/queue/m40_mtp/queue.log` is the full record (both `=== M40 … DONE ===`
+   lines stamped 2026-09-13 00:28:47 and 07:07:05; the 20:52–20:57 DONE lines are dry-runs). Daily-driver router:
+   start it per AGENTS.md if the operator wants the stack up (M40 left it down).
+2. `git status`: `main_models.yaml` carries intentional local-path overrides — NEVER stage it from the worktree
    (HEAD-blob technique: `git show HEAD:main_models.yaml` → patch → `git hash-object -w` → `git update-index
-   --cacheinfo 100644,<blob>,main_models.yaml`; `docs/qualify-a-model.md`). Pick B rows appear under
-   `benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/*m40on*|*m40off*|*d128k*` as they land — commit them as one
-   `data(bench)` unit at pick B DONE. Provenance jsons carry the worker cmdline with absolute paths: replace
-   `/Users/<u>/…/mlx_local_stack_workdir` → `$STACK_WORKDIR` then `…/mlx_local_stack` → `$STACK_REPO` before staging
-   (piicheck blocks otherwise). The modelnames hook false-positives on the judge key `opus` in machine-written <!-- allow-shorthand -->
-   `gate.json`; commit judge dirs with `--no-verify` after running piicheck by hand (M38 precedent d7f2d8c). <!-- allow-shorthand -->
-5. Unpushed: `git log --oneline origin/main..main`. Push ONLY on explicit in-turn approval.
+   --cacheinfo 100644,<blob>,main_models.yaml`; `docs/qualify-a-model.md`). No untracked result files should remain.
+3. Unpushed: `git log --oneline origin/main..main`. Push ONLY on explicit in-turn approval.
+4. **Open for the operator**: **C74** — confirm pick B `Qwen3.8-27B-mlx-uniform-4bit` ships ON with MBPPPlus labelled
+   INCONCLUSIVE (−1pp [−6,+3], not a FAIL; recommendation CONFIRM). Nothing else blocks.
 
-## Pick B analysis owed at its DONE (pre-registered, PLAN M40 row; mirror the pick A entry)
+## M40 outcome (one line each; full tables in campaign-results)
 
-- `cd benchmark && ../.venv-bench/bin/python -m bench.compare_predictor --model Qwen3.8-27B-mlx-uniform-4bit --bench math500 --tune-a m37med --tune-b m40on`
-  — CHECK FIRST which OFF tune holds pick B's matched Math500 row (`ls benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/math500.*`);
-  the tool refuses unless only `draft_kind` differs — a refusal is a finding. Coding: `--bench humanevalplus` and
-  `--bench mbppplus` with `--tune-a m40off --tune-b m40on`. Read per C72: PASS if CI within ±5pp OR the discordant set
-  has zero OFF-only wins; FAIL if CI excludes 0 on the negative side or point < −5pp; else INCONCLUSIVE (report as such).
-- cjudge: `run_judge_pairwise --models Qwen3.8-27B-mlx-uniform-4bit --pair-tunes m38 m40on --anchors results/judge_c_v1/pairs.jsonl
-  --judges opus sonnet --out results/judge_m40/Qwen3.8-27B-mlx-uniform-4bit --export-packets $STACK_WORKDIR/m40_packets_Qwen3.8-27B-mlx-uniform-4bit --batch-size 20` <!-- allow-shorthand -->
-  (**always pass `--out`** — without it the tool overwrites `results/judge_c_v1/pair_manifest.jsonl`); 16 blind
-  subagents (one per `<judge>/batchNN`, model = the judge; rules inline: read only own packet, write only the named
-  `.verdict.json`, never `manifest.jsonl`); codex in-process in parallel: same command with
-  `--judges codex:gpt-5.6-terra:medium --allow-single-family` and no export flag (nohup, ~35 min for 140 calls);
-  `--ingest-packets <dir>`; `judge_gate --pairs <out>/pair_manifest.jsonl --verdicts <out>/verdicts.jsonl --judges sonnet opus codex:gpt-5.6-terra:medium --out <out>` <!-- allow-shorthand -->
-  (`--out` is a DIRECTORY; it writes `gate.json` + `ranking.json` inside — pass the results dir, not a filename).
-  Read: FAIL only if OFF preferred with Holm p<.05; else "no detectable drift at n=40 (MDE ±20pp)".
-- vision: `vision_gate.m40on.summary.json` vs `.m40off.` (ON ≥16/20 and ≥OFF−2). depth: `reasoning.m40on-d128k.json`
-  vs `m40off-d128k` (strict draws ON ≥ OFF−1 of 3, budget-hits not higher). Perf separately: acceptance from rows'
-  `draft` field (math/cjudge/coding rows only), decode_tps, wall; runaway tax in TOKENS.
-- Decision rule: all pass → pick B ships ON (registry already ON; add `# CERTIFIED M40 <date>` comment via HEAD blob
-  in the SAME commit as the campaign-results entry). Any FAIL → PROPOSE flipping `draft_kind` OFF for pick B; never
-  auto-change. Then README evidence (B row 2 + C row 2 + a paragraph under "### C evidence"), PLAN M40 row → done,
-  open-questions if a decision arises. Then `=== M40 MTP QUEUE DONE ===` closes M40; next is M41 (needs its own go).
+- Pick A `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (t0.5 medium, repaired MTP): PASS ×4 — Math500 +2pp [0,+5]
+  with 0 OFF-only wins (C72 read), judge OFF-pref 0.40 [0.29,0.53] Holm p=.10, depth 128K 3/3 both, vision 20/20 both.
+  Decode ×1.93 math / ×1.5 prose / ×2.5 @128K; tokens/task 1.00. SHIPS ON.
+- Pick B `Qwen3.8-27B-mlx-uniform-4bit` (t0.6 medium, native MTP): PASS ×5 + MBPPPlus INCONCLUSIVE — Math500 0
+  discordant, judge OFF-pref 0.56 [0.45,0.68] Holm p=.28, hep +1pp [0,+3], mbpp −1pp [−6,+3] (pooled coding 0pp
+  [−2.5,+2.5], post-hoc), depth 3/3 both, vision 19/20 both. Decode ×1.8 code+math / ×1.4 prose; tokens/task 0.86–0.87
+  on code. SHIPS ON (C74).
+- Mechanism that transfers: acceptance tracks output entropy (0.91 code → 0.62 prose) and the decode multiplier
+  follows it; quality is state-invariant within MDE on every axis. Verdicts are M5-specific; the mechanism is not.
+- Limitation carried: depth/vision ON arms certified by worker cmdline only (no reachable draft counter).
 
-## Pick A result (for reference; full entry in campaign-results 2026-09-13)
+## Recipe notes learned this session (already in the pick A/B entries; repeated here because they bite)
 
-Math500 99 % ON vs 97 % OFF (+2pp, CI [0,+5], 0 OFF-only wins → PASS by C72; tool says INCONCLUSIVE at the edge);
-judge OFF-pref 0.40 [0.29,0.53] Holm p=.10, gate PASS 6/6; depth 128K 3/3 both; vision 20/20 both. Decode ×1.93
-math (acceptance 0.78), ×1.5 prose (0.62), ×2.5 at 128K; wall ratio 0.55; tokens/task 1.00 [0.81,1.27].
+- `run_judge_pairwise` ALWAYS with `--out <dir>` (default overwrites `results/judge_c_v1/pair_manifest.jsonl` — a
+  dry-run did exactly that; restored from git). `judge_gate --out` is a DIRECTORY.
+- Judge subagent path: export packets (`--export-packets`, `--batch-size 20`) → 16 general-purpose subagents, one per
+  `<judge>/batchNN`, model = judge, blind rules inline → `--ingest-packets` → codex in-process (`--judges
+  codex:gpt-5.6-terra:medium --allow-single-family`, nohup, ~35 min/140 calls) → `judge_gate`. ≈4–5 M subagent
+  tokens per 280 packets. <!-- allow-shorthand -->
+- Provenance jsons carry the worker cmdline with absolute paths → replace `…/mlx_local_stack_workdir` with
+  `$STACK_WORKDIR` THEN `…/mlx_local_stack` with `$STACK_REPO` before staging (piicheck blocks otherwise). The
+  modelnames hook false-positives on the judge key `opus` in machine-written `gate.json`; commit judge dirs with <!-- allow-shorthand -->
+  `--no-verify` after running piicheck by hand (M38 precedent d7f2d8c). <!-- allow-shorthand -->
+- 5-item seeded pilots under-projected the Math500 arms 3.4× on pick B (pilot mean 18 s vs full 61 s): the pilot is a
+  lower bound, as AGENTS.md says. Bounds were never threatened.
 
-## After M40 (Phase 2 queue, PLAN "Phase 2" section)
+## Next (Phase 2 queue, PLAN "Phase 2" section — each arm needs its own explicit go)
 
-M41 capacity + depth ladders on pick A predictor-ON (its first long-context evidence; 256K `mx.get_peak_memory`,
-reasoning + retrieval ladders, decode/prefill per rung) → M42 KV-lever OFAT (fp16 vs turboquant kv4) → D14 transfer
-write-up (zero GPU, parallel). Each arm needs its own explicit go. Candidates screened and dropped 2026-09-13: C73.
+M41 capacity + depth ladders on pick A predictor-ON (its first long-context evidence; 256K `mx.get_peak_memory` on a
+quiet box, reasoning + retrieval ladders, decode/prefill per rung; ~1 day box) → M42 KV-lever OFAT on pick A (fp16 vs
+turboquant kv4) → D14 transfer write-up (zero GPU, can run in parallel). Candidates screened and dropped 2026-09-13
+(C73): `nex-agi/Nex-N2.5-mini`, `Agnes-AI/Agnes-3.0-Flash`.
 
-## Ladder of record
+## Ladder of record (unchanged by M40)
 
 B (C57): 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, 2nd `Qwen3.8-27B-mlx-uniform-4bit`, 3rd
 `Ornith-1.0-35B-mlx-uniform-4bit`, 4th `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. C (C70, provisional): 1st
@@ -79,5 +62,5 @@ B (C57): 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, 2nd `Qwen3.8-27B-ml
 
 ## Bookkeeping
 
-- Next discussion point P354; next C id C74.
+- Next discussion point P354; next C id C75.
 - Pre-existing unrelated lint failure: `test_no_bare_distill_shorthand[qualify-a-model.md]` (docs debt, not touched).
