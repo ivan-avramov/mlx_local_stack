@@ -1,4 +1,4 @@
-# Handoff — 2026-09-13 ~07:30 PDT (M40 COMPLETE; both picks certified predictor-ON; box idle; M41 awaits a go)
+# Handoff — 2026-09-13 ~10:50 PDT (M41 LIVE: capacity + depth ladders on pick A predictor-ON; M40 complete)
 
 Rewritten in place. Phase 1 closed (B ladder C57, C ladder C70). **M40 (MTP-ON certification of both picks) is
 COMPLETE** — queue DONE 2026-09-13 07:07 PDT, runner exited cleanly, no worker/router alive. Entries:
@@ -7,7 +7,17 @@ registry carries `# CERTIFIED M40 2026-09-13` under both picks' `generation_defa
 
 ## Resume checklist
 
-1. **Box state**: expect NOTHING running (`pgrep -fl 'mlx_vlm.server|mlx-serve|run.py|bench.run_'` → empty). The M40
+0. **M41 RUNNING** (armed 10:44 PDT): `Q=$STACK_WORKDIR/queue/m41_ladders; ps -o pid,etime,command -p $(cat $Q/runner.pid)` (pid 70244);
+   `grep -vE HEARTBEAT $Q/queue.log | tail -20`; heartbeats every 5 min carry `progress=<last driver progress line>`;
+   `README.md` there has the log grammar and the restart recipe (`run.py --from-step <step>`; reasoning auto-`--resume`).
+   Re-arm one Monitor on `$Q/queue.log` (alternation FATAL/TIMEOUT/WARN/MISMATCH/RESULT/GATE-FAIL/TRANSPORT/RUNAWAY/MANIFEST/
+   DONE/Traceback/RUNNER-EXIT + SELFTEST). NEVER restart while a `bench.run_*` driver or `mlx_vlm.server` is alive.
+   Analysis owed at `=== M41 DONE ===`: capacity gate (≤46 GB `server_peak_gb` at 262144; prefill_s per rung), retrieval
+   curve (effective ctx at 0.85; per-rung acc/decode/prefill/acceptance), reasoning curve (lenient + strict per rung,
+   runaway tax in tokens) — curves reported SEPARATELY, no composite; then campaign-results entry, README evidence
+   (capacity row for pick A), PLAN M41 row → done; commit results as `data(bench)` (sanitize provenance paths are
+   already placeholder-form — the runner redacts; manifests are written by the tools).
+1. **Box state (when M41 is not running)**: expect NOTHING running (`pgrep -fl 'mlx_vlm.server|mlx-serve|run.py|bench.run_'` → empty). The M40
    runner (pid 74875) is gone; `$STACK_WORKDIR/queue/m40_mtp/queue.log` is the full record (both `=== M40 … DONE ===`
    lines stamped 2026-09-13 00:28:47 and 07:07:05; the 20:52–20:57 DONE lines are dry-runs). Daily-driver router:
    start it per AGENTS.md if the operator wants the stack up (M40 left it down).
@@ -16,7 +26,7 @@ registry carries `# CERTIFIED M40 2026-09-13` under both picks' `generation_defa
    --cacheinfo 100644,<blob>,main_models.yaml`; `docs/qualify-a-model.md`). No untracked result files should remain.
 3. Unpushed: `git log --oneline origin/main..main`. Push ONLY on explicit in-turn approval.
 4. **C74 RULED** (operator 2026-09-13): pick B `Qwen3.8-27B-mlx-uniform-4bit` ships ON, MBPPPlus labelled INCONCLUSIVE.
-   **M41 has its GO** (operator 2026-09-13): specs in `$STACK_WORKDIR/queue/m41_ladders/{SPEC.md,TOOLING.md}`; build/review in flight.
+   M41 armed 10:44 (see item 0).
 
 ## M40 outcome (one line each; full tables in campaign-results)
 
