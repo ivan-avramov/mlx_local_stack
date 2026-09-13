@@ -27,6 +27,10 @@ predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in t
 3. Unpushed: `git log --oneline origin/main..main`. Push ONLY on explicit in-turn approval.
 4. C75 approves the integration and bounded resumption above. The previous checkpoint decisions below are retained as context; P354/P355/D14/P356 now have a go within C75 scope.
 
+## Queued operator request — P373
+
+M44 in PLAN: full audit of all operator-published Hugging Face models against local artifacts, including insurance clones, MTP companions and vision assets; refresh model cards with matching latest test evidence, recommended parameters, MTP configuration and tested vision capabilities. Queued after current integration/resumption; not armed.
+
 ## Previous checkpoint proposals (2026-09-13 15:30; C75 disposition above)
 
 - **P354 — M42 KV-lever OFAT: go, reshape, or skip.** M41 prior: 4.9 GB headroom at 262144 under turboquant kv4; fp16 KV
