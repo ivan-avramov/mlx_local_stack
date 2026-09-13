@@ -1,8 +1,20 @@
-# Handoff — 2026-09-13 ~15:30 PDT (M40 + M41 COMPLETE; box idle; open decisions listed below)
+# Handoff — 2026-09-13 (M43 upstream integration RUNNING; M40 + M41 COMPLETE)
 
 Rewritten in place. Phase 1 closed (B ladder C57, C ladder C70). Phase 2: **M40 COMPLETE** (both picks certified
-predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in the shipped ON state). Nothing is
-running. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pick A).
+predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in the shipped ON state). No campaign benchmark is armed; isolated integration and baseline tests are running. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pick A).
+
+## Active integration — C75 (operator approved P359–P363)
+
+- Specification: `docs/specs/upstream-2026-09-13.md`; M43 in PLAN precedes M42.
+- Original forks/environments unchanged. MLX-VLM integration branch `sync/upstream-2026-09-13` lives at
+  `$STACK_WORKDIR/upstream/2026-09-13/mlx-vlm`; upstream target `45d6e125`. Merge conflicts being resolved.
+- MLX-Serve integration worktree is detached at `0ccc684`; upstream already incorporated.
+- Environment: `$STACK_WORKDIR/upstream/2026-09-13/venv` (MLX/Metal 0.32.2); baseline inventories and registry
+  patch in `evidence/`. Full baseline suite log: `logs/baseline-tests.log`; supervisor records exit status.
+- Approved next: integration audits/full suite/cold review, five-item real-model smokes, new-runtime capacity
+  on both picks, M42 fp16 capacity-first, D14 and cosmetic cleanup. Expanded quality/judge waves remain gated.
+- No push authorized. No production environment/submodule activation until validation.
+- Discussion numbering continues at P366; C75 RULED; next C id C76.
 
 ## Resume checklist
 
@@ -13,10 +25,9 @@ running. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pi
    (HEAD-blob technique; `docs/qualify-a-model.md`). NOTE: the worktree copy predates the two `# CERTIFIED M40`
    comment lines at HEAD (comments only; harmless). No untracked result files should remain.
 3. Unpushed: `git log --oneline origin/main..main`. Push ONLY on explicit in-turn approval.
-4. Next discussion point P357; next C id C75. `docs/open-questions.md` has NO OPEN rows (C74 RULED). The open
-   decisions are all in the next section — none is blocking; the box is idle until one of them is a go.
+4. C75 approves the integration and bounded resumption above. The previous checkpoint decisions below are retained as context; P354/P355/D14/P356 now have a go within C75 scope.
 
-## Open decisions for the operator (2026-09-13 15:30; nothing is armed)
+## Previous checkpoint proposals (2026-09-13 15:30; C75 disposition above)
 
 - **P354 — M42 KV-lever OFAT: go, reshape, or skip.** M41 prior: 4.9 GB headroom at 262144 under turboquant kv4; fp16 KV
   on the 16 full-attention layers ≈ +12 GB → EXPECTED to fail the 46 GB gate at the cap. Recommendation: run the fp16

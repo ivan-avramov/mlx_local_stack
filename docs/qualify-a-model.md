@@ -106,7 +106,7 @@ Full derivations: `docs/metrics.md`, `docs/serving-path.md`, `AGENTS.md`.
   and KV tune knobs (`kv_bits`, `kv_quant_scheme`, `quantized_kv_start`, `prefill_step_size`)
   WARN only — a `(model, tune)` pair legitimately differs there.
 - **Full registry model names everywhere** — chat prose, commits, docs, this doc's own output.
-  No bare `Nemotron`, `Ornith`, `the distill`, `the OptiQ`, `qat-6bit`, `8bit`, etc. <!-- allow-shorthand -->
+  No bare `Nemotron`, `Ornith`, `the distill` (ambiguous shorthand for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`), `the OptiQ`, `qat-6bit`, `8bit`, etc. <!-- allow-shorthand -->
   The pre-commit/commit-msg hooks enforce this on added lines (Appendix C); it is NOT enforced on
   your chat responses — hold yourself to it there.
 - **No PII in the repo.** No absolute home paths, hostnames, usernames, tokens, emails, in
@@ -1304,7 +1304,7 @@ and size from ITS mean and max, never from a table like this one alone.
 
 **The rule (AGENTS.md):** full registry model names everywhere — reports, results, docs,
 commits, AND chat prose. First use in every message and commit body. No bare `Nemotron`, <!-- allow-shorthand -->
-`Ornith`, `the distill`, `gemma`, `the MoE`, `the OptiQ`, `qat-6bit`, `8bit`, etc. <!-- allow-shorthand -->
+`Ornith`, `the distill` (ambiguous shorthand for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`), `gemma`, `the MoE`, `the OptiQ`, `qat-6bit`, `8bit`, etc. <!-- allow-shorthand -->
 
 **Mechanism (`benchmark/bench/modelnames.py`):** NOT a fixed blocklist — it tokenizes every
 registered model name in `main_models.yaml` into fragments (e.g. `A3B`, `OptiQ`, `4.5bpw`) <!-- allow-shorthand -->
