@@ -15,8 +15,8 @@ registry carries `# CERTIFIED M40 2026-09-13` under both picks' `generation_defa
    (HEAD-blob technique: `git show HEAD:main_models.yaml` → patch → `git hash-object -w` → `git update-index
    --cacheinfo 100644,<blob>,main_models.yaml`; `docs/qualify-a-model.md`). No untracked result files should remain.
 3. Unpushed: `git log --oneline origin/main..main`. Push ONLY on explicit in-turn approval.
-4. **Open for the operator**: **C74** — confirm pick B `Qwen3.8-27B-mlx-uniform-4bit` ships ON with MBPPPlus labelled
-   INCONCLUSIVE (−1pp [−6,+3], not a FAIL; recommendation CONFIRM). Nothing else blocks.
+4. **C74 RULED** (operator 2026-09-13): pick B `Qwen3.8-27B-mlx-uniform-4bit` ships ON, MBPPPlus labelled INCONCLUSIVE.
+   **M41 has its GO** (operator 2026-09-13): specs in `$STACK_WORKDIR/queue/m41_ladders/{SPEC.md,TOOLING.md}`; build/review in flight.
 
 ## M40 outcome (one line each; full tables in campaign-results)
 
