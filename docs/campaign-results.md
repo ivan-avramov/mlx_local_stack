@@ -1,5 +1,55 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-13 — M40 pick A `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`: MTP-ON CERTIFIED on every axis that backs its picks (PASS ×4); ships ON, Phase 2 runs ON
+
+Scope (PLAN M40, C71): the shipped triple (t0.5, medium, repaired MTP sidecar `caslca/…-mtp-drafter`) measured
+predictor-ON on every axis behind its B and C picks, paired to the existing OFF rows (same items, seeds, budgets, cap
+262144, resolved thinking budget 81920). Chain runner `$STACK_WORKDIR/queue/m40_mtp/run.py` (pid 74875, 2026-09-12
+20:58 → 2026-09-13 00:28 PDT, 3.5 h wall for pick A), every arm with `MLX_SERVE_CONFIG=<overlay>` in the driver env,
+C35 check OK on every first manifest (ON overlay sha `8a5151…`, OFF `cccadc…`), worker cmdline verified per arm
+(`--draft-kind mtp` present on ON arms, absent on OFF arms). Verdict tool: `bench.compare_predictor` (pre-registered);
+judge pairs via `run_judge_pairwise --pair-tunes m38 m40on`.
+
+| axis | OFF | ON | paired read | verdict |
+|---|---|---|---|---|
+| Math500 `acc_strict@81920`, n=100 (`m37med` vs `m40on`) | 97 % (100/100 conv) | 99 % (100/100 conv) | ON−OFF **+2pp, 95 % CI [0, +5pp]**, MDE ±12.5pp; 2 discordant items, both ON-wins, **0 OFF-only wins** | **PASS** (C72 read; tool verdict INCONCLUSIVE at the +5pp edge, recorded verbatim) |
+| cjudge panel, 40 items × 2 orders × 3 judges (`m38` vs `m40on`) | — | — | OFF preferred **0.40 [0.29, 0.53]**, Holm p = 0.099, MDE ±20pp; family split anthropic 0.44 / openai 0.50; gate PASS 6/6 (degrade 1.0, flip ≤0.1, κ 1.0, α 0.95, longer-pref 0.0, identity-tie 1.0) | **PASS** — no detectable drift at n=40; ON ahead on the point |
+| reasoning depth 128K, 3 seeded draws, chain 4 (`m40off-d128k` vs `m40on-d128k`) | 3/3 strict, 0 budget hits, eff. ctx 128K | 3/3 strict, 0 budget hits, eff. ctx 128K | ON ≥ OFF−1 and budget-hits not higher | **PASS** |
+| vision gate, 20 photos (`vision_gate.m40off` vs `.m40on`) | 20/20 | 20/20 | ON ≥16 and ≥ OFF−2 | **PASS** |
+
+**Decision (rule pre-registered in PLAN M40): all four axes pass → the pick SHIPS ON.** The registry already carries
+`draft_kind: mtp` for this entry; this entry is the certification record (M40, 2026-09-13). Phase 2 (M41/M42) runs
+predictor-ON for this pick. No pick or ordering change; nothing for the operator to approve beyond noting the record.
+
+Perf, reported separately (ON vs OFF, same items):
+
+| arm | decode tok/s | wall | acceptance (pooled) | tokens/task |
+|---|---|---|---|---|
+| Math500 n=100 | 45.8 vs 23.8, ratio **1.93 [1.90, 1.96]** | 1.20 h vs 2.20 h, ratio **0.55 [0.43, 0.71]** | 0.78 (mean-of-ratios 0.85) | mean 1806 both, ratio 1.00 [0.81, 1.27]; max 18774 ON vs 32564 OFF |
+| cjudge n=40 | 35.5 vs 23.6 (≈1.5×) | 1.07 h vs 1.55 h | 0.62 | mean 3386 vs 3268; max 5696 vs 6544 |
+| depth 128K, per draw | 21.0 vs 8.5 (≈2.5×) | 468 s vs 660 s (prefill-dominated) | n/a (no counter) | 317 tokens every draw, both states |
+| vision turn-1 | — | 13.9 s vs 22.0 s | n/a (no counter) | 487 vs 493 |
+
+Mechanisms: acceptance tracks output entropy — 0.78 on math derivations, 0.62 on open research prose — so the
+decode multiplier is 1.9× on math and 1.5× on prose; at 128K the multiplier is larger (2.5×) because the OFF decode
+rate itself halves with context while the draft verifies in one forward pass. Runaway tax under ON is counted in
+tokens: none (all 140 items converged in both states; the longest ON output is shorter than the longest OFF).
+The two Math500 discordant items are both ON-correct/OFF-wrong — consistent with predictor non-losslessness on
+bf16 (proven, `docs/serving-path.md`) being symmetric noise, not a bias against ON.
+
+Judge panel run: 70 pairs (40 tune pairs + 30 anchors) × 2 orders; opus and sonnet as 16 blind Claude Code <!-- allow-shorthand -->
+subagents (280 packets, ≈3.9 M subagent tokens), codex `gpt-5.6-terra` medium in-process (140 calls, usage not <!-- allow-shorthand -->
+reported). Verdicts `benchmark/results/judge_m40/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/` (gate.json,
+ranking.json, verdicts.jsonl, pair_manifest.jsonl). Note for future runs: `run_judge_pairwise` writes its pair
+manifest to `results/judge_c_v1/` unless `--out` is given (a dry-run without `--out` clobbered the M38 manifest;
+restored from git before any judging).
+
+Known limitation (stated up front in PLAN): the depth and vision ON arms are certified by the worker cmdline alone —
+no reachable draft counter on those drivers (`draft_counters: null` in both provenance jsons). Math500 and cjudge
+rows carry per-row `draft` counters, which is where the acceptance figures come from.
+
+Pick B `Qwen3.8-27B-mlx-uniform-4bit` started its ON chain at 00:28 PDT (math500 pilot first); its entry follows.
+
 ## 2026-09-12 — M38 length-controlled re-analysis (P342, zero GPU): uniform-over-mixed is NOT established at equal length; the rest of the C order is
 
 Question: how much of the judge-panel order is "writes more"? Method (`benchmark/bench/judge_length_diag.py`,
