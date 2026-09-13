@@ -1,5 +1,67 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-13 — M41 COMPLETE: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` predictor-ON clears the 46 GB gate at 262144 (41.1 GB) and carries retrieval to 128K and chain-4 reasoning to 156K with zero runaways
+
+First long-context evidence for the B/C 1st pick (it entered the contest after all Phase 1 depth work). Shipped state
+(t0.5, medium, repaired MTP sidecar ON, turboquant kv4, cap 262144), `deployed` profile, tag `m41on`, one router
+session, worker cmdline `--draft-kind mtp` verified before each ladder, manifests checked (fresh, registry sha =
+overlay sha `8a5151…`, draft_kind mtp). Runner `$STACK_WORKDIR/queue/m41_ladders/` (Sonnet-built from SPEC.md + <!-- allow-shorthand -->
+TOOLING.md, two cold Opus review rounds); 10:44 → 14:59 PDT, 4.2 h box. Data commit 2d09326. The ladder tools <!-- allow-shorthand -->
+were amended first (commit ddb1e23): `--sampling-profile` is now REQUIRED on the retrieval and capacity ladders
+(both had silently read the drifted `production` profile), derived request timeouts, per-draw prefill/decode/
+acceptance, provenance manifests, and retrieval transport failures ESCALATE (O41) instead of grading as misses.
+
+**Capacity (the gate — `mx.get_peak_memory`, prefill spike; quiet box, idle system-used 25.9 GB before preload):**
+
+| ctx (prompt tokens) | MLX peak | fits ≤46 | prefill s (tok/s) | decode tok/s (ON) | acceptance | retrieval co-signal |
+|---|---:|---|---:|---:|---:|---:|
+| 131072 (130,783) | **35.0 GB** | yes | 394 (332) | 19.7 | 0.74 | 1.0 |
+| 196608 (196,115) | **37.3 GB** | yes | 1001 (196) | 13.8 | 0.81 | 1.0 |
+| 262144 (261,449) | **41.1 GB** | yes | 1988 (132) | 10.7 | 0.80 | 1.0 |
+
+Gate **PASS** with 4.9 GB headroom. Steady-state RSS 20.1–20.3 GB (weights + drafter); the spike is +21 GB of
+KV + prefill scratch at the cap. Precedent peaks at 262144 (all OFF, other picks): `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`
+26.0, `Ornith-1.0-35B-mlx-uniform-4bit` 32.4, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 37.6 GB. `Qwen3.8-27B-mlx-uniform-4bit`
+(B/C 2nd) has NO capacity row — a coverage gap, not a result.
+
+**Retrieval depth (multi-needle NIAH, 5 codes at depths 0.1–0.9, 5 trials per rung, full thinking budget):**
+accuracy **1.0 at every rung 8K / 32K / 64K / 96K / 128K** (every depth, every trial, 0 transport errors);
+`retrieval_effective_ctx` = **128K** (ladder top by design — not measured beyond). Decode 36.3 → 20.4 tok/s,
+prefill 15 → 437 s, acceptance 0.78–0.83, answers 160–215 tokens.
+
+**Reasoning depth (vartrack chain-4, threshold 0.85; 5 seeded instances per rung to 64K, 3 above — M11 design):**
+
+| ctx | 8K | 16K | 24K | 32K | 48K | 64K | 96K | 128K | 156K |
+|---|---|---|---|---|---|---|---|---|---|
+| strict acc (= lenient) | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| budget hits | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| decode tok/s (ON) | 44.7 | 40.6 | 38.2 | 36.1 | 32.7 | 27.4 | 25.3 | 20.7 | 18.3 |
+| prefill s | 12 | 27 | 43 | 62 | 104 | 170 | 283 | 464 | 619 |
+| acceptance | 0.89 | 0.89 | 0.88 | 0.88 | 0.89 | 0.88 | 0.90 | 0.91 | 0.92 |
+
+`reasoning_effective_ctx` = **156K** (ladder top). **Runaway tax: 0 of 42 draws, 0 tokens** — versus 1/39, 2/39 and
+3/39 budget-hit draws for the three M11 models (OFF, their own tunes; `docs/campaign-results.md` 2026-08-31).
+Completions 268–520 tokens at every depth: the chain-4 task never gets harder with depth (M11's finding holds), so
+this axis certifies attention/KV integrity at depth and the runaway rate, not reasoning load.
+
+**Verdicts (M5-specific) and mechanisms (transfer):**
+- The pick is usable at the full 262144 cap on this box in its shipped state; the measured curves are flat to their
+  ladder tops (128K retrieval, 156K reasoning). No composite "effective context" is claimed; nothing above 156K
+  was measured for quality.
+- Prefill throughput falls 332 → 132 tok/s from 131K to 262K (attention share grows ~quadratically under
+  `prefill_step_size` 512); a 256K prompt costs ~33 min TTFT. This is the usability limit at depth, not memory.
+- Decode ON at depth: 21 tok/s @128K vs 8.5 OFF (M40), 10.7 @262K; acceptance is task-stable (0.74–0.92) and slightly
+  HIGHER at depth on vartrack, so the predictor's advantage grows with context as the OFF rate collapses.
+- Runaway rate tracks temperature (t0.5 here → 0/42; t0.3/0.6/1.0 in M11 → 1/39, 3/39, 4/15) — consistent with the
+  temperature-is-the-lever rule; suggestive at these counts.
+- **Implication for M42 (KV lever):** fp16 KV on the 16 full-attention layers ≈ +12 GB over kv4 at 262144 (PLAN
+  estimate 16 GiB fp16 vs ~4 GB kv4). With 4.9 GB headroom, fp16 KV is expected to FAIL the 46 GB gate at the cap;
+  M42 should measure it (the estimate is not a measurement) but the likely outcome is "fp16 fits only to ~160–190K"
+  and the decision becomes cap-vs-quality, not free.
+
+Known limitation: no reachable draft counter on the ladder drivers (`draft_counters: null`); ON state certified by
+worker cmdline plus the per-row `draft` counters the tools now record (acceptance figures above come from those).
+
 ## 2026-09-13 — M40 COMPLETE. Pick B `Qwen3.8-27B-mlx-uniform-4bit`: MTP-ON certified — PASS ×5, MBPPPlus INCONCLUSIVE (not FAIL); ships ON. Both picks now ship predictor-ON with both states on record
 
 Scope: the shipped triple (t0.6, medium, native MTP drafter) measured predictor-ON on every axis behind its B and C

@@ -1,76 +1,58 @@
-# Handoff — 2026-09-13 ~10:50 PDT (M41 LIVE: capacity + depth ladders on pick A predictor-ON; M40 complete)
+# Handoff — 2026-09-13 ~15:15 PDT (M41 COMPLETE; box idle; M42 awaits a go)
 
-Rewritten in place. Phase 1 closed (B ladder C57, C ladder C70). **M40 (MTP-ON certification of both picks) is
-COMPLETE** — queue DONE 2026-09-13 07:07 PDT, runner exited cleanly, no worker/router alive. Entries:
-`docs/campaign-results.md` 2026-09-13 (pick A, pick B). Data commits 018db56 (pick A) and 39e03e5 (pick B);
-registry carries `# CERTIFIED M40 2026-09-13` under both picks' `generation_defaults`.
+Rewritten in place. Phase 1 closed (B ladder C57, C ladder C70). Phase 2: **M40 COMPLETE** (both picks certified
+predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in the shipped ON state). Nothing is
+running. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pick A).
 
 ## Resume checklist
 
-0. **M41 RUNNING** (armed 10:44 PDT): `Q=$STACK_WORKDIR/queue/m41_ladders; ps -o pid,etime,command -p $(cat $Q/runner.pid)` (pid 70244);
-   `grep -vE HEARTBEAT $Q/queue.log | tail -20`; heartbeats every 5 min carry `progress=<last driver progress line>`;
-   `README.md` there has the log grammar and the restart recipe (`run.py --from-step <step>`; reasoning auto-`--resume`).
-   Re-arm one Monitor on `$Q/queue.log` (alternation FATAL/TIMEOUT/WARN/MISMATCH/RESULT/GATE-FAIL/TRANSPORT/RUNAWAY/MANIFEST/
-   DONE/Traceback/RUNNER-EXIT + SELFTEST). NEVER restart while a `bench.run_*` driver or `mlx_vlm.server` is alive.
-   Analysis owed at `=== M41 DONE ===`: capacity gate (≤46 GB `server_peak_gb` at 262144; prefill_s per rung), retrieval
-   curve (effective ctx at 0.85; per-rung acc/decode/prefill/acceptance), reasoning curve (lenient + strict per rung,
-   runaway tax in tokens) — curves reported SEPARATELY, no composite; then campaign-results entry, README evidence
-   (capacity row for pick A), PLAN M41 row → done; commit results as `data(bench)` (sanitize provenance paths are
-   already placeholder-form — the runner redacts; manifests are written by the tools).
-1. **Box state (when M41 is not running)**: expect NOTHING running (`pgrep -fl 'mlx_vlm.server|mlx-serve|run.py|bench.run_'` → empty). The M40
-   runner (pid 74875) is gone; `$STACK_WORKDIR/queue/m40_mtp/queue.log` is the full record (both `=== M40 … DONE ===`
-   lines stamped 2026-09-13 00:28:47 and 07:07:05; the 20:52–20:57 DONE lines are dry-runs). Daily-driver router:
-   start it per AGENTS.md if the operator wants the stack up (M40 left it down).
+1. **Box state**: expect NOTHING running (`pgrep -fl 'mlx_vlm.server|mlx-serve|run.py|bench.run_'` → empty). The
+   M41 runner exited cleanly at 14:59 (worker unloaded, 0 listeners). Daily-driver router: start per AGENTS.md if
+   the operator wants the stack up (it is down).
 2. `git status`: `main_models.yaml` carries intentional local-path overrides — NEVER stage it from the worktree
-   (HEAD-blob technique: `git show HEAD:main_models.yaml` → patch → `git hash-object -w` → `git update-index
-   --cacheinfo 100644,<blob>,main_models.yaml`; `docs/qualify-a-model.md`). No untracked result files should remain.
+   (HEAD-blob technique; `docs/qualify-a-model.md`). NOTE: the worktree copy predates the two `# CERTIFIED M40`
+   comment lines at HEAD (comments only; harmless). No untracked result files should remain.
 3. Unpushed: `git log --oneline origin/main..main`. Push ONLY on explicit in-turn approval.
-4. **C74 RULED** (operator 2026-09-13): pick B `Qwen3.8-27B-mlx-uniform-4bit` ships ON, MBPPPlus labelled INCONCLUSIVE.
-   M41 armed 10:44 (see item 0).
+4. Next discussion point P354; next C id C75. Nothing open for the operator except the M42 go.
 
-## M40 outcome (one line each; full tables in campaign-results)
+## M41 result (full entry in campaign-results 2026-09-13)
 
-- Pick A `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (t0.5 medium, repaired MTP): PASS ×4 — Math500 +2pp [0,+5]
-  with 0 OFF-only wins (C72 read), judge OFF-pref 0.40 [0.29,0.53] Holm p=.10, depth 128K 3/3 both, vision 20/20 both.
-  Decode ×1.93 math / ×1.5 prose / ×2.5 @128K; tokens/task 1.00. SHIPS ON.
-- Pick B `Qwen3.8-27B-mlx-uniform-4bit` (t0.6 medium, native MTP): PASS ×5 + MBPPPlus INCONCLUSIVE — Math500 0
-  discordant, judge OFF-pref 0.56 [0.45,0.68] Holm p=.28, hep +1pp [0,+3], mbpp −1pp [−6,+3] (pooled coding 0pp
-  [−2.5,+2.5], post-hoc), depth 3/3 both, vision 19/20 both. Decode ×1.8 code+math / ×1.4 prose; tokens/task 0.86–0.87
-  on code. SHIPS ON (C74).
-- Mechanism that transfers: acceptance tracks output entropy (0.91 code → 0.62 prose) and the decode multiplier
-  follows it; quality is state-invariant within MDE on every axis. Verdicts are M5-specific; the mechanism is not.
-- Limitation carried: depth/vision ON arms certified by worker cmdline only (no reachable draft counter).
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` ON: `mx.get_peak_memory` 35.0 / 37.3 / **41.1 GB** at 131K / 197K /
+262144 (gate ≤46 PASS, 4.9 GB headroom); retrieval 1.0 at every rung to 128K; chain-4 reasoning 1.0 at every rung to
+156K, **0/42 runaways**; decode 44.7 → 18.3 tok/s (8K → 156K), 10.7 at 262K; prefill 332 → 132 tok/s (131K → 262K,
+~33 min TTFT at the cap). Mechanism: acceptance is task-stable (0.74–0.92) so the ON advantage grows with depth as
+OFF decode collapses; prefill, not memory, is the depth-usability limit. Files `benchmark/results/<pick>/
+{capacity_retrieval,retrieval,reasoning}.m41on.*` (+ manifests, provenance; data commit 2d09326).
 
-## Recipe notes learned this session (already in the pick A/B entries; repeated here because they bite)
+## Next: M42 KV-lever OFAT on pick A (PLAN row; needs a go)
 
-- `run_judge_pairwise` ALWAYS with `--out <dir>` (default overwrites `results/judge_c_v1/pair_manifest.jsonl` — a
-  dry-run did exactly that; restored from git). `judge_gate --out` is a DIRECTORY.
-- Judge subagent path: export packets (`--export-packets`, `--batch-size 20`) → 16 general-purpose subagents, one per
-  `<judge>/batchNN`, model = judge, blind rules inline → `--ingest-packets` → codex in-process (`--judges
-  codex:gpt-5.6-terra:medium --allow-single-family`, nohup, ~35 min/140 calls) → `judge_gate`. ≈4–5 M subagent
-  tokens per 280 packets. <!-- allow-shorthand -->
-- Provenance jsons carry the worker cmdline with absolute paths → replace `…/mlx_local_stack_workdir` with
-  `$STACK_WORKDIR` THEN `…/mlx_local_stack` with `$STACK_REPO` before staging (piicheck blocks otherwise). The
-  modelnames hook false-positives on the judge key `opus` in machine-written `gate.json`; commit judge dirs with <!-- allow-shorthand -->
-  `--no-verify` after running piicheck by hand (M38 precedent d7f2d8c). <!-- allow-shorthand -->
-- 5-item seeded pilots under-projected the Math500 arms 3.4× on pick B (pilot mean 18 s vs full 61 s): the pilot is a
-  lower bound, as AGENTS.md says. Bounds were never threatened.
+Prior from M41: fp16 KV on the 16 full-attention layers ≈ +12 GB at 262144 → EXPECTED to fail the 46 GB gate at the
+cap. Recommended shape: (1) fp16 peak ladder first (131K/197K/262K, one prefill each — minutes) with a pre-registered
+rule "gate FAIL at 262144 ⇒ OFAT ends, kv4 stays"; (2) only if it fits, paired quality on the existing hep/mbpp/
+Math500 item sets + decode/prefill at 256K. Tooling is ready: `bench.run_capacity --sampling-profile deployed
+--out-tag <tag> --request-timeout 7200` with an overlay that sets `kv_bits: 0` for the pick (copy the M41 overlay,
+edit, log its sha). Runner pattern: `$STACK_WORKDIR/queue/m41_ladders/run.py` (reviewed; reuse `_launch_and_wait`,
+`assert_manifest`, `_redact_paths`).
 
-## Next (Phase 2 queue, PLAN "Phase 2" section — each arm needs its own explicit go)
+## Recipe notes that bite (kept from this session)
 
-M41 capacity + depth ladders on pick A predictor-ON (its first long-context evidence; 256K `mx.get_peak_memory` on a
-quiet box, reasoning + retrieval ladders, decode/prefill per rung; ~1 day box) → M42 KV-lever OFAT on pick A (fp16 vs
-turboquant kv4) → D14 transfer write-up (zero GPU, can run in parallel). Candidates screened and dropped 2026-09-13
-(C73): `nex-agi/Nex-N2.5-mini`, `Agnes-AI/Agnes-3.0-Flash`.
+- `run_judge_pairwise` ALWAYS with `--out <dir>`; `judge_gate --out` is a DIRECTORY.
+- Provenance jsons: the M41 runner redacts `$STACK_WORKDIR`/`$STACK_REPO`; older runners do not — sanitize before
+  staging. Judge dirs commit with `--no-verify` after a by-hand piicheck (judge key `opus` false-positive, M38 <!-- allow-shorthand -->
+  precedent d7f2d8c).
+- The ladder CLIs REQUIRE `--sampling-profile` since ddb1e23 (`run_capacity_seq.sh` and the docs were updated).
+- 5-item seeded pilots under-projected Math500 3.4× on pick B; the pilot is a lower bound.
+- The reasoning ladder's `seed` selects the vartrack INSTANCE (5 items per rung), not the sampler — verified the
+  instances differ; identical completion-token counts across draws are the fixed answer format, not copies.
 
-## Ladder of record (unchanged by M40)
+## Ladder of record (unchanged)
 
 B (C57): 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, 2nd `Qwen3.8-27B-mlx-uniform-4bit`, 3rd
 `Ornith-1.0-35B-mlx-uniform-4bit`, 4th `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`. C (C70, provisional): 1st
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, 2nd `Qwen3.8-27B-mlx-uniform-4bit`; shortlist
-`Ornith-1.0-35B-mlx-uniform-4bit`, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`.
+`Ornith-1.0-35B-mlx-uniform-4bit`, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`. Dropped 2026-09-13 (C73):
+`nex-agi/Nex-N2.5-mini`, `Agnes-AI/Agnes-3.0-Flash`.
 
 ## Bookkeeping
 
-- Next discussion point P354; next C id C75.
 - Pre-existing unrelated lint failure: `test_no_bare_distill_shorthand[qualify-a-model.md]` (docs debt, not touched).
