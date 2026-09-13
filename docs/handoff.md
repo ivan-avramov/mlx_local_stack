@@ -1,4 +1,4 @@
-# Handoff — 2026-09-12 (session close; M38 COMPLETE, C70 applied, PLAN hygiene done, P343 dropped)
+# Handoff — 2026-09-12 (session close; Phase 1 CLOSED — C70 applied; Phase 2 queued, M40 approved, arm pending go)
 
 Rewritten in place this session (Claude Code; Fable architect / Opus judges as subagents). Previous <!-- allow-shorthand -->
 handoff state (box idle, C68 open) was resumed 2026-09-12 and is superseded by this file.
@@ -11,10 +11,11 @@ handoff state (box idle, C68 open) was resumed 2026-09-12 and is superseded by t
    from the worktree (HEAD-blob technique, `docs/qualify-a-model.md` Stage 1). Everything else clean.
 3. `git log origin/main..main` — pushed through `fa8368c` (operator approval 2026-09-12); the P341/P342
    commit after it is unpushed unless the log says otherwise. Push ONLY on explicit in-turn approval.
-4. No open operator decision: **C70 RULED** 2026-09-12 (mixed first, uniform second) and applied. No
-   measurement is queued; PLAN hygiene pass 2026-09-12 tagged every stale row. **P343 (one more C candidate,
-   `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`) DROPPED by the operator 2026-09-12.** Next block is P344
-   (Phase 2 plan) once the operator approves its scope.
+4. **Next work = M40** (`docs/PLAN.md` Phase 2 section): MTP-ON certification of both picks across every
+   axis (Math500, cjudge + paired judge pass, vision gate, 128K depth rung, pick B MBPPPlus). Scope APPROVED
+   2026-09-12; **arming needs an explicit operator go** (propose the pick-A Math500 5-item seeded pilot first).
+   Then M41 (capacity + depth on pick A), M42 (KV lever), D14 (transfer write-up), all in the shipped
+   predictor state (C71). P343 dropped. No other open decision.
 5. Monitors/agents: none live. Judge packets + all 2,460 verdict files remain under
    `$STACK_WORKDIR/m38_packets/`; stage scratch under `$STACK_WORKDIR/m38_opus_anchor_stage/` and
    `$STACK_WORKDIR/m38_opus_item_stage/` (group lists only).
@@ -55,12 +56,13 @@ evidence tables.
 
 ## Bookkeeping
 
-- Next discussion point P345; next C id C71.
+- Next discussion point P345; next C id C72.
 - P343 DROPPED 2026-09-12 (kept for the record — scope was: `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`
   (M16) — vision tower present, MTP head NOT split, Stages 0–1 + tune ladder done (t0.55, hep 86 / mbpp 74
   strict); missing: matched Math500, cjudge generation + judging vs the five (≈1,140 verdicts, ~15M judge
   tokens), vision gate, Stage 9 MTP split/probe if promoted).
-- P344: declare Phase 1 closed and write the Phase 2 (Optimization) plan — awaiting operator scope approval.
+- P344 DONE: Phase 1 closed, Phase 2 section written into PLAN (M40/M41/M42/D14) with pre-registered criteria; C71 rule amendment ruled.
+- M40 mechanics: ON arms need a fresh overlay per pick with `draft_kind: mtp` + the certified sidecar path, `MLX_SERVE_CONFIG` on the driver, C35 check that the first manifest reads `runtime.draft_kind: mtp` AND the worker cmdline carries `--draft-*`; tune labels `m37ref-mtpon` / `m38-mtpon` / `v1-mtpon` / `d128k-mtpon`; the OFF rows they pair with are `math500.m37med` (pick A) / `math500.m37ref`-equivalent (pick B: check the M37 tune label), `cjudge.m38`, `vision_gate.v1`, `reasoning.json` (pick B M11 128K draws). `compare.py` refuses across draft state by design — the ON-vs-OFF read is a paired analysis, run it with the fingerprint check consciously overridden for that one seam and say so in the entry.
 - Judge subagent recipe that worked (for any future panel): export packets with
   `run_judge_pairwise --export-packets`, write group files of ≤20 packet paths, one general-purpose
   subagent per group with the `README_JUDGE.md` rules inline, ingest with `--ingest-packets`, then
