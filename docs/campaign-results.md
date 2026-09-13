@@ -1,5 +1,101 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+## 2026-09-12 — M38 judge panel COMPLETE — three-judge gate PASS; C ranking (all ten pairs decisive)
+
+C68 stage 2 (operator "go" 2026-09-12): Claude Opus 5 judged the remaining 760 candidate packets as <!-- allow-shorthand -->
+Claude Code subagents (38 groups × 20 packets, rolling waves of ten, ~9.6M subagent tokens, ~80 min
+wall, 0 null verdicts). Panel = `sonnet` + `opus` + `codex:gpt-5.6-terra:medium`, 2,460 verdicts, all <!-- allow-shorthand -->
+three judges on every pair, blind, both orders. No GPU work at any point; the five contenders'
+`cjudge` outputs (tune `m38`, deployed tunes, predictor OFF) are unchanged since generation.
+
+**Gate (30 anchors, three judges): PASS on every metric** — identical to the stage-1 table below
+(`degrade_accuracy` 1.00, flip 0.067 worst, kappa 1.00, alpha 0.967, verbosity-longer 0.00, identity
+1.00). `benchmark/results/judge_c_v1/gate.json` now holds the three-judge PASS; the two-judge FAIL
+record stays in git at `ec6555a`. `ranking.json` written per the pre-registered rule.
+
+**Units**: 38 shared CONVERGED items (`dom-01`, `dom-16` excluded by design because
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` did not converge on them — its two runaways), 10 model pairs,
+balanced A/B slot assignment, panel verdict = majority of three per-judge collapsed verdicts (tie =
+0.5). Preference rate for model 1 with 95 % two-stage cluster-bootstrap CI over items, Holm across
+the 10 pairs, MDE at n=38 ≈ ±20.3pp. Candidate pairs were reconstructed from the verdict rows
+(`pairs_full.jsonl` = 30 anchors + 380 candidates; a_key/b_key identical across all three judges).
+
+| model 1 | model 2 | pref(model 1) | 95 % CI | p (Holm) | verdict | anthropic / openai split |
+|---|---|---:|---:|---:|---|---:|
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | `Ornith-1.0-35B-mlx-uniform-4bit` | 0.171 | [0.079, 0.276] | 0.001 | model 2 better | 0.224 / 0.224 |
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 0.224 | [0.118, 0.342] | 0.001 | model 2 better | 0.289 / 0.329 |
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | 0.026 | [0.000, 0.066] | 0.001 | model 2 better | 0.039 / 0.066 |
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | `Qwen3.8-27B-mlx-uniform-4bit` | 0.026 | [0.000, 0.079] | 0.001 | model 2 better | 0.026 / 0.184 |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 0.645 | [0.513, 0.776] | 0.031 | model 1 better | 0.605 / 0.618 |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | 0.237 | [0.132, 0.368] | 0.001 | model 2 better | 0.237 / 0.211 |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.8-27B-mlx-uniform-4bit` | 0.118 | [0.039, 0.224] | 0.001 | model 2 better | 0.118 / 0.316 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | 0.053 | [0.013, 0.105] | 0.001 | model 2 better | 0.105 / 0.105 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | `Qwen3.8-27B-mlx-uniform-4bit` | 0.026 | [0.000, 0.079] | 0.001 | model 2 better | 0.053 / 0.118 |
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | `Qwen3.8-27B-mlx-uniform-4bit` | 0.316 | [0.211, 0.421] | 0.001 | model 2 better | 0.342 / 0.605 |
+
+**Result**: a strict total order, every pair significant after Holm and every CI clear of 0.5:
+`Qwen3.8-27B-mlx-uniform-4bit` > `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` >
+`Ornith-1.0-35B-mlx-uniform-4bit` > `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` >
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`. Mean preference over the four opponents (descriptive
+only): 0.878 / 0.750 / 0.457 / 0.303 / 0.112. The two `Qwen3.8-27B` checkpoints beat every <!-- allow-shorthand -->
+non-`Qwen3.8` contender at ≥ 0.76, and `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (the C second <!-- allow-shorthand -->
+pick under C67, first pick before that) loses every pairing, at 0.03 against either `Qwen3.8-27B`. <!-- allow-shorthand -->
+The weakest result is `Ornith-1.0-35B-mlx-uniform-4bit` over `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+(0.645, CI [0.513, 0.776], Holm p 0.031) — the only pair whose CI approaches 0.5.
+
+**The four numbers per contender** (`usage` block of `ranking.json`; n=40 cjudge items; latency is
+mean seconds per item at deployed tunes, predictor OFF, single resident model):
+
+| model | tokens/task | latency s/item | runaway share | panel mean pref |
+|---|---:|---:|---:|---:|
+| `Qwen3.8-27B-mlx-uniform-4bit` | 5,485 | 200.2 | 0.00 | 0.878 |
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | 3,268 | 139.1 | 0.00 | 0.750 |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 4,388 | 42.6 | 0.00 | 0.457 |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 7,793 | 397.9 | 0.05 | 0.303 |
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | 4,042 | 33.0 | 0.00 | 0.112 |
+
+**Judge agreement on candidate pairs** (collapsed per-judge verdicts, 380 pairs): all three agree
+on 222; pairwise agreement sonnet–opus 305, codex–sonnet 242, codex–opus 258. Collapsed ties <!-- allow-shorthand -->
+(mostly order flips): sonnet 75, opus 22, codex 71. Family splits are direction-consistent on 9 of <!-- allow-shorthand -->
+10 pairs; the exception is `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` vs
+`Qwen3.8-27B-mlx-uniform-4bit`, where the Anthropic judges prefer the uniform checkpoint (0.342 for <!-- allow-shorthand -->
+the mixed) while the GPT judge mildly prefers the mixed one (0.605). Note the panel is 2-of-3
+Anthropic by family, so the majority can be carried by one family; that pair is the least robust
+ordering in the table.
+
+**Length diagnostic (caveat, not a gate metric)**: the longer response wins 70 % of panel-decided
+pairs (229/328; per judge sonnet 0.72, opus 0.70, codex 0.58). The verbosity anchor rules out a <!-- allow-shorthand -->
+preference for padding (padded copies never won), and the order is not monotone in length —
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is the second-longest writer (12.8k chars mean) and ranks
+fourth, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (9.4k) beats the two shorter writers
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (8.5k) and `Ornith-1.0-35B-mlx-uniform-4bit` (8.4k) at
+≥ 0.76. But `Qwen3.8-27B-mlx-uniform-4bit` is also the longest writer (15.9k chars, 1.7× the mixed
+checkpoint), so its first place is entangled with "writes more" in a way this design cannot fully
+separate. Treat the uniform-over-mixed margin as provisional on that ground.
+
+**Honesty notes**: (1) the third judge was added after seeing the two-judge gate result; the panel
+now matches the pre-registered design, and stage sequencing (anchors first) cannot bias item
+verdicts. (2) The committed `pair_manifest.jsonl` is a unit-test fixture (ModelBeta/ModelGamma), not
+this run's manifest; the real candidate pairs are recoverable from the verdict rows and are now
+materialised in `pairs_full.jsonl`. (3) Items are 38 not 40 because the design uses shared converged
+items; the two dropped prompts are exactly the runaways of the fourth-placed model, so their
+exclusion cannot have helped the top of the order.
+
+**C ladder implication (recommendation, NOT applied — operator approval required, filed as C69)**:
+the panel is the role's real axis and it separates the contenders where Math500 (93–99 % strict) and
+the vision gate (all four seeing models pass) could not. Proposed C ladder: 1st
+`Qwen3.8-27B-mlx-uniform-4bit` (t0.6, medium, certified MTP; vision gate 19/20; Math500 99 %
+strict; slowest decode and longest outputs), 2nd `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+(already the B first pick — one resident model serves both roles; 0.6× the tokens and 0.7× the
+latency of the uniform checkpoint; the runner-up on every pair it lost). Shortlist: <!-- allow-shorthand -->
+`Ornith-1.0-35B-mlx-uniform-4bit` (third; fastest seeing decode) and
+`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (last on the panel; retained only as the fast
+text-only reasoning tool, no longer a C pick). `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` stays off the
+table (C63 runaway tax; fourth here). Alternative the operator may prefer: keep the mixed
+checkpoint first for the one-resident-model convenience and make the uniform second — the <!-- allow-shorthand -->
+uniform-over-mixed margin (0.684, CI [0.579, 0.789]) clears the MDE but is the family-split,
+length-entangled pair above.
+
 ## 2026-09-12 — M38 judge panel — three-judge gate on anchors PASSES (C68 stage 1); item verdicts pending
 
 C68 ruled (a)-staged (operator 2026-09-12, P336): restore the pre-registered three-judge panel by adding
