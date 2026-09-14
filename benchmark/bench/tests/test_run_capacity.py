@@ -7,7 +7,7 @@ class FakeDriver:
     def complete(self, model, messages, params, timeout=3600):
         # calibration call asks for a known filler; return a prompt_tokens so cpt computes
         return {"content": "XKRZ0A7Q, XKRZ1B7Q, XKRZ2C7Q, XKRZ3D7Q, XKRZ4E7Q",
-                "prompt_tokens": 100, "prefill_s": 1.0, "prefill_tps": 100,
+                "prompt_tokens": 1000, "completion_tokens": 10, "finish_reason": "stop", "prefill_s": 1.0, "prefill_tps": 100,
                 "decode_tps": 9.5, "peak_mem_gb": 40.0}
 
 class FakeSampler:
@@ -15,7 +15,7 @@ class FakeSampler:
     def __enter__(self): return self
     def __exit__(self, *a): pass
     system_peak_gb = 45.0
-    peak_rss_gb = 35.0   # gate metric: under 46 → fits
+    peak_rss_gb = 35.0   # RSS is secondary, not the target metric
 
 def test_calibrate_returns_positive_cpt():
     assert R.calibrate_cpt(FakeDriver(), "m") > 0
@@ -24,21 +24,21 @@ def test_main_writes_results(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
-    # idle=10GB; RSS=35 (gate metric, fits); system_peak=45 → sys_footprint=35 (secondary)
+    # idle=10GB; RSS=35 (secondary); system_peak=45 → sys_footprint=35 (secondary)
     monkeypatch.setattr(R, "system_used_gb", lambda: 10.0)
     monkeypatch.setattr(R, "await_model_pid", lambda: 12345)
     rc = R.main(["--model", "m", "--grid", "160000,192000", "--sampling-profile", "production"])
     assert rc == 0
     sc = json.load(open(os.path.join(tmp_path, "m", "capacity_retrieval.json")))
     assert sc["model"] == "m" and sc["axis"] == "capacity_retrieval"
-    assert sc["gate_metric"] == "mlx_peak_gb (mx.get_peak_memory, the prefill spike)"
+    assert sc["memory_metric"] == "mlx_peak_gb (mx.get_peak_memory, the prefill spike)"
     assert len(sc["records"]) == 2
     assert sc["idle_baseline_gb"] == 10.0
     # verify capacity_ladder.jsonl has one line per rung
     lines = open(os.path.join(tmp_path, "m", "capacity_ladder.jsonl")).readlines()
     assert len(lines) == 2
     first = json.loads(lines[0])
-    assert first["server_peak_gb"] == 40.0 and first["fits"] is True  # MLX-peak gate (40<=46)
+    assert first["server_peak_gb"] == 40.0 and first["within_memory_target"] is True  # descriptive target (40<=48)
     assert first["peak_rss_gb"] == 35.0                               # steady-state reported
     assert first["model_footprint_gb"] == round(45.0 - 10.0, 2)       # 35.0 coarse cross-check
 
@@ -52,7 +52,7 @@ def test_main_passes_bounded_params_to_ladder(tmp_path, monkeypatch):
         return [{"ctx": 160000, "server_peak_gb": 40.0, "peak_rss_gb": 35.0,
                  "system_peak_gb": 45.0, "model_footprint_gb": 35.0,
                  "prefill_s": 1.0, "prefill_tps": 200, "decode_tps": 9.5,
-                 "prompt_tokens": 1000, "retrieval_acc": 1.0, "fits": True}]
+                 "prompt_tokens": 1000, "completion_tokens": 10, "finish_reason": "stop", "retrieval_acc": 1.0, "fits": True}]
 
     monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
@@ -100,7 +100,7 @@ def test_main_writes_a_provenance_manifest_beside_the_ladder(tmp_path, monkeypat
     assert model == "m"
     assert kw["profile"] == "production"
     assert kw["runtime"]["probe"] == "capacity_ladder"
-    assert kw["overrides"] == {"max_tokens": 256, "thinking_budget": 256}
+    assert kw["overrides"] == {"max_tokens": 256, "thinking_budget": 256, "seed": 0}
     import json as _json
     man_path = tmp_path / "m" / "capacity_ladder.manifest.json"
     assert man_path.exists(), "manifest must land beside the ladder, inside RESULTS"
@@ -189,3 +189,61 @@ def test_out_tag_changes_filenames(tmp_path, monkeypatch):
     assert os.path.exists(os.path.join(tmp_path, "m", "capacity_retrieval.t07.json"))
     assert os.path.exists(os.path.join(tmp_path, "m", "capacity_ladder.t07.jsonl"))
     assert os.path.exists(os.path.join(tmp_path, "m", "capacity_ladder.t07.manifest.json"))
+
+
+def test_request_failure_persisted_unscored_and_returns_nonzero(tmp_path, monkeypatch, capsys):
+    class Broken(FakeDriver):
+        def complete(self, model, messages, params, timeout=3600):
+            if params['max_tokens'] != 1:
+                raise TimeoutError('timed out')
+            return super().complete(model, messages, params, timeout)
+    monkeypatch.setattr(R, 'MlxServeDriver', Broken)
+    monkeypatch.setattr(R, 'MemorySampler', FakeSampler)
+    monkeypatch.setattr(R, 'RESULTS', str(tmp_path))
+    monkeypatch.setattr(R, 'system_used_gb', lambda: 10.)
+    monkeypatch.setattr(R, 'await_model_pid', lambda: 12345)
+    rc = R.main(['--model', 'm', '--grid', '100,200', '--sampling-profile', 'production'])
+    assert rc != 0
+    rows = [json.loads(x) for x in (tmp_path / 'm/capacity_ladder.jsonl').read_text().splitlines()]
+    assert len(rows) == 1 and rows[0]['retrieval_acc'] is None
+    assert 'runner-exit' in capsys.readouterr().out
+
+
+def test_existing_result_refused_before_driver_creation(tmp_path, monkeypatch):
+    import pytest
+    target = tmp_path / 'm/capacity_retrieval.json'
+    target.parent.mkdir()
+    target.write_text('historical bytes')
+    monkeypatch.setattr(R, 'RESULTS', str(tmp_path))
+    def forbidden():
+        raise AssertionError('must not load model before overwrite check')
+    monkeypatch.setattr(R, 'MlxServeDriver', forbidden)
+    with pytest.raises(SystemExit) as exc:
+        R.main(['--model', 'm', '--sampling-profile', 'production'])
+    assert exc.value.code == 2
+    assert target.read_text() == 'historical bytes'
+
+
+def test_calibration_rejects_invalid_or_implausible_usage():
+    import pytest
+    for tokens in [None, 0, 1, True, float('inf')]:
+        class Calibration:
+            def complete(self, *a, **kw):
+                return {'prompt_tokens': tokens, 'content': '', 'completion_tokens': 1,
+                        'finish_reason': 'length'}
+        with pytest.raises(ValueError, match='calibration'):
+            R.calibrate_cpt(Calibration(), 'm')
+
+
+def test_ladder_receives_explicit_seed(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(R, 'MlxServeDriver', FakeDriver)
+    monkeypatch.setattr(R, 'RESULTS', str(tmp_path))
+    monkeypatch.setattr(R, 'system_used_gb', lambda: 10.)
+    monkeypatch.setattr(R, 'await_model_pid', lambda: 12345)
+    def fake_ladder(*args, **kw):
+        seen.update(kw['params'])
+        return []
+    monkeypatch.setattr(R, 'run_ladder', fake_ladder)
+    R.main(['--model', 'm', '--grid', '100', '--sampling-profile', 'production'])
+    assert seen['seed'] == 0

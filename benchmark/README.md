@@ -256,6 +256,15 @@ miss. `--sampling-profile` is REQUIRED (O36); `--out-tag` and `--request-timeout
 exist. Per-trial rows now carry prefill_s / decode_tps / draft counters. Run 192K/256K rungs on a
 quiet box.
 
+## Capacity reporting
+
+`bench.run_capacity` writes schema2: request completion, a rough48GB memory-target
+flag and bounded retrieval co-score are separate. Above-target rungs continue;
+request failures are unscored and exit nonzero. Use a fresh `--out-tag` and supply
+matched `--expected-rung-seconds` for the built-in five-minute daemon's rate/ETA
+assessment. Historical results are never overwritten; `rescore.py` is retired.
+[Schema, monitoring and compatibility](../docs/specs/c83-capacity-reporting.md).
+
 ## Heavy reasoning (aggregation + latent)
 
 Two standalone probes for reasoning ceiling, both at production params, climb-to-cliff and

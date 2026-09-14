@@ -1,20 +1,19 @@
 from bench.scorecard import capacity_retrieval_scorecard
 
-def _rec(ctx, fp, acc, fits):
-    return {"ctx": ctx, "model_footprint_gb": fp, "retrieval_acc": acc, "fits": fits}
 
-def test_full_pass():
-    recs = [_rec(160000, 30, 1.0, True), _rec(192000, 33, 1.0, True),
-            _rec(224000, 36, 0.8, True), _rec(256000, 40, 0.9, True)]
-    sc = capacity_retrieval_scorecard("m", recs)
-    assert sc["capacity_gate_pass"] is True
-    assert sc["max_fitting_ctx"] == 256000
-    # 224K had acc 0.8 (<0.85) but 256K is 0.9 -> effective is the largest passing
-    assert sc["retrieval_effective_ctx"] == 256000
+def test_completed_above_target_retains_coscore():
+    rows = [{"ctx": 160000, "server_peak_gb": 30, "retrieval_acc": 1.0},
+            {"ctx": 192000, "server_peak_gb": 49, "retrieval_acc": 0.8},
+            {"ctx": 256000, "server_peak_gb": 50, "retrieval_acc": 0.9}]
+    sc = capacity_retrieval_scorecard("m", rows)
+    assert sc["execution_status"] == "completed"
+    assert sc["max_completed_ctx"] == 256000
+    assert sc["max_within_memory_target_ctx"] == 160000
+    assert sc["retrieval_coscore_max_passing_ctx"] == 256000
 
-def test_gate_fail_midway():
-    recs = [_rec(160000, 30, 1.0, True), _rec(192000, 48, 0.0, False)]
-    sc = capacity_retrieval_scorecard("m", recs)
-    assert sc["capacity_gate_pass"] is False
-    assert sc["max_fitting_ctx"] == 160000
-    assert sc["retrieval_effective_ctx"] == 160000
+
+def test_empty_is_not_completed():
+    sc = capacity_retrieval_scorecard("m", [])
+    assert sc["execution_status"] == "empty"
+    assert sc["max_completed_ctx"] is None
+    assert sc["retrieval_coscore_max_passing_ctx"] is None
