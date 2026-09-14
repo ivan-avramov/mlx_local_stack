@@ -2199,3 +2199,20 @@ table above. The headline gaps:
 ## 2026-09-13 — M43 paired runtime compatibility screen
 
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` and `Qwen3.8-27B-mlx-uniform-4bit` pass all five fixed cases on original and integrated runtimes: correctness/convergence, executable Python, JSON, native tool continuation and vision. MTP counters are positive. One explicit third-turn control reuses 1839 tokens. JSON reasoning changes for both models while final answers match; the original-runtime repeat reproduces the first model's six responses. Both old-source/MLX-0.32.2 controls reproduce original responses, associating the change with source integration or its interaction with MLX. A changed-prefill control does not isolate a unique cause. Capacity checks are in progress; C77 proposes a separate bounded diagnostic. This is a compatibility screen, not statistical equivalence or a benchmark ranking sample. No B/C ladder movement is supported. Recommendation: preserve deployed runtime pending validation and a scoped decision on affected quality evidence. [Report](upstream-integration-2026-09-13.md); [evidence](../benchmark/results/upstream_2026-09-13_smokes.json).
+
+
+## 2026-09-13 — M43 first-pick capacity on integrated runtime
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` passes the ≤46 GB MLX-peak gate at the **nominal 262144 rung**, with **261449 actual prompt tokens**, full cap/preallocation 262144, TurboQuant KV4, deployed sampling and repaired MTP ON. New source `c5a6f97b` / router `f8f1df4`, MLX/Metal 0.32.2; original runtime preserved. The reviewed supervisor validated calibration, actual prompt attainment, worker/config/source stability and final manifest; all three requests completed.
+
+| Nominal rung | Actual prompt tokens | MLX peak GB | Prefill seconds | Prefill tokens/s | Decode tokens/s | MTP acceptance |
+|---|---:|---:|---:|---:|---:|---:|
+| 131072 | 130783 | 35.0058 | 520.05 | 251 | 9.74 | 0.7963 |
+| 196608 | 196115 | 37.3205 | 1066.47 | 184 | 9.06 | 0.8000 |
+| 262144 | 261449 | 41.1029 | 1573.81 | 166 | 6.28 | 0.7955 |
+
+At the largest measured prompt, headroom is **4.90 GB**, prefill 26.2 minutes. These are single capacity probes, not quality draws or repeated speed estimates. Retrieval's 1.0 co-signal is from the bounded 256-token memory instrument; it does not extend certified retrieval/reasoning coverage. The nominal target is not proof of exact 262144-token prompt occupancy.
+
+**Mechanism/limits:** prefill dominates wall time; the underlying hardware/kernel bottleneck remains `unknown`. Peaks closely reproduce M41. Decode is lower than the historical M41 observations (19.66/13.82/10.73 tok/s), while prefill timing changes direction across rungs; those unpaired observations motivate inspection, not a causal speed verdict. The operator correctly challenged an initial power caveat: both AC/battery profiles have `powermode: 0`, and Apple specifies equal plugged/unplugged performance. Battery operation alone is not a reason to discount the timings.
+
+**B/C implications and recommendation:** no ladder movement or new quality certification. Preserve approved picks and deployed runtime; finish the second-pick capacity row and M42 capacity arm, assess timing definitions/paths, and seek C77's bounded matched quality diagnostic before deciding activation. [Rows](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_ladder.m43on-20260913.jsonl); [manifest](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_ladder.m43on-20260913.manifest.json); [validated provenance](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_retrieval.m43on-20260913.provenance.json).

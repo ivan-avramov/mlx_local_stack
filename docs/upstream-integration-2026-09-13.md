@@ -1,6 +1,6 @@
 # M43 upstream integration — 2026-09-13
 
-Status: source merge and independent code review complete in isolation; paired compatibility smokes pass. Bounded controls identify source-associated numerical changes; capacity validation remains pending. Production pointers and environment remain on the prior runtime. Nothing has been pushed.
+Status: source merge and independent code review complete in isolation; paired compatibility smokes pass. Bounded controls identify source-associated numerical changes; first-pick capacity passes; second-pick capacity and M42 remain pending. Production pointers and environment remain on the prior runtime. Nothing has been pushed.
 
 ## Source and environment
 
@@ -32,3 +32,9 @@ Next: run the approved, separately tagged capacity measurements; C77 proposes a 
 Raw evidence and private runners: `$STACK_WORKDIR/upstream/2026-09-13/`. [Approved specification](specs/upstream-2026-09-13.md)
 
 The capacity supervisor retains one calibration and the historical three-rung procedure. Before launch it validates calibration token counts and plausible chars/token; each measured prompt must contain at least 99% of its nominal rung, with positive integer and increasing token counts. This is an instrument plausibility guard, not proof of exact token occupancy. The nominal 262144-rung verdict always accompanies actual prompt tokens (M41 used 261449). Transport/missing telemetry yields no gate; an early-rung failure leaves larger rungs unmeasured.
+
+Power-source correction (2026-09-13): the operator correctly challenged the initial timing caveat. Both battery and AC profiles report `powermode: 0`; Apple specifies the same plugged/unplugged performance for these models. Battery operation alone does not invalidate these measurements or establish a performance confound. The charging request concerned endurance. Historical M41 timings remain unpaired observations, so a causal runtime-performance claim still needs matched measurement. [Apple specification](https://www.apple.com/ca/newsroom/2026/03/apple-introduces-macbook-pro-with-all-new-m5-pro-and-m5-max/); [energy-mode configuration](https://support.apple.com/en-us/101613).
+
+## First new-runtime capacity result
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` passes: MLX peaks 35.0058 /37.3205 /41.1029 GB for actual prompts 130783 /196115 /261449 at the three nominal rungs. Largest-rung headroom 4.90 GB; prefill 1573.81 seconds, decode 6.28 tok/s. Supervisor calibration, token-count, source/config and manifest checks passed. No quality or ladder change follows from these bounded memory probes. [Complete result](campaign-results.md); [validated provenance](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_retrieval.m43on-20260913.provenance.json).
