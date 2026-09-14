@@ -18,8 +18,9 @@ predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in t
 - M42 preflight follow-up: `M42_FP16_PREFLIGHT_DRAFT.md` under the integration directory proposes handling the router's omitted zero-bit flag and checking inherited `KV_BITS`. The first runner exited and its exact sources/tests/spec were archived under `instrument-v1`. The fix and CLI-alias guard now have 133 passing fake tests and independent cold clearance; v2 runner SHA `3bddbdbcadc2fac7472c94c9f6c3bdde41717d274496ab916e1f7a10714f17d7`. M42 is now RUNNING with v2, tag `m42native16-20260913`: supervisor PID 82422, router 79008, worker 79023; inspect actual PIDs before acting. Live worker has no `--kv-bits` flag and inherited `KV_BITS=0`; full cap/preallocation and MTP preserved. Calibration passed (3210 tokens). Do not edit a live instrument. The arm is unquantized native 16-bit KV (BF16 expected), not a forced IEEE fp16 conversion.
 - C77 proposes 40 paired items /80 generations across math, code and prose, about 65 minutes historical generation-only plus overhead/tails. Exact frozen selection/spec: `docs/specs/m43-quality-diagnostic.md`. No diagnostic generation or external judge wave is armed.
 - C78 proposes two measured 131K timing requests plus two calibrations for the first model, both source states on MLX/Metal 0.32.2. This is unarmed; `docs/specs/m43-timing-control.md`. Timing definitions are unchanged; source kernel/attention changes are hypotheses, not measured causes.
+- D14 COMPLETE: independently reviewed `docs/transfer-findings.md` incorporates historical M40/M41 and both M43 capacity ladders, with C76 draw-count caveat and pending C77/C78/activation explicit.
 - No push authorized. No production environment/submodule activation until validation.
-- Discussion numbering continues at P425; C75 RULED; C76 OPEN (M41 draw-count correction); C77 OPEN (quality diagnostic); C78 OPEN (paired long-context timing); next C id C79.
+- Discussion numbering continues at P427; C75 RULED; C76 OPEN (M41 draw-count correction); C77 OPEN (quality diagnostic); C78 OPEN (paired long-context timing); next C id C79.
 
 ## Resume checklist
 
