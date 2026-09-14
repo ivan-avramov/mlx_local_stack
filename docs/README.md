@@ -28,3 +28,5 @@ Live, in reading order for a cold start:
 Rules live in `AGENTS.md` (repo root). Deleted 2026-09-03 (git history is the archive, last present at
 `b723bde`): `docs/superpowers/{plans,specs}/` (June–August design docs), `docs/sketches/` (June session
 notes), `docs/work-queue.json` (JSON queue mirror; `PLAN.md` is the only queue).
+
+- [Stack certification,2026-09-14](stack-certification-2026-09-14.md): final GitHub pins, C85 repair, quality/speed/memory evidence and scope limits.

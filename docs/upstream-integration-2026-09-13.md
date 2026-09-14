@@ -1,5 +1,7 @@
 # M43 upstream integration — 2026-09-13
 
+**2026-09-14 current-state correction:** C84 runtime certification is complete on published and installed522671c4/b632280. Native16 idle-cache retirement resolves the continuation OOM while preserving full active preallocation. The sampled40 paired outputs are unchanged; measured speed costs remain explicit. Historical activation-pending statements below describe earlier checkpoints. Original pre-merge quality comparison and broader native16 depth/vision quality remain open. [Current report](stack-certification-2026-09-14.md).
+
 Status: tested source merge landed on the parent fork's local main; independent code review and paired compatibility smokes pass. Bounded controls identify source-associated numerical changes; both shipped-state capacity ladders pass; M42 native16-bit KV completed normally at47.1386GB and remains a candidate under C79's rough48GB guideline. Production pointers and environment remain on the prior runtime. Nothing has been pushed.
 
 ## Source and environment

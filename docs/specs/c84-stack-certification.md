@@ -18,3 +18,7 @@ Use independent review, known-positive instrument tests, real five-minute daemon
 This certifies the specified runtime integration and serving cases. It does not establish universal quality equivalence, a complete native16 vision/reasoning-depth certification, or every newly supported model architecture. Preserve those limits in recommendations and the handoff.
 
 Private instruments and raw evidence: `$STACK_WORKDIR/upstream/2026-09-14-activation`. Public results must redact machine-local paths and distinguish raw numeric memory flags from selection decisions. Commit coherent results; fork publication follows the explicitly authorized GitHub flow, while stack publication remains unrequested.
+
+## Completed outcome,2026-09-14
+
+All required bounded runtime checks completed on522671c4/b632280. C85 is resolved;40 paired outputs and official scores match, native16 largest-context peak47.155GB, with observed +5.95% prefill time and−3.75% decode-rate changes in one pair. Broader quality and original pre-merge effects remain outside this screen. The capacity wrapper's generic daemon had no rate-vs-baseline estimate; preserve its truthful records and correct that reporting gap before reuse. [Final evidence and limits](../stack-certification-2026-09-14.md).
