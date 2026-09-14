@@ -1,6 +1,6 @@
 # C88 — Shipped-configuration vision qualification
 
-Status2026-09-14: **APPROVED, preparation** (operator after P620, P621). The operator narrowed this to qualification of the selected model as declared by `main_models.yaml`. This supersedes the proposed two-cache210-call study. No TQ4 comparator, depth ladders, calibration calls, visual-quality ranking or external judges are included.
+Status2026-09-14: **COMPLETE** (operator after P620, P621). Result:20 PASS,0 FAIL,0 null; all40 turns converged without runtime errors, runner418.94s. [Canonical summary](../../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/vision_gate.c88-shipped-20260914.summary.json). The operator narrowed this to qualification of the selected model as declared by `main_models.yaml`. This supersedes the proposed two-cache210-call study. No TQ4 comparator, depth ladders, calibration calls, visual-quality ranking or external judges are included.
 
 ## Exact scope
 

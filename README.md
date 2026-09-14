@@ -40,7 +40,7 @@ Updated **2026-09-14**. B is agentic coding; C is research, brainstorming and de
 
 | Status | Model | Best for and supporting evidence |
 |---|---|---|
-| 1, provisional pick | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | Everyday research/design; already the B default. Top-pair length-adjusted panel margin +0.25, 95% CI [−0.76,+0.91]; lower token/time cost informed the approved ordering. Historical vision gate 20/20. |
+| 1, provisional pick | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | Everyday research/design; already the B default. Top-pair length-adjusted panel margin +0.25, 95% CI [−0.76,+0.91]; lower token/time cost informed the approved ordering. Shipped native16 vision smoke **20/20 PASS** (C88). |
 | 2, provisional pick | Qwen3.8-27B-mlx-uniform-4bit | Longer, more elaborated answers; first on the raw panel, with a length confound. Historical vision gate 19/20. MTP stays ON; its M40 MBPPPlus result remains INCONCLUSIVE. |
 | Shortlist only | Ornith-1.0-35B-mlx-uniform-4bit | Fast vision-capable alternative; historical vision gate 20/20, behind both approved picks on the panel. |
 | Shortlist only | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | Fast text-only tool, no vision tower; last on the panel. Deployed t0.5, native routing, predictor OFF. |
@@ -56,9 +56,10 @@ The panel used 38 shared items (approximate MDE 20pp). Vision gates establish bo
 | Quality regression screen | All 40 paired answers/reasoning match; all 80 responses converge. Native16 Math500 5/5, HumanEvalPlus 4/5, MBPPPlus 5/5; second pick 5/5 each. Ten reviewed prose ties retain shared factual/methodological weaknesses. |
 | Native16 at 261449 prompt tokens | **47.155GB** MLX peak; **1165.33s** prefill; **11.51tok/s** decode. Memory is a rough 48GB target, not a strict cutoff. |
 | Observed timing cost | Native16 task latency +1.2–2.5% per axis; one long-context pair shows +5.95% prefill time and −3.75% decode rate. Repeatability and cause are unmeasured. |
+| Shipped first-pick vision smoke | **C88: 20 PASS, 0 FAIL, 0 null** using the existing image → description → ground truth → model verdict recipe. All40 turns converge; registry settings unchanged. |
 | Automated checks | MLX-VLM 5372 passed; MLX-Serve 106; stack provenance/comparison 119; generated client config check passes. |
 
-**Retain native16 for the first pick; the second retains TQ4.** Native16 also beat uniform8 on measured capacity/long-context speed in C82. Broader native16 depth/vision quality remains provisional. C84 compares the repaired stack with its initial merged state; the original pre-merge quality comparison remains open. Five items per axis do not establish a 5pp equivalence bound. [Full report, paired intervals and source provenance](docs/stack-certification-2026-09-14.md).
+**Retain native16 for the first pick; the second retains TQ4.** Native16 also beat uniform8 on measured capacity/long-context speed in C82. The shipped native16 configuration now passes the full existing vision smoke; broader native16 depth qualification remains pending. C84 compares the repaired stack with its initial merged state; the original pre-merge quality comparison remains open. Five items per axis do not establish a 5pp equivalence bound. [Full report, paired intervals and source provenance](docs/stack-certification-2026-09-14.md).
 
 ## Documentation
 
