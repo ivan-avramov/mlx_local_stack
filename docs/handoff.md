@@ -1,6 +1,6 @@
 # Handoff — 2026-09-13: local upstream merge landed; C80 cache pilot complete
 
-Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. **C80 is COMPLETE: 30 generations graded; all model/router/driver processes stopped and port8000 has no listener.** The daily-driver stack remains down. State: `$STACK_WORKDIR/upstream/2026-09-13/quality-pilot-c80/active.json`; verify actual PIDs/ports on resume. C81 now sets the first pick's actual registry default to native16 (`kv_bits: 0`, provisional). C82 is approved for 38 generations; instrument preparation is underway, no model launched yet. Runtime activation and push remain unarmed.
+Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. **C82 uniform8 capacity ladder is RUNNING**: supervisor81800, router81745, worker81746; verify actual PIDs before action. Both quality arms are generated and graded: each Math5005/5, HumanEvalPlus4/5, MBPPPlus5/5, all30converged, no paired outcome change. State `$STACK_WORKDIR/upstream/2026-09-13/quality-pilot-c82/active.json`; capacity output under `capacity/m42c82cap-uniform8-20260913` in the integration directory. Fresh native16 capacity remains approved next. Do not edit live/frozen instruments, sources or overlays. C81 native16 registry default stands; daily-driver stack is down, production runtime activation/push unarmed.
 
 ## Latest operator correction — C79
 
@@ -37,8 +37,8 @@ Session audit and precision explanation: `docs/memory-guideline-audit-2026-09-13
 - D14 reviewed evidence report complete, updated for C79/C80: `docs/transfer-findings.md`. P356 cosmetic cleanup complete; local registry certification comments restored without staging local paths.
 - M44 QUEUED: full HF-published-model artifact parity audit and card refresh, including MTP companions, recommended parameters and tested vision abilities. Only PLAN is the queue; no audit/upload armed.
 - C81 RULED: actual `main_models.yaml` default is native16 (`kv_bits: 0`) for the first pick; weights/MTP/tune unchanged. M40 all-axis certification used TQ4. Zero maps to quantization disabled with current KV_BITS environment absent; verify actual worker settings on next startup.
-- C82 RULED: 15 fresh native16/uniform8 task pairs plus both three-rung capacity ladders, 38 generations total; `docs/specs/m42-uniform8-comparison.md`. Instrument preparation underway; no model launch yet.
-- Next C id C83. Discussion numbering continues at P475.
+- C82 RULED: 15 fresh native16/uniform8 task pairs plus both three-rung capacity ladders, 38 generations total; `docs/specs/m42-uniform8-comparison.md`. Both quality arms complete and graded; uniform8 capacity running, native16 capacity next.
+- Next C id C83. Discussion numbering continues at P494.
 
 ## Resume safeguards
 
@@ -59,3 +59,5 @@ Session audit and precision explanation: `docs/memory-guideline-audit-2026-09-13
   instances differ; identical completion-token counts across draws are the fixed answer format, not copies.
 
 C80 validation:85 fake tests passed, independent cross-reviews clear; known-answer native ARM64 grading control recognized13 positive and2 syntax-negative fixtures. Frozen plan SHA `18de6de537cc14c4052dd902e2fc55022511cf24ec4f881309e5c859e6fe5e0f`; instrument hashes/checks in private `quality-pilot-c80/prelaunch-checks.json`. Root-pinned completion evidence and canonical input hashes passed before grading. All official grading and independent score/interval checks complete. Full raw request/response evidence remains private; redacted rows/manifests/scores/full coding evaluator outputs/provenance are exported to `benchmark/results`. C81 subsequently approved the native16 registry default; C82 test expansion is now approved.
+
+C82 preflight:102 generation +56 grading +27 capacity fake tests pass, independent reviews clear. Known-answer ARM64 grader control recognized13 positives and2 negatives. Frozen plan SHA `240ebeb38bea29867cb0a7a43427f387df434b0ce349959d7a2d405d7e84eaa8`; final instrument hashes in private `quality-pilot-c82/prelaunch-checks.json`. Constructor/tiny-tensor CPU check confirms16native/16uniform8 attention caches,48recurrent unchanged, group64 and full preallocation; no live-model dtype observation claimed. Old C80 evidence and first pre-review C82 freeze are preserved.

@@ -2292,3 +2292,29 @@ Ratios use the canonical paired two-stage bootstrap, 10000 iterations, seed 80, 
 Operator approved native16 KV as both the recommendation and the actual `main_models.yaml` default for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`: `kv_bits: 0`. Model weights, repaired MTP ON, sampling and full cap/preallocation are unchanged. This is a configuration decision based on the M42 capacity/speed trend and C80 no-observed-regression pilot, not new all-axis certification. Historical M40 certification used TQ4; native16 long-context quality, prose and vision coverage remain incomplete. C82 proposes matched uniform8 comparison; no additional measurements have run. The daily-driver stack is stopped, production source/environment upgrade is still pending, and nothing was pushed.
 
 C81 validation: `configgen check` passes. Parsed HEAD/index comparison confirms the selected model's KV precision is the only semantic registry change; the staged blob excludes local path overrides. CPU launcher inspection preserves repaired MTP, generation defaults and full-cap preallocation, omits `--kv-bits` for zero, and both current/integrated server resolvers return unquantized KV with the current `KV_BITS` environment absent. No model was launched for this configuration edit; next real startup must verify actual worker settings.
+
+## 2026-09-13 — C82 native16 versus uniform8 quality pilot complete; capacity running
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, fresh native16 control versus uniform8 affine KV on frozen c5a6f97b/f8f1df4, MLX/Metal0.32.2, weights/MTP/tune unchanged. Each state used the exact15 C80 task payloads/seeds: five Math500, five HumanEvalPlus and five MBPPPlus. Full deployed max_tokens102400, resolved thinking budget81920, cap/preallocation262144. Uniform8 changes kv_bits0→8 and the active scheme to uniform/group64; it quantizes all16 eligible target attention caches. Native16 keeps all16 native;48 recurrent states and drafter settings remain unchanged. Constructor/tiny-tensor CPU checks establish the expected layout and BF16-preserving native storage, not a live-model dtype observation.
+
+| Axis, n5 pairs | Native16 ordinary / strict@81920 | Uniform8 ordinary / strict@81920 | Convergence, each state | Exclusive solves uniform8:native16 |
+|---|---:|---:|---:|---:|
+| Math500 | 5/5 /5/5 | 5/5 /5/5 | 5/5 | 0:0 |
+| HumanEvalPlus | 4/5 /4/5 | 4/5 /4/5 | 5/5 | 0:0 |
+| MBPPPlus | 5/5 /5/5 | 5/5 /5/5 | 5/5 | 0:0 |
+
+All30 responses converged with positive MTP counters and no transport errors/non-convergence kinds. No paired outcome changes. Each strict delta is0pp with degenerate empirical bootstrap interval[0,0]; this cannot bound unseen disagreements or certify ±5pp equivalence. Nominal axis MDE56.03pp assumes discordance0.20 and a normal approximation, unreliable at n5. Final content and reasoning hashes each match7/15 pairs. The shared HumanEval/141 plus-test failure again includes `éxample.exe`: both answers enforce the prompt's ASCII first-letter rule, whereas the reference accepts Unicode alphabetic characters. Keep official4/5; this is not proof of either function's full Unicode correctness.
+
+| Descriptive all15 measure | Native16 | Uniform8 | Uniform8/native16 ratio,95% interval |
+|---|---:|---:|---|
+| Total HTTP generation wall time | 211.1s | 199.3s | 0.944 [0.760,1.084] |
+| Completion tokens | 10350 | 9328 | 0.901 [0.721,1.040] |
+| Mean per-request decode rate | 54.33tok/s | 50.80tok/s | 0.935 [0.927,0.942] |
+
+Canonical paired two-stage bootstrap,10000 iterations,seed82; ratios of arithmetic means. These are unstratified mixed-benchmark descriptive ratios, not multiplicity-adjusted conclusions; per-axis quality remains primary. Uniform8 decodes more slowly on these short tasks but generated fewer tokens. Its lower total-time point estimate is uncertain. Do not substitute these timings for long-context capacity results or infer a specific kernel cause.
+
+Validation:102 generation,56 grading and27 capacity fake checks passed with independent reviews. Known-answer ARM64 grading control recognized13 positives and2 syntax negatives. Both real grade sets completed in the pinned network-disabled ARM64 EvalPlus sandbox plus canonical symbolic math scorer. Independent checks bind all requests/seeds, raw responses, canonical rows, manifests, source and instrument hashes, completion evidence and grading inputs/results. No external judges ran.
+
+**B/C recommendation at this checkpoint:** preserve the operator-approved native16 default and existing model ordering. There is no observed quality reason to prefer either cache mode from n5/axis; the remaining C82 capacity ladders must inform the practical memory/latency tradeoff. Uniform8 capacity is running, followed by a fresh native16 control. No capacity result is inferred from these short generations, and no automatic default change is authorized.
+
+[Quality analysis](../benchmark/results/m42_c82_quality_2026-09-13.json); [native16 provenance](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/m42_quality_pilot.m42c82-native16-20260913.provenance.json); [uniform8 provenance](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/m42_quality_pilot.m42c82-uniform8-20260913.provenance.json). Raw coding evaluator files and per-axis rows/manifests/scores are exported beside the provenance files.
