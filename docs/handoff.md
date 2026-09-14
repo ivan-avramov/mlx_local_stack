@@ -15,7 +15,7 @@ Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Current repor
 
 ## Current state and publication
 
-- Final installed gitlinks: MLX-VLM `522671c4bebc5ff492d465a1d0e6a14251f18260`, MLX-Serve `b632280709f771972bffbaf3231e996e8a89f4e8`. Includes upstream MLX-VLM434afb1a / MLX-Servea6f80eb. Both forks were pushed to GitHub FIRST; submodules were fetched through their GitHub origins and committed here. Stack push was not requested and has not been performed.
+- Final installed gitlinks: MLX-VLM `522671c4bebc5ff492d465a1d0e6a14251f18260`, MLX-Serve `b632280709f771972bffbaf3231e996e8a89f4e8`. Includes upstream MLX-VLM434afb1a / MLX-Servea6f80eb. Both forks were pushed to GitHub FIRST; submodules were fetched through their GitHub origins and committed here. The operator authorized publishing stack main on2026-09-14 (P603). Verify origin/main against HEAD on resume; the earlier publication hold is superseded.
 - Main serving environment: MLX/Metal0.32.2, imports resolve to this stack's `src` submodules. All69 package versions were held fixed across the paired study. Startup retains committed gitlinks; no `--remote` update.
 - All owned model/router/benchmark/grading processes are stopped. The daily-driver stack remains down. Verify PIDs/ports before launching anything; do not arm work from a historical runner file.
 - `main_models.yaml` retains eight intentional local path overrides. NEVER stage its worktree copy. C84 comments were added through a HEAD-derived blob after all measurements; parsed registry values are unchanged. See `docs/qualify-a-model.md` for the technique.
@@ -54,12 +54,12 @@ Private root: `$STACK_WORKDIR/upstream/2026-09-14-activation`.
 2. **C83 OPEN:** canonical capacity memory-policy/reporting cleanup; include generic capacity-monitor wording and baseline-rate estimation before reuse. Preserve historical raw flags.
 3. **C76 OPEN:** M41 historical39-versus42 reasoning draw discrepancy; D14 uses verified39 and flags the older42 summaries. Do not pool unrelated M40 draws.
 4. **C77/C78 OPEN, unarmed:** original pre-merge-versus-integrated quality/timing proposals need reshaping for the current native16 state. C84 does not substitute for C77; C78 can be reshaped to examine timing repeatability/mechanism if prioritized.
-5. Broader native16 depth/vision quality remains provisional; no automatic ranking change. Whether to bring up the daily-driver stack and whether to push stack commits remain operator decisions. Fork pushes in C84 followed explicit GitHub-first authorization.
+5. Broader native16 depth/vision quality remains provisional; no automatic ranking change. Whether to bring up the daily-driver stack remains an operator decision. Stack publication is now explicitly authorized. Fork pushes in C84 followed explicit GitHub-first authorization.
 
 M40/M41, M42/C80/C82, P355/P356 and D14 are complete at their documented scope. M44 is complete. C83 reporting/monitor cleanup is the next inexpensive candidate; C76/C77/C78/C87 remain explicit open decisions, not armed runs.
 
 ## Resume discipline
 
-One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P602; C86/M44 complete, C87 open; next decision id C88.
+One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P605; C86/M44 complete, C87 open; next decision id C88.
 
 Recipe reminders: pairwise judge requires `--out`; judge-gate output is a directory. Benchmark ladder CLIs require `--sampling-profile deployed`. Use real known-positive daemon monitors and derived request timeouts without retries. Read the current report before making quality, memory or publication claims from older handoff text.
