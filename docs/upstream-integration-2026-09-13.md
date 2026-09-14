@@ -1,6 +1,6 @@
 # M43 upstream integration — 2026-09-13
 
-Status: source merge and independent code review complete in isolation; paired compatibility smokes pass. Numerical attribution and capacity validation remain pending. Production pointers and environment remain on the prior runtime. Nothing has been pushed.
+Status: source merge and independent code review complete in isolation; paired compatibility smokes pass. Bounded controls identify source-associated numerical changes; capacity validation remains pending. Production pointers and environment remain on the prior runtime. Nothing has been pushed.
 
 ## Source and environment
 
@@ -25,8 +25,10 @@ This is not a claim that every diff count shrank. Excluding tests, the runtime p
 - Five fixed compatibility cases per model/runtime cover arithmetic, executable Python, exact JSON, native tool continuation and one existing vision fixture. All cases pass with final convergence and positive MTP counters on both approved models. The tool case uses two requests, so each arm contains six requests. The runner has 73 fake-only tests and an independent protocol review.
 - An explicit third conversation turn on `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` reused **1839 tokens** with a correct answer and active MTP. Earlier zero-cache probes were explained by conservative anchoring before the latest user message and by a changed tool prompt prefix; old/new anchoring and persistence logic were independently verified unchanged.
 
-Both models change reasoning text on the JSON case while preserving the exact correct final answer. The other five request reasoning texts match. Restarting the original runtime reproduces all six original responses for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. An old-source/new-MLX control is pending to separate dependency effects from source changes. These fixed cases do not establish statistical quality equivalence or justify a ladder change. [Paired smoke evidence](../benchmark/results/upstream_2026-09-13_smokes.json)
+Both models change reasoning text on the JSON case while preserving the exact correct final answer. Native tool-handoff raw content changes from empty to two newlines; the native call and final answer remain valid. The other five request reasoning texts match. Restarting the original runtime reproduces all six original responses for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. Both old-source/MLX-0.32.2 controls reproduce the original six responses. A first-pick prefill-step control changes the reasoning again but does not reproduce the integrated trace. Reachable upstream changes include short-prompt cache quantization timing, target verification projections and draft argmax arithmetic; the bounded controls do not isolate a unique cause. These fixed cases do not establish statistical quality equivalence or justify a ladder change. [Paired smoke evidence](../benchmark/results/upstream_2026-09-13_smokes.json)
 
-Next: resolve numerical attribution; run the approved, separately tagged capacity measurements; propose any affected quality remeasurement before activation. M44, the full published Hugging Face artifact/card audit, is queued separately in PLAN.
+Next: run the approved, separately tagged capacity measurements; C77 proposes a bounded quality diagnostic before deciding the affected recertification scope. Production activation remains pending. M44, the full published Hugging Face artifact/card audit, is queued separately in PLAN.
 
 Raw evidence and private runners: `$STACK_WORKDIR/upstream/2026-09-13/`. [Approved specification](specs/upstream-2026-09-13.md)
+
+The capacity supervisor retains one calibration and the historical three-rung procedure. Before launch it validates calibration token counts and plausible chars/token; each measured prompt must contain at least 99% of its nominal rung, with positive integer and increasing token counts. This is an instrument plausibility guard, not proof of exact token occupancy. The nominal 262144-rung verdict always accompanies actual prompt tokens (M41 used 261449). Transport/missing telemetry yields no gate; an early-rung failure leaves larger rungs unmeasured.

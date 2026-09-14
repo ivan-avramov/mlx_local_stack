@@ -1,7 +1,7 @@
 # Handoff — 2026-09-13 (M43 upstream integration RUNNING; M40 + M41 COMPLETE)
 
 Rewritten in place. Phase 1 closed (B ladder C57, C ladder C70). Phase 2: **M40 COMPLETE** (both picks certified
-predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in the shipped ON state). M43 compatibility smokes have completed; numerical attribution and capacity validation remain in progress. Inspect the live-state files below before launching anything. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pick A).
+predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in the shipped ON state). M43 compatibility smokes and bounded controls have completed; the first new-runtime capacity ladder is running under the reviewed supervisor. Inspect the live-state files below before launching anything. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pick A).
 
 ## Active integration — C75 (operator approved P359–P363)
 
@@ -10,12 +10,12 @@ predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in t
   `$STACK_WORKDIR/upstream/2026-09-13/mlx-vlm`; upstream target `45d6e125`. Integration commit `c5a6f97b` is unit/audit validated; both models pass old/new five-case smokes. Summary: `docs/upstream-integration-2026-09-13.md`.
 - MLX-Serve upstream was already incorporated; standing-rule documentation commit `f8f1df4` is local and validated (75 tests).
 - Environments: `venv` (unit) and `runtime-venv` (serving pins except MLX/Metal 0.32.2), both under the integration directory. Both full suites pass: 5357 tests, 10 skips, 149 subtests. Eight source audits pass; cold code/cache reviews complete.
-- Live smoke state: `$STACK_WORKDIR/upstream/2026-09-13/{active-router,active-smoke}.json`; inspect PIDs before any launch. All four primary smoke arms and one old-runtime repeat have finished. JSON reasoning differs while final answers match; old-source/new-MLX control is next. Daemon/summary under `smokes/<runtime>/<model>/`. Runner does not resume/overwrite. Raw old/new smoke data and worker/source/version evidence remain separate.
+- Live validation state: `$STACK_WORKDIR/upstream/2026-09-13/{active-router,active-capacity}.json`; inspect PIDs before any launch. All four primary smoke arms and one old-runtime repeat have finished. JSON reasoning differs while final answers match; both old-source/new-MLX controls reproduce original traces. Source numerical paths changed; C77 diagnostic proposal is pending. Daemon/summary under `smokes/<runtime>/<model>/`. Runner does not resume/overwrite. Raw old/new smoke data and worker/source/version evidence remain separate.
 - Isolated stack-validation clone checks out integration commits for truthful driver provenance; original stack submodules and serving environment remain unchanged.
-- Approved next: integration audits/full suite/cold review, five-item real-model smokes, new-runtime capacity
-  on both picks, M42 fp16 capacity-first, D14 and cosmetic cleanup. Expanded quality/judge waves remain gated.
+- Active capacity: tag `m43on-20260913`, first pick, fresh NEW router/worker. Supervisor and child passed 65 fake tests plus independent cold review. Logs, SELFTEST/assessments and terminal result: `capacity/<tag>/<model>/`; actual driver PID/environment captured there. Do not edit live runner/source/config. Next: second-pick capacity, then approved M42 fp16 capacity-first.
+- C77 proposes 40 paired items /80 generations across math, code and prose, about 65 minutes historical generation-only plus overhead/tails. Exact frozen selection/spec: `docs/specs/m43-quality-diagnostic.md`. No diagnostic generation or external judge wave is armed.
 - No push authorized. No production environment/submodule activation until validation.
-- Discussion numbering continues at P389; C75 RULED; C76 OPEN (M41 draw-count correction); next C id C77.
+- Discussion numbering continues at P397; C75 RULED; C76 OPEN (M41 draw-count correction); C77 OPEN (quality diagnostic); next C id C78.
 
 ## Resume checklist
 
