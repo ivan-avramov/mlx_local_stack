@@ -2216,3 +2216,20 @@ At the largest measured prompt, headroom is **4.90 GB**, prefill 26.2 minutes. T
 **Mechanism/limits:** prefill dominates wall time; the underlying hardware/kernel bottleneck remains `unknown`. Peaks closely reproduce M41. Decode is lower than the historical M41 observations (19.66/13.82/10.73 tok/s), while prefill timing changes direction across rungs; those unpaired observations motivate inspection, not a causal speed verdict. The operator correctly challenged an initial power caveat: both AC/battery profiles have `powermode: 0`, and Apple specifies equal plugged/unplugged performance. Battery operation alone is not a reason to discount the timings.
 
 **B/C implications and recommendation:** no ladder movement or new quality certification. Preserve approved picks and deployed runtime; finish the second-pick capacity row and M42 capacity arm, assess timing definitions/paths, and seek C77's bounded matched quality diagnostic before deciding activation. [Rows](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_ladder.m43on-20260913.jsonl); [manifest](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_ladder.m43on-20260913.manifest.json); [validated provenance](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_retrieval.m43on-20260913.provenance.json).
+
+
+## 2026-09-13 — M43 second-pick capacity on integrated runtime
+
+`Qwen3.8-27B-mlx-uniform-4bit`, deployed temperature 0.6 / medium effort / native MTP ON / turboquant KV4, source `c5a6f97b`, MLX/Metal 0.32.2, cap and preallocation 262144, prefill step 512. Tag `m43on-20260913`; byte-identical reviewed capacity instrument used for both picks. All calibration, prompt-attainment, source/config and final manifest checks passed; supervisor exited cleanly after 56.1 minutes. This closes P355 for the shipped state on this runtime; earlier capacity evidence used different campaign states.
+
+| Nominal rung | Actual prompt tokens | MLX peak GB | Fits ≤46 GB | Prefill s (tok/s) | Decode tok/s | MTP acceptance |
+|---|---:|---:|---|---:|---:|---:|
+| 131072 | 130783 | 31.7408 | yes | 504.88 (259) | 10.59 | 0.8148 |
+| 196608 | 196115 | 34.0559 | yes | 1179.20 (166) | 9.54 | 0.7901 |
+| 262144 | 261449 | 37.7970 | yes | 1598.33 (164) | 6.15 | 0.8462 |
+
+**Nominal262144 gate PASS**, **8.20 GB headroom**; exact full prompt occupancy is not claimed. Retrieval co-signal 1.0 at all three rungs is a bounded 256-token memory probe, not a new quality/depth certification. The emitted bottleneck label is `unknown`; no kernel-level attribution follows from these rows.
+
+**Trend and B/C recommendation:** both approved picks fit the target envelope on the integrated runtime. This model uses 3.31 GB less peak memory than `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` at the largest rung; memory is a gate, so that difference does not promote it over the quality-preferred first pick. Both largest-rung prefills remain about 26 minutes and decode about 6 tok/s, making long-prompt latency a practical limitation. Preserve the approved ordering and historical certification labels; finish M42 capacity and obtain the proposed matched quality/timing diagnostics before production activation.
+
+[Rows](../benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/capacity_ladder.m43on-20260913.jsonl); [manifest](../benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/capacity_ladder.m43on-20260913.manifest.json); [validated provenance](../benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/capacity_retrieval.m43on-20260913.provenance.json).

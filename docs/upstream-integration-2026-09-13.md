@@ -1,6 +1,6 @@
 # M43 upstream integration — 2026-09-13
 
-Status: source merge and independent code review complete in isolation; paired compatibility smokes pass. Bounded controls identify source-associated numerical changes; first-pick capacity passes; second-pick capacity and M42 remain pending. Production pointers and environment remain on the prior runtime. Nothing has been pushed.
+Status: source merge and independent code review complete in isolation; paired compatibility smokes pass. Bounded controls identify source-associated numerical changes; both shipped-state capacity ladders pass; M42 native16-bit KV capacity is running. Production pointers and environment remain on the prior runtime. Nothing has been pushed.
 
 ## Source and environment
 
@@ -27,7 +27,7 @@ This is not a claim that every diff count shrank. Excluding tests, the runtime p
 
 Both models change reasoning text on the JSON case while preserving the exact correct final answer. Native tool-handoff raw content changes from empty to two newlines; the native call and final answer remain valid. The other five request reasoning texts match. Restarting the original runtime reproduces all six original responses for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. Both old-source/MLX-0.32.2 controls reproduce the original six responses. A first-pick prefill-step control changes the reasoning again but does not reproduce the integrated trace. Reachable upstream changes include short-prompt cache quantization timing, target verification projections and draft argmax arithmetic; the bounded controls do not isolate a unique cause. These fixed cases do not establish statistical quality equivalence or justify a ladder change. [Paired smoke evidence](../benchmark/results/upstream_2026-09-13_smokes.json)
 
-Next: run the approved, separately tagged capacity measurements; C77 proposes a bounded quality diagnostic before deciding the affected recertification scope. Production activation remains pending. M44, the full published Hugging Face artifact/card audit, is queued separately in PLAN.
+Both approved, separately tagged capacity measurements are complete; C77 proposes a bounded quality diagnostic before deciding the affected recertification scope. Production activation remains pending. M44, the full published Hugging Face artifact/card audit, is queued separately in PLAN.
 
 Raw evidence and private runners: `$STACK_WORKDIR/upstream/2026-09-13/`. [Approved specification](specs/upstream-2026-09-13.md)
 
@@ -40,3 +40,6 @@ Power-source correction (2026-09-13): the operator correctly challenged the init
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` passes: MLX peaks 35.0058 /37.3205 /41.1029 GB for actual prompts 130783 /196115 /261449 at the three nominal rungs. Largest-rung headroom 4.90 GB; prefill 1573.81 seconds, decode 6.28 tok/s. Supervisor calibration, token-count, source/config and manifest checks passed. No quality or ladder change follows from these bounded memory probes. [Complete result](campaign-results.md); [validated provenance](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_retrieval.m43on-20260913.provenance.json).
 
 Timing inspection found unchanged capacity/server timing definitions. Reachable verification code now tries custom Metal affine-projection kernels instead of native quantized matmul and uses three singleton quantized-attention calls for a three-token verification block instead of one multi-query call. Their performance effects, including any difference in Neural Accelerator use for these shapes, are unmeasured. Short smoke timings do not reproduce the large historical long-context decode difference. [Proposed matched timing control](specs/m43-timing-control.md).
+
+
+`Qwen3.8-27B-mlx-uniform-4bit` also passes: MLX peaks 31.7408 /34.0559 /37.7970 GB at the same actual prompt counts. Largest-rung headroom 8.20 GB, prefill 1598.33 seconds, decode 6.15 tok/s. This closes the shipped-state capacity gap P355 on the new runtime, with no quality or ladder change. [Validated provenance](../benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/capacity_retrieval.m43on-20260913.provenance.json).
