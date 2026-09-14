@@ -1,7 +1,7 @@
 # Handoff — 2026-09-13 (M43 upstream integration RUNNING; M40 + M41 COMPLETE)
 
 Rewritten in place. Phase 1 closed (B ladder C57, C ladder C70). Phase 2: **M40 COMPLETE** (both picks certified
-predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in the shipped ON state). M43 compatibility smokes and bounded controls have completed; the first new-runtime capacity ladder passed and the second model is preparing to run. Inspect the live-state files below before launching anything. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pick A).
+predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in the shipped ON state). M43 compatibility smokes and bounded controls have completed; the first new-runtime capacity ladder passed and the second model is running its final nominal 262144 rung. Inspect the live-state files below before launching anything. Entries: `docs/campaign-results.md` 2026-09-13 (M41, M40 pick B, M40 pick A).
 
 ## Active integration — C75 (operator approved P359–P363)
 
@@ -19,7 +19,7 @@ predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in t
 - C77 proposes 40 paired items /80 generations across math, code and prose, about 65 minutes historical generation-only plus overhead/tails. Exact frozen selection/spec: `docs/specs/m43-quality-diagnostic.md`. No diagnostic generation or external judge wave is armed.
 - C78 proposes two measured 131K timing requests plus two calibrations for the first model, both source states on MLX/Metal 0.32.2. This is unarmed; `docs/specs/m43-timing-control.md`. Timing definitions are unchanged; source kernel/attention changes are hypotheses, not measured causes.
 - No push authorized. No production environment/submodule activation until validation.
-- Discussion numbering continues at P417; C75 RULED; C76 OPEN (M41 draw-count correction); C77 OPEN (quality diagnostic); C78 OPEN (paired long-context timing); next C id C79.
+- Discussion numbering continues at P422; C75 RULED; C76 OPEN (M41 draw-count correction); C77 OPEN (quality diagnostic); C78 OPEN (paired long-context timing); next C id C79.
 
 ## Resume checklist
 
