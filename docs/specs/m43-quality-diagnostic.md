@@ -4,11 +4,11 @@ Status: **PROPOSED, NOT ARMED**. This is outside C75's bounded compatibility/cap
 
 ## Question and scope
 
-Determine whether the integrated source's observed numerical differences affect sampled task outcomes, convergence, prose bodies or output cost. Preserve deployed weights, predictor, sampling, template inputs, context cap and full-cap allocation. Compare fresh original-runtime and integrated-runtime responses; historical rows supply selection and planning evidence only.
+Determine whether the integrated source's observed numerical differences affect sampled task outcomes, convergence, prose bodies or output cost. Preserve deployed weights, predictor, sampling, template inputs, context cap and full-cap allocation. Compare fresh original versus integrated runtime bundles (source plus MLX/Metal); historical rows supply selection and planning evidence only.
 
 Models: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` and `Qwen3.8-27B-mlx-uniform-4bit`. Each receives five tasks on Math500, HumanEvalPlus, MBPPPlus and the existing prose corpus: **40 pairs /80 requests**, one explicit seeded draw per item/runtime. Both runtimes use the shipped MTP-ON state. Do not add candidates, change predictor state or change either ladder.
 
-Frozen outcome-independent selection: [selection artifact](c77-proposed-selection.json), SHA-256 `5de7e1b3976bc70bb91b2dd8512c5fe5355081a78df0ba7194dba66adf82d3e6`. First-pick coding reuses the prior M36 random pilot; remaining axes sample sorted unique M40 IDs with `Random(4313)`. Preserve explicit sample-zero seeds. Verify corpus and request-builder hashes before launching. Historical rows omit prompt text; current corpus hashes do not prove historical prompt equality. The new causal comparison requires identical serialized prompts within each fresh pair.
+Frozen outcome-independent selection: [selection artifact](c77-proposed-selection.json), SHA-256 `5edcaf060e504c4eca1617a68a106a14e3f467d9510df75372dc25c64d7b94a6`. First-pick coding reuses the prior M36 random pilot; remaining axes sample sorted unique M40 IDs with `Random(4313)`. Preserve explicit sample-zero seeds. Verify corpus and request-builder hashes before launching. Historical rows omit prompt text; current corpus hashes do not prove historical prompt equality. The new causal comparison requires identical serialized prompts within each fresh pair.
 
 ## Runtime and supervision
 
@@ -24,3 +24,5 @@ Use canonical math and execution grading for code. Record per-item correctness, 
 The ordinary cross-model `compare.py` deliberately refuses changed serving hashes. Preserve that guard and all truthful manifests. Any dedicated diagnostic analysis must declare runtime as the treatment, enforce equality of other output-determining fields and exact item/seed pairing, and remain separate from cross-model ranking. Do not falsify provenance or strip refusal fields to obtain a comparison.
 
 Five pairs per axis do not establish ±5pp equivalence. Report concrete discordant items and uncertainty, distinguish trace-only changes from final-answer failures, and recommend either a scoped expansion or an explicitly qualified activation decision using all available evidence. New failed cases require diagnosis before expansion. Larger quality studies, depth/vision recertification and external judging require a new scoped proposal; this diagnostic does not authorize them.
+
+Independent cold review verified the selection, source hashes, count and timing arithmetic, provenance separation and scope limits before any diagnostic launch.
