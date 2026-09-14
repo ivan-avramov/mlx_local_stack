@@ -13,9 +13,12 @@ predictor-ON; C74 RULED), **M41 COMPLETE** (pick A capacity + depth ladders in t
 - Live validation state: `$STACK_WORKDIR/upstream/2026-09-13/{active-router,active-capacity}.json`; inspect PIDs before any launch. All four primary smoke arms and one old-runtime repeat have finished. JSON reasoning differs while final answers match; both old-source/new-MLX controls reproduce original traces. Source numerical paths changed; C77 diagnostic proposal is pending. Daemon/summary under `smokes/<runtime>/<model>/`. Runner does not resume/overwrite. Raw old/new smoke data and worker/source/version evidence remain separate.
 - Isolated stack-validation clone checks out integration commits for truthful driver provenance; original stack submodules and serving environment remain unchanged.
 - Active capacity: tag `m43on-20260913`, first pick, fresh NEW router/worker. Supervisor and child passed 65 fake tests plus independent cold review. Logs, SELFTEST/assessments and terminal result: `capacity/<tag>/<model>/`; actual driver PID/environment captured there. Do not edit live runner/source/config. Next: second-pick capacity, then approved M42 fp16 capacity-first.
+- Power constraint: battery power was observed during the first capacity ladder; the operator was asked to connect AC for remaining runs. Check `pmset -g batt` before the next arm. Power was not sampled at launch, so do not make source-only timing claims; local observation/log excerpts are in `evidence/power-observation.json`.
+- Interim first-pick rung reports: 131072 → 35.005776684 GB, prefill 520.05 s; 196608 → 37.320530766 GB, prefill 1066.47 s. The 262144 request is running. These remain provisional until final token-count and manifest checks.
+- M42 preflight follow-up: `M42_FP16_PREFLIGHT_DRAFT.md` under the integration directory proposes handling the router's omitted zero-bit flag and checking inherited `KV_BITS`. Apply/test/review only after the live runner exits; do not edit it in place during a run. The arm is unquantized native 16-bit KV (BF16 expected), not a forced IEEE fp16 conversion.
 - C77 proposes 40 paired items /80 generations across math, code and prose, about 65 minutes historical generation-only plus overhead/tails. Exact frozen selection/spec: `docs/specs/m43-quality-diagnostic.md`. No diagnostic generation or external judge wave is armed.
 - No push authorized. No production environment/submodule activation until validation.
-- Discussion numbering continues at P397; C75 RULED; C76 OPEN (M41 draw-count correction); C77 OPEN (quality diagnostic); next C id C78.
+- Discussion numbering continues at P410; C75 RULED; C76 OPEN (M41 draw-count correction); C77 OPEN (quality diagnostic); next C id C78.
 
 ## Resume checklist
 
