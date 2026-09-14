@@ -1,19 +1,48 @@
-# Handoff — 2026-09-14: C84 production dependency activation in progress
+# Handoff — 2026-09-14: C84 stack certification in progress
 
-C84/C85 certification ACTIVE. Latestforks are now PUBLISHED on GitHub and fetched/checkedout here: MLX-VLM6822db17970d00d9938c48d82c66a565af3907be (includes upstream434afb1a+bothC85repairs), MLX-Serveb632280709f771972bffbaf3231e996e8a89f4e8 (permodelcache_session_shrink bool/None). ParentfullVLM5357pass10skip149subtests, Serve106pass, independentreviews clear. Allmodelsstopped atthischeckpoint; verify beforeGPU. Main registry nowadds cache_session_shrink:true ONLY for firstnative16model, fullcap/prealloc262144 andweights/MTP/tuneunchanged. CleanHEAD-derivedregistryblob staged; neverstageworktreecopy. Stackpublicationnotrequested; forkpublication follows explicitGitHub-firstauthorization.
+Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. C84/C85 remain active under `docs/specs/c84-stack-certification.md`. Fork publication is explicitly authorized; stack publication is not.
 
-Failures remain in evidence: initialnative16toolcontinuationOOM reproducedfresh;5bownershipcleanup alone stillOOM; SHRINK=on alone stillOOM. DEBUGtelemetry shows a NEWanonymoussession oncontinuation whileprevious263-tokenprefix retainsfullbacking. _trim_cache physicallyslicedPreallocKVCache into a shortview, hidscapacityfromshrink andlostrefloorbehavior. Final6822logicaltrim preservescapacity; realMLXtestsprove8,372,224bytes releasedbyidle retirement andfull262144floor/data restored. The finalfix+permodelsetting LIVE RETEST is next and not yetclaimedpassed.
+## Current source and runtime
 
-Rootmetadata nowrecordsretirementpolicy and hardwarecomparisonguards refuseunknown-vs-explicit differences;98benchchecks+earlier36fingerprintchecks passed. QA-v2 AFTERamendment underconstruction toguarddeclaredsource/retirementpolicy/metadatachanges whilebeforeevidenceandall80wireinputspreserved. No afterqualityrequests launched. All69servingpackages remainpinned.
+- Stack commit `3a3d187`; GitHub-published and GitHub-fetched gitlinks: MLX-VLM `522671c4bebc5ff492d465a1d0e6a14251f18260`, MLX-Serve `b632280709f771972bffbaf3231e996e8a89f4e8`. VLM includes upstream `434afb1a` plus ownership, logical-trim and eager-retirement repairs. Startup preserves committed gitlinks.
+- Actual stack serving environment uses MLX/Metal0.32.2. All69 package versions remain pinned for the paired study. Imports resolve to this checkout's `src` submodules.
+- `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` ships native16 (`kv_bits: 0`) and `cache_session_shrink: true`. Only idle padding is compacted; active cap/preallocation262144, weights, MTP and tune are unchanged. `Qwen3.8-27B-mlx-uniform-4bit` retains TQ4 and its unchanged registry entry.
+- Eight intentional worktree registry path overrides remain. NEVER stage the worktree `main_models.yaml`; use the HEAD-blob technique in `docs/qualify-a-model.md`.
+- At this checkpoint final second-model smoke is running; both final actual-stack unit suites and configgen checks passed. Verify PIDs/ports and private run state before GPU use; subsequent quality work may already be running.
 
-BEFORE quality is complete, finalized and graded for both20-request arms (40total), allconverged: native16 Math5005/5,HumanEvalPlus4/5,MBPPPlus5/5; tq4 all5/5. Preserve root-reviewed finalization hashes native16=3c4957515f67a5c569d358e32333d28872caeebf302d874ae55b4a059fa4a656 and tq4=4db8d0a71caff2265bd8265fc1a52a53a85aff4770b6ca2327a0c66b8d0679bf. Beforefreeze5716db4fc30e0ac458fa78b1aa8b6b006a0087f4bcf40e502f75a59c4daf3c11. Its oldafter5b freeze was NEVER USED and archived as quality/frozen-after-unused-5b43e5d9.json. Do not rerun or edit beforeinstruments/data. quality/registry-before.yaml matches the exact original registry hash; quality/historical-code holds pre-metadata-change modules. All69 serving packages remain fixed. QA-v2 amendment is being prepared privately to allow ONLY the declared retirement policy/source bundle and metadata changes; all40after wire requests remain identical. No afterrequests launched.
+## Verified C85 repair evidence
 
-Native16 pre-fix largest-context control completed:261449tokens,47.138620204GB peak,1099.88sprefill,11.9545tok/sdecode,170completiontokens; content/reasoning identicalC82. Native16 standalonevisionpasses; secondmodelTQ4fivecasespass. Parent5b affected2060tests/12subtests pass. Actualstack5b fullsuite:5372pass,12skip,149subtests,onefailedaudit dueabsentupstream/main ref; fetching upstreamGitHub andrerunning53audit tests cleared that environmentfailure. Full finalsource suite stillrequired.
+The original native16 tool continuation OOM was real. Fresh-tool controls reproduced it. Ownership cleanup alone, retirement setting alone, and logical trimming alone did not resolve it. Preserve those failed runs.
 
-Next: coldreview/publish pendingforkchanges, fetchGitHub andbumpmain, enable permodelretirement safely with HEAD-blob registry technique, then focusedactualstacktool/vision/session tests before any longafterstudy; finalfullsuite,40pairedafterquality+offlinegrading/prose review, matchednative16capacity, criticalspeed/memory/qualityassessment and report. Source bundle after now includes C85repairs+newupstreamrollback+retirementpolicy, so do not attribute all before/after differences to first lifetime patch. Private root `$STACK_WORKDIR/upstream/2026-09-14-activation`; public scope `docs/specs/c84-stack-certification.md`. Preserve eight intentional local registry path overrides; NEVER stage worktree main_models.yaml.
+Native logical trimming had hidden full allocations behind short views. After that repair, retirement still created lazy copies holding the original backing. All three cache formats now evaluate and synchronize compact buffers before publishing replacement fields. Regression tests check immediate active-memory release without caller evaluation, exception safety, valid external aliases, exact prefixes and restoration of the full floor. Independent27 bounded MLX checks pass; final parent suite5372passed,10skipped,149subtests. Serve106passed.
 
+**Actual-stack live retest at522671c4 passed:** all five native16 smoke cases/six requests, including the previously failing tool continuation and vision; all three growing-conversation requests pass with cache reuse on the third turn. MTP remains engaged. Final second-model smoke and paired quality/capacity measurements are still pending. Actual-stack full suite also passed5372tests,10skips,149subtests. This clears the observed continuation failure, not broader statistical quality equivalence.
 
-Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. **All38 C82 generation requests are complete and independently audited.** All owned model/router/driver processes are stopped; verify current PIDs and ports before future work. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` retains the C81 native16 registry default (`kv_bits: 0`). At261449 actual prompt tokens, native16/uniform8 measured47.1386/48.2124GB MLX peak,1063.47/1609.23s prefill and12.948/5.673tok/s decode. Both ladders completed normally; a small memory-target overrun is not disqualification. Each quality arm scored Math5005/5, HumanEvalPlus4/5, MBPPPlus5/5; all30converged. This pilot does not certify broader quality equivalence. State: `$STACK_WORKDIR/upstream/2026-09-13/quality-pilot-c82/active.json`; analysis: `benchmark/results/m42_c82_comparison_2026-09-14.json`. Daily-driver stack is down; production runtime activation and push remain unarmed.
+## Paired study and preserved evidence
+
+Private root: `$STACK_WORKDIR/upstream/2026-09-14-activation`.
+
+- Original `quality` BEFORE protocol/data are immutable:40requests,20permodel, five each Math500/HumanEvalPlus/MBPPPlus/prose. All converge. Native16 official scores5/5,4/5,5/5; TQ4 scores5/5 on each mechanical axis. Shared historical HumanEval/141 prompt/reference mismatch remains an official failure. No prose quality score fabricated.
+- BEFORE freeze `5716db4fc30e0ac458fa78b1aa8b6b006a0087f4bcf40e502f75a59c4daf3c11`; finalized native16 `3c4957515f67a5c569d358e32333d28872caeebf302d874ae55b4a059fa4a656`, TQ4 `4db8d0a71caff2265bd8265fc1a52a53a85aff4770b6ca2327a0c66b8d0679bf`. Archived exact registry and historical metadata code preserve old provenance.
+- `quality-v2` supplies only40 AFTER requests; independent31 CPU checks clear. Prepared SHA `c58ff1f4cb2d12b3735e1bad4337736a99780f28f9d6ee40e4dfd8e83ef05e89`. Seal final522671c4/b632280 after final preflight; consult its README. Exact wire inputs and69 packages remain matched. Treatment includes the complete repair/upstream/retirement-policy bundle; do not attribute all differences to an isolated change. Original unused5b after freeze cannot launch this adapter.
+- BEFORE largest-context control:261449prompttokens,47.138620204GB peak,1099.88s prefill,11.954545tok/s decode,170completiontokens, correct retrieval, zero cache reuse, positive MTP. Exact content/reasoning match C82. `capacity_probe_after.py` repeats the same calibration plus largest request into new `capacity-after`; use a fresh worker.
+- Short smoke/quality memory is diagnostic only. Capacity evidence requires the long-context probe. Rough48GB is a guideline, not automatic rejection.
+
+## Finish this authorized work
+
+1. Verify final actual-stack unit/config/provenance checks and second-model five-case smoke.
+2. Seal QA-v2 against final clean gitlinks. Run20 AFTER requests per model with fresh workers, actual overlay environment, explicit seeds, daemon300s monitoring, no retries. Finalize each before changing state. Grade code only in the reviewed offline ARM64 container; inspect paired prose directly.
+3. Run fresh native16 calibration + exact largest-context control; compare quality, per-axis speed, full-context memory, correctness and convergence against preserved BEFORE evidence.
+4. Independently review complete results; update README evidence, campaign results, PLAN, C84/C85 and this handoff. Commit coherent units with PII-redacted exports; no stack push.
+5. Next queued project: M44 full HuggingFace artifact parity and model-card refresh. Other open items: C83 capacity-policy reporting, C76 M41 draw-count discrepancy, broader native16 quality/depth coverage. C77/C78 original pre-merge proposals need reshaping and remain unarmed. D14 transfer write-up is complete; incorporate final measured mechanisms.
+
+## Resume safeguards
+
+One resident model; APC absent; session count2; full active preallocation; deployed sampling and explicit served-overlay environment. Root owns lifecycle via private `runtime_control.py`. Verify worker flags and source SHAs. Never change config/source during a live arm. Current discussion sequence follows P539; next decision id C86.
+
+## Historical campaign context
+
+The following sections preserve completed earlier evidence and decisions. Statements about old activation/source state are historical and superseded by the current checkpoint above.
 
 ## Latest operator correction — C79
 
