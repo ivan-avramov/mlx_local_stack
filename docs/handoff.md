@@ -1,4 +1,4 @@
-# Handoff — 2026-09-14: C84 runtime certification complete
+# Handoff — 2026-09-14: M44 HF audit active; C84 complete
 
 Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Current report: [stack certification](stack-certification-2026-09-14.md). C84 bounded runtime checks are complete; C85's native16 tool-continuation OOM is resolved. Broader quality remains qualified below.
 
@@ -39,7 +39,7 @@ Private root: `$STACK_WORKDIR/upstream/2026-09-14-activation`.
 
 `docs/PLAN.md` is the only queue.
 
-1. **M44 NEXT:** full HuggingFace published-model parity audit and model-card refresh, including historical models, insurance clones, MTP sidecars, vision assets, exact recommended settings and matching latest test provenance. Requested and queued; audit/upload work has not begun. Reconcile artifact-changing remediation before execution.
+1. **M44 ACTIVE (operator P584: proceed):** full HuggingFace published-model parity audit and model-card refresh, including historical models, insurance clones, MTP sidecars, vision assets, exact recommended settings and matching latest test provenance. Remote inventory and local mapping are underway under `$STACK_WORKDIR/hf-audit/2026-09-14`; no model uploads or card changes have been made yet. README cleanup is also authorized. Reconcile artifact-changing remediation before execution.
 2. **C83 OPEN:** canonical capacity memory-policy/reporting cleanup; include generic capacity-monitor wording and baseline-rate estimation before reuse. Preserve historical raw flags.
 3. **C76 OPEN:** M41 historical39-versus42 reasoning draw discrepancy; D14 uses verified39 and flags the older42 summaries. Do not pool unrelated M40 draws.
 4. **C77/C78 OPEN, unarmed:** original pre-merge-versus-integrated quality/timing proposals need reshaping for the current native16 state. C84 does not substitute for C77; C78 can be reshaped to examine timing repeatability/mechanism if prioritized.
@@ -49,6 +49,6 @@ M40/M41, M42/C80/C82, P355/P356 and D14 are complete at their documented scope. 
 
 ## Resume discipline
 
-One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P580; next decision id C86.
+One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P586; C86 records M44 authorization; next decision id C87.
 
 Recipe reminders: pairwise judge requires `--out`; judge-gate output is a directory. Benchmark ladder CLIs require `--sampling-profile deployed`. Use real known-positive daemon monitors and derived request timeouts without retries. Read the current report before making quality, memory or publication claims from older handoff text.

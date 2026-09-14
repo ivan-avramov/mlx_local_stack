@@ -9,6 +9,7 @@ Live, in reading order for a cold start:
 | `campaign-supervision.md` | recurring Codex review authority, recovery boundaries and local scheduler operation |
 | `PLAN.md` | the backlog / queue (authoritative for what is live); rows M*, D*, C*, H*, S* |
 | `open-questions.md` | operator decision queue (O*/C* items; closed items are never deleted) |
+| `model-recommendation-evidence.md` | detailed per-language/session evidence and historical comparison tables; current picks remain in the root README |
 | `campaign-results.md` | living results record: dated entries + the scoreboard + comparability rules |
 | `upstream-integration-2026-09-13.md` | M43 merge/refactor disposition, runtime validation and remaining activation gates |
 | `transfer-findings.md` | reviewed D14 report: measured local findings, transferable methods and destination-backend remeasurement |

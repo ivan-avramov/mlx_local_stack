@@ -1,178 +1,68 @@
-# Local model recommendations
+# mlx_local_stack
 
-Updated 2026-09-14 (C84 runtime certification complete, native16 default retained; C82 native16/uniform8 comparison complete; M43 integration/capacity / C79 memory guideline; C70: C ladder set on the M38 judge panel with length control; C67: C ladder reordered with vision required for the C first pick; `Ornith-1.0-35B-mlx-uniform-4bit` added to the C contest). Rankings are operator-approved, provisional choices based on quality and observed trends, not claims of statistically proven superiority. B is agentic coding; C is research, brainstorming and design. Models ship as a model/tune/predictor combination. Confidence intervals and limitations remain part of the evidence. [Full results](docs/campaign-results.md), [queue](docs/PLAN.md), [decisions](docs/open-questions.md).
+Local model serving and evaluation on Apple Silicon: an OpenAI-compatible MLX router, an auxiliary task model, and OpenWebUI. Current measurements use a **64GB M5 Max**; hardware-specific recommendations are provisional.
 
-**2026-09-14 C84 runtime certification complete:** GitHub-published forks are installed at MLX-VLM `522671c4` / MLX-Serve `b632280`, with locked MLX/Metal 0.32.2. Both deployed models pass tool/vision serving screens; native16 continuation OOM is resolved by cache retirement repairs. All 40 paired outputs and grades match their initial merged-stack baseline. Native16 task latency increased 1.2–2.5% per axis; its final 261449-token probe measured **47.155GB**, **1165.33s prefill**, **11.51tok/s decode** (single-pair changes +5.95% prefill, −3.75% decode). Broader native16 quality and the original pre-merge quality comparison remain open. The daily-driver stack is stopped. [Full certification report](docs/stack-certification-2026-09-14.md).
+## Run the stack
 
-## B: top four for agentic coding
+Requires macOS on Apple Silicon, [uv](https://docs.astral.sh/uv/) with Python 3.12+, and Docker/OrbStack for OpenWebUI. Configure Hugging Face access in `.env` (`HF_TOKEN`) if needed for model downloads.
 
-| Rank | Model | Recommended configuration | Best for — and why |
-|---|---|---|---|
-| 1 | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | t0.5, medium effort, repaired MTP ON, **native16 KV default (C81, provisional)**; M40 all-axis predictor certification used TQ4 | Python/Go agentic work:22/22 at medium on each, with zero stalls; strongest completion trend. Other languages remain unmeasured. Also the C first pick; vision gate 20/20 (M39). C81 approves native16 KV as the provisional registry default; weights/MTP/tune unchanged. |
-| 2 | Qwen3.8-27B-mlx-uniform-4bit | t0.6, medium effort, certified MTP (M40 2026-09-13: predictor-ON certified on every axis; MBPPPlus inconclusive at n=100) | Broad coding coverage, especially Python/JavaScript: favorable repeats and efficient medium effort; Go remains16/22 with six stalls. |
-| 3 | Ornith-1.0-35B-mlx-uniform-4bit | t0.4, native expert routing, certified MTP | Rust and interactive coding: highest observed Rust score and short task latency. |
-| 4 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | deployed t0.3, certified MTP | Repair-oriented fallback: strong older multi-attempt repair evidence; retain despite weaker current agentic trends. |
-
-C57 approved this order on2026-09-09. C61/M36 approved repaired MTP for the first choice on2026-09-10. The [public sidecar](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter) is uploaded at revision `74bb2bc1feb60dbb8302bc8e6021d0be01f8f18d`; all four files passed anonymous download/checksum verification. Production registry now references it. Existing benchmark overlays remain immutable.
-
-M36 pooled strict accuracy is88.0% ON versus88.33% OFF, difference−0.33pp,95% CI[−3.0,+2.33], n100×3, nominal MDE12.5pp; all600 responses converged. Paired wall-time ratio0.417 CI[0.238,0.603]. HumanEvalPlus alone trends−1.33pp CI[−5.33,+2.0]; MBPPPlus+0.67pp CI[−2.0,+4.67], nominal MDE17.7pp each. The combined evidence supports quality equivalence at±5pp and a substantial time benefit; retain the dataset-specific caveat. Model rankings are unchanged. The base model's M36 positive control passed at1.785x decode and84.8% acceptance. No expanded routing is promoted.
-
-### B evidence
-
-Passes out of 22 per language/session. Commas indicate distinct sessions, not pooled scores. These are historical configurations, not one matched comparison of all current recommended triples.
-
-| Model | Python | Go | Rust | Java | JavaScript | Best for — evidence and limits |
-|---|---|---|---|---|---|---|
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | 21; **22 at medium** | **20** historical; **22 at medium** | Not measured | Not measured | Not measured | Python/Go: both medium suites finished22/22 with zero stalls. Repaired MTP is approved and registry-enabled after pooled quality equivalence and favorable speed. Three languages remain unmeasured. M37 medium Math50097% strict, all converge; fewer tokens but two fewer solves than the base. M41 (2026-09-13, predictor-ON): 41.1 GB MLX peak at 262144 (gate PASS), retrieval 1.0 to 128K, chain-4 reasoning 1.0 to 156K with 0/42 runaways; decode 21 tok/s @128K, 10.7 @262K; 256K prompt TTFT ≈33 min. M43 integrated-runtime KV4 peak41.10GB; C80 native16/TQ4 pilot matches on all 15 outcomes (Math500 5/5, HumanEvalPlus 4/5, MBPPPlus 5/5 each), all converge. C82 repeats the same quality outcomes versus uniform8; native16 has lower measured peak and faster long-context generation at all three rungs. C84 runtime integration passes with native16 retirement enabled; sampled quality is unchanged and measured timing costs are retained. Broader quality remains provisional. |
-| Qwen3.8-27B-mlx-uniform-4bit | 20, 18; **19 at medium** | 16 historical; **16 at medium** | 13 | 12 | **19, 18** | Broad coverage: favorable Python/JavaScript repeats; Rust is weaker. M43 integrated-runtime KV4 peak37.80GB at261449 actual prompt tokens; C84 runtime integration passes; all 20 paired outputs match and per-axis request-time increases are below 1%. Original pre-merge quality/timing scope remains separate. |
-| Ornith-1.0-35B-mlx-uniform-4bit | 19, 18 | 11 | **17** | 12 | 12, 17 | Rust/latency: Rust leads; JavaScript varies markedly by session. ARM64 regrade confirms M34a MBPPPlus strict80.7% native versus78.7% expanded; native routing remains the recommendation. |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | 12, 18 | 12 | 15 | **13** | 17, 16 | Repair fallback: the 12-pass Python session did not repeat; do not rank from that outlier alone. |
-
-Matched medium-effort Go COMPLETE: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`22/22, zero stalls,1.697h; `Qwen3.8-27B-mlx-uniform-4bit`16/22, six stalls,2.039h. Paired success difference **+27.3pp,95% CI[+9.1,+45.5]**, exclusive solves6:0, exact paired p=.03125 (not campaign-multiplicity adjusted); nominal axis MDE26.7pp. Paired wall-time ratio0.832, CI[0.614,1.064]. This strengthens the approved B first choice for Python/Go; no new promotion. Both measured predictor OFF, medium effort, at their own deployed temperatures. Individual 22-case sessions have shown swings of 5–6 cases. Some comparisons cross serving-path revisions. Missing results are not zeros. The leader's Python advantage over the base at medium is directional (3:0 discordant cases, exact p=.25). Medium-vs-medium pooled standalone coding strict difference is +0.8pp, 95% CI [-1.2,+3.0], n=214, nominal MDE 8.6pp; its smaller token count does not produce a wall-time advantage there. These limitations qualify the recommendation without erasing the observed trends.
-
-M34a MBPPPlus native-evaluator confirmation for `Ornith-1.0-35B-mlx-uniform-4bit`: expanded-minus-native strict **−2.0pp, 95% CI [−6.7,+2.7]**, output-token ratio **1.545, CI [0.867,2.668]**, n=100 k=3 (nominal MDE12.5pp). The poorer MBPPPlus trend conflicts with favorable HumanEvalPlus/Math500 trends. Keep native routing while the queued resolution measures the tradeoff with and without the certified predictor.
-
-M34r four-cell MBPPPlus experiment COMPLETE for `Ornith-1.0-35B-mlx-uniform-4bit`, n100×1 per cell: native OFF81% strict, native MTP78%, expanded OFF77%, expanded MTP78%. With MTP, expansion-minus-native strict0pp CI[−6,+6], ordinary−1pp CI[−5,+3], token ratio0.860 CI[0.425,1.673]; wall1.37/1.47h. Without MTP, expansion strict−4pp CI[−11,+3], token ratio2.106 CI[0.850,5.045]. Nominal MDE12.5pp. Recommend native routing for the better overall quality trend; the modest expanded-MTP speed trend does not establish an overall win across datasets. Native OFF had the best point estimates in this MBPPPlus set; existing MTP certification also includes a larger HumanEvalPlus arm with quality near parity and faster completion, so no global predictor withdrawal from this single set. B/C order unchanged.
-
-## C: approved picks and evaluation shortlist (up to four)
-
-Only ranks 1–2 are approved C picks. **C70 (operator, 2026-09-12) set this order**, amending C69 after the length-controlled re-analysis of the M38 judge panel (three judges, reliability gate PASS, all ten pairwise comparisons decisive after Holm on 38 items, MDE ±20pp). Raw panel order: `Qwen3.8-27B-mlx-uniform-4bit` > `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` > `Ornith-1.0-35B-mlx-uniform-4bit` > `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` > `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`. The top pair is length-confounded (the uniform checkpoint wrote the longer answer in all 38 items; adjusted margin +0.25, CI [−0.76, +0.91], P = 0.56 — equivalent at equal length), so the cheaper, already-resident B pick takes first; every other ordering survives length adjustment. Picks stay PROVISIONAL. Vision quality is gate-only (M39), not ranked. <!-- allow-shorthand -->
-
-| Rank/status | Model | Recommended configuration | Best for — and why |
-|---|---|---|---|
-| 1, provisional pick | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | t0.5, medium effort, repaired MTP ON, **native16 KV default (C81, provisional)**; M40 all-axis predictor certification used TQ4 | Default research/design assistant and the everyday choice: equivalent to the uniform checkpoint at equal answer length (adjusted +0.25, CI [−0.76, +0.91]) and ≥0.76 vs the three non-Qwen3.8 contenders even when shorter; 0.6× the tokens and 0.7× the latency of the uniform; vision gate 20/20; matched Math500 97 % strict; already the B first pick, so one resident model serves both roles. C81 native16 KV default is provisional: C80 adds math/code evidence only; C84 adds five paired prose ties and one-image serving validation; broader native16 prose/vision quality remains provisional. | <!-- allow-shorthand -->
-| 2, provisional pick | Qwen3.8-27B-mlx-uniform-4bit | t0.6, medium effort, certified MTP (M40 2026-09-13: predictor-ON certified on every axis; MBPPPlus inconclusive at n=100) | The pick when longer, more elaborated answers are wanted by default: raw panel first on every pair (0.684 vs the mixed checkpoint, ≥0.88 vs the other three) but the longer answer in every head-to-head item; 99 % strict on matched Math500, vision gate 19/20. Slowest decode of the seeing models (200 s/item, 5.5k tokens/task on the panel corpus). |
-| Shortlist, not ranked (3rd on the panel) | Ornith-1.0-35B-mlx-uniform-4bit | t0.4, native expert routing, certified MTP | Fastest seeing model (43 s/item) with native vision (gate 20/20) and 97 % strict matched Math500; loses to both Qwen3.8-27B checkpoints on the panel (0.12 / 0.24) but beats the remaining two. | <!-- allow-shorthand -->
-| Shortlist, not ranked (5th on the panel) | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | t0.5, native routing, predictor OFF | Fast text-only reasoning/math tool only: 33 s/item, 97 % strict matched Math500, zero runaways, no vision tower. Last on the judge panel (0.03 vs either Qwen3.8-27B, 0.17 vs Ornith) — not a research/design pick. Stays shipped (role main) for the speed niche. | <!-- allow-shorthand -->
-
-`Qwen3.6-27B-Opus-Distill-OptiQ-4bit` is off the C table (C63 runaway tax; fourth on the panel, ≤0.05 vs either Qwen3.8-27B checkpoint). <!-- allow-shorthand -->
-
-Vision gate (M39): pass/fail on 20 photos ("can do some vision"), not a ranking — see `docs/campaign-results.md` 2026-09-12.
-
-C63 COMPLETE: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s matched Math500 reference row scores 93% strict / 99% ordinary, 6/100 non-converged (5 degenerate_repetition + 1 budget_hit), 21.72h/100 — the runaway tax accounts for the entire strict deficit (every non-converged item still landed the correct answer). At 8–26× the wall time of the other three matched-set models and with its only clean pairwise comparison (vs `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`) inconclusive, it stays on the C research shortlist; no reorder beyond C67 without operator approval. Full evidence: campaign-results.md 2026-09-11 (C63).
-
-### C evidence
-
-M40 MTP-ON certification (2026-09-13) for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, paired to the OFF rows it was picked on: Math500 strict 99 % ON vs 97 % OFF (+2pp, CI [0, +5pp], no OFF-only wins, n=100, MDE ±12.5pp); judge panel OFF-preference 0.40 [0.29, 0.53], Holm p=0.10, n=40 (no detectable drift, MDE ±20pp; gate PASS); depth 128K 3/3 strict both states; vision 20/20 both states. Decode ×1.9 on math, ×1.5 on prose, ×2.5 at 128K; tokens per task unchanged. All four axes pass → ships ON; Phase 2 runs ON. `docs/campaign-results.md` 2026-09-13.
-
-M40 for `Qwen3.8-27B-mlx-uniform-4bit` (2026-09-13): Math500 99 % both states (0 discordant items); judge panel OFF-preference 0.56 [0.45, 0.68], Holm p=0.28, n=40 (no detectable drift, MDE ±20pp; gate PASS); HumanEvalPlus 94 % ON vs 93 % OFF (+1pp, CI [0, +3]); MBPPPlus 82 % vs 83 % (−1pp, CI [−6, +3], INCONCLUSIVE, not a fail; pooled 200-item coding diagnostic 0pp [−2.5, +2.5]); depth 128K 3/3 both; vision 19/20 both. Decode ×1.8 on code and math, ×1.4 on prose; tokens per task 0.86–0.87 on code. No axis fails → ships ON (C74 RULED: retain ON with the MBPPPlus INCONCLUSIVE label). M40 COMPLETE: both picks certified in the shipped predictor state.
-
-M41 (2026-09-13) — `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` long-context evidence in the shipped ON state: `mx.get_peak_memory` 35.0 / 37.3 / 41.1 GB at 131K / 197K / 262K (historical46GB flag PASS; current target roughly48GB); multi-needle retrieval 1.0 at every rung to 128K; chain-4 reasoning 1.0 at every rung to 156K, 0 budget hits in 42 draws; decode 44.7 → 18.3 tok/s from 8K to 156K (acceptance 0.88–0.92), prefill 132 tok/s at 262K. `Qwen3.8-27B-mlx-uniform-4bit` had no corresponding M41 capacity row in its shipped medium-effort ON state; M43 below closes that coverage gap on the new runtime.
-
-M43 integration screen (2026-09-13): both approved picks pass five fixed old/new compatibility cases, including native tools and vision, with MTP active. JSON reasoning differs on both models; final answers match. Old-source/new-MLX controls reproduce original responses; source numerical paths changed and both new-runtime capacity ladders now pass. This is not quality recertification and does not change either ladder. [Integration report](docs/upstream-integration-2026-09-13.md). New-runtime capacity for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` passes: 41.10 GB MLX peak at nominal 262K /261449 actual prompt tokens, about6.90GB below the rough48GB target; prefill 26.2 minutes, decode 6.28 tok/s. `Qwen3.8-27B-mlx-uniform-4bit` also passes at the same actual prompt count: **37.80 GB** MLX peak, about**10.20GB** below the rough48GB target, prefill **26.6 minutes**, decode **6.15 tok/s**. Single memory probes do not establish quality or a causal speed change.
-
-Capacity evidence for both B/C picks on integrated source `c5a6f97b`, MLX/Metal0.32.2, MTP ON, full cap/preallocation262144. All rows below use261449 actual prompt tokens at the nominal262144 rung; original runtime certifications remain separate.
-
-| Model / KV mode | MLX peak GB | Memory interpretation (C79) | Prefill minutes | Decode tok/s |
-|---|---:|---|---:|---:|
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed / KV4 | 41.10 | Within rough48GB target | 26.2 | 6.28 |
-| Qwen3.8-27B-mlx-uniform-4bit / KV4 | 37.80 | Within rough48GB target | 26.6 | 6.15 |
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed / native16 | **47.14** | Within rough48GB target | 18.6 | 12.78 |
-
-**M42 capacity and C80 quality pilot complete.** For `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, native16 completed normally at 47.14 GB, within the rough 48 GB guideline. The matched pilot found no changed pass/fail outcomes; all 30 responses converged.
-
-| C80 axis, five paired tasks each | TQ4 ordinary / strict@81920 | Native16 ordinary / strict@81920 | Convergence, each state |
-|---|---:|---:|---:|
-| Math500 | 5/5 / 5/5 | 5/5 / 5/5 | 5/5 |
-| HumanEvalPlus | 4/5 / 4/5 | 4/5 / 4/5 | 5/5 |
-| MBPPPlus | 5/5 / 5/5 | 5/5 / 5/5 | 5/5 |
-
-The shared HumanEval/141 plus-test failure includes a prompt/reference disagreement about accented initial letters; official scores are preserved. Five pairs per axis do not prove equivalence: zero discordance gives a degenerate empirical [0,0] interval that cannot bound unseen disagreements; nominal MDE about 56pp is itself uncertain at n=5. Native16/TQ4 mean per-request decode ratio was 1.090 (95% paired interval [1.062, 1.121]), but total short-task HTTP time was 235.5 versus 233.2 seconds (ratio 1.010 [0.875, 1.128]); native16 generated more tokens. These are descriptive mixed-benchmark ratios, separate from the roughly twofold long-context decode observation.
-
-**C81 operator decision:** native16 is now the provisional recommended and registry-default KV mode; `main_models.yaml` sets `kv_bits: 0`. Expand matched quality coverage before claiming certification across axes. B/C model order, weights, MTP and tune are unchanged; C84 has since activated and validated the runtime; the daily-driver stack is stopped. C80 does not test old/new runtime quality, prose or vision. [M42 results and limitations](docs/campaign-results.md#2026-09-13--m42c80-paired-cache-quality-pilot-complete); [analysis](benchmark/results/m42_quality_pilot_2026-09-13.json); [session correction audit](docs/memory-guideline-audit-2026-09-13.md).
-
-**C82 uniform8 comparison COMPLETE:** fresh native16 versus uniform8 on `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` matches on all15 task outcomes: Math5005/5, HumanEvalPlus4/5, MBPPPlus5/5 in both modes, all30 converge. The shared coding failure includes the same ASCII/Unicode prompt-reference disagreement; official scores are preserved. Five pairs per axis do not establish equivalence (zero-discordance empirical interval[0,0] cannot bound unseen failures; nominal MDE56pp). Uniform8/native16 mean per-request decode ratio0.935 [0.927,0.942], total HTTP time199.3s versus211.1s (ratio0.944 [0.760,1.084]), tokens9328 versus10350. These mixed-benchmark descriptive timings reflect both rate and output length. Both capacity ladders are complete; retain native16 default and B/C order. [C82 analysis](benchmark/results/m42_c82_quality_2026-09-13.json).
-
-C82 matched capacity completed2026-09-14 for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. Both modes completed all three rungs normally, with identical long-context outputs and MTP counters. At261449 actual prompt tokens:
-
-| KV mode | MLX peak GB | Prefill minutes | Decode tok/s | Recommendation |
-|---|---:|---:|---:|---|
-| Native16 | **47.14** | **17.7** | **12.95** | Retain C81 default; better observed long-context latency/peak tradeoff |
-| Uniform8 | 48.21 | 26.8 | 5.67 | No promotion; slight target overrun is not disqualifying |
-
-Native16 was faster and used about1GiB less peak at all three rungs. Largest-rung decode ratio2.28 and prefill reduction33.9% are observations, without a repeatability interval or isolated kernel attribution. The backend paths differ; smaller calculated KV storage did not mean smaller total MLX peak. The current native16 recommendation remains provisional across broader quality axes. [Full matched comparison](docs/campaign-results.md#2026-09-14--c82-comparison-complete-retain-native16-kv-default).
-
-C76 source discrepancy remains open: persisted M41 reasoning data contain39 draws with zero budget hits; older42-draw summaries above await correction. Separate M40 draws must not be pooled into M41.
-
-Judge panel (M38, 2026-09-12; spec `docs/judge-panel-c.md`): 40 research/design prompts (18 public + 22 operator-domain), five contenders at deployed tunes, predictor OFF, blind pairwise both orders, three judges (Claude Sonnet 5, Claude Opus 5, gpt-5.6-terra medium), reliability gate PASS on 30 anchors. Preference rate of the ROW model over the COLUMN model on 38 shared converged items, 95 % cluster-bootstrap CI, all ten Holm-adjusted p ≤ 0.031; MDE ≈ ±20pp. <!-- allow-shorthand -->
-
-| row \ column | `Qwen3.8-27B-mlx-uniform-4bit` | `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | `Ornith-1.0-35B-mlx-uniform-4bit` | `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | tokens/task · s/item |
-|---|---:|---:|---:|---:|---:|---:|
-| `Qwen3.8-27B-mlx-uniform-4bit` | — | 0.684 [0.579, 0.789] | 0.882 [0.776, 0.961] | 0.974 [0.921, 1.000] | 0.974 [0.921, 1.000] | 5,485 · 200 |
-| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | 0.316 [0.211, 0.421] | — | 0.763 [0.632, 0.868] | 0.947 [0.895, 0.987] | 0.974 [0.934, 1.000] | 3,268 · 139 |
-| `Ornith-1.0-35B-mlx-uniform-4bit` | 0.118 [0.039, 0.224] | 0.237 [0.132, 0.368] | — | 0.645 [0.513, 0.776] | 0.829 [0.724, 0.921] | 4,388 · 43 |
-| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 0.026 [0.000, 0.079] | 0.053 [0.013, 0.105] | 0.355 [0.224, 0.487] | — | 0.776 [0.658, 0.882] | 7,793 · 398 (5 % runaways) |
-| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | 0.026 [0.000, 0.079] | 0.026 [0.000, 0.066] | 0.171 [0.079, 0.276] | 0.224 [0.118, 0.342] | — | 4,042 · 33 |
-
-Caveats: the longer response wins 70 % of decided pairs (padding anchors were never preferred, and the order is not monotone in length, but the first-placed model is also the longest writer); the uniform-vs-mixed `Qwen3.8-27B` pair is the only one where the Anthropic and GPT judges disagree in direction (0.342 vs 0.605 for the mixed), and the panel is 2-of-3 Anthropic. Full table, agreement stats and mechanism: `docs/campaign-results.md` 2026-09-12. <!-- allow-shorthand -->
-
-
-Math500: M33 rows share one100-case set; M37 uses the newer100-case set shared with the temperature ladder. Do not directly compare scores across these sets. All use deployed tunes, predictor OFF, budget81920. **2026-09-09 scorer correction:** extracted LaTeX expressions are now parsed as math; earlier 89/88/86 strict scores were undercounts. Saved responses were regraded, not regenerated. Updated paired bootstrap intervals are below; do not reuse the old accuracy intervals. Timing/token measurements are unchanged.
-
-| Model | Run / item set | Ordinary / strict correct | Non-converged | Mean output tokens/task | Generation time /100 | Best for — evidence and limits |
-|---|---|---|---|---|---|---|
-| NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | M33 | **99 / 99** | **0** | **3,849** | **0.81 h** | Fast text reasoning: favorable quality and token/time trends. M34r MBPPPlus native84% versus expanded82% strict;100% convergence both. Native general default retained. C48 t0.7 MBPPPlus85% versus84% at t1.0; Math50097% versus96% at t1.0 also favors t0.7; C48 complete: Operator prefers t0.5:87% coding/97% math with less runtime/repetition than t0.3. t0.4 completed85% coding/95% math versus t0.5 87%/97%; t0.5 approved and router default updated under C62. Expansion math/coding tradeoff remains below. |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | M33 | 99 / 97 | 2 | 12,842 | 16.4 h | Vision-capable alternative; some correct answers incurred non-convergence. |
-| Qwen3.6-27B-Opus-Distill-OptiQ-4bit | M37ref, newer matched set (C63) | 99 / 93 | 6 | 15,497 | 21.72 h | Runaway tax, not a quality gap: all 6 non-converged items still landed the correct answer, but at 8–26× the wall time of the other matched-set models; strict deltas vs the other three are inconclusive (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`) or diagnostic-only (`Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, reasoning_effort None vs medium). Stays on the shortlist; no reorder without operator approval. |
-| Ornith-1.0-35B-mlx-uniform-4bit | M33 | 99 / 93 | 6 | 15,788 | 4.7 h | Fast decoding, but more tokens and non-convergence on reasoning. |
-| Ornith-1.0-35B-mlx-uniform-4bit | M37ref, newer matched set | 99 / 97 | 2 | 11,306 | 3.32 h | Same runaway-tax pattern as `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` but smaller: both non-converged items still land the correct answer. No clean strict advantage vs any of the other three matched-set models; 6.5× faster than `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` but slower than `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`/`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. |
-| Qwen3.8-27B-mlx-uniform-4bit | M37, newer matched set | 99 / 99 | 0 | 2,423 | 2.62 h | Accuracy-first C candidate: fewer tokens but slower decode; accuracy-first math candidate after M37 pair, no approved C reorder. |
-
-M37 same-item comparison: `Qwen3.8-27B-mlx-uniform-4bit` medium99% strict versus `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` native t1.0 96% (+3pp CI[0,+7]) or t0.5 97% (+2pp CI[0,+5]); n100×1, nominal MDE12.5pp. Output-token ratios0.735 CI[0.534,1.005] and0.634 CI[0.428,0.931], respectively, but wall2.62h versus0.72/0.83h. It gains accuracy-first C consideration; M37 mixed-checkpoint result is97% strict versus this base99%, delta−2pp CI[−5,0], n100×1, nominal MDE12.5pp, all200 converge; mixed/base token ratio0.745 CI[0.582,0.937], wall2.20/2.62h. Recommend the base for accuracy-first math and retain the mixed checkpoint as token-efficient general coding leader; current C order unchanged.
-
-Corrected paired strict deltas: `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` versus `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`: **+2pp, 95% CI [-2,+6]**; versus `Ornith-1.0-35B-mlx-uniform-4bit`: **+6pp, CI [+1,+12]**. These are descriptive pairwise intervals before family multiplicity adjustment; n=100 nominal axis MDE is 12.5pp. The recommendation rests on favorable strict-quality and token/time trends, not a blanket superiority claim.
-
-M34r MBPPPlus expansion-minus-native for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`:−2pp strict,95% CI[−8,+4], n100×1, nominal MDE12.5pp; output-token ratio1.198 CI[0.890,1.506], generation0.508h expanded versus0.367h native. No non-convergence in either arm. Native has the favorable coding quality and cost point estimates. Math500 expansion instead improves98% versus96%, +2pp CI[0,+5], n100×1, nominal MDE12.5pp; token ratio1.277 CI[1.053,1.591], wall1.023h expanded/0.716h native. Both arms fully converge. Retain native as the general default; keep expansion as a math-oriented candidate for operator review rather than discard its quality trend. No routing change approved.
-
-C48 temperature ladder COMPLETE for `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, native/predictor OFF, n100×1 per dataset:
-
-| Temperature | MBPPPlus strict | Math500 strict | Non-converged coding / math | Combined generation time |
-|---|---:|---:|---:|---:|
-| 1.0, former default | 84% | 96% | 0 / 0 | 1.083h |
-| 0.7 | 85% | 97% | 0 / 0 | 1.210h |
-| 0.5, approved current default | 87% | 97% | 1 / 0 | 1.408h |
-| 0.4 | 85% | 95% | 1 / 0 | 1.439h |
-| 0.3 | 87% | 98% | 2 / 0 | 1.868h |
-
-C62 operator decision: t0.5 approved after the completed t0.4 comparison. The earlier t0.3 recommendation over-weighted its single extra mathematical solve relative to the operator’s preferred repetition/token tradeoff. Versus t0.5, coding difference0pp CI[−4,+4] and math+1pp CI[0,+3]; nominal MDE12.5pp per axis. Versus t1.0, t0.3 coding+3pp CI[−1,+8], math+2pp CI[0,+5]. These are descriptive paired intervals before correction across the temperature search. The gain is small and uncertain; retain the additional repetition/runtime cost explicitly. t0.5 is the preferred balance of quality, token use and repetition; t0.4 was measured on the same cases. Its coding result is86% ordinary/85% strict versus87% strict t0.5, difference−2pp CI[−7,+3], n100×1, nominal MDE12.5pp. Both have one non-converged response; token ratio0.972 CI[0.540,1.933], wall0.594/0.582h. Math500 also favors t0.5: t0.4 95% versus t0.5 97%, −2pp CI[−5,0], n100×1, nominal MDE12.5pp; both fully converge, token ratio0.957 CI[0.735,1.209], wall0.844/0.826h. **Operator approved t0.5; router generation default and both benchmark carriers now use it.** Existing daily-client lists omit this model because its registry presentation remains `candidate`; registration follow-up is tracked as C64. Live benchmark overlays are unchanged. Ladder samples differ from the M33 table above; do not compare their raw percentages as matched results.
-
-Math500 measures mathematical correctness, not brainstorming/design quality. BFCL has prior results (M18); the subjective judge panel (M38) is now complete and reported above. C69 ruled 2026-09-12; picks remain provisional as stated above. M34c's five-case Math500 pilot also regrades from 1/5 to **5/5 in both routing arms** after the parser correction. Its MBPPPlus pilot is native 4/5 vs expanded 5/5 at greater token/time cost: a candidate tradeoff, not a promotion. Rosetta evaluation failures were reproduced and removed by native ARM64 regrading of both M34a arms. Expanded ordinary MBPPPlus rose by one success; strict results were unchanged because that answer did not converge. Larger expansion resolution arms are queued in PLAN.
-
-
-# Getting started
-```sh
-./runserver
-```
-
-or to just initalize the local python env:
 ```sh
 git submodule update --init --recursive
-uv sync
+uv sync --frozen
+./runserver.sh
 ```
 
-# update forked deps with
+OpenWebUI runs at `http://localhost:3000`; clients use the router at `http://localhost:8000/v1`. The auxiliary task server uses port 8092. Ctrl+C stops the launched stack. [Serving configuration and operation](docs/serving-path.md).
+
+[main_models.yaml](main_models.yaml) is the registry of record for model paths, MTP, cache settings and sampling. Client configs are generated from it:
+
 ```sh
-git submodule update --init --recursive --remote
+uv run python -m configgen generate
+uv run python -m configgen check
 ```
 
-# updating locally-checked-out packages
-```sh
-uv lock --upgrade    # re-resolves everything, rewrites uv.lock
-uv sync              # applies the new lock to your .venv
-```
+Keep the committed dependency pins: upstream maintenance follows **parent fork → review/test → push fork → fetch and bump stack submodule**. Do not use `git submodule update --remote` for routine startup. [Maintenance report](docs/upstream-integration-2026-09-13.md).
 
-# HuggingFace cache management
-## download a model
-```sh
-uv run hf download mlx-community/gemma-4-31b-it-6bit
-```
+## Recommended models
 
-## run script to update all downloaded models
-```sh
-uv run hf_sync.py
-```
+Updated **2026-09-14**. B is agentic coding; C is research, brainstorming and design. Orders are operator-approved; evidence includes different historical configurations and incomplete coverage. **Use the registry's complete deployed settings**, including MTP companions and sampling defaults.
 
-## clean cache from stale versions - the ones we have a more recent version downloaded
-```sh
-uv run hf cache prune
-```
+### B: agentic coding
+
+| Rank | Model | Best for and supporting evidence |
+|---|---|---|
+| 1 | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | Python/Go: 22/22 each at medium effort, zero stalls. Rust/Java/JavaScript unmeasured. Current t0.5, medium, repaired MTP ON, native16 KV with idle retirement. |
+| 2 | Qwen3.8-27B-mlx-uniform-4bit | Broader coding coverage; favorable Python/JavaScript repeats. Medium Python 19/22, Go 16/22 with six stalls. Current t0.6, medium, MTP ON, TQ4. |
+| 3 | Ornith-1.0-35B-mlx-uniform-4bit | Rust and interactive coding: 17/22 Rust, short task latency. t0.4, native routing, certified MTP. |
+| 4 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | Repair-oriented fallback; older repair evidence is stronger than current agentic trends. Deployed t0.3, certified MTP. |
+
+### C: research and design
+
+| Status | Model | Best for and supporting evidence |
+|---|---|---|
+| 1, provisional pick | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | Everyday research/design; already the B default. Top-pair length-adjusted panel margin +0.25, 95% CI [−0.76,+0.91]; lower token/time cost informed the approved ordering. Historical vision gate 20/20. |
+| 2, provisional pick | Qwen3.8-27B-mlx-uniform-4bit | Longer, more elaborated answers; first on the raw panel, with a length confound. Historical vision gate 19/20. MTP stays ON; its M40 MBPPPlus result remains INCONCLUSIVE. |
+| Shortlist only | Ornith-1.0-35B-mlx-uniform-4bit | Fast vision-capable alternative; historical vision gate 20/20, behind both approved picks on the panel. |
+| Shortlist only | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | Fast text-only tool, no vision tower; last on the panel. Deployed t0.5, native routing, predictor OFF. |
+
+The panel used 38 shared items (approximate MDE 20pp). Vision gates establish bounded capability, not a visual-quality ranking. [Per-language/session evidence, intervals and historical comparisons](docs/model-recommendation-evidence.md).
+
+## Latest validation
+
+**C84 runtime integration passes** on MLX-VLM `522671c4`, MLX-Serve `b632280`, MLX/Metal 0.32.2. Both picks pass tool/vision serving screens; the native16 tool-continuation OOM is fixed, with full 262144-token active preallocation retained.
+
+| Evidence | Result and limit |
+|---|---|
+| Quality regression screen | All 40 paired answers/reasoning match; all 80 responses converge. Native16 Math500 5/5, HumanEvalPlus 4/5, MBPPPlus 5/5; second pick 5/5 each. Ten reviewed prose ties retain shared factual/methodological weaknesses. |
+| Native16 at 261449 prompt tokens | **47.155GB** MLX peak; **1165.33s** prefill; **11.51tok/s** decode. Memory is a rough 48GB target, not a strict cutoff. |
+| Observed timing cost | Native16 task latency +1.2–2.5% per axis; one long-context pair shows +5.95% prefill time and −3.75% decode rate. Repeatability and cause are unmeasured. |
+| Automated checks | MLX-VLM 5372 passed; MLX-Serve 106; stack provenance/comparison 119; generated client config check passes. |
+
+**Retain native16 for the first pick; the second retains TQ4.** Native16 also beat uniform8 on measured capacity/long-context speed in C82. Broader native16 depth/vision quality remains provisional. C84 compares the repaired stack with its initial merged state; the original pre-merge quality comparison remains open. Five items per axis do not establish a 5pp equivalence bound. [Full report, paired intervals and source provenance](docs/stack-certification-2026-09-14.md).
+
+## Documentation
+
+- [Current handoff](docs/handoff.md) and [work queue](docs/PLAN.md) — next: published Hugging Face artifact parity and model-card audit.
+- [Evaluation evidence](docs/model-recommendation-evidence.md), [dated campaign results](docs/campaign-results.md), and [transferable findings](docs/transfer-findings.md).
+- [Benchmark guide](benchmark/README.md), [measurement rules](docs/metrics.md), and [model qualification](docs/qualify-a-model.md).
+- [Documentation index](docs/README.md) and [contributor/agent rules](AGENTS.md).
