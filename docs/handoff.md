@@ -8,8 +8,8 @@ Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Current repor
 - **20 PASS,0 FAIL,0 null; all40 turns converged, no runtime errors.** Random88 five-image pilot5/5 was included in20. Runner418.94s; known-positive selftest, pilot, periodic300s assessment and terminal exit0 recorded.36 CPU tests passed before launch; independent launch and final evidence reviews clear. All40 responses carry positive MTP counters.
 - Native16/MTP ON, t0.5/medium, all registry sampling/cache settings preserved. Source522671c4/b632280, MLX/Metal0.32.2 verified; localhost listener ownership and worker model/drafter paths checked. Initial/final registry hashes and source/config fingerprints agree. Certification comments added only AFTER the run through a HEAD-derived blob; parsed YAML unchanged.
 - Public rows/summary/provenance: `benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/vision_gate.c88-shipped-20260914.*`; response/hash evidence `benchmark/results/m43_c88_vision_20260914.json`. Private root `$STACK_WORKDIR/qualification/c88-vision-20260914`, freeze SHA2565db123772ee528fc4338ea6b62b98b835570d1ac657468f0f26584c979736c1b. Preserve wire files, registry-tested snapshot and manifests. Do not rerun this completed directory.
-- Owned router25101, worker25102, driver25198 and tail watcher stopped. Daily-driver stack remains DOWN. Retain approved config/order. C77/C78 comparisons and broader depth qualification remain deferred; focus is shipped-config qualification, not an unshipped-cache comparison.
-- Last push was througha1a1dcb; C88 plan/result commits are local, not pushed. Eight intentional registry path overrides remain unstaged. Verify `git log origin/main..HEAD` and PIDs on resume.
+- Owned router25101, worker25102, driver25198 and tail watcher stopped. Daily-driver stack remains DOWN. Retain approved config/order. C77/C78 comparisons remain deferred. C89 now proposes shipped-native16 depth qualification only:66calls maximum, historical scored time3h16m, reserve4–5h. See `docs/specs/native16-depth-qualification.md`; proposed, NOT armed. Phase2 choices are settled, but full closure awaits a decision on this remaining qualification scope.
+- Stack publication through2f0c7ad completed. Operator then authorized the C88 HF updates and matching Git push. Both cards and new C88 evidence files are PUBLISHED and independently anonymously verified: targetf2b38a25, drafter41ee4495; all23 other file signatures unchanged. Canonical mirrors match readback; receipt `docs/huggingface-c88-update-2026-09-14.json`. Verify origin/main against HEAD on resume. Eight intentional registry path overrides remain unstaged.
 
 ## Latest approved work: C83/C76
 
@@ -71,13 +71,14 @@ Private root: `$STACK_WORKDIR/upstream/2026-09-14-activation`.
 2. **C83 COMPLETE:** schema2 reporting and capacity-specific daemon; preserve old raw flags and wrapper evidence.
 3. **C76 COMPLETE:** active M41 summaries corrected to39 draws; no raw data changes or M40 pooling.
 4. **C88 COMPLETE:** shipped-config20-image smoke20/20PASS. The previous native16/TQ4 depth/vision comparison is superseded.
-5. **C77 OPEN, deferred:** original pre-merge quality diagnostic refreshed for final sources, TQ4 fixed in both runtime bundles. C84 does not substitute for C77. **C78 deferred:** old timing proposal must not launch unchanged; prioritize quality before repeatability/mechanism work.
-6. Daily-driver startup and new pushes remain operator decisions. M44 publication is complete; C87 historical tuning remains deferred.
+5. **C89 OPEN, proposed:** shipped-native16 retrieval25prompts to128000 and chain-4 reasoning39prompts to156000, plus2calibrations, included five-prompt pilots. Exact config/test/runtime proposal linked above. No GPU work authorized.
+6. **C77 OPEN, deferred:** original pre-merge quality diagnostic refreshed for final sources, TQ4 fixed in both runtime bundles. C84 does not substitute for C77. **C78 deferred:** old timing proposal must not launch unchanged; prioritize quality before repeatability/mechanism work.
+7. Daily-driver startup and new pushes remain operator decisions. M44 publication is complete; C87 historical tuning remains deferred.
 
 M40/M41, M42/C80/C82, P355/P356, D14, C84, M44, C83, C76 and C88 are complete at their documented scopes. The box remains idle; do not arm a historical runner or infer approval for a new GPU study from completed cleanup work.
 
 ## Resume discipline
 
-One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P634; C83/C76/C88 complete, C87 open; next decision id C89.
+One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P648; C83/C76/C88 complete, C87/C89 open; next decision id C90.
 
 Recipe reminders: pairwise judge requires `--out`; judge-gate output is a directory. Benchmark ladder CLIs require `--sampling-profile deployed`. Use real known-positive daemon monitors and derived request timeouts without retries. Read the current report before making quality, memory or publication claims from older handoff text.

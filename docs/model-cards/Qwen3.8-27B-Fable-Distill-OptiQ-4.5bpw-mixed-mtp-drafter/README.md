@@ -10,7 +10,7 @@ tags:
 
 Model-card update:2026-09-14.
 
-This repository is an external MTP predictor for [Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed), not a standalone chat model. First operator-approved choice for agentic coding and research/design assistance (B1/C1), at temperature 0.5, medium reasoning effort and repaired MTP ON. The current runtime uses native16 KV and idle session-cache retirement; broader native16 depth and vision quality remain provisional.
+This repository is an external MTP predictor for [Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed), not a standalone chat model. First operator-approved choice for agentic coding and research/design assistance (B1/C1), at temperature 0.5, medium reasoning effort and repaired MTP ON. The current runtime uses native16 KV and idle session-cache retirement. It passed the existing 20-image vision smoke in C88 (20 PASS, 0 FAIL, 0 null); broader native16 long-context qualification remains pending.
 
 ## Predictor lineage and identity
 
@@ -71,7 +71,15 @@ The shared HumanEval/141 failure is retained under official EvalPlus grading; it
 
 Both produced 170 completion tokens, identical answers/reasoning, all five retrieval codes and no prefix reuse; MTP 67 rounds/134 proposed/104 accepted. One observation per state: peak+0.036%, prefill+5.95%, decode−3.75%; repeatability and isolated causes are unresolved. Peak is `mx.get_peak_memory`, including prefill scratch, not weight size or RSS. Rough 48 GB is guidance, not a strict 46/48 GB rejection rule. The five-code co-score is not general 256K reasoning quality. Idle cache retirement resolves the observed tool-continuation OOM while retaining full active preallocation.
 
-Historical TQ4 M41 measured retrieval through 128K and chain-4 reasoning through 156K. Those ladders are not native16 measurements; the older 42-draw summary disagrees with the verified 39 stored reasoning draws and is not reused here.
+Historical TQ4 M41 measured retrieval through 128K and chain-4 reasoning through 156K. Those ladders are not native16 measurements. C76 corrected the earlier 42-draw summaries to the verified 39 stored reasoning draws; the underlying results are unchanged.
+
+### C88 shipped-configuration vision qualification, 2026-09-14
+
+**20 PASS, 0 FAIL, 0 null** on the existing 20-image smoke. Each image receives two turns: describe the image, then receive its human ground-truth captions and return the model's own PASS/FAIL verdict. All 40 turns converged below the resolved 81920-token thinking budget, with MTP engaged and no runtime errors.
+
+This used the deployed native16 configuration unchanged: repaired MTP ON, temperature 0.5, medium effort, context/preallocation 262144, prefill 512 and idle cache retirement enabled, on the final MLX-VLM522671c4 / MLX-Serveb632280 runtime with MLX/Metal0.32.2. No TQ4 comparison, manual extraction-quality grading or external judge was used. This qualifies the existing image smoke; broader native16 long-context retrieval/reasoning remains separate.
+
+See the [C88 evidence](evaluation/C88-evidence-2026-09-14.json) and [published canonical results](https://github.com/ivan-avramov/mlx_local_stack/blob/2f0c7ad2a9a790a5041e84a78dd5124c74a61476/benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/vision_gate.c88-shipped-20260914.summary.json).
 
 ## Recommended current setting
 
