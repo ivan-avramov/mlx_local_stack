@@ -1,5 +1,7 @@
 # Campaign results — RECOMMENDATIONS + the SCORESHEET
 
+**Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
+
 ## 2026-09-13 — M41 COMPLETE: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` predictor-ON clears the 46 GB gate at 262144 (41.1 GB) and carries retrieval to 128K and chain-4 reasoning to 156K with zero runaways
 
 First long-context evidence for the B/C 1st pick (it entered the contest after all Phase 1 depth work). Shipped state
@@ -2233,3 +2235,26 @@ At the largest measured prompt, headroom is **4.90 GB**, prefill 26.2 minutes. T
 **Trend and B/C recommendation:** both approved picks fit the target envelope on the integrated runtime. This model uses 3.31 GB less peak memory than `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` at the largest rung; memory is a gate, so that difference does not promote it over the quality-preferred first pick. Both largest-rung prefills remain about 26 minutes and decode about 6 tok/s, making long-prompt latency a practical limitation. Preserve the approved ordering and historical certification labels; finish M42 capacity and obtain the proposed matched quality/timing diagnostics before production activation.
 
 [Rows](../benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/capacity_ladder.m43on-20260913.jsonl); [manifest](../benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/capacity_ladder.m43on-20260913.manifest.json); [validated provenance](../benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/capacity_retrieval.m43on-20260913.provenance.json).
+
+
+## 2026-09-13 — M42 capacity complete: native16 KV remains a candidate under the rough48GB guideline
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, integrated source `c5a6f97b`, MLX/Metal0.32.2, deployed temperature0.5 / medium effort / repaired MTP ON. Relative to the new `m43on-20260913` baseline, only `kv_bits: 4` changes to `0`; model weights, predictor, cap/preallocation262144 and prefill step512 stay fixed. The worker omits the zero-bit CLI flag and inherits verified `KV_BITS=0`. Native BF16 cache is expected from checkpoint/code; runtime KV dtype was not instrumented. The model remains mixed-quantized, not full BF16.
+
+Tag `m42native16-20260913`: one calibration and three bounded256-token probes, 37.8 minutes total. Calibration, prompt, source/config and final manifest checks passed; all requests completed normally with no transport errors. Supervisor v2 has133 fake tests; its unchanged child uses the same capacity procedure as the KV4 baseline.
+
+| Nominal rung | Actual prompt tokens | Native16 MLX peak GB | Prefill s (tok/s) | Decode tok/s | MTP acceptance |
+|---|---:|---:|---:|---:|---:|
+| 131072 | 130783 | 42.5220 | 368.24 (355) | 17.62 | 0.8063 |
+| 196608 | 196115 | 44.8367 | 737.54 (266) | 15.96 | 0.8202 |
+| 262144 | 261449 | **47.1386** | 1114.00 (235) | 12.78 | 0.7761 |
+
+**C79 interpretation:**47.1386GB is within the approximate48GB guideline. The former46GB tool flag is numerically FAIL, but is not a physical failure or a current disqualification. Withdraw the earlier “OFAT ends; KV4 stays because memory failed” conclusion. Native16 remains a candidate for matched quality evaluation; no native16 quality arm has run. Deployment and B/C ordering remain unchanged pending evidence and approval. Exact full prompt occupancy was not tested, and the bounded retrieval co-signal1.0 is not quality certification.
+
+**Observed tradeoff:** at the largest rung,4-bit TurboQuant uses41.1029GB, prefill1573.81s and decode6.28tok/s; native16 uses47.1386GB, prefill1114.00s and decode12.78tok/s. Native16's lower prefill time and higher decode rate occur at all three rungs. These are single observations per rung/state, without a repeatability interval or isolated kernel attribution. The measured largest-rung peak difference is6.0358GB; quality and actual memory pressure/stability still need assessment before choosing a deployed configuration.
+
+**Mechanism and transfer:** source inspection selects16 native full-attention caches versus15 TurboQuant caches plus one native final layer;48 recurrent cache entries are unchanged. Assuming2-byte native elements, full-cap target K/V backing arrays total17.1799GB versus5.1632GB. That12.0167GB difference excludes model/drafter/recurrent state and temporaries. Both modes allocate their logical floor early; peak-memory differences are differences of maxima across buffer lifetimes and workspaces. Backing arithmetic cannot predict the measured peak delta. This is source reasoning, not an observed allocator breakdown. [Source arithmetic and limitations](../benchmark/results/m42_cache_storage_analysis_2026-09-13.json).
+
+**Recommendation:** continue with a scoped paired quality pilot before selecting native16 or deciding any wider study. Do not reject it over a small numerical margin, nor select narrower KV solely to maximize headroom. C77/C78 runtime diagnostics remain separate proposed work. [Session correction audit](memory-guideline-audit-2026-09-13.md).
+
+[Rows](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_ladder.m42native16-20260913.jsonl); [manifest](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_ladder.m42native16-20260913.manifest.json); [validated provenance with policy amendment](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_retrieval.m42native16-20260913.provenance.json).

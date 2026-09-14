@@ -1,4 +1,4 @@
-# docs/ — index (2026-09-03)
+# docs/ — index (2026-09-13)
 
 Live, in reading order for a cold start:
 
@@ -10,6 +10,9 @@ Live, in reading order for a cold start:
 | `PLAN.md` | the backlog / queue (authoritative for what is live); rows M*, D*, C*, H*, S* |
 | `open-questions.md` | operator decision queue (O*/C* items; closed items are never deleted) |
 | `campaign-results.md` | living results record: dated entries + the scoreboard + comparability rules |
+| `upstream-integration-2026-09-13.md` | M43 merge/refactor disposition, runtime validation and remaining activation gates |
+| `transfer-findings.md` | reviewed D14 report: measured local findings, transferable methods and destination-backend remeasurement |
+| `memory-guideline-audit-2026-09-13.md` | C79 rough48GB policy correction, session decision audit, and KV/weight precision explanation |
 | `lab-notebook.md` | dated history from 2026-08-14 (earlier history: git log) |
 | `model-ledger.md` | every model ever considered, status + dated reasoning |
 | `metrics.md` | measurement rules and derivations (convergence vector, MDE, bootstrap, seeds) |

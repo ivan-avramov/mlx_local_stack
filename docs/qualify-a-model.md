@@ -202,7 +202,7 @@ e.g. the `Ornith-1.0-35B-mlx-uniform-4bit` block):
 | `hf_path` | `caslca/<name>` once uploaded; a local absolute path is a Stage-0/1 INTERIM only — swap to the hub path before any Stage-2 row (the current fingerprint (v5) includes `hf_path`, so the swap deliberately stales screening rows) — see `scripts/registry_commit.sh` to commit without leaking the local override. |
 | `max_kv_cache_size` | set from the capacity gate (Stage 2), not assumed. |
 | `kv_prealloc_tokens` | **MUST equal `max_kv_cache_size`** — full-cap prealloc is what makes the cap reachable without a realloc double-buffer OOM. Never lower it on a throughput argument alone (see `docs/serving-path.md`). |
-| `kv_quant_scheme` / `kv_bits` | `uniform`+integer bits = standard `QuantizedKVCache`; `turboquant`+integer bits = TurboQuant (only engages for `scheme=turboquant` or fractional `kv_bits`); `kv_bits: 0` = fp16 KV, no quantization. Measure at the EXPECTED DEPLOYMENT convention only — no bf16-KV arms (bf16 floor cost 16 GB/session on a sibling, measured 51 GB footprint). → Stage 11 |
+| `kv_quant_scheme` / `kv_bits` | `uniform`+integer bits = standard `QuantizedKVCache`; `turboquant`+integer bits = TurboQuant (only engages for `scheme=turboquant` or fractional `kv_bits`); `kv_bits: 0` = unquantized native-dtype KV; it does not convert model weights to BF16 or force IEEE fp16. Compare approved cache modes at matched settings; do not ban native KV based on a different model's memory result. → Stage 11 |
 | `prefill_step_size` | must be threaded through (512 is this registry's convention) — the mlx-vlm default of 2048 causes a 4× QK² scratch blow-up at 256K. |
 | `generation_defaults` | vendor-verbatim sampling to start (an omitted key falls through to the checkpoint under FU-2 precedence); `presence_penalty: 0.0` unless you have a specific reason (a nonzero value disables suffix decoding — moot while suffix stays OFF campaign-wide, but keep it for future-proofing); `max_tokens`/`thinking_budget` should MATCH the two current winners' values (81920/102400 convention) so `compare` does not refuse the pairing on an incidental mismatch. |
 | `presentation.role` | `candidate` = registered for benchmarking, never advertised to any client (bench carriers only). `main` = promoted, all five client configs pick it up. `task` = the summarization task model only. Promote `candidate` → `main` only via the Stage 13 promotion rule. |
@@ -272,17 +272,14 @@ cd benchmark && uv run python -m bench.run_capacity --model <full-registry-name>
 ```
 (`--sampling-profile` is REQUIRED since 2026-09-13 (O36; M41 tooling) — `deployed` for every new axis; `--out-tag`
 writes `capacity_retrieval.<tag>.json` and friends; `--request-timeout` is the DERIVED per-request bound, O41.)
-Grid defaults to `160_000, 192_000, 224_000, 256_000`; gate defaults to `46.0` GB. Writes
+Grid defaults to `160_000, 192_000, 224_000, 256_000`; the legacy numeric tool threshold defaults to `46.0` GB. This is not the current selection policy: roughly48GB is a guideline (C79). Its `fits`/PASS/FAIL flags and threshold-driven early stop must not be inherited as rejection rules; review the instrument and its stopping behavior before a new run. Writes
 `results/<model>/capacity_retrieval.json`.
 
 **What to record:** MLX peak memory (`mx.get_peak_memory` — the PREFILL SPIKE, never RSS) per
 rung, plus prefill/decode timing and the co-signal retrieval score at each rung (a 256-token
 thinking-starved probe — NOT the real retrieval-depth ladder, see Stage 7).
 
-**Decision rule:** ≤46 GB MLX-peak at every rung up to the target context (256K target; a
-lower context that still gates PASS is fine — this is a gate, not an axis to optimize). FAIL at
-any rung stops the model here; `park`, don't discard, if the failure is memory-config-fixable
-(e.g. narrower KV bits).
+**Decision rule:** assess MLX prefill peak against a rough target of48GB at the intended context. Do not automatically park, reject or stop a model/configuration for a small overrun. Report measured peak, memory pressure/stability and latency; weigh them alongside quality. Distinguish actual allocation/transport failure from crossing a configured reporting threshold. Preserve historical raw flags and explain their original threshold; do not rewrite them as a newly measured pass.
 
 **Cost:** capacity ladders on this stack have run overnight for a family of models; budget
 tens of minutes per rung, more at 256K (prefill can run into the tens of minutes per rung for a
@@ -915,8 +912,8 @@ coding-screen costs, doubled for the two arms.
 this from measurement — this stage is the reference for HOW to choose it).
 
 **Options** (`kv_quant_scheme` + `kv_bits` in the registry):
-- `kv_bits: 0` → fp16 KV, no quantization (highest memory cost, used where the capacity gate
-  has ample headroom — e.g. a very sparse MoE with tiny per-token KV).
+- `kv_bits: 0` → unquantized native-dtype KV; no weight conversion or forced IEEE fp16.
+  Assess measured memory pressure, quality and latency under the rough guideline.
 - `kv_quant_scheme: uniform` + integer `kv_bits` (e.g. 4) → standard `QuantizedKVCache`.
 - `kv_quant_scheme: turboquant` + integer `kv_bits` (e.g. 4) → TurboQuant engages (it activates
   ONLY for `scheme: turboquant` or a fractional `kv_bits` — an integer `kv_bits` under
@@ -929,21 +926,13 @@ this from measurement — this stage is the reference for HOW to choose it).
 `docs/serving-path.md`.
 
 **Session-cache interaction:** `MLX_VLM_CACHE_SESSION_MAX` (default 8 if unset) multiplies the
-full-cap KV floor by the number of retained sessions and can blow the 46 GB gate on floors alone
+full-cap KV floor by the number of retained sessions and can cause excessive memory pressure from floors alone
 — why `MLX_VLM_CACHE_SESSION_MAX=2` is mandatory everywhere (Stage 0); full audit:
 `docs/PLAN.md` D6.
 
-**What to record:** the chosen `kv_quant_scheme`/`kv_bits`/`quantized_kv_start` combination and
-the capacity-gate numbers (Stage 2) that justify it; if you tried a bf16-KV arm for
-comparison, label it clearly as OFF the deployment convention (never register it as the
-shipped tune — measure at the expected deployment only, no bf16-KV arms as a standing rule).
+**What to record:** the chosen `kv_quant_scheme`/`kv_bits`/`quantized_kv_start`, measured capacity and timing, and matching quality evidence. Label experimental configurations until certification/promotion is approved. TurboQuant is the scheme; its bit width is a separate setting. Current picks use4-bit TurboQuant; native16 KV changes the cache, not weight quantization.
 
-**Decision rule:** pick the narrowest KV width that clears the capacity gate with comfortable
-headroom — the one registry observation on record is `Ornith-1.0-35B-mlx-uniform-4bit` at fp16
-KV, 13.6 GB below the 46 GB gate (`main_models.yaml:134`); there is no campaign-wide norm beyond
-that single data point. Narrower buys headroom for co-residency and future context growth, not a
-quality claim by itself (KV bit-width is a `compare`-WARN tune axis, not a REFUSE axis, so
-document it but don't treat a narrower choice as free).
+**Decision rule:** choose using quality and measured usability, with roughly48GB MLX peak as a guideline. Do not choose the narrowest KV width merely to maximize headroom, or ban unquantized KV because a numeric flag exceeded46GB. Compare approved modes at matched settings; narrower KV is a lossy lever whose quality needs measurement. Keep full-cap preallocation and the one-resident-model rule.
 
 **Cost:** folded into Stage 2's capacity-gate runs — no separate GPU time needed if Stage 2 was
 run across the KV-width candidates you're choosing between.

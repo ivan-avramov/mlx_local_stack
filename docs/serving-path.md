@@ -1,5 +1,7 @@
 # Serving-path configuration — full rationale and measurement history
 
+**2026-09-13 policy correction (C79):** roughly48GB MLX prefill peak is a planning guideline, not a strict46GB or48GB cutoff. Numerical46GB references in historical investigations below describe the old instrument/policy; they do not automatically reject a configuration. Full-cap preallocation and measurement discipline remain in force.
+
 AGENTS.md carries the terse rules; this file holds the mechanisms, measurements and sagas behind
 them. Moved verbatim from AGENTS.md on 2026-08-23 (token-budget cleanup). When a rule here and
 AGENTS.md disagree, AGENTS.md wins and this file needs a dated correction.
