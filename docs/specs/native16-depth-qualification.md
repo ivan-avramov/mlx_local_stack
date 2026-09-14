@@ -1,6 +1,6 @@
-# C89 — Proposed shipped-config depth qualification
+# C89 — Approved shipped-config depth qualification
 
-Status2026-09-14: **PROPOSED, NOT ARMED** (operator requested the exact model/config, tests and runtime estimate after P642). This is qualification of the selected shipped configuration. It is not a model-selection or alternate-KV comparison.
+Status2026-09-14: **APPROVED, PREPARING** (operator approved P648 with “proceed”; P649). This is qualification of the selected shipped configuration. It is not a model-selection or alternate-KV comparison.
 
 ## One model/configuration
 
@@ -40,7 +40,7 @@ Report ordinary accuracy and strict resolved-budget success, convergence and fai
 
 Real HTTP/protocol/provenance failures abort unscored, with no retries. Verify actual endpoint/listener ownership, model/drafter paths, worker flags, package/import paths and registry fingerprints. Use exclusive-create outputs and preserve full requests/responses privately. Validate the instrument with fake-only tests and cold review before launch. Require a known-positive daemon,300-second critical assessments, completed-prompt progress, mean/max forecasts and runner-exit records. Memory remains a rough48GB guideline, not a numeric stop rule.
 
-Derive request timeouts from the full generation allowance and a conservative decode floor plus prefill headroom; the4–5hour planning window is not a timeout. A legitimate runaway may take much longer. GPU work is not authorized by this proposal alone.
+Derive request timeouts from the full generation allowance and a conservative decode floor plus prefill headroom; the4–5hour planning window is not a timeout. A legitimate runaway may take much longer. Operator approval covers this66-call scope; no expanded or alternate-configuration study is authorized.
 
 ## Estimate and Phase 2 implication
 
