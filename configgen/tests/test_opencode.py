@@ -1,5 +1,6 @@
 import json
-from configgen.emitters.opencode import emit_opencode
+import pytest
+from configgen.emitters.opencode import emit_opencode, emit_opencode_bench
 
 def test_opencode_structure(sample_source):
     d = json.loads(emit_opencode(sample_source))
@@ -11,7 +12,8 @@ def test_opencode_structure(sample_source):
     assert ml["Qwen-A"]["options"]["temperature"] == 0.4
     assert ml["Qwen-A"]["options"]["presence_penalty"] == 0.0   # qwen extra
     assert ml["Gemma-B"]["options"]["repetition_penalty"] == 1.08  # gemma extra
-    assert ml["Qwen-A"]["limit"]["context"] == 262144 - 102400
+    assert ml["Qwen-A"]["limit"]["context"] == 262144
+    assert ml["Qwen-A"]["limit"]["input"] == 262144 - 102400
 
 
 def test_nemotron_family_renders_as_main_with_vendor_sparse_extras(nemotron_source_tainted):
@@ -58,3 +60,54 @@ def test_generated_marker_is_absent_from_every_nesting_level(sample_source):
             for i, v in enumerate(node):
                 walk(v, f"{path}[{i}]")
     walk(json.loads(emit_opencode(sample_source)))
+
+
+@pytest.mark.parametrize("emit", [emit_opencode, emit_opencode_bench])
+def test_text_only_model_does_not_advertise_attachments(emit, nemotron_source, sample_source):
+    text_only = json.loads(emit(nemotron_source))["provider"]["mlx-local"]["models"]
+    assert text_only["NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit"]["attachment"] is False
+    vision = json.loads(emit(sample_source))["provider"]["mlx-local"]["models"]
+    assert vision["Qwen-A"]["attachment"] is True
+    assert vision["Gemma-B"]["attachment"] is True
+
+
+@pytest.mark.parametrize("emit", [emit_opencode, emit_opencode_bench])
+def test_resolved_provider_preserves_vision_input(emit, sample_source, nemotron_source):
+    # OpenCode v1.18.30 provider/provider.ts resolves custom models' image
+    # capability from modalities.input independently of attachment. Without
+    # a catalogue entry, omitted image capability defaults to false and
+    # provider/transform.ts replaces image parts with unsupported-input text.
+    def accepts_image(model):
+        return "image" in model.get("modalities", {}).get("input", [])
+
+    doc = json.loads(emit(sample_source))
+    for model in doc["provider"]["mlx-local"]["models"].values():
+        assert accepts_image(model), "vision input would be replaced before delivery"
+        assert model["modalities"]["output"] == ["text"]
+        assert "text" in model["modalities"]["input"]
+    task = doc["provider"]["mlx-task"]["models"]["mlx-community/Task-C"]
+    assert task["modalities"] == {"input": ["text"], "output": ["text"]}
+    text_only = json.loads(emit(nemotron_source))["provider"]["mlx-local"]["models"]
+    for model in text_only.values():
+        assert not accepts_image(model)
+        assert model["modalities"] == {"input": ["text"], "output": ["text"]}
+
+
+@pytest.mark.parametrize("emit", [emit_opencode, emit_opencode_bench])
+@pytest.mark.parametrize("effective_output_limit", [32768, 102400])
+def test_context_budget_reserves_output_once(emit, effective_output_limit, sample_source):
+    # Installed OpenCode v1.18.30 session/overflow.ts: an explicit input limit
+    # reserves the smaller of 20K and output; otherwise it subtracts output
+    # from context. Supplying window-output as context reserves output twice.
+    doc = json.loads(emit(sample_source))
+    limit = doc["provider"]["mlx-local"]["models"]["Qwen-A"]["limit"]
+    reserved = min(20000, effective_output_limit)
+    usable = (limit["input"] - reserved if limit.get("input")
+              else limit["context"] - effective_output_limit)
+    prompt_budget = 262144 - 102400
+    assert usable == prompt_budget - reserved
+    assert limit["context"] == 262144
+    assert limit["output"] == 102400
+    task = doc["provider"]["mlx-task"]["models"]["mlx-community/Task-C"]["limit"]
+    assert task["context"] == 30000
+    assert task["input"] + task["output"] == task["context"]

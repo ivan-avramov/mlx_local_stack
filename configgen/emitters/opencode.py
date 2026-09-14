@@ -25,8 +25,11 @@ def _emit(source: Source, *, roles: tuple[str, ...]) -> str:
     local_models = {}
     for m in main:
         local_models[m.name] = {
-            "name": m.display_name, "tool_call": True, "reasoning": True, "attachment": True,
-            "limit": {"context": input_limit(m), "output": m.output},
+            "name": m.display_name, "tool_call": True, "reasoning": True,
+            "attachment": "vision" in m.capabilities,
+            "modalities": {"input": ["text", "image"] if "vision" in m.capabilities else ["text"],
+                           "output": ["text"]},
+            "limit": {"context": m.context, "input": input_limit(m), "output": m.output},
             "options": {**sampling_openai(m), **sampling_extra(m)},
         }
     # NO `_generated` marker here, deliberately. opencode validates its config strictly and rejects
@@ -48,7 +51,8 @@ def _emit(source: Source, *, roles: tuple[str, ...]) -> str:
             "options": {"baseURL": f"http://localhost:{task.port}/v1", "apiKey": "not-needed"},
             "models": {task.name: {"name": task.display_name, "tool_call": False,
                                     "attachment": False,
-                                    "limit": {"context": input_limit(task), "output": task.output}}}}
+                                    "modalities": {"input": ["text"], "output": ["text"]},
+                                    "limit": {"context": task.context, "input": input_limit(task), "output": task.output}}}}
         doc["small_model"] = f"mlx-task/{task.name}"
     default = source.agent_defaults.get("opencode")
     if default:
