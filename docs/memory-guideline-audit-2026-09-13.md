@@ -37,3 +37,7 @@ The native arm disables cache quantization; it does not convert the whole model 
 Historical registry context: commit `76450fa` (2026-06-16) set `Qwen3.6-27B-UD-MLX-6bit` to 3-bit TurboQuant; `04afd70` (2026-06-17) changed it to 4-bit. This history does not establish a3-bit default for the present picks or a3-vs4-bit quality result on them.
 
 [Measured results](campaign-results.md); [M42 raw/provenance record](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_retrieval.m42native16-20260913.provenance.json); [current plan](PLAN.md).
+
+## 2026-09-14 — C82 derived scorecard correction
+
+The completed uniform8 capacity ladder has retrieval co-score1.0 at all three rungs, including261449 actual prompt tokens. Its48.2124GB largest peak triggers the tool's numeric `fits:false` but is a small overrun of the rough target, not rejection. The legacy scorecard further conditions `retrieval_effective_ctx` on `fits`, yielding196608 despite successful retrieval at the largest probe. Do not interpret that derived field as a retrieval failure or authoritative effective-context limit. C82 provenance/results annotate the conditioning while preserving raw outputs. Canonical policy cleanup is proposed in PLAN/C83; the approved C82 instrument already continues successful requests above48GB.

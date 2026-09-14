@@ -1,6 +1,6 @@
-# Handoff — 2026-09-13: local upstream merge landed; C80 cache pilot complete
+# Handoff — 2026-09-14: C82 native16 capacity control running
 
-Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. **C82 uniform8 capacity ladder is RUNNING**: supervisor81800, router81745, worker81746; verify actual PIDs before action. Both quality arms are generated and graded: each Math5005/5, HumanEvalPlus4/5, MBPPPlus5/5, all30converged, no paired outcome change. State `$STACK_WORKDIR/upstream/2026-09-13/quality-pilot-c82/active.json`; capacity output under `capacity/m42c82cap-uniform8-20260913` in the integration directory. Fresh native16 capacity remains approved next. Do not edit live/frozen instruments, sources or overlays. C81 native16 registry default stands; daily-driver stack is down, production runtime activation/push unarmed.
+Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. **C82 native16 capacity control is RUNNING**: supervisor83744, router83684, worker83685; verify actual PIDs. Uniform8 capacity completed all3 rungs normally: peaks43.5957/45.9105/48.2124GB, prefill441.39/941.52/1609.23s, decode11.110/7.729/5.673tok/s. Its48.21GB value is a small overrun of the rough target, not disqualification. Both quality arms are generated/graded and committed f136bba: each Math5005/5, HumanEvalPlus4/5, MBPPPlus5/5, all30converged. State `$STACK_WORKDIR/upstream/2026-09-13/quality-pilot-c82/active.json`; capacity output under `capacity/m42c82cap-native16-20260913`. Do not edit live/frozen instruments, sources or overlays. C81 native16 registry default stands. Daily-driver stack is down; production runtime activation/push unarmed.
 
 ## Latest operator correction — C79
 
@@ -37,8 +37,8 @@ Session audit and precision explanation: `docs/memory-guideline-audit-2026-09-13
 - D14 reviewed evidence report complete, updated for C79/C80: `docs/transfer-findings.md`. P356 cosmetic cleanup complete; local registry certification comments restored without staging local paths.
 - M44 QUEUED: full HF-published-model artifact parity audit and card refresh, including MTP companions, recommended parameters and tested vision abilities. Only PLAN is the queue; no audit/upload armed.
 - C81 RULED: actual `main_models.yaml` default is native16 (`kv_bits: 0`) for the first pick; weights/MTP/tune unchanged. M40 all-axis certification used TQ4. Zero maps to quantization disabled with current KV_BITS environment absent; verify actual worker settings on next startup.
-- C82 RULED: 15 fresh native16/uniform8 task pairs plus both three-rung capacity ladders, 38 generations total; `docs/specs/m42-uniform8-comparison.md`. Both quality arms complete and graded; uniform8 capacity running, native16 capacity next.
-- Next C id C83. Discussion numbering continues at P494.
+- C82 RULED: 15 fresh native16/uniform8 task pairs plus both three-rung capacity ladders, 38 generations total; `docs/specs/m42-uniform8-comparison.md`. Both quality arms complete and graded; uniform8 capacity complete, native16 capacity running.
+- C83 OPEN: canonical capacity-policy/reporting cleanup; C82 raw retrieval_effective_ctx is memory-threshold-conditioned and is not an actual retrieval failure. Next C id C84. Discussion numbering continues at P512.
 
 ## Resume safeguards
 

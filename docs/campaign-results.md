@@ -2318,3 +2318,21 @@ Validation:102 generation,56 grading and27 capacity fake checks passed with inde
 **B/C recommendation at this checkpoint:** preserve the operator-approved native16 default and existing model ordering. There is no observed quality reason to prefer either cache mode from n5/axis; the remaining C82 capacity ladders must inform the practical memory/latency tradeoff. Uniform8 capacity is running, followed by a fresh native16 control. No capacity result is inferred from these short generations, and no automatic default change is authorized.
 
 [Quality analysis](../benchmark/results/m42_c82_quality_2026-09-13.json); [native16 provenance](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/m42_quality_pilot.m42c82-native16-20260913.provenance.json); [uniform8 provenance](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/m42_quality_pilot.m42c82-uniform8-20260913.provenance.json). Raw coding evaluator files and per-axis rows/manifests/scores are exported beside the provenance files.
+
+## 2026-09-14 — C82 uniform8 capacity complete; native16 control running
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, uniform8/group64 KV, MTP ON, frozen integrated runtime. One calibration plus three bounded256-token probes completed in51.3 minutes. Actual prompt occupancies130783/196115/261449 match the planned payloads; no transport/runtime errors.
+
+| Nominal context | MLX peak GB | Prefill seconds | Decode tok/s |
+|---|---:|---:|---:|
+| 131072 | 43.5957 | 441.39 | 11.110 |
+| 196608 | 45.9105 | 941.52 | 7.729 |
+| 262144 | 48.2124 | 1609.23 | 5.673 |
+
+The48.2124GB peak is a small overrun of the rough48GB target, not rejection or physical failure. Raw `fits`, scorecard and `within_rough_48gb` booleans compare numerically with48; they did not terminate the experiment and do not decide eligibility. Root offline validation reconstructs the exact calibration/rung prompts, verifies raw timings/counters/retrieval scores, recomputes the scorecard, and binds source/overlay/instrument/manifest evidence. The postrun attestation is the original prelaunch record serialized after successful live stability checks, not a separately serialized second process snapshot.
+
+Source inspection shows smaller calculated uniform8 KV backing but an explicit score/mask/softmax attention path, versus native16's fused SDPA. These mechanisms do not identify the allocation responsible for peak memory. All three peaks are1.073741824GB above the earlier native16 observations; that exact difference is a clue, not proof of a duplicated buffer. The fresh native16 control is now running and will supply the matched timing/memory comparison. System swap was already nonzero at the first during-run snapshot, then increased slightly during the largest rung; these are coarse system observations with no prelaunch baseline or allocation attribution.
+
+**B/C recommendation:** retain the approved native16 default and model ordering while its matched capacity control completes. Quality outcomes match in the C82 pilot; lower theoretical cache storage alone has not produced a measured total-peak advantage. Do not treat bounded retrieval as quality certification. [Validated uniform8 evidence](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_retrieval.m42c82cap-uniform8-20260913.provenance.json).
+
+C82 scorecard clarification: all three uniform8 retrieval co-scores are1.0, including the261449-token probe. The raw scorecard reports `retrieval_effective_ctx: 196608` because that legacy field also requires `fits` under its numeric48GB threshold. It is not a retrieval failure or effective-context quality limit; the provenance annotates this conditioning. Raw scores/measurements are preserved.
