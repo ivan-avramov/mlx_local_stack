@@ -2,6 +2,8 @@
 
 Updated 2026-09-14 (C82 native16/uniform8 comparison complete, native16 default retained; M43 integration/capacity / C79 memory guideline; C70: C ladder set on the M38 judge panel with length control; C67: C ladder reordered with vision required for the C first pick; `Ornith-1.0-35B-mlx-uniform-4bit` added to the C contest). Rankings are operator-approved, provisional choices based on quality and observed trends, not claims of statistically proven superiority. B is agentic coding; C is research, brainstorming and design. Models ship as a model/tune/predictor combination. Confidence intervals and limitations remain part of the evidence. [Full results](docs/campaign-results.md), [queue](docs/PLAN.md), [decisions](docs/open-questions.md).
 
+**2026-09-14 activation checkpoint (C84/C85):** merged dependencies are now published in the forks and pinned in this stack (`c251b04`). Runtime certification is in progress: `Qwen3.8-27B-mlx-uniform-4bit` passes all five serving smoke cases, but `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` native16 hit a real Metal OOM on tool continuation after three standalone cases passed. The earlier single-request capacity/quality evidence does not clear that multi-turn failure. Native16 remains configured while the cache-lifetime repair and retests are in progress; it is not yet certified for daily-driver activation. [Certification scope](docs/specs/c84-stack-certification.md).
+
 ## B: top four for agentic coding
 
 | Rank | Model | Recommended configuration | Best for — and why |
