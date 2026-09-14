@@ -1,6 +1,14 @@
-# Handoff — 2026-09-14: M44 HF audit and C84 runtime certification complete
+# Handoff — 2026-09-14: C83/C76 cleanup complete; quality plan refreshed
 
 Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Current report: [stack certification](stack-certification-2026-09-14.md). C84 bounded runtime checks are complete; C85's native16 tool-continuation OOM is resolved. Broader quality remains qualified below.
+
+## Latest approved work: C83/C76
+
+- Operator approved P606: CPU-only capacity reporting/monitor cleanup, correction of historical M41 draw counts, then refreshed quality planning before GPU work. C83 and C76 are COMPLETE. No model calls, fork changes, registry settings or Hugging Face publication in this cleanup.
+- C83 schema2 separates request completion, descriptive48GB target flags and bounded retrieval co-scores; numeric overrun never stops the grid. Malformed/failed requests remain unscored and abort with nonzero exit. Output collisions are refused; historical bulk rescore is retired. Capacity daemon performs known-positive selftest, periodic baseline/mean/max assessments and terminal reporting; monitor failures propagate. 94 relevant CPU tests pass; independent cold review clear. See `docs/specs/c83-capacity-reporting.md`.
+- C76: M41 `reasoning.m41on.json` contains39 unique draws (six rungs×5, three×3), all score1.0, zero budget hits/errors. Active42-draw summaries corrected with dated note; all raw artifacts/provenance unchanged. SHA256a8524d48fac46bfb8134f35ddcd8b4777389f40ae94bf42f1aec2441e253827a.
+- Recommended next GPU scope is C88: fresh native16/TQ4 depth and vision controls on final sources, maximum210 calls including pilot/calibration; historical generation-only planning reference6.75h. Full protocol `docs/specs/native16-quality-validation.md`. C77 refreshed separately for original versus final runtime bundles with TQ4 fixed; C78 deferred. These are proposals, NOT armed. Current first-pick native16 default remains provisional on the missing axes.
+- Stack publication through6bdeac6 was completed and remotely verified in the preceding turn. New cleanup/planning commits are local until explicit new push authorization; inspect `git log origin/main..HEAD`. Eight intentional local registry path overrides remain unstaged.
 
 ## M44 completion and README cleanup
 
@@ -15,7 +23,7 @@ Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Current repor
 
 ## Current state and publication
 
-- Final installed gitlinks: MLX-VLM `522671c4bebc5ff492d465a1d0e6a14251f18260`, MLX-Serve `b632280709f771972bffbaf3231e996e8a89f4e8`. Includes upstream MLX-VLM434afb1a / MLX-Servea6f80eb. Both forks were pushed to GitHub FIRST; submodules were fetched through their GitHub origins and committed here. The operator authorized publishing stack main on2026-09-14 (P603). Verify origin/main against HEAD on resume; the earlier publication hold is superseded.
+- Final installed gitlinks: MLX-VLM `522671c4bebc5ff492d465a1d0e6a14251f18260`, MLX-Serve `b632280709f771972bffbaf3231e996e8a89f4e8`. Includes upstream MLX-VLM434afb1a / MLX-Servea6f80eb. Both forks were pushed to GitHub FIRST; submodules were fetched through their GitHub origins and committed here. The operator authorized publishing stack main on2026-09-14 (P603); publication through6bdeac6 completed. New commits require a fresh explicit push instruction.
 - Main serving environment: MLX/Metal0.32.2, imports resolve to this stack's `src` submodules. All69 package versions were held fixed across the paired study. Startup retains committed gitlinks; no `--remote` update.
 - All owned model/router/benchmark/grading processes are stopped. The daily-driver stack remains down. Verify PIDs/ports before launching anything; do not arm work from a historical runner file.
 - `main_models.yaml` retains eight intentional local path overrides. NEVER stage its worktree copy. C84 comments were added through a HEAD-derived blob after all measurements; parsed registry values are unchanged. See `docs/qualify-a-model.md` for the technique.
@@ -29,7 +37,7 @@ Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Current repor
 - All80 quality requests complete and converge:40 exact BEFORE/AFTER pairs across Math500/HumanEvalPlus/MBPPPlus/prose, five items per axis/model. All40 AFTER answers, reasoning hashes and token counts match BEFORE. Native16 official scores5/5,4/5,5/5; second model5/5 on each. The shared native16 HumanEval/141 ASCII/Unicode prompt-reference failure remains official. Ten prose pair reviews tie; shared factual/methodological weaknesses are documented. One nonblinded reviewer, no external judge wave.
 - Native16 request time668.6→680.8s; per-axis +1.2–2.5%. Second model821.4→822.9s; per-axis below1%. Report these small observed increases. Per-axis paired intervals are in the report and public analysis; they resample tasks, not repeated machine sessions.
 - Matched largest native16 probe:261449 prompt/170 completion tokens, exact answer/reasoning equality, zero cache reuse, all five retrieval codes correct, main-request MTP67rounds/134draft/104accepted. Peak47.138620→47.155397GB (+0.017GB); prefill1099.88→1165.33s (+5.95%); decode11.9545→11.5061tok/s (−3.75%). One observation per state; causal attribution and repeatability unresolved. Two-token calibration intentionally ends by length without MTP. Final supervisor completed1185.9s/rc0.
-- Capacity remains near the rough48GB guideline. It is NOT a strict46/48GB cutoff; numeric `fits`/memory-conditioned effective-context fields are not selection decisions or depth certification. The capacity daemon recorded real self-test/periodic/terminal events but lacked a baseline-rate estimate and retained generic smoke wording; fix this before reusing the wrapper.
+- Capacity remains near the rough48GB guideline. It is NOT a strict46/48GB cutoff; numeric `fits`/memory-conditioned effective-context fields are not selection decisions or depth certification. The historical capacity daemon recorded real self-test/periodic/terminal events but lacked a baseline-rate estimate and retained generic smoke wording. C83 now supplies a canonical capacity daemon; preserve the old wrapper as immutable evidence, not a reusable runner.
 - Certify this bounded runtime integration and retain native16/default order with the observed timing costs. Native16 broader depth/vision quality remains provisional. C84 starts from the initially merged e3bffd9a/f8f1df4 stack; it does not measure the original pre-merge integration effect or close C77.
 
 ## Evidence and reproducibility
@@ -51,15 +59,16 @@ Private root: `$STACK_WORKDIR/upstream/2026-09-14-activation`.
 `docs/PLAN.md` is the only queue.
 
 1. **M44 COMPLETE.** Cards/evidence published and local parity verified. Remaining historical recipe discrepancy is C87, above; it did not authorize new GPU work or a sampling change.
-2. **C83 OPEN:** canonical capacity memory-policy/reporting cleanup; include generic capacity-monitor wording and baseline-rate estimation before reuse. Preserve historical raw flags.
-3. **C76 OPEN:** M41 historical39-versus42 reasoning draw discrepancy; D14 uses verified39 and flags the older42 summaries. Do not pool unrelated M40 draws.
-4. **C77/C78 OPEN, unarmed:** original pre-merge-versus-integrated quality/timing proposals need reshaping for the current native16 state. C84 does not substitute for C77; C78 can be reshaped to examine timing repeatability/mechanism if prioritized.
-5. Broader native16 depth/vision quality remains provisional; no automatic ranking change. Whether to bring up the daily-driver stack remains an operator decision. Stack publication is now explicitly authorized. Fork pushes in C84 followed explicit GitHub-first authorization.
+2. **C83 COMPLETE:** schema2 reporting and capacity-specific daemon; preserve old raw flags and wrapper evidence.
+3. **C76 COMPLETE:** active M41 summaries corrected to39 draws; no raw data changes or M40 pooling.
+4. **C88 OPEN, unarmed:** recommend current native16 depth/vision study first, with the included paired pilot and fresh TQ4 controls. Full plan linked above.
+5. **C77 OPEN, unarmed:** original pre-merge quality diagnostic refreshed for final sources, TQ4 fixed in both runtime bundles. C84 does not substitute for C77. **C78 deferred:** old timing proposal must not launch unchanged; prioritize quality before repeatability/mechanism work.
+6. Daily-driver startup and new pushes remain operator decisions. M44 publication is complete; C87 historical tuning remains deferred.
 
-M40/M41, M42/C80/C82, P355/P356 and D14 are complete at their documented scope. M44 is complete. C83 reporting/monitor cleanup is the next inexpensive candidate; C76/C77/C78/C87 remain explicit open decisions, not armed runs.
+M40/M41, M42/C80/C82, P355/P356, D14, C84, M44, C83 and C76 are complete at their documented scopes. The box remains idle; do not arm a historical runner or infer approval for a new GPU study from completed cleanup work.
 
 ## Resume discipline
 
-One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P605; C86/M44 complete, C87 open; next decision id C88.
+One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P614; C83/C76 complete, C87/C88 open; next decision id C89.
 
 Recipe reminders: pairwise judge requires `--out`; judge-gate output is a directory. Benchmark ladder CLIs require `--sampling-profile deployed`. Use real known-positive daemon monitors and derived request timeouts without retries. Read the current report before making quality, memory or publication claims from older handoff text.

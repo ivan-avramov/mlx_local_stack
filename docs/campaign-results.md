@@ -4,6 +4,8 @@
 
 ## 2026-09-13 — M41 COMPLETE: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` predictor-ON clears the 46 GB gate at 262144 (41.1 GB) and carries retrieval to 128K and chain-4 reasoning to 156K with zero runaways
 
+**C76 correction, 2026-09-14:** the M41 reasoning ladder contains **39 draws, not 42**: five draws at each of 8000/16000/24000/32000/48000/64000 tokens, plus three at each of 96000/128000/156000. All 39 scored 1.0, stopped below the recorded thinking budget, and have zero budget hits or errors. The saved partial records exactly match the final artifact. [Raw reasoning data](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/reasoning.m41on.json), SHA256 `a8524d48fac46bfb8134f35ddcd8b4777389f40ae94bf42f1aec2441e253827a`, is unchanged. Earlier 42-draw summaries are corrected below; the three separate M40 depth draws are not part of M41. This count correction adds no measurements and changes no scores or tested depth limits.
+
 First long-context evidence for the B/C 1st pick (it entered the contest after all Phase 1 depth work). Shipped state
 (t0.5, medium, repaired MTP sidecar ON, turboquant kv4, cap 262144), `deployed` profile, tag `m41on`, one router
 session, worker cmdline `--draft-kind mtp` verified before each ladder, manifests checked (fresh, registry sha =
@@ -41,7 +43,7 @@ prefill 15 → 437 s, acceptance 0.78–0.83, answers 160–215 tokens.
 | prefill s | 12 | 27 | 43 | 62 | 104 | 170 | 283 | 464 | 619 |
 | acceptance | 0.89 | 0.89 | 0.88 | 0.88 | 0.89 | 0.88 | 0.90 | 0.91 | 0.92 |
 
-`reasoning_effective_ctx` = **156K** (ladder top). **Runaway tax: 0 of 42 draws, 0 tokens** — versus 1/39, 2/39 and
+`reasoning_effective_ctx` = **156K** (ladder top). **Runaway tax: 0 of 39 draws, 0 tokens** — versus 1/39, 2/39 and
 3/39 budget-hit draws for the three M11 models (OFF, their own tunes; `docs/campaign-results.md` 2026-08-31).
 Completions 268–520 tokens at every depth: the chain-4 task never gets harder with depth (M11's finding holds), so
 this axis certifies attention/KV integrity at depth and the runaway rate, not reasoning load.
@@ -54,7 +56,7 @@ this axis certifies attention/KV integrity at depth and the runaway rate, not re
   `prefill_step_size` 512); a 256K prompt costs ~33 min TTFT. This is the usability limit at depth, not memory.
 - Decode ON at depth: 21 tok/s @128K vs 8.5 OFF (M40), 10.7 @262K; acceptance is task-stable (0.74–0.92) and slightly
   HIGHER at depth on vartrack, so the predictor's advantage grows with context as the OFF rate collapses.
-- Runaway rate tracks temperature (t0.5 here → 0/42; t0.3/0.6/1.0 in M11 → 1/39, 3/39, 4/15) — consistent with the
+- Runaway rate tracks temperature (t0.5 here → 0/39; t0.3/0.6/1.0 in M11 → 1/39, 3/39, 4/15) — consistent with the
   temperature-is-the-lever rule; suggestive at these counts.
 - **Implication for M42 (KV lever):** fp16 KV on the 16 full-attention layers ≈ +12 GB over kv4 at 262144 (PLAN
   estimate 16 GiB fp16 vs ~4 GB kv4). With 4.9 GB headroom, fp16 KV is expected to FAIL the 46 GB gate at the cap;

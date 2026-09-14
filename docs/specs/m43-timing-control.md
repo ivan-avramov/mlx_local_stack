@@ -1,6 +1,6 @@
 # C78 — Proposed long-context timing control
 
-Status: **PROPOSED, NOT ARMED**. Separate from C77's 80-request quality diagnostic.
+Status2026-09-14: **DEFERRED, NOT ARMED**. The original proposal below is historical and must not launch unchanged. C84 already measured a single matched final native16 pair with +5.95% prefill time and−3.75% decode throughput; repeatability remains unknown. Prioritize C88 quality, then C77 if the historical upgrade question remains useful. If timing is prioritized later, propose repeated balanced-order native16 controls on the final source before attributing a slowdown or changing kernels. The old two-request estimate does not authorize that expanded design.
 
 Question: does the lower long-context decode throughput observed against historical M41 reproduce in a fresh source comparison? Do not infer that battery power, missing Neural Accelerators, or one particular verifier change caused it.
 
