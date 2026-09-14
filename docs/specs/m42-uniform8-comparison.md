@@ -1,6 +1,6 @@
 # C82 approved native16 versus uniform8 KV comparison
 
-Status: approved by operator “proceed” after P473 (2026-09-13). Preparation in progress; model requests not launched. C81 separately approves native16 as the provisional
+Status: approved by operator “proceed” after P473 (2026-09-13). COMPLETE2026-09-14: all38 requests and independent audits finished; native16 default retained. Results: `../campaign-results.md` and `../../benchmark/results/m42_c82_comparison_2026-09-14.json`. The pre-registered protocol below is preserved. C81 separately approves native16 as the provisional
 recommendation and actual registry default. Model:
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. Do not interpret native16 as uint16,
 a weight conversion or a new checkpoint.
