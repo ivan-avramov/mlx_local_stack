@@ -1,0 +1,51 @@
+# Hugging Face artifact and model-card audit — 2026-09-14
+
+**M44 complete.** All 13 public repositories were audited: nine target/mirror models and four MTP companions. Authenticated enumeration confirmed the same 13 repositories and zero private models. All 139 model/support files match local counterparts after a local cache repair. All 13 cards and dated evidence files are published and independently verified anonymously. Published model artifacts were unchanged.
+
+## Byte parity and local alignment
+
+The final pass read **161,764,394,797 bytes from 206 distinct local files**. It compared 61 LFS SHA256 values and 78 Git blob SHA1 values with remote metadata, including sizes; SHA256 was also computed for regular files. Device/inode/size/mtime/ctime guards passed. All 46 safetensors-header checks and 18 local/remote index checks passed without loading models. Cached filenames were never treated as integrity proof.
+
+The 139-file scope includes weights, configuration, tokenizer/templates, vision assets and supporting PNGs/repair provenance. Original model-folder README/license/repository-attribute files are separately recorded: five match, four differ,17 are absent. They are not silently counted as matching inference artifacts. The newly published cards/evidence have exact local mirrors. Another 58 files are HF upload bookkeeping, not additional model tensors/configs.
+
+`Qwen3.8-27B-static-mixed-4bit` was resolving cached revision `548e7898`, before the restored vision package. Its config/index matched that older remote revision; no local corruption was demonstrated. The local vision-grafted source matched all 15 files at artifact revision `be1aa462`, including 333 BF16 vision tensors. The revised index added vision references without removing or changing existing language-shard references.
+
+The official HF snapshot API refreshed that one local cache to `be1aa462`. The old snapshot and reference backup remain preserved. Two supporting figures for `Ornith-1.0-35B-mlx-uniform-4bit` and `repair_audit.json` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter` were restored locally and hashed. The second full audit passed. No remote weight repair was necessary.
+
+## Description and recommendation corrections
+
+- Both current picks now carry their actual recommendation status, deployed sampling, MTP companions, native16/TQ4 settings, full active allocation and idle-retirement policy. Historical M40 TQ4 certification remains distinct from C84 native16 coverage.
+- Cards retain measured C84 timing costs, C74's inconclusive MBPPPlus result, and small-sample/depth/vision limits. No GPU benchmarks or ranking changes were made during this audit.
+- Stale draft-OFF/untested, medium-not-certified, old ranking and strict 46GB-cutoff statements were replaced or dated. Vision-tower presence is distinguished from tested abilities; the historical text-only opening for the restored vision package was corrected.
+- `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` now uses recorded serving-manifest accounting: about 4.98 quantized-weight bits,152 eight-bit and346 four-bit modules, correcting the old4.67/150 text. This is manifest accounting, not a new whole-model storage measurement. The registry comment was corrected without changing parsed settings.
+- Original license/frontmatter and conversion/upstream attribution were preserved. Historical source notes use differing upstream namespace spellings for one target/drafter lineage; those spellings were retained rather than treated as a newly verified alias. Launch examples clear inherited cache/predictor overrides and link published fork commits. Self-contained evidence avoids reliance on unpublished stack commits.
+
+## Verified publications
+
+Publication updated each `README.md` and added `evaluation/M44-evidence-2026-09-14.json`. Minor README-only follow-ups removed one trailing space and expanded comparative model names on two cards; each was reverified. Fresh anonymous downloads matched all 26 reviewed files. Independent anonymous metadata reads confirmed all 13 final heads and **all 152 pre-existing non-README file signatures unchanged**:165 files before publication,178 after.
+
+| Repository | Published revision | Local mirror |
+|---|---|---|
+| [NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit](https://huggingface.co/caslca/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit) | [6a298953](https://huggingface.co/caslca/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit/commit/6a298953ee04ee8b3091b5540683073d261d9a21) | [Card](model-cards/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit/README.md) |
+| [Ornith-1.0-35B-mlx-uniform-4bit](https://huggingface.co/caslca/Ornith-1.0-35B-mlx-uniform-4bit) | [f3edbf91](https://huggingface.co/caslca/Ornith-1.0-35B-mlx-uniform-4bit/commit/f3edbf91b27130f95a0cfba6134fdfe2966a3a80) | [Card](model-cards/Ornith-1.0-35B-mlx-uniform-4bit/README.md) |
+| [Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter](https://huggingface.co/caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter) | [92deafbc](https://huggingface.co/caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter/commit/92deafbc1b669e585ee829b0e33fd7050e8d33c8) | [Card](model-cards/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter/README.md) |
+| [Qwen3.6-27B-Opus-Distill-OptiQ-4bit](https://huggingface.co/caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit) | [6eca8612](https://huggingface.co/caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit/commit/6eca8612419d07181ca1474542f1a497f5dcbfac) | [Card](model-cards/Qwen3.6-27B-Opus-Distill-OptiQ-4bit/README.md) |
+| [Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter](https://huggingface.co/caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter) | [a9f69509](https://huggingface.co/caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter/commit/a9f69509740c173afff42da311f3070d79da2580) | [Card](model-cards/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter/README.md) |
+| [Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed) | [536de092](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/commit/536de092af5e70a13c9eb9765f36249d2c46c089) | [Card](model-cards/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/README.md) |
+| [Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter) | [0da08348](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter/commit/0da0834891f64b1b486e60c7ddd8eead843cbfcd) | [Card](model-cards/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter/README.md) |
+| [Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit) | [5ce8dfb1](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit/commit/5ce8dfb121af2f5b5851f1a1301127539a346350) | [Card](model-cards/Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit/README.md) |
+| [Qwen3.8-27B-OptiQ-4.5bpw-mixed](https://huggingface.co/caslca/Qwen3.8-27B-OptiQ-4.5bpw-mixed) | [7ad00f99](https://huggingface.co/caslca/Qwen3.8-27B-OptiQ-4.5bpw-mixed/commit/7ad00f99409a5b804427463e73c674929d46db9d) | [Card](model-cards/Qwen3.8-27B-OptiQ-4.5bpw-mixed/README.md) |
+| [Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit](https://huggingface.co/caslca/Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit) | [3439bc45](https://huggingface.co/caslca/Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit/commit/3439bc45c1d58d5b704f5b145f6dd6044c485688) | [Card](model-cards/Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit/README.md) |
+| [Qwen3.8-27B-mlx-uniform-4bit](https://huggingface.co/caslca/Qwen3.8-27B-mlx-uniform-4bit) | [6302ea42](https://huggingface.co/caslca/Qwen3.8-27B-mlx-uniform-4bit/commit/6302ea426ea0b8cae0e5082f73353bae7640dc58) | [Card](model-cards/Qwen3.8-27B-mlx-uniform-4bit/README.md) |
+| [Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter](https://huggingface.co/caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter) | [81e6bd35](https://huggingface.co/caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter/commit/81e6bd35f48a6a1ce9c34fafce8ffba81d62b196) | [Card](model-cards/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter/README.md) |
+| [Qwen3.8-27B-static-mixed-4bit](https://huggingface.co/caslca/Qwen3.8-27B-static-mixed-4bit) | [4d66b3cc](https://huggingface.co/caslca/Qwen3.8-27B-static-mixed-4bit/commit/4d66b3cc6170302021b472458d1b7ab2e602f169) | [Card](model-cards/Qwen3.8-27B-static-mixed-4bit/README.md) |
+
+Canonical local cards live at `docs/model-cards/<full-model-name>/README.md` beside their `evaluation/` evidence. The four former flat filenames remain navigation redirects, not upload sources.
+
+## Remaining discrepancy and limits
+
+**C87 remains open:** `Qwen3.8-27B-static-mixed-4bit` has registry temperature 1.0 but a historical t0.4 reproduction recipe. Saved evidence contains15 attempts,13 returned/converged answers,12 correct and two transport failures. Its stored12/15 includes those failures and is not a clean model-accuracy estimate. One saved t0.6 timeout does not prove nonconvergence. The card preserves the historical recipe with these limits; no sampling change or candidate promotion was made. Reconcile or requalify only if this candidate is prioritized.
+
+This audit establishes current local/published parity, not retroactive cryptographic identity for every historical measurement. Studies retain their original provenance. Embedded document hashes identify the captured source snapshot at stack commit `c57f93b`; they are not assertions about future mutable handoff/PLAN files. Original converter README/license differences are recorded separately; current published card/evidence bytes are mirrored exactly. Cache references may retain pre-card-update revisions: unchanged artifact signatures establish parity across these documentation-only commits.
+
+[Machine-readable audit, per-file hashes and publication receipts](huggingface-audit-2026-09-14.json). Private inventories, mutation guards, backups and publication journal remain under `$STACK_WORKDIR/hf-audit/2026-09-14`. Independent reviews covered the audit, cards/bindings and publication. The publisher passed29 fault-injection tests, including stale-parent refusal, artifact preservation and fresh readback. No stack Git push was requested or performed.

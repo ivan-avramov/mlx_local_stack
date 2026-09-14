@@ -817,7 +817,7 @@ after certification.
 **HF sidecar publication:** upload the drafter dir to `caslca/<full-registry-name>-mtp-drafter`
 publicly; verify anonymous download and per-file SHA256 against the locally tested artifact
 (pattern: `HfApi(token=False)` listing + hash compare, `docs/lab-notebook.md` M27 execution
-entry) before citing the upload as done. Write a model card in `docs/model-cards/` with the
+entry) before citing the upload as done. Write the canonical card at `docs/model-cards/<full-registry-name>/README.md`; keep referenced evidence in that directory's `evaluation/` and publish both together. Legacy flat files are navigation redirects, not upload sources. Record the
 certification numbers and provenance (which shards/layers were split, quantization).
 
 **What to record:** M6a acceptance/tok-s/peak-mem-delta; M6b/M6d paired acc + CI + TOST verdict,
@@ -1085,7 +1085,7 @@ single-metric trigger.** Record the reasoning in `docs/model-ledger.md`, not jus
    operator should weigh in on (a reorder, a provisional-to-certified transition, a shortlist
    admission), file it as a new `C<n>`/`O<n>` item the MOMENT the judgement call is identified —
    never delete a closed item later.
-7. **HF model card**: write/update `docs/model-cards/<full-registry-name>.md` with per-number
+7. **HF model card**: write/update `docs/model-cards/<full-registry-name>/README.md` and referenced `evaluation/` files with per-number
    source citations (mirror the existing cards' style — capacity gate + retrieval ladder,
    F1/F2 convergence + pass@1 with MDE, recommended tune, honest serving caveats). If the
    checkpoint isn't uploaded yet, upload FIRST (`caslca/<full-registry-name>`), verify anonymous

@@ -1,6 +1,17 @@
-# Handoff — 2026-09-14: M44 HF audit active; C84 complete
+# Handoff — 2026-09-14: M44 HF audit and C84 runtime certification complete
 
 Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Current report: [stack certification](stack-certification-2026-09-14.md). C84 bounded runtime checks are complete; C85's native16 tool-continuation OOM is resolved. Broader quality remains qualified below.
+
+## M44 completion and README cleanup
+
+- C86/M44 COMPLETE: all13 public repositories (9 target/mirror models,4 MTP drafters) audited; authenticated enumeration found no private repos. Final full-byte audit read161,764,394,797 bytes/206distinctfiles:139 model/support files match (61LFS SHA256,78GitblobSHA1),46safetensorsheaders and18indexchecks pass. Original README/license/.gitattributes differences are separately recorded.
+- Refreshed the stale local `Qwen3.8-27B-static-mixed-4bit` cache from548e7898 to the already-published vision artifactbe1aa462, preserving oldsnapshot/ref backup. Restored three missing local support files. No published weight/config/tokenizer/vision artifact was changed.
+- All13 updated cards and dated evidence files are PUBLISHED on Hugging Face, fresh anonymously read back, and independently verified. All152 pre-existing non-README signatures remain unchanged. Full revisions/receipts: `docs/huggingface-audit-2026-09-14.json`; [human report](huggingface-audit-2026-09-14.md).
+- Exact publishable mirrors live at `docs/model-cards/<full-model-name>/README.md` with their `evaluation/` files. Four former flat names are navigation redirects; never upload those stubs. Publisher tests29pass; artifact-tool7pass; card/content/binding/publication cold reviews clear.
+- Cards correct old predictor/rank/memory/vision claims while preserving measured limitations. First-pick quantization accounting corrected to~4.98/152eight-bit modules from the old4.67/150 claim; only its registry COMMENT changed. Parsed deployed settings are unchanged.
+- README reduced from178 to70lines (~4052 to~700words), with detailed per-language/session results and certification provenance preserved in `docs/model-recommendation-evidence.md`.
+- Private audit root: `$STACK_WORKDIR/hf-audit/2026-09-14`. Preserve `remote`, baseline`local`, final`local-final`, cachebackup, reviewedcards, publicationplan/journals/readbacks. `publication/final-completed.json` is the final receipt; original `completed.json` records the initial13 commits, with small README-only follow-ups recorded separately. Publication is COMPLETE; do not rerun the publisher or overwrite its journal. No GPU models were loaded for M44.
+- C87 remains OPEN: historical `Qwen3.8-27B-static-mixed-4bit` t0.4 recipe versus current registryt1.0. Saved15attempts included13returned/converged,12correct,2transporterrors; one t0.6 timeout is not nonconvergence proof. No registry tune change or promotion. Reconcile only if this historical candidate is prioritized.
 
 ## Current state and publication
 
@@ -39,16 +50,16 @@ Private root: `$STACK_WORKDIR/upstream/2026-09-14-activation`.
 
 `docs/PLAN.md` is the only queue.
 
-1. **M44 ACTIVE (operator P584: proceed):** full HuggingFace published-model parity audit and model-card refresh, including historical models, insurance clones, MTP sidecars, vision assets, exact recommended settings and matching latest test provenance. Remote inventory and local mapping are underway under `$STACK_WORKDIR/hf-audit/2026-09-14`; no model uploads or card changes have been made yet. README cleanup is also authorized. Reconcile artifact-changing remediation before execution.
+1. **M44 COMPLETE.** Cards/evidence published and local parity verified. Remaining historical recipe discrepancy is C87, above; it did not authorize new GPU work or a sampling change.
 2. **C83 OPEN:** canonical capacity memory-policy/reporting cleanup; include generic capacity-monitor wording and baseline-rate estimation before reuse. Preserve historical raw flags.
 3. **C76 OPEN:** M41 historical39-versus42 reasoning draw discrepancy; D14 uses verified39 and flags the older42 summaries. Do not pool unrelated M40 draws.
 4. **C77/C78 OPEN, unarmed:** original pre-merge-versus-integrated quality/timing proposals need reshaping for the current native16 state. C84 does not substitute for C77; C78 can be reshaped to examine timing repeatability/mechanism if prioritized.
 5. Broader native16 depth/vision quality remains provisional; no automatic ranking change. Whether to bring up the daily-driver stack and whether to push stack commits remain operator decisions. Fork pushes in C84 followed explicit GitHub-first authorization.
 
-M40/M41, M42/C80/C82, P355/P356 and D14 are complete at their documented scope. M44 is the next queued campaign work, not another automatic GPU benchmark.
+M40/M41, M42/C80/C82, P355/P356 and D14 are complete at their documented scope. M44 is complete. C83 reporting/monitor cleanup is the next inexpensive candidate; C76/C77/C78/C87 remain explicit open decisions, not armed runs.
 
 ## Resume discipline
 
-One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P586; C86 records M44 authorization; next decision id C87.
+One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P602; C86/M44 complete, C87 open; next decision id C88.
 
 Recipe reminders: pairwise judge requires `--out`; judge-gate output is a directory. Benchmark ladder CLIs require `--sampling-profile deployed`. Use real known-positive daemon monitors and derived request timeouts without retries. Read the current report before making quality, memory or publication claims from older handoff text.

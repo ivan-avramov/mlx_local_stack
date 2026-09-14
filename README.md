@@ -62,7 +62,9 @@ The panel used 38 shared items (approximate MDE 20pp). Vision gates establish bo
 
 ## Documentation
 
-- [Current handoff](docs/handoff.md) and [work queue](docs/PLAN.md) — next: published Hugging Face artifact parity and model-card audit.
+[Published-model audit complete](docs/huggingface-audit-2026-09-14.md): all 13 repositories checked, local cache repaired, cards and evidence refreshed.
+
+- [Current handoff](docs/handoff.md) and [work queue](docs/PLAN.md).
 - [Evaluation evidence](docs/model-recommendation-evidence.md), [dated campaign results](docs/campaign-results.md), and [transferable findings](docs/transfer-findings.md).
 - [Benchmark guide](benchmark/README.md), [measurement rules](docs/metrics.md), and [model qualification](docs/qualify-a-model.md).
 - [Documentation index](docs/README.md) and [contributor/agent rules](AGENTS.md).

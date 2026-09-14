@@ -11,7 +11,7 @@ Live, in reading order for a cold start:
 | `open-questions.md` | operator decision queue (O*/C* items; closed items are never deleted) |
 | `model-recommendation-evidence.md` | detailed per-language/session evidence and historical comparison tables; current picks remain in the root README |
 | `campaign-results.md` | living results record: dated entries + the scoreboard + comparability rules |
-| `upstream-integration-2026-09-13.md` | M43 merge/refactor disposition, runtime validation and remaining activation gates |
+| `upstream-integration-2026-09-13.md` | M43 merge/refactor disposition and historical runtime validation; current certification is linked below |
 | `transfer-findings.md` | reviewed D14 report: measured local findings, transferable methods and destination-backend remeasurement |
 | `memory-guideline-audit-2026-09-13.md` | C79 rough48GB policy correction, session decision audit, and KV/weight precision explanation |
 | `lab-notebook.md` | dated history from 2026-08-14 (earlier history: git log) |
@@ -24,10 +24,12 @@ Live, in reading order for a cold start:
 | `regrade-vs-rerun-guideline.md` | the decision rule for re-grading vs re-running |
 | `two-box-archive.md` | archived two-box procedures (live again only if a second box returns) |
 | `specs/` | design specs for harness/fork work that is queued or landed (`c47-…`, `m29-…`, `switchyard-nvsy-plan.md`) |
-| `model-cards/` | one HF-style card per shipped/certified checkpoint or drafter, with per-number source citations |
+| `model-cards/` | canonical `<full-model-name>/README.md` cards with `evaluation/` evidence, mirrored from verified HF publications; legacy flat files redirect |
 
 Rules live in `AGENTS.md` (repo root). Deleted 2026-09-03 (git history is the archive, last present at
 `b723bde`): `docs/superpowers/{plans,specs}/` (June–August design docs), `docs/sketches/` (June session
 notes), `docs/work-queue.json` (JSON queue mirror; `PLAN.md` is the only queue).
 
 - [Stack certification,2026-09-14](stack-certification-2026-09-14.md): final GitHub pins, C85 repair, quality/speed/memory evidence and scope limits.
+
+- [Hugging Face audit,2026-09-14](huggingface-audit-2026-09-14.md):13 repositories, byte parity, local alignment, publication revisions and the historical recipe discrepancy.
