@@ -176,6 +176,7 @@ def test_refuses_when_top_p_differs(tmp_results):
     ("kv_bits", 4, 8),
     ("hf_path", "org/model-a", "org/model-b"),
     ("kv_prealloc_tokens", 131072, 65536),
+    ("cache_session_shrink", False, True),
     ("kv_quant_scheme", "uniform", "turboquant"),
 ])
 def test_refuses_when_a_kv_field_differs(tmp_results, field, val_a, val_b):
@@ -321,7 +322,7 @@ def test_every_fingerprint_key_is_classified_here_no_silent_gaps():
     assert kv_fingerprinted == set(CP._KV_MUST_MATCH)
     # kv_prealloc_tokens is deliberately OUTSIDE the correctness fingerprint (text-invariant per
     # provenance.py) but checked here anyway since this tool reports hardware-ish ratios too.
-    assert set(CP._KV_HARDWARE_EXTRA) == {"kv_prealloc_tokens"}
+    assert set(CP._KV_HARDWARE_EXTRA) == {"kv_prealloc_tokens", "cache_session_shrink"}
     assert not (set(CP._KV_HARDWARE_EXTRA) & kv_fingerprinted)
 
 

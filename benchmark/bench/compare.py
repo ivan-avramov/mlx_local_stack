@@ -67,7 +67,7 @@ _SERVING_PATH_RUNTIME = ("apc_enabled", "draft_kind")
 # has no proven text effect), while prealloc/prefill REFUSE hardware metrics (prealloc moved
 # wall-clock 24.7 vs 27.8 s in the 2026-08-14 OFAT).
 _TUNE_KV_WARN = ("kv_bits", "kv_quant_scheme", "quantized_kv_start", "prefill_step_size")
-_HARDWARE_KV = ("kv_prealloc_tokens", "prefill_step_size")
+_HARDWARE_KV = ("kv_prealloc_tokens", "prefill_step_size", "cache_session_shrink")
 
 # max_kv_cache_size gets the ruling-7 binding rule in compare() (refuse only when the silent
 # 0.8 budget clamp could actually have engaged); hf_path differs across models by definition
@@ -320,7 +320,9 @@ def _bench_gate(model_a, model_b, bench, *, metric="acc", intersect=False):
                            f"({apc_a} vs {apc_b})")
         for k in _HARDWARE_KV:
             va, vb = kva.get(k), kvb.get(k)
-            if va is not None and vb is not None and va != vb:
+            differs = va != vb and (k == "cache_session_shrink" or
+                                    (va is not None and vb is not None))
+            if differs:
                 return _refuse(f"{metric} is hardware/serving-structure-dependent and {k} "
                                f"differs ({va} vs {vb}) — prealloc alone moved wall-clock "
                                f"24.7 vs 27.8 s in the 2026-08-14 OFAT")

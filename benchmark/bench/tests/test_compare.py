@@ -754,3 +754,23 @@ def test_pooled_accepts_tune_applied_to_both_models(write_rows, tmp_results):
     r1 = CMP.pooled_compare("A", "B", ["math500", "aime"], tune="t0.6")
     assert r1["comparable"] is True, r1.get("reason")
     assert r1["n_items"] == 6
+
+
+def test_retirement_policy_blocks_speed_comparison_but_preserves_quality(write_rows, tmp_results):
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", kv={"kv_bits": 0, "cache_session_shrink": False})
+    _manifest(tmp_results, "B", "math500", kv={"kv_bits": 0, "cache_session_shrink": True})
+    result = CMP.compare("A", "B", "math500", metric="wall_s")
+    assert result["comparable"] is False and "cache_session_shrink" in result["reason"]
+    assert CMP.compare("A", "B", "math500")["comparable"] is True
+
+
+def test_unknown_retirement_policy_blocks_hardware_pairing(write_rows, tmp_results):
+    write_rows("A", "math500", _rows(["a", "b"]))
+    write_rows("B", "math500", _rows(["a", "b"]))
+    _manifest(tmp_results, "A", "math500", kv={"kv_bits": 0})
+    _manifest(tmp_results, "B", "math500", kv={"kv_bits": 0, "cache_session_shrink": True})
+    result = CMP.compare("A", "B", "math500", metric="wall_s")
+    assert result["comparable"] is False and "cache_session_shrink" in result["reason"]
+    assert CMP.compare("A", "B", "math500")["comparable"] is True

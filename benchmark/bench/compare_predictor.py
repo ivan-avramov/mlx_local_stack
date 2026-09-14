@@ -38,7 +38,7 @@ _KV_MUST_MATCH = (tuple(CMP._TUNE_KV_WARN) + tuple(CMP._CAP_BINDING_KV)
 # RATIOS, and prealloc alone is proven to move wall-clock (24.7 vs 27.8s, 2026-08-14 OFAT) — so it
 # is checked here anyway, kept in its own tuple so the fingerprint-parity test can still assert
 # `_KV_MUST_MATCH` exactly equals the fingerprinted kv keys.
-_KV_HARDWARE_EXTRA = ("kv_prealloc_tokens",)
+_KV_HARDWARE_EXTRA = ("kv_prealloc_tokens", "cache_session_shrink")
 
 # Runtime: every fingerprinted runtime key except draft_kind (compare.py's
 # _SERVING_PATH_RUNTIME = (apc_enabled, draft_kind); apc_enabled joins the must-match set here,

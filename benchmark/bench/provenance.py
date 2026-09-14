@@ -61,6 +61,9 @@ def registry_kv(model: str, registry_path: str | None = None):
                 # refuses HARDWARE metrics across it while a prealloc change must not let
                 # --clean-stale delete quality rows.
                 "kv_prealloc_tokens": e.get("kv_prealloc_tokens"),
+                # Retirement changes resource use, not stored KV values: record it for
+                # hardware comparisons without invalidating resumable quality rows.
+                "cache_session_shrink": e.get("cache_session_shrink"),
                 # "" (an operator may write it to document 'off' explicitly -- it's also
                 # ModelConfig's own mlx-serve default) normalizes to None, matching an absent
                 # key, so a documented-off entry fingerprints identically to an undeclared one.

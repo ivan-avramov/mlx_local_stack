@@ -255,3 +255,13 @@ def test_gather_stamps_quant_for_a_local_home_path_model(tmp_path, home_snapshot
     assert man["quant"]["nominal_bits"] == 4
     assert man["quant"]["effective_bits"] == 4.0
     assert man["quant"]["mixed"] is False
+
+
+def test_retirement_policy_is_recorded_without_invalidating_quality_resume(tmp_path):
+    registry = tmp_path / "retirement.yaml"
+    registry.write_text("models:\n  - name: example\n    cache_session_shrink: true\n")
+    assert P.registry_kv("example", str(registry))["cache_session_shrink"] is True
+    before = {"fingerprint_version": 5, "sampling": {}, "runtime": {},
+              "kv": {"kv_bits": 0, "cache_session_shrink": False}}
+    after = {**before, "kv": {"kv_bits": 0, "cache_session_shrink": True}}
+    assert P.is_compatible(before, after)
