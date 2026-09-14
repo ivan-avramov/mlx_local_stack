@@ -2258,3 +2258,31 @@ Tag `m42native16-20260913`: one calibration and three bounded256-token probes, 3
 **Recommendation:** continue with a scoped paired quality pilot before selecting native16 or deciding any wider study. Do not reject it over a small numerical margin, nor select narrower KV solely to maximize headroom. C77/C78 runtime diagnostics remain separate proposed work. [Session correction audit](memory-guideline-audit-2026-09-13.md).
 
 [Rows](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_ladder.m42native16-20260913.jsonl); [manifest](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_ladder.m42native16-20260913.manifest.json); [validated provenance with policy amendment](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/capacity_retrieval.m42native16-20260913.provenance.json).
+
+## 2026-09-13 — M42/C80 paired cache-quality pilot complete
+
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`: exactly 15 task pairs / 30 generations, five frozen tasks each Math500, HumanEvalPlus and MBPPPlus. TQ4 and native16 used byte-identical per-item request payloads and seeds, the same mixed-quantized weights, MTP ON, deployed t0.5/medium, max_tokens 102400, resolved thinking budget 81920, cap/preallocation 262144 and prefill step 512. Separate fresh router sessions ran TQ4 then native16 on source c5a6f97b/f8f1df4 and MLX/Metal 0.32.2. Only cache precision changed. This compares cache modes on the integrated runtime, not old versus new runtime; C77/C78 remain separate.
+
+| Axis | TQ4 ordinary / strict@81920 | Native16 ordinary / strict@81920 | Convergence, each state | Exclusive solves native16:TQ4 |
+|---|---:|---:|---:|---:|
+| Math500 | 5/5 / 5/5 | 5/5 / 5/5 | 5/5 | 0:0 |
+| HumanEvalPlus | 4/5 / 4/5 | 4/5 / 4/5 | 5/5 | 0:0 |
+| MBPPPlus | 5/5 / 5/5 | 5/5 / 5/5 | 5/5 | 0:0 |
+
+All 30 responses converged, with positive MTP engagement and no transport errors or non-convergence kinds. There was no observed paired quality change on any axis. Five pairs per axis cannot establish ±5pp equivalence: the empirical bootstrap gives delta 0pp and interval [0,0] because every observed pair agrees, but cannot bound unseen disagreements. The helper's raw equivalence label is explicitly non-operative. Nominal axis MDE is about 56pp assuming discordant-pair rate 0.20; the normal approximation is highly uncertain at this size. Only four of 15 final answers were byte-identical across cache modes; outcome agreement is not output identity.
+
+**Shared evaluator disagreement:** HumanEval/141 passes the base tests and fails the plus tests in both arms. The recorded counterexample is `éxample.exe`: the prompt requires the first character to be ASCII a–z/A–Z, whereas the reference uses Unicode-aware `isalpha()`. Both generated answers reject that accented first character, consistent with that part of the prompt. Preserve the official 4/5 scores. This recorded case does not indicate a cache-specific regression; it is not an exhaustive failure analysis or proof that either function satisfies the entire prompt (both also use Unicode-aware `isdigit()`).
+
+| Descriptive timing/token measure, all 15 tasks | TQ4 | Native16 | Native16 / TQ4, 95% paired interval |
+|---|---:|---:|---|
+| Total HTTP generation wall time | 233.2 s | 235.5 s | 1.010 [0.875, 1.128] |
+| Completion tokens | 9716 | 10350 | 1.065 [0.904, 1.219] |
+| Mean per-request decode rate | 44.80 tok/s | 48.83 tok/s | 1.090 [1.062, 1.121] |
+
+Ratios use the canonical paired two-stage bootstrap, 10000 iterations, seed 80, ratio of arithmetic means. The all-task overview is unstratified across the three benchmarks and descriptive, with no multiplicity adjustment; per-axis results remain primary. Decode is not aggregate throughput or the mean of itemwise ratios. Native16's roughly 9% higher short-task decode rate was offset by more generated tokens; no total task-time gain was observed. The earlier long-context capacity probes separately showed 12.78 versus 6.28 tok/s and 1114.00 versus 1573.81 seconds prefill at 261449 prompt tokens. Do not generalize their roughly twofold decode gain to short tasks. Kernel attribution and long-context quality are not established by this pilot.
+
+**Validation:** 85 fake instrument/grading tests passed, with independent cross-reviews; a known-answer ARM64 grading control recognized 13 positives and two intentional syntax negatives. Canonical symbolic math grading and official EvalPlus ran successfully; generated code executed only in network-disabled ARM64 Docker, pinned image `sha256:ff0ea20905962ccef0bcfc07f4ae0d389acdbafd4736c0b33eb51d350f048b43`. Root-pinned completion evidence, source/manifest checks, exact request/seed pairing and immutable input hashes passed. An independent result review reproduced all scores and all 12 ratio estimates/intervals. No external judges ran.
+
+**B/C recommendation:** native16 is the provisional preference for long-context use of this model: it fits the rough 48 GB target, showed faster long-context probes and no quality regression in the pilot. The evidence supports that direction, not certification across quality axes; broader matched quality coverage, especially at long context, remains to be scoped. No evidence supports changing the model ordering, and this pilot did not test the second pick or subjective/vision quality. TQ4 remains the deployed configuration; no activation, automatic expansion or push occurred. All pilot model/driver/router processes are stopped.
+
+[Analysis and intervals](../benchmark/results/m42_quality_pilot_2026-09-13.json); [TQ4 provenance](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/m42_quality_pilot.m42pilot-tq4-20260913.provenance.json); [native16 provenance](../benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/m42_quality_pilot.m42pilot-native16-20260913.provenance.json); [approved specification](specs/m42-quality-pilot.md). Canonical rows, manifests, per-axis scores and full official coding results are exported alongside each provenance file. Raw private evidence remains under `$STACK_WORKDIR/upstream/2026-09-13/quality-pilot-c80`.
