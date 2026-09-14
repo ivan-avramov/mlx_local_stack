@@ -29,13 +29,13 @@ Session audit and precision explanation: `docs/memory-guideline-audit-2026-09-13
 
 ## Remaining work and decisions
 
-- M42 quality follow-up: propose matched cache-mode quality/latency pilot and cost before any new GPU arm; no automatic native16 activation.
+- M42 quality follow-up APPROVED C80/P452:15 pairs/30 generations, five frozen tasks each Math500/HumanEvalPlus/MBPPPlus, TQ4 versus native16 on the first pick. Preparation only; no GPU generation launched yet. Spec `docs/specs/m42-quality-pilot.md`; private instruments under `quality-pilot-c80`. No automatic expansion/default change.
 - C77 OPEN:40 paired items/80 fresh generations across math/code/prose on both picks, old/new shipped MTP ON, roughly65.15 minutes historical generation-only plus loading/grading/tails. Frozen selection/spec: `docs/specs/m43-quality-diagnostic.md`. Not armed; no external judges.
 - C78 OPEN: two matched nominal131K timing requests plus two calibrations for the first pick, old/new sources both on MLX/Metal0.32.2, roughly15 minutes prefill before overhead. `docs/specs/m43-timing-control.md`. Not armed; hypotheses are not measured causes.
 - C76 OPEN: M41 raw reasoning artifact has39 draws and zero budget hits; older summaries say42. D14/audit use verified39 and flag the discrepancy. Do not pool separate M40 draws.
 - D14 reviewed evidence report complete, updated for C79: `docs/transfer-findings.md`. P356 cosmetic cleanup complete; local registry certification comments restored without staging local paths.
 - M44 QUEUED: full HF-published-model artifact parity audit and card refresh, including MTP companions, recommended parameters and tested vision abilities. Only PLAN is the queue; no audit/upload armed.
-- C79 RULED; next C id C80. Discussion numbering continues at P445.
+- C79/C80 RULED; next C id C81. Discussion numbering continues at P455.
 
 ## Resume safeguards
 
