@@ -37,7 +37,8 @@ else
 fi
 echo
 echo "Syncing submodules..."
-git submodule update --init --recursive --remote
+# Start the dependency revisions validated and committed by upstream maintenance.
+git submodule update --init --recursive
 
 echo "Bootstrapping uv..."
 uv sync

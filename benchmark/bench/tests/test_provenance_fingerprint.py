@@ -439,3 +439,13 @@ def test_registry_kv_normalizes_empty_string_moe_expand_to_none(tmp_path):
            "kv": {"kv_bits": 4, "hf_path": "org/m", "moe_expand": kv["moe_expand"]},
            "runtime": {}}
     assert P.is_compatible(old, new) is True
+
+
+def test_startup_preserves_committed_dependency_revisions():
+    import shlex
+    commands = [shlex.split(line) for line in _runserver_src().splitlines()
+                if line.strip().startswith("git submodule update")]
+    assert commands, "Startup must initialize pinned dependencies"
+    assert all("--remote" not in command for command in commands), (
+        "Startup must use committed gitlinks, not unvalidated remote branch tips"
+    )
