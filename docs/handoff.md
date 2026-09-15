@@ -1,6 +1,14 @@
-# Handoff — 2026-09-14: C94 four-entry OpenWebUI C menu complete; stack stopped
+# Handoff — 2026-09-14: C95 default tools restored; daily-driver running
 
 Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Reports: [depth qualification](native16-depth-qualification-2026-09-14.md), [runtime/capacity](stack-certification-2026-09-14.md), [client audit](client-config-audit-2026-09-14.md).
+
+## C95 complete — restore default tools
+
+Operator reported Web Search/Code Interpreter only present on `Ornith-1.0-35B-mlx-uniform-4bit`. Root cause: registry presentation flags were missing on the other three C models; reconciliation faithfully removed their defaults. Added both capability flags to those three main entries and regenerated through existing configgen. All four C entries now have both capabilities, builtin tools and `defaultFeatureIds: [web_search, code_interpreter]`. Global live Web Search and Code Interpreter switches verified enabled; explicit existing-chat overrides remain user-owned.68 tests pass, including a regression against all visible shipped chat models. Applied to running OpenWebUI with private backup under `$STACK_WORKDIR/qualification/c95-owui-tools`; repeated startup-model reconciliation makes no changes and task routing passes. No assistant inference requests or restarts.
+
+The user has started the daily-driver stack and is chatting. Do not act on older stopped-state checkpoints below. Verify current PIDs before lifecycle actions. The initial “hi” request reached the router22:28:06, downloaded the newly selected HF artifact because its cache was empty, became ready22:34:26 and completed HTTP200 at22:34:38 (392s total). Subsequent requests completed. Removing local-path overrides exposed this first-use download; no overrides were restored. User subsequently switched among C models; do not interrupt their sessions. No new model benchmark or UI-delivery claim is inferred from router HTTP status.
+
+C93/C94/C95 commits remain local after the previously verified e7f58fb push. No push authorization this turn. Next discussion P739; next decision C96.
 
 ## C94 complete — C menu selection
 

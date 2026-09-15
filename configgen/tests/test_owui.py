@@ -122,3 +122,21 @@ def test_task_is_hidden_from_selector_but_remains_active(sample_source):
     assert task["meta"]["hidden"] is True
     assert task["is_active"] is True
     assert all(m["meta"]["hidden"] is False for m in rows if m is not task)
+
+
+def test_all_shipped_chat_models_default_to_search_and_code_interpreter():
+    from pathlib import Path
+    from configgen.source import load_source
+
+    source = load_source(str(Path(__file__).resolve().parents[2] / "main_models.yaml"))
+    for model in json.loads(emit_owui(source)):
+        if model["meta"]["hidden"]:
+            continue
+        assert model["meta"]["defaultFeatureIds"] == [
+            "web_search",
+            "code_interpreter",
+        ], model["id"]
+        assert model["meta"]["capabilities"]["web_search"] is True
+        assert model["meta"]["capabilities"]["code_interpreter"] is True
+        assert model["meta"]["builtinTools"]["web_search"] is True
+        assert model["meta"]["builtinTools"]["code_interpreter"] is True

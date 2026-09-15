@@ -12,7 +12,7 @@ The existing generator writes:
 - `models_config.json`: registered main/task models, capabilities and explicit sampling/thinking parameters.
 - `model_settings.json`: main-model allowlist, excluded candidate/router-only IDs, task model, default/pinned selection and ordering. A hash binds it to the model file.
 
-`openwebui.models` declares the ordered four-entry C menu independently of other clients. `agent_defaults.openwebui` chooses its default. The task entry remains active for internal routing but carries `meta.hidden: true`, so the normal chat selector omits it. KV precision, MTP and cache allocation remain server-side registry settings.
+`openwebui.models` declares the ordered four-entry C menu independently of other clients. `agent_defaults.openwebui` chooses its default. The task entry remains active for internal routing but carries `meta.hidden: true`, so the normal chat selector omits it. Web Search and Code Interpreter are enabled and selected by default on every visible chat model, from registry presentation capabilities. KV precision, MTP and cache allocation remain server-side registry settings.
 
 `runserver.sh` checks generated files before launch and reads the task model from those settings. `init.py` and `publish_models.py` share `reconcile_models.py`. They reconcile both connections, model defaults, global default selection and task routing, then verify saved state and the refreshed combined model list. An empty router allowlist is not used: it exposes benchmark-only registrations.
 
