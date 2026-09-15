@@ -36,3 +36,5 @@ notes), `docs/work-queue.json` (JSON queue mirror; `PLAN.md` is the only queue).
 
 - [Shipped native16 depth qualification](native16-depth-qualification-2026-09-14.md): C89 retrieval25/25 and chain-4 tracking39/39, timings and bounded scope.
 - [Shipped client configuration audit](client-config-audit-2026-09-14.md): C90 OpenCode corrections and all five carrier checks.
+
+- [OpenWebUI reconciliation repair](openwebui-reconciliation-2026-09-14.md): C93 fixes discovery leakage and deployment verification beyond generated-file checks.

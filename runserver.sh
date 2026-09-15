@@ -11,8 +11,7 @@ export MAIN_MODEL_PORT="8000"
 TASK_MODEL_URL="http://${TASK_MODEL_HOST}:${TASK_MODEL_PORT}"
 MAIN_MODEL_URL="http://${MAIN_MODEL_HOST}:${MAIN_MODEL_PORT}"
 
-# the task model should be defined in the openwebui-init/models_config.json.
-export TASK_MODEL="mlx-community/Qwen2.5-1.5B-Instruct-4bit"
+# TASK_MODEL is resolved from checked generated settings after configgen check.
 
 OWUI_URL=http://localhost:3000
 export HF_HOME="${HOME}/.cache/huggingface"
@@ -53,6 +52,8 @@ log_ok "SearXNG settings rendered.\n"
 # than launch clients against an out-of-date model list/sampling.
 echo "Checking generated client configs for drift..."
 uv run python -m configgen check
+TASK_MODEL="$(uv run python -c 'import json; print(json.load(open("openwebui-init/model_settings.json"))["task_model_id"])')"
+export TASK_MODEL
 log_ok "Client configs match main_models.yaml.\n"
 
 echo "Backing up OpenWebUI data..."

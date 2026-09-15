@@ -21,6 +21,8 @@ uv run python -m configgen generate
 uv run python -m configgen check
 ```
 
+OpenWebUI startup reconciles the generated model list, parameters and default selection. [Update an existing instance](openwebui-init/README.md).
+
 Keep the committed dependency pins: upstream maintenance follows **parent fork → review/test → push fork → fetch and bump stack submodule**. Do not use `git submodule update --remote` for routine startup. [Maintenance report](docs/upstream-integration-2026-09-13.md).
 
 ## Recommended models

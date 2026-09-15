@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 from .source import Source, load_source
-from .targets import BENCH_TARGETS, TARGETS
+from .targets import BENCH_TARGETS, DEPLOYMENT_TARGETS, TARGETS
 
 
 def _render(source: Source) -> list[tuple[str, str, str]]:
@@ -13,7 +13,7 @@ def _render(source: Source) -> list[tuple[str, str, str]]:
     drift-checks is a file that silently goes stale, which is the failure mode `check` exists for.
     """
     rendered: list[tuple[str, str, str]] = []
-    for name, emit, paths in [*TARGETS, *BENCH_TARGETS]:
+    for name, emit, paths in [*TARGETS, *BENCH_TARGETS, *DEPLOYMENT_TARGETS]:
         output = emit(source)
         if isinstance(paths, dict):
             for key, path in paths.items():

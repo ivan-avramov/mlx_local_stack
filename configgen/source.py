@@ -31,6 +31,7 @@ class ModelSpec:
 class Source:
     models: list[ModelSpec]
     agent_defaults: dict[str, str]
+    router_only_models: tuple[str, ...] = ()
 
 def _parse_model_entry(entry: dict, seen: set[str]) -> ModelSpec | None:
     """Parse one `models:`-shaped entry (name / hf_path / presentation / optional
@@ -87,4 +88,6 @@ def load_source(path: str) -> Source:
     for agent, mid in agent_defaults.items():
         if mid not in names:
             raise ValueError(f"agent_defaults[{agent!r}] = {mid!r} is not a known model")
-    return Source(models=models, agent_defaults=agent_defaults)
+    router_only = tuple(entry["name"] for entry in doc.get("models", [])
+                        if not entry.get("presentation"))
+    return Source(models=models, agent_defaults=agent_defaults, router_only_models=router_only)

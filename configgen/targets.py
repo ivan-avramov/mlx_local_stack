@@ -2,7 +2,7 @@ from .emitters.opencode import emit_opencode, emit_opencode_bench
 from .emitters.aider import emit_aider, emit_aider_bench
 from .emitters.vscode import emit_vscode
 from .emitters.zed import emit_zed
-from .emitters.owui import emit_owui
+from .emitters.owui import emit_owui, emit_owui_settings
 
 # Each entry: (target_name, emitter_fn, output_path)
 # output_path is a str (single-file emitters) or a dict[str, str] mapping the
@@ -18,6 +18,11 @@ TARGETS: list[tuple[str, callable, str | dict]] = [
     ("vscode", emit_vscode, "vscode_config/chatLanguageModels.json"),
     ("zed", emit_zed, "zed_config/settings.snippet.jsonc"),
     ("owui", emit_owui, "openwebui-init/models_config.json"),
+]
+
+# Deployment policy includes excluded IDs for reconciliation, not client registrations.
+DEPLOYMENT_TARGETS = [
+    ("owui-settings", emit_owui_settings, "openwebui-init/model_settings.json"),
 ]
 
 # BENCH targets are generated and drift-checked exactly like TARGETS, but are NOT client configs.
