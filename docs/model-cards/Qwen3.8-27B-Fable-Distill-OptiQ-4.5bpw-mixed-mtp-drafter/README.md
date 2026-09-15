@@ -10,7 +10,7 @@ tags:
 
 Model-card update:2026-09-14.
 
-This repository is an external MTP predictor for [Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed), not a standalone chat model. First operator-approved choice for agentic coding and research/design assistance (B1/C1), at temperature 0.5, medium reasoning effort and repaired MTP ON. The current runtime uses native16 KV and idle session-cache retirement. It passed the existing 20-image vision smoke in C88 (20 PASS, 0 FAIL, 0 null); broader native16 long-context qualification remains pending.
+This repository is an external MTP predictor for [Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed](https://huggingface.co/caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed), not a standalone chat model. First operator-approved choice for agentic coding and research/design assistance (B1/C1), at temperature 0.5, medium reasoning effort and repaired MTP ON. The current runtime uses native16 KV and idle session-cache retirement. It passed the existing 20-image vision smoke in C88 (20 PASS, 0 FAIL, 0 null), and C89 retrieval (25/25 prompts through128K) and chain-4 variable tracking (39/39 through156K). These bounded checks do not establish broad native16 quality equivalence.
 
 ## Predictor lineage and identity
 
@@ -77,9 +77,28 @@ Historical TQ4 M41 measured retrieval through 128K and chain-4 reasoning through
 
 **20 PASS, 0 FAIL, 0 null** on the existing 20-image smoke. Each image receives two turns: describe the image, then receive its human ground-truth captions and return the model's own PASS/FAIL verdict. All 40 turns converged below the resolved 81920-token thinking budget, with MTP engaged and no runtime errors.
 
-This used the deployed native16 configuration unchanged: repaired MTP ON, temperature 0.5, medium effort, context/preallocation 262144, prefill 512 and idle cache retirement enabled, on the final MLX-VLM522671c4 / MLX-Serveb632280 runtime with MLX/Metal0.32.2. No TQ4 comparison, manual extraction-quality grading or external judge was used. This qualifies the existing image smoke; broader native16 long-context retrieval/reasoning remains separate.
+This used the deployed native16 configuration unchanged: repaired MTP ON, temperature 0.5, medium effort, context/preallocation 262144, prefill 512 and idle cache retirement enabled, on the final MLX-VLM522671c4 / MLX-Serveb632280 runtime with MLX/Metal0.32.2. No TQ4 comparison, manual extraction-quality grading or external judge was used. This qualifies the existing image smoke; the separate C89 depth results follow below.
 
 See the [C88 evidence](evaluation/C88-evidence-2026-09-14.json) and [published canonical results](https://github.com/ivan-avramov/mlx_local_stack/blob/2f0c7ad2a9a790a5041e84a78dd5124c74a61476/benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/vision_gate.c88-shipped-20260914.summary.json).
+
+### C89 shipped-configuration depth qualification, 2026-09-14
+
+The target with this repaired MTP companion passed both separate depth axes at the shipped native16 configuration:
+
+| Axis | Scored prompts | Result | Largest nominal prompt rung |
+|---|---:|---|---:|
+| Five-code retrieval | 25 | 25/25 fully correct; 125/125 codes | 128,000 tokens |
+| Chain-4 variable tracking | 39 | 39/39 correct | 156,000 tokens |
+
+Every rung has ordinary and strict accuracy 1.0. All 64 responses converged within the full resolved 81,920-token thinking budget, reported positive MTP activity and zero cached prefix tokens, with no budget hits or runtime errors. The largest actual prompt was 155,628 tokens. Five-prompt pilots were included in these counts; exactly 66 actual HTTP calls include two calibrations. The original interrupted calibration was retained and adopted without replay.
+
+Settings were unchanged: native16 `kv_bits: 0` (the declared TurboQuant scheme is inactive), repaired MTP ON, temperature 0.5, medium effort, context and active preallocation 262,144, prefill step 512, idle cache retirement enabled, two retained sessions and APC absent. Runtime: MLX-VLM `522671c4`, MLX-Serve `b632280`, MLX/Metal 0.32.2 on M5 Max 64 GB.
+
+Scored requests took 72.39 minutes for retrieval and 96.63 minutes for chain tracking. Prefill accounted for about 93.7% of total request wall time; at the 156K rung, mean server prefill was 490.32 seconds and mean reported decode was 17.99 tokens/s. These are current measurements, not a matched cache/runtime speed comparison. C89 supplies no new capacity measurement; C84's peak and observed timing costs above remain the relevant separate evidence.
+
+This qualifies the tested retrieval and simple variable-tracking grids with repetitive filler. Three to five prompts per rung do not establish general quality equivalence, difficult long-context reasoning, arbitrary-document recall, repository-editing quality or a failure boundary beyond the tested grid. The earlier broad M40 evidence remains historical TQ4 evidence. C91 separately records a length-finalization token-reporting issue exposed by calibration; raw counts are preserved, and every scored C89 response ended normally by stop.
+
+See [C89 evidence](evaluation/C89-evidence-2026-09-14.json), the [full report](https://github.com/ivan-avramov/mlx_local_stack/blob/4fb84256fe97df1b0e0dd69208f2cee647d36f2d/docs/native16-depth-qualification-2026-09-14.md), and [audited result bindings](https://github.com/ivan-avramov/mlx_local_stack/blob/4fb84256fe97df1b0e0dd69208f2cee647d36f2d/benchmark/results/c89_export_20260914.provenance.json).
 
 ## Recommended current setting
 

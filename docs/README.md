@@ -24,7 +24,7 @@ Live, in reading order for a cold start:
 | `regrade-vs-rerun-guideline.md` | the decision rule for re-grading vs re-running |
 | `two-box-archive.md` | archived two-box procedures (live again only if a second box returns) |
 | `specs/` | design specs for harness/fork work that is queued or landed (`c47-…`, `m29-…`, `switchyard-nvsy-plan.md`) |
-| `model-cards/` | canonical `<full-model-name>/README.md` cards with `evaluation/` evidence, mirrored from verified HF publications; legacy flat files redirect |
+| `model-cards/` | canonical `<full-model-name>/README.md` cards with `evaluation/` evidence, verified publication mirrors plus explicitly pending C89 updates (see `huggingface-c89-prepared-2026-09-14.json`); legacy flat files redirect |
 
 Rules live in `AGENTS.md` (repo root). Deleted 2026-09-03 (git history is the archive, last present at
 `b723bde`): `docs/superpowers/{plans,specs}/` (June–August design docs), `docs/sketches/` (June session

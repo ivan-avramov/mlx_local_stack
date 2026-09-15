@@ -16,7 +16,7 @@ Original root `$STACK_WORKDIR/qualification/c89-depth-20260914` is immutable:1 c
 
 After final audit, registry certification comments were updated using a clean HEAD-derived blob, with no parsed deployment changes. Eight private model-path overrides remain unstaged. Local `monitoring.log_dir` now points to `$STACK_WORKDIR/logs/mlx-serve` so future traffic cannot append to C89 evidence. Exact tested registry snapshot/hash22b6d91fa9f883484884c46f3d19502cc0c8c6b02e162d8f00933df77eb051b6 is retained; do not compare it blindly to post-run comments/log paths or rerun the exporter against changed live files. NEVER stage the worktree registry.
 
-Publication: latest verified pushed stack commit5b1c7c0bb902053aefde22ddb34891548cd5abcb. C90/approval/amendment commitsf5d71d3,1957881,bc66da8 and final result work are local; inspect `git log origin/main..HEAD` for the complete current list. No push or HF publication authorization in this turn. C89 target/drafter card updates are being prepared locally; C88 receipts below remain the latest published state.
+Publication: latest verified pushed stack commit5b1c7c0bb902053aefde22ddb34891548cd5abcb. C90/approval/amendment commitsf5d71d3,1957881,bc66da8 and final result work are local; inspect `git log origin/main..HEAD` for the complete current list. No push or HF publication authorization in this turn. C89 target/drafter card updates are PREPARED locally (C92; `docs/huggingface-c89-prepared-2026-09-14.json`); C88 receipts below remain the latest published state.
 
 ## C88 COMPLETE: shipped-config vision smoke
 
@@ -95,6 +95,6 @@ M40/M41, M42/C80/C82, P355/P356, D14, C84, M44, C83, C76 and C88 are complete at
 
 ## Resume discipline
 
-One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P716; C83/C76/C88/C89/C90 complete. C87 and C91 remain open/deferred; C77/C78 deferred. Next decision id C92. C91 repair proposal: `docs/specs/c91-terminal-token-accounting.md`. Daily-driver startup, push and C89 card publication remain operator decisions.
+One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P717; C83/C76/C88/C89/C90 complete. C87 and C91 remain open/deferred; C77/C78 deferred. C92 publication approval pending; next decision id C93. C91 repair proposal: `docs/specs/c91-terminal-token-accounting.md`. Daily-driver startup, push and C89 card publication remain operator decisions.
 
 Recipe reminders: pairwise judge requires `--out`; judge-gate output is a directory. Benchmark ladder CLIs require `--sampling-profile deployed`. Use real known-positive daemon monitors and derived request timeouts without retries. Read the current report before making quality, memory or publication claims from older handoff text.
