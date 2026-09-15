@@ -32,6 +32,7 @@ class Source:
     models: list[ModelSpec]
     agent_defaults: dict[str, str]
     router_only_models: tuple[str, ...] = ()
+    openwebui_models: tuple[str, ...] | None = None
 
 def _parse_model_entry(entry: dict, seen: set[str]) -> ModelSpec | None:
     """Parse one `models:`-shaped entry (name / hf_path / presentation / optional
@@ -90,4 +91,8 @@ def load_source(path: str) -> Source:
             raise ValueError(f"agent_defaults[{agent!r}] = {mid!r} is not a known model")
     router_only = tuple(entry["name"] for entry in doc.get("models", [])
                         if not entry.get("presentation"))
-    return Source(models=models, agent_defaults=agent_defaults, router_only_models=router_only)
+    menu = doc.get("openwebui", {}).get("models")
+    if menu is not None and (not isinstance(menu, list) or not all(isinstance(x, str) for x in menu)):
+        raise ValueError("openwebui.models must be a list of model names")
+    return Source(models=models, agent_defaults=agent_defaults, router_only_models=router_only,
+                  openwebui_models=tuple(menu) if menu is not None else None)

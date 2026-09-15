@@ -261,6 +261,15 @@ def reconcile(
     for m in entries:
         if m["id"] in expected and m.get("connection_type") != "local":
             raise RuntimeError("OpenWebUI task-routing connection verification failed")
+    if "hidden_model_ids" in settings:
+        hidden = set(settings["hidden_model_ids"])
+        for m in entries:
+            if m["id"] in expected:
+                flag = ((m.get("info") or {}).get("meta") or {}).get("hidden", False)
+                if bool(flag) != (m["id"] in hidden):
+                    raise RuntimeError(
+                        "OpenWebUI selector visibility verification failed"
+                    )
     print(
         f"Verified {len(expected)} shipped model registrations, defaults and discovery policy."
     )

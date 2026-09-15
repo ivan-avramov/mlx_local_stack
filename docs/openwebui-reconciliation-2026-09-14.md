@@ -1,5 +1,7 @@
 # OpenWebUI reconciliation — 2026-09-14
 
+**C94 follow-up:** the operator subsequently narrowed OpenWebUI to the four-entry C menu in `openwebui.models`, with the task entry hidden from the normal selector. The eight-entry inventory below is the historical C93 checkpoint. [Current verification](openwebui-c-menu-2026-09-14.json).
+
 **C93 complete.** The existing YAML generator was correct about which models belonged in its OpenWebUI registration file, but startup left the main connection's model allowlist empty. OpenWebUI consequently discovered all router registrations, including two candidates and three router-only models. The screenshot's 13 entries were the 12 router models plus the task model; the intended client inventory is seven main models plus that task model.
 
 The earlier C90 generated-file audit did not establish deployment correctness. Initial live inspection here found eight saved model configurations with matching parameters, but unrestricted discovery. The legacy seed also contained obsolete default/pinned models; the live global selection was unset.

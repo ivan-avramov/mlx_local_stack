@@ -1,8 +1,14 @@
-# Handoff — 2026-09-14: C93 OpenWebUI reconciliation complete; stack stopped
+# Handoff — 2026-09-14: C94 four-entry OpenWebUI C menu complete; stack stopped
 
 Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Reports: [depth qualification](native16-depth-qualification-2026-09-14.md), [runtime/capacity](stack-certification-2026-09-14.md), [client audit](client-config-audit-2026-09-14.md).
 
-## C93 complete — OpenWebUI deployment alignment
+## C94 complete — C menu selection
+
+Operator approved all four C entries for OpenWebUI: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`, `Ornith-1.0-35B-mlx-uniform-4bit`, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`, in that order. The first remains default. `main_models.yaml` now owns this list at `openwebui.models`; the existing generator uses it without changing other clients or serving parameters. The task model remains active internally with `meta.hidden: true`; five API registrations yield four normal selector entries.
+
+67 CPU tests pass. Live saved params, selector metadata and task routing verified. The actual installed frontend hidden-model predicate was executed against the live API list and produced exactly the four ordered C entries. Repeated reconciliation made zero changes; no inference or model-server launch. Only OpenWebUI was temporarily started from its cached image and stopped after verification. Private backup/evidence: `$STACK_WORKDIR/qualification/c94-owui`; public record `docs/openwebui-c-menu-2026-09-14.json`. C93's broader seven-main-model menu is superseded by this explicit C menu. C93 commit2c2a8bc and C94 work remain local; no push authorization this turn. Next discussion P736; next decision C95.
+
+## C93 historical deployment repair — menu superseded by C94
 
 Operator approved P727. Existing configgen now emits `models_config.json` plus hash-bound `model_settings.json`; registry `agent_defaults.openwebui` selects the approved first pick. Shared startup/manual reconciliation sets the seven-main-model allowlist, separate task model, explicit thinking params and default/pinned selection. Candidate/router-only entries cannot leak through unrestricted router discovery. Stale managed registrations fail pending reviewed `--prune`; unrelated custom models/connections and existing access grants are preserved.
 
@@ -103,6 +109,6 @@ M40/M41, M42/C80/C82, P355/P356, D14, C84, M44, C83, C76 and C88 are complete at
 
 ## Resume discipline
 
-One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P730; C83/C76/C88/C89/C90 complete. C87 and C91 remain open/deferred; C77/C78 deferred. C92 publication approval pending; C93 complete; next decision id C94. C91 repair proposal: `docs/specs/c91-terminal-token-accounting.md`. Daily-driver startup, push and C89 card publication remain operator decisions.
+One resident model; APC absent; retained sessions2; full active preallocation; deployed sampling and explicit served-overlay environment. Verify flags on the actual worker. Never alter source/config during a live run; preserve real data and recorded failures. Commit coherent units; push only on explicit current-turn instruction. Discussion sequence continues after P730; C83/C76/C88/C89/C90 complete. C87 and C91 remain open/deferred; C77/C78 deferred. C92 publication approval pending; C93/C94 complete; next decision id C95. C91 repair proposal: `docs/specs/c91-terminal-token-accounting.md`. Daily-driver startup, push and C89 card publication remain operator decisions.
 
 Recipe reminders: pairwise judge requires `--out`; judge-gate output is a directory. Benchmark ladder CLIs require `--sampling-profile deployed`. Use real known-positive daemon monitors and derived request timeouts without retries. Read the current report before making quality, memory or publication claims from older handoff text.

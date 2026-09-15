@@ -88,3 +88,37 @@ def test_owui_required_keys_and_shape(sample_source):
     task = by["mlx-community/Task-C"]
     assert task["meta"]["defaultFeatureIds"] == []
     assert "web_search" not in task["meta"]["capabilities"]
+
+
+def test_explicit_menu_is_ordered_and_does_not_change_other_clients(sample_source):
+    from dataclasses import replace
+    from configgen.emitters.owui import emit_owui_settings
+    from configgen.emitters.opencode import emit_opencode
+
+    source = replace(sample_source, openwebui_models=("Qwen-A",))
+    assert [m["id"] for m in json.loads(emit_owui(source))] == [
+        "Qwen-A",
+        "mlx-community/Task-C",
+    ]
+    policy = json.loads(emit_owui_settings(source))
+    assert policy["main_model_ids"] == ["Qwen-A"]
+    assert "Gemma-B" in policy["excluded_model_ids"]
+    assert emit_opencode(source) == emit_opencode(sample_source)
+
+
+def test_explicit_menu_rejects_invalid_membership(sample_source):
+    import pytest
+    from dataclasses import replace
+    from configgen.emitters.owui import emit_owui_settings
+
+    for menu in [(), ("Missing",), ("Qwen-A", "Qwen-A"), ("mlx-community/Task-C",)]:
+        with pytest.raises(ValueError):
+            emit_owui_settings(replace(sample_source, openwebui_models=menu))
+
+
+def test_task_is_hidden_from_selector_but_remains_active(sample_source):
+    rows = json.loads(emit_owui(sample_source))
+    task = next(m for m in rows if m["id"] == "mlx-community/Task-C")
+    assert task["meta"]["hidden"] is True
+    assert task["is_active"] is True
+    assert all(m["meta"]["hidden"] is False for m in rows if m is not task)

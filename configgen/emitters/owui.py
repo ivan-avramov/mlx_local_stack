@@ -45,19 +45,23 @@ def _meta(m) -> dict:
             builtin[k] = True
     return {"profile_image_url": "/static/favicon.png", "description": None,
             **om, "builtinTools": builtin, "defaultFilterIds": [],
-            "mlx_local_stack_managed": True}
+            "mlx_local_stack_managed": True, "hidden": m.role == "task"}
+
+
+def _main_models(source: Source):
+    available = {m.name: m for m in source.models if m.role == "main"}
+    if source.openwebui_models is None:
+        return list(available.values())
+    names = source.openwebui_models
+    if not names or len(set(names)) != len(names) or any(n not in available for n in names):
+        raise ValueError("openwebui.models must contain unique, existing main models")
+    return [available[n] for n in names]
 
 
 def emit_owui(source: Source) -> str:
     out = []
-    for m in source.models:
-        # OWUI intentionally carries BOTH main and task (it routes title/tag calls to the task
-        # model), so this excludes only `candidate` rather than filtering to role == "main" the
-        # way the other four emitters do. Candidates are registered so the bench harness can serve
-        # them; publishing an unvetted model into models_config.json — which AGENTS.md calls the
-        # SOURCE OF TRUTH pushed to OWUI — would put it in front of a human daily driver.
-        if m.role == "candidate":
-            continue
+    # The task entry must remain active for OWUI's title/tag routing lookup.
+    for m in [*_main_models(source), *(m for m in source.models if m.role == "task")]:
         capabilities = ["completion"] + (["vision"] if "vision" in m.capabilities else [])
         out.append({
             "id": m.name, "object": "model", "owned_by": "openai",
@@ -70,7 +74,7 @@ def emit_owui(source: Source) -> str:
 
 def emit_owui_settings(source: Source) -> str:
     """Deployment policy consumed by both startup and the manual publisher."""
-    main = [m.name for m in source.models if m.role == "main"]
+    main = [m.name for m in _main_models(source)]
     tasks = [m.name for m in source.models if m.role == "task"]
     if len(tasks) > 1:
         raise ValueError("OpenWebUI supports one dedicated task model")
@@ -85,7 +89,8 @@ def emit_owui_settings(source: Source) -> str:
         "models_sha256": hashlib.sha256(emit_owui(source).encode()).hexdigest(),
         "main_model_ids": main,
         "task_model_id": tasks[0] if tasks else None,
-        "excluded_model_ids": [m.name for m in source.models if m.role == "candidate"]
+        "hidden_model_ids": tasks,
+        "excluded_model_ids": [m.name for m in source.models if m.role != "task" and m.name not in main]
                               + list(source.router_only_models),
         "defaults": {"DEFAULT_MODELS": default, "DEFAULT_PINNED_MODELS": default,
                      "MODEL_ORDER_LIST": order},

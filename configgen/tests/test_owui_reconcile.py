@@ -249,3 +249,15 @@ def test_prune_backs_up_and_removes_only_stale_managed_model(tmp_path):
     assert backup.stat().st_mode & 0o777 == 0o600
     with pytest.raises(FileExistsError):
         m.write_backup(backup, {})
+
+
+def test_hidden_task_flag_must_reach_combined_model_list():
+    m = module()
+    api = API()
+    models, settings = desired()
+    settings["hidden_model_ids"] = ["Task-A"]
+    models[1]["meta"]["hidden"] = True
+    with pytest.raises(RuntimeError, match="selector"):
+        m.reconcile(
+            api, models, settings, "http://main/v1", "http://task/v1", apply=True
+        )
