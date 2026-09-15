@@ -1,4 +1,4 @@
-# docs/ — index (2026-09-13)
+# docs/ — index (2026-09-14)
 
 Live, in reading order for a cold start:
 
@@ -33,3 +33,6 @@ notes), `docs/work-queue.json` (JSON queue mirror; `PLAN.md` is the only queue).
 - [Stack certification,2026-09-14](stack-certification-2026-09-14.md): final GitHub pins, C85 repair, quality/speed/memory evidence and scope limits.
 
 - [Hugging Face audit,2026-09-14](huggingface-audit-2026-09-14.md):13 repositories, byte parity, local alignment, publication revisions and the historical recipe discrepancy.
+
+- [Shipped native16 depth qualification](native16-depth-qualification-2026-09-14.md): C89 retrieval25/25 and chain-4 tracking39/39, timings and bounded scope.
+- [Shipped client configuration audit](client-config-audit-2026-09-14.md): C90 OpenCode corrections and all five carrier checks.

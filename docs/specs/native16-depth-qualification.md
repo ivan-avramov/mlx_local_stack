@@ -1,6 +1,6 @@
 # C89 — Approved shipped-config depth qualification
 
-Status2026-09-14: **APPROVED, PREPARING** (operator approved P648 with “proceed”; P649). This is qualification of the selected shipped configuration. It is not a model-selection or alternate-KV comparison.
+Status2026-09-14: **COMPLETE, PASS** (operator approved P648 with “proceed”; P649). [Final report](../native16-depth-qualification-2026-09-14.md): retrieval25/25, chain-4 tracking39/39, all64 converged;66 actual calls including2 calibrations. This is qualification of the selected shipped configuration. It is not a model-selection or alternate-KV comparison.
 
 ## One model/configuration
 

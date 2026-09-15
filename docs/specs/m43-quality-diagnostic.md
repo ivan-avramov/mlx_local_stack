@@ -1,6 +1,6 @@
 # C77 — Proposed M43 quality diagnostic
 
-Status2026-09-14: **REFRESHED PROPOSAL, NOT ARMED**. C84 certified the later integrated-runtime/cache-repair transition, not the original pre-merge upgrade. Recommend C88's current native16 depth/vision comparison first; this historical diagnostic remains separate. No external judge calls.
+Status2026-09-14: **REFRESHED PROPOSAL, NOT ARMED**. C84 certified the later integrated-runtime/cache-repair transition, not the original pre-merge upgrade. C88 shipped-config vision is complete; C89 shipped-config depth qualification is also complete. Phase2 is closed at its approved measured scope. This historical diagnostic remains deferred and is not a Phase 2 closure blocker. No external judge calls.
 
 ## Question and scope
 
