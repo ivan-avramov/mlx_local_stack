@@ -54,6 +54,11 @@ services:
       # Needed so init.py can mark the main router's connection 'local' --
       # OWUI's get_task_model_id routes task calls to the CHAT model unless it is.
       - MAIN_MODEL_PORT
+      # Web-search provider (see init.py apply_web_search_config). Unset = DDGS
+      # with the ordered list google,duckduckgo,brave; OWUI_WEB_SEARCH_ENGINE=searxng
+      # falls back to the sidecar below while it is still shipped.
+      - OWUI_WEB_SEARCH_ENGINE
+      - OWUI_DDGS_BACKEND
     depends_on:
       open-webui:
         condition: service_healthy
@@ -61,6 +66,10 @@ services:
       - ./openwebui-init:/app
 
   # --- SearXNG: The Private Search Engine ---
+  # DEPRECATION CANDIDATE (2026-09-15): web search now defaults to DDGS inside
+  # the OWUI container (openwebui-init/init.py). The sidecar stays only as the
+  # OWUI_WEB_SEARCH_ENGINE=searxng fallback until the DDGS qualification in
+  # docs/websearch-ddgs-qualification-2026-09-15.md passes its live rounds.
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped

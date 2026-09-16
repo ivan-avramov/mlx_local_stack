@@ -137,8 +137,41 @@ def apply_task_model_config(headers):
         raise RuntimeError(f"Failed to update task model config: HTTP {r_post.status_code}")
 
 
+# Web-search provider. DDGS (the library behind OWUI's "duckduckgo" engine) runs
+# inside the OWUI container, so no sidecar and no API key are needed. The backend
+# string is an ORDERED preference list tried in batches of ceil(count/10)+1 = 2
+# (verified in scripts/websearch/test_ddgs_selection.py); it must be explicit --
+# DDGS's default "auto" puts Wikipedia/Grokipedia first, and a wholly invalid
+# list silently falls back to "auto". Override per box with OWUI_DDGS_BACKEND /
+# OWUI_WEB_SEARCH_ENGINE (set OWUI_WEB_SEARCH_ENGINE=searxng to fall back to the
+# sidecar while it is still in docker-compose.yml). Qualification evidence:
+# docs/websearch-ddgs-qualification-2026-09-15.md.
+WEB_SEARCH_ENGINE = os.environ.get("OWUI_WEB_SEARCH_ENGINE", "duckduckgo").strip() or "duckduckgo"
+DDGS_BACKEND = os.environ.get("OWUI_DDGS_BACKEND", "google,duckduckgo,brave").strip() or "google,duckduckgo,brave"
+DDGS_BACKENDS_KNOWN = {"google", "duckduckgo", "brave", "mojeek", "startpage", "yahoo", "wikipedia", "grokipedia"}
+
+
+def validate_ddgs_backend(backend, known=DDGS_BACKENDS_KNOWN):
+    """Refuse a backend list DDGS would silently widen or that names a reference backend.
+
+    DDGS drops unknown names with a warning and, if NONE remain, falls back to "auto"
+    (Wikipedia/Grokipedia first). Fail loudly here instead: every entry must be a known
+    general-web engine. Returns the normalised comma-joined list.
+    """
+    entries = [b.strip().lower() for b in backend.split(",") if b.strip()]
+    if not entries:
+        raise RuntimeError("OWUI_DDGS_BACKEND is empty")
+    bad = [b for b in entries if b not in known or b in ("auto", "all")]
+    if bad:
+        raise RuntimeError(f"OWUI_DDGS_BACKEND has unknown/disallowed backends {bad}; known: {sorted(known)}")
+    ref = [b for b in entries if b in ("wikipedia", "grokipedia")]
+    if ref:
+        raise RuntimeError(f"OWUI_DDGS_BACKEND must not use reference backends as general-web search: {ref}")
+    return ",".join(entries)
+
+
 def apply_web_search_config(headers):
-    """Enable Web Search and point it at the local SearXNG sidecar.
+    """Enable Web Search and pin the provider (DDGS by default, SearXNG on request).
 
     OWUI >=0.10 flattened this out of the old rag.web.search.* nesting
     (still what the checked-in openwebui_config.json DB-export uses) into
@@ -147,7 +180,9 @@ def apply_web_search_config(headers):
     open-webui-data/config.json` seed step only applies to a brand-new
     config store, so a box whose DB predates this schema silently stays
     at OWUI's defaults (search disabled) no matter what the checked-in
-    file says. Pushing it live here, every run, keeps it in sync instead.
+    file says. Pushing it live here, every run, keeps it in sync instead --
+    and overrides any value an admin later saved through the UI (the UI
+    dropdown can only pick a single DDGS backend; the list lives here).
     """
     read_url = f"{BASE_URL}/api/v1/retrieval/config"
     write_url = f"{BASE_URL}/api/v1/retrieval/config/update"
@@ -159,19 +194,31 @@ def apply_web_search_config(headers):
     # The update endpoint replaces every field in `web` wholesale, so we
     # must merge into the existing dict rather than send a partial one.
     web = r_get.json().get("web", {})
-    web["ENABLE_WEB_SEARCH"] = True
-    web["WEB_SEARCH_ENGINE"] = "searxng"
-    web["SEARXNG_QUERY_URL"] = "http://searxng:8080/search?q=<query>&format=json"
-    web["SEARXNG_LANGUAGE"] = "all"
-    web["WEB_SEARCH_RESULT_COUNT"] = 10
-    web["WEB_SEARCH_CONCURRENT_REQUESTS"] = 5
+    desired = {
+        "ENABLE_WEB_SEARCH": True,
+        "WEB_SEARCH_ENGINE": WEB_SEARCH_ENGINE,
+        "DDGS_BACKEND": validate_ddgs_backend(DDGS_BACKEND),
+        # SearXNG sidecar settings are kept so OWUI_WEB_SEARCH_ENGINE=searxng still works
+        # while the sidecar is being deprecated.
+        "SEARXNG_QUERY_URL": "http://searxng:8080/search?q=<query>&format=json",
+        "SEARXNG_LANGUAGE": "all",
+        "WEB_SEARCH_RESULT_COUNT": 10,
+        # Semaphore over the queries of one chat-turn fan-out (NOT requests/second, and
+        # the DDGS adapter's own use of it is a no-op -- see the qualification report).
+        "WEB_SEARCH_CONCURRENT_REQUESTS": 5,
+        "WEB_SEARCH_DOMAIN_FILTER_LIST": [],
+    }
+    web.update(desired)
 
     r_post = requests.post(write_url, headers=headers, json={"web": web})
-    if r_post.status_code == 200:
-        enabled = r_post.json().get("web", {}).get("ENABLE_WEB_SEARCH")
-        print(f"Web search config applied successfully: ENABLE_WEB_SEARCH={enabled}")
-    else:
+    if r_post.status_code != 200:
         raise RuntimeError(f"Failed to apply web search config: HTTP {r_post.status_code}")
+    applied = r_post.json().get("web", {})
+    for k, v in desired.items():
+        if applied.get(k) != v:
+            raise RuntimeError(f"Web search config verification failed: {k}={applied.get(k)!r} (wanted {v!r})")
+    print(f"Web search config applied: engine={applied['WEB_SEARCH_ENGINE']} "
+          f"ddgs_backend={applied['DDGS_BACKEND']} enabled={applied['ENABLE_WEB_SEARCH']}")
 
 
 def assert_task_model_routing(headers):
