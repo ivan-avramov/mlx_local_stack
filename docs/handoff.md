@@ -1,12 +1,26 @@
-# Handoff — 2026-09-14: C95 default tools restored; daily-driver running
+# Handoff — 2026-09-15: web-search diagnosis complete; stack stopped
 
 Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Reports: [depth qualification](native16-depth-qualification-2026-09-14.md), [runtime/capacity](stack-certification-2026-09-14.md), [client audit](client-config-audit-2026-09-14.md).
+
+## Current checkpoint — web-search diagnosis
+
+Operator shut down the disposable stack and authorized testing, configuration changes and restarts. Qualification is complete at the bounded diagnostic scope in [the report](websearch-ddgs-qualification-2026-09-15.md); [aggregate and artifact hashes](websearch-ddgs-qualification-2026-09-15.json). No inference, model changes, dependency promotion in the daily-driver image, or push. B/C ordering remains unchanged.
+
+- DDGS9.16.0 explicit `google,duckduckgo,brave` through the OWUI adapter:5s-spaced corpus3/25 plus0/8 burst;10s-spaced corpus25/25 via DuckDuckGo plus1/8 burst. Neither stock configuration meets both availability and burst requirements.
+- SearXNG alternate `duckduckgo web`:25/25 at1s spacing and8/8 burst. Google first passed5/5, then CAPTCHA/suspension caused0/25. This is implementation evidence on one network, not a universal provider recommendation.
+- 23 offline tests pass under each DDGS version. Harness now caps engine HTTP calls, refuses reused evidence directories, uses a seeded five-category smoke, preserves Wikipedia destinations and separates freshness hints from verified freshness. No runtime DDGS/OWUI engine fix was made.
+- Original three paired full rounds were held after the failure gate; bounded cadence and implementation controls replaced them. Total141 DDGS searches/283 engine HTTP-client calls plus68 SearXNG API searches. Full authenticated chat/fetch/model flow, other networks and long-term repeat remain untested.
+- Private evidence: `$STACK_WORKDIR/websearch/host-qualification-20260915`; isolated venvs under `$STACK_WORKDIR/websearch/venvs/`. Preserve raw rows, source snapshots, protocol/amendment and monitor logs. Do not rerun into completed output directories. The first `smoke-9.16.0` used a uv overlay and is preliminary, not the isolated candidate result.
+- **Runtime is down.** Temporary `localai-ddgs-searx-control` and `localai-ddgs-owui-control` containers ended; ports8000/8092/3000/18080 had no listeners at final check. The unrelated vault container was untouched. Verify current state before acting on this checkpoint.
+- The earlier `init.py` change still selects the provisional DDGS pool at next startup; do not mistake it for qualified support. C96 holds the new engine/scheduling/default choice. No new engine port or scheduling policy is approved. No live measurements need repeating merely to regenerate the report.
+
+Historical runtime/model checkpoints below remain evidence; their live-process statements do not override the stopped state above.
 
 ## C95 complete — restore default tools
 
 Operator reported Web Search/Code Interpreter only present on `Ornith-1.0-35B-mlx-uniform-4bit`. Root cause: registry presentation flags were missing on the other three C models; reconciliation faithfully removed their defaults. Added both capability flags to those three main entries and regenerated through existing configgen. All four C entries now have both capabilities, builtin tools and `defaultFeatureIds: [web_search, code_interpreter]`. Global live Web Search and Code Interpreter switches verified enabled; explicit existing-chat overrides remain user-owned.68 tests pass, including a regression against all visible shipped chat models. Applied to running OpenWebUI with private backup under `$STACK_WORKDIR/qualification/c95-owui-tools`; repeated startup-model reconciliation makes no changes and task routing passes. No assistant inference requests or restarts.
 
-The user has started the daily-driver stack and is chatting. Do not act on older stopped-state checkpoints below. Verify current PIDs before lifecycle actions. The initial “hi” request reached the router22:28:06, downloaded the newly selected HF artifact because its cache was empty, became ready22:34:26 and completed HTTP200 at22:34:38 (392s total). Subsequent requests completed. Removing local-path overrides exposed this first-use download; no overrides were restored. User subsequently switched among C models; do not interrupt their sessions. No new model benchmark or UI-delivery claim is inferred from router HTTP status.
+At the historical C95 checkpoint the user had started the daily-driver stack and was chatting. The current stopped-state checkpoint above supersedes that runtime state. The initial “hi” request reached the router22:28:06, downloaded the newly selected HF artifact because its cache was empty, became ready22:34:26 and completed HTTP200 at22:34:38 (392s total). Subsequent requests completed. Removing local-path overrides exposed this first-use download; no overrides were restored. User subsequently switched among C models; do not interrupt their sessions. No new model benchmark or UI-delivery claim is inferred from router HTTP status.
 
 C93/C94/C95 commits remain local after the previously verified e7f58fb push. No push authorization this turn. Next discussion P739; next decision C96.
 

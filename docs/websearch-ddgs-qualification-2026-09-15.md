@@ -1,6 +1,6 @@
 # DDGS as the Open WebUI web-search provider — qualification report (2026-09-15)
 
-Status: **DRAFT — offline parts complete; live measurement pending** (see §6).
+Status: **BOUNDED HOST DIAGNOSIS COMPLETE — stock DDGS is not customer-qualified.** Ten-second-spaced DDGS searches passed the corpus, but bursts failed; SearXNG's alternate DuckDuckGo implementation passed the targeted corpus and burst. See §5–§7.
 Scope: can `ddgs` (the library Open WebUI's `duckduckgo` engine wraps) provide useful
 general-web search per customer installation with no SearXNG sidecar, no API keys and
 no central subscription. Sections are labelled **[measured]**, **[inferred]** or
@@ -40,10 +40,11 @@ benchmark result rows); the adapter inspected is Open WebUI's own
 - `WEB_SEARCH_CONCURRENT_REQUESTS` is otherwise an `asyncio.Semaphore` over the *queries* of one chat-turn fan-out (`process_web_search`), not a requests-per-second limiter. The builtin `search_web` tool (`tools/builtin.py:293`) calls `_search_web` directly with no semaphore.
 - `DDGS_BACKEND` is a free string (env default `auto`; DB key `web.search.ddgs_backend`; settable via `POST /api/v1/retrieval/config/update`). The UI dropdown is the only thing restricting it to single values.
 
-## 3. DDGS selection semantics, verified offline on 9.14.4 and 9.16.0 [measured — 17 fake-transport tests, both versions pass]
+## 3. DDGS selection semantics [measured — 17 selection tests plus 6 guardrail tests, both versions pass]
 
-`scripts/websearch/test_ddgs_selection.py` replaces only the HTTP layer; registry,
-`_get_engines`, thread pool, provider dedup, aggregator and ranker run for real.
+`scripts/websearch/test_ddgs_selection.py` uses fake HTTP responses and a synthetic result extractor for the general-web engines; registry,
+`_get_engines`, thread pool, provider dedup, aggregator and ranker run for real. These tests
+establish selection/handling semantics, not live-provider parsing or reliability.
 
 | property | result |
 |---|---|
@@ -60,29 +61,67 @@ benchmark result rows); the adapter inspected is Open WebUI's own
 | Network cache | 9.14.4 has an opt-in DHT/libp2p result cache (`api_url=` only; OWUI never passes it — inert). Removed entirely in 9.16.0. |
 | Version deltas | 9.16.0: Google engine moved to `/wml/search` (Nokia S60 UA, new XPaths, `sca_esv=1`); DuckDuckGo engine drops `fake_useragent`/httpx for the shared `primp` client; Yandex disabled; DHT code removed. `_get_engines`/`_search_sync` selection logic is otherwise identical between the two versions. |
 
-## 4. Test plan [proposed; harness built and unit-tested]
+## 4. Execution and methodology [measured]
 
-Harness: `scripts/websearch/ddgs_qualify.py` (README alongside). Isolated `uv run
---no-project --with ddgs==<ver>` venvs; nothing installed into the container.
+The operator authorized host execution, changes and restarts, and shut down the daily-driver stack. Host access worked; the earlier cloud/bridge allowlist restriction did not apply. No inference was run and no model configuration or ranking changed.
 
-- Versions: 9.14.4 (installed baseline) vs 9.16.0 (pinned candidate).
-- Backend specs: `google`, `duckduckgo`, `brave`, `google,duckduckgo,brave`; `auto` as a round-1 control.
-- 25 queries, 5 per category (factual / official docs / current news / regional / long NL), each with a mechanical expectation (domain suffix or tokens in the top 5).
-- 3 rounds ≥ 30 min apart; per round per version 25×5 sequential searches at a 1 s gap + one 8-search burst at 4-wide per spec.
-- Budget: ≤ ~300 HTTP requests per version-round (individual 1/search, combined ≤ 3, auto ≤ ~5) → ≤ ~1,800 total, < 200 MB; ~20 min wall per round.
-- Acceptance per (version, spec) on the tested network: ≥ 90 % of searches return ≥ 3 results; ≥ 80 % useful (expectation hit in top 5, ≥ 3 http results, not reference-only); p95 ≤ 6 s; timeouts + throttles ≤ 5 %; burst success ≥ 80 %; round-3 not > 10 pp below round 1; zero reference-backend hosts with the explicit list; combined ≥ best individual on usefulness.
+The original proposal was three complete paired version rounds, at least30 minutes apart. The initial smoke failed, so the bulk campaign was held and replaced by bounded cooldown, cadence and implementation diagnostics. These are not three completed release-qualification rounds.
 
-## 5. Live measurements [pending]
+- Baseline9.14.4 and candidate9.16.0 each ran in an explicit isolated Python3.12.13 venv under `$STACK_WORKDIR/websearch/venvs/`. Shared runtime pins: `primp==2.0.0`, `lxml==6.1.1`, `pydantic==2.13.4`, matching these packages in the cached OWUI image. Version-specific dependencies remain distinct and are recorded in the aggregate.
+- An initial9.16.0 `uv run --no-project` smoke used an overlay that exposed the stack environment, with primp2.0.1. It is preserved as preliminary evidence and excluded from matched version comparisons. `--no-project` alone is not sufficient environment isolation here.
+- Five-query pilots selected one query per category with seed20260915: `docs-05`, `fact-01`, `nl-02`, `news-01`, `reg-03`. Full diagnostic corpora used all25 queries. Burst phases repeated the same eight declared query IDs with four concurrent searches.
+- The backend pool was `google,duckduckgo,brave`, count10, default DDGS timeout5s. The copied OWUI adapter SHA256 was independently matched to the cached container's actual file. A Linux/container adapter control was also run; failures are not exclusively a native-Mac observation.
+- New guardrails atomically cap engine HTTP client invocations, refuse output-directory reuse, record dependency/source provenance and stop admitting searches after a wall budget. Redirects inside the HTTP client are not separate counted calls; in-flight threads are not cancelled by the admission deadline. Five new tests initially failed, then passed; an additional real-DDGS/fake-transport test verifies budget enforcement before transport. Total23 tests pass on each version.
+- Result-domain scoring was corrected: Wikipedia URLs are allowed. `useful` is still a keyword/domain proxy; `fresh` remains null pending source review. Date-like text is recorded only as a freshness hint. HTTP result counts, proxy scores and source correctness are separate quantities.
+- Both full DDGS diagnostic runs used an automatic assessment wrapper with a known-positive self-test, five-minute assessment interval and terminal records. They completed in about151s and283s respectively, before the first periodic interval. Failed-provider responses were retained, not graded as model failures.
+- All live phases were sequential on one network. Prior traffic, cooldown, query reuse and order can affect blocking. The five-second versus ten-second observations do not establish an official rate limit or isolate every causal variable.
 
-Not yet run: neither execution environment available to this session can reach the
-engines (both return `403 blocked-by-allowlist` for google.com, duckduckgo.com,
-search.brave.com, wikipedia.org, grokipedia.com; PyPI/GitHub are allowed). The Mac
-host can (today's OWUI log shows Google 200s). Results will be filled in from
-`$STACK_WORKDIR/websearch/<round>-<version>/summary.json`.
+Private evidence root: `$STACK_WORKDIR/websearch/host-qualification-20260915`. Protocol, amendment, source snapshots, package versions, raw rows, source-page checks and assessment records are retained there. [Portable aggregate and artifact hashes](websearch-ddgs-qualification-2026-09-15.json).
 
-## 6. Recommendations so far
+## 5. Live results [measured]
 
-- Candidate to qualify further: **ddgs 9.16.0 pinned**, backend `google,duckduckgo,brave` (ordered). [inferred from source; live usefulness untested]
-- Minimal adapter fixes worth proposing upstream / carrying: (1) set `ddgs.ddgs.DDGS.threads` (class) or drop the dead assignment; (2) pass `region` from `SEARXNG_LANGUAGE`-style config; (3) validate `DDGS_BACKEND` against `ddgs.engines.ENGINES["text"]` at config time so an all-invalid string cannot silently become `auto`.
-- Stock multi-backend behaviour = ordered batch-wise fallback with width 2 at count 10. Whether explicit primary/fallback sequencing is justified depends on the measured per-engine block rates (§5).
-- Evidence still needed before customer release: the live rounds above on at least this network; the same run from ≥ 2 other residential/office networks; a longer-horizon repeat (engines change their anti-bot behaviour without notice — DDGS itself has shipped three Google rewrites in five months).
+A success below means at least three HTTP result URLs. All such successes in these runs also passed the mechanical expectation check; that coincidence is not proof of factual correctness or freshness.
+
+| Path and conditions | Sequential searches | Four-way burst | Interpretation |
+|---|---:|---:|---|
+| DDGS9.14.4, isolated Mac, pool,1s gap | 0/5 | not run | Google200 with no parsed results; DuckDuckGo202 and Brave429 in pool. |
+| DDGS9.16.0, isolated Mac, pool,1s gap | 0/5 | not run | Google429, DuckDuckGo202 and Brave429. |
+| DDGS9.16.0 through OWUI adapter,10s gap, pilot | 5/5 | not run | Every success came from DuckDuckGo; this triggered the larger cadence check. |
+| DDGS9.16.0 through OWUI adapter,5s gap, full corpus | **3/25** | **0/8** | Does not meet the proposed availability or burst gates. |
+| DDGS9.16.0 through OWUI adapter,10s gap, full corpus | **25/25** | **1/8** | Viable sequential retrieval in this window; stock concurrent behavior still fails. |
+| SearXNG Google,1s gap | pilot5/5; subsequent **0/25** | not run | First full-corpus call hit CAPTCHA;24 subsequent calls reported suspended engine. |
+| SearXNG `duckduckgo web`,1s gap | pilot5/5; full **25/25** | **8/8** | Strongest implementation signal in this bounded study; not production certification. |
+
+The isolated individual-engine smokes gave Google0/5, DuckDuckGo1/5 and Brave0/5 for each DDGS version. The earlier preliminary smoke had Brave5/5 before later429s. A five-minute quiet period did not restore Brave in the next smoke. These results do not justify ranking one DDGS version as globally more reliable.
+
+The cached OWUI9.14.4 adapter in a temporary Linux container also returned0/5 for Google and0/5 for DuckDuckGo. This was provider-function validation, not a full authenticated chat session. No model inference or complete search→fetch→model test was performed after the provider/burst failure gate.
+
+For the full DDGS pool at10s spacing, the25 successful sequential calls had p95 elapsed0.937s, all with DuckDuckGo results. The subsequent burst returned1/8, p95 elapsed0.887s including failures. At5s spacing, sequential p95 was0.908s despite only3/25 successes. **These elapsed times exclude the intentional gaps and any future request-queue delay; rapid failures are not speed wins.** SearXNG `duckduckgo web` had sequential p95 0.930s and burst p95 0.813s.
+
+Traffic: **141 DDGS search invocations /283 engine HTTP-client calls**, plus **68 SearXNG API search calls** and four source-page checks. SearXNG's internal outgoing calls were not instrumented, so68 must not be reported as its upstream HTTP count. No API key, paid service, model call or proxy workaround was used. Temporary containers were stopped; the daily-driver stack remains down.
+
+### Result quality and fetching [bounded qualitative review]
+
+One assistant reviewed the fixed five-category sample, unblinded. Official NGINX and TransLink results were topical and their content was retrievable; factual and quantization results were on topic. This is a source-discovery screen, not independent human grading of every claim.
+
+Google's Apple-news results mixed a stale2024 snippet with apparently current entries. A plain HTTP/text fetch of Apple Newsroom returned its navigation shell rather than news articles; a selected dated CNBC article returned403. Thus even this small screen exposes page-reading/freshness limitations. A search API success does not certify OWUI extraction or a model's answer. All corpus news freshness labels remain unverified, not silently passed by the previous year/token heuristic.
+
+## 6. Mechanisms and recommendation
+
+**Measured:** explicit lists avoided encyclopedia backend requests. Failure persisted across two DDGS versions, and a container control ruled out a solely native-Mac issue for the baseline. Ten-second-spaced DDGS searches succeeded, while five-second pacing and bursts did not. SearXNG Google demonstrated that a5/5 smoke can be followed immediately by CAPTCHA/suspension. Its alternate DuckDuckGo engine passed25 sequential plus8 burst searches.
+
+**Source-inspected:** SearXNG `duckduckgo web` bootstraps a website-provided `links.duckduckgo.com/d.js` URL; DDGS uses the HTML endpoint. SearXNG Google differs in request parameters, user-agent handling, HTTP-client impersonation and parser. These are unofficial/keyless implementations, not evidence that SearXNG uses a paid API. The cached SearXNG version is2026.9.15+94218a3ac; image IDs and repository digests are in the aggregate. Engine source snapshots are retained privately with hashes.
+
+**Not isolated:** which particular header, client, parser, endpoint or network-history difference caused each refusal. Ten seconds is an observed successful cadence, not a published DuckDuckGo entitlement or a guaranteed setting for other networks. Shared office egress remains untested.
+
+**Recommendation:** keep DDGS as the preferred smaller integration, but do not ship stock OWUI/DDGS with only a backend-list change as a reliability solution. Investigate an in-process DDGS implementation of the working alternate DuckDuckGo path and compare it against the retained SearXNG control. Feasibility and maintenance cost remain open; no engine port or new runtime dependency was implemented. A per-installation request queue with bounded backoff is another candidate, but queuing at10s intervals adds user latency and does not protect multiple installations sharing one public IP. The existing OWUI concurrency field is not that queue.
+
+No SearXNG sidecar was removed or added to the product plan automatically. No DDGS package upgrade was made in the daily-driver container. The earlier init default still selects the provisional pool on next startup; **it is not a qualified production default**. Implementation of a new engine or scheduling policy, and final provider/default selection, remain for explicit review.
+
+## 7. Remaining acceptance work [untested]
+
+- A repaired/chosen implementation must pass sustained normal and burst workloads, with queued-user latency measured if requests are paced.
+- Repeat across independent residential/office networks and a longer time horizon; do not generalize this one-network window.
+- Validate provider health/error reporting, fail-closed backend validation against the actual installed registry, retries/deadlines and shared-egress behavior.
+- Run the actual packaged/authenticated OWUI search/fetch/model workflow after the provider gate passes; preserve existing model tunings and avoid a new model-discovery campaign.
+- Retain B/C picks unchanged. This study measured search infrastructure, not model quality.

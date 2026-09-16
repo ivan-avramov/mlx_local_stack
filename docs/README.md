@@ -1,4 +1,4 @@
-# docs/ — index (2026-09-14)
+# docs/ — index (2026-09-15)
 
 Live, in reading order for a cold start:
 
@@ -38,3 +38,5 @@ notes), `docs/work-queue.json` (JSON queue mirror; `PLAN.md` is the only queue).
 - [Shipped client configuration audit](client-config-audit-2026-09-14.md): C90 OpenCode corrections and all five carrier checks.
 
 - [OpenWebUI reconciliation repair](openwebui-reconciliation-2026-09-14.md): C93 fixes discovery leakage and deployment verification beyond generated-file checks.
+
+- [DDGS web-search host diagnosis](websearch-ddgs-qualification-2026-09-15.md): provider cadence/burst limits, targeted SearXNG comparison, aggregate evidence and C96 follow-up.

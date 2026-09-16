@@ -26,10 +26,13 @@ fixed gap, plus one burst per backend spec (``--burst`` searches at
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
 import json
 import os
 import platform
 import re
+import random
 import statistics
 import sys
 import threading
@@ -82,9 +85,9 @@ def score(query: dict, results: list[dict]) -> dict:
             exp_hit = True
         if any(t in text for t in query.get("expect_tokens", [])):
             exp_hit = True
-    fresh = None
+    freshness_hint = None
     if query.get("fresh"):
-        fresh = any(FRESH_RE.search(f"{r.get('title','')} {r.get('body','')}") for r in top5)
+        freshness_hint = any(FRESH_RE.search(f"{r.get('title','')} {r.get('body','')}") for r in top5)
     reference_only = bool(results) and all(
         any(_host(r.get("href", "")).endswith(d) for d in REFERENCE_HOSTS) for r in results
     )
@@ -93,9 +96,10 @@ def score(query: dict, results: list[dict]) -> dict:
         "n_http": len(http_results),
         "relevant_share": (relevant / len(results)) if results else 0.0,
         "expectation_hit": exp_hit,
-        "fresh": fresh,
+        "fresh": None,  # requires dated-source review, not a keyword match
+        "freshness_hint": freshness_hint,
         "reference_only": reference_only,
-        "useful": len(http_results) >= 3 and exp_hit and not reference_only,
+        "useful": len(http_results) >= 3 and exp_hit,  # mechanical proxy, not human relevance
         "domains_top5": [_host(r.get("href", "")) for r in top5],
     }
 
@@ -162,7 +166,7 @@ def run_one(query: dict, backend: str, *, max_results: int, timeout: int, adapte
         "score": score(query, results),
         "results": [
             {"title": (r.get("title") or "")[:160], "href": (r.get("href") or "")[:300],
-             "body": (r.get("body") or "")[:200]}
+             "body": (r.get("body") or "")[:4000]}
             for r in results
         ],
     }
@@ -212,12 +216,14 @@ def summarize(rows: list[dict]) -> dict:
                 "n": len(cs),
                 "returned": sum(1 for r in cs if r["score"]["n_results"] > 0),
                 "useful": sum(1 for r in cs if r["score"]["useful"]),
-                "fresh": sum(1 for r in cs if r["score"]["fresh"]) if cat == "news" else None,
+                "fresh": None,
+                "freshness_hint": sum(1 for r in cs if r["score"]["freshness_hint"]) if cat == "news" else None,
             }
         out["|".join(key)] = {
             "ddgs_version": key[0], "adapter": key[1], "backend": key[2], "mode": key[3],
             "searches": n,
             "returned_any": returned,
+            "returned_three": sum(r["score"]["n_http"] >= 3 for r in sel),
             "useful": useful,
             "useful_rate": round(useful / n, 3) if n else None,
             "mean_results": round(statistics.mean(r["score"]["n_results"] for r in sel), 2) if sel else None,
@@ -252,6 +258,22 @@ def summarize(rows: list[dict]) -> dict:
 
 
 # ----------------------------------------------------------------------------- main
+def select_queries(queries: list[dict], limit: int, seed: int) -> list[dict]:
+    if not limit or limit >= len(queries):
+        return queries
+    rng = random.Random(seed)
+    categories = sorted({q["category"] for q in queries})
+    if limit == len(categories):
+        return [rng.choice([q for q in queries if q["category"] == cat]) for cat in categories]
+    return rng.sample(queries, limit)
+
+
+def prepare_output(out: Path) -> None:
+    if out.exists() and any(out.iterdir()):
+        raise FileExistsError(f"refusing to reuse nonempty evidence directory: {out}")
+    out.mkdir(parents=True, exist_ok=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", required=True, help="output directory (created); private, may hold result text")
@@ -266,18 +288,23 @@ def main() -> int:
     ap.add_argument("--gap", type=float, default=1.0, help="seconds between sequential searches")
     ap.add_argument("--burst", type=int, default=8, help="searches per burst (0 disables)")
     ap.add_argument("--burst-workers", type=int, default=4)
-    ap.add_argument("--limit", type=int, default=0, help="smoke: only the first N queries")
+    ap.add_argument("--limit", type=int, default=0, help="smoke: seeded sample; five selects one per category")
+    ap.add_argument("--seed", type=int, default=20260915, help="seeded, category-stratified five-item smoke")
+    ap.add_argument("--max-requests", type=int, default=500, help="hard cap on engine HTTP client invocations; redirects internal to the client are not separately counted")
+    ap.add_argument("--max-wall-seconds", type=float, default=1800, help="stop admitting searches after this elapsed time")
     ap.add_argument("--no-seq", action="store_true", help="skip the sequential pass")
     args = ap.parse_args()
 
     spec = json.loads(Path(args.queries).read_text())
-    queries = spec["queries"][: args.limit] if args.limit else spec["queries"]
+    queries = select_queries(spec["queries"], args.limit, args.seed)
     burst_ids = set(spec.get("burst_ids", []))
     burst_queries = [q for q in queries if q["id"] in burst_ids][: args.burst] if args.burst else []
 
     out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
+    prepare_output(out)
+    (out / "queries.json").write_text(json.dumps(spec, indent=2))
     ddgs_instrument.install()
+    ddgs_instrument.TRACE.configure_budget(args.max_requests)
     rows_path = out / "searches.jsonl"
     rows: list[dict] = []
     lock = threading.Lock()
@@ -295,12 +322,21 @@ def main() -> int:
     common = dict(max_results=args.max_results, timeout=args.timeout, adapter=args.adapter,
                   concurrent_requests=args.concurrent_requests, label=args.label, round_no=args.round)
     t_start = time.time()
+    stop_reason = None
     for backend in args.backends:
         if not args.no_seq:
             for q in queries:
+                if ddgs_instrument.TRACE.budget_exhausted or time.time() - t_start >= args.max_wall_seconds:
+                    stop_reason = "request budget" if ddgs_instrument.TRACE.budget_exhausted else "wall budget"
+                    break
                 emit(run_one(q, backend, mode="seq", **common))
                 time.sleep(args.gap)
+        if stop_reason:
+            break
         if burst_queries:
+            if ddgs_instrument.TRACE.budget_exhausted or time.time() - t_start >= args.max_wall_seconds:
+                stop_reason = "request or wall budget before burst"
+                break
             with ThreadPoolExecutor(max_workers=args.burst_workers, thread_name_prefix="burst") as ex:
                 futs = [ex.submit(run_one, q, backend, mode="burst", **common) for q in burst_queries]
                 for f in futs:
@@ -314,6 +350,14 @@ def main() -> int:
         "args": {k: v for k, v in vars(args).items() if k != "out"},
         "queries": len(queries), "burst_queries": len(burst_queries),
         "searches": len(rows), "http_requests": sum(len(r["requests"]) for r in rows),
+        "requests_started": ddgs_instrument.TRACE.requests_started,
+        "stop_reason": stop_reason,
+        "complete": len(rows) == len(args.backends) * ((0 if args.no_seq else len(queries)) + len(burst_queries)),
+        "selected_query_ids": [q["id"] for q in queries],
+        "scoring": "keyword/domain proxy only; freshness requires manual source review",
+        "packages": {d.metadata["Name"]: d.version for d in importlib.metadata.distributions()},
+        "source_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                          for p in [Path(__file__), HERE / "ddgs_instrument.py", Path(args.queries)]},
         "bytes_received": sum(q["bytes"] for r in rows for q in r["requests"]),
         "wall_s": round(time.time() - t_start, 1),
         "started_utc": datetime.fromtimestamp(t_start, timezone.utc).isoformat(timespec="seconds"),
@@ -327,7 +371,7 @@ def main() -> int:
         print(f"{k:<45} searches={v['searches']:3d} returned={v['returned_any']:3d} useful={v['useful']:3d} "
               f"p50={v['latency_p50']} p95={v['latency_p95']} empty={v['empty']} timeouts={v['timeouts']} "
               f"ref_contacted={v['reference_backend_contacted']}")
-    return 0
+    return 0 if meta["complete"] else 2
 
 
 if __name__ == "__main__":

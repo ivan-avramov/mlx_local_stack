@@ -25,20 +25,35 @@ running container. Full write-up: `docs/websearch-ddgs-qualification-2026-09-15.
 
 ## Run (on the box whose network is being characterised)
 
+Use an explicit venv under `$STACK_WORKDIR`, not just `uv run --no-project`:
+the latter can still expose an existing stack environment beneath its overlay.
+Pin and record shared transport/parser dependencies for a version comparison.
+The host study uses `primp==2.0.0`, `lxml==6.1.1`, and `pydantic==2.13.4`,
+matching the cached OWUI image for those packages.
+
+Outputs must be new/empty directories. `--max-requests` atomically caps engine
+HTTP client calls (library-internal redirects are not counted separately);
+`--max-wall-seconds` stops admitting new searches but does not cancel in-flight
+threads. Incomplete runs return nonzero. A five-query smoke is seeded and
+stratified across categories. `useful` remains a mechanical proxy; `fresh` stays
+null pending manual dated-source review. Wikipedia result URLs are permitted.
+
 ```sh
-# offline verification, both versions
-uv run --no-project --with ddgs==9.14.4 --with pytest --with pydantic \
-    -m pytest scripts/websearch/test_ddgs_selection.py -q -p no:cacheprovider
-uv run --no-project --with ddgs==9.16.0 --with pytest --with pydantic \
-    -m pytest scripts/websearch/test_ddgs_selection.py -q -p no:cacheprovider
+# Prepare one environment per version; repeat for 9.14.4.
+uv venv --python 3.12 "$STACK_WORKDIR/websearch/venvs/ddgs-9.16.0"
+uv pip install --python "$STACK_WORKDIR/websearch/venvs/ddgs-9.16.0/bin/python" \
+    ddgs==9.16.0 primp==2.0.0 lxml==6.1.1 pydantic==2.13.4 pytest
+"$STACK_WORKDIR/websearch/venvs/ddgs-9.16.0/bin/python" -m pytest \
+    scripts/websearch/test_ddgs_selection.py scripts/websearch/test_ddgs_guardrails.py \
+    -q -p no:cacheprovider --basetemp "$STACK_WORKDIR/websearch/pytest-916"
 
 # 5-query smoke first
-uv run --no-project --with ddgs==9.16.0 --with pydantic scripts/websearch/ddgs_qualify.py \
-    --out "$STACK_WORKDIR/websearch/smoke-9.16.0" --limit 5 --burst 0
+"$STACK_WORKDIR/websearch/venvs/ddgs-9.16.0/bin/python" scripts/websearch/ddgs_qualify.py \
+    --out "$STACK_WORKDIR/websearch/smoke-9.16.0" --limit 5 --burst 0 --max-requests 100
 
 # one round per version (repeat with --label r2/--round 2 etc. >= 30 min apart)
 for v in 9.14.4 9.16.0; do
-  uv run --no-project --with "ddgs==$v" --with pydantic scripts/websearch/ddgs_qualify.py \
+  "$STACK_WORKDIR/websearch/venvs/ddgs-$v/bin/python" scripts/websearch/ddgs_qualify.py \
       --out "$STACK_WORKDIR/websearch/r1-$v" --label r1 --round 1 \
       --backends google duckduckgo brave google,duckduckgo,brave auto
 done

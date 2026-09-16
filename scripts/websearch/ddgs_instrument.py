@@ -21,6 +21,10 @@ _lock = threading.Lock()
 _current_sid = threading.local()  # allow-pii-pattern (stdlib thread-local, not a hostname)
 
 
+class RequestBudgetExceeded(RuntimeError):
+    """The qualification request budget has been consumed."""
+
+
 @dataclass
 class RequestRecord:
     sid: str
@@ -48,6 +52,26 @@ class EngineRecord:
 class Trace:
     requests: list[RequestRecord] = field(default_factory=list)
     engines: list[EngineRecord] = field(default_factory=list)
+    max_requests: int | None = None
+    requests_started: int = 0
+
+    def configure_budget(self, maximum: int) -> None:
+        if maximum < 1:
+            raise ValueError("request budget must be positive")
+        with _lock:
+            self.max_requests = maximum
+            self.requests_started = 0
+
+    @property
+    def budget_exhausted(self) -> bool:
+        with _lock:
+            return self.max_requests is not None and self.requests_started >= self.max_requests
+
+    def reserve_request(self) -> None:
+        with _lock:
+            if self.max_requests is not None and self.requests_started >= self.max_requests:
+                raise RequestBudgetExceeded("qualification HTTP request budget exhausted")
+            self.requests_started += 1
 
     def for_sid(self, sid: str) -> tuple[list[RequestRecord], list[EngineRecord]]:
         with _lock:
@@ -60,6 +84,8 @@ class Trace:
         with _lock:
             self.requests.clear()
             self.engines.clear()
+            self.max_requests = None
+            self.requests_started = 0
 
 
 TRACE = Trace()
@@ -89,6 +115,7 @@ def install() -> None:
         return instances
 
     def request(self, method, url, *args, **kwargs):
+        TRACE.reserve_request()
         sid = getattr(self, "_qual_sid", None) or "?"
         t0 = time.perf_counter()
         status = None
