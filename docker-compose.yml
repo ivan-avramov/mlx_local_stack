@@ -20,8 +20,12 @@ services:
     environment:
       - 'OPENAI_API_BASE_URL=http://host.docker.internal:8000/v1'
       - 'OPENAI_API_KEY=not-needed'
+      # First-boot defaults only; openwebui-init/init.py pushes the live values
+      # through the API on every run. Concurrency is 1 because simultaneous
+      # queries are what trip engine rate limits -- the fan-out across the
+      # engine pool already happens inside SearXNG for each single query.
       - 'RAG_WEB_SEARCH_RESULT_COUNT=10'
-      - 'RAG_WEB_SEARCH_CONCURRENT_REQUESTS=10'
+      - 'RAG_WEB_SEARCH_CONCURRENT_REQUESTS=1'
       - 'ENABLE_EVALUATION_ARENA_MODELS=false'
       - 'WEBUI_ADMIN_EMAIL=${OWUI_ADMIN_EMAIL}'
       - 'WEBUI_ADMIN_PASSWORD=${OWUI_ADMIN_PASSWORD}'
@@ -54,9 +58,10 @@ services:
       # Needed so init.py can mark the main router's connection 'local' --
       # OWUI's get_task_model_id routes task calls to the CHAT model unless it is.
       - MAIN_MODEL_PORT
-      # Web-search provider (see init.py apply_web_search_config). Unset = DDGS
-      # with the ordered list google,duckduckgo,brave; OWUI_WEB_SEARCH_ENGINE=searxng
-      # falls back to the sidecar below while it is still shipped.
+      # Web-search provider (see init.py apply_web_search_config). Unset = the
+      # qualified SearXNG sidecar. OWUI_WEB_SEARCH_ENGINE=duckduckgo switches to
+      # in-container DDGS, which needs no sidecar but did not survive burst
+      # traffic; OWUI_DDGS_BACKEND only applies in that mode.
       - OWUI_WEB_SEARCH_ENGINE
       - OWUI_DDGS_BACKEND
     depends_on:
@@ -66,17 +71,27 @@ services:
       - ./openwebui-init:/app
 
   # --- SearXNG: The Private Search Engine ---
-  # DEPRECATION CANDIDATE (2026-09-15): web search now defaults to DDGS inside
-  # the OWUI container (openwebui-init/init.py). The sidecar stays only as the
-  # OWUI_WEB_SEARCH_ENGINE=searxng fallback until the DDGS qualification in
-  # docs/websearch-ddgs-qualification-2026-09-15.md passes its live rounds.
+  # THE SHIPPED WEB-SEARCH BACKEND (2026-09-16). The DDGS-inside-OWUI default
+  # trialled on 2026-09-15 was reverted: DDGS managed 1/8 on the burst test,
+  # and the plain duckduckgo scrape path CAPTCHAs on every query. This sidecar
+  # pools three qualified engines and scored 25/25 sequential + 8/8 burst.
+  # Evidence: docs/websearch-searxng-qualification-2026-09-16.md.
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      # LOOPBACK ONLY. A SearXNG instance reachable off-box is an open,
+      # unauthenticated search proxy that anyone on the network can drive,
+      # which also burns our engines' rate-limit budget. Open WebUI does not
+      # use this mapping at all -- it reaches the container as http://searxng:8080
+      # over the compose network. This is published purely so an operator can
+      # open /stats and /config while debugging.
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./searxng/settings.generated.yml:/etc/searxng/settings.yml:ro
     environment:
       - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
-      - FORWARDED_ALLOW_IPS=*
+      # FORWARDED_ALLOW_IPS is deliberately unset. It tells the ASGI server to
+      # trust client-supplied X-Forwarded-For, and "*" lets any caller forge
+      # the source address the bot limiter keys on. There is no reverse proxy
+      # in front of this service, so nothing needs it.

@@ -1,21 +1,70 @@
-use_default_settings: true
+# SearXNG settings TEMPLATE. render_settings.py turns this into the gitignored
+# settings.generated.yml that docker-compose actually mounts. This file is
+# PUBLIC: it must never contain a real API key or secret.
+#
+# Engine selection is a WHITELIST (use_default_settings.engines.keep_only), not
+# a set of disable-overrides on top of upstream's defaults. Two reasons:
+#   1. Upstream's default `general` pool drifts. Under the old override style a
+#      new default engine joined our production pool silently.
+#   2. The old style also let dictionary/translation/currency engines
+#      (dictzone, lingva, mymemory translated, currency) into `general`, where
+#      Open WebUI ranked their output alongside real web pages.
+#
+# keep_only FILTERS FIRST AND MERGES SECOND. An `engines:` override naming an
+# engine that keep_only removed is APPENDED as a brand-new engine definition
+# with no `engine:` module, which breaks startup. So every name below appears
+# in BOTH lists, and nothing else may be added to `engines:` alone.
+# (This already bit us: the old file carried a `karmasearch` override for an
+# engine upstream had deleted, appending exactly such a broken stub.)
+use_default_settings:
+  engines:
+    keep_only:
+      # --- shipped general-web pool, qualified 2026-09-16 -------------------
+      # 25/25 sequential and 8/8 burst as a POOL; see
+      # docs/websearch-searxng-qualification-2026-09-16.md.
+      - duckduckgo web
+      - startpage
+      - google
+      # --- bring-your-own-key upgrades, inactive until a key is present -----
+      - braveapi
+      - wolframalpha_api
 
 server:
-  secret_key: "something"
+  # Replaced by render_settings.py with a value from SEARXNG_SECRET_KEY, or a
+  # fresh random one. Never a real secret in this file.
+  secret_key: "PLACEHOLDER_REPLACED_BY_render_settings.py"
+  # The port is published on loopback only (docker-compose.yml) and the sole
+  # real client is Open WebUI on the compose network, so the bot limiter would
+  # only ever throttle our own traffic. Revisit if this instance is ever
+  # exposed beyond the host.
   limiter: false
-  image_proxy: true
+  # Off: it makes SearXNG fetch arbitrary third-party image URLs on request,
+  # and Open WebUI's adapter sends image_proxy=0 per request regardless.
+  image_proxy: false
 
 search:
+  # Open WebUI's adapter hardcodes safesearch=1 per request, so this only
+  # affects a human browsing the instance directly.
   safe_search: 0
   formats:
     - html
     - json
 
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 20.0
+
 engines:
-  - name: ahmia
-    disabled: true
-  - name: karmasearch
-    disabled: true
+  # Upstream ships `duckduckgo web` and `google` disabled; keep_only selects an
+  # engine but does not enable it, so these overrides are load-bearing.
+  - name: duckduckgo web
+    disabled: false
+  - name: google
+    disabled: false
+  # Upstream ships startpage `inactive`, which removes it entirely.
+  - name: startpage
+    disabled: false
+    inactive: false
 
   # Free-tier official APIs, OFF (inactive) here by default. render_settings.py
   # flips inactive:false and fills api_key only when BRAVE_SEARCH_API_KEY /
@@ -27,23 +76,25 @@ engines:
   - name: wolframalpha_api
     inactive: true
 
-  # `general` pool widening, tested live 2026-08-28 (duckduckgo/brave/startpage/
-  # google-cse were all CAPTCHA'd or connection-dead from this network at the
-  # time). Verified individually via `engines=<name>` against a real query:
-  - name: google
-    disabled: false  # WORKS — real results, no error.
-  - name: duckduckgo web
-    disabled: false  # WORKS — real results (distinct scrape path from the
-    # already-enabled `duckduckgo` module, which is the one that's CAPTCHA'd).
-  - name: bing
-    disabled: true  # TLS handshake fails: "Basic Constraints of CA cert not
-    # marked critical" — bing.com's own cert chain, not a bot-block. Confirmed
-    # with a raw urllib fetch from inside the container, no SearXNG involved.
-    # Not fixable from our side; revisit if bing's chain changes.
-  - name: qwant
-    disabled: true  # CAPTCHA-blocked.
-  - name: mojeek
-    disabled: true  # Silently dead: raw fetch gets HTTP 403, but the mojeek.py
-    # engine module doesn't surface that as an error — it just returns zero
-    # results with no entry in /stats/errors. Left off rather than kept as
-    # silent dead weight.
+# ENGINES DELIBERATELY EXCLUDED, measured on this network 2026-09-16
+# (25 queries each, 1.2 s apart, through the Open WebUI request shape):
+#   brave        0/25. HTTP 429 after ~6 queries, then SearXNG suspends it for
+#                180 s. The keyless scrape path cannot sustain agentic traffic.
+#                (An earlier note here called brave simply "dead"; it is not —
+#                it works, then throttles hard. Use braveapi with a key.)
+#   duckduckgo   0/25, CAPTCHA on every query. This is the plain html.duckduckgo
+#                path, distinct from `duckduckgo web`. Keeping both would also
+#                have doubled our load on the one upstream that does work.
+#   mojeek       0/25, HTTP 403 "access denied". (Now surfaced as an engine
+#                error; the old note that it fails silently is out of date.)
+#   mwmbl        3/25, the rest time out.
+#   yep          20/25 non-empty but only 17/25 useful, mean 7.6 results.
+#   google cse   25/25 and keyless, but it is a fourth path to Google's index;
+#                excluded to keep outbound fan-out at three engines.
+#   bing         TLS handshake fails from this network ("Basic Constraints of
+#                CA cert not marked critical" in bing.com's own chain).
+#   qwant        CAPTCHA-blocked.
+#   wikipedia,
+#   wikidata     Useless to Open WebUI specifically: both are display_type
+#                `infobox`, so their output lands in the JSON `infoboxes` key,
+#                and the adapter reads `results` only.

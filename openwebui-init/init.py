@@ -137,16 +137,18 @@ def apply_task_model_config(headers):
         raise RuntimeError(f"Failed to update task model config: HTTP {r_post.status_code}")
 
 
-# Web-search provider. DDGS (the library behind OWUI's "duckduckgo" engine) runs
-# inside the OWUI container, so no sidecar and no API key are needed. The backend
-# string is an ORDERED preference list tried in batches of ceil(count/10)+1 = 2
-# (verified in scripts/websearch/test_ddgs_selection.py); it must be explicit --
-# DDGS's default "auto" puts Wikipedia/Grokipedia first, and a wholly invalid
-# list silently falls back to "auto". Override per box with OWUI_DDGS_BACKEND /
-# OWUI_WEB_SEARCH_ENGINE (set OWUI_WEB_SEARCH_ENGINE=searxng to fall back to the
-# sidecar while it is still in docker-compose.yml). Qualification evidence:
-# docs/websearch-ddgs-qualification-2026-09-15.md.
-WEB_SEARCH_ENGINE = os.environ.get("OWUI_WEB_SEARCH_ENGINE", "duckduckgo").strip() or "duckduckgo"
+# Web-search provider. The default is the SearXNG sidecar, which pools three
+# engines qualified on 2026-09-16 (duckduckgo web, startpage, google): 25/25
+# sequential and 8/8 burst through Open WebUI's own request shape. Keyless, so
+# it works out of the box. See docs/websearch-searxng-qualification-2026-09-16.md.
+#
+# OWUI_WEB_SEARCH_ENGINE=duckduckgo switches to DDGS inside the OWUI container,
+# which needs no sidecar at all. It is NOT the default: the same study measured
+# DDGS at 1/8 under burst, and its backend string is an ORDERED preference list
+# that must be explicit -- DDGS's "auto" puts Wikipedia/Grokipedia first, and a
+# wholly invalid list silently falls back to "auto"
+# (docs/websearch-ddgs-qualification-2026-09-15.md).
+WEB_SEARCH_ENGINE = os.environ.get("OWUI_WEB_SEARCH_ENGINE", "searxng").strip() or "searxng"
 DDGS_BACKEND = os.environ.get("OWUI_DDGS_BACKEND", "google,duckduckgo,brave").strip() or "google,duckduckgo,brave"
 DDGS_BACKENDS_KNOWN = {"google", "duckduckgo", "brave", "mojeek", "startpage", "yahoo", "wikipedia", "grokipedia"}
 
@@ -197,28 +199,40 @@ def apply_web_search_config(headers):
     desired = {
         "ENABLE_WEB_SEARCH": True,
         "WEB_SEARCH_ENGINE": WEB_SEARCH_ENGINE,
-        "DDGS_BACKEND": validate_ddgs_backend(DDGS_BACKEND),
-        # SearXNG sidecar settings are kept so OWUI_WEB_SEARCH_ENGINE=searxng still works
-        # while the sidecar is being deprecated.
         "SEARXNG_QUERY_URL": "http://searxng:8080/search?q=<query>&format=json",
         "SEARXNG_LANGUAGE": "all",
         "WEB_SEARCH_RESULT_COUNT": 10,
-        # Semaphore over the queries of one chat-turn fan-out (NOT requests/second, and
-        # the DDGS adapter's own use of it is a no-op -- see the qualification report).
-        "WEB_SEARCH_CONCURRENT_REQUESTS": 5,
+        # Semaphore over the queries of ONE chat-turn fan-out, not requests/second.
+        # 1 because simultaneous queries are what trip engine rate limits: SearXNG
+        # already fans each single query out across its whole engine pool, so a
+        # concurrency of N multiplies that by N against the same upstreams.
+        "WEB_SEARCH_CONCURRENT_REQUESTS": 1,
         "WEB_SEARCH_DOMAIN_FILTER_LIST": [],
     }
+    # DDGS settings are pushed, and the backend list validated, ONLY in DDGS mode.
+    # Validating unconditionally meant a stale OWUI_DDGS_BACKEND could abort
+    # bring-up for a stack that never calls DDGS.
+    if WEB_SEARCH_ENGINE == "duckduckgo":
+        desired["DDGS_BACKEND"] = validate_ddgs_backend(DDGS_BACKEND)
+
     web.update(desired)
 
     r_post = requests.post(write_url, headers=headers, json={"web": web})
     if r_post.status_code != 200:
         raise RuntimeError(f"Failed to apply web search config: HTTP {r_post.status_code}")
+
+    # Readback is a WARNING, not an abort. The OWUI image is unpinned and
+    # re-pulled every run, so an upstream rename of a web-search key would
+    # otherwise take the entire stack down over a search setting.
     applied = r_post.json().get("web", {})
-    for k, v in desired.items():
-        if applied.get(k) != v:
-            raise RuntimeError(f"Web search config verification failed: {k}={applied.get(k)!r} (wanted {v!r})")
-    print(f"Web search config applied: engine={applied['WEB_SEARCH_ENGINE']} "
-          f"ddgs_backend={applied['DDGS_BACKEND']} enabled={applied['ENABLE_WEB_SEARCH']}")
+    drift = {k: applied.get(k) for k, v in desired.items() if applied.get(k) != v}
+    if drift:
+        print(f"WARNING: web search config did not read back as sent: {drift} "
+              f"(wanted {({k: desired[k] for k in drift})}). Web search may be "
+              f"misconfigured; check Admin Settings > Web Search.")
+    print(f"Web search config applied: engine={applied.get('WEB_SEARCH_ENGINE')} "
+          f"ddgs_backend={applied.get('DDGS_BACKEND', 'n/a')} "
+          f"enabled={applied.get('ENABLE_WEB_SEARCH')}")
 
 
 def assert_task_model_routing(headers):
