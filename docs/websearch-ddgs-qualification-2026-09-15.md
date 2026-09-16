@@ -1,6 +1,21 @@
 # DDGS as the Open WebUI web-search provider — qualification report (2026-09-15)
 
 Status: **BOUNDED HOST DIAGNOSIS COMPLETE — stock DDGS is not customer-qualified.** Ten-second-spaced DDGS searches passed the corpus, but bursts failed; SearXNG's alternate DuckDuckGo implementation passed the targeted corpus and burst. See §5–§7.
+
+> **CORRECTION 2026-09-16.** The measurements below stand. Two conclusions drawn
+> from them do not, and are superseded by
+> [`websearch-searxng-qualification-2026-09-16.md`](websearch-searxng-qualification-2026-09-16.md):
+>
+> 1. **DDGS is no longer the shipped default.** `openwebui-init/init.py` defaults
+>    to `searxng` again. DDGS remains available via `OWUI_WEB_SEARCH_ENGINE=duckduckgo`.
+> 2. **`keep_only: ["duckduckgo web"]` was the wrong shape.** That recommendation
+>    generalised single-engine-forced measurements to a production config that
+>    pools engines, and would have left the stack with no fallback: a one-engine
+>    instance returns zero results the moment its engine trips. The shipped
+>    whitelist is a three-engine pool.
+> 3. The §on-Google CAPTCHA observation was Google **via DDGS's scraper**.
+>    SearXNG's own `google` engine measured 25/25 on the same corpus; the two are
+>    different code paths and the result does not transfer.
 Scope: can `ddgs` (the library Open WebUI's `duckduckgo` engine wraps) provide useful
 general-web search per customer installation with no SearXNG sidecar, no API keys and
 no central subscription. Sections are labelled **[measured]**, **[inferred]** or

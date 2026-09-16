@@ -39,4 +39,7 @@ notes), `docs/work-queue.json` (JSON queue mirror; `PLAN.md` is the only queue).
 
 - [OpenWebUI reconciliation repair](openwebui-reconciliation-2026-09-14.md): C93 fixes discovery leakage and deployment verification beyond generated-file checks.
 
-- [DDGS web-search host diagnosis](websearch-ddgs-qualification-2026-09-15.md): provider cadence/burst limits, targeted SearXNG comparison, aggregate evidence and C96 follow-up.
+- [DDGS web-search host diagnosis](websearch-ddgs-qualification-2026-09-15.md): provider cadence/burst limits, targeted SearXNG comparison, aggregate evidence and C96 follow-up. Measurements stand; its DDGS-as-default conclusion is SUPERSEDED by the 2026-09-16 qualification below.
+
+- [SearXNG engine qualification](websearch-searxng-qualification-2026-09-16.md): C96 resolution. Picks the shipped keyless engine and pool (`duckduckgo web`, `startpage`, `google`), per-engine liveness and failure mechanisms, pooled burst evidence, security hardening and the retrieval-squeeze changes.
+- [Local-index web search](websearch-local-index.md): DEFERRED design. Tier-by-tier feasibility (DevDocs yes at ~0.57 GB, general web no), integration options and the acceptance criterion to pre-register if it is picked up.
