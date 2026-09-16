@@ -1,4 +1,39 @@
-# Web-search provider qualification (DDGS)
+# Web-search provider qualification
+
+Two harnesses. **`searxng_qualify.py` backs the current shipped configuration**
+(`docs/websearch-searxng-qualification-2026-09-16.md`); the DDGS harness
+documented below produced the earlier host study and is kept for comparison.
+
+## SearXNG engine qualification (`searxng_qualify.py`)
+
+Screens SearXNG engines for liveness and grades pools through Open WebUI's exact
+request shape. Two stages that answer different questions, deliberately not
+conflated: `--arms <name>` measures one engine alone (a screening device only),
+while `--arms "@default"` sends no `engines=` selector and therefore reproduces
+what Open WebUI actually generates. Every round re-measures a known-positive
+control arm and reports the round INVALID if it fails, so a zero can be trusted.
+
+`probe_settings.yml` is the probe-only instance config: it force-enables every
+keyless candidate so `engines=` can select it. It is never mounted by
+docker-compose.
+
+```sh
+docker run -d --name searxng-probe -p 127.0.0.1:8089:8080 \
+  -v "$PWD/scripts/websearch/probe_settings.yml:/etc/searxng/settings.yml:ro" \
+  -e SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml searxng/searxng:latest
+
+python3 scripts/websearch/searxng_qualify.py --out scripts/websearch/runs/screen-rN \
+  --label screen-rN --pace 1.2 \
+  --arms brave mojeek startpage yep mwmbl duckduckgo google "google cse"
+```
+
+Restart the probe container between stages to clear SearXNG-side engine
+suspension (this does NOT clear the upstream's own rate-limit memory, so arms
+ordered later meet a smaller budget — order the arm that matters first, or
+widest-first so the bias works against your recommendation). Output under
+`runs/` is gitignored: it contains live third-party result text.
+
+## DDGS qualification (`ddgs_qualify.py`)
 
 Bounded, provider-only qualification of the `ddgs` library as Open WebUI's
 web-search engine (`web.search.engine = duckduckgo`, `web.search.ddgs_backend =

@@ -1,0 +1,58 @@
+# SearXNG settings for the ENGINE PROBE ONLY — never mounted by docker-compose.
+#
+# Purpose: screen candidate `general` engines for liveness from this network
+# before choosing what the shipped searxng/settings.yml whitelists. Every
+# keyless candidate is force-enabled here (disabled:false, inactive:false) so
+# that `&engines=<name>` can select it; the shipped config enables far fewer.
+#
+# `marginalia` is deliberately absent: require_api_key is true upstream, which
+# fails the keyless-by-default requirement.
+use_default_settings: true
+
+server:
+  secret_key: "probe-only-not-a-production-key"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 20.0
+
+engines:
+  # --- known-positive controls -------------------------------------------
+  # A probe that cannot tell "engine is blocked" from "probe is broken" is
+  # worse than no probe. These two must return results in every round; a
+  # round where they do not is discarded rather than interpreted.
+  - name: duckduckgo web
+    disabled: false
+  - name: wikipedia
+    disabled: false
+
+  # --- redundancy candidates (all keyless) -------------------------------
+  - name: brave
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: startpage
+    disabled: false
+    inactive: false
+  - name: yep
+    disabled: false
+  - name: mwmbl
+    disabled: false
+
+  # --- incumbents, re-measured for comparison ----------------------------
+  - name: duckduckgo
+    disabled: false
+  - name: google
+    disabled: false
+  - name: google cse
+    disabled: false
+  - name: wikidata
+    disabled: false
