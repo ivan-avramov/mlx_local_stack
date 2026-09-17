@@ -235,6 +235,53 @@ def apply_web_search_config(headers):
           f"enabled={applied.get('ENABLE_WEB_SEARCH')}")
 
 
+def apply_ollama_config(headers):
+    """Disable the Ollama connection, which nothing in this stack serves.
+
+    OWUI migrated this out of the nested `ollama` blob (still what the
+    checked-in openwebui_config.json DB-export carries) into flattened
+    `ollama.*` keys, and its own seed_defaults sets `ollama.enable` to true.
+    So the file seed writes `enable: false` to a key nothing reads, and every
+    /api/models refresh probes a port with no listener. Pushing it live here,
+    every run, is the same treatment apply_web_search_config gives the other
+    half of that migration.
+
+    The base URLs and per-connection configs are preserved: OllamaConfigForm
+    requires both fields, and keeping them leaves the connection defined but
+    inert, so installing Ollama later is a UI toggle rather than a re-setup.
+    """
+    read_url = f"{BASE_URL}/ollama/config"
+    write_url = f"{BASE_URL}/ollama/config/update"
+
+    r_get = requests.get(read_url, headers=headers)
+    if r_get.status_code != 200:
+        raise RuntimeError(f"Failed to fetch ollama config: HTTP {r_get.status_code}")
+
+    current = r_get.json()
+    desired = {
+        "ENABLE_OLLAMA_API": False,
+        "OLLAMA_BASE_URLS": current.get("OLLAMA_BASE_URLS", []),
+        "OLLAMA_API_CONFIGS": current.get("OLLAMA_API_CONFIGS", {}),
+    }
+
+    r_post = requests.post(write_url, headers=headers, json=desired)
+    if r_post.status_code != 200:
+        raise RuntimeError(f"Failed to apply ollama config: HTTP {r_post.status_code}")
+
+    # Readback is a WARNING, not an abort -- same reasoning as the web-search
+    # config above: the OWUI image is unpinned and re-pulled every run, so an
+    # upstream rename of a key would otherwise take the whole stack down over
+    # a connection we do not even use.
+    applied = r_post.json()
+    if applied.get("ENABLE_OLLAMA_API") is not False:
+        print(f"WARNING: ollama config did not read back as sent "
+              f"(ENABLE_OLLAMA_API={applied.get('ENABLE_OLLAMA_API')!r}, wanted False). "
+              f"OpenWebUI may keep probing a nonexistent Ollama server; "
+              f"check Admin Settings > Connections.")
+    else:
+        print("Ollama connection disabled (nothing in this stack serves it).")
+
+
 def assert_task_model_routing(headers):
     """Fail the init container if OWUI would route task calls to a chat model.
 
@@ -325,6 +372,7 @@ def main():
     apply_model_configs(headers)
     apply_task_model_config(headers)
     apply_web_search_config(headers)
+    apply_ollama_config(headers)
 
     # Verify the routing actually landed. Must run LAST: it reads the live state
     # back, so it validates the pushes above rather than restating their intent.
