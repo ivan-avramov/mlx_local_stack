@@ -53,6 +53,35 @@ if [[ ! -f "$ENV_FILE" ]]; then
 else
   set -a; source "$ENV_FILE"; set +a
 fi
+
+# --- Container trust store -------------------------------------------------
+# Give the containers the same level of trust this host has. Behind a
+# TLS-inspecting proxy the host trusts a corporate CA (normally via
+# SSL_CERT_FILE in the shell profile) that a container, trusting only its own
+# certifi bundle, does not -- so every HTTPS call from a container fails with
+# CERTIFICATE_VERIFY_FAILED. Resolution and the reasons a bad bundle aborts
+# rather than degrading are in scripts/resolve_ca_bundle.sh; the mount and the
+# container-side variables are in docker-compose.ca.yml.
+#
+# Nothing declared (the common case) leaves the stack byte-identical to before.
+# `set +e` around the capture because `rc=$?` after a failing command
+# substitution under `set -e` never runs (AGENTS.md).
+set +e
+STACK_CA_BUNDLE="$("$(dirname "$0")/scripts/resolve_ca_bundle.sh")"
+CA_RC=$?
+set -e
+if [ $CA_RC -ne 0 ]; then
+  log_fail "Refusing to start: the declared CA bundle is unusable (see above).\n"
+  exit 1
+fi
+if [ -n "$STACK_CA_BUNDLE" ]; then
+  export STACK_CA_BUNDLE
+  # Exported, not passed as -f flags: this script calls `docker compose` from
+  # seven places including the cleanup trap, and a missed flag there would tear
+  # down a different project than the one it brought up.
+  export COMPOSE_FILE="docker-compose.yml:docker-compose.ca.yml"
+  log_ok "Mirroring the host CA bundle into the containers.\n"
+fi
 echo
 echo "Syncing submodules..."
 # Start the dependency revisions validated and committed by upstream maintenance.

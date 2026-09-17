@@ -1,0 +1,53 @@
+# Mirrors the host's CA bundle into every container.
+#
+# OVERLAY, activated by runserver.sh only when a bundle resolves (see
+# scripts/resolve_ca_bundle.sh). It is never used on its own:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ca.yml up
+#
+# runserver.sh exports COMPOSE_FILE so every `docker compose` call in the
+# script -- including the `down` in the cleanup trap -- picks it up.
+#
+# WHY A SEPARATE FILE rather than a conditional block in docker-compose.yml: a
+# volume whose source comes from an unset variable is a hard compose error
+# ("invalid spec: :/etc/ssl/...:ro: empty section between colons"), so the
+# mount cannot sit in the base file and be inert when nothing is configured.
+#
+# WHY THE VARIABLES ARE ASSIGNED LITERAL CONTAINER PATHS: writing
+# `- SSL_CERT_FILE` instead would make compose resolve the name from the
+# INVOKING SHELL. On a host that exports it (the normal case behind TLS
+# inspection) that injects a HOST path into the container, where the file does
+# not exist, and every TLS call dies with FileNotFoundError instead of working.
+# The host path enters only as the bind-mount SOURCE.
+#
+# WHY EVERY SERVICE: the containers get the same level of trust the host has,
+# rather than a per-service guess about which one needs it today (operator,
+# 2026-09-16). Note this buys uniform CONFIGURATION, not uniform BEHAVIOUR --
+# measured on this box, the same bundle is accepted by open-webui (Debian) and
+# rejected by searxng (Alpine) with "Basic Constraints of CA cert not marked
+# critical", because the corporate CA is not RFC 5280 compliant and stricter
+# verifiers refuse it. Nothing repo-side can fix that; see docs/box-notes.md.
+services:
+  open-webui:
+    volumes:
+      - "${STACK_CA_BUNDLE}:/etc/ssl/stack-ca-bundle.pem:ro"
+    environment:
+      - 'SSL_CERT_FILE=/etc/ssl/stack-ca-bundle.pem'
+      - 'REQUESTS_CA_BUNDLE=/etc/ssl/stack-ca-bundle.pem'
+      - 'CURL_CA_BUNDLE=/etc/ssl/stack-ca-bundle.pem'
+
+  open-webui-init:
+    volumes:
+      - "${STACK_CA_BUNDLE}:/etc/ssl/stack-ca-bundle.pem:ro"
+    environment:
+      - 'SSL_CERT_FILE=/etc/ssl/stack-ca-bundle.pem'
+      - 'REQUESTS_CA_BUNDLE=/etc/ssl/stack-ca-bundle.pem'
+      - 'CURL_CA_BUNDLE=/etc/ssl/stack-ca-bundle.pem'
+
+  searxng:
+    volumes:
+      - "${STACK_CA_BUNDLE}:/etc/ssl/stack-ca-bundle.pem:ro"
+    environment:
+      - 'SSL_CERT_FILE=/etc/ssl/stack-ca-bundle.pem'
+      - 'REQUESTS_CA_BUNDLE=/etc/ssl/stack-ca-bundle.pem'
+      - 'CURL_CA_BUNDLE=/etc/ssl/stack-ca-bundle.pem'
