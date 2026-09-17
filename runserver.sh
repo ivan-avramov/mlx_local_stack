@@ -36,6 +36,15 @@ export MLX_VLM_LOG_LEVEL="INFO"
 # breaks offline. Changing it invalidates existing embeddings: re-index any
 # knowledge base after a change (384 dims for this model).
 export EMBEDDING_MODEL="sentence-transformers/all-MiniLM-L6-v2"
+# OpenWebUI reads these at STARTUP, before the init container is allowed to run
+# (it waits for health), and builds its embedding function from them. Setting
+# them only through init.py's API push is too late: the in-container model is
+# already loaded by then, and the seed re-import wipes the pushed value on the
+# next boot anyway. See the docker-compose.yml comment for the full mechanism.
+export RAG_EMBEDDING_ENGINE="openai"
+export RAG_EMBEDDING_MODEL="$EMBEDDING_MODEL"
+export RAG_OPENAI_API_BASE_URL="http://host.docker.internal:${TASK_MODEL_PORT}/v1"
+export RAG_OPENAI_API_KEY="not-needed"
 export TASK_MODEL_LOG_FILE="logs/task_model.log"
 export TASK_MODEL_LOG_FILE0="logs/task_model_0.log"
 export TASK_MODEL_LOG_LEVEL="INFO"

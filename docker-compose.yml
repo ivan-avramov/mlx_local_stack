@@ -33,6 +33,29 @@ services:
       - HF_TOKEN
       - 'HF_HOME=/root/.cache/huggingface'
       - 'SENTENCE_TRANSFORMERS_HOME=/root/.cache/huggingface'
+      # RAG embeddings must be routed BEFORE startup, not after. OpenWebUI
+      # builds its embedding function during the startup lifespan, while the
+      # init container is still blocked on `condition: service_healthy` -- so
+      # init.py's API push lands ~2s too late and the in-container
+      # SentenceTransformers model has already been loaded (and revalidated
+      # against Hugging Face, which is what breaks offline).
+      #
+      # These are the seeded DEFAULTS' source: config.py maps
+      # 'rag.embedding_engine' -> RAG_EMBEDDING_ENGINE, and seed_defaults
+      # rewrites every missing key from them on each boot. That matters here
+      # because runserver.sh re-copies openwebui_config.json every run and
+      # OpenWebUI's import_legacy_config_json() REPLACES the config store with
+      # it, after which all 344 defaults are re-seeded -- so anything init
+      # pushed last run is gone by the time startup reads it.
+      #
+      # Bare names: unset under a bare `docker compose up`, where compose omits
+      # them entirely and OpenWebUI keeps its own defaults. runserver.sh
+      # exports all four. init.py still pushes the same values afterwards, as
+      # the reconciliation that also corrects drift saved through the UI.
+      - RAG_EMBEDDING_ENGINE
+      - RAG_EMBEDDING_MODEL
+      - RAG_OPENAI_API_BASE_URL
+      - RAG_OPENAI_API_KEY
     extra_hosts:
       # Allows the container to talk to the mlx-serve / mlx_vlm servers on the Mac host
       - "host.docker.internal:host-gateway"

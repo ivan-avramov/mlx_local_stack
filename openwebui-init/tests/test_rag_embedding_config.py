@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # init.py reads its container environment at import time; dummies for a CPU test.
@@ -108,3 +110,34 @@ def test_readback_drift_warns_but_does_not_abort(monkeypatch):
     monkeypatch.setenv("EMBEDDING_MODEL", MODEL)
     _stub(monkeypatch, calls, mutate={"RAG_EMBEDDING_ENGINE": ""})
     init.apply_rag_embedding_config({})  # must not raise
+
+
+# ------------------------------------------- the API push alone is NOT enough
+# OpenWebUI builds its embedding function during the STARTUP lifespan, while
+# the init container is still blocked on `condition: service_healthy`. Measured
+# 2026-09-16: the in-container SentenceTransformers model loaded at 01:52:32 and
+# init's push landed at 01:52:34 -- two seconds too late, after the model had
+# been loaded and revalidated against Hugging Face. The environment is the only
+# hook that runs early enough, because config.py maps these names onto the
+# seeded defaults (`'rag.embedding_engine': RAG_EMBEDDING_ENGINE`).
+STARTUP_VARS = ("RAG_EMBEDDING_ENGINE", "RAG_EMBEDDING_MODEL",
+                "RAG_OPENAI_API_BASE_URL", "RAG_OPENAI_API_KEY")
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def test_compose_passes_the_startup_vars_to_open_webui():
+    yaml = pytest.importorskip("yaml")
+    compose = yaml.safe_load((REPO / "docker-compose.yml").read_text())
+    env = compose["services"]["open-webui"]["environment"]
+    for var in STARTUP_VARS:
+        assert var in env, (
+            f"{var} must reach open-webui as a BARE name: compose then omits it "
+            f"entirely when unset, so a bare `docker compose up` keeps "
+            f"OpenWebUI's own defaults instead of being handed empty strings.")
+
+
+def test_runserver_exports_the_startup_vars():
+    text = (REPO / "runserver.sh").read_text()
+    for var in STARTUP_VARS:
+        assert f"export {var}=" in text, f"runserver.sh must export {var}"
