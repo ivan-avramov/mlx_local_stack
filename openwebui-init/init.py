@@ -235,6 +235,73 @@ def apply_web_search_config(headers):
           f"enabled={applied.get('ENABLE_WEB_SEARCH')}")
 
 
+def apply_rag_embedding_config(headers):
+    """Point RAG embeddings at the task-model mlx_vlm instance.
+
+    An empty RAG_EMBEDDING_ENGINE means OWUI loads SentenceTransformers inside
+    the container, which fetches the model from Hugging Face on every cold
+    boot: fatal offline, and fatal behind TLS inspection (the container trusts
+    certifi only). Which model that is, is OWUI's choice and can change under
+    an unpinned image, so we override the engine rather than chase the model.
+
+    The endpoint is the TASK model (:8092), never the :8000 router --
+    mlx-serve's /v1/embeddings calls process_manager.unload() first, so routing
+    RAG there would evict the resident chat model on every chunk and every
+    query. mlx_vlm keeps embedding models in their own cache group
+    (server/app.py::_cache_group_for_cache), so the embedding model lives
+    alongside the task model instead of displacing it.
+
+    EMBEDDING_MODEL is exported by runserver.sh, which also passes it to that
+    server as --embedding-model. A bare `docker compose up` sets neither, and
+    leaving OWUI's own default alone beats aborting the whole bring-up.
+    """
+    model = os.environ.get("EMBEDDING_MODEL", "").strip()
+    if not model:
+        print("WARNING: EMBEDDING_MODEL is unset; leaving OpenWebUI's RAG embedding "
+              "config alone. Knowledge/RAG will use OpenWebUI's in-container default, "
+              "which needs to reach Hugging Face on first use. runserver.sh exports it.")
+        return
+
+    read_url = f"{BASE_URL}/api/v1/retrieval/embedding"
+    write_url = f"{BASE_URL}/api/v1/retrieval/embedding/update"
+    port = os.environ.get("TASK_MODEL_PORT", "8092")
+
+    r_get = requests.get(read_url, headers=headers)
+    if r_get.status_code != 200:
+        raise RuntimeError(f"Failed to fetch embedding config: HTTP {r_get.status_code}")
+
+    current = r_get.json()
+    desired = {
+        "RAG_EMBEDDING_ENGINE": "openai",
+        "RAG_EMBEDDING_MODEL": model,
+        # OpenAIConfigForm is {url, key}. The key is unused by mlx_vlm but the
+        # OpenAI client refuses to send a request without one.
+        "openai_config": {
+            "url": f"http://host.docker.internal:{port}/v1",
+            "key": "not-needed",
+        },
+        "RAG_EMBEDDING_BATCH_SIZE": current.get("RAG_EMBEDDING_BATCH_SIZE", 1),
+    }
+
+    r_post = requests.post(write_url, headers=headers, json=desired)
+    if r_post.status_code != 200:
+        raise RuntimeError(f"Failed to apply embedding config: HTTP {r_post.status_code}")
+
+    # Readback is a WARNING, not an abort -- same reasoning as the web-search
+    # and ollama pushes above: the OWUI image is unpinned and re-pulled every
+    # run, so an upstream rename must not take the whole stack down.
+    applied = r_post.json()
+    drift = {k: applied.get(k) for k in ("RAG_EMBEDDING_ENGINE", "RAG_EMBEDDING_MODEL")
+             if applied.get(k) != desired[k]}
+    if drift:
+        print(f"WARNING: embedding config did not read back as sent: {drift} "
+              f"(wanted {({k: desired[k] for k in drift})}). RAG may still embed "
+              f"in-container; check Admin Settings > Documents.")
+    else:
+        print(f"RAG embeddings routed to the task-model server "
+              f"(:{port}, {model}).")
+
+
 def apply_ollama_config(headers):
     """Disable the Ollama connection, which nothing in this stack serves.
 
@@ -373,6 +440,7 @@ def main():
     apply_task_model_config(headers)
     apply_web_search_config(headers)
     apply_ollama_config(headers)
+    apply_rag_embedding_config(headers)
 
     # Verify the routing actually landed. Must run LAST: it reads the live state
     # back, so it validates the pushes above rather than restating their intent.

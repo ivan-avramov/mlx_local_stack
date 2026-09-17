@@ -17,6 +17,25 @@ OWUI_URL=http://localhost:3000
 export HF_HOME="${HOME}/.cache/huggingface"
 export MLX_VLM_LOG_FILE="logs/mlx_vlm.log"
 export MLX_VLM_LOG_LEVEL="INFO"
+# OpenWebUI's RAG embedding model, CO-HOSTED by the task-model server below.
+#
+# Hardcoded here, not in main_models.yaml: that file is the mlx-serve registry,
+# and this model must never become a router model. Routing embeddings through
+# the :8000 router would be actively harmful anyway -- mlx-serve's
+# /v1/embeddings calls process_manager.unload() first, so every chunk and every
+# query would evict the resident chat model.
+#
+# It shares the task model's process rather than taking a third one because
+# mlx_vlm puts embedding models in their own cache group
+# (server/app.py::_cache_group_for_cache), so the two live side by side.
+# Verified 2026-09-16: after serving embeddings, :8092/v1/models lists both and
+# no `Loading model:` line appears -- the task model is not reloaded.
+#
+# openwebui-init/init.py reads this to point OWUI's RAG engine at :8092. Without
+# it OWUI embeds in-container, which needs Hugging Face on first use and so
+# breaks offline. Changing it invalidates existing embeddings: re-index any
+# knowledge base after a change (384 dims for this model).
+export EMBEDDING_MODEL="sentence-transformers/all-MiniLM-L6-v2"
 export TASK_MODEL_LOG_FILE="logs/task_model.log"
 export TASK_MODEL_LOG_FILE0="logs/task_model_0.log"
 export TASK_MODEL_LOG_LEVEL="INFO"
@@ -64,6 +83,7 @@ log_ok "Backup completed.\n"
 echo "Starting task model (mlx_vlm, ${TASK_MODEL_URL})..."
 uv run python -u -m mlx_vlm.server \
   --model $TASK_MODEL \
+  --embedding-model $EMBEDDING_MODEL \
   --host $TASK_MODEL_HOST \
   --port $TASK_MODEL_PORT \
   --log-level $TASK_MODEL_LOG_LEVEL \
