@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # init.py reads its container environment at import time; dummies for a CPU test.
@@ -82,6 +84,20 @@ def test_it_targets_the_ollama_router_endpoints(monkeypatch):
     init.apply_ollama_config({})
     assert calls["get_url"].endswith("/ollama/config")
     assert calls["post_url"].endswith("/ollama/config/update")
+
+
+def test_compose_disables_ollama_at_startup_too():
+    """The API push cannot be the only mechanism: any model refresh that runs
+    BEFORE it -- including the one init.py itself triggers while reconciling
+    models -- probes :11434 and logs a connection error. config.py maps
+    'ollama.enable' onto ENABLE_OLLAMA_API, so the environment is what makes
+    the seeded default false from the first moment.
+    """
+    yaml = pytest.importorskip("yaml")
+    from pathlib import Path as _P
+    compose = yaml.safe_load((_P(__file__).resolve().parents[2] / "docker-compose.yml").read_text())
+    env = compose["services"]["open-webui"]["environment"]
+    assert "ENABLE_OLLAMA_API=false" in env
 
 
 def test_readback_drift_warns_but_does_not_abort(monkeypatch):

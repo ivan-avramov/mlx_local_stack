@@ -27,6 +27,15 @@ services:
       - 'RAG_WEB_SEARCH_RESULT_COUNT=10'
       - 'RAG_WEB_SEARCH_CONCURRENT_REQUESTS=1'
       - 'ENABLE_EVALUATION_ARENA_MODELS=false'
+      # Nothing in this stack serves Ollama, and every model refresh that runs
+      # before init.py's push probes host.docker.internal:11434 and logs a
+      # connection error. config.py maps 'ollama.enable' -> ENABLE_OLLAMA_API,
+      # so this makes the SEEDED DEFAULT false -- at startup, and again each
+      # time the config store is rebuilt by the openwebui_config.json import.
+      # A literal rather than a passthrough: this stack never serves Ollama,
+      # however it is started. init.py still pushes it, which is what preserves
+      # the base URLs so the connection stays one UI toggle away.
+      - 'ENABLE_OLLAMA_API=false'
       - 'WEBUI_ADMIN_EMAIL=${OWUI_ADMIN_EMAIL}'
       - 'WEBUI_ADMIN_PASSWORD=${OWUI_ADMIN_PASSWORD}'
       - 'WEBUI_ADMIN_NAME=Admin'
