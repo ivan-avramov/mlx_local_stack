@@ -33,15 +33,17 @@ is using it. Verify PIDs/ports before any lifecycle action.
   shipped C-menu models are `function_calling: native`, so OWUI never runs the forced-RAG
   path — web search is the `search_web`/`fetch_url` builtin-tool path, `rag.top_k`/chunking/
   task-model query generation are not on it.
-- **C98 (new, operator decision):** `openwebui_config.json` rows `rag.top_k 12` and
+- **C98 (a) DONE (operator, P7):** seed rows reverted to the live values (`d20e926`). (c) audit still open. Original finding: `openwebui_config.json` rows `rag.top_k 12` and
   `web.loader.concurrent_requests 5` are NOT live (readback 3 and 10) — OWUI 0.11's flat
   per-key config table is not populated by the nested seed file; only `init.py`'s API
   calls take effect. Recommend reverting the two seed rows (no behaviour change) and a
   CPU-only audit of other seed-only values. Nothing changed in the seed file this session.
 
-## C91 — fork fix committed, NOT pushed
+## C91 — fork fix pushed and bumped (operator go, P9)
 
-- `../mlx-vlm` local commit `4d4575a7` on top of the installed `522671c4`:
+- Fork `4d4575a7` pushed to GitHub; stack gitlink bumped in `f623b6d` (fetched through the
+  submodule's GitHub origin). The RUNNING worker still executes the 522671c4 code it
+  imported at start; the fix takes effect at the next router restart. Commit body:
   `_process_cached_request` now sets `StreamingToken.token_count` from the increment of
   dispatch's cumulative `generation_tokens` (mirrors `_DiffusionBlockEmitter`); chunks
   without a count keep 1/chunk. Test `mlx_vlm/tests/test_cached_token_count.py` (7
@@ -58,29 +60,29 @@ is using it. Verify PIDs/ports before any lifecycle action.
   needs the daily driver DOWN (one resident model) and must be proposed with exact
   requests before arming. Historical C84/C89 counts stay as recorded.
 
-## C92 — staged, awaiting explicit go
+## C92 — PUBLISHED 2026-09-20 (operator go, P8)
 
 - Prepared files re-hashed OK against `docs/huggingface-c89-prepared-2026-09-14.json`;
   result commit 4fb8425 is already on GitHub (origin/main == local before this
   session's commits). Both HF remotes are at the C88 revisions
   (`f2b38a25…` target, `41ee4495…` drafter); the C89 evidence file is NEW in each repo,
   README is an update (+19 lines each).
-- Publisher `$STACK_WORKDIR/hf-publish/c92-20260920/publish_c92.py` (parent-commit pin,
-  file-set and signature preservation, anonymous readback, receipt to
-  `docs/huggingface-c92-update-<date>.json`). Dry run clean. Run with `--apply` only on
-  an explicit instruction; then commit the receipt.
+- Published via `$STACK_WORKDIR/hf-publish/c92-20260920/publish_c92.py --apply`: target
+  `1dd70b36b8a800568576ad12fdeef3c7d3c2dc61`, drafter
+  `0caad904fdd7706310f42f342226e7ae9b2d55dc`; every other file's signature unchanged,
+  anonymous readback verified. Receipt `docs/huggingface-c92-update-2026-09-20.json`. Do not
+  rerun the publisher.
 
 ## Git
 
-This session's stack commits are LOCAL (gate + docs corrections; handoff). The fork
-commit is local. No push was authorized this turn; push only on an explicit
-in-turn instruction (stack first, then the fork + submodule bump as a separate unit).
+Operator authorized (2026-09-20, in turn): fork push, submodule bump, HF publication,
+then stack push — executed in that order. Verify `origin/main == HEAD` on resume.
 
 ## Resume discipline
 
 One resident model; APC absent; retained sessions 2; full active preallocation; deployed
 sampling and explicit served-overlay environment. Never alter source/config during a
 live run; preserve real data and recorded failures. Commit coherent units; push only on
-explicit current-turn instruction. Next decision id C99; discussion ids continue from P5
+explicit current-turn instruction. C98 (c) remains the only open C98 item. Next decision id C99; discussion ids continue from P5
 of this session's numbering (the P-sequence restarted at P1 on 2026-09-20 — earlier
 handoffs' P7xx numbering is historical).

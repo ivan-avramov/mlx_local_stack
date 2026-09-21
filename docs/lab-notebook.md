@@ -3854,3 +3854,4 @@ serialised harness, not real cost.
 - Pre-existing, unrelated: `test_speculative.py::test_general_quantized_verifier_matches_decode[127-nvfp4-4-16]` fails identically at pristine 522671c4 (`array_equal` False on the nvfp4 verifier). Not chased.
 - C92: prepared hashes verified, both HF remotes at the C88 revisions (f2b38a25 / 41ee4495), publisher `$STACK_WORKDIR/hf-publish/c92-20260920/publish_c92.py` dry-run clean. Publication awaits an explicit go.
 - Housekeeping: `git` was dead on this box until the operator accepted the Xcode license; `mlx_vlm/tests/test_smoke.py` is a script that `sys.exit`s on import — run the fork suite with `--ignore` for it and `test_models.py`.
+- Operator (later, same evening): P7 → C98(a) seed rows reverted (`d20e926`); P9 → fork `4d4575a7` pushed, submodule bumped (`f623b6d`); P8 → C92 PUBLISHED and verified (target `1dd70b36`, drafter `0caad904`; receipt `docs/huggingface-c92-update-2026-09-20.json`), then stack pushed.

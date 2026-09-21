@@ -1,5 +1,7 @@
 # Hugging Face artifact and model-card audit — 2026-09-14
 
+**C92 publication follow-up, 2026-09-20:** the same two cards now carry the C89 depth-qualification result (retrieval 25/25 through 128000, chain-4 39/39 through 156000) and a new dated `evaluation/C89-evidence-2026-09-14.json`; parent commits were the C88 revisions, all other files byte-identical, anonymous readback verified. [Receipt](huggingface-c92-update-2026-09-20.json).
+
 **C88 publication follow-up, 2026-09-14:** the two cards for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter` now include the shipped-config20-image PASS result and a new dated C88 evidence file. All four uploaded files were anonymously read back; all23 other file signatures remain unchanged. The M44 audit and its dated evidence below remain the historical snapshot. [Publication revisions and hashes](huggingface-c88-update-2026-09-14.json).
 
 **M44 complete.** All 13 public repositories were audited: nine target/mirror models and four MTP companions. Authenticated enumeration confirmed the same 13 repositories and zero private models. All 139 model/support files match local counterparts after a local cache repair. All 13 cards and dated evidence files are published and independently verified anonymously. Published model artifacts were unchanged.
