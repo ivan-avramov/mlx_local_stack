@@ -1,4 +1,4 @@
-# Handoff — 2026-09-20: C97 closed by e2e gate; C98 filed; C91 fixed in the fork (unpushed); C92 staged
+# Handoff — 2026-09-20: C97 closed by e2e gate; C98(a) done; C91 fork fix pushed + bumped; C92 published; stack pushed
 
 Read this first, then `docs/PLAN.md` and `docs/open-questions.md`. Reports this session:
 [web-search e2e gate](websearch-e2e-gate-2026-09-20.md) (+ public aggregate
@@ -36,8 +36,8 @@ is using it. Verify PIDs/ports before any lifecycle action.
 - **C98 (a) DONE (operator, P7):** seed rows reverted to the live values (`d20e926`). (c) audit still open. Original finding: `openwebui_config.json` rows `rag.top_k 12` and
   `web.loader.concurrent_requests 5` are NOT live (readback 3 and 10) — OWUI 0.11's flat
   per-key config table is not populated by the nested seed file; only `init.py`'s API
-  calls take effect. Recommend reverting the two seed rows (no behaviour change) and a
-  CPU-only audit of other seed-only values. Nothing changed in the seed file this session.
+  calls take effect. The seed rows are now reverted; the
+  CPU-only audit of other seed-only values (C98 c) is the remaining item.
 
 ## C91 — fork fix pushed and bumped (operator go, P9)
 
@@ -54,7 +54,7 @@ is using it. Verify PIDs/ports before any lifecycle action.
 - Pre-existing unrelated failure: `test_speculative.py::test_general_quantized_verifier_matches_decode[127-nvfp4-4-16]`
   fails identically at pristine 522671c4. Not chased; note it if the fork is bumped.
 - Remaining C91 steps (spec `docs/specs/c91-terminal-token-accounting.md`, items 4–5):
-  cold review; push the fork (explicit approval); submodule bump commit; then a bounded
+  cold review (not yet done); then a bounded
   real-server validation on `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` — the saved
   `max_tokens: 1` calibration shape plus normal-stop and bounded-length controls — which
   needs the daily driver DOWN (one resident model) and must be proposed with exact
