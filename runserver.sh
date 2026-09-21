@@ -208,8 +208,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "Seeding OpenWebUI config..."
-cp openwebui_config.json open-webui-data/config.json
+# No config-file seed (C100, 2026-09-21): OpenWebUI settings are owned by
+# openwebui-init/init.py's API calls and the compose environment; the legacy
+# nested seed never reached the flat config table (C98).
 
 # --- Start the compose stack (foreground, so script stays alive) ---
 docker compose build open-webui-init

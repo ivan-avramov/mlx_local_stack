@@ -11,7 +11,7 @@ a rule here and a doc disagree, this file wins and the doc needs a dated correct
 
 ## Entry points & logs
 
-- `runserver.sh` (full bring-up; reads `.env` for `HF_TOKEN`), `main_models.yaml` (mlx-serve registry), `openwebui_config.json` (seeded each start), `do_backup.py`.
+- `runserver.sh` (full bring-up; reads `.env` for `HF_TOKEN`), `main_models.yaml` (mlx-serve registry), `do_backup.py`.
 - Logs: `logs/{mlx_vlm,task_model,main_model,compose}.log`.
 
 ## Client/agent integrations (configs we ship)
@@ -27,7 +27,7 @@ Five clients, all pointed at the mlx-serve router (`localhost:8000`, OpenAI-comp
 | `zed_config/settings.snippet.jsonc` | Zed editor assistant | registration-only |
 
 - Enable `web_search` and `code_interpreter` in presentation capabilities and default features for every shipped OpenWebUI chat model. Keep the hidden task model separate.
-- **An OpenWebUI setting is live only if `openwebui-init/init.py` applies it through the HTTP API** (C98, 2026-09-20): OWUI 0.11 reads a flat per-key config table; the nested `openwebui_config.json` seed does not populate it. Verify with `GET /api/v1/retrieval/config` (or the relevant `/api/v1/*/config`), never from the seed file. Shipped chat models use `function_calling: native` → web search is the `search_web`/`fetch_url` tool path (no forced RAG, no `rag.top_k`); gate: `scripts/websearch/owui_e2e_gate.py`.
+- **An OpenWebUI setting is live only if `openwebui-init/init.py` applies it through the HTTP API** (C98, 2026-09-20): OWUI 0.11 reads a flat per-key config table; the legacy nested seed file never populated it and was RETIRED (C100, 2026-09-21) — there is no config-file seed; `init.py` + the compose environment own every setting. Verify with `GET /api/v1/retrieval/config` (or the relevant `/api/v1/*/config`), never from the seed file. Shipped chat models use `function_calling: native` → web search is the `search_web`/`fetch_url` tool path (no forced RAG, no `rag.top_k`); gate: `scripts/websearch/owui_e2e_gate.py`.
 - Regenerate OpenWebUI models and deployment policy with `configgen`; never hand-edit generated JSON. Verify allowlists, default selection, model params and task routing after reconciliation. OpenWebUI uses the ordered `openwebui.models` C menu. Keep the task model active with `meta.hidden: true`; exclude other main models, candidates and router-only entries.
 - **full-sampling** carriers hold the complete per-model sampling (temp, top_p, top_k, min_p, presence_penalty, max_tokens, enable_thinking, thinking_budget). **registration-only** carriers declare model+context+capabilities; they get the tuned config via the registry's `generation_defaults` (FU-2, 2026-07-09: mlx-serve forwards per-model defaults, applied only when a request omits a field — see `docs/serving-path.md`).
 - **A per-model sampling/thinking change must hit ALL FOUR carriers**: `opencode_config/opencode.json`, `aider_config/aider.model.settings.yml`, `openwebui-init/models_config.json` (then `publish_models.py`), AND `main_models.yaml` `generation_defaults`. Then audit for drift. A new model/context/capability change touches all five configs + the registry.

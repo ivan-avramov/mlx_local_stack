@@ -175,14 +175,11 @@ def validate_ddgs_backend(backend, known=DDGS_BACKENDS_KNOWN):
 def apply_web_search_config(headers):
     """Enable Web Search and pin the provider (DDGS by default, SearXNG on request).
 
-    OWUI >=0.10 flattened this out of the old rag.web.search.* nesting
-    (still what the checked-in openwebui_config.json DB-export uses) into
+    OWUI >=0.10 flattened this out of the old rag.web.search.* nesting into
     a top-level web.search.* config namespace served by the retrieval
-    router. The docker-compose `cp openwebui_config.json
-    open-webui-data/config.json` seed step only applies to a brand-new
-    config store, so a box whose DB predates this schema silently stays
-    at OWUI's defaults (search disabled) no matter what the checked-in
-    file says. Pushing it live here, every run, keeps it in sync instead --
+    router. The legacy config-file seed (retired, C100 2026-09-21) never
+    reached that flat table, so OWUI's defaults (search disabled) would
+    stand on their own. Pushing it live here, every run, keeps it in sync --
     and overrides any value an admin later saved through the UI (the UI
     dropdown can only pick a single DDGS backend; the list lives here).
     """
@@ -305,11 +302,11 @@ def apply_rag_embedding_config(headers):
 def apply_ollama_config(headers):
     """Disable the Ollama connection, which nothing in this stack serves.
 
-    OWUI migrated this out of the nested `ollama` blob (still what the
-    checked-in openwebui_config.json DB-export carries) into flattened
-    `ollama.*` keys, and its own seed_defaults sets `ollama.enable` to true.
-    So the file seed writes `enable: false` to a key nothing reads, and every
-    /api/models refresh probes a port with no listener. Pushing it live here,
+    OWUI migrated this out of the nested `ollama` blob into flattened
+    `ollama.*` keys, and its own seed_defaults sets `ollama.enable` to true
+    (the retired config-file seed only ever wrote the nested blob nothing
+    reads), so every /api/models refresh probes a port with no listener
+    unless this is pushed. Pushing it live here,
     every run, is the same treatment apply_web_search_config gives the other
     half of that migration.
 

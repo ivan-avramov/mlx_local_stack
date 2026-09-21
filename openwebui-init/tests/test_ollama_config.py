@@ -52,8 +52,8 @@ def _stub(monkeypatch, calls, existing=None, mutate=None):
 def test_ollama_api_is_disabled(monkeypatch):
     """OWUI's own seed_defaults sets the flattened `ollama.enable` to true.
 
-    openwebui_config.json only carries the legacy NESTED `ollama` blob, which
-    current OWUI no longer reads, so the file seed cannot turn this off.
+    There is no config-file seed any more (C100); only this API push turns
+    it off.
     """
     calls = {}
     _stub(monkeypatch, calls)

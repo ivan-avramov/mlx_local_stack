@@ -16,7 +16,7 @@ The existing generator writes:
 
 `runserver.sh` checks generated files before launch and reads the task model from those settings. `init.py` and `publish_models.py` share `reconcile_models.py`. They reconcile both connections, model defaults, global default selection and task routing, then verify saved state and the refreshed combined model list. An empty router allowlist is not used: it exposes benchmark-only registrations.
 
-The legacy `openwebui_config.json` seeds unrelated UI settings. It does not own model selection or per-model parameters. Existing chats and explicit user/chat overrides can still select different parameters; profile filters are intentional overrides, not registry defaults.
+There is no config-file seed (the legacy `openwebui_config.json` was retired in C100, 2026-09-21: its nested rows never reached OWUI's flat config table). `init.py` and the compose environment own every setting. Existing chats and explicit user/chat overrides can still select different parameters; profile filters are intentional overrides, not registry defaults.
 
 ## Update a running instance
 

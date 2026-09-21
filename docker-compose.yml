@@ -30,8 +30,8 @@ services:
       # Nothing in this stack serves Ollama, and every model refresh that runs
       # before init.py's push probes host.docker.internal:11434 and logs a
       # connection error. config.py maps 'ollama.enable' -> ENABLE_OLLAMA_API,
-      # so this makes the SEEDED DEFAULT false -- at startup, and again each
-      # time the config store is rebuilt by the openwebui_config.json import.
+      # so this makes the SEEDED DEFAULT false at startup (there is no
+      # config-file import any more; C100 retired the legacy seed).
       # A literal rather than a passthrough: this stack never serves Ollama,
       # however it is started. init.py still pushes it, which is what preserves
       # the base URLs so the connection stays one UI toggle away.
@@ -51,11 +51,10 @@ services:
       #
       # These are the seeded DEFAULTS' source: config.py maps
       # 'rag.embedding_engine' -> RAG_EMBEDDING_ENGINE, and seed_defaults
-      # rewrites every missing key from them on each boot. That matters here
-      # because runserver.sh re-copies openwebui_config.json every run and
-      # OpenWebUI's import_legacy_config_json() REPLACES the config store with
-      # it, after which all 344 defaults are re-seeded -- so anything init
-      # pushed last run is gone by the time startup reads it.
+      # fills every MISSING key from them on each boot. (Until C100 retired
+      # the legacy config-file seed, runserver.sh re-imported it every run and
+      # the store was rebuilt from scratch; now init.py's pushes persist, but
+      # the startup-ordering point above still stands.)
       #
       # Bare names: unset under a bare `docker compose up`, where compose omits
       # them entirely and OpenWebUI keeps its own defaults. runserver.sh
