@@ -47,8 +47,10 @@ Instrument + defaults under `$STACK_WORKDIR/scratch/c98c/`. Instrument trap reco
 `Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit` was acquired, converted and Stage-2 screened in
 August (hep 92.0/90 strict, mbpp 74.0/74, 0 DNFs, +6.2pp hep at 3× speed vs the representative,
 INCONCLUSIVE n=50, pre-O36 profile). Never re-run at the deployed profile, never uploaded, no C-ladder axes.
-Operator: no need to pursue. Loose end: the local-only registry placeholder `Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit`
-in `main_models.yaml` (remove or keep is a registry-of-record call).
+Operator: no need to pursue. Registry placeholder removed (operator go, same day); `model_settings.json` regenerated,
+`configgen check` clean, 104 configgen + provenance tests pass. Historical Stage-2 rows and the
+`benchmark/bench/model_params.py` map entry stay (grading of old rows). The converted weights in
+`$STACK_WORKDIR/models/` were NOT deleted (operator call).
 
 ## Parked / deferred (unchanged)
 
