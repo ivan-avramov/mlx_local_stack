@@ -3843,3 +3843,14 @@ serialised harness, not real cost.
   seven local overrides (diff = 14 lines, YAML parses, every local dir present). The live router reads an overlay file, so nothing served
   was affected. Rule added to the handoff.
 
+
+## 2026-09-20 (evening) — C97 ratified and closed by a 10/10 e2e gate; seed-file settings found inert (C98); C91 fork fix committed locally
+
+- Operator ratified P1–P4 (2026-09-20): C97 pool, e2e gate, C92 publication, C91 repair; declined the native16-vs-TQ4 quality run (P5), accepting the provisional labels.
+- Built `scripts/websearch/owui_e2e_gate.py` (+9 offline tests). First smoke FAILED on substance: with the web-search toggle on, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` answered "capital city of Australia" from weights, no tool call — on the native path search is the model's call. Gate now prefixes `Search the web and cite your sources: ` and records it. Smoke2 PASS; run1 (seed 20260920, 2/category, n=10) **PASS 10/10**, mean 35 s, max 60 s, 3 fetches, 0 fetch failures. `docs/websearch-e2e-gate-2026-09-20.md`.
+- MECHANISM: shipped models are `function_calling: native` → OWUI skips forced RAG entirely (`middleware.py`: only `legacy` runs `chat_web_search_handler`); the model gets `search_web` (snippets JSON) + `fetch_url` (page text). `rag.top_k`, chunking, the task model and the `<source>` template are not on the path. The 09-16 report's retrieval-squeeze reasoning was about a path we do not ship.
+- MECHANISM: OWUI 0.11 config = flat per-key table. `GET /api/v1/retrieval/config` → `TOP_K 3`, loader concurrency 10; the seed file says 12/5 and those live as an unread nested `rag` blob row. Only API-applied settings are live. C98 filed; AGENTS.md rule added.
+- C91: failing-test-first in the fork (`mlx_vlm/tests/test_cached_token_count.py`, 5 of 7 failed at 522671c4), minimal increment accounting at the cached bridge (`_process_cached_request`), 116 seam tests + 4906 full-suite pass; committed locally as `4d4575a7`. NOT pushed; no submodule bump; bounded real-server validation NOT armed (needs the daily driver down).
+- Pre-existing, unrelated: `test_speculative.py::test_general_quantized_verifier_matches_decode[127-nvfp4-4-16]` fails identically at pristine 522671c4 (`array_equal` False on the nvfp4 verifier). Not chased.
+- C92: prepared hashes verified, both HF remotes at the C88 revisions (f2b38a25 / 41ee4495), publisher `$STACK_WORKDIR/hf-publish/c92-20260920/publish_c92.py` dry-run clean. Publication awaits an explicit go.
+- Housekeeping: `git` was dead on this box until the operator accepted the Xcode license; `mlx_vlm/tests/test_smoke.py` is a script that `sys.exit`s on import — run the fork suite with `--ignore` for it and `test_models.py`.

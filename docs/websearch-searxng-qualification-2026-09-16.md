@@ -9,6 +9,16 @@ mechanical expectations as the DDGS study (`scripts/websearch/queries.json`), so
 the two are comparable. Run artifacts contain live third-party result text and
 stay out of the repo (`scripts/websearch/runs/`, gitignored).
 
+> **Correction 2026-09-20** (`websearch-e2e-gate-2026-09-20.md`): the engine/pool
+> verdict below stands and is now backed by a 10/10 end-to-end gate. Two claims in
+> "Shipped configuration" do not: (1) the shipped C-menu models run
+> `function_calling: native`, so Open WebUI never runs the forced-RAG path this report
+> reasoned about — they get `search_web`/`fetch_url` tools, and `rag.top_k` /
+> `web.loader.concurrent_requests` play no part; (2) the `rag.top_k 3→12` and
+> `web.loader.concurrent_requests 1→5` rows were written to the seed file only —
+> Open WebUI 0.11 reads a flat per-key config table that the legacy nested seed does
+> not populate, so the live values are still 3 and 10. Decision item C98.
+
 ## Verdict
 
 Ship **SearXNG** with a three-engine whitelist: **`duckduckgo web`, `startpage`,

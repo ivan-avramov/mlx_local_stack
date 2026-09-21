@@ -33,6 +33,25 @@ ordered later meet a smaller budget — order the arm that matters first, or
 widest-first so the bias works against your recommendation). Output under
 `runs/` is gitignored: it contains live third-party result text.
 
+## End-to-end gate through Open WebUI (`owui_e2e_gate.py`)
+
+Pass/fail check that the shipped configuration delivers cited web evidence into
+answers on the path the daily driver takes: native function calling with the
+`search_web`/`fetch_url` builtin tools (the forced-RAG path is NOT used by the
+shipped models). One fresh saved chat per item in the frontend's own request shape,
+tool approval `full`, background tasks off; the persisted assistant message (tool
+calls, tool outputs, sources, final text) is read back over the HTTP API and graded
+mechanically; worker rounds and convergence come from the router log. Known-positive
+SearXNG self-test first; derived timeouts, retries=0; transport/wedge aborts are
+never graded. Gate chats are exported to `--out` (private) and deleted from Open
+WebUI. Result: `docs/websearch-e2e-gate-2026-09-20.md` (10/10 PASS).
+
+```sh
+.venv-bench/bin/python -m pytest scripts/websearch/test_owui_e2e_gate.py -q
+python3 scripts/websearch/owui_e2e_gate.py --out "$STACK_WORKDIR/websearch/<dir>/smoke" --label smoke --ids fact-05
+python3 scripts/websearch/owui_e2e_gate.py --out "$STACK_WORKDIR/websearch/<dir>/run1" --label run1 --per-category 2 --seed 20260920
+```
+
 ## DDGS qualification (`ddgs_qualify.py`)
 
 Bounded, provider-only qualification of the `ddgs` library as Open WebUI's
