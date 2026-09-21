@@ -43,4 +43,6 @@ notes), `docs/work-queue.json` (JSON queue mirror; `PLAN.md` is the only queue).
 
 - [SearXNG engine qualification](websearch-searxng-qualification-2026-09-16.md): C96 resolution. Picks the shipped keyless engine and pool (`duckduckgo web`, `startpage`, `google`), per-engine liveness and failure mechanisms, pooled burst evidence, security hardening and the retrieval-squeeze changes.
 - [Web-search end-to-end gate](websearch-e2e-gate-2026-09-20.md): C97 closure. 10/10 PASS through Open WebUI on the shipped NATIVE tool path (`search_web`/`fetch_url`); corrects the 09-16 report (forced-RAG/`top_k` reasoning does not apply; seed-file `top_k`/loader rows never went live → C98). Public aggregate `websearch-e2e-gate-2026-09-20.json`.
+- [C91 real-server validation](c91-real-server-validation-2026-09-21.md): cached-path token accounting fix validated live on the shipped pick (max-1/length → 1, max-64 → 64, stream = non-stream); cold-review findings → C99.
+- [C98(c) seed audit](c98c-seed-audit-2026-09-21.md): no `openwebui_config.json` row reaches the flat config table; six inert intents listed; disposition → C100.
 - [Local-index web search](websearch-local-index.md): DEFERRED design. Tier-by-tier feasibility (DevDocs yes at ~0.57 GB, general web no), integration options and the acceptance criterion to pre-register if it is picked up.
