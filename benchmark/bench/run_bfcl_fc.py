@@ -37,6 +37,14 @@ from .bfcl_adapter import (
 _DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "..", "bfcl_runs_fc")
 
 
+def _relative_registry(path):
+    if not path:
+        return None
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    ap = os.path.abspath(path)
+    return os.path.relpath(ap, repo) if ap.startswith(repo + os.sep) else os.path.basename(ap)
+
+
 def _write_result(out_root: str, result: dict) -> str:
     """Write <out_root>/bfcl.json. A failed run (acc is None) must never clobber a real
     prior score — same defect class documented in run_bfcl.py / test_run_bfcl_guard.py."""
@@ -139,7 +147,8 @@ def main(argv=None) -> int:
     provenance = {"sample_seed": args.sample_seed, "run_ids": run_ids,
                   "sampling_override": ({"temperature": args.temperature}
                                         if args.temperature is not None else None),
-                  "registry": os.environ.get("MLX_SERVE_CONFIG")}
+                  # repo-relative when under the repo: persisted rows must not carry home paths
+                  "registry": _relative_registry(os.environ.get("MLX_SERVE_CONFIG"))}
 
     gen_args = SimpleNamespace(
         model=[args.model],
