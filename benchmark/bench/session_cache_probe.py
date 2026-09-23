@@ -329,7 +329,12 @@ def main(argv=None) -> int:
     result["footprint_end"] = footprint(pid)
     out = Path(a.out) if a.out else REPO / "benchmark/results" / a.model / f"session_cache.{a.tag}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(result, indent=1))
+    text = json.dumps(result, indent=1)
+    # PUBLIC repo: no absolute home paths in persisted rows (AGENTS.md); scrub workdir first.
+    for real, ph in ((os.environ.get("STACK_WORKDIR"), "$STACK_WORKDIR"), (os.path.expanduser("~"), "$HOME")):
+        if real and real != "~":
+            text = text.replace(real, ph)
+    out.write_text(text)
     print(f"[m45] wrote {out}", flush=True)
     return 0
 
