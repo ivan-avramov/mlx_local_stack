@@ -121,3 +121,46 @@ Everything NVSY lives under `$STACK_WORKDIR/switchyard/` (binary, config, logs, 
 artifacts); results rows follow the normal `benchmark/results/` + manifest path with the
 system provenance above. No writes outside the workdir without explicit per-item approval
 (AGENTS.md Operating rules, 2026-08-18).
+
+## 8. 2026-09-23 review: escalation-router mechanics, and a DEFERRED alternative composition
+
+**Escalation-router mechanics as documented upstream** (`docs/routing_algorithms/escalation_router_routing.md`,
+`benchmark/routing-profiles/tb21-escalation-opus-glm-deepseek.toml`): every session starts on the
+weak tier; after each completed assistant turn the judge sees anchors + the last `recent_turn_window`
+(28) messages truncated to `window_message_chars` (500) including the weak reply, and returns an
+escalate/continue verdict; `confirmations` (2) consecutive escalate verdicts latch the session on the
+strong tier — the buffered weak reply is discarded, the strong tier regenerates that turn from the
+FULL context and serves every later turn. **Latching is one-way for the session.** The judge is a
+configurable target (NVIDIA's benchmarked run used a cheap judge with thinking off, not the strong
+model). Integration facts: the `escalation` block is accepted only at tag `v0.2.0-rc.1`; latching
+needs `x-switchyard-session-id` per conversation (an unchanging header makes every session one session,
+so the first latch is permanent until restart); an unlatched turn waits weak + judge. Published
+figures: ~6 pt below frontier at 7% route share with the co-released weak model; 13.3% cheaper than
+Opus-alone with a stronger weak tier on Terminal-Bench 2.1 (most hard sessions latched and paid twice).
+
+**Assessment for software-development work:** escalation is a struggle detector (loops, repeated
+errors, drift) with a frontier bailout, not a quality verifier — a clean-looking wrong trajectory
+never escalates, so non-latched sessions land at weak-tier quality including its silent errors.
+Its unique value is zero-harness-change rescue of runaway sessions. If S1 is ever activated, run
+it as the loop bailout inside a local session (cheap judge, Sonnet-class strong tier) and measure
+latch share and judge false-accept rate first; never as the quality gate.
+
+**DEFERRED alternative (operator, 2026-09-23): frontier driver + local executor.** Claude Code on
+the frontier model (`claude-opus-5`) plans, <!-- allow-shorthand --> delegates bounded implementation tasks through a wrapper around `opencode run` on the
+B pick, and reviews the returned artifact (diff, test output, short summary; transcript stays on
+disk under `$STACK_WORKDIR`). Judged the better composition for sw-dev on both quality (the
+design/ambiguity work never reaches the weak model; frontier review catches silent errors) and cost
+(frontier tokens on the compact brief + review, local tokens on the verbose loop; billed to the
+subscription, not the API). It also moves the long-lived context off the box: each delegation is
+one short session, so no second full-cap KV floor is ever needed (see below). Sketch when
+activated: A1 wrapper tool (real subprocess timeout, serialized delegations, fixed return
+contract) → A2 terse skill (write/edit tasks go through A1; retry once with a tighter brief, then
+the frontier model does it) → A3 five-task pass/fail gate → A4 small matched local-alone / composed /
+frontier-alone read. Not queued; revisit after the qwen-thread items below land.
+
+**Same-model subagent roles (explore at reduced effort, build at medium) were REJECTED 2026-09-23 on
+memory:** at the shipped native16 floor every subagent conversation is a new session and a new
+~16 GB full-cap KV floor; cap 2 is the C85 regime, cap 1 re-prefills the main context on every
+return, and a lower-cap second registry entry is a second weight load. Sequential context-saving
+subagents only make sense once the long-lived context lives off the box (the deferred
+composition above).
