@@ -80,12 +80,16 @@ def reuse_summary(rows: list[dict]) -> dict:
             "reuse_fraction": fr, "elapsed_s": round(sum(r["elapsed_s"] for r in rows), 2)}
 
 
+_UNIT = {"KB": 1 / (1024 * 1024), "MB": 1 / 1024, "GB": 1.0}
+
+
 def parse_footprint(text: str) -> dict:
+    """`footprint -p` prints phys_footprint with a unit that scales with size (KB/MB/GB)."""
     out = {}
     for key, name in (("phys_footprint:", "footprint_gb"), ("phys_footprint_peak:", "peak_gb")):
-        m = re.search(re.escape(key) + r"\s+(\d+)\s+KB", text)
+        m = re.search(re.escape(key) + r"\s+([\d.]+)\s+(KB|MB|GB)", text)
         if m:
-            out[name] = round(int(m.group(1)) / (1024 * 1024), 2)
+            out[name] = round(float(m.group(1)) * _UNIT[m.group(2)], 2)
     return out
 
 
@@ -129,9 +133,12 @@ def chat(model: str, messages: list, *, max_tokens: int, timeout: float, chat_id
 
 def worker_pid(model_hint: str) -> int | None:
     out = subprocess.run(["ps", "-eo", "pid,command"], capture_output=True, text=True).stdout
+    me = os.getpid()
     for line in out.splitlines():
-        if "mlx_vlm.server" in line and model_hint in line and "--port 8092" not in line:
-            return int(line.split()[0])
+        if "mlx_vlm.server --model" in line and model_hint in line and "--port 8092" not in line:
+            pid = int(line.split()[0])
+            if pid != me:
+                return pid
     return None
 
 
@@ -242,43 +249,47 @@ def leg_b_opencode(model, log, pid, *, root: Path, turns: int, timeout: float) -
 
 
 def leg_c_eviction(model, log, pid, *, sizes: list[int], timeout: float) -> dict:
+    """cold (r1) → warm1 (r2) → warm2 (r3) → two evictors → cold-after-eviction (r4) → warm-again (r5).
+
+    WHY r3 IS THE HEALTHY BASELINE (measured 2026-09-23): on a DeltaNet-hybrid architecture (measured on `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`) the
+    session retires at the last SNAPSHOT boundary, which sits at message boundaries BEFORE the
+    final user turn — a fresh [system, big-user] conversation retires at offset=len(system), so
+    r2 reuses only the system turn; r2's retire offset is then the end of the echoed assistant
+    turn, so r3 reuses the big message. Eviction cost = r4 (cold) vs r3 (healthy warm)."""
     out = []
     for k, n in enumerate(sizes):
         chat_id = f"m45-evict-{n}-{int(time.time())}"
-        # Anonymous hash-chain routing needs >= 2 matching turns (_MIN_HASH_PREFIX_MATCH) and hashes
-        # the assistant turn over its CONTENT (reasoning excluded) — so carry a system turn and echo
-        # the assistant content back VERBATIM (an empty string stays an empty string). First run
-        # (2026-09-23) substituted "OK" for empty content and every warm resume became a new session.
         msgs = [{"role": "system", "content": "Reply with the single word OK."},
                 {"role": "user", "content": filler(k + 1, n) + "\n\nReply OK."}]
         steps = {}
-        log.new_rows()
-        r = chat(model, msgs, max_tokens=8, timeout=timeout, chat_id=chat_id)
-        steps["cold"] = {**r, "log": (log.new_rows() or [None])[-1], "footprint": footprint(pid)}
-        msgs.append({"role": "assistant", "content": r["content"]})
-        msgs.append({"role": "user", "content": "Again, reply OK."})
-        r = chat(model, msgs, max_tokens=8, timeout=timeout, chat_id=chat_id)
-        steps["warm"] = {**r, "log": (log.new_rows() or [None])[-1], "footprint": footprint(pid)}
+
+        def _turn(label, user_text):
+            if user_text is not None:
+                msgs.append({"role": "user", "content": user_text})
+            log.new_rows()
+            r = chat(model, msgs, max_tokens=8, timeout=timeout, chat_id=chat_id)
+            msgs.append({"role": "assistant", "content": r["content"]})   # verbatim echo (hash is over content)
+            steps[label] = {**r, "log": (log.new_rows() or [None])[-1], "footprint": footprint(pid)}
+            steps[label].pop("content", None); steps[label].pop("reasoning", None)
+            return r
+
+        _turn("r1_cold", None)
+        _turn("r2_warm_first_followup", "Again, reply OK.")
+        _turn("r3_warm_second_followup", "Once more, reply OK.")
         # evict: two fresh sessions (cap 2, LRU) — tiny prompts, each materialises its own floor
         for j in (1, 2):
+            log.new_rows()
             e = chat(model, [{"role": "user", "content": filler(100 + k * 10 + j, 200) + "\n\nReply OK."}],
                      max_tokens=8, timeout=timeout, chat_id=f"{chat_id}-evictor-{j}")
+            e.pop("content", None); e.pop("reasoning", None)
             steps[f"evictor_{j}"] = {**e, "log": (log.new_rows() or [None])[-1], "footprint": footprint(pid)}
-        msgs.append({"role": "assistant", "content": r["content"]})
-        msgs.append({"role": "user", "content": "Once more, reply OK."})
-        r = chat(model, msgs, max_tokens=8, timeout=timeout, chat_id=chat_id)
-        steps["cold_after_eviction"] = {**r, "log": (log.new_rows() or [None])[-1], "footprint": footprint(pid)}
-        for s in steps.values():
-            s.pop("content", None); s.pop("reasoning", None)
-        row = {"target_tokens": n, "steps": steps,
-               "prompt_tokens": steps["cold"]["prompt_tokens"],
-               "cold_wall_s": steps["cold"]["wall_s"], "warm_wall_s": steps["warm"]["wall_s"],
-               "warm_cached": steps["warm"]["cached_tokens"],
-               "after_eviction_wall_s": steps["cold_after_eviction"]["wall_s"],
-               "after_eviction_cached": steps["cold_after_eviction"]["cached_tokens"]}
-        print(f"[C] {n}: prompt={row['prompt_tokens']} cold={row['cold_wall_s']}s warm={row['warm_wall_s']}s "
-              f"(cached {row['warm_cached']}) after-eviction={row['after_eviction_wall_s']}s (cached {row['after_eviction_cached']})",
-              flush=True)
+        _turn("r4_cold_after_eviction", "And again, reply OK.")
+        _turn("r5_warm_after_recovery", "Last time, reply OK.")
+        row = {"target_tokens": n, "steps": steps, "prompt_tokens": steps["r1_cold"]["prompt_tokens"],
+               "summary": {lab: (steps[lab]["wall_s"], steps[lab]["cached_tokens"]) for lab in
+                           ("r1_cold", "r2_warm_first_followup", "r3_warm_second_followup",
+                            "r4_cold_after_eviction", "r5_warm_after_recovery")}}
+        print(f"[C] {n}: " + " ".join(f"{lab}={w}s/cached{c}" for lab, (w, c) in row["summary"].items()), flush=True)
         out.append(row)
     return {"sizes": out}
 

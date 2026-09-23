@@ -30,6 +30,9 @@ def test_reuse_summary_counts_prefilled_tokens_per_request():
 def test_footprint_parse_reads_phys_footprint_in_gb():
     txt = "python3.12 [99999]: 64-bit    Footprint: 1360 KB (16384 bytes per page)\n    phys_footprint: 31457280 KB\n    phys_footprint_peak: 33554432 KB\n"
     assert scp.parse_footprint(txt) == {"footprint_gb": 30.0, "peak_gb": 32.0}
+    # the tool switches units with size: the live worker printed "37 GB" / "40 GB"
+    assert scp.parse_footprint("    phys_footprint: 37 GB\n    phys_footprint_peak: 40 GB\n") == {"footprint_gb": 37.0, "peak_gb": 40.0}
+    assert scp.parse_footprint("    phys_footprint: 512 MB\n") == {"footprint_gb": 0.5}
 
 
 def test_opencode_command_continues_after_first_turn(tmp_path):
