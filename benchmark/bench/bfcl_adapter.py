@@ -198,12 +198,47 @@ def bfcl_available() -> bool:
     return shutil.which("bfcl") is not None
 
 
-def _write_run_ids_file(project_root: str, categories, limit: int) -> str:
-    """Write a v4 test_case_ids_to_generate.json with the first `limit` ids per
-    category (id format '<category>_<index>'). Returns the file path. bfcl reads it
-    from <BFCL_PROJECT_ROOT>/test_case_ids_to_generate.json."""
+# Per-category sizes of the v4 AST files (BFCL_v4_<cat>.json), used only when bfcl_eval's
+# data dir cannot be read. Keep in step with `category_sizes`.
+_KNOWN_SIZES = {"simple_python": 400, "multiple": 200, "parallel": 200, "parallel_multiple": 200}
+
+
+def category_sizes(categories) -> dict:
+    """Item count per AST category, read from the installed bfcl_eval data files (lazy
+    import; falls back to `_KNOWN_SIZES`)."""
+    sizes = {}
+    try:
+        import bfcl_eval  # noqa: F401 — optional dependency
+        root = os.path.join(os.path.dirname(bfcl_eval.__file__), "data")
+        for cat in categories:
+            path = os.path.join(root, f"BFCL_v4_{cat}.json")
+            with open(path, encoding="utf-8") as f:
+                sizes[cat] = sum(1 for line in f if line.strip())
+    except Exception:  # noqa: BLE001 — graceful-degrade to the known table
+        sizes = {cat: _KNOWN_SIZES[cat] for cat in categories if cat in _KNOWN_SIZES}
+    return sizes
+
+
+def _write_run_ids_file(project_root: str, categories, limit: int, *, seed=None, sizes=None) -> str:
+    """Write a v4 test_case_ids_to_generate.json with `limit` ids per category (id format
+    '<category>_<index>'). Returns the file path. bfcl reads it from
+    <BFCL_PROJECT_ROOT>/test_case_ids_to_generate.json.
+
+    `seed=None` keeps the historical first-N behaviour (smoke runs). With a seed the ids are a
+    SEEDED RANDOM SAMPLE across each category — AGENTS.md's pilot rule: never the first items,
+    which are ordered easy-first and under-sized M18 by 2.5x. `sizes` (per-category item
+    counts) is injectable for tests; default reads the installed data files."""
     os.makedirs(project_root, exist_ok=True)
-    ids = {cat: [f"{cat}_{i}" for i in range(limit)] for cat in categories}
+    if seed is None:
+        ids = {cat: [f"{cat}_{i}" for i in range(limit)] for cat in categories}
+    else:
+        import random
+        sizes = sizes or category_sizes(categories)
+        ids = {}
+        for cat in categories:
+            n = int(sizes.get(cat) or _KNOWN_SIZES.get(cat) or limit)
+            rng = random.Random(f"{seed}:{cat}")
+            ids[cat] = [f"{cat}_{i}" for i in sorted(rng.sample(range(n), min(limit, n)))]
     path = os.path.join(project_root, "test_case_ids_to_generate.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(ids, f)

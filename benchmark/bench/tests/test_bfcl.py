@@ -256,3 +256,26 @@ def test_bfcl_request_requests_thinking_explicitly(monkeypatch):
     assert body.get("enable_thinking") is True, "thinking must be requested explicitly"
     assert body.get("thinking_budget", 0) >= 16384, (
         "a small thinking budget truncates mid-<think> and scores as a model failure")
+
+
+# ---------------------------------------------------------------- M47: seeded pilot sample (AGENTS.md pilot rule)
+def test_write_run_ids_file_seeded_sample_is_random_within_range_and_deterministic(tmp_path):
+    from bench import bfcl_adapter as A
+    sizes = {"simple_python": 400, "multiple": 200}
+    p1 = A._write_run_ids_file(str(tmp_path / "a"), ("simple_python", "multiple"), 5, seed=7, sizes=sizes)
+    p2 = A._write_run_ids_file(str(tmp_path / "b"), ("simple_python", "multiple"), 5, seed=7, sizes=sizes)
+    ids1, ids2 = json.load(open(p1)), json.load(open(p2))
+    assert ids1 == ids2, "same seed must give the same sample"
+    for cat, size in sizes.items():
+        idx = [int(i.rsplit("_", 1)[1]) for i in ids1[cat]]
+        assert len(idx) == 5 == len(set(idx)) and all(0 <= i < size for i in idx)
+    assert any(json.load(open(p1))[c] != [f"{c}_{i}" for i in range(5)] for c in sizes), \
+        "a seeded sample must not be the first-N items (ordered easy-first)"
+    p3 = A._write_run_ids_file(str(tmp_path / "c"), ("simple_python", "multiple"), 5, seed=8, sizes=sizes)
+    assert json.load(open(p3)) != ids1
+
+
+def test_write_run_ids_file_without_seed_keeps_first_n(tmp_path):
+    from bench import bfcl_adapter as A
+    p = A._write_run_ids_file(str(tmp_path), ("multiple",), 3)
+    assert json.load(open(p)) == {"multiple": ["multiple_0", "multiple_1", "multiple_2"]}

@@ -279,3 +279,20 @@ def test_module_import_does_not_require_bfcl_eval(monkeypatch):
 
     monkeypatch.delitem(sys.modules, "bench.bfcl_handler", raising=False)
     importlib.import_module("bench.bfcl_handler")  # restore the real module for later tests
+
+
+# --------------------------------------------------------------------------- M47 temperature arm
+def test_temperature_env_override_wins_over_the_deployed_profile_and_lands_in_sampling(monkeypatch):
+    """M47 (joint temperature x effort certification): an arm's temperature is an explicit,
+    recorded override of the deployed value — everything else stays the deployed profile."""
+    monkeypatch.setenv("MLX_BFCL_TEMPERATURE", "0.7")
+    handler, fake = _build_handler(monkeypatch, temperature=0.5)
+    assert handler.temperature == 0.7
+    assert handler._sampling["temperature"] == 0.7
+    assert handler._sampling["top_k"] == 20  # untouched
+
+
+def test_no_env_override_keeps_the_deployed_temperature(monkeypatch):
+    monkeypatch.delenv("MLX_BFCL_TEMPERATURE", raising=False)
+    handler, _ = _build_handler(monkeypatch, temperature=0.5)
+    assert handler.temperature == 0.5

@@ -157,6 +157,12 @@ def _handler_class():
         def __init__(self, model_name, temperature, registry_name, is_fc_model, **kwargs):
             super().__init__(model_name, temperature, registry_name, is_fc_model, **kwargs)
             self._sampling = _load_deployed_sampling(registry_name)
+            # M47 (2026-09-23): a temperature ARM is an explicit, recorded override of the
+            # deployed value (run_bfcl_fc --temperature sets MLX_BFCL_TEMPERATURE); every
+            # other field stays the deployed profile — vary ONLY the param under test.
+            env_t = os.environ.get("MLX_BFCL_TEMPERATURE")
+            if env_t:
+                self._sampling["temperature"] = float(env_t)
             # bfcl's CLI temperature (default 0.001) is a harness default, not a serving
             # decision. Override unconditionally so a forgotten/wrong --temperature can
             # never silently under-measure this model at near-greedy.

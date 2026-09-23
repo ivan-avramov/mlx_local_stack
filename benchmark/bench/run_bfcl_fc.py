@@ -90,6 +90,12 @@ def main(argv=None) -> int:
     ap.add_argument("--host", default="localhost")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--limit", type=int, default=None, help="per-category item cap (smoke runs)")
+    ap.add_argument("--sample-seed", type=int, default=None,
+                    help="with --limit: draw the ids as a SEEDED RANDOM SAMPLE per category "
+                         "(AGENTS.md pilot rule) instead of the first N")
+    ap.add_argument("--temperature", type=float, default=None,
+                    help="M47 arm: override ONLY the deployed temperature (recorded in bfcl.json "
+                         "as sampling_override); everything else stays the deployed profile")
     ap.add_argument("--num-threads", type=int, default=1)
     ap.add_argument("--out", default=_DEFAULT_OUT,
                      help="run root (holds result/, score/, bfcl.json). NOT benchmark/results/ "
@@ -123,8 +129,17 @@ def main(argv=None) -> int:
     result_dir = os.path.join(out_root, "result")
     score_dir = os.path.join(out_root, "score")
 
+    run_ids = None
     if args.limit is not None:
-        _write_run_ids_file(out_root, categories, args.limit)
+        ids_path = _write_run_ids_file(out_root, categories, args.limit, seed=args.sample_seed)
+        with open(ids_path) as f:
+            run_ids = json.load(f)
+    if args.temperature is not None:
+        os.environ["MLX_BFCL_TEMPERATURE"] = str(args.temperature)
+    provenance = {"sample_seed": args.sample_seed, "run_ids": run_ids,
+                  "sampling_override": ({"temperature": args.temperature}
+                                        if args.temperature is not None else None),
+                  "registry": os.environ.get("MLX_SERVE_CONFIG")}
 
     gen_args = SimpleNamespace(
         model=[args.model],
@@ -174,7 +189,7 @@ def main(argv=None) -> int:
         return 1
 
     result = {"model": args.model, "axis": "tool_calling", "categories": list(categories),
-              **parse_scores(score_dir, args.model, categories), "skipped": False}
+              **parse_scores(score_dir, args.model, categories), "skipped": False, **provenance}
     result = _apply_poison_guard(result, result_dir, args.model)
     print(f"[bfcl_fc] {args.model} acc={result.get('acc')} n={result.get('n')} "
           f"per_category={result.get('per_category')}", flush=True)
