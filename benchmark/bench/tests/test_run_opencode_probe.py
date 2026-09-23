@@ -401,3 +401,71 @@ def test_row_assembly_uses_scrub_then_tail_not_the_broken_slice_then_scrub_order
     assert "_scrub_then_tail(log, 500)" in src
     assert "_scrub_pii(tail[-300:])" not in src
     assert "_scrub_pii(log[-500:])" not in src
+
+
+# ---------------------------------------------------------------- M46: transcript retention + loop metric
+def _tool(name, inp, status="completed", output="ok"):
+    return {"type": "tool", "tool": name, "callID": "c", "state": {"status": status, "input": inp, "output": output}}
+
+
+def _msg(role, parts):
+    return {"info": {"role": role}, "parts": parts}
+
+
+def test_loop_metrics_counts_identical_consecutive_calls_and_repeats_after_error():
+    export = {"info": {"id": "ses_x"}, "messages": [
+        _msg("user", [{"type": "text", "text": "go"}]),
+        _msg("assistant", [_tool("read", {"filePath": "a.py"}), _tool("read", {"filePath": "a.py"}),
+                            _tool("read", {"filePath": "a.py"})]),
+        _msg("assistant", [_tool("edit", {"filePath": "a.py", "old": "x"}, status="error", output="Error: no match"),
+                            _tool("edit", {"filePath": "a.py", "old": "x"}, status="error", output="Error: no match"),
+                            _tool("bash", {"command": "pytest"})]),
+    ]}
+    m = P.loop_metrics(export)
+    assert m["tool_calls"] == 6
+    assert m["repeat_identical_calls"] == 3          # read×2 extra, edit×1 extra
+    assert m["max_identical_run"] == 3
+    assert m["calls_repeated_after_error"] == 1      # the second identical failing edit
+    assert m["error_calls"] == 2
+
+
+def test_loop_metrics_handles_empty_or_malformed_export():
+    assert P.loop_metrics({})["tool_calls"] == 0
+    assert P.loop_metrics({"messages": [{"parts": [{"type": "tool"}]}]})["tool_calls"] == 1
+
+
+def test_export_latest_session_uses_the_isolated_data_home(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_check_output(cmd, **kw):
+        calls.append((cmd, kw.get("env", {}).get("XDG_DATA_HOME")))
+        if cmd[:3] == ["opencode", "session", "list"]:
+            return "Session ID   Title\n────\nses_new111  New session\nses_old222  Older\n"
+        if cmd[:2] == ["opencode", "export"]:
+            assert cmd[2] == "ses_new111"
+            return json.dumps({"info": {"id": "ses_new111"}, "messages": []})
+        raise AssertionError(cmd)
+
+    monkeypatch.setattr(P.subprocess, "check_output", fake_check_output)
+    data_home = tmp_path / "xdg"
+    out = P._export_latest_session(P._opencode_env(data_home), cwd=tmp_path)
+    assert out["info"]["id"] == "ses_new111"
+    assert all(h == str(data_home) for _, h in calls)
+
+
+def test_export_latest_session_degrades_to_none_when_no_session(monkeypatch, tmp_path):
+    monkeypatch.setattr(P.subprocess, "check_output", lambda cmd, **kw: "Session ID   Title\n")
+    assert P._export_latest_session(P._opencode_env(tmp_path), cwd=tmp_path) is None
+
+
+def test_opencode_env_redirects_only_the_data_home(tmp_path):
+    env = P._opencode_env(tmp_path / "xdg")
+    assert env["XDG_DATA_HOME"] == str(tmp_path / "xdg")
+    assert "XDG_CACHE_HOME" not in env or env["XDG_CACHE_HOME"] == __import__("os").environ.get("XDG_CACHE_HOME")
+
+
+def test_transcript_path_is_under_workdir_with_placeholder(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    p, rel = P._transcript_target("Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "python", "beer-song", tag="m46")
+    assert p == tmp_path / "opencode_transcripts" / "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed" / "m46" / "python__beer-song.json"
+    assert rel == "$STACK_WORKDIR/opencode_transcripts/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/m46/python__beer-song.json"

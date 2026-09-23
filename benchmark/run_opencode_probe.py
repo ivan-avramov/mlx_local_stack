@@ -222,7 +222,7 @@ def _tick_snapshot_fn(cwd: Path, sol: Path, test: Path, before_sol: str, grade, 
 def _run_opencode(model: str, cwd: Path, prompt: str, sol: Path, test: Path, grade,
                   before_sol: str, *, tick_s: int, hard_ceiling_s: int, poll_s: float,
                   stall_ticks: int, loop_repeats: int,
-                  pure: bool) -> tuple[int, str, float, "progress_gate.GateResult"]:
+                  pure: bool, env: dict | None = None) -> tuple[int, str, float, "progress_gate.GateResult"]:
     """Run opencode under the PROGRESS-GATED bound (`bench/progress_gate.py`), not a flat
     wall-clock timeout. A wedged session is killed on a stall/loop diagnosis well before
     `hard_ceiling_s`; a healthy long session is never killed just for being slow. The policy is
@@ -244,13 +244,99 @@ def _run_opencode(model: str, cwd: Path, prompt: str, sol: Path, test: Path, gra
 
     log_path = cwd / ".opencode_probe_log.txt"
     with log_path.open("w") as log_f:
-        proc = subprocess.Popen(cmd, cwd=cwd, stdout=log_f, stderr=subprocess.STDOUT, text=True)
+        proc = subprocess.Popen(cmd, cwd=cwd, stdout=log_f, stderr=subprocess.STDOUT, text=True,
+                                env=env)
         snapshot_fn = _tick_snapshot_fn(cwd, sol, test, before_sol, grade, log_path)
         result = progress_gate.run_progress_gated(
             proc, snapshot_fn, tick_s=tick_s, hard_ceiling_s=hard_ceiling_s, poll_s=poll_s,
             stall_ticks=stall_ticks, loop_repeats=loop_repeats)
     log = log_path.read_text(errors="replace") if log_path.exists() else ""
     return proc.returncode, log, result.elapsed_s, result
+
+
+# ----------------------------------------------------------------------------- M46 (2026-09-23)
+# Transcript retention + loop metric. The rows used to keep only a 500-char `log_tail`, so the
+# poisoned-tool-call / loop rate (the dominant failure in the 30-day community run of the
+# Qwen3.8-27B family <!-- allow-shorthand -->) could not be re-analysed from existing rows. Every
+# item now runs opencode with an ISOLATED `XDG_DATA_HOME` (opencode 1.18.x honours it; verified
+# 2026-09-23), so the item's store holds exactly one session; `opencode export` of that session
+# is PII-scrubbed and written under `$STACK_WORKDIR/opencode_transcripts/` (outside the public
+# repo — transcripts are tens to hundreds of KB per item), and the row carries `transcript_path`
+# (placeholder form) + `loop_metrics`.
+
+def _opencode_env(data_home: Path) -> dict:
+    """opencode's env for one item: only the DATA home is redirected (session store). The cache
+    home stays default on purpose — it holds the models.dev catalogue, and redirecting it would
+    make every item re-fetch over the network."""
+    env = dict(os.environ)
+    env["XDG_DATA_HOME"] = str(data_home)
+    return env
+
+
+def _export_latest_session(env: dict, *, cwd: Path) -> dict | None:
+    """`opencode session list` → newest session id → `opencode export <id>` → dict. Degrades to
+    None (never raises): a missing transcript is a note on the row, not a dead batch."""
+    try:
+        listing = subprocess.check_output(["opencode", "session", "list"], env=env, cwd=cwd,
+                                          text=True, stderr=subprocess.DEVNULL, timeout=60)
+        ids = re.findall(r"\bses_[A-Za-z0-9]+", listing)
+        if not ids:
+            return None
+        raw = subprocess.check_output(["opencode", "export", ids[0]], env=env, cwd=cwd,
+                                      text=True, stderr=subprocess.DEVNULL, timeout=120)
+        return json.loads(raw)
+    except Exception:  # noqa: BLE001 — graceful-degrade per bench tooling rule
+        return None
+
+
+def _tool_calls(export: dict) -> list[tuple[str, str, bool]]:
+    """(signature, tool, errored) per tool part, in transcript order."""
+    calls = []
+    for m in (export or {}).get("messages") or []:
+        for part in m.get("parts") or []:
+            if part.get("type") != "tool":
+                continue
+            state = part.get("state") or {}
+            sig = (part.get("tool") or "?") + " " + json.dumps(state.get("input"), sort_keys=True, default=str)
+            out = state.get("output")
+            errored = state.get("status") == "error" or (isinstance(out, str) and out.startswith("Error"))
+            calls.append((sig, part.get("tool") or "?", bool(errored)))
+    return calls
+
+
+def loop_metrics(export: dict) -> dict:
+    """Per-row loop metric from the exported transcript.
+    - repeat_identical_calls: calls identical (tool + input) to the IMMEDIATELY preceding call.
+    - max_identical_run: longest run of identical consecutive calls.
+    - calls_repeated_after_error: calls identical to an EARLIER call that errored (the poisoned
+      tool call re-issued — the thread-1 mechanism), consecutive or not.
+    """
+    calls = _tool_calls(export)
+    repeats = 0; run = 1; max_run = 1 if calls else 0
+    after_err = 0; errored_sigs: set[str] = set(); errors = 0
+    prev = None
+    for sig, _tool, err in calls:
+        if prev is not None and sig == prev:
+            repeats += 1; run += 1; max_run = max(max_run, run)
+        else:
+            run = 1
+        if sig in errored_sigs:
+            after_err += 1
+        if err:
+            errors += 1; errored_sigs.add(sig)
+        prev = sig
+    return {"tool_calls": len(calls), "error_calls": errors, "repeat_identical_calls": repeats,
+            "max_identical_run": max_run, "calls_repeated_after_error": after_err}
+
+
+def _transcript_target(model: str, lang: str, item: str, *, tag: str) -> tuple[Path, str]:
+    """(absolute path, placeholder path) for an item's transcript under $STACK_WORKDIR."""
+    workdir = os.environ.get("STACK_WORKDIR")
+    if not workdir:
+        raise SystemExit("STACK_WORKDIR is not set; transcripts must live under it (AGENTS.md: no "
+                         "filesystem pollution outside $STACK_WORKDIR)")
+    rel = f"opencode_transcripts/{model}/{tag}/{lang}__{item}.json"
+    return Path(workdir) / rel, f"$STACK_WORKDIR/{rel}"
 
 
 def _grade_python(cwd: Path, test: Path) -> tuple[bool, str]:
@@ -468,10 +554,19 @@ def main() -> int:
                 f"The specification is in .docs/instructions.md — read it first. "
                 f"Do NOT modify {test.name}. Do not create new files unless required by the spec."
             )
+            oc_env = _opencode_env(Path(tmp) / "xdg-data")      # M46: isolated session store
             rc, log, dur, gate_result = _run_opencode(
                 a.model, work, prompt, sol, test, grade, before,
                 tick_s=a.tick_s, hard_ceiling_s=hard_ceiling_s, poll_s=a.poll_s,
-                stall_ticks=a.stall_ticks, loop_repeats=a.loop_repeats, pure=not a.no_pure)
+                stall_ticks=a.stall_ticks, loop_repeats=a.loop_repeats, pure=not a.no_pure,
+                env=oc_env)
+            export = _export_latest_session(oc_env, cwd=work)
+            transcript_rel = None
+            if export is not None:
+                t_abs, transcript_rel = _transcript_target(a.model, a.lang, name, tag=out.stem)
+                t_abs.parent.mkdir(parents=True, exist_ok=True)
+                t_abs.write_text(_scrub_pii(json.dumps(export, indent=1)))
+            metrics = loop_metrics(export or {})
             after = sol.read_text(errors="replace")
             changed = after != before
             # A rewritten test file invalidates the grade: the model can make any suite pass by
@@ -495,6 +590,8 @@ def main() -> int:
                 "note": "FIRST-ATTEMPT only — not comparable to aider `final`, which allows a "
                         "second test-informed attempt",
                 "grade_tail": _scrub_then_tail(tail, 300), "log_tail": _scrub_then_tail(log, 500),
+                # M46: full transcript outside the repo + the loop metric on the row.
+                "transcript_path": transcript_rel, "loop_metrics": metrics,
             }
             with out.open("a") as f:
                 f.write(json.dumps(row) + "\n")
