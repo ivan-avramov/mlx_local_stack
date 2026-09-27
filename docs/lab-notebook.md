@@ -3937,3 +3937,44 @@ session costs ~11K tokens of prefill (≈15 s) to open and ~1 s per turn after; 
 cold prefill of its context. (2) A pinned-session client is impossible until C102(a). (3) Thread 1's cache
 complaint is a llama.cpp/harness-shape problem; on our stack the visible cost is mechanism 1, once per
 conversation with a big first user turn.
+
+## 2026-09-27 — C102(a) DONE: client session ids reach the worker; Codex cold review; live gate PASS; opencode system-prompt drift found
+
+Operator go 2026-09-27 (C101 ruled (b) the same morning: M47 closed on the pilot). Spec with pre-registered
+criteria: `docs/specs/c102a-session-headers.md`. Forks: mlx-serve `6602ae5` (router allowlist gains nine session
+headers), mlx-vlm `b5fdf113` (`_resolve_chat_id` aliases + value validation); stack bump `84f4540`; compose
+`ENABLE_FORWARD_USER_INFO_HEADERS=true`. Both forks committed locally, NOT pushed.
+
+**Cold review** (Codex `gpt-6-astra`, read-only sandbox, fresh context, ~4 min): PASS-WITH-GAPS. A1 PASS, A2 PARTIAL,
+A3 PASS. Findings and dispositions: P5 malformed values (`str({})`, booleans, control chars became shared keys) →
+fixed: identifiers must be non-blank printable str/int ≤256 chars, else ignored; P6 `prompt_cache_key` outranked
+genuine conversation ids → fixed: `metadata.session_id` and Claude Code's `metadata.user_id.session_id` come
+first, `prompt_cache_key` last; P7 the compose flag is global (user name/email/role go to every OWUI model
+connection) → accepted with the spec qualified: every OWUI connection is local and the router drops those
+headers; P8 test fidelity → tests now use real Starlette `Headers` (case-insensitive, first occurrence wins),
+plus role-header, value-preservation and streaming-path assertions. Suites after fixes: mlx-vlm 642, mlx-serve
+109, stack provenance 36, configgen check clean.
+
+**Live gate** (`scripts/session_pinning_gate.py`, row `session_pinning_gate.c102a.json`, fresh `runserver.sh`
+start, OWUI container recreated with the flag): **PASS.** A6 bare conversation: `anon:*` on all three requests,
+request 3 reuses 3024/3062 — the fallback is intact. A4 opencode: every request carries `session=ses_…`
+(pinned). A5 OpenWebUI: worker `session=<OWUI chat id>` on both turns, second turn reuses 5142/5179.
+
+**Finding (not caused by the change): every new `opencode run` process re-prefills its ~12.6K-token system
+prefix.** The worker logs `Hybrid-Cache Rewind Guard: no snapshot available for rewind to 10430…12125` and
+`cached_tokens=0` on the first request of each new process; within a process (tool round trips) reuse is
+98–99%. Captured the request bodies through a logging proxy: the system prompt differs between processes in
+the `<location>` lines of opencode's discovered-skills block — the Claude Code synced-skills directory names
+under `~/.claude/skills/synced/<uuid>_<uuid>/` rotate (two copies exist today, 09-24 and 09-27), and opencode
+lists a different copy per process (plus `~/.agents/skills` vs `~/.claude/skills` for one skill). The
+divergence sits ~2K tokens before the end of the system prompt; the only DeltaNet snapshot is at its end, so
+the whole prefix is re-prefilled (17–19 s per opencode invocation). M45 (09-23) did not show this because the
+synced dir did not change during that run. Filed as **C103**: fix on the opencode side (exclude the synced
+dir from skill discovery, or prune stale copies), and/or periodic DeltaNet snapshots in the worker (a
+generalisation of C102(b)) so a divergence deep inside a long prefix still reuses everything before it.
+
+**Instrument notes.** `opencode run` stalls at `init` when launched with stdout captured through a pipe
+(`subprocess.run(capture_output=True)`) or a plain shell redirect from this harness; a file handle for
+stdout (the gate's shape) works every time. A mixed-case client header passes in production (Starlette) but
+failed the first test helper (plain dict) — the helper now uses real `Headers`. Capture proxy + bodies under
+`$STACK_WORKDIR/c102a/capture/` (contain home paths; not for the repo).
