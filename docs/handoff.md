@@ -32,8 +32,10 @@ on the bumped submodules. Stop with `kill -TERM <runserver pid>` (its trap tears
 
 - **Push**: forks `../mlx-serve` (`6602ae5`) and `../mlx-vlm` (`b5fdf113`) must be pushed BEFORE the stack
   (`84f4540` records their shas); stack commits since `3205052` are local only.
-- **C103**: (a) opencode-side exclusion/prune of the synced skills dir (recommend now); (b) periodic
-  DeltaNet snapshots in the worker, merged with **C102(b)** (needs a go; C85-certified path).
+- **C103 RULED + DONE** (see open-questions): shell export `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true` added to
+  `~/.zshrc` (new shells only); probes run with `OPENCODE_DISABLE_EXTERNAL_SKILLS=true` and record the skill
+  policy + config hash as scaffold identity. Codex design review of the worker-side periodic-snapshot idea:
+  REJECTED as written (`docs/specs/c103-prefix-drift.md`); C102(b) stays open only as a future redesign.
 - Deferred composition (switchyard §8); S1 parked.
 
 ## Git

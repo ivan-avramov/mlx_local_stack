@@ -225,7 +225,9 @@ def _scratch_project(root: Path) -> Path:
 
 def leg_b_opencode(model, log, pid, *, root: Path, turns: int, timeout: float) -> dict:
     proj = _scratch_project(root)
-    env = dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), XDG_CACHE_HOME=str(root / "xdg-cache"))
+    # daily-driver shape: Claude Code's skill tree excluded (C103), .agents kept
+    env = dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), XDG_CACHE_HOME=str(root / "xdg-cache"),
+               OPENCODE_DISABLE_CLAUDE_CODE_SKILLS="true")
     per_turn = []
     log.new_rows()
     for i, prompt in enumerate(OPENCODE_PROMPTS[:turns]):

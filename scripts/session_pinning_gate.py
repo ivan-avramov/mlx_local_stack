@@ -59,7 +59,7 @@ def a6_bare(model, log, timeout) -> dict:
 def a4_opencode(model, log, root: Path, timeout) -> dict:
     proj = root / "oc-proj"; proj.mkdir(parents=True, exist_ok=True)
     (proj / "hello.py").write_text("def hello(name):\n    return f'hello {name}'\n")
-    env = dict(os.environ, XDG_DATA_HOME=str(root / "xdg"))
+    env = dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), OPENCODE_DISABLE_CLAUDE_CODE_SKILLS="true")  # daily-driver shape (C103)
     turns = []
     for i, prompt in enumerate(("In one sentence, what does hello.py do?", "One line: what does it return for 'x'?")):
         log.new_rows()

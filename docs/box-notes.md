@@ -23,6 +23,7 @@ procedures are archived in `docs/two-box-archive.md`.
 ## Conversions & heavy jobs
 
 - **`mlx_optiq` conversions cannot co-reside with the AI session** — measured on the retired driver: 24 min elapsed for 1:49 of CPU (~6%), swap 2 GB → 8 GB, and the expensive KL phase had not started. Schedule conversions in a quiet window; a partial `~/optiq_out` baseline is scratch, not resumable. <!-- allow-shorthand -->
+- **opencode scans `~/.claude/skills` (incl. `synced/<uuid>/` and `.trash/`) and `~/.agents/skills` and lists every skill with its path in the system prompt** (2026-09-27: 17 skills, 14.5K of 28.5K chars, ~4K tokens/request; synced dir names rotate → a resumed session forks inside the system prompt and re-prefills everything). `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true` excludes the Claude tree; `OPENCODE_DISABLE_EXTERNAL_SKILLS=true` excludes both (probes). `opencode run` also stalls at `init` when its stdout is a captured pipe — give it a file.
 - **`opencode` costs ~18,050 prompt tokens for a four-word request** — budget prefill accordingly for agentic runs.
 
 ## Corpus provenance facts

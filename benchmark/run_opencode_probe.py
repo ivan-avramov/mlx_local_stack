@@ -270,7 +270,30 @@ def _opencode_env(data_home: Path) -> dict:
     make every item re-fetch over the network."""
     env = dict(os.environ)
     env["XDG_DATA_HOME"] = str(data_home)
+    # C103 (2026-09-27): opencode embeds every skill it discovers under ~/.claude/skills (including
+    # synced/<uuid>/ and .trash/) and ~/.agents/skills in its system prompt, with file paths. That
+    # made the scaffold depend on what Claude Code had synced on this machine (17 skills, half the
+    # system prompt, paths that changed between processes). Exclude both external trees so the
+    # scaffold is opencode + this repo only; repo-local .opencode/skills would still be discovered.
+    env["OPENCODE_DISABLE_EXTERNAL_SKILLS"] = "true"
     return env
+
+
+SHIPPED_OPENCODE_CONFIG = REPO / "opencode_config" / "opencode.json"
+
+
+def _scaffold_runtime() -> dict:
+    """Scaffold identity fields for the manifest (C103): rows across a change in any of these must
+    never be pooled silently. The global ~/.config/opencode config the probe actually runs under is
+    expected to be the shipped file; the hash is of the shipped file."""
+    import hashlib
+    try:
+        digest = hashlib.sha256(SHIPPED_OPENCODE_CONFIG.read_bytes()).hexdigest()
+    except OSError:
+        digest = None
+    return {"skill_policy": "OPENCODE_DISABLE_EXTERNAL_SKILLS=true",
+            "opencode_config": "opencode_config/opencode.json",
+            "opencode_config_sha256": digest}
 
 
 def _export_latest_session(env: dict, *, cwd: Path) -> dict | None:
@@ -533,7 +556,8 @@ def main() -> int:
                                          "polyglot_sha": poly_sha,
                                          "tick_s": a.tick_s, "hard_ceiling_s": hard_ceiling_s,
                                          "stall_ticks": a.stall_ticks,
-                                         "loop_repeats": a.loop_repeats})
+                                         "loop_repeats": a.loop_repeats,
+                                         **_scaffold_runtime()})
         out.with_suffix(".manifest.json").write_text(json.dumps(man, indent=2))
     except Exception as e:  # noqa: BLE001 — never block a run on provenance, but say so loudly
         print(f"!! manifest not written: {e}", flush=True)
