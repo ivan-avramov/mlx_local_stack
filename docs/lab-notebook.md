@@ -3978,3 +3978,57 @@ generalisation of C102(b)) so a divergence deep inside a long prefix still reuse
 stdout (the gate's shape) works every time. A mixed-case client header passes in production (Starlette) but
 failed the first test helper (plain dict) — the helper now uses real `Headers`. Capture proxy + bodies under
 `$STACK_WORKDIR/c102a/capture/` (contain home paths; not for the repo).
+
+## 2026-09-27 → 2026-09-28 — Upstream sync of `../mlx-vlm` to v0.7.3 before M48; suite green; live smokes PASS on both deployed models
+
+Operator ruled: sync the fork with upstream BEFORE executing M48 (P48), and prove the stack with live smokes
+as well as unit tests. Merge-base `434afb1a` (2026-09-14) → upstream `967bf90b` (v0.7.3, 107 commits); the
+fork carried 1013 commits on top. Merge commit `2c276351` in `../mlx-vlm` (not pushed). Stack `src/mlx-vlm`
+bumped in the same session.
+
+**Conflicts (18 files).** Nine source files, resolved to keep fork serving semantics: `generate/ar.py`
+(fork snapshot-landing chunking + upstream's unconditional `logits_to_keep`; `clamp_temperature` import;
+upstream's re-added `_sample_top_p_one` dropped — the fork's `_filter` chain supersedes it, C26),
+`generate/dispatch.py` (fork's guarded prefix-reuse block kept over upstream's new `_prefix_cache_trim_amount`
+block; upstream's `pixel_values_videos` pop added), `server/openai.py` (upstream's tail-flush + `tool_calls`
+final chunk through the fork's `to_sse_json`; `import re` restored — the merge had dropped it),
+`server/{app,cli,generation,responses_state}.py` (import hunks; `--model-discovery` gone upstream),
+`turboquant.py` (upstream `memory_profile` hook + fork comment), one model module attribute removed
+(`supports_logits_to_keep`, dead after a8715d52). Nine test files: fork versions taken, then reconciled
+against upstream (below).
+
+**Test reconciliation.** Upstream #2276 deleted 93 test files and rewrote `test_models.py` as JSON-case
+driven (other tests import its helpers). Policy applied (C104): 30 serving-path files restored from the fork,
+model-zoo/APC-memory deletions accepted, `test_models.py` taken from upstream with the fork's MTP-split
+tests moved to `tests/test_mtp_split.py`, stale fork copies of upstream tests whose behaviour upstream changed
+dropped and upstream's replacements ported (model discovery, Anthropic tool-use streaming, tool-call stream
+parity, batch `logits_to_keep`, think-newline strip c36708d3, periodic cache eval ece7a9dd). Two fork code
+changes came out of upstream's new contracts: `EpiCacheKVCache.memory_profile` (delegates to the inner
+cache) and an optional seed slot in batch sequences (`ar.py` mixed warm/cold path IndexError'd on
+upstream-shaped 6-tuples — upstream's own audio tests found it). Final suite: **5068 passed, 5 skipped,
+1 xfailed** (`test_processors` qwen4_exp route: config-only directory fails in this environment; loader
+identical to upstream).
+
+**Live gate.** Fresh `runserver.sh` (docker up, task model, router on `main_models.yaml`, OpenWebUI
+reconciled). Router pid env: `MLX_VLM_CACHE_SESSION_MAX=2`, `MLX_SERVE_CONFIG=main_models.yaml`, no `APC_*`.
+New runner `benchmark/bench/stack_smoke.py` (six cases at the deployed profile, thinking ON: arithmetic,
+Python exec-checked, JSON, native tool continuation two-request, vision on a synthetic red circle, three-turn
+pinned-session reuse). `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`: 6/6, all converged, worker cmdline
+`--draft-kind mtp --kv-prealloc-tokens 262144 --cache-session-shrink on`. `Qwen3.8-27B-mlx-uniform-4bit`:
+6/6, all converged. Both models ready in ~4 s (weights page-cached), RAM 32.6 / 28.5 GB, swap used 0.5 GB
+with the full stack up. Turn-3 `cached_tokens=558` of 606 on both — the ~48-token re-prefill is exactly the
+last-user-turn + assistant re-render that M48 targets. Evidence `benchmark/results/upstream_2026-09-28_smokes.json`.
+
+**Mechanisms / rules learned.**
+- Upstream changed SAMPLING (`clamp_temperature`, `top_p_sampling` in the speculative target sampler):
+  the M48 A5 parity BEFORE arm must be served from fork `2c276351`, not from the pre-sync fork.
+- The fork grows packed TurboQuant capacity geometrically (`max(step, 1.25×)`); upstream's new memory
+  profile assumes step growth. Not on the served path (native16 KV, APC off) but the profile is a LOWER bound.
+- pyflakes prints no "undefined name" lines on a file with a syntax error — a clean run is not evidence
+  until the file compiles.
+- zsh word-splitting bit again in a `for f in $LIST` loop (AGENTS.md pitfall); `${=LIST}`.
+- Upstream's `n == 0` end-of-prefill capture in `dispatch.py` is one decode token late (the decode loop
+  steps before the first yield) and rotating-only; M48's prompt-end hook belongs after the final `_step()`
+  in `ar.py` (P49).
+- `git show HEAD:path` inside a merge in progress works; `git checkout --ours` on a UU test file then
+  `git add` is the fast path when the fork owns the file.
