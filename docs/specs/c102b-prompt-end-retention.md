@@ -1,6 +1,6 @@
 # C102(b) — retain the latest user turn across requests (prompt-end anchor) — PROPOSAL for a new session
 
-Status: PROPOSED 2026-09-27, not armed. Prior design (periodic checkpoints) REJECTED by Codex design
+Status: **DONE 2026-09-28** (fork `1bd249d3`; evidence `benchmark/results/m48_c102b_retention_20260928.json`; mechanism as built: `docs/serving-path.md` “Session retention at prompt end”). As built, the retire point is the per-request **retention boundary** (longest token prefix shared with the next rendering), not literally prompt end — see the serving-path note and C105 for leftovers. Original proposal below, unchanged. Prior design (periodic checkpoints) REJECTED by Codex design
 review (`docs/specs/c103-prefix-drift.md`, review under `$STACK_WORKDIR/c103/codex_review.md`); this is
 the narrowed successor. Needs an operator go in the session that executes it.
 

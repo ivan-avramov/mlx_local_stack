@@ -223,20 +223,52 @@ def _scratch_project(root: Path) -> Path:
     return proj
 
 
-def leg_b_opencode(model, log, pid, *, root: Path, turns: int, timeout: float) -> dict:
+BIG_FILE_PROMPT = "Read big_notes.txt in full and tell me the marker number it contains. One line."
+BIG_FILE_TURN = 3  # 1-based; the turn AFTER it shows whether the tool result was re-prefilled
+
+
+def leg_b_prompts(turns: int, big_file_tokens: int) -> list[str]:
+    """M48 A4: with ``big_file_tokens`` > 0 a read-a-big-file turn is inserted at BIG_FILE_TURN;
+    opencode returns the file as a user-role tool result, so turn BIG_FILE_TURN+1's prefilled
+    tokens reveal whether that result stayed in the session cache."""
+    prompts = list(OPENCODE_PROMPTS[:turns])
+    if big_file_tokens > 0:
+        prompts.insert(BIG_FILE_TURN - 1, BIG_FILE_PROMPT)
+        prompts = prompts[:max(turns, BIG_FILE_TURN + 1)]
+    return prompts
+
+
+def _write_big_file(proj: Path, approx_tokens: int) -> int:
+    """~approx_tokens of prose over many SHORT lines: opencode's read tool truncates
+    long lines (measured 2026-09-28: a two-line 92 KB file came back as ~600 tokens),
+    so the tool result only reaches the model at size when the file is line-shaped."""
+    marker = 4242 + approx_tokens
+    line = filler(99, 40).strip()  # ~40 tokens
+    n_lines = max(1, approx_tokens // 40)
+    body = f"MARKER NUMBER: {marker}\n\n" + "\n".join(f"{i:04d} {line}" for i in range(n_lines)) + "\n"
+    (proj / "big_notes.txt").write_text(body)
+    return marker
+
+
+def leg_b_opencode(model, log, pid, *, root: Path, turns: int, timeout: float,
+                   big_file_tokens: int = 0) -> dict:
     proj = _scratch_project(root)
+    marker = _write_big_file(proj, big_file_tokens) if big_file_tokens > 0 else None
     # daily-driver shape: Claude Code's skill tree excluded (C103), .agents kept
     env = dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), XDG_CACHE_HOME=str(root / "xdg-cache"),
                OPENCODE_DISABLE_CLAUDE_CODE_SKILLS="true")
     per_turn = []
     log.new_rows()
-    for i, prompt in enumerate(OPENCODE_PROMPTS[:turns]):
+    for i, prompt in enumerate(leg_b_prompts(turns, big_file_tokens)):
         cmd = opencode_cmd(model, proj, prompt, first=(i == 0))
         t0 = time.perf_counter()
         out_path = root / f"opencode_turn_{i + 1:02d}.txt"
         with out_path.open("w") as f:
             try:
-                rc = subprocess.run(cmd, cwd=proj, env=env, stdout=f, stderr=subprocess.STDOUT, timeout=timeout).returncode
+                # stdin DETACHED: opencode idles at init when it inherits a non-TTY pipe
+                # (measured 2026-09-28: 10 min, 0% CPU, empty output); stdout is a FILE.
+                rc = subprocess.run(cmd, cwd=proj, env=env, stdin=subprocess.DEVNULL, stdout=f,
+                                    stderr=subprocess.STDOUT, timeout=timeout).returncode
             except subprocess.TimeoutExpired:
                 rc = "timeout"
         wall = round(time.perf_counter() - t0, 1)
@@ -247,7 +279,9 @@ def leg_b_opencode(model, log, pid, *, root: Path, turns: int, timeout: float) -
               f"reuse={s['reuse_fraction']}", flush=True)
     all_rows = [r for t in per_turn for r in t["requests"]]
     return {"project": str(proj), "turns": per_turn, "overall": reuse_summary(all_rows),
-            "sessions_seen": sorted({r["session"] for r in all_rows}), "footprint_after": footprint(pid)}
+            "sessions_seen": sorted({r["session"] for r in all_rows}), "footprint_after": footprint(pid),
+            "big_file": ({"tokens": big_file_tokens, "turn": BIG_FILE_TURN, "marker": marker}
+                         if big_file_tokens > 0 else None)}
 
 
 def leg_c_eviction(model, log, pid, *, sizes: list[int], timeout: float) -> dict:
@@ -302,6 +336,8 @@ def main(argv=None) -> int:
     ap.add_argument("--tag", default="m45")
     ap.add_argument("--legs", default="A,B,C")
     ap.add_argument("--turns", type=int, default=10)
+    ap.add_argument("--big-file-tokens", type=int, default=0,
+                    help="M48 A4: insert a read-this-big-file turn (approx tokens) into leg B")
     ap.add_argument("--sizes", default="8000,32000,64000")
     ap.add_argument("--timeout", type=float, default=1200, help="derived: 64K prefill ≈141 s + queue; generous")
     ap.add_argument("--log", default=str(REPO / "logs/mlx_vlm.log"))
@@ -324,7 +360,8 @@ def main(argv=None) -> int:
     if "A" in legs:
         result["legs"]["A_control"] = leg_a_control(a.model, log, pid, turns=a.turns, timeout=a.timeout)
     if "B" in legs:
-        result["legs"]["B_opencode"] = leg_b_opencode(a.model, log, pid, root=wd, turns=a.turns, timeout=a.timeout)
+        result["legs"]["B_opencode"] = leg_b_opencode(a.model, log, pid, root=wd, turns=a.turns, timeout=a.timeout,
+                                                      big_file_tokens=a.big_file_tokens)
     if "C" in legs:
         result["legs"]["C_eviction"] = leg_c_eviction(a.model, log, pid, sizes=[int(x) for x in a.sizes.split(",")], timeout=a.timeout)
     result["finished"] = datetime.now().isoformat(timespec="seconds")

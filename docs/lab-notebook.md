@@ -4032,3 +4032,51 @@ last-user-turn + assistant re-render that M48 targets. Evidence `benchmark/resul
   in `ar.py` (P49).
 - `git show HEAD:path` inside a merge in progress works; `git checkout --ours` on a UU test file then
   `git add` is the fast path when the fork owns the file.
+
+## 2026-09-28 — M48 / C102(b) DONE: the session keeps the latest user turn and the canonical assistant turn; four cold-review rounds; live gates A2/A4/A5 PASS
+
+Operator: B1+B2 together (P56.2). Fork commits `bb59774a` → `927d21bb` → `1bd249d3` (not pushed); stack bumped.
+Evidence `benchmark/results/m48_c102b_retention_20260928.json`; mechanism `docs/serving-path.md`.
+
+**What changed in the design during review.** Round 1 (Codex): four blockers — canonical prefill positions were
+suffix-local (fixed: primed from the full sequence like the cached-prefix path); MTP swaps rotating layers for
+`BufferedRotatingKVCache` after prefill so a plain snapshot cannot be restored (fixed: snapshots record their layer
+class, restore refuses, session dropped); the buffered-window rewind guard checked the rewind point, not the
+window behind it (fixed with a real-class repro); an offset mismatch was published (fixed: refused). Round 2 found
+the decisive one: with thinking ON the shipped `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` template's generation tail `<think>\n` re-tokenises with the history
+form's `\n\n`, so retiring at prompt end diverged one token early and the big user turn still replayed. Design
+moved to a per-request **retention boundary** = longest token prefix shared with the next rendering (computed by
+the server with a placeholder answer), landed exactly by the chunk loop; the canonical suffix restarts there.
+Verified with the shipped tokenizer, thinking on and off. Rounds 3–4 closed the missing-capture route (hybrid
+cache with no capture → session dropped, never KV-trimmed over live recurrent state) and the anchor-pin
+semantics (only an exact user-marker landing is pinned; a continuation's fallback capture is not). Also fixed on
+the way: DeltaNet restores aliased the ring's list (pre-existing; the next forward pass rewrote the ring entry).
+
+**Live.** BEFORE on the post-sync fork, AFTER on `1bd249d3`, same box/session cap/APC absent/deployed profile:
+- A2 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` leg C r2 (first follow-up after a `[system, big-user]`
+  opener): cached 12 → 8010 / 31931 / 63835 at 8K/32K/64K; wall 12.5 / 55.5 / 130 s → 0.68 / 0.91 / 1.16 s.
+  r3/r5 (full reuse) and r4 (cold after eviction) unchanged.
+- A4 opencode (line-shaped 20K-token file; opencode truncates long lines): turn 3 read a 16,117-token tool
+  result once; turn 4's first request prefilled 27 tokens. Worker log shows the boundary one token before
+  prompt end and canonical suffixes of 6–194 tokens on opencode traffic; tool-call turns retire at the boundary.
+- A5 40 frozen C84 requests (payload + seed verbatim): 40/40 identical before/after at MTP ON and at MTP OFF.
+  ON vs OFF is also identical on this set — both states genuinely served (overlay router owned :8000, no
+  `--draft-kind` on the workers) — so the on/off split does not discriminate on these items.
+- A6 (bounded): worker footprint 35–36 GB with two sessions live before and after (1 GB resolution); swap
+  389 MB after vs 510 MB before; 0 router pressure events.
+- Smokes 6/6 on both deployed models; the 3-turn pinned session now reuses 582/606 (was 558/606): the
+  assistant turn is cached too.
+- A3 open: `Ornith-1.0-35B-mlx-uniform-4bit` is on the symmetric path (not asymmetric) → not a control (C105).
+
+**Instrument incidents (all recorded, none affect the numbers used).** (1) A probe launched without `nohup`
+died on the tool shell's hang-up mid-request; the abandoned request then made the next one 500 with the
+tokenizer's "Already borrowed" at the anchor-offset encode — that call and the new canonical encode now use the
+fork's borrow-retry helper. (2) Two `runserver.sh` shells survived TERM; a lean router then failed to bind and the
+first MTP-off arm silently ran on the daily driver (caught by the worker-cmdline evidence line: `--draft-kind
+mtp`). Stop recipe now kills by PID, escalates, and verifies :8000 is free and owned by the overlay router;
+arm redone on the old fork. (3) opencode idles at init when it inherits a non-TTY stdin — the probe now passes
+`stdin=DEVNULL`. (4) A killed probe's Python survived and ran concurrently with the rerun, contaminating
+attribution and 500-ing a smoke; kill by PID and verify zero probes before launching.
+
+**Tools added.** `benchmark/bench/parity_replay.py` (replay frozen requests, byte-compare), `stack_smoke.py`
+(six-case live gate), probe `--big-file-tokens`, provenance v6 (`session_retain_prompt_end`).

@@ -68,3 +68,31 @@ Suffix/MTP/draft speculative decoding is INHERENTLY non-lossless on bf16 (kernel
 The `"code"` fingerprint key is now a SERVING-PATH TREE HASH (`provenance.serving_path_hash`), not the raw submodule commit sha — a tool-only fork commit (the MTP splitter, never imported by the server) used to refuse pairing with every earlier row. A differing serving-path hash still REFUSES; a differing commit sha with an EQUAL hash now only WARNS ("byte-identical, pairable"). The exclusion list (tests/evals/trainer, the CLI/tool entry points, any `*.md`, and — 2026-09-03 follow-up, operator-verified — `mlx_vlm/speculative/drafters/mtp_split.py` plus the one-level pattern `mlx_vlm/speculative/drafters/<any>/split.py`, all conversion-time-only, imported solely by convert.py/split_mtp.py and each other) lives in `provenance.py` next to `serving_path_hash`, one line per entry naming why it's tool-only — extend it there, not here. A drafter's other files (its `model.py`, the actual serving-time drafter head) are NOT excluded and still move the hash. `derive_serving_path` recomputes the hash from a pre-v5 manifest's recorded commit sha, so an old row still pairs against a new one when the tree is unchanged.
 
 **Verifier round follow-ups (2026-09-03).** FIX-1: `is_compatible`'s `"code"` comparison now falls back to the raw commit sha when NEITHER side can produce a serving-path hash, instead of silently comparing None==None as equal — that hole let two native-v5 rows with different code and no hash pool via `is_compatible` while `compare.py` refused the identical pair via its own commit-sha fallback; the two seams now agree. FIX-3: `git submodule status` reports the checked-out WORKTREE sha, same as the dedicated `git -C <sub> rev-parse HEAD` `serving_path` uses — it is NOT, as an earlier draft of the code comment claimed, the parent's raw recorded pointer (that's `git ls-tree HEAD -- <sub>` in the parent); the dedicated call is for robustness, not because the two disagree in the common case. FIX-4: dependency pins (`pyproject.toml`, `requirements.txt`, `uv.lock`, whichever exist at the commit) are now hashed alongside each submodule's source root — a pinned mlx version is output-relevant exactly like a source change and must not be hash-inert.
+
+## Session retention at prompt end (M48 / C102(b), 2026-09-28) — fingerprint v6
+
+**Rule:** on a thinking (asymmetric-rendering) template the per-chat session cache retires at the **retention
+boundary plus the canonical assistant turn**, not before the latest user message. The boundary is the longest
+token prefix the live prompt shares with the next request's rendering (computed per request by the server with a
+placeholder answer); on the shipped `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` template with thinking ON it is one token short of prompt end, because
+the generation tail `<think>\n` re-tokenises with the history form's `\n\n` (review P5). Flag `--cache-session-retain-prompt-end
+on|off` (env `MLX_VLM_SESSION_RETAIN_PROMPT_END`, default on); it is recorded in provenance as
+`runtime.session_retain_prompt_end` and joins the resume fingerprint at **v6** (rows at different states never pool).
+
+**Mechanism.** `generate_step` captures rotating + DeltaNet state at the boundary (landed by the chunk loop; at prompt end right after the final prompt `_step`) (before
+speculative rounds or the decode loop — the only point where the prompt-end state exists for every draft kind; the
+older `n == 0` capture in dispatch is one decode token late). After generation `_retire_asymmetric_session`
+restores that state, trims KV to prompt_end, records the before-user anchor and prompt_end in the DeltaNet snapshot
+ring (ring size 3 ⇒ anchor, prompt_end, retired end), then — when the server's `canonical_suffix_fn` can predict the
+client's echo — prefills the template's HISTORY rendering of the answer (`<think>\n\n</think>\n\n{content}<|im_end|>\n`
+under `preserve_thinking=True`; thinking stripped, no media, no tool calls) with a prompt-only `generate_step` and stores
+`token_ids[:prompt_end + canonical_len]`. Next request: byte-match through the assistant turn ⇒ only the new user turn
+is prefilled; an edited last user turn rewinds to the anchor; a different assistant echo rewinds to prompt_end.
+Any failure in the canonical part falls back to retiring at the boundary; a capture that misses the boundary
+(e.g. media token expansion) DROPS the session rather than publish an inconsistent one. Media requests and templates
+whose boundary cannot be established take the legacy before-user path (no gain, no loss).
+
+**Costs.** Two extra ring entries per session at rest (~154 MB each on the pick); one small prefill (the answer) per
+turn, hidden after the response is sent. **Restore copies** the captured DeltaNet lists (`ArraysCache.state`
+returns the live list; the model writes into it element-wise) — the pre-existing rewind restore aliased the ring
+entry and is fixed in the same change.

@@ -1,4 +1,4 @@
-# Handoff — 2026-09-28: upstream sync of ../mlx-vlm DONE (M49, unpushed); next = M48 B1 (go given, split awaiting confirmation)
+# Handoff — 2026-09-28 (end of session): M49 sync PUSHED; M48 prompt-end retention DONE on fork `1bd249d3` + stack bump — NOT PUSHED
 
 THE one handoff (AGENTS.md: rewritten in place each session; there is no per-feature handoff). Read this,
 then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). Specs for queued work live in
@@ -6,19 +6,16 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## State of the world
 
-- **Git: NOTHING PUSHED since the 2026-09-27 push.** `../mlx-vlm` main = `7199aca0` (mlx-audio lock) on `2c276351` (merge of upstream
-  v0.7.3 `967bf90b`; parents `b5fdf113` + `967bf90b`); stack HEAD bumps `src/mlx-vlm` to it and adds the smoke
-  runner + docs. mlx-serve unchanged (`6602ae5`). Push order when the operator says so: fork first, then stack.
-  The stack's `src/mlx-vlm` submodule fetched the merge commit from the LOCAL fork path; a fresh clone cannot
-  resolve it until the fork is pushed.
-- **Stack is UP** on the merged fork (`nohup ./runserver.sh`, started 2026-09-28 00:0x; router `main_models.yaml`,
-  sessions 2, APC absent, task model :8092, OWUI :3000). Resident model after the smokes:
-  `Qwen3.8-27B-mlx-uniform-4bit`. Stop with `kill -TERM <runserver pid>` (trap tears compose down).
+- **Git:** the sync (fork `7199aca0`, stack `cf02b3e`) was pushed on the operator's word. Since then: fork
+  `bb59774a`→`927d21bb`→`1bd249d3` (M48) and stack commits (bump to `1bd249d3`, provenance v6, tools, evidence,
+  docs) are **NOT pushed**. Push order when told: fork first, then stack.
+- **Stack is UP** on the M48 fork (daily driver restarted by the chain at 12:11; router `main_models.yaml`, sessions
+  2, APC absent; `--cache-session-retain-prompt-end` default on). Resident model after the last smoke:
+  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (leg B ran last).
 - **Picks unchanged**: B/C 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` t0.5 medium, native16 KV (C81
-  provisional), repaired MTP. No pick/tune/serving-param change in the sync.
-- Fork `7199aca0` on top of the merge locks mlx-audio 0.5.6 (upstream requirement); stack `uv.lock` matches.
-- Fork suite on `2c276351`: 5068 passed / 5 skipped / 1 xfailed (audio/server/generate/models re-run green on mlx-audio 0.5.6). Live smokes 6/6 on both deployed models
-  (`benchmark/results/upstream_2026-09-28_smokes.json`).
+  provisional), repaired MTP. No pick/tune/serving-param change; M48 changes what the session cache keeps, not the
+  text (A5: 40/40 identical, MTP on and off).
+- Fork suite on `1bd249d3`: 5125 passed / 6 skipped / 1 xfailed. Stack bench tests green (1758 + new).
 
 ## Done since the 2026-09-21 handoff (all recorded in PLAN / open-questions / notebook)
 
@@ -32,49 +29,33 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 | C103 opencode skill-tree drift | RULED + DONE: daily driver excludes the Claude tree; probes exclude both external trees + manifest scaffold fields |
 | Periodic DeltaNet checkpoints (old C102(b)) | REJECTED in review; withdrawn |
 
-## DONE 2026-09-28: M49 upstream sync (details: notebook 2026-09-27→28 entry, PLAN M49, open-questions C104)
+## DONE this session (details: notebook 2026-09-27→28 and 2026-09-28 entries; PLAN M48/M49; OQ C102, C104, C105)
 
-Resolutions to remember: fork serving semantics kept everywhere; upstream taken for sampling
-(`clamp_temperature`, speculative `top_p_sampling`), unconditional `logits_to_keep`, periodic decode cache eval,
-think-close newline strip, tool-call stream parity, Chat/Responses + Anthropic parity, model discovery.
-Tests: stale fork copies of changed upstream tests dropped and upstream's ported; 30 serving-path files
-restored from the fork; `tests/test_mtp_split.py` holds the fork's MTP-split tests. `bench/stack_smoke.py`
-is the reusable live gate (six cases at the deployed profile). **Consequence for M48:** the A5 parity BEFORE
-arm is served from fork `2c276351`, never from the pre-sync fork (sampling changed upstream).
+- **M49** upstream sync to v0.7.3 (pushed). **M48** prompt-end retention (B1+B2 together, operator P56.2): four Codex
+  cold-review rounds; the retire point became a per-request **retention boundary** (longest token prefix shared with
+  the next rendering) because the shipped Qwen thinking-on tail re-tokenises. Live: A2 PASS (turn-2 reuse 12 →
+  full opener at 8K/32K/64K; 12.5/55/130 s → 0.7/0.9/1.2 s), A4 PASS (16K opencode tool result retained; next
+  request prefilled 27 tokens), A5 PASS (40/40 identical before/after, MTP on and off), A6 bounded PASS, smokes 6/6
+  both models, A3 open (C105). Evidence `benchmark/results/m48_c102b_retention_20260928.json`.
+- Tools: `benchmark/bench/stack_smoke.py`, `benchmark/bench/parity_replay.py`, probe `--big-file-tokens`,
+  provenance **v6** (`runtime.session_retain_prompt_end`; rows at different states never pool).
 
-## NEXT: M48 = B1 first, B2 second (P50/P51) — operator has given the go for M48; confirm the split
+## Rules learned this session (add to AGENTS.md if the operator agrees — see C105(4))
 
-Spec `docs/specs/c102b-prompt-end-retention.md`. Code facts established 2026-09-27 (P49) that the spec lacks:
-- Hook: after the final `_step()` in `generate_step` (`ar.py`, before `run_speculative_rounds`) — covers
-  MTP ON/OFF. The dispatch `n == 0` "end-of-prefill" capture is one decode token late and rotating-only.
-- Divergence rewind = `snapshot_ring.find_nearest(prefix_len)` (`dispatch.py` reuse block), fed ONLY by
-  `PromptCacheState.update()`; `capture()` refuses non-monotonic offsets; served ring size 3
-  (`--deltanet-ring-size`). B1 needs an explicit ring entry at the before-user anchor BEFORE the prompt_end
-  entry → 2 snapshots at rest under B1, 3 under B2 (~154 MB each on the pick; A6 counts them).
-- Canonical assistant form is client-dependent: sessions render with `preserve_thinking=True`
-  (`prompt_utils.CACHE_ALIGNMENT_KWARGS`), so the pick's template emits
-  `<|im_start|>assistant\n<think>\n{reasoning_content|trim}\n</think>\n\n{content}<|im_end|>\n` for every
-  history turn; bytes depend on whether the client echoes `reasoning_content`. B2 is validated live per client
-  (opencode, OpenWebUI) via next-request `cached_tokens` and rewind-to-prompt_end log events.
-- B1 files: `ar.py` new `prompt_end_capture` kwarg + `_capture_anchor_state` at the hook (`mx.eval` the
-  arrays); `dispatch.py` asymmetric branch restores prompt_end, trims KV to it, ring-captures the anchor
-  states, `update(token_ids[:prompt_end])`; `snapshot.py` `DeltaNetSnapshotRing.capture_states(offset,
-  states)`; `server/cli.py` + `session_manager` flag `--session-retain-prompt-end` default 1; fingerprint
-  version bump in the stack. Tests in `tests/test_rewind_guard.py` style (fake caches): retire offset ==
-  prompt_end; ring order (anchor, prompt_end); edited user turn → anchor; edited assistant echo →
-  prompt_end; flag off → today; pure attention → KV trim only.
-- B2 files: `server/openai.py` renders `messages + [assistant(content, no reasoning)] + [dummy user]` with
-  the same template kwargs, requires `ids[:prompt_end]` == prompt ids, slices canonical; skips on tool
-  calls or prefix mismatch. `dispatch.py` prefills canonical ids via `generate_step(max_tokens=0,
-  draft_model=None)` on the retired cache, then `update(token_ids[:prompt_end+canonical_len])`.
-- Gates unchanged from the spec (A1–A7); A1/A4 get a B1-only pass criterion (per-turn prefill ≈ new user
-  turn + assistant answer). Codex cold review before the fork commit lands. Order per the operator's task:
-  TDD → cold review → fork commit + bump → live A2–A6 with a fresh `runserver.sh` → notebook/PLAN/OQ/handoff.
+- `kill -TERM` on `runserver.sh` can leave the shell AND the router alive; a lean router then fails to bind and
+  requests silently go to the daily driver. Stop by PID with escalation and verify `:8000` has zero listeners, then
+  verify the new router OWNS the port (`lsof`) and read the worker cmdline (`--draft-kind`) as evidence, every arm.
+- Probes launched from a tool shell without `nohup … </dev/null &` die on hang-up mid-request; the abandoned
+  request then collides with the next one in the worker's tokenizer ("Already borrowed" → 500).
+- opencode idles at init on a non-TTY inherited stdin: `stdin=DEVNULL` (probe fixed), stdout a file.
+- Kill probes by PID and verify zero `session_cache_probe`/`opencode run` processes before launching another —
+  a survivor contaminates log-window attribution and can 500 a concurrent run via a model swap.
+- Upstream `uv sync` in `../mlx-vlm` drops pytest; reinstall `pytest pytest-subtests`.
 
 ## Pending (reconciled)
 
-1. **M48 — C102(b) prompt-end retention**: go given; see NEXT above. Push of the sync (fork then stack) awaits an
-   explicit operator instruction.
+1. **Push M48** (fork `1bd249d3` then the stack) on the operator's word. Then **C105** decisions (A3 control, OWUI
+   echo check, promote the PID-verified stop recipe).
 2. **M46 live check**: the next opencode probe run must show one transcript per row and populated
    `loop_metrics` (and the new manifest `skill_policy` fields). Lands together with **D12** (harness-traffic
    accounting) on that run.

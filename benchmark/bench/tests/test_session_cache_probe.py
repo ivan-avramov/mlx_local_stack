@@ -46,3 +46,24 @@ def test_opencode_command_continues_after_first_turn(tmp_path):
 def test_filler_tokens_scale_with_target():
     a, b = scp.filler(1, 8000), scp.filler(2, 32000)
     assert a != b and len(b) > 3 * len(a)
+
+
+# ----------------------------------------------------------------------------- M48 A4: big tool result
+def test_leg_b_prompts_insert_the_big_file_turn_only_when_asked():
+    from bench.session_cache_probe import BIG_FILE_PROMPT, BIG_FILE_TURN, OPENCODE_PROMPTS, leg_b_prompts
+
+    assert leg_b_prompts(4, 0) == OPENCODE_PROMPTS[:4]
+    with_file = leg_b_prompts(4, 20000)
+    assert with_file[BIG_FILE_TURN - 1] == BIG_FILE_PROMPT
+    assert len(with_file) == 4 and with_file[0] == OPENCODE_PROMPTS[0]
+    assert leg_b_prompts(2, 20000)[BIG_FILE_TURN - 1] == BIG_FILE_PROMPT  # turn after it kept
+
+
+def test_write_big_file_puts_the_marker_first(tmp_path):
+    from bench.session_cache_probe import _write_big_file
+
+    marker = _write_big_file(tmp_path, 20000)
+    body = (tmp_path / "big_notes.txt").read_text()
+    assert body.startswith(f"MARKER NUMBER: {marker}\n")
+    assert len(body) > 20000 * 3  # ~4 chars/token filler
+    assert body.count("\n") > 400  # line-shaped, so opencode's read tool returns it whole
