@@ -102,7 +102,7 @@ def test_signature_reflects_the_captured_log_tail(tmp_path):
 # --------------------------------------------------------------------------- _run_opencode (Popen fake)
 class _FakePopenCompletesImmediately:
     """Simulates a session that finishes before the first tick is ever due."""
-    def __init__(self, cmd, cwd=None, stdout=None, stderr=None, text=None):
+    def __init__(self, cmd, cwd=None, stdout=None, stderr=None, text=None, env=None):
         self.cmd, self.cwd = cmd, cwd
         if stdout is not None:
             stdout.write("fake opencode ran and exited\n")
@@ -122,7 +122,7 @@ class _FakePopenCompletesImmediately:
 
 class _FakePopenNeverExits:
     """Simulates a wedged session: never exits on its own, must be killed."""
-    def __init__(self, cmd, cwd=None, stdout=None, stderr=None, text=None):
+    def __init__(self, cmd, cwd=None, stdout=None, stderr=None, text=None, env=None):
         self.cmd, self.cwd = cmd, cwd
         self.returncode = None
         self.killed = False

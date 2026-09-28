@@ -265,3 +265,48 @@ def test_retirement_policy_is_recorded_without_invalidating_quality_resume(tmp_p
               "kv": {"kv_bits": 0, "cache_session_shrink": False}}
     after = {**before, "kv": {"kv_bits": 0, "cache_session_shrink": True}}
     assert P.is_compatible(before, after)
+
+
+# ----------------------------------------------------- v6 (M48, 2026-09-28): prompt-end retention
+def test_v6_fingerprints_session_retention_and_v5_rows_still_compare_on_v5():
+    """M48 changes WHICH prefix is served from cache vs re-prefilled (prompt-end retention +
+    canonical assistant retire). bf16 prefill-from-cache vs re-prefill is not proven
+    text-invariant, so the served state joins the resume guard at v6. Min-version rule keeps
+    every v5 row readable; two v6 manifests differing in the observed state are stale; an
+    UNOBSERVED state stays a wildcard (never condemn on ignorance)."""
+    def man(v, state):
+        return {"sampling_profile": "deployed", "fingerprint_version": v, "sampling": {},
+                "kv": {}, "runtime": {"session_retain_prompt_end": state}}
+    fp6 = P.config_fingerprint(man(6, "on"))
+    assert fp6["runtime"]["session_retain_prompt_end"] == "on"
+    assert "session_retain_prompt_end" not in P.config_fingerprint(man(5, "on"))["runtime"]
+    assert P.is_compatible(man(5, "off"), man(6, "on")) is True    # min-version: v5 slice
+    assert P.is_compatible(man(6, "off"), man(6, "on")) is False   # both v6, both observed
+    assert P.is_compatible(man(6, "unknown"), man(6, "on")) is True  # unobserved = wildcard
+    assert P.FINGERPRINT_VERSION >= 6
+
+
+def test_session_retention_state_reads_the_worker_cmdline_then_the_fork_default():
+    on = P.session_retention_state(worker_lookup=lambda: "python -m mlx_vlm.server --model x "
+                                   "--cache-session-retain-prompt-end on")
+    assert on == {"session_retain_prompt_end": "on", "session_retain_source": "worker"}
+    off = P.session_retention_state(worker_lookup=lambda: "python -m mlx_vlm.server --model x "
+                                    "--cache-session-retain-prompt-end off")
+    assert off["session_retain_prompt_end"] == "off"
+    # no flag on the cmdline: the fork's own default decides (the driver imports the same
+    # src/mlx-vlm the worker serves), and the source says so
+    dflt = P.session_retention_state(worker_lookup=lambda: "python -m mlx_vlm.server --model x")
+    assert dflt["session_retain_prompt_end"] in ("on", "off")
+    assert dflt["session_retain_source"] in ("fork-default", "fork-without-feature")
+    # no worker observable: unknown, honestly
+    assert P.session_retention_state(worker_lookup=lambda: None) == {
+        "session_retain_prompt_end": "unknown", "session_retain_source": "unknown"}
+
+
+def test_runtime_block_carries_session_retention(monkeypatch):
+    monkeypatch.setattr(P, "apc_state", lambda: {"apc_enabled": "0", "source": "process"})
+    monkeypatch.setattr(P, "session_retention_state",
+                        lambda: {"session_retain_prompt_end": "on", "session_retain_source": "worker"})
+    block = P._runtime_block(None, model=None)
+    assert block["session_retain_prompt_end"] == "on"
+    assert block["session_retain_source"] == "worker"

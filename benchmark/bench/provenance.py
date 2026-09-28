@@ -313,7 +313,13 @@ _FINGERPRINT_KV_EXTRA = ("hf_path", "kv_quant_scheme", "quantized_kv_start", "pr
 # instead of the raw submodule commit sha — a tool-only fork commit (never imported by the
 # server) no longer refuses pairing with earlier rows. See is_compatible for the cross-version
 # override that lets this apply even when the negotiated version is < 5.
-FINGERPRINT_VERSION = 5
+# v6 (M48, 2026-09-28): the served session-retention state (`--cache-session-retain-prompt-end`)
+# joins the runtime slice. Prompt-end retention + canonical assistant retire changes WHICH prefix is
+# served from cache vs re-prefilled; bf16 prefill-from-cache vs re-prefill is not proven
+# text-invariant (the prefill_step_size lesson), so rows at different states never pool. Observed
+# from the worker cmdline, else the fork's own default (same src/mlx-vlm the worker serves), else
+# "unknown" (wildcard). See session_retention_state().
+FINGERPRINT_VERSION = 6
 
 
 def config_fingerprint(manifest, version: int | None = None):
@@ -373,6 +379,8 @@ def config_fingerprint(manifest, version: int | None = None):
     if version >= 5:
         gsp = (manifest.get("git") or {}).get("serving_path") or {}
         fp["code"] = {k: gsp.get(k) for k in ("src/mlx-vlm", "src/mlx-serve")}
+    if version >= 6:
+        fp.setdefault("runtime", {})["session_retain_prompt_end"] = r.get("session_retain_prompt_end")
     return fp
 
 
@@ -500,6 +508,30 @@ def apc_state(process_env_lookup=_router_env) -> dict:
     return {"apc_enabled": "unknown", "source": "unknown"}
 
 
+def session_retention_state(worker_lookup=_worker_cmdline) -> dict:
+    """M48 served state: {"session_retain_prompt_end": "on"|"off"|"unknown", "session_retain_source"}.
+
+    Precedence: the live worker's `--cache-session-retain-prompt-end` flag (the SERVING truth),
+    else — when a worker is observable but carries no flag — the fork's own default, read from
+    the very src/mlx-vlm the driver imports (the worker serves the same tree), else "unknown".
+    """
+    try:
+        cmd = worker_lookup() if worker_lookup else None
+    except Exception:  # noqa: BLE001 — never block a run on provenance
+        cmd = None
+    if not cmd:
+        return {"session_retain_prompt_end": "unknown", "session_retain_source": "unknown"}
+    m = re.search(r"--cache-session-retain-prompt-end\s+(\S+)", cmd)
+    if m:
+        return {"session_retain_prompt_end": m.group(1).lower(), "session_retain_source": "worker"}
+    try:
+        from mlx_vlm.generate.common import session_retain_prompt_end
+    except Exception:  # noqa: BLE001 — a fork without the feature serves the old path
+        return {"session_retain_prompt_end": "off", "session_retain_source": "fork-without-feature"}
+    return {"session_retain_prompt_end": "on" if session_retain_prompt_end() else "off",
+            "session_retain_source": "fork-default"}
+
+
 def _runtime_block(runtime: dict = None, model: str = None,
                    registry_path: str | None = None) -> dict:
     """The runtime block: detected APC state, the registry's draft/suffix state, plus whatever knobs
@@ -513,6 +545,7 @@ def _runtime_block(runtime: dict = None, model: str = None,
     block = {"apc_enabled": st["apc_enabled"], "apc_source": st["source"]}
     block.update(registry_draft(model, registry_path) if model
                  else {"draft_kind": "unknown", "draft_source": "no-model-given"})
+    block.update(session_retention_state())
     if runtime:
         block.update(runtime)
     return block
