@@ -6,7 +6,7 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## State of the world
 
-- **Git: NOTHING PUSHED since the 2026-09-27 push.** `../mlx-vlm` main = `2c276351` (merge of upstream
+- **Git: NOTHING PUSHED since the 2026-09-27 push.** `../mlx-vlm` main = `7199aca0` (mlx-audio lock) on `2c276351` (merge of upstream
   v0.7.3 `967bf90b`; parents `b5fdf113` + `967bf90b`); stack HEAD bumps `src/mlx-vlm` to it and adds the smoke
   runner + docs. mlx-serve unchanged (`6602ae5`). Push order when the operator says so: fork first, then stack.
   The stack's `src/mlx-vlm` submodule fetched the merge commit from the LOCAL fork path; a fresh clone cannot
@@ -16,7 +16,8 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
   `Qwen3.8-27B-mlx-uniform-4bit`. Stop with `kill -TERM <runserver pid>` (trap tears compose down).
 - **Picks unchanged**: B/C 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` t0.5 medium, native16 KV (C81
   provisional), repaired MTP. No pick/tune/serving-param change in the sync.
-- Fork suite on `2c276351`: 5068 passed / 5 skipped / 1 xfailed. Live smokes 6/6 on both deployed models
+- Fork `7199aca0` on top of the merge locks mlx-audio 0.5.6 (upstream requirement); stack `uv.lock` matches.
+- Fork suite on `2c276351`: 5068 passed / 5 skipped / 1 xfailed (audio/server/generate/models re-run green on mlx-audio 0.5.6). Live smokes 6/6 on both deployed models
   (`benchmark/results/upstream_2026-09-28_smokes.json`).
 
 ## Done since the 2026-09-21 handoff (all recorded in PLAN / open-questions / notebook)
