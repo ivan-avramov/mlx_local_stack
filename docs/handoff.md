@@ -30,7 +30,7 @@ on the bumped submodules. Stop with `kill -TERM <runserver pid>` (its trap tears
 
 ## Open for the operator
 
-- **Push**: forks `../mlx-serve` (`6602ae5`) and `../mlx-vlm` (`b5fdf113`) must be pushed BEFORE the stack
+- ~~Push~~ DONE 2026-09-27 (forks first, then the stack).
   (`84f4540` records their shas); stack commits since `3205052` are local only.
 - **C103 RULED + DONE** (see open-questions): shell export `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true` added to
   `~/.zshrc` (new shells only); probes run with `OPENCODE_DISABLE_EXTERNAL_SKILLS=true` and record the skill
@@ -38,9 +38,9 @@ on the bumped submodules. Stop with `kill -TERM <runserver pid>` (its trap tears
   REJECTED as written (`docs/specs/c103-prefix-drift.md`); C102(b) stays open only as a future redesign.
 - Deferred composition (switchyard §8); S1 parked.
 
-## Git
+## Git (PUSHED 2026-09-27)
 
-Stack HEAD `see git log` (docs + gate + results after `84f4540`). Forks: local commits on `main`, unpushed.
+Forks pushed (mlx-serve `b632280..6602ae5`, mlx-vlm `b2e0d979..b5fdf113`), then the stack (`3205052..512218f`), operator instruction 2026-09-27. Nothing local is ahead of origin.
 Push only on explicit in-turn instruction; forks first, then the stack.
 
 ## Resume discipline
