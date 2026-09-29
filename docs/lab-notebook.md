@@ -4080,3 +4080,11 @@ attribution and 500-ing a smoke; kill by PID and verify zero probes before launc
 
 **Tools added.** `benchmark/bench/parity_replay.py` (replay frozen requests, byte-compare), `stack_smoke.py`
 (six-case live gate), probe `--big-file-tokens`, provenance v6 (`session_retain_prompt_end`).
+
+**Shipped-set coverage (operator ask, 2026-09-28 23:00).** Leg C (8K/32K) + six-case smoke on the new fork for the
+other three OpenWebUI-menu models:  r2 cached 8010/31931 (0.55/0.62 s), smoke 6/6;
+ r2 8010/31931 (0.38/0.40 s), 6/6; 
+r2 8012/31933 (0.19/0.26 s), 5/6 — the vision case fails by design (text-only tool). The worker log shows the
+boundary/canonical retire on all three (boundary one token before prompt end on every thinking template seen).
+So the change is verified live on every shipped model; only the abstract pure-attention control remains
+unmeasured (C105).
