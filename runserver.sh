@@ -117,6 +117,52 @@ echo "Backing up OpenWebUI data..."
 uv run python do_backup.py docker-compose.yml open-webui-data/
 log_ok "Backup completed.\n"
 
+# --- Teardown (M51, 2026-09-28) ---------------------------------------------------------------
+# Installed BEFORE the first server launches: a TERM during the health waits used to kill only the
+# shell (no trap yet) and orphan both servers. Signal traps just `exit`; the EXIT trap does the work.
+#
+# Why the final `docker compose logs -f` runs in the BACKGROUND with a `wait`: bash (3.2 here) does
+# not deliver a trapped signal while it is waiting on a FOREGROUND child — `kill -TERM <this pid>`
+# was parked until `logs -f` exited, i.e. never; only Ctrl+C worked because SIGINT hits the whole
+# foreground process group. `wait` returns immediately on a trapped signal. (2026-09-28: two shells
+# and the router survived TERM, a lean router then failed to bind and an arm ran on the daily driver.)
+TASK_MODEL_PID=""; MAIN_MODEL_PID=""; LOGS_PID=""
+descendants() {  # all descendants of $1, children first
+  local kids; kids="$(pgrep -P "$1" 2>/dev/null || true)"
+  for k in $kids; do descendants "$k"; echo "$k"; done
+}
+kill_tree() {  # TERM root + descendants (uv relays, mlx-serve unloads its worker); escalate to KILL
+  local root="$1"; [ -n "$root" ] || return 0
+  local all; all="$(descendants "$root") $root"
+  for p in $all; do kill -TERM "$p" 2>/dev/null || true; done
+  for _ in $(seq 1 100); do
+    local live=""; for p in $all; do kill -0 "$p" 2>/dev/null && live="$live $p"; done
+    [ -z "$live" ] && return 0
+    sleep 0.1
+  done
+  for p in $live; do kill -KILL "$p" 2>/dev/null || true; done
+}
+cleanup() {
+  trap - EXIT INT TERM
+  echo
+  echo "Shutting down..."
+  { [ -n "$LOGS_PID" ] && kill "$LOGS_PID" && wait "$LOGS_PID"; } 2>/dev/null || true
+  kill_tree "$MAIN_MODEL_PID"
+  kill_tree "$TASK_MODEL_PID"
+  wait 2>/dev/null || true
+  docker compose down || true
+  for _ in $(seq 1 30); do
+    [ "$(lsof -nP -iTCP:${MAIN_MODEL_PORT} -sTCP:LISTEN 2>/dev/null | grep -c LISTEN)" = "0" ] && \
+      { echo "Cleaned up (:${MAIN_MODEL_PORT} free). Goodbye!"; return 0; }
+    sleep 1
+  done
+  echo "cleanup: :${MAIN_MODEL_PORT} STILL BOUND by: $(lsof -nP -iTCP:${MAIN_MODEL_PORT} -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $1, $2}' | tr '\n' ' ')" >&2
+  exit 1
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+
 # --- Start task model server ---
 echo "Starting task model (mlx_vlm, ${TASK_MODEL_URL})..."
 uv run python -u -m mlx_vlm.server \
@@ -194,20 +240,6 @@ until curl -sf $TASK_MODEL_URL/health >/dev/null 2>&1; do
 done
 log_ok "Task model ready.\n"
 
-# --- Teardown on exit ---
-cleanup() {
-  trap - EXIT INT TERM
-  echo
-  echo "Shutting down..."
-  kill $TASK_MODEL_PID 2>/dev/null || true
-  wait $TASK_MODEL_PID 2>/dev/null || true
-  kill $MAIN_MODEL_PID 2>/dev/null || true
-  wait $MAIN_MODEL_PID 2>/dev/null || true
-  docker compose down
-  echo "Cleaned up. Goodbye!"
-}
-trap cleanup EXIT INT TERM
-
 # No config-file seed (C100, 2026-09-21): OpenWebUI settings are owned by
 # openwebui-init/init.py's API calls and the compose environment; the legacy
 # nested seed never reached the flat config table (C98).
@@ -224,7 +256,8 @@ echo -n "Waiting for openwebui-init..."
 # abort the script before the check below, so the actionable message never printed
 # and a failed init looked like a bare teardown.
 EXIT_CODE=0
-docker compose wait open-webui-init || EXIT_CODE=$?
+docker compose wait open-webui-init & WAIT_PID=$!
+wait $WAIT_PID || EXIT_CODE=$?
 if [ $EXIT_CODE -ne 0 ]; then
   log_fail "OpenWebUI initialization failed (exit $EXIT_CODE). Run 'docker compose logs open-webui-init' — a nonzero exit here also means the task-model routing assertion failed.\n"
   exit 1
@@ -244,4 +277,6 @@ echo "Opening OpenWebUI at ${OWUI_URL} ..."
 open "$OWUI_URL"
 printf "\nYou can log in with:\n  Email: ${OWUI_ADMIN_EMAIL}\n  Password: ${OWUI_ADMIN_PASSWORD}\n\n"
 echo "All services started. Press Ctrl+C to stop."
-docker compose logs -f &>logs/compose.log
+docker compose logs -f &>logs/compose.log &
+LOGS_PID=$!
+wait $LOGS_PID || true

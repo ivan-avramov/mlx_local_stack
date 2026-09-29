@@ -1,8 +1,10 @@
 #!/bin/bash
 # Stop the full stack (runserver.sh, router, workers, compose) and VERIFY :8000 is free.
-# Kills by PID and escalates to KILL: `kill -TERM` on runserver.sh has left the shell AND the
-# router alive (2026-09-28: a lean router then failed to bind and a parity arm silently ran
-# against the daily driver). Exit 1 if :8000 is still bound after the sweep.
+# Kills by PID and escalates to KILL. Before M51 (2026-09-28) `kill -TERM` on runserver.sh left the
+# shell AND the router alive (bash parks a trapped signal behind the foreground `docker compose
+# logs -f`; a lean router then failed to bind and a parity arm silently ran against the daily
+# driver). runserver.sh now tears down on TERM itself; this stays the belt-and-braces stop for
+# stale shells, orphaned workers and routers started by hand. Exit 1 if :8000 is still bound.
 set -u
 R="$(cd "$(dirname "$0")/.." && pwd)"
 sweep() { for p in $(pgrep -f "$1"); do kill "-$2" "$p" 2>/dev/null; done; }

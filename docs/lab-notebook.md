@@ -4103,3 +4103,26 @@ OpenWebUI's `/api/chat/completions` (frontend request shape, persisted assistant
 and the canonical prediction matches byte-for-byte; nothing to change. `scripts/stack_stop.sh` promoted (PID
 sweep with KILL escalation, compose down, :8000 verified free) + AGENTS.md rule; the automatic served-config
 tripwire (M50) and the `runserver.sh` TERM investigation (M51) are queued.
+
+
+## 2026-09-28 — M51: why `kill -TERM runserver.sh` left the router alive (two causes, fake-stack repro, fixed)
+
+**Cause 1 — the trap was parked behind a foreground child.** bash (3.2 on this box) does not run a trap while it is
+waiting on a foreground command; the script's last line was a foreground `docker compose logs -f`, which never
+exits, so `kill -TERM <pid>` was queued forever. Ctrl+C "worked" only because SIGINT goes to the whole foreground
+process group and killed `logs -f` first. Five-line repro: a script with `trap cleanup TERM; sleep 30` ignores TERM
+for 30 s; the same with `sleep 30 & wait $!` runs cleanup at once.
+**Cause 2 — the trap was installed too late.** `trap cleanup EXIT INT TERM` came after both health loops; a TERM during
+startup took bash's default action (die) and orphaned the task model and router.
+Also measured on the way: `uv run` does NOT exec (the router python is uv's child); uv relays TERM to it; mlx-serve's
+lifespan `unload()` terminates the worker. So the chain holds once the trap actually fires.
+
+**Fix (`runserver.sh`).** Trap installed before the first server launch; TERM/INT traps just `exit 143/130` into a
+single EXIT handler; `docker compose wait` and the final `logs -f` run in the background under `wait`; teardown
+tree-kills both server trees (TERM, 10 s, KILL), `compose down`, then verifies :8000 has zero listeners (exit 1 with
+the owning pids if not — the `stack_stop.sh` contract). **Test** `benchmark/bench/tests/test_runserver_term.py` runs a
+copy of the script against a stub PATH (fake `uv` that spawns and relays like the real wrapper, fake router with a
+worker grandchild, fake `docker` whose `logs -f` blocks and whose `down` leaves a marker, stub `curl`/`lsof`/`git`/
+`open`): TERM after full bring-up and TERM during the health wait both failed on the old script exactly as in the
+incident (shell alive; or shell dead with task/router/worker orphaned) and pass on the new one; a third case checks the
+still-bound exit 1. `scripts/stack_stop.sh` remains the belt-and-braces stop (stale shells, hand-started routers).
