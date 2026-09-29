@@ -4088,3 +4088,10 @@ r2 8012/31933 (0.19/0.26 s), 5/6 — the vision case fails by design (text-only 
 boundary/canonical retire on all three (boundary one token before prompt end on every thinking template seen).
 So the change is verified live on every shipped model; only the abstract pure-attention control remains
 unmeasured (C105).
+
+**A3 closed (operator ask, 23:05).** Pure-attention control on the cached `gemma-4-31B-it-qat-6bit` (global +
+sliding-window attention, thinking template, no drafter, kv_bits 4): leg C r2 cached 8014/31935 at 8K/32K
+(0.98/1.18 s vs 14.6/68.0 s cold), r3/r5 and eviction unchanged; smoke 6/6. Worker log: boundary == prompt end
+(this model's chat-template header is token-prefix compatible with its history form) and canonical 0 on every turn — the
+designed restricted mode on rotating-layer models (the user turn is retained, the answer is re-prefilled; the
+3-turn smoke reused 575/600). No layout-mismatch drops, no session drops.
