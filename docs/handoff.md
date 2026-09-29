@@ -1,4 +1,4 @@
-# Handoff — 2026-09-28 (end of session): M49 sync PUSHED; M48 prompt-end retention DONE on fork `1bd249d3` + stack bump — NOT PUSHED
+# Handoff — 2026-09-28 (end of session): M49 sync and M48 prompt-end retention DONE and PUSHED (fork `1bd249d3`, stack `afb407f`+)
 
 THE one handoff (AGENTS.md: rewritten in place each session; there is no per-feature handoff). Read this,
 then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). Specs for queued work live in
@@ -6,9 +6,8 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## State of the world
 
-- **Git:** the sync (fork `7199aca0`, stack `cf02b3e`) was pushed on the operator's word. Since then: fork
-  `bb59774a`→`927d21bb`→`1bd249d3` (M48) and stack commits (bump to `1bd249d3`, provenance v6, tools, evidence,
-  docs) are **NOT pushed**. Push order when told: fork first, then stack.
+- **Git: all pushed** (operator, 2026-09-28 23:2x): fork `../mlx-vlm` main `1bd249d3`, stack main = this commit; mlx-serve
+  unchanged (`6602ae5`). Clean trees.
 - **Stack is UP** on the M48 fork (daily driver restarted by the chain at 12:11; router `main_models.yaml`, sessions
   2, APC absent; `--cache-session-retain-prompt-end` default on). Resident model after the last smoke:
   `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (leg B ran last).
@@ -54,8 +53,8 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## Pending (reconciled)
 
-1. **Push M48** (fork `1bd249d3` then the stack) on the operator's word. Then **C105** decisions (A3 control, OWUI
-   echo check, promote the PID-verified stop recipe).
+1. **C105** decisions: (2) OpenWebUI echo check, (3) template scoping note, (4) promote the PID-verified stop recipe
+   into the repo. (1) A3 is CLOSED (pure-attention control on `gemma-4-31B-it-qat-6bit` PASS).
 2. **M46 live check**: the next opencode probe run must show one transcript per row and populated
    `loop_metrics` (and the new manifest `skill_policy` fields). Lands together with **D12** (harness-traffic
    accounting) on that run.
