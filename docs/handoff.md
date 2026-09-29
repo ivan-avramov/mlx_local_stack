@@ -1,4 +1,4 @@
-# Handoff — 2026-09-29 (end of session): M50 served-config tripwire + M51 `runserver.sh` TERM teardown DONE (not pushed)
+# Handoff — 2026-09-29 (end of session): M50 served-config tripwire + M51 `runserver.sh` TERM teardown DONE and PUSHED
 
 THE one handoff (AGENTS.md: rewritten in place each session; there is no per-feature handoff). Read this,
 then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). Specs for queued work live in
@@ -6,9 +6,8 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## State of the world
 
-- **Git: stack main has two NEW local commits on top of `90942de` — NOT PUSHED** (M51 `fix(stack)`, then M50
-  `feat(bench)`); fork `../mlx-vlm` main `1bd249d3` and mlx-serve `6602ae5` unchanged and pushed. Clean trees after
-  the M50 commit.
+- **Git: all pushed** (operator, 2026-09-29): stack main `02c2e67` (M50) on `1b30abf` (M51) on `90942de`; fork
+  `../mlx-vlm` main `1bd249d3` and mlx-serve `6602ae5` unchanged. Clean trees.
 - **Stack is UP** on the M48 fork (daily driver, router `main_models.yaml`, sessions 2, APC absent, `runserver.sh`
   pid 96728 — the OLD script; the M51 fix applies to the NEXT bring-up). Resident model after the last smoke:
   `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. No serving config was changed this session; no model requests
@@ -47,20 +46,27 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## Pending (reconciled)
 
-1. **Push** the two stack commits when the operator says so (no fork changes this session).
-2. **Possible follow-ups (not queued, operator call):** (a) `vision_gate` writes no manifest at all (pre-existing;
-   router is in its summary only); (b) a config identity/hash exposed BY the router (`/health` or `/v1/models`) would
-   close M50's residual: an in-place edit or symlink retarget after router start is invisible to a path comparison
-   (fork/mlx-serve change).
-3. **M46 live check**: the next opencode probe run must show one transcript per row and populated `loop_metrics`
-   (and the manifest `skill_policy` fields). Lands together with **D12** on that run.
-4. **Deferred**: frontier-driver composition (switchyard doc §8); S1 NVSY (parked); C77/C78/C87; C96; C104 open
+1. **First real-stack check of M51 (next bring-up):** the live daily driver still runs the OLD `runserver.sh` shell
+   (pid 96728). Stop it with `scripts/stack_stop.sh`, start with `./runserver.sh` (or `/mlx start`), then verify
+   `kill -TERM <new runserver pid>` alone tears down router, workers, task model and compose and leaves :8000 free.
+   Record the result in the notebook; if it fails, `stack_stop.sh` remains the stop and M51 reopens.
+2. **First live pass of the M50 opencode path:** the next `run_opencode_probe` / leg-B run exercises
+   `opencode debug config` per item for the first time outside unit tests (it is stubbed in the suite). Watch the
+   first item's log for the "M50 served-config OK: opencode -> …" line and the manifest `router` block.
+3. **Operator decisions open (raised 2026-09-29, not yet ruled):** (a) queue a PLAN row for the `vision_gate`
+   manifest gap (writes no manifest; router only in its summary) — recommended yes, small, CPU-only; (b) router-side
+   config identity (hash on `/health`) to close M50's residual (in-place edit / symlink retarget after start is
+   invisible to a path comparison) — fork/mlx-serve change, ~half a day; (c) the opencode child's strict proxy rule
+   (any mixed-case proxy-variable conflict refuses) — fine on this box, revisit only behind a corporate proxy.
+4. **M46 live check**: the next opencode probe run must show one transcript per row and populated `loop_metrics`
+   (and the manifest `skill_policy` fields). Lands together with **D12** on that run — same run as item 2.
+5. **Deferred**: frontier-driver composition (switchyard doc §8); S1 NVSY (parked); C77/C78/C87; C96; C104 open
    (fork test-suite sync policy, operator may veto items).
-5. **D7** and **D5** remain driver-side backlog.
+6. **D7** and **D5** remain driver-side backlog.
 
 ## Resume discipline
 
 One resident model; APC absent; retained sessions 2; full active preallocation; deployed sampling; explicit
 served-overlay environment on every driver (now ENFORCED by M50 — a mismatch refuses). Never alter source/config
 during a live run. Commit coherent units; push only on explicit current-turn instruction (forks before stack).
-Next decision id C106; discussion ids continue from P71.
+Next decision id C106; discussion ids continue from P80.
