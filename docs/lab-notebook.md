@@ -4167,3 +4167,23 @@ with a differential test against a REAL `ProxyHandler` opener (stub handler, no 
 findings; the reviewer's own 1,040-case no-socket comparison against urllib matched. Declined throughout: per-row
 stamping, `vision_gate` manifest (pre-existing, to queue), router-side config hash (fork), same-process check/use
 window without a restart, remote/org opencode config. Bench suite 1878 passed.
+
+
+## 2026-09-29 — M51 live PASS (first real-stack TERM) · M52 queued · stale `compose logs -f` orphans
+
+**M51 on the real stack.** The daily driver was still the OLD `runserver.sh` shell (pid 96728, up 25 h).
+`scripts/stack_stop.sh` cleared it (rc 0, all five pids gone, 0 listeners). Fresh `./runserver.sh` (detached,
+`MLX_VLM_CACHE_SESSION_MAX=2`, APC absent — verified on router 35925 and its `uv` parent by `ps -Eww`) printed
+`All services started` after 10 s. ONE `kill -TERM 35865` (the shell): shell, both `uv` wrappers, task model, router
+and the background log tail all gone in 3.1 s; `compose down` removed both containers and the network; the log ends
+`Cleaned up (:8000 free). Goodbye!`; `lsof` shows 0 listeners on :8000. Matches the fake-stack test exactly.
+Relaunched: shell 36341, router 36401 on :8000, compose healthy. `stack_stop.sh` stays the stop for stale shells.
+
+**Side finding.** Four `docker compose logs -f` processes with ppid 1 (ages 1–2 days) survived every earlier stop —
+the OLD script ran `logs -f` in the FOREGROUND and each killed shell orphaned it; `stack_stop.sh` sweeps only
+`runserver.sh`/router/task-model patterns. Killed by pid. The new script kills its own `LOGS_PID` in `cleanup`, so no
+new orphans; a `logs -f` sweep in `stack_stop.sh` would be a one-liner if any reappear.
+
+**M52 queued** (P81): `vision_gate` manifest. **P82** router-side config hash: deferred (no live-run edit of the
+served file has ever happened; the rule covers it; reopen on a registry-sha mismatch). **P83** opencode child proxy
+rule: unchanged.
