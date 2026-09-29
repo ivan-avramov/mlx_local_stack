@@ -53,8 +53,8 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## Pending (reconciled)
 
-1. **C105** decisions: (2) OpenWebUI echo check, (3) template scoping note, (4) promote the PID-verified stop recipe
-   into the repo. (1) A3 is CLOSED (pure-attention control on `gemma-4-31B-it-qat-6bit` PASS).
+1. **C105 CLOSED** (all four items; OpenWebUI echoes content only, canonical matches). New queue rows **M50** (served-config
+   tripwire at the driver precheck) and **M51** (`runserver.sh` TERM handling). `scripts/stack_stop.sh` is the stop recipe.
 2. **M46 live check**: the next opencode probe run must show one transcript per row and populated
    `loop_metrics` (and the new manifest `skill_policy` fields). Lands together with **D12** (harness-traffic
    accounting) on that run.

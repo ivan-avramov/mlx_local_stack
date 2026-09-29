@@ -4095,3 +4095,11 @@ sliding-window attention, thinking template, no drafter, kv_bits 4): leg C r2 ca
 (this model's chat-template header is token-prefix compatible with its history form) and canonical 0 on every turn — the
 designed restricted mode on rotating-layer models (the user turn is retained, the answer is re-prefilled; the
 3-turn smoke reused 575/600). No layout-mismatch drops, no session drops.
+
+**C105 closed (operator: go with the recommendations, 23:20).** OpenWebUI echo: three thinking turns through
+OpenWebUI's `/api/chat/completions` (frontend request shape, persisted assistant content echoed verbatim) on
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`: turn 1 retired at 5184 (boundary 5170 + canonical 14), turn 2
+`cached_tokens=5184` of 5204, retired at 5213; turn 3 `cached_tokens=5213` of 5237. OpenWebUI sends content only
+and the canonical prediction matches byte-for-byte; nothing to change. `scripts/stack_stop.sh` promoted (PID
+sweep with KILL escalation, compose down, :8000 verified free) + AGENTS.md rule; the automatic served-config
+tripwire (M50) and the `runserver.sh` TERM investigation (M51) are queued.
