@@ -4187,3 +4187,59 @@ new orphans; a `logs -f` sweep in `stack_stop.sh` would be a one-liner if any re
 **M52 queued** (P81): `vision_gate` manifest. **P82** router-side config hash: deferred (no live-run edit of the
 served file has ever happened; the rule covers it; reopen on a registry-sha mismatch). **P83** opencode child proxy
 rule: unchanged.
+
+
+## 2026-09-29 — M50 opencode path LIVE PASS · M46 live · first D12 accounting · P84 fail-fast gap
+
+**Run.** `run_opencode_probe.py --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --lang python --items
+scale-generator,zipper,poker,two-bucket,forth` (seeded random draw, `random.Random(20260929).sample` over the 34
+sorted python exercises; the probe has no `--seed`, so the draw is recorded here), `--allow-version-drift` (opencode
+1.18.30 vs pinned 1.18.15 — recorded in the manifest, rows NOT pooled with the September `opencode.jsonl`; separate
+`--out $STACK_WORKDIR/m50/opencode_live_check.jsonl`). Driver env: `MLX_SERVE_CONFIG=main_models.yaml`,
+`STACK_WORKDIR` exported, APC absent. Router pid 36401 (fresh M51 bring-up), worker `--draft-kind mtp`, deployed
+generation defaults (t0.5, medium, budget 81920), `kv_bits 0` → no `--kv-bits` flag on the worker = native16 (C81);
+the `--kv-quant-scheme turboquant` flag on the cmdline is inert at 0 bits. Watcher every 5 min
+(`$STACK_WORKDIR/m50/watch_live_check.py`); 0 survivors after exit.
+
+**M50 live.** First line before any request: `M50 served-config OK: opencode -> http://localhost:8000/v1: router pid
+36401 serves $HOME/ws/mlx_local_stack/main_models.yaml`. Manifest `router` block present and scrubbed
+(`config_raw: main_models.yaml`, cmdline with `$HOME`), `router_history` absent (attempt 2 reused attempt 1's manifest
+under the same pid — the "existing manifest, same served config" branch), `runtime.skill_policy =
+OPENCODE_DISABLE_EXTERNAL_SKILLS=true`, `opencode_config_sha256` recorded, registry sha `35a826c0…`.
+
+**Attempt 1 refused after item 1 (P84).** My launch omitted `config.sh`, so `STACK_WORKDIR` was unset; the M46
+transcript writer raises only at export time, i.e. AFTER opencode ran the whole item (8 router requests, ~1.5 min of
+worker time, model cold-loaded), then the probe exited with no rows. The M50 guard itself passed correctly. Late env
+precondition = fail-fast gap → **M53** queued (check at entry beside M50; audit other late preconditions). Attempt 1
+log kept as `opencode_live_check.attempt1.log`.
+
+**Result (attempt 2).** 5/5 `passed=True`, `stop_reason=completed`, rc 0, no stalls, no loops. **M46 live PASS**: one
+transcript per row (34–93 KB), `loop_metrics` populated: tool_calls 6/5/16/5/10, `error_calls`, `repeat_identical_calls`,
+`calls_repeated_after_error` all 0, `max_identical_run` 1. This is a probe of the harness path, not a pooled B-axis
+result (n=5, drifted scaffold version).
+
+**D12 first accounting (by hand; `$STACK_WORKDIR/m50/d12_accounting.py`).** Per item from the router metrics log
+(one line per `/v1/chat/completions`; a new session = prompt drops back to the ~8.1K system prefix):
+
+| item | turns | input cumulative | input incremental | output | max context | router wall s |
+|---|---|---|---|---|---|---|
+| scale-generator | 6 | 74,327 | 15,402 | 4,558 | 15,402 | 125.6 |
+| zipper | 4 | 49,843 | 14,421 | 1,642 | 14,421 | 58.7 |
+| poker | 16 | 247,679 | 19,535 | 5,166 | 19,535 | 179.1 |
+| two-bucket | 5 | 50,303 | 11,409 | 1,135 | 11,409 | 49.1 |
+| forth | 10 | 147,071 | 18,119 | 5,162 | 18,119 | 171.0 |
+
+Totals: 41 requests, 569K cumulative input, 79K incremental input, 17.7K output, 584 s router wall (probe wall 606 s
+incl. grading). Least-squares `ms = 1767 + 1.15·new_prompt + 23.8·completion` (R² 0.979) → ~873 tok/s incremental
+prefill, ~42 tok/s decode (MTP-ON); cost split **prefill 18 % / decode 82 %** at ≤19.5K context. **Mechanism:** the
+session cache turns 569K of cumulative input into 79K of actual prefill — without it, prefill at ~1K tok/s would cost
+~570 s, matching decode. The M12 "input traffic dominates at depth" mechanism therefore shows only where the cache
+misses (new process per item = the ~8.1K prefix re-prefill, C103) or at far deeper context. **Transcript cross-check:**
+opencode's per-assistant-message `tokens.input` sums to the INCREMENTAL input (15,407 vs router 15,402 …), `output`
+matches the router exactly, `reasoning` is always 0 because the router reports no reasoning-token split (thinking is
+inside `completion`). So D12's `input_tokens_total` must be defined as CUMULATIVE (router) vs INCREMENTAL (transcript)
+explicitly when the columns land; the router's TTFT field appears only on some requests and its `tok/s` on long
+completions (128–268) is not the decode rate — do not use it for D12 rates.
+
+**Open:** M53 (fail-fast), D12 columns in the probe, M52 (`vision_gate` manifest). No pick or ladder movement (probe,
+not a measurement).
