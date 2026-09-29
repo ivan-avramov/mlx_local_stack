@@ -540,6 +540,18 @@ def main() -> int:
                  f"is output-determining. Bump PINNED_OPENCODE_VERSION deliberately or pass "
                  f"--allow-version-drift to record the drift.")
 
+    # M50: refuse before anything is read, written or requested unless :port serves this registry.
+    from bench import provenance
+    try:  # opencode sends to what ITS resolved config says (never MLX_SERVE_BASE): verify THAT,
+        # resolved by `opencode debug config` under the probe's env from a neutral scratch cwd.
+        with _scratch_dir("m50") as neutral:
+            oc_base = provenance.opencode_router_base(neutral, _opencode_env(Path(neutral) / "xdg-data"))
+        router = provenance.assert_served_config(oc_base)
+    except (RuntimeError, OSError, KeyError, ValueError) as e:
+        sys.exit(f"REFUSED: M50 {type(e).__name__}: {e}")
+    print(f"M50 served-config OK: opencode -> {oc_base}: router pid {router['pid']} serves "
+          f"{router['config']}", flush=True)
+
     polyglot = _polyglot_root()
     poly_sha = _polyglot_sha(polyglot)
     root = polyglot / a.lang / "exercises/practice"
@@ -548,7 +560,28 @@ def main() -> int:
 
     # Manifest beside the rows, same machinery as the two-phase harness, so compare/clean-stale
     # see the sampling + code shas this run inherited — plus the scaffold identity in `runtime`.
-    try:
+    # M50: (a) an existing manifest's router attribution is PRESERVED — a different served config
+    # refuses the continuation, a different pid goes to `router_history`; (b) it is written only
+    # right before the first item actually RUNS, so a per-item destination refusal records nothing.
+    mp = out.with_suffix(".manifest.json")
+    history = []
+    if mp.exists():
+        try:
+            prev_doc = json.loads(mp.read_text())
+        except Exception as e:  # noqa: BLE001
+            sys.exit(f"REFUSED: M50 unreadable existing manifest {mp}: {e}")
+        prev = prev_doc.get("router"); history = list(prev_doc.get("router_history") or [])
+        if isinstance(prev, dict) and prev.get("config") and prev.get("config") != router["config"]:
+            sys.exit(f"REFUSED: M50 {out} was produced under served config {prev['config']!r}; this "
+                     f"router serves {router['config']!r}. Use a different --out.")
+        if isinstance(prev, dict) and prev.get("pid") is not None and prev.get("pid") != router["pid"]:
+            history.append(prev)
+    manifest_written = False
+
+    def _write_manifest():
+        nonlocal manifest_written
+        if manifest_written:
+            return
         from bench import provenance
         man = provenance.gather(a.model, profile="deployed",
                                 runtime={"client": "opencode", "edit_format": "tools",
@@ -557,10 +590,14 @@ def main() -> int:
                                          "tick_s": a.tick_s, "hard_ceiling_s": hard_ceiling_s,
                                          "stall_ticks": a.stall_ticks,
                                          "loop_repeats": a.loop_repeats,
-                                         **_scaffold_runtime()})
-        out.with_suffix(".manifest.json").write_text(json.dumps(man, indent=2))
-    except Exception as e:  # noqa: BLE001 — never block a run on provenance, but say so loudly
-        print(f"!! manifest not written: {e}", flush=True)
+                                         **_scaffold_runtime()},
+                                router=router)
+        if history:
+            man["router_history"] = history
+        tmp = mp.with_suffix(mp.suffix + ".tmp")
+        tmp.write_text(json.dumps(man, indent=2))
+        os.replace(tmp, mp)
+        manifest_written = True
 
     for name in [s.strip() for s in a.items.split(",") if s.strip()]:
         src = root / name
@@ -570,6 +607,14 @@ def main() -> int:
         with _scratch_dir(name) as tmp:
             work = Path(tmp) / name
             _prepare(src, work)
+            oc_env = _opencode_env(Path(tmp) / "xdg-data")      # M46: isolated session store
+            # M50: the destination opencode resolves from INSIDE this item's project must be the
+            # router verified at entry (a project-level config in the exercise would win otherwise).
+            provenance.assert_opencode_destination(work, oc_env, router["pid"])
+            try:
+                _write_manifest()           # first RUNNING item: attribution on disk before traffic
+            except Exception as e:  # noqa: BLE001
+                sys.exit(f"REFUSED: M50 cannot write the manifest {mp}: {e}")
             sol, test = _solution_and_test(work, src, a.lang)
             before = sol.read_text(errors="replace")
             test_before = test.read_text(errors="replace")
@@ -578,7 +623,6 @@ def main() -> int:
                 f"The specification is in .docs/instructions.md — read it first. "
                 f"Do NOT modify {test.name}. Do not create new files unless required by the spec."
             )
-            oc_env = _opencode_env(Path(tmp) / "xdg-data")      # M46: isolated session store
             rc, log, dur, gate_result = _run_opencode(
                 a.model, work, prompt, sol, test, grade, before,
                 tick_s=a.tick_s, hard_ceiling_s=hard_ceiling_s, poll_s=a.poll_s,

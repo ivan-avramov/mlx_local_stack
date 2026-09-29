@@ -120,6 +120,12 @@ def cmd_generate(args):
     # (ab5273f + C26 ab5708a5 are ancestors of 57177a21) and the ruling's 2-seed byte-difference
     # probe passed on the live router (seeds 11 vs 22 differ; seed 11 reproduces). k>1 draws are
     # now genuine draws; seeds derive from (item, sample) so they stay paired across models.
+    # M50 (2026-09-28): refuse before the FIRST request — `_resolve` without --models already
+    # GETs /v1/models — unless the process owning the router port serves this driver's registry.
+    from bench import provenance
+    router = provenance.assert_served_config(client.BASE)
+    print(f"[generate] M50 served-config OK: router pid {router['pid']} serves {router['config']}",
+          flush=True)
     models, benches, limits = _resolve(args)
     overrides = {}  # global params layered over each model's production config
     if args.thinking_budget is not None:

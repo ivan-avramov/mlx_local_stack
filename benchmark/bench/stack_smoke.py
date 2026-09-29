@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from bench import client
+from bench import client, provenance
 from bench.model_params import params_for
 
 TOOLS = [{
@@ -169,9 +169,14 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     ap.add_argument("--only", default=None, help="comma-separated case names")
     a = ap.parse_args()
-    params = params_for(a.model, profile="deployed")
     workdir = os.environ.get("STACK_WORKDIR") or os.path.expanduser("~/ws/mlx_local_stack_workdir")
     out = Path(a.out) if a.out else Path(workdir) / "smokes" / f"stack_smoke_{a.tag}_{datetime.now():%Y%m%d-%H%M%S}.json"
+    try:  # M50: refuse before anything is written or requested unless :port serves this registry
+        router = provenance.assert_served_config(client.BASE)
+    except RuntimeError as e:
+        print(f"[stack_smoke] REFUSED: {e}", file=sys.stderr, flush=True)
+        return 2
+    params = params_for(a.model, profile="deployed")
     out.parent.mkdir(parents=True, exist_ok=True)
     print(f"model={a.model} params={json.dumps(params)}", flush=True)
     client.preload(a.model)
@@ -183,7 +188,7 @@ def main() -> int:
             ok, res, note = fn(a.model, params)
         except Exception as e:  # transport / harness failure: escalate, do not grade
             print(f"[{name}] TRANSPORT ERROR {type(e).__name__}: {e}", flush=True)
-            json.dump({"status": "aborted", "model": a.model, "rows": rows, "error": f"{name}: {type(e).__name__}: {e}"}, open(out, "w"), indent=1)
+            json.dump({"status": "aborted", "model": a.model, "router": router, "rows": rows, "error": f"{name}: {type(e).__name__}: {e}"}, open(out, "w"), indent=1)
             return 2
         conv = _converged(res, params)
         row = {"case": name, "pass": bool(ok), "converged": conv, "finish_reason": res.get("finish_reason"),
@@ -195,7 +200,7 @@ def main() -> int:
         print(f"[{name}] {'PASS' if ok else 'FAIL'} conv={conv} finish={row['finish_reason']} "
               f"ctok={row['completion_tokens']} wall={row['wall_s']}s :: {note}", flush=True)
     result = {"status": "pass" if not failed else "fail", "model": a.model, "tag": a.tag, "params": params,
-              "base": client.BASE, "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}
+              "base": client.BASE, "router": router, "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}
     json.dump(result, open(out, "w"), indent=1)
     print(f"{result['status'].upper()} {len(rows) - failed}/{len(rows)} -> {out}")
     return 0 if not failed else 1

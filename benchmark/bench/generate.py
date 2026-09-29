@@ -219,6 +219,10 @@ def probe_with_recovery(model, messages, params, *, probe_fn, restart_fn=None, p
     if not convergence.looks_like_loop(p.get("reasoning")):
         return p, "genuine_nonconvergence", None
     restart_fn()
+    # M50: the router is a NEW process now — re-verify it serves this driver's registry before
+    # any further traffic (a restart is exactly when a stale/other router can take the port).
+    from . import provenance
+    provenance.assert_served_config(client.BASE)
     if preload_fn is not None:
         preload_fn(model)
     p2 = probe_fn(model, messages, params)
@@ -244,8 +248,10 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
     thinking budget used to detect the server's silent budget clamp. A wrong context limit there
     produces a wrong convergence verdict.
 
-    Compatible manifests are left untouched, so a resumed run keeps its original timestamp and code
-    SHAs rather than re-stamping itself as of whenever it last resumed.
+    Compatible manifests keep their original timestamp and code SHAs rather than re-stamping
+    themselves as of whenever they last resumed; only the M50 `router` block is refreshed, with the
+    previous router (if a different pid) appended to `router_history`, so a resumed file names every
+    router that produced rows in it.
     """
     from . import provenance  # lazy (provenance imports generate)
     cur_by_model = {}
@@ -261,6 +267,7 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
                 except Exception:  # noqa: BLE001 — unparseable == unknown provenance == rewrite
                     existing = None
                 if provenance.is_compatible(existing, cur_by_model[m]):
+                    _refresh_router(mp, existing, provenance)
                     continue
                 print(f"  [provenance] RESTAMPED {m}/{b} — the manifest on disk describes a "
                       f"different config than this run", flush=True)
@@ -269,8 +276,31 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
             # the corpus. `compare` decides per pair whether it COULD have bound.
             provenance.write(m, b, profile=profile, overrides=overrides, tune=tune,
                              runtime={"probe_timeout_s": probe_timeout} if probe_timeout else None)
+        except provenance.ServedConfigError:
+            raise                           # M50: a failed router attribution is never "skipped"
         except Exception as e:  # noqa: BLE001 — never block a run on provenance
             print(f"  [provenance] skipped {m}/{b}: {type(e).__name__}: {str(e)[:60]}", flush=True)
+
+
+def _refresh_router(mp, existing, provenance):
+    """M50: record the router this RESUME / restart runs against without touching the rest of the
+    manifest. Atomic replace; any failure is FATAL (ServedConfigError) — rows written under a
+    manifest naming the wrong router are false provenance."""
+    if not isinstance(existing, dict):
+        raise provenance.ServedConfigError(f"M50: manifest {mp} is unreadable; cannot attribute rows")
+    blk = provenance.router_block(client.BASE)
+    prev = existing.get("router")
+    if prev == blk:
+        return
+    if isinstance(prev, dict) and prev.get("pid") is not None and prev.get("pid") != blk.get("pid"):
+        existing.setdefault("router_history", []).append(prev)
+    existing["router"] = blk
+    try:
+        tmp = mp.with_suffix(mp.suffix + ".tmp")
+        tmp.write_text(json.dumps(existing, indent=2))
+        os.replace(tmp, mp)
+    except Exception as e:  # noqa: BLE001
+        raise provenance.ServedConfigError(f"M50: cannot refresh router in {mp}: {type(e).__name__}: {e}")
 
 
 def provenance_precheck(models, benches, profile="production", clean_stale=False, overrides=None,
@@ -414,6 +444,10 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # thinking budget implies >60min of generation (e.g. Qwen3.6-27B @ ~13.5 tok/s, 80K budget).
     def _probe(m, msg, pa):
         return client.probe(m, msg, pa, timeout=probe_timeout)
+    # M50 (2026-09-28): the process owning the router port must serve THIS driver's registry;
+    # refuse before anything is cleaned, written or requested (RuntimeError -> nonzero exit).
+    from . import provenance
+    provenance.assert_served_config(client.BASE)
     # Provenance guard: never resume on top of results produced under a different config
     # (the stale-results contamination). Runs BEFORE build_queue so cleaned files don't leak
     # into done_ids. clean_stale deletes mismatched files; default just warns.
@@ -431,8 +465,29 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
 
     # Provenance: stamp every (model, bench) with its exact config (box, code SHAs, quant
     # effective-bits, KV config, sampling) so results are never silently cross-compared.
-    stamp_manifests({(m, b) for m, b, _it, _s in queue},
-                    profile=sampling_profile, overrides=overrides, tune=tune, probe_timeout=probe_timeout)
+    pairs = {(m, b) for m, b, _it, _s in queue}
+    stamp_manifests(pairs, profile=sampling_profile, overrides=overrides, tune=tune,
+                    probe_timeout=probe_timeout)
+    if restart_fn is not None:
+        # M50: after a restart the router is a NEW process. Re-verify it serves this registry
+        # (raises ServedConfigError -> the run stops) and refresh every manifest of this run so the
+        # rows written from here on name the router that produced them (`router_history` keeps
+        # the old one). probe_with_recovery re-verifies too; this is where the manifests live.
+        _inner_restart = restart_fn
+
+        def restart_fn():
+            _inner_restart()
+            provenance.assert_served_config(client.BASE)
+            for m, b in sorted(pairs):
+                mp = result_path(m, b, tune=tune).with_suffix(".manifest.json")
+                if not mp.exists():
+                    raise provenance.ServedConfigError(
+                        f"M50: no manifest at {mp} to attribute post-restart rows to; refusing to continue")
+                try:
+                    existing = json.loads(mp.read_text())
+                except Exception as e:  # noqa: BLE001
+                    raise provenance.ServedConfigError(f"M50: unreadable manifest {mp}: {e}")
+                _refresh_router(mp, existing, provenance)      # fatal on failure
 
     per_item = {}                       # model -> list of per-item seconds (rolling)
     cur_model = None
@@ -515,6 +570,8 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                     rp["converged"] = convergence.is_converged(rp)
                     row["recovery_probe"] = rp
                     row["contaminated"] = "stale_router"
+            except provenance.ServedConfigError:
+                raise                       # M50: a refusal is FATAL, never an error row
             except Exception as e:  # noqa: BLE001 — network/OOM; record & continue
                 # An error row carries the same (id, sample) identity: resume retries errored
                 # rows, and without `sample` it could not tell which draw to redo. A probe that

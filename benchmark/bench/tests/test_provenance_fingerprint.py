@@ -449,3 +449,617 @@ def test_startup_preserves_committed_dependency_revisions():
     assert all("--remote" not in command for command in commands), (
         "Startup must use committed gitlinks, not unvalidated remote branch tips"
     )
+
+
+# ----------------------------------------------------- M50 (served-config tripwire, 2026-09-28)
+# The process that OWNS :8000 is the serving truth for which registry is live. On 2026-09-28 a lean
+# overlay router failed to bind, the daily driver kept the port, and a parity arm ran against it
+# with the overlay stamped as provenance. C35 only compares draft_kind, and only when a worker for
+# the requested model is already up. M50 compares the router's MLX_SERVE_CONFIG (resolved against
+# ITS cwd, exactly as mlx-serve does) with the driver's `paths.registry_path()` and REFUSES on any
+# difference, on no owner, and on an unreadable environ.
+import json
+import os
+import sys
+
+import pytest
+
+
+def _owner(tmp_path, config, cwd=None, pid=4242, env_ok=True):
+    """A fake :8000 owner as `router_owner` reports it."""
+    return {"pid": pid, "cmdline": "python mlx-serve start", "cwd": str(cwd or tmp_path),
+            "env": ({"MLX_SERVE_CONFIG": config} if config is not None else {}) if env_ok else None}
+
+
+def _driver_registry(monkeypatch, tmp_path, name="overlay.yaml"):
+    reg = tmp_path / name
+    reg.write_text("models: []")
+    monkeypatch.setenv("MLX_SERVE_CONFIG", str(reg))
+    return reg
+
+
+def test_m50_refuses_when_no_process_owns_the_port(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path)
+    with pytest.raises(RuntimeError, match="M50") as ei:
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: None)
+    assert ":8000" in str(ei.value)
+
+
+def test_m50_refuses_on_config_mismatch(monkeypatch, tmp_path):
+    """The exact 2026-09-28 failure: driver launched with the overlay, daily driver still on :8000."""
+    _driver_registry(monkeypatch, tmp_path)
+    (tmp_path / "main_models.yaml").write_text("models: []")
+    owner = _owner(tmp_path, "main_models.yaml")          # relative, as runserver.sh launches it
+    with pytest.raises(RuntimeError, match="M50") as ei:
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+    msg = str(ei.value)
+    assert "main_models.yaml" in msg and "overlay.yaml" in msg and "4242" in msg
+
+
+def test_m50_confirms_relative_config_resolved_against_the_router_cwd(monkeypatch, tmp_path):
+    reg = _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml", cwd=tmp_path)
+    blk = P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+    assert blk["pid"] == 4242
+    assert blk["config_raw"] == "main_models.yaml"
+    assert os.path.realpath(blk["config"].replace("$HOME", os.path.expanduser("~"))) == \
+        os.path.realpath(str(reg))
+    assert blk["port"] == 8000
+
+
+def test_m50_confirms_absolute_overlay_and_home_normalizes_the_record(monkeypatch, tmp_path):
+    reg = _driver_registry(monkeypatch, tmp_path)
+    owner = _owner(tmp_path, str(reg), cwd="/")
+    blk = P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+    home = os.path.expanduser("~")
+    assert not blk["config"].startswith(home), "results are TRACKED — no absolute home path"
+
+
+def test_m50_same_file_through_a_symlink_or_dotdot_is_a_match(monkeypatch, tmp_path):
+    reg = _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    sub = tmp_path / "sub"; sub.mkdir()
+    owner = _owner(tmp_path, "../main_models.yaml", cwd=sub)
+    assert P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)["pid"] == 4242
+    assert os.path.realpath(str(reg))  # sanity
+
+
+def test_m50_refuses_when_the_router_environ_is_unreadable(monkeypatch, tmp_path):
+    """Stricter than C35's skip-when-unobservable: the point is POSITIVE verification."""
+    _driver_registry(monkeypatch, tmp_path)
+    owner = _owner(tmp_path, None, env_ok=False)
+    with pytest.raises(RuntimeError, match="M50.*environ"):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+
+
+def test_m50_router_without_MLX_SERVE_CONFIG_is_a_mismatch_against_our_registry(monkeypatch, tmp_path):
+    """mlx-serve then falls back to ./models.yaml etc. — never main_models.yaml. Refuse, and say so."""
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, None)
+    with pytest.raises(RuntimeError, match="M50.*MLX_SERVE_CONFIG"):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+
+
+def test_m50_port_comes_from_the_driver_base_url(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    seen = {}
+
+    def lookup(port):
+        seen["port"] = port
+        return _owner(tmp_path, "main_models.yaml")
+
+    blk = P.assert_served_config("http://127.0.0.1:8123/", lookup=lookup)
+    assert seen["port"] == 8123 and blk["port"] == 8123
+    P.assert_served_config("http://localhost", lookup=lookup)
+    assert seen["port"] == 80
+
+
+def test_m50_router_block_rides_the_manifest_but_not_the_fingerprint(monkeypatch, tmp_path):
+    """Every manifest records router.pid + router.config — the block verified at ENTRY (or at the
+    restart re-check), not a fresh process walk per manifest; a pid change across restarts must NOT
+    make resumable rows stale."""
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    monkeypatch.setattr(P.model_params, "params_for", lambda m, profile, **k: {"temperature": 0.4})
+    monkeypatch.setattr(P, "registry_kv", lambda m, path: {"kv_bits": 4})
+    monkeypatch.setattr(P, "apc_state", lambda **k: {"apc_enabled": "0", "source": "env"})
+    monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "off"})
+    monkeypatch.setattr(P, "router_owner", lambda port: _owner(tmp_path, "main_models.yaml", pid=1))
+    P.assert_served_config("http://localhost:8000")            # entry
+    a = P.gather("m", profile="deployed")
+    monkeypatch.setattr(P, "router_owner", lambda port: _owner(tmp_path, "main_models.yaml", pid=2))
+    assert P.gather("m", profile="deployed")["router"]["pid"] == 1, "no re-walk per manifest"
+    P.assert_served_config("http://localhost:8000")            # restart re-check refreshes it
+    b = P.gather("m", profile="deployed")
+    assert a["router"]["pid"] == 1 and b["router"]["pid"] == 2
+    assert a["router"]["config"] == b["router"]["config"]
+    assert P.is_compatible(a, b)
+    assert P.config_fingerprint(a) == P.config_fingerprint(b)
+
+
+def test_m50_gather_never_raises_when_the_tripwire_would(monkeypatch, tmp_path):
+    """gather() is best-effort by contract; REFUSAL is the ENTRY POINTS' job (assert_served_config)."""
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    monkeypatch.setattr(P.model_params, "params_for", lambda m, profile, **k: {"temperature": 0.4})
+    monkeypatch.setattr(P, "registry_kv", lambda m, path: {"kv_bits": 4})
+    monkeypatch.setattr(P, "apc_state", lambda **k: {"apc_enabled": "0", "source": "env"})
+    monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "off"})
+    monkeypatch.setattr(P, "router_owner", lambda port: None)
+    man = P.gather("m", profile="deployed")
+    assert man["router"]["pid"] is None and "M50" in man["router"]["error"]
+
+
+class _FakeConn:
+    def __init__(self, ip, port, status="LISTEN"):
+        import collections
+        self.laddr = collections.namedtuple("addr", "ip port")(ip, port)
+        self.status = status
+
+
+class _FakeProc:
+    def __init__(self, pid, conns, denied=False):
+        self.pid, self._conns, self._denied = pid, conns, denied
+
+    def net_connections(self, kind="inet"):
+        if self._denied:
+            raise PermissionError("AccessDenied")
+        return self._conns
+
+
+def _fake_psutil(monkeypatch, procs):
+    import types
+    mod = types.SimpleNamespace(CONN_LISTEN="LISTEN", process_iter=lambda attrs=None: iter(procs))
+    monkeypatch.setitem(sys.modules, "psutil", mod)
+    monkeypatch.setattr(P, "_lsof_listeners", lambda port: [])
+
+
+def test_m50_psutil_walk_finds_the_listener_and_skips_denied_and_client_sockets(monkeypatch):
+    _fake_psutil(monkeypatch, [
+        _FakeProc(10, [], denied=True),
+        _FakeProc(11, [_FakeConn("127.0.0.1", 8000, "ESTABLISHED")]),    # a client, not the owner
+        _FakeProc(12, [_FakeConn("0.0.0.0", 8000), _FakeConn("::", 8000)]),  # v4+v6, same pid
+        _FakeProc(13, [_FakeConn("127.0.0.1", 8092)]),
+    ])
+    assert P._psutil_listeners(8000) == [(12, "0.0.0.0"), (12, "::")]
+    monkeypatch.setattr(P, "_process_facts", lambda pid: {"pid": pid, "cmdline": "mlx-serve", "cwd": "/", "env": {}})
+    own = P._real_router_owner(8000)
+    assert own["pid"] == 12 and own["bound_ips"] == ["0.0.0.0", "::"]
+
+
+def test_m50_two_different_listening_pids_is_ambiguous_and_refuses(monkeypatch):
+    """A stale router on IPv4 and a new one on IPv6 (or any two owners) — never pick the first."""
+    _fake_psutil(monkeypatch, [_FakeProc(20, [_FakeConn("127.0.0.1", 8000)]),
+                               _FakeProc(21, [_FakeConn("::1", 8000)])])
+    with pytest.raises(RuntimeError, match="M50.*ambiguous"):
+        P._real_router_owner(8000)
+
+
+def test_m50_router_owner_none_when_nothing_listens(monkeypatch):
+    _fake_psutil(monkeypatch, [_FakeProc(30, [_FakeConn("127.0.0.1", 9999)])])
+    assert P._real_router_owner(8000) is None
+
+
+def test_m50_lsof_field_output_is_parsed_with_addresses(monkeypatch):
+    class R:
+        stdout = "p777\nf12\nn*:8000\nf13\nn[::1]:8000\np778\nf3\nn127.0.0.1:8000\np779\n"
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"] = argv
+        return R()
+    monkeypatch.setattr(P.subprocess, "run", fake_run)
+    assert P._lsof_listeners(8000) == [(777, "*"), (777, "::1"), (778, "127.0.0.1"), (779, None)]
+    assert P._lsof_listener_pids(8000) == [777, 778, 779]
+    assert "-iTCP:8000" in seen["argv"] and "-sTCP:LISTEN" in seen["argv"] and "-Fpn" in seen["argv"]
+
+
+def test_m50_lsof_union_with_psutil_catches_a_second_owner(monkeypatch):
+    _fake_psutil(monkeypatch, [_FakeProc(40, [_FakeConn("127.0.0.1", 8000)])])
+    monkeypatch.setattr(P, "_lsof_listeners", lambda port: [(41, "127.0.0.1")])
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        P._real_router_owner(8000)
+
+
+def test_m50_refuses_a_remote_destination(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml")
+    with pytest.raises(RuntimeError, match="M50.*not this box"):
+        P.assert_served_config("http://10.0.0.7:8000", lookup=lambda port: owner)
+
+
+def test_m50_refuses_an_owner_that_is_not_an_mlx_serve_router(monkeypatch, tmp_path):
+    """A proxy/worker/anything else carrying an inherited MLX_SERVE_CONFIG is not the router."""
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml")
+    owner["cmdline"] = "python -m mlx_vlm.server --model x --port 8000"
+    with pytest.raises(RuntimeError, match="M50.*not an mlx-serve router"):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+
+
+def test_m50_tilde_expands_with_the_ROUTER_home_not_the_drivers(monkeypatch, tmp_path):
+    router_home = tmp_path / "rhome"; router_home.mkdir()
+    reg = router_home / "reg.yaml"; reg.write_text("models: []")
+    monkeypatch.setenv("MLX_SERVE_CONFIG", str(reg))
+    monkeypatch.setenv("HOME", str(tmp_path / "driver_home"))     # driver's HOME differs
+    owner = _owner(tmp_path, "~/reg.yaml")
+    owner["env"]["HOME"] = str(router_home)
+    assert P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)["pid"] == 4242
+    del owner["env"]["HOME"]
+    with pytest.raises(RuntimeError, match="M50.*HOME"):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+    owner["env"]["MLX_SERVE_CONFIG"] = "~other/reg.yaml"
+    with pytest.raises(RuntimeError, match="M50.*~user"):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+
+
+def test_m50_refuses_when_the_served_file_no_longer_exists(monkeypatch, tmp_path):
+    """Both sides naming the same MISSING file is not a match: mlx-serve raises on a missing explicit
+    path at start, so a running router whose file vanished is serving something unidentifiable."""
+    monkeypatch.setenv("MLX_SERVE_CONFIG", str(tmp_path / "gone.yaml"))
+    owner = _owner(tmp_path, str(tmp_path / "gone.yaml"))
+    with pytest.raises(RuntimeError, match="M50.*no longer exists"):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+
+
+def test_m50_relative_config_with_unreadable_cwd_refuses(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml"); owner["cwd"] = None
+    with pytest.raises(RuntimeError, match="M50.*cwd"):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+
+
+def test_m50_a_real_symlink_to_the_same_file_matches(monkeypatch, tmp_path):
+    reg = _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    link = tmp_path / "link.yaml"; link.symlink_to(reg)
+    owner = _owner(tmp_path, str(link), cwd="/")
+    assert P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)["pid"] == 4242
+
+
+def test_m50_every_persisted_router_string_is_home_scrubbed(monkeypatch, tmp_path):
+    """benchmark/results is TRACKED: config, config_raw, cmdline and the error text must all be
+    $HOME-form."""
+    home = tmp_path / "home"; home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    reg = home / "ws" / "reg.yaml"; reg.parent.mkdir(); reg.write_text("models: []")
+    monkeypatch.setenv("MLX_SERVE_CONFIG", str(reg))
+    owner = _owner(tmp_path, str(reg), cwd=str(home))
+    owner["cmdline"] = f"{home}/ws/.venv/bin/python {home}/ws/.venv/bin/mlx-serve start"
+    blk = P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+    for k in ("config", "config_raw", "cmdline"):
+        assert str(home) not in blk[k] and blk[k].startswith("$HOME"), (k, blk[k])
+    monkeypatch.setattr(P, "_LAST_VERIFIED", {})
+    monkeypatch.setattr(P, "router_owner", lambda port: {**owner, "env": {"MLX_SERVE_CONFIG": str(home / "other.yaml")}})
+    (home / "other.yaml").write_text("x")
+    err = P.router_block("http://localhost:8000")["error"]
+    assert str(home) not in err and "$HOME" in err
+
+
+def _fake_opencode(monkeypatch, stdout, rc=0, stderr=""):
+    seen = {}
+
+    class R:
+        returncode = rc
+    R.stdout, R.stderr = stdout, stderr
+
+    def fake_run(argv, **kw):
+        seen["argv"], seen["cwd"], seen["env"] = argv, kw.get("cwd"), kw.get("env")
+        return R()
+    monkeypatch.setattr(P.subprocess, "run", fake_run)
+    return seen
+
+
+def test_m50_opencode_router_base_is_what_opencode_itself_resolves(monkeypatch, tmp_path):
+    """Bound to `opencode debug config` run in the CHILD's cwd with the CHILD's env — every config
+    source opencode merges (global json/jsonc, config dir, ancestor projects) is opencode's problem."""
+    seen = _fake_opencode(monkeypatch, 'some preamble\n{"provider": {"mlx-local": {"options": {"baseURL": "http://localhost:8123/v1"}}}}\n')
+    env = {"PATH": "/usr/bin", "XDG_DATA_HOME": str(tmp_path)}
+    assert P.opencode_router_base(tmp_path, env) == "http://localhost:8123/v1"
+    assert seen["argv"][:3] == ["opencode", "debug", "config"]
+    assert seen["cwd"] == str(tmp_path) and seen["env"]["XDG_DATA_HOME"] == str(tmp_path)
+
+
+def test_m50_opencode_router_base_refuses_when_opencode_cannot_resolve(monkeypatch, tmp_path):
+    _fake_opencode(monkeypatch, "", rc=1, stderr="boom")
+    with pytest.raises(P.ServedConfigError, match="opencode debug config"):
+        P.opencode_router_base(tmp_path, {})
+    _fake_opencode(monkeypatch, '{"provider": {"other": {}}}')
+    with pytest.raises(P.ServedConfigError, match="mlx-local"):
+        P.opencode_router_base(tmp_path, {})
+
+
+# ----------------------------------------------------- M50 round 3 (Codex cold review #2)
+@pytest.mark.parametrize("argv,ok", [
+    (["/x/.venv/bin/python3", "/x/.venv/bin/mlx-serve", "start"], True),
+    (["python", "-m", "mlx_serve", "start"], True),
+    (["python", "-m", "mlx_serve.main"], True),
+    (["/opt/mlx-serve/.venv/bin/python", "-m", "http.server", "8000"], False),   # substring trap
+    (["python", "-m", "http.server", "8000", "--directory", "/opt/mlx-serve"], False),  # arg trap
+    (["python", "-u", "-X", "dev", "-m", "mlx_serve"], True),
+    (["python", "script.py", "mlx-serve"], False),
+    (["node", "mlx-serve"], False),
+    (["python", "-m", "mlx_vlm.server", "--model", "x"], False),
+    ([], False),
+])
+def test_m50_router_identity_is_argv_based(argv, ok):
+    assert P._is_router_argv(argv) is ok
+
+
+def test_m50_non_router_owner_under_an_mlx_serve_path_refuses(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml")
+    owner["argv"] = ["/opt/mlx-serve/.venv/bin/python", "-m", "http.server", "8000"]
+    owner["cmdline"] = " ".join(owner["argv"])
+    with pytest.raises(P.ServedConfigError, match="not an mlx-serve router"):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+
+
+@pytest.mark.parametrize("host,bound,ok", [
+    ("127.0.0.1", ["::1"], False),           # sole v6 loopback does not answer a v4 destination
+    ("::1", ["127.0.0.1"], False),
+    ("127.0.0.1", ["0.0.0.0"], True),
+    ("127.0.0.1", ["::"], True),             # wildcard v6 is dual-stack here
+    ("::1", ["0.0.0.0"], False),             # a v4 wildcard cannot answer v6
+    ("::1", ["::"], True),
+    ("localhost", ["0.0.0.0"], True),
+    ("localhost", ["::1"], True),
+    ("localhost", ["127.0.0.1"], True),
+    ("127.0.0.1", [], True),                 # lsof could not tell -> pid found is enough
+    ("127.0.0.1", ["*"], True),
+])
+def test_m50_listener_must_cover_the_destination_family(monkeypatch, tmp_path, host, bound, ok):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml"); owner["bound_ips"] = bound
+    if ok:
+        assert P.assert_served_config(f"http://{host if ':' not in host else '[' + host + ']'}:8000",
+                                      lookup=lambda port: owner)["pid"] == 4242
+    else:
+        with pytest.raises(P.ServedConfigError, match="does not answer"):
+            P.assert_served_config(f"http://{host if ':' not in host else '[' + host + ']'}:8000",
+                                   lookup=lambda port: owner)
+
+
+def test_m50_router_home_is_scrubbed_even_when_it_differs_from_the_drivers(monkeypatch, tmp_path):
+    rhome = tmp_path / "router-other"; (rhome / "ws").mkdir(parents=True)
+    reg = rhome / "ws" / "reg.yaml"; reg.write_text("models: []")
+    monkeypatch.setenv("MLX_SERVE_CONFIG", str(reg))
+    owner = _owner(tmp_path, str(reg), cwd=str(rhome))
+    owner["env"]["HOME"] = str(rhome)
+    owner["argv"] = [f"{rhome}/ws/.venv/bin/python", f"{rhome}/ws/.venv/bin/mlx-serve", "start"]
+    owner["cmdline"] = " ".join(owner["argv"])
+    blk = P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+    for k in ("config", "config_raw", "cmdline"):
+        assert str(rhome) not in blk[k], (k, blk[k])
+
+
+def test_m50_all_refusals_are_the_fatal_ServedConfigError(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path)
+    with pytest.raises(P.ServedConfigError):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: None)
+    assert issubclass(P.ServedConfigError, RuntimeError)
+
+
+@pytest.mark.parametrize("var", ["OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"])
+def test_m50_opencode_env_overrides_refuse(monkeypatch, tmp_path, var):
+    _fake_opencode(monkeypatch, '{"provider": {"mlx-local": {"options": {"baseURL": "http://localhost:8000/v1"}}}}')
+    with pytest.raises(P.ServedConfigError, match=var):
+        P.opencode_router_base(tmp_path, {var: "x"})
+
+
+def test_m50_opencode_destination_must_be_the_entry_router(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    _fake_opencode(monkeypatch, '{"provider": {"mlx-local": {"options": {"baseURL": "http://localhost:8000/v1"}}}}')
+    monkeypatch.setattr(P, "router_owner", lambda port: _owner(tmp_path, "main_models.yaml", pid=5))
+    assert P.assert_opencode_destination(tmp_path, {}, 5) == "http://localhost:8000/v1"
+    with pytest.raises(P.ServedConfigError, match="not the router verified at entry"):
+        P.assert_opencode_destination(tmp_path, {}, 6)
+
+
+def test_m50_gather_uses_the_callers_verified_block_over_client_BASE(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    monkeypatch.setattr(P.model_params, "params_for", lambda m, profile, **k: {"temperature": 0.4})
+    monkeypatch.setattr(P, "registry_kv", lambda m, path: {"kv_bits": 4})
+    monkeypatch.setattr(P, "apc_state", lambda **k: {"apc_enabled": "0", "source": "env"})
+    monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "off"})
+    blk = {"pid": 8123, "config": "$HOME/x", "port": 8123}
+    assert P.gather("m", profile="deployed", router=blk)["router"] == blk
+
+
+# ----------------------------------------------------- M50 round 5 (Codex cold review #4)
+@pytest.mark.parametrize("base", ["", None, 42, "localhost:8123/v1", "ftp://x"])
+def test_m50_opencode_empty_or_non_http_baseURL_refuses_instead_of_defaulting_to_8000(monkeypatch, tmp_path, base):
+    _fake_opencode(monkeypatch, json.dumps({"provider": {"mlx-local": {"options": {"baseURL": base},
+                                                                        "api": "http://localhost:8123/v1"}}}))
+    with pytest.raises(P.ServedConfigError, match="empty/non-http"):
+        P.opencode_router_base(tmp_path, {})
+
+
+def test_m50_http_proxy_in_the_driver_env_refuses_unless_bypassed(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml")
+    for k in ("http_proxy", "HTTP_PROXY", "no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("http_proxy", "http://proxy.example:8888")
+    with pytest.raises(P.ServedConfigError, match="http_proxy"):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+    monkeypatch.setenv("no_proxy", "localhost,127.0.0.1")
+    assert P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)["pid"] == 4242
+    monkeypatch.setenv("no_proxy", "example.com")
+    with pytest.raises(P.ServedConfigError, match="http_proxy"):
+        P.assert_served_config("http://127.0.0.1:8000", lookup=lambda port: owner)
+
+
+def test_m50_child_env_proxy_is_judged_for_opencode(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    for k in ("http_proxy", "HTTP_PROXY", "no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(k, raising=False)
+    _fake_opencode(monkeypatch, '{"provider": {"mlx-local": {"options": {"baseURL": "http://localhost:8000/v1"}}}}')
+    monkeypatch.setattr(P, "router_owner", lambda port: _owner(tmp_path, "main_models.yaml", pid=5))
+    with pytest.raises(P.ServedConfigError, match="child environment"):
+        P.assert_opencode_destination(tmp_path, {"HTTP_PROXY": "http://proxy.example:8888"}, 5)
+    assert P.assert_opencode_destination(tmp_path, {"HTTP_PROXY": "http://proxy.example:8888",
+                                                    "NO_PROXY": "localhost"}, 5)
+
+
+# ----------------------------------------------------- M50 round 6 (Codex cold review #5: proxy precedence)
+def _no_proxy_env(monkeypatch):
+    for k in list(os.environ):
+        if k.lower().endswith("_proxy"):
+            monkeypatch.delenv(k, raising=False)
+
+
+def test_m50_env_proxies_matches_urllib_precedence_exactly(monkeypatch):
+    """Cross-check the replica against CPython on the same environment — including the reproduced
+    `http_proxy=X NO_PROXY=* no_proxy=` case (lowercase empty clears the bypass)."""
+    from urllib.request import getproxies_environment
+    cases = [
+        {"http_proxy": "http://p:1", "NO_PROXY": "*", "no_proxy": ""},
+        {"HTTP_PROXY": "http://p:1", "http_proxy": "http://q:2"},
+        {"HTTP_PROXY": "http://p:1", "http_proxy": ""},
+        {"https_proxy": "http://p:1", "NO_PROXY": "localhost"},
+        {"HTTP_PROXY": "http://p:1", "NO_PROXY": "localhost,127.0.0.1"},
+    ]
+    for case in cases:
+        _no_proxy_env(monkeypatch)
+        for k, v in case.items():
+            monkeypatch.setenv(k, v)
+        assert P._env_proxies(dict(os.environ)) == getproxies_environment(), case
+
+
+def test_m50_reproduced_case_lowercase_empty_no_proxy_still_proxies(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml")
+    _no_proxy_env(monkeypatch)
+    monkeypatch.setenv("http_proxy", "http://proxy.example:8888")
+    monkeypatch.setenv("NO_PROXY", "*")
+    monkeypatch.setenv("no_proxy", "")
+    with pytest.raises(P.ServedConfigError, match="proxy"):
+        P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)
+
+
+def test_m50_https_destination_uses_https_proxy(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml")
+    _no_proxy_env(monkeypatch)
+    monkeypatch.setenv("https_proxy", "http://proxy.example:8888")
+    with pytest.raises(P.ServedConfigError, match="https_proxy"):
+        P.assert_served_config("https://localhost:8000", lookup=lambda port: owner)
+    assert P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)["pid"] == 4242
+
+
+def test_m50_child_env_case_conflict_is_ambiguous_and_refuses(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    _no_proxy_env(monkeypatch)
+    _fake_opencode(monkeypatch, '{"provider": {"mlx-local": {"options": {"baseURL": "http://localhost:8000/v1"}}}}')
+    monkeypatch.setattr(P, "router_owner", lambda port: _owner(tmp_path, "main_models.yaml", pid=5))
+    with pytest.raises(P.ServedConfigError, match="ambiguous"):
+        P.assert_opencode_destination(tmp_path, {"HTTP_PROXY": "http://p:1", "http_proxy": "http://q:2",
+                                                 "NO_PROXY": "localhost"}, 5)
+    with pytest.raises(P.ServedConfigError, match="ambiguous"):
+        P.assert_opencode_destination(tmp_path, {"HTTP_PROXY": "http://p:1", "NO_PROXY": "*", "no_proxy": ""}, 5)
+    assert P.assert_opencode_destination(tmp_path, {"HTTP_PROXY": "http://p:1", "NO_PROXY": "localhost"}, 5)
+    assert P.assert_opencode_destination(tmp_path, {}, 5)
+
+
+# ----------------------------------------------------- M50 round 7 (Codex cold review #6: URL canon + no_proxy port)
+@pytest.mark.parametrize("base", [" https://localhost:8000", "http://localhost:8000 ", "", "localhost:8000",
+                                  "ftp://localhost:8000", "http:///v1"])
+def test_m50_non_canonical_base_url_refuses(monkeypatch, tmp_path, base):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml")
+    with pytest.raises(P.ServedConfigError, match="base URL"):
+        P.assert_served_config(base, lookup=lambda port: owner)
+
+
+def test_m50_reproduced_whitespace_https_case_is_refused_not_misjudged(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml")
+    _no_proxy_env(monkeypatch)
+    monkeypatch.setenv("https_proxy", "http://proxy.example:8888")
+    with pytest.raises(P.ServedConfigError):
+        P.assert_served_config(" https://localhost:8000", lookup=lambda port: owner)
+
+
+def test_m50_no_proxy_with_port_bypasses_like_urllib(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml")
+    _no_proxy_env(monkeypatch)
+    monkeypatch.setenv("http_proxy", "http://proxy.example:8888")
+    monkeypatch.setenv("no_proxy", "localhost:8000")
+    assert P.assert_served_config("http://localhost:8000", lookup=lambda port: owner)["pid"] == 4242
+    with pytest.raises(P.ServedConfigError, match="proxy"):
+        P.assert_served_config("http://localhost:8001", lookup=lambda port: owner)
+
+
+def test_m50_router_block_survives_a_non_canonical_base(monkeypatch):
+    blk = P.router_block(" http://localhost:8000")
+    assert blk["pid"] is None and "base URL" in blk["error"]
+
+
+def test_m50_port_from_base_defaults(monkeypatch):
+    assert P._port_from_base(None) == 8000
+    assert P._port_from_base("https://localhost") == 443
+    assert P._split_base("http://127.0.0.1:8123/v1") == ("http", "127.0.0.1", 8123)
+
+
+# ----------------------------------------------------- M50 round 8 (Codex cold review #7: authority as spelled)
+class _Routed(Exception):
+    def __init__(self, host):
+        self.host = host
+
+
+def _urllib_destination(url, env, monkeypatch):
+    """What urllib's REAL ProxyHandler would connect to for `url` under `env` — captured by a stub
+    HTTP handler that raises with the final request host instead of opening a socket."""
+    import urllib.request as ur
+    for k in list(os.environ):
+        if k.lower().endswith("_proxy"):
+            monkeypatch.delenv(k, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+    class Stub(ur.BaseHandler):
+        handler_order = 10_000
+
+        def http_open(self, req):
+            raise _Routed(req.host)
+
+        def https_open(self, req):
+            raise _Routed(req.host)
+    opener = ur.OpenerDirector()
+    opener.add_handler(ur.ProxyHandler())          # env-derived, as the bench client's default opener
+    opener.add_handler(Stub())
+    try:
+        opener.open(url)
+    except _Routed as r:
+        return r.host
+    raise AssertionError("stub did not fire")
+
+
+@pytest.mark.parametrize("url,env", [
+    ("http://localhost:08000", {"http_proxy": "http://proxy.example:8888", "no_proxy": "localhost:8000"}),
+    ("http://localhost", {"http_proxy": "http://proxy.example:8888", "no_proxy": "localhost:80"}),
+    ("http://[::1]:8000", {"http_proxy": "http://proxy.example:8888", "no_proxy": "::1"}),
+    ("http://localhost:8000", {"http_proxy": "http://proxy.example:8888", "no_proxy": "localhost:8000"}),
+    ("http://localhost:8000", {"http_proxy": "http://proxy.example:8888", "no_proxy": "localhost"}),
+    ("http://localhost:8001", {"http_proxy": "http://proxy.example:8888", "no_proxy": "localhost:8000"}),
+    ("http://127.0.0.1:8000", {"http_proxy": "http://proxy.example:8888", "NO_PROXY": "*", "no_proxy": ""}),
+    ("https://localhost:8000", {"https_proxy": "http://proxy.example:8888"}),
+    ("https://localhost:8000", {"http_proxy": "http://proxy.example:8888"}),
+    ("http://localhost:8000", {"HTTP_PROXY": "http://proxy.example:8888", "http_proxy": ""}),
+    ("http://localhost:8000", {}),
+])
+def test_m50_proxy_decision_is_differential_against_urllibs_ProxyHandler(monkeypatch, url, env):
+    """The guard must say 'proxied' exactly when urllib's own transport would connect to the proxy."""
+    dest = _urllib_destination(url, env, monkeypatch)
+    urllib_proxied = dest.startswith("proxy.example")
+    assert (P._proxy_for(url, env) is not None) is urllib_proxied, (url, env, dest)
+
+
+def test_m50_reproduced_authority_cases_refuse(monkeypatch, tmp_path):
+    _driver_registry(monkeypatch, tmp_path, "main_models.yaml")
+    owner = _owner(tmp_path, "main_models.yaml")
+    _no_proxy_env(monkeypatch)
+    monkeypatch.setenv("http_proxy", "http://proxy.example:8888")
+    for url, bypass in (("http://localhost:08000", "localhost:8000"), ("http://localhost", "localhost:80"),
+                        ("http://[::1]:8000", "::1")):
+        monkeypatch.setenv("no_proxy", bypass)
+        with pytest.raises(P.ServedConfigError, match="proxy"):
+            P.assert_served_config(url, lookup=lambda port: owner)

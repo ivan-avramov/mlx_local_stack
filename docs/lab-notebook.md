@@ -4126,3 +4126,44 @@ worker grandchild, fake `docker` whose `logs -f` blocks and whose `down` leaves 
 `open`): TERM after full bring-up and TERM during the health wait both failed on the old script exactly as in the
 incident (shell alive; or shell dead with task/router/worker orphaned) and pass on the new one; a third case checks the
 still-bound exit 1. `scripts/stack_stop.sh` remains the belt-and-braces stop (stale shells, hand-started routers).
+
+
+## 2026-09-29 — M50: served-config tripwire at every driver entry (eight Codex rounds to PASS; live-verified)
+
+**What it guards.** The process that OWNS the router port is the serving truth for which registry is live; C35 only
+compared `draft_kind`, and only for a model whose worker was already up. `bench/provenance.assert_served_config(base_url)`
+now runs first in `run.py generate` (before the `/v1/models` roster GET), `generate.run`, `session_cache_probe`,
+`stack_smoke`, `parity_replay`, `vision_gate` and `run_opencode_probe`, and raises (nonzero exit, nothing written)
+unless: exactly one process listens on the port (psutil per-process walk ∪ `lsof -Fp`; two pids = ambiguous), the
+destination host is this box, the owner's cmdline is an mlx-serve router, its environ is readable, `MLX_SERVE_CONFIG`
+is set, the file it resolves to (router cwd, router HOME, realpath) exists and is the driver's `paths.registry_path()`.
+Live on the daily driver: OK with the default registry (pid 96795, `main_models.yaml`); REFUSED with an overlay in the
+driver env — the 2026-09-28 incident shape — on the first call. opencode-driven probes verify opencode's OWN provider
+baseURL (global config, else shipped) because opencode never sees `MLX_SERVE_BASE`.
+
+**Recorded.** `router{pid, config, config_raw, port, cmdline}`, every string $HOME-scrubbed (results are tracked), in
+every manifest (`provenance.gather`, from the block verified at entry — no per-manifest process walk) and every tool
+result incl. abort records; outside the fingerprint (a pid change is not a config change); a compatible resume refreshes
+`router` and appends the previous pid to `router_history`; an auto-restart re-verifies before preload.
+
+**Codex cold review — five rounds (`$STACK_WORKDIR/m50/codex_review_{1..5}.md`).** Each round's exact-incident retest
+passed at every entry point from round 2 on; the FAILs were variants and provenance holes, all real:
+R1 (13): guard after `mkdir`/roster GET, driver-HOME `~`, missing files accepted, first listener / remote host /
+non-router owner accepted, opencode destination unverified, unscrubbed cmdline/raw/error, abort records and resumes
+without router, discovery untested, psutil<6 API, per-manifest walk. R2: post-restart refusal swallowed as an error row
+→ `ServedConfigError` is fatal through the item loop; manifests not refreshed after a restart → `router_history`;
+opencode manifest stamped from `client.BASE` → verified block passed into `gather(router=)`; `mlx-serve` substring
+identity → argv program position; v4/v6 family; router HOME scrub. R3: opencode config sources (jsonc, config dir,
+ancestors) → BIND to `opencode debug config` run in the child's cwd/env instead of a policy list; parity resume
+rewrote attribution; refresh failures swallowed → atomic + fatal; wildcard family. R4: empty baseURL defaulted to
+:8000 → refuse non-http; opencode rerun overwrote attribution → history/refuse; inherited `http_proxy` would route past
+the verified router → refuse unless no_proxy covers the host (driver env, and the CHILD env for opencode); manifest
+written before the per-item check → lazy write before the first running item. R5–R7 (proxy precedence only):
+lowercase-wins / empty-lowercase-clears semantics → `_env_proxies` replicates CPython's `getproxies_environment`
+(cross-checked against it); scheme selection from a `startswith` while urllib tolerated leading whitespace → one
+canonical parse that refuses non-canonical URLs; reconstructed `host:port` vs urllib's authority (`localhost:08000`,
+`[::1]:8000`, omitted port) → the guard now feeds `Request(url).type/.host` to the same bypass matcher urllib uses,
+with a differential test against a REAL `ProxyHandler` opener (stub handler, no socket). **R8: PASS**, no new
+findings; the reviewer's own 1,040-case no-socket comparison against urllib matched. Declined throughout: per-row
+stamping, `vision_gate` manifest (pre-existing, to queue), router-side config hash (fork), same-process check/use
+window without a restart, remote/org opencode config. Bench suite 1878 passed.

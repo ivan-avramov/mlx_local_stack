@@ -200,3 +200,21 @@ def frozen_clock():
 @pytest.fixture
 def fake_runner():
     return FakeRunner()
+
+
+# --------------------------------------------------------------------------- M50 served-config
+@pytest.fixture(autouse=True)
+def _m50_router_matches_registry(monkeypatch, tmp_path):
+    """M50 (2026-09-28): every driver refuses to run unless the process owning the router port serves
+    the driver's `paths.registry_path()`. Unit tests have no router, so by default the owner lookup
+    reports a fake router serving exactly that registry. Tests OF the tripwire pass `lookup=` or
+    re-patch `provenance.router_owner` explicitly."""
+    import bench.provenance as P
+    from bench import paths
+
+    def _fake_owner(port):
+        return {"pid": 4242, "cmdline": "python mlx-serve start", "cwd": str(tmp_path),
+                "env": {"MLX_SERVE_CONFIG": str(paths.registry_path())}}
+    monkeypatch.setattr(P, "_real_router_owner", P.router_owner, raising=False)  # for tests OF it
+    monkeypatch.setattr(P, "router_owner", _fake_owner)
+    monkeypatch.setattr(P, "_LAST_VERIFIED", {})   # the entry-verified block never leaks across tests

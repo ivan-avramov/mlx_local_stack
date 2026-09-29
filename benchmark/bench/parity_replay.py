@@ -28,7 +28,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from bench import client
+from bench import client, provenance
 
 FLOOR_DECODE_TPS = 8.0  # conservative decode floor on this box for both deployed picks
 HEADROOM_S = 900.0
@@ -62,11 +62,24 @@ def load_requests(frozen_path: str, models: list[str] | None) -> list[dict]:
 
 
 def run(a) -> int:
+    try:  # M50: refuse before anything is written or requested unless :port serves this registry
+        router = provenance.assert_served_config(client.BASE)
+    except RuntimeError as e:
+        print(f"[parity_replay] REFUSED: {e}", file=sys.stderr, flush=True)
+        return 2
     reqs = load_requests(a.frozen, a.models.split(",") if a.models else None)
     out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
-    rows = []
+    rows = []; history = []
     if out.exists() and a.resume:
-        rows = json.load(open(out))["rows"]
+        prev_doc = json.load(open(out))
+        rows = prev_doc["rows"]
+        prev = prev_doc.get("router"); history = list(prev_doc.get("router_history") or [])
+        if isinstance(prev, dict) and prev.get("config") and prev.get("config") != router["config"]:
+            print(f"[parity_replay] REFUSED: resuming {out} produced under served config "
+                  f"{prev['config']!r} with a router serving {router['config']!r}", file=sys.stderr, flush=True)
+            return 2
+        if isinstance(prev, dict) and prev.get("pid") is not None and prev.get("pid") != router["pid"]:
+            history.append(prev)          # rows above were produced by THAT router
     done = {(r["model"], r["bench"], r["id"]) for r in rows}
     reqs = [r for r in reqs if (r["model"], r["bench"], r["id"]) not in done]
     print(f"{len(reqs)} requests to run ({len(done)} already done) tag={a.tag}", flush=True)
@@ -81,7 +94,7 @@ def run(a) -> int:
             resp = _post(r["payload"], timeout)
         except Exception as e:  # transport: escalate
             print(f"[{i}/{len(reqs)}] TRANSPORT FAILURE {r['bench']} {r['id']}: {type(e).__name__}: {e}", flush=True)
-            json.dump({"status": "aborted", "tag": a.tag, "rows": rows}, open(out, "w"), indent=1)
+            json.dump({"status": "aborted", "tag": a.tag, "router": router, "router_history": history, "rows": rows}, open(out, "w"), indent=1)
             return 2
         wall = time.perf_counter() - t0
         ch = (resp.get("choices") or [{}])[0]
@@ -99,9 +112,9 @@ def run(a) -> int:
         rows.append(row)
         print(f"[{i}/{len(reqs)}] {r['bench']:14s} {r['id'][:28]:28s} finish={row['finish_reason']} "
               f"ctok={row['completion_tokens']} wall={row['wall_s']}s", flush=True)
-        json.dump({"status": "running", "tag": a.tag, "base": client.BASE, "frozen": a.frozen,
+        json.dump({"status": "running", "tag": a.tag, "base": client.BASE, "router": router, "router_history": history, "frozen": a.frozen,
                    "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
-    json.dump({"status": "complete", "tag": a.tag, "base": client.BASE, "frozen": a.frozen,
+    json.dump({"status": "complete", "tag": a.tag, "base": client.BASE, "router": router, "router_history": history, "frozen": a.frozen,
                "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
     print(f"complete: {len(rows)} rows -> {out}")
     return 0

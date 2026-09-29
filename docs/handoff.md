@@ -1,4 +1,4 @@
-# Handoff — 2026-09-28 (end of session): M49 sync and M48 prompt-end retention DONE and PUSHED (fork `1bd249d3`, stack `afb407f`+)
+# Handoff — 2026-09-29 (end of session): M50 served-config tripwire + M51 `runserver.sh` TERM teardown DONE (not pushed)
 
 THE one handoff (AGENTS.md: rewritten in place each session; there is no per-feature handoff). Read this,
 then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). Specs for queued work live in
@@ -6,78 +6,61 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## State of the world
 
-- **Git: all pushed** (operator, 2026-09-28 23:2x): fork `../mlx-vlm` main `1bd249d3`, stack main = this commit; mlx-serve
-  unchanged (`6602ae5`). Clean trees.
-- **Stack is UP** on the M48 fork (daily driver restarted by the chain at 12:11; router `main_models.yaml`, sessions
-  2, APC absent; `--cache-session-retain-prompt-end` default on). Resident model after the last smoke:
-  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (leg B ran last).
+- **Git: stack main has two NEW local commits on top of `90942de` — NOT PUSHED** (M51 `fix(stack)`, then M50
+  `feat(bench)`); fork `../mlx-vlm` main `1bd249d3` and mlx-serve `6602ae5` unchanged and pushed. Clean trees after
+  the M50 commit.
+- **Stack is UP** on the M48 fork (daily driver, router `main_models.yaml`, sessions 2, APC absent, `runserver.sh`
+  pid 96728 — the OLD script; the M51 fix applies to the NEXT bring-up). Resident model after the last smoke:
+  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. No serving config was changed this session; no model requests
+  were sent (M50 was verified read-only against the live router's process facts).
 - **Picks unchanged**: B/C 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` t0.5 medium, native16 KV (C81
-  provisional), repaired MTP. No pick/tune/serving-param change; M48 changes what the session cache keeps, not the
-  text (A5: 40/40 identical, MTP on and off).
-- Fork suite on `1bd249d3`: 5125 passed / 6 skipped / 1 xfailed. Stack bench tests green (1758 + new).
+  provisional), repaired MTP.
+- Bench suite in `.venv-bench`: **1878 passed / 3 skipped** (M50 + M51 tests included).
 
-## Done since the 2026-09-21 handoff (all recorded in PLAN / open-questions / notebook)
+## DONE this session (notebook 2026-09-28 M51 and 2026-09-29 M50 entries; PLAN M50/M51)
 
-| item | outcome |
-|---|---|
-| Thread review (2026-09-23) | Switchyard escalation = struggle detector, not a quality gate; frontier-driver + local-executor composition DEFERRED (switchyard doc §8, A1–A4 sketch); same-model subagent roles REJECTED on memory |
-| M45 session-cache mechanics | DONE: opencode reuse ≈99%/request; eviction = one cold prefill; two mechanisms found → C102 |
-| M46 opencode transcripts + loop metric | DONE in code (not yet exercised live) |
-| M47 / C101 joint tune validity | CLOSED on the pilot: t0.5/medium stands; validity temperature-insensitive |
-| C102(a) session ids reach the worker | DONE, cold-reviewed (Codex), live gate PASS, pushed |
-| C103 opencode skill-tree drift | RULED + DONE: daily driver excludes the Claude tree; probes exclude both external trees + manifest scaffold fields |
-| Periodic DeltaNet checkpoints (old C102(b)) | REJECTED in review; withdrawn |
+- **M51** `runserver.sh` TERM: two causes reproduced with a fake stack (bash parks a trapped signal behind the
+  foreground `docker compose logs -f`; trap installed after the health waits). Fixed: trap before the first launch,
+  signal traps `exit` into one EXIT handler, log tail + `compose wait` in the background under `wait`, tree-kill
+  (TERM→10 s→KILL) of both server trees, `compose down`, :8000 verified free (exit 1 if bound).
+  Test `benchmark/bench/tests/test_runserver_term.py` (3 cases). `scripts/stack_stop.sh` stays the belt-and-braces stop.
+- **M50** served-config tripwire: `bench/provenance.assert_served_config()` first in every driver/probe (list in PLAN
+  M50); refuses on no/ambiguous/remote/non-router owner, unreadable environ, missing `MLX_SERVE_CONFIG`, missing file,
+  or resolved path ≠ `paths.registry_path()`; no bypass. `router{pid,config,…}` scrubbed into every manifest/result,
+  `router_history` on resume/rerun, re-verify + manifest refresh after auto-restart (fatal on failure), opencode
+  probes bound to `opencode debug config` in the child's cwd/env, proxy decisions differential against urllib's own
+  `ProxyHandler`. Codex cold review: eight rounds (`$STACK_WORKDIR/m50/codex_review_{1..8}.md`), round 8 PASS, no new
+  findings; every finding fixed or explicitly declined (notebook 2026-09-29). Live: OK on the default registry,
+  REFUSED with an overlay in the driver env.
 
-## DONE this session (details: notebook 2026-09-27→28 and 2026-09-28 entries; PLAN M48/M49; OQ C102, C104, C105)
+## Rules learned this session (already in AGENTS.md)
 
-- **M49** upstream sync to v0.7.3 (pushed). **M48** prompt-end retention (B1+B2 together, operator P56.2): four Codex
-  cold-review rounds; the retire point became a per-request **retention boundary** (longest token prefix shared with
-  the next rendering) because the shipped Qwen thinking-on tail re-tokenises. Live: A2 PASS (turn-2 reuse 12 →
-  full opener at 8K/32K/64K; 12.5/55/130 s → 0.7/0.9/1.2 s), A4 PASS (16K opencode tool result retained; next
-  request prefilled 27 tokens), A5 PASS (40/40 identical before/after, MTP on and off), A6 bounded PASS, smokes 6/6
-  both models, A3 open (C105). Evidence `benchmark/results/m48_c102b_retention_20260928.json`.
-- Tools: `benchmark/bench/stack_smoke.py`, `benchmark/bench/parity_replay.py`, probe `--big-file-tokens`,
-  provenance **v6** (`runtime.session_retain_prompt_end`; rows at different states never pool).
-
-## Rules learned this session (add to AGENTS.md if the operator agrees — see C105(4))
-
-- `kill -TERM` on `runserver.sh` can leave the shell AND the router alive; a lean router then fails to bind and
-  requests silently go to the daily driver. Stop by PID with escalation and verify `:8000` has zero listeners, then
-  verify the new router OWNS the port (`lsof`) and read the worker cmdline (`--draft-kind`) as evidence, every arm.
-- Probes launched from a tool shell without `nohup … </dev/null &` die on hang-up mid-request; the abandoned
-  request then collides with the next one in the worker's tokenizer ("Already borrowed" → 500).
-- opencode idles at init on a non-TTY inherited stdin: `stdin=DEVNULL` (probe fixed), stdout a file.
-- Kill probes by PID and verify zero `session_cache_probe`/`opencode run` processes before launching another —
-  a survivor contaminates log-window attribution and can 500 a concurrent run via a model swap.
-- Upstream `uv sync` in `../mlx-vlm` drops pytest; reinstall `pytest pytest-subtests`.
+- `kill -TERM runserver.sh` now tears the stack down; `scripts/stack_stop.sh` remains the verified stop for stale
+  shells and hand-started routers.
+- Every driver/probe now refuses at entry unless the :8000 owner serves the driver's registry; opencode-driven probes
+  verify opencode's OWN provider baseURL (global `~/.config/opencode/opencode.json`, else the shipped file).
+- A cold review of a tripwire pays for many rounds: eight here, each finding real (guard ordering, router HOME,
+  listener selection, opencode's effective config, swallowed refusals, resume attribution, proxy precedence spelled
+  exactly as the transport spells it). Budget it; do not stop at "the exact incident is caught".
+- When a guard must agree with a library's behaviour (urllib proxies), test DIFFERENTIALLY against the library's own
+  code path (a real `ProxyHandler` with a stub transport), not against a re-derivation.
 
 ## Pending (reconciled)
 
-1. **C105 CLOSED** (all four items; OpenWebUI echoes content only, canonical matches). New queue rows **M50** (served-config
-   tripwire at the driver precheck) and **M51** (`runserver.sh` TERM handling). `scripts/stack_stop.sh` is the stop recipe.
-2. **M46 live check**: the next opencode probe run must show one transcript per row and populated
-   `loop_metrics` (and the new manifest `skill_policy` fields). Lands together with **D12** (harness-traffic
-   accounting) on that run.
-3. **Deferred**: frontier-driver composition (switchyard doc §8); S1 NVSY (parked, no go); C77/C78/C87 (deferred
-   diagnostics, no GPU work armed); C96 search-engine policy (C97 resolved the shipped config).
-4. **D7** (opencode in scoreboard roles) and **D5** (queue runner PAUSE/STOP) remain driver-side backlog.
-
-## Rules learned this session (already in AGENTS.md / box-notes)
-
-- `opencode run` from a harness: give it a FILE for stdout; a captured pipe stalls it at `init`.
-- opencode embeds discovered skill paths in its system prompt; a resumed session forks silently if they
-  change. Probes: `OPENCODE_DISABLE_EXTERNAL_SKILLS=true` (set by the probe). Daily driver: the Claude tree
-  only.
-- Session identity through the router: nine headers forwarded; the worker also reads `chat_id`,
-  `metadata.chat_id`, `metadata.session_id`, Claude Code's `metadata.user_id` session id, `prompt_cache_key`
-  (last). The anonymous hash chain stays the fallback.
-- Cold review recipe: `codex exec --skip-git-repo-check --sandbox read-only -C $STACK_REPO/..
-  --output-last-message <file> "<prompt>"` (default model `gpt-6-astra`), prompt = spec criteria + file
-  pointers; runs 4–6 min; not inside a git repo → the skip flag is required.
+1. **Push** the two stack commits when the operator says so (no fork changes this session).
+2. **Possible follow-ups (not queued, operator call):** (a) `vision_gate` writes no manifest at all (pre-existing;
+   router is in its summary only); (b) a config identity/hash exposed BY the router (`/health` or `/v1/models`) would
+   close M50's residual: an in-place edit or symlink retarget after router start is invisible to a path comparison
+   (fork/mlx-serve change).
+3. **M46 live check**: the next opencode probe run must show one transcript per row and populated `loop_metrics`
+   (and the manifest `skill_policy` fields). Lands together with **D12** on that run.
+4. **Deferred**: frontier-driver composition (switchyard doc §8); S1 NVSY (parked); C77/C78/C87; C96; C104 open
+   (fork test-suite sync policy, operator may veto items).
+5. **D7** and **D5** remain driver-side backlog.
 
 ## Resume discipline
 
 One resident model; APC absent; retained sessions 2; full active preallocation; deployed sampling; explicit
-served-overlay environment on every driver. Never alter source/config during a live run. Commit coherent
-units; push only on explicit current-turn instruction (forks before stack). Next decision id C104;
-discussion ids continue from P47.
+served-overlay environment on every driver (now ENFORCED by M50 — a mismatch refuses). Never alter source/config
+during a live run. Commit coherent units; push only on explicit current-turn instruction (forks before stack).
+Next decision id C106; discussion ids continue from P71.

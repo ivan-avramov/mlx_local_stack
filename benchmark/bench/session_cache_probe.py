@@ -250,13 +250,22 @@ def _write_big_file(proj: Path, approx_tokens: int) -> int:
     return marker
 
 
+def _leg_b_env(root: Path) -> dict:
+    """daily-driver shape: Claude Code's skill tree excluded (C103), .agents kept."""
+    return dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), XDG_CACHE_HOME=str(root / "xdg-cache"),
+                OPENCODE_DISABLE_CLAUDE_CODE_SKILLS="true")
+
+
 def leg_b_opencode(model, log, pid, *, root: Path, turns: int, timeout: float,
                    big_file_tokens: int = 0) -> dict:
     proj = _scratch_project(root)
+    from . import provenance
+    env = _leg_b_env(root)
+    # M50: the scratch project now exists — re-resolve opencode's destination from INSIDE it (a
+    # project-level config there would win) before the first opencode turn.
+    provenance.assert_opencode_destination(proj, env, provenance.assert_served_config(
+        os.environ.get("MLX_SERVE_BASE"))["pid"])
     marker = _write_big_file(proj, big_file_tokens) if big_file_tokens > 0 else None
-    # daily-driver shape: Claude Code's skill tree excluded (C103), .agents kept
-    env = dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), XDG_CACHE_HOME=str(root / "xdg-cache"),
-               OPENCODE_DISABLE_CLAUDE_CODE_SKILLS="true")
     per_turn = []
     log.new_rows()
     for i, prompt in enumerate(leg_b_prompts(turns, big_file_tokens)):
@@ -345,7 +354,23 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=None)
     a = ap.parse_args(argv)
 
+    legs = [x.strip().upper() for x in a.legs.split(",") if x.strip()]
     wd = Path(a.workdir or os.path.join(os.environ.get("STACK_WORKDIR", "/tmp"), "m45"))
+    try:  # M50: refuse before anything is written or requested unless :port serves this registry.
+        from . import provenance
+        router = provenance.assert_served_config(os.environ.get("MLX_SERVE_BASE"))
+        if "B" in legs:
+            # opencode sends to what ITS resolved config says (global json/jsonc, ancestors of the
+            # scratch project, env), not to MLX_SERVE_BASE: resolve it with opencode itself from the
+            # nearest EXISTING ancestor of the scratch project, under leg B's env, before any write.
+            probe_cwd = wd / "proj"
+            while not probe_cwd.exists():
+                probe_cwd = probe_cwd.parent
+            router["opencode_base"] = provenance.assert_opencode_destination(
+                probe_cwd, _leg_b_env(wd), router["pid"])
+    except RuntimeError as e:
+        print(f"[m45] REFUSED: {e}", file=sys.stderr, flush=True)
+        return 2
     wd.mkdir(parents=True, exist_ok=True)
     log = LogTail(Path(a.log))
     # preload through the router (server path; never a bare process)
@@ -354,9 +379,8 @@ def main(argv=None) -> int:
     print(f"[m45] loaded {a.model} in {time.perf_counter() - t0:.1f}s", flush=True)
     pid = worker_pid(a.model.split("/")[-1])
     result = {"model": a.model, "tag": a.tag, "started": datetime.now().isoformat(timespec="seconds"),
-              "worker_pid": pid, "footprint_start": footprint(pid),
+              "worker_pid": pid, "router": router, "footprint_start": footprint(pid),
               "session_max_env": os.environ.get("MLX_VLM_CACHE_SESSION_MAX"), "legs": {}}
-    legs = [x.strip().upper() for x in a.legs.split(",")]
     if "A" in legs:
         result["legs"]["A_control"] = leg_a_control(a.model, log, pid, turns=a.turns, timeout=a.timeout)
     if "B" in legs:

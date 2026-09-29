@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bench import budget_timeout, client, convergence, generate, model_params, paths, rowschema  # noqa: E402
+from bench import budget_timeout, client, convergence, generate, model_params, paths, provenance, rowschema  # noqa: E402
 
 DEFAULT_CORPUS = paths.repo_root() / "benchmark" / "corpora" / "vision_gate_v1.jsonl"
 # Name used only as the `bench` key for `generate.rows_for_rate`'s decode-rate lookup (globs
@@ -274,6 +274,11 @@ def main(argv=None) -> int:
     args = build_argparser().parse_args(argv)
     if args.url:
         client.BASE = args.url
+    try:  # M50: refuse before anything is read or requested unless :port serves this registry
+        router = provenance.assert_served_config(client.BASE)
+    except RuntimeError as e:
+        print(f"[vision_gate] REFUSED: {e}", file=sys.stderr, flush=True)
+        return 2
 
     out = (Path(args.out) if args.out
           else paths.default_results_root() / args.model / f"{BENCH_NAME}.{TUNE}.jsonl")
@@ -316,6 +321,7 @@ def main(argv=None) -> int:
               f"tokens={row_out['completion_tokens']}", flush=True)
 
     summary = summarize(read_rows(out))
+    summary["router"] = router
     summary_path_for(out).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(f"[vision_gate] RESULT {args.model}: {summary['pass']}/{summary['n']} pass, "
           f"fail={summary['fail']} null={summary['null']} pass_rate={summary['pass_rate']}")

@@ -532,6 +532,390 @@ def session_retention_state(worker_lookup=_worker_cmdline) -> dict:
             "session_retain_source": "fork-default"}
 
 
+# ----------------------------------------------------- M50 served-config tripwire (2026-09-28)
+# The process that OWNS the router port is the serving truth for WHICH registry is live. C35 only
+# checks draft_kind, and only when a worker for the requested model is already up; on 2026-09-28 a
+# lean overlay router failed to bind, the daily driver kept :8000, and a parity arm ran against it
+# with the overlay stamped as provenance. Every driver/probe now calls `assert_served_config()`
+# before anything is read, written or requested and REFUSES (RuntimeError -> nonzero exit) unless
+# the owner is an mlx-serve router whose MLX_SERVE_CONFIG, resolved against ITS cwd/HOME exactly as
+# mlx-serve resolves it, is the same existing file as the driver's `paths.registry_path()`.
+# `gather()` records the verified block best-effort as `manifest["router"]` (outside the
+# fingerprint: a pid change across restarts is not a config change). No env/flag bypass exists.
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "::"}
+_WILDCARDS = {"0.0.0.0", "::", "*"}
+_LAST_VERIFIED: dict = {}   # port -> block from the most recent assert_served_config in this process
+
+
+class ServedConfigError(RuntimeError):
+    """M50 refusal. FATAL by contract: entry points exit nonzero; `generate`'s per-item error handler
+    re-raises it instead of recording an error row (a refusal after an auto-restart must stop the
+    run, not become one more row)."""
+
+
+def _is_router_argv(argv) -> bool:
+    """The owner must BE the mlx-serve router, judged by the PROGRAM position only: argv[0] is the
+    `mlx-serve` console script, or argv[0] is a python interpreter whose first positional is that
+    script or whose `-m` module is `mlx_serve[...]`. Application arguments are never identity
+    (`python -m http.server 8000 --directory /opt/mlx-serve` is not a router)."""
+    argv = list(argv or [])
+    if not argv:
+        return False
+    if os.path.basename(argv[0]) == "mlx-serve":
+        return True
+    if not os.path.basename(argv[0]).startswith("python"):
+        return False
+    i = 1
+    while i < len(argv):
+        a = argv[i]
+        if a == "-m":
+            return i + 1 < len(argv) and argv[i + 1].split(".")[0] == "mlx_serve"
+        if a in ("-X", "-W"):          # interpreter flag with a SEPARATE value
+            i += 2
+            continue
+        if a.startswith("-"):          # interpreter flag (-u, -Xdev, -Wignore, ...)
+            i += 1
+            continue
+        return os.path.basename(a) == "mlx-serve"   # first positional = the script
+    return False
+
+
+def _covers(dest_host: str, bound_ips) -> bool:
+    """Does some listener bound address serve a connection to `dest_host`? `0.0.0.0` covers v4
+    only; `::` covers v6 and (dual-stack) v4; `*`/unknown (lsof could not tell) count as covering
+    because the pid was found; `localhost` may resolve either way so any loopback covers it; an
+    explicit v4/v6 destination needs a listener of its family."""
+    ips = set(bound_ips or [])
+    if not ips or "*" in ips or None in ips:
+        return True
+    v4_dest = dest_host == "localhost" or ":" not in dest_host
+    v6_dest = dest_host == "localhost" or ":" in dest_host
+    if v4_dest and (ips & {"0.0.0.0", "::"} or dest_host in ips or (dest_host == "localhost" and "127.0.0.1" in ips)):
+        return True
+    if v6_dest and ("::" in ips or dest_host in ips or (dest_host == "localhost" and "::1" in ips)):
+        return True
+    return False
+
+
+def _split_base(base_url: str | None) -> tuple[str, str, int]:
+    """(scheme, host, port) from ONE parse of a CANONICAL base URL. Anything non-canonical (leading
+    or trailing whitespace, a scheme other than http/https, no host) refuses: the cold review showed
+    `' https://…'` parsed as https by urllib but read as http by a `startswith` — the proxy check
+    then looked at the wrong variable while the client tunnelled through the proxy."""
+    from urllib.parse import urlsplit
+    raw = base_url if base_url is not None else "http://localhost:8000"
+    if not isinstance(raw, str) or raw != raw.strip() or not raw:
+        raise ServedConfigError(f"M50 tripwire: non-canonical base URL {raw!r} (whitespace/empty); "
+                                f"refusing to guess how the client will parse it.")
+    u = urlsplit(raw)
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise ServedConfigError(f"M50 tripwire: base URL {raw!r} is not an http(s) URL with a host.")
+    port = int(u.port) if u.port else (443 if u.scheme == "https" else 80)
+    return u.scheme, u.hostname.lower(), port
+
+
+def _env_proxies(env: dict) -> dict:
+    """EXACTLY CPython's `urllib.request.getproxies_environment`, over an arbitrary env: every
+    `*_proxy` (any case) with a value is collected, then the LOWERCASE names win — a lowercase
+    value overrides an uppercase one and an EMPTY lowercase value clears the entry. (Reproduced by
+    the cold review: `http_proxy=X NO_PROXY=* no_proxy=` proxies everything under urllib.)"""
+    proxies = {}
+    for name, value in env.items():
+        lname = name.lower()
+        if value and lname[-6:] == "_proxy":
+            proxies[lname[:-6]] = value
+    if "REQUEST_METHOD" in env:
+        proxies.pop("http", None)
+    for name, value in env.items():
+        if name[-6:] == "_proxy":
+            if value:
+                proxies[name[:-6]] = value
+            else:
+                proxies.pop(name[:-6], None)
+    return proxies
+
+
+def _proxy_for(base_url: str, env: dict | None = None, strict: bool = False) -> str | None:
+    """The proxy an env-honouring client would route `base_url` through under `env`, or None for a
+    direct connection — decided on the SAME inputs urllib's ProxyHandler uses: `Request(url).type`
+    picks the `<scheme>_proxy`, and `Request(url).host` (the authority exactly as spelled:
+    `localhost:08000`, `[::1]:8000`, no port when omitted) is what no_proxy is matched against.
+    Nothing is reconstructed. `strict` (the opencode CHILD, whose runtime has its own precedence
+    rules): any lower/upper-case pair of the same variable with DIFFERENT values is ambiguous and
+    counts as proxied, so the guard never guesses which one the child will honour."""
+    from urllib.request import Request, proxy_bypass_environment
+    env = dict(os.environ if env is None else env)
+    if strict:
+        by_key = {}
+        for name, value in env.items():
+            if name.lower().endswith("_proxy"):
+                by_key.setdefault(name.lower(), set()).add(value or "")
+        for k, vals in by_key.items():
+            if len(vals) > 1:
+                return f"ambiguous {k} ({sorted(vals)})"
+    req = Request(base_url)
+    proxies = _env_proxies(env)
+    chosen = proxies.get(req.type)
+    if not chosen:
+        return None
+    if req.host and proxy_bypass_environment(req.host, proxies):
+        return None
+    return chosen
+
+
+def _port_from_base(base_url: str | None) -> int:
+    return _split_base(base_url)[2]
+
+
+def _psutil_listeners(port: int) -> list[tuple[int, str]]:
+    """[(pid, bound_ip)] for every LISTEN socket on `port`, via the per-process walk (the
+    system-wide table is AccessDenied for a non-root user on macOS; per-process works for our
+    own processes, which is what we launch). psutil<6 spells the accessor `connections`."""
+    try:
+        import psutil
+    except Exception:  # noqa: BLE001
+        return []
+    found = []
+    for p in psutil.process_iter(["pid"]):
+        try:
+            conns = getattr(p, "net_connections", None) or getattr(p, "connections")
+            for c in conns(kind="inet"):
+                if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port:
+                    found.append((p.pid, c.laddr.ip))
+        except Exception:  # noqa: BLE001 — AccessDenied / gone / zombie
+            continue
+    return found
+
+
+def _lsof_listeners(port: int) -> list[tuple[int, str | None]]:
+    """[(pid, bound_ip)] from `lsof -Fpn`: a `p<pid>` line, then one `n<addr>:<port>` line per
+    socket (`*` = wildcard, `[::1]` = v6 loopback). A pid with no `n` line yields (pid, None)."""
+    try:
+        out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpn"],
+                             capture_output=True, text=True, timeout=20).stdout
+    except Exception:  # noqa: BLE001
+        return []
+    found, pid, seen_addr = [], None, False
+    for line in out.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            if pid is not None and not seen_addr:
+                found.append((pid, None))
+            pid, seen_addr = int(line[1:]), False
+        elif line.startswith("n") and pid is not None:
+            addr = line[1:].rsplit(":", 1)[0]
+            found.append((pid, "*" if addr == "*" else addr.strip("[]")))
+            seen_addr = True
+    if pid is not None and not seen_addr:
+        found.append((pid, None))
+    return found
+
+
+def _lsof_listener_pids(port: int) -> list[int]:
+    return sorted({pid for pid, _ in _lsof_listeners(port)})
+
+
+def _process_facts(pid: int) -> dict:
+    """{pid, cmdline, cwd, env, env_error}; each fact read independently so one refusal does not
+    blank the others. `env` is None when the environ is unreadable (another user's process)."""
+    facts = {"pid": pid, "argv": None, "cmdline": None, "cwd": None, "env": None, "env_error": None}
+    try:
+        import psutil
+        p = psutil.Process(pid)
+    except Exception as e:  # noqa: BLE001
+        facts["env_error"] = f"{type(e).__name__}: {e}"
+        return facts
+    for key, fn in (("argv", lambda: list(p.cmdline())), ("cwd", p.cwd),
+                    ("env", lambda: dict(p.environ()))):
+        try:
+            facts[key] = fn()
+        except Exception as e:  # noqa: BLE001
+            if key == "env":
+                facts["env_error"] = f"{type(e).__name__}: {e}"
+    if facts["argv"] is not None:
+        facts["cmdline"] = " ".join(facts["argv"])
+    return facts
+
+
+def router_owner(port: int = 8000) -> dict | None:
+    """Facts about THE process listening on `port`; None when nothing does. Two DIFFERENT pids
+    listening (e.g. a stale router on IPv4 and a new one on IPv6) is ambiguous and refuses."""
+    listeners = list(_psutil_listeners(port)) + list(_lsof_listeners(port))
+    pids = sorted({pid for pid, _ in listeners})
+    if not pids:
+        return None
+    if len(pids) > 1:
+        raise ServedConfigError(f"M50 tripwire: {len(pids)} different processes listen on :{port} "
+                                f"(pids {pids}); the owner is ambiguous — stop the stale one "
+                                f"(scripts/stack_stop.sh) and relaunch.")
+    facts = _process_facts(pids[0])
+    facts["bound_ips"] = sorted({ip for _, ip in listeners if ip is not None}, key=str)
+    return facts
+
+
+def _served_config_path(owner: dict, port: int) -> tuple[str | None, str | None]:
+    """(raw MLX_SERVE_CONFIG, realpath the ROUTER resolves it to). Mirrors mlx-serve `config.py`
+    `_find_config`: `Path(env).expanduser()` — with the ROUTER's HOME — relative to the ROUTER's
+    cwd; the file must exist (mlx-serve raises on a missing explicit path; a router whose file
+    was deleted after start is serving something we can no longer identify). Absent -> (None, None)."""
+    env = owner.get("env") or {}
+    raw = env.get("MLX_SERVE_CONFIG")
+    pid = owner.get("pid")
+    if not raw:
+        return None, None
+    p = raw
+    if p == "~" or p.startswith("~/"):
+        home = env.get("HOME")
+        if not home:
+            raise ServedConfigError(f"M50 tripwire: pid {pid} serves MLX_SERVE_CONFIG={raw!r} but its "
+                               f"environ has no HOME to expand it with; unverifiable.")
+        p = home + p[1:]
+    elif p.startswith("~"):
+        raise ServedConfigError(f"M50 tripwire: pid {pid} serves MLX_SERVE_CONFIG={raw!r} (~user form); "
+                           f"cannot resolve another user's home; unverifiable.")
+    if not os.path.isabs(p):
+        cwd = owner.get("cwd")
+        if not cwd:
+            raise ServedConfigError(f"M50 tripwire: pid {pid} serves relative MLX_SERVE_CONFIG={raw!r} "
+                               f"but its cwd is unreadable; unverifiable.")
+        p = os.path.join(cwd, p)
+    resolved = os.path.realpath(p)
+    if not os.path.isfile(resolved):
+        raise ServedConfigError(f"M50 tripwire: pid {pid} (owner of :{port}) was started with "
+                           f"MLX_SERVE_CONFIG={raw!r} -> {resolved!r}, which no longer exists; the "
+                           f"served config cannot be identified. Restart the router.")
+    return raw, resolved
+
+
+def _scrub(v, extra_homes=()):
+    """Every occurrence of the driver's $HOME AND the router's HOME (they can differ) in every
+    persisted string — a cmdline holds several absolute paths, not just a leading one."""
+    if not isinstance(v, str):
+        return v
+    for home in sorted({os.path.expanduser("~"), *[h for h in extra_homes if h]}, key=len, reverse=True):
+        if home and home != "/":
+            v = v.replace(home, "$HOME")
+    return v
+
+
+def assert_served_config(base_url: str | None = None, *, port: int | None = None,
+                         lookup=None, env: dict | None = None) -> dict:
+    """M50 tripwire. Returns {"pid", "config" ($HOME-form), "config_raw", "port", "cmdline"} for
+    the mlx-serve router that owns the port when it serves exactly `paths.registry_path()`;
+    raises ServedConfigError otherwise. Call BEFORE anything is read, written or requested and let
+    the error escalate (nonzero exit). Only a LOCAL, UNPROXIED destination can be verified (single
+    box). `env` is the environment whose proxy settings apply (a child's); default: this process."""
+    lookup = lookup or router_owner
+    scheme, host, url_port = _split_base(base_url)
+    port = int(port or url_port)
+    expected = os.path.realpath(str(paths.registry_path()))
+    hint = ("Start the router you mean to measure with MLX_SERVE_CONFIG=<that file> (and the "
+            "driver with the same value), verify it OWNS the port (lsof -nP -iTCP:%d -sTCP:LISTEN), "
+            "then relaunch." % port)
+    if host not in _LOCAL_HOSTS:
+        raise ServedConfigError(f"M50 tripwire: destination host {host!r} is not this box; the served "
+                           f"config of a remote router cannot be verified (SINGLE BOX since "
+                           f"2026-08-17). Point the driver at localhost.")
+    proxy = _proxy_for(base_url if base_url is not None else "http://localhost:8000", env,
+                       strict=env is not None)
+    if proxy:
+        raise ServedConfigError(f"M50 tripwire: {scheme}_proxy {proxy!r} applies to {host!r} in the "
+                                f"{'child' if env is not None else 'driver'} environment; requests would "
+                                f"go to the proxy, not the verified router. Add {host} to no_proxy (same "
+                                f"case as the proxy variable) or unset the proxy.")
+    owner = lookup(port)
+    if owner is None:
+        raise ServedConfigError(f"M50 tripwire: no process owns :{port} — refusing to run against a "
+                           f"router that is not there (driver registry {expected!r}). {hint}")
+    pid = owner.get("pid")
+    cmd = owner.get("cmdline") or ""
+    argv = owner.get("argv") if owner.get("argv") is not None else cmd.split()
+    if not _is_router_argv(argv):
+        raise ServedConfigError(f"M50 tripwire: pid {pid} owns :{port} but is not an mlx-serve router "
+                                f"(cmdline {cmd!r}); refusing to trust its environ. {hint}")
+    if not _covers(host, owner.get("bound_ips")):
+        raise ServedConfigError(f"M50 tripwire: pid {pid} listens on :{port} at {owner.get('bound_ips')} "
+                                f"which does not answer {host!r}; the driver would connect elsewhere "
+                                f"(or fail). Point the driver at an address the router is bound to.")
+    if owner.get("env") is None:
+        raise ServedConfigError(f"M50 tripwire: cannot read the environ of pid {pid} (owner of :{port}, "
+                           f"{owner.get('env_error')}); the served config is unverifiable. {hint}")
+    raw, served = _served_config_path(owner, port)
+    if served is None:
+        raise ServedConfigError(f"M50 tripwire: pid {pid} owns :{port} but carries no MLX_SERVE_CONFIG "
+                           f"(mlx-serve then reads ./models.yaml, ~/.mlx-serve/models.yaml or its "
+                           f"bundled default — not this driver's registry {expected!r}). {hint}")
+    if served != expected:
+        raise ServedConfigError(f"M50 tripwire: pid {pid} owns :{port} and serves MLX_SERVE_CONFIG="
+                           f"{raw!r} -> {served!r}, but this driver's registry is {expected!r}. "
+                           f"Every request would be measured against the wrong served config. {hint}")
+    homes = ((owner.get("env") or {}).get("HOME"),)
+    block = {"pid": pid, "config": _scrub(served, homes), "config_raw": _scrub(raw, homes),
+             "port": port, "cmdline": _scrub(cmd, homes)}
+    _LAST_VERIFIED[port] = dict(block)
+    return block
+
+
+def router_block(base_url: str | None = None) -> dict:
+    """Best-effort manifest block for gather(): the block verified at this process's entry for
+    that port (no second process walk per manifest), else a fresh check, else {pid: None, error}."""
+    try:
+        port = _port_from_base(base_url)
+    except Exception as e:  # noqa: BLE001
+        return {"pid": None, "config": None, "port": None,
+                "error": _scrub(f"{type(e).__name__}: {str(e)[:300]}")}
+    if port in _LAST_VERIFIED:
+        return dict(_LAST_VERIFIED[port])
+    try:
+        return assert_served_config(base_url)
+    except Exception as e:  # noqa: BLE001 — never block a run on provenance; entry points refuse
+        return {"pid": None, "config": None, "port": port,
+                "error": _scrub(f"{type(e).__name__}: {str(e)[:300]}")}
+
+
+def opencode_router_base(cwd=None, env=None, provider: str = "mlx-local") -> str:
+    """The base URL opencode will ACTUALLY send to, from `opencode debug config` run in the child's
+    cwd with the child's env — i.e. every source opencode merges (global json/jsonc, config dir,
+    ancestor project configs, inline content) resolved by opencode itself, not by us. The three
+    override variables are refused outright: the probes record the SHIPPED config's hash as
+    scaffold identity, so a run under an override would carry false scaffold provenance."""
+    env = dict(env if env is not None else os.environ)
+    for var in ("OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"):
+        if env.get(var):
+            raise ServedConfigError(f"M50 tripwire: {var} is set; opencode would load a config override "
+                                    f"that the recorded scaffold identity does not describe. Unset it "
+                                    f"(probes run the shipped/global scaffold only).")
+    try:
+        r = subprocess.run(["opencode", "debug", "config"], cwd=str(cwd) if cwd else None, env=env,
+                           capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
+    except Exception as e:  # noqa: BLE001
+        raise ServedConfigError(f"M50 tripwire: cannot run `opencode debug config`: {type(e).__name__}: {e}")
+    out = r.stdout or ""
+    try:
+        data = json.loads(out[out.index("{"):])
+        base = data["provider"][provider]["options"]["baseURL"]
+    except Exception as e:  # noqa: BLE001
+        raise ServedConfigError(f"M50 tripwire: `opencode debug config` (rc={r.returncode}) gave no "
+                                f"{provider!r} baseURL: {type(e).__name__}: {e}; stderr {r.stderr[-300:]!r}")
+    # An empty/non-string baseURL is NOT "default 8000": opencode then falls back to the model's
+    # `api.url` — a destination this tripwire does not resolve. Refuse rather than guess.
+    if not isinstance(base, str) or not base.lower().startswith(("http://", "https://")):
+        raise ServedConfigError(f"M50 tripwire: opencode's resolved {provider!r} baseURL is {base!r} "
+                                f"(empty/non-http); its effective destination would come from a model "
+                                f"`api.url` fallback the tripwire cannot bind. Fix the opencode config.")
+    return base
+
+
+def assert_opencode_destination(cwd, env, expected_pid: int) -> str:
+    """Per opencode invocation: the destination opencode resolves in THIS cwd/env must be owned by
+    the router verified at entry (`expected_pid`). Returns the base URL."""
+    base = opencode_router_base(cwd, env)
+    blk = assert_served_config(base, env=env)           # the CHILD's proxy settings apply
+    if blk["pid"] != expected_pid:
+        raise ServedConfigError(f"M50 tripwire: opencode in {str(cwd)!r} resolves {base!r}, owned by pid "
+                                f"{blk['pid']}, not the router verified at entry (pid {expected_pid}).")
+    return base
+
+
 def _runtime_block(runtime: dict = None, model: str = None,
                    registry_path: str | None = None) -> dict:
     """The runtime block: detected APC state, the registry's draft/suffix state, plus whatever knobs
@@ -704,8 +1088,10 @@ def _resolve_snapshot(hf_path):
 
 def gather(model: str, registry_path: str | None = None,
            profile: str = "production", overrides: dict = None, runtime: dict = None,
-           tune: str | None = None) -> dict:
-    """Assemble the real provenance manifest for ``model`` on this box. `overrides` are the
+           tune: str | None = None, router: dict | None = None) -> dict:
+    """Assemble the real provenance manifest for ``model`` on this box. `router` is the M50 block
+    the caller verified for ITS destination (opencode's baseURL, not `client.BASE`); absent, the
+    block verified in this process for `client.BASE` is used. `overrides` are the
     CLI sampling overrides layered on the profile, recorded so the manifest matches what
     generation actually used. `tune` (docs/superpowers/specs/2026-08-17-tune-encoding-migration-
     design.md) is stamped as a top-level `tune` field when given; absent (None, the default)
@@ -736,6 +1122,8 @@ def gather(model: str, registry_path: str | None = None,
     man["sampling_profile"] = profile
     man["registry"] = _registry_state(str(paths.registry_path())
                                       if registry_path is None else registry_path)
+    from . import client as _client
+    man["router"] = dict(router) if router is not None else router_block(_client.BASE)
     if tune is not None:
         man["tune"] = tune
     return man
@@ -743,10 +1131,10 @@ def gather(model: str, registry_path: str | None = None,
 
 def write(model: str, bench: str, registry_path: str | None = None,
           profile: str = "production", overrides: dict = None, runtime: dict = None,
-          tune: str | None = None) -> dict:
+          tune: str | None = None, router: dict | None = None) -> dict:
     """Gather + write results/<model>/<bench>[.tune].manifest.json. Returns the manifest."""
     man = gather(model, registry_path, profile=profile, overrides=overrides,
-                 runtime=runtime, tune=tune)
+                 runtime=runtime, tune=tune, router=router)
     path = generate.result_path(model, bench, tune=tune).with_suffix(".manifest.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(man, indent=2))
