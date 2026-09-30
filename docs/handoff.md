@@ -55,7 +55,7 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 1. **D12 report side**: wall-clock cost per task from the row's `traffic` × rates fitted on the router metrics log
    (script in `$STACK_WORKDIR/m50/`); lands with the next agentic run's report.
 3. **Deferred**: C106 router-side config hash; frontier-driver composition (switchyard doc §8); S1 NVSY (parked);
-   C104 open (fork test-suite sync policy — operator ruling pending). **C77/C78/C87/C96 CLOSED 2026-09-29** (P93–P95:
+   **C104 RULED 2026-09-29 (P96): (a)–(d) ratified as the standing fork-sync policy.** **C77/C78/C87/C96 CLOSED 2026-09-29** (P93–P95:
    superseded by C84/C88/C89 certification, documentation-only, superseded by C97/C98).
 4. **D7** and **D5** remain driver-side backlog.
 

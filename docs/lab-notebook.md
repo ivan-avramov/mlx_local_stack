@@ -4303,3 +4303,8 @@ closed as superseded. C87 (`Qwen3.8-27B-static-mixed-4bit` recipe discrepancy) c
 unpromoted, old metrics kept with transport caveats. C96 (search engine policy) closed as superseded by C97/C98
 (SearXNG pool ratified, 10/10 native-tool e2e gate). Rows kept with dated rulings; reopen conditions stated in each.
 Remaining open decisions: C104 (fork test-suite sync policy), S1 (parked), C106 (deferred).
+
+**C104 RULED 2026-09-29 (operator, P96):** the four sync choices of 2026-09-28 are the standing policy — restore the 30
+serving-path test files at every sync, follow upstream deletions elsewhere, accept behaviour changes that reach opencode
+and Claude Code with upstream's tests ported and the live smokes as the gate, keep the box-local xfail. Narrow (a) only
+file-by-file when a restored test fails for an upstream-design reason.
