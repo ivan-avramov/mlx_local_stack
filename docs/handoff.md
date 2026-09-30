@@ -6,7 +6,7 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## State of the world
 
-- **Git: stack main pushed through 13b0b66** (P86–P88); the M52 commit after it is UNPUSHED. Forks `../mlx-vlm`
+- **Git: stack main pushed through 13b0b66** (P86–P88); the M52 and P89 commits after it are UNPUSHED. Forks `../mlx-vlm`
   `1bd249d3` and mlx-serve `6602ae5` unchanged.
 - **Stack is UP on the NEW `runserver.sh`** (M51 script): shell pid 36341, router pid 36401 on :8000,
   `MLX_SERVE_CONFIG=main_models.yaml`, sessions 2, APC absent (verified `ps -Eww`), compose healthy. Resident model:
@@ -14,7 +14,7 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
   now tears the whole stack down (verified live today); `scripts/stack_stop.sh` remains the stop for stale shells.
 - **Picks unchanged**: B/C 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` t0.5 medium, native16 KV (C81
   provisional), repaired MTP. No serving config changed this session.
-- Bench suite: **1889 passed / 3 skipped** (M53, D12 and M52 tests added).
+- Bench suite: **1894 passed / 3 skipped** (M53, D12, M52 and P89 tests added).
 
 ## DONE this session (notebook 2026-09-29, two entries; PLAN M50/M51/M46/D12/M52/M53; open-questions C106)
 
@@ -37,6 +37,8 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
   transcripts. **Pin bumped** to opencode 1.18.30 (P88).
 - **M52 DONE**: `vision_gate` writes a manifest beside its rows (router block, deployed profile, corpus sha,
   `router_history` on rerun, refusal on a different served config); live one-item PASS on the daily driver.
+- **P89 DONE**: `bench.paths.stack_workdir` (env, else config.sh parsed) serves the probe, the gate's image cache and
+  the visionqa loader; live resume of the gate without the export: no warning, cache under the workdir.
 
 ## Rules learned this session
 
@@ -50,9 +52,7 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## Pending (reconciled)
 
-1. **P89 (unruled)**: `vision_gate`'s image cache resolves `STACK_WORKDIR` from the env only (falls back to the HF
-   cache with a warning); move the probe's `_stack_workdir()` resolver to `bench/paths.py` and use it in both.
-2. **D12 report side**: wall-clock cost per task from the row's `traffic` × rates fitted on the router metrics log
+1. **D12 report side**: wall-clock cost per task from the row's `traffic` × rates fitted on the router metrics log
    (script in `$STACK_WORKDIR/m50/`); lands with the next agentic run's report.
 3. **Deferred**: C106 router-side config hash; frontier-driver composition (switchyard doc §8); S1 NVSY (parked);
    C77/C78/C87; C96; C104 open (fork test-suite sync policy).

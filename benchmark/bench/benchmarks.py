@@ -195,9 +195,10 @@ def _visionqa_image_cache_dir() -> str:
     pre-workdir-rule `~/.cache/huggingface` location ONLY when STACK_WORKDIR is unset, with a
     loud warning -- that fallback is a pre-approved CACHE exception, not a home for new
     artifacts, so this should never be the steady state."""
-    workdir = os.environ.get("STACK_WORKDIR")
+    from . import paths
+    workdir = paths.stack_workdir(required=False)      # P89: env, else config.sh
     if workdir:
-        return os.path.join(workdir, "visionqa_images")
+        return os.path.join(str(workdir), "visionqa_images")
     import sys
     print("WARNING: STACK_WORKDIR is not set; visionqa image cache falls back to "
           f"{_VISIONQA_IMAGE_CACHE_FALLBACK} (set STACK_WORKDIR per the workdir rule, AGENTS.md)",

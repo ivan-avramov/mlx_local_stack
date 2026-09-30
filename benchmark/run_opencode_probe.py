@@ -87,32 +87,14 @@ def _polyglot_sha(root: Path) -> str | None:
         return None
 
 
-_CONFIG_SH_WORKDIR = re.compile(r'^\s*(?:export\s+)?STACK_WORKDIR=["\']?([^"\'\n#]+)["\']?\s*$', re.M)
-
-
 def _stack_workdir(*, required: bool = True) -> Path | None:
-    """The out-of-repo artifact home (AGENTS.md: no filesystem pollution outside $STACK_WORKDIR).
-
-    `STACK_WORKDIR` in the environment wins; otherwise the machine-local `config.sh`
-    (`${XDG_CONFIG_HOME:-~/.config}/mlx_local_stack/config.sh`) is parsed for the same assignment
-    (no shell is executed; `$HOME`/`~` are expanded). M53 (2026-09-29): resolved ONCE at entry, before
-    the M50 guard — on 2026-09-29 the transcript writer discovered the missing variable only after a
-    whole item had run (~1.5 min of worker time). A hand launch from a fresh terminal (which does not
-    source config.sh) therefore no longer needs the export.
-    """
-    env = os.environ.get("STACK_WORKDIR")
-    if env:
-        return Path(os.path.expanduser(env))
-    cfg = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "mlx_local_stack/config.sh"
-    if cfg.is_file():
-        m = _CONFIG_SH_WORKDIR.search(cfg.read_text(errors="replace"))
-        if m:
-            return Path(os.path.expanduser(os.path.expandvars(m.group(1).strip())))
-    if required:
-        raise SystemExit("STACK_WORKDIR is not set and no `mlx_local_stack/config.sh` declares it; transcripts "
-                         "must live under it (AGENTS.md: no filesystem pollution outside $STACK_WORKDIR). "
-                         "Export STACK_WORKDIR or source config.sh.")
-    return None
+    """M53/P89: `bench.paths.stack_workdir` (env, else config.sh parsed, else refuse) — resolved at
+    entry before the M50 guard; a hand launch from a fresh terminal needs no export."""
+    from bench import paths
+    try:
+        return paths.stack_workdir(required=required)
+    except paths.MissingWorkdirError as e:
+        raise SystemExit(f"{e} Transcripts must live under it.") from None
 
 
 def _scrub_pii(s: str) -> str:

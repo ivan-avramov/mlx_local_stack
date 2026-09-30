@@ -24,6 +24,7 @@ or a run in flight.
 Layout assumption, asserted at import: this file is `<repo>/benchmark/bench/paths.py`.
 """
 import os
+import re
 from pathlib import Path
 
 # <repo>/benchmark/bench/paths.py -> parents[0]=bench, [1]=benchmark, [2]=<repo>
@@ -60,3 +61,35 @@ def registry_path() -> Path:
 def default_results_root() -> Path:
     """Absolute path to the shipped results tree (`<repo>/benchmark/results`)."""
     return BENCHMARK_DIR / "results"
+
+
+class MissingWorkdirError(RuntimeError):
+    """`STACK_WORKDIR` is neither exported nor declared in the machine-local config.sh."""
+
+
+_CONFIG_SH_WORKDIR = re.compile(r'^\s*(?:export\s+)?STACK_WORKDIR=["\']?([^"\'\n#]+)["\']?\s*(?:#.*)?$', re.M)
+
+
+def stack_workdir(*, required: bool = True) -> Path | None:
+    """The out-of-repo artifact home (AGENTS.md: NO FILESYSTEM POLLUTION OUTSIDE $STACK_WORKDIR).
+
+    `STACK_WORKDIR` in the environment wins; otherwise `${XDG_CONFIG_HOME:-~/.config}/mlx_local_stack/
+    config.sh` is PARSED for the same assignment (no shell is executed; `$HOME`/`~` are expanded).
+    Missing everywhere: `MissingWorkdirError`, or None with `required=False` for callers that degrade
+    to a pre-approved cache location. P89 (2026-09-29): one resolver for the opencode probe (M53), the
+    `vision_gate` image cache and the visionqa loader — a hand launch from a fresh terminal (which does
+    not source config.sh) no longer refuses late or silently falls back.
+    """
+    env = os.environ.get("STACK_WORKDIR")
+    if env:
+        return Path(os.path.expanduser(env))
+    cfg = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "mlx_local_stack/config.sh"
+    if cfg.is_file():
+        m = _CONFIG_SH_WORKDIR.search(cfg.read_text(errors="replace"))
+        if m:
+            return Path(os.path.expanduser(os.path.expandvars(m.group(1).strip())))
+    if required:
+        raise MissingWorkdirError(
+            "STACK_WORKDIR is not set and no `mlx_local_stack/config.sh` declares it (AGENTS.md: no "
+            "filesystem pollution outside $STACK_WORKDIR). Export STACK_WORKDIR or source config.sh.")
+    return None

@@ -52,9 +52,9 @@ def _image_cache_dir() -> str:
     """`$STACK_WORKDIR/vision_gate_images` -- same out-of-repo-workdir rule and pre-approved
     cache-exception fallback as `bench.benchmarks._visionqa_image_cache_dir`, reimplemented here
     because this script is a standalone CLI outside the `bench` package."""
-    workdir = os.environ.get("STACK_WORKDIR")
+    workdir = paths.stack_workdir(required=False)      # P89: env, else config.sh
     if workdir:
-        return os.path.join(workdir, "vision_gate_images")
+        return os.path.join(str(workdir), "vision_gate_images")
     fallback = os.path.expanduser("~/.cache/huggingface/mlx_local_stack_vision_gate_images")
     print(f"WARNING: STACK_WORKDIR is not set; vision_gate image cache falls back to "
           f"{fallback} (set STACK_WORKDIR per the workdir rule, AGENTS.md)", file=sys.stderr)

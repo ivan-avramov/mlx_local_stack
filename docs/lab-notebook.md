@@ -4280,3 +4280,16 @@ deployed`, registry sha `35a826c0…`, `draft_kind: mtp`, corpus sha; verdict PA
 **Found, not fixed (P89):** `_image_cache_dir()` reads `STACK_WORKDIR` from the env only and warns + falls back to
 `~/.cache/huggingface/mlx_local_stack_vision_gate_images` (a pre-approved location, so no pollution) — same late-env
 pattern as M53; the probe's `_stack_workdir()` resolver should move to `bench/paths.py` and serve both.
+
+
+## 2026-09-29 — P89: one `STACK_WORKDIR` resolver (`bench.paths.stack_workdir`) for probe, vision_gate and visionqa
+
+Moved the M53 resolver out of the probe into `bench/paths.py` (`stack_workdir(required=True)`: env, else
+`${XDG_CONFIG_HOME:-~/.config}/mlx_local_stack/config.sh` parsed — comments and trailing comments tolerated, `$HOME`
+expanded, no shell executed — else `MissingWorkdirError`, or None for callers that degrade). The probe keeps a thin
+`_stack_workdir()` wrapper that converts to `SystemExit`; `vision_gate._image_cache_dir()` and
+`benchmarks._visionqa_image_cache_dir()` call it with `required=False` and keep their HF-cache fallback + warning only
+when neither source declares the variable (the existing fallback test now hides the real config.sh via
+`XDG_CONFIG_HOME`). Five new tests; suite 1894 passed / 3 skipped. Live: `vision_gate --resume --limit 2` with the
+variable unset — no warning, the image landed under `$STACK_WORKDIR/vision_gate_images`, manifest refreshed under the
+same router pid (no `router_history`), verdict PASS (2/2). Stack, router 36401, unchanged.

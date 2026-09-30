@@ -199,8 +199,9 @@ def test_visionqa_image_cache_uses_stack_workdir(monkeypatch, tmp_path):
     assert B._visionqa_image_cache_dir() == str(tmp_path / "visionqa_images")
 
 
-def test_visionqa_image_cache_falls_back_with_a_warning_when_stack_workdir_is_unset(monkeypatch, capsys):
+def test_visionqa_image_cache_falls_back_with_a_warning_when_stack_workdir_is_unset(monkeypatch, capsys, tmp_path):
     monkeypatch.delenv("STACK_WORKDIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty"))   # P89: no config.sh either
     d = B._visionqa_image_cache_dir()
     assert d == B._VISIONQA_IMAGE_CACHE_FALLBACK
     assert "STACK_WORKDIR" in capsys.readouterr().err
