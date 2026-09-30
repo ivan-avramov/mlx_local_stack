@@ -6,8 +6,8 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## State of the world
 
-- **Git: stack main pushed through 13b0b66** (P86–P88); the M52, P89, closures/rulings and C106 commits after it are UNPUSHED. Forks `../mlx-vlm`
-  `1bd249d3` and mlx-serve `6602ae5` unchanged.
+- **Git: all pushed** — stack main `70a61a7` (operator, 2026-09-29 end of session). Forks `../mlx-vlm` `1bd249d3` and
+  mlx-serve `6602ae5` unchanged. Clean trees.
 - **Stack is UP on the NEW `runserver.sh`** (M51 script): shell pid 36341, router pid 36401 on :8000,
   `MLX_SERVE_CONFIG=main_models.yaml`, sessions 2, APC absent (verified `ps -Eww`), compose healthy. Resident model:
   `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (worker `--draft-kind mtp`, native16 KV per C81). `kill -TERM 36341`
