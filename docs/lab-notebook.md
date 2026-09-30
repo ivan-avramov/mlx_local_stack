@@ -4293,3 +4293,13 @@ when neither source declares the variable (the existing fallback test now hides 
 `XDG_CONFIG_HOME`). Five new tests; suite 1894 passed / 3 skipped. Live: `vision_gate --resume --limit 2` with the
 variable unset — no warning, the image landed under `$STACK_WORKDIR/vision_gate_images`, manifest refreshed under the
 same router pid (no `router_history`), verdict PASS (2/2). Stack, router 36401, unchanged.
+
+
+## 2026-09-29 — Housekeeping closures (operator P93–P95): C77, C78, C87, C96
+
+C77 (post-M43 quality diagnostic) and C78 (matched timing control) were never armed and described a TQ4 old/new pair
+that no longer matches the shipped native16 state, which C84/C88/C89/M40 certified afterwards on the final pins —
+closed as superseded. C87 (`Qwen3.8-27B-static-mixed-4bit` recipe discrepancy) closed documentation-only: model
+unpromoted, old metrics kept with transport caveats. C96 (search engine policy) closed as superseded by C97/C98
+(SearXNG pool ratified, 10/10 native-tool e2e gate). Rows kept with dated rulings; reopen conditions stated in each.
+Remaining open decisions: C104 (fork test-suite sync policy), S1 (parked), C106 (deferred).

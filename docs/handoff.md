@@ -6,7 +6,7 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## State of the world
 
-- **Git: stack main pushed through 13b0b66** (P86–P88); the M52 and P89 commits after it are UNPUSHED. Forks `../mlx-vlm`
+- **Git: stack main pushed through 13b0b66** (P86–P88); the M52, P89 and closures commits after it are UNPUSHED. Forks `../mlx-vlm`
   `1bd249d3` and mlx-serve `6602ae5` unchanged.
 - **Stack is UP on the NEW `runserver.sh`** (M51 script): shell pid 36341, router pid 36401 on :8000,
   `MLX_SERVE_CONFIG=main_models.yaml`, sessions 2, APC absent (verified `ps -Eww`), compose healthy. Resident model:
@@ -55,7 +55,8 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 1. **D12 report side**: wall-clock cost per task from the row's `traffic` × rates fitted on the router metrics log
    (script in `$STACK_WORKDIR/m50/`); lands with the next agentic run's report.
 3. **Deferred**: C106 router-side config hash; frontier-driver composition (switchyard doc §8); S1 NVSY (parked);
-   C77/C78/C87; C96; C104 open (fork test-suite sync policy).
+   C104 open (fork test-suite sync policy — operator ruling pending). **C77/C78/C87/C96 CLOSED 2026-09-29** (P93–P95:
+   superseded by C84/C88/C89 certification, documentation-only, superseded by C97/C98).
 4. **D7** and **D5** remain driver-side backlog.
 
 ## Resume discipline
