@@ -199,8 +199,15 @@ def main() -> int:
         rows.append(row); failed += not ok
         print(f"[{name}] {'PASS' if ok else 'FAIL'} conv={conv} finish={row['finish_reason']} "
               f"ctok={row['completion_tokens']} wall={row['wall_s']}s :: {note}", flush=True)
+    try:  # C106: complete only if the served runtime is unchanged since entry
+        exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
+    except provenance.ServedConfigError as e:
+        print(f"[stack_smoke] REFUSED: {e}", file=sys.stderr, flush=True)
+        json.dump({"status": "aborted", "model": a.model, "router": router, "rows": rows, "error": f"{e}"}, open(out, "w"), indent=1)
+        return 2
     result = {"status": "pass" if not failed else "fail", "model": a.model, "tag": a.tag, "params": params,
-              "base": client.BASE, "router": router, "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}
+              "base": client.BASE, "router": router, "router_exit": exit_blk,
+              "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}
     json.dump(result, open(out, "w"), indent=1)
     print(f"{result['status'].upper()} {len(rows) - failed}/{len(rows)} -> {out}")
     return 0 if not failed else 1

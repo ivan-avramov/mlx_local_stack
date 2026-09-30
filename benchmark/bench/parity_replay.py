@@ -114,7 +114,15 @@ def run(a) -> int:
               f"ctok={row['completion_tokens']} wall={row['wall_s']}s", flush=True)
         json.dump({"status": "running", "tag": a.tag, "base": client.BASE, "router": router, "router_history": history, "frozen": a.frozen,
                    "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
-    json.dump({"status": "complete", "tag": a.tag, "base": client.BASE, "router": router, "router_history": history, "frozen": a.frozen,
+    try:  # C106: complete only if the served runtime is unchanged since entry
+        exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
+    except provenance.ServedConfigError as e:
+        print(f"[parity_replay] REFUSED: {e}", file=sys.stderr, flush=True)
+        json.dump({"status": "aborted", "tag": a.tag, "router": router, "router_history": history, "rows": rows,
+                   "error": f"{e}"}, open(out, "w"), indent=1)
+        return 2
+    json.dump({"status": "complete", "tag": a.tag, "base": client.BASE, "router": router, "router_exit": exit_blk,
+               "router_history": history, "frozen": a.frozen,
                "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
     print(f"complete: {len(rows)} rows -> {out}")
     return 0

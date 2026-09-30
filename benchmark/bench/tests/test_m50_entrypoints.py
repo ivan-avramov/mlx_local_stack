@@ -361,7 +361,8 @@ def test_generate_successful_restart_refreshes_manifests_with_history(tmp_path, 
     """Codex #2 P17: rows written after a restart must be attributed to the NEW router."""
     G, calls, n = _run_with_restart(tmp_path, monkeypatch,
                                     [_good(tmp_path, 1), _good(tmp_path, 2), _good(tmp_path, 2),
-                                     _good(tmp_path, 3), _good(tmp_path, 3)])
+                                     _good(tmp_path, 3), _good(tmp_path, 3),
+                                     _good(tmp_path, 3)])      # C106 exit check: one more lookup
     G.run(["m"], ["aime"], {}, restart_fn=lambda: calls.append("restart"))
     man = json.loads((tmp_path / "m" / "aime.manifest.json").read_text())
     assert man["router"]["pid"] == 3

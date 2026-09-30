@@ -4308,3 +4308,23 @@ Remaining open decisions: C104 (fork test-suite sync policy), S1 (parked), C106 
 serving-path test files at every sync, follow upstream deletions elsewhere, accept behaviour changes that reach opencode
 and Claude Code with upstream's tests ported and the live smokes as the gate, keep the box-local xfail. Narrow (a) only
 file-by-file when a restored test fails for an upstream-design reason.
+
+
+## 2026-09-29 — C106 driver-side belt (operator P97: "many other ways the runtime can change"; no fork change)
+
+`assert_served_config` adds `config_sha256` (sha256 of the served file at verification) to the M50 block, so every
+manifest and tool result now carries the content identity, not just the path. `assert_served_config_unchanged(entry)`
+re-runs the verification and refuses (`ServedConfigError`, message names entry/exit hashes and pids) when the file hash
+or the router pid differs. Wired at the completion point of all six drivers: `generate.run` before COMPLETE (compares
+against the post-restart block after a verified auto-restart, since a restart legitimately changes the pid),
+`run_opencode_probe` and `vision_gate` (drift → `served_config_drift{entry_sha256, exit_sha256, error}` in the manifest,
+no summary, rc 2; clean → `router_exit`), `stack_smoke` and `parity_replay` (status `aborted` + error, rc 2),
+`session_cache_probe` (result `status: aborted`, rc 2). Seven tests written failing first (`test_c106_exit_check.py`:
+block sha, pass, file edit, pid change, generate mid-run edit → no COMPLETE, gate drift → manifest stamp + no summary,
+smoke abort); the restart test needed one more scripted owner lookup. Suite 1901 passed / 3 skipped. Live no-drift:
+probe with no item (entry + exit, zero requests) and gate `--resume --limit 3` (verdict PASS; manifest and summary
+`router_exit` pid 36401, entry = exit sha `35a826c0…` = the registry file). Drift was NOT exercised live — editing the
+registry of record under a live router is exactly what the standing rule forbids; the unit tests cover it.
+**Scope note:** this sees an edited/retargeted file or a restarted router. It cannot see a worker swapped by hand, a
+changed `.env`, or a fork rebuild under the same router pid; those remain behavioural (never change serving config
+during a live run; `ps -o command=` on the worker before and after).

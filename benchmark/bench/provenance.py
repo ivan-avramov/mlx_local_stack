@@ -850,9 +850,46 @@ def assert_served_config(base_url: str | None = None, *, port: int | None = None
                            f"Every request would be measured against the wrong served config. {hint}")
     homes = ((owner.get("env") or {}).get("HOME"),)
     block = {"pid": pid, "config": _scrub(served, homes), "config_raw": _scrub(raw, homes),
-             "port": port, "cmdline": _scrub(cmd, homes)}
+             "port": port, "cmdline": _scrub(cmd, homes),
+             # C106 (2026-09-29): content identity of the served file at verification time. The
+             # router reads its registry ONCE at start; a path comparison cannot see an in-place
+             # edit or a symlink retarget afterwards. Compared again at exit (assert_served_config_unchanged).
+             "config_sha256": _file_sha256(served)}
     _LAST_VERIFIED[port] = dict(block)
     return block
+
+
+def _file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def assert_served_config_unchanged(entry: dict, base_url: str | None = None, *, port: int | None = None,
+                                   lookup=None, env: dict | None = None) -> dict:
+    """C106 driver-side belt (operator 2026-09-29): re-run the M50 verification at EXIT and refuse
+    to declare a run complete if the served file's content or the router pid differs from `entry`
+    (the block verified at entry). Rows written in between stay on disk but must not be graded or
+    marked clean: the runtime they were produced under is not the one the manifest names. Returns
+    the exit block (same shape as `entry`, plus `verified_at: "exit"`). Catches only what a driver
+    can see from outside — an edited/retargeted registry or a restarted router; the operator rule
+    "never change serving config during a live run" still stands for everything else."""
+    exit_blk = assert_served_config(base_url, port=port, lookup=lookup, env=env)
+    problems = []
+    if entry.get("pid") is not None and exit_blk["pid"] != entry.get("pid"):
+        problems.append(f"router pid changed {entry.get('pid')} -> {exit_blk['pid']} (restart during the run)")
+    if entry.get("config_sha256") and exit_blk["config_sha256"] != entry["config_sha256"]:
+        problems.append(f"served file content changed: entry sha256 {entry['config_sha256'][:12]}… -> "
+                        f"exit sha256 {exit_blk['config_sha256'][:12]}… ({exit_blk['config']})")
+    if problems:
+        raise ServedConfigError("C106 exit check: the served runtime changed during this run — "
+                                + "; ".join(problems) + ". Rows written since entry cannot be attributed "
+                                "to the manifest's registry: do not grade or pool them; restart the router "
+                                "on the intended config and rerun.")
+    exit_blk["verified_at"] = "exit"
+    return exit_blk
 
 
 def router_block(base_url: str | None = None) -> dict:

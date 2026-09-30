@@ -52,6 +52,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "benchmark"))
+from bench import provenance  # noqa: E402
 from bench import progress_gate  # noqa: E402 — needs the sys.path insert above
 
 # The scaffold is part of the serving path (the suffix lesson): an unpinned client version is an
@@ -576,7 +577,6 @@ def main() -> int:
     _stack_workdir()
 
     # M50: refuse before anything is read, written or requested unless :port serves this registry.
-    from bench import provenance
     try:  # opencode sends to what ITS resolved config says (never MLX_SERVE_BASE): verify THAT,
         # resolved by `opencode debug config` under the probe's env from a neutral scratch cwd.
         with _scratch_dir("m50") as neutral:
@@ -705,8 +705,36 @@ def main() -> int:
                   f"rc={rc} {dur:.0f}s turns={traffic['turns']} in_inc={traffic['input_tokens_incremental']} "
                   f"in_cum={traffic['input_tokens_cumulative']} out={traffic['output_tokens']} "
                   f"ctx={traffic['max_context']}", flush=True)
+    # C106: refuse to declare the run complete if the served runtime changed since entry; the
+    # drift is stamped into the manifest so the rows are never mistaken for clean.
+    try:
+        exit_blk = provenance.assert_served_config_unchanged(router, oc_base)
+    except provenance.ServedConfigError as e:
+        _stamp_manifest(mp, {"served_config_drift": {"entry_sha256": router.get("config_sha256"),
+                                                     "exit_sha256": _exit_sha(oc_base),
+                                                     "error": str(e)}})
+        sys.exit(f"REFUSED: {e}")
+    _stamp_manifest(mp, {"router_exit": exit_blk})
     print(f"rows -> {out}", flush=True)
     return 0
+
+
+def _exit_sha(base: str) -> str | None:
+    try:
+        return provenance.assert_served_config(base).get("config_sha256")
+    except Exception:  # noqa: BLE001 — best effort for the drift record
+        return None
+
+
+def _stamp_manifest(mp: Path, fields: dict) -> None:
+    """Merge `fields` into an existing manifest atomically; no manifest (no item ran) → no-op."""
+    if not mp.exists():
+        return
+    doc = json.loads(mp.read_text())
+    doc.update(fields)
+    tmp = mp.with_suffix(mp.suffix + ".tmp")
+    tmp.write_text(json.dumps(doc, indent=2))
+    os.replace(tmp, mp)
 
 
 if __name__ == "__main__":

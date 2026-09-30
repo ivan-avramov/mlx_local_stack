@@ -447,7 +447,9 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # M50 (2026-09-28): the process owning the router port must serve THIS driver's registry;
     # refuse before anything is cleaned, written or requested (RuntimeError -> nonzero exit).
     from . import provenance
-    provenance.assert_served_config(client.BASE)
+    # C106: the block the exit check compares against — refreshed after every verified restart
+    # (a restart legitimately changes the pid; an edit to the served file never is).
+    served = {"entry": provenance.assert_served_config(client.BASE)}
     # Provenance guard: never resume on top of results produced under a different config
     # (the stale-results contamination). Runs BEFORE build_queue so cleaned files don't leak
     # into done_ids. clean_stale deletes mismatched files; default just warns.
@@ -477,7 +479,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
 
         def restart_fn():
             _inner_restart()
-            provenance.assert_served_config(client.BASE)
+            served["entry"] = provenance.assert_served_config(client.BASE)
             for m, b in sorted(pairs):
                 mp = result_path(m, b, tune=tune).with_suffix(".manifest.json")
                 if not mp.exists():
@@ -608,6 +610,9 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                     return
                 chunk_start = time.perf_counter()
                 chunk_items = 0
+        # C106: the run is complete only if the served runtime is still the one verified at entry
+        # (raises ServedConfigError — rows stay, nothing is declared clean).
+        provenance.assert_served_config_unchanged(served["entry"], client.BASE)
         print(f"[generate] COMPLETE — {i} items generated. Run `grade` next.", flush=True)
     except KeyboardInterrupt:
         print(f"\n[generate] interrupted at {i}/{len(queue)} — progress saved. "

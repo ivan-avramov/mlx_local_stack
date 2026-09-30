@@ -6,7 +6,7 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 ## State of the world
 
-- **Git: stack main pushed through 13b0b66** (P86–P88); the M52, P89 and closures commits after it are UNPUSHED. Forks `../mlx-vlm`
+- **Git: stack main pushed through 13b0b66** (P86–P88); the M52, P89, closures/rulings and C106 commits after it are UNPUSHED. Forks `../mlx-vlm`
   `1bd249d3` and mlx-serve `6602ae5` unchanged.
 - **Stack is UP on the NEW `runserver.sh`** (M51 script): shell pid 36341, router pid 36401 on :8000,
   `MLX_SERVE_CONFIG=main_models.yaml`, sessions 2, APC absent (verified `ps -Eww`), compose healthy. Resident model:
@@ -14,7 +14,7 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
   now tears the whole stack down (verified live today); `scripts/stack_stop.sh` remains the stop for stale shells.
 - **Picks unchanged**: B/C 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` t0.5 medium, native16 KV (C81
   provisional), repaired MTP. No serving config changed this session.
-- Bench suite: **1894 passed / 3 skipped** (M53, D12, M52 and P89 tests added).
+- Bench suite: **1901 passed / 3 skipped** (M53, D12, M52, P89 and C106 tests added).
 
 ## DONE this session (notebook 2026-09-29, two entries; PLAN M50/M51/M46/D12/M52/M53; open-questions C106)
 
@@ -39,6 +39,8 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
   `router_history` on rerun, refusal on a different served config); live one-item PASS on the daily driver.
 - **P89 DONE**: `bench.paths.stack_workdir` (env, else config.sh parsed) serves the probe, the gate's image cache and
   the visionqa loader; live resume of the gate without the export: no warning, cache under the workdir.
+- **C106 driver-side belt DONE** (P97): served-file sha in every M50 block; exit re-verification in all six drivers refuses
+  completion on drift (file hash or pid). **Rulings**: C77/C78/C87/C96 closed (P93–P95); C104 ratified (P96).
 
 ## Rules learned this session
 
@@ -54,7 +56,7 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 1. **D12 report side**: wall-clock cost per task from the row's `traffic` × rates fitted on the router metrics log
    (script in `$STACK_WORKDIR/m50/`); lands with the next agentic run's report.
-3. **Deferred**: C106 router-side config hash; frontier-driver composition (switchyard doc §8); S1 NVSY (parked);
+3. **C106 RULED driver-side, DONE (P97).** **Deferred**: frontier-driver composition (switchyard doc §8); S1 NVSY (parked);
    **C104 RULED 2026-09-29 (P96): (a)–(d) ratified as the standing fork-sync policy.** **C77/C78/C87/C96 CLOSED 2026-09-29** (P93–P95:
    superseded by C84/C88/C89 certification, documentation-only, superseded by C97/C98).
 4. **D7** and **D5** remain driver-side backlog.
@@ -63,4 +65,4 @@ then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). S
 
 One resident model; APC absent; retained sessions 2; full active preallocation; deployed sampling; explicit
 served-overlay environment on every OVERLAY driver (M50 refuses a mismatch; the probe resolves `STACK_WORKDIR` itself). Never alter source/config during a live run. Commit coherent units; push only on explicit
-current-turn instruction (forks before stack). Next decision id C107; discussion ids continue from P89.
+current-turn instruction (forks before stack). Next decision id C107; discussion ids continue from P97.

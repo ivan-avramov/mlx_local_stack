@@ -237,6 +237,13 @@ def _load_previous_manifest(mp: Path, router: dict) -> tuple[list, str | None]:
     return history, None
 
 
+def _exit_sha(base: str) -> str | None:
+    try:
+        return provenance.assert_served_config(base).get("config_sha256")
+    except Exception:  # noqa: BLE001 — best effort for the drift record
+        return None
+
+
 def _write_manifest(mp: Path, model: str, *, runtime: dict, router: dict, history: list) -> None:
     man = provenance.gather(model, profile="deployed", runtime=runtime, router=router)
     if history:
@@ -381,8 +388,24 @@ def main(argv=None) -> int:
         print(f"[vision_gate]   -> verdict={row_out['verdict']} converged={row_out['converged']} "
               f"tokens={row_out['completion_tokens']}", flush=True)
 
+    # C106: the gate is complete only if the served runtime is unchanged since entry; on drift the
+    # manifest records both hashes, no summary is written, rc 2.
+    try:
+        exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
+    except provenance.ServedConfigError as e:
+        if mp.exists():
+            doc = json.loads(mp.read_text(encoding="utf-8"))
+            doc["served_config_drift"] = {"entry_sha256": router.get("config_sha256"),
+                                          "exit_sha256": _exit_sha(client.BASE), "error": str(e)}
+            mp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        print(f"[vision_gate] REFUSED: {e}", file=sys.stderr, flush=True)
+        return 2
+    if mp.exists():
+        doc = json.loads(mp.read_text(encoding="utf-8")); doc["router_exit"] = exit_blk
+        mp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     summary = summarize(read_rows(out))
     summary["router"] = router
+    summary["router_exit"] = exit_blk
     summary_path_for(out).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(f"[vision_gate] RESULT {args.model}: {summary['pass']}/{summary['n']} pass, "
           f"fail={summary['fail']} null={summary['null']} pass_rate={summary['pass_rate']}")

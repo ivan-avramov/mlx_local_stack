@@ -390,6 +390,14 @@ def main(argv=None) -> int:
         result["legs"]["C_eviction"] = leg_c_eviction(a.model, log, pid, sizes=[int(x) for x in a.sizes.split(",")], timeout=a.timeout)
     result["finished"] = datetime.now().isoformat(timespec="seconds")
     result["footprint_end"] = footprint(pid)
+    rc = 0
+    try:  # C106: complete only if the served runtime is unchanged since entry
+        result["router_exit"] = provenance.assert_served_config_unchanged(router, os.environ.get("MLX_SERVE_BASE"))
+    except provenance.ServedConfigError as e:
+        result["served_config_drift"] = {"entry_sha256": router.get("config_sha256"), "error": str(e)}
+        result["status"] = "aborted"
+        print(f"[m45] REFUSED: {e}", file=sys.stderr, flush=True)
+        rc = 2
     out = Path(a.out) if a.out else REPO / "benchmark/results" / a.model / f"session_cache.{a.tag}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(result, indent=1)
@@ -399,7 +407,7 @@ def main(argv=None) -> int:
             text = text.replace(real, ph)
     out.write_text(text)
     print(f"[m45] wrote {out}", flush=True)
-    return 0
+    return rc
 
 
 if __name__ == "__main__":
