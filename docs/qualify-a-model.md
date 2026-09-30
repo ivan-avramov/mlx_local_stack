@@ -697,7 +697,7 @@ uv run python benchmark/run_opencode_probe.py --model <full-registry-name> \
     [--allow-version-drift]
 ```
 No `--tune` flag — opencode rows are tagged by `--lang`/`--out`, not a harness tune label. Pin
-opencode **1.18.15** (drift is recorded, not silently tolerated — pass `--allow-version-drift`
+opencode **1.18.30** (bumped 2026-09-29; drift is recorded, not silently tolerated — pass `--allow-version-drift`
 only when you mean it). Use the M3 22-item python set (or the matching per-language set) named
 by exercise, per the O39 protocol: record the version per row + in the manifest (`deployed`
 profile, polyglot sha, `edit_format: tools`); `.meta/` (reference solutions) excluded from the

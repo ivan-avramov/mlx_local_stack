@@ -56,7 +56,7 @@ from bench import progress_gate  # noqa: E402 — needs the sys.path insert abov
 
 # The scaffold is part of the serving path (the suffix lesson): an unpinned client version is an
 # unrecorded output-determining knob. Bump this deliberately, never implicitly.
-PINNED_OPENCODE_VERSION = "1.18.15"
+PINNED_OPENCODE_VERSION = "1.18.30"  # bumped 2026-09-29 (P88); 1.18.15 rows do not pool
 
 
 def _polyglot_root() -> Path:
@@ -87,13 +87,41 @@ def _polyglot_sha(root: Path) -> str | None:
         return None
 
 
+_CONFIG_SH_WORKDIR = re.compile(r'^\s*(?:export\s+)?STACK_WORKDIR=["\']?([^"\'\n#]+)["\']?\s*$', re.M)
+
+
+def _stack_workdir(*, required: bool = True) -> Path | None:
+    """The out-of-repo artifact home (AGENTS.md: no filesystem pollution outside $STACK_WORKDIR).
+
+    `STACK_WORKDIR` in the environment wins; otherwise the machine-local `config.sh`
+    (`${XDG_CONFIG_HOME:-~/.config}/mlx_local_stack/config.sh`) is parsed for the same assignment
+    (no shell is executed; `$HOME`/`~` are expanded). M53 (2026-09-29): resolved ONCE at entry, before
+    the M50 guard — on 2026-09-29 the transcript writer discovered the missing variable only after a
+    whole item had run (~1.5 min of worker time). A hand launch from a fresh terminal (which does not
+    source config.sh) therefore no longer needs the export.
+    """
+    env = os.environ.get("STACK_WORKDIR")
+    if env:
+        return Path(os.path.expanduser(env))
+    cfg = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "mlx_local_stack/config.sh"
+    if cfg.is_file():
+        m = _CONFIG_SH_WORKDIR.search(cfg.read_text(errors="replace"))
+        if m:
+            return Path(os.path.expanduser(os.path.expandvars(m.group(1).strip())))
+    if required:
+        raise SystemExit("STACK_WORKDIR is not set and no `mlx_local_stack/config.sh` declares it; transcripts "
+                         "must live under it (AGENTS.md: no filesystem pollution outside $STACK_WORKDIR). "
+                         "Export STACK_WORKDIR or source config.sh.")
+    return None
+
+
 def _scrub_pii(s: str) -> str:
     # The repo is PUBLIC: persisted rows must not carry absolute home paths. opencode's
     # transcript echoes tool-call paths under the scratch workdir, so scrub the workdir
     # first (keeps the more specific placeholder), then any remaining home prefix.
-    workdir = os.environ.get("STACK_WORKDIR")
+    workdir = _stack_workdir(required=False)
     if workdir:
-        s = s.replace(workdir, "$STACK_WORKDIR")
+        s = s.replace(str(workdir), "$STACK_WORKDIR")
     home = os.path.expanduser("~")
     if home and home != "~":
         s = s.replace(home, "$HOME")
@@ -352,14 +380,35 @@ def loop_metrics(export: dict) -> dict:
             "max_identical_run": max_run, "calls_repeated_after_error": after_err}
 
 
+def traffic_metrics(export: dict) -> dict:
+    """D12 harness-traffic accounting per row, from the exported transcript.
+
+    opencode reports `tokens.input` per assistant message as the INCREMENTAL prompt (verified
+    2026-09-29: the sums match the router's session-cache deltas exactly), while the router re-reads
+    the whole context on every turn. Both views are kept: `input_tokens_incremental` is what prefill
+    actually costs with the session cache; `input_tokens_cumulative` (running-sum total) is what a
+    cache-less server would prefill. The gap IS the session-cache saving. `max_context` is the final
+    prompt length. Reasoning tokens are not split out (the router reports none; thinking is inside
+    `output`).
+    """
+    turns = 0; inc = 0; cum = 0; out = 0; ctx = 0
+    for m in (export or {}).get("messages") or []:
+        info = m.get("info") or {}
+        if info.get("role") != "assistant":
+            continue
+        turns += 1
+        tok = info.get("tokens") or {}
+        i = int(tok.get("input") or 0); o = int(tok.get("output") or 0)
+        inc += i; ctx += i; cum += ctx; out += o
+    return {"turns": turns, "input_tokens_incremental": inc, "input_tokens_cumulative": cum,
+            "output_tokens": out, "max_context": ctx}
+
+
 def _transcript_target(model: str, lang: str, item: str, *, tag: str) -> tuple[Path, str]:
     """(absolute path, placeholder path) for an item's transcript under $STACK_WORKDIR."""
-    workdir = os.environ.get("STACK_WORKDIR")
-    if not workdir:
-        raise SystemExit("STACK_WORKDIR is not set; transcripts must live under it (AGENTS.md: no "
-                         "filesystem pollution outside $STACK_WORKDIR)")
+    workdir = _stack_workdir()
     rel = f"opencode_transcripts/{model}/{tag}/{lang}__{item}.json"
-    return Path(workdir) / rel, f"$STACK_WORKDIR/{rel}"
+    return workdir / rel, f"$STACK_WORKDIR/{rel}"
 
 
 def _grade_python(cwd: Path, test: Path) -> tuple[bool, str]:
@@ -540,6 +589,10 @@ def main() -> int:
                  f"is output-determining. Bump PINNED_OPENCODE_VERSION deliberately or pass "
                  f"--allow-version-drift to record the drift.")
 
+    # M53: every late precondition fails HERE, before the M50 guard and before any request.
+    # (2026-09-29: a missing STACK_WORKDIR surfaced only in the transcript writer, after item 1 ran.)
+    _stack_workdir()
+
     # M50: refuse before anything is read, written or requested unless :port serves this registry.
     from bench import provenance
     try:  # opencode sends to what ITS resolved config says (never MLX_SERVE_BASE): verify THAT,
@@ -635,6 +688,7 @@ def main() -> int:
                 t_abs.parent.mkdir(parents=True, exist_ok=True)
                 t_abs.write_text(_scrub_pii(json.dumps(export, indent=1)))
             metrics = loop_metrics(export or {})
+            traffic = traffic_metrics(export or {})      # D12
             after = sol.read_text(errors="replace")
             changed = after != before
             # A rewritten test file invalidates the grade: the model can make any suite pass by
@@ -660,11 +714,15 @@ def main() -> int:
                 "grade_tail": _scrub_then_tail(tail, 300), "log_tail": _scrub_then_tail(log, 500),
                 # M46: full transcript outside the repo + the loop metric on the row.
                 "transcript_path": transcript_rel, "loop_metrics": metrics,
+                # D12: harness traffic (turns, incremental + cumulative input, output, max context).
+                "traffic": traffic,
             }
             with out.open("a") as f:
                 f.write(json.dumps(row) + "\n")
             print(f"[{time.strftime('%H:%M:%S')}] {name:16s} changed={changed} passed={passed} "
-                  f"rc={rc} {dur:.0f}s", flush=True)
+                  f"rc={rc} {dur:.0f}s turns={traffic['turns']} in_inc={traffic['input_tokens_incremental']} "
+                  f"in_cum={traffic['input_tokens_cumulative']} out={traffic['output_tokens']} "
+                  f"ctx={traffic['max_context']}", flush=True)
     print(f"rows -> {out}", flush=True)
     return 0
 

@@ -489,3 +489,83 @@ def test_manifest_runtime_records_the_skill_policy_and_config_hash(monkeypatch, 
     import hashlib
     assert rt["opencode_config_sha256"] == hashlib.sha256(cfg.read_bytes()).hexdigest()
     assert rt["opencode_config"] == "opencode_config/opencode.json"
+
+
+# ------------------------------------------------- M53: STACK_WORKDIR resolved at ENTRY, config.sh fallback
+def _config_sh(tmp_path, monkeypatch, body):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    d = tmp_path / "xdg" / "mlx_local_stack"
+    d.mkdir(parents=True)
+    (d / "config.sh").write_text(body)
+
+
+def test_stack_workdir_env_wins(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "env"))
+    _config_sh(tmp_path, monkeypatch, 'export STACK_WORKDIR="/nope"\n')
+    assert P._stack_workdir() == tmp_path / "env"
+
+
+def test_stack_workdir_falls_back_to_config_sh_and_expands_home(monkeypatch, tmp_path):
+    monkeypatch.delenv("STACK_WORKDIR", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _config_sh(tmp_path, monkeypatch,
+               '# comment\nexport STACK_REPO="$HOME/ws/repo"\nexport STACK_WORKDIR="$HOME/ws/wd"\n')
+    assert P._stack_workdir() == tmp_path / "home" / "ws" / "wd"
+    t_abs, rel = P._transcript_target("m", "python", "x", tag="t")
+    assert t_abs == tmp_path / "home" / "ws" / "wd" / "opencode_transcripts" / "m" / "t" / "python__x.json"
+    assert rel == "$STACK_WORKDIR/opencode_transcripts/m/t/python__x.json"
+
+
+def test_stack_workdir_missing_everywhere_exits_naming_the_variable(monkeypatch, tmp_path):
+    monkeypatch.delenv("STACK_WORKDIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty"))
+    try:
+        P._stack_workdir()
+        raised = False
+    except SystemExit as e:
+        raised = True; msg = str(e)
+    assert raised and "STACK_WORKDIR" in msg
+
+
+def test_entry_refuses_missing_workdir_before_m50_and_before_any_request(monkeypatch, tmp_path):
+    """Attempt 1 on 2026-09-29 ran a whole item (~1.5 min of worker time) before the transcript
+    writer noticed STACK_WORKDIR was unset. The check must fire at entry, before the M50 guard."""
+    from bench import provenance
+    monkeypatch.delenv("STACK_WORKDIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty"))
+    monkeypatch.setattr(P, "_opencode_version", lambda: P.PINNED_OPENCODE_VERSION)
+
+    def boom(*a, **k):
+        raise AssertionError("reached M50 / the router before the workdir check")
+    monkeypatch.setattr(provenance, "opencode_router_base", boom)
+    monkeypatch.setattr(provenance, "assert_served_config", boom)
+    monkeypatch.setattr(sys, "argv", ["run_opencode_probe.py", "--model", "m", "--items", "x", "--lang", "python"])
+    try:
+        P.main()
+        raised = False
+    except SystemExit as e:
+        raised = True; msg = str(e)
+    assert raised and "STACK_WORKDIR" in msg
+
+
+# ------------------------------------------------- D12: harness-traffic accounting per row
+def _amsg(inp, out, reasoning=0):
+    return {"info": {"role": "assistant", "tokens": {"input": inp, "output": out, "reasoning": reasoning,
+                                                     "cache": {"read": 0, "write": 0}}}, "parts": []}
+
+
+def test_traffic_metrics_reports_cumulative_and_incremental_input():
+    # opencode's per-message `tokens.input` is the INCREMENTAL prompt (verified 2026-09-29 against the
+    # router's session-cache deltas); the router re-reads the whole context each turn, so the
+    # cumulative figure is the running-sum total. Both are reported; the gap is the session-cache saving.
+    export = {"info": {"id": "ses"}, "messages": [
+        {"info": {"role": "user"}, "parts": []}, _amsg(100, 5), _amsg(20, 6), _amsg(30, 7)]}
+    t = P.traffic_metrics(export)
+    assert t == {"turns": 3, "input_tokens_incremental": 150, "input_tokens_cumulative": 370,
+                 "output_tokens": 18, "max_context": 150}
+
+
+def test_traffic_metrics_handles_empty_or_malformed_export():
+    assert P.traffic_metrics({}) == {"turns": 0, "input_tokens_incremental": 0, "input_tokens_cumulative": 0,
+                                     "output_tokens": 0, "max_context": 0}
+    assert P.traffic_metrics({"messages": [{"info": {"role": "assistant"}}]})["turns"] == 1

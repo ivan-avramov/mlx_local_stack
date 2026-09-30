@@ -4243,3 +4243,24 @@ completions (128–268) is not the decode rate — do not use it for D12 rates.
 
 **Open:** M53 (fail-fast), D12 columns in the probe, M52 (`vision_gate` manifest). No pick or ladder movement (probe,
 not a measurement).
+
+
+## 2026-09-29 — M53 fail-fast + D12 row columns + opencode pin 1.18.30 (P86–P88)
+
+**M53.** `_stack_workdir()` (env, else `config.sh` parsed without executing a shell, else `SystemExit`) is called at
+entry before the M50 guard and reused by the transcript writer and the PII scrub. Four failing tests first (env wins;
+config.sh fallback expands `$HOME` and feeds `_transcript_target`; missing everywhere exits naming the variable; entry
+refuses BEFORE `provenance.opencode_router_base`/`assert_served_config`, stubbed to raise if reached). Live: a launch
+with the variable unset and an empty `XDG_CONFIG_HOME` refused at once with zero router requests; a launch with the
+variable unset but the real `config.sh` fell back, printed the M50 line and sent zero requests (`--items no-such-item`).
+`MLX_SERVE_CONFIG` was also unset on that run: against the daily driver it is optional (the driver defaults to
+`main_models.yaml`); it matters only for an overlay. Daily opencode/OpenWebUI use never touches either guard.
+
+**D12 columns.** `traffic_metrics(export)` → `turns`, `input_tokens_incremental` (Σ per-message `tokens.input`),
+`input_tokens_cumulative` (running-sum total = what a cache-less server would prefill), `output_tokens`, `max_context`.
+Validated on the five live transcripts vs the router log: output exact; incremental input +3…+15 tokens per item
+(opencode counts ~1 token/turn more), cumulative +6…+120. Two tests. Wall-clock cost stays report-side (rates from
+the router-log fit, `$STACK_WORKDIR/m50/d12_accounting.py`).
+
+**P88.** `PINNED_OPENCODE_VERSION` 1.18.15 → 1.18.30; the September rows (1.18.15) do not pool with new ones
+(scaffold identity), which was already true under drift. `docs/qualify-a-model.md` updated. Suite: 1884 passed / 3 skipped.
