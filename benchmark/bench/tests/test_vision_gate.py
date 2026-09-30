@@ -268,3 +268,95 @@ def test_cli_help_does_not_crash():
                        env={"PYTHONPATH": str(paths.BENCHMARK_DIR), "PATH": "/usr/bin:/bin"})
     assert r.returncode == 0
     assert "--resume" in r.stdout
+
+
+# --------------------------------------------------------------------------- M52: manifest beside the rows
+def _stub_gather(monkeypatch, calls):
+    def fake_gather(model, registry_path=None, profile="production", overrides=None, runtime=None,
+                    tune=None, router=None):
+        calls.append({"model": model, "profile": profile, "runtime": runtime, "router": router})
+        return {"model": model, "sampling_profile": profile, "runtime": dict(runtime or {}),
+                "router": dict(router) if router else None}
+    monkeypatch.setattr(VG.provenance, "gather", fake_gather)
+
+
+def _wire_one_item(tmp_path, monkeypatch, script=None):
+    monkeypatch.setattr(VG, "resolve_image", lambda row, cache: _tiny_jpeg_path(tmp_path))
+    fp = FakeProbe(script=script or [probe_result(content="desc", completion_tokens=10),
+                                     probe_result(content="PASS", completion_tokens=1)])
+    monkeypatch.setattr(VG.client, "probe", fp)
+    monkeypatch.setattr(VG.model_params, "params_for",
+                        lambda model, profile: {"thinking_budget": 1000, "max_tokens": 2000})
+    monkeypatch.setattr(VG.model_params, "registry_context_limit", lambda model: None)
+    monkeypatch.setattr(VG.generate, "rows_for_rate", lambda model, bench: [])
+    return fp
+
+
+def test_manifest_path_for_sits_beside_the_rows():
+    assert VG.manifest_path_for(Path("/r/m/vision_gate.v1.jsonl")) == Path("/r/m/vision_gate.v1.manifest.json")
+
+
+def test_main_writes_a_manifest_beside_out_with_router_corpus_and_deployed_profile(tmp_path, monkeypatch):
+    out = tmp_path / "results" / "m" / "vision_gate.v1.jsonl"
+    corpus = tmp_path / "corpus.jsonl"
+    _write_jsonl(corpus, [_row()])
+    _wire_one_item(tmp_path, monkeypatch)
+    calls = []; _stub_gather(monkeypatch, calls)
+    assert VG.main(["--model", "m", "--corpus", str(corpus), "--out", str(out)]) == 0
+    man = json.loads((out.parent / "vision_gate.v1.manifest.json").read_text())
+    assert man["router"]["pid"] == 4242                      # the M50 block verified at entry
+    assert man["sampling_profile"] == "deployed"
+    assert man["runtime"]["client"] == "vision_gate"
+    assert man["runtime"]["corpus_sha256"] == VG._sha256_file(corpus)
+    assert "router_history" not in man
+    assert calls and calls[0]["router"]["pid"] == 4242 and calls[0]["profile"] == "deployed"
+
+
+def test_manifest_is_on_disk_before_the_first_request(tmp_path, monkeypatch):
+    """Attribution before traffic (M50 shape): a transport failure on item 1 still leaves the
+    manifest naming the router that was about to produce rows."""
+    import urllib.error
+    out = tmp_path / "results" / "m" / "vision_gate.v1.jsonl"
+    corpus = tmp_path / "corpus.jsonl"
+    _write_jsonl(corpus, [_row()])
+    _wire_one_item(tmp_path, monkeypatch)
+
+    def boom(*a, **kw):
+        raise urllib.error.URLError("connection refused")
+    monkeypatch.setattr(VG.client, "probe", boom)
+    _stub_gather(monkeypatch, [])
+    with pytest.raises(urllib.error.URLError):
+        VG.main(["--model", "m", "--corpus", str(corpus), "--out", str(out)])
+    assert (out.parent / "vision_gate.v1.manifest.json").exists()
+
+
+def test_resume_appends_the_previous_router_to_router_history_when_the_pid_changed(tmp_path, monkeypatch):
+    out = tmp_path / "results" / "m" / "vision_gate.v1.jsonl"
+    _write_jsonl(out, [{"id": "cocoval2017-000", "verdict": "PASS", "completion_tokens": 5, "wall_s": 1.0}])
+    # the verified block's `config` is $HOME-scrubbed (results are tracked); a previous manifest
+    # stores that same scrubbed form, so build `prev` from the live verification, pid changed.
+    prev = {**VG.provenance.assert_served_config(VG.client.BASE), "pid": 1}
+    (out.parent / "vision_gate.v1.manifest.json").write_text(json.dumps({"router": prev}))
+    corpus = tmp_path / "corpus.jsonl"
+    _write_jsonl(corpus, [_row(id="cocoval2017-000"), _row(id="cocoval2017-001")])
+    _wire_one_item(tmp_path, monkeypatch)
+    _stub_gather(monkeypatch, [])
+    assert VG.main(["--model", "m", "--corpus", str(corpus), "--out", str(out), "--resume"]) == 0
+    man = json.loads((out.parent / "vision_gate.v1.manifest.json").read_text())
+    assert man["router"]["pid"] == 4242
+    assert man["router_history"] == [prev]
+
+
+def test_resume_refuses_a_different_served_config_before_any_request(tmp_path, monkeypatch, capsys):
+    out = tmp_path / "results" / "m" / "vision_gate.v1.jsonl"
+    _write_jsonl(out, [{"id": "cocoval2017-000", "verdict": "PASS", "completion_tokens": 5, "wall_s": 1.0}])
+    (out.parent / "vision_gate.v1.manifest.json").write_text(
+        json.dumps({"router": {"pid": 1, "config": "/elsewhere/overlay.yaml", "port": 8000}}))
+    corpus = tmp_path / "corpus.jsonl"
+    _write_jsonl(corpus, [_row(id="cocoval2017-000"), _row(id="cocoval2017-001")])
+    fp = _wire_one_item(tmp_path, monkeypatch)
+    _stub_gather(monkeypatch, [])
+    rc = VG.main(["--model", "m", "--corpus", str(corpus), "--out", str(out), "--resume"])
+    assert rc == 2
+    assert fp.n_calls == 0
+    assert "overlay.yaml" in capsys.readouterr().err

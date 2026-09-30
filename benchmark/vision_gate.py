@@ -198,9 +198,52 @@ def append_row(path: Path, row: dict) -> None:
         f.flush()
 
 
+def _stem(out: Path) -> str:
+    return out.name[:-len(".jsonl")] if out.name.endswith(".jsonl") else out.name
+
+
 def summary_path_for(out: Path) -> Path:
-    stem = out.name[:-len(".jsonl")] if out.name.endswith(".jsonl") else out.name
-    return out.parent / f"{stem}.summary.json"
+    return out.parent / f"{_stem(out)}.summary.json"
+
+
+def manifest_path_for(out: Path) -> Path:
+    """M52 (2026-09-29): the gate's provenance manifest sits beside its rows, same shape as every
+    other driver's (`provenance.gather`), so the M50 `router` attribution and the sampling/registry
+    fingerprint survive outside the summary text."""
+    return out.parent / f"{_stem(out)}.manifest.json"
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _load_previous_manifest(mp: Path, router: dict) -> tuple[list, str | None]:
+    """(router_history, refusal). M50 shape shared with the other drivers: a previous manifest
+    produced under a DIFFERENT served config refuses the continuation; a different pid under the
+    same config is appended to `router_history`; unreadable → refuse (rows cannot be attributed)."""
+    if not mp.exists():
+        return [], None
+    try:
+        prev_doc = json.loads(mp.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return [], f"M50 unreadable existing manifest {mp}: {e}"
+    prev = prev_doc.get("router")
+    history = list(prev_doc.get("router_history") or [])
+    if isinstance(prev, dict) and prev.get("config") and prev.get("config") != router.get("config"):
+        return history, (f"M50 {mp} was produced under served config {prev['config']!r}; this router "
+                         f"serves {router.get('config')!r}. Use a different --out.")
+    if isinstance(prev, dict) and prev.get("pid") is not None and prev.get("pid") != router.get("pid"):
+        history.append(prev)
+    return history, None
+
+
+def _write_manifest(mp: Path, model: str, *, runtime: dict, router: dict, history: list) -> None:
+    man = provenance.gather(model, profile="deployed", runtime=runtime, router=router)
+    if history:
+        man["router_history"] = history
+    tmp = mp.with_suffix(mp.suffix + ".tmp")
+    tmp.write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, mp)
 
 
 def summarize(rows: list) -> dict:
@@ -292,6 +335,13 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 2
 
+    # M52: a previous manifest's router attribution is honoured BEFORE anything is requested.
+    mp = manifest_path_for(out)
+    history, refusal = _load_previous_manifest(mp, router)
+    if refusal:
+        print(f"[vision_gate] REFUSED: {refusal}", file=sys.stderr, flush=True)
+        return 2
+
     corpus_rows = load_corpus(Path(args.corpus), args.limit)
     todo = [r for r in corpus_rows if r["id"] not in done_ids] if args.resume else corpus_rows
 
@@ -311,6 +361,17 @@ def main(argv=None) -> int:
     print(f"[vision_gate] {args.model}: {len(todo)} item(s) to run "
           f"({len(done_ids)} already done)" if args.resume else
           f"[vision_gate] {args.model}: {len(todo)} item(s) to run")
+
+    # M52: attribution on disk before the first request (a transport failure on item 1 still
+    # leaves the manifest naming the router that was about to produce rows); nothing to run →
+    # nothing is stamped (same as the other drivers).
+    if todo:
+        _write_manifest(mp, args.model,
+                        runtime={"client": "vision_gate", "bench": BENCH_NAME, "tune": TUNE,
+                                 "corpus": str(args.corpus), "corpus_sha256": _sha256_file(args.corpus),
+                                 "limit": args.limit, "timeout_s": round(timeout, 1),
+                                 "n_todo": len(todo), "n_done_before": len(done_ids)},
+                        router=router, history=history)
 
     ds_cache: dict = {}
     for i, row in enumerate(todo):

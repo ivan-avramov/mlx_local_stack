@@ -4264,3 +4264,19 @@ the router-log fit, `$STACK_WORKDIR/m50/d12_accounting.py`).
 
 **P88.** `PINNED_OPENCODE_VERSION` 1.18.15 → 1.18.30; the September rows (1.18.15) do not pool with new ones
 (scaffold identity), which was already true under drift. `docs/qualify-a-model.md` updated. Suite: 1884 passed / 3 skipped.
+
+
+## 2026-09-29 — M52: `vision_gate` manifest (TDD; live one-item PASS)
+
+`manifest_path_for(out)` (`<stem>.manifest.json` beside the rows and the summary). `main()` loads a previous manifest
+BEFORE any request: a different served `config` refuses (rc 2, `fp.n_calls == 0` in the test), a different pid is
+appended to `router_history`, an unreadable file refuses. The manifest is written through `provenance.gather(...,
+profile="deployed", router=<the block verified at entry>)` right before the first request and only when `todo` is
+non-empty (the M50 entry-point test runs the gate with an empty corpus and expects no file). Test fixture lesson: the
+verified block's `config` is `$HOME`-scrubbed, so a "previous manifest" fixture must store the scrubbed form too —
+build it from `assert_served_config` rather than `paths.registry_path()`. Live `--limit 1` against router 36401
+(`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, 2 requests): manifest has the router block, `sampling_profile:
+deployed`, registry sha `35a826c0…`, `draft_kind: mtp`, corpus sha; verdict PASS, converged, 514 tokens. Suite 1889/3.
+**Found, not fixed (P89):** `_image_cache_dir()` reads `STACK_WORKDIR` from the env only and warns + falls back to
+`~/.cache/huggingface/mlx_local_stack_vision_gate_images` (a pre-approved location, so no pollution) — same late-env
+pattern as M53; the probe's `_stack_workdir()` resolver should move to `bench/paths.py` and serve both.
