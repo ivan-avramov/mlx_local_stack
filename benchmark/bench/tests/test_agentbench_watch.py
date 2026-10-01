@@ -688,19 +688,31 @@ def test_run_watch_refuses_when_self_test_fails(tmp_path, monkeypatch):
 
 # --------------------------------------------------------------------------- P31 path confinement
 def test_main_refuses_out_outside_confined_roots(tmp_path, monkeypatch):
+    """7th cold review round 7 addendum R7: `--once` is MANDATORY here, not cosmetic -- without
+    it, a MUTANT that removed/weakened the confine_path() refusal would fall through into
+    run_watch()'s tick loop with `--driver-pid` pointing at THIS live pytest process (never dies)
+    and `total=1` never satisfied (no rows file), so the test would hang at the 300s default
+    --interval FOREVER instead of failing fast. `--once` bounds run_watch to a single tick
+    regardless of what the mutant did, so a weakened check still shows up as `rc == 0` (wrong),
+    not a wedged test run."""
     monkeypatch.delenv("STACK_WORKDIR", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-xdg"))
     rc = W.main(["--rows", str(tmp_path / "rows.jsonl"), "--manifest", str(tmp_path / "m.json"),
                "--total", "1", "--driver-pid", str(os.getpid()),
-               "--router-log", str(tmp_path / "r.log"), "--out", str(tmp_path / "watch.log")])
+               "--router-log", str(tmp_path / "r.log"), "--out", str(tmp_path / "watch.log"),
+               "--once"])
     assert rc == 2
 
 
 def test_main_accepts_out_under_stack_workdir(tmp_path, monkeypatch):
+    """R7: `--once` added for the same reason/symmetry as the refusal test above, even though
+    this one's dead --driver-pid already bounds it to one tick today -- a future change to the
+    dead-driver exit condition must not silently reintroduce a hang here too."""
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     rows_path = tmp_path / "rows.jsonl"
     _write_rows(rows_path, [_row("a")])
     rc = W.main(["--rows", str(rows_path), "--manifest", str(tmp_path / "m.json"),
                "--total", "1", "--driver-pid", str(2 ** 30),
-               "--router-log", str(tmp_path / "r.log"), "--out", str(tmp_path / "watch.log")])
+               "--router-log", str(tmp_path / "r.log"), "--out", str(tmp_path / "watch.log"),
+               "--once"])
     assert rc == 0
