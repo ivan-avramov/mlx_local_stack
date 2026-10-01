@@ -817,6 +817,41 @@ def test_pilot_draw_is_recorded_in_manifest_and_limits_the_run(tmp_path, monkeyp
     assert sorted(man["runtime"]["pilot_ids"]) == sorted(seen)
 
 
+def test_generate_refuses_limit_and_pilot_seed_together_addendum_J(tmp_path, monkeypatch, capsys):
+    """Addendum J (round 6): mutation-sensitive coverage for G4's --limit/--pilot-seed refusal via
+    the real CLI (main/run_generate), not just by inspection of the source."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task(f"m{i}") for i in range(10)])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=3, pilot_seed=1, pilot_n=3))
+    assert rc == 2
+    assert seen == []
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_main_refuses_out_outside_confined_roots_addendum_J(tmp_path, monkeypatch, capsys):
+    """Addendum J (round 6): mutation-sensitive coverage for P19's --out confinement wiring in
+    main() itself (not just the underlying confine_path unit tests) -- a genuinely out-of-bounds
+    --out must refuse before any docker/corpus work happens."""
+    import tempfile
+    # the file's own autouse fixture pins STACK_WORKDIR to `tmp_path`; a dir minted OUTSIDE
+    # tmp_path (and outside the repo) is therefore genuinely unconfined for this test.
+    outside_dir = Path(tempfile.mkdtemp(prefix="agentbench_os_j_outside_"))
+    try:
+        rc = R.main(["--model", "m", "--out", str(outside_dir / "rows.jsonl"),
+                    "--corpus", str(tmp_path / "corpus.jsonl"),
+                    "--scripts-root", str(tmp_path / "scripts"), "--llm-timeout", "60"])
+        assert rc == 2
+        assert "--out" in capsys.readouterr().err
+        assert not (outside_dir / "rows.jsonl").exists()
+    finally:
+        import shutil
+        shutil.rmtree(outside_dir, ignore_errors=True)
+
+
 def test_pilot_executes_in_the_sampled_order_not_resorted_P17(tmp_path, monkeypatch):
     """6th cold review round 6, P17 remainder: the pilot must run in the SAMPLED order
     (AB.pilot_draw's own output order), never re-sorted back to the corpus's easy-first order --
@@ -1150,6 +1185,10 @@ def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeyp
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
     assert man["runtime"]["deadline_s"] == man["runtime"]["llm_timeout_s"] * R.DEADLINE_MULTIPLIER
     assert man["runtime"]["deadline_s"] > 3600   # proves there is no cap any more
+    # addendum J (round 6): explicit proof the per-turn timeout ITSELF can exceed the shared
+    # budget_timeout.CEILING_S (7200s) -- that ceiling exists for a DIFFERENT axis and must never
+    # silently cap this one.
+    assert man["runtime"]["llm_timeout_s"] > R.budget_timeout.CEILING_S
     assert not hasattr(R, "DEADLINE_CAP_S")
 
 
