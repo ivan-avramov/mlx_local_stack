@@ -866,52 +866,65 @@ def evaluate_match(answer, match_cfg: dict) -> bool:
     return False
 
 
-# 5th cold review P9(a) + 6th cold review round 6 P23/addendum C: a docker EXECUTION failure
-# (the daemon unreachable, the container gone, docker itself misconfigured) must never be scored
-# as the checker's legitimate nonzero verdict -- but classification now requires EXPLICIT
-# EVIDENCE, never a bare exit code or a bare timeout alone:
-#   - P23 reproduction #1: checker exit 127 ALONE used to become `setup_error` and vanish from
-#     accuracy -- but 127 is ALSO exactly what a model-broken dependency produces ("command not
-#     found"), which belongs IN the denominator as a real model failure. An exit code in
-#     {125,126,127} is evidence only TOGETHER WITH stderr text that actually names a docker/
-#     daemon/container/runtime problem.
-#   - P23 reproduction #2: docker exit 1 with "Error response from daemon: container ... is not
-#     running" used to pass through as ordinary `failed_tests` -- stderr pattern matching has to
-#     cover plain docker-daemon error TEXT regardless of exit code, not just the narrow 125-127
-#     band.
-#   - addendum C: a checker TIMEOUT alone used to be ALWAYS infra -- but std-005-0/1/2 time out
-#     because the MODEL's OWN installed binary hangs, which is a real `failed_tests`, not an infra
-#     failure. A timeout is infra ONLY if a HEALTH CHECK (`docker exec <container> true`) run
-#     immediately afterward ALSO fails -- proving docker itself, not just the checker script, is
-#     unresponsive.
-_DOCKER_TRANSPORT_EXIT_CODES = frozenset({125, 126, 127})
-_DOCKER_INFRA_STDERR_PATTERNS = (
+# 5th cold review P9(a) + 6th cold review round 6 P23/addendum C + 7th cold review round 7 P37:
+# a docker EXECUTION failure (the daemon unreachable, the container gone, docker itself
+# misconfigured) must never be scored as the checker's legitimate nonzero verdict -- but
+# classification is now by EXPLICIT EVIDENCE for EVERY nonzero/timeout result, never an exit-code
+# BAND:
+#   - P37 (HIGH), reproduced end-to-end: exit 1 + "container ... is not running" in stderr still
+#     scored `failed_tests` (the OLD {125,126,127}-band gate never even looked at exit 1); exit
+#     127 + an APPLICATION's own "application is not running" stderr text was EXCLUDED as infra
+#     (the OLD stderr substring list -- "is not running"/"No such container" -- collides with
+#     ordinary application error text, which has nothing to do with docker). The test this
+#     superseded (formerly at this file's ~line 242) directly asserted the first wrong behavior.
+#   - Minimal fix per the coordinator: run a live HEALTH PROBE (`docker exec <c> true`, 3s) after
+#     ANY nonzero/timeout checker result, REGARDLESS of its own rc or exit code. Health probe OK
+#     -> the checker itself produced a real (if failing) verdict -> `failed_tests`, IN the
+#     denominator. Health probe ALSO fails (nonzero/timeout), OR the ORIGINAL stderr carries an
+#     unambiguous DOCKER-CLI ERROR PREFIX (never ordinary free-form application text) -> infra,
+#     `setup_error` with `infra_evidence` attached.
+_DOCKER_CLI_STDERR_PREFIXES = (
     "Error response from daemon",
     "Cannot connect to the Docker daemon",
-    "is not running",
-    "No such container",
+    "docker: Error",
     "OCI runtime",
 )
 
 
-def _docker_stderr_indicates_infra_failure(stderr) -> bool:
+def _docker_stderr_is_cli_prefixed(stderr) -> bool:
+    """P37: ONLY docker's OWN CLI error prefixes -- never generic substrings like "is not
+    running"/"No such container" that an APPLICATION's own stderr can just as easily contain,
+    with nothing to do with docker at all."""
     s = stderr or ""
-    return any(p in s for p in _DOCKER_INFRA_STDERR_PATTERNS)
+    return any(s.startswith(p) or f"\n{p}" in s for p in _DOCKER_CLI_STDERR_PREFIXES)
 
 
-def _is_docker_transport_failure(res: dict) -> bool:
-    """EXPLICIT-EVIDENCE classification ONLY (P23): an exit code in the docker-transport band
-    together with daemon/container error TEXT in stderr. Never a bare exit code; never a bare
-    timeout (that is handled separately via a live health check -- see `run_check_chain`)."""
-    return (res.get("exit_code") in _DOCKER_TRANSPORT_EXIT_CODES
-           and _docker_stderr_indicates_infra_failure(res.get("stderr")))
-
-
-def _docker_health_check(container: str, runner=subprocess.run, timeout: float = 10.0) -> bool:
-    """P23/addendum C: `docker exec <container> true` -- a cheap, fast probe proving docker (not
-    the checker script) is still responsive. True = healthy."""
+def _docker_health_check(container: str, runner=subprocess.run, timeout: float = 3.0) -> bool:
+    """P23/addendum C/P37: `docker exec <container> true` -- a cheap, fast probe proving docker
+    (not the checker script) is still responsive. True = healthy. 3s timeout per P37 (a health
+    probe that can't answer in 3s is itself evidence of an unresponsive daemon/container)."""
     res = docker_exec(container, ("bash", "true"), timeout, runner)
     return (not res.get("timed_out")) and res.get("exit_code") == 0
+
+
+def _classify_check_result(container: str, res: dict, runner) -> dict | None:
+    """P37: the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout checker result. Returns
+    `None` (a legitimate model/checker failure, stays `failed_tests`) or an `infra_evidence` dict
+    (`{"message", "exit_code", "stderr", "timed_out", "health_probe_ok"}`)."""
+    if _docker_stderr_is_cli_prefixed(res.get("stderr")):
+        return {"message": f"docker CLI error prefix in stderr (exit={res.get('exit_code')}, "
+                          f"timed_out={res.get('timed_out')}): {(res.get('stderr') or '')[:200]}",
+               "exit_code": res.get("exit_code"), "stderr": (res.get("stderr") or "")[:200],
+               "timed_out": bool(res.get("timed_out")), "health_probe_ok": None}
+    healthy = _docker_health_check(container, runner)
+    if healthy:
+        # the checker ran to completion (or to ITS OWN timeout) under a PROVEN-responsive
+        # docker/container -- whatever it reported is the model's own doing.
+        return None
+    return {"message": f"docker health probe failed after checker result (exit={res.get('exit_code')}, "
+                      f"timed_out={res.get('timed_out')}): {(res.get('stderr') or '')[:200]}",
+           "exit_code": res.get("exit_code"), "stderr": (res.get("stderr") or "")[:200],
+           "timed_out": bool(res.get("timed_out")), "health_probe_ok": False}
 
 
 def run_check_chain(container: str, check_list: list, example, answer, runner=subprocess.run,
@@ -926,12 +939,10 @@ def run_check_chain(container: str, check_list: list, example, answer, runner=su
     Returns `(passed: bool, gold_live: str|None, infra_evidence: dict|None)`. `gold_live` is the
     stdout of the FIRST null ("gold slot") position actually executed in THIS live grading run
     (R5/AC5: the chain already runs it; capture it rather than trusting the D2-prepare-time value
-    stayed valid). `None` when the check list has no gold slot at all. `infra_evidence`
-    (`{"message", "exit_code", "stderr", "timed_out"}`, P23) is set only on EXPLICIT docker-
-    execution-failure evidence -- the caller must turn that into a `setup_error` row with the
-    evidence attached, never a plain `failed_tests`. A model-caused checker failure (wrong exit
-    code, or a timeout with docker proven healthy right after) stays `failed_tests`, IN the
-    denominator."""
+    stayed valid). `None` when the check list has no gold slot at all. `infra_evidence` (P23/P37)
+    is set only when a live health probe (or an unambiguous docker CLI stderr prefix) proves the
+    failure was docker's, not the checker's -- the caller must turn that into a `setup_error` row
+    with the evidence attached, never a plain `failed_tests`."""
     params = [str(answer)]
     gold_live = None
     for entry in check_list:
@@ -941,23 +952,9 @@ def run_check_chain(container: str, check_list: list, example, answer, runner=su
         res = docker_exec(container, script, timeout, runner, extra_params=params)
         if entry is None and gold_live is None:
             gold_live = res["stdout"]
-        if res.get("timed_out"):
-            if not _docker_health_check(container, runner):
-                return False, gold_live, {
-                    "message": "docker transport failure grading check script (timeout, docker "
-                              "health check also failed/timed out)",
-                    "exit_code": None, "stderr": (res.get("stderr") or "")[:200], "timed_out": True}
-            # addendum C: docker itself answers immediately right after -- the MODEL's own program
-            # hung (e.g. std-005-0/1/2 run the model's own binaries), not an infra failure.
-            return False, gold_live, None
-        if _is_docker_transport_failure(res):
-            return False, gold_live, {
-                "message": f"docker transport failure grading check script (exit={res['exit_code']}): "
-                          f"{(res.get('stderr') or '')[:200]}",
-                "exit_code": res["exit_code"], "stderr": (res.get("stderr") or "")[:200],
-                "timed_out": False}
-        if res["exit_code"] != 0:
-            return False, gold_live, None
+        if res.get("timed_out") or res.get("exit_code") != 0:
+            infra_evidence = _classify_check_result(container, res, runner)
+            return False, gold_live, infra_evidence
         params.append(res["stdout"])
     return True, gold_live, None
 

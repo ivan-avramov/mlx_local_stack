@@ -170,7 +170,10 @@ def test_run_check_chain_null_entry_runs_example_and_chains_stdout():
 
 
 def test_run_check_chain_nonzero_exit_fails():
-    runner = FakeRunner(default=FakeRunner.Proc(1, "", "boom"))
+    """7th cold review round 7 P37: ANY nonzero exit now triggers a live health probe -- a
+    HEALTHY docker/container proves the checker's own verdict is real, so this stays
+    failed_tests."""
+    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "boom"), FakeRunner.Proc(0, "", "")])
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and gold_live is None and infra_error is None
 
@@ -217,53 +220,83 @@ def test_run_check_chain_docker_daemon_unreachable_is_infra_error_not_failed_tes
     runner = FakeRunner(default=FakeRunner.Proc(125, "", "Cannot connect to the Docker daemon at..."))
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False
-    assert infra_error is not None and "docker transport failure" in infra_error["message"]
+    assert infra_error is not None and "docker CLI error prefix" in infra_error["message"]
     assert infra_error["exit_code"] == 125
 
 
-def test_run_check_chain_exit_127_ALONE_is_NOT_infra_error_P23():
-    """6th cold review round 6 P23 (HIGH), reproduction: checker exit 127 ALONE used to become
-    `setup_error` and vanish from accuracy -- but 127 is ALSO exactly what a MODEL-broken
-    dependency produces ("command not found"), which belongs IN the denominator. An exit code is
-    evidence only TOGETHER WITH stderr text that actually names a docker/daemon/container
-    problem; bare "exec: not found" (no such pattern) must stay a legitimate failed_tests."""
-    runner = FakeRunner(default=FakeRunner.Proc(127, "", "exec: not found"))
+# --------------------------------------------------------------------------- P37 health-probe matrix
+# 7th cold review round 7 P37 (HIGH), reproduced end-to-end against the OLD {125,126,127}-band
+# rule: exit 1 + "container ... is not running" in stderr still scored `failed_tests` (the band
+# never even looked at exit 1); exit 127 + an APPLICATION's own "application is not running"
+# stderr text was wrongly EXCLUDED as infra (broad substring matching collided with ordinary
+# application error text that has nothing to do with docker). The coordinator's minimal fix:
+# classify EVERY nonzero/timeout checker result by a LIVE health probe
+# (`docker exec <c> true`, 3s), regardless of the checker's own exit code -- never an exit-code
+# band -- short-circuited only by an UNAMBIGUOUS docker-CLI stderr prefix.
+def test_run_check_chain_P37_case1_nonzero_exit_no_cli_prefix_healthy_docker_is_failed_tests():
+    """Case 1: nonzero exit, stderr has no docker-CLI prefix, health probe OK -> failed_tests."""
+    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "container abc is not running"),
+                                 FakeRunner.Proc(0, "", "")])
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is None
 
 
-def test_run_check_chain_exit_127_WITH_daemon_stderr_IS_infra_error_P23():
-    runner = FakeRunner(default=FakeRunner.Proc(127, "", "OCI runtime exec failed: exec failed"))
+def test_run_check_chain_P37_case2_docker_cli_stderr_prefix_is_infra_no_probe_needed():
+    """Case 2: stderr carries an UNAMBIGUOUS docker-CLI error prefix -> setup_error/infra_evidence
+    immediately, without even needing to run the health probe (the evidence is already explicit)."""
+    runner = FakeRunner(default=FakeRunner.Proc(1, "", "should-not-be-called"))
+
+    def fail_if_probed(cmd, **kw):
+        raise AssertionError("health probe must not run when stderr is already CLI-prefixed")
+    runner_seen = []
+
+    def wrapped(cmd, **kw):
+        runner_seen.append(cmd)
+        if len(runner_seen) > 1:
+            fail_if_probed(cmd, **kw)
+        return FakeRunner.Proc(1, "", "Error response from daemon: container abc is not running")
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", wrapped)
+    assert ok is False and infra_error is not None
+    assert infra_error["exit_code"] == 1
+    assert len(runner_seen) == 1   # proves the probe call never happened
+
+
+def test_run_check_chain_P37_case3_nonzero_exit_no_cli_prefix_unhealthy_docker_is_infra():
+    """Case 3: nonzero exit, stderr has no docker-CLI prefix, health probe ITSELF fails ->
+    setup_error/infra_evidence -- proving docker (not the checker) was the real failure."""
+    runner = FakeRunner(results=[FakeRunner.Proc(127, "", "application is not running"),
+                                 FakeRunner.Proc(1, "", "docker daemon unresponsive")])
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is not None
     assert infra_error["exit_code"] == 127
+    assert infra_error["health_probe_ok"] is False
 
 
-def test_run_check_chain_exit_1_with_daemon_stderr_stays_failed_tests_by_the_coordinators_rule():
-    """P23's minimal fix (coordinator's literal formula, round 6): infra classification requires
-    rc IN {125,126,127} AND a matching stderr pattern, OR a docker-cli timeout -- 'any OTHER
-    nonzero checker exit' stays failed_tests regardless of stderr content. Exit 1 is deliberately
-    OUTSIDE the transport exit-code band even with daemon-shaped text in stderr."""
-    runner = FakeRunner(default=FakeRunner.Proc(1, "",
-                                                "Error response from daemon: container abc is not running"))
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+def test_run_check_chain_P37_case4_timeout_healthy_docker_is_failed_tests():
+    """Case 4: checker TIMEOUT, health probe OK -> failed_tests (the model's own program hung,
+    e.g. std-005-0/1/2 running the model's own binaries -- addendum C)."""
+    runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1),
+                                 FakeRunner.Proc(0, "", "")])
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
     assert ok is False and infra_error is None
 
 
-def test_is_docker_transport_failure_requires_BOTH_exit_code_band_AND_stderr_pattern():
-    """Unit-level proof of the exact rule: neither signal alone is sufficient."""
-    assert AB._is_docker_transport_failure(
-        {"exit_code": 127, "stderr": "No such container: abc"}) is True
-    assert AB._is_docker_transport_failure(
-        {"exit_code": 127, "stderr": "assertion failed: missing file"}) is False
-    assert AB._is_docker_transport_failure(
-        {"exit_code": 1, "stderr": "Error response from daemon: x"}) is False
+def test_docker_stderr_is_cli_prefixed_rejects_generic_application_text():
+    """Unit-level proof: broad substrings like 'is not running'/'No such container' must NOT
+    trigger infra classification on their own -- only docker's OWN CLI error prefixes do."""
+    assert AB._docker_stderr_is_cli_prefixed("container abc is not running") is False
+    assert AB._docker_stderr_is_cli_prefixed("No such container: abc") is False
+    assert AB._docker_stderr_is_cli_prefixed("Error response from daemon: x") is True
+    assert AB._docker_stderr_is_cli_prefixed("Cannot connect to the Docker daemon at...") is True
+    assert AB._docker_stderr_is_cli_prefixed("docker: Error response from daemon") is True
+    assert AB._docker_stderr_is_cli_prefixed("OCI runtime exec failed") is True
 
 
 def test_run_check_chain_legitimate_checker_failure_has_no_infra_error():
     """A checker script failing on its OWN merits (not a docker/transport problem) must NOT be
     mistaken for an infra error -- P9(a) distinguishes the MECHANISM, not just "nonzero"."""
-    runner = FakeRunner(default=FakeRunner.Proc(1, "", "assertion failed: file missing"))
+    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "assertion failed: file missing"),
+                                 FakeRunner.Proc(0, "", "")])
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is None
 
@@ -1887,7 +1920,7 @@ def test_run_task_grading_infra_failure_preserves_completed_turns_and_transcript
         if cmd[:2] == ["docker", "run"]:
             return FakeRunner.Proc(0, "", "")
         if cmd[:2] == ["docker", "exec"] and "echo gold" in cmd:
-            return FakeRunner.Proc(127, "", "No such container: abc")
+            return FakeRunner.Proc(127, "", "Error response from daemon: No such container: abc")
         return FakeRunner.Proc(0, "", "")
     task = {"id": "t1", "group": 1, "labels": [],
            "evaluation": {"check": [None], "example": {"code": "echo gold"}}, "description": "d"}
