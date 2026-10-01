@@ -120,13 +120,35 @@ def _readable(path) -> bool:
 
 
 def read_manifest(path) -> dict:
+    """11th cold review round 11 P3: tolerant of INVALID UTF-8 (a torn write mid-multibyte-
+    character -- `Path.read_text` raises UnicodeDecodeError on its own, which is NEITHER an
+    OSError NOR a json.JSONDecodeError and was previously UNCAUGHT, crashing the watcher daemon)
+    and of valid JSON that is NOT a mapping (e.g. a bare list/scalar -- a caller's `.get(...)`
+    would otherwise raise AttributeError). Both degrade to {}, same as a missing/unreadable file;
+    see `_manifest_evidence_ok` for how `run_watch` distinguishes this from a genuinely absent/
+    empty manifest to report UNKNOWN evidence rather than silently trust the empty dict."""
     p = Path(path)
     if not p.exists():
         return {}
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        parsed = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _manifest_evidence_ok(path) -> bool:
+    """11th cold review round 11 P3: True only if the manifest file can be READ as valid UTF-8
+    AND PARSED as a JSON mapping -- False for invalid UTF-8, invalid JSON, or valid JSON that is
+    not a mapping. `run_watch` combines this with `.exists()`/`_readable()` to compute
+    `manifest_evidence`: any of these corruption modes means `read_manifest`'s {} fallback is NOT
+    "genuinely no manifest data", it is silently-swallowed corruption, and the tick must report
+    UNKNOWN evidence rather than trust the empty dict as an all-clear."""
+    try:
+        parsed = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(parsed, dict)
 
 
 def pid_alive(pid: int) -> bool:
@@ -557,17 +579,27 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
     # never report "STALL: none" (a confident all-clear) on the strength of whatever partial/
     # stale state happened to be left over from a PRIOR tick. This does NOT downgrade an
     # already-positive verdict that is INDEPENDENTLY verified: DRIVER DEAD (pid_alive_fn, unrelated
-    # to file reads) and RUNAWAY-SUSPECT (a live `ps` busy sample, also unrelated to file reads)
-    # both stand regardless. WEDGE, however, is NOT independent of file reads -- when the rows
-    # file is unreadable this tick, `reference_timestamp` falls back to the run's (possibly very
-    # old) start time, and that STALE reference can make classify_stall's OWN arithmetic look
-    # exactly like a genuine long stall even though we simply failed to observe the current state.
-    # So both "nothing's wrong" (stall_label is None) AND a WEDGE conclusion are untrustworthy
-    # when the evidence behind them is.
+    # to file reads). WEDGE, however, is NOT independent of file reads -- when the rows file is
+    # unreadable this tick, `reference_timestamp` falls back to the run's (possibly very old)
+    # start time, and that STALE reference can make classify_stall's OWN arithmetic look exactly
+    # like a genuine long stall even though we simply failed to observe the current state. So both
+    # "nothing's wrong" (stall_label is None) AND a WEDGE conclusion are untrustworthy when the
+    # evidence behind them is.
+    stall_label_text = stall_label or ""
     if not (rows_evidence and manifest_evidence) and (
-            stall_label is None or (stall_label or "").startswith("WEDGE")):
+            stall_label is None or stall_label_text.startswith("WEDGE")):
         stall_label = ("UNKNOWN (evidence missing/unreadable this tick -- rows and/or manifest "
                        "could not be trusted, so no stall classification can be made)")
+    # 11th cold review round 11 P3: RUNAWAY-SUSPECT is a live `ps` busy sample -- unrelated to
+    # file reads on its own -- but "busy, AND no NEW row for a while" fundamentally depends on
+    # having actually read the CURRENT rows this tick. A CPU-busy sample alone cannot prove (or
+    # disprove) item progress when the rows file itself was unreadable; this gate fires on ROWS
+    # evidence alone (unlike the combined rows-AND-manifest gate above), since a corrupt/missing
+    # MANIFEST does not itself undermine what "no new row" means.
+    elif not rows_evidence and stall_label_text.startswith("RUNAWAY-SUSPECT"):
+        stall_label = ("UNKNOWN (evidence missing/unreadable this tick -- the rows file could not "
+                       "be trusted, so a CPU-busy sample alone cannot prove or disprove item "
+                       "progress)")
     router_active = router_active_fn(router_log_path, ROUTER_ACTIVITY_WINDOW_S, now)
 
     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
@@ -916,7 +948,11 @@ def run_watch(args) -> int:
             # otherwise be indistinguishable from "genuinely no rows yet". `_readable()` catches
             # that case so the tick reports UNKNOWN evidence instead of a false-empty state.
             rows_evidence = rows_path.exists() and _readable(rows_path)
-            manifest_evidence = manifest_path.exists() and _readable(manifest_path)
+            # 11th round P3: readable (OS-level, P52(a)) AND parseable as a JSON mapping (content-
+            # level, P3) -- a corrupt (invalid UTF-8, invalid JSON, non-mapping) manifest is
+            # evidence-missing too, not a trustworthy "{}".
+            manifest_evidence = (manifest_path.exists() and _readable(manifest_path)
+                                 and _manifest_evidence_ok(manifest_path))
             now = time.time()
             ref = reference_timestamp(rows, manifest, rows_path)
             router_pid = (manifest.get("router") or {}).get("pid")

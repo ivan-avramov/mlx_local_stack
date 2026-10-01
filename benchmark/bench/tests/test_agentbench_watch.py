@@ -55,6 +55,48 @@ def test_read_manifest_missing_file_returns_empty_dict(tmp_path):
     assert W.read_manifest(tmp_path / "nope.json") == {}
 
 
+def test_read_manifest_tolerates_invalid_utf8_P3(tmp_path):
+    """11th cold review round 11 P3: a manifest file with INVALID UTF-8 bytes (e.g. a torn write
+    mid-multibyte-character) must degrade to {} like any other unreadable/corrupt manifest --
+    `Path.read_text(encoding="utf-8")` raises UnicodeDecodeError on its own, which is NOT an
+    OSError or json.JSONDecodeError and was previously UNCAUGHT, crashing the watcher daemon."""
+    p = tmp_path / "manifest.json"
+    p.write_bytes(b'{"model": "m", "broken": "\xff\xfe"}')
+    assert W.read_manifest(p) == {}   # must not raise
+
+
+def test_read_manifest_tolerates_non_mapping_json_P3(tmp_path):
+    """Valid JSON that is NOT a mapping (e.g. a bare list) must also degrade to {} -- a caller
+    doing manifest.get(...) on a list would otherwise raise AttributeError."""
+    p = tmp_path / "manifest.json"
+    p.write_text("[1, 2, 3]", encoding="utf-8")
+    assert W.read_manifest(p) == {}
+
+
+def test_read_manifest_tolerates_a_bare_json_scalar_P3(tmp_path):
+    p = tmp_path / "manifest.json"
+    p.write_text('"just a string"', encoding="utf-8")
+    assert W.read_manifest(p) == {}
+
+
+def test_manifest_evidence_ok_false_for_invalid_utf8_P3(tmp_path):
+    p = tmp_path / "manifest.json"
+    p.write_bytes(b'{"model": "m", "broken": "\xff\xfe"}')
+    assert W._manifest_evidence_ok(p) is False
+
+
+def test_manifest_evidence_ok_false_for_non_mapping_json_P3(tmp_path):
+    p = tmp_path / "manifest.json"
+    p.write_text("[1, 2, 3]", encoding="utf-8")
+    assert W._manifest_evidence_ok(p) is False
+
+
+def test_manifest_evidence_ok_true_for_a_normal_manifest_P3(tmp_path):
+    p = tmp_path / "manifest.json"
+    p.write_text(json.dumps({"model": "m"}), encoding="utf-8")
+    assert W._manifest_evidence_ok(p) is True
+
+
 # --------------------------------------------------------------------------- reference_timestamp (P25)
 def test_reference_timestamp_uses_rows_file_mtime_when_rows_exist(tmp_path):
     p = tmp_path / "rows.jsonl"
@@ -710,15 +752,34 @@ def test_build_assessment_readable_evidence_with_a_stale_reference_still_reports
     assert "(4) STALL: WEDGE (idle)" in block
 
 
-def test_build_assessment_unreadable_evidence_with_runaway_suspect_still_reports_it_P9():
-    """A POSITIVE busy observation (RUNAWAY-SUSPECT) is sampled live via ps, independent of the
-    rows/manifest file reads -- it must NOT be downgraded by the evidence-missing gate (unlike
-    WEDGE, which depends on believing nothing has happened for a long time)."""
+def test_build_assessment_unreadable_rows_evidence_blocks_runaway_suspect_P3():
+    """11th cold review round 11 P3 (supersedes the 10th round's P9 assumption below): a POSITIVE
+    busy observation (RUNAWAY-SUSPECT) is sampled live via ps, but "busy, and no NEW row for a
+    while" fundamentally depends on actually having read the rows file -- CPU busy ALONE cannot
+    prove item progress (or its absence) when we could not trust this tick's rows read. Unreadable
+    ROWS evidence must downgrade RUNAWAY-SUSPECT to UNKNOWN too, unlike WEDGE's general gate which
+    required BOTH rows and manifest to be untrustworthy -- this one fires on rows alone."""
     now = time.time()
     block = W.build_assessment([], prev_rows_count=0, total=10, driver_pid=os.getpid(),
                                router_log_path="/nonexistent", stall_s=100.0,
                                reference_ts=now - 10000, now=now,
                                rows_evidence=False, manifest_evidence=True,
+                               busy_check_fn=lambda: True)
+    assert "(4) STALL: RUNAWAY-SUSPECT" not in block
+    assert "(4) STALL: UNKNOWN" in block
+
+
+def test_build_assessment_runaway_suspect_stands_when_only_manifest_evidence_is_missing_P3():
+    """Contrast: P3 scopes the NEW gate to ROWS evidence specifically -- with rows readable (just
+    the manifest unreadable), a RUNAWAY-SUSPECT verdict is unaffected (rows are what "no new item"
+    actually depends on; the manifest mainly feeds router_pid, whose own failure mode is already
+    handled upstream by the busy check itself going UNKNOWN)."""
+    now = time.time()
+    rows = [_row("a", wall_total_s=10.0)]
+    block = W.build_assessment(rows, prev_rows_count=0, total=10, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=100.0,
+                               reference_ts=now - 10000, now=now,
+                               rows_evidence=True, manifest_evidence=False,
                                busy_check_fn=lambda: True)
     assert "(4) STALL: RUNAWAY-SUSPECT (busy)" in block
 
