@@ -789,6 +789,25 @@ class PersistentShell:
                 _feed(bytes(unfed))
                 unfed = bytearray()
 
+        def _finalize() -> None:
+            # 10th cold review round 10 P12: finalize the decoder (final=True) once no more
+            # bytes for THIS command's output will ever arrive (after the sentinel split, or on
+            # timeout/EOF/dead-shell) -- a trailing PARTIAL lead byte (e.g. the literal output of
+            # `printf 'ABCD\342'`) is genuinely incomplete, and upstream's own strict WHOLE-output
+            # decode treats that as an ERROR (the decode-error message), not something silently
+            # invisible. `codecs.getincrementaldecoder`'s DEFAULT final=False instead buffers an
+            # incomplete trailing sequence forever, waiting for bytes that will never come --
+            # which would otherwise produce "ABCD" with the incomplete byte silently dropped.
+            nonlocal decoded_text, decode_broken
+            if decode_broken:
+                return
+            try:
+                tail = decoder.decode(b"", final=True)
+                if tail:
+                    decoded_text = self._cap_text(decoded_text + tail)
+            except UnicodeDecodeError:
+                decode_broken = True
+
         try:
             while True:
                 idx = raw.find(marker, max(0, search_from - len(marker)))
@@ -806,6 +825,7 @@ class PersistentShell:
                                        if len(unfed) >= trailer_len else b"")
                         if command_part:
                             _feed(command_part)
+                        _finalize()
                         output = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
                         consumed_end = idx + len(marker) + m.end()
                         leftover = bytes(raw[consumed_end:])
@@ -831,6 +851,7 @@ class PersistentShell:
                     writer_box["abort"] = True
                     self._on_timeout()
                     _flush_unfed()
+                    _finalize()
                     out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
                     return {"output": out, "exit_code": None, "timed_out": True,
                            "shell_died": False, "raw_output_len": total_bytes_in}
@@ -842,6 +863,7 @@ class PersistentShell:
                         # arriving on this pass -- the shell is dead.
                         self.dead = True
                         _flush_unfed()
+                        _finalize()
                         out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
                         return {"output": out, "exit_code": None, "timed_out": False,
                                "shell_died": True, "raw_output_len": total_bytes_in}
@@ -849,6 +871,7 @@ class PersistentShell:
                 if chunk is None:   # EOF -- the shell process exited (e.g. the command ran `exit`)
                     self.dead = True
                     _flush_unfed()
+                    _finalize()
                     out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
                     return {"output": out, "exit_code": None, "timed_out": False,
                            "shell_died": True, "raw_output_len": total_bytes_in}

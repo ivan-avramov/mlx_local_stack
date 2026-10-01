@@ -1077,6 +1077,35 @@ def test_persistent_shell_trailer_never_influences_preceding_output_P11(monkeypa
         shell.close()
 
 
+def test_persistent_shell_command_outputs_own_trailing_partial_lead_byte_is_decode_error_P12(monkeypatch):
+    """10th cold review round 10 P12: a trailing PARTIAL lead byte in the COMMAND's OWN real
+    output (e.g. the literal stdout of `printf 'ABCD\\342'`) is genuinely incomplete -- upstream's
+    own strict WHOLE-output decode treats this as an ERROR, not something silently invisible.
+    DISTINCT from P11's trailer tests: here the incomplete byte is BEFORE the sentinel (part of
+    the command's real output), not an unexpected byte AFTER it."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        # "ABCD" + a LONE lead byte of a 3-byte UTF-8 sequence (e.g. printf's own real stdout),
+        # immediately followed by the clean sentinel -- no unexpected trailer at all.
+        proc.stdout.push(b"ABCD\xe2" + marker + b"0\n")
+        res = shell.run("printf 'ABCD\\342'", timeout_s=5)
+        assert res["output"] == AB.PersistentShell.UPSTREAM_DECODE_ERROR_TEXT
+        assert res["exit_code"] == 0
+        assert shell._carry == b""   # nothing unexpected past the sentinel this time
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
 # --------------------------------------------------------------------------- PersistentShell (real bash)
 @_timeout(10)
 def test_persistent_shell_real_bash_runs_a_command_and_returns_exit_code(tmp_path):
@@ -1556,6 +1585,21 @@ def test_persistent_shell_real_bash_600kb_output_fast_and_uncapped(tmp_path):
 
 
 @_timeout(15)
+@_timeout(10)
+def test_persistent_shell_real_bash_timeout_finalizes_a_trailing_partial_byte_P12(tmp_path):
+    """10th cold review round 10 P12: the decoder must be finalized (final=True) on a TIMEOUT
+    exit too, not just the sentinel-found success path -- real bash never reaches the sentinel
+    (the command itself hangs), so `output` is built from whatever arrived before the deadline;
+    a trailing partial lead byte in THAT must still produce the decode-error text."""
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("printf 'ABCD\\342'; sleep 999", timeout_s=0.3)
+        assert res["timed_out"] is True
+        assert res["output"] == AB.PersistentShell.UPSTREAM_DECODE_ERROR_TEXT
+    finally:
+        shell.close()
+
+
 def test_persistent_shell_real_bash_4mb_output_fast_and_capped_G2(tmp_path):
     """4th cold review G2: an output well past the 1 MiB retention cap is held/returned capped
     (head 512 KiB + tail 512 KiB + a drop marker) -- NOT buffered in full -- while
