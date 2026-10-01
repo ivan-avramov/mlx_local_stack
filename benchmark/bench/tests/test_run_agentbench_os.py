@@ -1581,10 +1581,12 @@ def test_derive_llm_timeout_mixed_exact_and_params_sources_is_unvalidated_P8(mon
     assert d["observable"] == "params-match (UNVALIDATED)"
 
 
-def test_derive_llm_timeout_params_match_does_not_refuse_the_run_P8(tmp_path, monkeypatch):
-    """The caller (run_generate) must treat 'params-match (UNVALIDATED)' the SAME way it treats
-    an explicit override: allowed (not refused) and logged -- never silently presented as the
-    same strength of evidence as an exact match, but never blocking the run either."""
+def test_derive_llm_timeout_params_match_without_override_refuses_the_run_P8(tmp_path, monkeypatch, capsys):
+    """11th cold review round 11 P8 (residual, supersedes the 10th round's "treat it like an
+    override" ruling): 'params-match (UNVALIDATED)' is a truthy STRING, but the refusal gate must
+    not be fooled by truthiness -- it requires `observable is True` EXACTLY, or an explicit
+    --llm-timeout. A params-match derivation WITHOUT an override now REFUSES, with the derived
+    number printed as a suggestion (never silently used)."""
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
@@ -1596,10 +1598,32 @@ def test_derive_llm_timeout_params_match_does_not_refuse_the_run_P8(tmp_path, mo
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, llm_timeout=None))
-    assert rc == 0   # NOT refused
+    assert rc == 2   # REFUSED -- not the 10th round's "allowed" verdict
+    assert not (tmp_path / "rows.manifest.json").exists()
+    err = capsys.readouterr().err
+    assert "REFUSED" in err
+    assert "params-match" in err
+    assert "--llm-timeout" in err   # the derived number is suggested, not silently used
+
+
+def test_derive_llm_timeout_params_match_with_explicit_override_proceeds_P8(tmp_path, monkeypatch):
+    """An explicit --llm-timeout still proceeds regardless of what the underlying rate-evidence
+    would have derived -- observable is "override" (the explicit path short-circuits the rate
+    lookup entirely), which the gate's "or an explicit --llm-timeout" clause always allows."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}] * 10,
+                                                         [{"file": "f", "identity_match": "params"}])
+                       if bench == "agentbench_os" else ([], []))
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, llm_timeout=45.0))
+    assert rc == 0
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
-    d = man["runtime"]["timeout_derivation"]
-    assert d["observable"] == "params-match (UNVALIDATED)"
+    assert man["runtime"]["timeout_derivation"]["observable"] == "override"
 
 
 # --------------------------------------------------------------------------- N11 timeout source / deadline cap
@@ -1638,7 +1662,7 @@ def test_generate_refuses_when_llm_timeout_cannot_be_sized_P14(tmp_path, monkeyp
     rc = R.main(_args(tmp_path, llm_timeout=None))
     assert rc == 2
     assert seen == []   # refused before touching a single task
-    assert "cannot derive a per-turn LLM timeout" in capsys.readouterr().err
+    assert "cannot derive a VALIDATED per-turn LLM timeout" in capsys.readouterr().err
 
 
 def test_generate_explicit_llm_timeout_overrides_an_unobservable_derivation_P14(tmp_path, monkeypatch):

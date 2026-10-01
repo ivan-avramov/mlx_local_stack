@@ -943,10 +943,24 @@ def run_generate(args, out: Path) -> int:
         # P14: a per-turn timeout that cannot be SIZED (no measured rate, no budget) is not merely
         # imprecise -- it is uninterpretable, and AGENTS.md forbids silently running on a number
         # that is. Refuse rather than falling back to the shared ceiling, unless overridden.
-        if not timeout_derivation["observable"] and not args.llm_timeout:
-            print(f"[agentbench_os] REFUSED: cannot derive a per-turn LLM timeout "
-                 f"({timeout_derivation['reason']}) -- pass --llm-timeout explicitly to override.",
-                 file=sys.stderr, flush=True)
+        #
+        # 11th cold review round 11 P8 (residual, supersedes the 10th round's "treat a params-match
+        # like an override" ruling): `observable` can now be a TRUTHY STRING
+        # ("params-match (UNVALIDATED)") that is NOT a validated derivation -- `not
+        # timeout_derivation["observable"]` would be fooled by that truthiness and silently let it
+        # through. The gate now requires `observable is True` EXACTLY (an exact router.config_sha256
+        # match) or an explicit --llm-timeout; a params-match derivation without an override
+        # REFUSES, same as "no evidence at all" -- but the derived number (still computed, just not
+        # validated) is printed as a SUGGESTION so the operator can choose to use it explicitly.
+        if timeout_derivation["observable"] is not True and not args.llm_timeout:
+            suggestion = ""
+            if timeout_derivation["observable"] == "params-match (UNVALIDATED)":
+                suggestion = (f" -- a params-match (UNVALIDATED) derivation estimated "
+                             f"{llm_timeout:.0f}s; pass --llm-timeout {llm_timeout:.0f} to use it "
+                             "as an explicit, logged override")
+            print(f"[agentbench_os] REFUSED: cannot derive a VALIDATED per-turn LLM timeout "
+                 f"({timeout_derivation['reason']}){suggestion} -- pass --llm-timeout explicitly "
+                 "to override.", file=sys.stderr, flush=True)
             return 2
         if args.deadline_s:
             deadline_s = args.deadline_s
