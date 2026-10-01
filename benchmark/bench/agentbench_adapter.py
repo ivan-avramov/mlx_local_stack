@@ -109,6 +109,14 @@ TASK_TEMPLATE = "Now, I will start a new problem in a new OS. My problem is:\n\n
 
 # task.py:558-566 (empty tool_calls re-prompt) and :660-668 (bash-output wrapping), VERBATIM.
 NO_TOOL_CALL_REPROMPT = "No executable tool calls found. Please call a tool instead"
+# 8th cold review round 8 P49: task.py's sibling check (`action_data["action"] not in
+# ["bash", "commit"]`, which is what an UNKNOWN func_name/tool name actually falls through to --
+# upstream's _extract_function silently maps any unrecognized name to action=None), VERBATIM.
+UNKNOWN_TOOL_TEXT = "Invalid function call. Please call a tool instead"
+# P49: an EMPTY answer_action call is renamed to this sentinel (matches neither a real tool nor
+# submit_tool) so agent_loop.run_agent's re-dispatch cannot mistake it for a valid empty
+# submission -- see DualSubmitDriver.complete().
+_EMPTY_SUBMIT_SENTINEL = "__p49_empty_answer_action_not_a_submission__"
 TRUNCATE_LIMIT = 800
 TRUNCATE_KEEP = 780
 TRUNCATE_MARKER = "\n[truncated because the output is too long]"
@@ -1168,7 +1176,14 @@ def _parse_args_or_error(raw) -> tuple:
     "Error parsing arguments: " prefix -- see `agent_loop._parse_args_with_error`'s docstring;
     these two functions must stay byte-for-byte identical in their error TEXT, since
     `DualSubmitDriver.complete()`'s `turn_entry["tool_result"]` (P43a) must match exactly what
-    `agent_loop.run_agent`'s OWN re-parse of the same raw string feeds back to the model. Returns
+    `agent_loop.run_agent`'s OWN re-parse of the same raw string feeds back to the model.
+
+    8th cold review round 8 P49: an EMPTY dict is deliberately NOT rejected here either, for the
+    same reason as `agent_loop._parse_args_with_error` -- it is a structurally valid call; the
+    upstream-positional-extraction asymmetry (finish_action tolerates it, bash_action/
+    answer_action do not) is handled entirely in `DualSubmitDriver.complete()` and `_bash`, at
+    the EXTRACTION point (`_extract_tool_arg`), not here. Must stay in lockstep with
+    `agent_loop._parse_args_with_error` for the cases this function DOES decide. Returns
     (args: dict, error: str|None)."""
     if isinstance(raw, dict):
         return raw, None
@@ -1181,21 +1196,25 @@ def _parse_args_or_error(raw) -> tuple:
     return v, None
 
 
-def _extract_tool_arg(args: dict, expected_key: str):
-    """7th cold review round 7 addendum R2: mirrors upstream AgentBench task.py's own
-    `_extract_function`, which does `list(json.loads(args).values())[0]` -- upstream ignores
-    argument KEY NAMES entirely and takes the first value by POSITION. Our tools each declare a
-    single named JSON-schema property (`script`, `thought`, `answer`), so: prefer the EXPECTED
-    key when present (handles extra hallucinated keys alongside the correct one), falling back to
-    the first value in the dict when it is absent (handles a plausible-but-wrong key name, e.g. a
-    model emitting `command` instead of `script` for `bash_action` -- common enough across model
-    families that dropping the argument entirely, as the old `args.get(expected_key, "")` did,
-    silently turned a real action into a no-op)."""
-    if expected_key in args:
-        return args[expected_key]
-    if args:
-        return next(iter(args.values()))
-    return None
+def _extract_tool_arg(args: dict):
+    """7th cold review round 7 addendum R2, SUPERSEDED by 8th round P49: upstream AgentBench
+    task.py's own extraction (`arguments = list(json.loads(args).values())`, then
+    `_extract_function`'s `arguments[0]`) is PURELY POSITIONAL -- it has NO awareness of key
+    names at all, not even as a fallback. Even when a tool's documented key (e.g. `script` for
+    bash_action) happens to be present, upstream still takes the FIRST value by dict insertion
+    order, never by name match (R2's "prefer the expected key" was a reasonable-sounding but
+    non-upstream compromise; this is the literal mirror).
+
+    P49: an EMPTY `args` raises `IndexError("list index out of range")`, matching Python's own
+    `[][0]` and upstream's real `arguments[0]` on an empty list -- verified against the pinned
+    upstream source (task.py `_extract_function`): `bash_action`/`answer_action` do plain
+    `arguments[0]` (would raise on empty), while `finish_action` ALONE tolerates it
+    (`arguments[0] if arguments else None`). That asymmetry is handled at each call site, not
+    here -- this function always raises on empty so a caller that wants upstream's finish_action
+    tolerance must catch it explicitly."""
+    if not args:
+        raise IndexError("list index out of range")
+    return next(iter(args.values()))
 
 
 class DualSubmitDriver:
@@ -1261,10 +1280,15 @@ class DualSubmitDriver:
             # successfully and silently credit the episode.
             if parse_error is None and name == "finish_action":
                 fn["name"] = self.SUBMIT_TOOL
-                # R2: _extract_tool_arg, not a bare args.get("thought") -- a model that emits
-                # e.g. {"reason": "..."} instead of {"thought": "..."} must not have its
-                # submission silently become {"answer": None}.
-                fn["arguments"] = json.dumps({"answer": _extract_tool_arg(args, "thought")})
+                # R2/P49: _extract_tool_arg is PURELY positional (no key-name awareness at all).
+                # P49: upstream's finish_action ALONE tolerates an EMPTY call
+                # (`arguments[0] if arguments else None`) -- a thought-less finish is still a
+                # valid (if empty) submission; catch the IndexError and default to None.
+                try:
+                    answer = _extract_tool_arg(args)
+                except IndexError:
+                    answer = None
+                fn["arguments"] = json.dumps({"answer": answer})
                 # cold-review N10: run_agent only ever DISPATCHES tool_calls[0]
                 # (single_tool_call_per_turn=True) -- a submit riding in position 1+ never actually
                 # runs, so it must not be recorded as having submitted anything.
@@ -1272,14 +1296,31 @@ class DualSubmitDriver:
                     self.submitted_via = "finish"
                     turn_entry["tool_result"] = "submitted"
             elif parse_error is None and name == self.SUBMIT_TOOL:
-                # R2: normalize answer_action's args to the canonical {"answer": ...} key too, by
-                # the SAME rule -- agent_loop.run_agent re-parses THIS rewritten arguments string,
-                # so `submitted["answer"]` must never silently come back None because the model
-                # used a plausible-but-wrong key (e.g. "response" instead of "answer").
-                fn["arguments"] = json.dumps({"answer": _extract_tool_arg(args, "answer")})
-                if i == 0:
-                    self.submitted_via = "answer"
-                    turn_entry["tool_result"] = "submitted"
+                # R2/P49: normalize answer_action's args to the canonical {"answer": ...} key too,
+                # by the SAME purely-positional rule -- agent_loop.run_agent re-parses THIS
+                # rewritten arguments string, so `submitted["answer"]` must never silently come
+                # back None because the model used a plausible-but-wrong key (e.g. "response"
+                # instead of "answer"). UNLIKE finish_action, upstream's answer_action does NOT
+                # tolerate an EMPTY call (plain `arguments[0]`, no `if arguments else None` guard)
+                # -- an empty call here must NOT become a silent empty submission (simply leaving
+                # `fn["arguments"]` as the unchanged "{}" would make agent_loop.run_agent's OWN
+                # re-parse see a clean empty dict and dispatch it as submit_tool regardless, since
+                # the GENERIC parser treats `{}` as structurally valid). Rename the tool to a
+                # sentinel that matches neither a real tool nor submit_tool, so the re-dispatch
+                # falls through to the unknown-tool branch and feeds back corrective text instead.
+                try:
+                    answer = _extract_tool_arg(args)
+                except IndexError as e:
+                    fn["name"] = _EMPTY_SUBMIT_SENTINEL
+                    fn["arguments"] = "{}"
+                    if i == 0:
+                        turn_entry["tool_call"]["parse_error"] = str(e)
+                        turn_entry["tool_result"] = UNKNOWN_TOOL_TEXT
+                else:
+                    fn["arguments"] = json.dumps({"answer": answer})
+                    if i == 0:
+                        self.submitted_via = "answer"
+                        turn_entry["tool_result"] = "submitted"
             new_tc = dict(tc)
             new_tc["function"] = fn
             new_tcs.append(new_tc)
@@ -1317,7 +1358,7 @@ def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
     def _bash(args: dict) -> str:
         # R2: _extract_tool_arg, not a bare args.get("script", "") -- models commonly emit
         # "command" instead of "script"; upstream ignores the key name entirely.
-        script = _extract_tool_arg(args, "script") or ""
+        script = _extract_tool_arg(args) or ""
         res = shell.run(script, timeout_s=timeout)
         if res["shell_died"]:
             shell_died_flag["hit"] = True
@@ -1525,7 +1566,7 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
             submit_tool=DualSubmitDriver.SUBMIT_TOOL, deadline_s=deadline_s,
             loop_guard=AO.LoopGuard(max_identical=0, max_unknown=0),   # F5(d): the round cap is the bound
             clock=clock, no_tool_call_reprompt=NO_TOOL_CALL_REPROMPT,
-            single_tool_call_per_turn=True)
+            single_tool_call_per_turn=True, unknown_tool_text=UNKNOWN_TOOL_TEXT)
 
         if result.get("outcome") == AO.SERVER_ERROR and result.get("error"):
             raise TransportFailure(f"task {task['id']}: {result['error']}")

@@ -2108,20 +2108,24 @@ def test_run_task_unexpected_grading_exception_preserves_completed_turns_P43a():
     assert len(row["_transcript_turns"]) == 1   # the episode's real turn survives
 
 
-# --------------------------------------------------------------------------- R2 upstream-fidelity arg extraction
-def test_extract_tool_arg_prefers_the_expected_key_when_present():
-    assert AB._extract_tool_arg({"script": "ls", "extra": "junk"}, "script") == "ls"
+# --------------------------------------------------------------------------- R2/P49 upstream-fidelity arg extraction
+def test_extract_tool_arg_is_purely_positional_ignores_the_documented_key_P49():
+    """8th cold review round 8 P49 (supersedes R2's "prefer the expected key" compromise):
+    upstream is PURELY positional -- even when the documented key ("script") IS present, if it is
+    not FIRST in the dict, upstream still takes the first value by position."""
+    assert AB._extract_tool_arg({"extra": "junk", "script": "ls"}) == "junk"
 
 
-def test_extract_tool_arg_falls_back_to_the_first_value_when_the_expected_key_is_absent():
-    """7th cold review round 7 addendum R2: upstream's `_extract_function` ignores key NAMES
-    entirely (`list(json.loads(args).values())[0]`) -- a model emitting `command` instead of
+def test_extract_tool_arg_takes_the_first_value_regardless_of_key_name():
+    """R2's original reproduction, still valid under P49: a model emitting `command` instead of
     `script` must still have its argument used, not silently dropped."""
-    assert AB._extract_tool_arg({"command": "echo hi"}, "script") == "echo hi"
+    assert AB._extract_tool_arg({"command": "echo hi"}) == "echo hi"
 
 
-def test_extract_tool_arg_none_when_args_is_empty():
-    assert AB._extract_tool_arg({}, "script") is None
+def test_extract_tool_arg_raises_index_error_on_empty_args_P49():
+    """P49: mirrors upstream's `list({}.values())[0]` -> IndexError("list index out of range")."""
+    with pytest.raises(IndexError, match="list index out of range"):
+        AB._extract_tool_arg({})
 
 
 def test_run_task_bash_action_with_wrong_key_name_still_runs_the_script_R2():
@@ -2155,6 +2159,65 @@ def test_run_task_finish_action_with_wrong_key_name_still_submits_the_thought_as
     row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
     assert row["answer"] == "love"
     assert row["passed"] is True
+
+
+def test_run_task_submit_args_with_multiple_keys_take_the_FIRST_value_not_the_documented_key_P49():
+    """8th cold review round 8 P49 (supersedes R2): upstream is PURELY positional -- even with
+    the documented key ("answer") present, if a DIFFERENT key comes first in the dict, upstream
+    still takes that first value. This distinguishes P49 from R2's superseded "prefer the
+    expected key" behavior."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[
+        tool_call("answer_action", {"confidence": "high", "answer": "love"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["answer"] == "high"   # the FIRST value, not the "answer"-keyed one
+    assert row["passed"] is False    # "high" != "love" -- a real, scored miss
+
+
+def test_run_task_empty_finish_action_submits_a_null_answer_not_a_parse_error_P49():
+    """P49: upstream's finish_action tolerates an EMPTY call (arguments[0] if arguments else
+    None) -- an empty finish_action is still a valid (if hopeless) submission, not fed back as a
+    malformed-arguments error."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("finish_action", {})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["answer"] is None
+    assert row["passed"] is False   # None != "love", but it IS a real scored submission
+    assert row["turns"] == 1
+
+
+def test_run_task_empty_answer_action_is_not_a_submission_episode_continues_P49():
+    """P49: UNLIKE finish_action, upstream's answer_action does NOT tolerate an empty call -- it
+    must not become a silent empty submission. The episode must CONTINUE (not end as SOLVED with
+    answer=None) and get the chance to submit a real answer next turn."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[
+        complete_result(tool_calls=[tool_call("answer_action", {})]),
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})]),
+    ])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["turns"] == 2   # the empty call did NOT end the episode
+    assert row["answer"] == "love"
+    assert row["passed"] is True
+    turns = row["_transcript_turns"]
+    assert turns[0]["tool_result"] == AB.UNKNOWN_TOOL_TEXT
+
+
+def test_run_task_unknown_tool_name_feeds_back_upstream_verbatim_text_P49():
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[
+        complete_result(tool_calls=[tool_call("not_a_real_tool", {"x": 1})]),
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})]),
+    ])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    # the unknown-tool turn did not end the episode -- it continued to the 2nd (real) turn.
+    assert row["turns"] == 2
+    assert row["passed"] is True
+    assert AB.UNKNOWN_TOOL_TEXT == "Invalid function call. Please call a tool instead"
 
 
 def test_run_task_only_one_container_touched_per_task():

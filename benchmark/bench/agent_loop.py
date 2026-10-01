@@ -55,7 +55,17 @@ def _parse_args_with_error(raw) -> tuple:
     7th cold review round 7 addendum R5: the fed-back text is the BARE `str(e)`, with NO
     "Error parsing arguments: " prefix -- upstream task.py:575-592 feeds back the raw exception
     text verbatim, and our added prefix is foreign to a model that has seen upstream's exact
-    phrasing during training/eval on the real benchmark. Returns (args: dict, error: str|None)."""
+    phrasing during training/eval on the real benchmark.
+
+    8th cold review round 8 P49: an EMPTY dict (`{}`) is deliberately NOT rejected HERE -- it is
+    a structurally VALID tool call with zero arguments, legitimate for any tool whose JSON schema
+    requires nothing (confirmed by a PRE-EXISTING generic test: a zero-arg tool dispatched with
+    `{}` must actually run). Upstream AgentBench's own POSITIONAL extraction
+    (`list(json.loads(args).values())[0]`, which raises IndexError on an empty values list) is
+    specific to AgentBench OS's 3 single-argument tools, not a property of tool-call parsing in
+    general -- handled at the EXTRACTION point (`agentbench_adapter._extract_tool_arg` and its
+    call sites), not genericaly here. This parser stays tool-agnostic (it also backs non-
+    AgentBench callers). Returns (args: dict, error: str|None)."""
     if isinstance(raw, dict):
         return raw, None
     try:
@@ -104,7 +114,8 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
               submit_tool: str = "submit", deadline_s: float | None = None,
               loop_guard: AO.LoopGuard | None = None, clock=time.perf_counter,
               no_tool_call_reprompt: str | None = None,
-              single_tool_call_per_turn: bool = False) -> dict:
+              single_tool_call_per_turn: bool = False,
+              unknown_tool_text: str | None = None) -> dict:
     """Run the loop. Returns {final, submitted, turns, transcript, outcome, counters}.
 
     `submitted` is the args dict of the first call to `submit_tool` (or None if never submitted).
@@ -121,6 +132,14 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
       * `single_tool_call_per_turn` — when True, only the FIRST tool call of a turn is dispatched;
         the rest are silently ignored (upstream `tool_calls[0]`), so a submit riding alongside a
         bash call in the same turn is never processed.
+      * `unknown_tool_text` (8th cold review round 8 P49) — when set, an unknown-tool-name call
+        feeds back this EXACT text instead of our own diagnostic "ERROR: unknown tool ...
+        Available tools: [...]" message. Upstream AgentBench os_interaction task.py's equivalent
+        check (`action_data["action"] not in ["bash", "commit"]`) feeds back the fixed string
+        "Invalid function call. Please call a tool instead" -- no tool name, no tool list, since
+        upstream's extraction silently maps any OTHER func_name to action=None rather than
+        naming what was wrong. Default `None` preserves the diagnostic text for every
+        pre-existing (non-AgentBench) caller.
     """
     guard = loop_guard if loop_guard is not None else AO.LoopGuard()
     by_name = {t.name: t for t in tools}
@@ -189,6 +208,9 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
                     break
                 except Exception as e:  # noqa: BLE001 — tool failure is fed back, not fatal
                     result = f"ERROR: {type(e).__name__}: {str(e)[:200]}"
+            elif unknown_tool_text is not None:
+                # P49: upstream's own corrective text, verbatim.
+                result = unknown_tool_text
             else:
                 # The corrective feedback whose EFFECT is now measured: naming the available
                 # tools makes a repeat of the same invalid call unambiguously the model's doing.

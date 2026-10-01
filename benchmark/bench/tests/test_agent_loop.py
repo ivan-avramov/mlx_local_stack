@@ -163,3 +163,28 @@ def test_abort_episode_from_a_tool_ends_the_loop_immediately_with_the_given_outc
     assert out["turns"] == 1
     assert len(driver.calls) == 1                        # the loop did not continue to a 2nd turn
     assert out["submitted"] is None
+
+
+# --------------------------------------------------------------------------- P49 unknown_tool_text
+def test_unknown_tool_text_default_preserves_the_diagnostic_message():
+    log = []
+    tools = _tools(log)
+    driver = ScriptedDriver([([_toolcall("nope", {})], ""), ([_toolcall("submit", {"patch": "D"})], "")])
+    out = AL.run_agent(driver, "m", "sys", "t", tools, {}, max_turns=5)
+    tool_msgs = [m for m in driver.calls[1]["messages"] if m.get("role") == "tool"]
+    assert "ERROR: unknown tool" in tool_msgs[-1]["content"]
+    assert out["outcome"] == AO.SOLVED
+
+
+def test_unknown_tool_text_when_set_feeds_back_the_exact_text_verbatim_P49():
+    """8th cold review round 8 P49: an opt-in unknown_tool_text, when set, replaces our own
+    diagnostic message with the caller-supplied text verbatim -- default behaviour (every
+    pre-existing, non-AgentBench caller) is unchanged."""
+    log = []
+    tools = _tools(log)
+    driver = ScriptedDriver([([_toolcall("nope", {})], ""), ([_toolcall("submit", {"patch": "D"})], "")])
+    out = AL.run_agent(driver, "m", "sys", "t", tools, {}, max_turns=5,
+                       unknown_tool_text="Invalid function call. Please call a tool instead")
+    tool_msgs = [m for m in driver.calls[1]["messages"] if m.get("role") == "tool"]
+    assert tool_msgs[-1]["content"] == "Invalid function call. Please call a tool instead"
+    assert out["outcome"] == AO.SOLVED   # the episode continued to a real submit next turn
