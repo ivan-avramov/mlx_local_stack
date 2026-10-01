@@ -321,6 +321,10 @@ def summarize(rows: list) -> dict:
         "completion_tokens_max": round(max(toks), 1) if toks else None,
         "fail_ids": [r["id"] for r in graded_rows if r.get("passed") is not True],
         "setup_error_ids": [r["id"] for r in setup_error_rows],
+        # P23: the exact set actually IN the acc/acc_strict denominator -- two arms (or a rerun of
+        # the same arm) must intersect `graded_ids` before their accuracies are compared; a task
+        # excluded via setup_error on one arm but graded on another is NOT the same evaluation.
+        "graded_ids": [r["id"] for r in graded_rows],
         # cold-review N12: distinct mechanisms, counted explicitly rather than only buried inside
         # outcome_counts/setup_error_count.
         "exec_timeout_count": sum(1 for r in rows if r.get("exec_timeout")),

@@ -175,13 +175,25 @@ def test_run_check_chain_nonzero_exit_fails():
     assert ok is False and gold_live is None and infra_error is None
 
 
-def test_run_check_chain_timeout_fails():
-    """P9(a): a check-script TIMEOUT is itself one of the docker/infra transport signals (the
-    checker never got to render a verdict at all) -- it is an infra_error, not a legitimate
-    checker-script failure."""
-    runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1)])
+def test_run_check_chain_timeout_with_unhealthy_docker_is_infra_error():
+    """6th cold review round 6, addendum C refinement of P9(a): a check-script TIMEOUT is infra
+    ONLY when a health check (`docker exec <c> true`) run immediately afterward ALSO fails/times
+    out -- proving docker itself, not just the checker script, is unresponsive."""
+    runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1),
+                                 subprocess.TimeoutExpired(cmd="true", timeout=10)])
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
     assert ok is False and gold_live is None and infra_error is not None
+    assert infra_error["timed_out"] is True
+
+
+def test_run_check_chain_timeout_with_healthy_docker_is_failed_tests_addendum_C():
+    """Addendum C: std-005-0/1/2 run the MODEL's OWN installed binaries, which can hang -- that is
+    a real `failed_tests` (IN the denominator), not an infra failure, when docker itself answers
+    the health check immediately right after."""
+    runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1),
+                                 FakeRunner.Proc(0, "", "")])   # health check succeeds
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
+    assert ok is False and gold_live is None and infra_error is None
 
 
 def test_run_check_chain_null_with_no_example_fails_without_raising():
@@ -205,13 +217,47 @@ def test_run_check_chain_docker_daemon_unreachable_is_infra_error_not_failed_tes
     runner = FakeRunner(default=FakeRunner.Proc(125, "", "Cannot connect to the Docker daemon at..."))
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False
-    assert infra_error is not None and "docker transport failure" in infra_error
+    assert infra_error is not None and "docker transport failure" in infra_error["message"]
+    assert infra_error["exit_code"] == 125
 
 
-def test_run_check_chain_exit_127_is_infra_error():
+def test_run_check_chain_exit_127_ALONE_is_NOT_infra_error_P23():
+    """6th cold review round 6 P23 (HIGH), reproduction: checker exit 127 ALONE used to become
+    `setup_error` and vanish from accuracy -- but 127 is ALSO exactly what a MODEL-broken
+    dependency produces ("command not found"), which belongs IN the denominator. An exit code is
+    evidence only TOGETHER WITH stderr text that actually names a docker/daemon/container
+    problem; bare "exec: not found" (no such pattern) must stay a legitimate failed_tests."""
     runner = FakeRunner(default=FakeRunner.Proc(127, "", "exec: not found"))
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False and infra_error is None
+
+
+def test_run_check_chain_exit_127_WITH_daemon_stderr_IS_infra_error_P23():
+    runner = FakeRunner(default=FakeRunner.Proc(127, "", "OCI runtime exec failed: exec failed"))
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is not None
+    assert infra_error["exit_code"] == 127
+
+
+def test_run_check_chain_exit_1_with_daemon_stderr_stays_failed_tests_by_the_coordinators_rule():
+    """P23's minimal fix (coordinator's literal formula, round 6): infra classification requires
+    rc IN {125,126,127} AND a matching stderr pattern, OR a docker-cli timeout -- 'any OTHER
+    nonzero checker exit' stays failed_tests regardless of stderr content. Exit 1 is deliberately
+    OUTSIDE the transport exit-code band even with daemon-shaped text in stderr."""
+    runner = FakeRunner(default=FakeRunner.Proc(1, "",
+                                                "Error response from daemon: container abc is not running"))
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False and infra_error is None
+
+
+def test_is_docker_transport_failure_requires_BOTH_exit_code_band_AND_stderr_pattern():
+    """Unit-level proof of the exact rule: neither signal alone is sufficient."""
+    assert AB._is_docker_transport_failure(
+        {"exit_code": 127, "stderr": "No such container: abc"}) is True
+    assert AB._is_docker_transport_failure(
+        {"exit_code": 127, "stderr": "assertion failed: missing file"}) is False
+    assert AB._is_docker_transport_failure(
+        {"exit_code": 1, "stderr": "Error response from daemon: x"}) is False
 
 
 def test_run_check_chain_legitimate_checker_failure_has_no_infra_error():
@@ -1799,6 +1845,27 @@ def test_run_task_single_tool_call_per_turn_ignores_a_trailing_submit_F5c():
                       popen=_shell_popen_ok())
     assert row["turns"] == 2            # turn 1's trailing submit was ignored; turn 2 actually submitted
     assert row["outcome"] == AO.SOLVED and row["passed"] is True
+
+
+def test_run_task_grading_infra_failure_preserves_completed_turns_and_transcript_addendum_I():
+    """6th cold review round 6, addendum I: a grading-time infra failure (P23) must NOT reset an
+    already-executed episode back to zero turns/tokens/transcript -- the row still carries the
+    episode's actual completed turns and the transcript turns the model actually produced."""
+    def runner(cmd, **kw):
+        if cmd[:2] == ["docker", "run"]:
+            return FakeRunner.Proc(0, "", "")
+        if cmd[:2] == ["docker", "exec"] and "echo gold" in cmd:
+            return FakeRunner.Proc(127, "", "No such container: abc")
+        return FakeRunner.Proc(0, "", "")
+    task = {"id": "t1", "group": 1, "labels": [],
+           "evaluation": {"check": [None], "example": {"code": "echo gold"}}, "description": "d"}
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "x"})])])
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["setup_error"] is True
+    assert row["infra_evidence"] is not None and row["infra_evidence"]["exit_code"] == 127
+    assert row["turns"] == 1   # the episode actually ran one turn -- not reset to 0
+    assert len(row["_transcript_turns"]) == 1
+    assert row["submitted_via"] == "answer"
 
 
 def test_run_task_captures_gold_live_from_the_check_chain_R5():

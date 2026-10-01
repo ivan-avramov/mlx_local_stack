@@ -866,20 +866,52 @@ def evaluate_match(answer, match_cfg: dict) -> bool:
     return False
 
 
-# 5th cold review P9(a): a docker TRANSPORT failure (the daemon unreachable, docker itself
-# missing/misconfigured, our own exec timing out) must never be scored as the checker's legitimate
-# nonzero verdict -- these exit codes/text are docker/sh's OWN "couldn't even run this" signals,
-# not the checker script's.
+# 5th cold review P9(a) + 6th cold review round 6 P23/addendum C: a docker EXECUTION failure
+# (the daemon unreachable, the container gone, docker itself misconfigured) must never be scored
+# as the checker's legitimate nonzero verdict -- but classification now requires EXPLICIT
+# EVIDENCE, never a bare exit code or a bare timeout alone:
+#   - P23 reproduction #1: checker exit 127 ALONE used to become `setup_error` and vanish from
+#     accuracy -- but 127 is ALSO exactly what a model-broken dependency produces ("command not
+#     found"), which belongs IN the denominator as a real model failure. An exit code in
+#     {125,126,127} is evidence only TOGETHER WITH stderr text that actually names a docker/
+#     daemon/container/runtime problem.
+#   - P23 reproduction #2: docker exit 1 with "Error response from daemon: container ... is not
+#     running" used to pass through as ordinary `failed_tests` -- stderr pattern matching has to
+#     cover plain docker-daemon error TEXT regardless of exit code, not just the narrow 125-127
+#     band.
+#   - addendum C: a checker TIMEOUT alone used to be ALWAYS infra -- but std-005-0/1/2 time out
+#     because the MODEL's OWN installed binary hangs, which is a real `failed_tests`, not an infra
+#     failure. A timeout is infra ONLY if a HEALTH CHECK (`docker exec <container> true`) run
+#     immediately afterward ALSO fails -- proving docker itself, not just the checker script, is
+#     unresponsive.
 _DOCKER_TRANSPORT_EXIT_CODES = frozenset({125, 126, 127})
-_DOCKER_DAEMON_ERROR_MARKER = "Cannot connect to the Docker daemon"
+_DOCKER_INFRA_STDERR_PATTERNS = (
+    "Error response from daemon",
+    "Cannot connect to the Docker daemon",
+    "is not running",
+    "No such container",
+    "OCI runtime",
+)
+
+
+def _docker_stderr_indicates_infra_failure(stderr) -> bool:
+    s = stderr or ""
+    return any(p in s for p in _DOCKER_INFRA_STDERR_PATTERNS)
 
 
 def _is_docker_transport_failure(res: dict) -> bool:
-    if res.get("timed_out"):
-        return True
-    if res.get("exit_code") in _DOCKER_TRANSPORT_EXIT_CODES:
-        return True
-    return _DOCKER_DAEMON_ERROR_MARKER in (res.get("stderr") or "")
+    """EXPLICIT-EVIDENCE classification ONLY (P23): an exit code in the docker-transport band
+    together with daemon/container error TEXT in stderr. Never a bare exit code; never a bare
+    timeout (that is handled separately via a live health check -- see `run_check_chain`)."""
+    return (res.get("exit_code") in _DOCKER_TRANSPORT_EXIT_CODES
+           and _docker_stderr_indicates_infra_failure(res.get("stderr")))
+
+
+def _docker_health_check(container: str, runner=subprocess.run, timeout: float = 10.0) -> bool:
+    """P23/addendum C: `docker exec <container> true` -- a cheap, fast probe proving docker (not
+    the checker script) is still responsive. True = healthy."""
+    res = docker_exec(container, ("bash", "true"), timeout, runner)
+    return (not res.get("timed_out")) and res.get("exit_code") == 0
 
 
 def run_check_chain(container: str, check_list: list, example, answer, runner=subprocess.run,
@@ -891,12 +923,15 @@ def run_check_chain(container: str, check_list: list, example, answer, runner=su
     appended for the next; a None entry runs `example` instead (the "gold" position); any
     timeout/nonzero exit fails the whole chain.
 
-    Returns `(passed: bool, gold_live: str|None, infra_error: str|None)`. `gold_live` is the
+    Returns `(passed: bool, gold_live: str|None, infra_evidence: dict|None)`. `gold_live` is the
     stdout of the FIRST null ("gold slot") position actually executed in THIS live grading run
     (R5/AC5: the chain already runs it; capture it rather than trusting the D2-prepare-time value
-    stayed valid). `None` when the check list has no gold slot at all. `infra_error` is set (P9a)
-    when a step failed via a DOCKER TRANSPORT failure rather than the checker's own verdict -- the
-    caller must turn that into a `setup_error` row, never a plain `failed_tests`."""
+    stayed valid). `None` when the check list has no gold slot at all. `infra_evidence`
+    (`{"message", "exit_code", "stderr", "timed_out"}`, P23) is set only on EXPLICIT docker-
+    execution-failure evidence -- the caller must turn that into a `setup_error` row with the
+    evidence attached, never a plain `failed_tests`. A model-caused checker failure (wrong exit
+    code, or a timeout with docker proven healthy right after) stays `failed_tests`, IN the
+    denominator."""
     params = [str(answer)]
     gold_live = None
     for entry in check_list:
@@ -906,11 +941,22 @@ def run_check_chain(container: str, check_list: list, example, answer, runner=su
         res = docker_exec(container, script, timeout, runner, extra_params=params)
         if entry is None and gold_live is None:
             gold_live = res["stdout"]
+        if res.get("timed_out"):
+            if not _docker_health_check(container, runner):
+                return False, gold_live, {
+                    "message": "docker transport failure grading check script (timeout, docker "
+                              "health check also failed/timed out)",
+                    "exit_code": None, "stderr": (res.get("stderr") or "")[:200], "timed_out": True}
+            # addendum C: docker itself answers immediately right after -- the MODEL's own program
+            # hung (e.g. std-005-0/1/2 run the model's own binaries), not an infra failure.
+            return False, gold_live, None
         if _is_docker_transport_failure(res):
-            return False, gold_live, (f"docker transport failure grading check script "
-                                      f"(exit={res['exit_code']}, timed_out={res['timed_out']}): "
-                                      f"{(res.get('stderr') or '')[:200]}")
-        if res["timed_out"] or res["exit_code"] != 0:
+            return False, gold_live, {
+                "message": f"docker transport failure grading check script (exit={res['exit_code']}): "
+                          f"{(res.get('stderr') or '')[:200]}",
+                "exit_code": res["exit_code"], "stderr": (res.get("stderr") or "")[:200],
+                "timed_out": False}
+        if res["exit_code"] != 0:
             return False, gold_live, None
         params.append(res["stdout"])
     return True, gold_live, None
@@ -1288,7 +1334,8 @@ def _fail_row(base: dict, outcome: str, t0, clock, **extra) -> dict:
           "nonconv_kinds": [],
           "budget_hits": 0, "wall_s": round(clock() - t0, 2), "tool_calls": 0, "tool_timeouts": 0,
           "repeat_calls": 0, "exec_timeout": False, "shell_died": False, "setup_error": True,
-          "decode_tps": None, "per_turn_decode_tps": [], "error": None, "_transcript_turns": []}
+          "decode_tps": None, "per_turn_decode_tps": [], "error": None, "_transcript_turns": [],
+          "infra_evidence": None}
     row.update(extra)
     return row
 
@@ -1389,39 +1436,44 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
         # row-level setup_error/shell_died flags are.
         outcome, passed, answer = finalize_outcome(result, _evaluate)
 
-        # P9(a): a docker TRANSPORT failure during grading is an infra failure, never a graded
-        # model loss -- override whatever finalize_outcome computed.
-        if infra_error_box["value"] is not None:
-            row = _fail_row(base, AO.SERVER_ERROR, t0, clock, error=infra_error_box["value"],
-                             answer=answer, gold_live=gold_live_box["value"])
-            return row
-
         counters = result.get("counters") or {}
         conv = evaluate_convergence(wrapped.per_turn, params.get("thinking_budget"), context_limit,
                                     params.get("max_tokens"))
         dtps = [t.get("decode_tps") for t in wrapped.per_turn if isinstance(t.get("decode_tps"), (int, float))]
-        row = {**base, "passed": passed, "outcome": outcome, "turns": result.get("turns", 0),
-                "submitted_via": wrapped.submitted_via, "answer": answer,
-                "gold_live": gold_live_box["value"],
-                "per_turn_completion_tokens": [t.get("completion_tokens") for t in wrapped.per_turn],
-                "completion_tokens_total": counters.get("completion_tokens", 0),
-                "per_turn_finish_reasons": conv["per_turn_finish_reasons"],
-                "converged": conv["converged"], "budget_hits": conv["budget_hits"],
-                "per_turn_resolved_budget": conv["per_turn_resolved_budget"],
-                "nonconv_kinds": conv["nonconv_kinds"],
-                "wall_s": counters.get("wall_s", round(clock() - t0, 2)),
-                "tool_calls": counters.get("tool_calls", 0),
-                "tool_timeouts": tool_counters["tool_timeouts"],
-                "repeat_calls": counters.get("repeat_identical_calls", 0),
-                "exec_timeout": exec_timeout_flag["hit"], "shell_died": shell_died_flag["hit"],
-                # R2: by this point we are PAST the start-phase checks (which already returned
-                # early via _fail_row, setup_error=True, for a start-caused death) -- any
-                # shell_died here came from a bash_action, i.e. the model's own doing, and is
-                # IN the acc denominator (outcome is already FAILED_TESTS via AbortEpisode above).
-                "setup_error": False,
-                "decode_tps": round(statistics.mean(dtps), 2) if dtps else None,
-                "per_turn_decode_tps": [t.get("decode_tps") for t in wrapped.per_turn],
-                "error": result.get("error"), "_transcript_turns": wrapped.per_turn}
+        common = {"turns": result.get("turns", 0), "submitted_via": wrapped.submitted_via,
+                 "answer": answer, "gold_live": gold_live_box["value"],
+                 "per_turn_completion_tokens": [t.get("completion_tokens") for t in wrapped.per_turn],
+                 "completion_tokens_total": counters.get("completion_tokens", 0),
+                 "per_turn_finish_reasons": conv["per_turn_finish_reasons"],
+                 "converged": conv["converged"], "budget_hits": conv["budget_hits"],
+                 "per_turn_resolved_budget": conv["per_turn_resolved_budget"],
+                 "nonconv_kinds": conv["nonconv_kinds"],
+                 "wall_s": counters.get("wall_s", round(clock() - t0, 2)),
+                 "tool_calls": counters.get("tool_calls", 0),
+                 "tool_timeouts": tool_counters["tool_timeouts"],
+                 "repeat_calls": counters.get("repeat_identical_calls", 0),
+                 "exec_timeout": exec_timeout_flag["hit"], "shell_died": shell_died_flag["hit"],
+                 "decode_tps": round(statistics.mean(dtps), 2) if dtps else None,
+                 "per_turn_decode_tps": [t.get("decode_tps") for t in wrapped.per_turn],
+                 "_transcript_turns": wrapped.per_turn}
+
+        # P9(a)/P23: a docker EXECUTION failure during grading (explicit evidence only -- see
+        # run_check_chain) is an infra failure, never a graded model loss -- override whatever
+        # finalize_outcome computed. Addendum I: the row still carries the episode's ACTUAL
+        # completed turns/transcript/tokens (`common`, built above) -- a grading-time infra
+        # failure must not reset an already-executed episode back to zero.
+        ie = infra_error_box["value"]
+        if ie is not None:
+            row = {**base, **common, "passed": False, "outcome": AO.SERVER_ERROR,
+                  "setup_error": True, "error": ie["message"], "infra_evidence": ie}
+            return row
+
+        row = {**base, **common, "passed": passed, "outcome": outcome,
+              # R2: by this point we are PAST the start-phase checks (which already returned
+              # early via _fail_row, setup_error=True, for a start-caused death) -- any
+              # shell_died here came from a bash_action, i.e. the model's own doing, and is
+              # IN the acc denominator (outcome is already FAILED_TESTS via AbortEpisode above).
+              "setup_error": False, "error": result.get("error"), "infra_evidence": None}
         return row
     except TransportFailure:
         raise

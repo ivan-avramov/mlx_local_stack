@@ -420,6 +420,15 @@ def test_summarize_acc_strict_denominator_excludes_setup_errors_P11():
     assert summary["acc_strict"] == 1.0
 
 
+def test_summarize_graded_ids_excludes_setup_error_rows_P23():
+    """P23: graded_ids is the exact set actually in the denominator -- two arms must intersect it
+    before their accuracies are compared."""
+    rows = [_row("a", passed=True, converged=True),
+           _row("b", passed=False, converged=False, setup_error=True)]
+    summary = R.summarize(rows)
+    assert summary["graded_ids"] == ["a"]
+
+
 def test_setup_error_rows_excluded_from_acc_denominator_F1(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
