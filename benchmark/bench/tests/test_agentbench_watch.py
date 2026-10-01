@@ -397,6 +397,21 @@ def test_run_calibrate_samples_and_prints_for_the_configured_duration(tmp_path, 
     assert "42.0" in out and "max=42.0" in out
 
 
+def test_run_calibrate_returns_1_when_no_valid_cpu_sample_is_ever_obtained_P52b(tmp_path, capsys):
+    """8th cold review round 8 P52(b): if every single %cpu sample fails across the whole
+    calibration window, the run produced NO evidence at all -- it must not silently "succeed"
+    with rc 0 and an empty-looking samples list."""
+    import argparse
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"router": {"pid": ROUTER_PID}}), encoding="utf-8")
+    args = argparse.Namespace(manifest=str(manifest_path))
+    # discovery succeeds (worker pid found), but every %cpu sample itself fails.
+    run_fn = _run_fn(pgrep_out="111 x --port 8000\n", ppid_out=f"{ROUTER_PID}\n", cpu_rc=1)
+    rc = W.run_calibrate(args, run_fn=run_fn, sleep_fn=lambda s: None, duration_s=3.0)
+    assert rc == 1
+    assert "FAILED" in capsys.readouterr().err
+
+
 # --------------------------------------------------------------------------- router log (SUPPORTING diagnostic only)
 def test_router_recently_active_true_with_fresh_log_and_marker(tmp_path):
     log = tmp_path / "main_model.log"
@@ -636,6 +651,138 @@ def test_run_watch_once_appends_selftest_and_one_tick(tmp_path):
     assert "SELF-TEST" in content
     assert "model=m" in content
     assert content.count("PROGRESSING") == 2   # one self-test bundled-fixture block + one real tick
+
+
+def test_run_watch_prints_a_calibration_line_on_the_first_tick_P52c(tmp_path):
+    """8th cold review round 8 P52(c): the first tick of a live run must print a CALIBRATION line
+    (worker CPU, ideally during an in-flight request) -- a `calibrate_fn` is injected via `args`
+    to avoid the real ~3s worker_busy() subprocess/sleep cost in this unit test."""
+    rows_path = tmp_path / "rows.jsonl"
+    _write_rows(rows_path, [_row("a")])
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"model": "m", "router": {"pid": ROUTER_PID}}), encoding="utf-8")
+    out_path = tmp_path / "watch.log"
+    import argparse
+    args = argparse.Namespace(rows=str(rows_path), manifest=str(manifest_path), total=5,
+                              driver_pid=os.getpid(), router_log=str(tmp_path / "router.log"),
+                              out=str(out_path), interval=300.0, stall_s=2700.0, once=True,
+                              calibrate_fn=lambda router_pid: True)
+    rc = W.run_watch(args)
+    assert rc == 0
+    content = out_path.read_text(encoding="utf-8")
+    assert f"CALIBRATION (tick 1): worker_busy=True (router_pid={ROUTER_PID})" in content
+
+
+def test_run_watch_prints_a_calibration_line_with_no_router_pid_yet_P52c(tmp_path):
+    rows_path = tmp_path / "rows.jsonl"
+    _write_rows(rows_path, [_row("a")])
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"model": "m"}), encoding="utf-8")   # no router pid
+    out_path = tmp_path / "watch.log"
+    import argparse
+    args = argparse.Namespace(rows=str(rows_path), manifest=str(manifest_path), total=5,
+                              driver_pid=os.getpid(), router_log=str(tmp_path / "router.log"),
+                              out=str(out_path), interval=300.0, stall_s=2700.0, once=True)
+    rc = W.run_watch(args)
+    assert rc == 0
+    content = out_path.read_text(encoding="utf-8")
+    assert "CALIBRATION (tick 1): no router pid recorded" in content
+
+
+def test_run_watch_survives_an_unreadable_rows_file_P52a(tmp_path):
+    """8th cold review round 8 P52(a): a permission-denied rows file must produce an UNKNOWN/
+    evidence-missing block, NEVER crash the watcher daemon."""
+    rows_path = tmp_path / "rows.jsonl"
+    _write_rows(rows_path, [_row("a")])
+    os.chmod(rows_path, 0)
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"model": "m"}), encoding="utf-8")
+    out_path = tmp_path / "watch.log"
+    import argparse
+    args = argparse.Namespace(rows=str(rows_path), manifest=str(manifest_path), total=5,
+                              driver_pid=os.getpid(), router_log=str(tmp_path / "router.log"),
+                              out=str(out_path), interval=300.0, stall_s=2700.0, once=True)
+    try:
+        rc = W.run_watch(args)   # must not raise
+    finally:
+        os.chmod(rows_path, 0o644)   # restore so tmp_path cleanup can remove it
+    assert rc == 0
+    content = out_path.read_text(encoding="utf-8")
+    assert "EVIDENCE MISSING" in content
+    assert "rows file missing/unreadable" in content
+
+
+def test_readable_false_for_a_permission_denied_file(tmp_path):
+    p = tmp_path / "secret.jsonl"
+    p.write_text("x", encoding="utf-8")
+    os.chmod(p, 0)
+    try:
+        assert W._readable(p) is False
+    finally:
+        os.chmod(p, 0o644)
+
+
+def test_readable_true_for_a_normal_file(tmp_path):
+    p = tmp_path / "ok.jsonl"
+    p.write_text("x", encoding="utf-8")
+    assert W._readable(p) is True
+
+
+def test_read_rows_does_not_raise_on_a_permission_denied_file_P52a(tmp_path):
+    p = tmp_path / "secret.jsonl"
+    _write_rows(p, [_row("a")])
+    os.chmod(p, 0)
+    try:
+        assert W.read_rows(p) == []   # degrades, never raises
+    finally:
+        os.chmod(p, 0o644)
+
+
+# --------------------------------------------------------------------------- P52(d) calibration gate
+def test_classify_stall_refuses_to_label_wedge_when_not_calibrated_this_run():
+    """8th cold review round 8 P52(d): an idle busy-check with NO prior BUSY sample observed in
+    this run must NOT be labelled WEDGE -- the busy-detection mechanism itself is unproven and
+    could be silently broken, which would otherwise manufacture a false kill recommendation every
+    single time."""
+    label = W.classify_stall(3000.0, 2700.0, os.getpid(), busy_check_fn=lambda: False,
+                             calibrated=False)
+    assert label is not None and label.startswith("UNKNOWN") and "not yet calibrated" in label
+
+
+def test_classify_stall_labels_wedge_once_calibrated():
+    label = W.classify_stall(3000.0, 2700.0, os.getpid(), busy_check_fn=lambda: False,
+                             calibrated=True)
+    assert label == "WEDGE (idle)"
+
+
+def test_classify_stall_calibrated_default_preserves_prior_behaviour():
+    """The default `calibrated=True` means every PRE-EXISTING caller that doesn't pass this new
+    parameter keeps the exact prior WEDGE behaviour."""
+    label = W.classify_stall(3000.0, 2700.0, os.getpid(), busy_check_fn=lambda: False)
+    assert label == "WEDGE (idle)"
+
+
+def test_build_assessment_busy_observed_box_gates_wedge_across_ticks_P52d():
+    """An idle verdict on tick 1 (box empty -- never calibrated) must NOT read WEDGE; a BUSY
+    sample on tick 2 calibrates the box; an idle verdict on tick 3 (now calibrated) DOES read
+    WEDGE."""
+    now = time.time()
+    rows = [_row("a", wall_total_s=10.0)]
+    box = {}
+    busy_sequence = iter([False, True, False])
+    block1 = W.build_assessment(rows, 0, 10, os.getpid(), "/nonexistent", stall_s=0.0,
+                                reference_ts=now - 5000, now=now,
+                                busy_check_fn=lambda: next(busy_sequence), busy_observed_box=box)
+    assert "WEDGE (idle)" not in block1 and "UNKNOWN (busy-detection not yet calibrated" in block1
+    block2 = W.build_assessment(rows, 0, 10, os.getpid(), "/nonexistent", stall_s=0.0,
+                                reference_ts=now - 5000, now=now,
+                                busy_check_fn=lambda: next(busy_sequence), busy_observed_box=box)
+    assert "RUNAWAY-SUSPECT (busy)" in block2
+    assert box["seen"] is True
+    block3 = W.build_assessment(rows, 0, 10, os.getpid(), "/nonexistent", stall_s=0.0,
+                                reference_ts=now - 5000, now=now,
+                                busy_check_fn=lambda: next(busy_sequence), busy_observed_box=box)
+    assert "WEDGE (idle)" in block3
 
 
 def test_run_watch_exits_when_driver_dead_and_rows_complete(tmp_path):

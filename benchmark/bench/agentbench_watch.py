@@ -77,12 +77,22 @@ SELFTEST_ROWS = [
 def read_rows(path) -> list:
     """Tolerant of a torn final line (the producer may be mid-write at tick time) -- unlike
     run_agentbench_os.read_rows, a malformed NON-final line here is also just skipped: this is a
-    read-only observer, not the thing responsible for catching real corruption."""
+    read-only observer, not the thing responsible for catching real corruption.
+
+    8th cold review round 8 P52(a): a permission-denied or other OS-level read failure (file
+    EXISTS but cannot be READ) must not CRASH the watcher daemon -- caught here the same way
+    `read_manifest` already catches it, degrading to `[]`. See `_readable()` for how `run_watch`
+    distinguishes this from "genuinely no rows yet" to report UNKNOWN rather than silently
+    treating an unreadable file as an empty one."""
     p = Path(path)
     if not p.exists():
         return []
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
     rows = []
-    for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -91,6 +101,17 @@ def read_rows(path) -> list:
         except json.JSONDecodeError:
             continue
     return rows
+
+
+def _readable(path) -> bool:
+    """P52(a): True only if `path` can actually be OPENED for reading -- `Path.exists()` alone
+    says nothing about a permission-denied file, which the watcher must report as UNKNOWN
+    evidence, not silently treat as "0 rows so far"."""
+    try:
+        with open(path, "rb"):
+            return True
+    except OSError:
+        return False
 
 
 def read_manifest(path) -> dict:
@@ -282,15 +303,25 @@ def worker_busy(router_pid, run_fn=_real_subprocess_run, sleep_fn=time.sleep,
 
 # --------------------------------------------------------------------------- (1)/(4) stall / wedge
 def classify_stall(seconds_since_reference, stall_s: float, driver_pid: int,
-                   pid_alive_fn=pid_alive, busy_check_fn=worker_busy) -> str | None:
+                   pid_alive_fn=pid_alive, busy_check_fn=worker_busy,
+                   calibrated: bool = True) -> str | None:
     """Returns None (genuinely not stalled, driver alive, real reference evidence) or one of
     'DRIVER DEAD' / 'RUNAWAY-SUSPECT (busy)' / 'WEDGE (idle)' /
-    'UNKNOWN (evidence missing: ...)'. NEVER returns None or 'WEDGE' when the evidence needed to
-    support that conclusion is actually missing (P25).
+    'UNKNOWN (evidence missing: ...)' / 'UNKNOWN (busy-detection not yet calibrated this run...)'.
+    NEVER returns None or 'WEDGE' when the evidence needed to support that conclusion is actually
+    missing (P25).
 
     Driver liveness is checked FIRST, UNCONDITIONALLY (addendum E) -- independent of the stall
     threshold, so a driver that crashed early (before any stall timer could fire) is reported
-    immediately rather than silently read as 'not stalled yet'."""
+    immediately rather than silently read as 'not stalled yet'.
+
+    8th cold review round 8 P52(d): `calibrated=False` means busy-detection has NEVER actually
+    observed a BUSY sample in THIS run -- an idle reading in that state is NOT trustworthy enough
+    to label WEDGE (the busy-check mechanism itself could be silently broken: wrong pids, wrong
+    port, a %cpu metric that never reads above the threshold on this box -- it would then ALWAYS
+    read idle, manufacturing a false kill recommendation every time). The CALLER (`run_watch`)
+    is responsible for tracking calibration state across ticks and passing it in; this function
+    stays stateless."""
     if not pid_alive_fn(driver_pid):
         return "DRIVER DEAD"
     if seconds_since_reference is None:
@@ -300,7 +331,12 @@ def classify_stall(seconds_since_reference, stall_s: float, driver_pid: int,
     busy = busy_check_fn() if busy_check_fn is not None else None
     if busy is None:
         return "UNKNOWN (evidence missing: no mlx_vlm worker process found to sample)"
-    return "RUNAWAY-SUSPECT (busy)" if busy else "WEDGE (idle)"
+    if not busy:
+        if not calibrated:
+            return ("UNKNOWN (busy-detection not yet calibrated this run -- no BUSY sample "
+                    "observed; refusing to label WEDGE on an unproven idle reading)")
+        return "WEDGE (idle)"
+    return "RUNAWAY-SUSPECT (busy)"
 
 
 # --------------------------------------------------------------------------- (2) rate / ETA
@@ -403,7 +439,8 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
                      pid_alive_fn=pid_alive, busy_check_fn=None, router_pid=None,
                      router_active_fn=router_recently_active, label: str = "",
                      rows_evidence: bool = True, manifest_evidence: bool = True,
-                     elapsed_s: float | None = None, predicted_mean_s: float | None = None) -> str:
+                     elapsed_s: float | None = None, predicted_mean_s: float | None = None,
+                     busy_observed_box: dict | None = None) -> str:
     done = len(rows)
     progressing = done > prev_rows_count
     stats = rate_stats(rows)
@@ -414,9 +451,24 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
     # verified router (see find_worker_pids) -- a caller-supplied `busy_check_fn` (tests) is used
     # verbatim; otherwise bind the default `worker_busy` to `router_pid` lazily (never called
     # unless classify_stall actually needs a busy/idle verdict).
-    effective_busy_check_fn = busy_check_fn if busy_check_fn is not None else (lambda: worker_busy(router_pid))
+    raw_busy_check_fn = busy_check_fn if busy_check_fn is not None else (lambda: worker_busy(router_pid))
+    # P52(d): `busy_observed_box` (when the caller tracks it -- `run_watch` does, across ticks)
+    # records whether a BUSY sample has EVER been seen in this run; `calibrated` reflects state
+    # from PRIOR ticks only (this tick's own result, once observed below, updates the box for
+    # FUTURE ticks). No box at all (every other build_assessment caller, mostly tests) means
+    # "not tracking calibration" -- always treated as calibrated, preserving prior behaviour.
+    if busy_observed_box is not None:
+        def effective_busy_check_fn():
+            result = raw_busy_check_fn()
+            if result is True:
+                busy_observed_box["seen"] = True
+            return result
+        calibrated = busy_observed_box.get("seen", False)
+    else:
+        effective_busy_check_fn = raw_busy_check_fn
+        calibrated = True
     stall_label = classify_stall(seconds_since_reference, stall_s, driver_pid,
-                                 pid_alive_fn, effective_busy_check_fn)
+                                 pid_alive_fn, effective_busy_check_fn, calibrated=calibrated)
     router_active = router_active_fn(router_log_path, ROUTER_ACTIVITY_WINDOW_S, now)
 
     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
@@ -663,23 +715,49 @@ def run_watch(args) -> int:
 
     prev_count = 0
     run_t0 = time.time()
+    tick_num = 0
+    # P52(d): persists ACROSS ticks (one dict for the whole run) -- see build_assessment's
+    # busy_observed_box docstring.
+    busy_observed_box: dict = {}
+    calibrate_fn = getattr(args, "calibrate_fn", None) or worker_busy
     try:
         while True:
+            tick_num += 1
             rows_path = Path(args.rows)
             rows = read_rows(rows_path)
             manifest = read_manifest(manifest_path)
             # P25: evidence presence is tracked explicitly, not inferred from a None reference.
-            rows_evidence = rows_path.exists()
-            manifest_evidence = manifest_path.exists()
+            # P52(a): existence alone is not enough -- a permission-denied file EXISTS but
+            # `read_rows`/`read_manifest` degrade it to [] / {} rather than crash, which would
+            # otherwise be indistinguishable from "genuinely no rows yet". `_readable()` catches
+            # that case so the tick reports UNKNOWN evidence instead of a false-empty state.
+            rows_evidence = rows_path.exists() and _readable(rows_path)
+            manifest_evidence = manifest_path.exists() and _readable(manifest_path)
             now = time.time()
             ref = reference_timestamp(rows, manifest, rows_path)
             router_pid = (manifest.get("router") or {}).get("pid")
+            if tick_num == 1:
+                # P52(c): a PROACTIVE calibration sample on the very first tick, independent of
+                # whether a stall is even suspected -- gives the operator early, concrete evidence
+                # that busy-detection reads something sane on THIS box/run (ideally sampled while
+                # a real request is in flight), rather than discovering only much later (at the
+                # first actual stall) whether the mechanism even works.
+                if router_pid is None:
+                    _append(out_path, "[agentbench_watch] CALIBRATION (tick 1): no router pid "
+                                     "recorded in the manifest yet -- cannot sample a worker\n")
+                else:
+                    calib_sample = calibrate_fn(router_pid)
+                    if calib_sample is True:
+                        busy_observed_box["seen"] = True
+                    _append(out_path, f"[agentbench_watch] CALIBRATION (tick 1): "
+                                     f"worker_busy={calib_sample} (router_pid={router_pid})\n")
             block = build_assessment(rows, prev_count, args.total, args.driver_pid,
                                      args.router_log, args.stall_s, ref, now, label=label,
                                      router_pid=router_pid,
                                      rows_evidence=rows_evidence, manifest_evidence=manifest_evidence,
                                      elapsed_s=now - run_t0,
-                                     predicted_mean_s=getattr(args, "predicted_mean_s", None))
+                                     predicted_mean_s=getattr(args, "predicted_mean_s", None),
+                                     busy_observed_box=busy_observed_box)
             _append(out_path, block)
             prev_count = len(rows)
             # addendum E: exit after a DRIVER DEAD tick regardless of row count -- a crashed
@@ -750,9 +828,14 @@ def run_calibrate(args, run_fn=_real_subprocess_run, sleep_fn=time.sleep,
         elapsed += 1.0
     numeric = [s for s in samples if s is not None]
     print(f"[agentbench_watch] CALIBRATE: samples={samples}")
-    if numeric:
-        print(f"[agentbench_watch] CALIBRATE: max={max(numeric):.1f} mean="
-             f"{sum(numeric) / len(numeric):.1f} threshold={WORKER_BUSY_THRESHOLD_PCT:.0f}")
+    if not numeric:
+        # P52(b): every sample failed (ps error every second of the window) -- this run produced
+        # NO evidence at all, never silently "succeed" with nothing to show for it.
+        print("[agentbench_watch] CALIBRATE: FAILED -- no valid %cpu sample was obtained in "
+             f"{duration_s:.0f}s (every `ps` call failed)", file=sys.stderr)
+        return 1
+    print(f"[agentbench_watch] CALIBRATE: max={max(numeric):.1f} mean="
+         f"{sum(numeric) / len(numeric):.1f} threshold={WORKER_BUSY_THRESHOLD_PCT:.0f}")
     return 0
 
 
