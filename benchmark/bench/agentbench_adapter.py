@@ -1120,9 +1120,17 @@ def evaluate_convergence(per_turn: list, thinking_budget, context_limit, max_tok
     thinking budget for that turn (prompt_tokens grows turn over turn, so the resolved budget
     shrinks over the episode -- `bench.convergence.resolved_thinking_budget` per turn, falling back
     to the declared budget when context_limit/max_tokens are unknown). Episode `converged` = ALL
-    turns converged; `budget_hits` counts turns that hit their own resolved budget."""
+    turns converged; `budget_hits` counts turns that hit their own resolved budget.
+
+    5th cold review P11: a turn with `completion_tokens is None` (the server omitted `usage`) can
+    never be PROVEN convergent -- fail closed. That turn's own `per_turn_converged` entry is `None`
+    (unknown), but it still forces the WHOLE episode to `converged=False` via
+    `nonconv_kinds += ["missing_usage"]`, exactly like any other non-convergence mechanism (a
+    `finish=="stop"` alone must never read as a silent pass)."""
     finish_reasons, budget_hits = [], 0
     per_turn_converged = []
+    per_turn_resolved_budget = []
+    nonconv_kinds = set()
     for t in per_turn:
         fr = t.get("finish_reason")
         finish_reasons.append(fr)
@@ -1134,13 +1142,29 @@ def evaluate_convergence(per_turn: list, thinking_budget, context_limit, max_tok
                 context_limit=context_limit, max_tokens=max_tokens)
             if rb is not None:
                 budget = rb
-        hit_budget = bool(budget is not None and ct is not None and ct >= budget)
+        per_turn_resolved_budget.append(budget)
+        if ct is None:
+            per_turn_converged.append(None)
+            nonconv_kinds.add("missing_usage")
+            continue
+        hit_budget = bool(budget is not None and ct >= budget)
         if hit_budget:
             budget_hits += 1
-        per_turn_converged.append(fr in ("stop", "tool_calls") and not hit_budget)
-    episode_converged = all(per_turn_converged) if per_turn_converged else None
+            nonconv_kinds.add("budget_hit")
+        ok_finish = fr in ("stop", "tool_calls")
+        if not ok_finish:
+            nonconv_kinds.add("bad_finish_reason")
+        per_turn_converged.append(ok_finish and not hit_budget)
+    if not per_turn:
+        episode_converged = None
+    elif "missing_usage" in nonconv_kinds:
+        episode_converged = False
+    else:
+        episode_converged = all(per_turn_converged)
     return {"converged": episode_converged, "per_turn_finish_reasons": finish_reasons,
-            "budget_hits": budget_hits, "per_turn_converged": per_turn_converged}
+            "budget_hits": budget_hits, "per_turn_converged": per_turn_converged,
+            "per_turn_resolved_budget": per_turn_resolved_budget,
+            "nonconv_kinds": sorted(nonconv_kinds) if episode_converged is False else []}
 
 
 # --------------------------------------------------------------------------- per-task run
@@ -1148,7 +1172,8 @@ def _fail_row(base: dict, outcome: str, t0, clock, **extra) -> dict:
     row = {**base, "passed": False, "outcome": outcome, "turns": 0, "submitted_via": None,
           "answer": None, "gold_prepare": base.get("gold_prepare"), "gold_live": None,
           "per_turn_completion_tokens": [], "completion_tokens_total": 0,
-          "per_turn_finish_reasons": [], "converged": None,
+          "per_turn_finish_reasons": [], "converged": None, "per_turn_resolved_budget": [],
+          "nonconv_kinds": [],
           "budget_hits": 0, "wall_s": round(clock() - t0, 2), "tool_calls": 0, "tool_timeouts": 0,
           "repeat_calls": 0, "exec_timeout": False, "shell_died": False, "setup_error": True,
           "decode_tps": None, "per_turn_decode_tps": [], "error": None, "_transcript_turns": []}
@@ -1270,6 +1295,8 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
                 "completion_tokens_total": counters.get("completion_tokens", 0),
                 "per_turn_finish_reasons": conv["per_turn_finish_reasons"],
                 "converged": conv["converged"], "budget_hits": conv["budget_hits"],
+                "per_turn_resolved_budget": conv["per_turn_resolved_budget"],
+                "nonconv_kinds": conv["nonconv_kinds"],
                 "wall_s": counters.get("wall_s", round(clock() - t0, 2)),
                 "tool_calls": counters.get("tool_calls", 0),
                 "tool_timeouts": tool_counters["tool_timeouts"],

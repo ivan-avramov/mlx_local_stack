@@ -60,3 +60,28 @@ def test_visionqa_image_cache_uses_config_sh_without_a_warning(monkeypatch, tmp_
     _config_sh(tmp_path, monkeypatch, 'export STACK_WORKDIR="$HOME/wd"\n')
     assert B._visionqa_image_cache_dir() == str(tmp_path / "home" / "wd" / "visionqa_images")
     assert "STACK_WORKDIR" not in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- confine_path (P19)
+def test_confine_path_accepts_a_path_under_the_repo():
+    p = paths.repo_root() / "benchmark" / "results" / "x.jsonl"
+    assert paths.confine_path(p) is None
+
+
+def test_confine_path_accepts_a_path_under_stack_workdir(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "wd"))
+    p = tmp_path / "wd" / "m54" / "transcripts" / "model" / "t1.json"
+    assert paths.confine_path(p) is None
+
+
+def test_confine_path_refuses_a_path_outside_both(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "wd"))
+    reason = paths.confine_path(tmp_path / "elsewhere" / "x.jsonl", what="--out")
+    assert reason and "--out" in reason and "outside" in reason
+
+
+def test_confine_path_refuses_outside_repo_when_workdir_unset(monkeypatch, tmp_path):
+    monkeypatch.delenv("STACK_WORKDIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty-xdg"))
+    reason = paths.confine_path(tmp_path / "elsewhere" / "x.jsonl")
+    assert reason is not None

@@ -12,6 +12,14 @@ import bench.run_agentbench_os as R
 from bench import paths
 
 
+@pytest.fixture(autouse=True)
+def _stack_workdir_is_tmp_path(monkeypatch, tmp_path):
+    """5th cold review P19 confines --out/--transcripts-dir/the exclusions artifact to the repo or
+    STACK_WORKDIR. Every test in this file writes under pytest's own `tmp_path`, which is neither
+    -- treat it as this test's STACK_WORKDIR so the existing fixtures keep working unmodified."""
+    monkeypatch.setattr(paths, "stack_workdir", lambda required=True: tmp_path)
+
+
 def _passing(monkeypatch, tmp_path, pid=999):
     monkeypatch.setattr(P, "router_owner", lambda port: {
         "pid": pid, "cmdline": "mlx-serve start", "cwd": str(tmp_path),
@@ -43,6 +51,15 @@ def _write_corpus(tmp_path, tasks):
 
 def _match_task(tid):
     return {"id": tid, "group": 1, "labels": [], "evaluation": {"match": "yes"}, "description": "d"}
+
+
+def _check_task(tid):
+    """A non-match task -- P10: a manual exclusion must not pre-empt the match exemption, so a
+    manually-excluded task in these tests must be a CHECK task (match tasks are never examined by
+    anything, manual included)."""
+    return {"id": tid, "group": 1, "labels": [],
+           "evaluation": {"check": [{"code": "true"}], "example": {"code": "echo x"}},
+           "description": "d"}
 
 
 IMAGE_IDS = {"default": "sha256:d", "packages": "sha256:p", "ubuntu": "sha256:u"}
@@ -200,7 +217,7 @@ def test_prepare_artifact_is_independent_of_out_path(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- manual exclusions
 def test_prepare_merges_manual_exclusions_into_the_artifact(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
-    corpus = _write_corpus(tmp_path, [_match_task("m0"), _match_task("m1")])
+    corpus = _write_corpus(tmp_path, [_check_task("m0"), _match_task("m1")])
     manual_path = AB.manual_exclusions_path(corpus)
     manual_path.write_text(json.dumps({"m0": "known blind spot"}), encoding="utf-8")
     rc = R.main(_args(tmp_path, prepare=""))
@@ -236,7 +253,7 @@ def test_generate_refuses_when_manual_exclusions_file_changed_since_prepare(tmp_
 def test_generate_accepts_when_manual_exclusions_file_unchanged_since_prepare(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
-    corpus = _write_corpus(tmp_path, [_match_task("m0"), _match_task("m1")])
+    corpus = _write_corpus(tmp_path, [_check_task("m0"), _match_task("m1")])
     manual_path = AB.manual_exclusions_path(corpus)
     manual_path.write_text(json.dumps({"m0": "x"}), encoding="utf-8")
     rc = R.main(_args(tmp_path, prepare=""))
@@ -561,6 +578,20 @@ def test_append_row_truncates_a_torn_tail_before_appending(tmp_path):
     assert json.loads(lines[0]) == {"id": "m0", "passed": True}
     assert json.loads(lines[1]) == {"id": "m2", "passed": True}
     assert len(lines) == 2   # the torn row is gone, not concatenated onto
+
+
+def test_append_row_preserves_a_complete_row_missing_only_its_newline_P13(tmp_path):
+    """5th cold review P13: a final line that IS a complete, valid JSON object (just missing its
+    trailing newline -- e.g. the write landed but the process died before the `\\n` byte) must be
+    PRESERVED, not deleted as if it were an actually-torn fragment."""
+    out = tmp_path / "rows.jsonl"
+    good = json.dumps({"id": "m0", "passed": True})
+    complete_no_newline = json.dumps({"id": "m1", "passed": False, "outcome": "failed_tests"})
+    out.write_text(good + "\n" + complete_no_newline, encoding="utf-8")
+    R.append_row(out, {"id": "m2", "passed": True})
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert [json.loads(l)["id"] for l in lines] == ["m0", "m1", "m2"]
+    assert json.loads(lines[1]) == {"id": "m1", "passed": False, "outcome": "failed_tests"}
 
 
 def test_append_row_leaves_a_clean_file_untouched(tmp_path):
@@ -888,8 +919,9 @@ def test_transcripts_dir_defaults_to_stack_workdir_m54_transcripts_model(tmp_pat
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     workdir = tmp_path / "workdir"
+    workdir.mkdir()
     monkeypatch.setattr(R.paths, "stack_workdir", lambda required=True: workdir)
-    args = _args(tmp_path)   # no --transcripts-dir
+    args = _args(tmp_path, out=str(workdir / "rows.jsonl"))   # no --transcripts-dir
     rc = R.main(args)
     assert rc == 0
     expected = workdir / "m54" / "transcripts" / "m"

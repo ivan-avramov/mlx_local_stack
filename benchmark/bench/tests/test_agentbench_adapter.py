@@ -1496,6 +1496,37 @@ def test_evaluate_convergence_none_for_empty_episode():
     assert out["converged"] is None and out["budget_hits"] == 0
 
 
+def test_evaluate_convergence_missing_completion_tokens_is_missing_usage_nonconv_P11():
+    """P11: a turn with no `completion_tokens` (the server omitted usage) can never be PROVEN
+    convergent -- fail closed. The episode is converged=False with nonconv_kinds containing
+    'missing_usage', never a silent pass just because finish_reason looked fine."""
+    per_turn = [{"completion_tokens": None, "finish_reason": "stop", "prompt_tokens": 1}]
+    out = AB.evaluate_convergence(per_turn, thinking_budget=100, context_limit=None, max_tokens=None)
+    assert out["converged"] is False
+    assert out["per_turn_converged"] == [None]
+    assert "missing_usage" in out["nonconv_kinds"]
+
+
+def test_evaluate_convergence_nonconv_kinds_empty_when_converged():
+    per_turn = [{"completion_tokens": 5, "finish_reason": "stop", "prompt_tokens": 1}]
+    out = AB.evaluate_convergence(per_turn, thinking_budget=100, context_limit=None, max_tokens=None)
+    assert out["converged"] is True
+    assert out["nonconv_kinds"] == []
+
+
+def test_evaluate_convergence_reports_per_turn_resolved_budget():
+    per_turn = [{"completion_tokens": 5, "finish_reason": "stop", "prompt_tokens": 1}]
+    out = AB.evaluate_convergence(per_turn, thinking_budget=100, context_limit=None, max_tokens=None)
+    assert out["per_turn_resolved_budget"] == [100]
+
+
+def test_evaluate_convergence_bad_finish_reason_is_tagged():
+    per_turn = [{"completion_tokens": 5, "finish_reason": "length", "prompt_tokens": 1}]
+    out = AB.evaluate_convergence(per_turn, thinking_budget=100, context_limit=None, max_tokens=None)
+    assert out["converged"] is False
+    assert "bad_finish_reason" in out["nonconv_kinds"]
+
+
 def test_evaluate_convergence_uses_resolved_budget_per_turn():
     """As prompt_tokens grows, the resolved budget SHRINKS -- a turn can hit it even though its
     own completion_tokens is well under the DECLARED budget."""

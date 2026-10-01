@@ -92,9 +92,13 @@ def read_rows(out_path: Path) -> list:
 
 def _truncate_torn_tail(path: Path) -> None:
     """cold-review N6: if `path` exists and its last byte is not `\\n`, an earlier write was
-    interrupted mid-row. Truncate back to the last complete `\\n` (the torn row is already
-    unrecoverable -- `read_rows` would have discarded it anyway) so the NEXT append starts a clean
-    new line rather than concatenating onto a half-written one."""
+    interrupted -- OR (5th cold review P13) the process was killed (SIGKILL, power loss) in the
+    narrow window AFTER `f.write(json.dumps(row) + "\\n")` fully landed on disk but BEFORE... no --
+    actually the gap this guards is simpler and real: a write that completed the JSON body but was
+    cut off before its own trailing `\\n` could be flushed. That dangling content may be a
+    COMPLETE, valid JSON object missing only its newline -- deleting a fully-written row just
+    because the newline didn't make it would silently drop real data. Only a content that is NOT
+    valid JSON on its own is an actually-torn (truly unrecoverable) fragment; truncate only that."""
     if not path.exists():
         return
     with open(path, "rb+") as f:
@@ -108,8 +112,17 @@ def _truncate_torn_tail(path: Path) -> None:
         f.seek(0)
         content = f.read()
         last_nl = content.rfind(b"\n")
-        f.seek(0)
-        f.truncate(last_nl + 1 if last_nl >= 0 else 0)
+        dangling = content[last_nl + 1:]
+        try:
+            json.loads(dangling.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            f.seek(0)
+            f.truncate(last_nl + 1 if last_nl >= 0 else 0)
+        else:
+            # P13: a complete row, just missing its trailing newline -- preserve it, add the
+            # newline so the NEXT append starts a clean new line.
+            f.seek(0, os.SEEK_END)
+            f.write(b"\n")
 
 
 def append_row(path: Path, row: dict) -> None:
@@ -408,6 +421,16 @@ def run_generate(args, out: Path) -> int:
         print(f"[agentbench_os] REFUSED: {refusal}", file=sys.stderr, flush=True)
         return 2
 
+    # 4th cold review G4: --limit truncates the candidate list to its FIRST N -- the corpus is
+    # ordered easy-first (see the "no job at n>=40 without a seeded pilot" rule), so combining it
+    # with --pilot-seed would draw a random sample from an already-biased, already-truncated
+    # subset, silently defeating the whole point of a seeded random pilot.
+    if args.limit and args.pilot_seed is not None:
+        print("[agentbench_os] REFUSED: --limit and --pilot-seed are mutually exclusive -- "
+             "--limit truncates to the corpus's (easy-first) head, which would bias any pilot "
+             "drawn from it.", file=sys.stderr, flush=True)
+        return 2
+
     all_tasks = AB.load_corpus(corpus_path)
     candidates = AB.apply_exclusions(all_tasks, exclusions)
     if args.limit:
@@ -558,6 +581,17 @@ def main(argv=None) -> int:
     args.scripts_root = Path(args.scripts_root)
     out = (Path(args.out) if args.out
           else paths.default_results_root() / args.model / f"{BENCH_NAME}.{TUNE}.jsonl")
+    # 5th cold review P19: --out and the transcripts dir are the only USER-STEERABLE write targets
+    # here -- confine both to the repo or STACK_WORKDIR before anything is written.
+    refusal = paths.confine_path(out, what="--out")
+    if refusal:
+        print(f"[agentbench_os] REFUSED: {refusal}", file=sys.stderr, flush=True)
+        return 2
+    if not args.prepare:
+        tdir_refusal = paths.confine_path(transcripts_dir_for(args), what="--transcripts-dir")
+        if tdir_refusal:
+            print(f"[agentbench_os] REFUSED: {tdir_refusal}", file=sys.stderr, flush=True)
+            return 2
     if args.prepare:
         return run_prepare(args, out)
     return run_generate(args, out)

@@ -93,3 +93,24 @@ def stack_workdir(*, required: bool = True) -> Path | None:
             "STACK_WORKDIR is not set and no `mlx_local_stack/config.sh` declares it (AGENTS.md: no "
             "filesystem pollution outside $STACK_WORKDIR). Export STACK_WORKDIR or source config.sh.")
     return None
+
+
+def confine_path(path, *, what: str = "path") -> str | None:
+    """5th cold review P19 (AGENTS.md: NO FILESYSTEM POLLUTION OUTSIDE $STACK_WORKDIR): None if
+    `path` (resolved) is under the repo root OR the configured STACK_WORKDIR; else a human-readable
+    refusal reason. STACK_WORKDIR is consulted only if actually configured (`required=False`) -- an
+    unset STACK_WORKDIR is not itself a confinement failure for a repo-relative path."""
+    p = Path(path).resolve()
+    roots = [repo_root().resolve()]
+    wd = stack_workdir(required=False)
+    if wd is not None:
+        roots.append(Path(wd).resolve())
+    for root in roots:
+        try:
+            p.relative_to(root)
+            return None
+        except ValueError:
+            continue
+    allowed = ", ".join(str(r) for r in roots)
+    return (f"{what} {p} is outside the repo and outside STACK_WORKDIR ({allowed}) -- refusing "
+           "(AGENTS.md: no filesystem pollution outside STACK_WORKDIR)")
