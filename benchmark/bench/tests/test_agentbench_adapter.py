@@ -1045,6 +1045,38 @@ def test_persistent_shell_leftover_bytes_past_sentinel_carried_raw_not_decoded_P
         shell.close()
 
 
+@pytest.mark.parametrize("trailer,trailer_name", [
+    ("€".encode("utf-8"), "complete_euro_sign"),
+    ("€".encode("utf-8")[:1], "partial_first_byte_of_euro_sign"),
+    (b"\xff", "raw_invalid_byte"),
+])
+def test_persistent_shell_trailer_never_influences_preceding_output_P11(monkeypatch, trailer, trailer_name):
+    """9th cold review round 9 P11 (refines P51): the raw bytes are split at the sentinel BEFORE
+    any decoding, and the command-output incremental decoder is finalized on the command bytes
+    ONLY -- the trailer (complete, partial, or outright invalid UTF-8) must NEVER influence the
+    preceding output. All three trailer shapes must produce output == "ABCD" and carry the
+    trailer bytes forward raw, unmodified."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        proc.stdout.push(b"ABCD" + marker + b"0\n" + trailer)
+        res = shell.run("printf ABCD", timeout_s=5)
+        assert res["output"] == "ABCD", f"trailer={trailer_name}"
+        assert res["exit_code"] == 0
+        assert shell._carry == trailer   # carried RAW, byte-for-byte, regardless of validity
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
 # --------------------------------------------------------------------------- PersistentShell (real bash)
 @_timeout(10)
 def test_persistent_shell_real_bash_runs_a_command_and_returns_exit_code(tmp_path):

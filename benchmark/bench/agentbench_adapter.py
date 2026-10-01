@@ -763,9 +763,31 @@ class PersistentShell:
 
         raw = bytearray(self._carry)
         total_bytes_in = len(self._carry)   # G2: tracked INDEPENDENTLY of capping, so
-        _feed(bytes(self._carry))           # a previous round's leftover carry IS output text too
+        # 9th cold review round 9 P11 (refines P51): `unfed` holds bytes received but NOT YET fed
+        # to the decoder -- never the full chunk blindly. Splitting happens at the RAW BYTE level,
+        # BEFORE any decoding: once the sentinel is found, only the bytes STRICTLY BEFORE the
+        # trailer (marker + exit-code digits + newline + any unexpected leftover) are fed; the
+        # trailer itself (whether a complete character, a partial lead byte, or outright invalid
+        # UTF-8) is NEVER fed to the decoder, so it can never poison `decode_broken` for output
+        # that was already clean. P51's approach fed the FULL chunk (command bytes AND trailer
+        # bytes together, whenever both arrived in the same read) to the SAME decoder call, so an
+        # invalid/incomplete trailer byte could flip decode_broken globally and discard GOOD
+        # command output alongside it -- reproduced: "ABCD" + sentinel + a bare 0xff byte wrongly
+        # produced the upstream decode-error message for "ABCD" too. While no sentinel has been
+        # found yet, it is only safe to feed everything EXCEPT the last `len(marker)-1` bytes
+        # (which might be the START of a marker that only completes once the next chunk arrives).
+        unfed = bytearray(self._carry)
         self._carry = b""                   # `raw_output_len` stays exact regardless of how many
         search_from = 0                     # times the retained buffer gets compacted.
+
+        def _flush_unfed() -> None:
+            # the process will never produce more bytes relevant to THIS run() call past this
+            # point (timeout / EOF / dead shell) -- any withheld tail is definitely genuine
+            # command output, not a developing marker; safe to feed it all now.
+            nonlocal unfed
+            if unfed:
+                _feed(bytes(unfed))
+                unfed = bytearray()
 
         try:
             while True:
@@ -779,34 +801,12 @@ class PersistentShell:
                         # total_bytes_in minus that trailing length is the exact TRUE output
                         # length.
                         raw_output_len = total_bytes_in - (len(raw) - idx)
-                        # 8th cold review round 8 P51 (MEDIUM): NEVER trim the incrementally
-                        # decoded TEXT by a BYTE-length trailer -- the old code assumed the
-                        # trailer (marker + exit-code digits + newline, plus any unexpected
-                        # "leftover" bytes past the sentinel) was pure ASCII, so its byte length
-                        # equalled its character length closely enough to subtract from
-                        # `len(decoded_text)`. An unexpected multibyte leftover byte sequence
-                        # breaks that assumption (byte length != character length) and corrupts
-                        # the trim, potentially slicing INTO the command's own real output.
-                        #
-                        # Fix: split the raw BYTES at the sentinel first -- `trailer_bytes =
-                        # raw[idx:]` is a COMPLETE, self-contained range (the marker is pure
-                        # ASCII and starts with `\n`, so it can never straddle a multibyte
-                        # sequence; `decode_broken is False` here means the incremental decoder
-                        # consumed the FULL stream, including the trailer, without a pending
-                        # partial sequence, so the trailer necessarily starts at a genuine
-                        # character boundary). Decode ONLY the trailer bytes, fresh, to learn its
-                        # TRUE character length, then trim `decoded_text` (the P28-correct,
-                        # never-capped-mid-character incremental decode of the COMMAND's own
-                        # output) by that many CHARACTERS -- never re-decoding `raw` itself
-                        # (which CAN be capping-corrupted mid-character; P28's whole point).
-                        if decode_broken:
-                            output = self.UPSTREAM_DECODE_ERROR_TEXT
-                        else:
-                            try:
-                                trailer_text = bytes(raw[idx:]).decode("utf-8")
-                                output = decoded_text[:len(decoded_text) - len(trailer_text)]
-                            except UnicodeDecodeError:
-                                output = self.UPSTREAM_DECODE_ERROR_TEXT
+                        trailer_len = len(raw) - idx
+                        command_part = (bytes(unfed[:len(unfed) - trailer_len])
+                                       if len(unfed) >= trailer_len else b"")
+                        if command_part:
+                            _feed(command_part)
+                        output = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
                         consumed_end = idx + len(marker) + m.end()
                         leftover = bytes(raw[consumed_end:])
                         if leftover:
@@ -821,11 +821,16 @@ class PersistentShell:
                     # offset once more data arrives (R4: never guess a partial exit code).
                     search_from = idx
                 else:
+                    safe_len = max(0, len(unfed) - (len(marker) - 1))
+                    if safe_len > 0:
+                        _feed(bytes(unfed[:safe_len]))
+                        del unfed[:safe_len]
                     search_from = len(raw)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     writer_box["abort"] = True
                     self._on_timeout()
+                    _flush_unfed()
                     out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
                     return {"output": out, "exit_code": None, "timed_out": True,
                            "shell_died": False, "raw_output_len": total_bytes_in}
@@ -836,18 +841,20 @@ class PersistentShell:
                         # the write itself failed (broken pipe / shell gone) AND nothing more is
                         # arriving on this pass -- the shell is dead.
                         self.dead = True
+                        _flush_unfed()
                         out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
                         return {"output": out, "exit_code": None, "timed_out": False,
                                "shell_died": True, "raw_output_len": total_bytes_in}
                     continue
                 if chunk is None:   # EOF -- the shell process exited (e.g. the command ran `exit`)
                     self.dead = True
+                    _flush_unfed()
                     out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
                     return {"output": out, "exit_code": None, "timed_out": False,
                            "shell_died": True, "raw_output_len": total_bytes_in}
                 total_bytes_in += len(chunk)
                 raw += chunk
-                _feed(chunk)
+                unfed += chunk
                 capped = self._cap_buffer(raw)
                 if len(capped) != len(raw):
                     # bytes were physically removed from the middle -- any offset computed against
