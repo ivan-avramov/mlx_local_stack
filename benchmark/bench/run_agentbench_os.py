@@ -471,28 +471,96 @@ MAX_GENERATION_HEADROOM_TOKENS = 4096   # P30: thinking_budget + this, when larg
 TIMEOUT_HEADROOM_S = 300.0              # P30: fixed prefill/load headroom, replacing the x1.5 safety factor
 
 
-def _min_per_turn_tps(rows: list, native: bool) -> float | None:
-    """6th cold review round 6 P30: the SLOW-tail evidence must be the recorded PER-TURN decode
-    rate (a turn's prompt grows across the episode, so later turns decode slower -- an
-    EPISODE-AVERAGE `decode_tps` hides exactly the turns most likely to time out), not a
-    percentile-smoothed aggregate. For this axis's OWN rows (`native=True`, AgentBench OS rows
-    carry `per_turn_decode_tps`), flatten every turn's rate across every row and take the TRUE
-    minimum. Fallback benches (math500/convergence) are single-turn probes with only one
-    `decode_tps` per row -- the minimum ACROSS ROWS is the best available slow-tail evidence
-    there."""
-    vals = []
+def _percentile(values: list, pct: int) -> float:
+    s = sorted(values)
+    idx = max(0, min(len(s) - 1, int((pct / 100.0) * (len(s) - 1))))
+    return s[idx]
+
+
+def _floor_tps_R6(rows: list, native: bool) -> float | None:
+    """6th cold review round 6 P30 + 7th cold review round 7 addendum R6: the SLOW-tail evidence
+    must be the recorded PER-TURN decode rate (a turn's prompt grows across the episode, so later
+    turns decode slower -- an EPISODE-AVERAGE `decode_tps` hides exactly the turns most likely to
+    time out), never a bare episode average. R6 refines P30's "true minimum" into: the 10th
+    PERCENTILE over turns whose completion_tokens >= 256 (a turn generating only a handful of
+    tokens can have an anomalously small tok/s value dominated by fixed per-request overhead, not
+    sustained decode rate -- including those would bias the floor far lower than reality),
+    falling back to the plain MINIMUM across ALL qualifying turns when fewer than 5 turns meet
+    that 256-token threshold (too little evidence for a percentile to mean anything). For this
+    axis's OWN rows (`native=True`), turns are paired from `per_turn_decode_tps`/
+    `per_turn_completion_tokens`; fallback benches (math500/convergence) are single-turn probes,
+    paired from `decode_tps`/`completion_tokens` directly."""
+    pairs = []   # (tps, completion_tokens)
     for r in rows:
         if r.get("error"):
             continue
         if native:
-            for v in (r.get("per_turn_decode_tps") or []):
-                if isinstance(v, (int, float)) and v > 0:
-                    vals.append(v)
+            tps_list = r.get("per_turn_decode_tps") or []
+            ct_list = r.get("per_turn_completion_tokens") or []
+            # index-based, not zip(): a row missing/short on per_turn_completion_tokens (older
+            # data, or a fixture with no token counts at all) must not silently DROP its tps
+            # evidence -- a missing count defaults to 0, which correctly fails the >=256
+            # qualifying threshold and falls through to the min-across-all-turns fallback below,
+            # matching this axis's behavior before R6 for data that never carried token counts.
+            for i, tps in enumerate(tps_list):
+                if isinstance(tps, (int, float)) and tps > 0:
+                    ct = ct_list[i] if i < len(ct_list) else 0
+                    pairs.append((tps, ct if isinstance(ct, (int, float)) else 0))
         else:
-            v = r.get("decode_tps")
-            if isinstance(v, (int, float)) and v > 0:
-                vals.append(v)
-    return min(vals) if vals else None
+            tps = r.get("decode_tps")
+            ct = r.get("completion_tokens")
+            if isinstance(tps, (int, float)) and tps > 0:
+                pairs.append((tps, ct if isinstance(ct, (int, float)) else 0))
+    if not pairs:
+        return None
+    qualifying = [tps for tps, ct in pairs if ct >= 256]
+    if len(qualifying) >= 5:
+        return _percentile(qualifying, 10)
+    return min(tps for tps, _ in pairs)
+
+
+def _rate_rows_matching_identity(model: str, bench: str, draft_kind) -> tuple:
+    """7th cold review round 7 P43(b): rate evidence is filtered to rows whose OWN sibling
+    manifest records the SAME model AND SAME draft_kind as the run being sized -- a historical row
+    from an incompatible serving configuration (e.g. a different predictor state) must never
+    silently inform this derivation. Returns (rows: list, source_files: list[str] -- the exact
+    files that contributed, recorded in the manifest's timeout_derivation block)."""
+    root = generate.results_root() / model
+    rows, source_files = [], []
+    if not root.is_dir():
+        return rows, source_files
+    candidates = sorted(root.glob(f"{bench}.jsonl")) + sorted(root.glob(f"{bench}.*.jsonl"))
+    for p in candidates:
+        if p.name.endswith("_samples.jsonl"):
+            continue
+        stem = p.name[:-len(".jsonl")] if p.name.endswith(".jsonl") else p.name
+        man_path = p.parent / f"{stem}.manifest.json"
+        if not man_path.exists():
+            continue
+        try:
+            man = json.loads(man_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 -- an unreadable manifest can't prove identity; skip
+            continue
+        if man.get("model") != model:
+            continue
+        if (man.get("runtime") or {}).get("draft_kind") != draft_kind:
+            continue
+        file_rows = []
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    file_rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        except OSError:
+            continue
+        if file_rows:
+            rows.extend(file_rows)
+            source_files.append(str(p))
+    return rows, source_files
 
 
 def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
@@ -515,18 +583,28 @@ def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
     (a fixed 300s prefill/load headroom, not a multiplicative safety factor). `max_generation_tokens`
     is the LARGER of the deployed `max_tokens` and `thinking_budget + 4096` -- `max_tokens` alone
     can under-count when the model's post-think answer legitimately extends past its thinking
-    budget; `floor_tps` is the TRUE per-turn minimum (see `_min_per_turn_tps`), never an
-    episode-averaged or percentile-smoothed rate."""
+    budget.
+
+    7th cold review round 7 P43(b): rate evidence is now FILTERED to rows whose own sibling
+    manifest records the SAME model AND SAME draft_kind as THIS run (`_rate_rows_matching_identity`)
+    -- an incompatible historical row (e.g. a 100 tok/s row from a different predictor state) used
+    to silently inform the derivation, once producing an "observable" 1,324s timeout for 102,400
+    tokens that had nothing to do with the CURRENT serving configuration. `floor_tps` is R6's
+    10th-percentile-over-turns->=256-tokens (falling back to the true minimum under 5 such turns;
+    see `_floor_tps_R6`), never a bare episode average. The contributing FILES are recorded in the
+    manifest (`source_files`)."""
     max_generation_tokens = max(thinking_budget or 0, 0) + MAX_GENERATION_HEADROOM_TOKENS
     if max_tokens:
         max_generation_tokens = max(max_generation_tokens, max_tokens)
     if explicit:
         derivation = {"max_generation_tokens": max_generation_tokens, "floor_decode_tps": None,
                      "headroom_s": None, "source": "explicit", "observable": "override",
-                     "reason": "explicit --llm-timeout override -- NOT independently validated"}
+                     "reason": "explicit --llm-timeout override -- NOT independently validated",
+                     "draft_kind": None, "source_files": []}
         return explicit, "explicit", f"{explicit:.0f}s (EXPLICIT --llm-timeout, UNVALIDATED)", derivation
-    own_rows = generate.rows_for_rate(model, BENCH_NAME)
-    tps = _min_per_turn_tps(own_rows, native=True)
+    draft_kind = provenance.registry_draft(model).get("draft_kind")
+    own_rows, source_files = _rate_rows_matching_identity(model, BENCH_NAME, draft_kind)
+    tps = _floor_tps_R6(own_rows, native=True)
     source = BENCH_NAME
     if tps is None:
         # cold-review N11: name only the benches that actually contributed rows, not every
@@ -536,28 +614,32 @@ def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
         contributors = []
         for b in FALLBACK_RATE_BENCHES:
             try:
-                rows = generate.rows_for_rate(model, b)
+                rows, files = _rate_rows_matching_identity(model, b, draft_kind)
             except Exception:  # noqa: BLE001 -- a missing/unreadable bench must not block the run
-                rows = []
+                rows, files = [], []
             if rows:
                 contributors.append(b)
             fb_rows += rows
-        tps = _min_per_turn_tps(fb_rows, native=False)
+            source_files += files
+        tps = _floor_tps_R6(fb_rows, native=False)
         source = f"fallback:{'+'.join(contributors)}" if tps is not None else "none"
     if not tps or tps <= 0:
         timeout_s = budget_timeout.CEILING_S
         observable = False
-        reason = "no measured per-turn decode rate -- a per-turn timeout cannot be SIZED"
+        reason = (f"no measured per-turn decode rate for model={model!r} draft_kind={draft_kind!r} "
+                 "-- a per-turn timeout cannot be SIZED (P43(b): rate evidence from an "
+                 "incompatible serving identity is excluded, never silently used as a fallback)")
     else:
         timeout_s = max_generation_tokens / tps + TIMEOUT_HEADROOM_S
         observable = True
         reason = (f"{max_generation_tokens} max generation tokens at {tps:.1f} tok/s floor "
-                 f"(TRUE per-turn minimum) = {max_generation_tokens / tps / 60:.1f} min + "
-                 f"{TIMEOUT_HEADROOM_S:.0f}s headroom, UNCAPPED (P14: no 7200s ceiling for this "
-                 "per-turn axis)")
+                 f"(R6: 10th pct over turns>=256 tok, else the min) = "
+                 f"{max_generation_tokens / tps / 60:.1f} min + {TIMEOUT_HEADROOM_S:.0f}s "
+                 "headroom, UNCAPPED (P14: no 7200s ceiling for this per-turn axis)")
     derivation = {"max_generation_tokens": max_generation_tokens, "floor_decode_tps": tps,
                  "headroom_s": TIMEOUT_HEADROOM_S, "source": source,
-                 "observable": observable, "reason": reason}
+                 "observable": observable, "reason": reason, "draft_kind": draft_kind,
+                 "source_files": source_files}
     return (round(timeout_s, 1), source,
            f"{timeout_s:.0f}s (DERIVED, timeout_source={source}) -- {reason}", derivation)
 
@@ -745,6 +827,24 @@ def run_generate(args, out: Path) -> int:
         except Exception:  # noqa: BLE001
             reused_timeout = None
     if reused_timeout is not None:
+        # 7th cold review round 7 addendum R6: an explicit --llm-timeout/--deadline-s on a resume
+        # that DIFFERS from the manifest's recorded value must REFUSE, not silently ignore it in
+        # favor of the reused number -- a silent ignore means the operator's explicit instruction
+        # was never actually applied and the run looks identical either way.
+        if args.llm_timeout and round(float(args.llm_timeout), 1) != round(reused_timeout["llm_timeout_s"], 1):
+            print(f"[agentbench_os] REFUSED: --llm-timeout={args.llm_timeout} was given explicitly "
+                 f"on this resume but differs from the manifest's recorded "
+                 f"llm_timeout_s={reused_timeout['llm_timeout_s']} -- a resume REUSES the pilot's "
+                 "timeout by design; start a fresh --out if you intend a different value.",
+                 file=sys.stderr, flush=True)
+            return 2
+        if args.deadline_s and round(float(args.deadline_s), 1) != round(reused_timeout["deadline_s"], 1):
+            print(f"[agentbench_os] REFUSED: --deadline-s={args.deadline_s} was given explicitly "
+                 f"on this resume but differs from the manifest's recorded "
+                 f"deadline_s={reused_timeout['deadline_s']} -- a resume REUSES the pilot's "
+                 "deadline by design; start a fresh --out if you intend a different value.",
+                 file=sys.stderr, flush=True)
+            return 2
         llm_timeout = reused_timeout["llm_timeout_s"]
         timeout_source = reused_timeout.get("timeout_source", "resumed")
         timeout_derivation = reused_timeout.get("timeout_derivation") or {"observable": True,

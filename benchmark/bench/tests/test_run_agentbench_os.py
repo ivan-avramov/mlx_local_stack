@@ -295,7 +295,7 @@ def test_generate_accepts_when_manual_exclusions_file_unchanged_since_prepare(tm
     manual_path.write_text(json.dumps({"m0": "x"}), encoding="utf-8")
     rc = R.main(_args(tmp_path, prepare=""))
     assert rc == 0
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path))
@@ -372,7 +372,7 @@ def test_full_generate_writes_rows_manifest_and_summary(tmp_path, monkeypatch):
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m1")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
 
@@ -397,7 +397,7 @@ def test_manifest_records_the_actual_overridden_profile_F15(tmp_path, monkeypatc
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m1")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     monkeypatch.setattr(R.model_params, "params_for",
                        lambda model, profile: {"temperature": 1.0, "max_tokens": 10, "thinking_budget": 5})
     fake, _ = _fake_run_task_factory()
@@ -477,7 +477,7 @@ def test_setup_error_rows_excluded_from_acc_denominator_F1(tmp_path, monkeypatch
     tasks = [_match_task("m0"), _match_task("m1")]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
 
     def fake_run_task(model, task, scripts_root, driver, params, **kw):
         if task["id"] == "m0":
@@ -511,7 +511,7 @@ def test_transport_failure_escalates_and_writes_no_row_F1(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0"), _match_task("m1")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     seen = []
 
     def fake_run_task(model, task, scripts_root, driver, params, **kw):
@@ -746,8 +746,8 @@ def test_resume_reuses_llm_timeout_and_deadline_from_previous_manifest_addendum_
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     # pilot: derive from a measured rate (no explicit --llm-timeout)
-    monkeypatch.setattr(R.generate, "rows_for_rate",
-                       lambda model, bench: [{"per_turn_decode_tps": [10.0]}] * 10 if bench == "agentbench_os" else [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}] * 10, ["f1"]) if bench == "agentbench_os" else ([], []))
     rc = R.main(_args(tmp_path, limit=1, llm_timeout=None))
     assert rc == 0
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
@@ -757,13 +757,67 @@ def test_resume_reuses_llm_timeout_and_deadline_from_previous_manifest_addendum_
     # resume: the axis now has MORE rows with a DIFFERENT measured rate -- would derive a
     # DIFFERENT number if re-derived, but must REUSE the pilot's instead.
     seen.clear()
-    monkeypatch.setattr(R.generate, "rows_for_rate",
-                       lambda model, bench: [{"decode_tps": 999.0}] * 50 if bench == "agentbench_os" else [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"decode_tps": 999.0}] * 50, ["f2"]) if bench == "agentbench_os" else ([], []))
     rc = R.main(_args(tmp_path, resume="", llm_timeout=None))
     assert rc == 0
     man2 = json.loads((tmp_path / "rows.manifest.json").read_text())
     assert man2["runtime"]["llm_timeout_s"] == pilot_timeout
     assert man2["runtime"]["deadline_s"] == pilot_deadline
+
+
+def test_resume_refuses_when_explicit_llm_timeout_differs_from_the_manifest_R6(tmp_path, monkeypatch, capsys):
+    """7th cold review round 7 addendum R6: an explicit --llm-timeout on a resume that DIFFERS
+    from the manifest's recorded value must REFUSE, not silently ignore it in favor of reuse."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1, llm_timeout="60"))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert man["runtime"]["llm_timeout_s"] == 60.0
+
+    seen.clear()
+    rc = R.main(_args(tmp_path, resume="", llm_timeout="99"))
+    assert rc == 2 and seen == []
+    assert "REFUSED" in capsys.readouterr().err
+
+
+def test_resume_accepts_an_explicit_llm_timeout_matching_the_manifest_R6(tmp_path, monkeypatch):
+    """The SAME explicit value re-given on resume is NOT a conflict -- only a DIFFERING value
+    refuses."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1, llm_timeout="60"))
+    assert rc == 0
+    seen.clear()
+    rc = R.main(_args(tmp_path, resume="", llm_timeout="60"))
+    assert rc == 0 and seen == ["m1"]
+
+
+def test_resume_refuses_when_explicit_deadline_s_differs_from_the_manifest_R6(tmp_path, monkeypatch, capsys):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1, llm_timeout="60", deadline_s="600"))
+    assert rc == 0
+    seen.clear()
+    rc = R.main(_args(tmp_path, resume="", llm_timeout="60", deadline_s="9999"))
+    assert rc == 2 and seen == []
+    assert "REFUSED" in capsys.readouterr().err
 
 
 def test_resume_refuses_when_previous_manifest_has_served_config_drift_P7(tmp_path, monkeypatch, capsys):
@@ -894,7 +948,7 @@ def test_pilot_draw_is_recorded_in_manifest_and_limits_the_run(tmp_path, monkeyp
     tasks = [_match_task(f"m{i}") for i in range(20)]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, pilot_seed=7, pilot_n=5))
@@ -949,7 +1003,7 @@ def test_pilot_executes_in_the_sampled_order_not_resorted_P17(tmp_path, monkeypa
     tasks = [_match_task(f"m{i}") for i in range(20)]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, pilot_seed=7, pilot_n=5))
@@ -964,7 +1018,7 @@ def test_limit_caps_number_of_tasks_run(tmp_path, monkeypatch):
     tasks = [_match_task(f"m{i}") for i in range(10)]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, limit=3))
@@ -978,7 +1032,7 @@ def test_exclusions_are_never_run(tmp_path, monkeypatch):
             "evaluation": {"check": [{"code": "x"}]}, "description": "d"}]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus, exclusions=[{"id": "m1", "reason": "no_gold"}])
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path))
@@ -991,7 +1045,7 @@ def test_generate_sweeps_only_the_generate_prefix(tmp_path, monkeypatch):
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     swept = []
@@ -1183,35 +1237,110 @@ def test_resume_after_a_torn_tail_real_file_both_old_and_new_rows_readable_then_
     assert sorted(r["id"] for r in rows2) == ["m0", "m1", "m2"]
 
 
-# --------------------------------------------------------------------------- P30 timeout formula
-def test_min_per_turn_tps_native_flattens_per_turn_rates_and_takes_the_true_minimum():
-    """6th cold review round 6 P30: the floor must be the TRUE per-turn minimum (a turn's slow
-    tail, as prompt grows across the episode), never an episode-averaged `decode_tps`."""
+# --------------------------------------------------------------------------- P30/R6 timeout formula
+def test_floor_tps_r6_native_falls_back_to_true_minimum_under_5_qualifying_turns():
+    """6th cold review round 6 P30 + 7th round addendum R6: with FEWER than 5 turns at
+    completion_tokens>=256 (here: none carry completion_tokens at all), the floor falls back to
+    the TRUE minimum across all turns -- never an episode-averaged `decode_tps`."""
     rows = [{"per_turn_decode_tps": [50.0, 30.0, 5.0]}, {"per_turn_decode_tps": [40.0]}]
-    assert R._min_per_turn_tps(rows, native=True) == 5.0
+    assert R._floor_tps_R6(rows, native=True) == 5.0
 
 
-def test_min_per_turn_tps_native_ignores_error_rows_and_non_numeric_turns():
+def test_floor_tps_r6_native_ignores_error_rows_and_non_numeric_turns():
     rows = [{"per_turn_decode_tps": [50.0, None, 2.0], "error": None},
            {"per_turn_decode_tps": [1.0], "error": "boom"}]   # excluded: errored row
-    assert R._min_per_turn_tps(rows, native=True) == 2.0
+    assert R._floor_tps_R6(rows, native=True) == 2.0
 
 
-def test_min_per_turn_tps_fallback_uses_per_row_decode_tps():
+def test_floor_tps_r6_fallback_uses_per_row_decode_tps():
     rows = [{"decode_tps": 20.0}, {"decode_tps": 5.0}, {"decode_tps": 50.0}]
-    assert R._min_per_turn_tps(rows, native=False) == 5.0
+    assert R._floor_tps_R6(rows, native=False) == 5.0
 
 
-def test_min_per_turn_tps_none_when_no_evidence():
-    assert R._min_per_turn_tps([], native=True) is None
-    assert R._min_per_turn_tps([{"per_turn_decode_tps": []}], native=True) is None
+def test_floor_tps_r6_none_when_no_evidence():
+    assert R._floor_tps_R6([], native=True) is None
+    assert R._floor_tps_R6([{"per_turn_decode_tps": []}], native=True) is None
+
+
+def test_floor_tps_r6_uses_10th_percentile_over_turns_with_at_least_256_tokens():
+    """7th cold review round 7 addendum R6: with >=5 turns at completion_tokens>=256, the floor
+    is the 10th PERCENTILE over THOSE turns, not the bare minimum -- a turn generating only a
+    handful of tokens (fixed per-request overhead, not sustained decode) must not set the floor."""
+    rows = [{"per_turn_decode_tps": [100.0, 90.0, 80.0, 70.0, 60.0, 1.0],
+            "per_turn_completion_tokens": [300, 300, 300, 300, 300, 10]}]   # last turn: 10 tok, excluded
+    tps = R._floor_tps_R6(rows, native=True)
+    assert tps == 60.0   # 10th pct over [60,70,80,90,100] (sorted) == the lowest of the 5
+    assert tps != 1.0   # the tiny-token turn must NOT set the floor
+
+
+def test_floor_tps_r6_fallback_to_minimum_with_fewer_than_5_qualifying_turns():
+    """Only 4 turns qualify (>=256 tokens) -- too little evidence for a percentile, so fall back
+    to the true minimum across ALL turns (including the small ones)."""
+    rows = [{"per_turn_decode_tps": [100.0, 90.0, 80.0, 70.0, 1.0],
+            "per_turn_completion_tokens": [300, 300, 300, 300, 10]}]
+    assert R._floor_tps_R6(rows, native=True) == 1.0
+
+
+def _write_rate_row_file(tmp_path, model: str, bench: str, tune: str, man_model: str,
+                         man_draft_kind, row: dict):
+    root = tmp_path / model
+    root.mkdir(parents=True, exist_ok=True)
+    stem = f"{bench}.{tune}" if tune else bench
+    rows_path = root / f"{stem}.jsonl"
+    rows_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    man_path = root / f"{stem}.manifest.json"
+    man_path.write_text(json.dumps({"model": man_model, "runtime": {"draft_kind": man_draft_kind}}),
+                        encoding="utf-8")
+    return rows_path
+
+
+def test_rate_rows_matching_identity_includes_a_file_whose_manifest_matches_P43b(tmp_path, monkeypatch):
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", man_model="m1", man_draft_kind="mtp",
+                         row={"per_turn_decode_tps": [42.0]})
+    rows, files = R._rate_rows_matching_identity("m1", R.BENCH_NAME, "mtp")
+    assert len(rows) == 1 and rows[0]["per_turn_decode_tps"] == [42.0]
+    assert len(files) == 1 and files[0].endswith(f"{R.BENCH_NAME}.v1.jsonl")
+
+
+def test_rate_rows_matching_identity_excludes_a_file_with_a_different_draft_kind_P43b(tmp_path, monkeypatch):
+    """7th cold review round 7 P43(b): rate evidence from an INCOMPATIBLE serving identity
+    (different draft_kind) must never silently inform the derivation."""
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", man_model="m1", man_draft_kind="off",
+                         row={"per_turn_decode_tps": [999.0]})
+    rows, files = R._rate_rows_matching_identity("m1", R.BENCH_NAME, "mtp")
+    assert rows == [] and files == []
+
+
+def test_rate_rows_matching_identity_excludes_a_file_with_no_manifest_P43b(tmp_path, monkeypatch):
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    root = tmp_path / "m1"
+    root.mkdir(parents=True)
+    (root / f"{R.BENCH_NAME}.v1.jsonl").write_text(json.dumps({"per_turn_decode_tps": [999.0]}) + "\n",
+                                                    encoding="utf-8")
+    rows, files = R._rate_rows_matching_identity("m1", R.BENCH_NAME, "mtp")
+    assert rows == [] and files == []
+
+
+def test_derive_llm_timeout_end_to_end_filters_by_draft_kind_real_files_P43b(tmp_path, monkeypatch):
+    """End-to-end (no _rate_rows_matching_identity mock): a compatible-draft_kind file sizes the
+    timeout; an incompatible-draft_kind file for the SAME model is silently excluded."""
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    monkeypatch.setattr(R.provenance, "registry_draft", lambda model, **k: {"draft_kind": "mtp"})
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", man_model="m1", man_draft_kind="off",
+                         row={"per_turn_decode_tps": [999.0]})   # incompatible -- must be excluded
+    timeout_s, source, msg, d = R._derive_llm_timeout("m1", 1000, 2000, None)
+    assert d["observable"] is False   # no COMPATIBLE evidence found anywhere
+    assert d["draft_kind"] == "mtp"
+    assert d["source_files"] == []
 
 
 def test_derive_llm_timeout_formula_uses_max_generation_tokens_over_floor_tps_plus_headroom(monkeypatch):
     """P30: timeout = max_generation_tokens / floor_tps + 300s headroom (no multiplicative safety
     factor); max_generation_tokens is the LARGER of max_tokens and thinking_budget+4096."""
-    monkeypatch.setattr(R.generate, "rows_for_rate",
-                       lambda model, bench: [{"per_turn_decode_tps": [10.0]}] if bench == "agentbench_os" else [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}], ["f"]) if bench == "agentbench_os" else ([], []))
     timeout_s, source, msg, d = R._derive_llm_timeout("m", 1000, 2000, None)
     # thinking_budget+4096=5096 < max_tokens=2000? no, 5096 > 2000, so max_generation_tokens=5096
     assert d["max_generation_tokens"] == 5096
@@ -1219,8 +1348,8 @@ def test_derive_llm_timeout_formula_uses_max_generation_tokens_over_floor_tps_pl
 
 
 def test_derive_llm_timeout_max_tokens_wins_when_larger_than_budget_plus_headroom(monkeypatch):
-    monkeypatch.setattr(R.generate, "rows_for_rate",
-                       lambda model, bench: [{"per_turn_decode_tps": [10.0]}] if bench == "agentbench_os" else [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}], ["f"]) if bench == "agentbench_os" else ([], []))
     _, _, _, d = R._derive_llm_timeout("m", 100, 50000, None)
     assert d["max_generation_tokens"] == 50000
 
@@ -1241,13 +1370,13 @@ def test_timeout_source_names_only_contributing_fallback_benches(tmp_path, monke
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
 
-    def rows_for_rate(model, bench):
+    def _rate_rows(model, bench, draft_kind):
         if bench == "agentbench_os":
-            return []
+            return [], []
         if bench == "math500":
-            return [{"decode_tps": v} for v in range(10, 30)]
-        return []   # convergence contributes NOTHING
-    monkeypatch.setattr(R.generate, "rows_for_rate", rows_for_rate)
+            return [{"decode_tps": v} for v in range(10, 30)], ["f_math500"]
+        return [], []   # convergence contributes NOTHING
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", _rate_rows)
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, llm_timeout=None))
@@ -1264,7 +1393,7 @@ def test_generate_refuses_when_llm_timeout_cannot_be_sized_P14(tmp_path, monkeyp
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, llm_timeout=None))
@@ -1278,7 +1407,7 @@ def test_generate_explicit_llm_timeout_overrides_an_unobservable_derivation_P14(
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, llm_timeout=45))
@@ -1294,8 +1423,8 @@ def test_manifest_records_timeout_derivation_block_P14(tmp_path, monkeypatch):
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate",
-                       lambda model, bench: [{"per_turn_decode_tps": [10.0]}] * 10 if bench == "agentbench_os" else [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}] * 10, ["f"]) if bench == "agentbench_os" else ([], []))
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, llm_timeout=None))
@@ -1305,6 +1434,7 @@ def test_manifest_records_timeout_derivation_block_P14(tmp_path, monkeypatch):
     assert d["observable"] is True
     assert d["floor_decode_tps"] == 10.0
     assert d["source"] == "agentbench_os"
+    assert d["source_files"] == ["f"]   # P43(b): the contributing files are recorded
 
 
 def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeypatch):
@@ -1316,8 +1446,8 @@ def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeyp
     _write_complete_exclusions(tmp_path, AB, corpus)
     # a very slow decode rate -> a large per-turn timeout -> the deadline must scale with it,
     # uncapped (this would have been clamped to 3600s before R3).
-    monkeypatch.setattr(R.generate, "rows_for_rate",
-                       lambda model, bench: [{"per_turn_decode_tps": [0.01]}] * 10 if bench == "agentbench_os" else [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [0.01]}] * 10, ["f"]) if bench == "agentbench_os" else ([], []))
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, llm_timeout=None))
@@ -1337,7 +1467,7 @@ def test_deadline_explicit_flag_overrides_the_default(tmp_path, monkeypatch):
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, **{"deadline-s": 9999}))
@@ -1353,7 +1483,7 @@ def test_summary_counts_exec_timeout_and_shell_died_rows(tmp_path, monkeypatch):
     tasks = [_match_task("m0"), _match_task("m1")]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
 
     def fake_run_task(model, task, scripts_root, driver, params, **kw):
         base, _ = _fake_run_task_factory()
@@ -1378,7 +1508,7 @@ def test_summary_counts_gold_prepare_differs_rows_R5(tmp_path, monkeypatch):
     tasks = [_match_task("m0"), _match_task("m1")]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
 
     def fake_run_task(model, task, scripts_root, driver, params, **kw):
         base, _ = _fake_run_task_factory()
@@ -1401,7 +1531,7 @@ def test_summary_gold_prepare_differs_ignores_rows_missing_either_gold(tmp_path,
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, _ = _fake_run_task_factory()   # gold_prepare/gold_live both None by default
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path))
@@ -1415,7 +1545,7 @@ def test_stale_skipped_marker_is_cleared_after_a_successful_run(tmp_path, monkey
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     (tmp_path / "rows.skipped.json").write_text(json.dumps({"skipped": True, "note": "stale"}),
                                                 encoding="utf-8")
     fake, _ = _fake_run_task_factory()
@@ -1454,7 +1584,7 @@ def test_generate_populates_gold_prepare_onto_every_row_from_the_artifact_AC5(tm
                                  scripts_root=str(scripts_root),
                                  scripts_sha256=AB.scripts_root_sha256(scripts_root),
                                  disposition={"m0": "match"})
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     seen_golds = []
 
     def fake_run_task(model, task, scripts_root, driver, params, **kw):
@@ -1478,7 +1608,7 @@ def test_generate_refuses_to_complete_when_served_file_changes_mid_run(tmp_path,
     reg = paths.registry_path()
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
 
     def fake_run_task(model, task, scripts_root, driver, params, **kw):
         reg.write_text(reg.read_text() + "\n# edited mid-run\n")
@@ -1497,7 +1627,7 @@ def test_transcript_written_after_the_row_with_expected_fields(tmp_path, monkeyp
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     tdir = tmp_path / "transcripts"
@@ -1521,7 +1651,7 @@ def test_transcript_not_written_when_no_row_is_appended(tmp_path, monkeypatch):
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
 
     def fake_run_task(model, task, scripts_root, driver, params, **kw):
         raise AB.TransportFailure(f"task {task['id']}: boom")
@@ -1612,7 +1742,7 @@ def test_manifest_records_transcripts_dir(tmp_path, monkeypatch):
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     tdir = tmp_path / "transcripts"
@@ -1627,7 +1757,7 @@ def test_transcripts_dir_defaults_to_stack_workdir_m54_transcripts_model(tmp_pat
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     workdir = tmp_path / "workdir"
