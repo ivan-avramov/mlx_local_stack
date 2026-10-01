@@ -1,68 +1,52 @@
-# Handoff — 2026-09-29 (late session): M51/M50 LIVE-VERIFIED; M46 live; D12 columns + M53/M52 landed; opencode pin 1.18.30
+# Handoff — 2026-10-01: M54 AgentBench OS built, reviewed, chain 1 complete; chain 2 (pty harness) running
 
-THE one handoff (AGENTS.md: rewritten in place each session; there is no per-feature handoff). Read this,
-then `docs/PLAN.md` (the only queue) and `docs/open-questions.md` (decisions). Specs for queued work live in
-`docs/specs/`; history in `docs/lab-notebook.md`.
+THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (the only queue) and
+`docs/open-questions.md` (decisions; C107 holds the M54 rulings and amendments). Spec + pre-registered acceptance
+criteria: `docs/specs/m54-agentbench-os.md`. Results narrative: `docs/campaign-results.md` 2026-10-01. History:
+`docs/lab-notebook.md` 2026-10-01.
 
 ## State of the world
 
-- **Git: all pushed** — stack main `70a61a7` (operator, 2026-09-29 end of session). Forks `../mlx-vlm` `1bd249d3` and
-  mlx-serve `6602ae5` unchanged. Clean trees.
-- **Stack is UP on the NEW `runserver.sh`** (M51 script): shell pid 36341, router pid 36401 on :8000,
-  `MLX_SERVE_CONFIG=main_models.yaml`, sessions 2, APC absent (verified `ps -Eww`), compose healthy. Resident model:
-  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (worker `--draft-kind mtp`, native16 KV per C81). `kill -TERM 36341`
-  now tears the whole stack down (verified live today); `scripts/stack_stop.sh` remains the stop for stale shells.
-- **Picks unchanged**: B/C 1st `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` t0.5 medium, native16 KV (C81
-  provisional), repaired MTP. No serving config changed this session.
-- Bench suite: **1901 passed / 3 skipped** (M53, D12, M52, P89 and C106 tests added).
+- **Git: NOT pushed** — stack main at `815af79` + later data/docs commits this session (see `git log 70a61a7..`). Forks unchanged.
+- **Stack is DOWN; a LEAN ROUTER is up** for the M54 arms: router pid 70408 on :8000, `MLX_SERVE_CONFIG=$STACK_WORKDIR/m54/overlay_m54_draft_off.yaml`
+  (every `draft_*` stripped from the registry of record; sha `81fa0c15…`), `MLX_VLM_CACHE_SESSION_MAX=2`, APC absent. The daily driver
+  (`runserver.sh`, OpenWebUI) was stopped with `scripts/stack_stop.sh` at 04:52 PDT. **Restore the daily driver after chain 2:**
+  `scripts/stack_stop.sh` (kills the lean router) then `./runserver.sh` (or `/mlx start`).
+- **Picks unchanged.** No serving config changed. Registry of record untouched.
+- **Chain 2 is RUNNING** (`$STACK_WORKDIR/m54/arms_909b1e0/run_arms.py`, runner pid in `runner.pid`, per-arm `driver.log`/`watch.log`,
+  `RUNLOG.md` with RESULT lines): five arms in order first pick, second pick, `Ornith-1.0-35B-mlx-uniform-4bit`,
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`; harness `909b1e0` (pty shell), ~4 h.
+  Pinned worktrees under `$STACK_WORKDIR/m54/wt-*` (remove with `git worktree remove` when done).
+- Docker images `local-os/{default,packages,ubuntu}` built from `ubuntu:24.04@sha256:11dc1ccb…`; exclusions artifact rule v2
+  (`benchmark/corpora/agentbench_os_v1.exclusions.json`, 142 gradeable) — committed once `scripts_root` is relative (task with the implementer).
 
-## DONE this session (notebook 2026-09-29, two entries; PLAN M50/M51/M46/D12/M52/M53; open-questions C106)
+## DONE this session
 
-- **M51 live PASS**: old shell (pid 96728) cleared by `stack_stop.sh`; fresh bring-up in 10 s; ONE `kill -TERM` on the
-  shell exited shell, both server trees, log tail and compose in 3.1 s, `Cleaned up (:8000 free)`, 0 listeners.
-  Side finding: four `docker compose logs -f` orphans (ppid 1, 1–2 days old) from OLD-script shells had survived every
-  stop; killed by pid. The new script kills its own tail; `stack_stop.sh` does not sweep that pattern (one-liner if needed).
-- **M50 opencode path live PASS** (5 seeded python items, `$STACK_WORKDIR/m50/opencode_live_check.*`): the
-  `M50 served-config OK: opencode -> http://localhost:8000/v1 …` line before any request; manifest `router` block
-  scrubbed; `skill_policy` + `opencode_config_sha256` recorded. 5/5 passed, no stalls/loops.
-- **M46 live PASS**: one transcript per row under `$STACK_WORKDIR/opencode_transcripts/`, `loop_metrics` populated.
-- **D12 first accounting** by hand (`$STACK_WORKDIR/m50/d12_accounting.py`): session cache turns 569K cumulative input
-  into 79K incremental prefill; fit ~873 tok/s incremental prefill, ~42 tok/s decode; prefill 18 % / decode 82 % of
-  router wall at ≤19.5K context. Transcript `tokens.input` = incremental, `reasoning` = 0 (router reports no split).
-  The two report columns are still to land in the probe (D12 stays queued with a definition note).
-- **Rulings**: P81 → **M52** queued (`vision_gate` manifest); P82 → **C106 DEFERRED** (router-side config hash);
-  P83 → opencode child proxy rule unchanged.
-- **M53 DONE** (P86): `_stack_workdir()` at entry before M50, env else `config.sh` fallback (no shell executed); live-verified
-  both ways with zero router requests. **D12 row columns DONE** (P87): `traffic{...}` per row, validated on the five live
-  transcripts. **Pin bumped** to opencode 1.18.30 (P88).
-- **M52 DONE**: `vision_gate` writes a manifest beside its rows (router block, deployed profile, corpus sha,
-  `router_history` on rerun, refusal on a different served config); live one-item PASS on the daily driver.
-- **P89 DONE**: `bench.paths.stack_workdir` (env, else config.sh parsed) serves the probe, the gate's image cache and
-  the visionqa loader; live resume of the gate without the export: no warning, cache under the workdir.
-- **C106 driver-side belt DONE** (P97): served-file sha in every M50 block; exit re-verification in all six drivers refuses
-  completion on drift (file hash or pid). **Rulings**: C77/C78/C87/C96 closed (P93–P95); C104 ratified (P96).
+- M54 built from the spec by a Sonnet implementer; 16 cold-review rounds (Claude reviewer ×12 with real-bash/pty probes and
+  mutation testing, Codex gpt-6-astra ×8); every round's findings in `$STACK_WORKDIR/m54/codex_review_*.md` and the agent reports.
+- Live pilot 3/5 (first pick); two shakedown arms on `1feba7c`; **chain 1 on `b43c8e5` complete** (table in campaign-results):
+  dense Qwen checkpoints tie at 0.61–0.62, `Ornith-1.0-35B-mlx-uniform-4bit` 0.549, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 0.415;
+  rows `benchmark/results/<model>/agentbench_os.v1.chain1.*`, report `benchmark/results/agentbench_os_compare_chain1.md`.
+- Tools: `bench/run_agentbench_os.py` (driver, `--prepare`, M50/C106), `bench/agentbench_adapter.py`, `bench/agentbench_watch.py`
+  (5-min daemon, calibrated busy/idle), `bench/agentbench_compare.py` (paired report; refuses mixed harness/shell_mode),
+  `scripts/build_agentbench_images.sh`. Suite ~2520 tests.
 
 ## Rules learned this session
 
-- Against the daily driver a probe launch needs NEITHER export: `MLX_SERVE_CONFIG` defaults to `main_models.yaml` and
-  `STACK_WORKDIR` falls back to `config.sh` (M53). `MLX_SERVE_CONFIG` is mandatory only when a lean router serves an
-  overlay. Neither guard exists outside the bench drivers — daily opencode/OpenWebUI use is untouched.
-- The router metrics log's `TTFT`/`tok/s` fields appear only on some requests and the `tok/s` on long completions is
-  not the decode rate; derive D12 rates from a fit over (incremental prompt, completion, ms).
-- `kv_bits: 0` in the registry means NO `--kv-bits` flag on the worker cmdline (mlx-serve emits it only for >0); the
-  `--kv-quant-scheme turboquant` flag still appears and is inert. Read both before calling a worker "quantized".
+- Upstream AgentBench OS shell is `tty=True` interactive bash (AgentRL `create_shell`); a non-tty shell dies on a model syntax error.
+  Upstream strips five escape patterns before the model sees output (`task.py` `Container.execute`).
+- Upstream grades check-tasks by running the reference in the task's OWN container → randomized-init tasks are gradeable; an exclusion
+  rule that compares two fresh containers over-excludes (11 tasks).
+- The first pick's native16 KV at full prealloc plus docker containers runs the box at 84–87 % RAM; one router 500 at 96 %.
+  The 4-bit-KV models never warned. Keep the box quiet for native16 arms.
+- zsh: a failed glob aborts the whole command line (monitors died silently); `${=var}` for word-splitting.
+- The C35 provenance tests read the LIVE worker; they fail by design while a draft-off overlay arm is resident.
 
-## Pending (reconciled)
+## Pending
 
-1. **D12 report side**: wall-clock cost per task from the row's `traffic` × rates fitted on the router metrics log
-   (script in `$STACK_WORKDIR/m50/`); lands with the next agentic run's report.
-3. **C106 RULED driver-side, DONE (P97).** **Deferred**: frontier-driver composition (switchyard doc §8); S1 NVSY (parked);
-   **C104 RULED 2026-09-29 (P96): (a)–(d) ratified as the standing fork-sync policy.** **C77/C78/C87/C96 CLOSED 2026-09-29** (P93–P95:
-   superseded by C84/C88/C89 certification, documentation-only, superseded by C97/C98).
-4. **D7** and **D5** remain driver-side backlog.
+1. Chain 2 completion → compare report (chain 2 only) → harness-sensitivity note (chain 1 vs 2, by hand, never pooled) → campaign-results/README update → restore daily driver.
+2. Commit the chain-1 rows (blocked on a narrow piicheck exemption for guest-OS `/home/<name>/` paths in agentbench rows) and the exclusions artifact (relative `scripts_root`).
+3. Decision for the operator: chain 2 becomes the record if its results agree; if they differ materially, the pty harness is the faithful one.
+4. Push: operator's call (nothing pushed this session).
 
-## Resume discipline
-
-One resident model; APC absent; retained sessions 2; full active preallocation; deployed sampling; explicit
-served-overlay environment on every OVERLAY driver (M50 refuses a mismatch; the probe resolves `STACK_WORKDIR` itself). Never alter source/config during a live run. Commit coherent units; push only on explicit
-current-turn instruction (forks before stack). Next decision id C107; discussion ids continue from P97.
+Next decision id C108; discussion ids continue from P5.
