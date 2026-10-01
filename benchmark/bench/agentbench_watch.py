@@ -54,6 +54,9 @@ ROUTER_ACTIVITY_MARKER = "/v1/chat/completions"
 WORKER_SAMPLE_GAP_S = 3.0
 WORKER_BUSY_THRESHOLD_PCT = 20.0
 DEGENERATE_EOS_MAX_TOKENS = 5   # P32: finish_reason=="stop" with fewer tokens than this is suspect
+# 9th round's 8th-pass addendum N2: >= this many CONSECUTIVE (trailing) setup_error/harness_error rows
+# means the harness itself is failing repeatedly -- overrides the economics-based recommendation.
+HARNESS_FAILURE_STREAK_THRESHOLD = 3
 
 # Known-positive self-test fixture (AGENTS.md: "an instrument that cannot distinguish healthy from
 # not-looking is worse than none") -- a tiny but representative row set exercising every branch of
@@ -489,7 +492,8 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
                      rows_evidence: bool = True, manifest_evidence: bool = True,
                      elapsed_s: float | None = None, predicted_mean_s: float | None = None,
                      busy_observed_box: dict | None = None,
-                     persistence_box: dict | None = None) -> str:
+                     persistence_box: dict | None = None,
+                     fix_cost_s: float | None = None) -> str:
     done = len(rows)
     progressing = done > prev_rows_count
     stats = rate_stats(rows)
@@ -584,21 +588,61 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
         numbers = (f"done={done} (need >=5) predicted_mean_wall_total_s={predicted_mean_s} "
                   "-- not enough evidence to decide")
     else:
+        # 9th cold review round 9 P13 (supersedes P54's sunk-cost comparison): PERSISTENCE now
+        # ALSO requires at least one NEW row to have arrived between the two trigger-firing
+        # blocks -- re-polling the SAME stale rows faster must never fake persistence. A trigger
+        # that fires again before any new row arrived FREEZES the streak (neither advances nor
+        # resets) rather than counting a stale re-observation as fresh confirmation.
         if persistence_box is not None:
-            persistence_box["streak"] = persistence_box.get("streak", 0) + 1 if trigger else 0
-            streak = persistence_box["streak"]
+            prev_done = persistence_box.get("last_done")
+            new_row_since_last = prev_done is not None and done > prev_done
+            prev_streak = persistence_box.get("streak", 0)
+            if trigger:
+                streak = 1 if prev_streak == 0 else (prev_streak + 1 if new_row_since_last
+                                                      else prev_streak)
+            else:
+                streak = 0
+            persistence_box["streak"] = streak
+            persistence_box["last_done"] = done
         else:
             streak = 1 if trigger else 0
+        problem_detected = streak >= 2
         remaining = max(total - done, 0)
-        remaining_cost_s = remaining * mean_s
-        restart_cost_s = done * mean_s
-        correct = bool(streak >= 2 and remaining_cost_s > restart_cost_s)
-        recommendation = "CORRECT" if correct else "FINISH"
-        numbers = (f"trigger_streak={streak} remaining_cost_s={round(remaining_cost_s, 1)} "
-                  f"restart_cost_s={round(restart_cost_s, 1)} "
+        cost_if_continued_s = remaining * mean_s
+        # P13: the recommendation is no longer a bare sunk-cost comparison -- it is
+        # PROBLEM DETECTED (the persisted trigger, defined above) PLUS an ECONOMICS verdict.
+        # `--fix-cost-s` (optional) is the estimated cost of actually applying a correction;
+        # CORRECT only when fixing now (its cost, PLUS finishing the remainder at the BETTER
+        # predicted rate) is cheaper than continuing at the CURRENT, worse, observed rate. No
+        # fix-cost given means the economics genuinely cannot be evaluated -- say so explicitly,
+        # never silently default to either verdict.
+        if not problem_detected:
+            recommendation = "FINISH"
+            economics = "n/a (no problem detected)"
+        elif fix_cost_s is not None:
+            cost_if_fixed_s = fix_cost_s + remaining * predicted_mean_s
+            recommendation = "CORRECT" if cost_if_fixed_s < cost_if_continued_s else "FINISH"
+            economics = (f"fix_cost_s={fix_cost_s} cost_if_fixed_s={round(cost_if_fixed_s, 1)} "
+                        f"cost_if_continued_s={round(cost_if_continued_s, 1)}")
+        else:
+            recommendation = "UNKNOWN"
+            economics = "economics UNKNOWN (no --fix-cost-s given)"
+        numbers = (f"trigger_streak={streak} PROBLEM_DETECTED={problem_detected} {economics} "
                   f"ratio={None if ratio is None else round(ratio, 2)} "
                   f"nonconv_share={None if nonconv_share is None else round(nonconv_share, 2)} "
                   f"setup_error_in_last_5={last5_setup_error}")
+    # 9th round's 8th-pass addendum N2: a harness-failure trigger OVERRIDES economics entirely -- >= 3
+    # CONSECUTIVE setup_error/harness_error rows (trailing) means the HARNESS itself is failing
+    # repeatedly, independent of whatever the cost comparison says; recommend CORRECT regardless.
+    harness_streak = 0
+    for r in reversed(rows):
+        if r.get("setup_error") or r.get("harness_error"):
+            harness_streak += 1
+        else:
+            break
+    if harness_streak >= HARNESS_FAILURE_STREAK_THRESHOLD:
+        recommendation = "CORRECT"
+        numbers = f"HARNESS FAILURE STREAK={harness_streak} (overrides economics) " + numbers
     lines.append(
         f"    CORRECT-vs-FINISH: observed_mean_wall_total_s={None if mean_s is None else round(mean_s, 2)} "
         f"predicted_mean_wall_total_s={predicted_mean_s} {numbers} -> {recommendation}"
@@ -863,7 +907,8 @@ def run_watch(args) -> int:
                                      elapsed_s=now - run_t0,
                                      predicted_mean_s=getattr(args, "predicted_mean_s", None),
                                      busy_observed_box=busy_observed_box,
-                                     persistence_box=persistence_box)
+                                     persistence_box=persistence_box,
+                                     fix_cost_s=getattr(args, "fix_cost_s", None))
             _append(out_path, block)
             prev_count = len(rows)
             # addendum E: exit after a DRIVER DEAD tick regardless of row count -- a crashed
@@ -892,6 +937,11 @@ def build_argparser() -> argparse.ArgumentParser:
                     help="P43(d): a prior prediction (typically the pilot's own observed mean "
                          "wall_total_s) to compare the axis's CURRENT observed mean against, for "
                          "the CORRECT-vs-FINISH recommendation line.")
+    ap.add_argument("--fix-cost-s", type=float, default=None,
+                    help="P13: the estimated wall-clock cost (seconds) of actually applying a "
+                         "correction, once PROBLEM DETECTED fires -- CORRECT only when fixing now "
+                         "is cheaper than continuing at the current observed rate. Omitted means "
+                         "the economics cannot be evaluated ('economics UNKNOWN').")
     ap.add_argument("--once", action="store_true", help="tick exactly once and exit (testing)")
     ap.add_argument("--calibrate", action="store_true",
                     help="P38: sample the discovered worker's %%cpu for 10s during a KNOWN-ACTIVE "

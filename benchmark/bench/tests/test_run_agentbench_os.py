@@ -1333,6 +1333,19 @@ def test_floor_tps_r6_uses_10th_percentile_over_turns_with_at_least_256_tokens()
     assert tps != 1.0   # the tiny-token turn must NOT set the floor
 
 
+def test_floor_tps_r6_10th_percentile_genuinely_differs_from_the_plain_minimum_G3():
+    """9th round's 8th-pass addendum G3: the test above uses a 5-element qualifying set, where the 10th
+    percentile's index computation (int(0.1*4)=0) happens to COINCIDE with the plain minimum --
+    a mutant that silently replaced _percentile(qualifying, 10) with min(qualifying) would still
+    pass it. With 11 qualifying turns, the 10th percentile index (int(0.1*10)=1) lands on the
+    SECOND-lowest value, genuinely distinct from min() -- this is the mutation-sensitive case."""
+    tps_values = [float(v) for v in range(10, 121, 10)]   # 10..120, 11 values
+    rows = [{"per_turn_decode_tps": tps_values, "per_turn_completion_tokens": [300] * 11}]
+    tps = R._floor_tps_R6(rows, native=True)
+    assert tps == 20.0        # the 10th percentile (2nd-lowest of the sorted 11)
+    assert tps != min(tps_values)   # != 10.0 -- genuinely NOT the plain minimum
+
+
 def test_floor_tps_r6_fallback_to_minimum_with_fewer_than_5_qualifying_turns():
     """Only 4 turns qualify (>=256 tokens) -- too little evidence for a percentile, so fall back
     to the true minimum across ALL turns (including the small ones)."""
@@ -1849,6 +1862,42 @@ def test_resume_reuses_the_same_run_id_transcripts_dir_P29(tmp_path, monkeypatch
     man2 = json.loads((workdir / "rows.manifest.json").read_text())
     assert man2["runtime"]["transcripts_dir"] == first_dir
     assert (Path(first_dir) / "m1.json").exists()
+
+
+def test_resume_refuses_when_the_resolved_transcripts_dir_is_outside_confinement_P42(tmp_path, monkeypatch, capsys):
+    """9th round's 8th-pass addendum G3 (P42 mutation-sensitive coverage): main()'s EARLY --transcripts-dir
+    confinement check only ever sees the BASE path (computed before resume resolution) -- a
+    manifest recording an out-of-bounds transcripts_dir (e.g. a prior run under a since-changed
+    STACK_WORKDIR, or hand-tampered) must still refuse once resolved, not silently write there."""
+    import tempfile
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    monkeypatch.setattr(R.paths, "stack_workdir", lambda required=True: workdir)
+    rc = R.main(_args(tmp_path, out=str(workdir / "rows.jsonl"), limit=1))
+    assert rc == 0
+
+    man_path = workdir / "rows.manifest.json"
+    man = json.loads(man_path.read_text())
+    outside_dir = Path(tempfile.mkdtemp(prefix="agentbench_os_p42_outside_"))
+    try:
+        man["runtime"]["transcripts_dir"] = str(outside_dir)
+        man_path.write_text(json.dumps(man))
+
+        seen.clear()
+        rc = R.main(_args(tmp_path, out=str(workdir / "rows.jsonl"), resume=""))
+        assert rc == 2
+        assert seen == []
+        assert "transcripts-dir" in capsys.readouterr().err
+    finally:
+        import shutil
+        shutil.rmtree(outside_dir, ignore_errors=True)
 
 
 def test_two_fresh_runs_use_different_run_id_transcript_dirs_P29(tmp_path, monkeypatch):

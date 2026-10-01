@@ -366,6 +366,31 @@ def test_worker_busy_none_when_cpu_sample_itself_fails_P38():
     assert W.worker_busy(ROUTER_PID, run_fn=run_fn, sleep_fn=lambda s: None) is None
 
 
+def test_worker_busy_none_when_specifically_the_FIRST_cpu_sample_fails_P38_G3(monkeypatch):
+    """9th round's 8th-pass addendum G3: the test above fails BOTH samples identically (a single fixed cpu_rc),
+    so it cannot distinguish a mutant that removes `if s1 is None: return None` -- with BOTH
+    samples failing, the SECOND check alone would still (coincidentally) catch it. This test makes
+    ONLY the first %cpu call fail and the second SUCCEED -- if the s1-specific check were removed,
+    `max(None, 50.0)` would raise TypeError instead of cleanly returning None."""
+    calls = {"cpu": 0}
+
+    def run_fn(argv):
+        if argv[:2] == ["pgrep", "-fl"]:
+            return W._FakeCompletedProcess("111 x --port 8000\n", 0)
+        if argv[:2] == ["ps", "-o"] and "ppid=" in argv[2]:
+            return W._FakeCompletedProcess(f"{ROUTER_PID}\n", 0)
+        if argv[:2] == ["ps", "-o"] and "%cpu=" in argv[2]:
+            calls["cpu"] += 1
+            if calls["cpu"] == 1:
+                return W._FakeCompletedProcess("", 1)   # the FIRST sample fails
+            return W._FakeCompletedProcess("50.0\n", 0)   # the SECOND would succeed
+        return W._FakeCompletedProcess("", 1)
+
+    assert W.worker_busy(ROUTER_PID, run_fn=run_fn, sleep_fn=lambda s: None) is None
+    assert calls["cpu"] == 1   # proves it returned after the FIRST failed sample, never reaching
+                               # a second attempt (which this fixture deliberately made succeed)
+
+
 # --------------------------------------------------------------------------- _ppid_chain_contains (P38)
 def test_ppid_chain_contains_direct_parent():
     run_fn = _run_fn(ppid_out=f"{ROUTER_PID}\n")
@@ -647,50 +672,108 @@ def test_correct_vs_finish_single_tick_trigger_is_not_enough_P54():
                                persistence_box=box)
     assert "ratio=10.0" in block
     assert "trigger_streak=1" in block
+    assert "PROBLEM_DETECTED=False" in block
     assert "-> FINISH" in block
 
 
-def test_correct_vs_finish_recommends_correct_when_trigger_persists_2_ticks_and_cost_favors_it_P54():
-    """P54: the trigger must persist for >= 2 CONSECUTIVE blocks (same persistence_box across two
-    build_assessment calls) AND the estimated remaining cost must exceed the sunk/restart cost."""
+# --------------------------------------------------------------------------- P13 PROBLEM DETECTED + economics
+def test_correct_vs_finish_streak_does_not_advance_without_a_new_row_between_ticks_P13():
+    """9th cold review round 9 P13: re-polling the SAME stale rows faster must never fake
+    persistence -- the streak only advances past 1 when a NEW row has arrived between the two
+    trigger-firing ticks. The SAME 5 rows on both ticks must stay at streak=1, FINISH."""
     now = time.time()
     rows = [_row(f"r{i}", wall_total_s=100.0, converged=True) for i in range(5)]
     box = {}
-    # tick 1: trigger fires, streak becomes 1 -- not yet persisted.
     block1 = W.build_assessment(rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
                                 reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box)
-    assert "-> FINISH" in block1
-    # tick 2: trigger fires again -- streak becomes 2, persisted. remaining=15*100=1500 >
-    # restart=5*100=500 -- correction is worth it.
+    assert "trigger_streak=1" in block1 and "-> FINISH" in block1
     block2 = W.build_assessment(rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
                                 reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box)
+    assert "trigger_streak=1" in block2   # FROZEN, not advanced -- no new row arrived
+    assert "PROBLEM_DETECTED=False" in block2
+    assert "-> FINISH" in block2
+
+
+def test_correct_vs_finish_problem_detected_when_trigger_persists_with_a_new_row_between_ticks_P13():
+    """P13: the trigger must persist across >= 2 consecutive blocks WITH at least one new row
+    arriving between them -- PROBLEM DETECTED fires once that holds."""
+    now = time.time()
+    rows5 = [_row(f"r{i}", wall_total_s=100.0, converged=True) for i in range(5)]
+    rows6 = rows5 + [_row("r5", wall_total_s=100.0, converged=True)]   # one NEW row arrived
+    box = {}
+    block1 = W.build_assessment(rows5, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                                reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box)
+    assert "trigger_streak=1" in block1
+    block2 = W.build_assessment(rows6, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                                reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box)
     assert "trigger_streak=2" in block2
-    assert "remaining_cost_s=1500.0" in block2
-    assert "restart_cost_s=500.0" in block2
+    assert "PROBLEM_DETECTED=True" in block2
+
+
+def test_correct_vs_finish_problem_detected_but_no_fix_cost_is_economics_unknown_P13():
+    """P13: PROBLEM DETECTED with NO --fix-cost-s given means the economics genuinely cannot be
+    evaluated -- recommendation is UNKNOWN, never silently CORRECT or FINISH."""
+    now = time.time()
+    rows5 = [_row(f"r{i}", wall_total_s=100.0, converged=True) for i in range(5)]
+    rows6 = rows5 + [_row("r5", wall_total_s=100.0, converged=True)]
+    box = {}
+    W.build_assessment(rows5, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                       reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box)
+    block2 = W.build_assessment(rows6, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                                reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box)
+    assert "PROBLEM_DETECTED=True" in block2
+    assert "economics UNKNOWN" in block2
+    assert "-> UNKNOWN" in block2
+
+
+def test_correct_vs_finish_problem_detected_fix_cost_favors_correcting_P13():
+    """P13: fix_cost_s given, PROBLEM DETECTED -- CORRECT when
+    fix_cost + remaining*predicted_mean < remaining*observed_mean."""
+    now = time.time()
+    rows5 = [_row(f"r{i}", wall_total_s=100.0, converged=True) for i in range(5)]
+    rows6 = rows5 + [_row("r5", wall_total_s=100.0, converged=True)]
+    box = {}
+    # total=20, done=6 after tick 2 -> remaining=14. predicted_mean=10 -> cost_if_fixed =
+    # fix_cost + 14*10 = fix_cost + 140. cost_if_continued = 14*100 = 1400. fix_cost=50 ->
+    # 50+140=190 < 1400 -> CORRECT.
+    W.build_assessment(rows5, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                       reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box,
+                       fix_cost_s=50.0)
+    block2 = W.build_assessment(rows6, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                                reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box,
+                                fix_cost_s=50.0)
+    assert "PROBLEM_DETECTED=True" in block2
+    assert "fix_cost_s=50.0" in block2
+    assert "cost_if_fixed_s=190.0" in block2
+    assert "cost_if_continued_s=1400.0" in block2
     assert "-> CORRECT" in block2
 
 
-def test_correct_vs_finish_persisted_trigger_but_cost_does_not_favor_correction_P54():
-    """P54: even with a persisted trigger, if the remaining work costs LESS than what's already
-    sunk (nearly done), the verdict stays FINISH -- correcting now would waste more than it saves."""
+def test_correct_vs_finish_problem_detected_fix_cost_favors_continuing_P13():
+    """P13: a fix_cost high enough (or little enough remaining work left) that fixing costs more
+    than just continuing -- still FINISH, even with a detected problem."""
     now = time.time()
-    rows = [_row(f"r{i}", wall_total_s=100.0, converged=True) for i in range(18)]
+    rows18 = [_row(f"r{i}", wall_total_s=100.0, converged=True) for i in range(18)]
+    rows19 = rows18 + [_row("r18", wall_total_s=100.0, converged=True)]
     box = {}
-    for _ in range(2):
-        block = W.build_assessment(rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
-                                   reference_ts=now, now=now, predicted_mean_s=10.0,
-                                   persistence_box=box)
-    # remaining=2*100=200, restart=18*100=1800 -- NOT worth correcting this close to the end.
-    assert "trigger_streak=2" in block
-    assert "remaining_cost_s=200.0" in block
-    assert "restart_cost_s=1800.0" in block
-    assert "-> FINISH" in block
+    # total=20, done=19 after tick 2 -> remaining=1. cost_if_continued=1*100=100.
+    # fix_cost=500 -> cost_if_fixed = 500 + 1*10 = 510 > 100 -- NOT worth it.
+    W.build_assessment(rows18, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                       reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box,
+                       fix_cost_s=500.0)
+    block2 = W.build_assessment(rows19, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                                reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box,
+                                fix_cost_s=500.0)
+    assert "PROBLEM_DETECTED=True" in block2
+    assert "-> FINISH" in block2
 
 
 def test_correct_vs_finish_streak_resets_when_trigger_stops_firing_P54():
     now = time.time()
     triggering_rows = [_row(f"r{i}", wall_total_s=100.0, converged=True) for i in range(5)]
-    calm_rows = [_row(f"r{i}", wall_total_s=10.0, converged=True) for i in range(5)]
+    # a FRESH set of all-calm rows (not triggering_rows + one cheap row -- the mean would still
+    # be dominated by the 5 expensive rows and keep triggering).
+    calm_rows = [_row(f"c{i}", wall_total_s=10.0, converged=True) for i in range(6)]
     box = {}
     W.build_assessment(triggering_rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
                        reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box)
@@ -698,7 +781,8 @@ def test_correct_vs_finish_streak_resets_when_trigger_stops_firing_P54():
     W.build_assessment(calm_rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
                        reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box)
     assert box["streak"] == 0   # the calm tick reset it -- no persistence credit carries over
-    block3 = W.build_assessment(triggering_rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+    more_rows = calm_rows + [_row("r6", wall_total_s=100.0, converged=True)]
+    block3 = W.build_assessment(more_rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
                                 reference_ts=now, now=now, predicted_mean_s=10.0, persistence_box=box)
     assert "trigger_streak=1" in block3   # starts over, not 3
     assert "-> FINISH" in block3
@@ -712,6 +796,45 @@ def test_correct_vs_finish_without_a_persistence_box_never_recommends_correct_P5
     block = W.build_assessment(rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
                                reference_ts=now, now=now, predicted_mean_s=10.0)
     assert "-> CORRECT" not in block
+
+
+# --------------------------------------------------------------------------- N2 harness failure streak
+def test_correct_vs_finish_harness_failure_streak_overrides_economics_N2():
+    """9th round's 8th-pass addendum N2: >= 3 CONSECUTIVE (trailing) setup_error/harness_error rows
+    override economics entirely -- CORRECT regardless of what the cost comparison would say, even
+    with NO problem otherwise detected (no trigger, no persistence, no fix cost)."""
+    now = time.time()
+    rows = [_row(f"r{i}", wall_total_s=10.0, converged=True) for i in range(5)]
+    rows[-1]["setup_error"] = True
+    rows[-2]["setup_error"] = True
+    rows[-3]["harness_error"] = True
+    block = W.build_assessment(rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                               reference_ts=now, now=now, predicted_mean_s=10.0)
+    assert "HARNESS FAILURE STREAK=3" in block
+    assert "-> CORRECT" in block
+
+
+def test_correct_vs_finish_harness_failure_streak_below_threshold_does_not_override_N2():
+    now = time.time()
+    rows = [_row(f"r{i}", wall_total_s=10.0, converged=True) for i in range(5)]
+    rows[-1]["setup_error"] = True
+    rows[-2]["setup_error"] = True   # only 2 consecutive -- below the threshold of 3
+    block = W.build_assessment(rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                               reference_ts=now, now=now, predicted_mean_s=10.0)
+    assert "HARNESS FAILURE STREAK" not in block
+    assert "-> FINISH" in block
+
+
+def test_correct_vs_finish_harness_failure_streak_broken_by_a_passing_row_N2():
+    """The streak is TRAILING and must break on the first non-failing row scanning backward."""
+    now = time.time()
+    rows = [_row(f"r{i}", wall_total_s=10.0, converged=True) for i in range(6)]
+    rows[0]["setup_error"] = True
+    rows[1]["setup_error"] = True
+    rows[2]["setup_error"] = True   # 3 consecutive, but NOT trailing (rows[3:] are clean)
+    block = W.build_assessment(rows, 0, 20, os.getpid(), "/nonexistent", stall_s=2700.0,
+                               reference_ts=now, now=now, predicted_mean_s=10.0)
+    assert "HARNESS FAILURE STREAK" not in block
 
 
 def test_build_assessment_emits_a_grep_friendly_summary_line():
@@ -769,11 +892,17 @@ def test_self_test_raises_when_a_case_would_misclassify(tmp_path, monkeypatch):
 
 
 def test_self_test_runs_without_a_tmp_dir_argument_and_cleans_up(tmp_path, monkeypatch):
-    """P42: the default (no explicit tmp_dir) path writes under $STACK_WORKDIR/m54/tmp."""
+    """P42: the default (no explicit tmp_dir) path writes under $STACK_WORKDIR/m54/tmp.
+
+    9th round's 8th-pass addendum G3: "not list(tmp_path.glob('m54/tmp/*'))" ALONE is NOT
+    mutation-sensitive -- a mutant that reverted to the bare system temp dir (never touching
+    tmp_path at all) would ALSO leave tmp_path/m54/tmp empty/nonexistent and still pass. The
+    added assertion proves the CONFINED base directory was actually created or used."""
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     out = W.self_test()
     assert "SELF-TEST" in out
     assert "[OK] progressing" in out
+    assert (tmp_path / "m54" / "tmp").is_dir()   # proves the confined base was actually used
     assert not list(tmp_path.glob("m54/tmp/*"))   # cleaned up after self_test() returns
 
 
