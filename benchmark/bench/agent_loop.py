@@ -44,6 +44,24 @@ def _parse_args(raw) -> dict:
         return {}
 
 
+def _parse_args_with_error(raw) -> tuple:
+    """6th cold review round 6 P27 (HIGH): malformed tool-call arguments must NEVER be silently
+    substituted with `{}` -- that let a garbled `finish_action`/submit call through as a VALID
+    (if empty) submission, reproduced as a passing one-turn episode on a state-check task.
+    Mirrors upstream AgentBench task.py's own parse-failure handling (`except Exception as e: ...
+    content=str(e)`, feeding the exception text back as a tool response and continuing the
+    episode, never ending it). Returns (args: dict, error: str|None)."""
+    if isinstance(raw, dict):
+        return raw, None
+    try:
+        v = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as e:
+        return {}, f"Error parsing arguments: {e}"
+    if not isinstance(v, dict):
+        return {}, f"Error parsing arguments: expected a JSON object, got {type(v).__name__}"
+    return v, None
+
+
 _JSON_TYPES = {"string": str, "integer": int, "number": (int, float), "boolean": bool,
                "array": list, "object": dict}
 
@@ -144,8 +162,14 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
         for tc in calls_this_turn:
             fn = (tc.get("function") or {})
             name = fn.get("name")
-            args = _parse_args(fn.get("arguments"))
+            args, parse_error = _parse_args_with_error(fn.get("arguments"))
             counters.observe({"name": name, "args": args}, cschema, turn=turns)
+            if parse_error is not None:
+                # P27: a malformed-arguments call is NEVER a submission, regardless of which tool
+                # name it claims (including submit_tool) -- feed back the parse error (upstream's
+                # own mechanism) and let the episode continue, never silently substitute {}.
+                messages.append({"role": "tool", "tool_call_id": tc.get("id"), "content": parse_error})
+                continue
             if name == submit_tool:
                 submitted = args
                 stop = True

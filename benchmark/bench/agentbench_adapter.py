@@ -1111,14 +1111,18 @@ def prepare_exclusions(tasks: list, scripts_root, runner=subprocess.run,
 
 
 # --------------------------------------------------------------------------- dual-submit driver
-def _parse_args(raw) -> dict:
+def _parse_args_or_error(raw) -> tuple:
+    """6th cold review round 6 P27: mirrors `agent_loop._parse_args_with_error` -- malformed
+    arguments are NEVER silently turned into `{}`. Returns (args: dict, error: str|None)."""
     if isinstance(raw, dict):
-        return raw
+        return raw, None
     try:
         v = json.loads(raw)
-        return v if isinstance(v, dict) else {}
-    except (json.JSONDecodeError, TypeError):
-        return {}
+    except (json.JSONDecodeError, TypeError) as e:
+        return {}, f"Error parsing arguments: {e}"
+    if not isinstance(v, dict):
+        return {}, f"Error parsing arguments: expected a JSON object, got {type(v).__name__}"
+    return v, None
 
 
 class DualSubmitDriver:
@@ -1167,10 +1171,18 @@ class DualSubmitDriver:
         for i, tc in enumerate(raw_tcs):
             fn = dict(tc.get("function") or {})
             name = fn.get("name")
-            args = _parse_args(fn.get("arguments"))
+            args, parse_error = _parse_args_or_error(fn.get("arguments"))
             if i == 0:
                 turn_entry["tool_call"] = {"name": name, "args": args}
-            if name == "finish_action":
+                if parse_error is not None:
+                    turn_entry["tool_call"]["parse_error"] = parse_error
+            # P27: a MALFORMED finish_action/answer_action is NEVER a submission -- leave `fn`
+            # completely UNCHANGED (do not rename, do not reserialize into fresh always-valid
+            # JSON) so agent_loop.run_agent's OWN fresh parse of the SAME raw argument string
+            # fails identically and feeds back upstream's corrective parse-error text, rather than
+            # us "fixing" a garbled call into a clean `{"answer": null}` that would then parse
+            # successfully and silently credit the episode.
+            if parse_error is None and name == "finish_action":
                 fn["name"] = self.SUBMIT_TOOL
                 fn["arguments"] = json.dumps({"answer": args.get("thought")})
                 # cold-review N10: run_agent only ever DISPATCHES tool_calls[0]
@@ -1179,7 +1191,7 @@ class DualSubmitDriver:
                 if i == 0:
                     self.submitted_via = "finish"
                     turn_entry["tool_result"] = "submitted"
-            elif name == self.SUBMIT_TOOL:
+            elif parse_error is None and name == self.SUBMIT_TOOL:
                 if i == 0:
                     self.submitted_via = "answer"
                     turn_entry["tool_result"] = "submitted"

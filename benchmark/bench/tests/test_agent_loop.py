@@ -59,15 +59,32 @@ def test_agent_respects_max_turns():
 
 
 def test_agent_handles_bad_tool_args():
-    # arguments is not valid JSON -> treated as {}; unknown tool name -> error result, loop continues.
+    """6th cold review round 6 P27: malformed arguments are NEVER silently substituted with `{}`
+    and dispatched as if valid -- the tool's `fn` must NOT be called at all; a parse-error tool
+    response is fed back instead, and the loop continues (never crashes, never ends the episode)."""
     driver = ScriptedDriver([
         ([{"id": "x", "type": "function", "function": {"name": "read_file", "arguments": "not json"}}], ""),
         ([_toolcall("submit", {"patch": "D"})], ""),
     ])
     log = []
     out = AL.run_agent(driver, "m", "sys", "t", _tools(log), {}, max_turns=5)
-    assert ("read", None) in log               # bad args -> {} -> path None, no crash
+    assert ("read", None) not in log            # the tool's fn was NEVER called with bad args
+    assert log == []
     assert out["submitted"] == {"patch": "D"}
+
+
+def test_agent_malformed_submit_args_are_never_treated_as_a_submission_P27():
+    """6th cold review round 6 P27 (HIGH), reproduction: malformed JSON in the SUBMIT tool's
+    arguments must not be silently turned into a valid (if empty/null) submission -- the episode
+    must continue, feeding back the parse error, until a WELL-FORMED submit arrives."""
+    driver = ScriptedDriver([
+        ([{"id": "x", "type": "function", "function": {"name": "submit", "arguments": "{bad json"}}], ""),
+        ([_toolcall("submit", {"patch": "D"})], ""),
+    ])
+    log = []
+    out = AL.run_agent(driver, "m", "sys", "t", _tools(log), {}, max_turns=5)
+    assert out["submitted"] == {"patch": "D"}   # only the SECOND, well-formed submit counts
+    assert out["turns"] == 2
 
 
 # --------------------------------------------------------------------------- M54 cold-review: opt-in extensions

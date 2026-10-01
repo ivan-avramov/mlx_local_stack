@@ -1847,6 +1847,25 @@ def test_run_task_single_tool_call_per_turn_ignores_a_trailing_submit_F5c():
     assert row["outcome"] == AO.SOLVED and row["passed"] is True
 
 
+def test_run_task_malformed_finish_action_does_not_produce_a_passing_one_turn_episode_P27():
+    """6th cold review round 6 P27 (HIGH), the literal reproduction: malformed JSON in
+    finish_action used to become answer_action({"answer": null}) -- a FALSE submission that could
+    pass a state-check/match task on turn 1. The malformed call must be rejected (parse-error
+    tool response, episode continues); only the SECOND, well-formed answer_action submits."""
+    driver = FakeDriver(script=[
+        complete_result(tool_calls=[
+            {"id": "c1", "type": "function",
+             "function": {"name": "finish_action", "arguments": "{not valid json"}}]),
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})]),
+    ])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=FakeRunner(default=FakeRunner.Proc(0, "", "")),
+                      popen=_shell_popen_ok())
+    assert row["passed"] is True
+    assert row["turns"] == 2   # NOT a one-turn pass via the malformed call
+    assert row["submitted_via"] == "answer"
+
+
 def test_run_task_grading_infra_failure_preserves_completed_turns_and_transcript_addendum_I():
     """6th cold review round 6, addendum I: a grading-time infra failure (P23) must NOT reset an
     already-executed episode back to zero turns/tokens/transcript -- the row still carries the
