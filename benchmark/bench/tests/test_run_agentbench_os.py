@@ -82,7 +82,11 @@ def _fake_run_task_factory(seen=None, **overrides):
               "per_turn_finish_reasons": ["stop"], "converged": True, "budget_hits": 0,
               "wall_s": 0.1, "tool_calls": 0, "tool_timeouts": 0, "repeat_calls": 0,
               "exec_timeout": False, "setup_error": False, "decode_tps": 10.0,
-              "per_turn_decode_tps": [10.0], "error": None}
+              "per_turn_decode_tps": [10.0], "error": None,
+              "_transcript_turns": [{"turn": 1, "assistant_content": "ok", "tool_call": None,
+                                     "tool_result": None, "raw_output_len": None,
+                                     "finish_reason": "stop", "completion_tokens": 1,
+                                     "decode_tps": 10.0, "wall_s": 0.1}]}
         row.update(overrides)
         return row
     return fake_run_task, seen
@@ -793,3 +797,100 @@ def test_generate_refuses_to_complete_when_served_file_changes_mid_run(tmp_path,
     assert rc == 2
     assert "C106" in capsys.readouterr().err
     assert not (tmp_path / "rows.summary.json").exists()
+
+
+# --------------------------------------------------------------------------- transcripts
+def test_transcript_written_after_the_row_with_expected_fields(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    tdir = tmp_path / "transcripts"
+    rc = R.main(_args(tmp_path, **{"transcripts-dir": str(tdir)}))
+    assert rc == 0
+    doc = json.loads((tdir / "m0.json").read_text())
+    assert doc["id"] == "m0" and doc["model"] == "m"
+    assert doc["system"] == AB.SYSTEM_PROMPT
+    assert doc["task_description"] == "d"
+    assert doc["turns"][0]["assistant_content"] == "ok"
+    assert doc["submitted_via"] == "answer" and doc["answer"] == "yes"
+    assert doc["gold_prepare"] is None and doc["gold_live"] is None
+    assert doc["passed"] is True and doc["outcome"] == "solved"
+    rows = R.read_rows(tmp_path / "rows.jsonl")
+    assert rows[0]["transcript_path"] == str(tdir / "m0.json")
+
+
+def test_transcript_not_written_when_no_row_is_appended(tmp_path, monkeypatch):
+    """Transport-failure tasks write no row -- and therefore no transcript either."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+
+    def fake_run_task(model, task, scripts_root, driver, params, **kw):
+        raise AB.TransportFailure(f"task {task['id']}: boom")
+    monkeypatch.setattr(AB, "run_task", fake_run_task)
+    tdir = tmp_path / "transcripts"
+    with pytest.raises(AB.TransportFailure):
+        R.main(_args(tmp_path, **{"transcripts-dir": str(tdir)}))
+    assert not tdir.exists() or list(tdir.glob("*.json")) == []
+
+
+def test_resume_does_not_rewrite_an_existing_transcript(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task("m0"), _match_task("m1")]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    (tmp_path / "rows.jsonl").write_text(json.dumps({"id": "m0", "passed": True, "outcome": "solved",
+                                                     "wall_s": 0.1, "completion_tokens_total": 1,
+                                                     "labels": [], "setup_error": False}) + "\n",
+                                        encoding="utf-8")
+    tdir = tmp_path / "transcripts"
+    tdir.mkdir()
+    sentinel_doc = {"id": "m0", "note": "PRE-EXISTING, must not be overwritten"}
+    (tdir / "m0.json").write_text(json.dumps(sentinel_doc), encoding="utf-8")
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, resume="", **{"transcripts-dir": str(tdir)}))
+    assert rc == 0
+    assert seen == ["m1"]
+    assert json.loads((tdir / "m0.json").read_text()) == sentinel_doc   # untouched
+    assert (tdir / "m1.json").exists()                                 # the newly-run task got one
+
+
+def test_manifest_records_transcripts_dir(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    tdir = tmp_path / "transcripts"
+    rc = R.main(_args(tmp_path, **{"transcripts-dir": str(tdir)}))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert man["runtime"]["transcripts_dir"] == str(tdir)
+
+
+def test_transcripts_dir_defaults_to_stack_workdir_m54_transcripts_model(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    workdir = tmp_path / "workdir"
+    monkeypatch.setattr(R.paths, "stack_workdir", lambda required=True: workdir)
+    args = _args(tmp_path)   # no --transcripts-dir
+    rc = R.main(args)
+    assert rc == 0
+    expected = workdir / "m54" / "transcripts" / "m"
+    assert (expected / "m0.json").exists()

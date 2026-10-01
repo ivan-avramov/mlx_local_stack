@@ -1026,6 +1026,81 @@ def test_dualsubmit_driver_decode_tps_falls_back_to_servers_own_value_without_ti
     assert d.per_turn[0]["decode_tps"] == 7.5
 
 
+# --------------------------------------------------------------------------- transcripts
+def test_dualsubmit_driver_per_turn_captures_transcript_fields():
+    inner = FakeDriver(script=[complete_result(
+        content="let me look", reasoning="thinking...", finish_reason="tool_calls",
+        completion_tokens=10, wall_s=1.5, tool_calls=[tool_call("bash_action", {"script": "ls"})])])
+    d = AB.DualSubmitDriver(inner, timeout=5)
+    d.complete("m", [], {})
+    t = d.per_turn[0]
+    assert t["turn"] == 1
+    assert t["assistant_content"] == "let me look"
+    assert t["reasoning_content"] == "thinking..."
+    assert t["wall_s"] == 1.5
+    assert t["tool_call"] == {"name": "bash_action", "args": {"script": "ls"}}
+    assert t["tool_result"] is None and t["raw_output_len"] is None   # filled by build_tools, not here
+
+
+def test_dualsubmit_driver_per_turn_omits_reasoning_when_absent():
+    inner = FakeDriver(script=[complete_result(reasoning="")])
+    d = AB.DualSubmitDriver(inner, timeout=5)
+    d.complete("m", [], {})
+    assert "reasoning_content" not in d.per_turn[0]
+
+
+def test_dualsubmit_driver_per_turn_tool_call_none_when_no_tool_calls():
+    inner = FakeDriver(script=[complete_result(tool_calls=[], content="final answer prose")])
+    d = AB.DualSubmitDriver(inner, timeout=5)
+    d.complete("m", [], {})
+    assert d.per_turn[0]["tool_call"] is None
+
+
+def test_dualsubmit_driver_per_turn_tool_result_submitted_on_answer_action():
+    inner = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "x"})])])
+    d = AB.DualSubmitDriver(inner, timeout=5)
+    d.complete("m", [], {})
+    assert d.per_turn[0]["tool_result"] == "submitted"
+
+
+def test_dualsubmit_driver_per_turn_tool_result_submitted_on_finish_action():
+    inner = FakeDriver(script=[complete_result(tool_calls=[tool_call("finish_action", {"thought": "done"})])])
+    d = AB.DualSubmitDriver(inner, timeout=5)
+    d.complete("m", [], {})
+    assert d.per_turn[0]["tool_result"] == "submitted"
+    assert d.per_turn[0]["tool_call"] == {"name": "finish_action", "args": {"thought": "done"}}
+
+
+def test_dualsubmit_driver_turn_numbers_increment():
+    inner = FakeDriver(script=[complete_result(tool_calls=[tool_call("bash_action", {"script": "a"})]),
+                               complete_result(tool_calls=[tool_call("bash_action", {"script": "b"})])])
+    d = AB.DualSubmitDriver(inner, timeout=5)
+    d.complete("m", [], {})
+    d.complete("m", [], {})
+    assert [t["turn"] for t in d.per_turn] == [1, 2]
+
+
+def test_build_tools_patches_the_current_turn_with_tool_result_and_raw_output_len(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        transcript_turns = [{"turn": 1, "tool_call": {"name": "bash_action", "args": {"script": "echo hi"}},
+                             "tool_result": None, "raw_output_len": None}]
+        tools = AB.build_tools(shell, timeout=10, counters={}, transcript_turns=transcript_turns)
+        bash = {t.name: t for t in tools}["bash_action"]
+        out = bash.fn({"script": "echo hi"})
+        assert transcript_turns[0]["tool_result"] == out
+        assert transcript_turns[0]["raw_output_len"] == len("hi\n")   # pre-truncation, pre-wrap
+    finally:
+        shell.close()
+
+
+def test_build_tools_without_transcript_turns_is_a_noop():
+    """transcript_turns is optional -- omitting it must not break anything."""
+    shell = AB.PersistentShell("c1")
+    tools = AB.build_tools(shell)   # should not raise
+    assert {t.name for t in tools} == {"bash_action", "finish_action", "answer_action"}
+
+
 # --------------------------------------------------------------------------- build_tools (bash_action)
 @_timeout(10)
 def test_bash_tool_executes_via_persistent_shell_and_wraps_output(tmp_path):
@@ -1380,6 +1455,25 @@ def test_run_task_only_one_container_touched_per_task():
     AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, max_turns=5, runner=runner, popen=_shell_popen_ok())
     names = {c["cmd"][5] for c in runner.calls if c["cmd"][:2] == ["docker", "run"]}
     assert len(names) == 1
+
+
+def test_run_task_returns_transcript_turns_for_a_solved_episode():
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(content="submitting now",
+                                               tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    turns = row["_transcript_turns"]
+    assert len(turns) == 1
+    assert turns[0]["assistant_content"] == "submitting now"
+    assert turns[0]["tool_result"] == "submitted"
+
+
+def test_run_task_returns_empty_transcript_turns_for_a_setup_error():
+    runner = FakeRunner(default=FakeRunner.Proc(1, "", "boom"))
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, FakeDriver(), {}, runner=runner, popen=_shell_popen_ok())
+    assert row["_transcript_turns"] == []
 
 
 def test_run_task_setup_error_flagged_rows_carry_decode_tps_none_not_crash():
