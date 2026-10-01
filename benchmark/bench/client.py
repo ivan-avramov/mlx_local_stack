@@ -62,6 +62,16 @@ def _as_nonneg_int(value):
     return None
 
 
+# 8th cold review round 8 P50: the ONLY finish_reason values the served router/mlx_vlm fork ever
+# legitimately emits. Anything else (a non-str, or a str outside this set, e.g. "content_filter",
+# which this router never emits) is a SERVING anomaly -- escalate at the transport boundary (same
+# rationale as P24/P36's token-count checks), rather than let an unrecognized value reach
+# convergence classification as if it were an ordinary (if unusual) model outcome. This does NOT
+# retroactively constrain `evaluate_convergence`, which still classifies arbitrary/historical
+# finish_reason values on STORED rows (regrading older data predates this check).
+_VALID_FINISH_REASONS = {"stop", "length", "tool_calls"}
+
+
 def roster() -> list[str]:
     """Models the live router serves (self-correcting against main_models.yaml)."""
     return [m["id"] for m in _get("/v1/models")["data"]]
@@ -108,8 +118,15 @@ def probe(model: str, messages: list, params: dict, timeout: float = 3600, tools
     # content and no tool_calls is a VALID outcome (immediate EOS, or a max_tokens/"length" hit
     # with reasoning but no final answer yet) that the agent loop / convergence logic must
     # classify, not this boundary. Only STRUCTURE and TELEMETRY TYPES are validated here.
-    if choices[0].get("finish_reason") is None:
+    finish_reason = choices[0].get("finish_reason")
+    if finish_reason is None:
         raise MalformedResponseError(f"{model}: choices[0] is missing finish_reason")
+    if not (isinstance(finish_reason, str) and finish_reason in _VALID_FINISH_REASONS):
+        # P50: a non-str (an unhashable JSON list/dict must not raise TypeError out of `in set`,
+        # hence the isinstance guard FIRST) OR a str outside {"stop","length","tool_calls"}.
+        raise MalformedResponseError(
+            f"{model}: choices[0].finish_reason={finish_reason!r} is not one of "
+            f"{sorted(_VALID_FINISH_REASONS)}")
     raw_prompt_tokens = us.get("prompt_tokens")
     if raw_prompt_tokens is None:
         raw_prompt_tokens = tm.get("prompt_n")

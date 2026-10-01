@@ -202,3 +202,38 @@ def test_probe_accepts_prompt_tokens_from_timings_fallback_P24(monkeypatch):
     srv.shutdown()
     assert out["prompt_tokens"] == 1000
     assert out["completion_tokens"] == 5
+
+
+# --------------------------------------------------------------------------- P50 finish_reason validation
+@pytest.mark.parametrize("value", ["content_filter", "function_call", "", "STOP", "stopp", "none"])
+def test_probe_raises_on_an_unrecognized_finish_reason_string_P50(monkeypatch, value):
+    """8th cold review round 8 P50: finish_reason must be one of {"stop","length","tool_calls"}
+    -- the only values the served router/mlx_vlm fork ever legitimately emits. Anything else is a
+    SERVING anomaly, escalated here rather than reaching convergence classification as if it were
+    an ordinary model outcome."""
+    srv = _server_returning({"choices": [{"message": {"content": "ok"}, "finish_reason": value}],
+                             "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+    client = _client_against(srv, monkeypatch)
+    with pytest.raises(client.MalformedResponseError, match="finish_reason"):
+        client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
+    srv.shutdown()
+
+
+@pytest.mark.parametrize("value", [True, 1, 1.5, ["stop"], {"x": "stop"}])
+def test_probe_raises_on_a_non_string_finish_reason_P50(monkeypatch, value):
+    srv = _server_returning({"choices": [{"message": {"content": "ok"}, "finish_reason": value}],
+                             "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+    client = _client_against(srv, monkeypatch)
+    with pytest.raises(client.MalformedResponseError, match="finish_reason"):
+        client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
+    srv.shutdown()
+
+
+@pytest.mark.parametrize("value", ["stop", "length", "tool_calls"])
+def test_probe_accepts_every_legitimate_finish_reason_P50(monkeypatch, value):
+    srv = _server_returning({"choices": [{"message": {"content": "ok"}, "finish_reason": value}],
+                             "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+    client = _client_against(srv, monkeypatch)
+    out = client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
+    srv.shutdown()
+    assert out["finish_reason"] == value
