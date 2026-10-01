@@ -160,7 +160,8 @@ def test_run_check_chain_null_entry_runs_example_and_chains_stdout():
         FakeRunner.Proc(0, "7\n", ""),
         FakeRunner.Proc(0, "", ""),
     ])
-    ok, gold_live = AB.run_check_chain("c1", [None, ("python", "check")], ("bash", "example"), "7", runner)
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [None, ("python", "check")], ("bash", "example"), "7", runner)
+    assert infra_error is None
     assert ok is True
     assert gold_live == "7\n"   # R5: the null-slot stdout, captured live
     assert len(runner.calls) == 2
@@ -170,20 +171,23 @@ def test_run_check_chain_null_entry_runs_example_and_chains_stdout():
 
 def test_run_check_chain_nonzero_exit_fails():
     runner = FakeRunner(default=FakeRunner.Proc(1, "", "boom"))
-    ok, gold_live = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
-    assert ok is False and gold_live is None
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False and gold_live is None and infra_error is None
 
 
 def test_run_check_chain_timeout_fails():
+    """P9(a): a check-script TIMEOUT is itself one of the docker/infra transport signals (the
+    checker never got to render a verdict at all) -- it is an infra_error, not a legitimate
+    checker-script failure."""
     runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1)])
-    ok, gold_live = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
-    assert ok is False and gold_live is None
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
+    assert ok is False and gold_live is None and infra_error is not None
 
 
 def test_run_check_chain_null_with_no_example_fails_without_raising():
     runner = FakeRunner()
-    ok, gold_live = AB.run_check_chain("c1", [None], None, "ans", runner)
-    assert ok is False and gold_live is None
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [None], None, "ans", runner)
+    assert ok is False and gold_live is None and infra_error is None
     assert runner.calls == []
 
 
@@ -194,6 +198,28 @@ def test_run_check_chain_none_answer_becomes_the_literal_string_None_cold_review
     runner = FakeRunner()
     AB.run_check_chain("c1", [("bash", "x")], None, None, runner)
     assert runner.last_cmd[-1] == "None"
+
+
+# --------------------------------------------------------------------------- P9(a) transport vs checker
+def test_run_check_chain_docker_daemon_unreachable_is_infra_error_not_failed_tests():
+    runner = FakeRunner(default=FakeRunner.Proc(125, "", "Cannot connect to the Docker daemon at..."))
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False
+    assert infra_error is not None and "docker transport failure" in infra_error
+
+
+def test_run_check_chain_exit_127_is_infra_error():
+    runner = FakeRunner(default=FakeRunner.Proc(127, "", "exec: not found"))
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False and infra_error is not None
+
+
+def test_run_check_chain_legitimate_checker_failure_has_no_infra_error():
+    """A checker script failing on its OWN merits (not a docker/transport problem) must NOT be
+    mistaken for an infra error -- P9(a) distinguishes the MECHANISM, not just "nonzero"."""
+    runner = FakeRunner(default=FakeRunner.Proc(1, "", "assertion failed: file missing"))
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False and infra_error is None
 
 
 # --------------------------------------------------------------------------- D2 exclusion (F6/F7)
@@ -267,18 +293,23 @@ def test_answer_placeholder_constants_are_distinct():
 
 
 def test_prepare_exclusions_disagreeing_golds_excluded_as_gold_mismatch():
+    """D2 rule v2: this is now EXPECTED (not necessarily an error) for a randomized-init task --
+    two runs INSIDE the same container legitimately producing different example stdout."""
     runner = _exec_sequenced_runner([(0, "3\n", ""), (0, "4\n", "")])
     golds, exclusions = AB.prepare_exclusions([_check_task("t1")], SCRIPTS_ROOT, runner)
     assert golds == {}
-    assert exclusions == [{"id": "t1", "reason": "gold_mismatch",
-                           "gold_primary": "3\n", "gold_probe": "4\n"}]
+    assert exclusions == [{"id": "t1", "reason": "gold_mismatch", "failed_step": None,
+                           "exit_codes": [0, 0], "stdout": ["3\n", "4\n"], "stderr": ["", ""],
+                           "timed_out": False}]
 
 
 def test_prepare_exclusions_no_gold_when_example_fails():
     runner = _exec_sequenced_runner([(1, "", "boom"), (0, "3\n", "")])
     golds, exclusions = AB.prepare_exclusions([_check_task("t1")], SCRIPTS_ROOT, runner)
     assert golds == {}
-    assert exclusions == [{"id": "t1", "reason": "no_gold"}]
+    assert exclusions == [{"id": "t1", "reason": "no_gold", "failed_step": "example",
+                           "exit_codes": [1, 0], "stdout": ["", "3\n"], "stderr": ["boom", ""],
+                           "timed_out": False}]
 
 
 def test_prepare_exclusions_no_gold_when_stdout_empty():
@@ -286,7 +317,51 @@ def test_prepare_exclusions_no_gold_when_stdout_empty():
     runner = _exec_sequenced_runner([(0, "", ""), (0, "3\n", "")])
     golds, exclusions = AB.prepare_exclusions([_check_task("t1")], SCRIPTS_ROOT, runner)
     assert golds == {}
-    assert exclusions == [{"id": "t1", "reason": "no_gold"}]
+    assert exclusions == [{"id": "t1", "reason": "no_gold", "failed_step": "example",
+                           "exit_codes": [0, 0], "stdout": ["", "3\n"], "stderr": ["", ""],
+                           "timed_out": False}]
+
+
+def test_prepare_exclusions_gold_slot_uses_exactly_one_container_D2_v2():
+    """D2 rule v2 (operator 2026-09-30): the old two-SEPARATE-fresh-containers probe caused 11/13
+    real exclusions to be false positives on randomized-init ($RANDOM/shuf) tasks, because two
+    DIFFERENT containers legitimately produce different random state. The fix: ONE fresh container
+    (one `docker run`), `example` run TWICE inside it. Count `docker run` calls, not just exec."""
+    runner_calls = []
+
+    def runner(cmd, **kw):
+        runner_calls.append(list(cmd))
+        return FakeRunner.Proc(0, "same\n", "")
+    AB.prepare_exclusions([_check_task("t1")], SCRIPTS_ROOT, runner)
+    run_calls = [c for c in runner_calls if c[:2] == ["docker", "run"]]
+    assert len(run_calls) == 1
+
+
+def test_prepare_exclusions_match_exemption_wins_over_manual_P10():
+    """P10: a manual exclusion must NOT pre-empt the match exemption -- a match-config task is
+    skipped before `manual` is even consulted, so a (mistaken or stale) manual entry naming a
+    match task has no effect and the task is never probed."""
+    task = _match_task("m1")
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", "should-not-run"))
+    golds, exclusions = AB.prepare_exclusions([task], SCRIPTS_ROOT, runner,
+                                              manual={"m1": "stale manual entry"})
+    assert exclusions == [] and golds == {}
+    assert runner.calls == []
+
+
+def test_prepare_exclusions_setup_failure_records_failed_step():
+    """D2 rule v2 diagnostic requirement: a setup (create/init/start) failure for a gold-slot task
+    is `no_gold` with the failing step recorded, not a silent/unexplained exclusion (operator's
+    std-004-8 complaint: 'came back no_gold with no explanation')."""
+    def runner(cmd, **kw):
+        if cmd[:2] == ["docker", "run"]:
+            return FakeRunner.Proc(1, "", "create failed: no such image")
+        return FakeRunner.Proc(0, "", "")
+    golds, exclusions = AB.prepare_exclusions([_check_task("t1")], SCRIPTS_ROOT, runner)
+    assert golds == {}
+    assert len(exclusions) == 1
+    assert exclusions[0]["id"] == "t1" and exclusions[0]["reason"] == "no_gold"
+    assert exclusions[0]["failed_step"] == "create"
 
 
 def _local_bash_shim(cwd):
@@ -404,7 +479,8 @@ def test_read_exclusions_artifact_missing_returns_none(tmp_path):
 
 
 def test_validate_exclusions_artifact_accepts_matching_state():
-    doc = {"corpus_sha256": "abc", "image_ids": {"default": "id1"}, "complete": True}
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc",
+          "image_ids": {"default": "id1"}, "complete": True}
     assert AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={"default": "id1"}) is None
 
 
@@ -413,21 +489,79 @@ def test_validate_exclusions_artifact_refuses_missing():
 
 
 def test_validate_exclusions_artifact_refuses_incomplete():
-    doc = {"corpus_sha256": "abc", "image_ids": {}, "complete": False}
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc", "image_ids": {},
+          "complete": False}
     reason = AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={})
     assert reason and "complete" in reason
 
 
 def test_validate_exclusions_artifact_refuses_corpus_drift():
-    doc = {"corpus_sha256": "OLD", "image_ids": {}, "complete": True}
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "OLD", "image_ids": {},
+          "complete": True}
     reason = AB.validate_exclusions_artifact(doc, corpus_sha256="NEW", image_ids={})
     assert reason and "corpus" in reason
 
 
 def test_validate_exclusions_artifact_refuses_image_drift():
-    doc = {"corpus_sha256": "abc", "image_ids": {"default": "old"}, "complete": True}
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc",
+          "image_ids": {"default": "old"}, "complete": True}
     reason = AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={"default": "new"})
     assert reason and "image" in reason
+
+
+def test_validate_exclusions_artifact_refuses_old_rule_version():
+    """D2 rule-v2 (operator 2026-09-30): an artifact produced under the OLD (two-separate-
+    containers) rule must be refused outright, never silently reused -- its exclusions are known
+    to contain false positives for randomized-init tasks."""
+    doc = {"rule_version": 1, "corpus_sha256": "abc", "image_ids": {}, "complete": True}
+    reason = AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={})
+    assert reason and "rule_version" in reason
+
+
+def test_validate_exclusions_artifact_refuses_scripts_drift_P10():
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc", "image_ids": {},
+          "complete": True, "scripts_sha256": "old"}
+    reason = AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
+                                             scripts_sha256="new")
+    assert reason and "scripts" in reason
+
+
+def test_validate_exclusions_artifact_refuses_missing_disposition_entries_P10():
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc", "image_ids": {},
+          "complete": True, "disposition": {"t1": "kept"}}
+    reason = AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
+                                             all_task_ids=["t1", "t2"])
+    assert reason and "t2" in reason
+
+
+def test_validate_exclusions_artifact_accepts_complete_disposition_P10():
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc", "image_ids": {},
+          "complete": True, "disposition": {"t1": "kept", "t2": "match"}}
+    assert AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
+                                           all_task_ids=["t1", "t2"]) is None
+
+
+def test_scripts_root_sha256_changes_when_a_script_file_changes(tmp_path):
+    (tmp_path / "a.sh").write_text("echo 1\n")
+    h1 = AB.scripts_root_sha256(tmp_path)
+    (tmp_path / "a.sh").write_text("echo 2\n")
+    h2 = AB.scripts_root_sha256(tmp_path)
+    assert h1 != h2
+
+
+def test_scripts_root_sha256_stable_for_unchanged_tree(tmp_path):
+    (tmp_path / "a.sh").write_text("echo 1\n")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "b.sh").write_text("echo 2\n")
+    assert AB.scripts_root_sha256(tmp_path) == AB.scripts_root_sha256(tmp_path)
+
+
+def test_build_disposition_map_covers_match_kept_and_excluded():
+    tasks = [_match_task("m1"), _check_task("t1"), _check_task("t2")]
+    golds = {"t1": "3\n"}
+    exclusions = [{"id": "t2", "reason": "gold_mismatch"}]
+    disposition = AB.build_disposition_map(tasks, SCRIPTS_ROOT, golds, exclusions)
+    assert disposition == {"m1": "match", "t1": "kept", "t2": "excluded:gold_mismatch"}
 
 
 # --------------------------------------------------------------------------- manual exclusions
@@ -473,23 +607,23 @@ def test_write_exclusions_artifact_records_manual_exclusions_sha(tmp_path):
 
 
 def test_validate_exclusions_artifact_refuses_manual_exclusions_drift():
-    doc = {"corpus_sha256": "abc", "image_ids": {}, "complete": True,
-          "manual_exclusions_sha256": "old"}
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc", "image_ids": {},
+          "complete": True, "manual_exclusions_sha256": "old"}
     reason = AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
                                              manual_exclusions_sha256="new")
     assert reason and "manual" in reason
 
 
 def test_validate_exclusions_artifact_accepts_matching_manual_exclusions_sha():
-    doc = {"corpus_sha256": "abc", "image_ids": {}, "complete": True,
-          "manual_exclusions_sha256": "same"}
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc", "image_ids": {},
+          "complete": True, "manual_exclusions_sha256": "same"}
     assert AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
                                            manual_exclusions_sha256="same") is None
 
 
 def test_validate_exclusions_artifact_accepts_both_none_when_no_manual_file_either_time():
-    doc = {"corpus_sha256": "abc", "image_ids": {}, "complete": True,
-          "manual_exclusions_sha256": None}
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc", "image_ids": {},
+          "complete": True, "manual_exclusions_sha256": None}
     assert AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
                                            manual_exclusions_sha256=None) is None
 
@@ -840,9 +974,11 @@ def test_persistent_shell_timeout_kills_process_and_reports_timed_out():
     assert runner_calls == [["docker", "exec", "c1", "pkill", "-KILL", "-f", "bash --login"]]
 
 
-def test_persistent_shell_exit_code_137_is_treated_as_timed_out():
-    """N5 (moot as a live trigger now, kept as a safety net): a sentinel that DOES arrive, but with
-    exit code 137 (SIGKILL), still marks timed_out=True."""
+def test_persistent_shell_exit_code_137_is_NOT_treated_as_timed_out_G1():
+    """4th cold review G1: there is no in-container `timeout` wrapper any more, so a sentinel that
+    arrives WITH exit code 137 (SIGKILL) is most likely the container's own 1 GiB memory-cap OOM
+    killer, not our Python-side deadline -- mis-scoring it as `exec_timeout` would hide a real
+    memory failure behind the wrong label. Only OUR OWN deadline firing sets timed_out."""
     class _Proc137:
         def __init__(self):
             self.stdin = self
@@ -870,7 +1006,7 @@ def test_persistent_shell_exit_code_137_is_treated_as_timed_out():
     shell.proc = _Proc137()
     _threading.Thread(target=shell._reader_loop, daemon=True).start()
     res = shell.run("kill -KILL $$", timeout_s=5)
-    assert res["exit_code"] == 137 and res["timed_out"] is True
+    assert res["exit_code"] == 137 and res["timed_out"] is False
 
 
 def test_persistent_shell_sentinel_tail_split_across_two_reads_parses_137_and_leaks_nothing():
@@ -917,32 +1053,159 @@ def test_persistent_shell_sentinel_tail_split_across_two_reads_parses_137_and_le
     assert shell._carry == b""   # nothing leaked past the sentinel+newline
 
 
-@_timeout(15)
-def test_persistent_shell_real_bash_1mb_output_fast_and_correct(tmp_path):
-    """3rd cold review R1: the old O(n^2) `re.search` over the whole buffer measured 20KB->9.4s,
-    50KB->116s, >=100KB effectively hangs. The incremental bytearray.find() scan must handle 1MB
-    in well under 2s."""
+def test_persistent_shell_leftover_bytes_carry_forward_G5():
+    """G5, mutation-sensitive: if a round's sentinel match leaves unexpected trailing bytes (e.g. a
+    background job's output racing the sentinel), those bytes MUST be carried into and PREFIXED
+    onto the next round's raw buffer -- deleting the carry-forward (`self._carry = b""`
+    unconditionally, discarding whatever was captured) must fail this test."""
+    class _LeftoverProc:
+        def __init__(self):
+            self.stdin = self
+            self.stdout = self
+            self._pending = None
+            self._round = 0
+
+        def write(self, s):
+            m = re.search(rb"printf '\\n%s%d\\n' (\S+) \$\?", s)
+            sentinel = m.group(1)
+            if self._round == 0:
+                self._pending = b"\n" + sentinel + b"0\nEXTRA-LEFTOVER-BYTES"
+            else:
+                self._pending = b"second-output\n" + sentinel + b"0\n"
+            self._round += 1
+
+        def flush(self):
+            pass
+
+        def read(self, n):
+            while self._pending is None:
+                time.sleep(0.01)
+            data, self._pending = self._pending, None
+            return data
+
+        def poll(self):
+            return None
+
+    import threading as _threading
+    proc = _LeftoverProc()
+    shell = AB.PersistentShell("c1", popen=lambda *a, **k: proc)
+    shell.proc = proc
+    _threading.Thread(target=shell._reader_loop, daemon=True).start()
+    res1 = shell.run("first", timeout_s=5)
+    assert res1["exit_code"] == 0
+    assert shell._carry == b"EXTRA-LEFTOVER-BYTES"
+    res2 = shell.run("second", timeout_s=5)
+    # the protocol's own leading "\n" (from `printf '\n%s%d\n' ...`) is indistinguishable from the
+    # command's own trailing newline and is consumed as part of the sentinel match either way.
+    assert res2["output"] == "EXTRA-LEFTOVER-BYTESsecond-output"
+
+
+def test_persistent_shell_invalid_utf8_reproduces_upstream_message_P15b():
+    """5th cold review P15b: upstream (`task.py` `_execute_bash_command`, confirmed at the pinned
+    commit) strict-decodes with `.decode('utf-8')` and on failure the WHOLE result text becomes the
+    literal string 'OS Environment output cannot be decoded as UTF-8' -- not per-byte mojibake."""
+    class _BadUtf8Proc:
+        def __init__(self):
+            self.stdin = self
+            self.stdout = self
+            self._pending = None
+
+        def write(self, s):
+            m = re.search(rb"printf '\\n%s%d\\n' (\S+) \$\?", s)
+            self._pending = b"\xff\xfe" + b"\n" + m.group(1) + b"0\n"
+
+        def flush(self):
+            pass
+
+        def read(self, n):
+            while self._pending is None:
+                time.sleep(0.01)
+            data, self._pending = self._pending, None
+            return data
+
+        def poll(self):
+            return None
+
+    import threading as _threading
+    proc = _BadUtf8Proc()
+    shell = AB.PersistentShell("c1", popen=lambda *a, **k: proc)
+    shell.proc = proc
+    _threading.Thread(target=shell._reader_loop, daemon=True).start()
+    res = shell.run("whatever", timeout_s=5)
+    assert res["output"] == AB.PersistentShell.UPSTREAM_DECODE_ERROR_TEXT
+    assert res["exit_code"] == 0
+
+
+@_timeout(10)
+def test_persistent_shell_write_deadline_fires_before_a_blocking_write_completes_P8(tmp_path):
+    """5th cold review P8: the deadline covers the WRITE itself, not just the subsequent read --
+    a shell busy running a long foreground command (not yet reading stdin) can fill the OS pipe's
+    write buffer; a blocked write past the deadline must itself report timed_out=True, well before
+    bash's own sleep would otherwise finish."""
     shell = _real_shell(tmp_path)
     try:
+        huge = "x" * (300 * 1024)
+        script = f"sleep 2\necho {huge}"
         t0 = time.monotonic()
-        res = shell.run("head -c 1048576 /dev/zero | tr '\\0' x", timeout_s=10)
+        res = shell.run(script, timeout_s=0.5)
         elapsed = time.monotonic() - t0
-        assert res["exit_code"] == 0 and res["timed_out"] is False
-        assert len(res["output"]) == 1048576
-        assert elapsed < 2.0, f"1MB took {elapsed:.2f}s -- should be well under 2s"
+        assert res["timed_out"] is True
+        assert elapsed < 1.5, f"write-deadline timeout took {elapsed:.2f}s -- should fire near 0.5s"
+    finally:
+        shell.close()
+
+
+def test_persistent_shell_start_returns_the_handshake_result_P9b(tmp_path):
+    """P9(b): start() must return the handshake ("true") round's result so the caller (run_task)
+    can validate it BEFORE ever making a model call, rather than discarding it."""
+    home = tmp_path / f"home-{uuid.uuid4().hex}"
+    home.mkdir()
+    shell = AB.PersistentShell("unused-container", popen=_real_bash_popen_factory(home),
+                              runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    handshake = shell.start()
+    try:
+        assert handshake["exit_code"] == 0
+        assert handshake["shell_died"] is False and handshake["timed_out"] is False
     finally:
         shell.close()
 
 
 @_timeout(15)
-def test_persistent_shell_real_bash_4mb_output_fast_and_correct(tmp_path):
+def test_persistent_shell_real_bash_600kb_output_fast_and_uncapped(tmp_path):
+    """3rd cold review R1: the old O(n^2) `re.search` over the whole buffer measured 20KB->9.4s,
+    50KB->116s, >=100KB effectively hangs. The incremental bytearray.find() scan must handle a
+    sizeable output in well under 2s. 600 KiB is comfortably UNDER the G2 1 MiB retention cap
+    (sentinel + exit-code overhead on top of a round 1 MiB input would tip exactly-1MiB over the
+    cap), so this also proves a legitimate large-but-not-huge output is NOT truncated."""
+    shell = _real_shell(tmp_path)
+    try:
+        t0 = time.monotonic()
+        res = shell.run("head -c 614400 /dev/zero | tr '\\0' x", timeout_s=10)
+        elapsed = time.monotonic() - t0
+        assert res["exit_code"] == 0 and res["timed_out"] is False
+        assert len(res["output"]) == 614400
+        assert res["raw_output_len"] == 614400
+        assert elapsed < 2.0, f"600KB took {elapsed:.2f}s -- should be well under 2s"
+    finally:
+        shell.close()
+
+
+@_timeout(15)
+def test_persistent_shell_real_bash_4mb_output_fast_and_capped_G2(tmp_path):
+    """4th cold review G2: an output well past the 1 MiB retention cap is held/returned capped
+    (head 512 KiB + tail 512 KiB + a drop marker) -- NOT buffered in full -- while
+    `raw_output_len` still reports the TRUE total so a huge/degenerate output stays visible in the
+    data."""
     shell = _real_shell(tmp_path)
     try:
         t0 = time.monotonic()
         res = shell.run("head -c 4194304 /dev/zero | tr '\\0' x", timeout_s=10)
         elapsed = time.monotonic() - t0
         assert res["exit_code"] == 0 and res["timed_out"] is False
-        assert len(res["output"]) == 4194304
+        assert res["raw_output_len"] == 4194304
+        assert len(res["output"]) < 4194304
+        assert len(res["output"]) <= AB.PersistentShell.MAX_RETAINED_BYTES + 64
+        assert "bytes dropped" in res["output"]
         assert elapsed < 2.0, f"4MB took {elapsed:.2f}s -- should be well under 2s"
     finally:
         shell.close()
@@ -1506,6 +1769,103 @@ def test_run_task_start_script_shell_death_is_also_setup_error(tmp_path):
            "evaluation": {"match": "x"}, "description": "d"}
     row = AB.run_task("m", task, SCRIPTS_ROOT, FakeDriver(), {}, runner=runner, popen=_shell_popen_ok())
     assert row["shell_died"] is True and row["setup_error"] is True
+
+
+def test_run_task_handshake_failure_is_setup_error_with_no_model_call_P9b():
+    """P9(b): a shell whose handshake ("true") round itself fails must never reach the agent
+    loop -- the row is setup_error and the model driver is NEVER invoked."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+
+    class _FailHandshakeProc:
+        def __init__(self):
+            self.stdin = self
+            self.stdout = self
+            self._pending = None
+
+        def write(self, s):
+            m = re.search(rb"printf '\\n%s%d\\n' (\S+) \$\?", s)
+            self._pending = b"\n" + m.group(1) + b"1\n"
+
+        def flush(self):
+            pass
+
+        def read(self, n):
+            while self._pending is None:
+                time.sleep(0.01)
+            data, self._pending = self._pending, None
+            return data
+
+        def poll(self):
+            return None
+
+    class _BoomIfCalledDriver:
+        def complete(self, *a, **k):
+            pytest.fail("model must never be called when the shell handshake failed")
+
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, _BoomIfCalledDriver(), {}, runner=runner,
+                      popen=lambda *a, **k: _FailHandshakeProc())
+    assert row["outcome"] == AO.SERVER_ERROR and row["setup_error"] is True
+    assert "handshake" in row["error"]
+
+
+# --------------------------------------------------------------------------- P16 container cleanup
+def test_remove_container_verify_true_returns_true_when_rm_succeeds_and_absent():
+    def runner(cmd, **kw):
+        if cmd[:3] == ["docker", "rm", "-f"]:
+            return FakeRunner.Proc(0, "", "")
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return FakeRunner.Proc(0, "", "")
+        return FakeRunner.Proc(0, "", "")
+    assert AB.remove_container("c1", runner, verify=True) is True
+
+
+def test_remove_container_verify_true_returns_false_when_still_present():
+    def runner(cmd, **kw):
+        if cmd[:3] == ["docker", "rm", "-f"]:
+            return FakeRunner.Proc(0, "", "")
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return FakeRunner.Proc(0, "c1\n", "")
+        return FakeRunner.Proc(0, "", "")
+    assert AB.remove_container("c1", runner, verify=True) is False
+
+
+def test_remove_container_verify_true_returns_false_when_rm_itself_failed():
+    def runner(cmd, **kw):
+        if cmd[:3] == ["docker", "rm", "-f"]:
+            return FakeRunner.Proc(1, "", "no such container")
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return FakeRunner.Proc(0, "", "")
+        return FakeRunner.Proc(0, "", "")
+    assert AB.remove_container("c1", runner, verify=True) is False
+
+
+def test_remove_container_default_verify_false_is_best_effort_never_raises():
+    runner = FakeRunner(default=FakeRunner.Proc(1, "", "boom"))
+    assert AB.remove_container("c1", runner) is None
+
+
+def test_run_task_row_carries_container_removed_verified_true_on_clean_removal():
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["container_removed_verified"] is True
+
+
+def test_run_task_row_carries_container_removed_verified_false_when_rm_unverified():
+    """P16: when final cleanup cannot be verified, the row still comes back (so the caller can
+    append it) but flagged -- the caller decides whether to stop the run."""
+    def runner(cmd, **kw):
+        if cmd[:2] == ["docker", "rm"]:
+            return FakeRunner.Proc(1, "", "boom")
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return FakeRunner.Proc(0, "", "")
+        return FakeRunner.Proc(0, "", "")
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["container_removed_verified"] is False
 
 
 def test_run_task_populates_gold_prepare_from_the_artifact_AC5():

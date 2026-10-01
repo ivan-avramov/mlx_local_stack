@@ -128,6 +128,12 @@ ANSWER_PLACEHOLDER_PROBE = "2"
 # (and vice versa) whenever both ran the same day.
 GENERATE_CONTAINER_PREFIX = "agentbench-os-run"
 PREPARE_CONTAINER_PREFIX = "agentbench-os-prep"
+# D2 exclusion rule version. v2 (operator 2026-09-30, after the live --prepare run found 11 of 13
+# exclusions were randomized-init tasks -- $RANDOM/shuf -- legitimately disagreeing across two
+# FRESH containers): gold-slot tasks are now probed with the example run TWICE inside the SAME
+# already-set-up container, mirroring upstream (`task.py` grades the check chain, including any
+# null-slot `example`, inside the task's OWN live container, never a fresh one per probe).
+EXCLUSIONS_RULE_VERSION = 2
 
 
 class TransportFailure(RuntimeError):
@@ -173,12 +179,48 @@ def exclusions_artifact_path(corpus_path) -> Path:
     return p.parent / f"{stem}.exclusions.json"
 
 
+def scripts_root_sha256(scripts_root) -> str:
+    """5th cold review P10: sha256 over every vendored script file under `scripts_root` (sorted
+    relative posix paths + contents) -- an edit to a check/example/init script invalidates the
+    exclusions artifact just like a corpus or image change does."""
+    root = Path(scripts_root)
+    h = hashlib.sha256()
+    if root.exists():
+        for f in sorted((p for p in root.rglob("*") if p.is_file()), key=lambda p: p.as_posix()):
+            h.update(f.relative_to(root).as_posix().encode("utf-8") + b"\x00")
+            h.update(f.read_bytes() + b"\x00")
+    return h.hexdigest()
+
+
+def build_disposition_map(tasks: list, scripts_root, golds: dict, exclusions: list) -> dict:
+    """P10: a per-task disposition covering EVERY corpus id -- `"match"` (never examined by D2),
+    `"kept"`, or `"excluded:<reason>"`. Built from `prepare_exclusions`'s own outputs rather than
+    changing that function's return shape (every existing caller keeps working)."""
+    excluded_reason = {e["id"]: e["reason"] for e in exclusions}
+    disposition = {}
+    for task in tasks:
+        cfg = task_config(task, scripts_root)
+        if cfg["match"] is not None:
+            disposition[task["id"]] = "match"
+        elif task["id"] in excluded_reason:
+            disposition[task["id"]] = f"excluded:{excluded_reason[task['id']]}"
+        else:
+            disposition[task["id"]] = "kept"
+    return disposition
+
+
 def write_exclusions_artifact(path, *, corpus_sha256: str, image_ids: dict, golds: dict,
                               exclusions: list, complete: bool,
-                              manual_exclusions_sha256: str | None = None) -> dict:
-    doc = {"corpus_sha256": corpus_sha256, "image_ids": image_ids, "golds": golds,
-          "exclusions": exclusions, "complete": complete, "generated_at": int(time.time()),
-          "manual_exclusions_sha256": manual_exclusions_sha256}
+                              manual_exclusions_sha256: str | None = None,
+                              scripts_root: str | None = None,
+                              scripts_sha256: str | None = None,
+                              disposition: dict | None = None,
+                              rule_version: int = EXCLUSIONS_RULE_VERSION) -> dict:
+    doc = {"rule_version": rule_version, "corpus_sha256": corpus_sha256, "image_ids": image_ids,
+          "scripts_root": str(scripts_root) if scripts_root is not None else None,
+          "scripts_sha256": scripts_sha256, "golds": golds, "exclusions": exclusions,
+          "disposition": disposition or {}, "complete": complete,
+          "manual_exclusions_sha256": manual_exclusions_sha256, "generated_at": int(time.time())}
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(str(path) + ".tmp")
     tmp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
@@ -194,11 +236,17 @@ def read_exclusions_artifact(path):
 
 
 def validate_exclusions_artifact(doc, *, corpus_sha256: str, image_ids: dict,
-                                 manual_exclusions_sha256: str | None = None):
+                                 manual_exclusions_sha256: str | None = None,
+                                 scripts_sha256: str | None = None,
+                                 all_task_ids: list | None = None,
+                                 rule_version: int = EXCLUSIONS_RULE_VERSION):
     """None if `doc` is usable for a generate run against the CURRENT corpus + images + manual
-    exclusions file; else a human-readable refusal reason."""
+    exclusions file + vendored scripts; else a human-readable refusal reason."""
     if doc is None:
         return "no exclusions artifact -- run --prepare first"
+    if doc.get("rule_version") != rule_version:
+        return (f"exclusions artifact rule_version={doc.get('rule_version')!r} but this driver "
+               f"expects {rule_version} -- rerun --prepare")
     if not doc.get("complete"):
         return ("exclusions artifact has complete=false (produced with --limit, or an earlier "
                "--prepare was interrupted) -- rerun --prepare over the WHOLE corpus")
@@ -208,6 +256,14 @@ def validate_exclusions_artifact(doc, *, corpus_sha256: str, image_ids: dict,
         return "local-os image ids changed since --prepare -- rerun --prepare"
     if doc.get("manual_exclusions_sha256") != manual_exclusions_sha256:
         return "manual exclusions file changed since --prepare -- rerun --prepare"
+    if scripts_sha256 is not None and doc.get("scripts_sha256") != scripts_sha256:
+        return "vendored scripts changed since --prepare (sha256 mismatch) -- rerun --prepare"
+    if all_task_ids is not None:
+        disposition = doc.get("disposition") or {}
+        missing = [i for i in all_task_ids if i not in disposition]
+        if missing:
+            return (f"exclusions artifact is missing a disposition for {len(missing)} corpus "
+                   f"id(s) (e.g. {missing[0]!r}) -- rerun --prepare")
     return None
 
 
@@ -355,11 +411,33 @@ def create_container(image: str, name: str, runner=subprocess.run, timeout: floa
         raise RuntimeError(f"docker run {image} (name={name}) failed: {(proc.stderr or '')[:300]}")
 
 
-def remove_container(name: str, runner=subprocess.run) -> None:
+class ContainerCleanupError(RuntimeError):
+    """5th cold review P16: `docker rm -f` either reported failure or a `docker ps -a` check
+    afterward still shows the container -- the caller (run_agentbench_os.py) raises this AFTER the
+    row has been written, stopping the run rather than starting the next container on a box that
+    may be silently accumulating live containers."""
+
+
+def remove_container(name: str, runner=subprocess.run, verify: bool = False):
+    """Best-effort by default (returns None, never raises -- every OTHER call site, e.g. D2
+    prepare's per-probe churn and the pre-clean before `create_container`, wants exactly that).
+    `verify=True` (run_task's own final cleanup) additionally confirms removal via
+    `docker ps -a --filter name=<name>` and returns a bool (True = verified gone); it still never
+    raises itself -- see `ContainerCleanupError`."""
     try:
-        runner(["docker", "rm", "-f", name], capture_output=True, text=True, timeout=30)
+        proc = runner(["docker", "rm", "-f", name], capture_output=True, text=True, timeout=30)
+        rc = getattr(proc, "returncode", None)
     except Exception:  # noqa: BLE001 -- cleanup must never raise over the real error/result
-        pass
+        rc = None
+    if not verify:
+        return None
+    try:
+        check = runner(["docker", "ps", "-a", "--filter", f"name=^{name}$", "--format", "{{.Names}}"],
+                      capture_output=True, text=True, timeout=30)
+        still_present = bool((getattr(check, "stdout", "") or "").strip())
+    except Exception:  # noqa: BLE001 -- cannot verify -> treat as NOT verified (fail closed)
+        still_present = True
+    return rc == 0 and not still_present
 
 
 def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run,
@@ -445,28 +523,57 @@ class PersistentShell:
     `docker exec <container> pkill -KILL -f "bash --login"` is issued (R7: deliberately simple and
     bounded -- the container is removed at task end regardless, and exact process-GROUP semantics
     inside an arbitrary image are unverified, so this is a backstop, not the primary guarantee).
-    Exit code 137 (SIGKILL) is ALSO treated as `timed_out=True` defensively, in case a stray
-    external kill (ours or otherwise) still let the sentinel through. A command that reads stdin
-    (e.g. a bare `read` with no input piped to it) will itself hang until this timeout fires, same
-    as upstream's session-based execution -- there is no attempt to detect or special-case that.
+    (4th cold review G1: exit code 137 is NO LONGER treated as a timeout -- there is no
+    in-container timeout wrapper any more, so a model-run process legitimately OOM-killed by the
+    container's 1 GiB memory cap also exits 137, and mis-scoring that as `exec_timeout` would
+    hide a real memory failure behind the wrong label. Only OUR OWN Python-side deadline counts.)
+    A command that reads stdin (e.g. a bare `read` with no input piped to it) will itself hang
+    until this timeout fires, same as upstream's session-based execution (R8) -- there is no
+    attempt to detect or special-case that.
+
+    THE DEADLINE COVERS THE WRITE TOO (5th cold review P8): it is set once, before the command is
+    even written to stdin, and the write itself goes through a bounded writer thread -- if the
+    shell is busy (e.g. running a long foreground command) and never reads stdin, the OS pipe's
+    write buffer fills and a plain `.write()` blocks indefinitely; that blocking IS a timeout, not
+    just a slow read.
+
+    MEMORY IS BOUNDED (G2): the reader thread's queue has `maxsize=256` (backpressure on a chatty
+    background process once we stop reading its queue -- e.g. `while :; do echo tick; done &`
+    inside the task), and the retained raw buffer is capped at ~1 MiB, keeping the first and last
+    512 KiB with a `[... N bytes dropped ...]` marker in between. The MODEL never sees more than
+    780 chars anyway (`truncate_output`); `raw_output_len` on the row/transcript still reports the
+    TRUE pre-cap length so a huge/degenerate output is still visible in the data, just not held
+    entirely in memory.
+
+    INVALID UTF-8 (5th cold review P15b): reproduces upstream's exact behaviour
+    (`_execute_bash_command`: a strict `.decode("utf-8")` that raises on any invalid byte) --
+    the WHOLE output becomes the literal upstream string `"OS Environment output cannot be
+    decoded as UTF-8"` rather than per-character `errors="replace"` mojibake.
 
     SHELL DEATH (N9). Upstream: `exit` ends the session. If the shell process exits (EOF on
     stdout, or a `BrokenPipeError` writing to a dead stdin), `run()` returns `shell_died=True`
     immediately rather than hanging for the full timeout.
     """
 
+    UPSTREAM_DECODE_ERROR_TEXT = "OS Environment output cannot be decoded as UTF-8"
+    MAX_RETAINED_BYTES = 1024 * 1024
+    RETAINED_HEAD_BYTES = 512 * 1024
+    RETAINED_TAIL_BYTES = 512 * 1024
+
     def __init__(self, container: str, popen=subprocess.Popen, runner=subprocess.run,
-                read_chunk: int = 65536):
+                read_chunk: int = 65536, queue_maxsize: int = 256):
         self.container = container
         self._popen = popen
         self._runner = runner
         self._read_chunk = read_chunk
         self.proc = None
-        self._q: "queue.Queue" = queue.Queue()
+        self._q: "queue.Queue" = queue.Queue(maxsize=queue_maxsize)
         self.dead = False
         self._carry = b""   # unexpected leftover bytes past a previous round's sentinel (see above)
 
-    def start(self) -> None:
+    def start(self) -> dict:
+        """Returns the handshake (no-op sentinel round) result -- P9(b): the caller MUST check
+        this and refuse to make any model call if it didn't cleanly succeed."""
         self.proc = self._popen(
             ["docker", "exec", "-i", self.container, "/bin/bash", "--login"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
@@ -474,7 +581,7 @@ class PersistentShell:
         t.start()
         # N8: a login shell sources profile scripts that can print banners/MOTD/warnings before
         # anything we asked for. One no-op sentinel round, with everything read before it discarded.
-        self.run("true", timeout_s=10.0)
+        return self.run("true", timeout_s=10.0)
 
     def _reader_loop(self) -> None:
         try:
@@ -483,67 +590,133 @@ class PersistentShell:
                 if not chunk:
                     self._q.put(None)
                     return
-                self._q.put(chunk)
+                self._q.put(chunk)   # blocks (backpressure, G2) once the queue holds 256 chunks
         except (ValueError, OSError):
-            self._q.put(None)
+            try:
+                self._q.put(None)
+            except Exception:  # noqa: BLE001 -- queue full and nobody draining any more; give up
+                pass
+
+    def _write_with_deadline(self, data: bytes, deadline: float) -> bool:
+        """True if written (and flushed) before `deadline` (time.monotonic()). A writer THREAD is
+        used (not a raw fd) so this works uniformly whether `self.proc.stdin` is a real OS pipe or
+        a test double with no fileno(); a write that cannot complete by the deadline (the shell is
+        busy and not reading stdin, so the OS pipe buffer fills) is itself a timeout (P8)."""
+        done = threading.Event()
+        box: dict = {}
+
+        def _writer():
+            try:
+                self.proc.stdin.write(data)
+                self.proc.stdin.flush()
+            except Exception as e:  # noqa: BLE001
+                box["error"] = e
+            finally:
+                done.set()
+
+        threading.Thread(target=_writer, daemon=True).start()
+        done.wait(max(0.0, deadline - time.monotonic()))
+        if not done.is_set():
+            return False
+        if "error" in box:
+            raise box["error"]
+        return True
 
     def run(self, command: str, timeout_s: float = DEFAULT_EXEC_TIMEOUT_S) -> dict:
-        """Returns {output, exit_code, timed_out, shell_died}."""
+        """Returns {output, exit_code, timed_out, shell_died, raw_output_len}."""
         if self.proc is None:
             raise RuntimeError("PersistentShell.run() called before start()")
         if self.dead or self.proc.poll() is not None:
             self.dead = True
-            return {"output": "", "exit_code": None, "timed_out": False, "shell_died": True}
+            return {"output": "", "exit_code": None, "timed_out": False, "shell_died": True,
+                   "raw_output_len": 0}
 
+        # P8: the deadline is set BEFORE anything is written, and covers the write itself.
+        deadline = time.monotonic() + timeout_s
         sentinel = f"__M54_SENTINEL_{uuid.uuid4().hex}__"
         full = f"{command}\nprintf '\\n%s%d\\n' {sentinel} $?\n"
         try:
-            self.proc.stdin.write(full.encode("utf-8"))
-            self.proc.stdin.flush()
+            wrote = self._write_with_deadline(full.encode("utf-8"), deadline)
         except (BrokenPipeError, ValueError, OSError):
             self.dead = True
-            return {"output": "", "exit_code": None, "timed_out": False, "shell_died": True}
+            return {"output": "", "exit_code": None, "timed_out": False, "shell_died": True,
+                   "raw_output_len": 0}
+        if not wrote:
+            self._on_timeout()
+            return {"output": "", "exit_code": None, "timed_out": True, "shell_died": False,
+                   "raw_output_len": 0}
 
         marker = ("\n" + sentinel).encode("ascii")
         raw = bytearray(self._carry)
-        self._carry = b""
-        search_from = 0
-        start_t = time.monotonic()
+        total_bytes_in = len(self._carry)   # G2: tracked INDEPENDENTLY of capping, so
+        self._carry = b""                   # `raw_output_len` stays exact regardless of how many
+        search_from = 0                     # times the retained buffer gets compacted.
         while True:
             idx = raw.find(marker, max(0, search_from - len(marker)))
             if idx != -1:
                 m = re.match(rb"(\d+)\n", bytes(raw[idx + len(marker):]))
                 if m:
                     exit_code = int(m.group(1))
-                    timed_out = exit_code == 137     # SIGKILL -- defensive (N5)
-                    output = bytes(raw[:idx]).decode("utf-8", errors="replace")
+                    output_bytes = bytes(raw[:idx])
+                    # bytes after idx were never touched by capping (capping only ever drops a
+                    # MIDDLE span strictly before the eventual sentinel position) -- so
+                    # total_bytes_in minus that trailing length is the exact TRUE output length.
+                    raw_output_len = total_bytes_in - (len(raw) - idx)
+                    output = self._decode(output_bytes)
                     consumed_end = idx + len(marker) + m.end()
                     leftover = bytes(raw[consumed_end:])
                     if leftover:
                         print(f"[PersistentShell] WARNING: {len(leftover)} unexpected byte(s) past "
                              "the sentinel; carrying to the next run() call", file=sys.stderr)
                     self._carry = leftover
-                    return {"output": output, "exit_code": exit_code, "timed_out": timed_out,
-                           "shell_died": False}
+                    return {"output": output, "exit_code": exit_code, "timed_out": False,
+                           "shell_died": False, "raw_output_len": raw_output_len}
                 # digits present but not yet newline-terminated -- re-check from the SAME offset
                 # once more data arrives (R4: never guess a partial exit code).
                 search_from = idx
             else:
                 search_from = len(raw)
-            remaining = timeout_s - (time.monotonic() - start_t)
+            remaining = deadline - time.monotonic()
             if remaining <= 0:
                 self._on_timeout()
-                return {"output": raw.decode("utf-8", errors="replace"), "exit_code": None,
-                       "timed_out": True, "shell_died": False}
+                out = self._decode(bytes(raw))
+                return {"output": out, "exit_code": None, "timed_out": True, "shell_died": False,
+                       "raw_output_len": total_bytes_in}
             try:
                 chunk = self._q.get(timeout=min(remaining, 0.1))
             except queue.Empty:
                 continue
             if chunk is None:   # EOF -- the shell process exited (e.g. the command ran `exit`)
                 self.dead = True
-                return {"output": raw.decode("utf-8", errors="replace"), "exit_code": None,
-                       "timed_out": False, "shell_died": True}
+                out = self._decode(bytes(raw))
+                return {"output": out, "exit_code": None, "timed_out": False, "shell_died": True,
+                       "raw_output_len": total_bytes_in}
+            total_bytes_in += len(chunk)
             raw += chunk
+            capped = self._cap_buffer(raw)
+            if len(capped) != len(raw):
+                # bytes were physically removed from the middle -- any offset computed against the
+                # OLD buffer is no longer meaningful; the capped buffer is <=~1MiB regardless, so a
+                # full re-scan from 0 is cheap (this is the G2 bound, not the R1 O(n^2) problem).
+                search_from = 0
+            raw = capped
+
+    def _cap_buffer(self, raw: bytearray) -> bytearray:
+        """G2: bound memory on a chatty background writer -- keep head+tail, drop the middle."""
+        if len(raw) <= self.MAX_RETAINED_BYTES:
+            return raw
+        head = bytes(raw[:self.RETAINED_HEAD_BYTES])
+        tail = bytes(raw[-self.RETAINED_TAIL_BYTES:])
+        newly_dropped = len(raw) - len(head) - len(tail)
+        marker = f"\n[... {newly_dropped} bytes dropped ...]\n".encode("ascii")
+        return bytearray(head + marker + tail)
+
+    def _decode(self, data: bytes) -> str:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return self.UPSTREAM_DECODE_ERROR_TEXT
+        return text
 
     def _on_timeout(self) -> None:
         self.kill()
@@ -589,6 +762,22 @@ def evaluate_match(answer, match_cfg: dict) -> bool:
     return False
 
 
+# 5th cold review P9(a): a docker TRANSPORT failure (the daemon unreachable, docker itself
+# missing/misconfigured, our own exec timing out) must never be scored as the checker's legitimate
+# nonzero verdict -- these exit codes/text are docker/sh's OWN "couldn't even run this" signals,
+# not the checker script's.
+_DOCKER_TRANSPORT_EXIT_CODES = frozenset({125, 126, 127})
+_DOCKER_DAEMON_ERROR_MARKER = "Cannot connect to the Docker daemon"
+
+
+def _is_docker_transport_failure(res: dict) -> bool:
+    if res.get("timed_out"):
+        return True
+    if res.get("exit_code") in _DOCKER_TRANSPORT_EXIT_CODES:
+        return True
+    return _DOCKER_DAEMON_ERROR_MARKER in (res.get("stderr") or "")
+
+
 def run_check_chain(container: str, check_list: list, example, answer, runner=subprocess.run,
                     timeout: float = DEFAULT_EXEC_TIMEOUT_S) -> tuple:
     """Mirrors task.py `_evaluate_by_check_scripts` EXACTLY, including `params = [str(answer)]`
@@ -598,52 +787,113 @@ def run_check_chain(container: str, check_list: list, example, answer, runner=su
     appended for the next; a None entry runs `example` instead (the "gold" position); any
     timeout/nonzero exit fails the whole chain.
 
-    Returns `(passed: bool, gold_live: str|None)` -- `gold_live` is the stdout of the FIRST null
-    ("gold slot") position actually executed in THIS live grading run (R5/AC5: the chain already
-    runs it; capture it rather than trusting the D2-prepare-time value stayed valid). `None` when
-    the check list has no gold slot at all."""
+    Returns `(passed: bool, gold_live: str|None, infra_error: str|None)`. `gold_live` is the
+    stdout of the FIRST null ("gold slot") position actually executed in THIS live grading run
+    (R5/AC5: the chain already runs it; capture it rather than trusting the D2-prepare-time value
+    stayed valid). `None` when the check list has no gold slot at all. `infra_error` is set (P9a)
+    when a step failed via a DOCKER TRANSPORT failure rather than the checker's own verdict -- the
+    caller must turn that into a `setup_error` row, never a plain `failed_tests`."""
     params = [str(answer)]
     gold_live = None
     for entry in check_list:
         script = entry if entry is not None else example
         if script is None:
-            return False, gold_live
+            return False, gold_live, None
         res = docker_exec(container, script, timeout, runner, extra_params=params)
         if entry is None and gold_live is None:
             gold_live = res["stdout"]
+        if _is_docker_transport_failure(res):
+            return False, gold_live, (f"docker transport failure grading check script "
+                                      f"(exit={res['exit_code']}, timed_out={res['timed_out']}): "
+                                      f"{(res.get('stderr') or '')[:200]}")
         if res["timed_out"] or res["exit_code"] != 0:
-            return False, gold_live
+            return False, gold_live, None
         params.append(res["stdout"])
-    return True, gold_live
+    return True, gold_live, None
+
+
+def _container_setup(image: str, init_scripts: list, start, container: str,
+                     runner=subprocess.run, timeout: float = DEFAULT_EXEC_TIMEOUT_S) -> dict:
+    """Fresh container: create + init + start. Returns
+    {"ok", "failed_step": "create"|"init"|"start"|None, "exit_code", "timed_out", "stderr"}."""
+    remove_container(container, runner)
+    try:
+        create_container(f"local-os/{image}", container, runner)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "failed_step": "create", "exit_code": None, "timed_out": False,
+               "stderr": str(e)[:300]}
+    for s in init_scripts:
+        res = docker_exec(container, s, timeout, runner)
+        if res["timed_out"] or res["exit_code"] != 0:
+            return {"ok": False, "failed_step": "init", "exit_code": res["exit_code"],
+                   "timed_out": res["timed_out"], "stderr": (res["stderr"] or "")[:300]}
+    if start:
+        res = docker_exec(container, start, timeout, runner)
+        if res["timed_out"] or res["exit_code"] != 0:
+            return {"ok": False, "failed_step": "start", "exit_code": res["exit_code"],
+                   "timed_out": res["timed_out"], "stderr": (res["stderr"] or "")[:300]}
+    return {"ok": True, "failed_step": None, "exit_code": 0, "timed_out": False, "stderr": ""}
+
+
+def _run_example_in_container(container: str, example, runner, timeout: float, placeholder: str) -> dict:
+    if example is None:
+        return {"ok": False, "exit_code": None, "timed_out": False, "stdout": "", "stderr": ""}
+    res = docker_exec(container, example, timeout, runner, extra_params=[placeholder])
+    return {"ok": (not res["timed_out"] and res["exit_code"] == 0), "exit_code": res["exit_code"],
+           "timed_out": res["timed_out"], "stdout": res["stdout"], "stderr": res["stderr"] or ""}
 
 
 def run_reference(image: str, init_scripts: list, start, example, container: str,
                   runner=subprocess.run, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
                   answer_placeholder: str = ANSWER_PLACEHOLDER_PRIMARY) -> tuple:
-    """D2: a FRESH container, init + start, then `example` once with `answer_placeholder` as its
-    sole argv (mirrors the chain's `params=[answer]` at the null slot). Returns
-    `(exit_ok: bool, stdout: str|None)` -- `exit_ok` is False on any setup/example failure or
-    timeout; `stdout` is only meaningful when `exit_ok` is True."""
-    remove_container(container, runner)
+    """NO-gold-slot path: a FRESH container, init + start, then `example` once. Returns
+    `(exit_ok: bool, stdout: str|None)`."""
     try:
-        try:
-            create_container(f"local-os/{image}", container, runner)
-        except Exception:  # noqa: BLE001
+        setup = _container_setup(image, init_scripts, start, container, runner, timeout)
+        if not setup["ok"]:
             return False, None
-        for s in init_scripts:
-            res = docker_exec(container, s, timeout, runner)
-            if res["timed_out"] or res["exit_code"] != 0:
-                return False, None
-        if start:
-            res = docker_exec(container, start, timeout, runner)
-            if res["timed_out"] or res["exit_code"] != 0:
-                return False, None
+        r = _run_example_in_container(container, example, runner, timeout, answer_placeholder)
+        return (True, r["stdout"]) if r["ok"] else (False, None)
+    finally:
+        remove_container(container, runner)
+
+
+def run_reference_pair_in_container(image: str, init_scripts: list, start, example: object,
+                                    container: str, runner=subprocess.run,
+                                    timeout: float = DEFAULT_EXEC_TIMEOUT_S) -> dict:
+    """D2 rule v2 (operator 2026-09-30): gold-slot tasks are graded by running `example` TWICE
+    inside the SAME already-set-up container (one init+start), mirroring upstream -- task.py grades
+    the check chain, including any null-slot `example`, inside the task's OWN live container, never
+    a fresh one per probe. This is why a randomized init ($RANDOM/shuf) no longer produces a false
+    `gold_mismatch`: the environment is fixed once per probe, same as a real grading run.
+
+    Returns a full diagnostic:
+      {"outcome": "ok"|"no_gold"|"gold_mismatch", "gold": str|None,
+       "failed_step": "create"|"init"|"start"|"example_missing"|"example"|None,
+       "exit_codes": [c1, c2], "stdout": [s1[:200], s2[:200]], "stderr": [e1[:300], e2[:300]],
+       "timed_out": bool}
+    """
+    try:
+        setup = _container_setup(image, init_scripts, start, container, runner, timeout)
+        if not setup["ok"]:
+            return {"outcome": "no_gold", "gold": None, "failed_step": setup["failed_step"],
+                   "exit_codes": [setup["exit_code"], None], "stdout": ["", ""],
+                   "stderr": [setup["stderr"], ""], "timed_out": setup["timed_out"]}
         if example is None:
-            return False, None
-        res = docker_exec(container, example, timeout, runner, extra_params=[answer_placeholder])
-        if res["timed_out"] or res["exit_code"] != 0:
-            return False, None
-        return True, res["stdout"]
+            return {"outcome": "no_gold", "gold": None, "failed_step": "example_missing",
+                   "exit_codes": [None, None], "stdout": ["", ""], "stderr": ["", ""],
+                   "timed_out": False}
+        r1 = _run_example_in_container(container, example, runner, timeout, ANSWER_PLACEHOLDER_PRIMARY)
+        r2 = _run_example_in_container(container, example, runner, timeout, ANSWER_PLACEHOLDER_PROBE)
+        diag = {"exit_codes": [r1["exit_code"], r2["exit_code"]],
+               "stdout": [r1["stdout"][:200], r2["stdout"][:200]],
+               "stderr": [r1["stderr"][:300], r2["stderr"][:300]],
+               "timed_out": r1["timed_out"] or r2["timed_out"]}
+        if not r1["ok"] or not r2["ok"] or not r1["stdout"] or not r2["stdout"]:
+            return {"outcome": "no_gold", "gold": None, "failed_step": "example", **diag}
+        if r1["stdout"] != r2["stdout"]:
+            return {"outcome": "gold_mismatch", "gold": None, "failed_step": None, **diag}
+        return {"outcome": "ok", "gold": r1["stdout"], "failed_step": None, **diag}
     finally:
         remove_container(container, runner)
 
@@ -655,48 +905,44 @@ def _check_list_has_gold_slot(check_list) -> bool:
 def prepare_exclusions(tasks: list, scripts_root, runner=subprocess.run,
                        timeout: float = DEFAULT_EXEC_TIMEOUT_S,
                        prefix: str = PREPARE_CONTAINER_PREFIX, manual: dict | None = None) -> tuple:
-    """D2 (AC2 + cold-review N3/N4/R10), no model calls. Returns (golds: {id: str}, exclusions:
-    [{id, reason, ...}]). `match` tasks are never excluded (never even examined).
+    """D2 (AC2 + cold-review N3/N4/R10/D2-v2/P10), no model calls. Returns
+    (golds: {id: str}, exclusions: [{id, reason, ...diagnostic...}]).
 
-    `manual` (id -> reason, from `manual_exclusions_path`/`load_manual_exclusions`) is checked
-    FIRST and short-circuits: a hand-curated exclusion is never re-probed (it is excluded on
-    inspection, not on a mechanical result the probe could second-guess).
+    `match` tasks are checked FIRST and are never excluded or examined by anything below -- 5th
+    cold review P10: a manual exclusion must NOT pre-empt the match exemption. `manual` (id ->
+    reason) is checked next and short-circuits: a hand-curated exclusion is never re-probed.
 
-    A check list's position-0..n entries can include a `None` ("gold slot": the live grading
-    chain runs `example` there, fed the actual submitted answer). Only THOSE tasks need the two-
-    placeholder probe (`"1"`/`"2"`, two plausible-looking answers -- N4): disagreement means the
-    example script is not a stable answer-independent ground truth -- either it reads its answer
-    argument, or it is simply nondeterministic (`gold_mismatch`, R10: one reason covers both, since
-    neither makes it usable as a cached gold); empty stdout at either run is `no_gold`.
+    A check list's position-0..n entries can include a `None` ("gold slot": the live grading chain
+    runs `example` there, fed the actual submitted answer). Only THOSE tasks are probed, via
+    `run_reference_pair_in_container` (D2 rule v2: ONE fresh container, `example` run twice inside
+    it with placeholders `"1"`/`"2"`): disagreement is `gold_mismatch` (a genuinely nondeterministic
+    reference OR an answer-reading one -- EXPECTED for randomized-init tasks, not necessarily an
+    error); empty/failed/timed-out is `no_gold`, with the failing step recorded.
 
-    A check list with NO gold slot (every position is a literal checker script -- a "pure state
-    check", e.g. "did the file move") never touches a gold value at grading time, so probing with
-    two placeholders would prove nothing about the real failure mode. Those tasks only need their
-    REFERENCE SOLUTION to actually run: init + start + `example` once, exit 0. Nonzero/timeout ->
-    `reference_failed`; no gold is cached either way (none is ever used)."""
+    A check list with NO gold slot (every position a literal checker script) never touches a gold
+    value at grading time, so the two-placeholder probe would prove nothing; it only needs its
+    reference solution to run once, exit 0 (`reference_failed` otherwise); no gold is ever cached
+    for these."""
     manual = manual or {}
     golds, exclusions = {}, []
     for task in tasks:
-        if task["id"] in manual:
-            exclusions.append({"id": task["id"], "reason": "manual", "note": manual[task["id"]]})
-            continue
         cfg = task_config(task, scripts_root)
         if cfg["match"] is not None:
             continue
+        if task["id"] in manual:
+            exclusions.append({"id": task["id"], "reason": "manual", "note": manual[task["id"]]})
+            continue
         name = container_name(prefix, task["id"])
         if _check_list_has_gold_slot(cfg["check"]):
-            ok1, g1 = run_reference(cfg["image"], cfg["init_scripts"], cfg["start"], cfg["example"],
-                                    name, runner, timeout, ANSWER_PLACEHOLDER_PRIMARY)
-            ok2, g2 = run_reference(cfg["image"], cfg["init_scripts"], cfg["start"], cfg["example"],
-                                    name, runner, timeout, ANSWER_PLACEHOLDER_PROBE)
-            if not ok1 or not ok2 or not g1 or not g2:
-                exclusions.append({"id": task["id"], "reason": "no_gold"})
-                continue
-            if g1 != g2:
-                exclusions.append({"id": task["id"], "reason": "gold_mismatch",
-                                   "gold_primary": g1, "gold_probe": g2})
-                continue
-            golds[task["id"]] = g1
+            result = run_reference_pair_in_container(cfg["image"], cfg["init_scripts"], cfg["start"],
+                                                      cfg["example"], name, runner, timeout)
+            if result["outcome"] == "ok":
+                golds[task["id"]] = result["gold"]
+            else:
+                exclusions.append({"id": task["id"], "reason": result["outcome"],
+                                   "failed_step": result["failed_step"],
+                                   "exit_codes": result["exit_codes"], "stdout": result["stdout"],
+                                   "stderr": result["stderr"], "timed_out": result["timed_out"]})
         else:
             ok, _stdout = run_reference(cfg["image"], cfg["init_scripts"], cfg["start"],
                                         cfg["example"], name, runner, timeout,
@@ -836,7 +1082,7 @@ def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
             # the turn entry for THIS call was appended by DualSubmitDriver.complete() just
             # before run_agent dispatched us; patch in what only the tool itself knows.
             transcript_turns[-1]["tool_result"] = wrapped_text
-            transcript_turns[-1]["raw_output_len"] = len(res["output"])
+            transcript_turns[-1]["raw_output_len"] = res.get("raw_output_len", len(res["output"]))
         return wrapped_text
 
     return [
@@ -930,33 +1176,46 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
     base = {"id": task["id"], "group": task.get("group"), "labels": task.get("labels") or [],
             "image": cfg["image"], "gold_prepare": gold_prepare}
     shell = None
+    row = None
     try:
         try:
             create_container(f"local-os/{cfg['image']}", name, runner)
         except Exception as e:  # noqa: BLE001
-            return _fail_row(base, AO.SERVER_ERROR, t0, clock,
+            row = _fail_row(base, AO.SERVER_ERROR, t0, clock,
                              error=f"container create: {type(e).__name__}: {e}")
+            return row
 
         for s in cfg["init_scripts"]:
             res = docker_exec(name, s, exec_timeout, runner)
             if res["timed_out"] or res["exit_code"] != 0:
-                return _fail_row(base, AO.SERVER_ERROR, t0, clock,
+                row = _fail_row(base, AO.SERVER_ERROR, t0, clock,
                                  error=f"init script failed (timed_out={res['timed_out']}, "
                                        f"exit={res['exit_code']}): {res['stderr'][:200]}")
+                return row
 
         shell = PersistentShell(name, popen=popen, runner=runner)
-        shell.start()
+        handshake = shell.start()
+        # P9(b): validate the handshake BEFORE the first model call -- a shell that never came up
+        # cleanly must never reach the agent loop.
+        if handshake["shell_died"] or handshake["timed_out"] or handshake["exit_code"] != 0:
+            row = _fail_row(base, AO.SERVER_ERROR, t0, clock,
+                             shell_died=handshake["shell_died"],
+                             error=f"shell handshake failed (shell_died={handshake['shell_died']}, "
+                                   f"timed_out={handshake['timed_out']}, exit={handshake['exit_code']})")
+            return row
         if cfg["start"]:
             lang, code = cfg["start"]
             if lang != "bash":
-                return _fail_row(base, AO.SERVER_ERROR, t0, clock,
+                row = _fail_row(base, AO.SERVER_ERROR, t0, clock,
                                  error=f"unsupported start script language {lang!r}")
+                return row
             res = shell.run(code, timeout_s=exec_timeout)
             if res["shell_died"] or res["timed_out"] or res["exit_code"] != 0:
-                return _fail_row(base, AO.SERVER_ERROR, t0, clock,
+                row = _fail_row(base, AO.SERVER_ERROR, t0, clock,
                                  shell_died=res["shell_died"],
                                  error=f"start script failed (shell_died={res['shell_died']}, "
                                        f"timed_out={res['timed_out']}, exit={res['exit_code']})")
+                return row
 
         tool_counters = {"tool_timeouts": 0}
         exec_timeout_flag = {"hit": False}
@@ -976,13 +1235,15 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
             raise TransportFailure(f"task {task['id']}: {result['error']}")
 
         gold_live_box = {"value": None}
+        infra_error_box = {"value": None}
 
         def _evaluate(answer):
             if cfg["match"] is not None:
                 return evaluate_match(answer, cfg["match"])
-            passed, gold_live = run_check_chain(name, cfg["check"], cfg["example"], answer,
-                                                runner, exec_timeout)
+            passed, gold_live, infra_error = run_check_chain(name, cfg["check"], cfg["example"],
+                                                             answer, runner, exec_timeout)
             gold_live_box["value"] = gold_live
+            infra_error_box["value"] = infra_error
             return passed
 
         # AbortEpisode already set result["outcome"] to FAILED_TESTS (exec timeout, model-caused
@@ -991,11 +1252,18 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
         # row-level setup_error/shell_died flags are.
         outcome, passed, answer = finalize_outcome(result, _evaluate)
 
+        # P9(a): a docker TRANSPORT failure during grading is an infra failure, never a graded
+        # model loss -- override whatever finalize_outcome computed.
+        if infra_error_box["value"] is not None:
+            row = _fail_row(base, AO.SERVER_ERROR, t0, clock, error=infra_error_box["value"],
+                             answer=answer, gold_live=gold_live_box["value"])
+            return row
+
         counters = result.get("counters") or {}
         conv = evaluate_convergence(wrapped.per_turn, params.get("thinking_budget"), context_limit,
                                     params.get("max_tokens"))
         dtps = [t.get("decode_tps") for t in wrapped.per_turn if isinstance(t.get("decode_tps"), (int, float))]
-        return {**base, "passed": passed, "outcome": outcome, "turns": result.get("turns", 0),
+        row = {**base, "passed": passed, "outcome": outcome, "turns": result.get("turns", 0),
                 "submitted_via": wrapped.submitted_via, "answer": answer,
                 "gold_live": gold_live_box["value"],
                 "per_turn_completion_tokens": [t.get("completion_tokens") for t in wrapped.per_turn],
@@ -1015,13 +1283,20 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
                 "decode_tps": round(statistics.mean(dtps), 2) if dtps else None,
                 "per_turn_decode_tps": [t.get("decode_tps") for t in wrapped.per_turn],
                 "error": result.get("error"), "_transcript_turns": wrapped.per_turn}
+        return row
     except TransportFailure:
         raise
     except KeyboardInterrupt:
         raise
     except Exception as e:  # noqa: BLE001 -- infra/setup/evaluate failure; never crash the batch
-        return _fail_row(base, AO.SERVER_ERROR, t0, clock, error=f"{type(e).__name__}: {e}")
+        row = _fail_row(base, AO.SERVER_ERROR, t0, clock, error=f"{type(e).__name__}: {e}")
+        return row
     finally:
         if shell is not None:
             shell.close()
-        remove_container(name, runner)
+        # P16: verify removal; the CALLER (after appending this row) decides whether
+        # to stop the run on an unverified cleanup -- raising HERE would override the
+        # function's return value and the row would never reach the caller at all.
+        verified = remove_container(name, runner, verify=True)
+        if row is not None:
+            row["container_removed_verified"] = verified
