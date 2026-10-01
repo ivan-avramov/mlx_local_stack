@@ -694,6 +694,36 @@ def wrap_os_output(text: str) -> str:
 
 
 # --------------------------------------------------------------------------- persistent shell (F4a)
+# 14th cold review round 14 (fidelity, from a LIVE pty smoke against local-os/default on d268e98):
+# a REAL interactive shell (the 13th round's own pty switch) emits terminal CONTROL sequences a
+# plain pipe never produced -- readline's bracketed-paste mode toggles around every line it reads
+# (`\x1b[?2004h`/`\x1b[?2004l`), the image's own `.bashrc` aliasing `ls`/`grep` with
+# `--color=auto` (SGR colour codes), and bash's OSC window-title updates (`\x1b]0;user@host: ~\a`)
+# -- none of which `docker exec -i` (no tty) ever produced. Stripped in EXACTLY upstream's own
+# byte-level order (task.py `Container.execute`), applied to RAW BYTES before any UTF-8 decoding:
+# the ORDER matters -- step 1 (the OSC-wrapped prompt LINE) must run before step 2 (generic CSI
+# stripping), or step 2 would eat the prompt's own embedded colour codes first and break step 1's
+# own match; step 4 (bracketed-paste) needs its OWN step because it is a CSI PRIVATE-mode form
+# (the `?` is not in step 2's `[0-9;]*` class).
+_ANSI_STRIP_PATTERNS = (
+    re.compile(rb"\x1b.+@.+[#|$] "),            # 1: an OSC-title-wrapped shell prompt line
+    re.compile(rb"\x1b\[[0-9;]*[a-zA-Z]"),       # 2: generic CSI (SGR colour, cursor movement, ...)
+    re.compile(rb"\x1b\][0-9]*;[^\x07]*\x07"),   # 3: OSC sequences terminated by BEL
+    re.compile(rb"\x1b\[\?2004[hl]"),            # 4: bracketed-paste mode toggles (CSI private-mode)
+    re.compile(rb"\x07"),                        # 5: any stray leftover BEL byte
+)
+
+
+def _strip_ansi_bytes(raw_bytes: bytes) -> bytes:
+    """Applies `_ANSI_STRIP_PATTERNS` in order. Pure, byte-in/byte-out -- called on whatever span
+    of bytes is about to be fed to the decoder (the common case, one call per round covering the
+    COMPLETE span; also the few extra-large-output rounds that feed incrementally mid-chunk, same
+    call site either way)."""
+    for pattern in _ANSI_STRIP_PATTERNS:
+        raw_bytes = pattern.sub(b"", raw_bytes)
+    return raw_bytes
+
+
 class _PtyReader:
     """13th round: a pty master fd wrapped with the SAME `.read(n)`/`.close()` shape as the
     scripted-fake-process test double (`_ScriptedStdout`) -- but POLLABLE and CANCELLABLE, never
@@ -929,8 +959,14 @@ class PersistentShell:
         # else in this one throwaway handshake round. `stty -echo` disables the pty's own echo of
         # typed input for every round AFTER this one (this round's OWN command text is inevitably
         # echoed back too, since echo is still ON while bash is reading this very line -- but its
-        # entire output is discarded regardless, same as the banner).
-        return self.run("export PS1='' PS2='' PROMPT_COMMAND=; stty -echo 2>/dev/null; true",
+        # entire output is discarded regardless, same as the banner, and run()'s own strip
+        # pipeline cleans it up too -- see _postprocess/item (c)). 14th round: `bind 'set
+        # enable-bracketed-paste off'` reduces readline's bracketed-paste noise at the source --
+        # kept ALONGSIDE, never instead of, the byte-level strip regexes in `run()` (item (b)):
+        # a model's own `bash_action` could still re-enable it (e.g. `bind` inside a sub-shell),
+        # and the regexes are what actually guarantee correctness regardless.
+        return self.run("export PS1='' PS2='' PROMPT_COMMAND=; stty -echo 2>/dev/null; "
+                        "bind 'set enable-bracketed-paste off' 2>/dev/null; true",
                         timeout_s=10.0)
 
     def _put_until_cancelled(self, item) -> None:
@@ -1026,12 +1062,20 @@ class PersistentShell:
             byte-for-byte; then strip a leading echo of the EXACT text we just wrote -- the
             fallback for when `stty -echo` (sent in the handshake) did not fully suppress it (see
             the class docstring). Applied ONLY to genuinely decoded text, never to the fixed
-            UPSTREAM_DECODE_ERROR_TEXT sentinel string."""
+            UPSTREAM_DECODE_ERROR_TEXT sentinel string.
+
+            14th round: readline's bracketed-paste toggle at the START of every round (off while
+            it reads our line, back on once consumed -- stripped as BYTES by `_strip_ansi_bytes`
+            above) leaves its own leading \\r\\n behind once the escape bytes are gone -- strip
+            exactly ONE leading newline so a command with NO real output at all (e.g. `printf
+            ''`) produces the empty string, not a lone blank line."""
             if not text:
                 return text
             text = text.replace("\r\n", "\n")
             if text.startswith(full):
                 text = text[len(full):]
+            if text.startswith("\n"):
+                text = text[1:]
             return text
 
         # P28 (MEDIUM): decode INCREMENTALLY as each ORIGINAL chunk arrives, never by re-decoding
@@ -1051,6 +1095,13 @@ class PersistentShell:
         def _feed(piece: bytes) -> None:
             nonlocal decoded_text, decode_broken
             if decode_broken or not piece:
+                return
+            # 14th round: strip terminal control sequences from the RAW BYTES before decoding
+            # (upstream's own byte-level order, see `_strip_ansi_bytes`) -- never from already-
+            # decoded text, so a multi-byte UTF-8 character adjacent to a stripped sequence is
+            # never disturbed.
+            piece = _strip_ansi_bytes(piece)
+            if not piece:
                 return
             try:
                 decoded_text = self._cap_text(decoded_text + decoder.decode(piece))
@@ -1139,7 +1190,20 @@ class PersistentShell:
                         output = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else _postprocess(decoded_text)
                         consumed_end = idx + len(marker) + m.end()
                         leftover = bytes(raw[consumed_end:])
-                        if leftover:
+                        # 14th round item (a): bytes past the sentinel that are PURE terminal
+                        # noise (escape sequences and/or \r\n -- readline re-enabling bracketed-
+                        # paste right after our sentinel line, before we've even sent the next
+                        # command) are EXPECTED, not evidence of a real protocol anomaly -- no
+                        # warning, and discarded outright (never carried forward; there is
+                        # nothing genuine in it for the next round to use). A leftover with ANY
+                        # other bytes remaining after the SAME stripping is still a real anomaly
+                        # (P51's own case) and keeps warning + carrying the RAW, unstripped bytes.
+                        leftover_is_pure_noise = (leftover and not _strip_ansi_bytes(leftover)
+                                                 .replace(b"\r\n", b"").replace(b"\r", b"")
+                                                 .replace(b"\n", b""))
+                        if leftover_is_pure_noise:
+                            leftover = b""
+                        elif leftover:
                             print(f"[PersistentShell] WARNING: {len(leftover)} unexpected byte(s) "
                                  "past the sentinel; carrying to the next run() call",
                                  file=sys.stderr)

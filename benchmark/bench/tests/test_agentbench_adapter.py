@@ -1382,6 +1382,240 @@ def test_persistent_shell_command_outputs_own_trailing_partial_lead_byte_is_deco
         shell.close()
 
 
+# --------------------------------------------------------------------------- PersistentShell pty terminal noise (14th round)
+# 14th cold review round 14 (fidelity from a LIVE pty smoke against local-os/default on d268e98):
+# a REAL interactive shell (the 13th round's own pty switch) emits terminal control sequences a
+# plain pipe never did -- readline's bracketed-paste mode toggles around every line it reads, the
+# image's own `.bashrc` aliasing `ls`/`grep` with `--color=auto` (SGR colour codes), and bash's
+# OSC window-title updates. Stripped in EXACTLY upstream's own byte-level order (task.py
+# `Container.execute`), scripted here with exact reproduction bytes (no real docker image needed
+# to prove the mechanism -- same spirit as the round-13 marker/subshell scripted tests).
+def test_persistent_shell_scripted_strips_bracketed_paste_around_echo_hi_P14(monkeypatch):
+    """Live reproduction: `echo hi` returned
+    '\\x1b[?2004h\\x1b[?2004l\\r\\nhi\\n...' -- must strip to exactly 'hi\\n'."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\nhi\n" + marker + b"0\n")
+        res = shell.run("echo hi")
+        assert res["output"] == "hi\n"
+        assert res["exit_code"] == 0
+        assert "\x1b" not in res["output"]
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_scripted_printf_empty_strips_to_empty_string_P14(monkeypatch):
+    """`printf ''` (no real output at all) -- after stripping the bracketed-paste pair and its
+    own leading \\r\\n, the result must be the EMPTY string (so wrap_os_output's "The output of
+    the OS is empty." path fires), never a lone blank line."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\n" + marker + b"0\n")
+        res = shell.run("printf ''")
+        assert res["output"] == ""
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_scripted_strips_ls_colour_aliases_P14(monkeypatch):
+    """Live reproduction: `ls /` returned '\\x1b[0m\\x1b[01;36mbin\\x1b[0m …' (the image's
+    .bashrc aliases ls/grep with --color=auto) -- must strip to the plain names."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        colour_ls = (b"\x1b[?2004h\x1b[?2004l\r\n"
+                    b"\x1b[0m\x1b[01;36mbin\x1b[0m  \x1b[01;36metc\x1b[0m\n")
+        proc.stdout.push(colour_ls + marker + b"0\n")
+        res = shell.run("ls")
+        assert res["output"] == "bin  etc\n"
+        assert "\x1b" not in res["output"]
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_scripted_trailing_noise_past_sentinel_no_warning_discarded_P14(monkeypatch, capsys):
+    """14th round item (a): bytes past the sentinel that consist ONLY of escape sequences/\\r\\n
+    (the live reproduction: the trailing '\\x1b[?2004h' bracketed-paste re-enable after our
+    sentinel line, printed every call before this fix) are EXPECTED NOISE -- no warning, and
+    discarded (never carried forward as _carry) -- unlike a genuinely unexpected leftover, which
+    must still warn and carry (P51, unaffected by this change)."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        proc.stdout.push(b"hi\n" + marker + b"0\n" + b"\x1b[?2004h\x1b[?2004l\r\n")
+        res = shell.run("echo hi", timeout_s=5)
+        assert res["output"] == "hi\n"
+        err = capsys.readouterr().err
+        assert "unexpected byte" not in err
+        assert shell._carry == b""   # discarded, not carried forward
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_scripted_genuinely_unexpected_leftover_still_warns_and_carries_P14(monkeypatch, capsys):
+    """Contrast case: a leftover that is NOT pure escape-sequence/\\r\\n noise (real, unexpected
+    bytes) must still warn and carry forward -- P51's own mechanism, unaffected by the (a) fix."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        proc.stdout.push(b"ABCD" + marker + b"0\n" + "€".encode("utf-8"))
+        res = shell.run("printf ABCD", timeout_s=5)
+        assert res["output"] == "ABCD"
+        err = capsys.readouterr().err
+        assert "unexpected byte" in err
+        assert shell._carry == "€".encode("utf-8")
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_scripted_echo_strip_fallback_when_stty_echo_fails_P14(monkeypatch):
+    """Dedicated test for the ECHO-STRIP FALLBACK path specifically (distinct from the round-13
+    real-bash "no echo pollution" test, which exercised `stty -echo` actually WORKING): if echo
+    were NOT suppressed (e.g. a `su -` sub-shell resetting terminal settings mid-episode), run()
+    must still strip a leading echo of the EXACT text it just wrote."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        full = f"echo hi\nprintf '\\n%s%d\\n' {sentinel} $?\n"
+        echoed = full.replace("\n", "\r\n").encode("utf-8")   # echo still ON: reflects the WHOLE write
+        proc.stdout.push(echoed + b"hi\n" + marker + b"0\n")
+        res = shell.run("echo hi")
+        assert res["output"] == "hi\n"
+        assert "echo hi" not in res["output"]
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_start_handshake_output_never_leaks_command_text_P14(monkeypatch):
+    """14th round item (c): start()'s own handshake round must never leak the OSC-title-wrapped
+    shell prompt or the echoed handshake command text -- echo is still ON while bash is reading
+    that very line (stty -echo only takes effect once it's EXECUTED), but the result must be
+    clean regardless, via the SAME strip pipeline every other round gets."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+    handshake_cmd = ("export PS1='' PS2='' PROMPT_COMMAND=; stty -echo 2>/dev/null; "
+                     "bind 'set enable-bracketed-paste off' 2>/dev/null; true")
+    full = f"{handshake_cmd}\nprintf '\\n%s%d\\n' {sentinel} $?\n"
+    echoed = full.replace("\n", "\r\n").encode("utf-8")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(b"\x1b]0;root@container: ~\x07root@container:~# " + echoed + marker + b"0\n")
+    try:
+        res = shell.start()
+        assert res["output"] == ""
+        assert "export PS1" not in res["output"]
+        assert "\x1b" not in res["output"]
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_start_uses_docker_exec_it_not_dash_i_P14(monkeypatch):
+    """14th round mutation-testing surviving mutant: no existing test asserted the EXACT argv
+    start() builds includes "-it" (interactive + tty) specifically -- a mutant reverting it to
+    "-i" alone (the pre-round-13 non-interactive form, the root cause of the whole round-13
+    shell_died defect) survived every existing test."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+    captured = {}
+
+    def fake_popen(cmd, **kw):
+        captured["cmd"] = cmd
+        return proc
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("my-container", popen=fake_popen,
+                              runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        assert captured["cmd"] == ["docker", "exec", "-it", "my-container", "/bin/bash", "--login"]
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_start_handshake_disables_bracketed_paste_P14(monkeypatch):
+    """14th round item (b): the handshake sends `bind 'set enable-bracketed-paste off'` -- a
+    noise-reduction measure, kept ALONGSIDE (never instead of) the strip regexes."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        assert b"enable-bracketed-paste off" in bytes(proc.stdin.written)
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
 # --------------------------------------------------------------------------- PersistentShell (real bash)
 @_timeout(10)
 def test_persistent_shell_real_bash_runs_a_command_and_returns_exit_code(tmp_path):
