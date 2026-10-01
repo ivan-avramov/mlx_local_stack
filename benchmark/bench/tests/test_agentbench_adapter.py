@@ -2,7 +2,11 @@
 mocked via FakeRunner / a fake Popen), dual-submit shim, and per-task run outcomes. No docker, no
 network, no model calls."""
 import json
+import os
+import re
 import subprocess
+import time
+import uuid
 
 import pytest
 
@@ -233,30 +237,95 @@ def test_prepare_exclusions_no_gold_when_stdout_empty():
     assert exclusions == [{"id": "t1", "reason": "no_gold"}]
 
 
-def test_std_007_84_answer_dependent_example_is_excluded_fixture():
-    """A REAL corpus task (std-007-84): its `example` script reads `$1` (the argument) as a user
-    id and greps the log for it -- feeding "" vs a sentinel produces different grep match counts,
-    exactly the blind spot F7 exists to catch."""
+def _local_bash_shim(cwd):
+    """A `runner` that routes `docker run`/`rm` to no-ops and `docker exec <c> bash -c <code>
+    [-- params...]` to a REAL local `/bin/bash` with `cwd=cwd` standing in for the container's
+    filesystem (2nd cold review N3/N4: "running them under real local bash with a tmp-root
+    substitution"). This executes the ACTUAL vendored init/example scripts, not a re-implementation
+    of their logic."""
+    def runner(cmd, **kw):
+        if cmd[:2] in (["docker", "run"], ["docker", "rm"]):
+            return FakeRunner.Proc(0, "", "")
+        if cmd[:2] == ["docker", "exec"]:
+            tail = cmd[3:]   # ["bash", "-c", code, ...maybe "--", *params]
+            proc = subprocess.run(tail, cwd=str(cwd), capture_output=True, text=True, timeout=10)
+            return FakeRunner.Proc(proc.returncode, proc.stdout, proc.stderr)
+        return FakeRunner.Proc(0, "", "")
+    return runner
+
+
+def test_std_007_84_example_script_genuinely_reads_its_answer_argument(tmp_path):
+    """A REAL corpus task (std-007-84): its `example` script is
+    `grep "error" system_logs.log | grep " $USER_ID " | wc -l` -- genuinely data-dependent on its
+    argument (the log's real user ids are 15/28/01). Proven here with REAL local bash (the real
+    vendored init script writes the real log fixture, the real vendored example script runs the
+    real grep pipeline) and DISCRIMINATING placeholders ("15" vs "28", values that actually appear
+    in the fixture log) -- not a hand-simulated count, which was blind to whether this was really
+    true of the vendored script text."""
     tasks = {t["id"]: t for t in AB.load_corpus(CORPUS)}
     task = tasks["std-007-84"]
     cfg = AB.task_config(task, SCRIPTS_ROOT)
     assert cfg["example"][0] == "bash" and "$1" in cfg["example"][1]
+    assert AB._check_list_has_gold_slot(cfg["check"])
 
-    # The real script is `grep "error" system_logs.log | grep " $USER_ID " | wc -l`: an empty
-    # USER_ID greps for a literal double space (`"  "`), which is a DIFFERENT, data-dependent match
-    # count than a sentinel that appears nowhere in the log. Model that data-dependence directly
-    # rather than re-simulating grep: the two placeholders must get different counts.
+    runner = _local_bash_shim(tmp_path)
+    ok1, g1 = AB.run_reference(cfg["image"], cfg["init_scripts"], cfg["start"], cfg["example"],
+                               "c1", runner, 10, "15")
+    ok2, g2 = AB.run_reference(cfg["image"], cfg["init_scripts"], cfg["start"], cfg["example"],
+                               "c2", runner, 10, "28")
+    assert ok1 and ok2
+    assert g1.strip() == "2" and g2.strip() == "1"   # genuinely different -- the script DOES read $1
+    assert g1 != g2
+
+
+def test_std_007_84_with_production_placeholders_is_a_known_miss(tmp_path):
+    """HONEST LIMITATION, found by running the REAL script rather than assuming: the production
+    placeholders "1"/"2" (N4: "plausible-looking answers") do NOT happen to appear anywhere in
+    std-007-84's specific fixture log (whose real user ids are 15/28/01), so BOTH placeholders grep
+    to the same count (0) and this task is NOT excluded under the real probe -- even though the
+    script provably reads its argument (see the test above with discriminating placeholders "15"/
+    "28"). This is a genuine gap in a GENERIC two-placeholder heuristic, not a bug in the
+    disagreement-detection mechanism itself; flagged for the operator rather than silently
+    asserting a false "it works" with placeholders chosen to make this one task pass."""
+    tasks = {t["id"]: t for t in AB.load_corpus(CORPUS)}
+    task = tasks["std-007-84"]
+    golds, exclusions = AB.prepare_exclusions([task], SCRIPTS_ROOT, _local_bash_shim(tmp_path))
+    assert exclusions == []                              # NOT caught by the generic probe
+    assert golds["std-007-84"].strip() == "0"             # both placeholders agree, wrongly
+
+
+def test_std_004_47_pure_state_check_requires_only_one_reference_run_no_placeholder_probe():
+    """A REAL corpus task with NO gold slot in its check list (Q47's vendored task): every check
+    position is a literal checker script, so the live grading chain never runs `example` with the
+    model's answer -- probing with two placeholders would test nothing. Only the reference
+    (init+start+example) needs to run, once, successfully, and no gold is ever cached."""
+    tasks = {t["id"]: t for t in AB.load_corpus(CORPUS)}
+    task = next(t for t in tasks.values() if t["source_file"] == "Q47.json")
+    cfg = AB.task_config(task, SCRIPTS_ROOT)
+    assert not AB._check_list_has_gold_slot(cfg["check"])
+
+    calls = []
+
     def runner(cmd, **kw):
-        if len(cmd) >= 2 and cmd[1] == "exec":
-            placeholder = cmd[-1]
-            count = 2 if placeholder == AB.ANSWER_PLACEHOLDER_PRIMARY else 0
-            return FakeRunner.Proc(0, f"{count}\n", "")
+        calls.append(cmd)
         return FakeRunner.Proc(0, "", "")
+    golds, exclusions = AB.prepare_exclusions([task], SCRIPTS_ROOT, runner)
+    assert exclusions == [] and golds == {}
+    run_calls = [c for c in calls if c[:2] == ["docker", "run"]]
+    assert len(run_calls) == 1          # ONE fresh container -- not the two-placeholder probe
 
+
+def test_reference_failed_reason_when_no_gold_slot_and_example_fails():
+    task = {"id": "t2", "group": 1, "evaluation": {
+        "check": [{"code": "exit 0"}, {"code": "exit 0"}], "example": {"code": "exit 1"}}}
+
+    def runner(cmd, **kw):
+        if cmd[:2] == ["docker", "exec"]:
+            return FakeRunner.Proc(1, "", "example failed")   # only the example script fails
+        return FakeRunner.Proc(0, "", "")
     golds, exclusions = AB.prepare_exclusions([task], SCRIPTS_ROOT, runner)
     assert golds == {}
-    assert exclusions and exclusions[0]["reason"] == "example_reads_answer"
-    assert exclusions[0]["id"] == "std-007-84"
+    assert exclusions == [{"id": "t2", "reason": "reference_failed"}]
 
 
 # --------------------------------------------------------------------------- corpus-level exclusions artifact (F6)
@@ -440,108 +509,130 @@ def test_pilot_draw_is_not_the_first_items():
 
 
 # --------------------------------------------------------------------------- PersistentShell (F4a)
-class _FakeShellProc:
-    """A fake `subprocess.Popen` standing in for `docker exec -i <c> /bin/bash --login`.
-    `responder(written_text) -> (output_lines, exit_code) | None` (None = hang forever, simulating
-    a runaway command for the timeout path)."""
-
-    def __init__(self, responder):
-        self.responder = responder
-        self._pending = []
-        self.killed = False
-        self.terminated = False
-        self.stdin = self
-        self.stdout = self
-
-    def write(self, s):
-        import re as _re
-        m = _re.search(r"echo (\S+)\$\?", s)
-        sentinel = m.group(1)
-        resp = self.responder(s)
-        if resp is None:
-            self._pending = None   # readline() will block (simulated via a long sleep)
-            return
-        out_lines, rc = resp
-        self._pending = list(out_lines) + [f"{sentinel}{rc}\n"]
-
-    def flush(self):
-        pass
-
-    def close(self):
-        pass
-
-    def readline(self):
-        if self._pending is None:
-            import time as _t
-            _t.sleep(2)             # "hangs" -- long enough to exceed any test's tiny timeout
-            return ""
-        if not self._pending:
-            return ""
-        return self._pending.pop(0)
-
-    def kill(self):
-        self.killed = True
-
-    def terminate(self):
-        self.terminated = True
+def _real_bash_popen_factory(home_dir=None):
+    """Swaps the `docker exec -i <container> /bin/bash --login` argv `PersistentShell.start()`
+    builds for a REAL local `/bin/bash --login` (2nd cold review N1: "spawn bash directly in
+    tests with the docker argv swapped out"). `home_dir`, when given, becomes $HOME for the
+    spawned shell -- used to control exactly what a login shell sources (N8)."""
+    def _popen(cmd, **kwargs):
+        env = dict(os.environ)
+        if home_dir is not None:
+            env["HOME"] = str(home_dir)
+        return subprocess.Popen(["/bin/bash", "--login"], env=env, **kwargs)
+    return _popen
 
 
-def test_persistent_shell_run_returns_output_and_exit_code():
-    def responder(written):
-        assert "pwd" in written
-        return (["/root\n"], 0)
-    shell = AB.PersistentShell("c1", timeout=5, popen=lambda *a, **k: _FakeShellProc(responder))
+def _real_shell(tmp_path, banner=None):
+    """A PersistentShell over a REAL bash, with its own empty $HOME (optionally seeded with a
+    `.bash_profile` banner line) so login-shell sourcing is controlled and reproducible."""
+    home = tmp_path / f"home-{uuid.uuid4().hex}"
+    home.mkdir()
+    if banner:
+        (home / ".bash_profile").write_text(f"echo '{banner}'\n")
+    shell = AB.PersistentShell("unused-container", popen=_real_bash_popen_factory(home),
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
     shell.start()
-    res = shell.run("pwd")
-    assert res == {"output": "/root\n", "exit_code": 0, "timed_out": False}
+    return shell
 
 
-def test_persistent_shell_wraps_command_with_in_container_timeout_kill():
-    captured = {}
-
-    def responder(written):
-        captured["written"] = written
-        return (["ok\n"], 0)
-    shell = AB.PersistentShell("c1", timeout=30, popen=lambda *a, **k: _FakeShellProc(responder))
-    shell.start()
-    shell.run("echo ok")
-    assert "timeout -s KILL 30" in captured["written"]
-    assert "echo ok" in captured["written"]
+# --------------------------------------------------------------------------- PersistentShell (real bash)
+def test_persistent_shell_real_bash_runs_a_command_and_returns_exit_code(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("pwd")
+        assert res["exit_code"] == 0 and res["timed_out"] is False and res["shell_died"] is False
+        assert res["output"].strip()
+    finally:
+        shell.close()
 
 
-def test_persistent_shell_state_persists_across_calls_via_sentinel_protocol():
-    """Simulates `cd /tmp` changing the EFFECTIVE state seen by a later `pwd` -- the responder
-    tracks cwd itself (as the real persistent bash process would), proving the protocol threads
-    state across `run()` calls rather than resetting per call (which a fresh `docker exec` per
-    command, the pre-cold-review design, could never do)."""
-    state = {"cwd": "/root"}
-
-    def responder(written):
-        if "cd /tmp" in written:
-            state["cwd"] = "/tmp"
-            return ([], 0)
-        if "pwd" in written:
-            return ([f"{state['cwd']}\n"], 0)
-        return ([], 0)
-    shell = AB.PersistentShell("c1", timeout=5, popen=lambda *a, **k: _FakeShellProc(responder))
-    shell.start()
-    shell.run("cd /tmp")
-    res = shell.run("pwd")
-    assert res["output"] == "/tmp\n"
+def test_persistent_shell_real_bash_eats_login_banner_N8(tmp_path):
+    shell = _real_shell(tmp_path, banner="BANNER_NOISE_XYZ")
+    try:
+        res = shell.run("echo hi")
+        assert "BANNER_NOISE_XYZ" not in res["output"]
+        assert res["output"] == "hi\n"
+    finally:
+        shell.close()
 
 
-def test_persistent_shell_timeout_kills_process_and_reports_timed_out():
-    proc_holder = {}
+def test_persistent_shell_real_bash_start_cd_persists_into_later_commands(tmp_path):
+    """start=`cd /usr`, then `pwd` -> `/usr` (upstream-faithful: start and bash_action share ONE
+    shell session)."""
+    shell = _real_shell(tmp_path)
+    try:
+        shell.run("cd /usr")
+        res = shell.run("pwd")
+        assert res["output"] == "/usr\n" and res["exit_code"] == 0
+    finally:
+        shell.close()
 
-    def make_proc(*a, **k):
-        p = _FakeShellProc(lambda written: None)   # hangs forever
-        proc_holder["proc"] = p
-        return p
-    shell = AB.PersistentShell("c1", timeout=0.01, popen=make_proc, join_margin=0.01)
-    shell.start()
-    res = shell.run("sleep 999")
-    assert res["timed_out"] is True
-    assert proc_holder["proc"].killed is True
+
+def test_persistent_shell_real_bash_start_var_persists_into_later_commands(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        shell.run("var=10")
+        res = shell.run("echo $var")
+        assert res["output"] == "10\n" and res["exit_code"] == 0
+    finally:
+        shell.close()
+
+
+def test_persistent_shell_real_bash_printf_no_trailing_newline(tmp_path):
+    """N2: the command's own output has NO trailing newline; the sentinel protocol's injected `\\n`
+    (from `printf '\\n%s%d\\n' ...`) must be the ONLY newline consumed -- the real output text
+    comes back exactly as `printf` wrote it, with no extra/missing characters."""
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("printf abc")
+        assert res["output"] == "abc" and res["exit_code"] == 0
+    finally:
+        shell.close()
+
+
+def test_persistent_shell_real_bash_cat_file_without_final_newline(tmp_path):
+    f = tmp_path / "nofinalnewline.txt"
+    f.write_bytes(b"line1")        # deliberately no trailing \n
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run(f"cat {f}")
+        assert res["output"] == "line1" and res["exit_code"] == 0
+    finally:
+        shell.close()
+
+
+def test_persistent_shell_real_bash_false_reports_nonzero(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("false")
+        assert res["exit_code"] == 1
+    finally:
+        shell.close()
+
+
+def test_persistent_shell_real_bash_exit_ends_the_shell_N9(tmp_path):
+    """Upstream: `exit` ends the session. bash never reaches the sentinel printf (it terminates on
+    the `exit` line itself), so THIS SAME run() call must report shell_died, not hang/time out."""
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("exit 3")
+        assert res["shell_died"] is True
+    finally:
+        shell.close()
+
+
+def test_persistent_shell_real_bash_run_after_shell_died_reports_immediately(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        shell.run("exit 0")
+        import time as _time
+        t0 = _time.monotonic()
+        res = shell.run("echo should not run", timeout_s=5)
+        elapsed = _time.monotonic() - t0
+        assert res["shell_died"] is True
+        assert elapsed < 1.0, "shell_died must be reported immediately, not after the full timeout"
+    finally:
+        shell.close()
 
 
 def test_persistent_shell_run_before_start_raises():
@@ -550,7 +641,131 @@ def test_persistent_shell_run_before_start_raises():
         shell.run("pwd")
 
 
+def test_persistent_shell_close_terminates_a_live_process_N7(tmp_path):
+    shell = _real_shell(tmp_path)
+    assert shell.proc.poll() is None, "sanity: the real shell process is alive before close()"
+    shell.close()
+    assert shell.proc.poll() is not None, "close() must leave no live process behind"
+
+
+def test_persistent_shell_without_close_the_process_is_left_running_N7(tmp_path):
+    """Demonstrates why `finally: shell.close()` is mandatory: the real process is a resource that
+    outlives the Python object if nothing terminates it. (The real cleanup path is exercised,
+    end-to-end through run_task, by test_run_task_cleans_up_container_AFTER_docker_run_on_init_failure
+    and friends; this isolates PersistentChain's OWN contribution to that cleanup.)"""
+    shell = _real_shell(tmp_path)
+    try:
+        assert shell.proc.poll() is None   # still alive -- close() was never called
+    finally:
+        shell.close()       # the test's own cleanup; NOT part of what is being demonstrated
+
+
+# --------------------------------------------------------------------------- PersistentShell timeout
+# (2nd cold review: "a fake Popen may remain only for timeout paths" -- a real bash process that
+# never responds cannot be simulated without actually blocking, so this one path keeps a minimal
+# fake that just never produces the sentinel line.)
+class _HangingFakeProc:
+    def __init__(self):
+        self.stdin = self
+        self.stdout = self
+        self.killed = False
+
+    def write(self, s):
+        pass
+
+    def flush(self):
+        pass
+
+    def read(self, n):
+        time.sleep(2)   # "hangs" -- long enough to exceed any test's tiny timeout
+        return b""
+
+    def poll(self):
+        return None if not self.killed else -9
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        if not self.killed:
+            raise subprocess.TimeoutExpired(cmd="x", timeout=timeout)
+
+
+def test_persistent_shell_timeout_kills_process_and_reports_timed_out():
+    proc_holder = {}
+
+    def make_proc(*a, **k):
+        p = _HangingFakeProc()
+        proc_holder["proc"] = p
+        return p
+    runner_calls = []
+    shell = AB.PersistentShell("c1", popen=make_proc,
+                              runner=lambda cmd, **kw: runner_calls.append(cmd) or FakeRunner.Proc(0, "", ""))
+    shell.proc = make_proc()    # bypass start()'s own no-op sentinel round (it would also hang)
+    res = shell.run("sleep 999", timeout_s=0.02)
+    assert res["timed_out"] is True
+    assert proc_holder["proc"].killed is True
+    # best-effort in-container kill was ALSO attempted (N1's "docker exec ... kill -KILL ...")
+    assert any(c[:3] == ["docker", "exec", "c1"] for c in runner_calls)
+
+
+def test_persistent_shell_exit_code_137_is_treated_as_timed_out():
+    """N5 (moot as a live trigger now, kept as a safety net): a sentinel that DOES arrive, but with
+    exit code 137 (SIGKILL), still marks timed_out=True."""
+    class _Proc137:
+        def __init__(self):
+            self.stdin = self
+            self.stdout = self
+            self._pending = None   # None = nothing written yet; the reader must wait, not EOF
+
+        def write(self, s):
+            m = re.search(rb"printf '\\n%s%d\\n' (\S+) \$\?", s)
+            self._pending = b"\n" + m.group(1) + b"137\n"
+
+        def flush(self):
+            pass
+
+        def read(self, n):
+            while self._pending is None:
+                time.sleep(0.01)
+            data, self._pending = self._pending, b""
+            return data
+
+        def poll(self):
+            return None
+
+    import threading as _threading
+    shell = AB.PersistentShell("c1", popen=lambda *a, **k: _Proc137())
+    shell.proc = _Proc137()
+    _threading.Thread(target=shell._reader_loop, daemon=True).start()
+    res = shell.run("kill -KILL $$", timeout_s=5)
+    assert res["exit_code"] == 137 and res["timed_out"] is True
+
+
 # --------------------------------------------------------------------------- dual-submit driver
+def test_dualsubmit_driver_submitted_via_only_from_the_DISPATCHED_first_call_N10():
+    """run_agent (single_tool_call_per_turn=True) only ever dispatches tool_calls[0]; a
+    finish_action/answer_action riding in position 1+ never actually runs and must NOT be recorded
+    as the submission."""
+    inner = FakeDriver(script=[complete_result(tool_calls=[
+        tool_call("bash_action", {"script": "ls"}, call_id="c0"),
+        tool_call("answer_action", {"answer": "ignored"}, call_id="c1"),
+    ])])
+    d = AB.DualSubmitDriver(inner, timeout=5)
+    d.complete("m", [], {})
+    assert d.submitted_via is None
+
+
+def test_dualsubmit_driver_submitted_via_set_when_the_submit_IS_first_N10():
+    inner = FakeDriver(script=[complete_result(tool_calls=[
+        tool_call("finish_action", {"thought": "done"}, call_id="c0"),
+        tool_call("bash_action", {"script": "ls"}, call_id="c1"),
+    ])])
+    d = AB.DualSubmitDriver(inner, timeout=5)
+    d.complete("m", [], {})
+    assert d.submitted_via == "finish"
+
+
 def test_dualsubmit_driver_passes_through_answer_action_unrenamed():
     inner = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "42"})])])
     d = AB.DualSubmitDriver(inner, timeout=5)
@@ -606,52 +821,69 @@ def test_dualsubmit_driver_decode_tps_falls_back_to_servers_own_value_without_ti
 
 
 # --------------------------------------------------------------------------- build_tools (bash_action)
-def test_bash_tool_executes_via_persistent_shell_and_wraps_output():
-    shell = AB.PersistentShell("c1", timeout=10,
-                               popen=lambda *a, **k: _FakeShellProc(lambda w: (["hello\n"], 0)))
-    shell.start()
-    counters = {}
-    tools = AB.build_tools(shell, timeout=10, counters=counters)
-    bash = {t.name: t for t in tools}["bash_action"]
-    out = bash.fn({"script": "echo hello"})
-    assert out == "The output of the OS:\n\nhello\n"
+def test_bash_tool_executes_via_persistent_shell_and_wraps_output(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        counters = {}
+        tools = AB.build_tools(shell, timeout=10, counters=counters)
+        bash = {t.name: t for t in tools}["bash_action"]
+        out = bash.fn({"script": "echo hello"})
+        assert out == "The output of the OS:\n\nhello\n"
+    finally:
+        shell.close()
 
 
-def test_bash_tool_empty_output_uses_upstream_sentence():
-    shell = AB.PersistentShell("c1", timeout=10, popen=lambda *a, **k: _FakeShellProc(lambda w: ([], 0)))
-    shell.start()
-    tools = AB.build_tools(shell, timeout=10, counters={})
-    bash = {t.name: t for t in tools}["bash_action"]
-    assert bash.fn({"script": "true"}) == "The output of the OS is empty."
+def test_bash_tool_empty_output_uses_upstream_sentence(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        tools = AB.build_tools(shell, timeout=10, counters={})
+        bash = {t.name: t for t in tools}["bash_action"]
+        assert bash.fn({"script": "true"}) == "The output of the OS is empty."
+    finally:
+        shell.close()
 
 
-def test_bash_tool_truncates_at_800_keeping_780():
-    big = "x" * 2000 + "\n"
-
-    def responder(w):
-        return ([big], 0)
-    shell = AB.PersistentShell("c1", timeout=10, popen=lambda *a, **k: _FakeShellProc(responder))
-    shell.start()
-    tools = AB.build_tools(shell, timeout=10, counters={})
-    bash = {t.name: t for t in tools}["bash_action"]
-    out = bash.fn({"script": "cat big"})
-    assert out.endswith("[truncated because the output is too long]")
-    body = out[len("The output of the OS:\n\n"):]
-    assert body == "x" * 780 + "\n[truncated because the output is too long]"
+def test_bash_tool_truncates_at_800_keeping_780(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        tools = AB.build_tools(shell, timeout=10, counters={})
+        bash = {t.name: t for t in tools}["bash_action"]
+        out = bash.fn({"script": "printf 'x%.0s' {1..2000}"})
+        assert out.endswith("[truncated because the output is too long]")
+        body = out[len("The output of the OS:\n\n"):]
+        assert body == "x" * 780 + "\n[truncated because the output is too long]"
+    finally:
+        shell.close()
 
 
 def test_bash_tool_timeout_kills_shell_sets_flag_and_aborts_episode():
-    shell = AB.PersistentShell("c1", timeout=0.01, join_margin=0.01,
-                               popen=lambda *a, **k: _FakeShellProc(lambda w: None))
-    shell.start()
+    def make_proc(*a, **k):
+        return _HangingFakeProc()
+    shell = AB.PersistentShell("c1", popen=make_proc)
+    shell.proc = make_proc()   # bypass the no-op start() round, which would also hang
     counters, flag = {}, {}
-    tools = AB.build_tools(shell, timeout=0.01, counters=counters, exec_timeout_flag=flag)
+    tools = AB.build_tools(shell, timeout=0.02, counters=counters, exec_timeout_flag=flag)
     bash = {t.name: t for t in tools}["bash_action"]
     with pytest.raises(agent_loop.AbortEpisode) as ei:
         bash.fn({"script": "sleep 999"})
     assert ei.value.outcome == AO.FAILED_TESTS
     assert counters["tool_timeouts"] == 1
     assert flag["hit"] is True
+
+
+def test_bash_tool_shell_died_sets_flag_and_aborts_with_server_error(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        counters, exec_flag, died_flag = {}, {}, {}
+        tools = AB.build_tools(shell, timeout=10, counters=counters, exec_timeout_flag=exec_flag,
+                               shell_died_flag=died_flag)
+        bash = {t.name: t for t in tools}["bash_action"]
+        with pytest.raises(agent_loop.AbortEpisode) as ei:
+            bash.fn({"script": "exit 1"})
+        assert ei.value.outcome == AO.SERVER_ERROR
+        assert died_flag["hit"] is True
+    finally:
+        shell.close()
 
 
 def test_build_tools_schemas_are_upstream_verbatim():
@@ -731,7 +963,10 @@ def _match_cfg_task():
 
 
 def _shell_popen_ok():
-    return lambda *a, **k: _FakeShellProc(lambda w: ([], 0))
+    """A REAL local bash backs every run_task test's PersistentShell (2nd cold review: "a fake
+    Popen may remain only for timeout paths") -- run_task's own docker lifecycle (create/init/rm)
+    stays on the FakeRunner; only the persistent-shell PROCESS is real."""
+    return _real_bash_popen_factory()
 
 
 def test_run_task_cleans_up_container_AFTER_docker_run_on_init_failure():
@@ -770,8 +1005,11 @@ def test_run_task_cleans_up_container_on_keyboard_interrupt_and_reraises():
     task = _match_cfg_task()
     with pytest.raises(KeyboardInterrupt):
         AB.run_task("m", task, SCRIPTS_ROOT, _BoomDriver(), {}, runner=runner, popen=_shell_popen_ok())
-    rm_calls = [c for c in runner.calls if c["cmd"][:2] == ["docker", "rm"]]
-    assert len(rm_calls) >= 1
+    # F11 leftover: not just "an rm happened somewhere" (the pre-clean rm exists even with the
+    # `finally` deleted) -- an rm AFTER the `docker run` that actually created this container.
+    run_idx = next(i for i, c in enumerate(runner.calls) if c["cmd"][:2] == ["docker", "run"])
+    rm_after = [c for c in runner.calls[run_idx + 1:] if c["cmd"][:2] == ["docker", "rm"]]
+    assert rm_after, "no `docker rm` after `docker run` -- cleanup did not run post-creation"
 
 
 def test_run_task_transport_failure_raises_and_writes_no_row_F1():
@@ -787,8 +1025,10 @@ def test_run_task_transport_failure_raises_and_writes_no_row_F1():
     task = _match_cfg_task()
     with pytest.raises(AB.TransportFailure, match="std-004-0"):
         AB.run_task("m", task, SCRIPTS_ROOT, _Http500Driver(), {}, runner=runner, popen=_shell_popen_ok())
-    rm_calls = [c for c in runner.calls if c["cmd"][:2] == ["docker", "rm"]]
-    assert len(rm_calls) >= 1   # container still cleaned up despite the escalation
+    # F11 leftover: an rm AFTER the `docker run` that created this container, not just any rm.
+    run_idx = next(i for i, c in enumerate(runner.calls) if c["cmd"][:2] == ["docker", "run"])
+    rm_after = [c for c in runner.calls[run_idx + 1:] if c["cmd"][:2] == ["docker", "rm"]]
+    assert rm_after, "no `docker rm` after `docker run` -- cleanup did not run post-creation"
 
 
 def test_run_task_no_submit_only_when_cap_reached_without_any_submit_F5a():
@@ -861,11 +1101,13 @@ def test_run_task_repeat_calls_counted_not_guard_aborted_F5d():
 
 
 def test_run_task_exec_timeout_ends_episode_and_marks_row_F4a():
+    """Real bash: `sleep 999` genuinely never reaches the sentinel printf within our tiny
+    Python-side exec_timeout, so the timeout fires on OUR schedule, not the sleep's."""
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
     driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("bash_action", {"script": "sleep 999"})])])
     task = _match_cfg_task()
-    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, exec_timeout=0.01,
-                      popen=lambda *a, **k: _FakeShellProc(lambda w: None))
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, exec_timeout=0.05,
+                      popen=_shell_popen_ok())
     assert row["exec_timeout"] is True
     assert row["outcome"] == AO.FAILED_TESTS and row["passed"] is False
 
@@ -885,3 +1127,40 @@ def test_run_task_setup_error_flagged_rows_carry_decode_tps_none_not_crash():
     task = _match_cfg_task()
     row = AB.run_task("m", task, SCRIPTS_ROOT, FakeDriver(), {}, runner=runner, popen=_shell_popen_ok())
     assert row["setup_error"] is True and row["decode_tps"] is None
+
+
+def test_run_task_shell_died_is_setup_error_style_N9(tmp_path):
+    """Upstream: `exit` ends the session. A model that runs `exit` mid-task must end the episode
+    with a setup_error-style row (environment died, not a graded model failure), using a REAL
+    bash process so the shell genuinely exits rather than us pretending it did."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("bash_action", {"script": "exit 0"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["shell_died"] is True
+    assert row["setup_error"] is True
+    assert row["outcome"] == AO.SERVER_ERROR and row["passed"] is False
+
+
+def test_run_task_start_script_shell_death_is_also_setup_error(tmp_path):
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    task = {"id": "t1", "group": 1, "labels": [], "create": {"local": "default"}, "start": "exit 0",
+           "evaluation": {"match": "x"}, "description": "d"}
+    row = AB.run_task("m", task, SCRIPTS_ROOT, FakeDriver(), {}, runner=runner, popen=_shell_popen_ok())
+    assert row["shell_died"] is True and row["setup_error"] is True
+
+
+def test_run_task_populates_gold_from_the_artifact_AC5():
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok(),
+                      gold="3\n")
+    assert row["gold"] == "3\n"
+
+
+def test_run_task_gold_defaults_to_none_when_not_provided():
+    runner = FakeRunner(default=FakeRunner.Proc(1, "", "boom"))
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, FakeDriver(), {}, runner=runner, popen=_shell_popen_ok())
+    assert row["gold"] is None

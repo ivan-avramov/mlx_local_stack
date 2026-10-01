@@ -495,6 +495,192 @@ def test_sigterm_handler_noop_when_no_container_live():
         AB.remove_container = orig_remove
 
 
+# --------------------------------------------------------------------------- N6 append_row torn-tail
+def test_append_row_truncates_a_torn_tail_before_appending(tmp_path):
+    out = tmp_path / "rows.jsonl"
+    good = json.dumps({"id": "m0", "passed": True})
+    torn = '{"id": "m1", "passed": tr'   # cut off mid-write, no trailing \n
+    out.write_text(good + "\n" + torn, encoding="utf-8")
+    R.append_row(out, {"id": "m2", "passed": True})
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert json.loads(lines[0]) == {"id": "m0", "passed": True}
+    assert json.loads(lines[1]) == {"id": "m2", "passed": True}
+    assert len(lines) == 2   # the torn row is gone, not concatenated onto
+
+
+def test_append_row_leaves_a_clean_file_untouched(tmp_path):
+    out = tmp_path / "rows.jsonl"
+    out.write_text(json.dumps({"id": "m0"}) + "\n", encoding="utf-8")
+    R.append_row(out, {"id": "m1"})
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert [json.loads(l)["id"] for l in lines] == ["m0", "m1"]
+
+
+def test_resume_after_a_torn_tail_real_file_both_old_and_new_rows_readable_then_second_resume_works(tmp_path, monkeypatch):
+    """N6 end-to-end: a real torn-tail file, resumed via the full CLI, produces a clean file a
+    SECOND resume can also build on."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(3)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    good = json.dumps({"id": "m0", "passed": True, "outcome": "solved", "wall_s": 0.1,
+                       "completion_tokens_total": 1, "labels": [], "setup_error": False})
+    torn = '{"id": "m1", "passed": tr'
+    (tmp_path / "rows.jsonl").write_text(good + "\n" + torn, encoding="utf-8")
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+
+    rc = R.main(_args(tmp_path, resume=""))
+    assert rc == 0
+    assert seen == ["m1", "m2"]      # m1's torn row discarded -> reran; m2 never ran before
+    rows = R.read_rows(tmp_path / "rows.jsonl")
+    assert sorted(r["id"] for r in rows) == ["m0", "m1", "m2"]
+
+    # a SECOND resume with nothing left to do must not error and must not duplicate rows
+    seen.clear()
+    rc2 = R.main(_args(tmp_path, resume=""))
+    assert rc2 == 0 and seen == []
+    rows2 = R.read_rows(tmp_path / "rows.jsonl")
+    assert sorted(r["id"] for r in rows2) == ["m0", "m1", "m2"]
+
+
+# --------------------------------------------------------------------------- N11 timeout source / deadline cap
+def test_timeout_source_names_only_contributing_fallback_benches(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+
+    def rows_for_rate(model, bench):
+        if bench == "agentbench_os":
+            return []
+        if bench == "math500":
+            return [{"decode_tps": v} for v in range(10, 30)]
+        return []   # convergence contributes NOTHING
+    monkeypatch.setattr(R.generate, "rows_for_rate", rows_for_rate)
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert man["runtime"]["timeout_source"] == "fallback:math500"   # NOT "fallback:math500+convergence"
+
+
+def test_deadline_defaults_to_the_multiplier_capped_at_3600(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    # a very slow decode rate -> a large per-turn timeout -> 8x would exceed the 3600s cap
+    monkeypatch.setattr(R.generate, "rows_for_rate",
+                       lambda model, bench: [{"decode_tps": 0.01}] * 10 if bench == "agentbench_os" else [])
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert man["runtime"]["deadline_s"] == R.DEADLINE_CAP_S
+
+
+def test_deadline_explicit_flag_can_exceed_the_cap(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, **{"deadline-s": 9999}))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert man["runtime"]["deadline_s"] == 9999.0
+
+
+# --------------------------------------------------------------------------- N12
+def test_summary_counts_exec_timeout_and_shell_died_rows(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task("m0"), _match_task("m1")]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+
+    def fake_run_task(model, task, scripts_root, driver, params, **kw):
+        base, _ = _fake_run_task_factory()
+        row = base(model, task, scripts_root, driver, params, **kw)
+        if task["id"] == "m0":
+            row["exec_timeout"] = True
+        else:
+            row["shell_died"] = True
+            row["setup_error"] = True
+        return row
+    monkeypatch.setattr(AB, "run_task", fake_run_task)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0
+    summary = json.loads((tmp_path / "rows.summary.json").read_text())
+    assert summary["exec_timeout_count"] == 1
+    assert summary["shell_died_count"] == 1
+
+
+def test_stale_skipped_marker_is_cleared_after_a_successful_run(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    (tmp_path / "rows.skipped.json").write_text(json.dumps({"skipped": True, "note": "stale"}),
+                                                encoding="utf-8")
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0
+    assert not (tmp_path / "rows.skipped.json").exists()
+
+
+def test_prepare_installs_a_sigterm_sweep_handler(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _write_corpus(tmp_path, [_match_task("m0")])
+    installed = {}
+    real_signal = signal.signal
+
+    def fake_signal(sig, handler):
+        if sig == signal.SIGTERM:
+            installed["handler"] = handler
+        return real_signal(sig, handler) if sig != signal.SIGTERM else None
+    monkeypatch.setattr(signal, "signal", fake_signal)
+    monkeypatch.setattr(AB, "prepare_exclusions", lambda *a, **k: ({}, []))
+    rc = R.main(_args(tmp_path, prepare=""))
+    assert rc == 0
+    assert "handler" in installed
+
+
+def test_generate_populates_gold_onto_every_row_from_the_artifact_AC5(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    AB.write_exclusions_artifact(AB.exclusions_artifact_path(corpus),
+                                 corpus_sha256=R._sha256_file(corpus), image_ids=dict(IMAGE_IDS),
+                                 golds={"m0": "3\n"}, exclusions=[], complete=True)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    seen_golds = []
+
+    def fake_run_task(model, task, scripts_root, driver, params, **kw):
+        seen_golds.append(kw.get("gold"))
+        fake, _ = _fake_run_task_factory()
+        row = fake(model, task, scripts_root, driver, params, **kw)
+        row["gold"] = kw.get("gold")
+        return row
+    monkeypatch.setattr(AB, "run_task", fake_run_task)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0
+    assert seen_golds == ["3\n"]
+    rows = R.read_rows(tmp_path / "rows.jsonl")
+    assert rows[0]["gold"] == "3\n"
+
+
 # --------------------------------------------------------------------------- C106 exit check
 def test_generate_refuses_to_complete_when_served_file_changes_mid_run(tmp_path, monkeypatch, capsys):
     AB = _ready(tmp_path, monkeypatch)

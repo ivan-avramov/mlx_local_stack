@@ -114,6 +114,20 @@ def test_single_tool_call_per_turn_ignores_the_rest_and_does_not_stop_on_a_trail
     assert out["turns"] == 2
 
 
+def test_deadline_is_reachable_on_the_no_tool_call_reprompt_path():
+    """cold-review N12: a deadline check only after tool-call processing can never fire for an
+    episode that keeps getting re-prompted (no tool calls at all) -- it would only ever bound on
+    max_turns."""
+    from bench.tests.conftest import FrozenClock
+    clock = FrozenClock()
+    driver = ScriptedDriver([([], "")] * 100)   # far more turns than the deadline should allow
+    out = AL.run_agent(driver, "m", "sys", "t", _tools([]), {}, max_turns=100,
+                       no_tool_call_reprompt="REPROMPT", deadline_s=5,
+                       clock=clock.ticking(2))   # +2s per clock() read
+    assert out["outcome"] == AO.DEADLINE
+    assert out["turns"] < 100
+
+
 def test_abort_episode_from_a_tool_ends_the_loop_immediately_with_the_given_outcome():
     log = []
 
