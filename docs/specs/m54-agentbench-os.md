@@ -1,6 +1,6 @@
 # M54 — AgentBench OS (multi-step shell-tool agent axis)
 
-Status 2026-09-30: **QUEUED, build pending operator confirmation of C107 design choices.** Proposed after P2 (2026-09-30): the only axis the B ladder lacks is a multi-step tool loop with self-correction; BFCL is single-step, polyglot is edit-via-instruction, the SWE-bench probe never ran at scale.
+Status 2026-09-30: **BUILD IN PROGRESS** (C107 ruled: own loop, mechanical exclusion, predictor OFF, round limit 8). Proposed after P2 (2026-09-30): the only axis the B ladder lacks is a multi-step tool loop with self-correction; BFCL is single-step, polyglot is edit-via-instruction, the SWE-bench probe never ran at scale.
 
 ## Corpus
 
@@ -30,3 +30,15 @@ Status 2026-09-30: **QUEUED, build pending operator confirmation of C107 design 
 ## Deliverables
 
 - `benchmark/bench/run_agentbench_os.py` (driver: M50/C106 guard, manifest, resumable rows, `--limit`, `--pilot-seed`), `bench/agentbench_adapter.py` (corpus load, container lifecycle, evaluation), `scripts/build_agentbench_images.sh`, tests mocked (no docker in CI), `benchmark/README.md` section.
+
+## Pre-registered acceptance criteria (cold review checks each)
+
+- AC1 corpus: loader yields all 144 `os-std` tasks with upstream fields preserved; vendored data + scripts carry the upstream sha and Apache-2.0 notice; corpus sha in the manifest.
+- AC2 exclusion (D2): before any model call, each task's `evaluation.example.code` runs twice in fresh containers; a task with no gold or disagreeing golds is excluded; the exclusion list with reasons is in the corpus manifest. Tasks with `match` evaluation are never excluded by this step.
+- AC3 protocol: three upstream tools and the upstream system prompt verbatim; `round_limit` 8; `bash_action` runs `docker exec` with a per-command timeout; outcomes labelled via `bench.agent_outcomes`; `turn_cap`/`no_submit`/`deadline` are scored FAIL rows, never dropped.
+- AC4 driver discipline: `provenance.assert_served_config` before the first request and `assert_served_config_unchanged` at exit (C106); manifest via `provenance.gather`; `--sampling-profile deployed` via `model_params.params_for`; seed `rowschema.sample_seed(item, 0)`; resumable (completed ids skipped); `--limit`; `--pilot-seed` draws a seeded random subset, never the first items; derived client timeout, retries 0; transport failures escalate.
+- AC5 evaluation: `match` (stripped) and `check` scripts run inside the task container with the gold from the reference; row carries `passed`, `outcome`, `turns`, per-turn completion tokens, convergence vector, `labels`, `image`.
+- AC6 tests: docker, driver and router mocked; no network, docker or model calls in the suite; failing-test-first visible in history.
+- AC7 degrade: missing docker/images/corpus → `skipped: true` with note, exit 0, never a crash.
+- AC8 hygiene: full registry model names, no PII, hooks pass; `benchmark/README.md` section; nothing written outside the repo except under `$STACK_WORKDIR`.
+- AC9 cleanup: every container removed on success, failure, timeout and KeyboardInterrupt; one container at a time.
