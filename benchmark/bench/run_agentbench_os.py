@@ -316,6 +316,12 @@ def _identity_snapshot(doc: dict) -> dict | None:
         return None
     if "sampling" not in doc or "config_sha256" not in router or "draft_kind" not in runtime:
         return None
+    # 9th cold review round 9 P14: `box` (provenance.gather's own machine-identity field, never a
+    # re-derived hostname) must be STRUCTURALLY present too -- a resume on a DIFFERENT box than
+    # the one that produced the existing rows must refuse, not silently continue just because
+    # everything else (sampling/kv/router hash/git) happens to match.
+    if "box" not in doc:
+        return None
     if any(k not in kv for k in ("kv_bits", "max_kv_cache_size")):
         return None
     if any(k not in runtime for k in RESUME_IDENTITY_KEYS):
@@ -326,6 +332,7 @@ def _identity_snapshot(doc: dict) -> dict | None:
     snap["draft_kind"] = runtime.get("draft_kind")
     snap["kv_bits"] = kv.get("kv_bits")
     snap["max_kv_cache_size"] = kv.get("max_kv_cache_size")
+    snap["box"] = doc.get("box")
     # P39: the harness version (repo HEAD) and the serving fork(s) version -- a different
     # implementation producing identical-looking sampling/kv/router identity is still a
     # DIFFERENT measurement.

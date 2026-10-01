@@ -658,6 +658,66 @@ def test_resume_segments_carry_git_identity_P39(tmp_path, monkeypatch):
     assert "stack_head" in man["segments"][0]["identity"]["git"]
 
 
+def test_resume_refuses_when_box_changed_P14(tmp_path, monkeypatch, capsys):
+    """9th cold review round 9 P14: `box` (provenance.gather's own machine-identity field) joins
+    resume identity -- a resume on a DIFFERENT box than the one that produced the existing rows
+    must refuse, even when everything else (sampling/kv/router hash/git) still matches."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0"), _match_task("m1")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1))
+    assert rc == 0
+
+    man_path = tmp_path / "rows.manifest.json"
+    man = json.loads(man_path.read_text())
+    man["box"] = "a-different-box"
+    man_path.write_text(json.dumps(man))
+
+    seen.clear()
+    rc = R.main(_args(tmp_path, resume=""))
+    assert rc == 2
+    assert seen == []
+    assert "box" in capsys.readouterr().err
+
+
+def test_resume_refuses_when_manifest_lacks_box_P14(tmp_path, monkeypatch, capsys):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0"), _match_task("m1")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1))
+    assert rc == 0
+
+    man_path = tmp_path / "rows.manifest.json"
+    man = json.loads(man_path.read_text())
+    del man["box"]
+    man_path.write_text(json.dumps(man))
+
+    seen.clear()
+    rc = R.main(_args(tmp_path, resume=""))
+    assert rc == 2
+    assert seen == []
+
+
+def test_resume_segments_carry_box_identity_P14(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert "box" in man["segments"][0]["identity"]
+    assert man["segments"][0]["identity"]["box"] == man["box"]
+
+
 def test_resume_refuses_when_manifest_lacks_nested_identity_P21(tmp_path, monkeypatch, capsys):
     """6th cold review round 6 P21 (HIGH): a manifest missing the nested identity blocks
     entirely (router.config_sha256 / sampling / kv.*) -- e.g. a legacy manifest predating this
