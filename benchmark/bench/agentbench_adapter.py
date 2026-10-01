@@ -714,11 +714,20 @@ _ANSI_STRIP_PATTERNS = (
 )
 
 
+_BRACKETED_PASTE_OFF_NEWLINE = re.compile(rb"\x1b\[\?2004l\r?\n")
+
+
 def _strip_ansi_bytes(raw_bytes: bytes) -> bytes:
     """Applies `_ANSI_STRIP_PATTERNS` in order. Pure, byte-in/byte-out -- called on whatever span
     of bytes is about to be fed to the decoder (the common case, one call per round covering the
     COMPLETE span; also the few extra-large-output rounds that feed incrementally mid-chunk, same
-    call site either way)."""
+    call site either way).
+
+    16th round: `_BRACKETED_PASTE_OFF_NEWLINE` runs FIRST, removing a `\r?\n` ONLY when it
+    directly follows the bracketed-paste-off toggle -- that specific newline is readline's own
+    artifact, never genuine command output. A bare, unconditional leading-newline strip (the
+    15th round and earlier) wrongly ate a GENUINE leading blank line too."""
+    raw_bytes = _BRACKETED_PASTE_OFF_NEWLINE.sub(b"", raw_bytes)
     for pattern in _ANSI_STRIP_PATTERNS:
         raw_bytes = pattern.sub(b"", raw_bytes)
     return raw_bytes
@@ -1109,8 +1118,6 @@ class PersistentShell:
             text = text.replace("\r\n", "\n")
             if text.startswith(full):
                 text = text[len(full):]
-            if text.startswith("\n"):
-                text = text[1:]
             return text
 
         # P28 (MEDIUM): decode INCREMENTALLY as each ORIGINAL chunk arrives, never by re-decoding

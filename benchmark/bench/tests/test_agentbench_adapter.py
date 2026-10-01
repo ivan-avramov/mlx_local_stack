@@ -1723,6 +1723,117 @@ def test_persistent_shell_scripted_bare_escape_byte_not_withheld_forever_P15(mon
         shell.close()
 
 
+# --------------------------------------------------------------------------- PersistentShell leading blank line preservation (16th round)
+# 16th cold review round 16: `_postprocess` stripped ONE leading `\n` UNCONDITIONALLY (15th round
+# and earlier) -- correct ONLY when that `\n` was readline's own bracketed-paste-off artifact,
+# wrong whenever the round had NO bracketed-paste prefix at all (e.g. the `bind` handshake fully
+# suppressed it for that round) and the command's OWN first line of real output happened to be
+# blank: `echo; echo x` -> 'x\n' instead of the correct '\nx\n'. Verified by hand (toggling the
+# fix) that this exact construction asserts the BUGGY 'x\n' against the pre-fix code and the
+# correct '\nx\n' against the fix -- genuine TDD red/green. Fixed by moving the newline strip to
+# the BYTE level, coupled to the actual `\x1b[?2004l` toggle it is an artifact of
+# (`_BRACKETED_PASTE_OFF_NEWLINE`, applied inside `_strip_ansi_bytes` BEFORE the five upstream
+# patterns) -- `_postprocess` no longer strips a leading newline unconditionally at all.
+def test_persistent_shell_scripted_preserves_genuine_leading_blank_line_P16(monkeypatch):
+    """No bracketed-paste prefix this round (simulating the `bind` handshake fully suppressing
+    it) -- a genuine leading blank line in the command's own output must survive."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        proc.stdout.push(b"\nx\n" + marker + b"0\n")
+        res = shell.run("echo; echo x")
+        assert res["output"] == "\nx\n"
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_scripted_bracketed_paste_prefix_still_strips_to_hi_P16(monkeypatch):
+    """Regression guard: the bracketed-paste fixture from the 14th round must still strip to
+    exactly 'hi\\n' under the 16th round's byte-level, conditional newline strip."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\nhi\n" + marker + b"0\n")
+        res = shell.run("echo hi")
+        assert res["output"] == "hi\n"
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_scripted_printf_empty_with_paste_pair_still_empty_P16(monkeypatch):
+    """Regression guard: `printf ''` with the bracketed-paste pair still produces the empty
+    string under the 16th round's fix."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\n" + marker + b"0\n")
+        res = shell.run("printf ''")
+        assert res["output"] == ""
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+# --------------------------------------------------------------------------- byte-level ANSI strip -- pure-function unit tests (16th round review)
+# Three gaps flagged in the 15th round's review: `_strip_ansi_bytes` / `_ANSI_STRIP_PATTERNS` /
+# `_split_pending_escape` were exercised only indirectly, through full PersistentShell
+# scripted-pty round trips -- direct, pure-function coverage of the underlying regex/boundary
+# behavior was missing.
+def test_strip_ansi_bytes_strips_a_stray_bel_byte_P16():
+    """Pattern 5: any leftover bare BEL (`\\x07`), not already consumed as an OSC terminator,
+    is stripped."""
+    assert AB._strip_ansi_bytes(b"before\x07after") == b"beforeafter"
+
+
+def test_strip_ansi_bytes_csi_final_letter_accepts_uppercase_incl_Z_P16():
+    """Pattern 2's terminator class is `[a-zA-Z]`, not just the lowercase SGR letters common in
+    colour codes ('m'/'h'/'l') -- CSI sequences terminated by an UPPERCASE letter (e.g.
+    cursor-movement codes) must also be recognized and stripped."""
+    assert AB._strip_ansi_bytes(b"a\x1b[2Zb") == b"ab"
+    assert AB._strip_ansi_bytes(b"a\x1b[1;5Hb") == b"ab"
+
+
+def test_split_pending_escape_32_byte_cap_boundary_P16():
+    """`_MAX_PENDING_ESCAPE_BYTES` (32) is the boundary between "still might complete" and "give
+    up, treat as content": a tail of EXACTLY 32 bytes since (and including) the last `\\x1b` is
+    still withheld as pending; one byte more forces it through as safe-to-strip content."""
+    at_cap = b"\x1b" + b"x" * 31          # 32 bytes total from the \x1b; no pattern matches
+    safe, pending = AB._split_pending_escape(at_cap)
+    assert safe == b""
+    assert pending == at_cap
+
+    over_cap = b"\x1b" + b"x" * 32        # 33 bytes total -- exceeds the cap, give up withholding
+    safe, pending = AB._split_pending_escape(over_cap)
+    assert safe == over_cap
+    assert pending == b""
+
+
 # --------------------------------------------------------------------------- PersistentShell (real bash)
 @_timeout(10)
 def test_persistent_shell_real_bash_runs_a_command_and_returns_exit_code(tmp_path):
