@@ -3,12 +3,12 @@
 # os-std task images (local-os/default, local-os/packages, local-os/ubuntu) NATIVELY (aarch64) from
 # its data/os_interaction/res/dockerfiles/*.
 #
-# MIRROR REWRITE (operator 2026-09-30): the upstream dockerfiles read
+# MIRROR REWRITE (operator 2026-02-08): the upstream dockerfiles read
 #   FROM docker.1ms.run/ubuntu
 # -- a third-party mirror, unpinned tag. We do NOT pull from that mirror: each dockerfile is copied
 # into the build dir and its FROM line is rewritten to a DIGEST-PINNED Docker Hub base,
 #   FROM ubuntu:24.04@sha256:<UBUNTU_DIGEST>
-# before `docker build` ever runs. 24.04 matches upstream `ubuntu:latest` at the 2026-09-30 pin
+# before `docker build` ever runs. 24.04 matches upstream `ubuntu:latest` at the 2026-02-08 pin
 # date; a bare tag (even "22.04"/"24.04") is still a MOVING target (Canonical republishes the same
 # tag with security patches), so cold-review F9 requires a digest. Resolving that digest needs a
 # registry query (`docker manifest inspect ubuntu:24.04` or the Docker Hub API) that this
@@ -98,7 +98,7 @@ for name in "${IMAGE_NAMES[@]}"; do
   mkdir -p "$dest_dir"
   dest="$dest_dir/Dockerfile"
   {
-    echo "# Rewritten by scripts/build_agentbench_images.sh (M54, 2026-09-30):"
+    echo "# Rewritten by scripts/build_agentbench_images.sh (M54, 2026-02-08):"
     echo "# upstream base was '$MIRROR_FROM_LINE' (unpinned third-party mirror); pinned to"
     echo "# '$PINNED_FROM_LINE' (Docker Hub) instead. Never built against the mirror."
     echo "$PINNED_FROM_LINE"
