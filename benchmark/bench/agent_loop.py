@@ -166,6 +166,17 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
         turns += 1
         try:
             out = driver.complete(model, messages, params, tools=schemas)
+        except AbortEpisode as e:
+            # 9th cold review round 9 P10: a wrapping Driver (e.g. AgentBench OS's
+            # DualSubmitDriver) can determine an episode-ending condition from the RAW model
+            # output itself (an empty answer_action call), before run_agent ever sees a tool_call
+            # to dispatch -- AbortEpisode raised HERE must end the episode with the SAME outcome
+            # a tool-level abort would, not be swallowed by the generic transport-failure handler
+            # below (which would wrongly report SERVER_ERROR and lose the clean abort text).
+            outcome = e.outcome
+            if on_feedback is not None:
+                on_feedback(None, e.message or str(e))
+            break
         except Exception as e:  # noqa: BLE001 — transport/router failure is an OUTCOME, not a crash
             outcome, error = AO.SERVER_ERROR, f"{type(e).__name__}: {str(e)[:200]}"
             break

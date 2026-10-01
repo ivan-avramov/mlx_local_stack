@@ -2396,24 +2396,25 @@ def test_run_task_bash_action_with_wrong_key_name_still_runs_the_script_R2():
     assert "R2_MARKER_919" in turns[0]["tool_result"]
 
 
-def test_run_task_empty_bash_action_feedback_captured_via_on_feedback_P53b():
-    """8th cold review round 8 P53(b): an empty bash_action call's IndexError (P49) is caught by
-    agent_loop.run_agent's GENERIC tool-exception handler, not by _bash itself -- before
-    on_feedback existed, this turn's transcript tool_result stayed None (a gap _bash's own direct
-    writes couldn't close, since the exception happens before _bash ever gets a result to
-    record). on_feedback now captures it at the one true source."""
+def test_run_task_empty_bash_action_ends_the_episode_as_a_scored_fail_P10():
+    """9th cold review round 9 P10 (supersedes the P53(b) reproduction, which encoded the
+    OLD P49-era "continue the episode" behavior): verified against the pinned upstream source --
+    bash_action's empty-args IndexError is UNCAUGHT upstream, terminating the whole sample via its
+    task-error path. This is functionally a SCORED FAIL that ENDS the episode immediately, not a
+    recoverable tool error the episode continues past."""
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
     driver = FakeDriver(script=[
         complete_result(tool_calls=[tool_call("bash_action", {})]),
-        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})]),
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})]),   # never reached
     ])
     task = _match_cfg_task()
     row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
-    assert row["turns"] == 2   # the empty call did not end the episode
-    assert row["passed"] is True
+    assert row["turns"] == 1   # ended on the FIRST (empty) call -- the 2nd script entry never ran
+    assert row["outcome"] == AO.FAILED_TESTS
+    assert row["passed"] is False
+    assert row["setup_error"] is False   # a SCORED fail, not infra
     turns = row["_transcript_turns"]
-    assert turns[0]["tool_result"] is not None
-    assert "list index out of range" in turns[0]["tool_result"]
+    assert turns[0]["tool_result"] == "empty tool arguments"
 
 
 def test_run_task_answer_action_with_wrong_key_name_still_submits_the_answer_R2():
@@ -2461,22 +2462,28 @@ def test_run_task_empty_finish_action_submits_a_null_answer_not_a_parse_error_P4
     assert row["turns"] == 1
 
 
-def test_run_task_empty_answer_action_is_not_a_submission_episode_continues_P49():
-    """P49: UNLIKE finish_action, upstream's answer_action does NOT tolerate an empty call -- it
-    must not become a silent empty submission. The episode must CONTINUE (not end as SOLVED with
-    answer=None) and get the chance to submit a real answer next turn."""
+def test_run_task_empty_answer_action_ends_the_episode_as_a_scored_fail_P10():
+    """9th cold review round 9 P10 (supersedes the P49 reproduction, which recovered into an
+    unknown-tool turn and let the episode continue -- the coordinator's ruling explicitly removes
+    that recovery for this case): verified against the pinned upstream source -- answer_action's
+    empty-args IndexError is UNCAUGHT upstream, terminating the whole sample via its task-error
+    path. SCORED FAIL, episode ends immediately; submitted_via records "none" (a STRING, distinct
+    from the Python None used for "never attempted a submission at all")."""
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
     driver = FakeDriver(script=[
         complete_result(tool_calls=[tool_call("answer_action", {})]),
-        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})]),
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})]),   # never reached
     ])
     task = _match_cfg_task()
     row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
-    assert row["turns"] == 2   # the empty call did NOT end the episode
-    assert row["answer"] == "love"
-    assert row["passed"] is True
+    assert row["turns"] == 1   # ended on the FIRST (empty) call
+    assert row["outcome"] == AO.FAILED_TESTS
+    assert row["passed"] is False
+    assert row["setup_error"] is False
+    assert row["submitted_via"] == "none"
+    assert row["answer"] is None
     turns = row["_transcript_turns"]
-    assert turns[0]["tool_result"] == AB.UNKNOWN_TOOL_TEXT
+    assert turns[0]["tool_result"] == "empty tool arguments"
 
 
 def test_run_task_unknown_tool_name_feeds_back_upstream_verbatim_text_P49():

@@ -113,10 +113,6 @@ NO_TOOL_CALL_REPROMPT = "No executable tool calls found. Please call a tool inst
 # ["bash", "commit"]`, which is what an UNKNOWN func_name/tool name actually falls through to --
 # upstream's _extract_function silently maps any unrecognized name to action=None), VERBATIM.
 UNKNOWN_TOOL_TEXT = "Invalid function call. Please call a tool instead"
-# P49: an EMPTY answer_action call is renamed to this sentinel (matches neither a real tool nor
-# submit_tool) so agent_loop.run_agent's re-dispatch cannot mistake it for a valid empty
-# submission -- see DualSubmitDriver.complete().
-_EMPTY_SUBMIT_SENTINEL = "__p49_empty_answer_action_not_a_submission__"
 TRUNCATE_LIMIT = 800
 TRUNCATE_KEEP = 780
 TRUNCATE_MARKER = "\n[truncated because the output is too long]"
@@ -1371,31 +1367,32 @@ class DualSubmitDriver:
                     self.submitted_via = "finish"
                     turn_entry["tool_result"] = "submitted"
             elif parse_error is None and name == self.SUBMIT_TOOL:
-                # R2/P49: normalize answer_action's args to the canonical {"answer": ...} key too,
-                # by the SAME purely-positional rule -- agent_loop.run_agent re-parses THIS
-                # rewritten arguments string, so `submitted["answer"]` must never silently come
-                # back None because the model used a plausible-but-wrong key (e.g. "response"
-                # instead of "answer"). UNLIKE finish_action, upstream's answer_action does NOT
-                # tolerate an EMPTY call (plain `arguments[0]`, no `if arguments else None` guard)
-                # -- an empty call here must NOT become a silent empty submission (simply leaving
-                # `fn["arguments"]` as the unchanged "{}" would make agent_loop.run_agent's OWN
-                # re-parse see a clean empty dict and dispatch it as submit_tool regardless, since
-                # the GENERIC parser treats `{}` as structurally valid). Rename the tool to a
-                # sentinel that matches neither a real tool nor submit_tool, so the re-dispatch
-                # falls through to the unknown-tool branch and feeds back corrective text instead.
+                # R2/P49/9th round P10: normalize answer_action's args to the canonical
+                # {"answer": ...} key too, by the SAME purely-positional rule -- agent_loop
+                # re-parses THIS rewritten arguments string, so `submitted["answer"]` must never
+                # silently come back None because the model used a plausible-but-wrong key (e.g.
+                # "response" instead of "answer").
+                #
+                # P10 (supersedes P49's unknown-tool-sentinel recovery): upstream's answer_action
+                # does a plain `arguments[0]` on an EMPTY call -- an uncaught IndexError
+                # terminates the WHOLE sample via upstream's task-error path, which is
+                # functionally a SCORED FAIL that ENDS the episode immediately (verified against
+                # the pinned upstream source). Mirrored here via AbortEpisode, raised from WITHIN
+                # complete() -- agent_loop.run_agent's own driver.complete() call site (P10) now
+                # catches AbortEpisode there specifically, ending the episode with the SAME
+                # outcome a tool-level abort would, rather than recovering into an unknown-tool
+                # turn that let the episode continue.
                 try:
                     answer = _extract_tool_arg(args)
-                except IndexError as e:
-                    fn["name"] = _EMPTY_SUBMIT_SENTINEL
-                    fn["arguments"] = "{}"
-                    if i == 0:
-                        turn_entry["tool_call"]["parse_error"] = str(e)
-                        turn_entry["tool_result"] = UNKNOWN_TOOL_TEXT
-                else:
-                    fn["arguments"] = json.dumps({"answer": answer})
-                    if i == 0:
-                        self.submitted_via = "answer"
-                        turn_entry["tool_result"] = "submitted"
+                except IndexError:
+                    self.submitted_via = "none"
+                    turn_entry["tool_result"] = "empty tool arguments"
+                    self.per_turn.append(turn_entry)   # record this turn BEFORE aborting
+                    raise agent_loop.AbortEpisode(AO.FAILED_TESTS, "empty tool arguments")
+                fn["arguments"] = json.dumps({"answer": answer})
+                if i == 0:
+                    self.submitted_via = "answer"
+                    turn_entry["tool_result"] = "submitted"
             new_tc = dict(tc)
             new_tc["function"] = fn
             new_tcs.append(new_tc)
@@ -1431,6 +1428,16 @@ def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
     shell_died_flag.setdefault("hit", False)
 
     def _bash(args: dict) -> str:
+        # 9th cold review round 9 P10: upstream's bash_action does a plain `arguments[0]` -- an
+        # EMPTY call's IndexError is UNCAUGHT upstream, terminating the whole sample via its
+        # task-error path, which is functionally a SCORED FAIL that ENDS the episode immediately
+        # (verified against the pinned upstream source). Mirrored via AbortEpisode (caught by
+        # agent_loop.run_agent's dedicated handler for a tool's fn, which ends the episode with
+        # this exact outcome) rather than letting the IndexError propagate into run_agent's
+        # GENERIC tool-exception handler (which would feed back "ERROR: IndexError: ..." and let
+        # the episode continue -- the R2/P49 behavior this supersedes for the EMPTY case).
+        if not args:
+            raise agent_loop.AbortEpisode(AO.FAILED_TESTS, "empty tool arguments")
         # R2: _extract_tool_arg, not a bare args.get("script", "") -- models commonly emit
         # "command" instead of "script"; upstream ignores the key name entirely.
         script = _extract_tool_arg(args) or ""
