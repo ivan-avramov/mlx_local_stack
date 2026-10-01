@@ -724,6 +724,41 @@ def _strip_ansi_bytes(raw_bytes: bytes) -> bytes:
     return raw_bytes
 
 
+# 15th cold review round 15 (fidelity, from a LIVE pty smoke against local-os/default on 81ce162):
+# `_strip_ansi_bytes` ran PER PIECE as `_feed` was called -- when a round's output is large enough
+# to trigger the sentinel-search loop's own incremental feeding (the "safe_len" margin in `run()`,
+# which withholds only `len(marker)-1` trailing bytes at a time while still searching for the
+# marker), an escape sequence can straddle TWO SEPARATE `_feed()` calls, and neither half alone is
+# recognized by any `_ANSI_STRIP_PATTERNS` entry -- reproduced live: `ls /` returned
+# '...  \x1b[01;34msrv   tmp  var\n' with every OTHER colour code correctly stripped except the
+# one that happened to land on such a boundary. `_split_pending_escape` is the fix's core: given
+# a byte span about to be stripped, it withholds a TRAILING, possibly-incomplete escape sequence
+# (an `\x1b`-started tail with no RECOGNIZED pattern match starting at it) so the caller can
+# prepend it to the NEXT span before stripping either.
+_MAX_PENDING_ESCAPE_BYTES = 32   # a bare \x1b that is NOT the start of any real sequence (or a
+# pathologically long one) must never be withheld forever -- this bound forces it through as
+# plain content once enough bytes have accumulated without ever completing a recognized pattern.
+
+
+def _split_pending_escape(data: bytes) -> tuple:
+    """Returns `(safe_to_strip_now, pending_tail)`. `pending_tail` is a SUFFIX of `data` starting
+    at the LAST `\\x1b` byte, held back because no pattern in `_ANSI_STRIP_PATTERNS` matches
+    STARTING at that position yet -- it might still be completed by bytes that haven't arrived.
+    If a pattern DOES match starting there (regardless of how far it extends, or what follows --
+    `re.Pattern.match(data, pos)` is NOT anchored to the end of `data`), the sequence at that
+    position is PROVABLY complete, and since it is the LAST `\\x1b` in `data`, nothing AFTER it
+    can be an incomplete escape either -- the WHOLE of `data` is safe."""
+    idx = data.rfind(b"\x1b")
+    if idx == -1:
+        return data, b""
+    if len(data) - idx > _MAX_PENDING_ESCAPE_BYTES:
+        return data, b""
+    for pattern in _ANSI_STRIP_PATTERNS:
+        if pattern.match(data, idx):
+            return data, b""
+    return data[:idx], data[idx:]
+
+
 class _PtyReader:
     """13th round: a pty master fd wrapped with the SAME `.read(n)`/`.close()` shape as the
     scripted-fake-process test double (`_ScriptedStdout`) -- but POLLABLE and CANCELLABLE, never
@@ -1091,15 +1126,24 @@ class PersistentShell:
         decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
         decoded_text = ""
         decode_broken = False
+        # 15th round: a possibly-incomplete escape sequence withheld from the PREVIOUS _feed()
+        # call (see `_split_pending_escape`) -- prepended to the NEXT piece before stripping,
+        # so a sequence straddling two SEPARATE _feed() calls (e.g. the sentinel-search loop's
+        # own incremental "safe_len" feeding, see `unfed` below) is never split by either call
+        # alone. Flushed unconditionally by `_finalize()` once nothing more will ever arrive.
+        pending_escape = b""
 
         def _feed(piece: bytes) -> None:
-            nonlocal decoded_text, decode_broken
+            nonlocal decoded_text, decode_broken, pending_escape
             if decode_broken or not piece:
                 return
             # 14th round: strip terminal control sequences from the RAW BYTES before decoding
             # (upstream's own byte-level order, see `_strip_ansi_bytes`) -- never from already-
             # decoded text, so a multi-byte UTF-8 character adjacent to a stripped sequence is
-            # never disturbed.
+            # never disturbed. 15th round: withhold a possibly-incomplete TRAILING escape
+            # sequence (carried via `pending_escape`) rather than stripping per-piece blindly.
+            piece = pending_escape + piece
+            piece, pending_escape = _split_pending_escape(piece)
             piece = _strip_ansi_bytes(piece)
             if not piece:
                 return
@@ -1145,9 +1189,22 @@ class PersistentShell:
             # invisible. `codecs.getincrementaldecoder`'s DEFAULT final=False instead buffers an
             # incomplete trailing sequence forever, waiting for bytes that will never come --
             # which would otherwise produce "ABCD" with the incomplete byte silently dropped.
-            nonlocal decoded_text, decode_broken
+            nonlocal decoded_text, decode_broken, pending_escape
             if decode_broken:
                 return
+            # 15th round: nothing more will ever arrive for THIS round -- any still-withheld
+            # `pending_escape` tail is definitively genuine content now (or a truly incomplete
+            # sequence the output itself ended mid-way through), stripped/fed as-is rather than
+            # held forever.
+            if pending_escape:
+                tail_bytes = _strip_ansi_bytes(pending_escape)
+                pending_escape = b""
+                if tail_bytes:
+                    try:
+                        decoded_text = self._cap_text(decoded_text + decoder.decode(tail_bytes))
+                    except UnicodeDecodeError:
+                        decode_broken = True
+                        return
             try:
                 tail = decoder.decode(b"", final=True)
                 if tail:

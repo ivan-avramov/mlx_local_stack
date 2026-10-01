@@ -1616,6 +1616,113 @@ def test_persistent_shell_start_handshake_disables_bracketed_paste_P14(monkeypat
         shell.close()
 
 
+# --------------------------------------------------------------------------- PersistentShell pty escape sequences split across chunks (15th round)
+# 15th cold review round 15 (fidelity, from a LIVE pty smoke against local-os/default on 81ce162):
+# `_strip_ansi_bytes` (14th round) ran PER CHUNK inside `_feed` -- an escape sequence straddling a
+# chunk (os.read()) boundary was not recognized by EITHER half alone and leaked through
+# unstripped. Reproduced live: `ls /` returned '...  \x1b[01;34msrv   tmp  var\n' with every OTHER
+# colour code correctly stripped except the one that happened to land on a read boundary. Fixed
+# with a `pending_escape` carry (nonlocal across `_feed()` calls within one run()): before
+# stripping, a possibly-incomplete escape sequence (an `\x1b`-started span with NO recognized
+# pattern match at its start -- i.e. genuinely truncated) is withheld (never fed/stripped) and
+# prepended to the NEXT piece; `_split_pending_escape` is bounded to 32 bytes so a bare `\x1b`
+# that's not the start of any real sequence is never withheld forever.
+def test_persistent_shell_scripted_csi_colour_code_split_across_chunks_is_still_stripped_P15(monkeypatch):
+    """Live reproduction: a CSI colour code (`\\x1b[01;34m`) genuinely split across TWO SEPARATE
+    `_feed()` calls (not just two `.push()`es -- the sentinel-search loop's own `safe_len` margin,
+    ~49 bytes here, swallows anything smaller whole; this construction is sized so the SECOND
+    non-marker chunk's own arrival is what cuts the escape mid-sequence, exactly reproducing the
+    live defect) must still be fully stripped. Filler is 'x'/'.' deliberately -- never a letter
+    that could itself be mistaken for a CSI terminator.
+
+    VERIFIED against the pre-fix code before locking in: this exact construction reproduces
+    `'...x\\x1b[01;34m...'` (unstripped) on bench.agentbench_adapter as of commit 81ce162, and the
+    expected clean result once `_split_pending_escape` is applied."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        proc.stdout.push(b"x" * 60)
+        time.sleep(0.05)
+        proc.stdout.push(b"x" * 40 + b"\x1b[0")        # escape cut after its 3rd byte
+        time.sleep(0.05)
+        proc.stdout.push(b"1;34m" + b"." * 42)         # completes it; no marker yet
+        time.sleep(0.05)
+        proc.stdout.push(b"ZZZ\n" + marker + b"0\n")
+        res = shell.run("ls")
+        assert res["output"] == "x" * 100 + "." * 42 + "ZZZ\n"
+        assert "\x1b" not in res["output"]
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_scripted_osc_title_split_across_chunks_is_still_stripped_P15(monkeypatch):
+    """Same class of bug for an OSC window-title sequence (`\\x1b]0;...~\\x07`) genuinely split
+    across TWO SEPARATE `_feed()` calls (same construction shape as the CSI test above) -- the
+    terminating BEL arrives in a LATER call than the `\\x1b]` that opens it.
+
+    VERIFIED against the pre-fix code before locking in, same as the CSI test."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+    osc = b"\x1b]0;root@container: ~\x07"
+    osc_part1, osc_part2 = osc[:15], osc[15:]
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        proc.stdout.push(b"x" * 60)
+        time.sleep(0.05)
+        proc.stdout.push(b"x" * 40 + osc_part1)   # OSC opened, BEL not yet arrived
+        time.sleep(0.05)
+        proc.stdout.push(osc_part2 + b"." * 42)   # BEL + rest; no marker yet
+        time.sleep(0.05)
+        proc.stdout.push(b"ZZZ\n" + marker + b"0\n")
+        res = shell.run("some_command")
+        assert res["output"] == "x" * 100 + "." * 42 + "ZZZ\n"
+        assert "\x1b" not in res["output"]
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
+def test_persistent_shell_scripted_bare_escape_byte_not_withheld_forever_P15(monkeypatch):
+    """A lone `\\x1b` that is NOT the start of any recognized sequence (genuine model/content
+    output, not a terminal control code) must not be withheld past the 32-byte bound -- it
+    eventually passes through as plain content once enough unrelated bytes follow it."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        # a bare ESC followed by 40 plain bytes (well past the 32-byte withholding bound), then
+        # the sentinel -- the whole thing must still reach `output`, never silently dropped.
+        proc.stdout.push(b"\x1b" + b"x" * 40 + b"\n" + marker + b"0\n")
+        res = shell.run("weird_output")
+        assert res["output"] == "\x1b" + "x" * 40 + "\n"
+    finally:
+        proc.stdout.push(b"")
+        shell.close()
+
+
 # --------------------------------------------------------------------------- PersistentShell (real bash)
 @_timeout(10)
 def test_persistent_shell_real_bash_runs_a_command_and_returns_exit_code(tmp_path):
