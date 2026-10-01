@@ -1155,6 +1155,60 @@ def test_persistent_shell_write_deadline_fires_before_a_blocking_write_completes
         shell.close()
 
 
+def test_persistent_shell_reader_queue_is_actually_bounded_G2_J():
+    """6th cold review round 6, addendum J: mutation-sensitive -- an UNBOUNDED `queue.Queue()`
+    (the pre-G2 state) would never raise `Full` here. Proves `queue_maxsize` is actually wired
+    into the real `queue.Queue(maxsize=...)` the reader thread writes to, not just accepted and
+    ignored."""
+    import queue as _queue
+    shell = AB.PersistentShell("c1", queue_maxsize=2)
+    assert shell._q.maxsize == 2
+    shell._q.put_nowait(b"a")
+    shell._q.put_nowait(b"b")
+    with pytest.raises(_queue.Full):
+        shell._q.put_nowait(b"c")
+
+
+@_timeout(10)
+def test_persistent_shell_read_write_do_not_deadlock_P22(tmp_path):
+    """6th cold review (round 6) P22, HIGH, real-bash reproduction: `head -c 20971520 /dev/zero`
+    completes in ~0.03s alone; the SAME command followed by a 300 KiB comment on one stdin write
+    used to wedge solid (>1s, effectively forever) -- bash starts executing the first line and
+    floods its own stdout; the reader thread fills the bounded queue (G2, maxsize=256) and blocks
+    on put(); the OLD `run()` was still parked awaiting the full write before it ever drained that
+    queue. The fix services reads and the (now backgrounded) write concurrently against one
+    deadline."""
+    shell = _real_shell(tmp_path)
+    try:
+        comment = "x" * (300 * 1024)
+        script = f"head -c 20971520 /dev/zero\n# {comment}"
+        t0 = time.monotonic()
+        res = shell.run(script, timeout_s=10)
+        elapsed = time.monotonic() - t0
+        assert res["exit_code"] == 0 and res["timed_out"] is False
+        # 20MB is well past the G2 1MiB retention cap, so the DISPLAY text is capped -- the point
+        # of this test is that it completes at all (no deadlock), not the exact capped length.
+        assert res["raw_output_len"] == 20971520
+        assert elapsed < 2.0, f"took {elapsed:.2f}s -- should complete in well under 2s, not deadlock"
+    finally:
+        shell.close()
+
+
+@_timeout(10)
+def test_persistent_shell_close_bounded_even_with_a_pipe_holding_descendant_P22(tmp_path):
+    """P22: close() must return promptly even when a backgrounded descendant (`sleep 30 &`) still
+    holds a reference to the shell's stdout pipe -- the OLD close() could wedge on its own
+    unbounded `self.proc.stdin.write(b"exit\\n")` call if the shell was busy; this proves the
+    bounded write + bounded wait/kill + bounded thread joins keep close() itself fast regardless."""
+    shell = _real_shell(tmp_path)
+    shell.run("sleep 30 & disown", timeout_s=5)
+    t0 = time.monotonic()
+    shell.close()
+    elapsed = time.monotonic() - t0
+    assert elapsed < 3.0, f"close() took {elapsed:.2f}s -- should return within 3s"
+    assert shell.proc.poll() is not None
+
+
 def test_persistent_shell_start_returns_the_handshake_result_P9b(tmp_path):
     """P9(b): start() must return the handshake ("true") round's result so the caller (run_task)
     can validate it BEFORE ever making a model call, rather than discarding it."""
@@ -1205,8 +1259,31 @@ def test_persistent_shell_real_bash_4mb_output_fast_and_capped_G2(tmp_path):
         assert res["raw_output_len"] == 4194304
         assert len(res["output"]) < 4194304
         assert len(res["output"]) <= AB.PersistentShell.MAX_RETAINED_BYTES + 64
-        assert "bytes dropped" in res["output"]
+        # P28: the DISPLAY TEXT is now capped by CHARACTER count (never a byte-offset cut, which
+        # could split a multibyte codepoint), so its drop marker says "chars dropped".
+        assert "chars dropped" in res["output"]
         assert elapsed < 2.0, f"4MB took {elapsed:.2f}s -- should be well under 2s"
+    finally:
+        shell.close()
+
+
+@_timeout(15)
+def test_persistent_shell_real_bash_1_2mb_of_euro_signs_roundtrips_P28(tmp_path):
+    """6th cold review round 6 P28, MEDIUM, reproduction: 1.2MB of valid multi-byte UTF-8 (`€`,
+    3 bytes each) is well past the 1 MiB retention cap, so compaction WILL trigger -- a naive
+    fixed BYTE-offset head/tail cut can land mid-character and corrupt the WHOLE output into the
+    upstream decode-error message, even though every byte the process produced was genuinely valid
+    UTF-8. Decoding incrementally per ORIGINAL chunk (never re-decoding a post-hoc byte slice)
+    must round-trip real `€` characters instead."""
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("python3 -c \"import sys; sys.stdout.write(chr(0x20AC) * 400000)\"",
+                        timeout_s=10)
+        assert res["exit_code"] == 0 and res["timed_out"] is False
+        assert res["raw_output_len"] == 400000 * 3
+        assert res["output"] != AB.PersistentShell.UPSTREAM_DECODE_ERROR_TEXT
+        assert "€" in res["output"]
+        assert res["output"].count("€") > 100000   # most of it survived despite compaction
     finally:
         shell.close()
 

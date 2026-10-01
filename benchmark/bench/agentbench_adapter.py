@@ -44,6 +44,7 @@ task's own post-agent container, exactly as task.py does.
 """
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import queue
@@ -559,6 +560,9 @@ class PersistentShell:
     MAX_RETAINED_BYTES = 1024 * 1024
     RETAINED_HEAD_BYTES = 512 * 1024
     RETAINED_TAIL_BYTES = 512 * 1024
+    MAX_RETAINED_CHARS = 1024 * 1024
+    RETAINED_HEAD_CHARS = 512 * 1024
+    RETAINED_TAIL_CHARS = 512 * 1024
 
     def __init__(self, container: str, popen=subprocess.Popen, runner=subprocess.run,
                 read_chunk: int = 65536, queue_maxsize: int = 256):
@@ -570,6 +574,7 @@ class PersistentShell:
         self._q: "queue.Queue" = queue.Queue(maxsize=queue_maxsize)
         self.dead = False
         self._carry = b""   # unexpected leftover bytes past a previous round's sentinel (see above)
+        self._reader_thread = None
 
     def start(self) -> dict:
         """Returns the handshake (no-op sentinel round) result -- P9(b): the caller MUST check
@@ -577,8 +582,8 @@ class PersistentShell:
         self.proc = self._popen(
             ["docker", "exec", "-i", self.container, "/bin/bash", "--login"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
-        t = threading.Thread(target=self._reader_loop, daemon=True)
-        t.start()
+        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self._reader_thread.start()
         # N8: a login shell sources profile scripts that can print banners/MOTD/warnings before
         # anything we asked for. One no-op sentinel round, with everything read before it discarded.
         return self.run("true", timeout_s=10.0)
@@ -597,30 +602,49 @@ class PersistentShell:
             except Exception:  # noqa: BLE001 -- queue full and nobody draining any more; give up
                 pass
 
-    def _write_with_deadline(self, data: bytes, deadline: float) -> bool:
-        """True if written (and flushed) before `deadline` (time.monotonic()). A writer THREAD is
-        used (not a raw fd) so this works uniformly whether `self.proc.stdin` is a real OS pipe or
-        a test double with no fileno(); a write that cannot complete by the deadline (the shell is
-        busy and not reading stdin, so the OS pipe buffer fills) is itself a timeout (P8)."""
-        done = threading.Event()
-        box: dict = {}
+    def _start_writer(self, data: bytes) -> dict:
+        """5th cold review round 6, P22 (HIGH, deadlock): the OLD design made `run()` BLOCK on
+        `_write_with_deadline` (a synchronous `done.wait(...)`) before EVER draining the reader
+        queue. Reproduced: bash given `head -c 20MB /dev/zero` followed by a 300KiB comment on the
+        SAME stdin write wedges solid -- bash starts executing the first line and floods its own
+        stdout; the reader thread (already running) fills the BOUNDED queue (G2, maxsize=256) and
+        blocks on `put()`; `run()`'s main loop isn't draining that queue yet because it is still
+        parked waiting for the ENTIRE write to finish; the write can't finish because bash hasn't
+        gotten back to reading more stdin (it's busy, and backed up on its own stdout). Classic
+        two-sided pipe deadlock.
+
+        Fix: the write now happens in an INDEPENDENT background thread that `run()` never awaits
+        synchronously -- `run()` starts this and immediately begins draining the queue in the SAME
+        loop, both bounded by the SAME overall deadline, so the reader is always being serviced
+        and the writer's blocking `.write()` calls keep completing as bash keeps making progress.
+        The data is written in bounded chunks so an `abort` request (deadline expiry, or a found
+        sentinel making the rest of the write moot) is noticed promptly rather than only at the
+        next multi-hundred-KB syscall boundary."""
+        box: dict = {"done": False, "error": None, "abort": False, "thread": None}
 
         def _writer():
             try:
-                self.proc.stdin.write(data)
+                view = memoryview(data)
+                off = 0
+                chunk_size = 65536
+                while off < len(view):
+                    if box["abort"]:
+                        return
+                    piece = bytes(view[off:off + chunk_size])
+                    n = self.proc.stdin.write(piece)
+                    if not n:
+                        n = len(piece)   # some stream wrappers return None on success
+                    off += n
                 self.proc.stdin.flush()
             except Exception as e:  # noqa: BLE001
                 box["error"] = e
             finally:
-                done.set()
+                box["done"] = True
 
-        threading.Thread(target=_writer, daemon=True).start()
-        done.wait(max(0.0, deadline - time.monotonic()))
-        if not done.is_set():
-            return False
-        if "error" in box:
-            raise box["error"]
-        return True
+        t = threading.Thread(target=_writer, daemon=True)
+        box["thread"] = t
+        t.start()
+        return box
 
     def run(self, command: str, timeout_s: float = DEFAULT_EXEC_TIMEOUT_S) -> dict:
         """Returns {output, exit_code, timed_out, shell_died, raw_output_len}."""
@@ -635,74 +659,114 @@ class PersistentShell:
         deadline = time.monotonic() + timeout_s
         sentinel = f"__M54_SENTINEL_{uuid.uuid4().hex}__"
         full = f"{command}\nprintf '\\n%s%d\\n' {sentinel} $?\n"
-        try:
-            wrote = self._write_with_deadline(full.encode("utf-8"), deadline)
-        except (BrokenPipeError, ValueError, OSError):
-            self.dead = True
-            return {"output": "", "exit_code": None, "timed_out": False, "shell_died": True,
-                   "raw_output_len": 0}
-        if not wrote:
-            self._on_timeout()
-            return {"output": "", "exit_code": None, "timed_out": True, "shell_died": False,
-                   "raw_output_len": 0}
+        data = full.encode("utf-8")
+        # P22: start the write CONCURRENTLY -- never await it before draining the reader queue.
+        writer_box = self._start_writer(data)
 
         marker = ("\n" + sentinel).encode("ascii")
+
+        # P28 (MEDIUM): decode INCREMENTALLY as each ORIGINAL chunk arrives, never by re-decoding
+        # an arbitrary byte-offset slice of the (possibly head/tail-capped) accumulated buffer --
+        # a fixed byte cut can land mid-multibyte-character (reproduced: 1.2MB of valid `€`
+        # characters, 3 bytes each, produced the upstream decode-error message for the WHOLE
+        # output because the 512KiB head/tail cut split one). `codecs.getincrementaldecoder`
+        # correctly buffers a trailing incomplete sequence across chunk boundaries by itself.
+        # `raw` stays BYTES-only and is used EXCLUSIVELY for sentinel search (ASCII, never
+        # decoded) -- its own byte-level cap (`_cap_buffer`) is therefore safe as-is. The decoded
+        # TEXT is capped separately, by CHARACTER count (`_cap_text`), which can never split a
+        # codepoint.
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+        decoded_text = ""
+        decode_broken = False
+
+        def _feed(piece: bytes) -> None:
+            nonlocal decoded_text, decode_broken
+            if decode_broken or not piece:
+                return
+            try:
+                decoded_text = self._cap_text(decoded_text + decoder.decode(piece))
+            except UnicodeDecodeError:
+                decode_broken = True
+
         raw = bytearray(self._carry)
         total_bytes_in = len(self._carry)   # G2: tracked INDEPENDENTLY of capping, so
+        _feed(bytes(self._carry))           # a previous round's leftover carry IS output text too
         self._carry = b""                   # `raw_output_len` stays exact regardless of how many
         search_from = 0                     # times the retained buffer gets compacted.
-        while True:
-            idx = raw.find(marker, max(0, search_from - len(marker)))
-            if idx != -1:
-                m = re.match(rb"(\d+)\n", bytes(raw[idx + len(marker):]))
-                if m:
-                    exit_code = int(m.group(1))
-                    output_bytes = bytes(raw[:idx])
-                    # bytes after idx were never touched by capping (capping only ever drops a
-                    # MIDDLE span strictly before the eventual sentinel position) -- so
-                    # total_bytes_in minus that trailing length is the exact TRUE output length.
-                    raw_output_len = total_bytes_in - (len(raw) - idx)
-                    output = self._decode(output_bytes)
-                    consumed_end = idx + len(marker) + m.end()
-                    leftover = bytes(raw[consumed_end:])
-                    if leftover:
-                        print(f"[PersistentShell] WARNING: {len(leftover)} unexpected byte(s) past "
-                             "the sentinel; carrying to the next run() call", file=sys.stderr)
-                    self._carry = leftover
-                    return {"output": output, "exit_code": exit_code, "timed_out": False,
-                           "shell_died": False, "raw_output_len": raw_output_len}
-                # digits present but not yet newline-terminated -- re-check from the SAME offset
-                # once more data arrives (R4: never guess a partial exit code).
-                search_from = idx
-            else:
-                search_from = len(raw)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                self._on_timeout()
-                out = self._decode(bytes(raw))
-                return {"output": out, "exit_code": None, "timed_out": True, "shell_died": False,
-                       "raw_output_len": total_bytes_in}
-            try:
-                chunk = self._q.get(timeout=min(remaining, 0.1))
-            except queue.Empty:
-                continue
-            if chunk is None:   # EOF -- the shell process exited (e.g. the command ran `exit`)
-                self.dead = True
-                out = self._decode(bytes(raw))
-                return {"output": out, "exit_code": None, "timed_out": False, "shell_died": True,
-                       "raw_output_len": total_bytes_in}
-            total_bytes_in += len(chunk)
-            raw += chunk
-            capped = self._cap_buffer(raw)
-            if len(capped) != len(raw):
-                # bytes were physically removed from the middle -- any offset computed against the
-                # OLD buffer is no longer meaningful; the capped buffer is <=~1MiB regardless, so a
-                # full re-scan from 0 is cheap (this is the G2 bound, not the R1 O(n^2) problem).
-                search_from = 0
-            raw = capped
+
+        try:
+            while True:
+                idx = raw.find(marker, max(0, search_from - len(marker)))
+                if idx != -1:
+                    m = re.match(rb"(\d+)\n", bytes(raw[idx + len(marker):]))
+                    if m:
+                        exit_code = int(m.group(1))
+                        # bytes after idx were never touched by capping (capping only ever drops a
+                        # MIDDLE span strictly before the eventual sentinel position) -- so
+                        # total_bytes_in minus that trailing length is the exact TRUE output
+                        # length, and the trailing span's CHARACTER length (it's pure ASCII --
+                        # sentinel + digits + newline, plus any rare non-ASCII "leftover") equals
+                        # its byte length closely enough to trim `decoded_text` by.
+                        raw_output_len = total_bytes_in - (len(raw) - idx)
+                        trailer_len = len(raw) - idx
+                        output = (self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken
+                                 else decoded_text[:max(0, len(decoded_text) - trailer_len)])
+                        consumed_end = idx + len(marker) + m.end()
+                        leftover = bytes(raw[consumed_end:])
+                        if leftover:
+                            print(f"[PersistentShell] WARNING: {len(leftover)} unexpected byte(s) "
+                                 "past the sentinel; carrying to the next run() call",
+                                 file=sys.stderr)
+                        self._carry = leftover
+                        writer_box["abort"] = True
+                        return {"output": output, "exit_code": exit_code, "timed_out": False,
+                               "shell_died": False, "raw_output_len": raw_output_len}
+                    # digits present but not yet newline-terminated -- re-check from the SAME
+                    # offset once more data arrives (R4: never guess a partial exit code).
+                    search_from = idx
+                else:
+                    search_from = len(raw)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    writer_box["abort"] = True
+                    self._on_timeout()
+                    out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
+                    return {"output": out, "exit_code": None, "timed_out": True,
+                           "shell_died": False, "raw_output_len": total_bytes_in}
+                try:
+                    chunk = self._q.get(timeout=min(remaining, 0.1))
+                except queue.Empty:
+                    if writer_box["done"] and writer_box["error"] is not None:
+                        # the write itself failed (broken pipe / shell gone) AND nothing more is
+                        # arriving on this pass -- the shell is dead.
+                        self.dead = True
+                        out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
+                        return {"output": out, "exit_code": None, "timed_out": False,
+                               "shell_died": True, "raw_output_len": total_bytes_in}
+                    continue
+                if chunk is None:   # EOF -- the shell process exited (e.g. the command ran `exit`)
+                    self.dead = True
+                    out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
+                    return {"output": out, "exit_code": None, "timed_out": False,
+                           "shell_died": True, "raw_output_len": total_bytes_in}
+                total_bytes_in += len(chunk)
+                raw += chunk
+                _feed(chunk)
+                capped = self._cap_buffer(raw)
+                if len(capped) != len(raw):
+                    # bytes were physically removed from the middle -- any offset computed against
+                    # the OLD buffer is no longer meaningful; the capped buffer is <=~1MiB
+                    # regardless, so a full re-scan from 0 is cheap (the G2 bound, not the R1
+                    # O(n^2) problem).
+                    search_from = 0
+                raw = capped
+        finally:
+            writer_box["abort"] = True
 
     def _cap_buffer(self, raw: bytearray) -> bytearray:
-        """G2: bound memory on a chatty background writer -- keep head+tail, drop the middle."""
+        """G2: bound memory on a chatty background writer -- keep head+tail, drop the middle.
+        BYTES ONLY -- `raw` is never decoded (see P28); this cut can split a multibyte character
+        and that is fine, since it's used exclusively for ASCII sentinel search."""
         if len(raw) <= self.MAX_RETAINED_BYTES:
             return raw
         head = bytes(raw[:self.RETAINED_HEAD_BYTES])
@@ -711,12 +775,15 @@ class PersistentShell:
         marker = f"\n[... {newly_dropped} bytes dropped ...]\n".encode("ascii")
         return bytearray(head + marker + tail)
 
-    def _decode(self, data: bytes) -> str:
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            return self.UPSTREAM_DECODE_ERROR_TEXT
-        return text
+    def _cap_text(self, text: str) -> str:
+        """G2/P28: the character-count analogue of `_cap_buffer`, for the DECODED output text --
+        slicing a `str` by character count can never split a codepoint, unlike a byte-offset cut."""
+        if len(text) <= self.MAX_RETAINED_CHARS:
+            return text
+        head = text[:self.RETAINED_HEAD_CHARS]
+        tail = text[-self.RETAINED_TAIL_CHARS:]
+        dropped = len(text) - len(head) - len(tail)
+        return f"{head}\n[... {dropped} chars dropped ...]\n{tail}"
 
     def _on_timeout(self) -> None:
         self.kill()
@@ -736,18 +803,35 @@ class PersistentShell:
         self.dead = True
 
     def close(self) -> None:
-        """`exit\\n` then wait up to 2s, then kill (never leaves the process running)."""
+        """`exit\n` then wait up to 2s, then kill (never leaves the process running).
+
+        P22: the write itself now goes through the SAME bounded, backgrounded writer as `run()`
+        (reproduced: a descendant process still holding the pipe open, e.g. a backgrounded
+        `sleep 30 &`, could previously wedge `close()`'s raw `self.proc.stdin.write()` solid,
+        requiring the test process itself to be killed). `close()` never waits on the write
+        directly -- it polls briefly, then proceeds to `wait()`/`kill()` regardless, and finally
+        joins the reader/writer threads with a short timeout so neither leaks past this call."""
         if self.proc is None:
             return
+        writer_box = None
         try:
-            self.proc.stdin.write(b"exit\n")
-            self.proc.stdin.flush()
+            writer_box = self._start_writer(b"exit\n")
         except Exception:  # noqa: BLE001
             pass
+        if writer_box is not None:
+            write_deadline = time.monotonic() + 0.5
+            while not writer_box["done"] and time.monotonic() < write_deadline:
+                time.sleep(0.02)
+            writer_box["abort"] = True
         try:
             self.proc.wait(timeout=2.0)
         except Exception:  # noqa: BLE001
             self.kill()
+        self.dead = True
+        if self._reader_thread is not None:
+            self._reader_thread.join(timeout=0.3)
+        if writer_box is not None and writer_box.get("thread") is not None:
+            writer_box["thread"].join(timeout=0.2)
 
 
 # --------------------------------------------------------------------------- evaluation
