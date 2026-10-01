@@ -166,64 +166,117 @@ def router_recently_active(router_log_path, window_s: float = ROUTER_ACTIVITY_WI
     return ROUTER_ACTIVITY_MARKER in tail
 
 
-# --------------------------------------------------------------------------- (4) busy/idle (P25)
-def _real_pgrep_worker_lines() -> list:
+# --------------------------------------------------------------------------- (4) busy/idle (P25/P38)
+def _real_subprocess_run(argv, timeout: float = 5.0):
+    """None on ANY failure (nonzero-launch exception, timeout) -- distinct from a `CompletedProcess`
+    with a nonzero returncode, which callers also treat as failure. Never silently coerced into an
+    empty/zero result (P38: 'a failed `ps` call returned 0.0, producing WEDGE (idle)')."""
     try:
-        proc = subprocess.run(["pgrep", "-af", "mlx_vlm.server"], capture_output=True, text=True,
-                             timeout=5)
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     except Exception:  # noqa: BLE001
-        return []
-    return [l for l in (proc.stdout or "").splitlines() if l.strip()]
+        return None
 
 
-def find_worker_pids(pgrep_lines_fn=_real_pgrep_worker_lines) -> list:
-    """P25: `pgrep -af mlx_vlm.server`, EXCLUDING the :8092 task model (identified by `--port
-    8092` on its own cmdline) -- the task model is a SEPARATE, always-resident process and its
-    activity says nothing about the run being watched."""
-    pids = []
-    for line in pgrep_lines_fn():
-        parts = line.strip().split(None, 1)
+def find_worker_pids(router_pid, run_fn=_real_subprocess_run) -> list | None:
+    """7th cold review round 7 P38 (HIGH), reproduced on this Mac: `pgrep -af mlx_vlm.server`
+    returned ONLY the pid, never the command line -- macOS/BSD `pgrep` does not support `-a` as a
+    listing flag the way GNU pgrep does, so `-af` silently behaved like a bare `-f` (match-only,
+    no output format change) and every line this function tried to parse as "pid cmdline" failed
+    silently, discarding every real worker. `pgrep -fl` is BSD's own "long format" flag (pid +
+    full argv) and parses correctly.
+
+    Candidates are also now filtered to processes whose PPID CHAIN contains `router_pid` (the
+    manifest's own recorded, M50-verified router pid) via `ps -o ppid=` -- this associates the
+    worker with THIS run's verified router, not just any mlx_vlm.server process anywhere on the
+    box (a stale/unrelated worker from a different experiment must never be sampled).
+
+    Returns None (UNKNOWN) on ANY discovery failure (pgrep launch failure, or an exit code outside
+    {0 (matches), 1 (pgrep's own "no match", NOT a failure)}) -- never an empty list silently read
+    as "no worker" when discovery itself is actually broken."""
+    proc = run_fn(["pgrep", "-fl", "mlx_vlm.server"])
+    if proc is None or proc.returncode not in (0, 1):
+        return None
+    candidates = []
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
         if len(parts) != 2:
             continue
         pid_str, cmdline = parts
         if "--port 8092" in cmdline:
             continue
         try:
-            pids.append(int(pid_str))
+            candidates.append(int(pid_str))
         except ValueError:
             continue
-    return pids
+    if not candidates or router_pid is None:
+        return []
+    matched = []
+    for pid in candidates:
+        verdict = _ppid_chain_contains(pid, router_pid, run_fn)
+        if verdict is None:
+            return None   # a `ps` failure mid-ancestry-walk is a discovery failure, not "no match"
+        if verdict:
+            matched.append(pid)
+    return matched
 
 
-def _real_ps_cpu_sample(pids: list) -> float:
-    if not pids:
-        return 0.0
-    try:
-        proc = subprocess.run(["ps", "-o", "%cpu=", "-p", ",".join(str(p) for p in pids)],
-                             capture_output=True, text=True, timeout=5)
-    except Exception:  # noqa: BLE001
-        return 0.0
+def _ppid_chain_contains(pid: int, router_pid: int, run_fn, max_depth: int = 12) -> bool | None:
+    """True if `router_pid` is an ancestor of `pid` (walking `ps -o ppid=` up to `max_depth`
+    hops); False if the chain terminates (init/launchd, pid 1/0, or a cycle) without finding it;
+    None (UNKNOWN) if a `ps` call itself fails partway through the walk."""
+    cur = pid
+    for _ in range(max_depth):
+        if cur == router_pid:
+            return True
+        proc = run_fn(["ps", "-o", "ppid=", "-p", str(cur)])
+        if proc is None or proc.returncode != 0:
+            return None
+        try:
+            ppid = int((proc.stdout or "").strip())
+        except ValueError:
+            return None
+        if ppid == router_pid:
+            return True
+        if ppid in (0, 1, cur):
+            return False
+        cur = ppid
+    return False
+
+
+def _cpu_sample(pids: list, run_fn) -> float | None:
+    """None (UNKNOWN) on failure -- never 0.0, which `worker_busy` would otherwise silently read
+    as a genuine idle observation (P38 reproduction)."""
+    proc = run_fn(["ps", "-o", "%cpu=", "-p", ",".join(str(p) for p in pids)])
+    if proc is None or proc.returncode != 0:
+        return None
     vals = []
     for line in (proc.stdout or "").splitlines():
         try:
             vals.append(float(line.strip()))
         except ValueError:
             continue
-    return max(vals) if vals else 0.0
+    return max(vals) if vals else None
 
 
-def worker_busy(pgrep_lines_fn=_real_pgrep_worker_lines, sample_fn=_real_ps_cpu_sample,
-               sleep_fn=time.sleep, gap_s: float = WORKER_SAMPLE_GAP_S,
-               threshold_pct: float = WORKER_BUSY_THRESHOLD_PCT):
-    """P25: True (busy) / False (idle) / None (UNKNOWN -- no worker process found at all). Two
-    `%cpu` samples `gap_s` apart; either sample over `threshold_pct` counts as busy (a worker
-    between requests can legitimately dip to ~0% for a moment while still being in active use)."""
-    pids = find_worker_pids(pgrep_lines_fn)
-    if not pids:
+def worker_busy(router_pid, run_fn=_real_subprocess_run, sleep_fn=time.sleep,
+               gap_s: float = WORKER_SAMPLE_GAP_S, threshold_pct: float = WORKER_BUSY_THRESHOLD_PCT):
+    """True (busy) / False (idle) / None (UNKNOWN -- no worker process found, discovery failed, or
+    a `ps` sample failed). Two `%cpu` samples `gap_s` apart; either sample over `threshold_pct`
+    counts as busy (a worker between requests can legitimately dip to ~0% for a moment while still
+    being in active use)."""
+    pids = find_worker_pids(router_pid, run_fn)
+    if not pids:   # None (discovery failed) or [] (no match) -- both UNKNOWN here
         return None
-    s1 = sample_fn(pids)
+    s1 = _cpu_sample(pids, run_fn)
+    if s1 is None:
+        return None
     sleep_fn(gap_s)
-    s2 = sample_fn(pids)
+    s2 = _cpu_sample(pids, run_fn)
+    if s2 is None:
+        return None
     return max(s1, s2) > threshold_pct
 
 
@@ -341,7 +394,7 @@ def sanity_stats(rows: list) -> dict:
 # --------------------------------------------------------------------------- assessment block
 def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: int,
                      router_log_path, stall_s: float, reference_ts, now: float,
-                     pid_alive_fn=pid_alive, busy_check_fn=worker_busy,
+                     pid_alive_fn=pid_alive, busy_check_fn=None, router_pid=None,
                      router_active_fn=router_recently_active, label: str = "",
                      rows_evidence: bool = True, manifest_evidence: bool = True,
                      elapsed_s: float | None = None) -> str:
@@ -351,8 +404,13 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
     eta = eta_seconds(total, done, stats["mean_wall_s"])
     sanity = sanity_stats(rows)
     seconds_since_reference = None if reference_ts is None else max(0.0, now - reference_ts)
+    # P38: the REAL busy/idle path needs `router_pid` to associate a worker with THIS run's
+    # verified router (see find_worker_pids) -- a caller-supplied `busy_check_fn` (tests) is used
+    # verbatim; otherwise bind the default `worker_busy` to `router_pid` lazily (never called
+    # unless classify_stall actually needs a busy/idle verdict).
+    effective_busy_check_fn = busy_check_fn if busy_check_fn is not None else (lambda: worker_busy(router_pid))
     stall_label = classify_stall(seconds_since_reference, stall_s, driver_pid,
-                                 pid_alive_fn, busy_check_fn)
+                                 pid_alive_fn, effective_busy_check_fn)
     router_active = router_active_fn(router_log_path, ROUTER_ACTIVITY_WINDOW_S, now)
 
     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
@@ -411,8 +469,38 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
 # the REAL file reader + classifier against both known-POSITIVE and known-NEGATIVE cases, written
 # to actual temp files, never an in-memory list handed straight to formatting.
 _SELFTEST_CASES = (
-    "progressing", "stalled-busy", "stalled-idle", "driver-dead", "evidence-missing",
+    "progressing", "stalled-busy", "stalled-idle", "stalled-unknown-ps-failure",
+    "driver-dead", "evidence-missing",
 )
+_SELFTEST_ROUTER_PID = 4242
+_SELFTEST_WORKER_PID = 5151
+
+
+class _FakeCompletedProcess:
+    def __init__(self, stdout: str, returncode: int = 0):
+        self.stdout = stdout
+        self.returncode = returncode
+
+
+def _selftest_run_fn(cpu_value, ps_fails: bool = False):
+    """P38/addendum F: a fake `subprocess.run`-shaped callable returning macOS-style `pgrep -fl`
+    output (pid + FULL cmdline, the BSD "long" format -- the format the real bug was in) and `ps`
+    output, so the self-test drives `worker_busy`/`find_worker_pids` for REAL rather than
+    injecting a `busy_check_fn` boolean directly."""
+    def run_fn(argv):
+        if argv[:2] == ["pgrep", "-fl"]:
+            lines = [f"{_SELFTEST_WORKER_PID} /usr/bin/python3 -m mlx_vlm.server --port 8000",
+                    "9999 /usr/bin/python3 -m mlx_vlm.server --port 8092"]   # task model, excluded
+            return _FakeCompletedProcess("\n".join(lines) + "\n", 0)
+        if argv[:2] == ["ps", "-o"] and "ppid=" in argv[2]:
+            # the worker's PPID chain resolves directly to the recorded router pid.
+            return _FakeCompletedProcess(f"{_SELFTEST_ROUTER_PID}\n", 0)
+        if argv[:2] == ["ps", "-o"] and "%cpu=" in argv[2]:
+            if ps_fails:
+                return _FakeCompletedProcess("", 1)
+            return _FakeCompletedProcess(f"{cpu_value}\n", 0)
+        return _FakeCompletedProcess("", 1)
+    return run_fn
 
 
 def _selftest_case(tmp_dir: Path, case: str, now: float) -> dict:
@@ -430,7 +518,8 @@ def _selftest_case(tmp_dir: Path, case: str, now: float) -> dict:
         ok = rows == [] and manifest == {} and label is not None and label.startswith("UNKNOWN")
         return {"ok": ok, "detail": f"rows={rows} manifest={manifest} label={label!r}"}
 
-    manifest_path.write_text(json.dumps({"model": "m", "timestamp": int(now)}), encoding="utf-8")
+    manifest_path.write_text(json.dumps({"model": "m", "timestamp": int(now),
+                                        "router": {"pid": _SELFTEST_ROUTER_PID}}), encoding="utf-8")
     manifest = read_manifest(manifest_path)
 
     if case == "progressing":
@@ -442,17 +531,25 @@ def _selftest_case(tmp_dir: Path, case: str, now: float) -> dict:
         ok = len(rows) == 1 and label is None
         return {"ok": ok, "detail": f"rows={len(rows)} label={label!r}"}
 
-    if case in ("stalled-busy", "stalled-idle"):
+    if case in ("stalled-busy", "stalled-idle", "stalled-unknown-ps-failure"):
         rows_path.write_text(json.dumps(SELFTEST_ROWS[0]) + "\n", encoding="utf-8")
         stale = now - (STALL_DEFAULT_S * 2)
         os.utime(rows_path, (stale, stale))
         rows = read_rows(rows_path)
         ref = reference_timestamp(rows, manifest, rows_path)
-        busy_fn = (lambda: True) if case == "stalled-busy" else (lambda: False)
+        if case == "stalled-busy":
+            run_fn, want = _selftest_run_fn(cpu_value=85.0), "RUNAWAY-SUSPECT (busy)"
+        elif case == "stalled-idle":
+            run_fn, want = _selftest_run_fn(cpu_value=1.0), "WEDGE (idle)"
+        else:
+            # P38: a failing `ps` (the %cpu sample, not just discovery) must propagate as
+            # UNKNOWN -- reproduced bug: a failed `ps` call used to return 0.0, read as idle.
+            run_fn, want = _selftest_run_fn(cpu_value=0.0, ps_fails=True), "UNKNOWN"
+        busy_fn = lambda: worker_busy(_SELFTEST_ROUTER_PID, run_fn=run_fn, sleep_fn=lambda s: None)
         label = classify_stall(max(0.0, now - ref), STALL_DEFAULT_S, os.getpid(),
                                busy_check_fn=busy_fn)
-        want = "RUNAWAY-SUSPECT (busy)" if case == "stalled-busy" else "WEDGE (idle)"
-        ok = label == want
+        ok = (label == want) if case != "stalled-unknown-ps-failure" else bool(
+            label and label.startswith("UNKNOWN"))
         return {"ok": ok, "detail": f"rows={len(rows)} label={label!r} want={want!r}"}
 
     if case == "driver-dead":
@@ -471,11 +568,20 @@ def self_test(tmp_dir: Path | None = None, now: float | None = None) -> str:
     """(5) KNOWN-POSITIVE + KNOWN-NEGATIVE SELF-TEST (P25/addendum F): exercises the REAL
     read_rows/read_manifest/classify_stall path against fixtures written to actual files, never
     an in-memory shortcut. Returns the report text; raises SelfTestFailure if ANY case
-    misclassifies (the caller refuses to start rather than run unobserved)."""
+    misclassifies (the caller refuses to start rather than run unobserved).
+
+    7th cold review round 7 P42: when `tmp_dir` isn't supplied (the real/default path), fixture
+    files are written under `$STACK_WORKDIR/m54/tmp`, never the bare system temp directory
+    (AGENTS.md: no filesystem pollution outside STACK_WORKDIR) -- a caller-supplied `tmp_dir`
+    (tests) is used exactly as given."""
     import tempfile
     now = time.time() if now is None else now
     owns_tmp = tmp_dir is None
-    tmp_dir = Path(tempfile.mkdtemp(prefix="agentbench_watch_selftest_")) if owns_tmp else tmp_dir
+    if owns_tmp:
+        from . import paths
+        base = paths.stack_workdir(required=True) / "m54" / "tmp"
+        base.mkdir(parents=True, exist_ok=True)
+        tmp_dir = Path(tempfile.mkdtemp(prefix="agentbench_watch_selftest_", dir=str(base)))
     try:
         results = {case: _selftest_case(tmp_dir, case, now) for case in _SELFTEST_CASES}
     finally:
@@ -546,8 +652,10 @@ def run_watch(args) -> int:
             manifest_evidence = manifest_path.exists()
             now = time.time()
             ref = reference_timestamp(rows, manifest, rows_path)
+            router_pid = (manifest.get("router") or {}).get("pid")
             block = build_assessment(rows, prev_count, args.total, args.driver_pid,
                                      args.router_log, args.stall_s, ref, now, label=label,
+                                     router_pid=router_pid,
                                      rows_evidence=rows_evidence, manifest_evidence=manifest_evidence,
                                      elapsed_s=now - run_t0)
             _append(out_path, block)
@@ -575,7 +683,51 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--interval", type=float, default=INTERVAL_DEFAULT_S)
     ap.add_argument("--stall-s", type=float, default=STALL_DEFAULT_S)
     ap.add_argument("--once", action="store_true", help="tick exactly once and exit (testing)")
+    ap.add_argument("--calibrate", action="store_true",
+                    help="P38: sample the discovered worker's %%cpu for 10s during a KNOWN-ACTIVE "
+                         "generation and print it, so the operator can verify busy detection "
+                         "independently before trusting a live WEDGE/RUNAWAY-SUSPECT verdict. "
+                         "Exits without running the watch loop.")
     return ap
+
+
+def run_calibrate(args, run_fn=_real_subprocess_run, sleep_fn=time.sleep,
+                  duration_s: float = 10.0) -> int:
+    """P38: an explicit, operator-driven sanity check -- run this during a generation you KNOW is
+    active (e.g. mid-task) and confirm the printed %cpu samples are actually high; run it with no
+    generation in flight and confirm they stay near zero. This is the calibration the self-test's
+    synthetic fixtures cannot provide (it can't make a real worker busy)."""
+    manifest = read_manifest(args.manifest)
+    router_pid = (manifest.get("router") or {}).get("pid")
+    if router_pid is None:
+        print("[agentbench_watch] CALIBRATE: no router pid recorded in the manifest -- cannot "
+             "associate a worker with this run", file=sys.stderr)
+        return 2
+    pids = find_worker_pids(router_pid, run_fn)
+    if pids is None:
+        print("[agentbench_watch] CALIBRATE: worker DISCOVERY FAILED (pgrep/ps error) -- fix "
+             "that before trusting any live busy/idle verdict", file=sys.stderr)
+        return 2
+    if not pids:
+        print(f"[agentbench_watch] CALIBRATE: no worker process found descending from router pid "
+             f"{router_pid}", file=sys.stderr)
+        return 2
+    print(f"[agentbench_watch] CALIBRATE: worker pid(s) {pids}, sampling %cpu every 1s for "
+         f"{duration_s:.0f}s...")
+    samples = []
+    elapsed = 0.0
+    while elapsed < duration_s:
+        s = _cpu_sample(pids, run_fn)
+        samples.append(s)
+        print(f"[agentbench_watch] CALIBRATE: t={elapsed:.0f}s %cpu={s}")
+        sleep_fn(1.0)
+        elapsed += 1.0
+    numeric = [s for s in samples if s is not None]
+    print(f"[agentbench_watch] CALIBRATE: samples={samples}")
+    if numeric:
+        print(f"[agentbench_watch] CALIBRATE: max={max(numeric):.1f} mean="
+             f"{sum(numeric) / len(numeric):.1f} threshold={WORKER_BUSY_THRESHOLD_PCT:.0f}")
+    return 0
 
 
 def main(argv=None) -> int:
@@ -585,6 +737,8 @@ def main(argv=None) -> int:
     if refusal:
         print(f"[agentbench_watch] REFUSED: {refusal}", file=sys.stderr, flush=True)
         return 2
+    if args.calibrate:
+        return run_calibrate(args)
     return run_watch(args)
 
 

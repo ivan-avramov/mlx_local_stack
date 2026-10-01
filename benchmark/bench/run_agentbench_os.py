@@ -767,6 +767,15 @@ def run_generate(args, out: Path) -> int:
     # manifest it's building on; a fresh run mints one new run_id now. Never re-derive this later
     # in the function (a second `time.strftime(...)`-based call would mint a DIFFERENT run_id).
     tdir = run_transcripts_dir(args, mp, bool(done_ids))
+    # 7th cold review round 7 P42: a resume REUSES the transcripts dir recorded in the previous
+    # manifest verbatim -- main()'s EARLY confinement check only ever saw the BASE path (computed
+    # before resume resolution), never this resolved (possibly resumed-from-manifest) target.
+    # Re-validate it HERE, after resolution, so a manifest recording an out-of-bounds path (e.g.
+    # `/outside/old-run`) refuses rather than silently writing there.
+    tdir_resolved_refusal = paths.confine_path(tdir, what="the resolved --transcripts-dir")
+    if tdir_resolved_refusal:
+        print(f"[agentbench_os] REFUSED: {tdir_resolved_refusal}", file=sys.stderr, flush=True)
+        return 2
     runtime = {"client": "run_agentbench_os", "bench": BENCH_NAME, "tune": TUNE,
               "corpus": str(corpus_path), "exclusions_path": str(artifact_path),
               "limit": args.limit, "llm_timeout_s": round(llm_timeout, 1),

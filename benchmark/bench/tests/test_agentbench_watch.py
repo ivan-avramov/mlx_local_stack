@@ -227,42 +227,158 @@ def test_pid_alive_false_for_a_pid_that_does_not_exist():
     assert W.pid_alive(2**30) is False
 
 
-# --------------------------------------------------------------------------- worker busy/idle (P25)
-def test_find_worker_pids_excludes_the_8092_task_model():
-    lines = ["111 /path/python -m mlx_vlm.server --port 8000",
-            "222 /path/python -m mlx_vlm.server --port 8092"]
-    pids = W.find_worker_pids(pgrep_lines_fn=lambda: lines)
-    assert pids == [111]
+# --------------------------------------------------------------------------- worker busy/idle (P25/P38)
+ROUTER_PID = 4242
 
 
-def test_find_worker_pids_empty_when_no_match():
-    assert W.find_worker_pids(pgrep_lines_fn=lambda: []) == []
+def _run_fn(pgrep_out=None, pgrep_rc=0, ppid_out=None, ppid_rc=0, cpu_out=None, cpu_rc=0,
+           pgrep_raises=False):
+    """A fake `subprocess.run`-shaped callable for find_worker_pids/worker_busy, keyed by argv
+    shape (macOS `pgrep -fl` / `ps -o ppid=` / `ps -o %cpu=`)."""
+    def run_fn(argv):
+        if pgrep_raises and argv[:2] == ["pgrep", "-fl"]:
+            return None
+        if argv[:2] == ["pgrep", "-fl"]:
+            return W._FakeCompletedProcess(pgrep_out or "", pgrep_rc)
+        if argv[:2] == ["ps", "-o"] and "ppid=" in argv[2]:
+            return W._FakeCompletedProcess(ppid_out or "", ppid_rc)
+        if argv[:2] == ["ps", "-o"] and "%cpu=" in argv[2]:
+            return W._FakeCompletedProcess(cpu_out or "", cpu_rc)
+        return W._FakeCompletedProcess("", 1)
+    return run_fn
+
+
+def test_find_worker_pids_macos_pgrep_fl_format_pid_plus_full_cmdline():
+    """7th cold review round 7 P38 (HIGH), reproduced on macOS: `pgrep -af` returned ONLY the pid
+    (BSD pgrep does not support `-a` as a listing flag the way GNU pgrep does) -- `pgrep -fl` is
+    the correct BSD "long format" flag and is what this function must use."""
+    run_fn = _run_fn(pgrep_out="111 /path/python -m mlx_vlm.server --port 8000\n"
+                              "222 /path/python -m mlx_vlm.server --port 8092\n",
+                     ppid_out=f"{ROUTER_PID}\n")
+    pids = W.find_worker_pids(ROUTER_PID, run_fn=run_fn)
+    assert pids == [111]   # 222 excluded (the :8092 task model)
+
+
+def test_find_worker_pids_filters_by_ppid_chain_to_the_router():
+    """P38: a worker process NOT descended from the recorded router pid must be excluded -- it
+    belongs to some other experiment/box state, not THIS run."""
+    run_fn = _run_fn(pgrep_out="111 /path/python -m mlx_vlm.server --port 8000\n",
+                     ppid_out="99999\n")   # NOT the router pid
+    pids = W.find_worker_pids(ROUTER_PID, run_fn=run_fn)
+    assert pids == []
+
+
+def test_find_worker_pids_none_when_pgrep_itself_fails():
+    """P38: a discovery FAILURE (pgrep launch error, or an unexpected exit code) is UNKNOWN,
+    never indistinguishable from a legitimate 'no match' (empty list)."""
+    assert W.find_worker_pids(ROUTER_PID, run_fn=_run_fn(pgrep_raises=True)) is None
+    assert W.find_worker_pids(ROUTER_PID, run_fn=_run_fn(pgrep_out="", pgrep_rc=2)) is None
+
+
+def test_find_worker_pids_empty_list_when_pgrep_finds_no_match():
+    """pgrep rc=1 ('no processes matched') is a LEGITIMATE empty result, not a failure."""
+    assert W.find_worker_pids(ROUTER_PID, run_fn=_run_fn(pgrep_out="", pgrep_rc=1)) == []
 
 
 def test_worker_busy_none_when_no_worker_pid():
-    assert W.worker_busy(pgrep_lines_fn=lambda: []) is None
+    assert W.worker_busy(ROUTER_PID, run_fn=_run_fn(pgrep_out="", pgrep_rc=1)) is None
 
 
 def test_worker_busy_true_when_either_sample_exceeds_threshold():
-    samples = iter([5.0, 99.0])
-    busy = W.worker_busy(pgrep_lines_fn=lambda: ["111 mlx_vlm.server --port 8000"],
-                         sample_fn=lambda pids: next(samples), sleep_fn=lambda s: None)
+    samples = iter(["5.0\n", "99.0\n"])
+    run_fn = _run_fn(pgrep_out="111 mlx_vlm.server --port 8000\n", ppid_out=f"{ROUTER_PID}\n")
+
+    def run_fn_cycling(argv):
+        if argv[:2] == ["ps", "-o"] and "%cpu=" in argv[2]:
+            return W._FakeCompletedProcess(next(samples), 0)
+        return run_fn(argv)
+    busy = W.worker_busy(ROUTER_PID, run_fn=run_fn_cycling, sleep_fn=lambda s: None)
     assert busy is True
 
 
 def test_worker_busy_false_when_both_samples_below_threshold():
-    samples = iter([1.0, 2.0])
-    busy = W.worker_busy(pgrep_lines_fn=lambda: ["111 mlx_vlm.server --port 8000"],
-                         sample_fn=lambda pids: next(samples), sleep_fn=lambda s: None)
+    samples = iter(["1.0\n", "2.0\n"])
+    run_fn = _run_fn(pgrep_out="111 mlx_vlm.server --port 8000\n", ppid_out=f"{ROUTER_PID}\n")
+
+    def run_fn_cycling(argv):
+        if argv[:2] == ["ps", "-o"] and "%cpu=" in argv[2]:
+            return W._FakeCompletedProcess(next(samples), 0)
+        return run_fn(argv)
+    busy = W.worker_busy(ROUTER_PID, run_fn=run_fn_cycling, sleep_fn=lambda s: None)
     assert busy is False
 
 
 def test_worker_busy_samples_twice_with_the_configured_gap():
     gaps = []
-    samples = iter([1.0, 1.0])
-    W.worker_busy(pgrep_lines_fn=lambda: ["111 x --port 8000"],
-                 sample_fn=lambda pids: next(samples), sleep_fn=lambda s: gaps.append(s))
+    run_fn = _run_fn(pgrep_out="111 x --port 8000\n", ppid_out=f"{ROUTER_PID}\n", cpu_out="1.0\n")
+    W.worker_busy(ROUTER_PID, run_fn=run_fn, sleep_fn=lambda s: gaps.append(s))
     assert gaps == [W.WORKER_SAMPLE_GAP_S]
+
+
+def test_worker_busy_none_when_cpu_sample_itself_fails_P38():
+    """P38 reproduction: a failed `ps` call used to return 0.0 (read as a genuine idle
+    observation, producing WEDGE); it must propagate as UNKNOWN instead."""
+    run_fn = _run_fn(pgrep_out="111 x --port 8000\n", ppid_out=f"{ROUTER_PID}\n", cpu_rc=1)
+    assert W.worker_busy(ROUTER_PID, run_fn=run_fn, sleep_fn=lambda s: None) is None
+
+
+# --------------------------------------------------------------------------- _ppid_chain_contains (P38)
+def test_ppid_chain_contains_direct_parent():
+    run_fn = _run_fn(ppid_out=f"{ROUTER_PID}\n")
+    assert W._ppid_chain_contains(111, ROUTER_PID, run_fn) is True
+
+
+def test_ppid_chain_contains_walks_multiple_hops():
+    chain = iter([9000, ROUTER_PID])   # pid -> 9000 -> router_pid
+
+    def run_fn(argv):
+        return W._FakeCompletedProcess(f"{next(chain)}\n", 0)
+    assert W._ppid_chain_contains(111, ROUTER_PID, run_fn) is True
+
+
+def test_ppid_chain_contains_false_when_chain_terminates_at_init():
+    run_fn = _run_fn(ppid_out="1\n")
+    assert W._ppid_chain_contains(111, ROUTER_PID, run_fn) is False
+
+
+def test_ppid_chain_contains_none_when_ps_fails_mid_walk():
+    run_fn = _run_fn(ppid_rc=1)
+    assert W._ppid_chain_contains(111, ROUTER_PID, run_fn) is None
+
+
+# --------------------------------------------------------------------------- --calibrate (P38)
+def test_run_calibrate_refuses_without_a_router_pid_in_manifest(tmp_path, capsys):
+    import argparse
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({}), encoding="utf-8")
+    args = argparse.Namespace(manifest=str(manifest_path))
+    rc = W.run_calibrate(args, run_fn=lambda argv: None)
+    assert rc == 2
+    assert "router pid" in capsys.readouterr().err
+
+
+def test_run_calibrate_refuses_when_discovery_fails(tmp_path, capsys):
+    import argparse
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"router": {"pid": ROUTER_PID}}), encoding="utf-8")
+    args = argparse.Namespace(manifest=str(manifest_path))
+    rc = W.run_calibrate(args, run_fn=lambda argv: None)
+    assert rc == 2
+    assert "DISCOVERY FAILED" in capsys.readouterr().err
+
+
+def test_run_calibrate_samples_and_prints_for_the_configured_duration(tmp_path, capsys):
+    import argparse
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"router": {"pid": ROUTER_PID}}), encoding="utf-8")
+    args = argparse.Namespace(manifest=str(manifest_path))
+    run_fn = _run_fn(pgrep_out="111 x --port 8000\n", ppid_out=f"{ROUTER_PID}\n", cpu_out="42.0\n")
+    slept = []
+    rc = W.run_calibrate(args, run_fn=run_fn, sleep_fn=lambda s: slept.append(s), duration_s=3.0)
+    assert rc == 0
+    assert len(slept) == 3
+    out = capsys.readouterr().out
+    assert "42.0" in out and "max=42.0" in out
 
 
 # --------------------------------------------------------------------------- router log (SUPPORTING diagnostic only)
@@ -396,7 +512,7 @@ def test_self_test_exercises_real_file_io_for_every_known_case(tmp_path):
     known-negative case, and pass."""
     out = W.self_test(tmp_dir=tmp_path)
     assert "SELF-TEST" in out
-    for case in ("progressing", "stalled-busy", "stalled-idle", "driver-dead", "evidence-missing"):
+    for case in W._SELFTEST_CASES:
         assert f"[OK] {case}" in out, out
 
 
@@ -418,10 +534,13 @@ def test_self_test_raises_when_a_case_would_misclassify(tmp_path, monkeypatch):
         W.self_test(tmp_dir=tmp_path)
 
 
-def test_self_test_runs_without_a_tmp_dir_argument_and_cleans_up():
+def test_self_test_runs_without_a_tmp_dir_argument_and_cleans_up(tmp_path, monkeypatch):
+    """P42: the default (no explicit tmp_dir) path writes under $STACK_WORKDIR/m54/tmp."""
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     out = W.self_test()
     assert "SELF-TEST" in out
     assert "[OK] progressing" in out
+    assert not list(tmp_path.glob("m54/tmp/*"))   # cleaned up after self_test() returns
 
 
 def test_selftest_rows_fixture_is_exactly_three_rows():
