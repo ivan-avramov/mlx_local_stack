@@ -171,6 +171,22 @@ def test_sanity_stats_degenerate_eos_count_P32():
     assert W.sanity_stats(rows)["degenerate_eos"] == 1
 
 
+def test_sanity_stats_degenerate_eos_pairs_by_turn_not_independently_P43c():
+    """7th cold review round 7 P43(c), reproduced: ["tool_calls","stop"] paired with [1,100] used
+    to falsely count as degenerate EOS (turn 1's small token count checked independently of turn
+    2's "stop", which itself used 100 tokens and is not degenerate). finish_reason and
+    completion_tokens must be paired BY TURN INDEX."""
+    rows = [_row("a", per_turn_finish_reasons=["tool_calls", "stop"],
+                per_turn_completion_tokens=[1, 100])]
+    assert W.sanity_stats(rows)["degenerate_eos"] == 0
+
+
+def test_sanity_stats_degenerate_eos_true_positive_when_stop_turn_itself_has_few_tokens():
+    rows = [_row("a", per_turn_finish_reasons=["tool_calls", "stop"],
+                per_turn_completion_tokens=[100, 1])]
+    assert W.sanity_stats(rows)["degenerate_eos"] == 1
+
+
 # --------------------------------------------------------------------------- stall / wedge classification (P25)
 def test_classify_stall_none_when_within_threshold_and_driver_alive():
     assert W.classify_stall(100.0, stall_s=2700.0, driver_pid=os.getpid()) is None
@@ -477,7 +493,59 @@ def test_build_assessment_correct_vs_finish_line_P32(tmp_path):
                                router_log_path="/nonexistent", stall_s=2700.0,
                                reference_ts=now, now=now, elapsed_s=120.0)
     assert "CORRECT-vs-FINISH" in block
-    assert "elapsed=2.0 min" in block
+    assert "elapsed=2.0min" in block
+
+
+# --------------------------------------------------------------------------- CORRECT-vs-FINISH (P43d)
+def test_correct_vs_finish_recommends_finish_by_default():
+    now = time.time()
+    rows = [_row("a", wall_total_s=10.0, converged=True)]
+    block = W.build_assessment(rows, prev_rows_count=0, total=10, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=2700.0,
+                               reference_ts=now, now=now)
+    assert "-> FINISH" in block
+
+
+def test_correct_vs_finish_recommends_correct_when_ratio_exceeds_2x():
+    """7th cold review round 7 P43(d): the observed mean running >2x the PREDICTED (pilot) mean
+    is a correction signal."""
+    now = time.time()
+    rows = [_row("a", wall_total_s=100.0, converged=True)]
+    block = W.build_assessment(rows, prev_rows_count=0, total=10, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=2700.0,
+                               reference_ts=now, now=now, predicted_mean_s=10.0)
+    assert "ratio=10.0" in block
+    assert "-> CORRECT" in block
+
+
+def test_correct_vs_finish_recommends_correct_when_nonconv_share_exceeds_30pct():
+    now = time.time()
+    rows = [_row("a", wall_total_s=10.0, converged=False), _row("b", wall_total_s=10.0, converged=False),
+           _row("c", wall_total_s=10.0, converged=True)]
+    block = W.build_assessment(rows, prev_rows_count=0, total=10, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=2700.0,
+                               reference_ts=now, now=now)
+    assert "-> CORRECT" in block
+
+
+def test_correct_vs_finish_recommends_correct_on_setup_error_in_last_5():
+    now = time.time()
+    rows = [_row(f"r{i}", wall_total_s=10.0, converged=True) for i in range(10)]
+    rows[-1]["setup_error"] = True
+    block = W.build_assessment(rows, prev_rows_count=0, total=20, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=2700.0,
+                               reference_ts=now, now=now)
+    assert "-> CORRECT" in block
+
+
+def test_correct_vs_finish_ignores_setup_error_outside_last_5():
+    now = time.time()
+    rows = [_row(f"r{i}", wall_total_s=10.0, converged=True) for i in range(10)]
+    rows[0]["setup_error"] = True   # well outside the last 5
+    block = W.build_assessment(rows, prev_rows_count=0, total=20, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=2700.0,
+                               reference_ts=now, now=now)
+    assert "-> FINISH" in block
 
 
 def test_build_assessment_emits_a_grep_friendly_summary_line():

@@ -1221,6 +1221,10 @@ class DualSubmitDriver:
                 turn_entry["tool_call"] = {"name": name, "args": args}
                 if parse_error is not None:
                     turn_entry["tool_call"]["parse_error"] = parse_error
+                    # P43(a): record the ACTUAL fed-back text in tool_result too -- this mirrors
+                    # agent_loop.py's OWN `_parse_args_with_error` byte-for-byte (same message
+                    # format), which is what the model genuinely receives as the tool response.
+                    turn_entry["tool_result"] = parse_error
             # P27: a MALFORMED finish_action/answer_action is NEVER a submission -- leave `fn`
             # completely UNCHANGED (do not rename, do not reserialize into fresh always-valid
             # JSON) so agent_loop.run_agent's OWN fresh parse of the SAME raw argument string
@@ -1284,13 +1288,22 @@ def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
             # equivalent is "later reads return empty and the task fails". Only a death during
             # start()/the start script (before any model action; handled separately in run_task,
             # never reaches here) is setup_error.
-            raise agent_loop.AbortEpisode(
-                AO.FAILED_TESTS, "the persistent shell exited (e.g. the command ran `exit`)")
+            msg = "the persistent shell exited (e.g. the command ran `exit`)"
+            # P43(a): save the fed-back abort message in the transcript BEFORE raising -- the OLD
+            # code raised immediately, leaving tool_result=None/error=None even though the model
+            # DID get this text back (agent_loop's `except AbortEpisode` feeds e.message to it).
+            if transcript_turns:
+                transcript_turns[-1]["tool_result"] = msg
+                transcript_turns[-1]["raw_output_len"] = res.get("raw_output_len")
+            raise agent_loop.AbortEpisode(AO.FAILED_TESTS, msg)
         if res["timed_out"]:
             counters["tool_timeouts"] += 1
             exec_timeout_flag["hit"] = True
-            raise agent_loop.AbortEpisode(
-                AO.FAILED_TESTS, f"command timed out after {timeout:.0f}s and the shell was killed")
+            msg = f"command timed out after {timeout:.0f}s and the shell was killed"
+            if transcript_turns:
+                transcript_turns[-1]["tool_result"] = msg
+                transcript_turns[-1]["raw_output_len"] = res.get("raw_output_len")
+            raise agent_loop.AbortEpisode(AO.FAILED_TESTS, msg)
         clipped, _truncated = truncate_output(res["output"])
         wrapped_text = wrap_os_output(clipped)
         if transcript_turns:
@@ -1420,6 +1433,8 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
             "image": cfg["image"], "gold_prepare": gold_prepare}
     shell = None
     row = None
+    wrapped = None   # P43(a): referenced in the final except-all, so a completed episode's
+                     # per_turn transcript survives an UNEXPECTED exception during grading too
     try:
         try:
             create_container(f"local-os/{cfg['image']}", name, runner)
@@ -1539,7 +1554,13 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
     except KeyboardInterrupt:
         raise
     except Exception as e:  # noqa: BLE001 -- infra/setup/evaluate failure; never crash the batch
-        row = _fail_row(base, AO.SERVER_ERROR, t0, clock, error=f"{type(e).__name__}: {e}")
+        # 7th cold review round 7 P43(a): an UNEXPECTED exception during GRADING (e.g. a bug in
+        # _evaluate, after the agent loop already completed some turns) must not silently reset
+        # an already-executed episode's transcript to empty -- preserve whatever turns the model
+        # actually produced.
+        extra_turns = wrapped.per_turn if wrapped is not None else []
+        row = _fail_row(base, AO.SERVER_ERROR, t0, clock, error=f"{type(e).__name__}: {e}",
+                        _transcript_turns=extra_turns)
         return row
     finally:
         if shell is not None:

@@ -2072,6 +2072,51 @@ def test_run_task_exec_timeout_ends_episode_and_marks_row_F4a():
                       popen=_shell_popen_ok())
     assert row["exec_timeout"] is True
     assert row["outcome"] == AO.FAILED_TESTS and row["passed"] is False
+    # P43(a): the fed-back timeout message is saved in the transcript before raising.
+    turns = row["_transcript_turns"]
+    assert len(turns) == 1
+    assert "timed out after" in turns[-1]["tool_result"]
+
+
+def test_run_task_malformed_submit_args_save_fed_back_parse_error_in_transcript_P43a():
+    """7th cold review round 7 P43(a): a malformed finish_action/answer_action call's transcript
+    turn must carry the ACTUAL fed-back parse-error text in tool_result, not None."""
+    driver = FakeDriver(script=[
+        complete_result(tool_calls=[
+            {"id": "c1", "type": "function",
+             "function": {"name": "finish_action", "arguments": "{not valid json"}}]),
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})]),
+    ])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=FakeRunner(default=FakeRunner.Proc(0, "", "")),
+                      popen=_shell_popen_ok())
+    assert row["passed"] is True
+    turns = row["_transcript_turns"]
+    assert len(turns) == 2
+    assert turns[0]["tool_result"] is not None
+    assert "Error parsing arguments" in turns[0]["tool_result"]
+    assert turns[0]["tool_call"]["parse_error"] == turns[0]["tool_result"]
+
+
+def test_run_task_unexpected_grading_exception_preserves_completed_turns_P43a():
+    """P43(a): an UNEXPECTED exception during grading (not a known infra/parse condition) must not
+    reset an already-executed episode's transcript to empty."""
+    def boom_match(*a, **k):
+        raise RuntimeError("boom during grading")
+    task = _match_cfg_task()
+    task["evaluation"] = {"match": {"_boom": True}}   # triggers evaluate_match to raise via bad cfg
+
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    orig_evaluate_match = AB.evaluate_match
+    try:
+        AB.evaluate_match = boom_match
+        row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {},
+                          runner=FakeRunner(default=FakeRunner.Proc(0, "", "")), popen=_shell_popen_ok())
+    finally:
+        AB.evaluate_match = orig_evaluate_match
+    assert row["setup_error"] is True
+    assert row["error"] is not None and "boom during grading" in row["error"]
+    assert len(row["_transcript_turns"]) == 1   # the episode's real turn survives
 
 
 def test_run_task_only_one_container_touched_per_task():
@@ -2124,6 +2169,12 @@ def test_run_task_model_caused_shell_death_is_a_scored_fail_R2(tmp_path):
     assert row["shell_died"] is True
     assert row["setup_error"] is False
     assert row["outcome"] == AO.FAILED_TESTS and row["passed"] is False
+    # 7th cold review round 7 P43(a): the fed-back abort message is saved in the transcript
+    # BEFORE AbortEpisode is raised -- a shell-death episode used to retain tool_result=None even
+    # though the model genuinely received this text back.
+    turns = row["_transcript_turns"]
+    assert len(turns) == 1
+    assert turns[-1]["tool_result"] == "the persistent shell exited (e.g. the command ran `exit`)"
 
 
 @_timeout(10)

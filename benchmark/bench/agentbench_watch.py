@@ -351,11 +351,17 @@ def sanity_stats(rows: list) -> dict:
     for r in rows:
         for k in (r.get("nonconv_kinds") or []):
             nonconv_kind_counts[k] = nonconv_kind_counts.get(k, 0) + 1
-    degenerate_eos = sum(
-        1 for r in rows
-        if "stop" in (r.get("per_turn_finish_reasons") or [])
-        and any(isinstance(c, (int, float)) and c < DEGENERATE_EOS_MAX_TOKENS
-               for c in (r.get("per_turn_completion_tokens") or [])))
+    # 7th cold review round 7 P43(c): PAIR finish_reason with completion_tokens BY TURN (zip),
+    # never check "any turn has stop" and "any turn has few tokens" independently -- reproduced:
+    # per_turn_finish_reasons=["tool_calls","stop"] with per_turn_completion_tokens=[1,100] used
+    # to falsely count as degenerate EOS (turn 1's small token count paired with turn 2's "stop", which
+    # itself used 100 tokens and is not degenerate at all).
+    def _has_degenerate_eos(r: dict) -> bool:
+        frs = r.get("per_turn_finish_reasons") or []
+        cts = r.get("per_turn_completion_tokens") or []
+        return any(fr == "stop" and isinstance(ct, (int, float)) and ct < DEGENERATE_EOS_MAX_TOKENS
+                  for fr, ct in zip(frs, cts))
+    degenerate_eos = sum(1 for r in rows if _has_degenerate_eos(r))
     turns_histogram: dict = {}
     for r in rows:
         t = r.get("turns")
@@ -397,7 +403,7 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
                      pid_alive_fn=pid_alive, busy_check_fn=None, router_pid=None,
                      router_active_fn=router_recently_active, label: str = "",
                      rows_evidence: bool = True, manifest_evidence: bool = True,
-                     elapsed_s: float | None = None) -> str:
+                     elapsed_s: float | None = None, predicted_mean_s: float | None = None) -> str:
     done = len(rows)
     progressing = done > prev_rows_count
     stats = rate_stats(rows)
@@ -431,12 +437,27 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
     lines.append(f"(2) RATE: mean_wall_total_s={None if mean_s is None else round(mean_s, 2)} "
                 f"max_wall_total_s={max_s} ETA={eta_txt} (from the MEAN wall_total_s, never the "
                 "median)")
-    # P32: a fixed "CORRECT vs FINISH" line -- remaining ETA vs actual elapsed campaign time, so a
-    # reader sees drift between the PREDICTED rate and REALITY at a glance.
-    if elapsed_s is not None and eta is not None:
-        lines.append(f"    CORRECT-vs-FINISH: elapsed={elapsed_s / 60:.1f} min, "
-                    f"predicted-remaining={eta / 60:.1f} min, "
-                    f"predicted-total={(elapsed_s + eta) / 60:.1f} min")
+    # 7th cold review round 7 P43(d): a REAL "CORRECT vs FINISH" recommendation -- the round-6
+    # version only printed elapsed/ETA arithmetic, comparing nothing against a PRIOR prediction
+    # and evaluating no actual correction cost. `predicted_mean_s` (--predicted-mean-s, typically
+    # the pilot's own observed mean) is compared against the axis's CURRENT observed mean;
+    # CORRECT if the ratio exceeds 2x, more than 30% of graded rows are non-converged, or any of
+    # the last 5 rows is a setup_error -- else FINISH.
+    nonconv_share = (sanity["converged_false"] / done) if done else None
+    last5_setup_error = any(r.get("setup_error") for r in rows[-5:])
+    ratio = (mean_s / predicted_mean_s) if (mean_s is not None and predicted_mean_s) else None
+    correct = bool((ratio is not None and ratio > 2.0)
+                  or (nonconv_share is not None and nonconv_share > 0.3)
+                  or last5_setup_error)
+    recommendation = "CORRECT" if correct else "FINISH"
+    lines.append(
+        f"    CORRECT-vs-FINISH: observed_mean_wall_total_s={None if mean_s is None else round(mean_s, 2)} "
+        f"predicted_mean_wall_total_s={predicted_mean_s} "
+        f"ratio={None if ratio is None else round(ratio, 2)} "
+        f"nonconv_share={None if nonconv_share is None else round(nonconv_share, 2)} "
+        f"setup_error_in_last_5={last5_setup_error} -> {recommendation}"
+        + (f" (elapsed={elapsed_s / 60:.1f}min predicted-remaining="
+           f"{'n/a' if eta is None else f'{eta / 60:.1f}min'})" if elapsed_s is not None else ""))
     lines.append(
         "(3) SANE: outcome_counts=%s passed=%d failed=%d exec_timeout=%d shell_died=%d "
         "setup_error=%d gold_prepare_differs=%d converged_false=%d budget_hits_total=%d "
@@ -657,7 +678,8 @@ def run_watch(args) -> int:
                                      args.router_log, args.stall_s, ref, now, label=label,
                                      router_pid=router_pid,
                                      rows_evidence=rows_evidence, manifest_evidence=manifest_evidence,
-                                     elapsed_s=now - run_t0)
+                                     elapsed_s=now - run_t0,
+                                     predicted_mean_s=getattr(args, "predicted_mean_s", None))
             _append(out_path, block)
             prev_count = len(rows)
             # addendum E: exit after a DRIVER DEAD tick regardless of row count -- a crashed
@@ -682,6 +704,10 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--out", required=True)
     ap.add_argument("--interval", type=float, default=INTERVAL_DEFAULT_S)
     ap.add_argument("--stall-s", type=float, default=STALL_DEFAULT_S)
+    ap.add_argument("--predicted-mean-s", type=float, default=None,
+                    help="P43(d): a prior prediction (typically the pilot's own observed mean "
+                         "wall_total_s) to compare the axis's CURRENT observed mean against, for "
+                         "the CORRECT-vs-FINISH recommendation line.")
     ap.add_argument("--once", action="store_true", help="tick exactly once and exit (testing)")
     ap.add_argument("--calibrate", action="store_true",
                     help="P38: sample the discovered worker's %%cpu for 10s during a KNOWN-ACTIVE "
