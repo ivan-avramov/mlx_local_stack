@@ -64,13 +64,40 @@ def _counter_schema(tools, submit_tool: str) -> dict:
     return out
 
 
+class AbortEpisode(Exception):
+    """A tool can raise this (M54 cold review F5/F4a) to end the episode IMMEDIATELY with a given
+    outcome, instead of having the exception fed back as an "ERROR: ..." tool message and the loop
+    continuing (the default for every other exception a tool raises). Opt-in by construction: no
+    pre-existing tool raises it, so default behaviour is unchanged. Use case: an exec timeout that
+    must end the task, not just report a failed command."""
+
+    def __init__(self, outcome: str, message: str = ""):
+        super().__init__(message)
+        self.outcome = outcome
+        self.message = message
+
+
 def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
               submit_tool: str = "submit", deadline_s: float | None = None,
-              loop_guard: AO.LoopGuard | None = None, clock=time.perf_counter) -> dict:
+              loop_guard: AO.LoopGuard | None = None, clock=time.perf_counter,
+              no_tool_call_reprompt: str | None = None,
+              single_tool_call_per_turn: bool = False) -> dict:
     """Run the loop. Returns {final, submitted, turns, transcript, outcome, counters}.
 
     `submitted` is the args dict of the first call to `submit_tool` (or None if never submitted).
     `clock` is injectable so deadline behaviour is testable without real elapsed time.
+
+    Opt-in parameters added for M54 (AgentBench os-std), default off so every pre-existing caller
+    keeps its exact prior behaviour:
+      * `no_tool_call_reprompt` — when set, a turn with no tool call feeds this text back as a user
+        message and CONTINUES the loop (consuming a turn) instead of ending the episode as
+        NO_SUBMIT on the spot. `NO_SUBMIT` is then reserved for an episode that reaches `max_turns`
+        having NEVER made a single tool call; one that used tools but still never submitted is
+        `TURN_CAP` (upstream os-std semantics: a no-tool-call turn is a corrective re-prompt, not
+        a terminal state).
+      * `single_tool_call_per_turn` — when True, only the FIRST tool call of a turn is dispatched;
+        the rest are silently ignored (upstream `tool_calls[0]`), so a submit riding alongside a
+        bash call in the same turn is never processed.
     """
     guard = loop_guard if loop_guard is not None else AO.LoopGuard()
     by_name = {t.name: t for t in tools}
@@ -80,6 +107,7 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
     messages = [{"role": "system", "content": system}, {"role": "user", "content": task}]
     transcript, submitted, final, turns = [], None, None, 0
     outcome, error = None, None
+    any_tool_call_ever = False
     t0 = clock()
 
     while turns < max_turns:
@@ -95,13 +123,20 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
         transcript.append({"assistant": out.get("content", ""), "tool_calls": tcs})
 
         if not tcs:
+            if no_tool_call_reprompt is not None:
+                messages.append({"role": "assistant", "content": out.get("content", "")})
+                messages.append({"role": "user", "content": no_tool_call_reprompt})
+                continue
             final = out.get("content", "")
             outcome = AO.NO_SUBMIT          # ended its turn with prose and never submitted
             break
 
+        any_tool_call_ever = True
         messages.append({"role": "assistant", "content": out.get("content", ""), "tool_calls": tcs})
         stop = False
-        for tc in tcs:
+        aborted_episode = None
+        calls_this_turn = tcs[:1] if single_tool_call_per_turn else tcs
+        for tc in calls_this_turn:
             fn = (tc.get("function") or {})
             name = fn.get("name")
             args = _parse_args(fn.get("arguments"))
@@ -113,6 +148,11 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
             elif name in by_name:
                 try:
                     result = by_name[name].fn(args)
+                except AbortEpisode as e:
+                    result = e.message or str(e)
+                    messages.append({"role": "tool", "tool_call_id": tc.get("id"), "content": str(result)})
+                    aborted_episode = e.outcome
+                    break
                 except Exception as e:  # noqa: BLE001 — tool failure is fed back, not fatal
                     result = f"ERROR: {type(e).__name__}: {str(e)[:200]}"
             else:
@@ -121,6 +161,9 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
                 result = (f"ERROR: unknown tool {name!r}. Available tools: "
                           f"{sorted(list(by_name) + [submit_tool])}")
             messages.append({"role": "tool", "tool_call_id": tc.get("id"), "content": str(result)})
+        if aborted_episode is not None:
+            outcome = aborted_episode
+            break
         if stop:
             outcome = AO.SOLVED            # submitted; whether it PASSES is the grader's call
             break
@@ -135,7 +178,10 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
 
     counters.wall_s = round(clock() - t0, 2)
     if outcome is None:
-        outcome = AO.TURN_CAP              # still working when the turn budget ran out
+        # TURN_CAP unless this episode never made a single tool call under the reprompt protocol,
+        # in which case it is NO_SUBMIT even though it ran the full budget (see docstring).
+        outcome = AO.NO_SUBMIT if (no_tool_call_reprompt is not None and not any_tool_call_ever) \
+            else AO.TURN_CAP
     result = {"final": final, "submitted": submitted, "turns": turns, "transcript": transcript,
               "outcome": AO.validate_outcome(outcome), "counters": counters.as_dict()}
     if error:
