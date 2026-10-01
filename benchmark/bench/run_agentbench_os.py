@@ -138,6 +138,31 @@ def skipped_path_for(out: Path) -> Path:
     return out.parent / f"{_stem(out)}.skipped.json"
 
 
+# --------------------------------------------------------------------------- transcripts
+def transcripts_dir_for(args) -> Path:
+    """`--transcripts-dir`, else `<STACK_WORKDIR>/m54/transcripts/<model>/` (quality-inspection
+    artifacts; genuinely optional output, so STACK_WORKDIR is REQUIRED when not given explicitly
+    rather than silently falling back to a cache dir -- AGENTS.md: no filesystem pollution outside
+    STACK_WORKDIR)."""
+    if args.transcripts_dir:
+        return Path(args.transcripts_dir)
+    return paths.stack_workdir(required=True) / "m54" / "transcripts" / args.model
+
+
+def write_transcript(transcripts_dir: Path, task: dict, model: str, turns: list, row: dict) -> Path:
+    transcripts_dir.mkdir(parents=True, exist_ok=True)
+    doc = {"id": task["id"], "model": model, "system": AB.SYSTEM_PROMPT,
+          "task_description": task.get("description", ""), "turns": turns,
+          "submitted_via": row.get("submitted_via"), "answer": row.get("answer"),
+          "gold_prepare": row.get("gold_prepare"), "gold_live": row.get("gold_live"),
+          "passed": row.get("passed"), "outcome": row.get("outcome")}
+    path = transcripts_dir / f"{task['id']}.json"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
 def _sha256_file(path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -418,6 +443,7 @@ def run_generate(args, out: Path) -> int:
 
     AB.sweep_stale_containers(AB.GENERATE_CONTAINER_PREFIX, runner)
 
+    tdir = transcripts_dir_for(args)
     if todo:
         _write_manifest(mp, args.model, profile=args.sampling_profile,
                         runtime={"client": "run_agentbench_os", "bench": BENCH_NAME, "tune": TUNE,
@@ -431,9 +457,8 @@ def run_generate(args, out: Path) -> int:
                                  "n_todo": len(todo), "n_done_before": len(done_ids),
                                  "n_excluded": len(exclusions),
                                  "pilot_seed": args.pilot_seed, "pilot_n": args.pilot_n,
-                                 "pilot_ids": pilot_ids},
+                                 "pilot_ids": pilot_ids, "transcripts_dir": str(tdir)},
                         router=router, history=history)
-
     base_driver = driver_mod.MlxServeDriver()
     current = {"container": None}
     old_handler = signal.signal(signal.SIGTERM, _make_sigterm_handler(current, runner))
@@ -443,7 +468,8 @@ def run_generate(args, out: Path) -> int:
             current["container"] = AB.container_name(AB.GENERATE_CONTAINER_PREFIX, task["id"])
             item_params = {**params, "seed": rowschema.sample_seed(task["id"], 0)}
             # TransportFailure propagates OUT of this loop uncaught (cold-review F1): a transport
-            # failure ESCALATES, it is never graded, and no row is appended for the in-flight task.
+            # failure ESCALATES, it is never graded, and no row -- and so no transcript either --
+            # is written for the in-flight task.
             row = AB.run_task(args.model, task, args.scripts_root, base_driver, item_params,
                               container_prefix=AB.GENERATE_CONTAINER_PREFIX,
                               exec_timeout=args.exec_timeout, llm_timeout=llm_timeout,
@@ -451,6 +477,9 @@ def run_generate(args, out: Path) -> int:
                               context_limit=context_limit, gold_prepare=golds.get(task["id"]),
                               runner=runner)
             current["container"] = None
+            turns = row.pop("_transcript_turns", [])
+            transcript_path = write_transcript(tdir, task, args.model, turns, row)
+            row["transcript_path"] = str(transcript_path)
             append_row(out, row)
             print(f"[agentbench_os]   -> passed={row['passed']} outcome={row['outcome']} "
                  f"turns={row['turns']} setup_error={row['setup_error']}", flush=True)
@@ -518,6 +547,9 @@ def build_argparser() -> argparse.ArgumentParser:
                     help=f"episode wall-clock deadline, seconds. Default: "
                          f"{DEADLINE_MULTIPLIER:.0f}x the per-turn LLM timeout (no hard cap -- "
                          "AGENTS.md: external truncation is never tuned down for convenience)")
+    ap.add_argument("--transcripts-dir", default=None,
+                    help="per-task transcript JSON directory (quality inspection). Default: "
+                         "<STACK_WORKDIR>/m54/transcripts/<model>/")
     return ap
 
 

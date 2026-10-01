@@ -743,14 +743,30 @@ class DualSubmitDriver:
         ct = out.get("completion_tokens")
         pred_ms = tm.get("predicted_ms")
         decode_tps = (ct / (pred_ms / 1000.0)) if (pred_ms and ct) else out.get("decode_tps")
-        self.per_turn.append({"completion_tokens": ct, "prompt_tokens": out.get("prompt_tokens"),
-                              "finish_reason": out.get("finish_reason"), "decode_tps": decode_tps})
+
+        # Transcript turn entry (quality-inspection feature): everything available from the raw
+        # response goes in now; `tool_result`/`raw_output_len` are patched in by build_tools's
+        # `_bash` (the tool's ACTUAL execution happens after this call returns, inside
+        # agent_loop), and a dispatched submit's tool_result is known to be "submitted" here
+        # directly since run_agent never calls the submit Tool's `fn` at all.
+        turn_entry = {"turn": len(self.per_turn) + 1, "completion_tokens": ct,
+                     "prompt_tokens": out.get("prompt_tokens"), "finish_reason": out.get("finish_reason"),
+                     "decode_tps": decode_tps, "assistant_content": out.get("content") or "",
+                     "wall_s": out.get("wall_s"), "tool_call": None, "tool_result": None,
+                     "raw_output_len": None}
+        reasoning = out.get("reasoning")
+        if reasoning:
+            turn_entry["reasoning_content"] = reasoning
+
+        raw_tcs = out.get("tool_calls") or []
         new_tcs = []
-        for i, tc in enumerate(out.get("tool_calls") or []):
+        for i, tc in enumerate(raw_tcs):
             fn = dict(tc.get("function") or {})
             name = fn.get("name")
+            args = _parse_args(fn.get("arguments"))
+            if i == 0:
+                turn_entry["tool_call"] = {"name": name, "args": args}
             if name == "finish_action":
-                args = _parse_args(fn.get("arguments"))
                 fn["name"] = self.SUBMIT_TOOL
                 fn["arguments"] = json.dumps({"answer": args.get("thought")})
                 # cold-review N10: run_agent only ever DISPATCHES tool_calls[0]
@@ -758,12 +774,16 @@ class DualSubmitDriver:
                 # runs, so it must not be recorded as having submitted anything.
                 if i == 0:
                     self.submitted_via = "finish"
+                    turn_entry["tool_result"] = "submitted"
             elif name == self.SUBMIT_TOOL:
                 if i == 0:
                     self.submitted_via = "answer"
+                    turn_entry["tool_result"] = "submitted"
             new_tc = dict(tc)
             new_tc["function"] = fn
             new_tcs.append(new_tc)
+
+        self.per_turn.append(turn_entry)
         out = dict(out)
         out["tool_calls"] = new_tcs
         return out
@@ -771,7 +791,7 @@ class DualSubmitDriver:
 
 def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
                 counters: dict | None = None, exec_timeout_flag: dict | None = None,
-                shell_died_flag: dict | None = None) -> list:
+                shell_died_flag: dict | None = None, transcript_turns: list | None = None) -> list:
     """The three upstream tools. `bash_action` runs through the task's `PersistentShell` (NOT a
     fresh `docker exec`, see module docstring); the other two are no-ops in dispatch terms --
     `DualSubmitDriver` renames every terminating call to the literal submit_tool name before
@@ -811,7 +831,13 @@ def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
             raise agent_loop.AbortEpisode(
                 AO.FAILED_TESTS, f"command timed out after {timeout:.0f}s and the shell was killed")
         clipped, _truncated = truncate_output(res["output"])
-        return wrap_os_output(clipped)
+        wrapped_text = wrap_os_output(clipped)
+        if transcript_turns:
+            # the turn entry for THIS call was appended by DualSubmitDriver.complete() just
+            # before run_agent dispatched us; patch in what only the tool itself knows.
+            transcript_turns[-1]["tool_result"] = wrapped_text
+            transcript_turns[-1]["raw_output_len"] = len(res["output"])
+        return wrapped_text
 
     return [
         agent_loop.Tool("bash_action",
@@ -879,7 +905,7 @@ def _fail_row(base: dict, outcome: str, t0, clock, **extra) -> dict:
           "per_turn_finish_reasons": [], "converged": None,
           "budget_hits": 0, "wall_s": round(clock() - t0, 2), "tool_calls": 0, "tool_timeouts": 0,
           "repeat_calls": 0, "exec_timeout": False, "shell_died": False, "setup_error": True,
-          "decode_tps": None, "per_turn_decode_tps": [], "error": None}
+          "decode_tps": None, "per_turn_decode_tps": [], "error": None, "_transcript_turns": []}
     row.update(extra)
     return row
 
@@ -935,8 +961,9 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
         tool_counters = {"tool_timeouts": 0}
         exec_timeout_flag = {"hit": False}
         shell_died_flag = {"hit": False}
-        tools = build_tools(shell, exec_timeout, tool_counters, exec_timeout_flag, shell_died_flag)
         wrapped = DualSubmitDriver(driver, timeout=llm_timeout)
+        tools = build_tools(shell, exec_timeout, tool_counters, exec_timeout_flag, shell_died_flag,
+                            transcript_turns=wrapped.per_turn)
         task_text = TASK_TEMPLATE.format(description=task.get("description", ""))
         result = agent_loop.run_agent(
             wrapped, model, SYSTEM_PROMPT, task_text, tools, params, max_turns=max_turns,
@@ -987,7 +1014,7 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
                 "setup_error": False,
                 "decode_tps": round(statistics.mean(dtps), 2) if dtps else None,
                 "per_turn_decode_tps": [t.get("decode_tps") for t in wrapped.per_turn],
-                "error": result.get("error")}
+                "error": result.get("error"), "_transcript_turns": wrapped.per_turn}
     except TransportFailure:
         raise
     except KeyboardInterrupt:
