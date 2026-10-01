@@ -526,17 +526,19 @@ def test_transport_failure_escalates_and_writes_no_row_F1(tmp_path, monkeypatch)
 
 # --------------------------------------------------------------------------- resume + torn rows (F3)
 def test_resume_skips_already_done_ids(tmp_path, monkeypatch):
+    """P39 (round 7): a resume requires a REAL, readable manifest describing the existing rows --
+    produce it via a genuine first invocation (limit=1), never by hand-writing a bare rows file."""
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     tasks = [_match_task(f"m{i}") for i in range(2)]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus)
-    (tmp_path / "rows.jsonl").write_text(json.dumps({"id": "m0", "passed": True, "outcome": "solved",
-                                                     "wall_s": 0.1, "completion_tokens_total": 1,
-                                                     "labels": [], "setup_error": False}) + "\n", encoding="utf-8")
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1))
+    assert rc == 0 and seen == ["m0"]
+
+    seen.clear()
     rc = R.main(_args(tmp_path, resume=""))
     assert rc == 0
     assert seen == ["m1"]
@@ -576,6 +578,84 @@ def test_resume_accepts_when_nothing_changed_G3(tmp_path, monkeypatch):
     seen.clear()
     rc = R.main(_args(tmp_path, resume="", limit=1))   # identical runtime identity
     assert rc == 0
+
+
+def test_resume_refuses_when_rows_exist_but_manifest_is_missing_P39(tmp_path, monkeypatch, capsys):
+    """7th cold review round 7 P39 (HIGH), reproduced -- and directly exercised by a PASSING test
+    at the reviewed HEAD (provenance laundering): rows existing with NO manifest at all must
+    refuse resume, never silently accept with nothing to verify identity against."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0"), _match_task("m1")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    (tmp_path / "rows.jsonl").write_text(json.dumps({"id": "m0", "passed": True, "outcome": "solved",
+                                                     "wall_s": 0.1, "completion_tokens_total": 1,
+                                                     "labels": [], "setup_error": False}) + "\n",
+                                         encoding="utf-8")
+    assert not (tmp_path / "rows.manifest.json").exists()
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, resume=""))
+    assert rc == 2
+    assert seen == []
+    assert "does not exist" in capsys.readouterr().err
+
+
+def test_resume_refuses_when_manifest_is_unreadable_P39(tmp_path, monkeypatch, capsys):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0"), _match_task("m1")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    (tmp_path / "rows.jsonl").write_text(json.dumps({"id": "m0", "passed": True, "outcome": "solved",
+                                                     "wall_s": 0.1, "completion_tokens_total": 1,
+                                                     "labels": [], "setup_error": False}) + "\n",
+                                         encoding="utf-8")
+    (tmp_path / "rows.manifest.json").write_text("{not valid json", encoding="utf-8")
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, resume=""))
+    assert rc == 2
+    assert seen == []
+    assert "unreadable" in capsys.readouterr().err
+
+
+def test_resume_refuses_when_git_identity_changed_P39(tmp_path, monkeypatch, capsys):
+    """P39: the harness/serving-fork implementation identity (repo HEAD sha + fork submodule
+    shas) is part of resume identity -- changing it while everything else stays the same must
+    still refuse."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0"), _match_task("m1")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1))
+    assert rc == 0
+
+    man_path = tmp_path / "rows.manifest.json"
+    man = json.loads(man_path.read_text())
+    man["git"]["stack_head"] = "deadbeef" * 5
+    man_path.write_text(json.dumps(man))
+
+    seen.clear()
+    rc = R.main(_args(tmp_path, resume=""))
+    assert rc == 2
+    assert seen == []
+    assert "git" in capsys.readouterr().err
+
+
+def test_resume_segments_carry_git_identity_P39(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert "git" in man["segments"][0]["identity"]
+    assert "stack_head" in man["segments"][0]["identity"]["git"]
 
 
 def test_resume_refuses_when_manifest_lacks_nested_identity_P21(tmp_path, monkeypatch, capsys):
@@ -758,18 +838,26 @@ def test_generate_continues_when_container_removal_is_verified_P16(tmp_path, mon
 
 
 def test_resume_tolerates_a_torn_final_line(tmp_path, monkeypatch):
+    """P39 (round 7): the torn row must be simulated on top of a REAL manifest (produced by a
+    genuine first run), not a hand-written rows file with no manifest at all."""
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     tasks = [_match_task(f"m{i}") for i in range(2)]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus)
-    good = json.dumps({"id": "m0", "passed": True, "outcome": "solved", "wall_s": 0.1,
-                       "completion_tokens_total": 1, "labels": [], "setup_error": False})
-    torn = '{"id": "m1", "passed": true, "outc'   # cut off mid-write
-    (tmp_path / "rows.jsonl").write_text(good + "\n" + torn, encoding="utf-8")
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0 and seen == ["m0", "m1"]
+
+    # simulate an interrupted write: tear off the last row's tail (the manifest from the real run
+    # above stays intact).
+    rows_path = tmp_path / "rows.jsonl"
+    lines = rows_path.read_text(encoding="utf-8").splitlines()
+    torn_last = lines[-1][:len(lines[-1]) // 2]
+    rows_path.write_text("\n".join(lines[:-1]) + "\n" + torn_last, encoding="utf-8")
+
+    seen.clear()
     rc = R.main(_args(tmp_path, resume=""))
     assert rc == 0
     assert seen == ["m1"]      # the torn row for m1 was discarded, so m1 reran
@@ -1015,20 +1103,23 @@ def test_append_row_leaves_a_clean_file_untouched(tmp_path):
 
 def test_resume_after_a_torn_tail_real_file_both_old_and_new_rows_readable_then_second_resume_works(tmp_path, monkeypatch):
     """N6 end-to-end: a real torn-tail file, resumed via the full CLI, produces a clean file a
-    SECOND resume can also build on."""
+    SECOND resume can also build on. P39 (round 7): the torn tail is simulated on top of a REAL
+    manifest (a genuine first run covering only m0), not a hand-written rows file alone."""
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     tasks = [_match_task(f"m{i}") for i in range(3)]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
-    good = json.dumps({"id": "m0", "passed": True, "outcome": "solved", "wall_s": 0.1,
-                       "completion_tokens_total": 1, "labels": [], "setup_error": False})
-    torn = '{"id": "m1", "passed": tr'
-    (tmp_path / "rows.jsonl").write_text(good + "\n" + torn, encoding="utf-8")
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1))
+    assert rc == 0 and seen == ["m0"]
 
+    torn = '{"id": "m1", "passed": tr'
+    with open(tmp_path / "rows.jsonl", "a", encoding="utf-8") as f:
+        f.write(torn)
+
+    seen.clear()
     rc = R.main(_args(tmp_path, resume=""))
     assert rc == 0
     assert seen == ["m1", "m2"]      # m1's torn row discarded -> reran; m2 never ran before
@@ -1441,22 +1532,25 @@ def test_two_fresh_runs_use_different_run_id_transcript_dirs_P29(tmp_path, monke
 
 
 def test_resume_does_not_rewrite_an_existing_transcript(tmp_path, monkeypatch):
+    """P39 (round 7): the pre-existing-transcript scenario is simulated on top of a REAL manifest
+    (a genuine first run for m0 with the SAME --transcripts-dir), not a hand-written rows file."""
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     tasks = [_match_task("m0"), _match_task("m1")]
     corpus = _write_corpus(tmp_path, tasks)
     _write_complete_exclusions(tmp_path, AB, corpus)
-    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
-    (tmp_path / "rows.jsonl").write_text(json.dumps({"id": "m0", "passed": True, "outcome": "solved",
-                                                     "wall_s": 0.1, "completion_tokens_total": 1,
-                                                     "labels": [], "setup_error": False}) + "\n",
-                                        encoding="utf-8")
     tdir = tmp_path / "transcripts"
-    tdir.mkdir()
-    sentinel_doc = {"id": "m0", "note": "PRE-EXISTING, must not be overwritten"}
-    (tdir / "m0.json").write_text(json.dumps(sentinel_doc), encoding="utf-8")
     fake, seen = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1, **{"transcripts-dir": str(tdir)}))
+    assert rc == 0 and seen == ["m0"]
+
+    # overwrite m0's REAL transcript with a sentinel, simulating a pre-existing file a resume
+    # must never touch again.
+    sentinel_doc = {"id": "m0", "note": "PRE-EXISTING, must not be overwritten"}
+    (tdir / "m0.json").write_text(json.dumps(sentinel_doc), encoding="utf-8")
+
+    seen.clear()
     rc = R.main(_args(tmp_path, resume="", **{"transcripts-dir": str(tdir)}))
     assert rc == 0
     assert seen == ["m1"]

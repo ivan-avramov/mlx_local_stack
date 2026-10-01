@@ -296,17 +296,23 @@ RESUME_IDENTITY_KEYS = ("model", "round_limit", "exec_timeout_s", "sampling_prof
 
 
 def _identity_snapshot(doc: dict) -> dict | None:
-    """Flatten every P21 identity-relevant field out of a manifest doc (provenance.gather's
-    `runtime.draft_kind`, `kv.{kv_bits,max_kv_cache_size}`, `router.config_sha256`, `sampling`).
-    None if the doc lacks one of the required STRUCTURAL blocks, or any of the flat
-    RESUME_IDENTITY_KEYS, entirely -- an incomplete/legacy manifest can never be resumed against
-    silently. A field being STRUCTURALLY PRESENT but legitimately `None`/`0` (e.g. a model with no
-    declared `max_kv_cache_size`, or `kv_bits: 0` for native16 KV) is fine -- it's compared as a
-    normal value, not treated as missing."""
+    """Flatten every P21/P39 identity-relevant field out of a manifest doc (provenance.gather's
+    `runtime.draft_kind`, `kv.{kv_bits,max_kv_cache_size}`, `router.config_sha256`, `sampling`,
+    `git` -- the repo HEAD sha and the fork submodule shas, i.e. the HARNESS/SERVING
+    IMPLEMENTATION VERSION itself; round 7 P39: changing the implementation fingerprint while
+    everything else stayed the same used to pass a resume unchecked). None if the doc lacks one
+    of the required STRUCTURAL blocks, or any of the flat RESUME_IDENTITY_KEYS, entirely -- an
+    incomplete/legacy manifest can never be resumed against silently. A field being STRUCTURALLY
+    PRESENT but legitimately `None`/`0` (e.g. a model with no declared `max_kv_cache_size`, or
+    `kv_bits: 0` for native16 KV) is fine -- it's compared as a normal value, not treated as
+    missing."""
     runtime = doc.get("runtime")
     router = doc.get("router")
     kv = doc.get("kv")
+    git = doc.get("git")
     if not isinstance(runtime, dict) or not isinstance(router, dict) or not isinstance(kv, dict):
+        return None
+    if not isinstance(git, dict) or "stack_head" not in git:
         return None
     if "sampling" not in doc or "config_sha256" not in router or "draft_kind" not in runtime:
         return None
@@ -320,20 +326,30 @@ def _identity_snapshot(doc: dict) -> dict | None:
     snap["draft_kind"] = runtime.get("draft_kind")
     snap["kv_bits"] = kv.get("kv_bits")
     snap["max_kv_cache_size"] = kv.get("max_kv_cache_size")
+    # P39: the harness version (repo HEAD) and the serving fork(s) version -- a different
+    # implementation producing identical-looking sampling/kv/router identity is still a
+    # DIFFERENT measurement.
+    snap["git"] = git
     return snap
 
 
 def _check_resume_identity(mp: Path, candidate_doc: dict) -> str | None:
-    """None if `mp` doesn't exist yet (nothing to compare against) or its FULL identity snapshot
-    matches `candidate_doc`'s; else a refusal reason. A manifest that already recorded a
-    `served_config_drift` from a PRIOR exit is refused outright -- that prior run's results are
-    suspect and must not be silently built upon."""
+    """Called ONLY when rows already exist for this --out (the caller gates on `done_ids`).
+    7th cold review round 7 P39 (HIGH), reproduced -- and directly exercised by a passing test at
+    the reviewed HEAD: a MISSING manifest used to return `None` (no refusal), silently accepting a
+    resume with NOTHING to verify identity against ("provenance laundering" -- existing rows with
+    no record of what produced them). A missing, unreadable, or structurally incomplete manifest
+    is now ITSELF a refusal. A manifest that already recorded a `served_config_drift` from a prior
+    exit is refused outright -- that prior run's results are suspect and must not be silently
+    built upon."""
     if not mp.exists():
-        return None
+        return (f"resume refused: {mp} does not exist, but rows already exist for this --out -- "
+               "a resume requires a readable, complete manifest describing what produced them; "
+               "start a fresh --out instead")
     try:
         prev_doc = json.loads(mp.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 -- _load_previous_manifest already surfaces this
-        return None
+    except Exception as e:  # noqa: BLE001
+        return f"resume refused: {mp} is unreadable ({type(e).__name__}: {e})"
     if prev_doc.get("served_config_drift"):
         return (f"{mp} recorded a served_config_drift from a previous exit -- that run's results "
                "are suspect; investigate before resuming (or start a fresh --out)")
