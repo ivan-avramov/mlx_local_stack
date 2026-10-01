@@ -154,16 +154,23 @@ def skipped_path_for(out: Path) -> Path:
 
 # --------------------------------------------------------------------------- transcripts
 def transcripts_dir_for(args) -> Path:
-    """`--transcripts-dir`, else `<STACK_WORKDIR>/m54/transcripts/<model>/` (quality-inspection
-    artifacts; genuinely optional output, so STACK_WORKDIR is REQUIRED when not given explicitly
-    rather than silently falling back to a cache dir -- AGENTS.md: no filesystem pollution outside
-    STACK_WORKDIR). This is the BASE path used for the early --transcripts-dir confinement check
-    in main() (confinement of the base transitively covers any run-id subdirectory nested under
-    it -- see `run_transcripts_dir`) and as the fallback when `--transcripts-dir` IS given
-    explicitly (an explicit path is used AS-IS, never run-id-nested)."""
-    if args.transcripts_dir:
-        return Path(args.transcripts_dir)
-    return paths.stack_workdir(required=True) / "m54" / "transcripts" / args.model
+    """`<--transcripts-dir-or-STACK_WORKDIR/m54/transcripts>/<model>/` (quality-inspection
+    artifacts; genuinely optional output, so STACK_WORKDIR is REQUIRED when `--transcripts-dir`
+    isn't given explicitly rather than silently falling back to a cache dir -- AGENTS.md: no
+    filesystem pollution outside STACK_WORKDIR). This is the BASE path used for the early
+    --transcripts-dir confinement check in main() (confinement of the base transitively covers
+    any run-id subdirectory nested under it -- see `run_transcripts_dir`) and for run-id nesting.
+
+    10th cold review (live-pilot finding, between-arms fix 1): an EXPLICIT `--transcripts-dir`
+    used to be returned AS-IS here, bypassing the `<model>/<run_id>/` nesting entirely -- a live
+    pilot run with an explicit --transcripts-dir landed its transcripts FLAT
+    (`transcripts/std-007-49.json`), contradicting both P29's own stated design and what the
+    manifest's `runtime.transcripts_dir` implied. The layout must be IDENTICAL whether the base
+    came from the default or an explicit flag -- an operator-chosen base is not exempt from the
+    SAME collision-prevention nesting P29 exists for."""
+    base = Path(args.transcripts_dir) if args.transcripts_dir \
+        else paths.stack_workdir(required=True) / "m54" / "transcripts"
+    return base / args.model
 
 
 def run_transcripts_dir(args, mp: Path, is_resume: bool) -> Path:
@@ -171,10 +178,11 @@ def run_transcripts_dir(args, mp: Path, is_resume: bool) -> Path:
     THIS run's own start timestamp, so two DIFFERENT runs of the same model never share
     `<model>/<task>.json` and silently overwrite each other's evidence. A resume REUSES the
     run_id recorded in the manifest it's building on (never mints a new one), so a resumed run's
-    later tasks land in the SAME directory as its earlier ones. An explicit `--transcripts-dir`
-    is used AS-IS (no run-id nesting -- the operator asked for exactly that path)."""
-    if args.transcripts_dir:
-        return Path(args.transcripts_dir)
+    later tasks land in the SAME directory as its earlier ones.
+
+    10th cold review (between-arms fix 1): an explicit `--transcripts-dir` is now ALSO nested
+    `<dir>/<model>/<run_id>/`, via `transcripts_dir_for` -- see that docstring. It is no longer
+    used AS-IS."""
     base = transcripts_dir_for(args)
     if is_resume and mp.exists():
         try:

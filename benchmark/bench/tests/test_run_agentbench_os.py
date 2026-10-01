@@ -1809,7 +1809,14 @@ def test_transcript_written_after_the_row_with_expected_fields(tmp_path, monkeyp
     tdir = tmp_path / "transcripts"
     rc = R.main(_args(tmp_path, **{"transcripts-dir": str(tdir)}))
     assert rc == 0
-    doc = json.loads((tdir / "m0.json").read_text())
+    rows = R.read_rows(tmp_path / "rows.jsonl")
+    transcript_path = Path(rows[0]["transcript_path"])
+    # 10th cold review (live-pilot finding, between-arms fix 1): an explicit --transcripts-dir
+    # is now ALSO nested <dir>/<model>/<run_id>/<task>.json, identical to the default layout
+    # (it used to land FLAT at <dir>/<task>.json).
+    assert transcript_path.parent.parent == tdir / "m"
+    assert transcript_path.name == "m0.json"
+    doc = json.loads(transcript_path.read_text())
     assert doc["id"] == "m0" and doc["model"] == "m"
     assert doc["system"] == AB.SYSTEM_PROMPT
     assert doc["task_description"] == "d"
@@ -1817,8 +1824,6 @@ def test_transcript_written_after_the_row_with_expected_fields(tmp_path, monkeyp
     assert doc["submitted_via"] == "answer" and doc["answer"] == "yes"
     assert doc["gold_prepare"] is None and doc["gold_live"] is None
     assert doc["passed"] is True and doc["outcome"] == "solved"
-    rows = R.read_rows(tmp_path / "rows.jsonl")
-    assert rows[0]["transcript_path"] == str(tdir / "m0.json")
 
 
 def test_transcript_not_written_when_no_row_is_appended(tmp_path, monkeypatch):
@@ -1935,18 +1940,20 @@ def test_resume_does_not_rewrite_an_existing_transcript(tmp_path, monkeypatch):
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, limit=1, **{"transcripts-dir": str(tdir)}))
     assert rc == 0 and seen == ["m0"]
+    man1 = json.loads((tmp_path / "rows.manifest.json").read_text())
+    real_tdir = Path(man1["runtime"]["transcripts_dir"])   # <tdir>/m/<run_id>/, not <tdir>/ flat
 
     # overwrite m0's REAL transcript with a sentinel, simulating a pre-existing file a resume
     # must never touch again.
     sentinel_doc = {"id": "m0", "note": "PRE-EXISTING, must not be overwritten"}
-    (tdir / "m0.json").write_text(json.dumps(sentinel_doc), encoding="utf-8")
+    (real_tdir / "m0.json").write_text(json.dumps(sentinel_doc), encoding="utf-8")
 
     seen.clear()
     rc = R.main(_args(tmp_path, resume="", **{"transcripts-dir": str(tdir)}))
     assert rc == 0
     assert seen == ["m1"]
-    assert json.loads((tdir / "m0.json").read_text()) == sentinel_doc   # untouched
-    assert (tdir / "m1.json").exists()                                 # the newly-run task got one
+    assert json.loads((real_tdir / "m0.json").read_text()) == sentinel_doc   # untouched
+    assert (real_tdir / "m1.json").exists()                                 # the newly-run task got one
 
 
 def test_manifest_records_transcripts_dir(tmp_path, monkeypatch):
@@ -1961,7 +1968,43 @@ def test_manifest_records_transcripts_dir(tmp_path, monkeypatch):
     rc = R.main(_args(tmp_path, **{"transcripts-dir": str(tdir)}))
     assert rc == 0
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
-    assert man["runtime"]["transcripts_dir"] == str(tdir)
+    # 10th cold review (between-arms fix 1): nested <tdir>/<model>/<run_id>/, not the bare
+    # explicit --transcripts-dir flat.
+    recorded = Path(man["runtime"]["transcripts_dir"])
+    assert recorded.parent == tdir / "m"
+    assert recorded != tdir
+
+
+def test_explicit_and_default_transcripts_dir_have_the_SAME_layout_shape_P29(tmp_path, monkeypatch):
+    """10th cold review (live-pilot finding, between-arms fix 1), reproduced directly: a live
+    pilot run with an explicit --transcripts-dir landed its transcripts FLAT
+    (<dir>/<task>.json), contradicting P29's own stated <base>/<model>/<run_id>/<task>.json
+    design AND what the default (no --transcripts-dir) path actually produces. Both must resolve
+    to the IDENTICAL shape: <base>/<model>/<run_id>/, differing only in what `<base>` is."""
+    import argparse
+
+    explicit_base = tmp_path / "explicit-transcripts"
+    args_explicit = argparse.Namespace(transcripts_dir=str(explicit_base), model="m")
+    explicit_dir = R.transcripts_dir_for(args_explicit)
+    assert explicit_dir == explicit_base / "m"
+
+    monkeypatch.setattr(R.paths, "stack_workdir", lambda required=True: tmp_path / "workdir")
+    args_default = argparse.Namespace(transcripts_dir=None, model="m")
+    default_dir = R.transcripts_dir_for(args_default)
+    assert default_dir == tmp_path / "workdir" / "m54" / "transcripts" / "m"
+
+    # SAME shape relative to each one's own base: exactly one path component (<model>) below it.
+    assert explicit_dir.relative_to(explicit_base) == default_dir.relative_to(
+        tmp_path / "workdir" / "m54" / "transcripts")
+
+    # and run_transcripts_dir nests run_id identically under EITHER base.
+    mp_explicit = tmp_path / "explicit.manifest.json"
+    mp_default = tmp_path / "default.manifest.json"
+    run_id_explicit = R.run_transcripts_dir(args_explicit, mp_explicit, False)
+    run_id_default = R.run_transcripts_dir(args_default, mp_default, False)
+    assert run_id_explicit.parent == explicit_dir
+    assert run_id_default.parent == default_dir
+    assert len(run_id_explicit.name) == len(run_id_default.name)   # both a run_id timestamp
 
 
 def test_transcripts_dir_defaults_to_stack_workdir_m54_transcripts_model(tmp_path, monkeypatch):
