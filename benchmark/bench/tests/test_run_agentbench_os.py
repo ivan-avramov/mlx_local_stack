@@ -1281,36 +1281,53 @@ def test_floor_tps_r6_fallback_to_minimum_with_fewer_than_5_qualifying_turns():
     assert R._floor_tps_R6(rows, native=True) == 1.0
 
 
-def _write_rate_row_file(tmp_path, model: str, bench: str, tune: str, man_model: str,
-                         man_draft_kind, row: dict):
+_SAMPLE_IDENTITY = {"draft_kind": "mtp", "kv_bits": 4, "max_kv_cache_size": 262144,
+                    "thinking_budget": 1000, "max_tokens": 2000, "box": "testbox"}
+
+
+def _write_rate_row_file(tmp_path, model: str, bench: str, tune: str, row: dict, *,
+                         man_model: str | None = None, identity: dict | None = None,
+                         served_config_drift: bool = False, config_sha256: str | None = None):
+    """8th cold review round 8 P48: the manifest now carries the FULL identity (kv/sampling/box),
+    not just draft_kind -- `identity` defaults to `_SAMPLE_IDENTITY` (override individual fields
+    via `{**_SAMPLE_IDENTITY, "kv_bits": 8}` to test a single-field mismatch)."""
+    man_model = model if man_model is None else man_model
+    identity = dict(_SAMPLE_IDENTITY) if identity is None else identity
     root = tmp_path / model
     root.mkdir(parents=True, exist_ok=True)
     stem = f"{bench}.{tune}" if tune else bench
     rows_path = root / f"{stem}.jsonl"
     rows_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    man = {"model": man_model,
+          "runtime": {"draft_kind": identity.get("draft_kind")},
+          "kv": {"kv_bits": identity.get("kv_bits"), "max_kv_cache_size": identity.get("max_kv_cache_size")},
+          "sampling": {"thinking_budget": identity.get("thinking_budget"), "max_tokens": identity.get("max_tokens")},
+          "box": identity.get("box"), "router": {"config_sha256": config_sha256}}
+    if served_config_drift:
+        man["served_config_drift"] = {"entry_sha256": "x", "exit_sha256": "y"}
     man_path = root / f"{stem}.manifest.json"
-    man_path.write_text(json.dumps({"model": man_model, "runtime": {"draft_kind": man_draft_kind}}),
-                        encoding="utf-8")
+    man_path.write_text(json.dumps(man), encoding="utf-8")
     return rows_path
 
 
 def test_rate_rows_matching_identity_includes_a_file_whose_manifest_matches_P43b(tmp_path, monkeypatch):
     monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
-    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", man_model="m1", man_draft_kind="mtp",
-                         row={"per_turn_decode_tps": [42.0]})
-    rows, files = R._rate_rows_matching_identity("m1", R.BENCH_NAME, "mtp")
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [42.0]},
+                         config_sha256="abc123")
+    rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, _SAMPLE_IDENTITY)
     assert len(rows) == 1 and rows[0]["per_turn_decode_tps"] == [42.0]
-    assert len(files) == 1 and files[0].endswith(f"{R.BENCH_NAME}.v1.jsonl")
+    assert len(sources) == 1 and sources[0]["file"].endswith(f"{R.BENCH_NAME}.v1.jsonl")
+    assert sources[0]["config_sha256"] == "abc123"   # P48: each source's served-config hash
 
 
 def test_rate_rows_matching_identity_excludes_a_file_with_a_different_draft_kind_P43b(tmp_path, monkeypatch):
     """7th cold review round 7 P43(b): rate evidence from an INCOMPATIBLE serving identity
     (different draft_kind) must never silently inform the derivation."""
     monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
-    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", man_model="m1", man_draft_kind="off",
-                         row={"per_turn_decode_tps": [999.0]})
-    rows, files = R._rate_rows_matching_identity("m1", R.BENCH_NAME, "mtp")
-    assert rows == [] and files == []
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [999.0]},
+                         identity={**_SAMPLE_IDENTITY, "draft_kind": "off"})
+    rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, _SAMPLE_IDENTITY)
+    assert rows == [] and sources == []
 
 
 def test_rate_rows_matching_identity_excludes_a_file_with_no_manifest_P43b(tmp_path, monkeypatch):
@@ -1319,8 +1336,43 @@ def test_rate_rows_matching_identity_excludes_a_file_with_no_manifest_P43b(tmp_p
     root.mkdir(parents=True)
     (root / f"{R.BENCH_NAME}.v1.jsonl").write_text(json.dumps({"per_turn_decode_tps": [999.0]}) + "\n",
                                                     encoding="utf-8")
-    rows, files = R._rate_rows_matching_identity("m1", R.BENCH_NAME, "mtp")
-    assert rows == [] and files == []
+    rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, _SAMPLE_IDENTITY)
+    assert rows == [] and sources == []
+
+
+# --------------------------------------------------------------------------- P48 full-identity matching
+@pytest.mark.parametrize("field,other_value", [
+    ("kv_bits", 8), ("max_kv_cache_size", 131072), ("thinking_budget", 500), ("max_tokens", 4000),
+    ("box", "a-different-box"),
+])
+def test_rate_rows_matching_identity_excludes_a_mismatch_on_each_P48_field(tmp_path, monkeypatch, field, other_value):
+    """8th cold review round 8 P48: P43(b) filtered on model+draft_kind ALONE -- a row from a
+    different kv_bits, max_kv_cache_size, thinking_budget, max_tokens, or BOX could still silently
+    size the wrong timeout. Every one of these fields must independently exclude a mismatched
+    row."""
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [999.0]},
+                         identity={**_SAMPLE_IDENTITY, field: other_value})
+    rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, _SAMPLE_IDENTITY)
+    assert rows == [] and sources == []
+
+
+def test_rate_rows_matching_identity_excludes_a_file_with_served_config_drift_P48(tmp_path, monkeypatch):
+    """P48: a manifest that itself recorded a served_config_drift from a prior exit is suspect --
+    its rate evidence must be excluded even when every OTHER identity field matches exactly."""
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [999.0]},
+                         served_config_drift=True)
+    rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, _SAMPLE_IDENTITY)
+    assert rows == [] and sources == []
+
+
+def test_rate_rows_matching_identity_excludes_a_file_from_a_different_model_despite_matching_identity_P48(tmp_path, monkeypatch):
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [999.0]},
+                         man_model="a-different-model")
+    rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, _SAMPLE_IDENTITY)
+    assert rows == [] and sources == []
 
 
 def test_derive_llm_timeout_end_to_end_filters_by_draft_kind_real_files_P43b(tmp_path, monkeypatch):
@@ -1328,12 +1380,12 @@ def test_derive_llm_timeout_end_to_end_filters_by_draft_kind_real_files_P43b(tmp
     timeout; an incompatible-draft_kind file for the SAME model is silently excluded."""
     monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
     monkeypatch.setattr(R.provenance, "registry_draft", lambda model, **k: {"draft_kind": "mtp"})
-    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", man_model="m1", man_draft_kind="off",
-                         row={"per_turn_decode_tps": [999.0]})   # incompatible -- must be excluded
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [999.0]},
+                         identity={**_SAMPLE_IDENTITY, "draft_kind": "off"})   # incompatible
     timeout_s, source, msg, d = R._derive_llm_timeout("m1", 1000, 2000, None)
     assert d["observable"] is False   # no COMPATIBLE evidence found anywhere
-    assert d["draft_kind"] == "mtp"
-    assert d["source_files"] == []
+    assert d["identity"]["draft_kind"] == "mtp"
+    assert d["sources"] == []
 
 
 def test_derive_llm_timeout_formula_uses_max_generation_tokens_over_floor_tps_plus_headroom(monkeypatch):
@@ -1434,7 +1486,7 @@ def test_manifest_records_timeout_derivation_block_P14(tmp_path, monkeypatch):
     assert d["observable"] is True
     assert d["floor_decode_tps"] == 10.0
     assert d["source"] == "agentbench_os"
-    assert d["source_files"] == ["f"]   # P43(b): the contributing files are recorded
+    assert d["sources"] == ["f"]   # P43(b)/P48: the contributing sources are recorded
 
 
 def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeypatch):

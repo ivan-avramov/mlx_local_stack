@@ -519,16 +519,48 @@ def _floor_tps_R6(rows: list, native: bool) -> float | None:
     return min(tps for tps, _ in pairs)
 
 
-def _rate_rows_matching_identity(model: str, bench: str, draft_kind) -> tuple:
-    """7th cold review round 7 P43(b): rate evidence is filtered to rows whose OWN sibling
-    manifest records the SAME model AND SAME draft_kind as the run being sized -- a historical row
-    from an incompatible serving configuration (e.g. a different predictor state) must never
-    silently inform this derivation. Returns (rows: list, source_files: list[str] -- the exact
-    files that contributed, recorded in the manifest's timeout_derivation block)."""
+def _current_rate_identity(model: str, thinking_budget, max_tokens) -> dict:
+    """8th cold review round 8 P48: the FULL serving/sampling/box identity a historical row's
+    manifest must match before it can inform THIS run's timeout derivation -- a superset of
+    P43(b)'s model+draft_kind alone, which under-filtered: a row from a different kv_bits, a
+    different max_kv_cache_size, a different thinking_budget/max_tokens pair, or a DIFFERENT BOX
+    entirely could still silently size a wrong timeout (different hardware, different measured
+    floor rate)."""
+    kv = provenance.registry_kv(model) or {}
+    return {"draft_kind": provenance.registry_draft(model).get("draft_kind"),
+           "kv_bits": kv.get("kv_bits"), "max_kv_cache_size": kv.get("max_kv_cache_size"),
+           "thinking_budget": thinking_budget, "max_tokens": max_tokens,
+           "box": provenance._box()}
+
+
+def _manifest_matches_identity(man: dict, model: str, identity: dict) -> bool:
+    """P48: a candidate rows file's sibling manifest must match EVERY identity field, and must
+    NOT itself carry a recorded `served_config_drift` (that run's own results are suspect, so its
+    rate evidence is suspect too -- see `_check_resume_identity`'s identical refusal for resume)."""
+    if man.get("model") != model or man.get("served_config_drift"):
+        return False
+    runtime = man.get("runtime") or {}
+    kv = man.get("kv") or {}
+    sampling = man.get("sampling") or {}
+    return (runtime.get("draft_kind") == identity["draft_kind"]
+           and kv.get("kv_bits") == identity["kv_bits"]
+           and kv.get("max_kv_cache_size") == identity["max_kv_cache_size"]
+           and sampling.get("thinking_budget") == identity["thinking_budget"]
+           and sampling.get("max_tokens") == identity["max_tokens"]
+           and man.get("box") == identity["box"])
+
+
+def _rate_rows_matching_identity(model: str, bench: str, identity: dict) -> tuple:
+    """7th cold review round 7 P43(b) + 8th round P48: rate evidence is filtered to rows whose OWN
+    sibling manifest matches the FULL identity (see `_current_rate_identity`/
+    `_manifest_matches_identity`) of the run being sized -- a historical row from an incompatible
+    serving configuration must never silently inform this derivation. Returns (rows: list,
+    sources: list[dict] -- `{"file", "config_sha256"}` per contributing manifest, recorded in the
+    manifest's timeout_derivation block)."""
     root = generate.results_root() / model
-    rows, source_files = [], []
+    rows, sources = [], []
     if not root.is_dir():
-        return rows, source_files
+        return rows, sources
     candidates = sorted(root.glob(f"{bench}.jsonl")) + sorted(root.glob(f"{bench}.*.jsonl"))
     for p in candidates:
         if p.name.endswith("_samples.jsonl"):
@@ -541,9 +573,7 @@ def _rate_rows_matching_identity(model: str, bench: str, draft_kind) -> tuple:
             man = json.loads(man_path.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001 -- an unreadable manifest can't prove identity; skip
             continue
-        if man.get("model") != model:
-            continue
-        if (man.get("runtime") or {}).get("draft_kind") != draft_kind:
+        if not _manifest_matches_identity(man, model, identity):
             continue
         file_rows = []
         try:
@@ -559,8 +589,9 @@ def _rate_rows_matching_identity(model: str, bench: str, draft_kind) -> tuple:
             continue
         if file_rows:
             rows.extend(file_rows)
-            source_files.append(str(p))
-    return rows, source_files
+            sources.append({"file": str(p),
+                           "config_sha256": (man.get("router") or {}).get("config_sha256")})
+    return rows, sources
 
 
 def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
@@ -585,14 +616,15 @@ def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
     can under-count when the model's post-think answer legitimately extends past its thinking
     budget.
 
-    7th cold review round 7 P43(b): rate evidence is now FILTERED to rows whose own sibling
-    manifest records the SAME model AND SAME draft_kind as THIS run (`_rate_rows_matching_identity`)
-    -- an incompatible historical row (e.g. a 100 tok/s row from a different predictor state) used
-    to silently inform the derivation, once producing an "observable" 1,324s timeout for 102,400
-    tokens that had nothing to do with the CURRENT serving configuration. `floor_tps` is R6's
-    10th-percentile-over-turns->=256-tokens (falling back to the true minimum under 5 such turns;
-    see `_floor_tps_R6`), never a bare episode average. The contributing FILES are recorded in the
-    manifest (`source_files`)."""
+    7th cold review round 7 P43(b) + 8th round P48: rate evidence is FILTERED to rows whose own
+    sibling manifest matches the FULL identity of THIS run -- model, draft_kind, kv_bits,
+    max_kv_cache_size, thinking_budget, max_tokens, and box (see `_current_rate_identity`/
+    `_manifest_matches_identity`), and must NOT itself carry a `served_config_drift`. P43(b) alone
+    (model+draft_kind) under-filtered: an incompatible historical row (different predictor state,
+    different KV quant, different hardware) could still silently size the wrong timeout.
+    `floor_tps` is R6's 10th-percentile-over-turns->=256-tokens (falling back to the true minimum
+    under 5 such turns; see `_floor_tps_R6`), never a bare episode average. Each contributing
+    manifest's file path and `router.config_sha256` are recorded (`sources`)."""
     max_generation_tokens = max(thinking_budget or 0, 0) + MAX_GENERATION_HEADROOM_TOKENS
     if max_tokens:
         max_generation_tokens = max(max_generation_tokens, max_tokens)
@@ -600,10 +632,10 @@ def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
         derivation = {"max_generation_tokens": max_generation_tokens, "floor_decode_tps": None,
                      "headroom_s": None, "source": "explicit", "observable": "override",
                      "reason": "explicit --llm-timeout override -- NOT independently validated",
-                     "draft_kind": None, "source_files": []}
+                     "identity": None, "sources": []}
         return explicit, "explicit", f"{explicit:.0f}s (EXPLICIT --llm-timeout, UNVALIDATED)", derivation
-    draft_kind = provenance.registry_draft(model).get("draft_kind")
-    own_rows, source_files = _rate_rows_matching_identity(model, BENCH_NAME, draft_kind)
+    identity = _current_rate_identity(model, thinking_budget, max_tokens)
+    own_rows, sources = _rate_rows_matching_identity(model, BENCH_NAME, identity)
     tps = _floor_tps_R6(own_rows, native=True)
     source = BENCH_NAME
     if tps is None:
@@ -614,21 +646,21 @@ def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
         contributors = []
         for b in FALLBACK_RATE_BENCHES:
             try:
-                rows, files = _rate_rows_matching_identity(model, b, draft_kind)
+                rows, srcs = _rate_rows_matching_identity(model, b, identity)
             except Exception:  # noqa: BLE001 -- a missing/unreadable bench must not block the run
-                rows, files = [], []
+                rows, srcs = [], []
             if rows:
                 contributors.append(b)
             fb_rows += rows
-            source_files += files
+            sources += srcs
         tps = _floor_tps_R6(fb_rows, native=False)
         source = f"fallback:{'+'.join(contributors)}" if tps is not None else "none"
     if not tps or tps <= 0:
         timeout_s = budget_timeout.CEILING_S
         observable = False
-        reason = (f"no measured per-turn decode rate for model={model!r} draft_kind={draft_kind!r} "
-                 "-- a per-turn timeout cannot be SIZED (P43(b): rate evidence from an "
-                 "incompatible serving identity is excluded, never silently used as a fallback)")
+        reason = (f"no measured per-turn decode rate for model={model!r} matching this run's full "
+                 f"serving identity {identity!r} -- a per-turn timeout cannot be SIZED (P48: rate "
+                 "evidence from an incompatible identity is excluded, never silently used)")
     else:
         timeout_s = max_generation_tokens / tps + TIMEOUT_HEADROOM_S
         observable = True
@@ -638,8 +670,8 @@ def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
                  "headroom, UNCAPPED (P14: no 7200s ceiling for this per-turn axis)")
     derivation = {"max_generation_tokens": max_generation_tokens, "floor_decode_tps": tps,
                  "headroom_s": TIMEOUT_HEADROOM_S, "source": source,
-                 "observable": observable, "reason": reason, "draft_kind": draft_kind,
-                 "source_files": source_files}
+                 "observable": observable, "reason": reason, "identity": identity,
+                 "sources": sources}
     return (round(timeout_s, 1), source,
            f"{timeout_s:.0f}s (DERIVED, timeout_source={source}) -- {reason}", derivation)
 
