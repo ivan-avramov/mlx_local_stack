@@ -667,7 +667,7 @@ def test_resume_reuses_llm_timeout_and_deadline_from_previous_manifest_addendum_
     monkeypatch.setattr(AB, "run_task", fake)
     # pilot: derive from a measured rate (no explicit --llm-timeout)
     monkeypatch.setattr(R.generate, "rows_for_rate",
-                       lambda model, bench: [{"decode_tps": 10.0}] * 10 if bench == "agentbench_os" else [])
+                       lambda model, bench: [{"per_turn_decode_tps": [10.0]}] * 10 if bench == "agentbench_os" else [])
     rc = R.main(_args(tmp_path, limit=1, llm_timeout=None))
     assert rc == 0
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
@@ -1008,6 +1008,57 @@ def test_resume_after_a_torn_tail_real_file_both_old_and_new_rows_readable_then_
     assert sorted(r["id"] for r in rows2) == ["m0", "m1", "m2"]
 
 
+# --------------------------------------------------------------------------- P30 timeout formula
+def test_min_per_turn_tps_native_flattens_per_turn_rates_and_takes_the_true_minimum():
+    """6th cold review round 6 P30: the floor must be the TRUE per-turn minimum (a turn's slow
+    tail, as prompt grows across the episode), never an episode-averaged `decode_tps`."""
+    rows = [{"per_turn_decode_tps": [50.0, 30.0, 5.0]}, {"per_turn_decode_tps": [40.0]}]
+    assert R._min_per_turn_tps(rows, native=True) == 5.0
+
+
+def test_min_per_turn_tps_native_ignores_error_rows_and_non_numeric_turns():
+    rows = [{"per_turn_decode_tps": [50.0, None, 2.0], "error": None},
+           {"per_turn_decode_tps": [1.0], "error": "boom"}]   # excluded: errored row
+    assert R._min_per_turn_tps(rows, native=True) == 2.0
+
+
+def test_min_per_turn_tps_fallback_uses_per_row_decode_tps():
+    rows = [{"decode_tps": 20.0}, {"decode_tps": 5.0}, {"decode_tps": 50.0}]
+    assert R._min_per_turn_tps(rows, native=False) == 5.0
+
+
+def test_min_per_turn_tps_none_when_no_evidence():
+    assert R._min_per_turn_tps([], native=True) is None
+    assert R._min_per_turn_tps([{"per_turn_decode_tps": []}], native=True) is None
+
+
+def test_derive_llm_timeout_formula_uses_max_generation_tokens_over_floor_tps_plus_headroom(monkeypatch):
+    """P30: timeout = max_generation_tokens / floor_tps + 300s headroom (no multiplicative safety
+    factor); max_generation_tokens is the LARGER of max_tokens and thinking_budget+4096."""
+    monkeypatch.setattr(R.generate, "rows_for_rate",
+                       lambda model, bench: [{"per_turn_decode_tps": [10.0]}] if bench == "agentbench_os" else [])
+    timeout_s, source, msg, d = R._derive_llm_timeout("m", 1000, 2000, None)
+    # thinking_budget+4096=5096 < max_tokens=2000? no, 5096 > 2000, so max_generation_tokens=5096
+    assert d["max_generation_tokens"] == 5096
+    assert timeout_s == pytest.approx(5096 / 10.0 + 300.0, abs=0.1)
+
+
+def test_derive_llm_timeout_max_tokens_wins_when_larger_than_budget_plus_headroom(monkeypatch):
+    monkeypatch.setattr(R.generate, "rows_for_rate",
+                       lambda model, bench: [{"per_turn_decode_tps": [10.0]}] if bench == "agentbench_os" else [])
+    _, _, _, d = R._derive_llm_timeout("m", 100, 50000, None)
+    assert d["max_generation_tokens"] == 50000
+
+
+def test_derive_llm_timeout_explicit_override_is_recorded_as_unvalidated_P30():
+    """P30: an explicit --llm-timeout is NOT thereby validated -- observable must be the literal
+    string 'override', distinct from True (an independently sized, measured derivation)."""
+    timeout_s, source, msg, d = R._derive_llm_timeout("m", 1000, 2000, 45.0)
+    assert timeout_s == 45.0
+    assert d["observable"] == "override"
+    assert d["observable"] is not True
+
+
 # --------------------------------------------------------------------------- N11 timeout source / deadline cap
 def test_timeout_source_names_only_contributing_fallback_benches(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
@@ -1059,7 +1110,7 @@ def test_generate_explicit_llm_timeout_overrides_an_unobservable_derivation_P14(
     assert rc == 0 and seen == ["m0"]
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
     assert man["runtime"]["llm_timeout_s"] == 45.0
-    assert man["runtime"]["timeout_derivation"]["observable"] is True
+    assert man["runtime"]["timeout_derivation"]["observable"] == "override"
     assert man["runtime"]["timeout_derivation"]["source"] == "explicit"
 
 
@@ -1069,7 +1120,7 @@ def test_manifest_records_timeout_derivation_block_P14(tmp_path, monkeypatch):
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
     monkeypatch.setattr(R.generate, "rows_for_rate",
-                       lambda model, bench: [{"decode_tps": 10.0}] * 10 if bench == "agentbench_os" else [])
+                       lambda model, bench: [{"per_turn_decode_tps": [10.0]}] * 10 if bench == "agentbench_os" else [])
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, llm_timeout=None))
@@ -1091,7 +1142,7 @@ def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeyp
     # a very slow decode rate -> a large per-turn timeout -> the deadline must scale with it,
     # uncapped (this would have been clamped to 3600s before R3).
     monkeypatch.setattr(R.generate, "rows_for_rate",
-                       lambda model, bench: [{"decode_tps": 0.01}] * 10 if bench == "agentbench_os" else [])
+                       lambda model, bench: [{"per_turn_decode_tps": [0.01]}] * 10 if bench == "agentbench_os" else [])
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, llm_timeout=None))

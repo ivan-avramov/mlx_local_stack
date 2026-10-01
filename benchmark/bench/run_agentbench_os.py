@@ -451,28 +451,66 @@ def _write_skipped(out: Path, note: str) -> int:
 
 
 # --------------------------------------------------------------------------- timeout derivation (F8/P14)
-def _derive_llm_timeout(model: str, thinking_budget, explicit):
+MAX_GENERATION_HEADROOM_TOKENS = 4096   # P30: thinking_budget + this, when larger than max_tokens
+TIMEOUT_HEADROOM_S = 300.0              # P30: fixed prefill/load headroom, replacing the x1.5 safety factor
+
+
+def _min_per_turn_tps(rows: list, native: bool) -> float | None:
+    """6th cold review round 6 P30: the SLOW-tail evidence must be the recorded PER-TURN decode
+    rate (a turn's prompt grows across the episode, so later turns decode slower -- an
+    EPISODE-AVERAGE `decode_tps` hides exactly the turns most likely to time out), not a
+    percentile-smoothed aggregate. For this axis's OWN rows (`native=True`, AgentBench OS rows
+    carry `per_turn_decode_tps`), flatten every turn's rate across every row and take the TRUE
+    minimum. Fallback benches (math500/convergence) are single-turn probes with only one
+    `decode_tps` per row -- the minimum ACROSS ROWS is the best available slow-tail evidence
+    there."""
+    vals = []
+    for r in rows:
+        if r.get("error"):
+            continue
+        if native:
+            for v in (r.get("per_turn_decode_tps") or []):
+                if isinstance(v, (int, float)) and v > 0:
+                    vals.append(v)
+        else:
+            v = r.get("decode_tps")
+            if isinstance(v, (int, float)) and v > 0:
+                vals.append(v)
+    return min(vals) if vals else None
+
+
+def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
     """Returns (timeout_s, source, msg, derivation: dict).
 
     5th cold review P14: `budget_timeout.derive_timeout`'s 7200s CEILING_S exists for the
     convergence benchmark's own (differently justified: "a pathological draw shouldn't run
     unbounded") axis. An AgentBench OS episode calls the model MANY times across up to
-    `--round-limit` turns, each needing a per-turn timeout actually sized to THIS model's thinking
-    budget and measured floor decode rate -- silently capping it at that shared ceiling would
-    truncate every turn on a large-budget/slow-decode model long before it could legitimately hit
-    its own budget, every single turn, which is exactly the "client gives up before the model does"
-    defect `budget_timeout.py` itself documents (just at a different scale). So the value here is
-    computed UNCAPPED; `observable=False` (no measured rate, no budget, or the value is simply
-    unknown) is recorded and the caller refuses to start rather than silently falling back to a
-    ceiling whose only honest meaning is "uninterpretable", unless `--llm-timeout` was given
-    explicitly."""
+    `--round-limit` turns, each needing a per-turn timeout actually sized to THIS model's
+    generation length and measured floor decode rate -- silently capping it at that shared
+    ceiling would truncate every turn on a large-budget/slow-decode model long before it could
+    legitimately finish, every single turn. So the value here is computed UNCAPPED;
+    `observable=False` (no measured rate, no generation-length evidence) is recorded and the
+    caller refuses to start rather than silently falling back to a ceiling whose only honest
+    meaning is "uninterpretable", unless `--llm-timeout` was given explicitly (recorded as
+    `observable="override"` -- P30: an EXPLICIT value is not thereby VALIDATED, an arbitrarily
+    short override must not be labelled the same as a measured, sized derivation).
+
+    6th cold review round 6 P30: timeout = max_generation_tokens / floor_tps + TIMEOUT_HEADROOM_S
+    (a fixed 300s prefill/load headroom, not a multiplicative safety factor). `max_generation_tokens`
+    is the LARGER of the deployed `max_tokens` and `thinking_budget + 4096` -- `max_tokens` alone
+    can under-count when the model's post-think answer legitimately extends past its thinking
+    budget; `floor_tps` is the TRUE per-turn minimum (see `_min_per_turn_tps`), never an
+    episode-averaged or percentile-smoothed rate."""
+    max_generation_tokens = max(thinking_budget or 0, 0) + MAX_GENERATION_HEADROOM_TOKENS
+    if max_tokens:
+        max_generation_tokens = max(max_generation_tokens, max_tokens)
     if explicit:
-        derivation = {"thinking_budget": thinking_budget, "floor_decode_tps": None,
-                     "safety_headroom": None, "source": "explicit", "observable": True,
-                     "reason": "explicit --llm-timeout override"}
-        return explicit, "explicit", f"{explicit:.0f}s (EXPLICIT --llm-timeout)", derivation
+        derivation = {"max_generation_tokens": max_generation_tokens, "floor_decode_tps": None,
+                     "headroom_s": None, "source": "explicit", "observable": "override",
+                     "reason": "explicit --llm-timeout override -- NOT independently validated"}
+        return explicit, "explicit", f"{explicit:.0f}s (EXPLICIT --llm-timeout, UNVALIDATED)", derivation
     own_rows = generate.rows_for_rate(model, BENCH_NAME)
-    tps = budget_timeout.floor_decode_tps(own_rows)
+    tps = _min_per_turn_tps(own_rows, native=True)
     source = BENCH_NAME
     if tps is None:
         # cold-review N11: name only the benches that actually contributed rows, not every
@@ -488,22 +526,21 @@ def _derive_llm_timeout(model: str, thinking_budget, explicit):
             if rows:
                 contributors.append(b)
             fb_rows += rows
-        tps = budget_timeout.floor_decode_tps(fb_rows)
+        tps = _min_per_turn_tps(fb_rows, native=False)
         source = f"fallback:{'+'.join(contributors)}" if tps is not None else "none"
-    if not thinking_budget or not tps or tps <= 0:
+    if not tps or tps <= 0:
         timeout_s = budget_timeout.CEILING_S
         observable = False
-        reason = ("no measured decode rate or no thinking budget -- a per-turn timeout cannot be "
-                 "SIZED (not just 'cannot be interpreted as a budget hit')")
+        reason = "no measured per-turn decode rate -- a per-turn timeout cannot be SIZED"
     else:
-        budget_time_s = thinking_budget / tps
-        timeout_s = max(budget_timeout.FLOOR_S, budget_time_s * budget_timeout.SAFETY)
+        timeout_s = max_generation_tokens / tps + TIMEOUT_HEADROOM_S
         observable = True
-        reason = (f"budget {thinking_budget} tok at {tps:.1f} tok/s floor = "
-                 f"{budget_time_s / 60:.1f} min; x{budget_timeout.SAFETY} headroom, UNCAPPED "
-                 "(P14: no 7200s ceiling for this per-turn axis)")
-    derivation = {"thinking_budget": thinking_budget, "floor_decode_tps": tps,
-                 "safety_headroom": budget_timeout.SAFETY, "source": source,
+        reason = (f"{max_generation_tokens} max generation tokens at {tps:.1f} tok/s floor "
+                 f"(TRUE per-turn minimum) = {max_generation_tokens / tps / 60:.1f} min + "
+                 f"{TIMEOUT_HEADROOM_S:.0f}s headroom, UNCAPPED (P14: no 7200s ceiling for this "
+                 "per-turn axis)")
+    derivation = {"max_generation_tokens": max_generation_tokens, "floor_decode_tps": tps,
+                 "headroom_s": TIMEOUT_HEADROOM_S, "source": source,
                  "observable": observable, "reason": reason}
     return (round(timeout_s, 1), source,
            f"{timeout_s:.0f}s (DERIVED, timeout_source={source}) -- {reason}", derivation)
@@ -696,7 +733,7 @@ def run_generate(args, out: Path) -> int:
         deadline_reason = "REUSED from the manifest this resume builds on"
     else:
         llm_timeout, timeout_source, timeout_msg, timeout_derivation = _derive_llm_timeout(
-            args.model, params.get("thinking_budget"), args.llm_timeout)
+            args.model, params.get("thinking_budget"), params.get("max_tokens"), args.llm_timeout)
         # P14: a per-turn timeout that cannot be SIZED (no measured rate, no budget) is not merely
         # imprecise -- it is uninterpretable, and AGENTS.md forbids silently running on a number
         # that is. Refuse rather than falling back to the shared ceiling, unless overridden.
