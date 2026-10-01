@@ -1,9 +1,11 @@
 """M54: bench.agentbench_adapter -- corpus/eval semantics, container lifecycle (docker fully
 mocked via FakeRunner / a fake Popen), dual-submit shim, and per-task run outcomes. No docker, no
 network, no model calls."""
+import functools
 import json
 import os
 import re
+import signal
 import subprocess
 import time
 import uuid
@@ -17,6 +19,33 @@ from bench.tests.conftest import FakeDriver, FakeRunner, complete_result, tool_c
 
 CORPUS = "corpora/agentbench_os_v1.jsonl"
 SCRIPTS_ROOT = "corpora/agentbench_os_v1/scripts"
+
+
+class _TestHang(Exception):
+    pass
+
+
+def _timeout(seconds):
+    """3rd cold review: guards every REAL-bash test against a hang caused by a regression in
+    PersistentShell's OWN Python-side timeout -- this is a backstop so a broken timeout fails the
+    ONE test loudly instead of hanging the whole suite, never a substitute for the real fix.
+    `pytest-timeout` is not installed in .venv-bench; this is a signal.alarm-based guard (Unix
+    only, fine on macOS/Linux CI)."""
+    def _decorator(fn):
+        @functools.wraps(fn)
+        def _wrapped(*a, **kw):
+            def _handler(signum, frame):
+                raise _TestHang(f"{fn.__name__} exceeded its {seconds}s guard -- "
+                               "PersistentShell's own timeout likely regressed")
+            old = signal.signal(signal.SIGALRM, _handler)
+            signal.setitimer(signal.ITIMER_REAL, seconds)
+            try:
+                return fn(*a, **kw)
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.signal(signal.SIGALRM, old)
+        return _wrapped
+    return _decorator
 
 
 # --------------------------------------------------------------------------- corpus / id scheme
@@ -131,8 +160,9 @@ def test_run_check_chain_null_entry_runs_example_and_chains_stdout():
         FakeRunner.Proc(0, "7\n", ""),
         FakeRunner.Proc(0, "", ""),
     ])
-    ok = AB.run_check_chain("c1", [None, ("python", "check")], ("bash", "example"), "7", runner)
+    ok, gold_live = AB.run_check_chain("c1", [None, ("python", "check")], ("bash", "example"), "7", runner)
     assert ok is True
+    assert gold_live == "7\n"   # R5: the null-slot stdout, captured live
     assert len(runner.calls) == 2
     second_cmd = runner.calls[1]["cmd"]
     assert second_cmd[-2:] == ["7", "7\n"]
@@ -140,17 +170,20 @@ def test_run_check_chain_null_entry_runs_example_and_chains_stdout():
 
 def test_run_check_chain_nonzero_exit_fails():
     runner = FakeRunner(default=FakeRunner.Proc(1, "", "boom"))
-    assert AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner) is False
+    ok, gold_live = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False and gold_live is None
 
 
 def test_run_check_chain_timeout_fails():
     runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1)])
-    assert AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1) is False
+    ok, gold_live = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
+    assert ok is False and gold_live is None
 
 
 def test_run_check_chain_null_with_no_example_fails_without_raising():
     runner = FakeRunner()
-    assert AB.run_check_chain("c1", [None], None, "ans", runner) is False
+    ok, gold_live = AB.run_check_chain("c1", [None], None, "ans", runner)
+    assert ok is False and gold_live is None
     assert runner.calls == []
 
 
@@ -214,11 +247,30 @@ def test_prepare_exclusions_two_runs_use_different_placeholders():
     assert AB.ANSWER_PLACEHOLDER_PROBE in seen_placeholders
 
 
-def test_prepare_exclusions_disagreeing_golds_excluded_as_example_reads_answer():
+def test_prepare_exclusions_two_placeholder_runs_are_genuinely_different_R6():
+    """R6(2), mutation-resistant: the previous test's `in` checks pass even if both calls used the
+    SAME placeholder (membership doesn't prove distinctness). Capture the actual two values IN
+    ORDER and assert they differ -- a mutation that made both calls pass "1" must fail this."""
+    seen = []
+
+    def runner(cmd, **kw):
+        if len(cmd) >= 2 and cmd[1] == "exec" and "echo gold" in cmd:
+            seen.append(cmd[-1])
+        return FakeRunner.Proc(0, "x\n", "")
+    AB.prepare_exclusions([_check_task("t1")], SCRIPTS_ROOT, runner)
+    assert len(seen) == 2
+    assert seen[0] != seen[1]
+
+
+def test_answer_placeholder_constants_are_distinct():
+    assert AB.ANSWER_PLACEHOLDER_PRIMARY != AB.ANSWER_PLACEHOLDER_PROBE
+
+
+def test_prepare_exclusions_disagreeing_golds_excluded_as_gold_mismatch():
     runner = _exec_sequenced_runner([(0, "3\n", ""), (0, "4\n", "")])
     golds, exclusions = AB.prepare_exclusions([_check_task("t1")], SCRIPTS_ROOT, runner)
     assert golds == {}
-    assert exclusions == [{"id": "t1", "reason": "example_reads_answer",
+    assert exclusions == [{"id": "t1", "reason": "gold_mismatch",
                            "gold_primary": "3\n", "gold_probe": "4\n"}]
 
 
@@ -254,6 +306,7 @@ def _local_bash_shim(cwd):
     return runner
 
 
+@_timeout(10)
 def test_std_007_84_example_script_genuinely_reads_its_answer_argument(tmp_path):
     """A REAL corpus task (std-007-84): its `example` script is
     `grep "error" system_logs.log | grep " $USER_ID " | wc -l` -- genuinely data-dependent on its
@@ -278,6 +331,7 @@ def test_std_007_84_example_script_genuinely_reads_its_answer_argument(tmp_path)
     assert g1 != g2
 
 
+@_timeout(10)
 def test_std_007_84_with_production_placeholders_is_a_known_miss(tmp_path):
     """HONEST LIMITATION, found by running the REAL script rather than assuming: the production
     placeholders "1"/"2" (N4: "plausible-looking answers") do NOT happen to appear anywhere in
@@ -294,6 +348,7 @@ def test_std_007_84_with_production_placeholders_is_a_known_miss(tmp_path):
     assert golds["std-007-84"].strip() == "0"             # both placeholders agree, wrongly
 
 
+@_timeout(10)
 def test_std_004_47_pure_state_check_requires_only_one_reference_run_no_placeholder_probe():
     """A REAL corpus task with NO gold slot in its check list (Q47's vendored task): every check
     position is a literal checker script, so the live grading chain never runs `example` with the
@@ -373,6 +428,70 @@ def test_validate_exclusions_artifact_refuses_image_drift():
     doc = {"corpus_sha256": "abc", "image_ids": {"default": "old"}, "complete": True}
     reason = AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={"default": "new"})
     assert reason and "image" in reason
+
+
+# --------------------------------------------------------------------------- manual exclusions
+def test_manual_exclusions_path_is_corpus_sibling():
+    p = AB.manual_exclusions_path("corpora/agentbench_os_v1.jsonl")
+    assert str(p) == "corpora/agentbench_os_v1.manual_exclusions.json"
+
+
+def test_load_manual_exclusions_missing_file_returns_empty_dict(tmp_path):
+    assert AB.load_manual_exclusions(tmp_path / "nope.json") == {}
+
+
+def test_load_manual_exclusions_reads_the_real_vendored_file():
+    manual = AB.load_manual_exclusions("corpora/agentbench_os_v1.manual_exclusions.json")
+    assert "std-007-84" in manual
+    assert "placeholder probe" in manual["std-007-84"]
+
+
+def test_prepare_exclusions_manual_entry_excludes_without_any_probing():
+    task = _check_task("std-007-84")
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", "should not be called"))
+    golds, exclusions = AB.prepare_exclusions([task], SCRIPTS_ROOT, runner,
+                                              manual={"std-007-84": "known numeric-id blind spot"})
+    assert exclusions == [{"id": "std-007-84", "reason": "manual",
+                           "note": "known numeric-id blind spot"}]
+    assert golds == {}
+    assert runner.calls == []    # never probed, never even touched docker
+
+
+def test_prepare_exclusions_manual_does_not_affect_other_tasks():
+    tasks = [_check_task("std-007-84"), _match_task("m1")]
+    golds, exclusions = AB.prepare_exclusions(tasks, SCRIPTS_ROOT, FakeRunner(),
+                                              manual={"std-007-84": "x"})
+    assert [e["id"] for e in exclusions] == ["std-007-84"]   # m1 (match) still never examined
+
+
+def test_write_exclusions_artifact_records_manual_exclusions_sha(tmp_path):
+    path = tmp_path / "x.exclusions.json"
+    AB.write_exclusions_artifact(path, corpus_sha256="abc", image_ids={}, golds={}, exclusions=[],
+                                 complete=True, manual_exclusions_sha256="deadbeef")
+    doc = AB.read_exclusions_artifact(path)
+    assert doc["manual_exclusions_sha256"] == "deadbeef"
+
+
+def test_validate_exclusions_artifact_refuses_manual_exclusions_drift():
+    doc = {"corpus_sha256": "abc", "image_ids": {}, "complete": True,
+          "manual_exclusions_sha256": "old"}
+    reason = AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
+                                             manual_exclusions_sha256="new")
+    assert reason and "manual" in reason
+
+
+def test_validate_exclusions_artifact_accepts_matching_manual_exclusions_sha():
+    doc = {"corpus_sha256": "abc", "image_ids": {}, "complete": True,
+          "manual_exclusions_sha256": "same"}
+    assert AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
+                                           manual_exclusions_sha256="same") is None
+
+
+def test_validate_exclusions_artifact_accepts_both_none_when_no_manual_file_either_time():
+    doc = {"corpus_sha256": "abc", "image_ids": {}, "complete": True,
+          "manual_exclusions_sha256": None}
+    assert AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
+                                           manual_exclusions_sha256=None) is None
 
 
 # --------------------------------------------------------------------------- docker primitives
@@ -536,6 +655,7 @@ def _real_shell(tmp_path, banner=None):
 
 
 # --------------------------------------------------------------------------- PersistentShell (real bash)
+@_timeout(10)
 def test_persistent_shell_real_bash_runs_a_command_and_returns_exit_code(tmp_path):
     shell = _real_shell(tmp_path)
     try:
@@ -546,6 +666,7 @@ def test_persistent_shell_real_bash_runs_a_command_and_returns_exit_code(tmp_pat
         shell.close()
 
 
+@_timeout(10)
 def test_persistent_shell_real_bash_eats_login_banner_N8(tmp_path):
     shell = _real_shell(tmp_path, banner="BANNER_NOISE_XYZ")
     try:
@@ -556,6 +677,7 @@ def test_persistent_shell_real_bash_eats_login_banner_N8(tmp_path):
         shell.close()
 
 
+@_timeout(10)
 def test_persistent_shell_real_bash_start_cd_persists_into_later_commands(tmp_path):
     """start=`cd /usr`, then `pwd` -> `/usr` (upstream-faithful: start and bash_action share ONE
     shell session)."""
@@ -568,6 +690,7 @@ def test_persistent_shell_real_bash_start_cd_persists_into_later_commands(tmp_pa
         shell.close()
 
 
+@_timeout(10)
 def test_persistent_shell_real_bash_start_var_persists_into_later_commands(tmp_path):
     shell = _real_shell(tmp_path)
     try:
@@ -578,6 +701,7 @@ def test_persistent_shell_real_bash_start_var_persists_into_later_commands(tmp_p
         shell.close()
 
 
+@_timeout(10)
 def test_persistent_shell_real_bash_printf_no_trailing_newline(tmp_path):
     """N2: the command's own output has NO trailing newline; the sentinel protocol's injected `\\n`
     (from `printf '\\n%s%d\\n' ...`) must be the ONLY newline consumed -- the real output text
@@ -590,6 +714,7 @@ def test_persistent_shell_real_bash_printf_no_trailing_newline(tmp_path):
         shell.close()
 
 
+@_timeout(10)
 def test_persistent_shell_real_bash_cat_file_without_final_newline(tmp_path):
     f = tmp_path / "nofinalnewline.txt"
     f.write_bytes(b"line1")        # deliberately no trailing \n
@@ -601,6 +726,7 @@ def test_persistent_shell_real_bash_cat_file_without_final_newline(tmp_path):
         shell.close()
 
 
+@_timeout(10)
 def test_persistent_shell_real_bash_false_reports_nonzero(tmp_path):
     shell = _real_shell(tmp_path)
     try:
@@ -610,6 +736,7 @@ def test_persistent_shell_real_bash_false_reports_nonzero(tmp_path):
         shell.close()
 
 
+@_timeout(10)
 def test_persistent_shell_real_bash_exit_ends_the_shell_N9(tmp_path):
     """Upstream: `exit` ends the session. bash never reaches the sentinel printf (it terminates on
     the `exit` line itself), so THIS SAME run() call must report shell_died, not hang/time out."""
@@ -621,6 +748,7 @@ def test_persistent_shell_real_bash_exit_ends_the_shell_N9(tmp_path):
         shell.close()
 
 
+@_timeout(10)
 def test_persistent_shell_real_bash_run_after_shell_died_reports_immediately(tmp_path):
     shell = _real_shell(tmp_path)
     try:
@@ -641,6 +769,7 @@ def test_persistent_shell_run_before_start_raises():
         shell.run("pwd")
 
 
+@_timeout(10)
 def test_persistent_shell_close_terminates_a_live_process_N7(tmp_path):
     shell = _real_shell(tmp_path)
     assert shell.proc.poll() is None, "sanity: the real shell process is alive before close()"
@@ -648,6 +777,7 @@ def test_persistent_shell_close_terminates_a_live_process_N7(tmp_path):
     assert shell.proc.poll() is not None, "close() must leave no live process behind"
 
 
+@_timeout(10)
 def test_persistent_shell_without_close_the_process_is_left_running_N7(tmp_path):
     """Demonstrates why `finally: shell.close()` is mandatory: the real process is a resource that
     outlives the Python object if nothing terminates it. (The real cleanup path is exercised,
@@ -705,8 +835,9 @@ def test_persistent_shell_timeout_kills_process_and_reports_timed_out():
     res = shell.run("sleep 999", timeout_s=0.02)
     assert res["timed_out"] is True
     assert proc_holder["proc"].killed is True
-    # best-effort in-container kill was ALSO attempted (N1's "docker exec ... kill -KILL ...")
-    assert any(c[:3] == ["docker", "exec", "c1"] for c in runner_calls)
+    # R7: the best-effort in-container kill is the SIMPLE, bounded form -- pkill -KILL -f, not a
+    # process-group kill via pgrep substitution (unverified semantics on an arbitrary image).
+    assert runner_calls == [["docker", "exec", "c1", "pkill", "-KILL", "-f", "bash --login"]]
 
 
 def test_persistent_shell_exit_code_137_is_treated_as_timed_out():
@@ -740,6 +871,81 @@ def test_persistent_shell_exit_code_137_is_treated_as_timed_out():
     _threading.Thread(target=shell._reader_loop, daemon=True).start()
     res = shell.run("kill -KILL $$", timeout_s=5)
     assert res["exit_code"] == 137 and res["timed_out"] is True
+
+
+def test_persistent_shell_sentinel_tail_split_across_two_reads_parses_137_and_leaks_nothing():
+    """3rd cold review R1/R4: a chunk boundary landing INSIDE the exit-code digits+newline
+    (`...137` | `\\n...`) must not be misread as a shorter code, and nothing from that split must
+    leak into the following run() call's output."""
+    class _SplitProc:
+        def __init__(self):
+            self.stdin = self
+            self.stdout = self
+            self._sentinel = None
+            self._stage = 0   # 0=not written, 1=first half sent, 2=second half sent
+
+        def write(self, s):
+            m = re.search(rb"printf '\\n%s%d\\n' (\S+) \$\?", s)
+            self._sentinel = m.group(1)
+            self._stage = 1
+
+        def flush(self):
+            pass
+
+        def read(self, n):
+            while self._stage == 0:       # the reader thread starts before write() is called
+                time.sleep(0.01)
+            if self._stage == 1:
+                self._stage = 2
+                return b"\n" + self._sentinel + b"13"      # digits split mid-number
+            if self._stage == 2:
+                self._stage = 3
+                return b"7\n"                              # the rest, in a SEPARATE read()
+            while True:
+                time.sleep(0.05)   # next run() call hasn't written yet; just block harmlessly
+
+        def poll(self):
+            return None
+
+    import threading as _threading
+    proc = _SplitProc()
+    shell = AB.PersistentShell("c1", popen=lambda *a, **k: proc)
+    shell.proc = proc
+    _threading.Thread(target=shell._reader_loop, daemon=True).start()
+    res = shell.run("whatever", timeout_s=5)
+    assert res["exit_code"] == 137 and res["output"] == ""
+    assert shell._carry == b""   # nothing leaked past the sentinel+newline
+
+
+@_timeout(15)
+def test_persistent_shell_real_bash_1mb_output_fast_and_correct(tmp_path):
+    """3rd cold review R1: the old O(n^2) `re.search` over the whole buffer measured 20KB->9.4s,
+    50KB->116s, >=100KB effectively hangs. The incremental bytearray.find() scan must handle 1MB
+    in well under 2s."""
+    shell = _real_shell(tmp_path)
+    try:
+        t0 = time.monotonic()
+        res = shell.run("head -c 1048576 /dev/zero | tr '\\0' x", timeout_s=10)
+        elapsed = time.monotonic() - t0
+        assert res["exit_code"] == 0 and res["timed_out"] is False
+        assert len(res["output"]) == 1048576
+        assert elapsed < 2.0, f"1MB took {elapsed:.2f}s -- should be well under 2s"
+    finally:
+        shell.close()
+
+
+@_timeout(15)
+def test_persistent_shell_real_bash_4mb_output_fast_and_correct(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        t0 = time.monotonic()
+        res = shell.run("head -c 4194304 /dev/zero | tr '\\0' x", timeout_s=10)
+        elapsed = time.monotonic() - t0
+        assert res["exit_code"] == 0 and res["timed_out"] is False
+        assert len(res["output"]) == 4194304
+        assert elapsed < 2.0, f"4MB took {elapsed:.2f}s -- should be well under 2s"
+    finally:
+        shell.close()
 
 
 # --------------------------------------------------------------------------- dual-submit driver
@@ -821,6 +1027,7 @@ def test_dualsubmit_driver_decode_tps_falls_back_to_servers_own_value_without_ti
 
 
 # --------------------------------------------------------------------------- build_tools (bash_action)
+@_timeout(10)
 def test_bash_tool_executes_via_persistent_shell_and_wraps_output(tmp_path):
     shell = _real_shell(tmp_path)
     try:
@@ -833,6 +1040,7 @@ def test_bash_tool_executes_via_persistent_shell_and_wraps_output(tmp_path):
         shell.close()
 
 
+@_timeout(10)
 def test_bash_tool_empty_output_uses_upstream_sentence(tmp_path):
     shell = _real_shell(tmp_path)
     try:
@@ -843,6 +1051,7 @@ def test_bash_tool_empty_output_uses_upstream_sentence(tmp_path):
         shell.close()
 
 
+@_timeout(10)
 def test_bash_tool_truncates_at_800_keeping_780(tmp_path):
     shell = _real_shell(tmp_path)
     try:
@@ -871,7 +1080,10 @@ def test_bash_tool_timeout_kills_shell_sets_flag_and_aborts_episode():
     assert flag["hit"] is True
 
 
-def test_bash_tool_shell_died_sets_flag_and_aborts_with_server_error(tmp_path):
+@_timeout(10)
+def test_bash_tool_shell_died_sets_flag_and_aborts_as_scored_fail_R2(tmp_path):
+    """R2: a shell death triggered by the MODEL's own bash_action is a SCORED FAIL
+    (outcome=failed_tests), not an infra failure -- only a death during start() is setup_error."""
     shell = _real_shell(tmp_path)
     try:
         counters, exec_flag, died_flag = {}, {}, {}
@@ -880,7 +1092,7 @@ def test_bash_tool_shell_died_sets_flag_and_aborts_with_server_error(tmp_path):
         bash = {t.name: t for t in tools}["bash_action"]
         with pytest.raises(agent_loop.AbortEpisode) as ei:
             bash.fn({"script": "exit 1"})
-        assert ei.value.outcome == AO.SERVER_ERROR
+        assert ei.value.outcome == AO.FAILED_TESTS
         assert died_flag["hit"] is True
     finally:
         shell.close()
@@ -995,6 +1207,27 @@ def test_run_task_cleans_up_container_AFTER_docker_run_on_init_failure():
     assert rm_after, "no `docker rm` after `docker run` -- cleanup did not run post-creation"
 
 
+@_timeout(10)
+def test_run_task_calls_shell_close_and_the_real_process_has_exited_R6(monkeypatch, tmp_path):
+    """R6(1): spy on PersistentShell.close (must be called exactly once) AND, with a REAL bash
+    process, confirm it has actually exited by the time run_task returns -- a close() that's
+    called but doesn't really terminate the process would pass a pure spy check."""
+    calls = []
+    orig_close = AB.PersistentShell.close
+
+    def spy_close(self):
+        calls.append(self)
+        return orig_close(self)
+    monkeypatch.setattr(AB.PersistentShell, "close", spy_close)
+
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    task = _match_cfg_task()
+    AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert len(calls) == 1
+    assert calls[0].proc.poll() is not None, "the real shell process must have exited"
+
+
 def test_run_task_cleans_up_container_on_keyboard_interrupt_and_reraises():
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
 
@@ -1067,6 +1300,33 @@ def test_run_task_single_tool_call_per_turn_ignores_a_trailing_submit_F5c():
     assert row["outcome"] == AO.SOLVED and row["passed"] is True
 
 
+def test_run_task_captures_gold_live_from_the_check_chain_R5():
+    """R5: the check chain already executes the gold-slot script live at grading time; capture
+    its stdout as `gold_live` rather than trusting the D2-prepare-time `gold_prepare` is still
+    valid."""
+    runner = _exec_sequenced_runner([(0, "3\n", ""), (0, "", "")])   # null slot, then the checker
+    task = {"id": "std-001-0", "group": 1, "labels": [],
+           "evaluation": {"check": [None, {"code": "x"}], "example": {"code": "echo gold"}},
+           "description": "d"}
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "3"})])])
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok(),
+                      gold_prepare="3\n")
+    assert row["gold_live"] == "3\n"
+    assert row["gold_prepare"] == "3\n"
+
+
+def test_run_task_gold_drift_when_prepare_and_live_golds_disagree_R5():
+    runner = _exec_sequenced_runner([(0, "4\n", ""), (0, "", "")])   # environment now answers differently
+    task = {"id": "std-001-0", "group": 1, "labels": [],
+           "evaluation": {"check": [None, {"code": "x"}], "example": {"code": "echo gold"}},
+           "description": "d"}
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "4"})])])
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok(),
+                      gold_prepare="3\n")
+    assert row["gold_prepare"] == "3\n" and row["gold_live"] == "4\n"
+    assert row["gold_prepare"] != row["gold_live"]
+
+
 def test_run_task_solved_and_passing_match_task():
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
     driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
@@ -1129,19 +1389,23 @@ def test_run_task_setup_error_flagged_rows_carry_decode_tps_none_not_crash():
     assert row["setup_error"] is True and row["decode_tps"] is None
 
 
-def test_run_task_shell_died_is_setup_error_style_N9(tmp_path):
-    """Upstream: `exit` ends the session. A model that runs `exit` mid-task must end the episode
-    with a setup_error-style row (environment died, not a graded model failure), using a REAL
-    bash process so the shell genuinely exits rather than us pretending it did."""
+@_timeout(10)
+def test_run_task_model_caused_shell_death_is_a_scored_fail_R2(tmp_path):
+    """R2: a model-caused shell death (bash_action runs `exit`) is a SCORED FAIL --
+    outcome=failed_tests, shell_died=true, setup_error=FALSE, IN the acc denominator -- using a
+    REAL bash process so the shell genuinely exits rather than us pretending it did. Only a death
+    during the `start` script (before any model action) is setup_error; see the sibling test
+    `test_run_task_start_script_shell_death_is_also_setup_error`."""
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
     driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("bash_action", {"script": "exit 0"})])])
     task = _match_cfg_task()
     row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
     assert row["shell_died"] is True
-    assert row["setup_error"] is True
-    assert row["outcome"] == AO.SERVER_ERROR and row["passed"] is False
+    assert row["setup_error"] is False
+    assert row["outcome"] == AO.FAILED_TESTS and row["passed"] is False
 
 
+@_timeout(10)
 def test_run_task_start_script_shell_death_is_also_setup_error(tmp_path):
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
     task = {"id": "t1", "group": 1, "labels": [], "create": {"local": "default"}, "start": "exit 0",
@@ -1150,17 +1414,18 @@ def test_run_task_start_script_shell_death_is_also_setup_error(tmp_path):
     assert row["shell_died"] is True and row["setup_error"] is True
 
 
-def test_run_task_populates_gold_from_the_artifact_AC5():
+def test_run_task_populates_gold_prepare_from_the_artifact_AC5():
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
     driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
     task = _match_cfg_task()
     row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok(),
-                      gold="3\n")
-    assert row["gold"] == "3\n"
+                      gold_prepare="3\n")
+    assert row["gold_prepare"] == "3\n"
+    assert row["gold_live"] is None   # a match task never runs the check chain
 
 
-def test_run_task_gold_defaults_to_none_when_not_provided():
+def test_run_task_gold_prepare_defaults_to_none_when_not_provided():
     runner = FakeRunner(default=FakeRunner.Proc(1, "", "boom"))
     task = _match_cfg_task()
     row = AB.run_task("m", task, SCRIPTS_ROOT, FakeDriver(), {}, runner=runner, popen=_shell_popen_ok())
-    assert row["gold"] is None
+    assert row["gold_prepare"] is None and row["gold_live"] is None

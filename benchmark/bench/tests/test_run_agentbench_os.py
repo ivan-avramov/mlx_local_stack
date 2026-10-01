@@ -78,7 +78,7 @@ def _fake_run_task_factory(seen=None, **overrides):
         seen.append(task["id"])
         row = {"id": task["id"], "group": 1, "labels": [], "image": "default", "passed": True,
               "outcome": "solved", "turns": 1, "submitted_via": "answer", "answer": "yes",
-              "gold": None, "per_turn_completion_tokens": [1], "completion_tokens_total": 1,
+              "gold_prepare": None, "gold_live": None, "per_turn_completion_tokens": [1], "completion_tokens_total": 1,
               "per_turn_finish_reasons": ["stop"], "converged": True, "budget_hits": 0,
               "wall_s": 0.1, "tool_calls": 0, "tool_timeouts": 0, "repeat_calls": 0,
               "exec_timeout": False, "setup_error": False, "decode_tps": 10.0,
@@ -193,6 +193,57 @@ def test_prepare_artifact_is_independent_of_out_path(tmp_path, monkeypatch):
     assert AB.exclusions_artifact_path(corpus).exists()
 
 
+# --------------------------------------------------------------------------- manual exclusions
+def test_prepare_merges_manual_exclusions_into_the_artifact(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    corpus = _write_corpus(tmp_path, [_match_task("m0"), _match_task("m1")])
+    manual_path = AB.manual_exclusions_path(corpus)
+    manual_path.write_text(json.dumps({"m0": "known blind spot"}), encoding="utf-8")
+    rc = R.main(_args(tmp_path, prepare=""))
+    assert rc == 0
+    doc = AB.read_exclusions_artifact(AB.exclusions_artifact_path(corpus))
+    assert doc["exclusions"] == [{"id": "m0", "reason": "manual", "note": "known blind spot"}]
+    assert doc["manual_exclusions_sha256"] == R._sha256_file(manual_path)
+
+
+def test_prepare_with_no_manual_file_records_none_sha(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    rc = R.main(_args(tmp_path, prepare=""))
+    assert rc == 0
+    doc = AB.read_exclusions_artifact(AB.exclusions_artifact_path(corpus))
+    assert doc["manual_exclusions_sha256"] is None
+
+
+def test_generate_refuses_when_manual_exclusions_file_changed_since_prepare(tmp_path, monkeypatch, capsys):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    manual_path = AB.manual_exclusions_path(corpus)
+    manual_path.write_text(json.dumps({"m0": "x"}), encoding="utf-8")
+    rc = R.main(_args(tmp_path, prepare=""))
+    assert rc == 0
+    manual_path.write_text(json.dumps({"m0": "x", "m1": "y"}), encoding="utf-8")   # changed AFTER prepare
+    rc = R.main(_args(tmp_path))
+    assert rc == 2
+    assert "manual" in capsys.readouterr().err.lower()
+
+
+def test_generate_accepts_when_manual_exclusions_file_unchanged_since_prepare(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0"), _match_task("m1")])
+    manual_path = AB.manual_exclusions_path(corpus)
+    manual_path.write_text(json.dumps({"m0": "x"}), encoding="utf-8")
+    rc = R.main(_args(tmp_path, prepare=""))
+    assert rc == 0
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0 and seen == ["m1"]   # m0 excluded via manual, never run
+
+
 # --------------------------------------------------------------------------- generate refuses without/with a stale artifact
 def test_generate_refuses_without_prepare_artifact(tmp_path, monkeypatch, capsys):
     _ready(tmp_path, monkeypatch)
@@ -285,14 +336,14 @@ def test_setup_error_rows_excluded_from_acc_denominator_F1(tmp_path, monkeypatch
         if task["id"] == "m0":
             return {"id": "m0", "group": 1, "labels": [], "image": "default", "passed": False,
                     "outcome": "server_error", "turns": 0, "submitted_via": None, "answer": None,
-                    "gold": None, "per_turn_completion_tokens": [], "completion_tokens_total": 0,
+                    "gold_prepare": None, "gold_live": None, "per_turn_completion_tokens": [], "completion_tokens_total": 0,
                     "per_turn_finish_reasons": [], "converged": None, "budget_hits": 0, "wall_s": 0.1,
                     "tool_calls": 0, "tool_timeouts": 0, "repeat_calls": 0, "exec_timeout": False,
                     "setup_error": True, "decode_tps": None, "per_turn_decode_tps": [],
                     "error": "docker run failed"}
         return {"id": "m1", "group": 1, "labels": [], "image": "default", "passed": True,
                "outcome": "solved", "turns": 1, "submitted_via": "answer", "answer": "yes",
-               "gold": None, "per_turn_completion_tokens": [1], "completion_tokens_total": 1,
+               "gold_prepare": None, "gold_live": None, "per_turn_completion_tokens": [1], "completion_tokens_total": 1,
                "per_turn_finish_reasons": ["stop"], "converged": True, "budget_hits": 0,
                "wall_s": 0.1, "tool_calls": 0, "tool_timeouts": 0, "repeat_calls": 0,
                "exec_timeout": False, "setup_error": False, "decode_tps": 10.0,
@@ -453,7 +504,7 @@ def test_prepare_uses_the_prepare_container_prefix(tmp_path, monkeypatch):
                              "description": "d"}])
     used_prefix = {}
 
-    def fake_prepare(tasks, scripts_root, runner, timeout, prefix):
+    def fake_prepare(tasks, scripts_root, runner, timeout, prefix, manual=None):
         used_prefix["prefix"] = prefix
         return {}, []
     monkeypatch.setattr(AB, "prepare_exclusions", fake_prepare)
@@ -568,12 +619,15 @@ def test_timeout_source_names_only_contributing_fallback_benches(tmp_path, monke
     assert man["runtime"]["timeout_source"] == "fallback:math500"   # NOT "fallback:math500+convergence"
 
 
-def test_deadline_defaults_to_the_multiplier_capped_at_3600(tmp_path, monkeypatch):
+def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeypatch):
+    """R3 (architect ruling, AGENTS.md "the thinking budget is external truncation, never
+    tuned"): there is NO hard cap -- a slow model's deadline can legitimately be very large."""
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
-    # a very slow decode rate -> a large per-turn timeout -> 8x would exceed the 3600s cap
+    # a very slow decode rate -> a large per-turn timeout -> the deadline must scale with it,
+    # uncapped (this would have been clamped to 3600s before R3).
     monkeypatch.setattr(R.generate, "rows_for_rate",
                        lambda model, bench: [{"decode_tps": 0.01}] * 10 if bench == "agentbench_os" else [])
     fake, _ = _fake_run_task_factory()
@@ -581,10 +635,12 @@ def test_deadline_defaults_to_the_multiplier_capped_at_3600(tmp_path, monkeypatc
     rc = R.main(_args(tmp_path))
     assert rc == 0
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
-    assert man["runtime"]["deadline_s"] == R.DEADLINE_CAP_S
+    assert man["runtime"]["deadline_s"] == man["runtime"]["llm_timeout_s"] * R.DEADLINE_MULTIPLIER
+    assert man["runtime"]["deadline_s"] > 3600   # proves there is no cap any more
+    assert not hasattr(R, "DEADLINE_CAP_S")
 
 
-def test_deadline_explicit_flag_can_exceed_the_cap(tmp_path, monkeypatch):
+def test_deadline_explicit_flag_overrides_the_default(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
@@ -624,6 +680,44 @@ def test_summary_counts_exec_timeout_and_shell_died_rows(tmp_path, monkeypatch):
     assert summary["shell_died_count"] == 1
 
 
+def test_summary_counts_gold_drift_rows_R5(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task("m0"), _match_task("m1")]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+
+    def fake_run_task(model, task, scripts_root, driver, params, **kw):
+        base, _ = _fake_run_task_factory()
+        row = base(model, task, scripts_root, driver, params, **kw)
+        if task["id"] == "m0":
+            row["gold_prepare"], row["gold_live"] = "3\n", "4\n"   # drifted
+        else:
+            row["gold_prepare"], row["gold_live"] = "3\n", "3\n"   # agrees
+        return row
+    monkeypatch.setattr(AB, "run_task", fake_run_task)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0
+    summary = json.loads((tmp_path / "rows.summary.json").read_text())
+    assert summary["gold_drift_count"] == 1
+    assert summary["gold_drift_ids"] == ["m0"]
+
+
+def test_summary_gold_drift_ignores_rows_missing_either_gold(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    fake, _ = _fake_run_task_factory()   # gold_prepare/gold_live both None by default
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0
+    summary = json.loads((tmp_path / "rows.summary.json").read_text())
+    assert summary["gold_drift_count"] == 0
+
+
 def test_stale_skipped_marker_is_cleared_after_a_successful_run(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
@@ -656,7 +750,7 @@ def test_prepare_installs_a_sigterm_sweep_handler(tmp_path, monkeypatch):
     assert "handler" in installed
 
 
-def test_generate_populates_gold_onto_every_row_from_the_artifact_AC5(tmp_path, monkeypatch):
+def test_generate_populates_gold_prepare_onto_every_row_from_the_artifact_AC5(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
@@ -668,17 +762,17 @@ def test_generate_populates_gold_onto_every_row_from_the_artifact_AC5(tmp_path, 
     seen_golds = []
 
     def fake_run_task(model, task, scripts_root, driver, params, **kw):
-        seen_golds.append(kw.get("gold"))
+        seen_golds.append(kw.get("gold_prepare"))
         fake, _ = _fake_run_task_factory()
         row = fake(model, task, scripts_root, driver, params, **kw)
-        row["gold"] = kw.get("gold")
+        row["gold_prepare"] = kw.get("gold_prepare")
         return row
     monkeypatch.setattr(AB, "run_task", fake_run_task)
     rc = R.main(_args(tmp_path))
     assert rc == 0
     assert seen_golds == ["3\n"]
     rows = R.read_rows(tmp_path / "rows.jsonl")
-    assert rows[0]["gold"] == "3\n"
+    assert rows[0]["gold_prepare"] == "3\n"
 
 
 # --------------------------------------------------------------------------- C106 exit check
