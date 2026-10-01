@@ -2201,6 +2201,35 @@ def test_run_task_unexpected_grading_exception_preserves_completed_turns_P43a():
     assert len(row["_transcript_turns"]) == 1   # the episode's real turn survives
 
 
+def test_run_task_unexpected_grading_exception_preserves_real_turn_and_token_counters_P53a():
+    """8th cold review round 8 P53(a): an unexpected grading exception must keep the loop's REAL
+    turns/token counters on the row, not just the transcript -- _fail_row's defaults (turns=0,
+    completion_tokens_total=0, ...) must be overridden with the actual values from a MULTI-turn
+    episode."""
+    def boom_match(*a, **k):
+        raise RuntimeError("boom during grading")
+    task = _match_cfg_task()
+    task["evaluation"] = {"match": {"_boom": True}}
+
+    driver = FakeDriver(script=[
+        complete_result(tool_calls=[tool_call("bash_action", {"script": "echo hi"})], completion_tokens=7),
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})], completion_tokens=3),
+    ])
+    orig_evaluate_match = AB.evaluate_match
+    try:
+        AB.evaluate_match = boom_match
+        row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {},
+                          runner=FakeRunner(default=FakeRunner.Proc(0, "", "")), popen=_shell_popen_ok())
+    finally:
+        AB.evaluate_match = orig_evaluate_match
+    assert row["setup_error"] is True
+    assert row["turns"] == 2   # NOT the _fail_row default of 0
+    assert row["completion_tokens_total"] == 10   # NOT 0
+    assert row["per_turn_completion_tokens"] == [7, 3]
+    assert len(row["per_turn_finish_reasons"]) == 2
+    assert row["submitted_via"] == "answer"
+
+
 # --------------------------------------------------------------------------- R2/P49 upstream-fidelity arg extraction
 def test_extract_tool_arg_is_purely_positional_ignores_the_documented_key_P49():
     """8th cold review round 8 P49 (supersedes R2's "prefer the expected key" compromise):
@@ -2234,6 +2263,26 @@ def test_run_task_bash_action_with_wrong_key_name_still_runs_the_script_R2():
     assert row["passed"] is True
     turns = row["_transcript_turns"]
     assert "R2_MARKER_919" in turns[0]["tool_result"]
+
+
+def test_run_task_empty_bash_action_feedback_captured_via_on_feedback_P53b():
+    """8th cold review round 8 P53(b): an empty bash_action call's IndexError (P49) is caught by
+    agent_loop.run_agent's GENERIC tool-exception handler, not by _bash itself -- before
+    on_feedback existed, this turn's transcript tool_result stayed None (a gap _bash's own direct
+    writes couldn't close, since the exception happens before _bash ever gets a result to
+    record). on_feedback now captures it at the one true source."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[
+        complete_result(tool_calls=[tool_call("bash_action", {})]),
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})]),
+    ])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["turns"] == 2   # the empty call did not end the episode
+    assert row["passed"] is True
+    turns = row["_transcript_turns"]
+    assert turns[0]["tool_result"] is not None
+    assert "list index out of range" in turns[0]["tool_result"]
 
 
 def test_run_task_answer_action_with_wrong_key_name_still_submits_the_answer_R2():
@@ -2311,6 +2360,10 @@ def test_run_task_unknown_tool_name_feeds_back_upstream_verbatim_text_P49():
     assert row["turns"] == 2
     assert row["passed"] is True
     assert AB.UNKNOWN_TOOL_TEXT == "Invalid function call. Please call a tool instead"
+    # 8th cold review round 8 P53(b): on_feedback now captures the REAL fed-back text at its one
+    # true source, closing a gap where an unknown-tool turn's tool_result stayed None.
+    turns = row["_transcript_turns"]
+    assert turns[0]["tool_result"] == AB.UNKNOWN_TOOL_TEXT
 
 
 def test_run_task_only_one_container_touched_per_task():

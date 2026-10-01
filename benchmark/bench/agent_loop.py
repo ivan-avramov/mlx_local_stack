@@ -115,7 +115,8 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
               loop_guard: AO.LoopGuard | None = None, clock=time.perf_counter,
               no_tool_call_reprompt: str | None = None,
               single_tool_call_per_turn: bool = False,
-              unknown_tool_text: str | None = None) -> dict:
+              unknown_tool_text: str | None = None,
+              on_feedback=None) -> dict:
     """Run the loop. Returns {final, submitted, turns, transcript, outcome, counters}.
 
     `submitted` is the args dict of the first call to `submit_tool` (or None if never submitted).
@@ -140,6 +141,15 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
         upstream's extraction silently maps any OTHER func_name to action=None rather than
         naming what was wrong. Default `None` preserves the diagnostic text for every
         pre-existing (non-AgentBench) caller.
+      * `on_feedback` (8th cold review round 8 P53(b)) — when set, called as
+        `on_feedback(tool_call_id, text)` at the EXACT point this loop appends a `{"role":
+        "tool", ...}` message (or `on_feedback(None, text)` for the no-tool-call reprompt's user
+        message) -- i.e. the ACTUAL text fed back to the model, captured at its one true source,
+        rather than a caller having to independently RECONSTRUCT what this loop will produce
+        (parse-error text, unknown-tool text, a tool's own result/abort message) and risk it
+        drifting out of lockstep. Exceptions from `on_feedback` itself propagate (a caller's own
+        bug in its callback is not this loop's problem to swallow). Default `None` is a pure
+        no-op for every pre-existing caller.
     """
     guard = loop_guard if loop_guard is not None else AO.LoopGuard()
     by_name = {t.name: t for t in tools}
@@ -168,6 +178,8 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
             if no_tool_call_reprompt is not None:
                 messages.append({"role": "assistant", "content": out.get("content", "")})
                 messages.append({"role": "user", "content": no_tool_call_reprompt})
+                if on_feedback is not None:
+                    on_feedback(None, no_tool_call_reprompt)
                 # cold-review N12: the deadline must be reachable on this path too -- without it,
                 # an episode stuck re-prompting forever only ever bounds on max_turns.
                 if deadline_s is not None and (clock() - t0) >= deadline_s:
@@ -193,6 +205,8 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
                 # name it claims (including submit_tool) -- feed back the parse error (upstream's
                 # own mechanism) and let the episode continue, never silently substitute {}.
                 messages.append({"role": "tool", "tool_call_id": tc.get("id"), "content": parse_error})
+                if on_feedback is not None:
+                    on_feedback(tc.get("id"), parse_error)
                 continue
             if name == submit_tool:
                 submitted = args
@@ -204,6 +218,8 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
                 except AbortEpisode as e:
                     result = e.message or str(e)
                     messages.append({"role": "tool", "tool_call_id": tc.get("id"), "content": str(result)})
+                    if on_feedback is not None:
+                        on_feedback(tc.get("id"), str(result))
                     aborted_episode = e.outcome
                     break
                 except Exception as e:  # noqa: BLE001 — tool failure is fed back, not fatal
@@ -217,6 +233,8 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
                 result = (f"ERROR: unknown tool {name!r}. Available tools: "
                           f"{sorted(list(by_name) + [submit_tool])}")
             messages.append({"role": "tool", "tool_call_id": tc.get("id"), "content": str(result)})
+            if on_feedback is not None:
+                on_feedback(tc.get("id"), str(result))
         if aborted_episode is not None:
             outcome = aborted_episode
             break

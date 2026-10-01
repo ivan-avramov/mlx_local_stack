@@ -188,3 +188,57 @@ def test_unknown_tool_text_when_set_feeds_back_the_exact_text_verbatim_P49():
     tool_msgs = [m for m in driver.calls[1]["messages"] if m.get("role") == "tool"]
     assert tool_msgs[-1]["content"] == "Invalid function call. Please call a tool instead"
     assert out["outcome"] == AO.SOLVED   # the episode continued to a real submit next turn
+
+
+# --------------------------------------------------------------------------- P53(b) on_feedback
+def test_on_feedback_captures_every_feedback_kind_at_its_real_source():
+    """8th cold review round 8 P53(b): on_feedback fires with the EXACT text fed back, for every
+    kind -- parse-error, unknown-tool, a tool's own result, and the no-tool-call reprompt --
+    eliminating the need for a caller to independently reconstruct any of it."""
+    captured = []
+
+    def _on_feedback(tool_call_id, text):
+        captured.append((tool_call_id, text))
+
+    log = []
+    tools = _tools(log)
+    driver = ScriptedDriver([
+        ([], ""),                                                     # no tool call -> reprompt
+        ([{"id": "c1", "type": "function",
+           "function": {"name": "read_file", "arguments": "{not json"}}], ""),   # parse error
+        ([_toolcall("nope", {})], ""),                                # unknown tool
+        ([_toolcall("read_file", {"path": "a.py"})], ""),             # real tool success
+        ([_toolcall("submit", {"patch": "D"})], ""),                  # submit
+    ])
+    out = AL.run_agent(driver, "m", "sys", "t", tools, {}, max_turns=10,
+                       no_tool_call_reprompt="No executable tool calls found. Please call a tool instead",
+                       on_feedback=_on_feedback)
+    assert out["outcome"] == AO.SOLVED
+    assert len(captured) == 5
+    assert captured[0] == (None, "No executable tool calls found. Please call a tool instead")
+    assert captured[1][0] == "c1" and "Expecting" in captured[1][1]   # the JSON decode error text
+    assert "ERROR: unknown tool" in captured[2][1]
+    assert captured[3][1] == "contents of a.py"                      # the tool's own real result
+    assert captured[4][1] == "submitted"
+
+
+def test_on_feedback_abort_episode_captures_the_abort_message():
+    captured = []
+
+    def _boom(a):
+        raise AL.AbortEpisode(AO.FAILED_TESTS, "command timed out")
+    tools = [AL.Tool("boom", "d", {"type": "object", "properties": {}}, _boom)]
+    driver = ScriptedDriver([([_toolcall("boom", {})], "")])
+    out = AL.run_agent(driver, "m", "sys", "t", tools, {}, max_turns=5,
+                       on_feedback=lambda tcid, text: captured.append((tcid, text)))
+    assert out["outcome"] == AO.FAILED_TESTS
+    assert captured == [("x", "command timed out")]
+
+
+def test_on_feedback_default_none_is_a_pure_noop():
+    """Every pre-existing caller (on_feedback not passed at all) must see IDENTICAL behaviour."""
+    tools = _tools([])
+    driver = ScriptedDriver([([_toolcall("read_file", {"path": "a.py"})], ""),
+                             ([_toolcall("submit", {"patch": "D"})], "")])
+    out = AL.run_agent(driver, "m", "sys", "t", tools, {}, max_turns=5)
+    assert out["outcome"] == AO.SOLVED

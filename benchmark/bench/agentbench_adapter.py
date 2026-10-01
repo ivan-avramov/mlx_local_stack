@@ -1537,6 +1537,7 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
     row = None
     wrapped = None   # P43(a): referenced in the final except-all, so a completed episode's
                      # per_turn transcript survives an UNEXPECTED exception during grading too
+    result = None    # P53(a): referenced in the SAME except-all, for turns/token counters
     try:
         try:
             create_container(f"local-os/{cfg['image']}", name, runner)
@@ -1584,12 +1585,26 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
         tools = build_tools(shell, exec_timeout, tool_counters, exec_timeout_flag, shell_died_flag,
                             transcript_turns=wrapped.per_turn)
         task_text = TASK_TEMPLATE.format(description=task.get("description", ""))
+        def _on_feedback(tool_call_id, text):
+            # 8th cold review round 8 P53(b): capture the ACTUAL fed-back text at the point
+            # agent_loop.run_agent appends it, rather than the adapter independently
+            # RECONSTRUCTING what that text will be (parse-error, unknown-tool, abort/timeout
+            # messages) and risking drift from this loop's real behavior. single_tool_call_per_turn
+            # means exactly one call is dispatched per turn, so `wrapped.per_turn[-1]` is always
+            # THIS turn's entry (already appended by DualSubmitDriver.complete() before run_agent
+            # ever sees the turn). This is the single authoritative write for tool_result --
+            # _bash/DualSubmitDriver's own earlier writes (P43a) now simply agree with it, by
+            # construction, rather than needing to independently stay correct.
+            if wrapped.per_turn:
+                wrapped.per_turn[-1]["tool_result"] = text
+
         result = agent_loop.run_agent(
             wrapped, model, SYSTEM_PROMPT, task_text, tools, params, max_turns=max_turns,
             submit_tool=DualSubmitDriver.SUBMIT_TOOL, deadline_s=deadline_s,
             loop_guard=AO.LoopGuard(max_identical=0, max_unknown=0),   # F5(d): the round cap is the bound
             clock=clock, no_tool_call_reprompt=NO_TOOL_CALL_REPROMPT,
-            single_tool_call_per_turn=True, unknown_tool_text=UNKNOWN_TOOL_TEXT)
+            single_tool_call_per_turn=True, unknown_tool_text=UNKNOWN_TOOL_TEXT,
+            on_feedback=_on_feedback)
 
         if result.get("outcome") == AO.SERVER_ERROR and result.get("error"):
             raise TransportFailure(f"task {task['id']}: {result['error']}")
@@ -1656,13 +1671,31 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
     except KeyboardInterrupt:
         raise
     except Exception as e:  # noqa: BLE001 -- infra/setup/evaluate failure; never crash the batch
-        # 7th cold review round 7 P43(a): an UNEXPECTED exception during GRADING (e.g. a bug in
-        # _evaluate, after the agent loop already completed some turns) must not silently reset
-        # an already-executed episode's transcript to empty -- preserve whatever turns the model
-        # actually produced.
+        # 7th cold review round 7 P43(a) + 8th round P53(a): an UNEXPECTED exception during
+        # GRADING (e.g. a bug in _evaluate, after the agent loop already completed some turns)
+        # must not silently reset an already-executed episode back to a zeroed-out row --
+        # preserve the REAL turns/token counters alongside the transcript, using the exact same
+        # derivation the success path uses (`common`, above), guarded for an exception that struck
+        # before `result`/`wrapped` were even assigned.
         extra_turns = wrapped.per_turn if wrapped is not None else []
-        row = _fail_row(base, AO.SERVER_ERROR, t0, clock, error=f"{type(e).__name__}: {e}",
-                        _transcript_turns=extra_turns)
+        counters = (result.get("counters") or {}) if result is not None else {}
+        dtps = [t.get("decode_tps") for t in extra_turns if isinstance(t.get("decode_tps"), (int, float))]
+        extra = {
+            "_transcript_turns": extra_turns,
+            "turns": result.get("turns", len(extra_turns)) if result is not None else len(extra_turns),
+            "submitted_via": wrapped.submitted_via if wrapped is not None else None,
+            "per_turn_completion_tokens": [t.get("completion_tokens") for t in extra_turns],
+            "completion_tokens_total": counters.get("completion_tokens", 0),
+            "per_turn_finish_reasons": [t.get("finish_reason") for t in extra_turns],
+            "tool_calls": counters.get("tool_calls", 0),
+            "tool_timeouts": tool_counters["tool_timeouts"] if wrapped is not None else 0,
+            "repeat_calls": counters.get("repeat_identical_calls", 0),
+            "exec_timeout": exec_timeout_flag["hit"] if wrapped is not None else False,
+            "shell_died": shell_died_flag["hit"] if wrapped is not None else False,
+            "decode_tps": round(statistics.mean(dtps), 2) if dtps else None,
+            "per_turn_decode_tps": [t.get("decode_tps") for t in extra_turns],
+        }
+        row = _fail_row(base, AO.SERVER_ERROR, t0, clock, error=f"{type(e).__name__}: {e}", **extra)
         return row
     finally:
         if shell is not None:
