@@ -2131,3 +2131,69 @@ def test_transcripts_dir_defaults_to_stack_workdir_m54_transcripts_model(tmp_pat
     assert len(matches) == 1, f"expected exactly one run-id subdir under {base}, found {matches}"
     man = json.loads((workdir / "rows.manifest.json").read_text())
     assert man["runtime"]["transcripts_dir"] == str(matches[0].parent)
+
+
+# --------------------------------------------------------------------------- scripts_root migration CLI (17th round)
+# 17th cold review round: `--migrate-exclusions` rewrites an EXISTING corpus's exclusions
+# artifact's `scripts_root` from an absolute path (PII: the operator's home directory) to a
+# repo-root-relative one, touching NOTHING else -- see AB.migrate_exclusions_artifact_scripts_root.
+# No model, no router, no docker; `--model` is not required for this mode.
+def test_migrate_exclusions_cli_rewrites_absolute_to_relative_without_touching_hashes_P17(tmp_path):
+    import bench.agentbench_adapter as AB
+    corpus = _write_corpus(tmp_path, [_match_task("m1")])
+    artifact_path = AB.exclusions_artifact_path(corpus)
+    abs_root = AB.paths.repo_root() / "benchmark" / "corpora" / "agentbench_os_v1" / "scripts"
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": R._sha256_file(corpus),
+          "scripts_sha256": "deadbeef", "image_ids": dict(IMAGE_IDS), "golds": {},
+          "exclusions": [], "disposition": {"m1": "match"}, "complete": True,
+          "manual_exclusions_sha256": None, "scripts_root": str(abs_root),
+          "generated_at": 1111111111}
+    AB.write_exclusions_artifact_raw(artifact_path, doc)
+
+    rc = R.main(["--migrate-exclusions", "--corpus", str(corpus)])
+    assert rc == 0
+
+    migrated = AB.read_exclusions_artifact(artifact_path)
+    assert migrated["scripts_root"] == "benchmark/corpora/agentbench_os_v1/scripts"
+    untouched = {k: v for k, v in doc.items() if k != "scripts_root"}
+    assert {k: v for k, v in migrated.items() if k != "scripts_root"} == untouched
+
+
+def test_migrate_exclusions_cli_is_a_noop_when_already_relative_P17(tmp_path, capsys):
+    import bench.agentbench_adapter as AB
+    corpus = _write_corpus(tmp_path, [_match_task("m1")])
+    artifact_path = AB.exclusions_artifact_path(corpus)
+    doc = {"scripts_root": "benchmark/corpora/agentbench_os_v1/scripts",
+          "corpus_sha256": R._sha256_file(corpus)}
+    AB.write_exclusions_artifact_raw(artifact_path, doc)
+    before = artifact_path.read_text()
+
+    rc = R.main(["--migrate-exclusions", "--corpus", str(corpus)])
+    assert rc == 0
+    assert artifact_path.read_text() == before   # byte-for-byte untouched
+    assert "nothing to do" in capsys.readouterr().out
+
+
+def test_migrate_exclusions_cli_refuses_when_no_artifact_exists_P17(tmp_path, capsys):
+    corpus = _write_corpus(tmp_path, [_match_task("m1")])
+    rc = R.main(["--migrate-exclusions", "--corpus", str(corpus)])
+    assert rc == 2
+    assert "no exclusions artifact" in capsys.readouterr().err
+
+
+def test_migrate_exclusions_cli_does_not_require_model_P17(tmp_path):
+    """The migration mode needs no model, no router, no docker -- confirms --model is not
+    enforced as required when --migrate-exclusions is given."""
+    import bench.agentbench_adapter as AB
+    corpus = _write_corpus(tmp_path, [_match_task("m1")])
+    artifact_path = AB.exclusions_artifact_path(corpus)
+    AB.write_exclusions_artifact_raw(artifact_path, {"scripts_root": "benchmark/corpora"})
+    rc = R.main(["--migrate-exclusions", "--corpus", str(corpus)])
+    assert rc == 0
+
+
+def test_main_still_requires_model_outside_migrate_mode_P17(capsys):
+    with pytest.raises(SystemExit) as ei:
+        R.main(["--corpus", "x.jsonl"])
+    assert ei.value.code == 2
+    assert "--model" in capsys.readouterr().err

@@ -30,6 +30,7 @@ Like `bench.modelnames`, this raises the floor rather than implementing the rule
 """
 from __future__ import annotations
 
+import fnmatch
 import re
 from dataclasses import dataclass
 
@@ -57,9 +58,17 @@ PLACEHOLDER_USERS = frozenset({"remoteuser", "user", "username", "youruser", "me
                                # committed result rows — a dataset directory, not a person.
                                "datasets"})
 
+# A line whose PURPOSE is this check's own pattern name, kept separate from the `why` string a
+# reader sees — used ONLY to selectively suppress the `/home/` pattern (and no other) in the
+# narrow set of files matched by `_GUEST_OS_HOME_EXEMPT_GLOBS` below.
+_HOME_PATH_WHY = "absolute home path with a username (/home/)"
+
 _PATTERNS: tuple[tuple[str, str], ...] = (
-    # An absolute home path. The username is captured so the message can name what leaked.
-    (r"/(?:Users|home)/([A-Za-z0-9_][A-Za-z0-9_.-]*)/", "absolute home path with a username"),
+    # Split from a single `(?:Users|home)` alternation (pre-17th-round) so `/home/` can be
+    # exempted PATH-SCOPED without also exempting `/Users/` in the same files — see
+    # `_GUEST_OS_HOME_EXEMPT_GLOBS`. The username is captured so the message can name what leaked.
+    (r"/Users/([A-Za-z0-9_][A-Za-z0-9_.-]*)/", "absolute home path with a username"),
+    (r"/home/([A-Za-z0-9_][A-Za-z0-9_.-]*)/", _HOME_PATH_WHY),
     # The flattened form uses `-` as the (former) path separator, so the username capture must
     # stop at the next `-` rather than allowing one through, unlike the slash form above.
     (r"-(?:Users|home)-([A-Za-z0-9_.]+)-", "dash-flattened absolute home path with a username"),
@@ -70,6 +79,24 @@ _PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\b[a-z0-9][a-z0-9-]{2,}\.local\b", "mDNS hostname"),
 )
 _COMPILED = tuple((re.compile(p), why) for p, why in _PATTERNS)
+
+# 17th cold review round: AgentBench os-std RESULT/compare artifacts (model answers and tool
+# output from a Linux guest-OS sandbox, THUDM/AgentBench corpus, Apache-2.0) quote the SAME
+# fictional `/home/<name>/` guest accounts as the corpus itself (e.g. `/home/user1/`,
+# `/home/jack/`) — never a path on this or any real host. Unlike `EXEMPT_PATHS` (a WHOLE-FILE
+# exemption, right for the corpus's own one-row-per-line jsonl with no comment syntax), these
+# files are expected to otherwise carry genuine content worth checking — a REAL `/Users/<name>`
+# path leaking into a transcript must still be flagged — so only the `/home/` pattern is
+# suppressed here, by path glob, never the whole file.
+_GUEST_OS_HOME_EXEMPT_GLOBS = (
+    "benchmark/results/*/agentbench_os*.jsonl",
+    "benchmark/results/agentbench_os_compare*.md",
+    "benchmark/results/agentbench_os_compare*.json",
+)
+
+
+def _is_guest_os_home_exempt(path: str) -> bool:
+    return any(fnmatch.fnmatchcase(path, g) for g in _GUEST_OS_HOME_EXEMPT_GLOBS)
 
 
 def is_exempt(path: str) -> bool:
@@ -93,10 +120,13 @@ class Violation:
 def violations(text: str, *, path: str = "<text>", line: int = 0) -> list[Violation]:
     """PII findings in `text`. `line` is the number of its FIRST line (0 for a bare string)."""
     out: list[Violation] = []
+    home_exempt = _is_guest_os_home_exempt(path)
     for offset, raw in enumerate(text.splitlines() or [text]):
         if ALLOW_MARKER in raw:
             continue
         for rx, why in _COMPILED:
+            if home_exempt and why == _HOME_PATH_WHY:
+                continue
             for m in rx.finditer(raw):
                 if m.groups() and m.group(1) in PLACEHOLDER_USERS:
                     continue

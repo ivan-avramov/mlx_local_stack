@@ -1054,6 +1054,105 @@ def test_validate_exclusions_artifact_accepts_both_none_when_no_manual_file_eith
                                            manual_exclusions_sha256=None) is None
 
 
+# --------------------------------------------------------------------------- exclusions artifact scripts_root PII reduction (17th round)
+# 17th cold review round: the exclusions artifact recorded `scripts_root` as the ABSOLUTE path it
+# was invoked with -- machine-specific PII (the operator's home directory) in a file AGENTS.md
+# requires be committed (it fingerprints the vendored scripts). Stored repo-root-relative instead
+# (`bench.paths.repo_root()`); `validate_exclusions_artifact` resolves EITHER form (an old,
+# already-committed absolute path, or a new relative one) to the same absolute Path before
+# comparing, so neither a pre-migration artifact nor a freshly-migrated one spuriously refuses.
+def test_write_exclusions_artifact_stores_scripts_root_repo_relative_P17(tmp_path):
+    abs_root = AB.paths.repo_root() / "benchmark" / "corpora" / "agentbench_os_v1" / "scripts"
+    path = tmp_path / "x.exclusions.json"
+    AB.write_exclusions_artifact(path, corpus_sha256="abc", image_ids={}, golds={}, exclusions=[],
+                                 complete=True, scripts_root=abs_root)
+    doc = AB.read_exclusions_artifact(path)
+    assert doc["scripts_root"] == "benchmark/corpora/agentbench_os_v1/scripts"
+    assert not AB.Path(doc["scripts_root"]).is_absolute()
+
+
+def test_write_exclusions_artifact_scripts_root_outside_repo_falls_back_to_absolute_P17(tmp_path):
+    """Not under the repo root at all (unexpected layout) -- fall back to the absolute path
+    rather than silently producing a wrong relative one."""
+    outside = tmp_path / "elsewhere" / "scripts"
+    path = tmp_path / "x.exclusions.json"
+    AB.write_exclusions_artifact(path, corpus_sha256="abc", image_ids={}, golds={}, exclusions=[],
+                                 complete=True, scripts_root=outside)
+    doc = AB.read_exclusions_artifact(path)
+    assert doc["scripts_root"] == str(outside.resolve())
+
+
+def test_validate_exclusions_artifact_accepts_new_relative_scripts_root_P17():
+    current = AB.paths.repo_root() / "benchmark" / "corpora" / "agentbench_os_v1" / "scripts"
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc", "image_ids": {},
+          "complete": True, "scripts_root": "benchmark/corpora/agentbench_os_v1/scripts"}
+    assert AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
+                                           scripts_root=current) is None
+
+
+def test_validate_exclusions_artifact_accepts_old_absolute_scripts_root_P17():
+    """Backward compat: an artifact written BEFORE the 17th round stored the absolute path --
+    must still validate against the same current (absolute) scripts_root."""
+    current = AB.paths.repo_root() / "benchmark" / "corpora" / "agentbench_os_v1" / "scripts"
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc", "image_ids": {},
+          "complete": True, "scripts_root": str(current)}
+    assert AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
+                                           scripts_root=current) is None
+
+
+def test_validate_exclusions_artifact_refuses_scripts_root_mismatch_P17(tmp_path):
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc", "image_ids": {},
+          "complete": True, "scripts_root": "benchmark/corpora/agentbench_os_v1/scripts"}
+    reason = AB.validate_exclusions_artifact(doc, corpus_sha256="abc", image_ids={},
+                                             scripts_root=tmp_path / "different" / "scripts")
+    assert reason and "scripts_root" in reason
+
+
+def test_resolve_scripts_root_handles_both_absolute_and_relative_forms_P17():
+    expected = (AB.paths.repo_root() / "benchmark" / "corpora").resolve()
+    assert AB.resolve_scripts_root("benchmark/corpora") == expected
+    assert AB.resolve_scripts_root(str(expected)) == expected
+
+
+def test_migrate_exclusions_artifact_scripts_root_rewrites_absolute_to_relative_P17():
+    abs_root = AB.paths.repo_root() / "benchmark" / "corpora" / "agentbench_os_v1" / "scripts"
+    doc = {"rule_version": AB.EXCLUSIONS_RULE_VERSION, "corpus_sha256": "abc",
+          "scripts_sha256": "deadbeef", "image_ids": {"default": "id1"}, "golds": {"t1": "3"},
+          "exclusions": [], "disposition": {"t1": "kept"}, "complete": True,
+          "manual_exclusions_sha256": None, "scripts_root": str(abs_root),
+          "generated_at": 1234567890}
+    migrated, changed = AB.migrate_exclusions_artifact_scripts_root(doc)
+    assert changed is True
+    assert migrated["scripts_root"] == "benchmark/corpora/agentbench_os_v1/scripts"
+    # every OTHER field, INCLUDING every hash field and generated_at, is untouched.
+    untouched = {k: v for k, v in doc.items() if k != "scripts_root"}
+    assert {k: v for k, v in migrated.items() if k != "scripts_root"} == untouched
+
+
+def test_migrate_exclusions_artifact_scripts_root_noop_when_already_relative_P17():
+    doc = {"scripts_root": "benchmark/corpora/agentbench_os_v1/scripts", "corpus_sha256": "abc"}
+    migrated, changed = AB.migrate_exclusions_artifact_scripts_root(doc)
+    assert changed is False
+    assert migrated == doc
+
+
+def test_migrate_exclusions_artifact_scripts_root_noop_when_absent_P17():
+    doc = {"corpus_sha256": "abc"}
+    migrated, changed = AB.migrate_exclusions_artifact_scripts_root(doc)
+    assert changed is False
+    assert migrated == doc
+
+
+def test_write_exclusions_artifact_raw_roundtrip_preserves_every_field_P17(tmp_path):
+    """The migration writer, unlike `write_exclusions_artifact`, must NOT rebuild the doc from
+    named fields or stamp a fresh `generated_at` -- it writes exactly the doc it is given."""
+    path = tmp_path / "x.exclusions.json"
+    doc = {"scripts_root": "benchmark/corpora/agentbench_os_v1/scripts",
+          "generated_at": 1234567890, "scripts_sha256": "deadbeef"}
+    AB.write_exclusions_artifact_raw(path, doc)
+    assert AB.read_exclusions_artifact(path) == doc
+
+
 # --------------------------------------------------------------------------- docker primitives
 def test_docker_exec_bash_builds_exec_bash_c_with_extra_params():
     """11th cold review round 11 P7-residual: the code is now WRAPPED (code + a trailing rc-

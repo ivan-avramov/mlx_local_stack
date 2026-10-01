@@ -728,6 +728,35 @@ def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit,
            f"{timeout_s:.0f}s (DERIVED, timeout_source={source}) -- {reason}", derivation)
 
 
+# --------------------------------------------------------------------------- scripts_root migration (17th round)
+def run_migrate_exclusions(args) -> int:
+    """Rewrites `args.corpus`'s EXISTING exclusions artifact's `scripts_root` from an absolute
+    path to a repo-root-relative one (PII reduction) -- no model call, no container, no docker.
+    See `AB.migrate_exclusions_artifact_scripts_root`: every other field, including every hash
+    field, is left byte-for-byte unchanged."""
+    corpus_path = Path(args.corpus)
+    artifact_path = AB.exclusions_artifact_path(corpus_path)
+    # Same confinement rule as --prepare's own write to this derived path (6th cold review P31).
+    refusal = paths.confine_path(artifact_path, what="the D2 exclusions artifact (sibling of --corpus)")
+    if refusal:
+        print(f"[agentbench_os] REFUSED: {refusal}", file=sys.stderr, flush=True)
+        return 2
+    doc = AB.read_exclusions_artifact(artifact_path)
+    if doc is None:
+        print(f"[agentbench_os] REFUSED: no exclusions artifact at {artifact_path} -- nothing to "
+             "migrate", file=sys.stderr, flush=True)
+        return 2
+    migrated, changed = AB.migrate_exclusions_artifact_scripts_root(doc)
+    if not changed:
+        print(f"[agentbench_os] {artifact_path}: scripts_root already repo-relative or absent "
+             f"({doc.get('scripts_root')!r}) -- nothing to do")
+        return 0
+    AB.write_exclusions_artifact_raw(artifact_path, migrated)
+    print(f"[agentbench_os] migrated {artifact_path}: scripts_root "
+         f"{doc.get('scripts_root')!r} -> {migrated['scripts_root']!r}")
+    return 0
+
+
 # --------------------------------------------------------------------------- prepare (D2, F6/F7/F10)
 def run_prepare(args, out: Path) -> int:
     runner = subprocess.run
@@ -843,7 +872,7 @@ def run_generate(args, out: Path) -> int:
     refusal = AB.validate_exclusions_artifact(
         excl_doc, corpus_sha256=_sha256_file(corpus_path), image_ids=image_ids,
         manual_exclusions_sha256=manual_sha, scripts_sha256=AB.scripts_root_sha256(args.scripts_root),
-        all_task_ids=[t["id"] for t in all_tasks])
+        scripts_root=args.scripts_root, all_task_ids=[t["id"] for t in all_tasks])
     if refusal:
         print(f"[agentbench_os] REFUSED: {artifact_path}: {refusal}", file=sys.stderr, flush=True)
         return 2
@@ -1112,7 +1141,9 @@ def run_generate(args, out: Path) -> int:
 def build_argparser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--model", required=True, help="full registry name (main_models.yaml)")
+    ap.add_argument("--model", default=None,
+                    help="full registry name (main_models.yaml); required unless "
+                         "--migrate-exclusions")
     ap.add_argument("--url", default="http://localhost:8000")
     ap.add_argument("--corpus", default=str(DEFAULT_CORPUS))
     ap.add_argument("--scripts-root", default=str(DEFAULT_SCRIPTS_ROOT))
@@ -1121,6 +1152,12 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--prepare", action="store_true",
                     help="D2 exclusion pass only (AC2); no model calls; writes a CORPUS-level "
                          "artifact beside the corpus jsonl, not under --out")
+    ap.add_argument("--migrate-exclusions", action="store_true",
+                    help="17th cold review round: rewrite this --corpus's EXISTING exclusions "
+                         "artifact's scripts_root to a repo-root-relative path (PII reduction; "
+                         "see AB.migrate_exclusions_artifact_scripts_root) -- touches no hash "
+                         "field, no model call, no container; exits immediately. --model not "
+                         "required with this flag")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--pilot-seed", type=int, default=None,
                     help="seeded random pilot subset over the non-excluded corpus")
@@ -1146,7 +1183,12 @@ def build_argparser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
-    args = build_argparser().parse_args(argv)
+    ap = build_argparser()
+    args = ap.parse_args(argv)
+    if args.migrate_exclusions:
+        return run_migrate_exclusions(args)
+    if not args.model:
+        ap.error("the following arguments are required: --model")
     args.scripts_root = Path(args.scripts_root)
     out = (Path(args.out) if args.out
           else paths.default_results_root() / args.model / f"{BENCH_NAME}.{TUNE}.jsonl")

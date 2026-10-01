@@ -81,6 +81,37 @@ def test_agentbench_os_corpus_guest_paths_are_exempt():
     assert piicheck.diff_violations(d) == []
 
 
+def test_agentbench_os_results_guest_home_paths_are_exempt_P17():
+    """M54 result/compare artifacts quote the SAME guest-OS `/home/<name>/` paths verbatim,
+    inside model answers and tool output -- fictional container accounts, not a real host path.
+    Narrower than the corpus exemption above: ONLY the `/home/` pattern is suppressed in these
+    files; a real `/Users/<name>` path must still be caught (see the next test)."""
+    for path in ("benchmark/results/some-model/agentbench_os.v1.jsonl",
+                 "benchmark/results/agentbench_os_compare_2026-09-29.md",
+                 "benchmark/results/agentbench_os_compare.json"):
+        d = _diff(path, '{"answer": "cd /home/user1/os/linux && ls /home/jack/"}')
+        assert piicheck.diff_violations(d) == [], (path, piicheck.diff_violations(d))
+
+
+def test_agentbench_os_results_real_home_paths_still_flagged_P17():
+    """The SAME files must still catch a REAL `/Users/<name>` path leaking into a transcript --
+    the exemption above is scoped to `/home/` only, never a blanket per-file exemption."""
+    for path in ("benchmark/results/some-model/agentbench_os.v1.jsonl",
+                 "benchmark/results/agentbench_os_compare_2026-09-29.md",
+                 "benchmark/results/agentbench_os_compare.json"):
+        d = _diff(path, '{"answer": "/Users/someone/ws/project"}')
+        found = piicheck.diff_violations(d)
+        assert found, (path, "real /Users path must still be flagged")
+        assert "someone" in str(found[0])
+
+
+def test_agentbench_os_results_home_exemption_does_not_leak_to_other_files_P17():
+    """A file that merely LOOKS similar (wrong directory, wrong stem) gets no exemption -- the
+    glob match is narrow on purpose."""
+    d = _diff("benchmark/results/some-model/not_agentbench.jsonl", 'cd /home/user1/os/linux')
+    assert piicheck.diff_violations(d), "must NOT be exempt outside the narrow glob"
+
+
 def test_the_committed_corpus_is_clean():
     """Regression: run the checker over every tracked file AS COMMITTED (HEAD content, not
     the working tree). It must be silent — otherwise the scrub was incomplete, or the

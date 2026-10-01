@@ -66,6 +66,7 @@ from typing import Callable
 from . import agent_loop
 from . import agent_outcomes as AO
 from . import convergence
+from . import paths
 
 # --------------------------------------------------------------------------- upstream-verbatim
 # configs/tasks/os.yaml `default.parameters.tools` (verbatim) and `round_limit: 8`.
@@ -188,6 +189,27 @@ def exclusions_artifact_path(corpus_path) -> Path:
     return p.parent / f"{stem}.exclusions.json"
 
 
+def _scripts_root_for_storage(scripts_root) -> str:
+    """17th cold review round: store `scripts_root` repo-root-relative in the exclusions artifact
+    (a committed file, AGENTS.md: "No PII in the repo") rather than the absolute path it was
+    invoked with, which leaks the operator's home directory. Falls back to the absolute path when
+    `scripts_root` is not under the repo root at all (unexpected layout -- never silently produce
+    a wrong relative path)."""
+    p = Path(scripts_root).resolve()
+    try:
+        return p.relative_to(paths.repo_root()).as_posix()
+    except ValueError:
+        return str(p)
+
+
+def resolve_scripts_root(stored) -> Path:
+    """Inverse of `_scripts_root_for_storage`: a stored artifact value may be an OLD absolute
+    path (pre-17th-round artifacts, or the outside-repo fallback above) or a NEW repo-root-
+    relative one -- resolve either to the same absolute `Path` for comparison."""
+    p = Path(stored)
+    return p if p.is_absolute() else (paths.repo_root() / p).resolve()
+
+
 def scripts_root_sha256(scripts_root) -> str:
     """5th cold review P10: sha256 over every vendored script file under `scripts_root` (sorted
     relative posix paths + contents) -- an edit to a check/example/init script invalidates the
@@ -226,15 +248,39 @@ def write_exclusions_artifact(path, *, corpus_sha256: str, image_ids: dict, gold
                               disposition: dict | None = None,
                               rule_version: int = EXCLUSIONS_RULE_VERSION) -> dict:
     doc = {"rule_version": rule_version, "corpus_sha256": corpus_sha256, "image_ids": image_ids,
-          "scripts_root": str(scripts_root) if scripts_root is not None else None,
+          "scripts_root": _scripts_root_for_storage(scripts_root) if scripts_root is not None else None,
           "scripts_sha256": scripts_sha256, "golds": golds, "exclusions": exclusions,
           "disposition": disposition or {}, "complete": complete,
           "manual_exclusions_sha256": manual_exclusions_sha256, "generated_at": int(time.time())}
+    write_exclusions_artifact_raw(path, doc)
+    return doc
+
+
+def write_exclusions_artifact_raw(path, doc: dict) -> None:
+    """Atomic raw-doc write. Used by `write_exclusions_artifact` above, and by the `scripts_root`
+    migration (`run_agentbench_os.py --migrate-exclusions`) -- the migration must NOT rebuild the
+    doc from named fields or stamp a fresh `generated_at` the way `write_exclusions_artifact`
+    does; it changes exactly the one field and leaves everything else, including every hash
+    field, byte-for-byte."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(str(path) + ".tmp")
     tmp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
-    return doc
+
+
+def migrate_exclusions_artifact_scripts_root(doc: dict) -> tuple[dict, bool]:
+    """17th cold review round: rewrite an EXISTING exclusions artifact doc's `scripts_root` from
+    an absolute path to a repo-root-relative one. Returns `(migrated_doc, changed)`;
+    `changed=False` (the SAME doc, untouched) when `scripts_root` is absent or already not an
+    absolute path -- a no-op, never rewrites the file. Every other field, INCLUDING every hash
+    field (`corpus_sha256`, `scripts_sha256`, `manual_exclusions_sha256`) and `generated_at`, is
+    copied through completely unchanged -- this is a storage-format fix, never a regeneration."""
+    stored = doc.get("scripts_root")
+    if stored is None or not Path(stored).is_absolute():
+        return doc, False
+    migrated = dict(doc)
+    migrated["scripts_root"] = _scripts_root_for_storage(stored)
+    return migrated, True
 
 
 def read_exclusions_artifact(path):
@@ -247,6 +293,7 @@ def read_exclusions_artifact(path):
 def validate_exclusions_artifact(doc, *, corpus_sha256: str, image_ids: dict,
                                  manual_exclusions_sha256: str | None = None,
                                  scripts_sha256: str | None = None,
+                                 scripts_root=None,
                                  all_task_ids: list | None = None,
                                  rule_version: int = EXCLUSIONS_RULE_VERSION):
     """None if `doc` is usable for a generate run against the CURRENT corpus + images + manual
@@ -267,6 +314,12 @@ def validate_exclusions_artifact(doc, *, corpus_sha256: str, image_ids: dict,
         return "manual exclusions file changed since --prepare -- rerun --prepare"
     if scripts_sha256 is not None and doc.get("scripts_sha256") != scripts_sha256:
         return "vendored scripts changed since --prepare (sha256 mismatch) -- rerun --prepare"
+    # 17th round: compares the RESOLVED path -- the doc may carry either an old absolute
+    # scripts_root (pre-migration) or a new repo-root-relative one; `resolve_scripts_root`
+    # normalizes either form to the same absolute Path before comparing.
+    if (scripts_root is not None and doc.get("scripts_root") is not None
+            and resolve_scripts_root(doc["scripts_root"]) != Path(scripts_root).resolve()):
+        return "vendored scripts_root changed since --prepare -- rerun --prepare"
     if all_task_ids is not None:
         disposition = doc.get("disposition") or {}
         missing = [i for i in all_task_ids if i not in disposition]
