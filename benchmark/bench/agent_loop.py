@@ -126,6 +126,11 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
             if no_tool_call_reprompt is not None:
                 messages.append({"role": "assistant", "content": out.get("content", "")})
                 messages.append({"role": "user", "content": no_tool_call_reprompt})
+                # cold-review N12: the deadline must be reachable on this path too -- without it,
+                # an episode stuck re-prompting forever only ever bounds on max_turns.
+                if deadline_s is not None and (clock() - t0) >= deadline_s:
+                    outcome = AO.DEADLINE
+                    break
                 continue
             final = out.get("content", "")
             outcome = AO.NO_SUBMIT          # ended its turn with prose and never submitted

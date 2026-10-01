@@ -53,6 +53,7 @@ ALLOWED_PROFILES = ("deployed",)
 # cold-start estimate from one measured on this very axis.
 FALLBACK_RATE_BENCHES = ("math500", "convergence")
 DEADLINE_MULTIPLIER = 8.0
+DEADLINE_CAP_S = 3600.0
 
 
 # --------------------------------------------------------------------------- I/O helpers
@@ -90,7 +91,30 @@ def read_rows(out_path: Path) -> list:
     return rows
 
 
+def _truncate_torn_tail(path: Path) -> None:
+    """cold-review N6: if `path` exists and its last byte is not `\\n`, an earlier write was
+    interrupted mid-row. Truncate back to the last complete `\\n` (the torn row is already
+    unrecoverable -- `read_rows` would have discarded it anyway) so the NEXT append starts a clean
+    new line rather than concatenating onto a half-written one."""
+    if not path.exists():
+        return
+    with open(path, "rb+") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        if size == 0:
+            return
+        f.seek(size - 1)
+        if f.read(1) == b"\n":
+            return
+        f.seek(0)
+        content = f.read()
+        last_nl = content.rfind(b"\n")
+        f.seek(0)
+        f.truncate(last_nl + 1 if last_nl >= 0 else 0)
+
+
 def append_row(path: Path, row: dict) -> None:
+    _truncate_torn_tail(path)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(row) + "\n")
         f.flush()
@@ -186,6 +210,10 @@ def summarize(rows: list) -> dict:
         "completion_tokens_max": round(max(toks), 1) if toks else None,
         "fail_ids": [r["id"] for r in graded_rows if r.get("passed") is not True],
         "setup_error_ids": [r["id"] for r in setup_error_rows],
+        # cold-review N12: distinct mechanisms, counted explicitly rather than only buried inside
+        # outcome_counts/setup_error_count.
+        "exec_timeout_count": sum(1 for r in rows if r.get("exec_timeout")),
+        "shell_died_count": sum(1 for r in rows if r.get("shell_died")),
     }
 
 
@@ -219,14 +247,21 @@ def _derive_llm_timeout(model: str, thinking_budget, explicit):
     tps = budget_timeout.floor_decode_tps(own_rows)
     source = BENCH_NAME
     if tps is None:
+        # cold-review N11: name only the benches that actually contributed rows, not every
+        # configured fallback -- "fallback:math500+convergence" would be a lie if convergence had
+        # zero rows for this model and math500 alone produced the estimate.
         fb_rows = []
+        contributors = []
         for b in FALLBACK_RATE_BENCHES:
             try:
-                fb_rows += generate.rows_for_rate(model, b)
+                rows = generate.rows_for_rate(model, b)
             except Exception:  # noqa: BLE001 -- a missing/unreadable bench must not block the run
-                continue
+                rows = []
+            if rows:
+                contributors.append(b)
+            fb_rows += rows
         tps = budget_timeout.floor_decode_tps(fb_rows)
-        source = f"fallback:{'+'.join(FALLBACK_RATE_BENCHES)}" if tps is not None else "none"
+        source = f"fallback:{'+'.join(contributors)}" if tps is not None else "none"
     d = budget_timeout.derive_timeout(thinking_budget, tps)
     return d["timeout_s"], source, f"{d['timeout_s']:.0f}s (DERIVED, timeout_source={source}) -- {d['reason']}"
 
@@ -247,9 +282,15 @@ def run_prepare(args, out: Path) -> int:
 
     tasks = AB.load_corpus(corpus_path)
     image_ids = AB.current_image_ids(runner=runner)
-    golds, exclusions = AB.prepare_exclusions(tasks, args.scripts_root, runner,
-                                              timeout=args.exec_timeout,
-                                              prefix=AB.PREPARE_CONTAINER_PREFIX)
+    # cold-review N12: prepare gets the same SIGTERM discipline as generate -- sweep whatever
+    # prepare-prefixed container is still live rather than leaving it behind.
+    old_handler = signal.signal(signal.SIGTERM, _make_sigterm_sweep_handler(AB.PREPARE_CONTAINER_PREFIX, runner))
+    try:
+        golds, exclusions = AB.prepare_exclusions(tasks, args.scripts_root, runner,
+                                                  timeout=args.exec_timeout,
+                                                  prefix=AB.PREPARE_CONTAINER_PREFIX)
+    finally:
+        signal.signal(signal.SIGTERM, old_handler)
     artifact_path = AB.exclusions_artifact_path(corpus_path)
     AB.write_exclusions_artifact(artifact_path, corpus_sha256=_sha256_file(corpus_path),
                                  image_ids=image_ids, golds=golds, exclusions=exclusions,
@@ -260,12 +301,21 @@ def run_prepare(args, out: Path) -> int:
     return 0
 
 
-# --------------------------------------------------------------------------- SIGTERM (F12)
+# --------------------------------------------------------------------------- SIGTERM (F12/N12)
 def _make_sigterm_handler(current: dict, runner):
     def _handler(signum, frame):
         name = current.get("container")
         if name:
             AB.remove_container(name, runner)
+        sys.exit(143)
+    return _handler
+
+
+def _make_sigterm_sweep_handler(prefix: str, runner):
+    """Prepare mode doesn't track a single in-flight container name the way generate does (the
+    D2 probe creates/removes several in quick succession); sweep the whole prefix instead."""
+    def _handler(signum, frame):
+        AB.sweep_stale_containers(prefix, runner)
         sys.exit(143)
     return _handler
 
@@ -298,6 +348,7 @@ def run_generate(args, out: Path) -> int:
         print(f"[agentbench_os] REFUSED: {artifact_path}: {refusal}", file=sys.stderr, flush=True)
         return 2
     exclusions = excl_doc.get("exclusions") or []
+    golds = excl_doc.get("golds") or {}   # AC5: populated onto every row below
 
     if args.sampling_profile not in ALLOWED_PROFILES and not args.allow_profile:
         print(f"[agentbench_os] REFUSED: --sampling-profile {args.sampling_profile!r} is not "
@@ -336,9 +387,16 @@ def run_generate(args, out: Path) -> int:
     llm_timeout, timeout_source, timeout_msg = _derive_llm_timeout(
         args.model, params.get("thinking_budget"), args.llm_timeout)
     print(f"[agentbench_os] per-turn LLM timeout = {timeout_msg}")
-    deadline_s = args.deadline_s if args.deadline_s else llm_timeout * DEADLINE_MULTIPLIER
-    print(f"[agentbench_os] episode deadline = {deadline_s:.0f}s "
-         f"({'EXPLICIT --deadline-s' if args.deadline_s else f'{DEADLINE_MULTIPLIER:.0f}x per-turn timeout'})")
+    if args.deadline_s:
+        deadline_s = args.deadline_s
+        deadline_reason = "EXPLICIT --deadline-s"
+    else:
+        # cold-review N11: 8x the per-turn timeout stays the default SHAPE, but is also capped at
+        # DEADLINE_CAP_S -- a slow model's per-turn timeout alone could otherwise push the default
+        # deadline well past an hour with no operator having asked for that.
+        deadline_s = min(llm_timeout * DEADLINE_MULTIPLIER, DEADLINE_CAP_S)
+        deadline_reason = f"min({DEADLINE_MULTIPLIER:.0f}x per-turn timeout, {DEADLINE_CAP_S:.0f}s cap)"
+    print(f"[agentbench_os] episode deadline = {deadline_s:.0f}s ({deadline_reason})")
 
     print(f"[agentbench_os] {args.model}: {len(todo)} item(s) to run "
          f"({len(done_ids)} already done, {len(exclusions)} excluded)")
@@ -375,7 +433,8 @@ def run_generate(args, out: Path) -> int:
                               container_prefix=AB.GENERATE_CONTAINER_PREFIX,
                               exec_timeout=args.exec_timeout, llm_timeout=llm_timeout,
                               max_turns=args.round_limit, deadline_s=deadline_s,
-                              context_limit=context_limit, runner=runner)
+                              context_limit=context_limit, gold=golds.get(task["id"]),
+                              runner=runner)
             current["container"] = None
             append_row(out, row)
             print(f"[agentbench_os]   -> passed={row['passed']} outcome={row['outcome']} "
@@ -401,6 +460,11 @@ def run_generate(args, out: Path) -> int:
     summary["router"] = router
     summary["router_exit"] = exit_blk
     summary_path_for(out).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    # cold-review N12: a stale skip marker from an EARLIER degraded attempt at this --out would
+    # otherwise sit next to a now-successful run's rows/summary, misleading a later reader.
+    sp = skipped_path_for(out)
+    if sp.exists():
+        sp.unlink()
     print(f"[agentbench_os] RESULT {args.model}: {summary['passed']}/{summary['graded_n']} pass "
          f"acc={summary['acc']} setup_errors={summary['setup_error_count']}")
     print(f"[agentbench_os] wrote {out}")
@@ -436,8 +500,9 @@ def build_argparser() -> argparse.ArgumentParser:
                          "own rows' measured decode rate (falling back to math500/convergence "
                          "rows when this axis has none yet), never an SDK default")
     ap.add_argument("--deadline-s", type=float, default=None,
-                    help=f"episode wall-clock deadline, seconds. Default: {DEADLINE_MULTIPLIER:.0f}x "
-                         "the per-turn LLM timeout")
+                    help=f"episode wall-clock deadline, seconds. Default: "
+                         f"min({DEADLINE_MULTIPLIER:.0f}x the per-turn LLM timeout, "
+                         f"{DEADLINE_CAP_S:.0f}s) -- pass this flag explicitly to go higher")
     return ap
 
 
