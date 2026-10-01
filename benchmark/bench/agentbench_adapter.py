@@ -765,13 +765,36 @@ class PersistentShell:
                         # bytes after idx were never touched by capping (capping only ever drops a
                         # MIDDLE span strictly before the eventual sentinel position) -- so
                         # total_bytes_in minus that trailing length is the exact TRUE output
-                        # length, and the trailing span's CHARACTER length (it's pure ASCII --
-                        # sentinel + digits + newline, plus any rare non-ASCII "leftover") equals
-                        # its byte length closely enough to trim `decoded_text` by.
+                        # length.
                         raw_output_len = total_bytes_in - (len(raw) - idx)
-                        trailer_len = len(raw) - idx
-                        output = (self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken
-                                 else decoded_text[:max(0, len(decoded_text) - trailer_len)])
+                        # 8th cold review round 8 P51 (MEDIUM): NEVER trim the incrementally
+                        # decoded TEXT by a BYTE-length trailer -- the old code assumed the
+                        # trailer (marker + exit-code digits + newline, plus any unexpected
+                        # "leftover" bytes past the sentinel) was pure ASCII, so its byte length
+                        # equalled its character length closely enough to subtract from
+                        # `len(decoded_text)`. An unexpected multibyte leftover byte sequence
+                        # breaks that assumption (byte length != character length) and corrupts
+                        # the trim, potentially slicing INTO the command's own real output.
+                        #
+                        # Fix: split the raw BYTES at the sentinel first -- `trailer_bytes =
+                        # raw[idx:]` is a COMPLETE, self-contained range (the marker is pure
+                        # ASCII and starts with `\n`, so it can never straddle a multibyte
+                        # sequence; `decode_broken is False` here means the incremental decoder
+                        # consumed the FULL stream, including the trailer, without a pending
+                        # partial sequence, so the trailer necessarily starts at a genuine
+                        # character boundary). Decode ONLY the trailer bytes, fresh, to learn its
+                        # TRUE character length, then trim `decoded_text` (the P28-correct,
+                        # never-capped-mid-character incremental decode of the COMMAND's own
+                        # output) by that many CHARACTERS -- never re-decoding `raw` itself
+                        # (which CAN be capping-corrupted mid-character; P28's whole point).
+                        if decode_broken:
+                            output = self.UPSTREAM_DECODE_ERROR_TEXT
+                        else:
+                            try:
+                                trailer_text = bytes(raw[idx:]).decode("utf-8")
+                                output = decoded_text[:len(decoded_text) - len(trailer_text)]
+                            except UnicodeDecodeError:
+                                output = self.UPSTREAM_DECODE_ERROR_TEXT
                         consumed_end = idx + len(marker) + m.end()
                         leftover = bytes(raw[consumed_end:])
                         if leftover:

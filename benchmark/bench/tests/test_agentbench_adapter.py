@@ -4,6 +4,7 @@ network, no model calls."""
 import functools
 import json
 import os
+import queue
 import re
 import signal
 import subprocess
@@ -858,6 +859,98 @@ def _real_shell(tmp_path, banner=None):
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
     shell.start()
     return shell
+
+
+# ----------------------------------------------------------- PersistentShell (scripted fake proc, P51)
+class _FakeStdin:
+    """Swallows writes -- P51's test cares only about SCRIPTED stdout bytes, never about re-running
+    a real command."""
+    def __init__(self):
+        self.written = bytearray()
+
+    def write(self, data):
+        self.written += data
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class _ScriptedStdout:
+    """`.read()` blocks (polling, cancellable) until the test `.push()`es a chunk -- mirrors a real
+    pipe's blocking read without needing a real subprocess, so the exact byte layout around the
+    sentinel is fully under the test's control."""
+    def __init__(self):
+        self._q: "queue.Queue" = queue.Queue()
+        self._closed = False
+
+    def push(self, chunk: bytes):
+        self._q.put(chunk)
+
+    def read(self, n):
+        while not self._closed:
+            try:
+                return self._q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+        return b""
+
+    def close(self):
+        self._closed = True
+
+
+class _FakeProc:
+    def __init__(self):
+        self.stdin = _FakeStdin()
+        self.stdout = _ScriptedStdout()
+        self.returncode = None
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        self.returncode = 0
+        return 0
+
+    def kill(self):
+        self.returncode = -9
+
+    def terminate(self):
+        self.returncode = -15
+
+
+@_timeout(10)
+def test_persistent_shell_leftover_bytes_past_sentinel_carried_raw_not_decoded_P51(monkeypatch):
+    """8th cold review round 8 P51 (MEDIUM): 'ABCD' + sentinel + an UNEXPECTED multibyte leftover
+    ('€', 3 raw UTF-8 bytes) arriving in the SAME read chunk as the sentinel match must
+    produce output == 'ABCD' and carry the leftover bytes RAW (never decoded, never folded into
+    `output` via a byte-count trim) to the next run() call. The OLD code trimmed `decoded_text` by
+    `len(raw) - idx` (a BYTE count) assuming the trailer was pure ASCII -- a multibyte leftover
+    breaks that assumption and can corrupt real output."""
+    fixed = uuid.UUID(int=0)
+    monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
+    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
+    marker = ("\n" + sentinel).encode("ascii")
+
+    proc = _FakeProc()
+    shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
+                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
+    # the handshake run("true", ...) inside start() -- a clean, empty-output, exit-0 round.
+    proc.stdout.push(marker + b"0\n")
+    shell.start()
+    try:
+        # the real round: "ABCD" + marker + exit 0 + newline + an unexpected leftover '€',
+        # ALL in a single chunk (the exact scenario the byte-count trim got wrong).
+        proc.stdout.push(b"ABCD" + marker + b"0\n" + "€".encode("utf-8"))
+        res = shell.run("printf ABCD", timeout_s=5)
+        assert res["output"] == "ABCD"
+        assert res["exit_code"] == 0
+        assert shell._carry == "€".encode("utf-8")   # carried RAW, never decoded here
+    finally:
+        proc.stdout.push(b"")   # EOF, so the reader thread can terminate cleanly
+        shell.close()
 
 
 # --------------------------------------------------------------------------- PersistentShell (real bash)
