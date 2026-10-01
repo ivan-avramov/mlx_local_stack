@@ -925,54 +925,58 @@ def evaluate_match(answer, match_cfg: dict) -> bool:
 #     (the OLD stderr substring list -- "is not running"/"No such container" -- collides with
 #     ordinary application error text, which has nothing to do with docker). The test this
 #     superseded (formerly at this file's ~line 242) directly asserted the first wrong behavior.
-#   - Minimal fix per the coordinator: run a live HEALTH PROBE (`docker exec <c> true`, 3s) after
-#     ANY nonzero/timeout checker result, REGARDLESS of its own rc or exit code. Health probe OK
-#     -> the checker itself produced a real (if failing) verdict -> `failed_tests`, IN the
-#     denominator. Health probe ALSO fails (nonzero/timeout), OR the ORIGINAL stderr carries an
-#     unambiguous DOCKER-CLI ERROR PREFIX (never ordinary free-form application text) -> infra,
-#     `setup_error` with `infra_evidence` attached.
-_DOCKER_CLI_STDERR_PREFIXES = (
-    "Error response from daemon",
-    "Cannot connect to the Docker daemon",
-    "docker: Error",
-    "OCI runtime",
-)
-
-
-def _docker_stderr_is_cli_prefixed(stderr) -> bool:
-    """P37: ONLY docker's OWN CLI error prefixes -- never generic substrings like "is not
-    running"/"No such container" that an APPLICATION's own stderr can just as easily contain,
-    with nothing to do with docker at all."""
-    s = stderr or ""
-    return any(s.startswith(p) or f"\n{p}" in s for p in _DOCKER_CLI_STDERR_PREFIXES)
-
-
-def _docker_health_check(container: str, runner=subprocess.run, timeout: float = 3.0) -> bool:
-    """P23/addendum C/P37: `docker exec <container> true` -- a cheap, fast probe proving docker
-    (not the checker script) is still responsive. True = healthy. 3s timeout per P37 (a health
-    probe that can't answer in 3s is itself evidence of an unresponsive daemon/container)."""
-    res = docker_exec(container, ("bash", "true"), timeout, runner)
-    return (not res.get("timed_out")) and res.get("exit_code") == 0
+#   - P37's fix ran a live health probe via `docker exec <container> true` -- but that probe
+#     executes INSIDE the container, so a model that broke /bin/true (or bash itself, e.g.
+#     `rm -rf /bin`) made a HEALTHY container look infra-dead, and a model that merely PRINTED
+#     docker-CLI-looking text to its own stderr ("OCI runtime ...") could trip the stderr-prefix
+#     shortcut and get a free setup_error instead of a scored failure.
+#   - 8th cold review round 8 P47 (HIGH): the probe must be DAEMON-level, independent of the
+#     container's own contents -- `docker inspect <container> --format '{{.State.Running}}'` is
+#     answered by the Docker daemon directly, never executed inside the (possibly model-trashed)
+#     container. The stderr-prefix shortcut is REMOVED entirely (a model's own stderr text can
+#     never again short-circuit the classification); the checker's stderr is still RECORDED in
+#     infra_evidence for diagnostics, never used to decide.
+def _docker_inspect_running(container: str, runner=subprocess.run, timeout: float = 3.0) -> dict:
+    """P47: a DAEMON-level health check. Returns {"ok", "running", "stdout", "stderr",
+    "exit_code", "timed_out"}. `ok` is True only when `docker inspect` itself completed (exit 0,
+    no timeout) -- `running` is then True/False by what the daemon reported. `ok` False means the
+    daemon could not even answer (unreachable, inspect error, or timeout); `running` stays None
+    in that case, never a guessed value."""
+    cmd = ["docker", "inspect", container, "--format", "{{.State.Running}}"]
+    try:
+        proc = runner(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "running": None, "stdout": "", "stderr": "", "exit_code": None,
+               "timed_out": True}
+    stdout = (proc.stdout or "").strip()
+    stderr = proc.stderr or ""
+    if proc.returncode != 0:
+        return {"ok": False, "running": None, "stdout": stdout, "stderr": stderr,
+               "exit_code": proc.returncode, "timed_out": False}
+    return {"ok": True, "running": stdout == "true", "stdout": stdout, "stderr": stderr,
+           "exit_code": proc.returncode, "timed_out": False}
 
 
 def _classify_check_result(container: str, res: dict, runner) -> dict | None:
-    """P37: the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout checker result. Returns
-    `None` (a legitimate model/checker failure, stays `failed_tests`) or an `infra_evidence` dict
-    (`{"message", "exit_code", "stderr", "timed_out", "health_probe_ok"}`)."""
-    if _docker_stderr_is_cli_prefixed(res.get("stderr")):
-        return {"message": f"docker CLI error prefix in stderr (exit={res.get('exit_code')}, "
-                          f"timed_out={res.get('timed_out')}): {(res.get('stderr') or '')[:200]}",
-               "exit_code": res.get("exit_code"), "stderr": (res.get("stderr") or "")[:200],
-               "timed_out": bool(res.get("timed_out")), "health_probe_ok": None}
-    healthy = _docker_health_check(container, runner)
-    if healthy:
-        # the checker ran to completion (or to ITS OWN timeout) under a PROVEN-responsive
-        # docker/container -- whatever it reported is the model's own doing.
+    """P47: the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout checker result, now entirely
+    DAEMON-level (see `_docker_inspect_running`). Daemon reachable AND container Running -> the
+    checker's own result is the model's doing (covers BOTH a model that broke its own `/bin/true`
+    and one that printed docker-CLI-looking text into its own stderr) -> `None` (stays
+    failed_tests), regardless of the checker's exit code or stderr content. Daemon unreachable,
+    inspect itself erroring, or the container not Running -> an `infra_evidence` dict, with the
+    INSPECT result as the evidence (the checker's own stderr/exit_code are still recorded, purely
+    for diagnostics, never to decide)."""
+    inspect = _docker_inspect_running(container, runner)
+    if inspect["ok"] and inspect["running"]:
         return None
-    return {"message": f"docker health probe failed after checker result (exit={res.get('exit_code')}, "
-                      f"timed_out={res.get('timed_out')}): {(res.get('stderr') or '')[:200]}",
+    return {"message": f"docker inspect did not confirm a live, running container "
+                      f"(ok={inspect['ok']}, running={inspect['running']}, "
+                      f"inspect_exit_code={inspect['exit_code']}, "
+                      f"inspect_timed_out={inspect['timed_out']}): "
+                      f"{(inspect['stderr'] or inspect['stdout'] or '')[:200]}",
            "exit_code": res.get("exit_code"), "stderr": (res.get("stderr") or "")[:200],
-           "timed_out": bool(res.get("timed_out")), "health_probe_ok": False}
+           "timed_out": bool(res.get("timed_out")),
+           "health_probe_ok": bool(inspect["ok"] and inspect["running"]), "inspect": inspect}
 
 
 def run_check_chain(container: str, check_list: list, example, answer, runner=subprocess.run,

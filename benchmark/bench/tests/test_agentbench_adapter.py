@@ -170,20 +170,21 @@ def test_run_check_chain_null_entry_runs_example_and_chains_stdout():
 
 
 def test_run_check_chain_nonzero_exit_fails():
-    """7th cold review round 7 P37: ANY nonzero exit now triggers a live health probe -- a
-    HEALTHY docker/container proves the checker's own verdict is real, so this stays
-    failed_tests."""
-    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "boom"), FakeRunner.Proc(0, "", "")])
+    """8th cold review round 8 P47: ANY nonzero exit now triggers a live DAEMON-level
+    `docker inspect` health probe -- a RUNNING container proves the checker's own verdict is
+    real, so this stays failed_tests."""
+    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "boom"), FakeRunner.Proc(0, "true\n", "")])
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and gold_live is None and infra_error is None
 
 
 def test_run_check_chain_timeout_with_unhealthy_docker_is_infra_error():
-    """6th cold review round 6, addendum C refinement of P9(a): a check-script TIMEOUT is infra
-    ONLY when a health check (`docker exec <c> true`) run immediately afterward ALSO fails/times
-    out -- proving docker itself, not just the checker script, is unresponsive."""
+    """6th cold review round 6, addendum C refinement of P9(a), re-grounded on P47's
+    `docker inspect` probe: a check-script TIMEOUT is infra ONLY when the daemon-level health
+    probe run immediately afterward ALSO fails/times out -- proving docker itself, not just the
+    checker script, is unresponsive."""
     runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1),
-                                 subprocess.TimeoutExpired(cmd="true", timeout=10)])
+                                 subprocess.TimeoutExpired(cmd="docker inspect", timeout=3)])
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
     assert ok is False and gold_live is None and infra_error is not None
     assert infra_error["timed_out"] is True
@@ -191,10 +192,10 @@ def test_run_check_chain_timeout_with_unhealthy_docker_is_infra_error():
 
 def test_run_check_chain_timeout_with_healthy_docker_is_failed_tests_addendum_C():
     """Addendum C: std-005-0/1/2 run the MODEL's OWN installed binaries, which can hang -- that is
-    a real `failed_tests` (IN the denominator), not an infra failure, when docker itself answers
-    the health check immediately right after."""
+    a real `failed_tests` (IN the denominator), not an infra failure, when the daemon confirms the
+    container is still Running immediately after."""
     runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1),
-                                 FakeRunner.Proc(0, "", "")])   # health check succeeds
+                                 FakeRunner.Proc(0, "true\n", "")])   # inspect: Running
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
     assert ok is False and gold_live is None and infra_error is None
 
@@ -215,88 +216,74 @@ def test_run_check_chain_none_answer_becomes_the_literal_string_None_cold_review
     assert runner.last_cmd[-1] == "None"
 
 
-# --------------------------------------------------------------------------- P9(a) transport vs checker
-def test_run_check_chain_docker_daemon_unreachable_is_infra_error_not_failed_tests():
-    runner = FakeRunner(default=FakeRunner.Proc(125, "", "Cannot connect to the Docker daemon at..."))
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
-    assert ok is False
-    assert infra_error is not None and "docker CLI error prefix" in infra_error["message"]
-    assert infra_error["exit_code"] == 125
-
-
-# --------------------------------------------------------------------------- P37 health-probe matrix
-# 7th cold review round 7 P37 (HIGH), reproduced end-to-end against the OLD {125,126,127}-band
-# rule: exit 1 + "container ... is not running" in stderr still scored `failed_tests` (the band
-# never even looked at exit 1); exit 127 + an APPLICATION's own "application is not running"
-# stderr text was wrongly EXCLUDED as infra (broad substring matching collided with ordinary
-# application error text that has nothing to do with docker). The coordinator's minimal fix:
-# classify EVERY nonzero/timeout checker result by a LIVE health probe
-# (`docker exec <c> true`, 3s), regardless of the checker's own exit code -- never an exit-code
-# band -- short-circuited only by an UNAMBIGUOUS docker-CLI stderr prefix.
-def test_run_check_chain_P37_case1_nonzero_exit_no_cli_prefix_healthy_docker_is_failed_tests():
-    """Case 1: nonzero exit, stderr has no docker-CLI prefix, health probe OK -> failed_tests."""
-    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "container abc is not running"),
-                                 FakeRunner.Proc(0, "", "")])
+# --------------------------------------------------------------------------- P47 daemon-level health-probe matrix
+# 8th cold review round 8 P47 (HIGH), superseding P37's `docker exec <c> true` design entirely:
+# that probe ran INSIDE the container, so a model that deleted /bin/true (or bash itself, e.g.
+# `rm -rf /bin`) made a container that was still genuinely Running look infra-dead; and the P37
+# stderr-prefix shortcut meant a model that merely PRINTED docker-CLI-looking text into its own
+# stderr (e.g. "OCI runtime ...") could short-circuit straight to a free setup_error instead of a
+# scored failure. The fix is DAEMON-level: `docker inspect <c> --format '{{.State.Running}}'`,
+# answered by the daemon directly, independent of anything inside the container. The stderr-prefix
+# shortcut is REMOVED -- docker-CLI-looking stderr text is still RECORDED in infra_evidence for
+# diagnostics, but never again used to decide the classification on its own.
+def test_run_check_chain_P47_case_a_healthy_app_prints_docker_like_text_is_still_failed_tests():
+    """(a) Daemon reachable, container Running -- even though the checker's OWN stderr happens to
+    read like a docker-CLI error ("OCI runtime ...") -- must NOT short-circuit to infra; it is the
+    model's/checker's own failure."""
+    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "OCI runtime exec failed: my own app broke"),
+                                 FakeRunner.Proc(0, "true\n", "")])   # inspect: Running
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is None
 
 
-def test_run_check_chain_P37_case2_docker_cli_stderr_prefix_is_infra_no_probe_needed():
-    """Case 2: stderr carries an UNAMBIGUOUS docker-CLI error prefix -> setup_error/infra_evidence
-    immediately, without even needing to run the health probe (the evidence is already explicit)."""
-    runner = FakeRunner(default=FakeRunner.Proc(1, "", "should-not-be-called"))
-
-    def fail_if_probed(cmd, **kw):
-        raise AssertionError("health probe must not run when stderr is already CLI-prefixed")
-    runner_seen = []
-
-    def wrapped(cmd, **kw):
-        runner_seen.append(cmd)
-        if len(runner_seen) > 1:
-            fail_if_probed(cmd, **kw)
-        return FakeRunner.Proc(1, "", "Error response from daemon: container abc is not running")
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", wrapped)
-    assert ok is False and infra_error is not None
-    assert infra_error["exit_code"] == 1
-    assert len(runner_seen) == 1   # proves the probe call never happened
+def test_run_check_chain_P47_case_b_model_deleted_bin_true_inspect_still_confirms_running():
+    """(b) The model ran `rm -rf /bin` (or similar) inside the container -- a P37-era
+    `docker exec <c> true` probe would have failed (no /bin/true left to run), WRONGLY reporting
+    infra. The daemon-level inspect does not care what the model did to the container's
+    filesystem -- Running is Running -- so this stays failed_tests."""
+    runner = FakeRunner(results=[FakeRunner.Proc(127, "", "bash: true: No such file or directory"),
+                                 FakeRunner.Proc(0, "true\n", "")])   # inspect: still Running
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False and infra_error is None
 
 
-def test_run_check_chain_P37_case3_nonzero_exit_no_cli_prefix_unhealthy_docker_is_infra():
-    """Case 3: nonzero exit, stderr has no docker-CLI prefix, health probe ITSELF fails ->
-    setup_error/infra_evidence -- proving docker (not the checker) was the real failure."""
-    runner = FakeRunner(results=[FakeRunner.Proc(127, "", "application is not running"),
-                                 FakeRunner.Proc(1, "", "docker daemon unresponsive")])
+def test_run_check_chain_P47_case_c_container_exited_is_infra():
+    """(c) `docker inspect` answers successfully but reports the container is NOT Running
+    (exited) -> setup_error/infra_evidence."""
+    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "some checker error"),
+                                 FakeRunner.Proc(0, "false\n", "")])   # inspect: exited
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is not None
-    assert infra_error["exit_code"] == 127
     assert infra_error["health_probe_ok"] is False
+    assert infra_error["inspect"]["running"] is False
 
 
-def test_run_check_chain_P37_case4_timeout_healthy_docker_is_failed_tests():
-    """Case 4: checker TIMEOUT, health probe OK -> failed_tests (the model's own program hung,
-    e.g. std-005-0/1/2 running the model's own binaries -- addendum C)."""
-    runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1),
-                                 FakeRunner.Proc(0, "", "")])
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
-    assert ok is False and infra_error is None
+def test_run_check_chain_P47_case_d_daemon_down_is_infra():
+    """(d) `docker inspect` itself cannot even complete (daemon unreachable) -> setup_error/
+    infra_evidence -- the docker-CLI stderr is recorded as evidence, never used to decide on its
+    own (the shortcut is gone; this case reaches the same verdict via the ACTUAL probe failing)."""
+    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "some checker error"),
+                                 FakeRunner.Proc(125, "", "Cannot connect to the Docker daemon at...")])
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False and infra_error is not None
+    assert infra_error["health_probe_ok"] is False
+    assert infra_error["inspect"]["ok"] is False
+    assert "Cannot connect to the Docker daemon" in infra_error["message"]
 
 
-def test_docker_stderr_is_cli_prefixed_rejects_generic_application_text():
-    """Unit-level proof: broad substrings like 'is not running'/'No such container' must NOT
-    trigger infra classification on their own -- only docker's OWN CLI error prefixes do."""
-    assert AB._docker_stderr_is_cli_prefixed("container abc is not running") is False
-    assert AB._docker_stderr_is_cli_prefixed("No such container: abc") is False
-    assert AB._docker_stderr_is_cli_prefixed("Error response from daemon: x") is True
-    assert AB._docker_stderr_is_cli_prefixed("Cannot connect to the Docker daemon at...") is True
-    assert AB._docker_stderr_is_cli_prefixed("docker: Error response from daemon") is True
-    assert AB._docker_stderr_is_cli_prefixed("OCI runtime exec failed") is True
+def test_run_check_chain_P47_daemon_itself_times_out_is_infra():
+    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "some checker error"),
+                                 subprocess.TimeoutExpired(cmd="docker inspect", timeout=3)])
+    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False and infra_error is not None
+    assert infra_error["inspect"]["timed_out"] is True
 
 
 def test_run_check_chain_legitimate_checker_failure_has_no_infra_error():
     """A checker script failing on its OWN merits (not a docker/transport problem) must NOT be
     mistaken for an infra error -- P9(a) distinguishes the MECHANISM, not just "nonzero"."""
     runner = FakeRunner(results=[FakeRunner.Proc(1, "", "assertion failed: file missing"),
-                                 FakeRunner.Proc(0, "", "")])
+                                 FakeRunner.Proc(0, "true\n", "")])
     ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is None
 
