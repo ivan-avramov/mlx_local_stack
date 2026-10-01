@@ -475,7 +475,14 @@ def _make_sigterm_handler(current: dict, runner):
     def _handler(signum, frame):
         name = current.get("container")
         if name:
-            AB.remove_container(name, runner)
+            # P16: a SIGTERM teardown reports an unverified removal too -- we're about to exit
+            # regardless, but the next operator to look at this box needs to know whether a
+            # container was left behind.
+            verified = AB.remove_container(name, runner, verify=True)
+            if not verified:
+                print(f"[agentbench_os] WARNING: container {name} removal UNVERIFIED on SIGTERM "
+                     "teardown -- check `docker ps -a` before starting another run",
+                     file=sys.stderr, flush=True)
         sys.exit(143)
     return _handler
 

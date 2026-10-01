@@ -17,6 +17,16 @@ BASE = os.environ.get("MLX_SERVE_BASE", "http://localhost:8000")
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
+class MalformedResponseError(RuntimeError):
+    """5th cold review P18: an HTTP 200 whose body is an error envelope or has no usable
+    `choices[0].message` must never silently produce an EMPTY completion (the old
+    `(r.get("choices") or [{}])[0].get("message", {})` chain defaults all the way down to
+    `content=""`/`tool_calls=[]` with no signal anything went wrong). Raise instead -- callers
+    that already treat a `driver.complete` exception as a transport-class failure (escalate, never
+    grade; see `bench.agent_loop.run_agent`'s broad except around the complete() call) pick this up
+    for free."""
+
+
 def _post(path: str, payload: dict, timeout: float = 3600) -> dict:
     req = urllib.request.Request(
         BASE + path, data=json.dumps(payload).encode(),
@@ -56,9 +66,21 @@ def probe(model: str, messages: list, params: dict, timeout: float = 3600, tools
     t0 = time.perf_counter()
     r = _post("/v1/chat/completions", body, timeout=timeout)
     wall = time.perf_counter() - t0
+    if not isinstance(r, dict):
+        raise MalformedResponseError(f"{model}: HTTP 200 body is not a JSON object "
+                                     f"(type={type(r).__name__})")
+    if r.get("error"):
+        raise MalformedResponseError(f"{model}: HTTP 200 body is an error envelope: {r['error']!r}")
+    choices = r.get("choices")
+    if not choices or not isinstance(choices, list):
+        raise MalformedResponseError(f"{model}: HTTP 200 body has no `choices` "
+                                     f"(keys={sorted(r.keys())})")
+    if choices[0].get("message") is None:
+        raise MalformedResponseError(f"{model}: choices[0] has no `message` key "
+                                     f"(keys={sorted(choices[0].keys())})")
     tm = r.get("timings") or {}
     us = r.get("usage") or {}
-    msg = (r.get("choices") or [{}])[0].get("message", {})
+    msg = choices[0]["message"]
     return {
         "content": msg.get("content") or "",
         "reasoning": msg.get("reasoning") or "",

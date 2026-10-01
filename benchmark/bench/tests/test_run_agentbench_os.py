@@ -723,13 +723,30 @@ def test_sigterm_handler_removes_the_live_container_and_exits_143():
     monkeypatch_runner = object()
     orig_remove = AB.remove_container
     try:
-        AB.remove_container = lambda name, runner: calls.append((name, runner))
+        def _fake(name, runner, verify=False):
+            calls.append((name, runner, verify))
+            return True
+        AB.remove_container = _fake
         current = {"container": "agentbench-os-run-t1"}
         handler = R._make_sigterm_handler(current, monkeypatch_runner)
         with pytest.raises(SystemExit) as ei:
             handler(signal.SIGTERM, None)
         assert ei.value.code == 143
-        assert calls == [("agentbench-os-run-t1", monkeypatch_runner)]
+        assert calls == [("agentbench-os-run-t1", monkeypatch_runner, True)]
+    finally:
+        AB.remove_container = orig_remove
+
+
+def test_sigterm_handler_warns_on_unverified_removal_P16(capsys):
+    import bench.agentbench_adapter as AB
+    orig_remove = AB.remove_container
+    try:
+        AB.remove_container = lambda name, runner, verify=False: False
+        current = {"container": "agentbench-os-run-t1"}
+        handler = R._make_sigterm_handler(current, object())
+        with pytest.raises(SystemExit):
+            handler(signal.SIGTERM, None)
+        assert "UNVERIFIED" in capsys.readouterr().err
     finally:
         AB.remove_container = orig_remove
 
@@ -739,7 +756,7 @@ def test_sigterm_handler_noop_when_no_container_live():
     calls = []
     orig_remove = AB.remove_container
     try:
-        AB.remove_container = lambda name, runner: calls.append(name)
+        AB.remove_container = lambda name, runner, verify=False: calls.append(name)
         handler = R._make_sigterm_handler({"container": None}, object())
         with pytest.raises(SystemExit) as ei:
             handler(signal.SIGTERM, None)
