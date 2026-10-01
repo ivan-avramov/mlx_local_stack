@@ -1651,10 +1651,22 @@ def test_evaluate_convergence_reports_per_turn_resolved_budget():
 
 
 def test_evaluate_convergence_bad_finish_reason_is_tagged():
-    per_turn = [{"completion_tokens": 5, "finish_reason": "length", "prompt_tokens": 1}]
+    per_turn = [{"completion_tokens": 5, "finish_reason": "content_filter", "prompt_tokens": 1}]
     out = AB.evaluate_convergence(per_turn, thinking_budget=100, context_limit=None, max_tokens=None)
     assert out["converged"] is False
     assert "bad_finish_reason" in out["nonconv_kinds"]
+
+
+def test_evaluate_convergence_length_finish_reason_is_budget_hit_not_bad_finish_P36():
+    """7th cold review round 7 P36: finish_reason=="length" (a max_tokens hit) is itself a
+    budget/length exhaustion event -- classified as `budget_hit`, never the generic
+    `bad_finish_reason` bucket, even when this turn's own completion_tokens stayed under the
+    thinking_budget (a SMALLER max_tokens cap can be hit first)."""
+    per_turn = [{"completion_tokens": 5, "finish_reason": "length", "prompt_tokens": 1}]
+    out = AB.evaluate_convergence(per_turn, thinking_budget=100, context_limit=None, max_tokens=None)
+    assert out["converged"] is False
+    assert "budget_hit" in out["nonconv_kinds"]
+    assert "bad_finish_reason" not in out["nonconv_kinds"]
 
 
 def test_evaluate_convergence_uses_resolved_budget_per_turn():

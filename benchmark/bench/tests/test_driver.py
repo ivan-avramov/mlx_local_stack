@@ -130,14 +130,62 @@ def test_probe_raises_on_missing_finish_reason_P24(monkeypatch):
     srv.shutdown()
 
 
-def test_probe_raises_on_empty_message_neither_content_nor_tool_calls_P24(monkeypatch):
-    """P24 reproduction: `{"choices":[{"message":{}}]}` used to produce an eight-turn, scored
-    `no_submit` row end-to-end -- an assistant message with NEITHER content nor tool_calls is a
-    serving anomaly, not a legitimate empty turn."""
+def test_probe_accepts_empty_message_with_valid_finish_reason_and_usage_P36(monkeypatch):
+    """7th cold review round 7 P36 (HIGH, supersedes the round-6 P24 ruling): the round-6 check
+    was a REGRESSION -- `{"choices":[{"message":{}, "finish_reason": "stop"}]}` with valid usage
+    is a VALID model outcome (immediate EOS), not a serving anomaly. The client boundary validates
+    STRUCTURE/TELEMETRY TYPES only; classifying an empty completion is the agent loop's job."""
     srv = _server_returning({"choices": [{"message": {}, "finish_reason": "stop"}],
-                             "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+                             "usage": {"prompt_tokens": 1, "completion_tokens": 0}})
     client = _client_against(srv, monkeypatch)
-    with pytest.raises(client.MalformedResponseError, match="neither content nor tool_calls"):
+    out = client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
+    srv.shutdown()
+    assert out["content"] == "" and out["tool_calls"] == []
+    assert out["finish_reason"] == "stop"
+    assert out["completion_tokens"] == 0
+
+
+def test_probe_accepts_length_finish_with_empty_content_and_reasoning_P36(monkeypatch):
+    """P36: a `finish_reason=="length"` (max_tokens/budget hit) with empty `content` but non-empty
+    `reasoning` and valid usage is a legitimate budget-hit outcome, not malformed."""
+    srv = _server_returning({"choices": [{"message": {"reasoning": "thinking..."},
+                                         "finish_reason": "length"}],
+                             "usage": {"prompt_tokens": 10, "completion_tokens": 500}})
+    client = _client_against(srv, monkeypatch)
+    out = client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
+    srv.shutdown()
+    assert out["finish_reason"] == "length"
+    assert out["content"] == "" and out["reasoning"] == "thinking..."
+    assert out["completion_tokens"] == 500
+
+
+def test_probe_raises_on_non_integer_completion_tokens_P36(monkeypatch):
+    """P36 reproduction: completion_tokens="bad" (wrong TYPE, not merely absent) must still
+    escalate -- type validation, not just presence."""
+    srv = _server_returning({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                             "usage": {"prompt_tokens": 1, "completion_tokens": "bad"}})
+    client = _client_against(srv, monkeypatch)
+    with pytest.raises(client.MalformedResponseError, match="non-negative"):
+        client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
+    srv.shutdown()
+
+
+def test_probe_raises_on_negative_completion_tokens_P36(monkeypatch):
+    srv = _server_returning({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                             "usage": {"prompt_tokens": 1, "completion_tokens": -5}})
+    client = _client_against(srv, monkeypatch)
+    with pytest.raises(client.MalformedResponseError, match="non-negative"):
+        client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
+    srv.shutdown()
+
+
+def test_probe_raises_on_bool_as_completion_tokens_P36(monkeypatch):
+    """A JSON `true`/`false` deserializes to Python `bool`, which IS an `int` subclass in Python
+    -- must be explicitly rejected, never silently counted as 0 or 1 tokens."""
+    srv = _server_returning({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                             "usage": {"prompt_tokens": 1, "completion_tokens": True}})
+    client = _client_against(srv, monkeypatch)
+    with pytest.raises(client.MalformedResponseError, match="non-negative"):
         client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
     srv.shutdown()
 

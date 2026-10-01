@@ -1320,7 +1320,13 @@ def evaluate_convergence(per_turn: list, thinking_budget, context_limit, max_tok
             budget_hits += 1
             nonconv_kinds.add("budget_hit")
         ok_finish = fr in ("stop", "tool_calls")
-        if not ok_finish:
+        # 7th cold review round 7 P36: `finish_reason=="length"` IS itself a budget/length
+        # exhaustion event (the server hit max_tokens) -- classify it as `budget_hit`, not the
+        # generic `bad_finish_reason` bucket, even when the turn's own completion_tokens stayed
+        # under the (possibly larger) thinking_budget.
+        if fr == "length":
+            nonconv_kinds.add("budget_hit")
+        elif not ok_finish:
             nonconv_kinds.add("bad_finish_reason")
         per_turn_converged.append(ok_finish and not hit_budget)
     if not per_turn:

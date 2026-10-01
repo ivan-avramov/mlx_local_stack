@@ -24,7 +24,18 @@ class MalformedResponseError(RuntimeError):
     `content=""`/`tool_calls=[]` with no signal anything went wrong). Raise instead -- callers
     that already treat a `driver.complete` exception as a transport-class failure (escalate, never
     grade; see `bench.agent_loop.run_agent`'s broad except around the complete() call) pick this up
-    for free."""
+    for free.
+
+    7th cold review round 7 P36 (HIGH, regression from the round-6 P24 ruling): this boundary
+    validates STRUCTURE and TELEMETRY TYPES ONLY -- `choices[0].message` present, `finish_reason`
+    present, `usage.prompt_tokens`/`completion_tokens` present and non-negative INTEGERS. An
+    assistant message with EMPTY/ABSENT content and no tool_calls is a VALID model outcome when
+    `finish_reason` is "stop" (immediate EOS) or "length" (a budget/max_tokens hit) -- the mlx-serve
+    fork legitimately returns reasoning with empty `content` in that case
+    (mlx_vlm/server/openai.py ~2981). That is the agent loop's / convergence logic's job to
+    classify (a tool-less turn; `length` is a non-converged budget hit), never this boundary's --
+    treating it as malformed previously turned a real, scoreable model failure into a
+    TransportFailure with no row at all."""
 
 
 def _post(path: str, payload: dict, timeout: float = 3600) -> dict:
@@ -38,6 +49,17 @@ def _post(path: str, payload: dict, timeout: float = 3600) -> dict:
 def _get(path: str, timeout: float = 60) -> dict:
     with urllib.request.urlopen(BASE + path, timeout=timeout) as r:
         return json.loads(r.read().decode())
+
+
+def _as_nonneg_int(value):
+    """P36: None unless `value` is a genuine non-negative integer -- `bool` is deliberately
+    excluded even though `isinstance(True, int)` is true in Python; a boolean is never a
+    legitimate token count."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    return None
 
 
 def roster() -> list[str]:
@@ -81,29 +103,31 @@ def probe(model: str, messages: list, params: dict, timeout: float = 3600, tools
     tm = r.get("timings") or {}
     us = r.get("usage") or {}
     msg = choices[0]["message"]
-    # 6th cold review round 6 P24 (HIGH): the mlx-serve router ALWAYS returns content-or-
-    # tool_calls, a finish_reason, and usage.{prompt,completion}_tokens -- their absence is a
-    # SERVING anomaly, never a legitimate "the model produced nothing" signal, and must never
-    # silently become a scored failure/non-convergence. Reproduced: `{"choices":[{"message":{}}]}`
-    # produced an eight-turn, scored `no_submit` row end-to-end.
-    if not msg.get("content") and not msg.get("tool_calls"):
-        raise MalformedResponseError(f"{model}: assistant message has neither content nor "
-                                     f"tool_calls (keys={sorted(msg.keys())})")
+    # 7th cold review round 7 P36 (HIGH, supersedes the round-6 P24 "neither content nor
+    # tool_calls" check): that check was a REGRESSION -- an assistant message with empty/absent
+    # content and no tool_calls is a VALID outcome (immediate EOS, or a max_tokens/"length" hit
+    # with reasoning but no final answer yet) that the agent loop / convergence logic must
+    # classify, not this boundary. Only STRUCTURE and TELEMETRY TYPES are validated here.
     if choices[0].get("finish_reason") is None:
         raise MalformedResponseError(f"{model}: choices[0] is missing finish_reason")
-    prompt_tokens = us.get("prompt_tokens") or tm.get("prompt_n")
-    if prompt_tokens is None or us.get("completion_tokens") is None:
-        raise MalformedResponseError(f"{model}: usage is missing prompt_tokens/completion_tokens "
-                                     f"(usage={us!r}, timings.prompt_n={tm.get('prompt_n')!r})")
+    raw_prompt_tokens = us.get("prompt_tokens")
+    if raw_prompt_tokens is None:
+        raw_prompt_tokens = tm.get("prompt_n")
+    prompt_tokens = _as_nonneg_int(raw_prompt_tokens)
+    completion_tokens = _as_nonneg_int(us.get("completion_tokens"))
+    if prompt_tokens is None or completion_tokens is None:
+        raise MalformedResponseError(
+            f"{model}: usage.prompt_tokens/completion_tokens missing or not a non-negative "
+            f"integer (usage={us!r}, timings.prompt_n={tm.get('prompt_n')!r})")
     return {
         "content": msg.get("content") or "",
         "reasoning": msg.get("reasoning") or "",
         "tool_calls": msg.get("tool_calls") or [],
         "prompt_tokens": prompt_tokens,
-        "completion_tokens": us.get("completion_tokens"),
+        "completion_tokens": completion_tokens,
         "decode_tps": tm.get("predicted_per_second"),
         "peak_mem_gb": tm.get("peak_memory"),
-        "finish_reason": (r.get("choices") or [{}])[0].get("finish_reason"),
+        "finish_reason": choices[0].get("finish_reason"),
         "wall_s": round(wall, 1),
         "raw_timings": tm,
     }
