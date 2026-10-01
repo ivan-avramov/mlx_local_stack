@@ -33,10 +33,10 @@ Updated **2026-09-14**. B is agentic coding; C is research, brainstorming and de
 
 | Rank | Model | Best for and supporting evidence |
 |---|---|---|
-| 1 | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | Python/Go: 22/22 each at medium effort, zero stalls. Rust/Java/JavaScript unmeasured. Current t0.5, medium, repaired MTP ON, native16 KV with idle retirement; retrieval qualified through128K. |
-| 2 | Qwen3.8-27B-mlx-uniform-4bit | Broader coding coverage; favorable Python/JavaScript repeats. Medium Python 19/22, Go 16/22 with six stalls. Current t0.6, medium, MTP ON, TQ4. |
-| 3 | Ornith-1.0-35B-mlx-uniform-4bit | Rust and interactive coding: 17/22 Rust, short task latency. t0.4, native routing, certified MTP. |
-| 4 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | Repair-oriented fallback; older repair evidence is stronger than current agentic trends. Deployed t0.3, certified MTP. |
+| 1 | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | Python/Go: 22/22 each at medium effort, zero stalls. Rust/Java/JavaScript unmeasured. AgentBench OS (shell agent, draft OFF) 0.613, tied with the other dense Qwen checkpoints at half their tokens and a third of their runaway tax (M54 chain 1, provisional). Current t0.5, medium, repaired MTP ON, native16 KV with idle retirement; retrieval qualified through128K. |
+| 2 | Qwen3.8-27B-mlx-uniform-4bit | Broader coding coverage; favorable Python/JavaScript repeats. Medium Python 19/22, Go 16/22 with six stalls. AgentBench OS 0.620 (tie with the first pick, 2× tokens; M54 chain 1, provisional). Current t0.6, medium, MTP ON, TQ4. |
+| 3 | Ornith-1.0-35B-mlx-uniform-4bit | Rust and interactive coding: 17/22 Rust, short task latency. AgentBench OS 0.549 (−6 pp vs the first pick, inconclusive; two 81920-budget hits; M54 chain 1). t0.4, native routing, certified MTP. |
+| 4 | Qwen3.6-27B-Opus-Distill-OptiQ-4bit | Repair-oriented fallback; older repair evidence is stronger than current agentic trends. AgentBench OS 0.613 (tie with the picks, slowest per task; M54 chain 1). Deployed t0.3, certified MTP. |
 
 ### C: research and design
 
@@ -45,7 +45,7 @@ Updated **2026-09-14**. B is agentic coding; C is research, brainstorming and de
 | 1, provisional pick | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | Everyday research/design; already the B default. Top-pair length-adjusted panel margin +0.25, 95% CI [−0.76,+0.91]; lower token/time cost informed the approved ordering. Shipped native16 vision smoke **20/20 PASS** (C88); retrieval **25/25** through128K and chain-4 tracking **39/39** through156K (C89). |
 | 2, provisional pick | Qwen3.8-27B-mlx-uniform-4bit | Longer, more elaborated answers; first on the raw panel, with a length confound. Historical vision gate 19/20. MTP stays ON; its M40 MBPPPlus result remains INCONCLUSIVE. |
 | Shortlist only | Ornith-1.0-35B-mlx-uniform-4bit | Fast vision-capable alternative; historical vision gate 20/20, behind both approved picks on the panel. |
-| Shortlist only | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | Fast text-only tool, no vision tower; last on the panel. Deployed t0.5, native routing, predictor OFF. |
+| Shortlist only | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | Fast text-only tool, no vision tower; last on the panel. AgentBench OS 0.415, clearly last (−20 pp vs the picks, Holm p<0.001; M54 chain 1) — not a shell-agent model. Deployed t0.5, native routing, predictor OFF. |
 
 The panel used 38 shared items (approximate MDE 20pp). Vision gates establish bounded capability, not a visual-quality ranking. [Per-language/session evidence, intervals and historical comparisons](docs/model-recommendation-evidence.md).
 
@@ -55,6 +55,7 @@ The panel used 38 shared items (approximate MDE 20pp). Vision gates establish bo
 
 | Evidence | Result and limit |
 |---|---|
+| AgentBench OS (M54 chain 1, 2026-10-01) | 142 shell-agent tasks, draft OFF, deployed sampling. acc_strict@81920: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` **0.613**, `Qwen3.8-27B-mlx-uniform-4bit` **0.620**, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` **0.613**, `Ornith-1.0-35B-mlx-uniform-4bit` 0.549, `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` 0.415. Dense Qwen checkpoints tie (±6 pp CIs, MDE ±11.5 pp); first pick at half the tokens and a third of the runaway tax. Provisional until chain 2 (pty harness) confirms. [Report](benchmark/results/agentbench_os_compare_chain1.md). |
 | Quality regression screen | All 40 paired answers/reasoning match; all 80 responses converge. Native16 Math500 5/5, HumanEvalPlus 4/5, MBPPPlus 5/5; second pick 5/5 each. Ten reviewed prose ties retain shared factual/methodological weaknesses. |
 | Native16 at 261449 prompt tokens | **47.155GB** MLX peak; **1165.33s** prefill; **11.51tok/s** decode. Memory is a rough 48GB target, not a strict cutoff. |
 | Observed timing cost | Native16 task latency +1.2–2.5% per axis; one long-context pair shows +5.95% prefill time and −3.75% decode rate. Repeatability and cause are unmeasured. |
