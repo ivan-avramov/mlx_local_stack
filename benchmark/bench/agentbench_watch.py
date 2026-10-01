@@ -329,6 +329,29 @@ def _cpu_sample(pids: list, run_fn) -> float | None:
     return max(vals) if vals else None
 
 
+def check_calibration_identity(busy_observed_box: dict, router_pid, router_config_sha256) -> str | None:
+    """10th cold review round 10 P9 (residual, part c): a calibration record (`busy_observed_box`
+    "seen"=True, meaning a genuine BUSY sample has been observed this run -- see
+    build_assessment's docstring) is only trustworthy for the router it was taken against. If the
+    manifest's router identity (pid + config_sha256) CHANGES between ticks -- the router
+    restarted, possibly serving a different config -- a PRIOR busy sample says nothing about
+    whether busy-detection still works against the NEW process, so the calibration must be
+    INVALIDATED (reset back to uncalibrated) rather than silently carried forward. Returns a log
+    line to append when an invalidation actually fired, else None. Always updates the box's
+    recorded identity so the NEXT tick can detect a FURTHER change."""
+    identity = (router_pid, router_config_sha256)
+    prev_identity = busy_observed_box.get("calibrated_identity")
+    note = None
+    if prev_identity is not None and prev_identity != identity and busy_observed_box.get("seen"):
+        note = (f"[agentbench_watch] CALIBRATION INVALIDATED: router identity changed "
+               f"(pid/config_sha256 {prev_identity} -> {identity}) -- busy-detection calibration "
+               "reset to uncalibrated; WEDGE requires a fresh BUSY sample again before being "
+               "trusted\n")
+        busy_observed_box["seen"] = False
+    busy_observed_box["calibrated_identity"] = identity
+    return note
+
+
 def worker_busy(router_pid, run_fn=_real_subprocess_run, sleep_fn=time.sleep,
                gap_s: float = WORKER_SAMPLE_GAP_S, threshold_pct: float = WORKER_BUSY_THRESHOLD_PCT):
     """True (busy) / False (idle) / None (UNKNOWN -- no worker process found, discovery failed, or
@@ -529,13 +552,20 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
         calibrated = True
     stall_label = classify_stall(seconds_since_reference, stall_s, driver_pid,
                                  pid_alive_fn, effective_busy_check_fn, calibrated=calibrated)
-    # 9th cold review round 9 P12: EVIDENCE flags gate the classifier -- a tick that could not
-    # even read the rows file or the manifest must never report "STALL: none" (a confident
-    # all-clear) on the strength of whatever partial/stale state happened to be left over from a
-    # PRIOR tick. This does NOT downgrade an already-positive verdict (DRIVER DEAD is independently
-    # verified via pid_alive_fn, unrelated to rows/manifest readability) -- only the "nothing's
-    # wrong" conclusion (stall_label is None) is untrustworthy when the evidence behind it is.
-    if stall_label is None and not (rows_evidence and manifest_evidence):
+    # 9th cold review round 9 P12 (extended by 10th round P9, residual part b): EVIDENCE flags
+    # gate the classifier -- a tick that could not even read the rows file or the manifest must
+    # never report "STALL: none" (a confident all-clear) on the strength of whatever partial/
+    # stale state happened to be left over from a PRIOR tick. This does NOT downgrade an
+    # already-positive verdict that is INDEPENDENTLY verified: DRIVER DEAD (pid_alive_fn, unrelated
+    # to file reads) and RUNAWAY-SUSPECT (a live `ps` busy sample, also unrelated to file reads)
+    # both stand regardless. WEDGE, however, is NOT independent of file reads -- when the rows
+    # file is unreadable this tick, `reference_timestamp` falls back to the run's (possibly very
+    # old) start time, and that STALE reference can make classify_stall's OWN arithmetic look
+    # exactly like a genuine long stall even though we simply failed to observe the current state.
+    # So both "nothing's wrong" (stall_label is None) AND a WEDGE conclusion are untrustworthy
+    # when the evidence behind them is.
+    if not (rows_evidence and manifest_evidence) and (
+            stall_label is None or (stall_label or "").startswith("WEDGE")):
         stall_label = ("UNKNOWN (evidence missing/unreadable this tick -- rows and/or manifest "
                        "could not be trusted, so no stall classification can be made)")
     router_active = router_active_fn(router_log_path, ROUTER_ACTIVITY_WINDOW_S, now)
@@ -584,10 +614,15 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
     trigger = bool((ratio is not None and ratio > 2.0)
                   or (nonconv_share is not None and nonconv_share > 0.3)
                   or last5_setup_error)
-    if done < 5 or not predicted_mean_s:
+    # 10th cold review round 10 P9 (residual, part a): `mean_s` can be None even with done>=5 --
+    # EVERY row lacking wall_total_s (rate_stats excludes them all, see P12(b)) -- and the
+    # cost_if_continued_s = remaining * mean_s arithmetic below has no guard of its own; without
+    # this check it raised TypeError (remaining * None) instead of reporting UNKNOWN for lack of
+    # RATE evidence, same as the "not enough rows yet" / "no prediction given" cases.
+    if done < 5 or not predicted_mean_s or mean_s is None:
         recommendation = "UNKNOWN"
         numbers = (f"done={done} (need >=5) predicted_mean_wall_total_s={predicted_mean_s} "
-                  "-- not enough evidence to decide")
+                  f"observed_mean_wall_total_s={mean_s} -- not enough evidence to decide")
     else:
         # 9th cold review round 9 P13 (supersedes P54's sunk-cost comparison): PERSISTENCE now
         # ALSO requires at least one NEW row to have arrived between the two trigger-firing
@@ -885,6 +920,11 @@ def run_watch(args) -> int:
             now = time.time()
             ref = reference_timestamp(rows, manifest, rows_path)
             router_pid = (manifest.get("router") or {}).get("pid")
+            router_config_sha256 = (manifest.get("router") or {}).get("config_sha256")
+            invalidation_note = check_calibration_identity(busy_observed_box, router_pid,
+                                                           router_config_sha256)
+            if invalidation_note:
+                _append(out_path, invalidation_note)
             if tick_num == 1:
                 # P52(c): a PROACTIVE calibration sample on the very first tick, independent of
                 # whether a stall is even suspected -- gives the operator early, concrete evidence

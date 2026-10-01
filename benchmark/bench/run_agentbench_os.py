@@ -702,11 +702,24 @@ def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit,
                  "evidence from an incompatible identity is excluded, never silently used)")
     else:
         timeout_s = max_generation_tokens / tps + TIMEOUT_HEADROOM_S
-        observable = True
+        # 10th cold review round 10 P8 (residual): `observable=True` means a FULLY VALIDATED
+        # derivation -- only earned when EVERY contributing source matched on the served
+        # router.config_sha256 EXACTLY (P9's "exact"). A "params"-only match (the hash differed
+        # or was unavailable, but the individually-measured params still agreed) still derives a
+        # number -- it is NOT refused -- but is labelled distinctly ("params-match (UNVALIDATED)")
+        # so the caller treats it like an explicit override: allowed, logged, never silently
+        # presented as the same strength of evidence as an exact match.
+        all_exact = bool(sources) and all(s.get("identity_match") == "exact" for s in sources)
+        observable = True if all_exact else "params-match (UNVALIDATED)"
+        validation_note = ("every contributing source matched the served config exactly"
+                           if all_exact else
+                           "at least one contributing source matched on PARAMS only (the served "
+                           "config hash differed or was unavailable) -- derived, not validated")
         reason = (f"{max_generation_tokens} max generation tokens at {tps:.1f} tok/s floor "
                  f"(R6: 10th pct over turns>=256 tok, else the min) = "
                  f"{max_generation_tokens / tps / 60:.1f} min + {TIMEOUT_HEADROOM_S:.0f}s "
-                 "headroom, UNCAPPED (P14: no 7200s ceiling for this per-turn axis)")
+                 f"headroom, UNCAPPED (P14: no 7200s ceiling for this per-turn axis) -- "
+                 f"{validation_note}")
     derivation = {"max_generation_tokens": max_generation_tokens, "floor_decode_tps": tps,
                  "headroom_s": TIMEOUT_HEADROOM_S, "source": source,
                  "observable": observable, "reason": reason, "identity": identity,

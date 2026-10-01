@@ -281,30 +281,51 @@ def test_run_check_chain_P47_daemon_itself_times_out_is_infra():
     assert exec_started is None   # daemon unreachable -- truly unknown, not a guessed False
 
 
-# --------------------------------------------------------------------------- P8(a) exec-creation vs process exit
-# 9th cold review round 9 P8(a): `docker exec` itself returns 125/126/127 on an EXEC-CREATION
-# failure, but a checker script can ALSO legitimately exit 126/127 on its own merits (`exit 127`,
-# or a missing binary INSIDE the container producing bash's own "127: command not found"). The rc
-# band alone is never evidence; it is evidence ONLY paired with the docker CLI's own stderr
-# wording, which an arbitrary in-container script cannot plausibly coincidentally reproduce.
-def test_classify_check_result_exec_creation_failure_rc_and_cli_stderr_is_infra_no_probe_needed_P8a():
-    res = {"exit_code": 126, "stderr": "docker: Error response from daemon: OCI runtime exec failed: "
-                                       "exec failed: unable to start container process: exec: "
-                                       "\"bash\": executable file not found in $PATH",
+# --------------------------------------------------------------------------- P7 (residual, 10th round): exec-creation vs process exit
+# 10th cold review round 10 P7 (supersedes 9th round P8(a)'s rc-band+stderr-prefix design): the
+# stderr-prefix shortcut is REMOVED ENTIRELY. Only rc == 125 (the docker CLI's OWN dedicated
+# "could not even attempt it" code) is unambiguous on its own -- 126/127 are explicitly AMBIGUOUS
+# (a checker script can legitimately `exit 127` on its own) and now fall through to the normal
+# daemon-level `docker inspect` probe like any other nonzero rc.
+def test_classify_check_result_rc_125_is_infra_outright_no_probe_needed_P7():
+    """rc 125 decides OUTRIGHT, with no probe -- NOT even overridden if the container happens to
+    show Running right after (the 9th-round design's stderr-paired shortcut is gone; THIS rc
+    alone is now the sole trigger)."""
+    res = {"exit_code": 125, "stderr": "Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
           "timed_out": False}
 
     def fail_if_probed(cmd, **kw):
-        raise AssertionError("the daemon-level probe must not run -- the rc+stderr pairing is "
-                            "already unambiguous evidence")
+        raise AssertionError("the daemon-level probe must not run -- rc 125 alone is already "
+                            "unambiguous evidence")
     infra_evidence, exec_started = AB._classify_check_result("c1", res, fail_if_probed)
     assert exec_started is False
     assert infra_evidence is not None and infra_evidence["exec_started"] is False
+    assert "125" in infra_evidence["message"]
 
 
-def test_classify_check_result_rc_127_from_the_checkers_own_exit_is_not_infra_P8a():
-    """The checker SCRIPT itself ran `exit 127` -- the rc matches the exec-creation-failure band,
-    but with NO docker-CLI stderr wording at all, so it must fall through to the normal
-    daemon-level probe (P47), which here confirms the container is healthy -> failed_tests."""
+def test_classify_check_result_rc_125_stderr_is_recorded_but_never_decides_P7():
+    """rc 125 WITHOUT any docker-CLI-looking stderr wording at all must STILL decide outright --
+    the decision is the rc alone now, never the stderr text (which is merely RECORDED)."""
+    res = {"exit_code": 125, "stderr": "some unrelated text, not docker CLI wording at all",
+          "timed_out": False}
+    infra_evidence, exec_started = AB._classify_check_result(
+        "c1", res, lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not probe")))
+    assert exec_started is False
+    assert "some unrelated text" in infra_evidence["stderr"]   # still RECORDED
+
+
+def test_classify_check_result_rc_126_from_the_checkers_own_exit_is_not_infra_P7():
+    """126 is now AMBIGUOUS -- falls through to the daemon-level probe (P47), which here confirms
+    the container is healthy -> failed_tests, even with docker-CLI-looking stderr text."""
+    res = {"exit_code": 126, "stderr": "docker: Error response from daemon: OCI runtime exec failed",
+          "timed_out": False}
+    runner = FakeRunner(default=FakeRunner.Proc(0, "true\n", ""))   # inspect: Running
+    infra_evidence, exec_started = AB._classify_check_result("c1", res, runner)
+    assert infra_evidence is None
+    assert exec_started is True
+
+
+def test_classify_check_result_rc_127_from_the_checkers_own_exit_is_not_infra_P7():
     res = {"exit_code": 127, "stderr": "my_check.sh: line 4: some_missing_tool: command not found",
           "timed_out": False}
     runner = FakeRunner(default=FakeRunner.Proc(0, "true\n", ""))   # inspect: Running
@@ -313,15 +334,23 @@ def test_classify_check_result_rc_127_from_the_checkers_own_exit_is_not_infra_P8
     assert exec_started is True
 
 
-def test_run_check_chain_records_exec_started_true_on_a_full_pass_P8a():
+def test_classify_check_result_rc_126_not_running_is_infra_P7():
+    """126, container NOT Running -> setup_error (via the daemon-level probe, since 126 alone is
+    not decisive)."""
+    res = {"exit_code": 126, "stderr": "", "timed_out": False}
+    runner = FakeRunner(default=FakeRunner.Proc(0, "false\n", ""))   # inspect: exited
+    infra_evidence, exec_started = AB._classify_check_result("c1", res, runner)
+    assert infra_evidence is not None and exec_started is False
+
+
+def test_run_check_chain_records_exec_started_true_on_a_full_pass_P7():
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
     ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is True and exec_started is True
 
 
-def test_run_check_chain_records_exec_started_false_on_exec_creation_failure_P8a():
-    runner = FakeRunner(results=[FakeRunner.Proc(126, "", "docker: Error response from daemon: "
-                                                        "OCI runtime exec failed")])
+def test_run_check_chain_records_exec_started_false_on_exec_creation_failure_P7():
+    runner = FakeRunner(results=[FakeRunner.Proc(125, "", "Cannot connect to the Docker daemon")])
     ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and exec_started is False
     assert infra_error["exec_started"] is False

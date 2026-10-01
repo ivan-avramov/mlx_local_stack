@@ -403,6 +403,50 @@ def test_worker_busy_none_when_specifically_the_FIRST_cpu_sample_fails_P38_G3(mo
                                # a second attempt (which this fixture deliberately made succeed)
 
 
+# --------------------------------------------------------------------------- check_calibration_identity (10th round P9)
+def test_check_calibration_identity_no_change_no_invalidation():
+    box = {"seen": True}
+    note = W.check_calibration_identity(box, 111, "sha-a")
+    assert note is None
+    assert box["seen"] is True
+    note2 = W.check_calibration_identity(box, 111, "sha-a")   # same identity next tick
+    assert note2 is None
+    assert box["seen"] is True
+
+
+def test_check_calibration_identity_pid_change_invalidates_a_prior_calibration():
+    box = {"seen": True}
+    W.check_calibration_identity(box, 111, "sha-a")   # tick 1: records the identity
+    note = W.check_calibration_identity(box, 222, "sha-a")   # tick 2: router restarted (new pid)
+    assert note is not None and "CALIBRATION INVALIDATED" in note
+    assert box["seen"] is False
+
+
+def test_check_calibration_identity_config_sha_change_invalidates_a_prior_calibration():
+    box = {"seen": True}
+    W.check_calibration_identity(box, 111, "sha-a")
+    note = W.check_calibration_identity(box, 111, "sha-b")   # same pid, served config changed
+    assert note is not None and "CALIBRATION INVALIDATED" in note
+    assert box["seen"] is False
+
+
+def test_check_calibration_identity_change_before_any_calibration_is_silent():
+    """Nothing to invalidate -- `seen` was never True, so an identity change is just recorded,
+    not reported as an invalidation (there was no trusted calibration to lose)."""
+    box: dict = {}   # seen defaults to falsy
+    W.check_calibration_identity(box, 111, "sha-a")
+    note = W.check_calibration_identity(box, 222, "sha-a")
+    assert note is None
+    assert box.get("seen", False) is False
+
+
+def test_check_calibration_identity_first_tick_is_silent():
+    box: dict = {}
+    note = W.check_calibration_identity(box, 111, "sha-a")
+    assert note is None
+    assert box["calibrated_identity"] == (111, "sha-a")
+
+
 # --------------------------------------------------------------------------- _ppid_chain_contains (P38)
 def test_ppid_chain_contains_direct_parent():
     run_fn = _run_fn(ppid_out=f"{ROUTER_PID}\n")
@@ -631,6 +675,69 @@ def test_build_assessment_evidence_present_and_not_stalled_still_reads_none_P12a
                                reference_ts=now - 5.0, now=now,
                                rows_evidence=True, manifest_evidence=True)
     assert "(4) STALL: none" in block
+
+
+def test_build_assessment_unreadable_evidence_with_a_stale_reference_is_unknown_never_wedge_P9():
+    """10th cold review round 10 P9 (residual, part b): when the rows file is UNREADABLE this
+    tick, `reference_timestamp` falls back to the run's (possibly very OLD) start time -- feeding
+    classify_stall a STALE reference that, on its own arithmetic, looks exactly like a genuine
+    long stall (seconds_since_reference > stall_s) -- so classify_stall would otherwise report
+    WEDGE (idle) purely because `busy_check_fn` returns False. That verdict is not trustworthy:
+    we didn't actually observe the current rows state this tick. The evidence-missing gate (P12a)
+    previously only covered the 'STALL: none' (stall_label is None) case -- it must ALSO catch an
+    UNREADABLE-evidence WEDGE and downgrade it to UNKNOWN, never leaving a confident WEDGE verdict
+    standing on evidence we could not trust."""
+    now = time.time()
+    block = W.build_assessment([], prev_rows_count=0, total=10, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=100.0,
+                               reference_ts=now - 10000,   # STALE -- far past stall_s
+                               now=now, rows_evidence=False, manifest_evidence=True,
+                               busy_check_fn=lambda: False)
+    assert "(4) STALL: WEDGE" not in block
+    assert "(4) STALL: UNKNOWN" in block
+
+
+def test_build_assessment_readable_evidence_with_a_stale_reference_still_reports_wedge_P9():
+    """Contrast case: the SAME stale reference_ts, but evidence IS readable this tick -- the gate
+    must NOT fire (a genuine WEDGE, built on a trustworthy read, must still be reported)."""
+    now = time.time()
+    rows = [_row("a", wall_total_s=10.0)]
+    block = W.build_assessment(rows, prev_rows_count=0, total=10, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=100.0,
+                               reference_ts=now - 10000, now=now,
+                               rows_evidence=True, manifest_evidence=True,
+                               busy_check_fn=lambda: False)
+    assert "(4) STALL: WEDGE (idle)" in block
+
+
+def test_build_assessment_unreadable_evidence_with_runaway_suspect_still_reports_it_P9():
+    """A POSITIVE busy observation (RUNAWAY-SUSPECT) is sampled live via ps, independent of the
+    rows/manifest file reads -- it must NOT be downgraded by the evidence-missing gate (unlike
+    WEDGE, which depends on believing nothing has happened for a long time)."""
+    now = time.time()
+    block = W.build_assessment([], prev_rows_count=0, total=10, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=100.0,
+                               reference_ts=now - 10000, now=now,
+                               rows_evidence=False, manifest_evidence=True,
+                               busy_check_fn=lambda: True)
+    assert "(4) STALL: RUNAWAY-SUSPECT (busy)" in block
+
+
+def test_build_assessment_five_untimed_rows_plus_prediction_does_not_raise_P9():
+    """10th cold review round 10 P9 (residual, part a): rate_stats already excludes rows lacking
+    wall_total_s from the MEAN (returning mean_wall_s=None when EVERY row lacks it) -- but the
+    CORRECT-vs-FINISH block's cost_if_continued_s = remaining * mean_s arithmetic, entered once
+    done>=5 and --predicted-mean-s is given, did not itself guard against mean_s being None,
+    raising TypeError (remaining * None) instead of reporting UNKNOWN for lack of RATE evidence."""
+    now = time.time()
+    rows = [_row(f"r{i}") for i in range(5)]
+    for r in rows:
+        del r["wall_total_s"]   # every row genuinely lacks the field
+    block = W.build_assessment(rows, prev_rows_count=0, total=20, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=2700.0,
+                               reference_ts=now, now=now, predicted_mean_s=12.0)
+    assert "CORRECT-vs-FINISH" in block
+    assert "-> UNKNOWN" in block
 
 
 def test_build_assessment_correct_vs_finish_line_P32(tmp_path):
@@ -1003,6 +1110,52 @@ def test_run_watch_prints_a_calibration_line_with_no_router_pid_yet_P52c(tmp_pat
     assert rc == 0
     content = out_path.read_text(encoding="utf-8")
     assert "CALIBRATION (tick 1): no router pid recorded" in content
+
+
+def test_run_watch_invalidates_calibration_when_router_identity_changes_mid_run_P9(tmp_path):
+    """10th cold review round 10 P9 (residual, part c): tick 1 calibrates (a genuine BUSY sample,
+    in-flight confirmed via the router log); the manifest is then rewritten with a DIFFERENT
+    router pid (simulating a restart) before tick 2 -- tick 2 must log a CALIBRATION INVALIDATED
+    line, proving the stale calibration is not silently carried forward onto the new router."""
+    rows_path = tmp_path / "rows.jsonl"
+    _write_rows(rows_path, [_row("a")])
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"model": "m", "router": {"pid": ROUTER_PID,
+                                                                  "config_sha256": "sha-a"}}),
+                             encoding="utf-8")
+    out_path = tmp_path / "watch.log"
+    router_log = tmp_path / "router.log"
+    router_log.write_text("POST /v1/chat/completions model=m stream=True\n", encoding="utf-8")
+    import signal
+    import threading
+
+    ticks = {"n": 0}
+
+    def calibrate_fn(router_pid):
+        ticks["n"] += 1
+        if ticks["n"] == 1:
+            # between tick 1 (which calibrates) and tick 2, the router "restarts" under a new pid
+            manifest_path.write_text(json.dumps({"model": "m", "router": {"pid": ROUTER_PID + 1,
+                                                                          "config_sha256": "sha-a"}}),
+                                     encoding="utf-8")
+        return True   # always a BUSY sample -- tick 1 must calibrate on it
+
+    import argparse
+    args = argparse.Namespace(rows=str(rows_path), manifest=str(manifest_path), total=999999,
+                              driver_pid=os.getpid(), router_log=str(router_log),
+                              out=str(out_path), interval=0.01, stall_s=2700.0, once=False,
+                              calibrate_fn=calibrate_fn)
+    t = threading.Timer(0.3, lambda: os.kill(os.getpid(), signal.SIGTERM))
+    t.start()
+    try:
+        rc = W.run_watch(args)
+    finally:
+        t.cancel()
+    assert rc == 0
+    content = out_path.read_text(encoding="utf-8")
+    assert "CALIBRATION (tick 1): worker_busy=True" in content
+    assert "CALIBRATION INVALIDATED" in content
+    assert f"({ROUTER_PID}, 'sha-a') -> ({ROUTER_PID + 1}, 'sha-a')" in content
 
 
 def test_run_watch_survives_an_unreadable_rows_file_P52a(tmp_path):

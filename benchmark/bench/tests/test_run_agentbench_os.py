@@ -807,7 +807,7 @@ def test_resume_reuses_llm_timeout_and_deadline_from_previous_manifest_addendum_
     monkeypatch.setattr(AB, "run_task", fake)
     # pilot: derive from a measured rate (no explicit --llm-timeout)
     monkeypatch.setattr(R, "_rate_rows_matching_identity",
-                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}] * 10, ["f1"]) if bench == "agentbench_os" else ([], []))
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}] * 10, [{"file": "f1", "identity_match": "exact"}]) if bench == "agentbench_os" else ([], []))
     rc = R.main(_args(tmp_path, limit=1, llm_timeout=None))
     assert rc == 0
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
@@ -818,7 +818,7 @@ def test_resume_reuses_llm_timeout_and_deadline_from_previous_manifest_addendum_
     # DIFFERENT number if re-derived, but must REUSE the pilot's instead.
     seen.clear()
     monkeypatch.setattr(R, "_rate_rows_matching_identity",
-                       lambda model, bench, draft_kind: ([{"decode_tps": 999.0}] * 50, ["f2"]) if bench == "agentbench_os" else ([], []))
+                       lambda model, bench, draft_kind: ([{"decode_tps": 999.0}] * 50, [{"file": "f2", "identity_match": "exact"}]) if bench == "agentbench_os" else ([], []))
     rc = R.main(_args(tmp_path, resume="", llm_timeout=None))
     assert rc == 0
     man2 = json.loads((tmp_path / "rows.manifest.json").read_text())
@@ -1516,7 +1516,7 @@ def test_derive_llm_timeout_formula_uses_max_generation_tokens_over_floor_tps_pl
     """P30: timeout = max_generation_tokens / floor_tps + 300s headroom (no multiplicative safety
     factor); max_generation_tokens is the LARGER of max_tokens and thinking_budget+4096."""
     monkeypatch.setattr(R, "_rate_rows_matching_identity",
-                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}], ["f"]) if bench == "agentbench_os" else ([], []))
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}], [{"file": "f", "identity_match": "exact"}]) if bench == "agentbench_os" else ([], []))
     timeout_s, source, msg, d = R._derive_llm_timeout("m", 1000, 2000, None)
     # thinking_budget+4096=5096 < max_tokens=2000? no, 5096 > 2000, so max_generation_tokens=5096
     assert d["max_generation_tokens"] == 5096
@@ -1525,7 +1525,7 @@ def test_derive_llm_timeout_formula_uses_max_generation_tokens_over_floor_tps_pl
 
 def test_derive_llm_timeout_max_tokens_wins_when_larger_than_budget_plus_headroom(monkeypatch):
     monkeypatch.setattr(R, "_rate_rows_matching_identity",
-                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}], ["f"]) if bench == "agentbench_os" else ([], []))
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}], [{"file": "f", "identity_match": "exact"}]) if bench == "agentbench_os" else ([], []))
     _, _, _, d = R._derive_llm_timeout("m", 100, 50000, None)
     assert d["max_generation_tokens"] == 50000
 
@@ -1539,6 +1539,69 @@ def test_derive_llm_timeout_explicit_override_is_recorded_as_unvalidated_P30():
     assert d["observable"] is not True
 
 
+# ------------------------------------------------------------------- P8 (residual, 10th round): exact vs params-match
+def test_derive_llm_timeout_exact_identity_match_is_fully_observable_P8(monkeypatch):
+    """Every contributing source matched the served router.config_sha256 EXACTLY ->
+    observable=True (unchanged from P30's baseline meaning: a fully validated derivation)."""
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}],
+                                                         [{"file": "f", "identity_match": "exact"}])
+                       if bench == "agentbench_os" else ([], []))
+    timeout_s, source, msg, d = R._derive_llm_timeout("m", 1000, 2000, None)
+    assert d["observable"] is True
+
+
+def test_derive_llm_timeout_params_only_match_is_observable_but_labelled_unvalidated_P8(monkeypatch):
+    """10th cold review round 10 P8 (residual): when the served config hash is unavailable/
+    differs but the measured PARAMS still agree (P9's 'params' identity_match), a timeout is
+    still DERIVED (not refused) but observable must be the distinct string
+    'params-match (UNVALIDATED)', never bare True -- so a caller/auditor can tell this derivation
+    was never checked against the EXACT served config."""
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}],
+                                                         [{"file": "f", "identity_match": "params"}])
+                       if bench == "agentbench_os" else ([], []))
+    timeout_s, source, msg, d = R._derive_llm_timeout("m", 1000, 2000, None)
+    assert timeout_s is not None and timeout_s > 0
+    assert d["observable"] == "params-match (UNVALIDATED)"
+    assert d["observable"] is not True
+    assert "params-match (UNVALIDATED)" not in (False, True)   # i.e. a distinct, truthy string
+
+
+def test_derive_llm_timeout_mixed_exact_and_params_sources_is_unvalidated_P8(monkeypatch):
+    """A SINGLE contributing source that only matched on params (not the exact hash) is enough to
+    demote the WHOLE derivation to 'params-match (UNVALIDATED)' -- exactness is an ALL-or-nothing
+    property across every contributing source, not a majority vote."""
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}] * 2,
+                                                         [{"file": "f1", "identity_match": "exact"},
+                                                          {"file": "f2", "identity_match": "params"}])
+                       if bench == "agentbench_os" else ([], []))
+    _, _, _, d = R._derive_llm_timeout("m", 1000, 2000, None)
+    assert d["observable"] == "params-match (UNVALIDATED)"
+
+
+def test_derive_llm_timeout_params_match_does_not_refuse_the_run_P8(tmp_path, monkeypatch):
+    """The caller (run_generate) must treat 'params-match (UNVALIDATED)' the SAME way it treats
+    an explicit override: allowed (not refused) and logged -- never silently presented as the
+    same strength of evidence as an exact match, but never blocking the run either."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R, "_rate_rows_matching_identity",
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}] * 10,
+                                                         [{"file": "f", "identity_match": "params"}])
+                       if bench == "agentbench_os" else ([], []))
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, llm_timeout=None))
+    assert rc == 0   # NOT refused
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    d = man["runtime"]["timeout_derivation"]
+    assert d["observable"] == "params-match (UNVALIDATED)"
+
+
 # --------------------------------------------------------------------------- N11 timeout source / deadline cap
 def test_timeout_source_names_only_contributing_fallback_benches(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
@@ -1550,7 +1613,7 @@ def test_timeout_source_names_only_contributing_fallback_benches(tmp_path, monke
         if bench == "agentbench_os":
             return [], []
         if bench == "math500":
-            return [{"decode_tps": v} for v in range(10, 30)], ["f_math500"]
+            return [{"decode_tps": v} for v in range(10, 30)], [{"file": "f_math500", "identity_match": "exact"}]
         return [], []   # convergence contributes NOTHING
     monkeypatch.setattr(R, "_rate_rows_matching_identity", _rate_rows)
     fake, _ = _fake_run_task_factory()
@@ -1600,7 +1663,7 @@ def test_manifest_records_timeout_derivation_block_P14(tmp_path, monkeypatch):
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
     monkeypatch.setattr(R, "_rate_rows_matching_identity",
-                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}] * 10, ["f"]) if bench == "agentbench_os" else ([], []))
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [10.0]}] * 10, [{"file": "f", "identity_match": "exact"}]) if bench == "agentbench_os" else ([], []))
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, llm_timeout=None))
@@ -1610,7 +1673,7 @@ def test_manifest_records_timeout_derivation_block_P14(tmp_path, monkeypatch):
     assert d["observable"] is True
     assert d["floor_decode_tps"] == 10.0
     assert d["source"] == "agentbench_os"
-    assert d["sources"] == ["f"]   # P43(b)/P48: the contributing sources are recorded
+    assert d["sources"] == [{"file": "f", "identity_match": "exact"}]   # P43(b)/P48: the contributing sources are recorded
 
 
 def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeypatch):
@@ -1623,7 +1686,7 @@ def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeyp
     # a very slow decode rate -> a large per-turn timeout -> the deadline must scale with it,
     # uncapped (this would have been clamped to 3600s before R3).
     monkeypatch.setattr(R, "_rate_rows_matching_identity",
-                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [0.01]}] * 10, ["f"]) if bench == "agentbench_os" else ([], []))
+                       lambda model, bench, draft_kind: ([{"per_turn_decode_tps": [0.01]}] * 10, [{"file": "f", "identity_match": "exact"}]) if bench == "agentbench_os" else ([], []))
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
     rc = R.main(_args(tmp_path, llm_timeout=None))

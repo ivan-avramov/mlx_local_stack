@@ -1030,41 +1030,30 @@ def _docker_inspect_running(container: str, runner=subprocess.run, timeout: floa
            "exit_code": proc.returncode, "timed_out": False}
 
 
-# 9th cold review round 9 P8(a): `docker exec` itself returns 125 (daemon/CLI-level error before
-# the command ever ran), 126 ("cannot invoke" the target), or 127 ("not found") when EXEC CREATION
-# fails -- but a checker SCRIPT running happily to completion can ALSO legitimately exit 126/127 on
-# its own (e.g. `exit 127`, or a missing binary INSIDE the container producing bash's own "127:
-# command not found"). The rc band alone is NOT evidence; it only becomes unambiguous evidence of
-# an exec-creation failure when PAIRED with the docker CLI's own stderr wording, which an arbitrary
-# in-container script cannot plausibly coincidentally reproduce.
-_EXEC_CREATION_FAIL_RC = {125, 126, 127}
-_DOCKER_CLI_STDERR_PREFIXES = ("docker:", "Error response from daemon",
-                              "OCI runtime exec failed", "unable to start container process")
-
-
-def _stderr_has_docker_cli_prefix(stderr) -> bool:
-    s = stderr or ""
-    return any(s.startswith(p) or f"\n{p}" in s for p in _DOCKER_CLI_STDERR_PREFIXES)
+# 10th cold review round 10 P7 (residual, supersedes 9th round P8(a)): the stderr-prefix
+# shortcut is REMOVED ENTIRELY -- a model's own checker-script stderr text must NEVER again
+# decide the classification, not even when paired with an rc band. 126/127 are AMBIGUOUS (a
+# checker script running happily to completion can legitimately `exit 127`, or hit bash's own
+# "127: command not found" for a missing in-container binary) and are no longer treated as
+# exec-creation evidence at all. Only rc == 125 -- the docker CLI's OWN dedicated "could not even
+# attempt it" code -- is unambiguous on its own, and decides OUTRIGHT (no probe needed, and not
+# overridden even if the container happens to show Running right after). Every other nonzero/
+# timeout result is decided PURELY by the daemon-level `docker inspect` probe (P47): Running ->
+# failed_tests (the checker's own doing); not Running, or the daemon itself unreachable ->
+# setup_error. The checker's stderr is still RECORDED in infra_evidence for diagnostics, never
+# used to decide.
+_EXEC_CREATION_FAIL_RC = 125
 
 
 def _classify_check_result(container: str, res: dict, runner) -> tuple:
-    """P47 + 9th round P8(a): the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout checker
-    result. Returns `(infra_evidence: dict|None, exec_started: bool|None)`.
-
-    Two INDEPENDENT pieces of evidence, checked in order:
-      1. rc in {125,126,127} AND the stderr carries docker's OWN CLI wording -- unambiguous:
-         the exec never started (`exec_started=False`), no probe needed.
-      2. Otherwise, fall to the DAEMON-level `docker inspect` check (P47): daemon reachable AND
-         container Running -> the checker's own result is the model's doing (covers BOTH a model
-         that broke its own `/bin/true` and one that printed docker-CLI-looking text into its own
-         stderr) -> infra_evidence=None (stays failed_tests), `exec_started=True`. Daemon
-         unreachable (can't even ask) -> `exec_started=None` (truly unknown). Daemon reachable but
-         the container is NOT Running -> `exec_started=False` (plausibly never started, or died
-         immediately after)."""
+    """P47 + 10th round P7: the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout checker
+    result. Returns `(infra_evidence: dict|None, exec_started: bool|None)`. See the module-level
+    comment above for the full decision table."""
     exit_code = res.get("exit_code")
-    if exit_code in _EXEC_CREATION_FAIL_RC and _stderr_has_docker_cli_prefix(res.get("stderr")):
-        return ({"message": f"docker exec-creation failure (exit={exit_code}): explicit docker "
-                           f"CLI stderr evidence -- {(res.get('stderr') or '')[:200]}",
+    if exit_code == _EXEC_CREATION_FAIL_RC:
+        return ({"message": f"docker exec-creation failure (exit={exit_code}, the docker CLI's "
+                           f"own dedicated code) -- stderr (recorded, not used to decide): "
+                           f"{(res.get('stderr') or '')[:200]}",
                 "exit_code": exit_code, "stderr": (res.get("stderr") or "")[:200],
                 "timed_out": bool(res.get("timed_out")), "health_probe_ok": None,
                 "exec_started": False}, False)
