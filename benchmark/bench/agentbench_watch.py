@@ -440,7 +440,8 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
                      router_active_fn=router_recently_active, label: str = "",
                      rows_evidence: bool = True, manifest_evidence: bool = True,
                      elapsed_s: float | None = None, predicted_mean_s: float | None = None,
-                     busy_observed_box: dict | None = None) -> str:
+                     busy_observed_box: dict | None = None,
+                     persistence_box: dict | None = None) -> str:
     done = len(rows)
     progressing = done > prev_rows_count
     stats = rate_stats(rows)
@@ -489,25 +490,52 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
     lines.append(f"(2) RATE: mean_wall_total_s={None if mean_s is None else round(mean_s, 2)} "
                 f"max_wall_total_s={max_s} ETA={eta_txt} (from the MEAN wall_total_s, never the "
                 "median)")
-    # 7th cold review round 7 P43(d): a REAL "CORRECT vs FINISH" recommendation -- the round-6
-    # version only printed elapsed/ETA arithmetic, comparing nothing against a PRIOR prediction
-    # and evaluating no actual correction cost. `predicted_mean_s` (--predicted-mean-s, typically
-    # the pilot's own observed mean) is compared against the axis's CURRENT observed mean;
-    # CORRECT if the ratio exceeds 2x, more than 30% of graded rows are non-converged, or any of
-    # the last 5 rows is a setup_error -- else FINISH.
+    # 7th cold review round 7 P43(d) + 8th round P54: a REAL "CORRECT vs FINISH" recommendation --
+    # the round-6 version only printed elapsed/ETA arithmetic, comparing nothing against a PRIOR
+    # prediction and evaluating no actual correction cost. `predicted_mean_s` (--predicted-mean-s,
+    # typically the pilot's own observed mean) is compared against the axis's CURRENT observed
+    # mean; the TRIGGER fires when the ratio exceeds 2x, more than 30% of graded rows are
+    # non-converged, or any of the last 5 rows is a setup_error.
+    #
+    # P54 (supersedes P43(d)'s single-tick decision): UNKNOWN when there's too little evidence to
+    # decide at all (rows < 5, or no --predicted-mean-s given -- nothing to compare against).
+    # Otherwise CORRECT ONLY when the trigger has fired on >= 2 CONSECUTIVE blocks (a single bad
+    # tick is noise, not a verdict) AND the estimated cost of finishing the remaining work
+    # (remaining rows * observed mean) exceeds the cost already SUNK into what's done (done rows *
+    # observed mean) -- correcting now is only worth it if there's more expensive work ahead than
+    # what would be thrown away. Both cost numbers are printed regardless of the verdict.
+    # `persistence_box` (owned by run_watch, one dict for the whole run, across ticks) tracks the
+    # trigger's CONSECUTIVE streak; no box at all (every other caller, mostly tests) means no
+    # persistence is tracked, so CORRECT can never fire (the safe default).
     nonconv_share = (sanity["converged_false"] / done) if done else None
     last5_setup_error = any(r.get("setup_error") for r in rows[-5:])
     ratio = (mean_s / predicted_mean_s) if (mean_s is not None and predicted_mean_s) else None
-    correct = bool((ratio is not None and ratio > 2.0)
+    trigger = bool((ratio is not None and ratio > 2.0)
                   or (nonconv_share is not None and nonconv_share > 0.3)
                   or last5_setup_error)
-    recommendation = "CORRECT" if correct else "FINISH"
+    if done < 5 or not predicted_mean_s:
+        recommendation = "UNKNOWN"
+        numbers = (f"done={done} (need >=5) predicted_mean_wall_total_s={predicted_mean_s} "
+                  "-- not enough evidence to decide")
+    else:
+        if persistence_box is not None:
+            persistence_box["streak"] = persistence_box.get("streak", 0) + 1 if trigger else 0
+            streak = persistence_box["streak"]
+        else:
+            streak = 1 if trigger else 0
+        remaining = max(total - done, 0)
+        remaining_cost_s = remaining * mean_s
+        restart_cost_s = done * mean_s
+        correct = bool(streak >= 2 and remaining_cost_s > restart_cost_s)
+        recommendation = "CORRECT" if correct else "FINISH"
+        numbers = (f"trigger_streak={streak} remaining_cost_s={round(remaining_cost_s, 1)} "
+                  f"restart_cost_s={round(restart_cost_s, 1)} "
+                  f"ratio={None if ratio is None else round(ratio, 2)} "
+                  f"nonconv_share={None if nonconv_share is None else round(nonconv_share, 2)} "
+                  f"setup_error_in_last_5={last5_setup_error}")
     lines.append(
         f"    CORRECT-vs-FINISH: observed_mean_wall_total_s={None if mean_s is None else round(mean_s, 2)} "
-        f"predicted_mean_wall_total_s={predicted_mean_s} "
-        f"ratio={None if ratio is None else round(ratio, 2)} "
-        f"nonconv_share={None if nonconv_share is None else round(nonconv_share, 2)} "
-        f"setup_error_in_last_5={last5_setup_error} -> {recommendation}"
+        f"predicted_mean_wall_total_s={predicted_mean_s} {numbers} -> {recommendation}"
         + (f" (elapsed={elapsed_s / 60:.1f}min predicted-remaining="
            f"{'n/a' if eta is None else f'{eta / 60:.1f}min'})" if elapsed_s is not None else ""))
     lines.append(
@@ -719,6 +747,9 @@ def run_watch(args) -> int:
     # P52(d): persists ACROSS ticks (one dict for the whole run) -- see build_assessment's
     # busy_observed_box docstring.
     busy_observed_box: dict = {}
+    # P54: persists ACROSS ticks too -- see build_assessment's persistence_box docstring
+    # (CORRECT-vs-FINISH trigger streak).
+    persistence_box: dict = {}
     calibrate_fn = getattr(args, "calibrate_fn", None) or worker_busy
     try:
         while True:
@@ -757,7 +788,8 @@ def run_watch(args) -> int:
                                      rows_evidence=rows_evidence, manifest_evidence=manifest_evidence,
                                      elapsed_s=now - run_t0,
                                      predicted_mean_s=getattr(args, "predicted_mean_s", None),
-                                     busy_observed_box=busy_observed_box)
+                                     busy_observed_box=busy_observed_box,
+                                     persistence_box=persistence_box)
             _append(out_path, block)
             prev_count = len(rows)
             # addendum E: exit after a DRIVER DEAD tick regardless of row count -- a crashed
