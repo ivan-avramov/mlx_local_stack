@@ -400,6 +400,63 @@ def test_docker_exec_real_bash_checker_normal_output_is_preserved_P7():
     assert AB._RC_MARKER not in res["stdout"]
 
 
+def _all_vendored_bash_scripts():
+    """Every (task_id, field, code) for a bash-language init/start/check/example script actually
+    vendored in the corpus -- feeds both the bash -n sweep and documents which field each came
+    from on a failure."""
+    tasks = AB.load_corpus(CORPUS)
+    out = []
+    for task in tasks:
+        cfg = AB.task_config(task, SCRIPTS_ROOT)
+        for i, s in enumerate(cfg["init_scripts"]):
+            if s is not None and s[0] == "bash":
+                out.append((task["id"], f"init_scripts[{i}]", s[1]))
+        if cfg["start"] is not None and cfg["start"][0] == "bash":
+            out.append((task["id"], "start", cfg["start"][1]))
+        for i, s in enumerate(cfg["check"] or []):
+            if s is not None and s[0] == "bash":
+                out.append((task["id"], f"check[{i}]", s[1]))
+        if cfg["example"] is not None and cfg["example"][0] == "bash":
+            out.append((task["id"], "example", cfg["example"][1]))
+    return out
+
+
+def test_every_vendored_bash_script_wraps_to_syntactically_valid_bash_P12():
+    """12th cold review round 12 (HIGH regression in 0c4d469, external cold-review finding): the `( ... )`
+    subshell wrapping must stay syntactically valid bash for EVERY vendored init/start/check/
+    example script in the corpus, not just the ones exercised by other unit tests -- a
+    comment-only (or otherwise all-whitespace) script previously made the subshell body EMPTY,
+    which bash rejects as a syntax error. `bash -n` (parse/syntax-check only, never executes)
+    against the EXACT wrapping docker_exec applies (`_wrap_bash_script`, not a re-implementation
+    that could drift) catches this class of regression across the WHOLE corpus at once."""
+    scripts = _all_vendored_bash_scripts()
+    assert len(scripts) > 50   # sanity: the sweep is actually seeing the real corpus, not a stub
+    failures = []
+    for task_id, field, code in scripts:
+        wrapped = AB._wrap_bash_script(code)
+        proc = subprocess.run(["bash", "-n", "-c", wrapped], capture_output=True, text=True, timeout=5)
+        if proc.returncode != 0:
+            failures.append(f"{task_id} ({field}): rc={proc.returncode} stderr={proc.stderr!r}")
+    assert not failures, "bash -n rejected the wrapped form of:\n" + "\n".join(failures)
+
+
+@_timeout(10)
+def test_docker_exec_comment_only_script_runs_with_rc_0_and_marker_present_P12():
+    """12th round, end-to-end reproduction of the Opus-found regression: a comment-only init
+    script (the EXACT shape of the 7 affected upstream tasks, e.g. std-007-18's
+    "#!/bin/bash\\n# No initial setup required...") must run with rc 0 and the marker observed --
+    before the `:` fix this was a bash syntax error (rc 2, no marker) via a REAL local bash."""
+    def runner(cmd, **kw):
+        assert cmd[:3] == ["docker", "exec", "c1"]
+        real_cmd = ["bash"] + cmd[4:]
+        return subprocess.run(real_cmd, capture_output=True, timeout=kw.get("timeout", 5))
+    code = "\n#!/bin/bash\n# No initial setup required for this problem, as it uses default system tools."
+    res = AB.docker_exec("c1", ("bash", code), 5.0, runner)
+    assert res["marker_observed"] is True
+    assert res["exit_code"] == 0
+    assert res["timed_out"] is False
+
+
 # --------------------------------------------------------------------------- P8(b) binary/undecodable output
 def test_docker_exec_decodes_invalid_utf8_bytes_with_replace_never_raises_P8b():
     """A checker emitting raw 0xff on stderr must never raise UnicodeDecodeError -- it decodes
@@ -2698,6 +2755,29 @@ def test_run_task_unrepresentable_answer_embedded_nul_is_scored_failed_tests_not
     assert row["passed"] is False
     assert row["setup_error"] is False
     assert "unrepresentable answer" in row["error"]
+
+
+def test_run_task_harness_valueerror_unrelated_to_argv_is_NOT_labelled_unrepresentable_answer_Rb():
+    """12th cold review round 12 R-b (minor severity, narrows the P2 catch): a ValueError/TypeError raised
+    SOMEWHERE ELSE in the check-chain's broader logic (here: `docker inspect`'s own runner call,
+    reached via _classify_check_result after a nonzero exit -- nothing to do with the model's
+    answer at all) must NOT be mislabeled "unrepresentable answer" -- that would hide a genuine
+    HARNESS bug behind a model-blaming message. It must propagate to the generic catch-all like
+    any other unexpected exception: setup_error=True, outcome=SERVER_ERROR."""
+    def runner(cmd, **kw):
+        if cmd[:2] == ["docker", "run"]:
+            return FakeRunner.Proc(0, "", "")
+        if cmd[:2] == ["docker", "inspect"]:
+            raise ValueError("some unrelated harness bug, nothing to do with the model's answer")
+        if cmd[:2] == ["docker", "exec"]:
+            return FakeRunner.Proc(1, "", "checker failed, no marker")   # triggers the inspect probe
+        return FakeRunner.Proc(0, "", "")
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "x"})])])
+    task = _check_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["setup_error"] is True
+    assert row["outcome"] == AO.SERVER_ERROR
+    assert row.get("error") is None or "unrepresentable answer" not in row["error"]
 
 
 def test_run_task_a_valid_submit_followed_by_a_stray_empty_call_in_the_SAME_turn_still_solves_P10():

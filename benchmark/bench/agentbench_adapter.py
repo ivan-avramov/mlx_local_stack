@@ -449,6 +449,18 @@ class ContainerDiscoveryError(RuntimeError):
     run's container alive alongside a brand-new one using the same name pattern."""
 
 
+class UnrepresentableArgvError(ValueError):
+    """12th cold review round 12 R-b (minor severity, narrows 11th round P2): raised ONLY at the exact
+    argv-construction/dispatch step inside `docker_exec` -- i.e. the `runner(cmd, ...)` call
+    itself raising ValueError/TypeError while trying to pass `cmd` (which embeds the model's
+    answer) to the OS (the concrete case: an embedded NUL byte, which real subprocess.Popen
+    rejects before even exec'ing). A subclass of ValueError so existing broad `except ValueError`
+    handlers elsewhere are unaffected, but a run_task caller can `except UnrepresentableArgvError`
+    SPECIFICALLY -- never a bare `(ValueError, TypeError)`, which would also catch a ValueError/
+    TypeError raised by some UNRELATED harness bug elsewhere in the check-chain's broader logic
+    and wrongly label it the model's fault too."""
+
+
 def remove_container(name: str, runner=subprocess.run, verify: bool = False):
     """Best-effort by default (returns None, never raises -- every OTHER call site, e.g. D2
     prepare's per-probe churn and the pre-clean before `create_container`, wants exactly that).
@@ -524,6 +536,29 @@ def _extract_rc_marker(stdout: str):
     return stdout[:m.start()] + stdout[m.end():], int(m.group(1))
 
 
+def _wrap_bash_script(code: str) -> str:
+    """The exact wrapping `docker_exec` applies to a `("bash", code)` invocation -- pulled out so
+    tests can run it through `bash -n` (syntax-check) against every vendored script without
+    re-implementing the formula (which could silently drift from the real one).
+
+    The code runs inside a SUBSHELL `( ... )` -- an explicit `exit N` inside a checker script (a
+    REAL, common pattern -- e.g. the 11th round review's own "a checker doing exit 125") is the
+    bash `exit` BUILTIN, which terminates the CURRENT script immediately; without the subshell
+    boundary it would skip straight past `rc=$?`/the marker printf, and the marker would NEVER be
+    observed even though the script genuinely ran to completion. A subshell confines `exit` to
+    itself: its own exit status becomes `$?` in the OUTER script, which then continues normally to
+    the marker printf. Positional params ($1, $2, ...) are inherited by the subshell unchanged;
+    stdout/stderr pass through untouched.
+
+    12th cold review round 12 (HIGH regression in 0c4d469, external cold-review finding): a COMMENT-ONLY (or
+    otherwise all-whitespace) script makes `( ... )` an EMPTY subshell body, which bash rejects as
+    a syntax error (rc 2, no marker ever printed) -- reproduced: 7 upstream init scripts of the
+    form "#!/bin/bash\\n# No initial setup required..." turned into setup_error in every arm. A
+    leading `:` (the shell no-op builtin) guarantees the subshell body is never empty, regardless
+    of what `code` itself contains."""
+    return f'(\n:\n{code}\n)\nrc=$?\nprintf "\\n{_RC_MARKER}%d\\n" "$rc"\n'
+
+
 def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run,
                 extra_params=()) -> dict:
     """One FRESH, non-interactive `docker exec` (mirrors task.py `execute_independent`, used for
@@ -544,15 +579,7 @@ def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run
     lang, code = lang_code
     params = [str(p) for p in extra_params]
     if lang == "bash":
-        # the code runs inside a SUBSHELL `( ... )` -- an explicit `exit N` inside a checker
-        # script (a REAL, common pattern -- e.g. the review's own "a checker doing exit 125") is
-        # the bash `exit` BUILTIN, which terminates the CURRENT script immediately; without the
-        # subshell boundary it would skip straight past `rc=$?`/the marker printf, and the marker
-        # would NEVER be observed even though the script genuinely ran to completion. A subshell
-        # confines `exit` to itself: its own exit status becomes `$?` in the OUTER script, which
-        # then continues normally to the marker printf. Positional params ($1, $2, ...) are
-        # inherited by the subshell unchanged; stdout/stderr pass through untouched.
-        script = f'(\n{code}\n)\nrc=$?\nprintf "\\n{_RC_MARKER}%d\\n" "$rc"\n'
+        script = _wrap_bash_script(code)
         cmd = ["docker", "exec", container, "bash", "-c", script]
         if params:
             cmd += ["--", *params]
@@ -568,6 +595,14 @@ def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run
     except subprocess.TimeoutExpired:
         return {"exit_code": None, "stdout": "", "stderr": "", "timed_out": True,
                "marker_observed": False}
+    except (ValueError, TypeError) as e:
+        # 12th cold review round 12 R-b (minor severity, narrows 11th round P2): THIS is the exact
+        # argv-construction/dispatch step -- `cmd` embeds the model's answer (via `params`), and a
+        # real subprocess.Popen raises ValueError for e.g. an embedded NUL byte before even
+        # exec'ing. Re-raised as the narrow `UnrepresentableArgvError` so a caller can catch
+        # SPECIFICALLY this, never a bare (ValueError, TypeError) that could also swallow an
+        # unrelated harness bug raised somewhere else and wrongly blame the model for it.
+        raise UnrepresentableArgvError(f"{type(e).__name__}: {e}") from e
     stdout = _decode_replace(proc.stdout)
     stdout, marker_rc = _extract_rc_marker(stdout)
     if marker_rc is not None:
@@ -1777,16 +1812,22 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
             try:
                 passed, gold_live, infra_error, exec_started = run_check_chain(
                     name, cfg["check"], cfg["example"], answer, runner, exec_timeout)
-            except (ValueError, TypeError) as e:
-                # 11th cold review round 11 P2 (HIGH): the model's OWN answer could not be
-                # represented as a subprocess argv element while building/running the check-script
-                # chain (embedded NUL byte is the concrete case; any ValueError/TypeError raised
-                # while BUILDING the argv is treated the same way) -- this is the MODEL's doing,
-                # an unscorable/malformed answer, never an infra/harness failure. Scored
-                # failed_tests (via the normal "evaluate_submission returned False" path below),
-                # with the error recorded for the row -- NEVER reaching the generic catch-all,
-                # which would otherwise wrongly mark this setup_error=True, outcome=SERVER_ERROR.
-                unrepresentable_answer_box["value"] = f"unrepresentable answer: {type(e).__name__}: {e}"
+            except UnrepresentableArgvError as e:
+                # 11th cold review round 11 P2 (HIGH), narrowed by 12th round R-b (minor severity): the
+                # model's OWN answer could not be represented as a subprocess argv element (the
+                # concrete case: an embedded NUL byte) -- this is the MODEL's doing, an
+                # unscorable/malformed answer, never an infra/harness failure. Scored failed_tests
+                # (via the normal "evaluate_submission returned False" path below), with the error
+                # recorded for the row -- NEVER reaching the generic catch-all, which would
+                # otherwise wrongly mark this setup_error=True, outcome=SERVER_ERROR.
+                #
+                # R-b: this catches ONLY `UnrepresentableArgvError`, raised EXCLUSIVELY at
+                # docker_exec's own argv-dispatch step -- never a bare (ValueError, TypeError),
+                # which would also swallow a ValueError/TypeError raised by some UNRELATED harness
+                # bug elsewhere in run_check_chain's broader logic and wrongly blame the model for
+                # it too (such an exception now correctly falls through, uncaught here, to the
+                # generic catch-all as the harness failure it actually is).
+                unrepresentable_answer_box["value"] = f"unrepresentable answer: {e}"
                 return False
             gold_live_box["value"] = gold_live
             infra_error_box["value"] = infra_error
