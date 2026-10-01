@@ -4,6 +4,7 @@ the router and the model are all mocked; no network, no docker, no model calls."
 import json
 import signal
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -431,6 +432,22 @@ def test_summarize_graded_ids_excludes_setup_error_rows_P23():
            _row("b", passed=False, converged=False, setup_error=True)]
     summary = R.summarize(rows)
     assert summary["graded_ids"] == ["a"]
+
+
+def test_summarize_wall_total_s_mean_and_max_P32():
+    rows = [{**_row("a", passed=True, converged=True), "wall_total_s": 10.0},
+           {**_row("b", passed=True, converged=True), "wall_total_s": 30.0}]
+    summary = R.summarize(rows)
+    assert summary["wall_total_s_mean"] == 20.0
+    assert summary["wall_total_s_max"] == 30.0
+
+
+def test_summarize_wall_total_s_falls_back_to_wall_s_for_older_rows_P32():
+    row = _row("a", passed=True, converged=True)
+    row["wall_s"] = 5.0
+    assert "wall_total_s" not in row
+    summary = R.summarize([row])
+    assert summary["wall_total_s_mean"] == 5.0
 
 
 def test_setup_error_rows_excluded_from_acc_denominator_F1(tmp_path, monkeypatch):
@@ -1264,6 +1281,54 @@ def test_transcript_not_written_when_no_row_is_appended(tmp_path, monkeypatch):
     assert not tdir.exists() or list(tdir.glob("*.json")) == []
 
 
+def test_resume_reuses_the_same_run_id_transcripts_dir_P29(tmp_path, monkeypatch):
+    """6th cold review round 6 P29: a resume must land its LATER tasks' transcripts in the SAME
+    run-id directory as the earlier ones, not mint a fresh (different-timestamp) subdirectory."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    monkeypatch.setattr(R.paths, "stack_workdir", lambda required=True: workdir)
+    rc = R.main(_args(tmp_path, out=str(workdir / "rows.jsonl"), limit=1))
+    assert rc == 0
+    man1 = json.loads((workdir / "rows.manifest.json").read_text())
+    first_dir = man1["runtime"]["transcripts_dir"]
+
+    seen.clear()
+    rc = R.main(_args(tmp_path, out=str(workdir / "rows.jsonl"), resume=""))
+    assert rc == 0
+    man2 = json.loads((workdir / "rows.manifest.json").read_text())
+    assert man2["runtime"]["transcripts_dir"] == first_dir
+    assert (Path(first_dir) / "m1.json").exists()
+
+
+def test_two_fresh_runs_use_different_run_id_transcript_dirs_P29(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    monkeypatch.setattr(R.paths, "stack_workdir", lambda required=True: workdir)
+    rc = R.main(_args(tmp_path, out=str(workdir / "a" / "rows.jsonl")))
+    assert rc == 0
+    man1 = json.loads((workdir / "a" / "rows.manifest.json").read_text())
+
+    import time as _time
+    _time.sleep(1.01)   # run_id has second granularity -- ensure a different timestamp
+    rc = R.main(_args(tmp_path, out=str(workdir / "b" / "rows.jsonl")))
+    assert rc == 0
+    man2 = json.loads((workdir / "b" / "rows.manifest.json").read_text())
+    assert man1["runtime"]["transcripts_dir"] != man2["runtime"]["transcripts_dir"]
+
+
 def test_resume_does_not_rewrite_an_existing_transcript(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
@@ -1317,5 +1382,10 @@ def test_transcripts_dir_defaults_to_stack_workdir_m54_transcripts_model(tmp_pat
     args = _args(tmp_path, out=str(workdir / "rows.jsonl"))   # no --transcripts-dir
     rc = R.main(args)
     assert rc == 0
-    expected = workdir / "m54" / "transcripts" / "m"
-    assert (expected / "m0.json").exists()
+    base = workdir / "m54" / "transcripts" / "m"
+    # P29: transcripts now live under a run-id subdirectory of the base (two different runs of
+    # the same model must never share <model>/<task>.json and overwrite each other's evidence).
+    matches = list(base.glob("*/m0.json"))
+    assert len(matches) == 1, f"expected exactly one run-id subdir under {base}, found {matches}"
+    man = json.loads((workdir / "rows.manifest.json").read_text())
+    assert man["runtime"]["transcripts_dir"] == str(matches[0].parent)

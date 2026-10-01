@@ -1915,6 +1915,27 @@ def test_run_task_gold_drift_when_prepare_and_live_golds_disagree_R5():
     assert row["gold_prepare"] != row["gold_live"]
 
 
+def test_run_task_row_carries_wall_total_s_covering_full_lifecycle_P32():
+    """6th cold review round 6 P32: wall_total_s covers container create -> verified removal,
+    not just the agent loop's own wall_s -- it must be >= wall_s (cleanup/setup time is on top)."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert isinstance(row["wall_total_s"], (int, float))
+    assert row["wall_total_s"] >= row["wall_s"]
+
+
+def test_run_task_setup_error_row_also_carries_wall_total_s_P32():
+    runner = FakeRunner(default=FakeRunner.Proc(1, "", "init failed"))
+    task = {"id": "t1", "group": 1, "labels": [],
+           "create": {"local": "default", "init": {"code": "false"}},
+           "evaluation": {"match": "x"}, "description": "d"}
+    row = AB.run_task("m", task, SCRIPTS_ROOT, FakeDriver(), {}, runner=runner, popen=_shell_popen_ok())
+    assert row["setup_error"] is True
+    assert isinstance(row["wall_total_s"], (int, float))
+
+
 def test_run_task_solved_and_passing_match_task():
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
     driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])

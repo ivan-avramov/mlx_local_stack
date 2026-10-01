@@ -1499,3 +1499,8 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
         verified = remove_container(name, runner, verify=True)
         if row is not None:
             row["container_removed_verified"] = verified
+            # 6th cold review round 6 P32: wall_total_s is the FULL task cost -- container
+            # create -> verified removal -- not just the agent loop's own wall_s. `t0` is set
+            # right before create_container, so this finally block (which runs after everything,
+            # including this verified-removal call) is the correct measurement point.
+            row["wall_total_s"] = round(clock() - t0, 2)

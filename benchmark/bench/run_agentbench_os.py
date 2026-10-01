@@ -157,10 +157,34 @@ def transcripts_dir_for(args) -> Path:
     """`--transcripts-dir`, else `<STACK_WORKDIR>/m54/transcripts/<model>/` (quality-inspection
     artifacts; genuinely optional output, so STACK_WORKDIR is REQUIRED when not given explicitly
     rather than silently falling back to a cache dir -- AGENTS.md: no filesystem pollution outside
-    STACK_WORKDIR)."""
+    STACK_WORKDIR). This is the BASE path used for the early --transcripts-dir confinement check
+    in main() (confinement of the base transitively covers any run-id subdirectory nested under
+    it -- see `run_transcripts_dir`) and as the fallback when `--transcripts-dir` IS given
+    explicitly (an explicit path is used AS-IS, never run-id-nested)."""
     if args.transcripts_dir:
         return Path(args.transcripts_dir)
     return paths.stack_workdir(required=True) / "m54" / "transcripts" / args.model
+
+
+def run_transcripts_dir(args, mp: Path, is_resume: bool) -> Path:
+    """6th cold review round 6 P29: transcripts live under `<base>/<run_id>/`, `run_id` being
+    THIS run's own start timestamp, so two DIFFERENT runs of the same model never share
+    `<model>/<task>.json` and silently overwrite each other's evidence. A resume REUSES the
+    run_id recorded in the manifest it's building on (never mints a new one), so a resumed run's
+    later tasks land in the SAME directory as its earlier ones. An explicit `--transcripts-dir`
+    is used AS-IS (no run-id nesting -- the operator asked for exactly that path)."""
+    if args.transcripts_dir:
+        return Path(args.transcripts_dir)
+    base = transcripts_dir_for(args)
+    if is_resume and mp.exists():
+        try:
+            prev_td = (json.loads(mp.read_text(encoding="utf-8")).get("runtime") or {}).get("transcripts_dir")
+        except Exception:  # noqa: BLE001
+            prev_td = None
+        if prev_td:
+            return Path(prev_td)
+    run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    return base / run_id
 
 
 def write_transcript(transcripts_dir: Path, task: dict, model: str, turns: list, row: dict) -> Path:
@@ -169,7 +193,11 @@ def write_transcript(transcripts_dir: Path, task: dict, model: str, turns: list,
           "task_description": task.get("description", ""), "turns": turns,
           "submitted_via": row.get("submitted_via"), "answer": row.get("answer"),
           "gold_prepare": row.get("gold_prepare"), "gold_live": row.get("gold_live"),
-          "passed": row.get("passed"), "outcome": row.get("outcome")}
+          "passed": row.get("passed"), "outcome": row.get("outcome"),
+          # Addendum I (round 6): a setup/grading-infra failure still carries the episode's
+          # ACTUAL completed turns above -- these two fields explain WHY it failed on top of that.
+          "setup_error": row.get("setup_error"), "error": row.get("error"),
+          "infra_evidence": row.get("infra_evidence")}
     path = transcripts_dir / f"{task['id']}.json"
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
@@ -338,6 +366,12 @@ def summarize(rows: list) -> dict:
         for lbl in (r.get("labels") or []):
             label_counts[lbl] = label_counts.get(lbl, 0) + 1
     walls = [r["wall_s"] for r in rows if isinstance(r.get("wall_s"), (int, float))]
+    # P32: wall_total_s (container create -> verified removal) is the FULL per-task cost --
+    # wall_s alone (just the agent loop) understates campaign duration by the grading/cleanup
+    # time on top. Falls back to wall_s for rows that predate wall_total_s.
+    wall_totals = [r["wall_total_s"] if isinstance(r.get("wall_total_s"), (int, float))
+                  else r.get("wall_s") for r in rows]
+    wall_totals = [w for w in wall_totals if isinstance(w, (int, float))]
     toks = [r["completion_tokens_total"] for r in rows
            if isinstance(r.get("completion_tokens_total"), (int, float))]
     # 5th cold review P11: AGENTS.md -- acc_strict@<budget> (passed AND converged, DNF counts in
@@ -363,6 +397,8 @@ def summarize(rows: list) -> dict:
         "label_counts_diagnostic": label_counts,
         "wall_s_mean": round(statistics.mean(walls), 1) if walls else None,
         "wall_s_max": round(max(walls), 1) if walls else None,
+        "wall_total_s_mean": round(statistics.mean(wall_totals), 1) if wall_totals else None,
+        "wall_total_s_max": round(max(wall_totals), 1) if wall_totals else None,
         "completion_tokens_mean": round(statistics.mean(toks), 1) if toks else None,
         "completion_tokens_max": round(max(toks), 1) if toks else None,
         "fail_ids": [r["id"] for r in graded_rows if r.get("passed") is not True],
@@ -681,6 +717,10 @@ def run_generate(args, out: Path) -> int:
     # manifest it's building on -- compared against a FRESHLY gathered candidate manifest (the
     # same one that will be written below if accepted), covering the flat runtime identity AND
     # the served-file hash / effective sampling / predictor-context-scaffold identity.
+    # P29: resolved EXACTLY ONCE per invocation -- a resume reuses the run_id recorded in the
+    # manifest it's building on; a fresh run mints one new run_id now. Never re-derive this later
+    # in the function (a second `time.strftime(...)`-based call would mint a DIFFERENT run_id).
+    tdir = run_transcripts_dir(args, mp, bool(done_ids))
     runtime = {"client": "run_agentbench_os", "bench": BENCH_NAME, "tune": TUNE,
               "corpus": str(corpus_path), "exclusions_path": str(artifact_path),
               "limit": args.limit, "llm_timeout_s": round(llm_timeout, 1),
@@ -688,7 +728,7 @@ def run_generate(args, out: Path) -> int:
               "deadline_s": round(deadline_s, 1), "n_todo": len(todo),
               "n_done_before": len(done_ids), "n_excluded": len(exclusions),
               "pilot_seed": args.pilot_seed, "pilot_n": args.pilot_n, "pilot_ids": pilot_ids,
-              "transcripts_dir": str(transcripts_dir_for(args)),
+              "transcripts_dir": str(tdir),
               "model": args.model, "round_limit": args.round_limit,
               "exec_timeout_s": args.exec_timeout, "sampling_profile": args.sampling_profile,
               "image_ids": image_ids, "corpus_sha256": _sha256_file(corpus_path),
@@ -703,7 +743,6 @@ def run_generate(args, out: Path) -> int:
 
     AB.sweep_stale_containers(AB.GENERATE_CONTAINER_PREFIX, runner)
 
-    tdir = transcripts_dir_for(args)
     prev_segments = []
     if mp.exists():
         try:
