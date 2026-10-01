@@ -705,3 +705,44 @@ def test_time_to_success_rejects_p_out_of_range():
 def test_time_to_success_rejects_negative_durations():
     with pytest.raises(ValueError):
         S.time_to_success([-1.0], [200.0], 0.5)
+
+
+# ----------------------------------------------------------------------------- mcnemar_exact
+def test_mcnemar_exact_symmetric_discordant_pairs_is_p_one():
+    """b == c (equal discordant counts both directions) -- the null (no systematic difference)
+    is exactly what's observed, so p == 1.0."""
+    assert S.mcnemar_exact(5, 5) == pytest.approx(1.0)
+
+
+def test_mcnemar_exact_no_discordant_pairs_is_p_one():
+    """n = b + c = 0 (every item concordant) -- nothing to test, p == 1.0 (never divide by zero)."""
+    assert S.mcnemar_exact(0, 0) == pytest.approx(1.0)
+
+
+def test_mcnemar_exact_matches_known_textbook_value():
+    """b=1, c=9 (n=10 discordant) is a standard textbook exact-McNemar example: two-sided exact
+    binomial p = 2 * P(X<=1 | X~Binomial(10, 0.5)) = 2 * (11/1024) = 0.021484375."""
+    assert S.mcnemar_exact(1, 9) == pytest.approx(0.021484375, abs=1e-9)
+
+
+def test_mcnemar_exact_is_symmetric_in_b_and_c():
+    assert S.mcnemar_exact(2, 8) == pytest.approx(S.mcnemar_exact(8, 2))
+
+
+def test_mcnemar_exact_more_discordant_pairs_same_ratio_is_more_significant():
+    """Holding the imbalance ratio fixed, MORE discordant pairs sharpens the p-value (more
+    evidence against the null of no systematic difference)."""
+    p_small = S.mcnemar_exact(1, 4)     # n=5
+    p_large = S.mcnemar_exact(2, 8)     # n=10, same 1:4 ratio
+    assert p_large < p_small
+
+
+def test_mcnemar_exact_never_exceeds_one():
+    assert S.mcnemar_exact(50, 50) <= 1.0
+
+
+def test_mcnemar_exact_rejects_negative_counts():
+    with pytest.raises(ValueError):
+        S.mcnemar_exact(-1, 3)
+    with pytest.raises(ValueError):
+        S.mcnemar_exact(3, -1)

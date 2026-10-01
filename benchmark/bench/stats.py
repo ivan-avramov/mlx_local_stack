@@ -401,6 +401,31 @@ def n_for(delta, p_d=0.20, alpha=0.05, power=0.80):
     return math.ceil((z_a + z_b) ** 2 * p_d / (delta * delta))
 
 
+# ------------------------------------------------------------------------ paired significance
+def mcnemar_exact(b: int, c: int) -> float:
+    """Exact two-sided McNemar test on a paired binary comparison's DISCORDANT pairs: `b` is the
+    count of items where A succeeded and B failed, `c` the count where B succeeded and A failed
+    (concordant pairs -- both succeed, or both fail -- carry no information and are not passed
+    in at all). This is the exact binomial form (Edwards 1948), preferred over the chi-squared
+    approximation at the item counts this campaign runs (n < ~100): two-sided
+    p = 2 * P(X <= min(b,c) | X ~ Binomial(b+c, 0.5)), clamped to 1.0.
+
+    n=0 (no discordant pairs at all) returns 1.0 -- nothing to test, never a ZeroDivisionError.
+
+    FAILURE MODE: like every binomial test, power is limited by `b+c`, not by the full item
+    count -- two models that mostly agree (few discordant pairs) can never reach significance
+    here regardless of n. Report `b+c` alongside the p-value so a reader can see this.
+    """
+    if b < 0 or c < 0:
+        raise ValueError(f"mcnemar_exact: b and c must be >= 0, got b={b}, c={c}")
+    n = b + c
+    if n == 0:
+        return 1.0
+    k = min(b, c)
+    tail = sum(math.comb(n, i) for i in range(0, k + 1)) / (2 ** n)
+    return min(1.0, 2 * tail)
+
+
 # --------------------------------------------------------------------------- throughput view
 def time_to_success(t_success, t_fail, p):
     """Expected wall-clock to a FIRST success under independent retries, and its hourly rate.
