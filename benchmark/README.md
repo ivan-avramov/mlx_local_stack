@@ -218,16 +218,26 @@ newline-terminated before a round is considered complete (a chunk boundary landi
 misreads a shorter code). A command that reads stdin (e.g. a bare `read`) hangs until the timeout
 fires, exactly as it would upstream — there is no special-casing for that.
 
-The round's deadline is set BEFORE the command is even written to stdin, and the write itself goes
-through a bounded writer thread — a shell busy on a long foreground command (not yet reading stdin)
-can fill the OS pipe's write buffer, and a write that doesn't complete by the deadline is itself a
-timeout, not just a slow read. Reader-side memory is bounded too: the reader thread's queue has
-`maxsize=256` (backpressure against a chatty background process, e.g. `while :; do echo tick; done
-&`), and the retained output buffer is capped at ~1 MiB (head 512 KiB + tail 512 KiB + a `[... N
-bytes dropped ...]` marker) — `raw_output_len` on the row/transcript always reports the TRUE
-pre-cap length regardless. An invalid-UTF-8 output reproduces upstream's own
-`_execute_bash_command` behavior exactly: the WHOLE output becomes the literal string `"OS
-Environment output cannot be decoded as UTF-8"`, not per-byte mojibake. Timeout is enforced ONLY on
+The round's deadline is set BEFORE the command is even written to stdin, and the write itself
+happens in an INDEPENDENT background thread that `run()` never awaits synchronously — it starts
+the write and immediately begins draining the reader queue in the SAME loop, both bounded by the
+same deadline. (6th cold review round 6 P22, HIGH: the EARLIER write-then-drain design deadlocked
+— `head -c 20MB /dev/zero` followed by a 300 KiB comment on one stdin write wedged solid, because
+bash floods its own stdout executing the first line while the reader thread fills the bounded
+queue and blocks on `put()`, and `run()` was still parked awaiting the FULL write before it ever
+drained that queue. `close()` had the identical defect against a descendant still holding the pipe
+open, e.g. a backgrounded `sleep 30 &`.) Reader-side memory is bounded too: the reader thread's
+queue has `maxsize=256` (backpressure against a chatty background process, e.g. `while :; do echo
+tick; done &`), and the SENTINEL-SEARCH buffer (raw bytes only, never decoded) is capped at ~1 MiB
+(head 512 KiB + tail 512 KiB + a `[... N bytes dropped ...]` marker) — `raw_output_len` on the
+row/transcript always reports the TRUE pre-cap length regardless. The DISPLAY text is decoded
+INCREMENTALLY per original chunk (`codecs.getincrementaldecoder`, never by re-decoding an
+arbitrary byte-offset slice of the capped buffer, which can split a multibyte UTF-8 character and
+falsely report the WHOLE output as undecodable — P28, reproduced with 1.2 MB of valid `€`
+characters) and capped separately by CHARACTER count, which can never split a codepoint. A
+genuinely invalid-UTF-8 output still reproduces upstream's own `_execute_bash_command` behavior
+exactly: the WHOLE output becomes the literal string `"OS Environment output cannot be decoded as
+UTF-8"`, not per-byte mojibake. Timeout is enforced ONLY on
 the Python side (killing the process, plus a best-effort `docker exec <name> pkill -KILL -f "bash
 --login"` — deliberately simple; the container is removed at task end regardless, and process-group
 semantics inside an arbitrary image are unverified); exit code 137 (SIGKILL) is NEVER treated as a
@@ -238,14 +248,26 @@ would upstream, reported as `shell_died`; a death during `start()` (before the m
 a `setup_error` row, but a death caused by the MODEL's own `bash_action` is a SCORED FAIL
 (`outcome=failed_tests`, IN the acc denominator — upstream's equivalent is "later reads return
 empty and the task fails"). Grading itself still runs via FRESH one-shot `docker exec` calls
-(mirrors upstream `execute_independent`); a DOCKER TRANSPORT failure during grading (exit
-125/126/127, a "Cannot connect to the Docker daemon" stderr marker, or a grading-step timeout) is
-distinguished from the checker's own legitimate verdict and produces a `setup_error` row, never a
-graded `failed_tests`. `docker rm -f` always runs in a `finally` (success, failure, timeout,
-KeyboardInterrupt, SIGTERM) and is now VERIFIED (`docker ps -a` absence check); an unverified
-removal stops the run (`AB.ContainerCleanupError`, after the task's own row is durably written)
-rather than silently creating another container on a box that may be accumulating live ones. It is
-a **standalone probe**, not part of the `generate`/`grade` tier pipeline.
+(mirrors upstream `execute_independent`); a DOCKER EXECUTION failure during grading is
+distinguished from the checker's own legitimate verdict by EXPLICIT EVIDENCE ONLY (6th cold review
+round 6 P23: an exit code or a timeout alone is never sufficient — 127 alone can be the MODEL's own
+"command not found", and a checker timeout alone can be the model's own program hanging): a docker
+exit in {125,126,127} TOGETHER WITH stderr text naming an actual docker/daemon/container/runtime
+problem ("Error response from daemon", "Cannot connect to the Docker daemon", "is not running", "No
+such container", "OCI runtime"), or a checker timeout where a live `docker exec <container> true`
+health check run immediately afterward ALSO fails (addendum C: std-005-0/1/2 time out because the
+model's own installed binary hangs, which is `failed_tests`, not infra). Any other nonzero exit —
+including 127 by itself — stays `failed_tests`, IN the denominator; the matched `setup_error` row
+carries `infra_evidence` (rc + stderr excerpt). `docker rm -f` always runs in a `finally` (success,
+failure, timeout, KeyboardInterrupt, SIGTERM) and is VERIFIED fail-closed: `docker ps -a` must
+itself SUCCEED (rc 0) with empty stdout (P26 — a verification command that itself failed used to
+be indistinguishable from "confirmed empty"); the verdict is independent of `docker rm -f`'s own rc
+(a `docker run` that never created the container makes `rm -f` legitimately report nonzero, which
+is not a cleanup failure). An unverified removal stops the run (`AB.ContainerCleanupError`, after
+the task's own row is durably written) rather than silently creating another container on a box
+that may be accumulating live ones — the same fail-closed gate applies to D2 prepare's per-probe
+cleanup and the startup stale-container sweep. It is a **standalone probe**, not part of the
+`generate`/`grade` tier pipeline.
 
 Corpus: `benchmark/corpora/agentbench_os_v1.jsonl` (144 tasks, upstream fields verbatim + our
 `id`/`group`/`index_in_file`) + `benchmark/corpora/agentbench_os_v1/scripts/{1..7}/...` (referenced
@@ -301,7 +323,7 @@ a defect:
 # docker running, images built, mlx-serve serving <model> at :8000:
 cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> --prepare
 cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> \
-    --pilot-seed 1 --pilot-n 5        # seeded random pilot, never the first items
+    --pilot-seed 1 --pilot-n 5        # seeded random pilot, EXECUTED in sampled order
 cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> --resume
 ```
 
@@ -310,45 +332,78 @@ the router at `--url` isn't serving this driver's registry, and refuses to decla
 complete if the served file or router pid changed underneath it; an EXCEPTIONAL exit (a transport
 failure, `ContainerCleanupError`, KeyboardInterrupt, or the SIGTERM handler's own exit) still gets
 a best-effort C106 exit stamp on the manifest, without ever masking the original exception.
-`--resume` REFUSES (rc 2, before touching a single task) if the previous manifest's runtime
-identity (model, round_limit, exec_timeout_s, deadline_s, sampling_profile, image_ids,
-corpus_sha256, exclusions_sha256) differs, or if that manifest already recorded a
-`served_config_drift` from a prior exit — a resume never silently continues under different
-conditions, and never overwrites a changed identity field. Each process start appends a
-`{started_at, router_pid, rows_before}` entry to the manifest's persistent `segments` list.
-`--limit` and `--pilot-seed` are mutually exclusive (the corpus is ordered easy-first, so `--limit`
-would bias any pilot drawn from its already-truncated head). `--sampling-profile` defaults to (and
-is refused off) `deployed`, and the manifest records whichever profile actually ran; thinking stays
-ON. The per-turn LLM timeout is DERIVED from this axis's OWN rows' measured decode rate
-(`completion_tokens / generation_ms` per turn), falling back to `math500`/`convergence` rows (the
-manifest's `timeout_source` names only the benches that actually contributed rows, e.g.
-`fallback:math500`, never a configured-but-empty one) until this axis has rows of its own —
-UNCAPPED (the shared `budget_timeout.py` 7200s ceiling exists for the convergence benchmark's own,
-differently-justified axis; an episode here calls the model many times per task, each needing a
-timeout actually sized to the budget and rate, never silently truncated by that ceiling). The
-manifest records a `timeout_derivation` block (`thinking_budget`, `floor_decode_tps`,
-`safety_headroom`, `source`, `observable`, `reason`); if the value can't be SIZED at all (no
-measured rate anywhere, no budget) the run refuses to start unless `--llm-timeout` was given
-explicitly. The per-episode deadline defaults to 8x that per-turn timeout, UNCAPPED (`--deadline-s`
-to override — AGENTS.md: the thinking budget is external truncation and is never tuned down for
-convenience, so there is no hardcoded ceiling here either) so a looping episode reaches `deadline`
-rather than running unbounded — reachable even on an episode stuck re-prompting with no tool calls
-at all, not only after a tool-call turn. A `driver.complete` transport failure (HTTP error/timeout/
-connection error, OR an HTTP 200 whose body is an error envelope or has no usable
-`choices[0].message` — `bench.client.MalformedResponseError`, never a silently empty completion)
-ESCALATES — the run aborts nonzero with the task id in the message and writes no row for that
-task; it is never graded. A stale `.skipped.json` from an earlier degraded attempt is removed once
-a run completes successfully. SIGTERM removes the in-flight task's container, VERIFIES the removal
-and warns on stderr if unverified (prepare mode sweeps its own container prefix), and exits 143.
-`--out`, the resolved transcripts dir, and the exclusions artifact are all confined to the repo or
-`$STACK_WORKDIR` (refused otherwise — AGENTS.md: no filesystem pollution outside STACK_WORKDIR).
+`--resume` REFUSES (rc 2, before touching a single task) unless a FRESHLY gathered candidate
+manifest's full identity matches the previous one's: the flat runtime keys (model, round_limit,
+exec_timeout_s, sampling_profile, image_ids, corpus_sha256, exclusions_sha256) AND the served-file
+hash (`router.config_sha256`), the complete EFFECTIVE sampling dict actually used (temperature/
+top_p/top_k/min_p/max_tokens/thinking_budget), and predictor/context/scaffold identity
+(`kv.draft_kind`/`kv.kv_bits`/`kv.max_kv_cache_size`) — a manifest missing any of these fields
+STRUCTURALLY (not merely a legitimately-None leaf value) refuses outright, and so does a manifest
+that already recorded a `served_config_drift` from a prior exit. `llm_timeout_s`/`deadline_s`
+are deliberately NOT compared as identity (they are DERIVED numbers that legitimately drift as
+more rows accumulate on this axis) — a resume REUSES the previous manifest's values for them
+outright. Each process start appends a `{started_at, router_pid, rows_before, identity}` entry to
+the manifest's persistent `segments` list. `--limit` and `--pilot-seed` are mutually exclusive
+(the corpus is ordered easy-first, so `--limit` would bias any pilot drawn from its
+already-truncated head), and the pilot runs in `pilot_draw`'s own SAMPLED order, never re-sorted
+back to corpus order. `--sampling-profile` defaults to (and is refused off) `deployed`, and the
+manifest records whichever profile actually ran; thinking stays ON.
+
+The per-turn LLM timeout is `max_generation_tokens / floor_tps + 300s` headroom (UNCAPPED — the
+shared `budget_timeout.py` 7200s ceiling exists for the convergence benchmark's own,
+differently-justified axis and can legitimately be exceeded here): `max_generation_tokens` is the
+LARGER of the deployed `max_tokens` and `thinking_budget + 4096`; `floor_tps` is the TRUE per-turn
+MINIMUM decode rate (flattened across every row's `per_turn_decode_tps`, never an episode-averaged
+or percentile-smoothed rate — a turn's prompt grows across the episode, so later turns decode
+slower, and that slow tail is exactly what must be covered), falling back to the minimum
+per-row `decode_tps` on `math500`/`convergence` rows (the manifest's `timeout_source` names only
+the benches that actually contributed rows) until this axis has rows of its own. The manifest
+records a `timeout_derivation` block (`max_generation_tokens`, `floor_decode_tps`, `headroom_s`,
+`source`, `observable`, `reason`); if the value can't be SIZED at all (no measured rate anywhere)
+the run refuses to start unless `--llm-timeout` was given explicitly — an explicit override is
+recorded as `observable: "override"` (distinct from `true`: it is NOT thereby validated). The
+per-episode deadline defaults to 8x the per-turn timeout, UNCAPPED (`--deadline-s` to override —
+AGENTS.md: the thinking budget is external truncation and is never tuned down for convenience, so
+there is no hardcoded ceiling here either) so a looping episode reaches `deadline` rather than
+running unbounded — reachable even on an episode stuck re-prompting with no tool calls at all, not
+only after a tool-call turn.
+
+A `driver.complete` transport failure (HTTP error/timeout/connection error, OR an HTTP 200 whose
+body is an error envelope, has neither `content` nor `tool_calls`, is missing `finish_reason`, or
+is missing `usage.prompt_tokens`/`usage.completion_tokens` — `bench.client.MalformedResponseError`,
+never a silently empty/under-specified completion; the mlx-serve router always returns all of
+these, so their absence is a serving anomaly, never a model score) ESCALATES — the run aborts
+nonzero with the task id in the message and writes no row for that task; it is never graded. A
+malformed tool-call argument payload (invalid JSON) is NEVER silently treated as `{}` and
+dispatched — including when it claims to BE the submit tool — the model gets back a parse-error
+tool response (mirroring upstream AgentBench task.py's own corrective mechanism) and the episode
+continues; only a WELL-FORMED submit call ends it. A stale `.skipped.json` from an earlier
+degraded attempt is removed once a run completes successfully. SIGTERM removes the in-flight
+task's container, VERIFIES the removal and warns on stderr if unverified (prepare mode sweeps its
+own container prefix, also verified), and exits 143. `--out`, the resolved transcripts dir, and
+the exclusions artifact (including the one derived from a `--corpus` outside approved roots) are
+all confined to the repo or `$STACK_WORKDIR` (refused otherwise — AGENTS.md: no filesystem
+pollution outside STACK_WORKDIR).
 
 Per-task transcripts (quality inspection, turn-by-turn LLM + tool detail) are written to
-`--transcripts-dir` (default `$STACK_WORKDIR/m54/transcripts/<model>/`) as one JSON file per task,
-right after that task's row is appended. `bench/agentbench_watch.py` is the M54 run-watcher daemon
+`--transcripts-dir` (default `$STACK_WORKDIR/m54/transcripts/<model>/<run_id>/`, `run_id` a
+per-invocation timestamp recorded in the manifest and REUSED by `--resume`, so two different runs
+of the same model never share `<model>/<task>.json` and overwrite each other's evidence) as one
+JSON file per task, right after that task's row is appended — including a grading-infra-failure
+row, which still carries the episode's ACTUAL completed turns (never reset to empty) plus
+`setup_error`/`error`/`infra_evidence`. `bench/agentbench_watch.py` is the M54 run-watcher daemon
 (AGENTS.md: every run is reported and critically evaluated every 5 minutes) — read-only, polls the
-rows file and manifest, answers the standing four questions (progressing / rate+ETA-from-the-mean /
-output-sane / stall-or-wedge), and never kills anything itself.
+rows file and manifest, and answers the standing four questions. It never conflates "healthy" with
+"not looking": a missing rows file, missing manifest, or missing router log is reported as
+`UNKNOWN (evidence missing: ...)`, never silently read as "not stalled" or idle; driver-pid
+liveness is checked on EVERY tick, independent of the stall threshold, and the daemon exits right
+after reporting a dead driver regardless of row count; busy-vs-idle during a stall is an
+ATTRIBUTABLE signal (the mlx_vlm WORKER process, excluding the :8092 task model, sampled via `ps
+-o %cpu=` twice 3s apart — BUSY over 20%, UNKNOWN if no worker process is found at all; the
+router-log completion marker is a supporting diagnostic only, never the classifier). Its self-test
+exercises the real file-reading/classification path against known-positive AND known-negative
+fixtures (progressing, stalled-busy, stalled-idle, driver-dead, evidence-missing) and refuses to
+start if any of them misclassifies.
 
 Rows (`results/<model>/agentbench_os.v1.jsonl`) carry `id`, `group`, `labels`, `image`,
 `gold_prepare`/`gold_live` (see above), `passed`, `outcome` (`bench.agent_outcomes` taxonomy —
@@ -358,21 +413,25 @@ only ever comes from the FIRST tool call of its turn, matching what actually run
 `submitted_via` (`answer`/`finish`/none), `answer`, `per_turn_completion_tokens`,
 `completion_tokens_total`, `per_turn_finish_reasons` (includes `tool_calls`, which the server
 returns on every tool-calling turn), `converged` (all turns converged against their own RESOLVED
-thinking budget -- a response missing `usage.completion_tokens`/`usage.prompt_tokens`, a
-`finish_reason`, or with neither `content` nor `tool_calls` can never reach this field at all: P24
-makes `bench.client.probe` ESCALATE those as a `MalformedResponseError` -> `TransportFailure`, a
-serving anomaly, never a scored row), `per_turn_resolved_budget`, `nonconv_kinds`
-(`budget_hit`/`bad_finish_reason`), `budget_hits`, `decode_tps`/
-`per_turn_decode_tps`, `wall_s`, `tool_calls`, `tool_timeouts`, `repeat_calls` (the loop guard is
-disabled for this axis — the round cap is the bound — so identical repeats are counted, not
-aborted), `exec_timeout`, `shell_died` (true whether the death was model- or start-caused; see
-`setup_error` for which), `setup_error` (true ONLY for a start-phase or other docker/infra failure,
-never a model-caused shell death — EXCLUDED from `.summary.json`'s `acc`/`acc_strict`/`conv_rate`
-denominator and reported separately as `setup_error_count`/`setup_error_ids`), and
-`container_removed_verified`. `.summary.json` reports `acc` (raw pass rate), **`acc_strict`**
-(passed AND converged, same denominator — AGENTS.md's RANKING KEY), `conv_rate`, and
-`nonconv_kind_counts`, alongside `exec_timeout_count`/`shell_died_count`/
-`gold_prepare_differs_count`/`gold_prepare_differs_ids`.
+thinking budget), `per_turn_resolved_budget`, `nonconv_kinds` (`budget_hit`/`bad_finish_reason`),
+`budget_hits`, `decode_tps`/`per_turn_decode_tps`, `wall_s` (the agent loop only) and
+`wall_total_s` (container create -> VERIFIED removal, the full per-task cost -- the basis for the
+watcher's ETA and `.summary.json`'s `wall_total_s_mean`/`_max`), `tool_calls`, `tool_timeouts`,
+`repeat_calls` (the loop guard is disabled for this axis — the round cap is the bound — so
+identical repeats are counted, not aborted), `exec_timeout`, `shell_died` (true whether the death
+was model- or start-caused; see `setup_error` for which), `setup_error` (true ONLY for a
+start-phase or GRADING-INFRA failure — distinguished from a legitimate checker nonzero exit by
+EXPLICIT evidence only: a docker exit in {125,126,127} together with daemon/container error text
+in stderr, or a checker timeout where a live `docker exec <container> true` health check ALSO
+fails; any other nonzero exit, including 127 from a model-broken dependency, stays `failed_tests`
+IN the denominator — EXCLUDED from `.summary.json`'s `acc`/`acc_strict`/`conv_rate` denominator
+and reported separately as `setup_error_count`/`setup_error_ids`, with `infra_evidence`
+(rc + stderr excerpt) attached), and `container_removed_verified`. `.summary.json` reports `acc`
+(raw pass rate), **`acc_strict`** (passed AND converged, same denominator — AGENTS.md's RANKING
+KEY), `conv_rate`, `nonconv_kind_counts`, `graded_ids` (the exact id set in the denominator, so two
+arms — or a rerun of the same arm — can be intersected before their accuracies are compared),
+alongside `exec_timeout_count`/`shell_died_count`/`gold_prepare_differs_count`/
+`gold_prepare_differs_ids`.
 
 If docker, the local-os images, or the corpus are missing, the probe writes `<out
 stem>.skipped.json` (never the rows file itself) with a note and exits 0 — it never crashes the
