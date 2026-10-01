@@ -249,13 +249,16 @@ class _AbortingDriver:
     """9th cold review round 9 P10: a Driver whose OWN complete() can determine an episode-ending
     condition from the raw model output (e.g. DualSubmitDriver's empty answer_action handling),
     before run_agent ever sees a tool_call to dispatch."""
-    def __init__(self, outcome, message):
+    def __init__(self, outcome, message, *, completion_tokens=None, tool_calls=None):
         self._outcome, self._message = outcome, message
+        self._completion_tokens, self._tool_calls = completion_tokens, tool_calls
         self.calls = 0
 
     def complete(self, model, messages, params, timeout=3600, tools=None):
         self.calls += 1
-        raise AL.AbortEpisode(self._outcome, self._message)
+        raise AL.AbortEpisode(self._outcome, self._message,
+                              completion_tokens=self._completion_tokens,
+                              tool_calls=self._tool_calls)
 
 
 def test_abort_episode_from_driver_complete_ends_the_episode_with_that_outcome_P10():
@@ -276,3 +279,27 @@ def test_abort_episode_from_driver_complete_is_not_swallowed_as_server_error_P10
     out = AL.run_agent(driver, "m", "sys", "t", _tools([]), {}, max_turns=5)
     assert out["outcome"] != AO.SERVER_ERROR
     assert out["outcome"] == AO.FAILED_TESTS
+
+
+def test_abort_episode_from_driver_complete_folds_its_telemetry_into_counters_P11():
+    """10th cold review round 10 P11: an abort raised from WITHIN driver.complete() must still
+    carry that response's telemetry into counters -- the normal post-complete() update
+    (counters.turns/.completion_tokens, right after driver.complete() returns) never runs for
+    this turn since the exception fires before run_agent ever sees `out`."""
+    driver = _AbortingDriver(AO.FAILED_TESTS, "empty tool arguments",
+                             completion_tokens=17, tool_calls=1)
+    out = AL.run_agent(driver, "m", "sys", "t", _tools([]), {}, max_turns=5)
+    assert out["counters"]["turns"] == 1
+    assert out["counters"]["completion_tokens"] == 17
+    assert out["counters"]["tool_calls"] == 1
+
+
+def test_abort_episode_from_driver_complete_with_no_telemetry_leaves_counters_at_zero():
+    """completion_tokens/tool_calls default to None (opt-in) -- a caller that doesn't pass them
+    (e.g. a tool-level abort re-raised oddly, or a pre-existing non-AgentBench caller) must not
+    have counters silently corrupted by a None-to-int coercion."""
+    driver = _AbortingDriver(AO.FAILED_TESTS, "no telemetry here")
+    out = AL.run_agent(driver, "m", "sys", "t", _tools([]), {}, max_turns=5)
+    assert out["counters"]["turns"] == 1
+    assert out["counters"]["completion_tokens"] == 0
+    assert out["counters"]["tool_calls"] == 0

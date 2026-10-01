@@ -102,12 +102,27 @@ class AbortEpisode(Exception):
     outcome, instead of having the exception fed back as an "ERROR: ..." tool message and the loop
     continuing (the default for every other exception a tool raises). Opt-in by construction: no
     pre-existing tool raises it, so default behaviour is unchanged. Use case: an exec timeout that
-    must end the task, not just report a failed command."""
+    must end the task, not just report a failed command.
 
-    def __init__(self, outcome: str, message: str = ""):
+    10th cold review round 10 P11: when raised from WITHIN `driver.complete()` itself (P10, 9th
+    round) -- before `run_agent` ever sees that turn's `out` dict -- the telemetry that response
+    carried would otherwise be lost (run_agent's own `counters.turns`/`.completion_tokens`
+    updates, which normally happen right after `driver.complete()` returns, are unreachable once
+    this exception is in flight). `completion_tokens`/`tool_calls`, when given, let the driver.
+    complete()-level `except AbortEpisode` in `run_agent` fold that turn's telemetry into
+    `counters` before breaking, so the row's `completion_tokens_total`/`tool_calls` stay
+    consistent with its per-turn lists (which already include the aborted turn, via
+    DualSubmitDriver's own `self.per_turn.append(turn_entry)` before it raises). A tool-level
+    abort (e.g. _bash's shell-death/timeout) does not need these -- `counters` is already updated
+    for that turn by the time a tool's `fn` is even dispatched."""
+
+    def __init__(self, outcome: str, message: str = "", *, completion_tokens: int | None = None,
+                tool_calls: int | None = None):
         super().__init__(message)
         self.outcome = outcome
         self.message = message
+        self.completion_tokens = completion_tokens
+        self.tool_calls = tool_calls
 
 
 def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
@@ -174,6 +189,16 @@ def run_agent(driver, model, system, task, tools, params, max_turns: int = 30,
             # a tool-level abort would, not be swallowed by the generic transport-failure handler
             # below (which would wrongly report SERVER_ERROR and lose the clean abort text).
             outcome = e.outcome
+            # P11 (10th round): fold this turn's telemetry into counters before breaking --
+            # otherwise it's permanently lost (this turn never reaches the normal post-complete()
+            # update below), leaving completion_tokens_total/tool_calls inconsistent with the
+            # per-turn lists (which DO include this turn, via the driver's own transcript append
+            # before it raised).
+            counters.turns = turns
+            if e.completion_tokens is not None:
+                counters.completion_tokens += int(e.completion_tokens)
+            if e.tool_calls is not None:
+                counters.tool_calls += int(e.tool_calls)
             if on_feedback is not None:
                 on_feedback(None, e.message or str(e))
             break

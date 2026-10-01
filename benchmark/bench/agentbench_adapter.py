@@ -1338,18 +1338,34 @@ class DualSubmitDriver:
 
         raw_tcs = out.get("tool_calls") or []
         new_tcs = []
-        for i, tc in enumerate(raw_tcs):
+        # 10th cold review round 10 P10 (MEDIUM, scoring -- fixes a round-9 regression): this
+        # loop used to apply full semantics (empty-args abort, submit detection, arg extraction)
+        # to EVERY tool_call in raw_tcs -- but agent_loop.run_agent is always called with
+        # single_tool_call_per_turn=True (cold-review N10), so it only ever DISPATCHES
+        # raw_tcs[0]; positions 1+ never run. Reproduced: a model emitting
+        # [answer_action({"answer":"42"}), answer_action({})] -- a clean, complete submission
+        # FOLLOWED by a stray empty one -- had the i==1 empty call's P10 AbortEpisode propagate
+        # out of complete() and abort the WHOLE episode as a scored fail, even though the FIRST
+        # call alone was already a valid "42" submission that should have solved it. Only
+        # raw_tcs[0] is processed now; positions 1+ are DROPPED before the loop (never
+        # fed into any semantics, never reaching agent_loop at all) -- matching what
+        # single_tool_call_per_turn=True would have done to them anyway. `n_tool_calls` (the full
+        # raw count, BEFORE dropping) is recorded on the transcript turn so a multi-call turn is
+        # auditable even though only the first call was ever actually acted on.
+        n_tool_calls = len(raw_tcs)
+        turn_entry["n_tool_calls"] = n_tool_calls
+        if raw_tcs:
+            tc = raw_tcs[0]
             fn = dict(tc.get("function") or {})
             name = fn.get("name")
             args, parse_error = _parse_args_or_error(fn.get("arguments"))
-            if i == 0:
-                turn_entry["tool_call"] = {"name": name, "args": args}
-                if parse_error is not None:
-                    turn_entry["tool_call"]["parse_error"] = parse_error
-                    # P43(a): record the ACTUAL fed-back text in tool_result too -- this mirrors
-                    # agent_loop.py's OWN `_parse_args_with_error` byte-for-byte (same message
-                    # format), which is what the model genuinely receives as the tool response.
-                    turn_entry["tool_result"] = parse_error
+            turn_entry["tool_call"] = {"name": name, "args": args}
+            if parse_error is not None:
+                turn_entry["tool_call"]["parse_error"] = parse_error
+                # P43(a): record the ACTUAL fed-back text in tool_result too -- this mirrors
+                # agent_loop.py's OWN `_parse_args_with_error` byte-for-byte (same message
+                # format), which is what the model genuinely receives as the tool response.
+                turn_entry["tool_result"] = parse_error
             # P27: a MALFORMED finish_action/answer_action is NEVER a submission -- leave `fn`
             # completely UNCHANGED (do not rename, do not reserialize into fresh always-valid
             # JSON) so agent_loop.run_agent's OWN fresh parse of the SAME raw argument string
@@ -1367,12 +1383,8 @@ class DualSubmitDriver:
                 except IndexError:
                     answer = None
                 fn["arguments"] = json.dumps({"answer": answer})
-                # cold-review N10: run_agent only ever DISPATCHES tool_calls[0]
-                # (single_tool_call_per_turn=True) -- a submit riding in position 1+ never actually
-                # runs, so it must not be recorded as having submitted anything.
-                if i == 0:
-                    self.submitted_via = "finish"
-                    turn_entry["tool_result"] = "submitted"
+                self.submitted_via = "finish"
+                turn_entry["tool_result"] = "submitted"
             elif parse_error is None and name == self.SUBMIT_TOOL:
                 # R2/P49/9th round P10: normalize answer_action's args to the canonical
                 # {"answer": ...} key too, by the SAME purely-positional rule -- agent_loop
@@ -1395,11 +1407,18 @@ class DualSubmitDriver:
                     self.submitted_via = "none"
                     turn_entry["tool_result"] = "empty tool arguments"
                     self.per_turn.append(turn_entry)   # record this turn BEFORE aborting
-                    raise agent_loop.AbortEpisode(AO.FAILED_TESTS, "empty tool arguments")
+                    # P11 (10th round): this abort fires from WITHIN complete() itself, before
+                    # run_agent ever sees `out` -- its own counters.turns/.completion_tokens
+                    # update (right after driver.complete() normally returns) never runs for
+                    # this turn. Pass the telemetry through AbortEpisode so run_agent's
+                    # driver-level handler can fold it in, keeping completion_tokens_total/
+                    # tool_calls consistent with the per-turn lists above (which DO include this
+                    # turn already).
+                    raise agent_loop.AbortEpisode(AO.FAILED_TESTS, "empty tool arguments",
+                                                  completion_tokens=ct, tool_calls=1)
                 fn["arguments"] = json.dumps({"answer": answer})
-                if i == 0:
-                    self.submitted_via = "answer"
-                    turn_entry["tool_result"] = "submitted"
+                self.submitted_via = "answer"
+                turn_entry["tool_result"] = "submitted"
             new_tc = dict(tc)
             new_tc["function"] = fn
             new_tcs.append(new_tc)
@@ -1575,7 +1594,8 @@ def _fail_row(base: dict, outcome: str, t0, clock, **extra) -> dict:
           "budget_hits": 0, "wall_s": round(clock() - t0, 2), "tool_calls": 0, "tool_timeouts": 0,
           "repeat_calls": 0, "exec_timeout": False, "shell_died": False, "setup_error": True,
           "decode_tps": None, "per_turn_decode_tps": [], "error": None, "_transcript_turns": [],
-          "infra_evidence": None, "exec_started": None, "harness_error": False}
+          "infra_evidence": None, "exec_started": None, "harness_error": False,
+          "multi_call_turns": 0}
     row.update(extra)
     return row
 
@@ -1715,7 +1735,12 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
                  "decode_tps": round(statistics.mean(dtps), 2) if dtps else None,
                  "per_turn_decode_tps": [t.get("decode_tps") for t in wrapped.per_turn],
                  "_transcript_turns": wrapped.per_turn,
-                 "exec_started": exec_started_box["value"]}
+                 "exec_started": exec_started_box["value"],
+                 # P10: a COUNT of turns (across the episode) where the model emitted more than
+                 # one tool_call -- only the first was ever acted on (see DualSubmitDriver.
+                 # complete()); this is purely an AUDIT signal (how often does this happen on
+                 # this arm), never a scoring input.
+                 "multi_call_turns": sum(1 for t in wrapped.per_turn if (t.get("n_tool_calls") or 0) > 1)}
 
         # P9(a)/P23: a docker EXECUTION failure during grading (explicit evidence only -- see
         # run_check_chain) is an infra failure, never a graded model loss -- override whatever
@@ -1772,6 +1797,7 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
             # (never silently folded into an ordinary setup_error) so it surfaces for a fix
             # rather than being misread as routine infra flakiness.
             "harness_error": isinstance(e, UnicodeError),
+            "multi_call_turns": sum(1 for t in extra_turns if (t.get("n_tool_calls") or 0) > 1),
         }
         row = _fail_row(base, AO.SERVER_ERROR, t0, clock, error=f"{type(e).__name__}: {e}", **extra)
         return row

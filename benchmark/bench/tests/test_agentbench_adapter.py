@@ -2518,6 +2518,58 @@ def test_run_task_empty_answer_action_ends_the_episode_as_a_scored_fail_P10():
     assert turns[0]["tool_result"] == "empty tool arguments"
 
 
+def test_run_task_empty_answer_action_abort_still_carries_that_turns_telemetry_P11():
+    """10th cold review round 10 P11 (MEDIUM): an abort raised from WITHIN driver.complete()
+    (empty answer_action) must still carry that response's telemetry into the row --
+    completion_tokens_total and tool_calls must be consistent with the per-turn lists, which DO
+    include the aborted turn (via DualSubmitDriver's own transcript append before it raises)."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[
+        complete_result(tool_calls=[tool_call("answer_action", {})], completion_tokens=17),
+    ])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["outcome"] == AO.FAILED_TESTS
+    assert row["turns"] == 1
+    assert len(row["per_turn_completion_tokens"]) == 1   # the aborted turn IS in the per-turn list
+    assert row["per_turn_completion_tokens"] == [17]
+    assert row["completion_tokens_total"] == 17          # must match, not silently 0
+    assert row["tool_calls"] == 1                         # the one (aborting) call IS counted
+
+
+def test_run_task_a_valid_submit_followed_by_a_stray_empty_call_in_the_SAME_turn_still_solves_P10():
+    """10th cold review round 10 P10 (MEDIUM, scoring -- fixes a round-9 regression): a complete,
+    valid answer_action({"answer":"42"}) followed in the SAME turn by a stray empty
+    answer_action({}) must still solve the episode -- agent_loop.run_agent (single_tool_call_
+    per_turn=True) only ever dispatches position 0; DualSubmitDriver.complete() must apply
+    semantics to position 0 ONLY and drop the rest, never let a never-dispatched position-1 call
+    abort an otherwise-valid submission."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[
+        tool_call("answer_action", {"answer": "42"}, call_id="c1"),
+        tool_call("answer_action", {}, call_id="c2"),
+    ])])
+    task = {"id": "t1", "group": 1, "labels": [], "evaluation": {"match": "42"}, "description": "d"}
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["outcome"] == AO.SOLVED
+    assert row["passed"] is True
+    assert row["answer"] == "42"
+    assert row["submitted_via"] == "answer"
+    turns = row["_transcript_turns"]
+    assert len(turns) == 1
+    assert turns[0]["n_tool_calls"] == 2   # the raw count, even though only position 0 ran
+    assert row["multi_call_turns"] == 1
+
+
+def test_run_task_multi_call_turns_is_zero_when_every_turn_has_one_call_P10():
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["multi_call_turns"] == 0
+    assert row["_transcript_turns"][0]["n_tool_calls"] == 1
+
+
 def test_run_task_unknown_tool_name_feeds_back_upstream_verbatim_text_P49():
     runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
     driver = FakeDriver(script=[
