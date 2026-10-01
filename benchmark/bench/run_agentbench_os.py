@@ -526,44 +526,65 @@ def _floor_tps_R6(rows: list, native: bool) -> float | None:
     return min(tps for tps, _ in pairs)
 
 
-def _current_rate_identity(model: str, thinking_budget, max_tokens) -> dict:
-    """8th cold review round 8 P48: the FULL serving/sampling/box identity a historical row's
-    manifest must match before it can inform THIS run's timeout derivation -- a superset of
-    P43(b)'s model+draft_kind alone, which under-filtered: a row from a different kv_bits, a
-    different max_kv_cache_size, a different thinking_budget/max_tokens pair, or a DIFFERENT BOX
-    entirely could still silently size a wrong timeout (different hardware, different measured
-    floor rate)."""
+def _current_rate_identity(model: str, thinking_budget, max_tokens,
+                           router_config_sha256=None) -> dict:
+    """8th cold review round 8 P48 + 9th round P9: the FULL serving/sampling/box identity a
+    historical row's manifest must match before it can inform THIS run's timeout derivation -- a
+    superset of P43(b)'s model+draft_kind alone, which under-filtered: a row from a different
+    kv_bits, a different max_kv_cache_size, a different thinking_budget/max_tokens pair, or a
+    DIFFERENT BOX entirely could still silently size a wrong timeout (different hardware,
+    different measured floor rate). `router_config_sha256` (P9), when given, is the SERVED
+    config's hash for THIS run -- an exact match against a candidate's own hash is the strongest
+    possible identity confirmation (`identity_match="exact"`); `kv_prealloc_tokens` (P9) joins the
+    params set compared when the hashes differ or are unavailable (`identity_match="params"`)."""
     kv = provenance.registry_kv(model) or {}
     return {"draft_kind": provenance.registry_draft(model).get("draft_kind"),
            "kv_bits": kv.get("kv_bits"), "max_kv_cache_size": kv.get("max_kv_cache_size"),
+           "kv_prealloc_tokens": kv.get("kv_prealloc_tokens"),
            "thinking_budget": thinking_budget, "max_tokens": max_tokens,
-           "box": provenance._box()}
+           "box": provenance._box(), "router_config_sha256": router_config_sha256}
 
 
-def _manifest_matches_identity(man: dict, model: str, identity: dict) -> bool:
-    """P48: a candidate rows file's sibling manifest must match EVERY identity field, and must
-    NOT itself carry a recorded `served_config_drift` (that run's own results are suspect, so its
-    rate evidence is suspect too -- see `_check_resume_identity`'s identical refusal for resume)."""
+def _manifest_matches_identity(man: dict, model: str, identity: dict) -> tuple:
+    """P48 + 9th round P9: a candidate rows file's sibling manifest must match EVERY PARAMS
+    identity field, and must NOT itself carry a recorded `served_config_drift` (that run's own
+    results are suspect, so its rate evidence is suspect too -- see `_check_resume_identity`'s
+    identical refusal for resume; drift exclusion is UNCONDITIONAL, never downgraded to a weaker
+    match). Returns `(matches: bool, identity_match: "exact"|"params"|None)` -- "exact" when the
+    served router.config_sha256 ALSO matches (the strongest confirmation), "params" when it
+    doesn't (or either side's hash is unavailable) but every individually-measured param the rate
+    axis actually depends on (kv_prealloc_tokens, max_kv_cache_size, kv_bits, draft_kind, budgets,
+    box) still matches -- a config file can change for reasons unrelated to THIS model's serving
+    characteristics, and penalizing every row for that would under-use good evidence."""
     if man.get("model") != model or man.get("served_config_drift"):
-        return False
+        return False, None
     runtime = man.get("runtime") or {}
     kv = man.get("kv") or {}
     sampling = man.get("sampling") or {}
-    return (runtime.get("draft_kind") == identity["draft_kind"]
-           and kv.get("kv_bits") == identity["kv_bits"]
-           and kv.get("max_kv_cache_size") == identity["max_kv_cache_size"]
-           and sampling.get("thinking_budget") == identity["thinking_budget"]
-           and sampling.get("max_tokens") == identity["max_tokens"]
-           and man.get("box") == identity["box"])
+    params_match = (runtime.get("draft_kind") == identity.get("draft_kind")
+                   and kv.get("kv_bits") == identity.get("kv_bits")
+                   and kv.get("max_kv_cache_size") == identity.get("max_kv_cache_size")
+                   and kv.get("kv_prealloc_tokens") == identity.get("kv_prealloc_tokens")
+                   and sampling.get("thinking_budget") == identity.get("thinking_budget")
+                   and sampling.get("max_tokens") == identity.get("max_tokens")
+                   and man.get("box") == identity.get("box"))
+    if not params_match:
+        return False, None
+    man_config_sha256 = (man.get("router") or {}).get("config_sha256")
+    cur_config_sha256 = identity.get("router_config_sha256")
+    if cur_config_sha256 is not None and man_config_sha256 is not None \
+            and man_config_sha256 == cur_config_sha256:
+        return True, "exact"
+    return True, "params"
 
 
 def _rate_rows_matching_identity(model: str, bench: str, identity: dict) -> tuple:
-    """7th cold review round 7 P43(b) + 8th round P48: rate evidence is filtered to rows whose OWN
-    sibling manifest matches the FULL identity (see `_current_rate_identity`/
+    """7th cold review round 7 P43(b) + 8th round P48 + 9th round P9: rate evidence is filtered to
+    rows whose OWN sibling manifest matches the FULL identity (see `_current_rate_identity`/
     `_manifest_matches_identity`) of the run being sized -- a historical row from an incompatible
     serving configuration must never silently inform this derivation. Returns (rows: list,
-    sources: list[dict] -- `{"file", "config_sha256"}` per contributing manifest, recorded in the
-    manifest's timeout_derivation block)."""
+    sources: list[dict] -- `{"file", "config_sha256", "identity_match"}` per contributing
+    manifest, recorded in the manifest's timeout_derivation block)."""
     root = generate.results_root() / model
     rows, sources = [], []
     if not root.is_dir():
@@ -580,7 +601,8 @@ def _rate_rows_matching_identity(model: str, bench: str, identity: dict) -> tupl
             man = json.loads(man_path.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001 -- an unreadable manifest can't prove identity; skip
             continue
-        if not _manifest_matches_identity(man, model, identity):
+        matches, identity_match = _manifest_matches_identity(man, model, identity)
+        if not matches:
             continue
         file_rows = []
         try:
@@ -597,11 +619,13 @@ def _rate_rows_matching_identity(model: str, bench: str, identity: dict) -> tupl
         if file_rows:
             rows.extend(file_rows)
             sources.append({"file": str(p),
-                           "config_sha256": (man.get("router") or {}).get("config_sha256")})
+                           "config_sha256": (man.get("router") or {}).get("config_sha256"),
+                           "identity_match": identity_match})
     return rows, sources
 
 
-def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
+def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit,
+                        router_config_sha256=None):
     """Returns (timeout_s, source, msg, derivation: dict).
 
     5th cold review P14: `budget_timeout.derive_timeout`'s 7200s CEILING_S exists for the
@@ -641,7 +665,7 @@ def _derive_llm_timeout(model: str, thinking_budget, max_tokens, explicit):
                      "reason": "explicit --llm-timeout override -- NOT independently validated",
                      "identity": None, "sources": []}
         return explicit, "explicit", f"{explicit:.0f}s (EXPLICIT --llm-timeout, UNVALIDATED)", derivation
-    identity = _current_rate_identity(model, thinking_budget, max_tokens)
+    identity = _current_rate_identity(model, thinking_budget, max_tokens, router_config_sha256)
     own_rows, sources = _rate_rows_matching_identity(model, BENCH_NAME, identity)
     tps = _floor_tps_R6(own_rows, native=True)
     source = BENCH_NAME
@@ -893,7 +917,8 @@ def run_generate(args, out: Path) -> int:
         deadline_reason = "REUSED from the manifest this resume builds on"
     else:
         llm_timeout, timeout_source, timeout_msg, timeout_derivation = _derive_llm_timeout(
-            args.model, params.get("thinking_budget"), params.get("max_tokens"), args.llm_timeout)
+            args.model, params.get("thinking_budget"), params.get("max_tokens"), args.llm_timeout,
+            router_config_sha256=router.get("config_sha256"))
         # P14: a per-turn timeout that cannot be SIZED (no measured rate, no budget) is not merely
         # imprecise -- it is uninterpretable, and AGENTS.md forbids silently running on a number
         # that is. Refuse rather than falling back to the shared ceiling, unless overridden.

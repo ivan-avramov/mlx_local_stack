@@ -1342,7 +1342,8 @@ def test_floor_tps_r6_fallback_to_minimum_with_fewer_than_5_qualifying_turns():
 
 
 _SAMPLE_IDENTITY = {"draft_kind": "mtp", "kv_bits": 4, "max_kv_cache_size": 262144,
-                    "thinking_budget": 1000, "max_tokens": 2000, "box": "testbox"}
+                    "kv_prealloc_tokens": 262144, "thinking_budget": 1000, "max_tokens": 2000,
+                    "box": "testbox"}
 
 
 def _write_rate_row_file(tmp_path, model: str, bench: str, tune: str, row: dict, *,
@@ -1360,7 +1361,8 @@ def _write_rate_row_file(tmp_path, model: str, bench: str, tune: str, row: dict,
     rows_path.write_text(json.dumps(row) + "\n", encoding="utf-8")
     man = {"model": man_model,
           "runtime": {"draft_kind": identity.get("draft_kind")},
-          "kv": {"kv_bits": identity.get("kv_bits"), "max_kv_cache_size": identity.get("max_kv_cache_size")},
+          "kv": {"kv_bits": identity.get("kv_bits"), "max_kv_cache_size": identity.get("max_kv_cache_size"),
+                "kv_prealloc_tokens": identity.get("kv_prealloc_tokens")},
           "sampling": {"thinking_budget": identity.get("thinking_budget"), "max_tokens": identity.get("max_tokens")},
           "box": identity.get("box"), "router": {"config_sha256": config_sha256}}
     if served_config_drift:
@@ -1402,18 +1404,67 @@ def test_rate_rows_matching_identity_excludes_a_file_with_no_manifest_P43b(tmp_p
 
 # --------------------------------------------------------------------------- P48 full-identity matching
 @pytest.mark.parametrize("field,other_value", [
-    ("kv_bits", 8), ("max_kv_cache_size", 131072), ("thinking_budget", 500), ("max_tokens", 4000),
-    ("box", "a-different-box"),
+    ("kv_bits", 8), ("max_kv_cache_size", 131072), ("kv_prealloc_tokens", 131072),
+    ("thinking_budget", 500), ("max_tokens", 4000), ("box", "a-different-box"),
 ])
 def test_rate_rows_matching_identity_excludes_a_mismatch_on_each_P48_field(tmp_path, monkeypatch, field, other_value):
-    """8th cold review round 8 P48: P43(b) filtered on model+draft_kind ALONE -- a row from a
-    different kv_bits, max_kv_cache_size, thinking_budget, max_tokens, or BOX could still silently
-    size the wrong timeout. Every one of these fields must independently exclude a mismatched
-    row."""
+    """8th cold review round 8 P48 + 9th round P9 (kv_prealloc_tokens added to the params set):
+    P43(b) filtered on model+draft_kind ALONE -- a row from a different kv_bits,
+    max_kv_cache_size, kv_prealloc_tokens, thinking_budget, max_tokens, or BOX could still
+    silently size the wrong timeout. Every one of these fields must independently exclude a
+    mismatched row."""
     monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
     _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [999.0]},
                          identity={**_SAMPLE_IDENTITY, field: other_value})
     rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, _SAMPLE_IDENTITY)
+    assert rows == [] and sources == []
+
+
+# --------------------------------------------------------------------------- P9 identity_match exact/params
+def test_rate_rows_matching_identity_exact_when_config_sha256_matches_P9(tmp_path, monkeypatch):
+    """9th cold review round 9 P9: a matching router.config_sha256 is the strongest possible
+    identity confirmation -- labelled "exact"."""
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [42.0]},
+                         config_sha256="same_hash")
+    identity = {**_SAMPLE_IDENTITY, "router_config_sha256": "same_hash"}
+    rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, identity)
+    assert len(rows) == 1
+    assert sources[0]["identity_match"] == "exact"
+
+
+def test_rate_rows_matching_identity_params_when_config_sha256_differs_but_params_match_P9(tmp_path, monkeypatch):
+    """P9: the served config file can change for reasons unrelated to THIS model's serving
+    characteristics -- a differing hash with every individually-measured param still matching is
+    still usable evidence, labelled "params" (not excluded, not "exact")."""
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [42.0]},
+                         config_sha256="old_hash")
+    identity = {**_SAMPLE_IDENTITY, "router_config_sha256": "new_hash"}
+    rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, identity)
+    assert len(rows) == 1
+    assert sources[0]["identity_match"] == "params"
+
+
+def test_rate_rows_matching_identity_params_when_either_hash_is_unavailable_P9(tmp_path, monkeypatch):
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [42.0]},
+                         config_sha256=None)
+    identity = {**_SAMPLE_IDENTITY, "router_config_sha256": None}
+    rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, identity)
+    assert len(rows) == 1
+    assert sources[0]["identity_match"] == "params"   # both unknown -- never silently "exact"
+
+
+def test_rate_rows_matching_identity_served_config_drift_still_excluded_even_with_matching_hash_P9(tmp_path, monkeypatch):
+    """P9: 'drift still excluded' -- a served_config_drift on the candidate manifest is an
+    UNCONDITIONAL exclusion, never downgraded to a weaker "params" match even if the hash and
+    every param happen to match."""
+    monkeypatch.setattr(R.generate, "RESULTS", tmp_path)
+    _write_rate_row_file(tmp_path, "m1", R.BENCH_NAME, "v1", row={"per_turn_decode_tps": [999.0]},
+                         config_sha256="same_hash", served_config_drift=True)
+    identity = {**_SAMPLE_IDENTITY, "router_config_sha256": "same_hash"}
+    rows, sources = R._rate_rows_matching_identity("m1", R.BENCH_NAME, identity)
     assert rows == [] and sources == []
 
 
