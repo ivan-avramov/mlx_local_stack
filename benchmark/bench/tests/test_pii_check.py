@@ -71,6 +71,16 @@ def test_removed_lines_are_never_flagged():
     assert piicheck.diff_violations(d) == []
 
 
+def test_agentbench_os_corpus_guest_paths_are_exempt():
+    """M54: upstream os-std task descriptions quote guest-OS paths like /home/user1/ verbatim
+    (Apache-2.0, THUDM/AgentBench) -- fictional accounts inside the task's own docker sandbox,
+    never a path on this host. One row per line with no comment syntax to carry an inline marker,
+    so the file is exempted by path (same rationale as the BFCL/IFEval corpus exemptions)."""
+    d = _diff("benchmark/corpora/agentbench_os_v1.jsonl",
+              '{"id": "std-004-0", "description": "look in /home/user1/os/linux"}')
+    assert piicheck.diff_violations(d) == []
+
+
 def test_the_committed_corpus_is_clean():
     """Regression: run the checker over every tracked file AS COMMITTED (HEAD content, not
     the working tree). It must be silent — otherwise the scrub was incomplete, or the

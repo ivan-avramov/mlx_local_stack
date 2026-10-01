@@ -40,6 +40,12 @@ ALLOW_MARKER = "allow-pii-pattern"
 EXEMPT_PATHS = (
     "benchmark/bench/piicheck.py",
     "benchmark/bench/tests/test_pii_check.py",
+    # M54: THUDM/AgentBench os-std task descriptions are GUEST-OS Linux sysadmin scenarios quoted
+    # verbatim from upstream (Apache-2.0) — "/home/user1/", "/home/student/", etc. name fictional
+    # accounts INSIDE the task's docker sandbox, never a path on this (or any real) host. One
+    # vendored jsonl with no per-line comment syntax available; same class as the BFCL/IFEval
+    # corpus exemptions above (`datasets`, fake emails) — exempt the file, not the pattern.
+    "benchmark/corpora/agentbench_os_v1.jsonl",
 )
 
 # The sanctioned placeholder vocabulary. A path segment from this set is a template, not a person:
