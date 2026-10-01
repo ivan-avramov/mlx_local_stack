@@ -208,13 +208,24 @@ exactly that one injected newline (never the command's real output) is stripped.
 `start` script's `cd`/`var=...`/`su - jack` genuinely persists into later `bash_action` calls (a
 fresh `docker exec` per command cannot do this at all): the next command is simply read by
 whichever shell currently owns stdin. The ONE no-op round run right after the shell starts (`true`)
-eats login-shell banner/profile noise before anything else is read. Timeout is enforced ONLY on the
-Python side (killing the process, plus a best-effort in-container process-group kill); the model
-running `exit` ends the shell the same way it would upstream, reported as `shell_died` (a
-`setup_error`-style row, not a graded model failure). Grading itself still runs via FRESH one-shot
-`docker exec` calls (mirrors upstream `execute_independent`), `docker rm -f` always in a `finally`
-(success, failure, timeout, KeyboardInterrupt, SIGTERM). It is a **standalone probe**, not part of
-the `generate`/`grade` tier pipeline.
+eats login-shell banner/profile noise before anything else is read. Matching is done on raw BYTES
+with an incrementally-advancing `bytearray.find()` (never a regex re-scanned over the whole buffer
+after every chunk — that was O(n²): measured 20KB→9.4s, 50KB→116s, ≥100KB effectively hangs; the
+current scan handles 1MB in ~0.03s and 4MB in ~0.15s), and the exit-code digits must themselves be
+newline-terminated before a round is considered complete (a chunk boundary landing mid-digit never
+misreads a shorter code). A command that reads stdin (e.g. a bare `read`) hangs until the timeout
+fires, exactly as it would upstream — there is no special-casing for that. Timeout is enforced ONLY
+on the Python side (killing the process, plus a best-effort `docker exec <name> pkill -KILL -f
+"bash --login"` — deliberately simple; the container is removed at task end regardless, and
+process-group semantics inside an arbitrary image are unverified); exit code 137 (SIGKILL) is also
+treated as a timeout defensively. The model running `exit` ends the shell the same way it would
+upstream, reported as `shell_died`; a death during `start()` (before the model ever acted) is a
+`setup_error` row, but a death caused by the MODEL's own `bash_action` is a SCORED FAIL
+(`outcome=failed_tests`, IN the acc denominator — upstream's equivalent is "later reads return
+empty and the task fails"). Grading itself still runs via FRESH one-shot `docker exec` calls
+(mirrors upstream `execute_independent`), `docker rm -f` always in a `finally` (success, failure,
+timeout, KeyboardInterrupt, SIGTERM). It is a **standalone probe**, not part of the `generate`/
+`grade` tier pipeline.
 
 Corpus: `benchmark/corpora/agentbench_os_v1.jsonl` (144 tasks, upstream fields verbatim + our
 `id`/`group`/`index_in_file`) + `benchmark/corpora/agentbench_os_v1/scripts/{1..7}/...` (referenced
@@ -230,17 +241,26 @@ UBUNTU_DIGEST=sha256:... scripts/build_agentbench_images.sh
 **D2 exclusion is a CORPUS-level artifact and is mandatory**: a `check`-type task whose check list
 contains a "gold slot" (a `None` entry — the live grading chain runs `evaluation.example.code`
 there, fed the model's REAL answer) is probed with TWO plausible-looking but different placeholder
-answers (`"1"`, `"2"`) in two independent fresh containers; disagreement (`example_reads_answer`,
-the example script turns out to read its answer argument) or an empty/failed run (`no_gold`)
-excludes it. A check list with NO gold slot (every position a self-contained checker script —
-grading never runs `example` with the answer) only needs its reference solution to actually run
-once (`reference_failed` if init/start/example don't all exit 0); no placeholder probe, no gold is
-cached. `match`-type tasks are never examined. `--prepare` writes `agentbench_os_v1.exclusions.json`
-beside the corpus jsonl (corpus sha256, the three `local-os` image ids, per-task golds, exclusions,
-and `complete: true` — refused with `--limit`, since `complete` must mean the WHOLE corpus).
-Generate mode refuses to start unless that file exists, is `complete`, and both the corpus sha256
-and image ids still match what is live; every row's `gold` field is populated from the artifact
-(null for tasks with no gold slot):
+answers (`"1"`, `"2"`) in two independent fresh containers; disagreement (`gold_mismatch` — covers
+both a genuinely nondeterministic reference AND an example script that reads its answer argument,
+neither of which makes it usable as a cached gold) or an empty/failed run (`no_gold`) excludes it.
+A check list with NO gold slot (every position a self-contained checker script — grading never runs
+`example` with the answer) only needs its reference solution to actually run once
+(`reference_failed` if init/start/example don't all exit 0); no placeholder probe, no gold is
+cached. `match`-type tasks are never examined. A hand-curated
+`benchmark/corpora/agentbench_os_v1.manual_exclusions.json` (`{id: reason}`) covers probe blind
+spots found by inspection rather than mechanically — e.g. `std-007-84`, whose example script reads
+a numeric user id that the generic `"1"`/`"2"` probe doesn't happen to trigger for its specific log
+fixture; `--prepare` merges it in with reason `manual`, never re-probing those tasks. `--prepare`
+writes `agentbench_os_v1.exclusions.json` beside the corpus jsonl (corpus sha256, the three
+`local-os` image ids, the manual-exclusions file's sha256, per-task golds, exclusions, and
+`complete: true` — refused with `--limit`, since `complete` must mean the WHOLE corpus). Generate
+mode refuses to start unless that file exists, is `complete`, and the corpus sha256, image ids, AND
+manual-exclusions sha256 all still match what is live. Every row's `gold_prepare` field is the
+D2-prepare-time value (null for tasks with no gold slot); `gold_live` is the gold-slot stdout
+actually observed when THIS run's check chain graded the answer (the chain already executes it) —
+a `gold_prepare != gold_live` row is counted as `gold_drift` in the summary, since the environment
+may have changed since `--prepare` ran:
 
 ```bash
 # docker running, images built, mlx-serve serving <model> at :8000:
@@ -258,29 +278,33 @@ stays ON. The per-turn LLM timeout is DERIVED from this axis's OWN rows' measure
 (`completion_tokens / generation_ms` per turn), falling back to `math500`/`convergence` rows (the
 manifest's `timeout_source` names only the benches that actually contributed rows, e.g.
 `fallback:math500`, never a configured-but-empty one) until this axis has rows of its own; the
-per-episode deadline defaults to `min(8x that per-turn timeout, 3600s)` (`--deadline-s` to go
-higher) so a looping episode reaches `deadline` rather than running unbounded — reachable even on
-an episode stuck re-prompting with no tool calls at all, not only after a tool-call turn. A
+per-episode deadline defaults to 8x that per-turn timeout, UNCAPPED (`--deadline-s` to override —
+AGENTS.md: the thinking budget is external truncation and is never tuned down for convenience, so
+there is no hardcoded ceiling here either) so a looping episode reaches `deadline` rather than
+running unbounded — reachable even on an episode stuck re-prompting with no tool calls at all, not
+only after a tool-call turn. A
 `driver.complete` transport failure (HTTP error/timeout/connection error) ESCALATES — the run
 aborts nonzero with the task id in the message and writes no row for that task; it is never graded.
 A stale `.skipped.json` from an earlier degraded attempt is removed once a run completes
 successfully. SIGTERM removes the in-flight task's container (prepare mode sweeps its own
 container prefix) and exits 143.
 
-Rows (`results/<model>/agentbench_os.v1.jsonl`) carry `id`, `group`, `labels`, `image`, `gold`
-(from the D2 artifact, null when the task has no gold slot), `passed`, `outcome`
-(`bench.agent_outcomes` taxonomy — `turn_cap`/`no_submit`/`deadline` are scored FAIL rows, never
-dropped; `no_submit` is reserved for an episode that never made a single tool call — a dispatched
-submit only ever comes from the FIRST tool call of its turn, matching what actually runs), `turns`,
+Rows (`results/<model>/agentbench_os.v1.jsonl`) carry `id`, `group`, `labels`, `image`,
+`gold_prepare`/`gold_live` (see above), `passed`, `outcome` (`bench.agent_outcomes` taxonomy —
+`turn_cap`/`no_submit`/`deadline`/a model-caused `shell_died` are scored FAIL rows, never dropped;
+`no_submit` is reserved for an episode that never made a single tool call — a dispatched submit
+only ever comes from the FIRST tool call of its turn, matching what actually runs), `turns`,
 `submitted_via` (`answer`/`finish`/none), `answer`, `per_turn_completion_tokens`,
 `completion_tokens_total`, `per_turn_finish_reasons` (includes `tool_calls`, which the server
 returns on every tool-calling turn), `converged` (all turns converged against their own RESOLVED
 thinking budget), `budget_hits`, `decode_tps`/`per_turn_decode_tps`, `wall_s`, `tool_calls`,
 `tool_timeouts`, `repeat_calls` (the loop guard is disabled for this axis — the round cap is the
-bound — so identical repeats are counted, not aborted), `exec_timeout`, `shell_died` (the model ran
-`exit`; also `setup_error`), and `setup_error` (a docker/infra failure, not a model failure —
-EXCLUDED from `.summary.json`'s `acc` denominator and reported separately as
-`setup_error_count`/`setup_error_ids`, alongside `exec_timeout_count`/`shell_died_count`).
+bound — so identical repeats are counted, not aborted), `exec_timeout`, `shell_died` (true whether
+the death was model- or start-caused; see `setup_error` for which), and `setup_error` (true ONLY
+for a start-phase or other docker/infra failure, never a model-caused shell death — EXCLUDED from
+`.summary.json`'s `acc` denominator and reported separately as `setup_error_count`/
+`setup_error_ids`, alongside `exec_timeout_count`/`shell_died_count`/`gold_drift_count`/
+`gold_drift_ids`).
 
 If docker, the local-os images, or the corpus are missing, the probe writes `<out
 stem>.skipped.json` (never the rows file itself) with a note and exits 0 — it never crashes the
