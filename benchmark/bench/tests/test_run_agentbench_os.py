@@ -540,6 +540,114 @@ def test_resume_accepts_when_nothing_changed_G3(tmp_path, monkeypatch):
     assert rc == 0
 
 
+def test_resume_refuses_when_manifest_lacks_nested_identity_P21(tmp_path, monkeypatch, capsys):
+    """6th cold review round 6 P21 (HIGH): a manifest missing the nested identity blocks
+    entirely (router.config_sha256 / sampling / kv.*) -- e.g. a legacy manifest predating this
+    check -- must refuse rather than silently treat absence as 'no constraint'."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    (tmp_path / "rows.jsonl").write_text(json.dumps({"id": "m0", "passed": True, "outcome": "solved",
+                                                     "wall_s": 0.1, "completion_tokens_total": 1,
+                                                     "labels": [], "setup_error": False}) + "\n",
+                                         encoding="utf-8")
+    (tmp_path / "rows.manifest.json").write_text(json.dumps({
+        "runtime": {"model": "m", "round_limit": AB.ROUND_LIMIT}, "router": {"pid": 999}}) + "\n",
+        encoding="utf-8")
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, resume=""))
+    assert rc == 2
+    assert seen == []
+    assert "missing" in capsys.readouterr().err
+
+
+def test_resume_refuses_when_router_config_sha_changed_P21(tmp_path, monkeypatch, capsys):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1))
+    assert rc == 0
+
+    # mutate the recorded router config sha, simulating a served-file change between runs
+    man_path = tmp_path / "rows.manifest.json"
+    man = json.loads(man_path.read_text())
+    man["router"]["config_sha256"] = "DIFFERENT-SHA"
+    man_path.write_text(json.dumps(man))
+
+    seen.clear()
+    rc = R.main(_args(tmp_path, resume=""))
+    assert rc == 2
+    assert seen == []
+    assert "router_config_sha256" in capsys.readouterr().err
+
+
+def test_resume_refuses_when_effective_sampling_changed_P21(tmp_path, monkeypatch, capsys):
+    """Addendum B/P21: identity compares the EFFECTIVE sampling (temperature/top_p/etc) actually
+    used -- changing the registry's generation_defaults between the first run and a resume must
+    refuse, even though --sampling-profile itself didn't change."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1))
+    assert rc == 0
+
+    reg = tmp_path / "reg.yaml"
+    reg.write_text("models:\n  - name: m\n    generation_defaults:\n      temperature: 0.9\n"
+                   "      max_tokens: 100\n      thinking_budget: 50\n", encoding="utf-8")
+
+    seen.clear()
+    rc = R.main(_args(tmp_path, resume=""))
+    assert rc == 2
+    assert seen == []
+    # in this mock harness the registry file IS the served-config file, so editing it also
+    # changes router_config_sha256 -- either refusal reason is correct evidence of the change.
+    err = capsys.readouterr().err
+    assert "sampling" in err or "router_config_sha256" in err
+
+
+def test_resume_reuses_llm_timeout_and_deadline_from_previous_manifest_addendum_B(tmp_path, monkeypatch):
+    """Addendum B: a resume must REUSE the pilot's derived llm_timeout_s/deadline_s rather than
+    re-deriving (and refusing on a changed NUMBER) once this axis has gathered more rows of its
+    own between the pilot and the resume."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    # pilot: derive from a measured rate (no explicit --llm-timeout)
+    monkeypatch.setattr(R.generate, "rows_for_rate",
+                       lambda model, bench: [{"decode_tps": 10.0}] * 10 if bench == "agentbench_os" else [])
+    rc = R.main(_args(tmp_path, limit=1, llm_timeout=None))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    pilot_timeout = man["runtime"]["llm_timeout_s"]
+    pilot_deadline = man["runtime"]["deadline_s"]
+
+    # resume: the axis now has MORE rows with a DIFFERENT measured rate -- would derive a
+    # DIFFERENT number if re-derived, but must REUSE the pilot's instead.
+    seen.clear()
+    monkeypatch.setattr(R.generate, "rows_for_rate",
+                       lambda model, bench: [{"decode_tps": 999.0}] * 50 if bench == "agentbench_os" else [])
+    rc = R.main(_args(tmp_path, resume="", llm_timeout=None))
+    assert rc == 0
+    man2 = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert man2["runtime"]["llm_timeout_s"] == pilot_timeout
+    assert man2["runtime"]["deadline_s"] == pilot_deadline
+
+
 def test_resume_refuses_when_previous_manifest_has_served_config_drift_P7(tmp_path, monkeypatch, capsys):
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
@@ -669,6 +777,24 @@ def test_pilot_draw_is_recorded_in_manifest_and_limits_the_run(tmp_path, monkeyp
     assert seen != [f"m{i}" for i in range(5)]
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
     assert sorted(man["runtime"]["pilot_ids"]) == sorted(seen)
+
+
+def test_pilot_executes_in_the_sampled_order_not_resorted_P17(tmp_path, monkeypatch):
+    """6th cold review round 6, P17 remainder: the pilot must run in the SAMPLED order
+    (AB.pilot_draw's own output order), never re-sorted back to the corpus's easy-first order --
+    a re-sort silently discards the whole point of drawing a representative random sample."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(20)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, pilot_seed=7, pilot_n=5))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert seen == man["runtime"]["pilot_ids"]   # EXACT order, not just the same set
 
 
 def test_limit_caps_number_of_tasks_run(tmp_path, monkeypatch):

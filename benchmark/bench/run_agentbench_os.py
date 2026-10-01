@@ -206,37 +206,6 @@ def _exit_sha(base: str):
         return None
 
 
-# 4th cold review G3 + 5th cold review P7: a --resume must refuse rather than silently continue a
-# run under DIFFERENT conditions than the one that produced the existing rows -- any of these
-# changing invalidates apples-to-apples comparison within the same rows file.
-RESUME_IDENTITY_KEYS = ("model", "round_limit", "exec_timeout_s", "deadline_s", "sampling_profile",
-                       "image_ids", "corpus_sha256", "exclusions_sha256")
-
-
-def _check_resume_identity(mp: Path, current: dict) -> str | None:
-    """None if `mp` doesn't exist yet (nothing to compare against) or its `runtime` block matches
-    `current` on every key in RESUME_IDENTITY_KEYS; else a refusal reason. P7: a manifest that
-    already recorded a `served_config_drift` from a PRIOR exit is refused outright -- that prior
-    run's results are suspect and must not be silently built upon."""
-    if not mp.exists():
-        return None
-    try:
-        prev_doc = json.loads(mp.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 -- _load_previous_manifest already surfaces this
-        return None
-    if prev_doc.get("served_config_drift"):
-        return (f"{mp} recorded a served_config_drift from a previous exit -- that run's results "
-               "are suspect; investigate before resuming (or start a fresh --out)")
-    prev_runtime = prev_doc.get("runtime") or {}
-    for key in RESUME_IDENTITY_KEYS:
-        if key not in prev_runtime:
-            continue
-        if prev_runtime[key] != current.get(key):
-            return (f"resume refused: {key} changed since the previous manifest ({mp}): "
-                   f"{prev_runtime[key]!r} -> {current.get(key)!r}")
-    return None
-
-
 def _stamp_manifest_exit(mp: Path, router: dict, base_url: str) -> None:
     """P7: best-effort FORENSIC C106 exit stamp for an EXCEPTIONAL exit (TransportFailure,
     ContainerCleanupError, KeyboardInterrupt, a SIGTERM SystemExit). Never raises and never masks
@@ -260,11 +229,17 @@ def _stamp_manifest_exit(mp: Path, router: dict, base_url: str) -> None:
         pass
 
 
-def _write_manifest(mp: Path, model: str, *, profile: str, runtime: dict, router: dict,
-                    history: list, segments: list | None = None) -> None:
+def _gather_candidate_manifest(model: str, *, profile: str, runtime: dict, router: dict) -> dict:
     # cold-review F15: the manifest must record the PROFILE ACTUALLY USED (which may be an
-    # --allow-profile override), not a hardcoded "deployed".
-    man = provenance.gather(model, profile=profile, runtime=runtime, router=router)
+    # --allow-profile override), not a hardcoded "deployed". Built EARLY (before the P21 resume-
+    # identity check and before any decision to actually write) -- comparing against a FRESHLY
+    # gathered candidate, rather than re-deriving ad hoc fields, keeps the identity check and the
+    # eventually-written manifest provably in sync.
+    return provenance.gather(model, profile=profile, runtime=runtime, router=router)
+
+
+def _write_manifest(mp: Path, man: dict, *, history: list, segments: list | None = None) -> None:
+    man = dict(man)
     if history:
         man["router_history"] = history
     # P7: segments accumulate across resumes (one entry per process start) -- the caller is
@@ -276,6 +251,77 @@ def _write_manifest(mp: Path, model: str, *, profile: str, runtime: dict, router
     tmp = mp.with_suffix(mp.suffix + ".tmp")
     tmp.write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, mp)
+
+
+# 4th cold review G3 + 5th cold review P7 + 6th cold review round 6 P21: a --resume must refuse
+# rather than silently continue a run under DIFFERENT conditions than the one that produced the
+# existing rows. RESUME_IDENTITY_KEYS covers the flat `runtime` block; P21 additionally requires
+# the served-file hash, the EFFECTIVE sampling params actually used, and predictor/context/
+# scaffold identity (router.config_sha256, the full sampling dict, kv.draft_kind/kv_bits/
+# max_kv_cache_size) to match -- read from provenance.gather's own nested blocks, not re-derived
+# ad hoc. Addendum B: llm_timeout_s/deadline_s are DELIBERATELY excluded -- they are DERIVED
+# numbers that legitimately drift as more rows accumulate on this axis; identity compares the
+# derivation RULE and its inputs (already covered above), and a resume REUSES the previous
+# manifest's derived values outright rather than re-deriving and comparing them (see run_generate).
+RESUME_IDENTITY_KEYS = ("model", "round_limit", "exec_timeout_s", "sampling_profile",
+                       "image_ids", "corpus_sha256", "exclusions_sha256")
+
+
+def _identity_snapshot(doc: dict) -> dict | None:
+    """Flatten every P21 identity-relevant field out of a manifest doc (provenance.gather's
+    `runtime.draft_kind`, `kv.{kv_bits,max_kv_cache_size}`, `router.config_sha256`, `sampling`).
+    None if the doc lacks one of the required STRUCTURAL blocks, or any of the flat
+    RESUME_IDENTITY_KEYS, entirely -- an incomplete/legacy manifest can never be resumed against
+    silently. A field being STRUCTURALLY PRESENT but legitimately `None`/`0` (e.g. a model with no
+    declared `max_kv_cache_size`, or `kv_bits: 0` for native16 KV) is fine -- it's compared as a
+    normal value, not treated as missing."""
+    runtime = doc.get("runtime")
+    router = doc.get("router")
+    kv = doc.get("kv")
+    if not isinstance(runtime, dict) or not isinstance(router, dict) or not isinstance(kv, dict):
+        return None
+    if "sampling" not in doc or "config_sha256" not in router or "draft_kind" not in runtime:
+        return None
+    if any(k not in kv for k in ("kv_bits", "max_kv_cache_size")):
+        return None
+    if any(k not in runtime for k in RESUME_IDENTITY_KEYS):
+        return None
+    snap = {k: runtime.get(k) for k in RESUME_IDENTITY_KEYS}
+    snap["router_config_sha256"] = router.get("config_sha256")
+    snap["sampling"] = doc.get("sampling")
+    snap["draft_kind"] = runtime.get("draft_kind")
+    snap["kv_bits"] = kv.get("kv_bits")
+    snap["max_kv_cache_size"] = kv.get("max_kv_cache_size")
+    return snap
+
+
+def _check_resume_identity(mp: Path, candidate_doc: dict) -> str | None:
+    """None if `mp` doesn't exist yet (nothing to compare against) or its FULL identity snapshot
+    matches `candidate_doc`'s; else a refusal reason. A manifest that already recorded a
+    `served_config_drift` from a PRIOR exit is refused outright -- that prior run's results are
+    suspect and must not be silently built upon."""
+    if not mp.exists():
+        return None
+    try:
+        prev_doc = json.loads(mp.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 -- _load_previous_manifest already surfaces this
+        return None
+    if prev_doc.get("served_config_drift"):
+        return (f"{mp} recorded a served_config_drift from a previous exit -- that run's results "
+               "are suspect; investigate before resuming (or start a fresh --out)")
+    prev_snap = _identity_snapshot(prev_doc)
+    if prev_snap is None:
+        return (f"resume refused: {mp} is missing one or more required identity fields (served "
+               "config hash, effective sampling, predictor/context identity, or scaffold "
+               "identity) -- it predates this check or was produced incompletely; start a fresh "
+               "--out rather than resuming against it")
+    cur_snap = _identity_snapshot(candidate_doc)
+    for key, prev_val in prev_snap.items():
+        cur_val = cur_snap.get(key) if cur_snap else None
+        if prev_val != cur_val:
+            return (f"resume refused: {key} changed since the previous manifest ({mp}): "
+                   f"{prev_val!r} -> {cur_val!r}")
+    return None
 
 
 # --------------------------------------------------------------------------- summary
@@ -570,49 +616,87 @@ def run_generate(args, out: Path) -> int:
     pilot_ids = None
     if args.pilot_seed is not None:
         pilot_ids = AB.pilot_draw([t["id"] for t in candidates], args.pilot_seed, args.pilot_n)
-        wanted = set(pilot_ids)
-        candidates = [t for t in candidates if t["id"] in wanted]
+        # 6th cold review round 6, P17 remainder: execute the pilot in the SAMPLED order, not
+        # re-sorted back to corpus (easy-first) order -- a re-sort silently discards the point of
+        # drawing a random sample (early signal from a representative mix, not the easy head).
+        by_id = {t["id"]: t for t in candidates}
+        candidates = [by_id[i] for i in pilot_ids if i in by_id]
 
     todo = [t for t in candidates if t["id"] not in done_ids] if args.resume else candidates
 
     params = model_params.params_for(args.model, profile=args.sampling_profile)
     context_limit = model_params.registry_context_limit(args.model)
 
-    llm_timeout, timeout_source, timeout_msg, timeout_derivation = _derive_llm_timeout(
-        args.model, params.get("thinking_budget"), args.llm_timeout)
-    print(f"[agentbench_os] per-turn LLM timeout = {timeout_msg}")
-    # P14: a per-turn timeout that cannot be SIZED (no measured rate, no budget) is not merely
-    # imprecise -- it is uninterpretable, and AGENTS.md forbids silently running on a number that
-    # is. Refuse rather than falling back to the shared ceiling, unless the operator overrode it.
-    if not timeout_derivation["observable"] and not args.llm_timeout:
-        print(f"[agentbench_os] REFUSED: cannot derive a per-turn LLM timeout "
-             f"({timeout_derivation['reason']}) -- pass --llm-timeout explicitly to override.",
-             file=sys.stderr, flush=True)
-        return 2
-    if args.deadline_s:
-        deadline_s = args.deadline_s
-        deadline_reason = "EXPLICIT --deadline-s"
+    # Addendum B (round 6): on a resume, REUSE the previous manifest's llm_timeout_s/deadline_s
+    # outright rather than re-deriving and comparing them -- they are DERIVED numbers that
+    # legitimately drift as more rows accumulate on this axis (the floor decode rate moves), so
+    # comparing the derived VALUE would make a pilot-then-resume workflow refuse itself once this
+    # axis has gathered >=5 rows of its own. Identity (P21) already covers the derivation RULE and
+    # its inputs; the derived number itself is explicitly NOT part of identity.
+    reused_timeout = None
+    if done_ids and mp.exists():
+        try:
+            prev_runtime = (json.loads(mp.read_text(encoding="utf-8")).get("runtime") or {})
+            if "llm_timeout_s" in prev_runtime and "deadline_s" in prev_runtime:
+                reused_timeout = prev_runtime
+        except Exception:  # noqa: BLE001
+            reused_timeout = None
+    if reused_timeout is not None:
+        llm_timeout = reused_timeout["llm_timeout_s"]
+        timeout_source = reused_timeout.get("timeout_source", "resumed")
+        timeout_derivation = reused_timeout.get("timeout_derivation") or {"observable": True,
+                                                                          "source": "resumed"}
+        deadline_s = reused_timeout["deadline_s"]
+        timeout_msg = f"{llm_timeout:.0f}s (REUSED from the manifest this resume builds on)"
+        deadline_reason = "REUSED from the manifest this resume builds on"
     else:
-        # 3rd cold review R3 (architect ruling, AGENTS.md "the thinking budget is external
-        # truncation, never tuned"): NO hardcoded cap here -- a slow model legitimately needs a
-        # longer deadline, and silently capping it is exactly the kind of truncation AGENTS.md
-        # forbids for a budget. 8x the per-turn timeout is the whole rule.
-        deadline_s = llm_timeout * DEADLINE_MULTIPLIER
-        deadline_reason = f"{DEADLINE_MULTIPLIER:.0f}x per-turn timeout"
+        llm_timeout, timeout_source, timeout_msg, timeout_derivation = _derive_llm_timeout(
+            args.model, params.get("thinking_budget"), args.llm_timeout)
+        # P14: a per-turn timeout that cannot be SIZED (no measured rate, no budget) is not merely
+        # imprecise -- it is uninterpretable, and AGENTS.md forbids silently running on a number
+        # that is. Refuse rather than falling back to the shared ceiling, unless overridden.
+        if not timeout_derivation["observable"] and not args.llm_timeout:
+            print(f"[agentbench_os] REFUSED: cannot derive a per-turn LLM timeout "
+                 f"({timeout_derivation['reason']}) -- pass --llm-timeout explicitly to override.",
+                 file=sys.stderr, flush=True)
+            return 2
+        if args.deadline_s:
+            deadline_s = args.deadline_s
+            deadline_reason = "EXPLICIT --deadline-s"
+        else:
+            # 3rd cold review R3 (architect ruling, AGENTS.md "the thinking budget is external
+            # truncation, never tuned"): NO hardcoded cap here -- a slow model legitimately needs
+            # a longer deadline, and silently capping it is exactly the kind of truncation
+            # AGENTS.md forbids for a budget. 8x the per-turn timeout is the whole rule.
+            deadline_s = llm_timeout * DEADLINE_MULTIPLIER
+            deadline_reason = f"{DEADLINE_MULTIPLIER:.0f}x per-turn timeout"
+    print(f"[agentbench_os] per-turn LLM timeout = {timeout_msg}")
     print(f"[agentbench_os] episode deadline = {deadline_s:.0f}s ({deadline_reason})")
 
     print(f"[agentbench_os] {args.model}: {len(todo)} item(s) to run "
          f"({len(done_ids)} already done, {len(exclusions)} excluded)")
 
-    # 4th cold review G3 + 5th cold review P7: a resume (done_ids nonzero) must refuse rather than
-    # silently continue under conditions that changed since the manifest it's building on.
-    runtime_identity = {"model": args.model, "round_limit": args.round_limit,
-                        "exec_timeout_s": args.exec_timeout, "deadline_s": round(deadline_s, 1),
-                        "sampling_profile": args.sampling_profile, "image_ids": image_ids,
-                        "corpus_sha256": _sha256_file(corpus_path),
-                        "exclusions_sha256": _sha256_file(artifact_path)}
+    # 4th cold review G3 + 5th cold review P7 + 6th cold review round 6 P21: a resume (done_ids
+    # nonzero) must refuse rather than silently continue under conditions that changed since the
+    # manifest it's building on -- compared against a FRESHLY gathered candidate manifest (the
+    # same one that will be written below if accepted), covering the flat runtime identity AND
+    # the served-file hash / effective sampling / predictor-context-scaffold identity.
+    runtime = {"client": "run_agentbench_os", "bench": BENCH_NAME, "tune": TUNE,
+              "corpus": str(corpus_path), "exclusions_path": str(artifact_path),
+              "limit": args.limit, "llm_timeout_s": round(llm_timeout, 1),
+              "timeout_source": timeout_source, "timeout_derivation": timeout_derivation,
+              "deadline_s": round(deadline_s, 1), "n_todo": len(todo),
+              "n_done_before": len(done_ids), "n_excluded": len(exclusions),
+              "pilot_seed": args.pilot_seed, "pilot_n": args.pilot_n, "pilot_ids": pilot_ids,
+              "transcripts_dir": str(transcripts_dir_for(args)),
+              "model": args.model, "round_limit": args.round_limit,
+              "exec_timeout_s": args.exec_timeout, "sampling_profile": args.sampling_profile,
+              "image_ids": image_ids, "corpus_sha256": _sha256_file(corpus_path),
+              "exclusions_sha256": _sha256_file(artifact_path)}
+    candidate_man = _gather_candidate_manifest(args.model, profile=args.sampling_profile,
+                                               runtime=runtime, router=router)
     if done_ids:
-        identity_refusal = _check_resume_identity(mp, runtime_identity)
+        identity_refusal = _check_resume_identity(mp, candidate_man)
         if identity_refusal:
             print(f"[agentbench_os] REFUSED: {identity_refusal}", file=sys.stderr, flush=True)
             return 2
@@ -626,21 +710,14 @@ def run_generate(args, out: Path) -> int:
             prev_segments = json.loads(mp.read_text(encoding="utf-8")).get("segments") or []
         except Exception:  # noqa: BLE001
             prev_segments = []
+    # P21: each segment carries the FULL identity snapshot active for that process start, not
+    # just pid/row-count -- a reviewer reconstructing a run's history can see exactly what
+    # identity each segment ran under.
     segments = prev_segments + [{"started_at": time.time(), "router_pid": router.get("pid"),
-                                 "rows_before": len(done_ids)}]
+                                 "rows_before": len(done_ids),
+                                 "identity": _identity_snapshot(candidate_man)}]
     if todo:
-        _write_manifest(mp, args.model, profile=args.sampling_profile,
-                        runtime={"client": "run_agentbench_os", "bench": BENCH_NAME, "tune": TUNE,
-                                 "corpus": str(corpus_path), "exclusions_path": str(artifact_path),
-                                 "limit": args.limit, "llm_timeout_s": round(llm_timeout, 1),
-                                 "timeout_source": timeout_source,
-                                 "timeout_derivation": timeout_derivation,
-                                 "n_todo": len(todo), "n_done_before": len(done_ids),
-                                 "n_excluded": len(exclusions),
-                                 "pilot_seed": args.pilot_seed, "pilot_n": args.pilot_n,
-                                 "pilot_ids": pilot_ids, "transcripts_dir": str(tdir),
-                                 **runtime_identity},
-                        router=router, history=history, segments=segments)
+        _write_manifest(mp, candidate_man, history=history, segments=segments)
     base_driver = driver_mod.MlxServeDriver()
     current = {"container": None}
     old_handler = signal.signal(signal.SIGTERM, _make_sigterm_handler(current, runner))
