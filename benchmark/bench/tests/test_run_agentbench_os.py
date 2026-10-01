@@ -1700,6 +1700,22 @@ def test_manifest_records_timeout_derivation_block_P14(tmp_path, monkeypatch):
     assert d["sources"] == [{"file": "f", "identity_match": "exact"}]   # P43(b)/P48: the contributing sources are recorded
 
 
+def test_manifest_records_shell_mode_P13(tmp_path, monkeypatch):
+    """13th cold review round 13 (fidelity): the manifest's runtime block records WHICH shell
+    I/O mode PersistentShell used -- agentbench_compare's comparability gate refuses to pool arms
+    recorded under different shell_mode values."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, llm_timeout="60"))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert man["runtime"]["shell_mode"] == AB.PersistentShell.SHELL_MODE == "pty"
+
+
 def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeypatch):
     """R3 (architect ruling, AGENTS.md "the thinking budget is external truncation, never
     tuned"): there is NO hard cap -- a slow model's deadline can legitimately be very large."""

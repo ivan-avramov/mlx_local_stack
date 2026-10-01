@@ -8,7 +8,9 @@ produced by `run_agentbench_os.py`; the sibling `<stem>.manifest.json`
 
 COMPARABILITY GATE (AGENTS.md "APPLES-TO-APPLES IS MANDATORY"): before computing ANY statistic,
 every arm's manifest is checked against the first arm's for corpus sha, exclusions sha,
-round_limit, exec_timeout_s, harness git stack_head, draft_kind state, and sampling profile. ANY
+round_limit, exec_timeout_s, harness git stack_head, draft_kind state, sampling profile, and
+shell_mode (13th round: a non-interactive and an interactive/pty shell are not the same
+measurement -- a syntax error in a bash_action ends the episode differently under each). ANY
 mismatch REFUSES the whole run (prints every mismatch, writes nothing) -- these are the axes
 that silently turn a model comparison into a (model x harness-config) composite.
 `llm_timeout_s` is explicitly EXEMPTED (it is a DERIVED number that legitimately drifts as more
@@ -68,6 +70,11 @@ _GATE_FIELDS = (
     (("git", "stack_head"), "harness git stack_head"),
     (("runtime", "draft_kind"), "draft_kind state"),
     (("runtime", "sampling_profile"), "sampling profile"),
+    # 13th round (fidelity): a non-interactive (`docker exec -i`) and an interactive (pty,
+    # `docker exec -it`) shell are not the same measurement -- a syntax error in a bash_action
+    # ends the episode as shell_died under one and not the other (THE regression this round
+    # fixed). Arms recorded under different shell_mode values must never be pooled/compared.
+    (("runtime", "shell_mode"), "shell_mode"),
 )
 _LLM_TIMEOUT_FIELD = ("runtime", "llm_timeout_s")
 

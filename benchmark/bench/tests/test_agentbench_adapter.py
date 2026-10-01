@@ -1491,6 +1491,110 @@ def test_persistent_shell_real_bash_run_after_shell_died_reports_immediately(tmp
         shell.close()
 
 
+# --------------------------------------------------------------------------- PersistentShell pty fidelity (13th round)
+# 13th cold review round 13: upstream's persistent shell is INTERACTIVE
+# (`container.exec('/bin/bash --login', stdin=True, tty=True)`, THUDM/AgentRL
+# worker/src/agentrl/worker/environment/docker.py) -- ours was `docker exec -i` with NO tty, so
+# bash runs NON-interactively. A non-interactive bash that hits a syntax error TERMINATES the
+# whole shell (POSIX); an INTERACTIVE one just prints the error and keeps going. Reproduced live:
+# Ornith-1.0-35B-mlx-uniform-4bit std-005-0 (`calc 6 * (9 / 3) + 7`, unquoted parens) ended the
+# episode as shell_died when upstream would have printed the error and continued. Fixed by
+# allocating a REAL pty (`pty.openpty()`) and launching `docker exec -it` with the slave as
+# stdin/stdout/stderr -- `_real_bash_popen_factory`/`_real_shell` already hand `start()`'s pty
+# kwargs straight through to a REAL local `/bin/bash --login`, so these tests exercise a REAL pty
+# end to end, same as every other `_real_shell`-based test in this file.
+@_timeout(10)
+def test_persistent_shell_real_bash_syntax_error_does_not_kill_the_shell_P13(tmp_path):
+    """THE regression test: a syntax error must NOT end the session -- the NEXT command still
+    runs normally, exit 0, shell alive (upstream prints the error and continues; ours must too,
+    now that the shell is INTERACTIVE)."""
+    shell = _real_shell(tmp_path)
+    try:
+        bad = shell.run("echo (")
+        assert bad["shell_died"] is False
+        good = shell.run("echo ok")
+        assert good["shell_died"] is False
+        assert good["output"] == "ok\n"
+        assert good["exit_code"] == 0
+    finally:
+        shell.close()
+
+
+@_timeout(10)
+def test_persistent_shell_real_bash_exit_still_ends_the_shell_P13(tmp_path):
+    """`exit` must still end an INTERACTIVE shell exactly like it did the non-interactive one --
+    THIS behaviour is unaffected by the pty switch."""
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("exit")
+        assert res["shell_died"] is True
+    finally:
+        shell.close()
+
+
+@_timeout(10)
+def test_persistent_shell_real_bash_no_echo_pollution_P13(tmp_path):
+    """The command line itself must never appear in `output` -- `stty -echo` (sent in the
+    handshake) suppresses the pty's own echo of typed input."""
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("echo hello_world")
+        assert res["output"] == "hello_world\n"
+        assert "echo hello_world" not in res["output"]
+    finally:
+        shell.close()
+
+
+@_timeout(10)
+def test_persistent_shell_real_bash_crlf_normalised_to_lf_P13(tmp_path):
+    """A pty's line discipline translates outgoing \\n to \\r\\n (ONLCR) -- the returned `output`
+    must be normalised back to plain \\n, matching the pre-pty (`docker exec -i`, no tty)
+    behaviour byte-for-byte."""
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("printf 'a\\nb\\nc\\n'")
+        assert res["output"] == "a\nb\nc\n"
+        assert "\r" not in res["output"]
+    finally:
+        shell.close()
+
+
+@_timeout(10)
+def test_persistent_shell_real_bash_1mb_output_roundtrips_P13(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("head -c 1048576 /dev/zero | tr '\\0' x", timeout_s=10)
+        assert res["raw_output_len"] == 1048576
+        assert res["exit_code"] == 0
+        assert res["timed_out"] is False
+    finally:
+        shell.close()
+
+
+@_timeout(15)
+def test_persistent_shell_real_bash_timeout_kill_P13(tmp_path):
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("sleep 999", timeout_s=0.5)
+        assert res["timed_out"] is True
+    finally:
+        shell.close()
+
+
+@_timeout(15)
+def test_persistent_shell_real_bash_close_bounded_with_a_background_job_P13(tmp_path):
+    """A backgrounded job holding the pty open (`sleep 30 &`) must not wedge close() -- same
+    guarantee P22/P41 already proved for the non-pty design, now re-proved over a real pty."""
+    shell = _real_shell(tmp_path)
+    try:
+        shell.run("sleep 30 < /dev/null > /dev/null 2>&1 &")
+    finally:
+        t0 = time.monotonic()
+        shell.close()
+        elapsed = time.monotonic() - t0
+        assert elapsed < 5.0, f"close() took {elapsed:.1f}s -- should be bounded"
+
+
 def test_persistent_shell_run_before_start_raises():
     shell = AB.PersistentShell("c1")
     with pytest.raises(RuntimeError):
@@ -1771,7 +1875,13 @@ def test_persistent_shell_read_write_do_not_deadlock_P22(tmp_path):
     floods its own stdout; the reader thread fills the bounded queue (G2, maxsize=256) and blocks
     on put(); the OLD `run()` was still parked awaiting the full write before it ever drained that
     queue. The fix services reads and the (now backgrounded) write concurrently against one
-    deadline."""
+    deadline.
+
+    13th round: the elapsed-time bound is relaxed from 2s to 8s -- a pty's bulk throughput is
+    genuinely, substantially slower than a plain pipe's (smaller kernel buffers, interactive-
+    oriented, not bulk-oriented), independent of this test's own deadlock-avoidance fix; measured
+    ~4.9s for this same 20MB transfer post-pty-switch, well under the 10s `timeout_s` and
+    nowhere near "wedged solid" (the ORIGINAL defect this test exists to catch)."""
     shell = _real_shell(tmp_path)
     try:
         comment = "x" * (300 * 1024)
@@ -1783,7 +1893,7 @@ def test_persistent_shell_read_write_do_not_deadlock_P22(tmp_path):
         # 20MB is well past the G2 1MiB retention cap, so the DISPLAY text is capped -- the point
         # of this test is that it completes at all (no deadlock), not the exact capped length.
         assert res["raw_output_len"] == 20971520
-        assert elapsed < 2.0, f"took {elapsed:.2f}s -- should complete in well under 2s, not deadlock"
+        assert elapsed < 8.0, f"took {elapsed:.2f}s -- should complete well under the 10s timeout_s, not deadlock"
     finally:
         shell.close()
 
@@ -2060,7 +2170,13 @@ def test_build_tools_patches_the_current_turn_with_tool_result_and_raw_output_le
         bash = {t.name: t for t in tools}["bash_action"]
         out = bash.fn({"script": "echo hi"})
         assert transcript_turns[0]["tool_result"] == out
-        assert transcript_turns[0]["raw_output_len"] == len("hi\n")   # pre-truncation, pre-wrap
+        # 13th round pty fidelity: `raw_output_len` reports the TRUE wire byte count, which is
+        # now LARGER than len(output) for anything containing a newline -- the pty's own ONLCR
+        # line discipline doubles every \n to \r\n on the wire; `output` itself is normalised
+        # back to plain \n (see _postprocess), but raw_output_len intentionally is NOT (it exists
+        # to make a huge/degenerate output visible in the data even when `output` is capped/
+        # substituted, so it reports what was ACTUALLY on the wire, not the display text).
+        assert transcript_turns[0]["raw_output_len"] == len("hi\r\n")
     finally:
         shell.close()
 
@@ -2909,6 +3025,36 @@ def test_run_task_harness_valueerror_unrelated_to_argv_is_NOT_labelled_unreprese
     assert row["setup_error"] is True
     assert row["outcome"] == AO.SERVER_ERROR
     assert row.get("error") is None or "unrepresentable answer" not in row["error"]
+
+
+def test_persistent_shell_mode_constant_is_pty_P13():
+    assert AB.PersistentShell.SHELL_MODE == "pty"
+
+
+def test_run_task_row_records_shell_mode_on_a_normal_pass_P13():
+    """13th cold review round 13: every row records WHICH shell I/O mode produced it --
+    agentbench_compare's comparability gate refuses to pool arms recorded under different
+    shell_mode values (a non-interactive and an interactive/pty shell are not the same
+    measurement)."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["shell_mode"] == "pty"
+
+
+def test_run_task_row_records_shell_mode_on_a_setup_error_P13():
+    """_fail_row's own default must ALSO carry shell_mode -- an early setup_error (e.g. container
+    create failure, before any shell I/O happens at all) must not leave this field missing."""
+    def runner(cmd, **kw):
+        if cmd[:2] == ["docker", "run"]:
+            return FakeRunner.Proc(1, "", "docker run failed")
+        return FakeRunner.Proc(0, "", "")
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "x"})])])
+    task = _check_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["setup_error"] is True
+    assert row["shell_mode"] == "pty"
 
 
 def test_run_task_a_valid_submit_followed_by_a_stray_empty_call_in_the_SAME_turn_still_solves_P10():

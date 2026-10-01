@@ -24,7 +24,7 @@ def _manifest(**over):
             "corpus_sha256": "corpus-sha-a", "exclusions_sha256": "excl-sha-a",
             "round_limit": 30, "exec_timeout_s": 60.0, "draft_kind": "off",
             "sampling_profile": "deployed", "llm_timeout_s": 300.0,
-            "apc_enabled": False, "apc_source": "default",
+            "apc_enabled": False, "apc_source": "default", "shell_mode": "pty",
         },
         "router": {"pid": 123, "config_sha256": "router-sha-a"},
     }
@@ -119,6 +119,7 @@ def test_check_comparability_identical_manifests_is_clean():
     (("git", "stack_head"), "cafebabe" * 5),
     (("runtime", "draft_kind"), "mtp"),
     (("runtime", "sampling_profile"), "production"),
+    (("runtime", "shell_mode"), "non-interactive"),
 ])
 def test_check_comparability_refuses_on_each_gate_field(field_path, bad_value):
     man_b = _manifest(model=MODEL_B)

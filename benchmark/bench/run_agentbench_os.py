@@ -1007,7 +1007,12 @@ def run_generate(args, out: Path) -> int:
               "model": args.model, "round_limit": args.round_limit,
               "exec_timeout_s": args.exec_timeout, "sampling_profile": args.sampling_profile,
               "image_ids": image_ids, "corpus_sha256": _sha256_file(corpus_path),
-              "exclusions_sha256": _sha256_file(artifact_path)}
+              "exclusions_sha256": _sha256_file(artifact_path),
+              # 13th round (fidelity): which shell I/O mode PersistentShell used for this run --
+              # the comparability gate in agentbench_compare.py refuses to compare arms recorded
+              # under different shell_mode values (a non-interactive and an interactive shell are
+              # not the same measurement).
+              "shell_mode": AB.PersistentShell.SHELL_MODE}
     candidate_man = _gather_candidate_manifest(args.model, profile=args.sampling_profile,
                                                runtime=runtime, router=router)
     if done_ids:

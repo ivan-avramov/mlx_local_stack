@@ -48,9 +48,12 @@ import codecs
 import errno
 import hashlib
 import json
+import os
+import pty
 import queue
 import random
 import re
+import select
 import statistics
 import subprocess
 import sys
@@ -691,6 +694,74 @@ def wrap_os_output(text: str) -> str:
 
 
 # --------------------------------------------------------------------------- persistent shell (F4a)
+class _PtyReader:
+    """13th round: a pty master fd wrapped with the SAME `.read(n)`/`.close()` shape as the
+    scripted-fake-process test double (`_ScriptedStdout`) -- but POLLABLE and CANCELLABLE, never
+    a bare blocking `os.read()`.
+
+    WHY: a plain blocking read on a pty master can wedge in an UNINTERRUPTIBLE kernel wait when
+    some OTHER process still holds the SLAVE side open -- reproduced: a `bash_action` that
+    backgrounds a job (`sleep 30 &`) and then the episode ends; the orphaned `sleep` (re-parented
+    to init once bash itself is killed) keeps its own copy of the slave fd open, and closing OUR
+    master-side fd from another thread while the reader is blocked inside `.read()` on it is NOT
+    a reliable way to unblock that read (unlike a plain pipe, where it usually is -- this is a
+    genuine pty-vs-pipe behavioural difference, not a regression in the P41 close()-unblocks-the-
+    reader mechanism, which stays correct for the pipe it was designed for). `select()` with a
+    short timeout bounds EVERY wait to that timeout, so the loop always gets a chance to notice
+    `close()` on its own schedule -- independent of whether anyone else still holds the pty open."""
+    POLL_S = 0.2
+
+    def __init__(self, fd: int):
+        self._fd = fd
+        self._closed = False
+
+    def read(self, n: int) -> bytes:
+        while not self._closed:
+            try:
+                r, _, _ = select.select([self._fd], [], [], self.POLL_S)
+            except (OSError, ValueError):
+                return b""
+            if self._fd in r:
+                try:
+                    return os.read(self._fd, n)
+                except OSError:
+                    return b""
+        return b""
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            os.close(self._fd)
+        except OSError:
+            pass
+
+
+class _PtyWriter:
+    """13th round: the write-side analogue of `_PtyReader`, same `.write(data)`/`.flush()`/
+    `.close()` shape as the scripted-fake-process test double (`_FakeStdin`)."""
+
+    def __init__(self, fd: int):
+        self._fd = fd
+        self._closed = False
+
+    def write(self, data: bytes) -> int:
+        return os.write(self._fd, data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            os.close(self._fd)
+        except OSError:
+            pass
+
+
 class PersistentShell:
     """One `docker exec -i <container> /bin/bash --login` process for the life of a task (upstream
     `Container.execute`'s session, not a fresh exec per command). `start` and every `bash_action`
@@ -773,12 +844,40 @@ class PersistentShell:
     RETAINED_HEAD_CHARS = 512 * 1024
     RETAINED_TAIL_CHARS = 512 * 1024
 
+    # 13th cold review round 13: upstream's persistent shell is INTERACTIVE
+    # (`container.exec('/bin/bash --login', stdin=True, tty=True)`, THUDM/AgentRL
+    # worker/src/agentrl/worker/environment/docker.py create_shell/execute_shell) -- a real pty,
+    # not a plain pipe. `docker exec -i` (no `-t`) runs bash NON-interactively even with
+    # `--login`, and POSIX non-interactive bash TERMINATES THE WHOLE SHELL on a syntax error --
+    # upstream's interactive shell just prints the error and keeps going. Reproduced live:
+    # Ornith-1.0-35B-mlx-uniform-4bit std-005-0 (`calc 6 * (9 / 3) + 7`, unquoted parens) ended
+    # the episode as shell_died where upstream would have continued. Fixed by allocating a REAL
+    # pty (`pty.openpty()`) and launching `docker exec -it` with the slave fd as stdin/stdout/
+    # stderr (`-t` REQUIRES a tty on our own side, which the slave provides). The sentinel
+    # protocol, the reader/writer/timeout/memory-capping/decode machinery below are UNCHANGED --
+    # only the I/O ENDPOINT changes: `self.proc.stdout`/`self.proc.stdin` are now fdopen()
+    # wrappers around the pty master fd (one fd, two independently-closable file objects, exactly
+    # like a real Popen gives you for two pipe ends) rather than subprocess.PIPE-backed ones, so
+    # every existing `.read()`/`.write()`/`.flush()`/`.close()` call site below needs no change at
+    # all. One-shot `docker_exec` (checker/init/example scripts) is UNCHANGED -- still
+    # `docker exec -i`, no tty, START/RC markers.
+    #
+    # A pty's line discipline echoes typed input back on its own output stream, and translates
+    # outgoing `\n` to `\r\n` (ONLCR) -- two effects a plain pipe never had. `start()`'s handshake
+    # now ALSO disables echo and the prompt (`stty -echo` plus clearing PS1/PS2/PROMPT_COMMAND, so
+    # nothing extra is ever emitted); `run()` strips a leading echo of the exact command text as a
+    # fallback (if `stty -echo` didn't take for some reason -- e.g. a `su -` sub-shell resetting
+    # terminal settings) and normalises `\r\n` -> `\n` in the returned text, matching the
+    # pre-pty (`docker exec -i`, no tty) output byte-for-byte.
+    SHELL_MODE = "pty"
+
     def __init__(self, container: str, popen=subprocess.Popen, runner=subprocess.run,
-                read_chunk: int = 65536, queue_maxsize: int = 256):
+                read_chunk: int = 65536, queue_maxsize: int = 256, openpty=None):
         self.container = container
         self._popen = popen
         self._runner = runner
         self._read_chunk = read_chunk
+        self._openpty = openpty or pty.openpty
         self.proc = None
         self._q: "queue.Queue" = queue.Queue(maxsize=queue_maxsize)
         self.dead = False
@@ -791,16 +890,48 @@ class PersistentShell:
         self._cancel = threading.Event()
 
     def start(self) -> dict:
-        """Returns the handshake (no-op sentinel round) result -- P9(b): the caller MUST check
-        this and refuse to make any model call if it didn't cleanly succeed."""
-        self.proc = self._popen(
-            ["docker", "exec", "-i", self.container, "/bin/bash", "--login"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+        """Returns the handshake result -- P9(b): the caller MUST check this and refuse to make
+        any model call if it didn't cleanly succeed.
+
+        13th round: allocates a real pty and launches `docker exec -it`, with the slave fd as
+        stdin/stdout/stderr -- closed in THIS process right after launch (the child/real pty
+        machinery keeps its own copy; an extra open slave fd here would prevent the master's
+        read from ever seeing EOF when the shell exits). `self.proc.stdout`/`self.proc.stdin` are
+        `_PtyReader`/`_PtyWriter` wrappers around the master fd (stdout owns it; stdin gets an
+        independent dup(), so each can be closed on its own, exactly like two pipe ends) -- every
+        read/write/close call site elsewhere in this class is unchanged (same `.read(n)`/
+        `.write(data)`/`.flush()`/`.close()` shape as a real file object or the scripted-fake-
+        process test double). `_PtyReader` is POLLABLE/CANCELLABLE, not a bare blocking read --
+        see its own docstring for why a plain blocking read on a pty master is unsafe here.
+
+        A real `subprocess.Popen` given `stdin=<int>`/`stdout=<int>` (not `PIPE`) leaves
+        `.stdin`/`.stdout` as `None` -- the wrapping above applies ONLY then. A test's injected
+        `popen` returning a double that already carries its OWN `.stdout`/`.stdin` (the existing
+        scripted-fake-process seam, unchanged since long before this round) is left alone, and the
+        now-unused master fd is simply closed -- the fake ignores the pty plumbing entirely by
+        design, same as it always ignored `stdin=PIPE`/`stdout=PIPE`."""
+        master_fd, slave_fd = self._openpty()
+        try:
+            self.proc = self._popen(
+                ["docker", "exec", "-it", self.container, "/bin/bash", "--login"],
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, close_fds=True)
+        finally:
+            os.close(slave_fd)
+        if self.proc.stdout is None:
+            self.proc.stdout = _PtyReader(master_fd)
+            self.proc.stdin = _PtyWriter(os.dup(master_fd))
+        else:
+            os.close(master_fd)
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
-        # N8: a login shell sources profile scripts that can print banners/MOTD/warnings before
-        # anything we asked for. One no-op sentinel round, with everything read before it discarded.
-        return self.run("true", timeout_s=10.0)
+        # N8 (unaffected by the pty switch): a login shell sources profile scripts that can print
+        # banners/MOTD/warnings before anything we asked for -- discarded along with everything
+        # else in this one throwaway handshake round. `stty -echo` disables the pty's own echo of
+        # typed input for every round AFTER this one (this round's OWN command text is inevitably
+        # echoed back too, since echo is still ON while bash is reading this very line -- but its
+        # entire output is discarded regardless, same as the banner).
+        return self.run("export PS1='' PS2='' PROMPT_COMMAND=; stty -echo 2>/dev/null; true",
+                        timeout_s=10.0)
 
     def _put_until_cancelled(self, item) -> None:
         """P41: retry `put(timeout=...)` in a loop, checking `self._cancel` between attempts --
@@ -888,6 +1019,21 @@ class PersistentShell:
 
         marker = ("\n" + sentinel).encode("ascii")
 
+        def _postprocess(text: str) -> str:
+            """13th round pty fidelity: normalise \\r\\n -> \\n (the pty's own ONLCR line
+            discipline translates every outgoing \\n, including the command's own output, not
+            just ours) so the returned text matches the pre-pty (`docker exec -i`, no tty) output
+            byte-for-byte; then strip a leading echo of the EXACT text we just wrote -- the
+            fallback for when `stty -echo` (sent in the handshake) did not fully suppress it (see
+            the class docstring). Applied ONLY to genuinely decoded text, never to the fixed
+            UPSTREAM_DECODE_ERROR_TEXT sentinel string."""
+            if not text:
+                return text
+            text = text.replace("\r\n", "\n")
+            if text.startswith(full):
+                text = text[len(full):]
+            return text
+
         # P28 (MEDIUM): decode INCREMENTALLY as each ORIGINAL chunk arrives, never by re-decoding
         # an arbitrary byte-offset slice of the (possibly head/tail-capped) accumulated buffer --
         # a fixed byte cut can land mid-multibyte-character (reproduced: 1.2MB of valid `€`
@@ -962,21 +1108,35 @@ class PersistentShell:
             while True:
                 idx = raw.find(marker, max(0, search_from - len(marker)))
                 if idx != -1:
-                    m = re.match(rb"(\d+)\n", bytes(raw[idx + len(marker):]))
+                    # 13th round pty fidelity: the pty's own ONLCR line discipline translates the
+                    # printf's trailing `\n` (after the exit-code digits) to `\r\n` -- `\r?` makes
+                    # the terminator tolerant of that extra byte without weakening R4's own rule
+                    # (never guess a partial exit code: a lone `\r` with no `\n` yet still fails
+                    # to match, same as before, and re-checks from the SAME offset next chunk).
+                    m = re.match(rb"(\d+)\r?\n", bytes(raw[idx + len(marker):]))
                     if m:
                         exit_code = int(m.group(1))
+                        # 13th round pty fidelity: the marker is `"\n" + sentinel` -- printf's OWN
+                        # leading format-string `\n` (right before the sentinel) is what becomes
+                        # that `\n`, pty-translated from `\r\n`. The marker match only consumes
+                        # the `\n` itself, leaving its own `\r` as the LAST byte of what would
+                        # otherwise look like "real" content -- a dangling, unpaired `\r` with no
+                        # following `\n` to normalise away. Excluded here from the CONTENT span
+                        # (never from the trailer/marker span used by `consumed_end`/`leftover`
+                        # below, which still starts at the UNCHANGED `idx`).
+                        trailer_extra = 1 if (idx > 0 and raw[idx - 1:idx] == b"\r") else 0
                         # bytes after idx were never touched by capping (capping only ever drops a
                         # MIDDLE span strictly before the eventual sentinel position) -- so
                         # total_bytes_in minus that trailing length is the exact TRUE output
                         # length.
-                        raw_output_len = total_bytes_in - (len(raw) - idx)
-                        trailer_len = len(raw) - idx
+                        trailer_len = len(raw) - idx + trailer_extra
+                        raw_output_len = total_bytes_in - trailer_len
                         command_part = (bytes(unfed[:len(unfed) - trailer_len])
                                        if len(unfed) >= trailer_len else b"")
                         if command_part:
                             _feed(command_part)
                         _finalize()
-                        output = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
+                        output = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else _postprocess(decoded_text)
                         consumed_end = idx + len(marker) + m.end()
                         leftover = bytes(raw[consumed_end:])
                         if leftover:
@@ -1002,7 +1162,7 @@ class PersistentShell:
                     self._on_timeout()
                     _flush_unfed()
                     _finalize()
-                    out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
+                    out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else _postprocess(decoded_text)
                     return {"output": out, "exit_code": None, "timed_out": True,
                            "shell_died": False, "raw_output_len": total_bytes_in}
                 try:
@@ -1014,7 +1174,7 @@ class PersistentShell:
                         self.dead = True
                         _flush_unfed()
                         _finalize()
-                        out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
+                        out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else _postprocess(decoded_text)
                         return {"output": out, "exit_code": None, "timed_out": False,
                                "shell_died": True, "raw_output_len": total_bytes_in}
                     continue
@@ -1022,7 +1182,7 @@ class PersistentShell:
                     self.dead = True
                     _flush_unfed()
                     _finalize()
-                    out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else decoded_text
+                    out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else _postprocess(decoded_text)
                     return {"output": out, "exit_code": None, "timed_out": False,
                            "shell_died": True, "raw_output_len": total_bytes_in}
                 total_bytes_in += len(chunk)
@@ -1117,6 +1277,14 @@ class PersistentShell:
         try:
             if self.proc.stdout is not None:
                 self.proc.stdout.close()
+        except Exception:  # noqa: BLE001
+            pass
+        # 13th round: `self.proc.stdin` now owns an INDEPENDENT dup() of the pty master fd (see
+        # start()) rather than being a subprocess.PIPE Python manages for us -- it needs its own
+        # explicit close, or that fd leaks for the life of the process.
+        try:
+            if self.proc.stdin is not None:
+                self.proc.stdin.close()
         except Exception:  # noqa: BLE001
             pass
         if self._reader_thread is not None:
@@ -1777,7 +1945,7 @@ def _fail_row(base: dict, outcome: str, t0, clock, **extra) -> dict:
           "repeat_calls": 0, "exec_timeout": False, "shell_died": False, "setup_error": True,
           "decode_tps": None, "per_turn_decode_tps": [], "error": None, "_transcript_turns": [],
           "infra_evidence": None, "exec_started": None, "harness_error": False,
-          "multi_call_turns": 0}
+          "multi_call_turns": 0, "shell_mode": PersistentShell.SHELL_MODE}
     row.update(extra)
     return row
 
@@ -1941,7 +2109,13 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
                  # one tool_call -- only the first was ever acted on (see DualSubmitDriver.
                  # complete()); this is purely an AUDIT signal (how often does this happen on
                  # this arm), never a scoring input.
-                 "multi_call_turns": sum(1 for t in wrapped.per_turn if (t.get("n_tool_calls") or 0) > 1)}
+                 "multi_call_turns": sum(1 for t in wrapped.per_turn if (t.get("n_tool_calls") or 0) > 1),
+                 # 13th round: records WHICH shell I/O mode produced this row -- the
+                 # comparability gate in agentbench_compare.py refuses to pool/compare arms
+                 # recorded under different shell_mode values (a non-interactive `docker exec -i`
+                 # row and an interactive pty row are not the same measurement: a syntax error
+                 # kills the shell under one and not the other).
+                 "shell_mode": PersistentShell.SHELL_MODE}
 
         # P9(a)/P23: a docker EXECUTION failure during grading (explicit evidence only -- see
         # run_check_chain) is an infra failure, never a graded model loss -- override whatever
