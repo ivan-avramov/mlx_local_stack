@@ -787,7 +787,7 @@ def test_sweep_stale_containers_generate_prefix_never_matches_prepare_containers
         if cmd[:2] == ["docker", "ps"]:
             # a real `docker ps --filter name=^agentbench-os-run-` would never list a
             # `agentbench-os-prep-...` container in the first place; assert the filter used says so
-            assert cmd[3] == f"name=^{AB.GENERATE_CONTAINER_PREFIX}-"
+            assert cmd[4] == f"name=^{AB.GENERATE_CONTAINER_PREFIX}-"
             return FakeRunner.Proc(0, "", "")
         return FakeRunner.Proc(0, "", "")
     AB.sweep_stale_containers(AB.GENERATE_CONTAINER_PREFIX, runner)
@@ -1744,6 +1744,32 @@ def test_run_task_failed_docker_run_cleanup_does_not_raise_addendum_G():
                       popen=_shell_popen_ok())
     assert row["setup_error"] is True
     assert row["container_removed_verified"] is True
+
+
+def test_sweep_stale_containers_raises_on_nonzero_discovery_rc_P40():
+    """7th cold review round 7 P40 (HIGH): a mocked FAILED discovery command used to return []
+    (indistinguishable from proven absence) -- it must abort BEFORE any container is created."""
+    def runner(cmd, **kw):
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return FakeRunner.Proc(1, "", "Cannot connect to the Docker daemon")
+        return FakeRunner.Proc(0, "", "")
+    with pytest.raises(AB.ContainerDiscoveryError):
+        AB.sweep_stale_containers(AB.GENERATE_CONTAINER_PREFIX, runner)
+
+
+def test_sweep_stale_containers_raises_on_discovery_launch_exception_P40():
+    def runner(cmd, **kw):
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            raise OSError("docker: command not found")
+        return FakeRunner.Proc(0, "", "")
+    with pytest.raises(AB.ContainerDiscoveryError):
+        AB.sweep_stale_containers(AB.GENERATE_CONTAINER_PREFIX, runner)
+
+
+def test_sweep_stale_containers_succeeds_when_discovery_rc_is_zero_and_empty_P40():
+    def runner(cmd, **kw):
+        return FakeRunner.Proc(0, "", "")
+    assert AB.sweep_stale_containers(AB.GENERATE_CONTAINER_PREFIX, runner) == []
 
 
 def test_sweep_stale_containers_raises_on_unverified_removal_P26():

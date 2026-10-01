@@ -590,6 +590,11 @@ def run_prepare(args, out: Path) -> int:
     manual_path = AB.manual_exclusions_path(corpus_path)
     manual = AB.load_manual_exclusions(manual_path)
     manual_sha = _sha256_file(manual_path) if manual_path.exists() else None
+    # 7th cold review round 7 P40 (HIGH): prepare gets the SAME initial startup sweep as generate
+    # -- without this, a prior interrupted --prepare's leftover containers are never cleared
+    # before probing begins, and (via sweep_stale_containers' own P40 fix) a failed discovery
+    # command now aborts here rather than silently proceeding.
+    AB.sweep_stale_containers(AB.PREPARE_CONTAINER_PREFIX, runner)
     # cold-review N12: prepare gets the same SIGTERM discipline as generate -- sweep whatever
     # prepare-prefixed container is still live rather than leaving it behind.
     old_handler = signal.signal(signal.SIGTERM, _make_sigterm_sweep_handler(AB.PREPARE_CONTAINER_PREFIX, runner))

@@ -393,13 +393,24 @@ def sweep_stale_containers(prefix: str, runner=subprocess.run) -> list:
     P26: each removal is VERIFIED (same fail-closed gate as run_task's final cleanup and D2
     prepare) -- raises `ContainerCleanupError` on the first one that can't be confirmed absent,
     rather than silently starting a run on a box that may already be accumulating live
-    containers. Discovering the stale list itself stays best-effort (a `docker ps` failure here
-    just means nothing to sweep was found, not a cleanup failure)."""
+    containers.
+
+    7th cold review round 7 P40 (HIGH): discovering the stale list is now ALSO fail-closed --
+    a failed `docker ps -a` (nonzero rc, launch exception, or timeout) raises
+    `ContainerDiscoveryError` BEFORE a single container is created, instead of the old best-effort
+    `except Exception: return []`, which made "docker is unreachable" and "genuinely nothing to
+    sweep" indistinguishable; a transient discovery failure could let another task's container
+    start while an earlier crashed run's container survived under the exact same prefix."""
     try:
         proc = runner(["docker", "ps", "-a", "--filter", f"name=^{prefix}-", "--format", "{{.Names}}"],
                       capture_output=True, text=True, timeout=30)
-    except Exception:  # noqa: BLE001
-        return []
+    except Exception as e:  # noqa: BLE001
+        raise ContainerDiscoveryError(
+            f"startup sweep discovery failed for prefix {prefix!r}: {type(e).__name__}: {e}") from e
+    if getattr(proc, "returncode", None) != 0:
+        raise ContainerDiscoveryError(
+            f"startup sweep discovery failed for prefix {prefix!r}: `docker ps -a` exited "
+            f"{getattr(proc, 'returncode', None)} (stderr={(getattr(proc, 'stderr', '') or '')[:200]!r})")
     names = [n for n in (proc.stdout or "").splitlines() if n.strip()]
     for n in names:
         if not remove_container(n, runner, verify=True):
@@ -424,6 +435,14 @@ class ContainerCleanupError(RuntimeError):
     afterward still shows the container -- the caller (run_agentbench_os.py) raises this AFTER the
     row has been written, stopping the run rather than starting the next container on a box that
     may be silently accumulating live containers."""
+
+
+class ContainerDiscoveryError(RuntimeError):
+    """7th cold review round 7 P40 (HIGH): a startup sweep's OWN discovery command
+    (`docker ps -a --filter name=<prefix>`) failing must ABORT before a single container is
+    created -- a failed discovery returning an empty match list is INDISTINGUISHABLE from a
+    genuinely clean box, and silently proceeding on that non-evidence can leave a crashed prior
+    run's container alive alongside a brand-new one using the same name pattern."""
 
 
 def remove_container(name: str, runner=subprocess.run, verify: bool = False):

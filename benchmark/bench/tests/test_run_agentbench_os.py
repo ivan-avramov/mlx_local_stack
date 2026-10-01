@@ -1000,6 +1000,55 @@ def test_generate_sweeps_only_the_generate_prefix(tmp_path, monkeypatch):
     assert swept == [AB.GENERATE_CONTAINER_PREFIX]
 
 
+def test_prepare_sweeps_the_prepare_prefix_at_startup_P40(tmp_path, monkeypatch):
+    """7th cold review round 7 P40 (HIGH): prepare gets the SAME initial startup sweep as
+    generate -- a prior interrupted --prepare's leftover containers must be cleared before
+    probing begins."""
+    AB = _ready(tmp_path, monkeypatch)
+    _write_corpus(tmp_path, [{"id": "c0", "group": 1, "evaluation": {"check": [{"code": "x"}],
+                                                                     "example": {"code": "y"}},
+                             "description": "d"}])
+    swept = []
+    monkeypatch.setattr(AB, "sweep_stale_containers", lambda prefix, runner: swept.append(prefix))
+    monkeypatch.setattr(AB, "prepare_exclusions", lambda *a, **k: ({}, []))
+    rc = R.main(_args(tmp_path, prepare=""))
+    assert rc == 0
+    assert swept == [AB.PREPARE_CONTAINER_PREFIX]
+
+
+def test_generate_aborts_before_any_container_when_startup_discovery_fails_P40(tmp_path, monkeypatch, capsys):
+    """7th cold review round 7 P40 (HIGH): deliberately does NOT use `_ready()` (which stubs
+    sweep_stale_containers to a no-op) -- this test needs the REAL startup-sweep discovery path."""
+    import bench.agentbench_adapter as AB
+    _passing(monkeypatch, tmp_path)
+    monkeypatch.setattr(AB, "docker_available", lambda *a, **k: True)
+    monkeypatch.setattr(AB, "images_available", lambda **k: {"default": True, "packages": True, "ubuntu": True})
+    monkeypatch.setattr(AB, "current_image_ids", lambda **k: dict(IMAGE_IDS))
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+
+    class _Proc:
+        def __init__(self, returncode, stdout="", stderr=""):
+            self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+    def failing_runner(cmd, **kw):
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return _Proc(1, "", "Cannot connect to the Docker daemon")
+        raise AssertionError(f"no container work should happen after a failed startup sweep: {cmd}")
+    seen = []
+
+    def fake_run_task(*a, **k):
+        seen.append(a[1]["id"])
+        raise AssertionError("run_task must never be called after a failed startup sweep")
+    monkeypatch.setattr(AB, "run_task", fake_run_task)
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", failing_runner)
+    with pytest.raises(AB.ContainerDiscoveryError):
+        R.main(_args(tmp_path))
+    assert seen == []
+
+
 def test_prepare_uses_the_prepare_container_prefix(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     _write_corpus(tmp_path, [{"id": "c0", "group": 1, "evaluation": {"check": [{"code": "x"}],
