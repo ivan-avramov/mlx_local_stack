@@ -198,24 +198,32 @@ report path/keys are wired and validated at the first real run. Start with `--n 
 `d1e4a10db08c87075c78972e48ecc182be03e2d5` (`benchmark/corpora/agentbench_os_v1.manifest.json`).
 Unlike SWE-bench above, the tool loop is OUR OWN — `bench.agent_loop.run_agent` over the three
 upstream tools (`bash_action`, `finish_action`, `answer_action`, upstream system prompt verbatim,
-`round_limit` 8) — with one docker container per task (`docker exec` for every `bash_action`,
-graded inside the same container, `docker rm -f` always in a `finally`). It is a **standalone
-probe**, not part of the `generate`/`grade` tier pipeline.
+`round_limit` 8) — with one docker container per task. `start` and every `bash_action` share a
+SINGLE persistent `docker exec -i <name> /bin/bash --login` session for the life of the task
+(upstream-faithful: a `start` script's `cd`/`su -`/exported vars must persist into later commands,
+which a fresh `docker exec` per command cannot do), graded inside the same container,
+`docker rm -f` always in a `finally` (success, failure, timeout, KeyboardInterrupt, SIGTERM). It is
+a **standalone probe**, not part of the `generate`/`grade` tier pipeline.
 
 Corpus: `benchmark/corpora/agentbench_os_v1.jsonl` (144 tasks, upstream fields verbatim + our
-`id`/`group`) + `benchmark/corpora/agentbench_os_v1/scripts/{1..7}/...` (referenced init/check/
-example scripts) + `LICENSE-AgentBench`. Build the three task images first (native aarch64; never
-built against upstream's third-party mirror base — see the script's header):
+`id`/`group`/`index_in_file`) + `benchmark/corpora/agentbench_os_v1/scripts/{1..7}/...` (referenced
+init/check/example scripts) + `LICENSE-AgentBench`. Build the three task images first (native
+aarch64, digest-pinned base; never built against upstream's third-party mirror — see the script's
+header):
 
 ```bash
-scripts/build_agentbench_images.sh    # clones the pinned sha into $STACK_WORKDIR/agentbench,
-                                       # builds local-os/{default,packages,ubuntu}
+UBUNTU_DIGEST=sha256:... scripts/build_agentbench_images.sh
+    # clones the pinned sha into $STACK_WORKDIR/agentbench, builds local-os/{default,packages,ubuntu}
 ```
 
-**D2 exclusion is mandatory and runs first, with no model calls**: for every `check`-type task
-(never `match`), `evaluation.example.code` runs to completion in two independent fresh
-containers; a task with no gold or disagreeing golds is excluded. Generate mode refuses to start
-until this has produced `<out stem>.exclusions.json`:
+**D2 exclusion is a CORPUS-level artifact and is mandatory**: for every `check`-type task (never
+`match`), `evaluation.example.code` runs to completion in two independent fresh containers with TWO
+DIFFERENT placeholder answers; disagreement (`example_reads_answer`) or an empty/failed run
+(`no_gold`) excludes the task. `--prepare` writes `agentbench_os_v1.exclusions.json` beside the
+corpus jsonl (corpus sha256, the three `local-os` image ids, per-task golds, exclusions, and
+`complete: true` — refused with `--limit`, since `complete` must mean the WHOLE corpus). Generate
+mode refuses to start unless that file exists, is `complete`, and both the corpus sha256 and image
+ids still match what is live:
 
 ```bash
 # docker running, images built, mlx-serve serving <model> at :8000:
@@ -228,18 +236,29 @@ cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-
 Same M50/C106 served-config discipline as `vision_gate.py`: refuses before the first request if
 the router at `--url` isn't serving this driver's registry, and refuses to declare the run
 complete if the served file or router pid changed underneath it. `--sampling-profile` defaults to
-(and is refused off) `deployed`; thinking stays ON; the per-turn LLM timeout is DERIVED from the
-model's measured decode rate, never an SDK default.
+(and is refused off) `deployed`; thinking stays ON. The per-turn LLM timeout is DERIVED from this
+axis's OWN rows' measured decode rate (`completion_tokens / generation_ms` per turn), falling back
+to `math500`/`convergence` rows (named as `timeout_source` in the manifest) until this axis has
+rows of its own; the per-episode deadline defaults to 8x that per-turn timeout (`--deadline-s` to
+override) so a looping episode reaches `deadline` rather than running unbounded. A `driver.complete`
+transport failure (HTTP error/timeout/connection error) ESCALATES — the run aborts nonzero with the
+task id in the message and writes no row for that task; it is never graded.
 
 Rows (`results/<model>/agentbench_os.v1.jsonl`) carry `id`, `group`, `labels`, `image`, `passed`,
 `outcome` (`bench.agent_outcomes` taxonomy — `turn_cap`/`no_submit`/`deadline` are scored FAIL
-rows, never dropped), `turns`, `submitted_via` (`answer`/`finish`/none), `answer`,
-`per_turn_completion_tokens`, `completion_tokens_total`, `finish_reasons`, `converged`, `wall_s`,
-`tool_calls`, `tool_timeouts`. `.summary.json` carries `n`/`passed`/`acc`, outcome counts, a
-DIAGNOSTIC per-label breakdown, and mean/max wall and tokens.
+rows, never dropped; `no_submit` is reserved for an episode that never made a single tool call),
+`turns`, `submitted_via` (`answer`/`finish`/none), `answer`, `per_turn_completion_tokens`,
+`completion_tokens_total`, `per_turn_finish_reasons` (includes `tool_calls`, which the server
+returns on every tool-calling turn), `converged` (all turns converged against their own RESOLVED
+thinking budget), `budget_hits`, `decode_tps`/`per_turn_decode_tps`, `wall_s`, `tool_calls`,
+`tool_timeouts`, `repeat_calls` (the loop guard is disabled for this axis — the round cap is the
+bound — so identical repeats are counted, not aborted), `exec_timeout`, and `setup_error` (a
+docker/infra failure, not a model failure — EXCLUDED from `.summary.json`'s `acc` denominator and
+reported separately as `setup_error_count`/`setup_error_ids`).
 
-If docker, the local-os images, or the corpus are missing, the probe writes `skipped: true` with
-a note and exits 0 — it never crashes the broader harness.
+If docker, the local-os images, or the corpus are missing, the probe writes `<out
+stem>.skipped.json` (never the rows file itself) with a note and exits 0 — it never crashes the
+broader harness.
 
 ### GPQA auth
 GPQA is gated. Put `HF_TOKEN=hf_...` in `.env` (the stack already sources it) and accept the
