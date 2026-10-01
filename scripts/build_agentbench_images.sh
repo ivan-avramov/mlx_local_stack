@@ -6,10 +6,16 @@
 # MIRROR REWRITE (operator 2026-09-30): the upstream dockerfiles read
 #   FROM docker.1ms.run/ubuntu
 # -- a third-party mirror, unpinned tag. We do NOT pull from that mirror: each dockerfile is copied
-# into the build dir and its FROM line is rewritten to a pinned Docker Hub base,
-#   FROM ubuntu:22.04
-# before `docker build` ever runs. The rewrite (and why) is recorded again in the images manifest
-# this script writes, beside each image's `docker image inspect --format '{{.Id}}'`.
+# into the build dir and its FROM line is rewritten to a DIGEST-PINNED Docker Hub base,
+#   FROM ubuntu:24.04@sha256:<UBUNTU_DIGEST>
+# before `docker build` ever runs. 24.04 matches upstream `ubuntu:latest` at the 2026-09-30 pin
+# date; a bare tag (even "22.04"/"24.04") is still a MOVING target (Canonical republishes the same
+# tag with security patches), so cold-review F9 requires a digest. Resolving that digest needs a
+# registry query (`docker manifest inspect ubuntu:24.04` or the Docker Hub API) that this
+# agent/session is not allowed to run -- UBUNTU_DIGEST below is an OPERATOR-FILLED variable; the
+# script refuses outright while it is empty, rather than silently falling back to a moving tag.
+# The resolved digest (and why) is recorded in the images manifest this script writes, beside each
+# image's `docker image inspect --format '{{.Id}}'`.
 #
 # Never run from this agent/session -- the operator runs this by hand when ready to build.
 set -euo pipefail
@@ -17,7 +23,16 @@ set -euo pipefail
 AGENTBENCH_REPO="https://github.com/THUDM/AgentBench.git"
 AGENTBENCH_SHA="d1e4a10db08c87075c78972e48ecc182be03e2d5"
 MIRROR_FROM_LINE="FROM docker.1ms.run/ubuntu"
-PINNED_FROM_LINE="FROM ubuntu:22.04"
+# OPERATOR: fill this in with `docker manifest inspect ubuntu:24.04 | ...` (or the Docker Hub API)
+# before running -- e.g. UBUNTU_DIGEST="sha256:aabbcc...". The script refuses while this is empty.
+UBUNTU_DIGEST="${UBUNTU_DIGEST:-}"
+if [ -z "$UBUNTU_DIGEST" ]; then
+  echo "build_agentbench_images: UBUNTU_DIGEST is empty -- resolve the current ubuntu:24.04 digest" \
+       "(docker manifest inspect ubuntu:24.04, or the Docker Hub API) and pass it as" \
+       "UBUNTU_DIGEST=sha256:... in the environment. Refusing to build against a moving tag." >&2
+  exit 1
+fi
+PINNED_FROM_LINE="FROM ubuntu:24.04@${UBUNTU_DIGEST}"
 IMAGE_NAMES=(default packages ubuntu)
 BUILD_PLATFORM="linux/arm64"
 
@@ -103,11 +118,11 @@ done
 # Built with python3 (already a hard dependency of this repo) rather than hand-quoted bash JSON --
 # the one-field-per-tab-separated-line form above has no bash string-interpolation/quoting hazard.
 python3 - "$MANIFEST" "$AGENTBENCH_REPO" "$AGENTBENCH_SHA" "$BUILD_PLATFORM" \
-  "$MIRROR_FROM_LINE" "$PINNED_FROM_LINE" "$RECORDS_TSV" <<'PYEOF'
+  "$MIRROR_FROM_LINE" "$PINNED_FROM_LINE" "$UBUNTU_DIGEST" "$RECORDS_TSV" <<'PYEOF'
 import json
 import sys
 
-manifest_path, repo, sha, platform, mirror_line, pinned_line, tsv_path = sys.argv[1:]
+manifest_path, repo, sha, platform, mirror_line, pinned_line, ubuntu_digest, tsv_path = sys.argv[1:]
 images = []
 with open(tsv_path, encoding="utf-8") as f:
     for line in f:
@@ -122,10 +137,12 @@ doc = {
     "upstream_repo": repo,
     "upstream_commit": sha,
     "build_platform": platform,
+    "base_image": "ubuntu:24.04",
+    "base_image_digest": ubuntu_digest,
     "from_rewrite_reason": ("upstream dockerfiles pull FROM a third-party mirror "
-                            "(docker.1ms.run) with an unpinned tag; rewritten to the pinned "
-                            "ubuntu:22.04 Docker Hub base before building, never pulled from "
-                            "the mirror"),
+                            "(docker.1ms.run) with an unpinned tag; rewritten to a DIGEST-PINNED "
+                            "ubuntu:24.04 Docker Hub base before building, never pulled from "
+                            "the mirror -- a bare tag is still a moving target"),
     "images": images,
 }
 with open(manifest_path, "w", encoding="utf-8") as f:
