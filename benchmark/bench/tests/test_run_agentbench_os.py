@@ -209,6 +209,27 @@ def test_prepare_refuses_limit(tmp_path, monkeypatch, capsys):
     assert not AB.exclusions_artifact_path(tmp_path / "corpus.jsonl").exists()
 
 
+def test_prepare_refuses_when_corpus_sibling_artifact_is_outside_confined_roots_P31(tmp_path, monkeypatch, capsys):
+    """6th cold review round 6 P31: `--prepare --corpus /outside/tasks.jsonl` would write a
+    sibling .exclusions.json artifact outside the repo/STACK_WORKDIR, unchecked by main()'s
+    generic --out confinement (which never looks at --corpus's own directory). --out itself
+    stays confined (the default, under tmp_path, which this file's autouse fixture treats as
+    STACK_WORKDIR) -- only --corpus points outside, isolating which check fires."""
+    import tempfile
+    AB = _ready(tmp_path, monkeypatch)
+    outside_dir = Path(tempfile.mkdtemp(prefix="agentbench_os_p31_outside_"))
+    try:
+        outside = outside_dir / "tasks.jsonl"
+        outside.write_text(json.dumps(_match_task("t1")) + "\n", encoding="utf-8")
+        rc = R.main(_args(tmp_path, prepare="", corpus=str(outside)))
+        assert rc == 2
+        assert "D2 exclusions artifact" in capsys.readouterr().err
+        assert not (outside_dir / "tasks.exclusions.json").exists()
+    finally:
+        import shutil
+        shutil.rmtree(outside_dir, ignore_errors=True)
+
+
 def test_prepare_writes_corpus_level_artifact_with_image_ids_and_complete_true(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     corpus = _write_corpus(tmp_path, [_match_task("m1")])

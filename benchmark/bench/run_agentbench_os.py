@@ -513,6 +513,15 @@ def _derive_llm_timeout(model: str, thinking_budget, explicit):
 def run_prepare(args, out: Path) -> int:
     runner = subprocess.run
     corpus_path = Path(args.corpus)
+    # 6th cold review round 6 P31: the exclusions artifact is a SIBLING of --corpus (derived, not
+    # user-specified directly) -- a --corpus pointed outside the repo/STACK_WORKDIR would write
+    # that derived artifact outside approved roots too, unchecked by the generic --out confinement
+    # in main() (which only ever looks at --out, never at --corpus's own directory).
+    artifact_refusal = paths.confine_path(AB.exclusions_artifact_path(corpus_path),
+                                          what="the D2 exclusions artifact (sibling of --corpus)")
+    if artifact_refusal:
+        print(f"[agentbench_os] REFUSED: {artifact_refusal}", file=sys.stderr, flush=True)
+        return 2
     reason = _degrade_reason(corpus_path, runner)
     if reason:
         return _write_skipped(out, reason)
