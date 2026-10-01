@@ -53,7 +53,6 @@ ALLOWED_PROFILES = ("deployed",)
 # cold-start estimate from one measured on this very axis.
 FALLBACK_RATE_BENCHES = ("math500", "convergence")
 DEADLINE_MULTIPLIER = 8.0
-DEADLINE_CAP_S = 3600.0
 
 
 # --------------------------------------------------------------------------- I/O helpers
@@ -214,7 +213,16 @@ def summarize(rows: list) -> dict:
         # outcome_counts/setup_error_count.
         "exec_timeout_count": sum(1 for r in rows if r.get("exec_timeout")),
         "shell_died_count": sum(1 for r in rows if r.get("shell_died")),
+        # R5: a row where the D2-prepare-time gold and the gold observed live at grading disagree
+        # -- only meaningful when BOTH are known (a gold slot exists AND grading actually ran it).
+        "gold_drift_count": sum(1 for r in _gold_drift_rows(rows)),
+        "gold_drift_ids": [r["id"] for r in _gold_drift_rows(rows)],
     }
+
+
+def _gold_drift_rows(rows: list) -> list:
+    return [r for r in rows if r.get("gold_prepare") is not None and r.get("gold_live") is not None
+           and r["gold_prepare"] != r["gold_live"]]
 
 
 # --------------------------------------------------------------------------- degrade checks
@@ -282,21 +290,24 @@ def run_prepare(args, out: Path) -> int:
 
     tasks = AB.load_corpus(corpus_path)
     image_ids = AB.current_image_ids(runner=runner)
+    manual_path = AB.manual_exclusions_path(corpus_path)
+    manual = AB.load_manual_exclusions(manual_path)
+    manual_sha = _sha256_file(manual_path) if manual_path.exists() else None
     # cold-review N12: prepare gets the same SIGTERM discipline as generate -- sweep whatever
     # prepare-prefixed container is still live rather than leaving it behind.
     old_handler = signal.signal(signal.SIGTERM, _make_sigterm_sweep_handler(AB.PREPARE_CONTAINER_PREFIX, runner))
     try:
         golds, exclusions = AB.prepare_exclusions(tasks, args.scripts_root, runner,
                                                   timeout=args.exec_timeout,
-                                                  prefix=AB.PREPARE_CONTAINER_PREFIX)
+                                                  prefix=AB.PREPARE_CONTAINER_PREFIX, manual=manual)
     finally:
         signal.signal(signal.SIGTERM, old_handler)
     artifact_path = AB.exclusions_artifact_path(corpus_path)
     AB.write_exclusions_artifact(artifact_path, corpus_sha256=_sha256_file(corpus_path),
                                  image_ids=image_ids, golds=golds, exclusions=exclusions,
-                                 complete=True)
-    print(f"[agentbench_os] D2 prepare: {len(tasks)} task(s), {len(exclusions)} excluded, "
-         f"{len(golds)} gold(s) cached")
+                                 complete=True, manual_exclusions_sha256=manual_sha)
+    print(f"[agentbench_os] D2 prepare: {len(tasks)} task(s), {len(exclusions)} excluded "
+         f"({len(manual)} manual), {len(golds)} gold(s) cached")
     print(f"[agentbench_os] wrote {artifact_path}")
     return 0
 
@@ -342,8 +353,11 @@ def run_generate(args, out: Path) -> int:
     image_ids = AB.current_image_ids(runner=runner)
     artifact_path = AB.exclusions_artifact_path(corpus_path)
     excl_doc = AB.read_exclusions_artifact(artifact_path)
+    manual_path = AB.manual_exclusions_path(corpus_path)
+    manual_sha = _sha256_file(manual_path) if manual_path.exists() else None
     refusal = AB.validate_exclusions_artifact(excl_doc, corpus_sha256=_sha256_file(corpus_path),
-                                              image_ids=image_ids)
+                                              image_ids=image_ids,
+                                              manual_exclusions_sha256=manual_sha)
     if refusal:
         print(f"[agentbench_os] REFUSED: {artifact_path}: {refusal}", file=sys.stderr, flush=True)
         return 2
@@ -391,11 +405,12 @@ def run_generate(args, out: Path) -> int:
         deadline_s = args.deadline_s
         deadline_reason = "EXPLICIT --deadline-s"
     else:
-        # cold-review N11: 8x the per-turn timeout stays the default SHAPE, but is also capped at
-        # DEADLINE_CAP_S -- a slow model's per-turn timeout alone could otherwise push the default
-        # deadline well past an hour with no operator having asked for that.
-        deadline_s = min(llm_timeout * DEADLINE_MULTIPLIER, DEADLINE_CAP_S)
-        deadline_reason = f"min({DEADLINE_MULTIPLIER:.0f}x per-turn timeout, {DEADLINE_CAP_S:.0f}s cap)"
+        # 3rd cold review R3 (architect ruling, AGENTS.md "the thinking budget is external
+        # truncation, never tuned"): NO hardcoded cap here -- a slow model legitimately needs a
+        # longer deadline, and silently capping it is exactly the kind of truncation AGENTS.md
+        # forbids for a budget. 8x the per-turn timeout is the whole rule.
+        deadline_s = llm_timeout * DEADLINE_MULTIPLIER
+        deadline_reason = f"{DEADLINE_MULTIPLIER:.0f}x per-turn timeout"
     print(f"[agentbench_os] episode deadline = {deadline_s:.0f}s ({deadline_reason})")
 
     print(f"[agentbench_os] {args.model}: {len(todo)} item(s) to run "
@@ -433,7 +448,7 @@ def run_generate(args, out: Path) -> int:
                               container_prefix=AB.GENERATE_CONTAINER_PREFIX,
                               exec_timeout=args.exec_timeout, llm_timeout=llm_timeout,
                               max_turns=args.round_limit, deadline_s=deadline_s,
-                              context_limit=context_limit, gold=golds.get(task["id"]),
+                              context_limit=context_limit, gold_prepare=golds.get(task["id"]),
                               runner=runner)
             current["container"] = None
             append_row(out, row)
@@ -501,8 +516,8 @@ def build_argparser() -> argparse.ArgumentParser:
                          "rows when this axis has none yet), never an SDK default")
     ap.add_argument("--deadline-s", type=float, default=None,
                     help=f"episode wall-clock deadline, seconds. Default: "
-                         f"min({DEADLINE_MULTIPLIER:.0f}x the per-turn LLM timeout, "
-                         f"{DEADLINE_CAP_S:.0f}s) -- pass this flag explicitly to go higher")
+                         f"{DEADLINE_MULTIPLIER:.0f}x the per-turn LLM timeout (no hard cap -- "
+                         "AGENTS.md: external truncation is never tuned down for convenience)")
     return ap
 
 

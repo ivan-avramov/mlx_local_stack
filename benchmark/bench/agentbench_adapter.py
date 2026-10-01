@@ -36,7 +36,7 @@ the CLI can report and exclude it from the accuracy denominator without crashing
 D2 EXCLUSION (pre-registered, C107; cold-review F6/F7). Before any model call, for every CHECK task
 (never `match`): run `evaluation.example.code` to completion in two FRESH containers with TWO
 DIFFERENT placeholder "answers" (`""` and a sentinel). Disagreement reveals the example script
-reads the answer argument (`example_reads_answer`) — a blind spot in treating a null check-slot as
+reads the answer argument (`gold_mismatch`) — a blind spot in treating a null check-slot as
 an answer-independent gold. Empty stdout at either run, or any failure/timeout, is `no_gold`. This
 is a corpus-level, not per-model, artifact (see `exclusions_artifact_path` et al.) — the cached
 gold is NOT substituted into per-item grading; grading always re-runs the check chain live in the
@@ -51,6 +51,7 @@ import random
 import re
 import statistics
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -173,9 +174,11 @@ def exclusions_artifact_path(corpus_path) -> Path:
 
 
 def write_exclusions_artifact(path, *, corpus_sha256: str, image_ids: dict, golds: dict,
-                              exclusions: list, complete: bool) -> dict:
+                              exclusions: list, complete: bool,
+                              manual_exclusions_sha256: str | None = None) -> dict:
     doc = {"corpus_sha256": corpus_sha256, "image_ids": image_ids, "golds": golds,
-          "exclusions": exclusions, "complete": complete, "generated_at": int(time.time())}
+          "exclusions": exclusions, "complete": complete, "generated_at": int(time.time()),
+          "manual_exclusions_sha256": manual_exclusions_sha256}
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(str(path) + ".tmp")
     tmp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
@@ -190,9 +193,10 @@ def read_exclusions_artifact(path):
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def validate_exclusions_artifact(doc, *, corpus_sha256: str, image_ids: dict):
-    """None if `doc` is usable for a generate run against the CURRENT corpus + images; else a
-    human-readable refusal reason."""
+def validate_exclusions_artifact(doc, *, corpus_sha256: str, image_ids: dict,
+                                 manual_exclusions_sha256: str | None = None):
+    """None if `doc` is usable for a generate run against the CURRENT corpus + images + manual
+    exclusions file; else a human-readable refusal reason."""
     if doc is None:
         return "no exclusions artifact -- run --prepare first"
     if not doc.get("complete"):
@@ -202,7 +206,26 @@ def validate_exclusions_artifact(doc, *, corpus_sha256: str, image_ids: dict):
         return "corpus changed since --prepare (sha256 mismatch) -- rerun --prepare"
     if doc.get("image_ids") != image_ids:
         return "local-os image ids changed since --prepare -- rerun --prepare"
+    if doc.get("manual_exclusions_sha256") != manual_exclusions_sha256:
+        return "manual exclusions file changed since --prepare -- rerun --prepare"
     return None
+
+
+# --------------------------------------------------------------------------- manual exclusions
+def manual_exclusions_path(corpus_path) -> Path:
+    """A hand-curated corpus-sibling file (never auto-generated) naming tasks excluded for a
+    reason the D2 probe cannot mechanically detect (e.g. a probe blind spot found by inspection --
+    see std-007-84). `{id: reason}`."""
+    p = Path(corpus_path)
+    stem = p.name[:-len(".jsonl")] if p.name.endswith(".jsonl") else p.name
+    return p.parent / f"{stem}.manual_exclusions.json"
+
+
+def load_manual_exclusions(path) -> dict:
+    p = Path(path)
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------- task config
@@ -392,19 +415,40 @@ class PersistentShell:
     PROTOCOL (2nd cold review, N1/N2). Each `run(cmd)` writes
         {cmd}\\nprintf '\\n%s%d\\n' {sentinel} $?\\n
     where `sentinel` is a fresh uuid per call -- the command text VERBATIM, then one more line that
-    prints a literal newline, the sentinel, and `$?` (the command's exit status). Output is matched
-    with `(.*?)(?:^|\\n)?{sentinel}(\\d+)$` against the accumulated buffer: the printf's leading
-    `\\n` guarantees the sentinel always starts a fresh output line even when the command's own
-    output had no trailing newline, and that exact injected newline is consumed by the
-    `(?:^|\\n)` alternative (never part of the returned output) -- not "stripped after the fact".
+    prints a literal newline, the sentinel, and `$?` (the command's exit status). The printf's
+    leading `\\n` guarantees the sentinel always starts a fresh output line even when the command's
+    own output had no trailing newline, and that exact injected newline is the one stripped from
+    the returned output.
+
+    SENTINEL SEARCH (3rd cold review R1/R4/R9): matching is done on the RAW BYTES with
+    `bytearray.find(marker, start)`, never by re-running a regex over the whole accumulated buffer
+    after every chunk -- the earlier `re.search(..., DOTALL)` approach was O(n^2) (measured: 20 KB
+    -> 9.4s, 50 KB -> 116s, >=100 KB effectively hangs). `search_from` only moves forward, so total
+    work across a `run()` call is O(bytes received), not O(bytes^2). The marker (`"\\n" + sentinel`)
+    is pure ASCII, so finding it in the RAW byte stream is always safe even if a multi-byte UTF-8
+    character from the command's own output happens to straddle a chunk boundary elsewhere in the
+    buffer (UTF-8 continuation bytes are never valid ASCII byte values, so they can't produce a
+    false match, and the marker's own bytes can't be split by someone else's multi-byte sequence).
+    The exit-code digits after the marker must themselves be terminated by a newline
+    (`re.match(rb"(\\d+)\\n", ...)`) before the round is considered complete -- a chunk boundary
+    landing mid-digits (e.g. "...13" | "7\\n") must not be read as exit code 13 (R4); if the
+    trailing newline hasn't arrived yet, reading continues from the SAME marker offset. The output
+    span is decoded to `str` ONCE, as a whole, only after its complete byte range is known -- this
+    (not a streaming incremental decoder) is what actually guarantees a multi-byte character that
+    was split across two `read()` chunks decodes correctly (R9): by decode time the two chunks'
+    bytes are already concatenated contiguously. Any bytes received after the exit-code's newline
+    are unexpected (nothing should still be arriving once a round is consumed) and are carried to
+    the NEXT `run()` call rather than dropped, with a warning logged.
 
     TIMEOUT is enforced ONLY on the Python side (there is no in-container `timeout` anymore): if
-    the sentinel hasn't arrived within `timeout_s`, the Popen is killed, a best-effort
-    `docker exec <container> bash -c 'kill -KILL -- -$(pgrep -o -f "bash --login")'` is issued (a
-    process-group kill inside the container; `pkill -P 1` is not reliable against an arbitrary
-    descendant tree), and `timed_out=True` is returned. Exit code 137 (SIGKILL) is ALSO treated as
-    `timed_out=True` defensively, in case a stray external kill (ours or otherwise) still let the
-    sentinel through.
+    the sentinel hasn't arrived within `timeout_s`, the Popen is killed and a best-effort
+    `docker exec <container> pkill -KILL -f "bash --login"` is issued (R7: deliberately simple and
+    bounded -- the container is removed at task end regardless, and exact process-GROUP semantics
+    inside an arbitrary image are unverified, so this is a backstop, not the primary guarantee).
+    Exit code 137 (SIGKILL) is ALSO treated as `timed_out=True` defensively, in case a stray
+    external kill (ours or otherwise) still let the sentinel through. A command that reads stdin
+    (e.g. a bare `read` with no input piped to it) will itself hang until this timeout fires, same
+    as upstream's session-based execution -- there is no attempt to detect or special-case that.
 
     SHELL DEATH (N9). Upstream: `exit` ends the session. If the shell process exits (EOF on
     stdout, or a `BrokenPipeError` writing to a dead stdin), `run()` returns `shell_died=True`
@@ -412,7 +456,7 @@ class PersistentShell:
     """
 
     def __init__(self, container: str, popen=subprocess.Popen, runner=subprocess.run,
-                read_chunk: int = 4096):
+                read_chunk: int = 65536):
         self.container = container
         self._popen = popen
         self._runner = runner
@@ -420,6 +464,7 @@ class PersistentShell:
         self.proc = None
         self._q: "queue.Queue" = queue.Queue()
         self.dead = False
+        self._carry = b""   # unexpected leftover bytes past a previous round's sentinel (see above)
 
     def start(self) -> None:
         self.proc = self._popen(
@@ -459,34 +504,51 @@ class PersistentShell:
             self.dead = True
             return {"output": "", "exit_code": None, "timed_out": False, "shell_died": True}
 
-        pattern = re.compile(r"(.*?)(?:^|\n)?" + re.escape(sentinel) + r"(\d+)$", re.DOTALL)
-        buf = ""
+        marker = ("\n" + sentinel).encode("ascii")
+        raw = bytearray(self._carry)
+        self._carry = b""
+        search_from = 0
         start_t = time.monotonic()
         while True:
-            m = pattern.search(buf)
-            if m:
-                exit_code = int(m.group(2))
-                timed_out = exit_code == 137     # SIGKILL -- defensive (N5)
-                return {"output": m.group(1), "exit_code": exit_code, "timed_out": timed_out,
-                       "shell_died": False}
+            idx = raw.find(marker, max(0, search_from - len(marker)))
+            if idx != -1:
+                m = re.match(rb"(\d+)\n", bytes(raw[idx + len(marker):]))
+                if m:
+                    exit_code = int(m.group(1))
+                    timed_out = exit_code == 137     # SIGKILL -- defensive (N5)
+                    output = bytes(raw[:idx]).decode("utf-8", errors="replace")
+                    consumed_end = idx + len(marker) + m.end()
+                    leftover = bytes(raw[consumed_end:])
+                    if leftover:
+                        print(f"[PersistentShell] WARNING: {len(leftover)} unexpected byte(s) past "
+                             "the sentinel; carrying to the next run() call", file=sys.stderr)
+                    self._carry = leftover
+                    return {"output": output, "exit_code": exit_code, "timed_out": timed_out,
+                           "shell_died": False}
+                # digits present but not yet newline-terminated -- re-check from the SAME offset
+                # once more data arrives (R4: never guess a partial exit code).
+                search_from = idx
+            else:
+                search_from = len(raw)
             remaining = timeout_s - (time.monotonic() - start_t)
             if remaining <= 0:
                 self._on_timeout()
-                return {"output": buf, "exit_code": None, "timed_out": True, "shell_died": False}
+                return {"output": raw.decode("utf-8", errors="replace"), "exit_code": None,
+                       "timed_out": True, "shell_died": False}
             try:
                 chunk = self._q.get(timeout=min(remaining, 0.1))
             except queue.Empty:
                 continue
             if chunk is None:   # EOF -- the shell process exited (e.g. the command ran `exit`)
                 self.dead = True
-                return {"output": buf, "exit_code": None, "timed_out": False, "shell_died": True}
-            buf += chunk.decode("utf-8", errors="replace")
+                return {"output": raw.decode("utf-8", errors="replace"), "exit_code": None,
+                       "timed_out": False, "shell_died": True}
+            raw += chunk
 
     def _on_timeout(self) -> None:
         self.kill()
         try:
-            self._runner(["docker", "exec", self.container, "bash", "-c",
-                         'kill -KILL -- -$(pgrep -o -f "bash --login")'],
+            self._runner(["docker", "exec", self.container, "pkill", "-KILL", "-f", "bash --login"],
                         capture_output=True, text=True, timeout=10)
         except Exception:  # noqa: BLE001 -- best-effort; the Popen kill above is the real backstop
             pass
@@ -528,23 +590,31 @@ def evaluate_match(answer, match_cfg: dict) -> bool:
 
 
 def run_check_chain(container: str, check_list: list, example, answer, runner=subprocess.run,
-                    timeout: float = DEFAULT_EXEC_TIMEOUT_S) -> bool:
+                    timeout: float = DEFAULT_EXEC_TIMEOUT_S) -> tuple:
     """Mirrors task.py `_evaluate_by_check_scripts` EXACTLY, including `params = [str(answer)]`
     (cold-review F14): a `finish_action` with no `thought` submits Python `None`, and `str(None)`
     is the literal string `"None"` sent as argv[1] -- upstream has no special-case for "no answer
     given", and neither does this. Each script runs with the accumulated params and its stdout is
     appended for the next; a None entry runs `example` instead (the "gold" position); any
-    timeout/nonzero exit fails the whole chain."""
+    timeout/nonzero exit fails the whole chain.
+
+    Returns `(passed: bool, gold_live: str|None)` -- `gold_live` is the stdout of the FIRST null
+    ("gold slot") position actually executed in THIS live grading run (R5/AC5: the chain already
+    runs it; capture it rather than trusting the D2-prepare-time value stayed valid). `None` when
+    the check list has no gold slot at all."""
     params = [str(answer)]
+    gold_live = None
     for entry in check_list:
         script = entry if entry is not None else example
         if script is None:
-            return False
+            return False, gold_live
         res = docker_exec(container, script, timeout, runner, extra_params=params)
+        if entry is None and gold_live is None:
+            gold_live = res["stdout"]
         if res["timed_out"] or res["exit_code"] != 0:
-            return False
+            return False, gold_live
         params.append(res["stdout"])
-    return True
+    return True, gold_live
 
 
 def run_reference(image: str, init_scripts: list, start, example, container: str,
@@ -584,23 +654,32 @@ def _check_list_has_gold_slot(check_list) -> bool:
 
 def prepare_exclusions(tasks: list, scripts_root, runner=subprocess.run,
                        timeout: float = DEFAULT_EXEC_TIMEOUT_S,
-                       prefix: str = PREPARE_CONTAINER_PREFIX) -> tuple:
-    """D2 (AC2 + cold-review N3/N4), no model calls. Returns (golds: {id: str}, exclusions:
+                       prefix: str = PREPARE_CONTAINER_PREFIX, manual: dict | None = None) -> tuple:
+    """D2 (AC2 + cold-review N3/N4/R10), no model calls. Returns (golds: {id: str}, exclusions:
     [{id, reason, ...}]). `match` tasks are never excluded (never even examined).
+
+    `manual` (id -> reason, from `manual_exclusions_path`/`load_manual_exclusions`) is checked
+    FIRST and short-circuits: a hand-curated exclusion is never re-probed (it is excluded on
+    inspection, not on a mechanical result the probe could second-guess).
 
     A check list's position-0..n entries can include a `None` ("gold slot": the live grading
     chain runs `example` there, fed the actual submitted answer). Only THOSE tasks need the two-
     placeholder probe (`"1"`/`"2"`, two plausible-looking answers -- N4): disagreement means the
-    example script reads its answer argument rather than computing an answer-independent ground
-    truth (`example_reads_answer`); empty stdout at either run is `no_gold`.
+    example script is not a stable answer-independent ground truth -- either it reads its answer
+    argument, or it is simply nondeterministic (`gold_mismatch`, R10: one reason covers both, since
+    neither makes it usable as a cached gold); empty stdout at either run is `no_gold`.
 
     A check list with NO gold slot (every position is a literal checker script -- a "pure state
     check", e.g. "did the file move") never touches a gold value at grading time, so probing with
     two placeholders would prove nothing about the real failure mode. Those tasks only need their
     REFERENCE SOLUTION to actually run: init + start + `example` once, exit 0. Nonzero/timeout ->
     `reference_failed`; no gold is cached either way (none is ever used)."""
+    manual = manual or {}
     golds, exclusions = {}, []
     for task in tasks:
+        if task["id"] in manual:
+            exclusions.append({"id": task["id"], "reason": "manual", "note": manual[task["id"]]})
+            continue
         cfg = task_config(task, scripts_root)
         if cfg["match"] is not None:
             continue
@@ -614,7 +693,7 @@ def prepare_exclusions(tasks: list, scripts_root, runner=subprocess.run,
                 exclusions.append({"id": task["id"], "reason": "no_gold"})
                 continue
             if g1 != g2:
-                exclusions.append({"id": task["id"], "reason": "example_reads_answer",
+                exclusions.append({"id": task["id"], "reason": "gold_mismatch",
                                    "gold_primary": g1, "gold_probe": g2})
                 continue
             golds[task["id"]] = g1
@@ -703,8 +782,10 @@ def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
     On a timed-out command: a best-effort kill is issued (see PersistentShell._on_timeout),
     `exec_timeout_flag["hit"]` is set, and `agent_loop.AbortEpisode` ends the episode immediately
     (upstream ends the task on a hung command rather than feeding back an error and continuing).
-    On shell death (N9, e.g. the model ran `exit`): `shell_died_flag["hit"]` is set and the
-    episode ends with a SERVER_ERROR outcome (an environment failure, not a graded model failure)."""
+    On shell death (N9, e.g. the model ran `exit`) via a `bash_action`: `shell_died_flag["hit"]` is
+    set and the episode ends with a FAILED_TESTS outcome -- a death the MODEL caused is a scored
+    fail, in the acc denominator (R2; a death during the `start` script, before any model action,
+    is handled separately in `run_task` and stays setup_error)."""
     counters = counters if counters is not None else {}
     counters.setdefault("tool_timeouts", 0)
     exec_timeout_flag = exec_timeout_flag if exec_timeout_flag is not None else {}
@@ -717,8 +798,13 @@ def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
         res = shell.run(script, timeout_s=timeout)
         if res["shell_died"]:
             shell_died_flag["hit"] = True
+            # R2: a shell death triggered by the MODEL'S OWN action (running `exit`, `set -e` then
+            # a failing command, ...) is a SCORED FAIL, not an infra failure -- upstream's
+            # equivalent is "later reads return empty and the task fails". Only a death during
+            # start()/the start script (before any model action; handled separately in run_task,
+            # never reaches here) is setup_error.
             raise agent_loop.AbortEpisode(
-                AO.SERVER_ERROR, "the persistent shell exited (e.g. the command ran `exit`)")
+                AO.FAILED_TESTS, "the persistent shell exited (e.g. the command ran `exit`)")
         if res["timed_out"]:
             counters["tool_timeouts"] += 1
             exec_timeout_flag["hit"] = True
@@ -788,8 +874,9 @@ def evaluate_convergence(per_turn: list, thinking_budget, context_limit, max_tok
 # --------------------------------------------------------------------------- per-task run
 def _fail_row(base: dict, outcome: str, t0, clock, **extra) -> dict:
     row = {**base, "passed": False, "outcome": outcome, "turns": 0, "submitted_via": None,
-          "answer": None, "gold": base.get("gold"), "per_turn_completion_tokens": [],
-          "completion_tokens_total": 0, "per_turn_finish_reasons": [], "converged": None,
+          "answer": None, "gold_prepare": base.get("gold_prepare"), "gold_live": None,
+          "per_turn_completion_tokens": [], "completion_tokens_total": 0,
+          "per_turn_finish_reasons": [], "converged": None,
           "budget_hits": 0, "wall_s": round(clock() - t0, 2), "tool_calls": 0, "tool_timeouts": 0,
           "repeat_calls": 0, "exec_timeout": False, "shell_died": False, "setup_error": True,
           "decode_tps": None, "per_turn_decode_tps": [], "error": None}
@@ -800,19 +887,22 @@ def _fail_row(base: dict, outcome: str, t0, clock, **extra) -> dict:
 def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
             container_prefix: str = GENERATE_CONTAINER_PREFIX,
             exec_timeout: float = DEFAULT_EXEC_TIMEOUT_S, llm_timeout: float = 3600.0,
-            max_turns: int = ROUND_LIMIT, deadline_s=None, context_limit=None, gold=None,
+            max_turns: int = ROUND_LIMIT, deadline_s=None, context_limit=None, gold_prepare=None,
             runner=subprocess.run, popen=subprocess.Popen, clock=time.perf_counter) -> dict:
     """One task, one container, start to `docker rm -f` (always, via `finally` -- AC9). Raises
     `TransportFailure` (never returns a row) if `driver.complete` itself failed during the agent
     loop (cold-review F1) or `KeyboardInterrupt`; any other exception (docker/setup/evaluate
-    infra failure) is converted to a `setup_error: true` row so the batch never crashes. `gold`
-    (from the D2 exclusions artifact) is populated onto every row verbatim (AC5)."""
+    infra failure) is converted to a `setup_error: true` row so the batch never crashes.
+    `gold_prepare` (from the D2 exclusions artifact) is populated onto every row verbatim (AC5);
+    `gold_live` (R5) is the gold-slot stdout actually observed when THIS run's check chain graded
+    the answer -- None for match tasks, tasks with no gold slot, or an episode that never
+    submitted."""
     cfg = task_config(task, scripts_root)
     name = container_name(container_prefix, task["id"])
     remove_container(name, runner)   # idempotent pre-clean (a prior interrupted run may have left one)
     t0 = clock()
     base = {"id": task["id"], "group": task.get("group"), "labels": task.get("labels") or [],
-            "image": cfg["image"], "gold": gold}
+            "image": cfg["image"], "gold_prepare": gold_prepare}
     shell = None
     try:
         try:
@@ -858,14 +948,20 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
         if result.get("outcome") == AO.SERVER_ERROR and result.get("error"):
             raise TransportFailure(f"task {task['id']}: {result['error']}")
 
+        gold_live_box = {"value": None}
+
         def _evaluate(answer):
             if cfg["match"] is not None:
                 return evaluate_match(answer, cfg["match"])
-            return run_check_chain(name, cfg["check"], cfg["example"], answer, runner, exec_timeout)
+            passed, gold_live = run_check_chain(name, cfg["check"], cfg["example"], answer,
+                                                runner, exec_timeout)
+            gold_live_box["value"] = gold_live
+            return passed
 
-        # AbortEpisode already set result["outcome"] to FAILED_TESTS (exec timeout) or SERVER_ERROR
-        # (shell death); finalize_outcome passes any non-SOLVED outcome through unchanged, so no
-        # manual override is needed here -- only the row-level setup_error/shell_died flags are.
+        # AbortEpisode already set result["outcome"] to FAILED_TESTS (exec timeout, model-caused
+        # shell death) or SERVER_ERROR (start-caused shell death); finalize_outcome passes any
+        # non-SOLVED outcome through unchanged, so no manual override is needed here -- only the
+        # row-level setup_error/shell_died flags are.
         outcome, passed, answer = finalize_outcome(result, _evaluate)
 
         counters = result.get("counters") or {}
@@ -874,6 +970,7 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
         dtps = [t.get("decode_tps") for t in wrapped.per_turn if isinstance(t.get("decode_tps"), (int, float))]
         return {**base, "passed": passed, "outcome": outcome, "turns": result.get("turns", 0),
                 "submitted_via": wrapped.submitted_via, "answer": answer,
+                "gold_live": gold_live_box["value"],
                 "per_turn_completion_tokens": [t.get("completion_tokens") for t in wrapped.per_turn],
                 "completion_tokens_total": counters.get("completion_tokens", 0),
                 "per_turn_finish_reasons": conv["per_turn_finish_reasons"],
@@ -883,7 +980,11 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
                 "tool_timeouts": tool_counters["tool_timeouts"],
                 "repeat_calls": counters.get("repeat_identical_calls", 0),
                 "exec_timeout": exec_timeout_flag["hit"], "shell_died": shell_died_flag["hit"],
-                "setup_error": shell_died_flag["hit"],
+                # R2: by this point we are PAST the start-phase checks (which already returned
+                # early via _fail_row, setup_error=True, for a start-caused death) -- any
+                # shell_died here came from a bash_action, i.e. the model's own doing, and is
+                # IN the acc denominator (outcome is already FAILED_TESTS via AbortEpisode above).
+                "setup_error": False,
                 "decode_tps": round(statistics.mean(dtps), 2) if dtps else None,
                 "per_turn_decode_tps": [t.get("decode_tps") for t in wrapped.per_turn],
                 "error": result.get("error")}
