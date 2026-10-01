@@ -22,6 +22,15 @@ CORPUS = "corpora/agentbench_os_v1.jsonl"
 SCRIPTS_ROOT = "corpora/agentbench_os_v1/scripts"
 
 
+def _marked(rc: int, stdout: str = "") -> str:
+    """11th cold review round 11 P7-residual: FakeRunner fixtures simulate a REAL docker_exec
+    invocation, which now wraps every checker/init/example script with a trailing rc marker (see
+    bench.agentbench_adapter._RC_MARKER / docker_exec) -- a test that wants to simulate "the
+    script genuinely ran to completion with rc=<rc>" must embed that marker in the configured
+    Proc's stdout, exactly as the real wrapped bash -c invocation would produce it."""
+    return f"{stdout}\n{AB._RC_MARKER}{rc}\n"
+
+
 class _TestHang(Exception):
     pass
 
@@ -171,10 +180,11 @@ def test_run_check_chain_null_entry_runs_example_and_chains_stdout():
 
 
 def test_run_check_chain_nonzero_exit_fails():
-    """8th cold review round 8 P47: ANY nonzero exit now triggers a live DAEMON-level
-    `docker inspect` health probe -- a RUNNING container proves the checker's own verdict is
-    real, so this stays failed_tests."""
-    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "boom"), FakeRunner.Proc(0, "true\n", "")])
+    """8th cold review round 8 P47 (11th round P7-residual: the checker's rc marker is now
+    authoritative on its own -- no `docker inspect` probe is even needed once the marker is
+    observed): a nonzero exit that genuinely completed (the trailing rc marker was observed) is
+    the checker's own verdict, so this stays failed_tests."""
+    runner = FakeRunner(results=[FakeRunner.Proc(0, _marked(1, ""), "boom")])
     ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and gold_live is None and infra_error is None
 
@@ -231,19 +241,20 @@ def test_run_check_chain_P47_case_a_healthy_app_prints_docker_like_text_is_still
     """(a) Daemon reachable, container Running -- even though the checker's OWN stderr happens to
     read like a docker-CLI error ("OCI runtime ...") -- must NOT short-circuit to infra; it is the
     model's/checker's own failure."""
-    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "OCI runtime exec failed: my own app broke"),
-                                 FakeRunner.Proc(0, "true\n", "")])   # inspect: Running
+    runner = FakeRunner(results=[FakeRunner.Proc(0, _marked(1, ""),
+                                                 "OCI runtime exec failed: my own app broke")])
     ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is None
 
 
 def test_run_check_chain_P47_case_b_model_deleted_bin_true_inspect_still_confirms_running():
-    """(b) The model ran `rm -rf /bin` (or similar) inside the container -- a P37-era
-    `docker exec <c> true` probe would have failed (no /bin/true left to run), WRONGLY reporting
-    infra. The daemon-level inspect does not care what the model did to the container's
-    filesystem -- Running is Running -- so this stays failed_tests."""
-    runner = FakeRunner(results=[FakeRunner.Proc(127, "", "bash: true: No such file or directory"),
-                                 FakeRunner.Proc(0, "true\n", "")])   # inspect: still Running
+    """(b) The model ran `rm` on `/bin/true` (or similar) inside the container, but bash ITSELF
+    (what we invoke -- see docker_exec's wrapping) is still intact, so our exec still reaches the
+    trailing rc marker -- the SCRIPT's own attempt to use the now-missing /bin/true just produces
+    bash's own "127: command not found" as ITS exit code. The marker's presence alone proves this
+    is the model's own doing, no `docker inspect` probe even needed."""
+    runner = FakeRunner(results=[FakeRunner.Proc(0, _marked(127, ""),
+                                                 "bash: true: No such file or directory")])
     ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is None
 
@@ -281,66 +292,61 @@ def test_run_check_chain_P47_daemon_itself_times_out_is_infra():
     assert exec_started is None   # daemon unreachable -- truly unknown, not a guessed False
 
 
-# --------------------------------------------------------------------------- P7 (residual, 10th round): exec-creation vs process exit
-# 10th cold review round 10 P7 (supersedes 9th round P8(a)'s rc-band+stderr-prefix design): the
-# stderr-prefix shortcut is REMOVED ENTIRELY. Only rc == 125 (the docker CLI's OWN dedicated
-# "could not even attempt it" code) is unambiguous on its own -- 126/127 are explicitly AMBIGUOUS
-# (a checker script can legitimately `exit 127` on its own) and now fall through to the normal
-# daemon-level `docker inspect` probe like any other nonzero rc.
-def test_classify_check_result_rc_125_is_infra_outright_no_probe_needed_P7():
-    """rc 125 decides OUTRIGHT, with no probe -- NOT even overridden if the container happens to
-    show Running right after (the 9th-round design's stderr-paired shortcut is gone; THIS rc
-    alone is now the sole trigger)."""
-    res = {"exit_code": 125, "stderr": "Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
-          "timed_out": False}
+# --------------------------------------------------------------------------- P7 (residual, 11th round): authoritative execution evidence via rc marker
+# 11th cold review round 11 P7 (supersedes 10th round P7's bare rc-125 rule): rc 125 from `docker
+# exec` and rc 125 from the SCRIPT ITSELF (its own `exit 125`) share the same channel -- the bare
+# rc can never tell them apart. `docker_exec` now wraps every invocation with a trailing rc
+# marker (see `_RC_MARKER`); `_classify_check_result` reads `res["marker_observed"]` as the
+# PRIMARY signal instead.
+def test_classify_check_result_marker_observed_rc_125_is_not_infra_P7():
+    """The marker's PRESENCE is authoritative on its own, no probe needed -- even rc 125 (the
+    docker CLI's own code) is then just the SCRIPT's own exit code, since the script genuinely
+    ran to completion (proven by reaching the trailing printf)."""
+    res = {"exit_code": 125, "marker_observed": True, "timed_out": False,
+          "stderr": "some checker-internal message, exit 125"}
 
     def fail_if_probed(cmd, **kw):
-        raise AssertionError("the daemon-level probe must not run -- rc 125 alone is already "
-                            "unambiguous evidence")
+        raise AssertionError("the daemon-level probe must not run -- the marker alone is "
+                            "already unambiguous evidence")
     infra_evidence, exec_started = AB._classify_check_result("c1", res, fail_if_probed)
-    assert exec_started is False
-    assert infra_evidence is not None and infra_evidence["exec_started"] is False
-    assert "125" in infra_evidence["message"]
-
-
-def test_classify_check_result_rc_125_stderr_is_recorded_but_never_decides_P7():
-    """rc 125 WITHOUT any docker-CLI-looking stderr wording at all must STILL decide outright --
-    the decision is the rc alone now, never the stderr text (which is merely RECORDED)."""
-    res = {"exit_code": 125, "stderr": "some unrelated text, not docker CLI wording at all",
-          "timed_out": False}
-    infra_evidence, exec_started = AB._classify_check_result(
-        "c1", res, lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not probe")))
-    assert exec_started is False
-    assert "some unrelated text" in infra_evidence["stderr"]   # still RECORDED
-
-
-def test_classify_check_result_rc_126_from_the_checkers_own_exit_is_not_infra_P7():
-    """126 is now AMBIGUOUS -- falls through to the daemon-level probe (P47), which here confirms
-    the container is healthy -> failed_tests, even with docker-CLI-looking stderr text."""
-    res = {"exit_code": 126, "stderr": "docker: Error response from daemon: OCI runtime exec failed",
-          "timed_out": False}
-    runner = FakeRunner(default=FakeRunner.Proc(0, "true\n", ""))   # inspect: Running
-    infra_evidence, exec_started = AB._classify_check_result("c1", res, runner)
     assert infra_evidence is None
     assert exec_started is True
 
 
-def test_classify_check_result_rc_127_from_the_checkers_own_exit_is_not_infra_P7():
-    res = {"exit_code": 127, "stderr": "my_check.sh: line 4: some_missing_tool: command not found",
-          "timed_out": False}
+def test_classify_check_result_marker_absent_despite_running_is_now_infra_P7():
+    """11th round's STRENGTHENED rule (vs the 10th round's P47 inspect-based fallback): a
+    COMPLETED nonzero exit with NO marker observed is STILL ambiguous even when `docker inspect`
+    confirms the container is Running -- we have no proof the real command ever ran at all."""
+    res = {"exit_code": 1, "marker_observed": False, "timed_out": False, "stderr": "boom"}
     runner = FakeRunner(default=FakeRunner.Proc(0, "true\n", ""))   # inspect: Running
     infra_evidence, exec_started = AB._classify_check_result("c1", res, runner)
-    assert infra_evidence is None
-    assert exec_started is True
+    assert infra_evidence is not None and exec_started is False
+    assert infra_evidence["exec_started"] is False
 
 
-def test_classify_check_result_rc_126_not_running_is_infra_P7():
-    """126, container NOT Running -> setup_error (via the daemon-level probe, since 126 alone is
-    not decisive)."""
-    res = {"exit_code": 126, "stderr": "", "timed_out": False}
+def test_classify_check_result_marker_absent_and_not_running_is_infra_P7():
+    res = {"exit_code": 1, "marker_observed": False, "timed_out": False, "stderr": ""}
     runner = FakeRunner(default=FakeRunner.Proc(0, "false\n", ""))   # inspect: exited
     infra_evidence, exec_started = AB._classify_check_result("c1", res, runner)
     assert infra_evidence is not None and exec_started is False
+
+
+def test_classify_check_result_marker_absent_daemon_down_is_infra_P7():
+    res = {"exit_code": None, "marker_observed": False, "timed_out": False, "stderr": ""}
+    runner = FakeRunner(default=FakeRunner.Proc(125, "", "Cannot connect to the Docker daemon"))
+    infra_evidence, exec_started = AB._classify_check_result("c1", res, runner)
+    assert infra_evidence is not None and exec_started is None   # daemon unreachable -- unknown
+
+
+def test_classify_check_result_timeout_marker_absent_but_running_is_still_addendum_C_P7():
+    """Addendum C is UNAFFECTED by the marker change: a check-script TIMEOUT (the marker is
+    NEVER observed for a timeout -- the process was killed before reaching it) with the daemon
+    confirming Running is still the model's own hang, not infra."""
+    res = {"exit_code": None, "marker_observed": False, "timed_out": True, "stderr": ""}
+    runner = FakeRunner(default=FakeRunner.Proc(0, "true\n", ""))   # inspect: Running
+    infra_evidence, exec_started = AB._classify_check_result("c1", res, runner)
+    assert infra_evidence is None
+    assert exec_started is True
 
 
 def test_run_check_chain_records_exec_started_true_on_a_full_pass_P7():
@@ -350,10 +356,48 @@ def test_run_check_chain_records_exec_started_true_on_a_full_pass_P7():
 
 
 def test_run_check_chain_records_exec_started_false_on_exec_creation_failure_P7():
+    """No marker in the (empty) stdout -> falls to the daemon-level probe, which here ALSO fails
+    (no more queued results, default Proc() has empty "" stdout -> not Running) -> infra."""
     runner = FakeRunner(results=[FakeRunner.Proc(125, "", "Cannot connect to the Docker daemon")])
     ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and exec_started is False
     assert infra_error["exec_started"] is False
+
+
+@_timeout(10)
+def test_docker_exec_real_bash_checker_exit_125_is_authoritative_via_marker_P7():
+    """11th cold review round 11 P7: a REAL local bash checker doing `exit 125` proves the marker
+    mechanism end-to-end -- rc 125 from the SCRIPT itself (not docker exec) is observed via the
+    marker and is authoritative, never misread as an exec-creation failure. `runner` substitutes a
+    REAL local bash for "docker exec <container>", keeping the EXACT wrapped script/argv
+    docker_exec built, so the generated script text and marker-parsing round-trip through genuine
+    bash (no actual Docker container needed to prove the mechanism)."""
+    def runner(cmd, **kw):
+        assert cmd[:3] == ["docker", "exec", "c1"]
+        real_cmd = ["bash"] + cmd[4:]   # drop "docker exec c1", keep "bash -c <script> [-- ...]"
+        return subprocess.run(real_cmd, capture_output=True, timeout=kw.get("timeout", 5))
+    res = AB.docker_exec("c1", ("bash", "exit 125"), 5.0, runner)
+    assert res["marker_observed"] is True
+    assert res["exit_code"] == 125
+    infra_evidence, exec_started = AB._classify_check_result("c1", res, runner)
+    assert infra_evidence is None   # authoritative: the model's/checker's own exit 125, not infra
+    assert exec_started is True
+
+
+@_timeout(10)
+def test_docker_exec_real_bash_checker_normal_output_is_preserved_P7():
+    """The marker is correctly stripped and the script's OWN stdout is preserved byte-for-byte --
+    proves _extract_rc_marker's splitting is exact against genuine bash output, not just a
+    FakeRunner-simulated one."""
+    def runner(cmd, **kw):
+        assert cmd[:3] == ["docker", "exec", "c1"]
+        real_cmd = ["bash"] + cmd[4:]
+        return subprocess.run(real_cmd, capture_output=True, timeout=kw.get("timeout", 5))
+    res = AB.docker_exec("c1", ("bash", "echo hello"), 5.0, runner)
+    assert res["marker_observed"] is True
+    assert res["exit_code"] == 0
+    assert res["stdout"] == "hello\n"
+    assert AB._RC_MARKER not in res["stdout"]
 
 
 # --------------------------------------------------------------------------- P8(b) binary/undecodable output
@@ -388,8 +432,9 @@ def test_run_task_checker_stderr_with_invalid_utf8_is_failed_tests_not_setup_err
             return FakeRunner.Proc(0, "", "")
         if cmd[:2] == ["docker", "inspect"]:
             return FakeRunner.Proc(0, "true\n", "")
-        if cmd[:2] == ["docker", "exec"] and "echo gold" not in cmd:
-            return _BytesProc(1, b"", b"assertion failed \xff binary")
+        if cmd[:2] == ["docker", "exec"] and not any(isinstance(c, str) and "echo gold" in c for c in cmd):
+            marker = f"\n{AB._RC_MARKER}1\n".encode()
+            return _BytesProc(0, marker, b"assertion failed \xff binary")
         return FakeRunner.Proc(0, "", "")
     task = {"id": "t1", "group": 1, "labels": [],
            "evaluation": {"check": [{"code": "x"}], "example": {"code": "echo gold"}},
@@ -404,8 +449,7 @@ def test_run_task_checker_stderr_with_invalid_utf8_is_failed_tests_not_setup_err
 def test_run_check_chain_legitimate_checker_failure_has_no_infra_error():
     """A checker script failing on its OWN merits (not a docker/transport problem) must NOT be
     mistaken for an infra error -- P9(a) distinguishes the MECHANISM, not just "nonzero"."""
-    runner = FakeRunner(results=[FakeRunner.Proc(1, "", "assertion failed: file missing"),
-                                 FakeRunner.Proc(0, "true\n", "")])
+    runner = FakeRunner(results=[FakeRunner.Proc(0, _marked(1, ""), "assertion failed: file missing")])
     ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is None
 
@@ -455,7 +499,7 @@ def test_prepare_exclusions_two_runs_use_different_placeholders():
     def runner(cmd, **kw):
         if cmd[:3] == ["docker", "ps", "-a"]:
             return FakeRunner.Proc(0, "", "")   # P26: verification requires an EMPTY stdout
-        if len(cmd) >= 2 and cmd[1] == "exec" and "echo gold" in cmd:
+        if len(cmd) >= 2 and cmd[1] == "exec" and any(isinstance(c, str) and "echo gold" in c for c in cmd):
             seen_placeholders.append(cmd[-1])
         return FakeRunner.Proc(0, "x\n", "")
     AB.prepare_exclusions([_check_task("t1")], SCRIPTS_ROOT, runner)
@@ -472,7 +516,7 @@ def test_prepare_exclusions_two_placeholder_runs_are_genuinely_different_R6():
     def runner(cmd, **kw):
         if cmd[:3] == ["docker", "ps", "-a"]:
             return FakeRunner.Proc(0, "", "")   # P26: verification requires an EMPTY stdout
-        if len(cmd) >= 2 and cmd[1] == "exec" and "echo gold" in cmd:
+        if len(cmd) >= 2 and cmd[1] == "exec" and any(isinstance(c, str) and "echo gold" in c for c in cmd):
             seen.append(cmd[-1])
         return FakeRunner.Proc(0, "x\n", "")
     AB.prepare_exclusions([_check_task("t1")], SCRIPTS_ROOT, runner)
@@ -824,15 +868,30 @@ def test_validate_exclusions_artifact_accepts_both_none_when_no_manual_file_eith
 
 # --------------------------------------------------------------------------- docker primitives
 def test_docker_exec_bash_builds_exec_bash_c_with_extra_params():
+    """11th cold review round 11 P7-residual: the code is now WRAPPED (code + a trailing rc-
+    marker printf, see _RC_MARKER) inside the SAME bash -c script element -- the original code
+    text and the marker constant must both be present, and the positional params still follow
+    `--`, unaffected."""
     runner = FakeRunner()
     AB.docker_exec("c1", ("bash", "echo hi"), 10, runner, extra_params=["a", "b"])
-    assert runner.last_cmd == ["docker", "exec", "c1", "bash", "-c", "echo hi", "--", "a", "b"]
+    cmd = runner.last_cmd
+    assert cmd[:5] == ["docker", "exec", "c1", "bash", "-c"]
+    assert "echo hi" in cmd[5]   # wrapped in a subshell -- see docker_exec's bash branch
+    assert AB._RC_MARKER in cmd[5]
+    assert cmd[6:] == ["--", "a", "b"]
 
 
 def test_docker_exec_python_builds_python3_c_with_argv():
+    """11th round P7-residual: python code is now passed as ITS OWN argv element ($1 inside a
+    bash -c wrapper, see docker_exec), never interpolated into the bash script text -- avoiding
+    any shell-quoting hazard -- with the rc-marker printf appended the same way as bash."""
     runner = FakeRunner()
     AB.docker_exec("c1", ("python", "print(1)"), 10, runner, extra_params=["a"])
-    assert runner.last_cmd == ["docker", "exec", "c1", "python3", "-c", "print(1)", "a"]
+    cmd = runner.last_cmd
+    assert cmd[:5] == ["docker", "exec", "c1", "bash", "-c"]
+    assert AB._RC_MARKER in cmd[5]
+    assert "python3" in cmd[5]
+    assert cmd[6:] == ["--", "print(1)", "a"]   # code and params passed as bash's OWN positional argv
 
 
 def test_docker_exec_timeout_returns_timed_out_without_raising():
@@ -2244,7 +2303,7 @@ def test_run_task_grading_infra_failure_preserves_completed_turns_and_transcript
     def runner(cmd, **kw):
         if cmd[:2] == ["docker", "run"]:
             return FakeRunner.Proc(0, "", "")
-        if cmd[:2] == ["docker", "exec"] and "echo gold" in cmd:
+        if cmd[:2] == ["docker", "exec"] and any(isinstance(c, str) and "echo gold" in c for c in cmd):
             return FakeRunner.Proc(127, "", "Error response from daemon: No such container: abc")
         return FakeRunner.Proc(0, "", "")
     task = {"id": "t1", "group": 1, "labels": [],
@@ -2608,6 +2667,37 @@ def test_run_task_empty_answer_action_abort_still_carries_that_turns_telemetry_P
     assert row["per_turn_completion_tokens"] == [17]
     assert row["completion_tokens_total"] == 17          # must match, not silently 0
     assert row["tool_calls"] == 1                         # the one (aborting) call IS counted
+
+
+def _check_cfg_task():
+    """A non-match task (a real check chain, inline code -- no scripts_root file dependency) so
+    the model's answer actually flows into a subprocess argv via docker_exec/run_check_chain."""
+    return {"id": "std-004-0", "group": 4, "labels": ["l1"],
+           "evaluation": {"check": [{"code": "exit 0", "language": "bash"}]},
+           "description": "say something"}
+
+
+def test_run_task_unrepresentable_answer_embedded_nul_is_scored_failed_tests_not_setup_error_P2():
+    """11th cold review round 11 P2 (HIGH): a model answer that cannot be passed as a subprocess
+    argv element (embedded NUL byte is the concrete case; any ValueError/TypeError raised while
+    BUILDING the argv counts the same way) must be a SCORED failed_tests row with
+    error="unrepresentable answer: ...", never setup_error -- the generic catch-all (which would
+    otherwise wrongly mark it setup_error=True, outcome=SERVER_ERROR) must never see this
+    exception. The runner here simulates exactly what a real subprocess.Popen raises for an
+    argv element containing an embedded NUL byte."""
+    def runner(cmd, **kw):
+        if any(isinstance(c, str) and "\x00" in c for c in cmd):
+            raise ValueError("embedded null byte")
+        return FakeRunner.Proc(0, "", "")
+    driver = FakeDriver(script=[
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": "bad\x00answer"})]),
+    ])
+    task = _check_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["outcome"] == AO.FAILED_TESTS
+    assert row["passed"] is False
+    assert row["setup_error"] is False
+    assert "unrepresentable answer" in row["error"]
 
 
 def test_run_task_a_valid_submit_followed_by_a_stray_empty_call_in_the_SAME_turn_still_solves_P10():

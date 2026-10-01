@@ -496,33 +496,85 @@ def _decode_replace(value) -> str:
     return value or ""
 
 
+# 11th cold review round 11 P7 (residual, supersedes 10th round P7's bare rc-125 rule):
+# `docker exec` itself and the checker/init/example SCRIPT it runs share the same rc channel --
+# rc 125 could be the docker CLI's own "could not even attempt it" code, OR it could just be the
+# script's own `exit 125`. The bare rc alone can never disambiguate those. The fix: every
+# invocation is wrapped so the script's own exit is distinguishable from `docker exec` never
+# running it at all -- a marker is printed, inside the SAME docker exec invocation, immediately
+# after the script's own command, carrying that command's OWN `$?`. Its PRESENCE is authoritative
+# proof the script ran to completion (so its rc -- even 125 -- is simply the script's own exit
+# code, never infra evidence on its own); its ABSENCE (never printed -- the exec never started,
+# or the process was killed/timed out before reaching it) is now the ONLY infra signal; the raw
+# `docker exec` process's own rc is no longer inspected on its own at all. See
+# `_classify_check_result` for how marker absence is then resolved.
+_RC_MARKER = "__M54_RC__"
+_RC_MARKER_RE = re.compile(re.escape("\n" + _RC_MARKER) + r"(-?\d+)\n")
+
+
+def _extract_rc_marker(stdout: str):
+    """Returns (stdout_without_marker, marker_rc or None). Scans for the LAST match (robust
+    against the script's own output coincidentally containing marker-shaped text earlier) --
+    the one WE appended is always the trailing one. Strips exactly the matched span, preserving
+    whatever trailing newline (or lack of one) the script's own output had."""
+    matches = list(_RC_MARKER_RE.finditer(stdout))
+    if not matches:
+        return stdout, None
+    m = matches[-1]
+    return stdout[:m.start()] + stdout[m.end():], int(m.group(1))
+
+
 def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run,
                 extra_params=()) -> dict:
     """One FRESH, non-interactive `docker exec` (mirrors task.py `execute_independent`, used for
     init scripts and all evaluation/check/example scripts -- NEVER for `start` or `bash_action`,
     which share the persistent session; see `PersistentShell`). Returns
-    {exit_code, stdout, stderr, timed_out}. `extra_params` are appended argv (the answer / prior
-    check-script stdout chain).
+    {exit_code, stdout, stderr, timed_out, marker_observed}. `extra_params` are appended argv (the
+    answer / prior check-script stdout chain).
 
     P8(b): captures stdout/stderr as BYTES (no `text=True`) and decodes with `errors="replace"`
     (`_decode_replace`) -- never the strict decoding `text=True` would otherwise apply, which can
-    raise UnicodeDecodeError on arbitrary checker/script output and crash the whole batch."""
+    raise UnicodeDecodeError on arbitrary checker/script output and crash the whole batch.
+
+    11th round P7-residual: every invocation is wrapped (see the comment above `_RC_MARKER`) so
+    `exit_code` is the SCRIPT's own authoritative rc whenever `marker_observed` is True -- never
+    the wrapping bash -c's own exit status (always 0, the trailing printf's own success). When the
+    marker was never observed, `exit_code` falls back to the raw `docker exec` process's own
+    returncode (or None on an outright timeout)."""
     lang, code = lang_code
     params = [str(p) for p in extra_params]
     if lang == "bash":
-        cmd = ["docker", "exec", container, "bash", "-c", code]
+        # the code runs inside a SUBSHELL `( ... )` -- an explicit `exit N` inside a checker
+        # script (a REAL, common pattern -- e.g. the review's own "a checker doing exit 125") is
+        # the bash `exit` BUILTIN, which terminates the CURRENT script immediately; without the
+        # subshell boundary it would skip straight past `rc=$?`/the marker printf, and the marker
+        # would NEVER be observed even though the script genuinely ran to completion. A subshell
+        # confines `exit` to itself: its own exit status becomes `$?` in the OUTER script, which
+        # then continues normally to the marker printf. Positional params ($1, $2, ...) are
+        # inherited by the subshell unchanged; stdout/stderr pass through untouched.
+        script = f'(\n{code}\n)\nrc=$?\nprintf "\\n{_RC_MARKER}%d\\n" "$rc"\n'
+        cmd = ["docker", "exec", container, "bash", "-c", script]
         if params:
             cmd += ["--", *params]
     elif lang == "python":
-        cmd = ["docker", "exec", container, "python3", "-c", code, *params]
+        # the code is passed as its OWN argv element ($1), never interpolated into the bash -c
+        # script text -- avoids any shell-quoting hazard from arbitrary python source.
+        script = (f'python3 -c "$1" "${{@:2}}"\nrc=$?\nprintf "\\n{_RC_MARKER}%d\\n" "$rc"\n')
+        cmd = ["docker", "exec", container, "bash", "-c", script, "--", code, *params]
     else:
         raise ValueError(f"unsupported script language {lang!r}")
     try:
         proc = runner(cmd, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        return {"exit_code": None, "stdout": "", "stderr": "", "timed_out": True}
-    return {"exit_code": proc.returncode, "stdout": _decode_replace(proc.stdout),
-            "stderr": _decode_replace(proc.stderr), "timed_out": False}
+        return {"exit_code": None, "stdout": "", "stderr": "", "timed_out": True,
+               "marker_observed": False}
+    stdout = _decode_replace(proc.stdout)
+    stdout, marker_rc = _extract_rc_marker(stdout)
+    if marker_rc is not None:
+        return {"exit_code": marker_rc, "stdout": stdout, "stderr": _decode_replace(proc.stderr),
+               "timed_out": False, "marker_observed": True}
+    return {"exit_code": proc.returncode, "stdout": stdout, "stderr": _decode_replace(proc.stderr),
+           "timed_out": False, "marker_observed": False}
 
 
 def truncate_output(text: str, limit: int = TRUNCATE_LIMIT, keep: int = TRUNCATE_KEEP,
@@ -1030,36 +1082,43 @@ def _docker_inspect_running(container: str, runner=subprocess.run, timeout: floa
            "exit_code": proc.returncode, "timed_out": False}
 
 
-# 10th cold review round 10 P7 (residual, supersedes 9th round P8(a)): the stderr-prefix
-# shortcut is REMOVED ENTIRELY -- a model's own checker-script stderr text must NEVER again
-# decide the classification, not even when paired with an rc band. 126/127 are AMBIGUOUS (a
-# checker script running happily to completion can legitimately `exit 127`, or hit bash's own
-# "127: command not found" for a missing in-container binary) and are no longer treated as
-# exec-creation evidence at all. Only rc == 125 -- the docker CLI's OWN dedicated "could not even
-# attempt it" code -- is unambiguous on its own, and decides OUTRIGHT (no probe needed, and not
-# overridden even if the container happens to show Running right after). Every other nonzero/
-# timeout result is decided PURELY by the daemon-level `docker inspect` probe (P47): Running ->
-# failed_tests (the checker's own doing); not Running, or the daemon itself unreachable ->
-# setup_error. The checker's stderr is still RECORDED in infra_evidence for diagnostics, never
-# used to decide.
-_EXEC_CREATION_FAIL_RC = 125
-
-
+# 11th cold review round 11 P7 (residual, supersedes 10th round P7's bare rc-125 rule): the rc
+# of `docker exec` and of the SCRIPT it runs share one channel, and rc 125 alone could be either
+# -- the docker CLI's own code, or just the script's `exit 125`. The fix (see docker_exec /
+# _extract_rc_marker above) makes the script's OWN completion authoritative via a trailing
+# marker: `res["marker_observed"]` True means the script genuinely ran to completion and its rc
+# (whatever it is, even 125) is simply ITS OWN exit code -- never infra evidence, no probe
+# needed. `marker_observed` False means the marker was never printed -- EITHER the exec never
+# started, OR the process was killed/timed out before reaching it; a TIMEOUT is orthogonal to
+# this (a hanging MODEL BINARY, addendum C, is unaffected -- see below) and is resolved exactly
+# as before. For a COMPLETED-but-marker-less nonzero exit, the daemon-level `docker inspect`
+# probe (P47) is consulted purely for diagnostics now: Running is STILL ambiguous (we have no
+# proof the real command ran) -> setup_error; not Running / daemon unreachable -> setup_error.
+# The checker's stderr is still RECORDED in infra_evidence for diagnostics, never used to decide.
 def _classify_check_result(container: str, res: dict, runner) -> tuple:
-    """P47 + 10th round P7: the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout checker
+    """P47 + 11th round P7: the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout checker
     result. Returns `(infra_evidence: dict|None, exec_started: bool|None)`. See the module-level
     comment above for the full decision table."""
-    exit_code = res.get("exit_code")
-    if exit_code == _EXEC_CREATION_FAIL_RC:
-        return ({"message": f"docker exec-creation failure (exit={exit_code}, the docker CLI's "
-                           f"own dedicated code) -- stderr (recorded, not used to decide): "
-                           f"{(res.get('stderr') or '')[:200]}",
-                "exit_code": exit_code, "stderr": (res.get("stderr") or "")[:200],
-                "timed_out": bool(res.get("timed_out")), "health_probe_ok": None,
-                "exec_started": False}, False)
+    timed_out = bool(res.get("timed_out"))
+    if not timed_out and res.get("marker_observed"):
+        # authoritative: the script genuinely ran to completion -- its rc is its own, never infra.
+        return None, True
     inspect = _docker_inspect_running(container, runner)
     if inspect["ok"] and inspect["running"]:
-        return None, True
+        if timed_out:
+            # addendum C (unaffected by the marker change): a check-script TIMEOUT with the
+            # daemon confirming the container is still Running is the MODEL's own hang (e.g. its
+            # own installed binary), not infra.
+            return None, True
+        # a COMPLETED nonzero exit with no marker, despite Running, is now STILL ambiguous (we
+        # have no proof the real command ran at all) -- the strengthened P7-residual rule.
+        return ({"message": "docker exec: no authoritative rc marker observed, despite the "
+                           "daemon confirming the container is Running -- the exec may never "
+                           "have reached the checker/init/example script at all -- stderr "
+                           f"(recorded, not used to decide): {(res.get('stderr') or '')[:200]}",
+                "exit_code": res.get("exit_code"), "stderr": (res.get("stderr") or "")[:200],
+                "timed_out": timed_out, "health_probe_ok": True, "inspect": inspect,
+                "exec_started": False}, False)
     exec_started = None if not inspect["ok"] else False
     return ({"message": f"docker inspect did not confirm a live, running container "
                        f"(ok={inspect['ok']}, running={inspect['running']}, "
@@ -1067,7 +1126,7 @@ def _classify_check_result(container: str, res: dict, runner) -> tuple:
                        f"inspect_timed_out={inspect['timed_out']}): "
                        f"{(inspect['stderr'] or inspect['stdout'] or '')[:200]}",
             "exit_code": res.get("exit_code"), "stderr": (res.get("stderr") or "")[:200],
-            "timed_out": bool(res.get("timed_out")),
+            "timed_out": timed_out,
             "health_probe_ok": bool(inspect["ok"] and inspect["running"]), "inspect": inspect,
             "exec_started": exec_started}, exec_started)
 
@@ -1710,12 +1769,25 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
         gold_live_box = {"value": None}
         infra_error_box = {"value": None}
         exec_started_box = {"value": None}   # P8(a): None for a match task (no check chain ran)
+        unrepresentable_answer_box = {"value": None}
 
         def _evaluate(answer):
             if cfg["match"] is not None:
                 return evaluate_match(answer, cfg["match"])
-            passed, gold_live, infra_error, exec_started = run_check_chain(
-                name, cfg["check"], cfg["example"], answer, runner, exec_timeout)
+            try:
+                passed, gold_live, infra_error, exec_started = run_check_chain(
+                    name, cfg["check"], cfg["example"], answer, runner, exec_timeout)
+            except (ValueError, TypeError) as e:
+                # 11th cold review round 11 P2 (HIGH): the model's OWN answer could not be
+                # represented as a subprocess argv element while building/running the check-script
+                # chain (embedded NUL byte is the concrete case; any ValueError/TypeError raised
+                # while BUILDING the argv is treated the same way) -- this is the MODEL's doing,
+                # an unscorable/malformed answer, never an infra/harness failure. Scored
+                # failed_tests (via the normal "evaluate_submission returned False" path below),
+                # with the error recorded for the row -- NEVER reaching the generic catch-all,
+                # which would otherwise wrongly mark this setup_error=True, outcome=SERVER_ERROR.
+                unrepresentable_answer_box["value"] = f"unrepresentable answer: {type(e).__name__}: {e}"
+                return False
             gold_live_box["value"] = gold_live
             infra_error_box["value"] = infra_error
             exec_started_box["value"] = exec_started
@@ -1771,8 +1843,11 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
               # early via _fail_row, setup_error=True, for a start-caused death) -- any
               # shell_died here came from a bash_action, i.e. the model's own doing, and is
               # IN the acc denominator (outcome is already FAILED_TESTS via AbortEpisode above).
-              "setup_error": False, "error": result.get("error"), "infra_evidence": None,
-              "harness_error": False}
+              # P2 (11th round): an unrepresentable-answer error (see _evaluate above) takes
+              # precedence over result.get("error") when present.
+              "setup_error": False,
+              "error": unrepresentable_answer_box["value"] or result.get("error"),
+              "infra_evidence": None, "harness_error": False}
         return row
     except TransportFailure:
         raise
