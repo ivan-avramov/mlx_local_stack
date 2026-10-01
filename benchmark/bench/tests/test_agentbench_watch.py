@@ -94,10 +94,38 @@ def test_rate_stats_uses_wall_total_s_not_wall_s_P32():
     assert W.rate_stats(rows)["mean_wall_s"] == 100.0
 
 
-def test_rate_stats_falls_back_to_wall_s_for_rows_missing_wall_total_s():
+def test_rate_stats_excludes_rows_missing_wall_total_s_P12b():
+    """9th cold review round 9 P12(b) (supersedes the old wall_s-fallback behavior): a row
+    lacking wall_total_s is EXCLUDED from the timing arithmetic outright, never silently
+    substituted with the smaller wall_s -- excluded_count reports exactly how many."""
     row = _row("a", wall_s=5.0)
     del row["wall_total_s"]
-    assert W.rate_stats([row])["mean_wall_s"] == 5.0
+    stats = W.rate_stats([row])
+    assert stats["mean_wall_s"] is None
+    assert stats["excluded_count"] == 1
+
+
+def test_rate_stats_excluded_count_zero_when_every_row_has_wall_total_s():
+    rows = [_row("a", wall_total_s=10.0), _row("b", wall_total_s=20.0)]
+    stats = W.rate_stats(rows)
+    assert stats["mean_wall_s"] == 15.0
+    assert stats["excluded_count"] == 0
+
+
+def test_rate_stats_mixed_rows_excludes_only_the_ones_missing_wall_total_s_P12b():
+    rows = [_row("a", wall_total_s=10.0), _row("b", wall_total_s=20.0)]
+    del rows[1]["wall_total_s"]
+    stats = W.rate_stats(rows)
+    assert stats["mean_wall_s"] == 10.0   # only "a" counted
+    assert stats["excluded_count"] == 1
+
+
+def test_rate_stats_never_raises_on_garbage_wall_total_s_P12b():
+    rows = [_row("a", wall_total_s="not-a-number"), _row("b")]
+    rows[1]["wall_total_s"] = None   # bypass _row's own None->wall_s+1.0 default fixup
+    stats = W.rate_stats(rows)   # must not raise TypeError
+    assert stats["mean_wall_s"] is None
+    assert stats["excluded_count"] == 2
 
 
 # --------------------------------------------------------------------------- sanity stats
@@ -439,6 +467,45 @@ def test_router_recently_active_none_when_log_missing_P25():
     assert W.router_recently_active("/nonexistent-path", window_s=600, now=time.time()) is None
 
 
+# --------------------------------------------------------------------------- P12(c) request_in_flight
+def test_request_in_flight_true_when_last_post_has_no_matching_completion(tmp_path):
+    log = tmp_path / "router.log"
+    log.write_text(
+        "2026-09-29 13:33:46 [INFO] mlx-serve.router — POST /v1/chat/completions model=m stream=True\n",
+        encoding="utf-8")
+    assert W._request_in_flight(log) is True
+
+
+def test_request_in_flight_false_when_the_last_post_already_completed(tmp_path):
+    log = tmp_path / "router.log"
+    log.write_text(
+        "2026-09-29 13:33:46 [INFO] mlx-serve.router — POST /v1/chat/completions model=m stream=True\n"
+        "2026-09-29 13:34:51 [INFO] mlx-serve.metrics — /v1/chat/completions 200 | model=m | "
+        "13677ms | TTFT=7686ms | 79.5 tok/s | prompt=12269 | completion=476\n",
+        encoding="utf-8")
+    assert W._request_in_flight(log) is False
+
+
+def test_request_in_flight_false_when_no_post_seen_at_all(tmp_path):
+    log = tmp_path / "router.log"
+    log.write_text("router started\n", encoding="utf-8")
+    assert W._request_in_flight(log) is False
+
+
+def test_request_in_flight_true_for_the_latest_post_even_with_an_earlier_completed_one(tmp_path):
+    log = tmp_path / "router.log"
+    log.write_text(
+        "POST /v1/chat/completions model=m stream=True\n"
+        "/v1/chat/completions 200 | model=m | 100ms | prompt=1 | completion=1\n"
+        "POST /v1/chat/completions model=m stream=True\n",   # a SECOND request, still in-flight
+        encoding="utf-8")
+    assert W._request_in_flight(log) is True
+
+
+def test_request_in_flight_none_when_log_missing_P12c():
+    assert W._request_in_flight("/nonexistent-path") is None
+
+
 # --------------------------------------------------------------------------- build_assessment / tick
 def test_build_assessment_progressing_true_when_rows_grew():
     now = time.time()
@@ -499,6 +566,34 @@ def test_build_assessment_evidence_missing_section_when_rows_file_absent_P25():
     assert "rows file missing" in block
     assert "manifest missing" in block
     assert "UNKNOWN" in block   # the stall line must not silently read "none"
+
+
+def test_build_assessment_evidence_missing_forces_unknown_even_when_not_otherwise_stalled_P12a():
+    """9th cold review round 9 P12(a): classify_stall's OWN logic would have returned None here
+    (reference_ts is recent, well under stall_s) -- but with rows/manifest evidence UNREADABLE,
+    the block must NOT print a confident "STALL: none" on the strength of stale/partial state.
+    This is DISTINCT from test_build_assessment_evidence_missing_section_when_rows_file_absent_P25
+    above, which exercises classify_stall's OWN reference_ts=None UNKNOWN path, not this gate."""
+    now = time.time()
+    rows = [_row("a", wall_total_s=10.0)]
+    block = W.build_assessment(rows, prev_rows_count=0, total=10, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=2700.0,
+                               reference_ts=now - 5.0, now=now,   # recent -- NOT stalled on its own
+                               rows_evidence=False, manifest_evidence=True)
+    assert "(4) STALL: none" not in block
+    assert "(4) STALL: UNKNOWN" in block
+
+
+def test_build_assessment_evidence_present_and_not_stalled_still_reads_none_P12a():
+    """The gate must NOT fire when evidence IS readable -- preserves the ordinary "all clear"
+    reporting path."""
+    now = time.time()
+    rows = [_row("a", wall_total_s=10.0)]
+    block = W.build_assessment(rows, prev_rows_count=0, total=10, driver_pid=os.getpid(),
+                               router_log_path="/nonexistent", stall_s=2700.0,
+                               reference_ts=now - 5.0, now=now,
+                               rows_evidence=True, manifest_evidence=True)
+    assert "(4) STALL: none" in block
 
 
 def test_build_assessment_correct_vs_finish_line_P32(tmp_path):
@@ -729,6 +824,30 @@ def test_run_watch_prints_a_calibration_line_on_the_first_tick_P52c(tmp_path):
     assert f"CALIBRATION (tick 1): worker_busy=True (router_pid={ROUTER_PID})" in content
 
 
+def test_run_watch_calibration_record_distinguishes_busy_cpu_from_idle_cpu_P12c(tmp_path):
+    """9th cold review round 9 P12(c): the structured calibration record attributes the sample to
+    busy_cpu ONLY when a request was confirmed in-flight at sample time (via the router log),
+    else to idle_cpu -- never both, never guessed."""
+    rows_path = tmp_path / "rows.jsonl"
+    _write_rows(rows_path, [_row("a")])
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"model": "m", "router": {"pid": ROUTER_PID}}), encoding="utf-8")
+    out_path = tmp_path / "watch.log"
+    router_log = tmp_path / "router.log"
+    router_log.write_text("POST /v1/chat/completions model=m stream=True\n", encoding="utf-8")   # in-flight
+    import argparse
+    args = argparse.Namespace(rows=str(rows_path), manifest=str(manifest_path), total=5,
+                              driver_pid=os.getpid(), router_log=str(router_log),
+                              out=str(out_path), interval=300.0, stall_s=2700.0, once=True,
+                              calibrate_fn=lambda router_pid: 55.0)
+    rc = W.run_watch(args)
+    assert rc == 0
+    content = out_path.read_text(encoding="utf-8")
+    assert "in_flight=True" in content
+    assert "'busy_cpu': 55.0" in content
+    assert "'idle_cpu': None" in content
+
+
 def test_run_watch_prints_a_calibration_line_with_no_router_pid_yet_P52c(tmp_path):
     rows_path = tmp_path / "rows.jsonl"
     _write_rows(rows_path, [_row("a")])
@@ -818,27 +937,48 @@ def test_classify_stall_calibrated_default_preserves_prior_behaviour():
     assert label == "WEDGE (idle)"
 
 
-def test_build_assessment_busy_observed_box_gates_wedge_across_ticks_P52d():
+def test_build_assessment_busy_observed_box_gates_wedge_across_ticks_P52d(tmp_path):
     """An idle verdict on tick 1 (box empty -- never calibrated) must NOT read WEDGE; a BUSY
-    sample on tick 2 calibrates the box; an idle verdict on tick 3 (now calibrated) DOES read
-    WEDGE."""
+    sample taken DURING a confirmed in-flight request (P12(c)) on tick 2 calibrates the box; an
+    idle verdict on tick 3 (now calibrated) DOES read WEDGE."""
     now = time.time()
     rows = [_row("a", wall_total_s=10.0)]
+    router_log = tmp_path / "router.log"
+    router_log.write_text("POST /v1/chat/completions model=m stream=True\n", encoding="utf-8")
     box = {}
     busy_sequence = iter([False, True, False])
-    block1 = W.build_assessment(rows, 0, 10, os.getpid(), "/nonexistent", stall_s=0.0,
+    block1 = W.build_assessment(rows, 0, 10, os.getpid(), str(router_log), stall_s=0.0,
                                 reference_ts=now - 5000, now=now,
                                 busy_check_fn=lambda: next(busy_sequence), busy_observed_box=box)
     assert "WEDGE (idle)" not in block1 and "UNKNOWN (busy-detection not yet calibrated" in block1
-    block2 = W.build_assessment(rows, 0, 10, os.getpid(), "/nonexistent", stall_s=0.0,
+    block2 = W.build_assessment(rows, 0, 10, os.getpid(), str(router_log), stall_s=0.0,
                                 reference_ts=now - 5000, now=now,
                                 busy_check_fn=lambda: next(busy_sequence), busy_observed_box=box)
     assert "RUNAWAY-SUSPECT (busy)" in block2
     assert box["seen"] is True
-    block3 = W.build_assessment(rows, 0, 10, os.getpid(), "/nonexistent", stall_s=0.0,
+    block3 = W.build_assessment(rows, 0, 10, os.getpid(), str(router_log), stall_s=0.0,
                                 reference_ts=now - 5000, now=now,
                                 busy_check_fn=lambda: next(busy_sequence), busy_observed_box=box)
     assert "WEDGE (idle)" in block3
+
+
+def test_build_assessment_busy_observed_box_NOT_calibrated_by_a_busy_sample_without_in_flight_confirmation_P12c(tmp_path):
+    """9th cold review round 9 P12(c): a busy CPU sample taken WITHOUT a confirmed in-flight
+    request (e.g. the router log shows the last POST already completed, or no POST at all) must
+    NOT calibrate the WEDGE gate -- it could be coincidental background CPU noise."""
+    now = time.time()
+    rows = [_row("a", wall_total_s=10.0)]
+    router_log = tmp_path / "router.log"
+    router_log.write_text(
+        "POST /v1/chat/completions model=m stream=True\n"
+        "/v1/chat/completions 200 | model=m | 100ms | prompt=1 | completion=1\n",
+        encoding="utf-8")   # the last POST already completed -- NOT in-flight
+    box = {}
+    block = W.build_assessment(rows, 0, 10, os.getpid(), str(router_log), stall_s=0.0,
+                               reference_ts=now - 5000, now=now,
+                               busy_check_fn=lambda: True, busy_observed_box=box)
+    assert "RUNAWAY-SUSPECT (busy)" in block   # the busy verdict itself is unaffected
+    assert box.get("seen") is not True         # but calibration did NOT fire
 
 
 def test_run_watch_exits_when_driver_dead_and_rows_complete(tmp_path):

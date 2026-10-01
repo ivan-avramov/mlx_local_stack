@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import statistics
 import subprocess
@@ -185,6 +186,48 @@ def router_recently_active(router_log_path, window_s: float = ROUTER_ACTIVITY_WI
     except OSError:
         return None
     return ROUTER_ACTIVITY_MARKER in tail
+
+
+# 9th cold review round 9 P12(c): mlx-serve's router log lines (see src/mlx_serve/router.py and
+# metrics.py, logger names "mlx-serve.router"/"mlx-serve.metrics") carry NO shared request_id in
+# their plain text -- correlation relies on ORDERING: a "POST <endpoint> model=... stream=..."
+# line (request received) and a "<endpoint> <status> | model=... | <duration>ms | ..." line
+# (request completed). A genuinely IN-FLIGHT request is detected as: the LAST POST line in the
+# tail has no matching completion line (same endpoint) AFTER it.
+_ROUTER_POST_RE = re.compile(r"POST (\S+) model=")
+
+
+def _request_in_flight(router_log_path, tail_bytes: int = 65536) -> bool | None:
+    """P12(c): True if the router log's LAST POST line has NO matching completion line after it
+    (same endpoint) -- a request is genuinely in-flight RIGHT NOW, confirmed from the log, not
+    inferred from CPU activity alone. False if the last POST already completed, or no POST was
+    seen in the tail at all. None (unobservable) if the log is missing/unreadable."""
+    p = Path(router_log_path)
+    if not p.exists():
+        return None
+    try:
+        with open(p, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - tail_bytes))
+            tail = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    lines = tail.splitlines()
+    last_post_idx = None
+    last_post_endpoint = None
+    for i, line in enumerate(lines):
+        m = _ROUTER_POST_RE.search(line)
+        if m:
+            last_post_idx = i
+            last_post_endpoint = m.group(1)
+    if last_post_idx is None:
+        return False   # no POST in the tail at all -- nothing pending to be in-flight
+    completion_marker = re.compile(rf"{re.escape(last_post_endpoint)} \d+ \|")
+    for line in lines[last_post_idx + 1:]:
+        if completion_marker.search(line):
+            return False   # the last POST already has a matching completion line
+    return True
 
 
 # --------------------------------------------------------------------------- (4) busy/idle (P25/P38)
@@ -342,16 +385,21 @@ def classify_stall(seconds_since_reference, stall_s: float, driver_pid: int,
 # --------------------------------------------------------------------------- (2) rate / ETA
 def rate_stats(rows: list) -> dict:
     """P32: `wall_total_s` (container create -> verified removal, the FULL task cost) is the ETA
-    basis -- `wall_s` (just the agent loop) understates it; grading/cleanup time is real campaign
-    cost. Falls back to `wall_s` only for rows that predate `wall_total_s` (never silently drop
-    them from the rate estimate)."""
-    totals = [r["wall_total_s"] if isinstance(r.get("wall_total_s"), (int, float))
-             else r.get("wall_s")
-             for r in rows]
-    totals = [t for t in totals if isinstance(t, (int, float))]
+    basis -- `wall_s` (just the agent loop) understates it.
+
+    9th cold review round 9 P12(b) (supersedes P32's wall_s fallback): a row LACKING
+    `wall_total_s` is now EXCLUDED from the timing arithmetic outright, never silently
+    substituted with the SMALLER `wall_s` figure (which understates true campaign cost and would
+    quietly bias the mean/ETA downward) -- `excluded_count` is returned so the caller can print
+    exactly how many rows were excluded, rather than let the substitution happen invisibly. Never
+    raises TypeError regardless of what garbage a row's `wall_total_s` holds (an isinstance guard,
+    not a bare arithmetic attempt)."""
+    totals = [r.get("wall_total_s") for r in rows if isinstance(r.get("wall_total_s"), (int, float))]
+    excluded_count = len(rows) - len(totals)
     if not totals:
-        return {"mean_wall_s": None, "max_wall_s": None}
-    return {"mean_wall_s": statistics.mean(totals), "max_wall_s": max(totals)}
+        return {"mean_wall_s": None, "max_wall_s": None, "excluded_count": excluded_count}
+    return {"mean_wall_s": statistics.mean(totals), "max_wall_s": max(totals),
+           "excluded_count": excluded_count}
 
 
 def eta_seconds(total: int, done: int, mean_wall_s) -> float | None:
@@ -462,7 +510,13 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
         def effective_busy_check_fn():
             result = raw_busy_check_fn()
             if result is True:
-                busy_observed_box["seen"] = True
+                # P12(c): a busy sample only counts toward calibration if it was taken DURING a
+                # genuinely in-flight request (confirmed via the router log's last POST having no
+                # matching completion line yet) -- otherwise it could be coincidental background
+                # CPU activity unrelated to actual request processing, which would wrongly
+                # "calibrate" the WEDGE gate on a false signal.
+                if _request_in_flight(router_log_path) is True:
+                    busy_observed_box["seen"] = True
             return result
         calibrated = busy_observed_box.get("seen", False)
     else:
@@ -470,6 +524,15 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
         calibrated = True
     stall_label = classify_stall(seconds_since_reference, stall_s, driver_pid,
                                  pid_alive_fn, effective_busy_check_fn, calibrated=calibrated)
+    # 9th cold review round 9 P12: EVIDENCE flags gate the classifier -- a tick that could not
+    # even read the rows file or the manifest must never report "STALL: none" (a confident
+    # all-clear) on the strength of whatever partial/stale state happened to be left over from a
+    # PRIOR tick. This does NOT downgrade an already-positive verdict (DRIVER DEAD is independently
+    # verified via pid_alive_fn, unrelated to rows/manifest readability) -- only the "nothing's
+    # wrong" conclusion (stall_label is None) is untrustworthy when the evidence behind it is.
+    if stall_label is None and not (rows_evidence and manifest_evidence):
+        stall_label = ("UNKNOWN (evidence missing/unreadable this tick -- rows and/or manifest "
+                       "could not be trusted, so no stall classification can be made)")
     router_active = router_active_fn(router_log_path, ROUTER_ACTIVITY_WINDOW_S, now)
 
     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
@@ -487,9 +550,12 @@ def build_assessment(rows: list, prev_rows_count: int, total: int, driver_pid: i
                 f"{done} (of {total} total)")
     mean_s, max_s = stats["mean_wall_s"], stats["max_wall_s"]
     eta_txt = "n/a (no completed rows yet)" if eta is None else f"{eta / 60:.1f} min"
+    # P12(b): rows lacking wall_total_s are EXCLUDED from this arithmetic (never silently
+    # substituted with the smaller wall_s) -- the excluded count is always printed so a reader
+    # can see exactly how much of `done` the RATE line is actually based on.
     lines.append(f"(2) RATE: mean_wall_total_s={None if mean_s is None else round(mean_s, 2)} "
                 f"max_wall_total_s={max_s} ETA={eta_txt} (from the MEAN wall_total_s, never the "
-                "median)")
+                f"median) excluded_no_wall_total_s={stats['excluded_count']}")
     # 7th cold review round 7 P43(d) + 8th round P54: a REAL "CORRECT vs FINISH" recommendation --
     # the round-6 version only printed elapsed/ETA arithmetic, comparing nothing against a PRIOR
     # prediction and evaluating no actual correction cost. `predicted_mean_s` (--predicted-mean-s,
@@ -778,10 +844,18 @@ def run_watch(args) -> int:
                                      "recorded in the manifest yet -- cannot sample a worker\n")
                 else:
                     calib_sample = calibrate_fn(router_pid)
-                    if calib_sample is True:
+                    # P12(c): confirm via the router log whether this sample was actually taken
+                    # DURING an in-flight request -- only THAT state tells the operator whether
+                    # "busy" detection is seeing something real, not background noise.
+                    in_flight = _request_in_flight(args.router_log)
+                    if calib_sample is True and in_flight is True:
                         busy_observed_box["seen"] = True
+                    calibration = {"busy_cpu": calib_sample if in_flight is True else None,
+                                  "idle_cpu": calib_sample if in_flight is False else None,
+                                  "at": now}
                     _append(out_path, f"[agentbench_watch] CALIBRATION (tick 1): "
-                                     f"worker_busy={calib_sample} (router_pid={router_pid})\n")
+                                     f"worker_busy={calib_sample} (router_pid={router_pid}) "
+                                     f"in_flight={in_flight} calibration={calibration}\n")
             block = build_assessment(rows, prev_count, args.total, args.driver_pid,
                                      args.router_log, args.stall_s, ref, now, label=label,
                                      router_pid=router_pid,
