@@ -1158,16 +1158,40 @@ def prepare_exclusions(tasks: list, scripts_root, runner=subprocess.run,
 # --------------------------------------------------------------------------- dual-submit driver
 def _parse_args_or_error(raw) -> tuple:
     """6th cold review round 6 P27: mirrors `agent_loop._parse_args_with_error` -- malformed
-    arguments are NEVER silently turned into `{}`. Returns (args: dict, error: str|None)."""
+    arguments are NEVER silently turned into `{}`.
+
+    7th cold review round 7 addendum R5: the fed-back text is the BARE `str(e)`, no
+    "Error parsing arguments: " prefix -- see `agent_loop._parse_args_with_error`'s docstring;
+    these two functions must stay byte-for-byte identical in their error TEXT, since
+    `DualSubmitDriver.complete()`'s `turn_entry["tool_result"]` (P43a) must match exactly what
+    `agent_loop.run_agent`'s OWN re-parse of the same raw string feeds back to the model. Returns
+    (args: dict, error: str|None)."""
     if isinstance(raw, dict):
         return raw, None
     try:
         v = json.loads(raw)
     except (json.JSONDecodeError, TypeError) as e:
-        return {}, f"Error parsing arguments: {e}"
+        return {}, str(e)
     if not isinstance(v, dict):
-        return {}, f"Error parsing arguments: expected a JSON object, got {type(v).__name__}"
+        return {}, f"expected a JSON object, got {type(v).__name__}"
     return v, None
+
+
+def _extract_tool_arg(args: dict, expected_key: str):
+    """7th cold review round 7 addendum R2: mirrors upstream AgentBench task.py's own
+    `_extract_function`, which does `list(json.loads(args).values())[0]` -- upstream ignores
+    argument KEY NAMES entirely and takes the first value by POSITION. Our tools each declare a
+    single named JSON-schema property (`script`, `thought`, `answer`), so: prefer the EXPECTED
+    key when present (handles extra hallucinated keys alongside the correct one), falling back to
+    the first value in the dict when it is absent (handles a plausible-but-wrong key name, e.g. a
+    model emitting `command` instead of `script` for `bash_action` -- common enough across model
+    families that dropping the argument entirely, as the old `args.get(expected_key, "")` did,
+    silently turned a real action into a no-op)."""
+    if expected_key in args:
+        return args[expected_key]
+    if args:
+        return next(iter(args.values()))
+    return None
 
 
 class DualSubmitDriver:
@@ -1233,7 +1257,10 @@ class DualSubmitDriver:
             # successfully and silently credit the episode.
             if parse_error is None and name == "finish_action":
                 fn["name"] = self.SUBMIT_TOOL
-                fn["arguments"] = json.dumps({"answer": args.get("thought")})
+                # R2: _extract_tool_arg, not a bare args.get("thought") -- a model that emits
+                # e.g. {"reason": "..."} instead of {"thought": "..."} must not have its
+                # submission silently become {"answer": None}.
+                fn["arguments"] = json.dumps({"answer": _extract_tool_arg(args, "thought")})
                 # cold-review N10: run_agent only ever DISPATCHES tool_calls[0]
                 # (single_tool_call_per_turn=True) -- a submit riding in position 1+ never actually
                 # runs, so it must not be recorded as having submitted anything.
@@ -1241,6 +1268,11 @@ class DualSubmitDriver:
                     self.submitted_via = "finish"
                     turn_entry["tool_result"] = "submitted"
             elif parse_error is None and name == self.SUBMIT_TOOL:
+                # R2: normalize answer_action's args to the canonical {"answer": ...} key too, by
+                # the SAME rule -- agent_loop.run_agent re-parses THIS rewritten arguments string,
+                # so `submitted["answer"]` must never silently come back None because the model
+                # used a plausible-but-wrong key (e.g. "response" instead of "answer").
+                fn["arguments"] = json.dumps({"answer": _extract_tool_arg(args, "answer")})
                 if i == 0:
                     self.submitted_via = "answer"
                     turn_entry["tool_result"] = "submitted"
@@ -1279,7 +1311,9 @@ def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
     shell_died_flag.setdefault("hit", False)
 
     def _bash(args: dict) -> str:
-        script = args.get("script", "")
+        # R2: _extract_tool_arg, not a bare args.get("script", "") -- models commonly emit
+        # "command" instead of "script"; upstream ignores the key name entirely.
+        script = _extract_tool_arg(args, "script") or ""
         res = shell.run(script, timeout_s=timeout)
         if res["shell_died"]:
             shell_died_flag["hit"] = True

@@ -50,15 +50,20 @@ def _parse_args_with_error(raw) -> tuple:
     (if empty) submission, reproduced as a passing one-turn episode on a state-check task.
     Mirrors upstream AgentBench task.py's own parse-failure handling (`except Exception as e: ...
     content=str(e)`, feeding the exception text back as a tool response and continuing the
-    episode, never ending it). Returns (args: dict, error: str|None)."""
+    episode, never ending it).
+
+    7th cold review round 7 addendum R5: the fed-back text is the BARE `str(e)`, with NO
+    "Error parsing arguments: " prefix -- upstream task.py:575-592 feeds back the raw exception
+    text verbatim, and our added prefix is foreign to a model that has seen upstream's exact
+    phrasing during training/eval on the real benchmark. Returns (args: dict, error: str|None)."""
     if isinstance(raw, dict):
         return raw, None
     try:
         v = json.loads(raw)
     except (json.JSONDecodeError, TypeError) as e:
-        return {}, f"Error parsing arguments: {e}"
+        return {}, str(e)
     if not isinstance(v, dict):
-        return {}, f"Error parsing arguments: expected a JSON object, got {type(v).__name__}"
+        return {}, f"expected a JSON object, got {type(v).__name__}"
     return v, None
 
 

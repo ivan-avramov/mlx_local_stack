@@ -2094,7 +2094,9 @@ def test_run_task_malformed_submit_args_save_fed_back_parse_error_in_transcript_
     turns = row["_transcript_turns"]
     assert len(turns) == 2
     assert turns[0]["tool_result"] is not None
-    assert "Error parsing arguments" in turns[0]["tool_result"]
+    # R5: bare str(e), no "Error parsing arguments: " prefix -- upstream task.py:575-592.
+    assert "Expecting property name" in turns[0]["tool_result"]
+    assert not turns[0]["tool_result"].startswith("Error parsing arguments")
     assert turns[0]["tool_call"]["parse_error"] == turns[0]["tool_result"]
 
 
@@ -2117,6 +2119,55 @@ def test_run_task_unexpected_grading_exception_preserves_completed_turns_P43a():
     assert row["setup_error"] is True
     assert row["error"] is not None and "boom during grading" in row["error"]
     assert len(row["_transcript_turns"]) == 1   # the episode's real turn survives
+
+
+# --------------------------------------------------------------------------- R2 upstream-fidelity arg extraction
+def test_extract_tool_arg_prefers_the_expected_key_when_present():
+    assert AB._extract_tool_arg({"script": "ls", "extra": "junk"}, "script") == "ls"
+
+
+def test_extract_tool_arg_falls_back_to_the_first_value_when_the_expected_key_is_absent():
+    """7th cold review round 7 addendum R2: upstream's `_extract_function` ignores key NAMES
+    entirely (`list(json.loads(args).values())[0]`) -- a model emitting `command` instead of
+    `script` must still have its argument used, not silently dropped."""
+    assert AB._extract_tool_arg({"command": "echo hi"}, "script") == "echo hi"
+
+
+def test_extract_tool_arg_none_when_args_is_empty():
+    assert AB._extract_tool_arg({}, "script") is None
+
+
+def test_run_task_bash_action_with_wrong_key_name_still_runs_the_script_R2():
+    """R2's literal reproduction: `bash_action({"command":"echo hi"})` must actually run
+    `echo hi`, not silently execute an empty script because `args.get("script")` found nothing."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[
+        complete_result(tool_calls=[tool_call("bash_action", {"command": "echo R2_MARKER_919"})]),
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})]),
+    ])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["passed"] is True
+    turns = row["_transcript_turns"]
+    assert "R2_MARKER_919" in turns[0]["tool_result"]
+
+
+def test_run_task_answer_action_with_wrong_key_name_still_submits_the_answer_R2():
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"response": "love"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["answer"] == "love"
+    assert row["passed"] is True
+
+
+def test_run_task_finish_action_with_wrong_key_name_still_submits_the_thought_as_answer_R2():
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("finish_action", {"reason": "love"})])])
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["answer"] == "love"
+    assert row["passed"] is True
 
 
 def test_run_task_only_one_container_touched_per_task():
