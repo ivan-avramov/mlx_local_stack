@@ -358,9 +358,11 @@ only ever comes from the FIRST tool call of its turn, matching what actually run
 `submitted_via` (`answer`/`finish`/none), `answer`, `per_turn_completion_tokens`,
 `completion_tokens_total`, `per_turn_finish_reasons` (includes `tool_calls`, which the server
 returns on every tool-calling turn), `converged` (all turns converged against their own RESOLVED
-thinking budget; a turn with no `completion_tokens` at all can never be PROVEN convergent and fails
-the episode closed, tagged `missing_usage`), `per_turn_resolved_budget`, `nonconv_kinds`
-(`missing_usage`/`budget_hit`/`bad_finish_reason`), `budget_hits`, `decode_tps`/
+thinking budget -- a response missing `usage.completion_tokens`/`usage.prompt_tokens`, a
+`finish_reason`, or with neither `content` nor `tool_calls` can never reach this field at all: P24
+makes `bench.client.probe` ESCALATE those as a `MalformedResponseError` -> `TransportFailure`, a
+serving anomaly, never a scored row), `per_turn_resolved_budget`, `nonconv_kinds`
+(`budget_hit`/`bad_finish_reason`), `budget_hits`, `decode_tps`/
 `per_turn_decode_tps`, `wall_s`, `tool_calls`, `tool_timeouts`, `repeat_calls` (the loop guard is
 disabled for this axis — the round cap is the bound — so identical repeats are counted, not
 aborted), `exec_timeout`, `shell_died` (true whether the death was model- or start-caused; see

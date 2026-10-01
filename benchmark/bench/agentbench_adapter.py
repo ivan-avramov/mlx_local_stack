@@ -1292,11 +1292,13 @@ def evaluate_convergence(per_turn: list, thinking_budget, context_limit, max_tok
     to the declared budget when context_limit/max_tokens are unknown). Episode `converged` = ALL
     turns converged; `budget_hits` counts turns that hit their own resolved budget.
 
-    5th cold review P11: a turn with `completion_tokens is None` (the server omitted `usage`) can
-    never be PROVEN convergent -- fail closed. That turn's own `per_turn_converged` entry is `None`
-    (unknown), but it still forces the WHOLE episode to `converged=False` via
-    `nonconv_kinds += ["missing_usage"]`, exactly like any other non-convergence mechanism (a
-    `finish=="stop"` alone must never read as a silent pass)."""
+    6th cold review round 6 P24 (HIGH): the `missing_usage` nonconv_kind (5th cold review P11) is
+    REMOVED -- `bench.client.probe` now REFUSES (`MalformedResponseError` -> `TransportFailure`
+    escalation, never a scored row) any response missing `usage.completion_tokens`, so a turn
+    reaching this function with `completion_tokens is None` cannot happen on a live run any more.
+    The `ct is None` branch below stays purely DEFENSIVE (never crash on malformed/historical
+    data) -- it does not force episode non-convergence; that invariant is now enforced upstream,
+    at the transport boundary, where it belongs."""
     finish_reasons, budget_hits = [], 0
     per_turn_converged = []
     per_turn_resolved_budget = []
@@ -1313,11 +1315,7 @@ def evaluate_convergence(per_turn: list, thinking_budget, context_limit, max_tok
             if rb is not None:
                 budget = rb
         per_turn_resolved_budget.append(budget)
-        if ct is None:
-            per_turn_converged.append(None)
-            nonconv_kinds.add("missing_usage")
-            continue
-        hit_budget = bool(budget is not None and ct >= budget)
+        hit_budget = bool(budget is not None and ct is not None and ct >= budget)
         if hit_budget:
             budget_hits += 1
             nonconv_kinds.add("budget_hit")
@@ -1327,8 +1325,6 @@ def evaluate_convergence(per_turn: list, thinking_budget, context_limit, max_tok
         per_turn_converged.append(ok_finish and not hit_budget)
     if not per_turn:
         episode_converged = None
-    elif "missing_usage" in nonconv_kinds:
-        episode_converged = False
     else:
         episode_converged = all(per_turn_converged)
     return {"converged": episode_converged, "per_turn_finish_reasons": finish_reasons,

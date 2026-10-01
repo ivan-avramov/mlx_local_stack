@@ -81,11 +81,25 @@ def probe(model: str, messages: list, params: dict, timeout: float = 3600, tools
     tm = r.get("timings") or {}
     us = r.get("usage") or {}
     msg = choices[0]["message"]
+    # 6th cold review round 6 P24 (HIGH): the mlx-serve router ALWAYS returns content-or-
+    # tool_calls, a finish_reason, and usage.{prompt,completion}_tokens -- their absence is a
+    # SERVING anomaly, never a legitimate "the model produced nothing" signal, and must never
+    # silently become a scored failure/non-convergence. Reproduced: `{"choices":[{"message":{}}]}`
+    # produced an eight-turn, scored `no_submit` row end-to-end.
+    if not msg.get("content") and not msg.get("tool_calls"):
+        raise MalformedResponseError(f"{model}: assistant message has neither content nor "
+                                     f"tool_calls (keys={sorted(msg.keys())})")
+    if choices[0].get("finish_reason") is None:
+        raise MalformedResponseError(f"{model}: choices[0] is missing finish_reason")
+    prompt_tokens = us.get("prompt_tokens") or tm.get("prompt_n")
+    if prompt_tokens is None or us.get("completion_tokens") is None:
+        raise MalformedResponseError(f"{model}: usage is missing prompt_tokens/completion_tokens "
+                                     f"(usage={us!r}, timings.prompt_n={tm.get('prompt_n')!r})")
     return {
         "content": msg.get("content") or "",
         "reasoning": msg.get("reasoning") or "",
         "tool_calls": msg.get("tool_calls") or [],
-        "prompt_tokens": us.get("prompt_tokens") or tm.get("prompt_n"),
+        "prompt_tokens": prompt_tokens,
         "completion_tokens": us.get("completion_tokens"),
         "decode_tps": tm.get("predicted_per_second"),
         "peak_mem_gb": tm.get("peak_memory"),

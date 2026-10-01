@@ -1625,15 +1625,16 @@ def test_evaluate_convergence_none_for_empty_episode():
     assert out["converged"] is None and out["budget_hits"] == 0
 
 
-def test_evaluate_convergence_missing_completion_tokens_is_missing_usage_nonconv_P11():
-    """P11: a turn with no `completion_tokens` (the server omitted usage) can never be PROVEN
-    convergent -- fail closed. The episode is converged=False with nonconv_kinds containing
-    'missing_usage', never a silent pass just because finish_reason looked fine."""
+def test_evaluate_convergence_missing_completion_tokens_is_defensive_not_a_crash_P24():
+    """6th cold review round 6 P24: the P11 `missing_usage` nonconv_kind is REMOVED -- a response
+    missing `completion_tokens` now ESCALATES at the client boundary
+    (bench.client.probe -> MalformedResponseError -> TransportFailure, see test_driver.py) and
+    never reaches this function on a live run. This only proves the DEFENSIVE fallback (malformed/
+    historical data) does not crash and does not force non-convergence on its own."""
     per_turn = [{"completion_tokens": None, "finish_reason": "stop", "prompt_tokens": 1}]
     out = AB.evaluate_convergence(per_turn, thinking_budget=100, context_limit=None, max_tokens=None)
-    assert out["converged"] is False
-    assert out["per_turn_converged"] == [None]
-    assert "missing_usage" in out["nonconv_kinds"]
+    assert out["converged"] is True
+    assert "missing_usage" not in out["nonconv_kinds"]
 
 
 def test_evaluate_convergence_nonconv_kinds_empty_when_converged():

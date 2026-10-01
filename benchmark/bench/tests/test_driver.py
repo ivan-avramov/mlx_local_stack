@@ -109,13 +109,48 @@ def test_probe_accepts_a_tool_call_only_message_with_empty_content(monkeypatch):
     assert len(out["tool_calls"]) == 1
 
 
-def test_probe_accepts_a_response_missing_usage(monkeypatch):
-    """P11's missing_usage nonconv_kind depends on a response that's missing `usage` being
-    accepted here (not raised as malformed) -- the convergence layer handles that case, not the
-    transport layer."""
+def test_probe_raises_on_a_response_missing_usage_P24(monkeypatch):
+    """6th cold review round 6 P24 (HIGH): superseded P11's `missing_usage` nonconv_kind design --
+    the mlx-serve router ALWAYS returns usage.{prompt,completion}_tokens; their absence is a
+    SERVING anomaly, never a legitimate model signal, and must ESCALATE at the transport boundary
+    rather than quietly becoming a scored (non-converged) row."""
     srv = _server_returning({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]})
+    client = _client_against(srv, monkeypatch)
+    with pytest.raises(client.MalformedResponseError, match="usage"):
+        client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
+    srv.shutdown()
+
+
+def test_probe_raises_on_missing_finish_reason_P24(monkeypatch):
+    srv = _server_returning({"choices": [{"message": {"content": "ok"}}],
+                             "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+    client = _client_against(srv, monkeypatch)
+    with pytest.raises(client.MalformedResponseError, match="finish_reason"):
+        client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
+    srv.shutdown()
+
+
+def test_probe_raises_on_empty_message_neither_content_nor_tool_calls_P24(monkeypatch):
+    """P24 reproduction: `{"choices":[{"message":{}}]}` used to produce an eight-turn, scored
+    `no_submit` row end-to-end -- an assistant message with NEITHER content nor tool_calls is a
+    serving anomaly, not a legitimate empty turn."""
+    srv = _server_returning({"choices": [{"message": {}, "finish_reason": "stop"}],
+                             "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+    client = _client_against(srv, monkeypatch)
+    with pytest.raises(client.MalformedResponseError, match="neither content nor tool_calls"):
+        client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
+    srv.shutdown()
+
+
+def test_probe_accepts_prompt_tokens_from_timings_fallback_P24(monkeypatch):
+    """The usage-presence check must honor the SAME prompt_tokens fallback (usage.prompt_tokens
+    OR timings.prompt_n) the return value itself uses -- not re-require usage.prompt_tokens
+    directly when the timings block already supplies it."""
+    srv = _server_returning({"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+                             "usage": {"completion_tokens": 5},
+                             "timings": {"prompt_n": 1000, "predicted_per_second": 20.0}})
     client = _client_against(srv, monkeypatch)
     out = client.probe("m", [{"role": "user", "content": "hi"}], {"max_tokens": 16})
     srv.shutdown()
-    assert out["content"] == "ok"
-    assert out["completion_tokens"] is None
+    assert out["prompt_tokens"] == 1000
+    assert out["completion_tokens"] == 5

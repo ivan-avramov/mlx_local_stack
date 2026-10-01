@@ -404,12 +404,16 @@ def test_summarize_acc_strict_requires_passed_and_converged_P11():
 
 
 def test_summarize_conv_rate_and_nonconv_kind_counts_P11():
+    """summarize()'s aggregation is a generic string counter over whatever each row's
+    `nonconv_kinds` list contains -- `missing_usage` was retired as a PRODUCED kind by P24 (it now
+    escalates at the client boundary instead), but the counting mechanism itself is agnostic to
+    the specific label strings."""
     rows = [_row("a", passed=True, converged=True),
            _row("b", passed=False, converged=False, nonconv_kinds=["budget_hit"]),
-           _row("c", passed=False, converged=False, nonconv_kinds=["missing_usage", "budget_hit"])]
+           _row("c", passed=False, converged=False, nonconv_kinds=["bad_finish_reason", "budget_hit"])]
     summary = R.summarize(rows)
     assert summary["conv_rate"] == round(1 / 3, 3)
-    assert summary["nonconv_kind_counts"] == {"budget_hit": 2, "missing_usage": 1}
+    assert summary["nonconv_kind_counts"] == {"budget_hit": 2, "bad_finish_reason": 1}
 
 
 def test_summarize_acc_strict_denominator_excludes_setup_errors_P11():
