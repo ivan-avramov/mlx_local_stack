@@ -1,40 +1,59 @@
 """M54: AgentBench `os-std` adapter — corpus loading, task-config normalization (mirrors
 upstream `task.py`'s `_load_configs`/`_evaluate_answer` semantics exactly), one-container-per-task
-lifecycle over `docker`, and the dual-submit shim that lets agent_loop.run_agent (which only
-recognizes ONE literal `submit_tool` name) terminate on either upstream tool.
+lifecycle over `docker` with a persistent per-task shell session (upstream-faithful), and the
+dual-submit shim that lets agent_loop.run_agent terminate on either upstream tool.
 
 Upstream: THUDM/AgentBench (Apache-2.0), pinned commit d1e4a10db08c87075c78972e48ecc182be03e2d5,
-`os-std` split (`configs/tasks/os.yaml`, `src/server/tasks/os_interaction/task.py`). Corpus
-vendored at `benchmark/corpora/agentbench_os_v1.jsonl` (+ manifest + scripts + LICENSE).
+`os-std` split (`configs/tasks/os.yaml`, `src/server/tasks/os_interaction/task.py`,
+`src/server/tasks/os_interaction/environment.py`). Corpus vendored at
+`benchmark/corpora/agentbench_os_v1.jsonl` (+ manifest + scripts + LICENSE).
 
 DUAL-SUBMIT DESIGN NOTE. Upstream's os-std protocol has TWO tools that end an episode
 (`answer_action`, `finish_action`); `agent_loop.run_agent` only matches a single literal
-`submit_tool` name. Rather than editing the shared, heavily-tested `agent_loop.py`, this module
-wraps the Driver: `DualSubmitDriver.complete()` renames any `finish_action` tool call to the
+`submit_tool` name. `DualSubmitDriver.complete()` renames any `finish_action` tool call to the
 canonical `answer_action` (folding its `thought` into an `answer` key) BEFORE returning to
 run_agent, so termination is a single-name match from run_agent's point of view, while the TWO
-upstream tool schemas still reach the model verbatim (schemas come from the `tools` list, which
-this module never touches). `submitted_via` on the wrapper records which the model actually used.
+upstream tool schemas still reach the model verbatim. `submitted_via` records which was used.
 
-CONTAINER LIFECYCLE. One task = one container: create -> init scripts -> start (background) ->
-agent loop (bash_action -> `docker exec`) -> evaluate (match, or the check-script chain against
-the SAME container) -> `docker rm -f`, always in a `finally` (success, failure, timeout,
-KeyboardInterrupt all remove the container — AC9).
+CONTAINER LIFECYCLE (cold-review F4a: upstream-faithful, not one `docker exec` per command). One
+task = one container: create (`-w /root --memory 1g --memory-swap 1g --cpus 2`, environment.py:20-
+29) -> init scripts (fresh non-interactive `docker exec`, mirroring `execute_independent`) -> a
+SINGLE persistent `docker exec -i <name> /bin/bash --login` session for `start` AND every
+`bash_action` (mirroring `execute`/the session Container upstream uses — this is what makes a
+`start` script's `cd`/`su -`/env vars persist into later `bash_action` calls) -> evaluate (match,
+or the check-script chain, each via a FRESH non-interactive `docker exec`, mirroring
+`execute_independent` again) -> `docker rm -f`, always in a `finally` (success, failure, timeout,
+KeyboardInterrupt all remove the container and close the shell — AC9).
 
-D2 EXCLUSION (pre-registered, C107). Before any model call: for every CHECK task (never for
-`match` tasks), run `evaluation.example.code` to completion in two independent FRESH containers
-and compare stdout. No gold (either run errors/times out) or disagreeing golds -> excluded with a
-reason. This is a diagnostic/inclusion decision only — the cached gold is NOT substituted into
-per-item grading; grading always re-runs the check chain (including any `example`-script
-positions) live in the task's own post-agent container, exactly as task.py does.
+TRANSPORT VS INFRA FAILURES (cold-review F1). A `driver.complete` exception (HTTP error, timeout,
+connection error) surfaces from `agent_loop.run_agent` as `outcome=server_error` + a populated
+`error` string — AGENTS.md: transport/HTTP failures ESCALATE, they are NEVER graded. `run_task`
+detects exactly that signature and raises `TransportFailure` instead of returning a row (container
+still cleaned up in `finally`). A DOCKER-side setup/evaluate failure (container wouldn't start, an
+init/start script failed, grading itself errored) stays a labelled row with `setup_error: true` so
+the CLI can report and exclude it from the accuracy denominator without crashing the batch.
+
+D2 EXCLUSION (pre-registered, C107; cold-review F6/F7). Before any model call, for every CHECK task
+(never `match`): run `evaluation.example.code` to completion in two FRESH containers with TWO
+DIFFERENT placeholder "answers" (`""` and a sentinel). Disagreement reveals the example script
+reads the answer argument (`example_reads_answer`) — a blind spot in treating a null check-slot as
+an answer-independent gold. Empty stdout at either run, or any failure/timeout, is `no_gold`. This
+is a corpus-level, not per-model, artifact (see `exclusions_artifact_path` et al.) — the cached
+gold is NOT substituted into per-item grading; grading always re-runs the check chain live in the
+task's own post-agent container, exactly as task.py does.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 import re
+import shlex
+import statistics
 import subprocess
+import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Callable
 
@@ -86,8 +105,32 @@ Always use a tool provided instead of simply responding with content."""
 # `_inject_initial_messages` user turn template.
 TASK_TEMPLATE = "Now, I will start a new problem in a new OS. My problem is:\n\n{description}"
 
-TRUNCATE_CHARS = 8000
-DEFAULT_EXEC_TIMEOUT_S = 60.0
+# task.py:558-566 (empty tool_calls re-prompt) and :660-668 (bash-output wrapping), VERBATIM.
+NO_TOOL_CALL_REPROMPT = "No executable tool calls found. Please call a tool instead"
+TRUNCATE_LIMIT = 800
+TRUNCATE_KEEP = 780
+TRUNCATE_MARKER = "\n[truncated because the output is too long]"
+OUTPUT_PREFIX = "The output of the OS:\n\n"
+EMPTY_OUTPUT_TEXT = "The output of the OS is empty."
+
+DEFAULT_EXEC_TIMEOUT_S = 30.0          # cold-review F5(e); upstream per-command bound
+IMAGE_NAMES = ("default", "packages", "ubuntu")
+# D2 answer-dependence probe (cold-review F7): the two placeholders fed to `evaluation.example`
+# at a null check-slot. Disagreement between them means the script reads the answer argument.
+ANSWER_PLACEHOLDER_PRIMARY = ""
+ANSWER_PLACEHOLDER_PROBE = "__M54_PROBE__"
+# Distinct, non-prefix-colliding container-name prefixes (cold-review F16): the old scheme had the
+# generate prefix ("agentbench-os") as a literal PREFIX of the prepare prefix
+# ("agentbench-os-prep"), so a generate-mode startup sweep silently killed live prepare containers
+# (and vice versa) whenever both ran the same day.
+GENERATE_CONTAINER_PREFIX = "agentbench-os-run"
+PREPARE_CONTAINER_PREFIX = "agentbench-os-prep"
+
+
+class TransportFailure(RuntimeError):
+    """`driver.complete` raised during the agent loop (HTTP error/timeout/connection error).
+    AGENTS.md: transport/HTTP failures ESCALATE, they are NEVER graded -- `run_task` raises this
+    instead of returning a row; the container is still removed (`finally`)."""
 
 
 # --------------------------------------------------------------------------- corpus
@@ -101,12 +144,6 @@ def load_corpus(path, limit=None) -> list:
     return rows[:limit] if limit else rows
 
 
-def load_exclusions(path) -> list:
-    if not Path(path).exists():
-        return []
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
 def apply_exclusions(tasks: list, exclusions: list) -> list:
     excluded_ids = {e["id"] for e in exclusions}
     return [t for t in tasks if t["id"] not in excluded_ids]
@@ -118,6 +155,52 @@ def pilot_draw(task_ids: list, seed: int, n: int = 5) -> list:
     pool = list(task_ids)
     random.Random(seed).shuffle(pool)
     return pool[:n]
+
+
+def sha256_file(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+# --------------------------------------------------------------------------- corpus-level exclusions artifact
+def exclusions_artifact_path(corpus_path) -> Path:
+    """A CORPUS artifact, not per-model/per-run (cold-review F6): sibling of the corpus jsonl,
+    e.g. `agentbench_os_v1.jsonl` -> `agentbench_os_v1.exclusions.json`."""
+    p = Path(corpus_path)
+    stem = p.name[:-len(".jsonl")] if p.name.endswith(".jsonl") else p.name
+    return p.parent / f"{stem}.exclusions.json"
+
+
+def write_exclusions_artifact(path, *, corpus_sha256: str, image_ids: dict, golds: dict,
+                              exclusions: list, complete: bool) -> dict:
+    doc = {"corpus_sha256": corpus_sha256, "image_ids": image_ids, "golds": golds,
+          "exclusions": exclusions, "complete": complete, "generated_at": int(time.time())}
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(str(path) + ".tmp")
+    tmp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return doc
+
+
+def read_exclusions_artifact(path):
+    p = Path(path)
+    if not p.exists():
+        return None
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def validate_exclusions_artifact(doc, *, corpus_sha256: str, image_ids: dict):
+    """None if `doc` is usable for a generate run against the CURRENT corpus + images; else a
+    human-readable refusal reason."""
+    if doc is None:
+        return "no exclusions artifact -- run --prepare first"
+    if not doc.get("complete"):
+        return ("exclusions artifact has complete=false (produced with --limit, or an earlier "
+               "--prepare was interrupted) -- rerun --prepare over the WHOLE corpus")
+    if doc.get("corpus_sha256") != corpus_sha256:
+        return "corpus changed since --prepare (sha256 mismatch) -- rerun --prepare"
+    if doc.get("image_ids") != image_ids:
+        return "local-os image ids changed since --prepare -- rerun --prepare"
+    return None
 
 
 # --------------------------------------------------------------------------- task config
@@ -189,7 +272,7 @@ def docker_available(runner=subprocess.run) -> bool:
     return getattr(proc, "returncode", 1) == 0
 
 
-def images_available(images=("default", "packages", "ubuntu"), runner=subprocess.run) -> dict:
+def images_available(images=IMAGE_NAMES, runner=subprocess.run) -> dict:
     out = {}
     for name in images:
         try:
@@ -201,14 +284,29 @@ def images_available(images=("default", "packages", "ubuntu"), runner=subprocess
     return out
 
 
+def current_image_ids(images=IMAGE_NAMES, runner=subprocess.run) -> dict:
+    """{name: `docker image inspect --format '{{.Id}}'` output, or None if unavailable}."""
+    out = {}
+    for name in images:
+        try:
+            proc = runner(["docker", "image", "inspect", "--format", "{{.Id}}", f"local-os/{name}"],
+                          capture_output=True, text=True, timeout=10)
+            out[name] = (proc.stdout or "").strip() if getattr(proc, "returncode", 1) == 0 else None
+        except Exception:  # noqa: BLE001
+            out[name] = None
+    return out
+
+
 def container_name(prefix: str, task_id: str) -> str:
     safe = re.sub(r"[^a-zA-Z0-9_.-]", "-", task_id)
     return f"{prefix}-{safe}"
 
 
 def sweep_stale_containers(prefix: str, runner=subprocess.run) -> list:
-    """Remove any container whose name starts with `prefix` (a crash/interrupt from a prior run
-    left it behind). Returns the names removed. Best-effort: never raises."""
+    """Remove any container whose name starts with `prefix-` (a crash/interrupt from a prior run
+    left it behind). Returns the names removed. Best-effort: never raises. `prefix` must not be a
+    PREFIX of another live prefix (cold-review F16) -- callers use the distinct
+    GENERATE_/PREPARE_CONTAINER_PREFIX constants, never a shared stem."""
     try:
         proc = runner(["docker", "ps", "-a", "--filter", f"name=^{prefix}-", "--format", "{{.Names}}"],
                       capture_output=True, text=True, timeout=30)
@@ -221,8 +319,13 @@ def sweep_stale_containers(prefix: str, runner=subprocess.run) -> list:
 
 
 def create_container(image: str, name: str, runner=subprocess.run, timeout: float = 60.0) -> None:
-    proc = runner(["docker", "run", "-d", "--rm=false", "--name", name, image, "sleep", "infinity"],
-                  capture_output=True, text=True, timeout=timeout)
+    """`-w /root --memory 1g --memory-swap 1g --cpus 2` mirror upstream's
+    `environment.py:create_docker_container` (WorkingDir=/root, Memory=1GiB, MemorySwap=Memory i.e.
+    swap disabled, NanoCpus=2e9 i.e. 2 vCPUs)."""
+    proc = runner(["docker", "run", "-d", "--rm=false", "--name", name, "-w", "/root",
+                  "--memory", "1g", "--memory-swap", "1g", "--cpus", "2",
+                  image, "sleep", "infinity"],
+                 capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(f"docker run {image} (name={name}) failed: {(proc.stderr or '')[:300]}")
 
@@ -236,9 +339,11 @@ def remove_container(name: str, runner=subprocess.run) -> None:
 
 def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run,
                 extra_params=()) -> dict:
-    """Run one (language, code) script inside `container`. Returns
+    """One FRESH, non-interactive `docker exec` (mirrors task.py `execute_independent`, used for
+    init scripts and all evaluation/check/example scripts -- NEVER for `start` or `bash_action`,
+    which share the persistent session; see `PersistentShell`). Returns
     {exit_code, stdout, stderr, timed_out}. `extra_params` are appended argv (the answer / prior
-    check-script stdout chain), mirroring task.py `execute_independent`."""
+    check-script stdout chain)."""
     lang, code = lang_code
     params = [str(p) for p in extra_params]
     if lang == "bash":
@@ -257,10 +362,110 @@ def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run
             "timed_out": False}
 
 
-def truncate_output(text: str, limit: int = TRUNCATE_CHARS):
+def truncate_output(text: str, limit: int = TRUNCATE_LIMIT, keep: int = TRUNCATE_KEEP,
+                    marker: str = TRUNCATE_MARKER):
+    """task.py:660-668, verbatim mechanism: over `limit` chars -> first `keep` chars + marker
+    (the result can exceed `limit` once the marker is added, exactly like upstream)."""
     if len(text) <= limit:
         return text, False
-    return text[:limit], True
+    return text[:keep] + marker, True
+
+
+def wrap_os_output(text: str) -> str:
+    """task.py:660-668 VERBATIM wrapping: the already-(possibly)-truncated text, or the exact
+    empty-output sentence."""
+    return f"{OUTPUT_PREFIX}{text}" if text else EMPTY_OUTPUT_TEXT
+
+
+# --------------------------------------------------------------------------- persistent shell (F4a)
+class PersistentShell:
+    """One `docker exec -i <container> /bin/bash --login` process for the life of a task (upstream
+    `Container.execute`'s session, not a fresh exec per command). `start` and every `bash_action`
+    run through it, so a `start` script's `cd`/`su -`/exported vars persist into later commands --
+    a fresh `docker exec` per command (what this adapter did before the cold review) cannot do
+    that at all.
+
+    Protocol: write `timeout -s KILL <timeout> bash -c '<command>'; echo <sentinel>$?\\n` to stdin
+    (the in-container `timeout -s KILL` is a second, hard backstop so a runaway process cannot
+    linger past OUR timeout even if the Python-side wait is somehow delayed); read stdout lines
+    until one starts with `<sentinel>`, parsing the trailing exit code. A unique sentinel per call
+    (not a fixed string) means the command's own output can never be confused with the marker.
+    """
+
+    def __init__(self, container: str, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
+                popen=subprocess.Popen, join_margin: float = 5.0):
+        self.container = container
+        self.timeout = timeout
+        self._popen = popen
+        self.join_margin = join_margin
+        self.proc = None
+
+    def start(self) -> None:
+        self.proc = self._popen(
+            ["docker", "exec", "-i", self.container, "/bin/bash", "--login"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1)
+
+    def run(self, command: str) -> dict:
+        """Returns {output, exit_code, timed_out}. On timeout the process is KILLED (never left
+        to linger) and the caller is told so the episode can be ended."""
+        if self.proc is None:
+            raise RuntimeError("PersistentShell.run() called before start()")
+        sentinel = f"__M54_SENTINEL_{uuid.uuid4().hex}__"
+        inner = f"timeout -s KILL {int(self.timeout)} bash -c {shlex.quote(command)}"
+        full = f"{inner}; echo {sentinel}$?\n"
+        try:
+            self.proc.stdin.write(full)
+            self.proc.stdin.flush()
+        except (BrokenPipeError, ValueError, OSError):
+            return {"output": "", "exit_code": None, "timed_out": True}
+
+        lines: list = []
+        box: dict = {}
+
+        def _reader():
+            while True:
+                try:
+                    line = self.proc.stdout.readline()
+                except (ValueError, OSError):
+                    box["eof"] = True
+                    return
+                if line == "":
+                    box["eof"] = True
+                    return
+                if line.startswith(sentinel):
+                    rc_str = line[len(sentinel):].strip()
+                    box["exit_code"] = int(rc_str) if rc_str.lstrip("-").isdigit() else None
+                    return
+                lines.append(line)
+
+        t = threading.Thread(target=_reader, daemon=True)
+        t.start()
+        t.join(self.timeout + self.join_margin)
+        if t.is_alive() or box.get("eof"):
+            self.kill()
+            return {"output": "".join(lines), "exit_code": None, "timed_out": True}
+        return {"output": "".join(lines), "exit_code": box.get("exit_code"), "timed_out": False}
+
+    def kill(self) -> None:
+        if self.proc is None:
+            return
+        try:
+            self.proc.kill()
+        except Exception:  # noqa: BLE001 -- best-effort
+            pass
+
+    def close(self) -> None:
+        if self.proc is None:
+            return
+        try:
+            self.proc.stdin.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.proc.terminate()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # --------------------------------------------------------------------------- evaluation
@@ -277,12 +482,13 @@ def evaluate_match(answer, match_cfg: dict) -> bool:
 
 def run_check_chain(container: str, check_list: list, example, answer, runner=subprocess.run,
                     timeout: float = DEFAULT_EXEC_TIMEOUT_S) -> bool:
-    """Mirrors task.py `_evaluate_by_check_scripts`: params starts as [str(answer)]; each script
-    runs with the accumulated params and its stdout is appended for the next; a None entry runs
-    `example` instead (the "gold" position); any timeout/nonzero exit fails the whole chain; an
-    ungradable None-with-no-example also fails (same effective outcome as task.py's uncaught
-    TypeError, but never raises here)."""
-    params = [str(answer) if answer is not None else ""]
+    """Mirrors task.py `_evaluate_by_check_scripts` EXACTLY, including `params = [str(answer)]`
+    (cold-review F14): a `finish_action` with no `thought` submits Python `None`, and `str(None)`
+    is the literal string `"None"` sent as argv[1] -- upstream has no special-case for "no answer
+    given", and neither does this. Each script runs with the accumulated params and its stdout is
+    appended for the next; a None entry runs `example` instead (the "gold" position); any
+    timeout/nonzero exit fails the whole chain."""
+    params = [str(answer)]
     for entry in check_list:
         script = entry if entry is not None else example
         if script is None:
@@ -295,9 +501,12 @@ def run_check_chain(container: str, check_list: list, example, answer, runner=su
 
 
 def compute_gold(image: str, init_scripts: list, start, example, container: str,
-                 runner=subprocess.run, timeout: float = DEFAULT_EXEC_TIMEOUT_S):
-    """D2: a FRESH container, init + start, then `example` once. Returns its stdout, or None on
-    any setup/example failure (no gold)."""
+                 runner=subprocess.run, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
+                 answer_placeholder: str = ANSWER_PLACEHOLDER_PRIMARY):
+    """D2: a FRESH container, init + start, then `example` once with `answer_placeholder` as its
+    sole argv (mirrors the chain's `params=[answer]` at the null slot). Returns its stdout, or
+    None on any setup/example failure OR empty stdout (cold-review F7: an empty gold is treated the
+    same as no gold at all, not silently cached as `""`)."""
     remove_container(container, runner)
     try:
         try:
@@ -314,8 +523,8 @@ def compute_gold(image: str, init_scripts: list, start, example, container: str,
                 return None
         if example is None:
             return None
-        res = docker_exec(container, example, timeout, runner, extra_params=[""])
-        if res["timed_out"] or res["exit_code"] != 0:
+        res = docker_exec(container, example, timeout, runner, extra_params=[answer_placeholder])
+        if res["timed_out"] or res["exit_code"] != 0 or not res["stdout"]:
             return None
         return res["stdout"]
     finally:
@@ -324,9 +533,12 @@ def compute_gold(image: str, init_scripts: list, start, example, container: str,
 
 def prepare_exclusions(tasks: list, scripts_root, runner=subprocess.run,
                        timeout: float = DEFAULT_EXEC_TIMEOUT_S,
-                       prefix: str = "agentbench-os-prep") -> tuple:
-    """D2 (AC2), no model calls. Returns (golds: {id: str}, exclusions: [{id, reason, ...}]).
-    `match` tasks are never excluded (never even examined) by this step."""
+                       prefix: str = PREPARE_CONTAINER_PREFIX) -> tuple:
+    """D2 (AC2 + cold-review F7), no model calls. Returns (golds: {id: str}, exclusions:
+    [{id, reason, ...}]). `match` tasks are never excluded (never even examined). The two
+    `compute_gold` runs use DIFFERENT answer placeholders; disagreement means the example script
+    reads its answer argument (`example_reads_answer`) rather than computing an answer-independent
+    ground truth -- a blind spot in treating a null check-slot as "the gold"."""
     golds, exclusions = {}, []
     for task in tasks:
         cfg = task_config(task, scripts_root)
@@ -334,14 +546,15 @@ def prepare_exclusions(tasks: list, scripts_root, runner=subprocess.run,
             continue
         name = container_name(prefix, task["id"])
         g1 = compute_gold(cfg["image"], cfg["init_scripts"], cfg["start"], cfg["example"], name,
-                          runner, timeout)
+                          runner, timeout, answer_placeholder=ANSWER_PLACEHOLDER_PRIMARY)
         g2 = compute_gold(cfg["image"], cfg["init_scripts"], cfg["start"], cfg["example"], name,
-                          runner, timeout)
+                          runner, timeout, answer_placeholder=ANSWER_PLACEHOLDER_PROBE)
         if g1 is None or g2 is None:
             exclusions.append({"id": task["id"], "reason": "no_gold"})
             continue
         if g1 != g2:
-            exclusions.append({"id": task["id"], "reason": "gold_mismatch", "gold_1": g1, "gold_2": g2})
+            exclusions.append({"id": task["id"], "reason": "example_reads_answer",
+                               "gold_primary": g1, "gold_probe": g2})
             continue
         golds[task["id"]] = g1
     return golds, exclusions
@@ -361,7 +574,9 @@ def _parse_args(raw) -> dict:
 class DualSubmitDriver:
     """Wraps a Driver so BOTH `answer_action` and `finish_action` end an `agent_loop.run_agent`
     episode (see module docstring). Also records per-turn telemetry (`per_turn`) since
-    `run_agent`'s return value only carries AGGREGATE counters, and AC5 wants it per turn."""
+    `run_agent`'s return value only carries AGGREGATE counters, and the row schema wants it per
+    turn (finish_reason for the `tool_calls`-vs-`stop` convergence rule, and a per-turn decode_tps
+    for timeout self-derivation -- cold-review F2/F8)."""
 
     SUBMIT_TOOL = "answer_action"
 
@@ -378,9 +593,12 @@ class DualSubmitDriver:
         out = self.inner.complete(model, messages, params,
                                   timeout=timeout if timeout is not None else self.timeout,
                                   tools=tools)
-        self.per_turn.append({"completion_tokens": out.get("completion_tokens"),
-                              "prompt_tokens": out.get("prompt_tokens"),
-                              "finish_reason": out.get("finish_reason")})
+        tm = out.get("raw_timings") or {}
+        ct = out.get("completion_tokens")
+        pred_ms = tm.get("predicted_ms")
+        decode_tps = (ct / (pred_ms / 1000.0)) if (pred_ms and ct) else out.get("decode_tps")
+        self.per_turn.append({"completion_tokens": ct, "prompt_tokens": out.get("prompt_tokens"),
+                              "finish_reason": out.get("finish_reason"), "decode_tps": decode_tps})
         new_tcs = []
         for tc in (out.get("tool_calls") or []):
             fn = dict(tc.get("function") or {})
@@ -400,28 +618,34 @@ class DualSubmitDriver:
         return out
 
 
-def build_tools(container: str, runner=subprocess.run, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
-                counters: dict | None = None) -> list:
-    """The three upstream tools. `bash_action` actually executes (via `docker exec`); the other
-    two are no-ops in dispatch terms -- DualSubmitDriver renames every terminating call to the
-    literal submit_tool name before `run_agent` ever sees it, so these `fn`s are never invoked in
-    practice. They are still registered so their schemas reach the model verbatim and so
-    agent_outcomes' arg-schema counters have something to check against."""
+def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
+                counters: dict | None = None, exec_timeout_flag: dict | None = None) -> list:
+    """The three upstream tools. `bash_action` runs through the task's `PersistentShell` (NOT a
+    fresh `docker exec`, see module docstring); the other two are no-ops in dispatch terms --
+    `DualSubmitDriver` renames every terminating call to the literal submit_tool name before
+    `run_agent` ever sees it, so these `fn`s are never invoked in practice. They are still
+    registered so their schemas reach the model verbatim and so agent_outcomes' arg-schema
+    counters have something to check against.
+
+    On a timed-out command: the shell is killed, `exec_timeout_flag["hit"]` is set, and
+    `agent_loop.AbortEpisode` ends the episode immediately (cold-review F4a: upstream ends the
+    task on a hung command rather than feeding back an error and continuing)."""
     counters = counters if counters is not None else {}
     counters.setdefault("tool_timeouts", 0)
+    exec_timeout_flag = exec_timeout_flag if exec_timeout_flag is not None else {}
+    exec_timeout_flag.setdefault("hit", False)
 
     def _bash(args: dict) -> str:
         script = args.get("script", "")
-        res = docker_exec(container, ("bash", script), timeout, runner)
+        res = shell.run(script)
         if res["timed_out"]:
             counters["tool_timeouts"] += 1
-            return f"ERROR: command timed out after {timeout:.0f}s"
-        text = res["stdout"] + (("\n" + res["stderr"]) if res["stderr"] else "")
-        text = text if text else "(empty output)"
-        clipped, truncated = truncate_output(text)
-        if truncated:
-            clipped += "\n[truncated because the output is too long]"
-        return clipped
+            exec_timeout_flag["hit"] = True
+            shell.kill()
+            raise agent_loop.AbortEpisode(
+                AO.FAILED_TESTS, f"command timed out after {timeout:.0f}s and the shell was killed")
+        clipped, _truncated = truncate_output(res["output"])
+        return wrap_os_output(clipped)
 
     return [
         agent_loop.Tool("bash_action",
@@ -450,53 +674,106 @@ def finalize_outcome(result: dict, evaluate_submission: Callable[[object], bool]
     return outcome, False, answer
 
 
-def episode_converged(per_turn: list, thinking_budget, context_limit, max_tokens):
-    """Convergence of the turn that ENDED the episode (the repo's convergence vector is defined
-    per generation; an agentic episode's closest analogue is its final turn), judged against the
-    resolved budget when `context_limit`/`max_tokens` are known (bench.convergence)."""
-    if not per_turn:
-        return None
-    last = per_turn[-1]
-    row = {"finish_reason": last.get("finish_reason"), "completion_tokens": last.get("completion_tokens"),
-          "prompt_tokens": last.get("prompt_tokens"), "thinking_budget": thinking_budget}
-    if context_limit and max_tokens:
-        convergence.backfill_resolved_budget([row], context_limit=context_limit, max_tokens=max_tokens)
-    return convergence.is_converged(row)
+def evaluate_convergence(per_turn: list, thinking_budget, context_limit, max_tokens) -> dict:
+    """Cold-review F2: the server returns `finish_reason="tool_calls"` on every tool-calling turn
+    (mlx_vlm/server/openai.py), so a convergence rule that only accepts `"stop"` marks EVERY
+    multi-turn episode non-converged regardless of quality. A turn is converged iff
+    `finish_reason` in {"stop", "tool_calls"} AND its completion_tokens stayed under the RESOLVED
+    thinking budget for that turn (prompt_tokens grows turn over turn, so the resolved budget
+    shrinks over the episode -- `bench.convergence.resolved_thinking_budget` per turn, falling back
+    to the declared budget when context_limit/max_tokens are unknown). Episode `converged` = ALL
+    turns converged; `budget_hits` counts turns that hit their own resolved budget."""
+    finish_reasons, budget_hits = [], 0
+    per_turn_converged = []
+    for t in per_turn:
+        fr = t.get("finish_reason")
+        finish_reasons.append(fr)
+        ct = t.get("completion_tokens")
+        budget = thinking_budget
+        if context_limit and max_tokens and t.get("prompt_tokens") is not None:
+            rb = convergence.resolved_thinking_budget(
+                {"thinking_budget": thinking_budget, "prompt_tokens": t.get("prompt_tokens")},
+                context_limit=context_limit, max_tokens=max_tokens)
+            if rb is not None:
+                budget = rb
+        hit_budget = bool(budget is not None and ct is not None and ct >= budget)
+        if hit_budget:
+            budget_hits += 1
+        per_turn_converged.append(fr in ("stop", "tool_calls") and not hit_budget)
+    episode_converged = all(per_turn_converged) if per_turn_converged else None
+    return {"converged": episode_converged, "per_turn_finish_reasons": finish_reasons,
+            "budget_hits": budget_hits, "per_turn_converged": per_turn_converged}
 
 
 # --------------------------------------------------------------------------- per-task run
+def _fail_row(base: dict, outcome: str, t0, clock, **extra) -> dict:
+    row = {**base, "passed": False, "outcome": outcome, "turns": 0, "submitted_via": None,
+          "answer": None, "gold": None, "per_turn_completion_tokens": [],
+          "completion_tokens_total": 0, "per_turn_finish_reasons": [], "converged": None,
+          "budget_hits": 0, "wall_s": round(clock() - t0, 2), "tool_calls": 0, "tool_timeouts": 0,
+          "repeat_calls": 0, "exec_timeout": False, "setup_error": True, "decode_tps": None,
+          "per_turn_decode_tps": [], "error": None}
+    row.update(extra)
+    return row
+
+
 def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
-            container_prefix: str = "agentbench-os", exec_timeout: float = DEFAULT_EXEC_TIMEOUT_S,
-            llm_timeout: float = 3600.0, max_turns: int = ROUND_LIMIT, deadline_s=None,
-            loop_guard=None, context_limit=None, runner=subprocess.run,
-            clock=time.perf_counter) -> dict:
-    """One task, one container, start to `docker rm -f` (always, via `finally` -- AC9)."""
+            container_prefix: str = GENERATE_CONTAINER_PREFIX,
+            exec_timeout: float = DEFAULT_EXEC_TIMEOUT_S, llm_timeout: float = 3600.0,
+            max_turns: int = ROUND_LIMIT, deadline_s=None, context_limit=None,
+            runner=subprocess.run, popen=subprocess.Popen, clock=time.perf_counter) -> dict:
+    """One task, one container, start to `docker rm -f` (always, via `finally` -- AC9). Raises
+    `TransportFailure` (never returns a row) if `driver.complete` itself failed during the agent
+    loop (cold-review F1) or `KeyboardInterrupt`; any other exception (docker/setup/evaluate
+    infra failure) is converted to a `setup_error: true` row so the batch never crashes."""
     cfg = task_config(task, scripts_root)
     name = container_name(container_prefix, task["id"])
     remove_container(name, runner)   # idempotent pre-clean (a prior interrupted run may have left one)
     t0 = clock()
     base = {"id": task["id"], "group": task.get("group"), "labels": task.get("labels") or [],
             "image": cfg["image"]}
+    shell = None
     try:
-        create_container(f"local-os/{cfg['image']}", name, runner)
+        try:
+            create_container(f"local-os/{cfg['image']}", name, runner)
+        except Exception as e:  # noqa: BLE001
+            return _fail_row(base, AO.SERVER_ERROR, t0, clock,
+                             error=f"container create: {type(e).__name__}: {e}")
+
         for s in cfg["init_scripts"]:
             res = docker_exec(name, s, exec_timeout, runner)
             if res["timed_out"] or res["exit_code"] != 0:
-                raise RuntimeError(f"init script failed (timed_out={res['timed_out']}, "
-                                   f"exit={res['exit_code']}): {res['stderr'][:200]}")
+                return _fail_row(base, AO.SERVER_ERROR, t0, clock,
+                                 error=f"init script failed (timed_out={res['timed_out']}, "
+                                       f"exit={res['exit_code']}): {res['stderr'][:200]}")
+
+        shell = PersistentShell(name, timeout=exec_timeout, popen=popen)
+        shell.start()
         if cfg["start"]:
-            res = docker_exec(name, cfg["start"], exec_timeout, runner)
+            lang, code = cfg["start"]
+            if lang != "bash":
+                return _fail_row(base, AO.SERVER_ERROR, t0, clock,
+                                 error=f"unsupported start script language {lang!r}")
+            res = shell.run(code)
             if res["timed_out"] or res["exit_code"] != 0:
-                raise RuntimeError(f"start script failed (timed_out={res['timed_out']}, "
-                                   f"exit={res['exit_code']}): {res['stderr'][:200]}")
+                return _fail_row(base, AO.SERVER_ERROR, t0, clock,
+                                 error=f"start script failed (timed_out={res['timed_out']}, "
+                                       f"exit={res['exit_code']})")
 
         tool_counters = {"tool_timeouts": 0}
-        tools = build_tools(name, runner, exec_timeout, tool_counters)
+        exec_timeout_flag = {"hit": False}
+        tools = build_tools(shell, exec_timeout, tool_counters, exec_timeout_flag)
         wrapped = DualSubmitDriver(driver, timeout=llm_timeout)
         task_text = TASK_TEMPLATE.format(description=task.get("description", ""))
-        result = agent_loop.run_agent(wrapped, model, SYSTEM_PROMPT, task_text, tools, params,
-                                      max_turns=max_turns, submit_tool=DualSubmitDriver.SUBMIT_TOOL,
-                                      deadline_s=deadline_s, loop_guard=loop_guard, clock=clock)
+        result = agent_loop.run_agent(
+            wrapped, model, SYSTEM_PROMPT, task_text, tools, params, max_turns=max_turns,
+            submit_tool=DualSubmitDriver.SUBMIT_TOOL, deadline_s=deadline_s,
+            loop_guard=AO.LoopGuard(max_identical=0, max_unknown=0),   # F5(d): the round cap is the bound
+            clock=clock, no_tool_call_reprompt=NO_TOOL_CALL_REPROMPT,
+            single_tool_call_per_turn=True)
+
+        if result.get("outcome") == AO.SERVER_ERROR and result.get("error"):
+            raise TransportFailure(f"task {task['id']}: {result['error']}")
 
         def _evaluate(answer):
             if cfg["match"] is not None:
@@ -504,26 +781,34 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
             return run_check_chain(name, cfg["check"], cfg["example"], answer, runner, exec_timeout)
 
         outcome, passed, answer = finalize_outcome(result, _evaluate)
+        if exec_timeout_flag["hit"]:
+            outcome, passed = AO.FAILED_TESTS, False
+
         counters = result.get("counters") or {}
-        conv = episode_converged(wrapped.per_turn, params.get("thinking_budget"), context_limit,
-                                 params.get("max_tokens"))
+        conv = evaluate_convergence(wrapped.per_turn, params.get("thinking_budget"), context_limit,
+                                    params.get("max_tokens"))
+        dtps = [t.get("decode_tps") for t in wrapped.per_turn if isinstance(t.get("decode_tps"), (int, float))]
         return {**base, "passed": passed, "outcome": outcome, "turns": result.get("turns", 0),
                 "submitted_via": wrapped.submitted_via, "answer": answer, "gold": None,
                 "per_turn_completion_tokens": [t.get("completion_tokens") for t in wrapped.per_turn],
                 "completion_tokens_total": counters.get("completion_tokens", 0),
-                "finish_reasons": [t.get("finish_reason") for t in wrapped.per_turn],
-                "converged": conv, "wall_s": counters.get("wall_s", round(clock() - t0, 2)),
+                "per_turn_finish_reasons": conv["per_turn_finish_reasons"],
+                "converged": conv["converged"], "budget_hits": conv["budget_hits"],
+                "wall_s": counters.get("wall_s", round(clock() - t0, 2)),
                 "tool_calls": counters.get("tool_calls", 0),
                 "tool_timeouts": tool_counters["tool_timeouts"],
+                "repeat_calls": counters.get("repeat_identical_calls", 0),
+                "exec_timeout": exec_timeout_flag["hit"], "setup_error": False,
+                "decode_tps": round(statistics.mean(dtps), 2) if dtps else None,
+                "per_turn_decode_tps": [t.get("decode_tps") for t in wrapped.per_turn],
                 "error": result.get("error")}
+    except TransportFailure:
+        raise
     except KeyboardInterrupt:
         raise
-    except Exception as e:  # noqa: BLE001 -- infra/setup failure, not a model failure; never crash the batch
-        return {**base, "passed": False, "outcome": AO.SERVER_ERROR, "turns": 0,
-                "submitted_via": None, "answer": None, "gold": None,
-                "per_turn_completion_tokens": [], "completion_tokens_total": 0,
-                "finish_reasons": [], "converged": None, "wall_s": round(clock() - t0, 2),
-                "tool_calls": 0, "tool_timeouts": 0,
-                "error": f"{type(e).__name__}: {e}"}
+    except Exception as e:  # noqa: BLE001 -- infra/setup/evaluate failure; never crash the batch
+        return _fail_row(base, AO.SERVER_ERROR, t0, clock, error=f"{type(e).__name__}: {e}")
     finally:
+        if shell is not None:
+            shell.close()
         remove_container(name, runner)

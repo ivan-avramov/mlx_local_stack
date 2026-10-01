@@ -5,17 +5,23 @@ tool loop (`bench.agent_loop.run_agent`) and one docker container per task.
 
 Two modes:
 
-  --prepare   D2 exclusion pass (C107): for every CHECK task (never `match`), run
-              `evaluation.example.code` to completion in TWO fresh containers and compare. No
-              model calls. Writes `<out stem>.exclusions.json` and a gold cache under
-              `$STACK_WORKDIR`. Must be run (and succeed) before the generate mode below will
-              start at all.
+  --prepare   D2 exclusion pass (C107, cold-review F6/F7): for every CHECK task (never `match`),
+              run `evaluation.example.code` to completion in TWO fresh containers with TWO
+              DIFFERENT answer placeholders and compare. No model calls. Writes a CORPUS-level
+              artifact, `<corpus stem>.exclusions.json` (sibling of the corpus jsonl, not per
+              model/run) with the corpus sha256, the three `local-os` image ids, per-task golds,
+              exclusions with reasons, and `complete: true` (only set for a run over the WHOLE
+              corpus -- `--limit` is refused with `--prepare`). Generate mode below refuses to
+              start unless this file exists, is `complete`, and both the corpus sha256 and image
+              ids still match what is live.
 
   (default)   Generate mode: one container per (non-excluded) task, `bash_action`/`finish_action`/
               `answer_action` over the router, grade inside the container, `docker rm -f`. M50/C106
               served-config discipline (same pattern as `vision_gate.py`): refuse before the first
               request, refuse to declare the run complete if the served registry changed underneath
-              it.
+              it. A `driver.complete` transport failure (HTTP error/timeout/connection error)
+              ESCALATES -- the run aborts nonzero with the task id in the message, no row is
+              written for that task (AGENTS.md: transport failures are NEVER graded).
 
 Usage:
   cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> --prepare
@@ -28,7 +34,9 @@ import argparse
 import hashlib
 import json
 import os
+import signal
 import statistics
+import subprocess
 import sys
 from pathlib import Path
 
@@ -39,19 +47,46 @@ BENCH_NAME = "agentbench_os"
 TUNE = "v1"
 DEFAULT_CORPUS = paths.repo_root() / "benchmark" / "corpora" / "agentbench_os_v1.jsonl"
 DEFAULT_SCRIPTS_ROOT = paths.repo_root() / "benchmark" / "corpora" / "agentbench_os_v1" / "scripts"
-CONTAINER_PREFIX = "agentbench-os"
 ALLOWED_PROFILES = ("deployed",)
+# Fallback decode-rate evidence (cold-review F8) when this axis has no rows of its own yet (a
+# fresh model/box). Named explicitly in the manifest (`timeout_source`) so a reader can tell a
+# cold-start estimate from one measured on this very axis.
+FALLBACK_RATE_BENCHES = ("math500", "convergence")
+DEADLINE_MULTIPLIER = 8.0
 
 
 # --------------------------------------------------------------------------- I/O helpers
+class TornRowError(RuntimeError):
+    """A malformed row was found somewhere OTHER than the final line of a rows file -- that can
+    only mean real corruption (not an interrupted write), so it escalates rather than being
+    silently dropped (cold-review F3)."""
+
+
 def read_rows(out_path: Path) -> list:
+    """Every complete, id-bearing row in `out_path`. Tolerates a TORN LAST LINE (the shape an
+    interrupted write leaves: `append_row` truncated mid-`json.dumps`) by logging and ignoring
+    only that one; any OTHER malformed line is real corruption and escalates (cold-review F3).
+    A row with no `id` is skipped (can never be matched for resume/grading)."""
     if not out_path.exists():
         return []
+    lines = out_path.read_text(encoding="utf-8").splitlines()
     rows = []
-    for line in out_path.read_text(encoding="utf-8").splitlines():
+    for i, line in enumerate(lines):
         line = line.strip()
-        if line:
-            rows.append(json.loads(line))
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            if i == len(lines) - 1:
+                print(f"[agentbench_os] {out_path}: ignoring a torn final line (interrupted write)",
+                     file=sys.stderr)
+                continue
+            raise TornRowError(f"{out_path}: malformed row at line {i + 1} (not the last line) -- "
+                               "this is not an interrupted write; investigate before resuming")
+        if "id" not in row:
+            continue
+        rows.append(row)
     return rows
 
 
@@ -73,19 +108,15 @@ def manifest_path_for(out: Path) -> Path:
     return out.parent / f"{_stem(out)}.manifest.json"
 
 
-def exclusions_path_for(out: Path) -> Path:
-    return out.parent / f"{_stem(out)}.exclusions.json"
+def skipped_path_for(out: Path) -> Path:
+    """cold-review F3: the degrade marker is its OWN file, never the rows file -- writing
+    `{"skipped": true}` into `out` would corrupt a resumable rows file and silently discard
+    whatever was already there."""
+    return out.parent / f"{_stem(out)}.skipped.json"
 
 
 def _sha256_file(path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
-
-
-def _gold_cache_path(corpus_sha256: str) -> Path:
-    workdir = paths.stack_workdir(required=False)
-    base = Path(workdir) if workdir else Path(
-        os.path.expanduser("~/.cache/huggingface/mlx_local_stack_agentbench_os_golds"))
-    return base / "agentbench_os_golds" / f"{corpus_sha256[:16]}.json"
 
 
 def _load_previous_manifest(mp: Path, router: dict):
@@ -113,10 +144,14 @@ def _exit_sha(base: str):
         return None
 
 
-def _write_manifest(mp: Path, model: str, *, runtime: dict, router: dict, history: list) -> None:
-    man = provenance.gather(model, profile="deployed", runtime=runtime, router=router)
+def _write_manifest(mp: Path, model: str, *, profile: str, runtime: dict, router: dict,
+                    history: list) -> None:
+    # cold-review F15: the manifest must record the PROFILE ACTUALLY USED (which may be an
+    # --allow-profile override), not a hardcoded "deployed".
+    man = provenance.gather(model, profile=profile, runtime=runtime, router=router)
     if history:
         man["router_history"] = history
+    mp.parent.mkdir(parents=True, exist_ok=True)
     tmp = mp.with_suffix(mp.suffix + ".tmp")
     tmp.write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, mp)
@@ -125,7 +160,10 @@ def _write_manifest(mp: Path, model: str, *, runtime: dict, router: dict, histor
 # --------------------------------------------------------------------------- summary
 def summarize(rows: list) -> dict:
     n = len(rows)
-    passed = sum(1 for r in rows if r.get("passed") is True)
+    setup_error_rows = [r for r in rows if r.get("setup_error")]
+    graded_rows = [r for r in rows if not r.get("setup_error")]
+    graded_n = len(graded_rows)
+    passed = sum(1 for r in graded_rows if r.get("passed") is True)
     outcome_counts: dict = {}
     label_counts: dict = {}
     for r in rows:
@@ -136,14 +174,18 @@ def summarize(rows: list) -> dict:
     toks = [r["completion_tokens_total"] for r in rows
            if isinstance(r.get("completion_tokens_total"), (int, float))]
     return {
-        "n": n, "passed": passed, "acc": round(passed / n, 3) if n else None,
+        # cold-review F1: setup/evaluate infra failures are EXCLUDED from the acc denominator and
+        # reported separately, rather than silently counted as ordinary fails.
+        "n": n, "setup_error_count": len(setup_error_rows), "graded_n": graded_n,
+        "passed": passed, "acc": round(passed / graded_n, 3) if graded_n else None,
         "outcome_counts": outcome_counts,
         "label_counts_diagnostic": label_counts,
         "wall_s_mean": round(statistics.mean(walls), 1) if walls else None,
         "wall_s_max": round(max(walls), 1) if walls else None,
         "completion_tokens_mean": round(statistics.mean(toks), 1) if toks else None,
         "completion_tokens_max": round(max(toks), 1) if toks else None,
-        "fail_ids": [r["id"] for r in rows if r.get("passed") is not True],
+        "fail_ids": [r["id"] for r in graded_rows if r.get("passed") is not True],
+        "setup_error_ids": [r["id"] for r in setup_error_rows],
     }
 
 
@@ -162,39 +204,74 @@ def _degrade_reason(corpus_path: Path, runner) -> str | None:
 
 
 def _write_skipped(out: Path, note: str) -> int:
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"skipped": True, "note": note}) + "\n", encoding="utf-8")
+    sp = skipped_path_for(out)
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    sp.write_text(json.dumps({"skipped": True, "note": note}) + "\n", encoding="utf-8")
     print(f"[agentbench_os] SKIPPED: {note}", file=sys.stderr)
     return 0
 
 
-# --------------------------------------------------------------------------- prepare (D2)
+# --------------------------------------------------------------------------- timeout derivation (F8)
+def _derive_llm_timeout(model: str, thinking_budget, explicit):
+    if explicit:
+        return explicit, "explicit", f"{explicit:.0f}s (EXPLICIT --llm-timeout)"
+    own_rows = generate.rows_for_rate(model, BENCH_NAME)
+    tps = budget_timeout.floor_decode_tps(own_rows)
+    source = BENCH_NAME
+    if tps is None:
+        fb_rows = []
+        for b in FALLBACK_RATE_BENCHES:
+            try:
+                fb_rows += generate.rows_for_rate(model, b)
+            except Exception:  # noqa: BLE001 -- a missing/unreadable bench must not block the run
+                continue
+        tps = budget_timeout.floor_decode_tps(fb_rows)
+        source = f"fallback:{'+'.join(FALLBACK_RATE_BENCHES)}" if tps is not None else "none"
+    d = budget_timeout.derive_timeout(thinking_budget, tps)
+    return d["timeout_s"], source, f"{d['timeout_s']:.0f}s (DERIVED, timeout_source={source}) -- {d['reason']}"
+
+
+# --------------------------------------------------------------------------- prepare (D2, F6/F7/F10)
 def run_prepare(args, out: Path) -> int:
-    import subprocess
-    corpus_path = Path(args.corpus)
     runner = subprocess.run
+    corpus_path = Path(args.corpus)
     reason = _degrade_reason(corpus_path, runner)
     if reason:
         return _write_skipped(out, reason)
 
-    tasks = AB.load_corpus(corpus_path, args.limit)
+    if args.limit:
+        print("[agentbench_os] REFUSED: --prepare does not accept --limit -- the exclusion "
+             "artifact's `complete: true` means the WHOLE corpus, never a subset.",
+             file=sys.stderr, flush=True)
+        return 2
+
+    tasks = AB.load_corpus(corpus_path)
+    image_ids = AB.current_image_ids(runner=runner)
     golds, exclusions = AB.prepare_exclusions(tasks, args.scripts_root, runner,
                                               timeout=args.exec_timeout,
-                                              prefix=CONTAINER_PREFIX + "-prep")
-    exclusions_path_for(out).write_text(json.dumps(exclusions, indent=2) + "\n", encoding="utf-8")
-    gold_cache = _gold_cache_path(_sha256_file(corpus_path))
-    gold_cache.parent.mkdir(parents=True, exist_ok=True)
-    gold_cache.write_text(json.dumps(golds, indent=2) + "\n", encoding="utf-8")
+                                              prefix=AB.PREPARE_CONTAINER_PREFIX)
+    artifact_path = AB.exclusions_artifact_path(corpus_path)
+    AB.write_exclusions_artifact(artifact_path, corpus_sha256=_sha256_file(corpus_path),
+                                 image_ids=image_ids, golds=golds, exclusions=exclusions,
+                                 complete=True)
     print(f"[agentbench_os] D2 prepare: {len(tasks)} task(s), {len(exclusions)} excluded, "
          f"{len(golds)} gold(s) cached")
-    print(f"[agentbench_os] wrote {exclusions_path_for(out)}")
-    print(f"[agentbench_os] wrote {gold_cache}")
+    print(f"[agentbench_os] wrote {artifact_path}")
     return 0
+
+
+# --------------------------------------------------------------------------- SIGTERM (F12)
+def _make_sigterm_handler(current: dict, runner):
+    def _handler(signum, frame):
+        name = current.get("container")
+        if name:
+            AB.remove_container(name, runner)
+        sys.exit(143)
+    return _handler
 
 
 # --------------------------------------------------------------------------- generate
 def run_generate(args, out: Path) -> int:
-    import subprocess
     runner = subprocess.run
 
     if args.url:
@@ -212,13 +289,15 @@ def run_generate(args, out: Path) -> int:
     if reason:
         return _write_skipped(out, reason)
 
-    excl_path = exclusions_path_for(out)
-    if not excl_path.exists():
-        print(f"[agentbench_os] REFUSED: {excl_path} does not exist -- run --prepare first "
-             f"(D2 exclusion pass, AC2). Generate mode never starts without it.",
-             file=sys.stderr, flush=True)
+    image_ids = AB.current_image_ids(runner=runner)
+    artifact_path = AB.exclusions_artifact_path(corpus_path)
+    excl_doc = AB.read_exclusions_artifact(artifact_path)
+    refusal = AB.validate_exclusions_artifact(excl_doc, corpus_sha256=_sha256_file(corpus_path),
+                                              image_ids=image_ids)
+    if refusal:
+        print(f"[agentbench_os] REFUSED: {artifact_path}: {refusal}", file=sys.stderr, flush=True)
         return 2
-    exclusions = json.loads(excl_path.read_text(encoding="utf-8"))
+    exclusions = excl_doc.get("exclusions") or []
 
     if args.sampling_profile not in ALLOWED_PROFILES and not args.allow_profile:
         print(f"[agentbench_os] REFUSED: --sampling-profile {args.sampling_profile!r} is not "
@@ -254,26 +333,27 @@ def run_generate(args, out: Path) -> int:
     params = model_params.params_for(args.model, profile=args.sampling_profile)
     context_limit = model_params.registry_context_limit(args.model)
 
-    if args.llm_timeout:
-        llm_timeout = args.llm_timeout
-        print(f"[agentbench_os] per-turn LLM timeout = {llm_timeout:.0f}s (EXPLICIT --llm-timeout)")
-    else:
-        rate_rows = generate.rows_for_rate(args.model, BENCH_NAME)
-        tps = budget_timeout.floor_decode_tps(rate_rows)
-        d = budget_timeout.derive_timeout(params.get("thinking_budget"), tps)
-        llm_timeout = d["timeout_s"]
-        print(f"[agentbench_os] per-turn LLM timeout = {llm_timeout:.0f}s (DERIVED) -- {d['reason']}")
+    llm_timeout, timeout_source, timeout_msg = _derive_llm_timeout(
+        args.model, params.get("thinking_budget"), args.llm_timeout)
+    print(f"[agentbench_os] per-turn LLM timeout = {timeout_msg}")
+    deadline_s = args.deadline_s if args.deadline_s else llm_timeout * DEADLINE_MULTIPLIER
+    print(f"[agentbench_os] episode deadline = {deadline_s:.0f}s "
+         f"({'EXPLICIT --deadline-s' if args.deadline_s else f'{DEADLINE_MULTIPLIER:.0f}x per-turn timeout'})")
 
     print(f"[agentbench_os] {args.model}: {len(todo)} item(s) to run "
          f"({len(done_ids)} already done, {len(exclusions)} excluded)")
 
-    AB.sweep_stale_containers(CONTAINER_PREFIX, runner)
+    AB.sweep_stale_containers(AB.GENERATE_CONTAINER_PREFIX, runner)
 
     if todo:
-        _write_manifest(mp, args.model,
+        _write_manifest(mp, args.model, profile=args.sampling_profile,
                         runtime={"client": "run_agentbench_os", "bench": BENCH_NAME, "tune": TUNE,
                                  "corpus": str(corpus_path), "corpus_sha256": _sha256_file(corpus_path),
+                                 "exclusions_path": str(artifact_path),
+                                 "exclusions_sha256": _sha256_file(artifact_path),
+                                 "image_ids": image_ids,
                                  "limit": args.limit, "llm_timeout_s": round(llm_timeout, 1),
+                                 "timeout_source": timeout_source, "deadline_s": round(deadline_s, 1),
                                  "exec_timeout_s": args.exec_timeout, "round_limit": args.round_limit,
                                  "n_todo": len(todo), "n_done_before": len(done_ids),
                                  "n_excluded": len(exclusions),
@@ -282,16 +362,26 @@ def run_generate(args, out: Path) -> int:
                         router=router, history=history)
 
     base_driver = driver_mod.MlxServeDriver()
-    for i, task in enumerate(todo):
-        print(f"[agentbench_os] {args.model} {task['id']} ({i + 1}/{len(todo)})", flush=True)
-        item_params = {**params, "seed": rowschema.sample_seed(task["id"], 0)}
-        row = AB.run_task(args.model, task, args.scripts_root, base_driver, item_params,
-                          container_prefix=CONTAINER_PREFIX, exec_timeout=args.exec_timeout,
-                          llm_timeout=llm_timeout, max_turns=args.round_limit,
-                          context_limit=context_limit, runner=runner)
-        append_row(out, row)
-        print(f"[agentbench_os]   -> passed={row['passed']} outcome={row['outcome']} "
-             f"turns={row['turns']}", flush=True)
+    current = {"container": None}
+    old_handler = signal.signal(signal.SIGTERM, _make_sigterm_handler(current, runner))
+    try:
+        for i, task in enumerate(todo):
+            print(f"[agentbench_os] {args.model} {task['id']} ({i + 1}/{len(todo)})", flush=True)
+            current["container"] = AB.container_name(AB.GENERATE_CONTAINER_PREFIX, task["id"])
+            item_params = {**params, "seed": rowschema.sample_seed(task["id"], 0)}
+            # TransportFailure propagates OUT of this loop uncaught (cold-review F1): a transport
+            # failure ESCALATES, it is never graded, and no row is appended for the in-flight task.
+            row = AB.run_task(args.model, task, args.scripts_root, base_driver, item_params,
+                              container_prefix=AB.GENERATE_CONTAINER_PREFIX,
+                              exec_timeout=args.exec_timeout, llm_timeout=llm_timeout,
+                              max_turns=args.round_limit, deadline_s=deadline_s,
+                              context_limit=context_limit, runner=runner)
+            current["container"] = None
+            append_row(out, row)
+            print(f"[agentbench_os]   -> passed={row['passed']} outcome={row['outcome']} "
+                 f"turns={row['turns']} setup_error={row['setup_error']}", flush=True)
+    finally:
+        signal.signal(signal.SIGTERM, old_handler)
 
     try:
         exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
@@ -311,8 +401,8 @@ def run_generate(args, out: Path) -> int:
     summary["router"] = router
     summary["router_exit"] = exit_blk
     summary_path_for(out).write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print(f"[agentbench_os] RESULT {args.model}: {summary['passed']}/{summary['n']} pass "
-         f"acc={summary['acc']}")
+    print(f"[agentbench_os] RESULT {args.model}: {summary['passed']}/{summary['graded_n']} pass "
+         f"acc={summary['acc']} setup_errors={summary['setup_error_count']}")
     print(f"[agentbench_os] wrote {out}")
     print(f"[agentbench_os] wrote {summary_path_for(out)}")
     return 0
@@ -329,7 +419,8 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--out", default=None,
                     help="default: <results_root>/<model>/agentbench_os.v1.jsonl")
     ap.add_argument("--prepare", action="store_true",
-                    help="D2 exclusion pass only (AC2); no model calls")
+                    help="D2 exclusion pass only (AC2); no model calls; writes a CORPUS-level "
+                         "artifact beside the corpus jsonl, not under --out")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--pilot-seed", type=int, default=None,
                     help="seeded random pilot subset over the non-excluded corpus")
@@ -339,10 +430,14 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--allow-profile", action="store_true")
     ap.add_argument("--round-limit", type=int, default=AB.ROUND_LIMIT)
     ap.add_argument("--exec-timeout", type=float, default=AB.DEFAULT_EXEC_TIMEOUT_S,
-                    help="per `docker exec` command timeout, seconds")
+                    help="per `docker exec`/persistent-shell command timeout, seconds")
     ap.add_argument("--llm-timeout", type=float, default=None,
-                    help="per-turn LLM HTTP timeout, seconds. Default: DERIVED from the model's "
-                         "measured decode rate + thinking budget (never an SDK default)")
+                    help="per-turn LLM HTTP timeout, seconds. Default: DERIVED from this axis's "
+                         "own rows' measured decode rate (falling back to math500/convergence "
+                         "rows when this axis has none yet), never an SDK default")
+    ap.add_argument("--deadline-s", type=float, default=None,
+                    help=f"episode wall-clock deadline, seconds. Default: {DEADLINE_MULTIPLIER:.0f}x "
+                         "the per-turn LLM timeout")
     return ap
 
 
