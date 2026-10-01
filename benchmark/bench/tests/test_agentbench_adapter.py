@@ -27,6 +27,19 @@ def test_load_corpus_respects_limit():
     assert len(AB.load_corpus(CORPUS, limit=3)) == 3
 
 
+def test_load_corpus_rows_carry_index_in_file():
+    """index_in_file is the 0-based position within the task's OWN upstream source file --
+    distinct from the std-00n-<k> id's k, which is 0-based within the whole GROUP (several files
+    concatenated for group 4)."""
+    tasks = AB.load_corpus(CORPUS)
+    by_file = {}
+    for t in tasks:
+        key = (t["group"], t["source_file"])
+        by_file.setdefault(key, []).append(t["index_in_file"])
+    for key, idxs in by_file.items():
+        assert idxs == list(range(len(idxs))), key
+
+
 def test_load_corpus_group_counts_match_upstream_os_yaml():
     tasks = AB.load_corpus(CORPUS)
     counts = {}
