@@ -1294,6 +1294,28 @@ def test_persistent_shell_close_bounded_even_with_a_pipe_holding_descendant_P22(
     assert shell.proc.poll() is not None
 
 
+@_timeout(15)
+def test_persistent_shell_reader_thread_terminates_after_close_P41(tmp_path):
+    """7th cold review round 7 P41 (MEDIUM), reproduced: after a background writer filled the
+    queue, close() itself returned in ~0.3s (bounded, as designed) -- but after killing every
+    process, the READER THREAD remained alive, still parked in a blocking Queue.put() with 256
+    queued chunks nobody would ever drain; a timed Thread.join() alone cannot cancel a thread
+    stuck in a blocking call. This test proves the thread is ACTUALLY GONE after close(), not just
+    that close() itself returned quickly -- a background flooder (`while :; do echo tick; done &`)
+    keeps producing output AFTER the triggering run() call has already returned (nobody draining
+    the queue any more), and a `sleep 30 &` holds the shell's pipe open too."""
+    shell = _real_shell(tmp_path)
+    shell.run("(while :; do echo tick; done &) ; sleep 30 & disown", timeout_s=3)
+    # give the flooder time to actually fill the 256-chunk queue with nobody draining it.
+    time.sleep(1.5)
+    t0 = time.monotonic()
+    shell.close()
+    elapsed = time.monotonic() - t0
+    assert elapsed < 5.0, f"close() took {elapsed:.2f}s"
+    assert shell._reader_thread is not None
+    assert not shell._reader_thread.is_alive(), "reader thread leaked past close()"
+
+
 def test_persistent_shell_start_returns_the_handshake_result_P9b(tmp_path):
     """P9(b): start() must return the handshake ("true") round's result so the caller (run_task)
     can validate it BEFORE ever making a model call, rather than discarding it."""

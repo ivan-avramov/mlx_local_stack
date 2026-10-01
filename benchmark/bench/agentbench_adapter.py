@@ -614,6 +614,11 @@ class PersistentShell:
         self.dead = False
         self._carry = b""   # unexpected leftover bytes past a previous round's sentinel (see above)
         self._reader_thread = None
+        # 7th cold review round 7 P41 (MEDIUM): checked by the reader's put-retry loop so it can
+        # actually STOP once close() wants it to, instead of blocking forever inside a bare
+        # `Queue.put()` on a full queue nobody is draining any more (a timed `Thread.join()` alone
+        # cannot interrupt a thread parked in a blocking call).
+        self._cancel = threading.Event()
 
     def start(self) -> dict:
         """Returns the handshake (no-op sentinel round) result -- P9(b): the caller MUST check
@@ -627,19 +632,28 @@ class PersistentShell:
         # anything we asked for. One no-op sentinel round, with everything read before it discarded.
         return self.run("true", timeout_s=10.0)
 
+    def _put_until_cancelled(self, item) -> None:
+        """P41: retry `put(timeout=...)` in a loop, checking `self._cancel` between attempts --
+        unlike a bare blocking `put()`, this can actually be told to STOP once nobody is going to
+        drain the queue any more (close() sets the cancel event)."""
+        while not self._cancel.is_set():
+            try:
+                self._q.put(item, timeout=0.2)
+                return
+            except queue.Full:
+                continue
+
     def _reader_loop(self) -> None:
         try:
-            while True:
+            while not self._cancel.is_set():
                 chunk = self.proc.stdout.read(self._read_chunk)
                 if not chunk:
-                    self._q.put(None)
+                    self._put_until_cancelled(None)
                     return
-                self._q.put(chunk)   # blocks (backpressure, G2) once the queue holds 256 chunks
+                self._put_until_cancelled(chunk)   # backpressure (G2), but CANCELLABLE (P41)
         except (ValueError, OSError):
-            try:
-                self._q.put(None)
-            except Exception:  # noqa: BLE001 -- queue full and nobody draining any more; give up
-                pass
+            # the stdout fd is gone (close() closed it, or the process died) -- EOF-equivalent.
+            self._put_until_cancelled(None)
 
     def _start_writer(self, data: bytes) -> dict:
         """5th cold review round 6, P22 (HIGH, deadlock): the OLD design made `run()` BLOCK on
@@ -848,10 +862,20 @@ class PersistentShell:
         (reproduced: a descendant process still holding the pipe open, e.g. a backgrounded
         `sleep 30 &`, could previously wedge `close()`'s raw `self.proc.stdin.write()` solid,
         requiring the test process itself to be killed). `close()` never waits on the write
-        directly -- it polls briefly, then proceeds to `wait()`/`kill()` regardless, and finally
-        joins the reader/writer threads with a short timeout so neither leaks past this call."""
+        directly -- it polls briefly, then proceeds to `wait()`/`kill()` regardless.
+
+        7th cold review round 7 P41 (MEDIUM), reproduced: after a background writer filled the
+        queue, `close()` itself returned in ~0.3s (bounded, as designed) -- but after killing every
+        process, the READER THREAD remained alive, still parked in a blocking `Queue.put()` with
+        256 queued chunks nobody would ever drain; `Thread.join(timeout=...)` only WAITS, it cannot
+        cancel a thread stuck in a blocking call. Fixed: `self._cancel` is set FIRST (the reader's
+        own put-retry loop notices it and returns), the stdout PIPE HANDLE is explicitly closed
+        (unblocks a reader stuck in `.read()` instead of `.put()`, by making that read raise), and
+        then both threads are joined with a bounded timeout -- this method now actually PROVES
+        nothing is left running, not just that close() itself returned quickly."""
         if self.proc is None:
             return
+        self._cancel.set()
         writer_box = None
         try:
             writer_box = self._start_writer(b"exit\n")
@@ -867,10 +891,15 @@ class PersistentShell:
         except Exception:  # noqa: BLE001
             self.kill()
         self.dead = True
+        try:
+            if self.proc.stdout is not None:
+                self.proc.stdout.close()
+        except Exception:  # noqa: BLE001
+            pass
         if self._reader_thread is not None:
-            self._reader_thread.join(timeout=0.3)
+            self._reader_thread.join(timeout=1.0)
         if writer_box is not None and writer_box.get("thread") is not None:
-            writer_box["thread"].join(timeout=0.2)
+            writer_box["thread"].join(timeout=0.5)
 
 
 # --------------------------------------------------------------------------- evaluation
