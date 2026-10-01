@@ -1173,6 +1173,64 @@ def test_run_watch_prints_a_calibration_line_with_no_router_pid_yet_P52c(tmp_pat
     assert "CALIBRATION (tick 1): no router pid recorded" in content
 
 
+# --------------------------------------------------------------------------- safe_router_block (12th round addendum P9)
+def test_safe_router_block_router_absent_is_ok_empty_dict():
+    router, ok = W.safe_router_block({"model": "m"})
+    assert router == {} and ok is True
+
+
+def test_safe_router_block_router_not_a_mapping_is_not_ok():
+    """12th cold review round 12 addendum P9: a manifest whose `router` field is present but NOT
+    a mapping (the exact review reproduction) must not crash -- `ok` is False (evidence-failure),
+    `router` is a safe empty dict rather than the list itself."""
+    router, ok = W.safe_router_block({"router": [1]})
+    assert router == {} and ok is False
+
+
+def test_safe_router_block_router_valid_mapping_is_ok():
+    router, ok = W.safe_router_block({"router": {"pid": 123, "config_sha256": "abc"}})
+    assert router == {"pid": 123, "config_sha256": "abc"} and ok is True
+
+
+def test_safe_router_block_router_mapping_without_pid_is_ok_not_evidence_failure():
+    """A router block that IS a valid mapping but simply doesn't have a "pid" key yet (e.g. being
+    written incrementally) is NOT evidence-failure -- same as the pre-existing "no router pid
+    recorded yet" normal early-run state."""
+    router, ok = W.safe_router_block({"router": {}})
+    assert router == {} and ok is True
+
+
+def test_run_watch_router_not_a_mapping_is_unknown_evidence_no_crash_P9(tmp_path):
+    """12th cold review round 12 addendum P9, end-to-end: a manifest with `"router": [1]` (not a
+    mapping) must produce UNKNOWN evidence and keep the daemon alive -- never raise
+    AttributeError from `.get("pid")` on a list."""
+    rows_path = tmp_path / "rows.jsonl"
+    _write_rows(rows_path, [_row("a")])
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"model": "m", "router": [1]}), encoding="utf-8")
+    out_path = tmp_path / "watch.log"
+    import argparse
+    args = argparse.Namespace(rows=str(rows_path), manifest=str(manifest_path), total=5,
+                              driver_pid=os.getpid(), router_log=str(tmp_path / "router.log"),
+                              out=str(out_path), interval=300.0, stall_s=2700.0, once=True)
+    rc = W.run_watch(args)   # must not raise
+    assert rc == 0
+    content = out_path.read_text(encoding="utf-8")
+    assert "EVIDENCE MISSING" in content
+    assert "UNKNOWN" in content
+    # the calibration block on tick 1 degrades the same way "no router pid recorded" already did
+    assert "CALIBRATION (tick 1): no router pid recorded" in content
+
+
+def test_run_calibrate_router_not_a_mapping_does_not_crash_P9(tmp_path):
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"model": "m", "router": [1]}), encoding="utf-8")
+    import argparse
+    args = argparse.Namespace(manifest=str(manifest_path))
+    rc = W.run_calibrate(args)   # must not raise AttributeError
+    assert rc == 2
+
+
 def test_run_watch_invalidates_calibration_when_router_identity_changes_mid_run_P9(tmp_path):
     """10th cold review round 10 P9 (residual, part c): tick 1 calibrates (a genuine BUSY sample,
     in-flight confirmed via the router log); the manifest is then rewritten with a DIFFERENT

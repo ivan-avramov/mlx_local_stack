@@ -151,6 +151,23 @@ def _manifest_evidence_ok(path) -> bool:
     return isinstance(parsed, dict)
 
 
+def safe_router_block(manifest: dict):
+    """12th cold review round 12 addendum P9: a manifest whose `router` field is PRESENT but is
+    NOT itself a mapping (e.g. `{"router": [1]}`, a corrupt/malformed producer write) must never
+    crash the watcher -- the old `(manifest.get("router") or {}).get("pid")` raises AttributeError
+    on a list. Returns `(router: dict, ok: bool)`: `router` is always a dict (possibly empty,
+    always safe to `.get(...)` further), `ok` is False ONLY when `router` was present but not a
+    mapping (fold into `manifest_evidence` -- this is evidence-failure, reported as UNKNOWN, the
+    daemon stays alive). `router` simply ABSENT (the NORMAL early-run state, before anything has
+    recorded a pid yet) is `ok=True` with an empty dict -- unaffected, not evidence-failure."""
+    router = manifest.get("router")
+    if router is None:
+        return {}, True
+    if not isinstance(router, dict):
+        return {}, False
+    return router, True
+
+
 def pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -955,8 +972,14 @@ def run_watch(args) -> int:
                                  and _manifest_evidence_ok(manifest_path))
             now = time.time()
             ref = reference_timestamp(rows, manifest, rows_path)
-            router_pid = (manifest.get("router") or {}).get("pid")
-            router_config_sha256 = (manifest.get("router") or {}).get("config_sha256")
+            # 12th round addendum P9: a `router` field present but NOT a mapping (e.g.
+            # {"router": [1]}) must never crash the watcher (`.get("pid")` on a list raises
+            # AttributeError) -- fold that into manifest_evidence too (evidence-failure -> UNKNOWN,
+            # daemon stays alive). `router` simply absent (normal early-run state) is unaffected.
+            router, router_ok = safe_router_block(manifest)
+            manifest_evidence = manifest_evidence and router_ok
+            router_pid = router.get("pid")
+            router_config_sha256 = router.get("config_sha256")
             invalidation_note = check_calibration_identity(busy_observed_box, router_pid,
                                                            router_config_sha256)
             if invalidation_note:
@@ -1052,8 +1075,9 @@ def run_calibrate(args, run_fn=_real_subprocess_run, sleep_fn=time.sleep,
     generation in flight and confirm they stay near zero. This is the calibration the self-test's
     synthetic fixtures cannot provide (it can't make a real worker busy)."""
     manifest = read_manifest(args.manifest)
-    router_pid = (manifest.get("router") or {}).get("pid")
-    if router_pid is None:
+    router, router_ok = safe_router_block(manifest)
+    router_pid = router.get("pid")
+    if router_pid is None or not router_ok:
         print("[agentbench_watch] CALIBRATE: no router pid recorded in the manifest -- cannot "
              "associate a worker with this run", file=sys.stderr)
         return 2

@@ -45,6 +45,7 @@ task's own post-agent container, exactly as task.py does.
 from __future__ import annotations
 
 import codecs
+import errno
 import hashlib
 import json
 import queue
@@ -523,6 +524,22 @@ def _decode_replace(value) -> str:
 _RC_MARKER = "__M54_RC__"
 _RC_MARKER_RE = re.compile(re.escape("\n" + _RC_MARKER) + r"(-?\d+)\n")
 
+# 12th cold review round 12 addendum P6: a SECOND marker, printed BEFORE the subshell/python3
+# invocation even begins, gives a TIMEOUT path its own DIRECT evidence -- the old addendum-C
+# design inferred "the checker genuinely ran" from `docker inspect` showing the container
+# Running, which only proves the CONTAINER is alive, never that THIS exec actually reached the
+# real command. START observed on a timeout means the script genuinely began running (and then
+# hung); START absent means the exec never got that far at all -- never assert "it ran" without
+# this evidence.
+_START_MARKER = "__M54_START__"
+_START_MARKER_RE = re.compile(re.escape("\n" + _START_MARKER + "\n"))
+
+# 12th round addendum P7: a model answer whose size alone would blow up the argv/environ the OS
+# allows (`E2BIG`) is capped PROACTIVELY, before even attempting the exec -- 32 KiB is generously
+# above any legitimate AgentBench-OS answer and well under typical OS argv limits for a single
+# element.
+_MAX_ARGV_PARAM_BYTES = 32 * 1024
+
 
 def _extract_rc_marker(stdout: str):
     """Returns (stdout_without_marker, marker_rc or None). Scans for the LAST match (robust
@@ -534,6 +551,15 @@ def _extract_rc_marker(stdout: str):
         return stdout, None
     m = matches[-1]
     return stdout[:m.start()] + stdout[m.end():], int(m.group(1))
+
+
+def _extract_start_marker(stdout: str):
+    """Returns (stdout_without_marker, start_observed: bool). Scans for the FIRST match (the
+    start marker is always printed before anything else)."""
+    m = _START_MARKER_RE.search(stdout)
+    if not m:
+        return stdout, False
+    return stdout[:m.start()] + stdout[m.end():], True
 
 
 def _wrap_bash_script(code: str) -> str:
@@ -555,8 +581,14 @@ def _wrap_bash_script(code: str) -> str:
     a syntax error (rc 2, no marker ever printed) -- reproduced: 7 upstream init scripts of the
     form "#!/bin/bash\\n# No initial setup required..." turned into setup_error in every arm. A
     leading `:` (the shell no-op builtin) guarantees the subshell body is never empty, regardless
-    of what `code` itself contains."""
-    return f'(\n:\n{code}\n)\nrc=$?\nprintf "\\n{_RC_MARKER}%d\\n" "$rc"\n'
+    of what `code` itself contains.
+
+    12th round addendum P6: a leading `printf` prints `_START_MARKER` BEFORE the subshell even
+    begins -- direct evidence (distinct from the trailing `_RC_MARKER`) that the exec reached the
+    point of running the real command at all, used to resolve a TIMEOUT without inferring
+    anything from `docker inspect`."""
+    return (f'printf "\\n{_START_MARKER}\\n"\n(\n:\n{code}\n)\nrc=$?\n'
+           f'printf "\\n{_RC_MARKER}%d\\n" "$rc"\n')
 
 
 def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run,
@@ -564,7 +596,7 @@ def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run
     """One FRESH, non-interactive `docker exec` (mirrors task.py `execute_independent`, used for
     init scripts and all evaluation/check/example scripts -- NEVER for `start` or `bash_action`,
     which share the persistent session; see `PersistentShell`). Returns
-    {exit_code, stdout, stderr, timed_out, marker_observed}. `extra_params` are appended argv (the
+    {exit_code, stdout, stderr, timed_out, marker_observed, start_observed}. `extra_params` are appended argv (the
     answer / prior check-script stdout chain).
 
     P8(b): captures stdout/stderr as BYTES (no `text=True`) and decodes with `errors="replace"`
@@ -575,9 +607,21 @@ def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run
     `exit_code` is the SCRIPT's own authoritative rc whenever `marker_observed` is True -- never
     the wrapping bash -c's own exit status (always 0, the trailing printf's own success). When the
     marker was never observed, `exit_code` falls back to the raw `docker exec` process's own
-    returncode (or None on an outright timeout)."""
+    returncode (or None on an outright timeout). `start_observed` (12th round addendum P6) is DIRECT
+    evidence the exec reached the point of running the real command at all -- see `_classify_check_
+    result`'s handling of a timeout.
+
+    12th round addendum P7: a `params` element over `_MAX_ARGV_PARAM_BYTES` is rejected PROACTIVELY
+    (never even attempted) as `UnrepresentableArgvError("oversized answer (N bytes)")`; an OSError
+    from the runner call itself with errno E2BIG/EINVAL (the OS rejecting the argv/exec directly) is
+    the SAME scored failure -- any OTHER OSError (ENOENT: docker missing, EACCES: permission denied,
+    ...) is a genuine launch/infra failure and is left to propagate uncaught."""
     lang, code = lang_code
     params = [str(p) for p in extra_params]
+    for p in params:
+        n = len(p.encode("utf-8", errors="surrogatepass"))
+        if n > _MAX_ARGV_PARAM_BYTES:
+            raise UnrepresentableArgvError(f"oversized answer ({n} bytes)")
     if lang == "bash":
         script = _wrap_bash_script(code)
         cmd = ["docker", "exec", container, "bash", "-c", script]
@@ -586,15 +630,23 @@ def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run
     elif lang == "python":
         # the code is passed as its OWN argv element ($1), never interpolated into the bash -c
         # script text -- avoids any shell-quoting hazard from arbitrary python source.
-        script = (f'python3 -c "$1" "${{@:2}}"\nrc=$?\nprintf "\\n{_RC_MARKER}%d\\n" "$rc"\n')
+        script = (f'printf "\\n{_START_MARKER}\\n"\npython3 -c "$1" "${{@:2}}"\nrc=$?\n'
+                 f'printf "\\n{_RC_MARKER}%d\\n" "$rc"\n')
         cmd = ["docker", "exec", container, "bash", "-c", script, "--", code, *params]
     else:
         raise ValueError(f"unsupported script language {lang!r}")
     try:
         proc = runner(cmd, capture_output=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
+        # 12th round addendum P6: capture_output's TimeoutExpired carries whatever partial stdout
+        # was read before the kill -- scanned for the START marker (printed first, before the
+        # subshell/python3 invocation even begins) as DIRECT evidence the exec reached the point of
+        # running the real command, never inferred from `docker inspect` (addendum C's old design,
+        # which only proved the CONTAINER was alive, not that THIS exec ever ran).
+        partial_stdout = _decode_replace(getattr(e, "stdout", None))
+        _, start_observed = _extract_start_marker(partial_stdout)
         return {"exit_code": None, "stdout": "", "stderr": "", "timed_out": True,
-               "marker_observed": False}
+               "marker_observed": False, "start_observed": start_observed}
     except (ValueError, TypeError) as e:
         # 12th cold review round 12 R-b (minor severity, narrows 11th round P2): THIS is the exact
         # argv-construction/dispatch step -- `cmd` embeds the model's answer (via `params`), and a
@@ -603,13 +655,24 @@ def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run
         # SPECIFICALLY this, never a bare (ValueError, TypeError) that could also swallow an
         # unrelated harness bug raised somewhere else and wrongly blame the model for it.
         raise UnrepresentableArgvError(f"{type(e).__name__}: {e}") from e
+    except OSError as e:
+        # 12th round addendum P7: E2BIG ("argument list too long") / EINVAL from the OS itself
+        # rejecting the launch is the SAME scored failure as the proactive size cap above -- a
+        # safety net for whatever the per-param cap didn't catch (e.g. cumulative argv size
+        # across several params). Any OTHER OSError (ENOENT: the docker binary itself missing,
+        # EACCES: permission denied, ...) is a genuine infra failure -- re-raised unchanged, never
+        # mistaken for the model's doing.
+        if getattr(e, "errno", None) in (errno.E2BIG, errno.EINVAL):
+            raise UnrepresentableArgvError(f"{type(e).__name__}: {e}") from e
+        raise
     stdout = _decode_replace(proc.stdout)
+    stdout, start_observed = _extract_start_marker(stdout)
     stdout, marker_rc = _extract_rc_marker(stdout)
     if marker_rc is not None:
         return {"exit_code": marker_rc, "stdout": stdout, "stderr": _decode_replace(proc.stderr),
-               "timed_out": False, "marker_observed": True}
+               "timed_out": False, "marker_observed": True, "start_observed": start_observed}
     return {"exit_code": proc.returncode, "stdout": stdout, "stderr": _decode_replace(proc.stderr),
-           "timed_out": False, "marker_observed": False}
+           "timed_out": False, "marker_observed": False, "start_observed": start_observed}
 
 
 def truncate_output(text: str, limit: int = TRUNCATE_LIMIT, keep: int = TRUNCATE_KEEP,
@@ -1124,27 +1187,40 @@ def _docker_inspect_running(container: str, runner=subprocess.run, timeout: floa
 # marker: `res["marker_observed"]` True means the script genuinely ran to completion and its rc
 # (whatever it is, even 125) is simply ITS OWN exit code -- never infra evidence, no probe
 # needed. `marker_observed` False means the marker was never printed -- EITHER the exec never
-# started, OR the process was killed/timed out before reaching it; a TIMEOUT is orthogonal to
-# this (a hanging MODEL BINARY, addendum C, is unaffected -- see below) and is resolved exactly
-# as before. For a COMPLETED-but-marker-less nonzero exit, the daemon-level `docker inspect`
-# probe (P47) is consulted purely for diagnostics now: Running is STILL ambiguous (we have no
-# proof the real command ran) -> setup_error; not Running / daemon unreachable -> setup_error.
-# The checker's stderr is still RECORDED in infra_evidence for diagnostics, never used to decide.
+# started, OR the process was killed/timed out before reaching it. For a COMPLETED-but-marker-
+# less nonzero exit, the daemon-level `docker inspect` probe (P47) is consulted purely for
+# diagnostics now: Running is STILL ambiguous (we have no proof the real command ran) ->
+# setup_error; not Running / daemon unreachable -> setup_error. The checker's stderr is still
+# RECORDED in infra_evidence for diagnostics, never used to decide.
+#
+# 12th cold review round 12 addendum P6 (supersedes addendum C's `docker inspect`-based timeout
+# resolution): a TIMEOUT is now resolved by `res["start_observed"]` -- DIRECT evidence (the START
+# marker, printed BEFORE the subshell/python3 invocation even begins) that the exec reached the
+# point of running the real command at all. `docker inspect` showing the container Running only
+# proves the CONTAINER is alive, never that THIS specific exec ever got there -- never assert "it
+# ran" on that weaker, inferred basis. START observed -> the checker genuinely began running and
+# hung -> failed_tests, exec_started=True. START absent -> setup_error, exec_started=False. No
+# `docker inspect` call is made for a timeout at all any more.
 def _classify_check_result(container: str, res: dict, runner) -> tuple:
-    """P47 + 11th round P7: the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout checker
-    result. Returns `(infra_evidence: dict|None, exec_started: bool|None)`. See the module-level
-    comment above for the full decision table."""
+    """P47 + 11th/12th round P7/P6: the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout
+    checker result. Returns `(infra_evidence: dict|None, exec_started: bool|None)`. See the
+    module-level comment above for the full decision table."""
     timed_out = bool(res.get("timed_out"))
     if not timed_out and res.get("marker_observed"):
         # authoritative: the script genuinely ran to completion -- its rc is its own, never infra.
         return None, True
+    if timed_out:
+        if res.get("start_observed"):
+            return None, True
+        return ({"message": "docker exec timeout with NO start marker observed -- the exec never "
+                           "reached the point of running the checker/init/example script at all "
+                           f"(stderr recorded, not used to decide): "
+                           f"{(res.get('stderr') or '')[:200]}",
+                "exit_code": None, "stderr": (res.get("stderr") or "")[:200], "timed_out": True,
+                "health_probe_ok": None, "start_observed": False,
+                "exec_started": False}, False)
     inspect = _docker_inspect_running(container, runner)
     if inspect["ok"] and inspect["running"]:
-        if timed_out:
-            # addendum C (unaffected by the marker change): a check-script TIMEOUT with the
-            # daemon confirming the container is still Running is the MODEL's own hang (e.g. its
-            # own installed binary), not infra.
-            return None, True
         # a COMPLETED nonzero exit with no marker, despite Running, is now STILL ambiguous (we
         # have no proof the real command ran at all) -- the strengthened P7-residual rule.
         return ({"message": "docker exec: no authoritative rc marker observed, despite the "
@@ -1152,7 +1228,7 @@ def _classify_check_result(container: str, res: dict, runner) -> tuple:
                            "have reached the checker/init/example script at all -- stderr "
                            f"(recorded, not used to decide): {(res.get('stderr') or '')[:200]}",
                 "exit_code": res.get("exit_code"), "stderr": (res.get("stderr") or "")[:200],
-                "timed_out": timed_out, "health_probe_ok": True, "inspect": inspect,
+                "timed_out": False, "health_probe_ok": True, "inspect": inspect,
                 "exec_started": False}, False)
     exec_started = None if not inspect["ok"] else False
     return ({"message": f"docker inspect did not confirm a live, running container "
@@ -1161,7 +1237,7 @@ def _classify_check_result(container: str, res: dict, runner) -> tuple:
                        f"inspect_timed_out={inspect['timed_out']}): "
                        f"{(inspect['stderr'] or inspect['stdout'] or '')[:200]}",
             "exit_code": res.get("exit_code"), "stderr": (res.get("stderr") or "")[:200],
-            "timed_out": timed_out,
+            "timed_out": False,
             "health_probe_ok": bool(inspect["ok"] and inspect["running"]), "inspect": inspect,
             "exec_started": exec_started}, exec_started)
 

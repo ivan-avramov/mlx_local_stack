@@ -1,6 +1,7 @@
 """M54: bench.agentbench_adapter -- corpus/eval semantics, container lifecycle (docker fully
 mocked via FakeRunner / a fake Popen), dual-submit shim, and per-task run outcomes. No docker, no
 network, no model calls."""
+import errno
 import functools
 import json
 import os
@@ -201,14 +202,18 @@ def test_run_check_chain_timeout_with_unhealthy_docker_is_infra_error():
     assert infra_error["timed_out"] is True
 
 
-def test_run_check_chain_timeout_with_healthy_docker_is_failed_tests_addendum_C():
-    """Addendum C: std-005-0/1/2 run the MODEL's OWN installed binaries, which can hang -- that is
-    a real `failed_tests` (IN the denominator), not an infra failure, when the daemon confirms the
-    container is still Running immediately after."""
-    runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1),
-                                 FakeRunner.Proc(0, "true\n", "")])   # inspect: Running
+def test_run_check_chain_timeout_with_start_marker_observed_is_failed_tests_addendum_C():
+    """Addendum C (12th round addendum P6: resolved via the START marker now, never `docker
+    inspect`): std-005-0/1/2 run the MODEL's OWN installed binaries, which can hang -- that is a
+    real `failed_tests` (IN the denominator), not an infra failure, when the START marker was
+    observed in the partial output before the timeout (DIRECT evidence the checker genuinely
+    began running)."""
+    timeout_with_start = subprocess.TimeoutExpired(
+        cmd="x", timeout=1, output=f"\n{AB._START_MARKER}\n".encode())
+    runner = FakeRunner(results=[timeout_with_start])   # no docker inspect call needed/made
     ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
     assert ok is False and gold_live is None and infra_error is None
+    assert exec_started is True
 
 
 def test_run_check_chain_null_with_no_example_fails_without_raising():
@@ -338,15 +343,35 @@ def test_classify_check_result_marker_absent_daemon_down_is_infra_P7():
     assert infra_evidence is not None and exec_started is None   # daemon unreachable -- unknown
 
 
-def test_classify_check_result_timeout_marker_absent_but_running_is_still_addendum_C_P7():
-    """Addendum C is UNAFFECTED by the marker change: a check-script TIMEOUT (the marker is
-    NEVER observed for a timeout -- the process was killed before reaching it) with the daemon
-    confirming Running is still the model's own hang, not infra."""
-    res = {"exit_code": None, "marker_observed": False, "timed_out": True, "stderr": ""}
-    runner = FakeRunner(default=FakeRunner.Proc(0, "true\n", ""))   # inspect: Running
-    infra_evidence, exec_started = AB._classify_check_result("c1", res, runner)
+def test_classify_check_result_timeout_start_observed_is_addendum_C_P6():
+    """12th round addendum P6 (supersedes addendum C's docker-inspect-based timeout resolution):
+    a check-script TIMEOUT (the RC marker is NEVER observed for a timeout -- the process was
+    killed before reaching it) with the START marker observed is DIRECT evidence the model's own
+    hang, not infra -- no probe needed, `docker inspect` must not even be called."""
+    res = {"exit_code": None, "marker_observed": False, "start_observed": True,
+          "timed_out": True, "stderr": ""}
+
+    def fail_if_probed(cmd, **kw):
+        raise AssertionError("docker inspect must not be called -- the START marker is already "
+                            "direct, unambiguous evidence")
+    infra_evidence, exec_started = AB._classify_check_result("c1", res, fail_if_probed)
     assert infra_evidence is None
     assert exec_started is True
+
+
+def test_classify_check_result_timeout_start_absent_is_infra_even_if_running_P6():
+    """12th round addendum P6: a TIMEOUT with NO start marker observed is setup_error -- NEVER
+    asserted as "it ran" on the weaker basis of `docker inspect` showing the container Running
+    (which only proves the CONTAINER is alive, not that THIS exec ever reached the real command).
+    `docker inspect` is not even consulted for a timeout any more."""
+    res = {"exit_code": None, "marker_observed": False, "start_observed": False,
+          "timed_out": True, "stderr": "some stderr"}
+
+    def fail_if_probed(cmd, **kw):
+        raise AssertionError("docker inspect must not be called for a timeout")
+    infra_evidence, exec_started = AB._classify_check_result("c1", res, fail_if_probed)
+    assert infra_evidence is not None and exec_started is False
+    assert infra_evidence["exec_started"] is False
 
 
 def test_run_check_chain_records_exec_started_true_on_a_full_pass_P7():
@@ -398,6 +423,112 @@ def test_docker_exec_real_bash_checker_normal_output_is_preserved_P7():
     assert res["exit_code"] == 0
     assert res["stdout"] == "hello\n"
     assert AB._RC_MARKER not in res["stdout"]
+    assert res["start_observed"] is True            # 12th round P6
+    assert AB._START_MARKER not in res["stdout"]
+
+
+# --------------------------------------------------------------------------- P6 (12th round addendum): START marker on timeout
+@_timeout(10)
+def test_docker_exec_real_bash_timeout_with_start_marker_sets_start_observed_P6():
+    """12th cold review round 12 addendum P6: a checker that genuinely begins running (prints the
+    START marker) and then hangs must have `start_observed=True` on timeout -- DIRECT evidence,
+    captured from subprocess.TimeoutExpired's own partial stdout."""
+    def runner(cmd, **kw):
+        assert cmd[:3] == ["docker", "exec", "c1"]
+        real_cmd = ["bash"] + cmd[4:]
+        return subprocess.run(real_cmd, capture_output=True, timeout=kw.get("timeout", 5))
+    res = AB.docker_exec("c1", ("bash", "sleep 999"), 0.3, runner)
+    assert res["timed_out"] is True
+    assert res["start_observed"] is True
+
+
+def test_docker_exec_timeout_without_any_output_has_start_observed_false_P6():
+    """A timeout where NOTHING was ever captured (the exec never even reached the point of
+    printing the START marker) must report start_observed=False, never crash on a None partial
+    stdout."""
+    runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1)])   # no `output=`
+    res = AB.docker_exec("c1", ("bash", "x"), 1.0, runner)
+    assert res["timed_out"] is True
+    assert res["start_observed"] is False
+
+
+def test_docker_exec_timeout_with_start_marker_in_partial_output_sets_start_observed_true_P6():
+    timeout_with_start = subprocess.TimeoutExpired(
+        cmd="x", timeout=1, output=f"some partial output\n{AB._START_MARKER}\n".encode())
+    runner = FakeRunner(results=[timeout_with_start])
+    res = AB.docker_exec("c1", ("bash", "x"), 1.0, runner)
+    assert res["timed_out"] is True
+    assert res["start_observed"] is True
+
+
+# --------------------------------------------------------------------------- P7 (12th round addendum): oversized/unlaunchable argv
+def test_docker_exec_oversized_param_raises_UnrepresentableArgvError_without_attempting_exec_P7():
+    """12th cold review round 12 addendum P7: an answer/param over 32 KiB is rejected
+    PROACTIVELY, before even attempting the exec -- the runner must never be called."""
+    def fail_if_called(cmd, **kw):
+        raise AssertionError("must not attempt the exec for an oversized param")
+    oversized = "x" * (32 * 1024 + 1)
+    with pytest.raises(AB.UnrepresentableArgvError, match="oversized answer"):
+        AB.docker_exec("c1", ("bash", "x"), 5.0, fail_if_called, extra_params=[oversized])
+
+
+def test_docker_exec_param_at_exactly_the_cap_is_allowed_P7():
+    """Boundary: exactly 32 KiB must NOT be rejected -- only strictly OVER the cap is."""
+    runner = FakeRunner(default=FakeRunner.Proc(0, _marked(0, ""), ""))
+    at_cap = "x" * (32 * 1024)
+    res = AB.docker_exec("c1", ("bash", "x"), 5.0, runner, extra_params=[at_cap])
+    assert res["marker_observed"] is True
+
+
+def test_docker_exec_e2big_oserror_from_the_runner_is_UnrepresentableArgvError_P7():
+    """A safety net for whatever the proactive per-param cap didn't catch -- the OS itself
+    rejecting the launch with E2BIG (argument list too long) is the SAME scored failure."""
+    def runner(cmd, **kw):
+        raise OSError(errno.E2BIG, "Argument list too long")
+    with pytest.raises(AB.UnrepresentableArgvError):
+        AB.docker_exec("c1", ("bash", "x"), 5.0, runner)
+
+
+def test_docker_exec_einval_oserror_from_the_runner_is_UnrepresentableArgvError_P7():
+    def runner(cmd, **kw):
+        raise OSError(errno.EINVAL, "Invalid argument")
+    with pytest.raises(AB.UnrepresentableArgvError):
+        AB.docker_exec("c1", ("bash", "x"), 5.0, runner)
+
+
+def test_docker_exec_enoent_oserror_is_NOT_caught_stays_a_genuine_infra_failure_P7():
+    """ENOENT (the docker binary itself missing) is a genuine launch/infra failure -- it must
+    propagate UNCAUGHT, never mistaken for the model's doing."""
+    def runner(cmd, **kw):
+        raise FileNotFoundError(errno.ENOENT, "No such file or directory", "docker")
+    with pytest.raises(FileNotFoundError):
+        AB.docker_exec("c1", ("bash", "x"), 5.0, runner)
+
+
+def test_docker_exec_eacces_oserror_is_NOT_caught_stays_a_genuine_infra_failure_P7():
+    """EACCES (permission denied) is a genuine launch/infra failure -- it must propagate
+    UNCAUGHT, never mistaken for the model's doing."""
+    def runner(cmd, **kw):
+        raise PermissionError(errno.EACCES, "Permission denied")
+    with pytest.raises(PermissionError):
+        AB.docker_exec("c1", ("bash", "x"), 5.0, runner)
+
+
+def test_run_task_oversized_answer_is_scored_failed_tests_not_setup_error_P7():
+    """End-to-end: a model answer over the 32 KiB cap must be a SCORED failed_tests row with
+    "oversized answer (N bytes)" in the error, never setup_error."""
+    def runner(cmd, **kw):
+        return FakeRunner.Proc(0, "", "")
+    oversized_answer = "y" * (32 * 1024 + 500)
+    driver = FakeDriver(script=[
+        complete_result(tool_calls=[tool_call("answer_action", {"answer": oversized_answer})]),
+    ])
+    task = _check_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["outcome"] == AO.FAILED_TESTS
+    assert row["passed"] is False
+    assert row["setup_error"] is False
+    assert "oversized answer" in row["error"]
 
 
 def _all_vendored_bash_scripts():
