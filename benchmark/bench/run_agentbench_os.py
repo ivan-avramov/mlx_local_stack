@@ -38,6 +38,7 @@ import signal
 import statistics
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import agentbench_adapter as AB
@@ -205,13 +206,72 @@ def _exit_sha(base: str):
         return None
 
 
+# 4th cold review G3 + 5th cold review P7: a --resume must refuse rather than silently continue a
+# run under DIFFERENT conditions than the one that produced the existing rows -- any of these
+# changing invalidates apples-to-apples comparison within the same rows file.
+RESUME_IDENTITY_KEYS = ("model", "round_limit", "exec_timeout_s", "deadline_s", "sampling_profile",
+                       "image_ids", "corpus_sha256", "exclusions_sha256")
+
+
+def _check_resume_identity(mp: Path, current: dict) -> str | None:
+    """None if `mp` doesn't exist yet (nothing to compare against) or its `runtime` block matches
+    `current` on every key in RESUME_IDENTITY_KEYS; else a refusal reason. P7: a manifest that
+    already recorded a `served_config_drift` from a PRIOR exit is refused outright -- that prior
+    run's results are suspect and must not be silently built upon."""
+    if not mp.exists():
+        return None
+    try:
+        prev_doc = json.loads(mp.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 -- _load_previous_manifest already surfaces this
+        return None
+    if prev_doc.get("served_config_drift"):
+        return (f"{mp} recorded a served_config_drift from a previous exit -- that run's results "
+               "are suspect; investigate before resuming (or start a fresh --out)")
+    prev_runtime = prev_doc.get("runtime") or {}
+    for key in RESUME_IDENTITY_KEYS:
+        if key not in prev_runtime:
+            continue
+        if prev_runtime[key] != current.get(key):
+            return (f"resume refused: {key} changed since the previous manifest ({mp}): "
+                   f"{prev_runtime[key]!r} -> {current.get(key)!r}")
+    return None
+
+
+def _stamp_manifest_exit(mp: Path, router: dict, base_url: str) -> None:
+    """P7: best-effort FORENSIC C106 exit stamp for an EXCEPTIONAL exit (TransportFailure,
+    ContainerCleanupError, KeyboardInterrupt, a SIGTERM SystemExit). Never raises and never masks
+    the original exception -- call ONLY from an `except BaseException: ...; raise` handler."""
+    if not mp.exists():
+        return
+    try:
+        doc = json.loads(mp.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        doc["router_exit"] = provenance.assert_served_config_unchanged(router, base_url)
+    except provenance.ServedConfigError as e:
+        doc["served_config_drift"] = {"entry_sha256": router.get("config_sha256"),
+                                      "exit_sha256": _exit_sha(base_url), "error": str(e)}
+    except Exception:  # noqa: BLE001 -- forensic only
+        return
+    try:
+        mp.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _write_manifest(mp: Path, model: str, *, profile: str, runtime: dict, router: dict,
-                    history: list) -> None:
+                    history: list, segments: list | None = None) -> None:
     # cold-review F15: the manifest must record the PROFILE ACTUALLY USED (which may be an
     # --allow-profile override), not a hardcoded "deployed".
     man = provenance.gather(model, profile=profile, runtime=runtime, router=router)
     if history:
         man["router_history"] = history
+    # P7: segments accumulate across resumes (one entry per process start) -- the caller is
+    # responsible for reading any PRIOR segments off the existing manifest and passing the full
+    # list back in; this function never reads the old file itself (it may legitimately not exist).
+    if segments:
+        man["segments"] = segments
     mp.parent.mkdir(parents=True, exist_ok=True)
     tmp = mp.with_suffix(mp.suffix + ".tmp")
     tmp.write_text(json.dumps(man, indent=2) + "\n", encoding="utf-8")
@@ -285,10 +345,27 @@ def _write_skipped(out: Path, note: str) -> int:
     return 0
 
 
-# --------------------------------------------------------------------------- timeout derivation (F8)
+# --------------------------------------------------------------------------- timeout derivation (F8/P14)
 def _derive_llm_timeout(model: str, thinking_budget, explicit):
+    """Returns (timeout_s, source, msg, derivation: dict).
+
+    5th cold review P14: `budget_timeout.derive_timeout`'s 7200s CEILING_S exists for the
+    convergence benchmark's own (differently justified: "a pathological draw shouldn't run
+    unbounded") axis. An AgentBench OS episode calls the model MANY times across up to
+    `--round-limit` turns, each needing a per-turn timeout actually sized to THIS model's thinking
+    budget and measured floor decode rate -- silently capping it at that shared ceiling would
+    truncate every turn on a large-budget/slow-decode model long before it could legitimately hit
+    its own budget, every single turn, which is exactly the "client gives up before the model does"
+    defect `budget_timeout.py` itself documents (just at a different scale). So the value here is
+    computed UNCAPPED; `observable=False` (no measured rate, no budget, or the value is simply
+    unknown) is recorded and the caller refuses to start rather than silently falling back to a
+    ceiling whose only honest meaning is "uninterpretable", unless `--llm-timeout` was given
+    explicitly."""
     if explicit:
-        return explicit, "explicit", f"{explicit:.0f}s (EXPLICIT --llm-timeout)"
+        derivation = {"thinking_budget": thinking_budget, "floor_decode_tps": None,
+                     "safety_headroom": None, "source": "explicit", "observable": True,
+                     "reason": "explicit --llm-timeout override"}
+        return explicit, "explicit", f"{explicit:.0f}s (EXPLICIT --llm-timeout)", derivation
     own_rows = generate.rows_for_rate(model, BENCH_NAME)
     tps = budget_timeout.floor_decode_tps(own_rows)
     source = BENCH_NAME
@@ -308,8 +385,23 @@ def _derive_llm_timeout(model: str, thinking_budget, explicit):
             fb_rows += rows
         tps = budget_timeout.floor_decode_tps(fb_rows)
         source = f"fallback:{'+'.join(contributors)}" if tps is not None else "none"
-    d = budget_timeout.derive_timeout(thinking_budget, tps)
-    return d["timeout_s"], source, f"{d['timeout_s']:.0f}s (DERIVED, timeout_source={source}) -- {d['reason']}"
+    if not thinking_budget or not tps or tps <= 0:
+        timeout_s = budget_timeout.CEILING_S
+        observable = False
+        reason = ("no measured decode rate or no thinking budget -- a per-turn timeout cannot be "
+                 "SIZED (not just 'cannot be interpreted as a budget hit')")
+    else:
+        budget_time_s = thinking_budget / tps
+        timeout_s = max(budget_timeout.FLOOR_S, budget_time_s * budget_timeout.SAFETY)
+        observable = True
+        reason = (f"budget {thinking_budget} tok at {tps:.1f} tok/s floor = "
+                 f"{budget_time_s / 60:.1f} min; x{budget_timeout.SAFETY} headroom, UNCAPPED "
+                 "(P14: no 7200s ceiling for this per-turn axis)")
+    derivation = {"thinking_budget": thinking_budget, "floor_decode_tps": tps,
+                 "safety_headroom": budget_timeout.SAFETY, "source": source,
+                 "observable": observable, "reason": reason}
+    return (round(timeout_s, 1), source,
+           f"{timeout_s:.0f}s (DERIVED, timeout_source={source}) -- {reason}", derivation)
 
 
 # --------------------------------------------------------------------------- prepare (D2, F6/F7/F10)
@@ -446,9 +538,17 @@ def run_generate(args, out: Path) -> int:
     params = model_params.params_for(args.model, profile=args.sampling_profile)
     context_limit = model_params.registry_context_limit(args.model)
 
-    llm_timeout, timeout_source, timeout_msg = _derive_llm_timeout(
+    llm_timeout, timeout_source, timeout_msg, timeout_derivation = _derive_llm_timeout(
         args.model, params.get("thinking_budget"), args.llm_timeout)
     print(f"[agentbench_os] per-turn LLM timeout = {timeout_msg}")
+    # P14: a per-turn timeout that cannot be SIZED (no measured rate, no budget) is not merely
+    # imprecise -- it is uninterpretable, and AGENTS.md forbids silently running on a number that
+    # is. Refuse rather than falling back to the shared ceiling, unless the operator overrode it.
+    if not timeout_derivation["observable"] and not args.llm_timeout:
+        print(f"[agentbench_os] REFUSED: cannot derive a per-turn LLM timeout "
+             f"({timeout_derivation['reason']}) -- pass --llm-timeout explicitly to override.",
+             file=sys.stderr, flush=True)
+        return 2
     if args.deadline_s:
         deadline_s = args.deadline_s
         deadline_reason = "EXPLICIT --deadline-s"
@@ -464,50 +564,83 @@ def run_generate(args, out: Path) -> int:
     print(f"[agentbench_os] {args.model}: {len(todo)} item(s) to run "
          f"({len(done_ids)} already done, {len(exclusions)} excluded)")
 
+    # 4th cold review G3 + 5th cold review P7: a resume (done_ids nonzero) must refuse rather than
+    # silently continue under conditions that changed since the manifest it's building on.
+    runtime_identity = {"model": args.model, "round_limit": args.round_limit,
+                        "exec_timeout_s": args.exec_timeout, "deadline_s": round(deadline_s, 1),
+                        "sampling_profile": args.sampling_profile, "image_ids": image_ids,
+                        "corpus_sha256": _sha256_file(corpus_path),
+                        "exclusions_sha256": _sha256_file(artifact_path)}
+    if done_ids:
+        identity_refusal = _check_resume_identity(mp, runtime_identity)
+        if identity_refusal:
+            print(f"[agentbench_os] REFUSED: {identity_refusal}", file=sys.stderr, flush=True)
+            return 2
+
     AB.sweep_stale_containers(AB.GENERATE_CONTAINER_PREFIX, runner)
 
     tdir = transcripts_dir_for(args)
+    prev_segments = []
+    if mp.exists():
+        try:
+            prev_segments = json.loads(mp.read_text(encoding="utf-8")).get("segments") or []
+        except Exception:  # noqa: BLE001
+            prev_segments = []
+    segments = prev_segments + [{"started_at": time.time(), "router_pid": router.get("pid"),
+                                 "rows_before": len(done_ids)}]
     if todo:
         _write_manifest(mp, args.model, profile=args.sampling_profile,
                         runtime={"client": "run_agentbench_os", "bench": BENCH_NAME, "tune": TUNE,
-                                 "corpus": str(corpus_path), "corpus_sha256": _sha256_file(corpus_path),
-                                 "exclusions_path": str(artifact_path),
-                                 "exclusions_sha256": _sha256_file(artifact_path),
-                                 "image_ids": image_ids,
+                                 "corpus": str(corpus_path), "exclusions_path": str(artifact_path),
                                  "limit": args.limit, "llm_timeout_s": round(llm_timeout, 1),
-                                 "timeout_source": timeout_source, "deadline_s": round(deadline_s, 1),
-                                 "exec_timeout_s": args.exec_timeout, "round_limit": args.round_limit,
+                                 "timeout_source": timeout_source,
+                                 "timeout_derivation": timeout_derivation,
                                  "n_todo": len(todo), "n_done_before": len(done_ids),
                                  "n_excluded": len(exclusions),
                                  "pilot_seed": args.pilot_seed, "pilot_n": args.pilot_n,
-                                 "pilot_ids": pilot_ids, "transcripts_dir": str(tdir)},
-                        router=router, history=history)
+                                 "pilot_ids": pilot_ids, "transcripts_dir": str(tdir),
+                                 **runtime_identity},
+                        router=router, history=history, segments=segments)
     base_driver = driver_mod.MlxServeDriver()
     current = {"container": None}
     old_handler = signal.signal(signal.SIGTERM, _make_sigterm_handler(current, runner))
     try:
-        for i, task in enumerate(todo):
-            print(f"[agentbench_os] {args.model} {task['id']} ({i + 1}/{len(todo)})", flush=True)
-            current["container"] = AB.container_name(AB.GENERATE_CONTAINER_PREFIX, task["id"])
-            item_params = {**params, "seed": rowschema.sample_seed(task["id"], 0)}
-            # TransportFailure propagates OUT of this loop uncaught (cold-review F1): a transport
-            # failure ESCALATES, it is never graded, and no row -- and so no transcript either --
-            # is written for the in-flight task.
-            row = AB.run_task(args.model, task, args.scripts_root, base_driver, item_params,
-                              container_prefix=AB.GENERATE_CONTAINER_PREFIX,
-                              exec_timeout=args.exec_timeout, llm_timeout=llm_timeout,
-                              max_turns=args.round_limit, deadline_s=deadline_s,
-                              context_limit=context_limit, gold_prepare=golds.get(task["id"]),
-                              runner=runner)
-            current["container"] = None
-            turns = row.pop("_transcript_turns", [])
-            transcript_path = write_transcript(tdir, task, args.model, turns, row)
-            row["transcript_path"] = str(transcript_path)
-            append_row(out, row)
-            print(f"[agentbench_os]   -> passed={row['passed']} outcome={row['outcome']} "
-                 f"turns={row['turns']} setup_error={row['setup_error']}", flush=True)
-    finally:
-        signal.signal(signal.SIGTERM, old_handler)
+        try:
+            for i, task in enumerate(todo):
+                print(f"[agentbench_os] {args.model} {task['id']} ({i + 1}/{len(todo)})", flush=True)
+                current["container"] = AB.container_name(AB.GENERATE_CONTAINER_PREFIX, task["id"])
+                item_params = {**params, "seed": rowschema.sample_seed(task["id"], 0)}
+                # TransportFailure propagates OUT of this loop uncaught (cold-review F1): a
+                # transport failure ESCALATES, it is never graded, and no row -- and so no
+                # transcript either -- is written for the in-flight task.
+                row = AB.run_task(args.model, task, args.scripts_root, base_driver, item_params,
+                                  container_prefix=AB.GENERATE_CONTAINER_PREFIX,
+                                  exec_timeout=args.exec_timeout, llm_timeout=llm_timeout,
+                                  max_turns=args.round_limit, deadline_s=deadline_s,
+                                  context_limit=context_limit, gold_prepare=golds.get(task["id"]),
+                                  runner=runner)
+                current["container"] = None
+                turns = row.pop("_transcript_turns", [])
+                transcript_path = write_transcript(tdir, task, args.model, turns, row)
+                row["transcript_path"] = str(transcript_path)
+                append_row(out, row)
+                print(f"[agentbench_os]   -> passed={row['passed']} outcome={row['outcome']} "
+                     f"turns={row['turns']} setup_error={row['setup_error']}", flush=True)
+                # 5th cold review P16: the row is now durably written -- ONLY NOW does an unverified
+                # container removal stop the run (never before the row itself is safe).
+                if row.get("container_removed_verified") is False:
+                    raise AB.ContainerCleanupError(
+                        f"container for task {task['id']} was not verifiably removed (docker rm -f "
+                        "failed or `docker ps -a` still shows it) -- stopping rather than creating "
+                        "another container on a box that may be silently accumulating live ones")
+        finally:
+            signal.signal(signal.SIGTERM, old_handler)
+    except BaseException:
+        # P7: an exceptional exit (TransportFailure, ContainerCleanupError, KeyboardInterrupt, or
+        # the SystemExit our own SIGTERM handler raises) still gets a best-effort C106 exit stamp,
+        # WITHOUT masking the original exception -- re-raise unconditionally.
+        _stamp_manifest_exit(mp, router, client.BASE)
+        raise
 
     try:
         exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)

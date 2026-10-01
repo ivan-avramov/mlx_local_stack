@@ -30,10 +30,16 @@ def _refusing(monkeypatch):
     monkeypatch.setattr(P, "router_owner", lambda port: None)
 
 
-def _args(tmp_path, **over):
+def _args(tmp_path, *, llm_timeout="60", **over):
+    """`llm_timeout="60"` by default (5th cold review P14: a per-turn timeout that cannot be SIZED
+    now REFUSES the run) -- most tests here don't care about the exact derived value. The small
+    number of tests that specifically exercise DERIVATION (no explicit override) pass
+    `llm_timeout=None` to omit the flag."""
     base = ["--model", "m", "--out", str(tmp_path / "rows.jsonl"),
            "--corpus", str(tmp_path / "corpus.jsonl"),
            "--scripts-root", str(tmp_path / "scripts")]
+    if llm_timeout is not None:
+        base += ["--llm-timeout", str(llm_timeout)]
     for k, v in over.items():
         flag = f"--{k.replace('_', '-')}"
         if v == "":              # store_true style flag (--prepare, --resume): no value
@@ -416,6 +422,113 @@ def test_resume_skips_already_done_ids(tmp_path, monkeypatch):
     assert seen == ["m1"]
 
 
+# --------------------------------------------------------------------------- G3/P7 resume identity
+def test_resume_refuses_when_round_limit_changed_G3(tmp_path, monkeypatch, capsys):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, round_limit=4))
+    assert rc == 0 and seen == ["m0", "m1"]
+
+    seen.clear()
+    rc = R.main(_args(tmp_path, resume="", round_limit=8))   # changed since the first run
+    assert rc == 2
+    assert seen == []   # refused before touching a single task
+    err = capsys.readouterr().err
+    assert "round_limit" in err
+
+
+def test_resume_accepts_when_nothing_changed_G3(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1))
+    assert rc == 0 and seen == ["m0"]
+
+    seen.clear()
+    rc = R.main(_args(tmp_path, resume="", limit=1))   # identical runtime identity
+    assert rc == 0
+
+
+def test_resume_refuses_when_previous_manifest_has_served_config_drift_P7(tmp_path, monkeypatch, capsys):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    (tmp_path / "rows.jsonl").write_text(json.dumps({"id": "m0", "passed": True, "outcome": "solved",
+                                                     "wall_s": 0.1, "completion_tokens_total": 1,
+                                                     "labels": [], "setup_error": False}) + "\n",
+                                         encoding="utf-8")
+    (tmp_path / "rows.manifest.json").write_text(json.dumps({
+        "runtime": {"round_limit": R.AB.ROUND_LIMIT}, "router": {"pid": 999},
+        "served_config_drift": {"error": "config changed mid-run"}}) + "\n", encoding="utf-8")
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, resume=""))
+    assert rc == 2
+    assert seen == []
+    assert "served_config_drift" in capsys.readouterr().err
+
+
+def test_resume_segments_accumulate_across_runs_P7(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, limit=1))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert len(man["segments"]) == 1
+    assert man["segments"][0]["rows_before"] == 0
+
+    rc = R.main(_args(tmp_path, resume=""))   # no --limit this time: m1 is new work
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert len(man["segments"]) == 2
+    assert man["segments"][1]["rows_before"] == 1
+
+
+# --------------------------------------------------------------------------- P16 container cleanup CLI
+def test_generate_stops_the_run_when_container_removal_is_unverified_P16(tmp_path, monkeypatch, capsys):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(3)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory(container_removed_verified=False)
+    monkeypatch.setattr(AB, "run_task", fake)
+    with pytest.raises(AB.ContainerCleanupError):
+        R.main(_args(tmp_path))
+    # the row for the FIRST task was still durably written before the run stopped
+    rows = (tmp_path / "rows.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 1
+    assert seen == ["m0"]   # stopped after the first task, never reached m1/m2
+
+
+def test_generate_continues_when_container_removal_is_verified_P16(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    tasks = [_match_task(f"m{i}") for i in range(2)]
+    corpus = _write_corpus(tmp_path, tasks)
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    fake, seen = _fake_run_task_factory(container_removed_verified=True)
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path))
+    assert rc == 0 and seen == ["m0", "m1"]
+
+
 def test_resume_tolerates_a_torn_final_line(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
@@ -648,10 +761,61 @@ def test_timeout_source_names_only_contributing_fallback_benches(tmp_path, monke
     monkeypatch.setattr(R.generate, "rows_for_rate", rows_for_rate)
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
-    rc = R.main(_args(tmp_path))
+    rc = R.main(_args(tmp_path, llm_timeout=None))
     assert rc == 0
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
     assert man["runtime"]["timeout_source"] == "fallback:math500"   # NOT "fallback:math500+convergence"
+
+
+def test_generate_refuses_when_llm_timeout_cannot_be_sized_P14(tmp_path, monkeypatch, capsys):
+    """5th cold review P14: with no rows anywhere (this axis AND every fallback bench) and no
+    explicit --llm-timeout, the per-turn timeout cannot be SIZED at all -- refuse rather than
+    silently running on the shared ceiling, whose only honest meaning here is 'uninterpretable'."""
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, llm_timeout=None))
+    assert rc == 2
+    assert seen == []   # refused before touching a single task
+    assert "cannot derive a per-turn LLM timeout" in capsys.readouterr().err
+
+
+def test_generate_explicit_llm_timeout_overrides_an_unobservable_derivation_P14(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
+    fake, seen = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, llm_timeout=45))
+    assert rc == 0 and seen == ["m0"]
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert man["runtime"]["llm_timeout_s"] == 45.0
+    assert man["runtime"]["timeout_derivation"]["observable"] is True
+    assert man["runtime"]["timeout_derivation"]["source"] == "explicit"
+
+
+def test_manifest_records_timeout_derivation_block_P14(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R.generate, "rows_for_rate",
+                       lambda model, bench: [{"decode_tps": 10.0}] * 10 if bench == "agentbench_os" else [])
+    fake, _ = _fake_run_task_factory()
+    monkeypatch.setattr(AB, "run_task", fake)
+    rc = R.main(_args(tmp_path, llm_timeout=None))
+    assert rc == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    d = man["runtime"]["timeout_derivation"]
+    assert d["observable"] is True
+    assert d["floor_decode_tps"] == 10.0
+    assert d["source"] == "agentbench_os"
 
 
 def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeypatch):
@@ -667,7 +831,7 @@ def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeyp
                        lambda model, bench: [{"decode_tps": 0.01}] * 10 if bench == "agentbench_os" else [])
     fake, _ = _fake_run_task_factory()
     monkeypatch.setattr(AB, "run_task", fake)
-    rc = R.main(_args(tmp_path))
+    rc = R.main(_args(tmp_path, llm_timeout=None))
     assert rc == 0
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
     assert man["runtime"]["deadline_s"] == man["runtime"]["llm_timeout_s"] * R.DEADLINE_MULTIPLIER
