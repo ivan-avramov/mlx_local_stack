@@ -191,6 +191,56 @@ and exits cleanly — it never crashes the broader harness.
 The agent, per-instance repo checkout (`repo_provider`), docker harness flags, and the exact
 report path/keys are wired and validated at the first real run. Start with `--n 2`.
 
+### AgentBench OS (agentic)
+
+`bench/run_agentbench_os.py` (M54) measures multi-step shell-tool agency: the upstream
+`THUDM/AgentBench` `os-std` split, 144 Linux-sysadmin tasks, Apache-2.0, pinned commit
+`d1e4a10db08c87075c78972e48ecc182be03e2d5` (`benchmark/corpora/agentbench_os_v1.manifest.json`).
+Unlike SWE-bench above, the tool loop is OUR OWN — `bench.agent_loop.run_agent` over the three
+upstream tools (`bash_action`, `finish_action`, `answer_action`, upstream system prompt verbatim,
+`round_limit` 8) — with one docker container per task (`docker exec` for every `bash_action`,
+graded inside the same container, `docker rm -f` always in a `finally`). It is a **standalone
+probe**, not part of the `generate`/`grade` tier pipeline.
+
+Corpus: `benchmark/corpora/agentbench_os_v1.jsonl` (144 tasks, upstream fields verbatim + our
+`id`/`group`) + `benchmark/corpora/agentbench_os_v1/scripts/{1..7}/...` (referenced init/check/
+example scripts) + `LICENSE-AgentBench`. Build the three task images first (native aarch64; never
+built against upstream's third-party mirror base — see the script's header):
+
+```bash
+scripts/build_agentbench_images.sh    # clones the pinned sha into $STACK_WORKDIR/agentbench,
+                                       # builds local-os/{default,packages,ubuntu}
+```
+
+**D2 exclusion is mandatory and runs first, with no model calls**: for every `check`-type task
+(never `match`), `evaluation.example.code` runs to completion in two independent fresh
+containers; a task with no gold or disagreeing golds is excluded. Generate mode refuses to start
+until this has produced `<out stem>.exclusions.json`:
+
+```bash
+# docker running, images built, mlx-serve serving <model> at :8000:
+cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> --prepare
+cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> \
+    --pilot-seed 1 --pilot-n 5        # seeded random pilot, never the first items
+cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> --resume
+```
+
+Same M50/C106 served-config discipline as `vision_gate.py`: refuses before the first request if
+the router at `--url` isn't serving this driver's registry, and refuses to declare the run
+complete if the served file or router pid changed underneath it. `--sampling-profile` defaults to
+(and is refused off) `deployed`; thinking stays ON; the per-turn LLM timeout is DERIVED from the
+model's measured decode rate, never an SDK default.
+
+Rows (`results/<model>/agentbench_os.v1.jsonl`) carry `id`, `group`, `labels`, `image`, `passed`,
+`outcome` (`bench.agent_outcomes` taxonomy — `turn_cap`/`no_submit`/`deadline` are scored FAIL
+rows, never dropped), `turns`, `submitted_via` (`answer`/`finish`/none), `answer`,
+`per_turn_completion_tokens`, `completion_tokens_total`, `finish_reasons`, `converged`, `wall_s`,
+`tool_calls`, `tool_timeouts`. `.summary.json` carries `n`/`passed`/`acc`, outcome counts, a
+DIAGNOSTIC per-label breakdown, and mean/max wall and tokens.
+
+If docker, the local-os images, or the corpus are missing, the probe writes `skipped: true` with
+a note and exits 0 — it never crashes the broader harness.
+
 ### GPQA auth
 GPQA is gated. Put `HF_TOKEN=hf_...` in `.env` (the stack already sources it) and accept the
 dataset terms once on the Hub. Until then `list` shows it UNAVAILABLE and it is skipped.
