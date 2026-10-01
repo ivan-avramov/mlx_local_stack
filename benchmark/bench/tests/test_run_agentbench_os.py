@@ -89,9 +89,18 @@ def _stub_registry(monkeypatch, tmp_path):
 
 
 def _write_complete_exclusions(tmp_path, AB, corpus_path, exclusions=None):
+    """P10: stamps a scripts_sha256 matching the SAME (possibly nonexistent) scripts root every
+    test's generate-mode call uses (`_args`'s `--scripts-root <tmp_path>/scripts`), plus a full
+    disposition map over the corpus, so run_generate's P10 checks see a match by default."""
+    exclusions = exclusions or []
+    scripts_root = tmp_path / "scripts"
+    tasks = AB.load_corpus(corpus_path)
+    disposition = AB.build_disposition_map(tasks, scripts_root, {}, exclusions)
     AB.write_exclusions_artifact(
         AB.exclusions_artifact_path(corpus_path), corpus_sha256=R._sha256_file(corpus_path),
-        image_ids=dict(IMAGE_IDS), golds={}, exclusions=exclusions or [], complete=True)
+        image_ids=dict(IMAGE_IDS), golds={}, exclusions=exclusions, complete=True,
+        scripts_root=str(scripts_root), scripts_sha256=AB.scripts_root_sha256(scripts_root),
+        disposition=disposition)
 
 
 def _fake_run_task_factory(seen=None, **overrides):
@@ -309,6 +318,32 @@ def test_generate_refuses_when_images_changed_since_prepare(tmp_path, monkeypatc
     assert rc == 2 and "image" in capsys.readouterr().err.lower()
 
 
+def test_generate_refuses_when_scripts_changed_since_prepare_P10(tmp_path, monkeypatch, capsys):
+    AB = _ready(tmp_path, monkeypatch)
+    corpus = _write_corpus(tmp_path, [_match_task("t1")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(AB, "scripts_root_sha256", lambda root: "CHANGED")
+    rc = R.main(_args(tmp_path))
+    assert rc == 2
+    assert "scripts" in capsys.readouterr().err.lower()
+
+
+def test_generate_refuses_when_disposition_missing_a_corpus_id_P10(tmp_path, monkeypatch, capsys):
+    AB = _ready(tmp_path, monkeypatch)
+    corpus = _write_corpus(tmp_path, [_match_task("t1"), _match_task("t2")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    doc = AB.read_exclusions_artifact(AB.exclusions_artifact_path(corpus))
+    doc["disposition"].pop("t2", None)
+    AB.write_exclusions_artifact(AB.exclusions_artifact_path(corpus), corpus_sha256=doc["corpus_sha256"],
+                                 image_ids=doc["image_ids"], golds=doc["golds"],
+                                 exclusions=doc["exclusions"], complete=True,
+                                 scripts_root=doc["scripts_root"], scripts_sha256=doc["scripts_sha256"],
+                                 disposition=doc["disposition"])
+    rc = R.main(_args(tmp_path))
+    assert rc == 2
+    assert "t2" in capsys.readouterr().err
+
+
 # --------------------------------------------------------------------------- full generate happy path
 def test_full_generate_writes_rows_manifest_and_summary(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
@@ -349,6 +384,40 @@ def test_manifest_records_the_actual_overridden_profile_F15(tmp_path, monkeypatc
     assert rc == 0
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
     assert man["sampling_profile"] == "official"
+
+
+# --------------------------------------------------------------------------- P11 summary
+def _row(id_, *, passed, converged, setup_error=False, nonconv_kinds=None):
+    return {"id": id_, "passed": passed, "converged": converged, "setup_error": setup_error,
+           "nonconv_kinds": nonconv_kinds or [], "outcome": "solved" if passed else "failed_tests",
+           "labels": []}
+
+
+def test_summarize_acc_strict_requires_passed_and_converged_P11():
+    rows = [_row("a", passed=True, converged=True),
+           _row("b", passed=True, converged=False, nonconv_kinds=["budget_hit"]),
+           _row("c", passed=False, converged=True)]
+    summary = R.summarize(rows)
+    assert summary["passed"] == 2             # a and b both passed
+    assert summary["acc"] == round(2 / 3, 3)
+    assert summary["acc_strict"] == round(1 / 3, 3)   # only "a" is passed AND converged
+
+
+def test_summarize_conv_rate_and_nonconv_kind_counts_P11():
+    rows = [_row("a", passed=True, converged=True),
+           _row("b", passed=False, converged=False, nonconv_kinds=["budget_hit"]),
+           _row("c", passed=False, converged=False, nonconv_kinds=["missing_usage", "budget_hit"])]
+    summary = R.summarize(rows)
+    assert summary["conv_rate"] == round(1 / 3, 3)
+    assert summary["nonconv_kind_counts"] == {"budget_hit": 2, "missing_usage": 1}
+
+
+def test_summarize_acc_strict_denominator_excludes_setup_errors_P11():
+    rows = [_row("a", passed=True, converged=True),
+           _row("b", passed=False, converged=False, setup_error=True)]
+    summary = R.summarize(rows)
+    assert summary["graded_n"] == 1
+    assert summary["acc_strict"] == 1.0
 
 
 def test_setup_error_rows_excluded_from_acc_denominator_F1(tmp_path, monkeypatch):
@@ -879,7 +948,7 @@ def test_summary_counts_exec_timeout_and_shell_died_rows(tmp_path, monkeypatch):
     assert summary["shell_died_count"] == 1
 
 
-def test_summary_counts_gold_drift_rows_R5(tmp_path, monkeypatch):
+def test_summary_counts_gold_prepare_differs_rows_R5(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     tasks = [_match_task("m0"), _match_task("m1")]
@@ -899,11 +968,11 @@ def test_summary_counts_gold_drift_rows_R5(tmp_path, monkeypatch):
     rc = R.main(_args(tmp_path))
     assert rc == 0
     summary = json.loads((tmp_path / "rows.summary.json").read_text())
-    assert summary["gold_drift_count"] == 1
-    assert summary["gold_drift_ids"] == ["m0"]
+    assert summary["gold_prepare_differs_count"] == 1
+    assert summary["gold_prepare_differs_ids"] == ["m0"]
 
 
-def test_summary_gold_drift_ignores_rows_missing_either_gold(tmp_path, monkeypatch):
+def test_summary_gold_prepare_differs_ignores_rows_missing_either_gold(tmp_path, monkeypatch):
     AB = _ready(tmp_path, monkeypatch)
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
@@ -914,7 +983,7 @@ def test_summary_gold_drift_ignores_rows_missing_either_gold(tmp_path, monkeypat
     rc = R.main(_args(tmp_path))
     assert rc == 0
     summary = json.loads((tmp_path / "rows.summary.json").read_text())
-    assert summary["gold_drift_count"] == 0
+    assert summary["gold_prepare_differs_count"] == 0
 
 
 def test_stale_skipped_marker_is_cleared_after_a_successful_run(tmp_path, monkeypatch):
@@ -954,9 +1023,13 @@ def test_generate_populates_gold_prepare_onto_every_row_from_the_artifact_AC5(tm
     _stub_registry(monkeypatch, tmp_path)
     corpus = _write_corpus(tmp_path, [_match_task("m0")])
     _write_complete_exclusions(tmp_path, AB, corpus)
+    scripts_root = tmp_path / "scripts"
     AB.write_exclusions_artifact(AB.exclusions_artifact_path(corpus),
                                  corpus_sha256=R._sha256_file(corpus), image_ids=dict(IMAGE_IDS),
-                                 golds={"m0": "3\n"}, exclusions=[], complete=True)
+                                 golds={"m0": "3\n"}, exclusions=[], complete=True,
+                                 scripts_root=str(scripts_root),
+                                 scripts_sha256=AB.scripts_root_sha256(scripts_root),
+                                 disposition={"m0": "match"})
     monkeypatch.setattr(R.generate, "rows_for_rate", lambda model, bench: [])
     seen_golds = []
 

@@ -294,11 +294,25 @@ def summarize(rows: list) -> dict:
     walls = [r["wall_s"] for r in rows if isinstance(r.get("wall_s"), (int, float))]
     toks = [r["completion_tokens_total"] for r in rows
            if isinstance(r.get("completion_tokens_total"), (int, float))]
+    # 5th cold review P11: AGENTS.md -- acc_strict@<budget> (passed AND converged, DNF counts in
+    # the denominator) is the RANKING KEY; conv_rate and nonconv_kinds are reported alongside it,
+    # never folded into a composite. All three share the SAME denominator as `acc` (graded_n --
+    # setup/infra failures are excluded exactly as they are from `acc`).
+    converged_n = sum(1 for r in graded_rows if r.get("converged") is True)
+    passed_and_converged = sum(1 for r in graded_rows
+                               if r.get("passed") is True and r.get("converged") is True)
+    nonconv_kind_counts: dict = {}
+    for r in graded_rows:
+        for k in (r.get("nonconv_kinds") or []):
+            nonconv_kind_counts[k] = nonconv_kind_counts.get(k, 0) + 1
     return {
         # cold-review F1: setup/evaluate infra failures are EXCLUDED from the acc denominator and
         # reported separately, rather than silently counted as ordinary fails.
         "n": n, "setup_error_count": len(setup_error_rows), "graded_n": graded_n,
         "passed": passed, "acc": round(passed / graded_n, 3) if graded_n else None,
+        "acc_strict": round(passed_and_converged / graded_n, 3) if graded_n else None,
+        "conv_rate": round(converged_n / graded_n, 3) if graded_n else None,
+        "nonconv_kind_counts": nonconv_kind_counts,
         "outcome_counts": outcome_counts,
         "label_counts_diagnostic": label_counts,
         "wall_s_mean": round(statistics.mean(walls), 1) if walls else None,
@@ -311,14 +325,19 @@ def summarize(rows: list) -> dict:
         # outcome_counts/setup_error_count.
         "exec_timeout_count": sum(1 for r in rows if r.get("exec_timeout")),
         "shell_died_count": sum(1 for r in rows if r.get("shell_died")),
-        # R5: a row where the D2-prepare-time gold and the gold observed live at grading disagree
-        # -- only meaningful when BOTH are known (a gold slot exists AND grading actually ran it).
-        "gold_drift_count": sum(1 for r in _gold_drift_rows(rows)),
-        "gold_drift_ids": [r["id"] for r in _gold_drift_rows(rows)],
+        # R5/D2-rule-v2 (operator 2026-09-30): a row where the D2-prepare-time gold and the gold
+        # observed live at grading disagree -- only meaningful when BOTH are known (a gold slot
+        # exists AND grading actually ran it). RENAMED from gold_drift: for a randomized-init task
+        # ($RANDOM/shuf) this is EXPECTED, not necessarily an error -- the D2 probe already excludes
+        # tasks whose example disagrees across two in-container runs (gold_mismatch), so any row
+        # reaching here with a cached gold_prepare came from a task that agreed at prepare time;
+        # live disagreement still means the environment realized differently this time.
+        "gold_prepare_differs_count": sum(1 for r in _gold_prepare_differs_rows(rows)),
+        "gold_prepare_differs_ids": [r["id"] for r in _gold_prepare_differs_rows(rows)],
     }
 
 
-def _gold_drift_rows(rows: list) -> list:
+def _gold_prepare_differs_rows(rows: list) -> list:
     return [r for r in rows if r.get("gold_prepare") is not None and r.get("gold_live") is not None
            and r["gold_prepare"] != r["gold_live"]]
 
@@ -432,12 +451,21 @@ def run_prepare(args, out: Path) -> int:
                                                   prefix=AB.PREPARE_CONTAINER_PREFIX, manual=manual)
     finally:
         signal.signal(signal.SIGTERM, old_handler)
+    # P10: the artifact fingerprints the vendored scripts too, and carries a full per-task
+    # disposition map (match/kept/excluded:<reason>) so `validate_exclusions_artifact` can refuse
+    # on ANY missing corpus id, not just a drifted sha.
+    scripts_sha = AB.scripts_root_sha256(args.scripts_root)
+    disposition = AB.build_disposition_map(tasks, args.scripts_root, golds, exclusions)
     artifact_path = AB.exclusions_artifact_path(corpus_path)
     AB.write_exclusions_artifact(artifact_path, corpus_sha256=_sha256_file(corpus_path),
                                  image_ids=image_ids, golds=golds, exclusions=exclusions,
-                                 complete=True, manual_exclusions_sha256=manual_sha)
+                                 complete=True, manual_exclusions_sha256=manual_sha,
+                                 scripts_root=str(args.scripts_root), scripts_sha256=scripts_sha,
+                                 disposition=disposition)
+    gold_mismatch_n = sum(1 for e in exclusions if e.get("reason") == "gold_mismatch")
     print(f"[agentbench_os] D2 prepare: {len(tasks)} task(s), {len(exclusions)} excluded "
-         f"({len(manual)} manual), {len(golds)} gold(s) cached")
+         f"({len(manual)} manual, {gold_mismatch_n} gold_mismatch -- EXPECTED for randomized-init "
+         f"tasks, see docs), {len(golds)} gold(s) cached")
     print(f"[agentbench_os] wrote {artifact_path}")
     return 0
 
@@ -481,13 +509,15 @@ def run_generate(args, out: Path) -> int:
         return _write_skipped(out, reason)
 
     image_ids = AB.current_image_ids(runner=runner)
+    all_tasks = AB.load_corpus(corpus_path)
     artifact_path = AB.exclusions_artifact_path(corpus_path)
     excl_doc = AB.read_exclusions_artifact(artifact_path)
     manual_path = AB.manual_exclusions_path(corpus_path)
     manual_sha = _sha256_file(manual_path) if manual_path.exists() else None
-    refusal = AB.validate_exclusions_artifact(excl_doc, corpus_sha256=_sha256_file(corpus_path),
-                                              image_ids=image_ids,
-                                              manual_exclusions_sha256=manual_sha)
+    refusal = AB.validate_exclusions_artifact(
+        excl_doc, corpus_sha256=_sha256_file(corpus_path), image_ids=image_ids,
+        manual_exclusions_sha256=manual_sha, scripts_sha256=AB.scripts_root_sha256(args.scripts_root),
+        all_task_ids=[t["id"] for t in all_tasks])
     if refusal:
         print(f"[agentbench_os] REFUSED: {artifact_path}: {refusal}", file=sys.stderr, flush=True)
         return 2
@@ -523,7 +553,6 @@ def run_generate(args, out: Path) -> int:
              "drawn from it.", file=sys.stderr, flush=True)
         return 2
 
-    all_tasks = AB.load_corpus(corpus_path)
     candidates = AB.apply_exclusions(all_tasks, exclusions)
     if args.limit:
         candidates = candidates[:args.limit]
