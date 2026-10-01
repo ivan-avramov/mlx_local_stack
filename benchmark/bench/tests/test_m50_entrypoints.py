@@ -176,6 +176,8 @@ def test_vision_gate_records_router_in_the_summary(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- run_opencode_probe
 def test_run_opencode_probe_refuses_before_the_manifest(tmp_path, monkeypatch, capsys):
     import run_opencode_probe as OP
+    # 10th cold review (between-arms fix 2): see _oc_probe_setup's identical comment.
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     monkeypatch.setattr(OP, "_opencode_version", lambda: OP.PINNED_OPENCODE_VERSION)
     monkeypatch.setattr(OP, "_polyglot_root", lambda: pytest.fail("polyglot before tripwire"))
     _refusing(monkeypatch)
@@ -272,6 +274,8 @@ def test_session_cache_probe_leg_b_verifies_opencodes_own_destination(tmp_path, 
 
 def test_run_opencode_probe_checks_opencodes_destination_not_MLX_SERVE_BASE(tmp_path, monkeypatch):
     import run_opencode_probe as OP
+    # 10th cold review (between-arms fix 2): see _oc_probe_setup's identical comment.
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     monkeypatch.setattr(OP, "_opencode_version", lambda: OP.PINNED_OPENCODE_VERSION)
     monkeypatch.setenv("MLX_SERVE_BASE", "http://localhost:8000")
     monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8123/v1")
@@ -433,6 +437,8 @@ def test_stack_smoke_reads_params_only_after_verification(tmp_path, monkeypatch)
 
 def test_run_opencode_probe_rechecks_destination_inside_each_item(tmp_path, monkeypatch):
     import run_opencode_probe as OP
+    # 10th cold review (between-arms fix 2): see _oc_probe_setup's identical comment.
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     monkeypatch.setattr(OP, "_opencode_version", lambda: OP.PINNED_OPENCODE_VERSION)
     root = tmp_path / "poly" / "python" / "exercises" / "practice"; (root / "ex").mkdir(parents=True)
     monkeypatch.setattr(OP, "_polyglot_root", lambda: tmp_path / "poly")
@@ -453,6 +459,10 @@ def test_run_opencode_probe_rechecks_destination_inside_each_item(tmp_path, monk
 # --------------------------------------------------------------------------- round 5 (Codex cold review #4)
 def _oc_probe_setup(tmp_path, monkeypatch, pid):
     import run_opencode_probe as OP
+    # 10th cold review (live-pilot finding, between-arms fix 2): OP.main()'s own log-tail
+    # scrubbing calls the REAL bench.paths.stack_workdir (for a PII pattern to scrub, never a
+    # write target) -- redirect it under tmp_path so that incidental call stays confined.
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     monkeypatch.setattr(OP, "_opencode_version", lambda: OP.PINNED_OPENCODE_VERSION)
     root = tmp_path / "poly" / "python" / "exercises" / "practice"; (root / "ex").mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(OP, "_polyglot_root", lambda: tmp_path / "poly")

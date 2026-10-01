@@ -12,6 +12,18 @@ import pytest
 import bench.agentbench_watch as W
 
 
+# 10th cold review (live-pilot finding, between-arms fix 2): run_watch() ALWAYS calls self_test()
+# with no tmp_dir override, which (P42) resolves the REAL paths.stack_workdir() whenever a test
+# doesn't redirect STACK_WORKDIR itself -- several run_watch-driving tests here constructed a bare
+# `argparse.Namespace(...)` with no monkeypatch at all, silently writing self-test fixtures into
+# the OPERATOR's real $STACK_WORKDIR/m54/tmp. A test that needs the REAL (unset) env for its own
+# assertion can still `monkeypatch.delenv("STACK_WORKDIR", raising=False)` in its own body, same
+# as test_run_agentbench_os.py's identical pattern.
+@pytest.fixture(autouse=True)
+def _stack_workdir_is_tmp_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+
+
 def _row(id_, group=1, passed=True, outcome="solved", turns=1, answer="42", wall_s=2.0,
         wall_total_s=None, completion_tokens_total=50, exec_timeout=False, shell_died=False,
         setup_error=False, converged=True, budget_hits=0, gold_prepare=None, gold_live=None,
@@ -1124,6 +1136,31 @@ def test_run_watch_exits_when_driver_dead_and_rows_complete(tmp_path):
     assert rc == 0   # returned on its own (driver dead + rows==total), not via --once
 
 
+def test_run_watch_exits_on_the_FIRST_tick_when_driver_dead_and_rows_complete_fix3(tmp_path):
+    """10th cold review (live-pilot finding, fix 3): the pilot watcher (rows 5/5, driver pid
+    gone) must exit on the VERY FIRST tick where `driver dead AND rows >= total` holds -- not
+    wait out even one more interval. A LARGE --interval (300s, matching the live run's config)
+    makes this unambiguous: if the exit check fired only on a LATER tick (or not at all), this
+    test would take ~300s or time out; instead it must return in well under a second."""
+    rows_path = tmp_path / "rows.jsonl"
+    _write_rows(rows_path, [_row("a"), _row("b"), _row("c"), _row("d"), _row("e")])
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    out_path = tmp_path / "watch.log"
+    import argparse
+    args = argparse.Namespace(rows=str(rows_path), manifest=str(manifest_path), total=5,
+                              driver_pid=2**30, router_log=str(tmp_path / "router.log"),
+                              out=str(out_path), interval=300.0, stall_s=2700.0, once=False)
+    t0 = time.monotonic()
+    rc = W.run_watch(args)
+    elapsed = time.monotonic() - t0
+    assert rc == 0
+    assert elapsed < 2.0   # the FIRST tick already satisfied driver-dead-and-complete
+    content = out_path.read_text(encoding="utf-8")
+    assert "DRIVER DEAD" in content
+    assert content.count("PROGRESSING") == 2   # exactly one self-test block + ONE real tick
+
+
 def test_run_watch_exits_immediately_when_driver_dead_even_with_rows_incomplete_addendum_E(tmp_path):
     """Addendum E: a driver that crashed EARLY (rows < total) must not be watched forever -- the
     watcher exits after reporting the DRIVER DEAD tick, regardless of row count."""
@@ -1140,6 +1177,38 @@ def test_run_watch_exits_immediately_when_driver_dead_even_with_rows_incomplete_
     assert rc == 0
     content = out_path.read_text(encoding="utf-8")
     assert "DRIVER DEAD" in content
+
+
+def test_run_watch_exits_promptly_on_sigterm_not_after_the_full_interval(tmp_path):
+    """10th cold review (live-pilot finding, addendum 4): the lingering pilot watcher did not
+    exit on SIGTERM either (`kill -TERM` -> still alive ~2s later -- needed KILL). A bare
+    `time.sleep(args.interval)` is not reliably interrupted by the signal handler alone; the wait
+    must use an Event the handler can set to wake it immediately. A background Timer thread
+    delivers a REAL SIGTERM to this process shortly after run_watch enters its interval wait;
+    `elapsed` must be close to the Timer's delay, nowhere near the full (5s) interval."""
+    import signal
+    import threading
+    rows_path = tmp_path / "rows.jsonl"
+    _write_rows(rows_path, [_row("a")])
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"model": "m"}), encoding="utf-8")
+    out_path = tmp_path / "watch.log"
+    import argparse
+    # driver_pid=os.getpid() (THIS process) is deliberately kept ALIVE throughout, so the only
+    # way run_watch can return is via the SIGTERM path -- isolates it from the driver-dead path.
+    args = argparse.Namespace(rows=str(rows_path), manifest=str(manifest_path), total=5,
+                              driver_pid=os.getpid(), router_log=str(tmp_path / "router.log"),
+                              out=str(out_path), interval=5.0, stall_s=2700.0, once=False)
+    timer = threading.Timer(0.3, lambda: os.kill(os.getpid(), signal.SIGTERM))
+    timer.start()
+    try:
+        t0 = time.monotonic()
+        rc = W.run_watch(args)
+        elapsed = time.monotonic() - t0
+    finally:
+        timer.join()
+    assert rc == 0
+    assert elapsed < 2.0   # well under the 5s interval -- SIGTERM interrupted the wait promptly
 
 
 def test_run_watch_refuses_when_self_test_fails(tmp_path, monkeypatch):

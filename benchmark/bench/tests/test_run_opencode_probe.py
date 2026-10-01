@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # benchmark/ on sys.path
 import run_opencode_probe as P
+from bench import paths as _paths
 
 
 # --------------------------------------------------------------------------- _solution_and_test
@@ -350,6 +351,12 @@ def test_unsupported_lang_exits_with_clear_message(monkeypatch):
 def test_scrub_pii_replaces_home_and_workdir(monkeypatch):
     # The repo is PUBLIC: rows must not carry absolute home paths (the pre-commit
     # piicheck rejects them — M3's first commit attempt was blocked by exactly this).
+    # 10th cold review (between-arms fix 2): this FAKE path is pure TEST DATA for the scrubber
+    # (never an actual write target) -- replace paths.stack_workdir directly (not just the env
+    # var) so the conftest-level real-workdir guard, which wraps the REAL resolver and would
+    # otherwise flag this synthetic value as an out-of-bounds write target, is bypassed cleanly.
+    monkeypatch.setattr(_paths, "stack_workdir",
+                        lambda required=True: Path("/Users/someone/ws/mlx_local_stack_workdir"))  # allow-pii-pattern
     monkeypatch.setenv("STACK_WORKDIR", "/Users/someone/ws/mlx_local_stack_workdir")  # allow-pii-pattern
     monkeypatch.setattr(P.os.path, "expanduser", lambda p: "/Users/someone" if p == "~" else p)  # allow-pii-pattern
     raw = ("Read /Users/someone/ws/mlx_local_stack_workdir/scratch/octmp/oc-x/y failed; "  # allow-pii-pattern
@@ -368,6 +375,10 @@ def test_scrub_then_tail_scrubs_before_truncating_not_after(monkeypatch):
     for a prefix length that makes the naive (slice-then-scrub) order leak, the same methodology
     the verifier used, so the test doesn't depend on a hand-picked magic width happening to still
     reproduce the bug."""
+    # 10th cold review (between-arms fix 2): see test_scrub_pii_replaces_home_and_workdir above --
+    # same synthetic-data bypass of the conftest-level real-workdir guard.
+    monkeypatch.setattr(_paths, "stack_workdir",
+                        lambda required=True: Path("/Users/someone/ws/mlx_local_stack_workdir"))  # allow-pii-pattern
     monkeypatch.setenv("STACK_WORKDIR", "/Users/someone/ws/mlx_local_stack_workdir")  # allow-pii-pattern
     monkeypatch.setattr(P.os.path, "expanduser", lambda p: "/Users/someone" if p == "~" else p)  # allow-pii-pattern
     home_path = "/Users/someone/ws/mlx_local_stack_workdir/scratch/oc-x/y"  # allow-pii-pattern

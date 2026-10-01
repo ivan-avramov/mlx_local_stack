@@ -463,6 +463,13 @@ def test_integrity_machinery_is_the_opencode_implementation_by_identity():
 # --------------------------------------------------------------------------- L1: default --out and dedup
 
 def test_default_out_path_includes_the_tune_label(monkeypatch, tmp_path):
+    # 10th cold review (live-pilot finding, between-arms fix 2): main()'s own log-tail scrubbing
+    # (_scrub_then_tail -> _scrub_pii -> _stack_workdir(required=False)) calls the REAL
+    # bench.paths.stack_workdir for a PII pattern to scrub (never a write target) -- with no
+    # redirect, it silently resolved the OPERATOR's real STACK_WORKDIR during this test (caught
+    # by conftest's guard). This test doesn't exercise STACK_WORKDIR-dependent behavior at all;
+    # redirect it under tmp_path so the scrubber's incidental call stays confined.
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     poly = tmp_path / "polyglot"
     ex = poly / "python/exercises/practice/affine-cipher"
     ex.mkdir(parents=True)

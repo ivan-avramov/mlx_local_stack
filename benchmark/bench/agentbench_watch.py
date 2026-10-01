@@ -43,6 +43,7 @@ import signal
 import statistics
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -845,10 +846,17 @@ def run_watch(args) -> int:
              f"SELF-TEST block in {out_path}", file=sys.stderr, flush=True)
         return 2
 
-    stop = {"flag": False}
+    # 10th cold review (live-pilot finding, addendum 4): a bare `time.sleep(args.interval)` is
+    # NOT reliably interrupted by a signal handler that merely sets a flag -- the live pilot
+    # watcher (interval=300s) was still alive ~2s after a `kill -TERM`, needing a hard KILL.
+    # threading.Event.wait(timeout) IS reliably woken by `.set()` called from the signal handler
+    # (CPython delivers the signal on the main thread, runs the handler, which wakes the waiting
+    # Event immediately rather than leaving the tick loop blocked for the REMAINDER of the
+    # interval).
+    stop_event = threading.Event()
 
     def _on_sigterm(signum, frame):
-        stop["flag"] = True
+        stop_event.set()
     old_handler = signal.signal(signal.SIGTERM, _on_sigterm)
 
     prev_count = 0
@@ -913,11 +921,21 @@ def run_watch(args) -> int:
             prev_count = len(rows)
             # addendum E: exit after a DRIVER DEAD tick regardless of row count -- a crashed
             # driver is never watched forever waiting for a row count it will now never reach.
+            # 10th cold review (live-pilot finding, fix 3): `done_and_dead` is the PRIMARY,
+            # expected-completion exit condition (driver dead AND rows caught up to total) --
+            # checked FIRST and explicitly, ahead of the addendum-E early-crash fallback, so the
+            # intended "this tick, the run genuinely finished" case is never masked by it.
             driver_dead = not pid_alive(args.driver_pid)
             done_and_dead = len(rows) >= args.total and driver_dead
-            if done_and_dead or driver_dead or stop["flag"] or args.once:
+            if done_and_dead or driver_dead or stop_event.is_set() or args.once:
                 return 0
-            time.sleep(args.interval)
+            if stop_event.wait(args.interval):
+                # SIGTERM arrived during the wait -- an explicit final block makes the exit
+                # itself visible in the log (the regular tick above only shows the state AT
+                # the time of the signal, not that a shutdown was requested).
+                _append(out_path, f"[agentbench_watch] SIGTERM received -- exiting after this "
+                                 f"tick (rows={len(rows)}/{args.total})\n")
+                return 0
     finally:
         signal.signal(signal.SIGTERM, old_handler)
 

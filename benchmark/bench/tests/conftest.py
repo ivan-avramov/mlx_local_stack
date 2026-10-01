@@ -218,3 +218,31 @@ def _m50_router_matches_registry(monkeypatch, tmp_path):
     monkeypatch.setattr(P, "_real_router_owner", P.router_owner, raising=False)  # for tests OF it
     monkeypatch.setattr(P, "router_owner", _fake_owner)
     monkeypatch.setattr(P, "_LAST_VERIFIED", {})   # the entry-verified block never leaks across tests
+
+
+# --------------------------------------------------------------------------- STACK_WORKDIR guard
+# 10th cold review (live-pilot finding, between-arms fix 2): a test-suite run wrote INTO the
+# operator's REAL $STACK_WORKDIR (m54/transcripts/m/{m2,m7,m18}.json, from a test using model
+# name "m" with no per-test STACK_WORKDIR redirection reaching that code path). GLOBAL safety
+# net: wrap the REAL paths.stack_workdir so that whatever it resolves to (env var, config.sh, or
+# a test's own LATER monkeypatch/monkeypatch.setenv) must be `tmp_path` or a path under it -- any
+# other result fails the test LOUDLY instead of quietly writing into the operator's real workdir.
+@pytest.fixture(autouse=True)
+def _guard_stack_workdir_confined_to_tmp_path(monkeypatch, tmp_path):
+    from bench import paths
+    real_stack_workdir = paths.stack_workdir
+
+    def _guarded(*, required: bool = True):
+        result = real_stack_workdir(required=required)
+        if result is not None:
+            try:
+                result.resolve().relative_to(tmp_path.resolve())
+            except ValueError:
+                pytest.fail(
+                    f"paths.stack_workdir() resolved to {result!r}, which is NOT under this "
+                    f"test's tmp_path ({tmp_path!r}) -- a test must NEVER write to the "
+                    "operator's real STACK_WORKDIR. Monkeypatch STACK_WORKDIR (env) or "
+                    "paths.stack_workdir to redirect under tmp_path before exercising any code "
+                    "path that calls it.", pytrace=False)
+        return result
+    monkeypatch.setattr(paths, "stack_workdir", _guarded)

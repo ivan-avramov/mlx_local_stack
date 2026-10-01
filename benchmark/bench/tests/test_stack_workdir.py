@@ -63,7 +63,14 @@ def test_visionqa_image_cache_uses_config_sh_without_a_warning(monkeypatch, tmp_
 
 
 # --------------------------------------------------------------------------- confine_path (P19)
-def test_confine_path_accepts_a_path_under_the_repo():
+def test_confine_path_accepts_a_path_under_the_repo(monkeypatch, tmp_path):
+    # 10th cold review (live-pilot finding, between-arms fix 2): confine_path ALWAYS consults the
+    # REAL stack_workdir(required=False) too (as a SECOND allowed root, for its OWN membership
+    # check -- never a write target), even when the path under test is already confirmed to be
+    # under the repo. With no redirect, this test incidentally resolved the OPERATOR's real
+    # STACK_WORKDIR (caught by conftest's guard). Redirect it under tmp_path; the assertion itself
+    # is unaffected since the test path is confirmed via the repo-root branch regardless.
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     p = paths.repo_root() / "benchmark" / "results" / "x.jsonl"
     assert paths.confine_path(p) is None
 
