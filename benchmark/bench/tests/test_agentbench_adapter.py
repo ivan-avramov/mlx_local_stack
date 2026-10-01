@@ -265,6 +265,8 @@ def test_prepare_exclusions_two_runs_use_different_placeholders():
     seen_placeholders = []
 
     def runner(cmd, **kw):
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return FakeRunner.Proc(0, "", "")   # P26: verification requires an EMPTY stdout
         if len(cmd) >= 2 and cmd[1] == "exec" and "echo gold" in cmd:
             seen_placeholders.append(cmd[-1])
         return FakeRunner.Proc(0, "x\n", "")
@@ -280,6 +282,8 @@ def test_prepare_exclusions_two_placeholder_runs_are_genuinely_different_R6():
     seen = []
 
     def runner(cmd, **kw):
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return FakeRunner.Proc(0, "", "")   # P26: verification requires an EMPTY stdout
         if len(cmd) >= 2 and cmd[1] == "exec" and "echo gold" in cmd:
             seen.append(cmd[-1])
         return FakeRunner.Proc(0, "x\n", "")
@@ -331,6 +335,8 @@ def test_prepare_exclusions_gold_slot_uses_exactly_one_container_D2_v2():
 
     def runner(cmd, **kw):
         runner_calls.append(list(cmd))
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return FakeRunner.Proc(0, "", "")   # P26: verification requires an EMPTY stdout
         return FakeRunner.Proc(0, "same\n", "")
     AB.prepare_exclusions([_check_task("t1")], SCRIPTS_ROOT, runner)
     run_calls = [c for c in runner_calls if c[:2] == ["docker", "run"]]
@@ -1627,6 +1633,55 @@ def _shell_popen_ok():
     return _real_bash_popen_factory()
 
 
+def test_run_task_failed_docker_run_cleanup_does_not_raise_addendum_G():
+    """Addendum G (round 6): when `docker run` itself fails (container never created), the
+    FINAL-cleanup `remove_container(verify=True)` naturally sees `docker rm -f` report nonzero
+    (no such container) -- that must NOT be treated as an unverified removal / raise
+    ContainerCleanupError, since `docker ps -a` correctly proves the container is absent
+    regardless (addendum G: the verdict depends solely on verification, not on rm's own rc)."""
+    def runner(cmd, **kw):
+        if cmd[:2] == ["docker", "run"]:
+            return FakeRunner.Proc(1, "", "no such image")
+        if cmd[:3] == ["docker", "rm", "-f"]:
+            return FakeRunner.Proc(1, "", "no such container")
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return FakeRunner.Proc(0, "", "")
+        return FakeRunner.Proc(0, "", "")
+    task = _match_cfg_task()
+    row = AB.run_task("m", task, SCRIPTS_ROOT, FakeDriver(), {}, runner=runner,
+                      popen=_shell_popen_ok())
+    assert row["setup_error"] is True
+    assert row["container_removed_verified"] is True
+
+
+def test_sweep_stale_containers_raises_on_unverified_removal_P26():
+    def runner(cmd, **kw):
+        if cmd[:3] == ["docker", "rm", "-f"]:
+            return FakeRunner.Proc(0, "", "")
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            filter_arg = cmd[4] if len(cmd) > 4 else ""
+            if filter_arg.endswith("-"):   # sweep's own discovery query (prefix match)
+                return FakeRunner.Proc(0, "agentbench-os-run-stale\n", "")
+            return FakeRunner.Proc(0, "agentbench-os-run-stale\n", "")   # verify: still present!
+        return FakeRunner.Proc(0, "", "")
+    with pytest.raises(AB.ContainerCleanupError):
+        AB.sweep_stale_containers(AB.GENERATE_CONTAINER_PREFIX, runner)
+
+
+def test_sweep_stale_containers_succeeds_when_removal_is_verified_P26():
+    def runner(cmd, **kw):
+        if cmd[:3] == ["docker", "rm", "-f"]:
+            return FakeRunner.Proc(0, "", "")
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            filter_arg = cmd[4] if len(cmd) > 4 else ""
+            if filter_arg.endswith("-"):
+                return FakeRunner.Proc(0, "agentbench-os-run-stale\n", "")
+            return FakeRunner.Proc(0, "", "")   # verify: confirmed absent
+        return FakeRunner.Proc(0, "", "")
+    names = AB.sweep_stale_containers(AB.GENERATE_CONTAINER_PREFIX, runner)
+    assert names == ["agentbench-os-run-stale"]
+
+
 def test_run_task_cleans_up_container_AFTER_docker_run_on_init_failure():
     """cold-review F11: the OLD test only proved a pre-clean `rm` happened (which exists even with
     `finally` deleted), and failed at `docker run` rather than `init`. This one fails specifically
@@ -1938,12 +1993,30 @@ def test_remove_container_verify_true_returns_false_when_still_present():
     assert AB.remove_container("c1", runner, verify=True) is False
 
 
-def test_remove_container_verify_true_returns_false_when_rm_itself_failed():
+def test_remove_container_verify_true_ignores_rm_rc_when_verification_proves_absence_addendum_G():
+    """Addendum G (round 6): `rm -f` can legitimately report nonzero for a container that was
+    NEVER CREATED (a prior `docker run` failed) -- that is NOT a cleanup failure. The verdict
+    depends SOLELY on the verification step (`docker ps -a` rc 0 + empty stdout), independent of
+    `rm -f`'s own rc."""
     def runner(cmd, **kw):
         if cmd[:3] == ["docker", "rm", "-f"]:
             return FakeRunner.Proc(1, "", "no such container")
         if cmd[:3] == ["docker", "ps", "-a"]:
             return FakeRunner.Proc(0, "", "")
+        return FakeRunner.Proc(0, "", "")
+    assert AB.remove_container("c1", runner, verify=True) is True
+
+
+def test_remove_container_verify_true_returns_false_when_verification_command_itself_fails_P26():
+    """6th cold review round 6 P26 (HIGH), reproduction: `docker rm -f` reports rc 0, but the
+    VERIFICATION command (`docker ps -a`) itself fails (rc 1) while happening to produce empty
+    stdout (e.g. an error went to stderr) -- the OLD check only looked at stdout, so this falsely
+    verified. The check command's OWN rc must be required too."""
+    def runner(cmd, **kw):
+        if cmd[:3] == ["docker", "rm", "-f"]:
+            return FakeRunner.Proc(0, "", "")
+        if cmd[:3] == ["docker", "ps", "-a"]:
+            return FakeRunner.Proc(1, "", "docker: daemon hiccup")   # rc 1, empty stdout
         return FakeRunner.Proc(0, "", "")
     assert AB.remove_container("c1", runner, verify=True) is False
 
@@ -1963,12 +2036,12 @@ def test_run_task_row_carries_container_removed_verified_true_on_clean_removal()
 
 def test_run_task_row_carries_container_removed_verified_false_when_rm_unverified():
     """P16: when final cleanup cannot be verified, the row still comes back (so the caller can
-    append it) but flagged -- the caller decides whether to stop the run."""
+    append it) but flagged -- the caller decides whether to stop the run. Addendum G: the verdict
+    is unverified here because the VERIFICATION step itself fails (rc 1), not because `rm -f`'s
+    own rc is nonzero (that alone is no longer sufficient per P26)."""
     def runner(cmd, **kw):
-        if cmd[:2] == ["docker", "rm"]:
-            return FakeRunner.Proc(1, "", "boom")
         if cmd[:3] == ["docker", "ps", "-a"]:
-            return FakeRunner.Proc(0, "", "")
+            return FakeRunner.Proc(1, "", "docker: daemon hiccup")
         return FakeRunner.Proc(0, "", "")
     driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
     task = _match_cfg_task()

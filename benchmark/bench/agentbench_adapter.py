@@ -386,9 +386,15 @@ def container_name(prefix: str, task_id: str) -> str:
 
 def sweep_stale_containers(prefix: str, runner=subprocess.run) -> list:
     """Remove any container whose name starts with `prefix-` (a crash/interrupt from a prior run
-    left it behind). Returns the names removed. Best-effort: never raises. `prefix` must not be a
-    PREFIX of another live prefix (cold-review F16) -- callers use the distinct
-    GENERATE_/PREPARE_CONTAINER_PREFIX constants, never a shared stem."""
+    left it behind). Returns the names removed. `prefix` must not be a PREFIX of another live
+    prefix (cold-review F16) -- callers use the distinct GENERATE_/PREPARE_CONTAINER_PREFIX
+    constants, never a shared stem.
+
+    P26: each removal is VERIFIED (same fail-closed gate as run_task's final cleanup and D2
+    prepare) -- raises `ContainerCleanupError` on the first one that can't be confirmed absent,
+    rather than silently starting a run on a box that may already be accumulating live
+    containers. Discovering the stale list itself stays best-effort (a `docker ps` failure here
+    just means nothing to sweep was found, not a cleanup failure)."""
     try:
         proc = runner(["docker", "ps", "-a", "--filter", f"name=^{prefix}-", "--format", "{{.Names}}"],
                       capture_output=True, text=True, timeout=30)
@@ -396,7 +402,8 @@ def sweep_stale_containers(prefix: str, runner=subprocess.run) -> list:
         return []
     names = [n for n in (proc.stdout or "").splitlines() if n.strip()]
     for n in names:
-        remove_container(n, runner)
+        if not remove_container(n, runner, verify=True):
+            raise ContainerCleanupError(f"stale container {n} was not verifiably removed at startup sweep")
     return names
 
 
@@ -422,23 +429,36 @@ class ContainerCleanupError(RuntimeError):
 def remove_container(name: str, runner=subprocess.run, verify: bool = False):
     """Best-effort by default (returns None, never raises -- every OTHER call site, e.g. D2
     prepare's per-probe churn and the pre-clean before `create_container`, wants exactly that).
-    `verify=True` (run_task's own final cleanup) additionally confirms removal via
-    `docker ps -a --filter name=<name>` and returns a bool (True = verified gone); it still never
-    raises itself -- see `ContainerCleanupError`."""
+
+    `verify=True` (run_task's own final cleanup, prepare, startup sweeps, exceptional exits --
+    ALL of them, round 6 P26) confirms ABSENCE via `docker ps -a --filter name=<name>`, fail-
+    closed: verified ONLY if that check command ITSELF succeeded (rc 0) AND its stdout is empty.
+
+    6th cold review round 6 P26 (HIGH): the OLD check only looked at `check`'s STDOUT, never its
+    OWN returncode -- a `docker ps -a` invocation that itself FAILED (rc 1, e.g. a daemon hiccup)
+    but happened to produce no stdout (an error went to stderr, or the process died before
+    printing anything) was indistinguishable from "confirmed empty", so `verify=True` could
+    return `True` while nothing was actually proven. Now the check command's own rc is required.
+
+    Addendum G: the final verdict depends SOLELY on the VERIFICATION step, independent of
+    `docker rm -f`'s own rc -- a `docker run` that itself failed (container never created) makes
+    `rm -f` legitimately report nonzero (no such container), which is NOT a cleanup failure; what
+    matters is only whether the container is PROVABLY absent now, which `docker ps -a` answers on
+    its own."""
     try:
-        proc = runner(["docker", "rm", "-f", name], capture_output=True, text=True, timeout=30)
-        rc = getattr(proc, "returncode", None)
+        runner(["docker", "rm", "-f", name], capture_output=True, text=True, timeout=30)
     except Exception:  # noqa: BLE001 -- cleanup must never raise over the real error/result
-        rc = None
+        pass
     if not verify:
         return None
     try:
         check = runner(["docker", "ps", "-a", "--filter", f"name=^{name}$", "--format", "{{.Names}}"],
                       capture_output=True, text=True, timeout=30)
-        still_present = bool((getattr(check, "stdout", "") or "").strip())
+        check_rc = getattr(check, "returncode", None)
+        stdout = (getattr(check, "stdout", "") or "").strip()
     except Exception:  # noqa: BLE001 -- cannot verify -> treat as NOT verified (fail closed)
-        still_present = True
-    return rc == 0 and not still_present
+        check_rc, stdout = None, "unverifiable"
+    return check_rc == 0 and stdout == ""
 
 
 def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run,
@@ -939,7 +959,12 @@ def run_reference(image: str, init_scripts: list, start, example, container: str
         r = _run_example_in_container(container, example, runner, timeout, answer_placeholder)
         return (True, r["stdout"]) if r["ok"] else (False, None)
     finally:
-        remove_container(container, runner)
+        # 6th cold review round 6 P26: the SAME fail-closed verified-removal gate as run_task's
+        # final cleanup applies here too -- prepare must not silently proceed to the next task on
+        # a box that may be accumulating live containers.
+        if not remove_container(container, runner, verify=True):
+            raise ContainerCleanupError(
+                f"container {container} was not verifiably removed during D2 prepare")
 
 
 def run_reference_pair_in_container(image: str, init_scripts: list, start, example: object,
@@ -979,7 +1004,10 @@ def run_reference_pair_in_container(image: str, init_scripts: list, start, examp
             return {"outcome": "gold_mismatch", "gold": None, "failed_step": None, **diag}
         return {"outcome": "ok", "gold": r1["stdout"], "failed_step": None, **diag}
     finally:
-        remove_container(container, runner)
+        # P26: same fail-closed gate as run_reference / run_task's final cleanup.
+        if not remove_container(container, runner, verify=True):
+            raise ContainerCleanupError(
+                f"container {container} was not verifiably removed during D2 prepare")
 
 
 def _check_list_has_gold_slot(check_list) -> bool:
