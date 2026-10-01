@@ -488,13 +488,29 @@ def remove_container(name: str, runner=subprocess.run, verify: bool = False):
     return check_rc == 0 and stdout == ""
 
 
+def _decode_replace(value) -> str:
+    """9th cold review round 9 P8(b): a checker/init/start/example script can write ARBITRARY
+    bytes to stdout/stderr (binary garbage, a raw `\\xff`, ...) -- `errors="replace"` makes a
+    UnicodeDecodeError IMPOSSIBLE on this path (unlike `text=True`'s strict decoding, which would
+    raise and crash the batch). `isinstance` guards a value that's already `str` (every existing
+    FakeRunner test fixture constructs `Proc(returncode, stdout_str, stderr_str)` directly,
+    regardless of the real `docker_exec` no longer passing `text=True`)."""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
+
+
 def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run,
                 extra_params=()) -> dict:
     """One FRESH, non-interactive `docker exec` (mirrors task.py `execute_independent`, used for
     init scripts and all evaluation/check/example scripts -- NEVER for `start` or `bash_action`,
     which share the persistent session; see `PersistentShell`). Returns
     {exit_code, stdout, stderr, timed_out}. `extra_params` are appended argv (the answer / prior
-    check-script stdout chain)."""
+    check-script stdout chain).
+
+    P8(b): captures stdout/stderr as BYTES (no `text=True`) and decodes with `errors="replace"`
+    (`_decode_replace`) -- never the strict decoding `text=True` would otherwise apply, which can
+    raise UnicodeDecodeError on arbitrary checker/script output and crash the whole batch."""
     lang, code = lang_code
     params = [str(p) for p in extra_params]
     if lang == "bash":
@@ -506,11 +522,11 @@ def docker_exec(container: str, lang_code, timeout: float, runner=subprocess.run
     else:
         raise ValueError(f"unsupported script language {lang!r}")
     try:
-        proc = runner(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = runner(cmd, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"exit_code": None, "stdout": "", "stderr": "", "timed_out": True}
-    return {"exit_code": proc.returncode, "stdout": proc.stdout or "", "stderr": proc.stderr or "",
-            "timed_out": False}
+    return {"exit_code": proc.returncode, "stdout": _decode_replace(proc.stdout),
+            "stderr": _decode_replace(proc.stderr), "timed_out": False}
 
 
 def truncate_output(text: str, limit: int = TRUNCATE_LIMIT, keep: int = TRUNCATE_KEEP,
@@ -988,26 +1004,57 @@ def _docker_inspect_running(container: str, runner=subprocess.run, timeout: floa
            "exit_code": proc.returncode, "timed_out": False}
 
 
-def _classify_check_result(container: str, res: dict, runner) -> dict | None:
-    """P47: the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout checker result, now entirely
-    DAEMON-level (see `_docker_inspect_running`). Daemon reachable AND container Running -> the
-    checker's own result is the model's doing (covers BOTH a model that broke its own `/bin/true`
-    and one that printed docker-CLI-looking text into its own stderr) -> `None` (stays
-    failed_tests), regardless of the checker's exit code or stderr content. Daemon unreachable,
-    inspect itself erroring, or the container not Running -> an `infra_evidence` dict, with the
-    INSPECT result as the evidence (the checker's own stderr/exit_code are still recorded, purely
-    for diagnostics, never to decide)."""
+# 9th cold review round 9 P8(a): `docker exec` itself returns 125 (daemon/CLI-level error before
+# the command ever ran), 126 ("cannot invoke" the target), or 127 ("not found") when EXEC CREATION
+# fails -- but a checker SCRIPT running happily to completion can ALSO legitimately exit 126/127 on
+# its own (e.g. `exit 127`, or a missing binary INSIDE the container producing bash's own "127:
+# command not found"). The rc band alone is NOT evidence; it only becomes unambiguous evidence of
+# an exec-creation failure when PAIRED with the docker CLI's own stderr wording, which an arbitrary
+# in-container script cannot plausibly coincidentally reproduce.
+_EXEC_CREATION_FAIL_RC = {125, 126, 127}
+_DOCKER_CLI_STDERR_PREFIXES = ("docker:", "Error response from daemon",
+                              "OCI runtime exec failed", "unable to start container process")
+
+
+def _stderr_has_docker_cli_prefix(stderr) -> bool:
+    s = stderr or ""
+    return any(s.startswith(p) or f"\n{p}" in s for p in _DOCKER_CLI_STDERR_PREFIXES)
+
+
+def _classify_check_result(container: str, res: dict, runner) -> tuple:
+    """P47 + 9th round P8(a): the EXPLICIT-EVIDENCE classifier for ONE nonzero/timeout checker
+    result. Returns `(infra_evidence: dict|None, exec_started: bool|None)`.
+
+    Two INDEPENDENT pieces of evidence, checked in order:
+      1. rc in {125,126,127} AND the stderr carries docker's OWN CLI wording -- unambiguous:
+         the exec never started (`exec_started=False`), no probe needed.
+      2. Otherwise, fall to the DAEMON-level `docker inspect` check (P47): daemon reachable AND
+         container Running -> the checker's own result is the model's doing (covers BOTH a model
+         that broke its own `/bin/true` and one that printed docker-CLI-looking text into its own
+         stderr) -> infra_evidence=None (stays failed_tests), `exec_started=True`. Daemon
+         unreachable (can't even ask) -> `exec_started=None` (truly unknown). Daemon reachable but
+         the container is NOT Running -> `exec_started=False` (plausibly never started, or died
+         immediately after)."""
+    exit_code = res.get("exit_code")
+    if exit_code in _EXEC_CREATION_FAIL_RC and _stderr_has_docker_cli_prefix(res.get("stderr")):
+        return ({"message": f"docker exec-creation failure (exit={exit_code}): explicit docker "
+                           f"CLI stderr evidence -- {(res.get('stderr') or '')[:200]}",
+                "exit_code": exit_code, "stderr": (res.get("stderr") or "")[:200],
+                "timed_out": bool(res.get("timed_out")), "health_probe_ok": None,
+                "exec_started": False}, False)
     inspect = _docker_inspect_running(container, runner)
     if inspect["ok"] and inspect["running"]:
-        return None
-    return {"message": f"docker inspect did not confirm a live, running container "
-                      f"(ok={inspect['ok']}, running={inspect['running']}, "
-                      f"inspect_exit_code={inspect['exit_code']}, "
-                      f"inspect_timed_out={inspect['timed_out']}): "
-                      f"{(inspect['stderr'] or inspect['stdout'] or '')[:200]}",
-           "exit_code": res.get("exit_code"), "stderr": (res.get("stderr") or "")[:200],
-           "timed_out": bool(res.get("timed_out")),
-           "health_probe_ok": bool(inspect["ok"] and inspect["running"]), "inspect": inspect}
+        return None, True
+    exec_started = None if not inspect["ok"] else False
+    return ({"message": f"docker inspect did not confirm a live, running container "
+                       f"(ok={inspect['ok']}, running={inspect['running']}, "
+                       f"inspect_exit_code={inspect['exit_code']}, "
+                       f"inspect_timed_out={inspect['timed_out']}): "
+                       f"{(inspect['stderr'] or inspect['stdout'] or '')[:200]}",
+            "exit_code": res.get("exit_code"), "stderr": (res.get("stderr") or "")[:200],
+            "timed_out": bool(res.get("timed_out")),
+            "health_probe_ok": bool(inspect["ok"] and inspect["running"]), "inspect": inspect,
+            "exec_started": exec_started}, exec_started)
 
 
 def run_check_chain(container: str, check_list: list, example, answer, runner=subprocess.run,
@@ -1019,27 +1066,32 @@ def run_check_chain(container: str, check_list: list, example, answer, runner=su
     appended for the next; a None entry runs `example` instead (the "gold" position); any
     timeout/nonzero exit fails the whole chain.
 
-    Returns `(passed: bool, gold_live: str|None, infra_evidence: dict|None)`. `gold_live` is the
-    stdout of the FIRST null ("gold slot") position actually executed in THIS live grading run
-    (R5/AC5: the chain already runs it; capture it rather than trusting the D2-prepare-time value
-    stayed valid). `None` when the check list has no gold slot at all. `infra_evidence` (P23/P37)
-    is set only when a live health probe (or an unambiguous docker CLI stderr prefix) proves the
+    Returns `(passed: bool, gold_live: str|None, infra_evidence: dict|None,
+    exec_started: bool|None)`. `gold_live` is the stdout of the FIRST null ("gold slot") position
+    actually executed in THIS live grading run (R5/AC5: the chain already runs it; capture it
+    rather than trusting the D2-prepare-time value stayed valid). `None` when the check list has
+    no gold slot at all. `infra_evidence` (P23/P37/P8(a)) is set only when explicit evidence (an
+    exec-creation-failure rc+stderr pairing, or a live daemon-level health probe) proves the
     failure was docker's, not the checker's -- the caller must turn that into a `setup_error` row
-    with the evidence attached, never a plain `failed_tests`."""
+    with the evidence attached, never a plain `failed_tests`. `exec_started` (9th round P8(a)) is
+    True once any `docker_exec` call is confirmed to have actually run inside a live container,
+    False when explicit evidence shows it didn't, None when genuinely unknown (daemon
+    unreachable) or not applicable (the chain never got to exec anything, e.g. a null slot with
+    no example)."""
     params = [str(answer)]
     gold_live = None
     for entry in check_list:
         script = entry if entry is not None else example
         if script is None:
-            return False, gold_live, None
+            return False, gold_live, None, None
         res = docker_exec(container, script, timeout, runner, extra_params=params)
         if entry is None and gold_live is None:
             gold_live = res["stdout"]
         if res.get("timed_out") or res.get("exit_code") != 0:
-            infra_evidence = _classify_check_result(container, res, runner)
-            return False, gold_live, infra_evidence
+            infra_evidence, exec_started = _classify_check_result(container, res, runner)
+            return False, gold_live, infra_evidence, exec_started
         params.append(res["stdout"])
-    return True, gold_live, None
+    return True, gold_live, None, True
 
 
 def _container_setup(image: str, init_scripts: list, start, container: str,
@@ -1509,7 +1561,7 @@ def _fail_row(base: dict, outcome: str, t0, clock, **extra) -> dict:
           "budget_hits": 0, "wall_s": round(clock() - t0, 2), "tool_calls": 0, "tool_timeouts": 0,
           "repeat_calls": 0, "exec_timeout": False, "shell_died": False, "setup_error": True,
           "decode_tps": None, "per_turn_decode_tps": [], "error": None, "_transcript_turns": [],
-          "infra_evidence": None}
+          "infra_evidence": None, "exec_started": None, "harness_error": False}
     row.update(extra)
     return row
 
@@ -1611,14 +1663,16 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
 
         gold_live_box = {"value": None}
         infra_error_box = {"value": None}
+        exec_started_box = {"value": None}   # P8(a): None for a match task (no check chain ran)
 
         def _evaluate(answer):
             if cfg["match"] is not None:
                 return evaluate_match(answer, cfg["match"])
-            passed, gold_live, infra_error = run_check_chain(name, cfg["check"], cfg["example"],
-                                                             answer, runner, exec_timeout)
+            passed, gold_live, infra_error, exec_started = run_check_chain(
+                name, cfg["check"], cfg["example"], answer, runner, exec_timeout)
             gold_live_box["value"] = gold_live
             infra_error_box["value"] = infra_error
+            exec_started_box["value"] = exec_started
             return passed
 
         # AbortEpisode already set result["outcome"] to FAILED_TESTS (exec timeout, model-caused
@@ -1646,7 +1700,8 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
                  "exec_timeout": exec_timeout_flag["hit"], "shell_died": shell_died_flag["hit"],
                  "decode_tps": round(statistics.mean(dtps), 2) if dtps else None,
                  "per_turn_decode_tps": [t.get("decode_tps") for t in wrapped.per_turn],
-                 "_transcript_turns": wrapped.per_turn}
+                 "_transcript_turns": wrapped.per_turn,
+                 "exec_started": exec_started_box["value"]}
 
         # P9(a)/P23: a docker EXECUTION failure during grading (explicit evidence only -- see
         # run_check_chain) is an infra failure, never a graded model loss -- override whatever
@@ -1656,7 +1711,8 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
         ie = infra_error_box["value"]
         if ie is not None:
             row = {**base, **common, "passed": False, "outcome": AO.SERVER_ERROR,
-                  "setup_error": True, "error": ie["message"], "infra_evidence": ie}
+                  "setup_error": True, "error": ie["message"], "infra_evidence": ie,
+                  "harness_error": False}
             return row
 
         row = {**base, **common, "passed": passed, "outcome": outcome,
@@ -1664,7 +1720,8 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
               # early via _fail_row, setup_error=True, for a start-caused death) -- any
               # shell_died here came from a bash_action, i.e. the model's own doing, and is
               # IN the acc denominator (outcome is already FAILED_TESTS via AbortEpisode above).
-              "setup_error": False, "error": result.get("error"), "infra_evidence": None}
+              "setup_error": False, "error": result.get("error"), "infra_evidence": None,
+              "harness_error": False}
         return row
     except TransportFailure:
         raise
@@ -1694,6 +1751,13 @@ def run_task(model: str, task: dict, scripts_root, driver, params: dict, *,
             "shell_died": shell_died_flag["hit"] if wrapped is not None else False,
             "decode_tps": round(statistics.mean(dtps), 2) if dtps else None,
             "per_turn_decode_tps": [t.get("decode_tps") for t in extra_turns],
+            # 9th cold review round 9 P8(b): a Unicode/decode error reaching THIS catch-all is, by
+            # construction, a HARNESS bug -- after docker_exec's errors="replace" fix, no
+            # legitimate grading path should ever raise one; one reaching here means OUR OWN
+            # decoding missed a spot, never the model's or checker's doing. Flagged distinctly
+            # (never silently folded into an ordinary setup_error) so it surfaces for a fix
+            # rather than being misread as routine infra flakiness.
+            "harness_error": isinstance(e, UnicodeError),
         }
         row = _fail_row(base, AO.SERVER_ERROR, t0, clock, error=f"{type(e).__name__}: {e}", **extra)
         return row

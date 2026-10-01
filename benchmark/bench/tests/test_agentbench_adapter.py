@@ -161,7 +161,7 @@ def test_run_check_chain_null_entry_runs_example_and_chains_stdout():
         FakeRunner.Proc(0, "7\n", ""),
         FakeRunner.Proc(0, "", ""),
     ])
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [None, ("python", "check")], ("bash", "example"), "7", runner)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [None, ("python", "check")], ("bash", "example"), "7", runner)
     assert infra_error is None
     assert ok is True
     assert gold_live == "7\n"   # R5: the null-slot stdout, captured live
@@ -175,7 +175,7 @@ def test_run_check_chain_nonzero_exit_fails():
     `docker inspect` health probe -- a RUNNING container proves the checker's own verdict is
     real, so this stays failed_tests."""
     runner = FakeRunner(results=[FakeRunner.Proc(1, "", "boom"), FakeRunner.Proc(0, "true\n", "")])
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and gold_live is None and infra_error is None
 
 
@@ -186,7 +186,7 @@ def test_run_check_chain_timeout_with_unhealthy_docker_is_infra_error():
     checker script, is unresponsive."""
     runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1),
                                  subprocess.TimeoutExpired(cmd="docker inspect", timeout=3)])
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
     assert ok is False and gold_live is None and infra_error is not None
     assert infra_error["timed_out"] is True
 
@@ -197,13 +197,13 @@ def test_run_check_chain_timeout_with_healthy_docker_is_failed_tests_addendum_C(
     container is still Running immediately after."""
     runner = FakeRunner(results=[subprocess.TimeoutExpired(cmd="x", timeout=1),
                                  FakeRunner.Proc(0, "true\n", "")])   # inspect: Running
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner, timeout=1)
     assert ok is False and gold_live is None and infra_error is None
 
 
 def test_run_check_chain_null_with_no_example_fails_without_raising():
     runner = FakeRunner()
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [None], None, "ans", runner)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [None], None, "ans", runner)
     assert ok is False and gold_live is None and infra_error is None
     assert runner.calls == []
 
@@ -233,7 +233,7 @@ def test_run_check_chain_P47_case_a_healthy_app_prints_docker_like_text_is_still
     model's/checker's own failure."""
     runner = FakeRunner(results=[FakeRunner.Proc(1, "", "OCI runtime exec failed: my own app broke"),
                                  FakeRunner.Proc(0, "true\n", "")])   # inspect: Running
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is None
 
 
@@ -244,7 +244,7 @@ def test_run_check_chain_P47_case_b_model_deleted_bin_true_inspect_still_confirm
     filesystem -- Running is Running -- so this stays failed_tests."""
     runner = FakeRunner(results=[FakeRunner.Proc(127, "", "bash: true: No such file or directory"),
                                  FakeRunner.Proc(0, "true\n", "")])   # inspect: still Running
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is None
 
 
@@ -253,7 +253,7 @@ def test_run_check_chain_P47_case_c_container_exited_is_infra():
     (exited) -> setup_error/infra_evidence."""
     runner = FakeRunner(results=[FakeRunner.Proc(1, "", "some checker error"),
                                  FakeRunner.Proc(0, "false\n", "")])   # inspect: exited
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is not None
     assert infra_error["health_probe_ok"] is False
     assert infra_error["inspect"]["running"] is False
@@ -265,7 +265,7 @@ def test_run_check_chain_P47_case_d_daemon_down_is_infra():
     own (the shortcut is gone; this case reaches the same verdict via the ACTUAL probe failing)."""
     runner = FakeRunner(results=[FakeRunner.Proc(1, "", "some checker error"),
                                  FakeRunner.Proc(125, "", "Cannot connect to the Docker daemon at...")])
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is not None
     assert infra_error["health_probe_ok"] is False
     assert infra_error["inspect"]["ok"] is False
@@ -275,9 +275,101 @@ def test_run_check_chain_P47_case_d_daemon_down_is_infra():
 def test_run_check_chain_P47_daemon_itself_times_out_is_infra():
     runner = FakeRunner(results=[FakeRunner.Proc(1, "", "some checker error"),
                                  subprocess.TimeoutExpired(cmd="docker inspect", timeout=3)])
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is not None
     assert infra_error["inspect"]["timed_out"] is True
+    assert exec_started is None   # daemon unreachable -- truly unknown, not a guessed False
+
+
+# --------------------------------------------------------------------------- P8(a) exec-creation vs process exit
+# 9th cold review round 9 P8(a): `docker exec` itself returns 125/126/127 on an EXEC-CREATION
+# failure, but a checker script can ALSO legitimately exit 126/127 on its own merits (`exit 127`,
+# or a missing binary INSIDE the container producing bash's own "127: command not found"). The rc
+# band alone is never evidence; it is evidence ONLY paired with the docker CLI's own stderr
+# wording, which an arbitrary in-container script cannot plausibly coincidentally reproduce.
+def test_classify_check_result_exec_creation_failure_rc_and_cli_stderr_is_infra_no_probe_needed_P8a():
+    res = {"exit_code": 126, "stderr": "docker: Error response from daemon: OCI runtime exec failed: "
+                                       "exec failed: unable to start container process: exec: "
+                                       "\"bash\": executable file not found in $PATH",
+          "timed_out": False}
+
+    def fail_if_probed(cmd, **kw):
+        raise AssertionError("the daemon-level probe must not run -- the rc+stderr pairing is "
+                            "already unambiguous evidence")
+    infra_evidence, exec_started = AB._classify_check_result("c1", res, fail_if_probed)
+    assert exec_started is False
+    assert infra_evidence is not None and infra_evidence["exec_started"] is False
+
+
+def test_classify_check_result_rc_127_from_the_checkers_own_exit_is_not_infra_P8a():
+    """The checker SCRIPT itself ran `exit 127` -- the rc matches the exec-creation-failure band,
+    but with NO docker-CLI stderr wording at all, so it must fall through to the normal
+    daemon-level probe (P47), which here confirms the container is healthy -> failed_tests."""
+    res = {"exit_code": 127, "stderr": "my_check.sh: line 4: some_missing_tool: command not found",
+          "timed_out": False}
+    runner = FakeRunner(default=FakeRunner.Proc(0, "true\n", ""))   # inspect: Running
+    infra_evidence, exec_started = AB._classify_check_result("c1", res, runner)
+    assert infra_evidence is None
+    assert exec_started is True
+
+
+def test_run_check_chain_records_exec_started_true_on_a_full_pass_P8a():
+    runner = FakeRunner(default=FakeRunner.Proc(0, "", ""))
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is True and exec_started is True
+
+
+def test_run_check_chain_records_exec_started_false_on_exec_creation_failure_P8a():
+    runner = FakeRunner(results=[FakeRunner.Proc(126, "", "docker: Error response from daemon: "
+                                                        "OCI runtime exec failed")])
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    assert ok is False and exec_started is False
+    assert infra_error["exec_started"] is False
+
+
+# --------------------------------------------------------------------------- P8(b) binary/undecodable output
+def test_docker_exec_decodes_invalid_utf8_bytes_with_replace_never_raises_P8b():
+    """A checker emitting raw 0xff on stderr must never raise UnicodeDecodeError -- it decodes
+    with errors="replace" and the row stays a SCORED failed_tests, not a setup_error."""
+    class _BytesProc:
+        def __init__(self, returncode, stdout, stderr):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def runner(cmd, **kw):
+        return _BytesProc(1, b"", b"\xff binary garbage on stderr")
+    res = AB.docker_exec("c1", ("bash", "x"), 5.0, runner)
+    assert res["exit_code"] == 1
+    assert "�" in res["stderr"]   # the replacement character, not a raised exception
+
+
+def test_run_task_checker_stderr_with_invalid_utf8_is_failed_tests_not_setup_error_P8b():
+    """9th cold review round 9 P8(b), end-to-end: a checker emitting \\xff on stderr with a
+    nonzero exit, while the container is confirmed healthy/Running, must be a SCORED
+    failed_tests -- the decode itself must never be what crashes or misclassifies the row."""
+    class _BytesProc:
+        def __init__(self, returncode, stdout, stderr):
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    def runner(cmd, **kw):
+        if cmd[:2] == ["docker", "run"]:
+            return FakeRunner.Proc(0, "", "")
+        if cmd[:2] == ["docker", "inspect"]:
+            return FakeRunner.Proc(0, "true\n", "")
+        if cmd[:2] == ["docker", "exec"] and "echo gold" not in cmd:
+            return _BytesProc(1, b"", b"assertion failed \xff binary")
+        return FakeRunner.Proc(0, "", "")
+    task = {"id": "t1", "group": 1, "labels": [],
+           "evaluation": {"check": [{"code": "x"}], "example": {"code": "echo gold"}},
+           "description": "d"}
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "x"})])])
+    row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
+    assert row["setup_error"] is False
+    assert row["passed"] is False
+    assert row["harness_error"] is False
 
 
 def test_run_check_chain_legitimate_checker_failure_has_no_infra_error():
@@ -285,7 +377,7 @@ def test_run_check_chain_legitimate_checker_failure_has_no_infra_error():
     mistaken for an infra error -- P9(a) distinguishes the MECHANISM, not just "nonzero"."""
     runner = FakeRunner(results=[FakeRunner.Proc(1, "", "assertion failed: file missing"),
                                  FakeRunner.Proc(0, "true\n", "")])
-    ok, gold_live, infra_error = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
+    ok, gold_live, infra_error, exec_started = AB.run_check_chain("c1", [("bash", "x")], None, "ans", runner)
     assert ok is False and infra_error is None
 
 
@@ -2228,6 +2320,45 @@ def test_run_task_unexpected_grading_exception_preserves_real_turn_and_token_cou
     assert row["per_turn_completion_tokens"] == [7, 3]
     assert len(row["per_turn_finish_reasons"]) == 2
     assert row["submitted_via"] == "answer"
+
+
+def test_run_task_unicode_error_reaching_the_catch_all_is_flagged_harness_error_P8b():
+    """9th cold review round 9 P8(b): after docker_exec's errors="replace" fix, no LEGITIMATE
+    grading path should ever raise a UnicodeDecodeError -- one reaching the final catch-all is, by
+    construction, a HARNESS bug (our own decoding missed a spot somewhere), flagged distinctly so
+    it surfaces for a fix rather than reading as routine infra flakiness."""
+    def boom_match(*a, **k):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "simulated harness decode bug")
+    task = _match_cfg_task()
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    orig_evaluate_match = AB.evaluate_match
+    try:
+        AB.evaluate_match = boom_match
+        row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {},
+                          runner=FakeRunner(default=FakeRunner.Proc(0, "", "")), popen=_shell_popen_ok())
+    finally:
+        AB.evaluate_match = orig_evaluate_match
+    assert row["setup_error"] is True
+    assert row["harness_error"] is True
+    assert "simulated harness decode bug" in row["error"]
+
+
+def test_run_task_ordinary_value_error_is_not_flagged_harness_error_P8b():
+    """A ValueError that is NOT a UnicodeError (e.g. an ordinary bug elsewhere in grading) must
+    NOT be misclassified as a harness decoding bug."""
+    def boom_match(*a, **k):
+        raise ValueError("unrelated bug")
+    task = _match_cfg_task()
+    driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
+    orig_evaluate_match = AB.evaluate_match
+    try:
+        AB.evaluate_match = boom_match
+        row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {},
+                          runner=FakeRunner(default=FakeRunner.Proc(0, "", "")), popen=_shell_popen_ok())
+    finally:
+        AB.evaluate_match = orig_evaluate_match
+    assert row["setup_error"] is True
+    assert row["harness_error"] is False
 
 
 # --------------------------------------------------------------------------- R2/P49 upstream-fidelity arg extraction
