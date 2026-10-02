@@ -107,6 +107,49 @@ def run_smoke(image: str, runner=subprocess.run) -> int:
         fails += not _check("fake marker in output does not end the round early",
                             "real" in o["output"], repr(o["output"]))
 
+        # 19th round item (B): a genuinely multi-line bash_action is TWO top-level commands to
+        # bash's own read-eval loop without whole-script wrapping -- must return BOTH lines in
+        # ONE round, nothing leaking into the next.
+        o = run("echo a\nsleep 0.3; echo b")
+        fails += not _check("multi-line command single round", o["output"] == "a\nb\n",
+                            repr(o["output"]))
+
+        o = run("echo after_multiline")
+        fails += not _check("alive after multi-line", o["output"] == "after_multiline\n",
+                            repr(o["output"]))
+
+        # 19th round, chatty background job (item C): must return at the marker immediately (no
+        # quiet-confirmation window), and the NEXT round must still work regardless of ticks
+        # still arriving (discarded by the pre-write discard, 18th round).
+        o = run("(while :; do echo tick; sleep 0.01; done) &")
+        fails += not _check("chatty background job returns immediately", o["wall"] < 2.0,
+                            str(o["wall"]))
+        o = run("echo after_chatty")
+        fails += not _check("alive after chatty job", "after_chatty" in o["output"],
+                            repr(o["output"]))
+        # kill it now -- an infinite chatty job left running would otherwise pollute every LATER
+        # check in this script with stray "tick" lines (the 18th round's pre-write discard only
+        # ever catches bytes that arrived BEFORE a round's own write, not ones racing it live).
+        # Tolerant of a FEW more ticks still landing in the next round or two regardless (pkill
+        # itself needs a round-trip before the background job actually dies) -- an accepted,
+        # inherent limitation of a shared tty, not a bug this round introduces or fixes.
+        run("pkill -f 'while :; do echo tick' 2>/dev/null; true")
+        run("true")   # absorb one more round's worth of straggler ticks before the real checks
+
+        # 19th round, su/bashrc item: the marker machinery is installed container-wide in
+        # /etc/bash.bashrc, sourced by EVERY interactive bash regardless of user -- `su -` resets
+        # the environment for a full login simulation (an exported PROMPT_COMMAND does not
+        # survive it), so this is the one case the exported-env path alone cannot cover.
+        o = run("useradd -m probe")
+        fails += not _check("useradd probe", o["exit_code"] == 0, str(o))
+
+        o = run("su - probe -c whoami")
+        fails += not _check("su - probe; whoami == probe", "probe" in o["output"].split(),
+                            repr(o["output"]))
+
+        o = run("echo after_su")
+        fails += not _check("alive after su", "after_su" in o["output"], repr(o["output"]))
+
         o = run("head -c 1048576 /dev/zero | tr '\\0' x | wc -c")
         fails += not _check("1 MB pipeline", o["output"].strip() == "1048576", repr(o["output"][:20]))
 

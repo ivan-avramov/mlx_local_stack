@@ -41,6 +41,52 @@ an answer-independent gold. Empty stdout at either run, or any failure/timeout, 
 is a corpus-level, not per-model, artifact (see `exclusions_artifact_path` et al.) — the cached
 gold is NOT substituted into per-item grading; grading always re-runs the check chain live in the
 task's own post-agent container, exactly as task.py does.
+
+PERSISTENTSHELL END-OF-ROUND PROTOCOL RULING (19th cold review round 19, supersedes the 17th/18th
+round designs below in `PersistentShell`). Upstream's own session (`environment.py`'s
+`Container.execute`) detects a round's end by matching the SHELL'S OWN PROMPT via a regex
+(`\x1b.+@.+[#|$] `) — it never injects a marker of its own, so it survives ANY shell swap (`su -`,
+`exec bash`, a nested `bash`) for free, because every user's prompt matches the same regex. Ours
+instead installs a PROMPT_COMMAND of our own (bash has no portable prompt-regex equivalent we can
+rely on across arbitrary PS1 customizations) — three rounds of fixes follow from that one
+difference:
+
+  - 17th round: PROMPT_COMMAND (not a stdin-queued printf) reports `$?`, because a stdin-queued
+    marker is swallowed whole by any program that reads the tty (apt/dpkg/sudo/readline).
+  - 18th round: a stale, already-buffered marker (from a previous round, or the handshake's own
+    leftover) is discarded BEFORE every write, never trusted — a marker is only genuine if it
+    arrives strictly after this round's own write.
+  - 19th round item (B), THE CURRENT RULING: every round's command is sent as ONE BASH COMPOUND
+    COMMAND — `eval "$(cat <<'<delim>'\n<command>\n<delim>\n)"` (the heredoc body is read as PURE
+    TEXT, no bash syntax parsing, until the literal delimiter; `eval`, a builtin, then executes it
+    in the CURRENT shell, never a subshell, so `cd`/variable assignments still persist) — so
+    PROMPT_COMMAND fires EXACTLY ONCE per round regardless of how many internal top-level
+    statements/lines the command contains, AND regardless of whether the command's own text is
+    syntactically valid (a bare brace group, `{ ... }`, was tried first and rejected: a syntax
+    error partway through its body makes bash abandon the group and treat its own orphaned closing
+    `}` as a second, separate command — a second, spurious PROMPT_COMMAND firing for one round;
+    see `run()`'s own note at `full`'s construction for the reproduction). Without whole-script
+    wrapping of either kind,
+    a genuinely multi-line `bash_action` (e.g. `echo a\nsleep 1; echo b`) is TWO top-level commands
+    to bash's own read-eval loop, firing PROMPT_COMMAND after `echo a` alone — a DATA VALIDITY
+    defect (measured on 4.3% of real bash_actions), not just a latency one: the round returns
+    early and the second statement's output leaks into the NEXT round's observation,
+    nondeterministically (timing-dependent across arms). With the whole script as one unit, the
+    FIRST complete marker carrying this session's uuid is unambiguously this round's own marker —
+    accepted IMMEDIATELY, no quiet-confirmation window, no "is there a later marker" check (both
+    retired as of this round; a chatty background job's later ticks are simply discarded by the
+    pre-write discard the 18th round already established, never by waiting for silence).
+  - 19th round item (su/bashrc fix, same round): `su -` resets the environment for a full login
+    simulation, so an exported PROMPT_COMMAND does not survive it — the marker machinery is ALSO
+    installed container-wide, in `/etc/bash.bashrc` (sourced by every interactive bash on a
+    Debian/Ubuntu image, regardless of user or how the shell started), mirroring upstream's own
+    user-agnostic prompt-regex immunity. The exported-env path is kept alongside, not replaced.
+  - Residual, ACCEPTED edge case (item D): a command that itself prints a marker-shaped line
+    carrying THIS session's own uuid is indistinguishable from the genuine marker under
+    first-marker-wins semantics. Unfixable in principle once multi-line commands must be supported
+    as one round (there is no "wait for quiet" signal left to fall back on) — accepted because
+    forging it requires a command that reads `$PROMPT_COMMAND` (or otherwise discovers the live
+    uuid) and deliberately echoes it, which no legitimate task script does.
 """
 from __future__ import annotations
 
@@ -867,14 +913,37 @@ class _PtyReader:
 
 class _PtyWriter:
     """13th round: the write-side analogue of `_PtyReader`, same `.write(data)`/`.flush()`/
-    `.close()` shape as the scripted-fake-process test double (`_FakeStdin`)."""
+    `.close()` shape as the scripted-fake-process test double (`_FakeStdin`).
+
+    19th cold review round 19 item (A) (HIGH, reproduced: a 300 KiB script written to a shell
+    busy in `sleep 2`, with a 0.5s timeout -- the whole TEST PROCESS wedged in state U,
+    unkillable short of `kill -9`): a plain BLOCKING `os.write()` on the pty master can block
+    for an UNBOUNDED time once the pty's own small kernel input queue fills (the shell isn't
+    reading stdin). `PersistentShell.close()`'s own timeout/abort logic could not interrupt a
+    writer thread stuck inside that ONE blocking syscall, and then closed the underlying fd out
+    from under it anyway (`_start_writer`'s writer thread + `close()`'s fd close race) -- closing
+    an fd a thread is actively blocked writing to is UNDEFINED/DANGEROUS, not a reliable way to
+    unblock it (unlike many ordinary fds). Fixed: the fd is opened NON-BLOCKING (`start()` calls
+    `os.set_blocking(master_fd, False)` once; dup()'d fds share the O_NONBLOCK status flag, so
+    this covers the reader's copy too), and `write()` is now NEVER a single unbounded syscall --
+    it returns IMMEDIATELY with however many bytes the kernel accepted RIGHT NOW (zero if the
+    queue is full), letting `_start_writer`'s own loop retry with a short, bounded `select()` wait
+    for writability -- re-checking `box["abort"]` between polls, so it is interruptible on the
+    SAME timescale the reader already is. `close()` now joins that writer thread (bounded) BEFORE
+    closing the fd, never the other way around."""
 
     def __init__(self, fd: int):
         self._fd = fd
         self._closed = False
 
     def write(self, data: bytes) -> int:
-        return os.write(self._fd, data)
+        """Non-blocking: returns the bytes the kernel accepted right now (may be 0 if the pty's
+        input queue is currently full) -- never blocks. The caller (`_start_writer`) is
+        responsible for retrying with a bounded wait for writability."""
+        try:
+            return os.write(self._fd, data)
+        except BlockingIOError:
+            return 0
 
     def flush(self) -> None:
         pass
@@ -1018,19 +1087,19 @@ class PersistentShell:
     # which includes after a multi-line heredoc (bash's own PS2, also emptied here, governs
     # continuation lines; nothing fires until the whole compound command is done).
     #
-    # A marker-shaped line can still appear INSIDE a command's own legitimate output (printed by
-    # the command itself, not by PROMPT_COMMAND) -- the per-session uuid makes an ACCIDENTAL
-    # collision astronomically unlikely, but never IMPOSSIBLE, so a second, cheap check is applied
-    # before a match is trusted: a candidate is accepted as the genuine end-of-command marker only
-    # once NOTHING ELSE arrives for `_MARKER_CONFIRM_QUIET_S` after it -- the real PROMPT_COMMAND
-    # marker is always immediately followed by bash blocking on read() for our NEXT command (pure
-    # silence); a marker-shaped string INSIDE the command's own output is followed by whatever the
-    # command prints next (and is retried against a LATER, genuinely-quiet candidate instead).
+    # 19th cold review round 19 item (B) (supersedes the paragraph above about a quiet-
+    # confirmation window, now RETIRED): every round's command is sent as ONE bash compound
+    # command (an `eval`+quoted-heredoc wrapper -- see `run()`'s own note at `full`'s
+    # construction), so PROMPT_COMMAND fires EXACTLY ONCE per round and the FIRST complete
+    # marker carrying this session's uuid is accepted IMMEDIATELY, unambiguously. See the
+    # MODULE docstring's own
+    # "PERSISTENTSHELL END-OF-ROUND PROTOCOL RULING" section for the full history and the one
+    # residual, accepted edge case (item D: a command that itself prints a marker-shaped line
+    # carrying this session's own uuid).
     SHELL_MODE = "pty-prompt"
 
     # Upper bound on bash's own `$?`: POSIX exit statuses are 0-255 (3 digits); never negative.
     _MARKER_MAX_RC_DIGITS = 3
-    _MARKER_CONFIRM_QUIET_S = 0.05
 
     def __init__(self, container: str, popen=subprocess.Popen, runner=subprocess.run,
                 read_chunk: int = 65536, queue_maxsize: int = 256, openpty=None):
@@ -1090,6 +1159,77 @@ class PersistentShell:
         # scan cheap.
         self._marker_margin = len(self._marker_literal) + 1
 
+    _BASHRC_MARKER_BEGIN = "# __M54_BASHRC_MARKER_BEGIN__"
+    _BASHRC_MARKER_END = "# __M54_BASHRC_MARKER_END__"
+
+    def _install_bashrc_marker(self) -> None:
+        """19th cold review round 19: installs THIS session's marker machinery into
+        `/etc/bash.bashrc` via a ONE-SHOT, non-interactive `docker exec` -- BEFORE the interactive
+        pty shell is even started (see `start()`'s own note). Idempotent and self-replacing: any
+        PRIOR guarded block (e.g. from an earlier, unrelated session reusing this container, or a
+        retried `start()`) is removed by its own guard comments before the fresh one -- carrying
+        THIS session's uuid -- is appended, so `/etc/bash.bashrc` never accumulates stale blocks
+        and never references a uuid other than the one THIS instance's `run()` is listening for.
+
+        Best-effort: a failure here (non-Debian/Ubuntu image with no `/etc/bash.bashrc`, a
+        container without `bash`, docker exec itself failing) is logged, never raised -- the
+        exported-env path in `start()`'s own handshake still covers the TOP-LEVEL session even if
+        this step fails; only a LATER `su`/`exec bash`/nested shell loses marker coverage, the
+        same gap that existed before this round."""
+        rc_printf = ('printf "\\n__M54_RC__%d__' + self._session_uuid + '__\\n" $?')
+        script = (
+            f"if grep -qF '{self._BASHRC_MARKER_BEGIN}' /etc/bash.bashrc 2>/dev/null; then "
+            f"sed -i '/^{re.escape(self._BASHRC_MARKER_BEGIN)}$/,/^{re.escape(self._BASHRC_MARKER_END)}$/d' "
+            "/etc/bash.bashrc; fi\n"
+            "cat >> /etc/bash.bashrc <<'M54_BASHRC_EOF'\n"
+            f"{self._BASHRC_MARKER_BEGIN}\n"
+            "PS1=''\n"
+            "PS2=''\n"
+            f"PROMPT_COMMAND='{rc_printf}'\n"
+            "bind 'set enable-bracketed-paste off' 2>/dev/null\n"
+            "bind 'set disable-completion on' 2>/dev/null\n"
+            "stty -echo 2>/dev/null\n"
+            f"{self._BASHRC_MARKER_END}\n"
+            "M54_BASHRC_EOF\n"
+        )
+        try:
+            proc = self._runner(["docker", "exec", self.container, "bash", "-c", script],
+                                capture_output=True, text=True, timeout=10)
+            rc = getattr(proc, "returncode", 1)
+            if rc != 0:
+                print(f"[PersistentShell] WARNING: installing the container-wide marker into "
+                     f"/etc/bash.bashrc exited {rc} -- a su/exec'd/nested shell may not pick up "
+                     "the rc marker; the exported-env path still covers the top-level session "
+                     f"only ({(getattr(proc, 'stderr', '') or '').strip()[:200]!r})",
+                     file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 -- best-effort; never abort start() over this
+            print(f"[PersistentShell] WARNING: installing the container-wide marker into "
+                 f"/etc/bash.bashrc raised {e!r} -- a su/exec'd/nested shell may not pick up the "
+                 "rc marker; the exported-env path still covers the top-level session only",
+                 file=sys.stderr)
+
+    def _drain_startup_noise(self, max_wait_s: float = 1.5, quiet_s: float = 0.15) -> None:
+        """19th round (su/bashrc item): discards EVERYTHING the shell produces before the
+        handshake's own write -- login banners/MOTD, and (now that `/etc/bash.bashrc` carries
+        this session's own PROMPT_COMMAND) the EARLY marker its first, startup-triggered
+        return-to-prompt fires, with no round of ours to attribute it to. Bounded: waits for the
+        shell to go quiet (no bytes for `quiet_s`) before returning, up to `max_wait_s` total --
+        never blocks indefinitely if bashrc did not fire anything (e.g. an image lacking
+        `/etc/bash.bashrc`)."""
+        deadline = time.monotonic() + max_wait_s
+        last_activity = time.monotonic()
+        while time.monotonic() < deadline:
+            try:
+                chunk = self._q.get(timeout=0.05)
+            except queue.Empty:
+                if time.monotonic() - last_activity >= quiet_s:
+                    return
+                continue
+            if chunk is None:   # EOF -- the shell died before we ever wrote anything
+                self.dead = True
+                return
+            last_activity = time.monotonic()
+
     def start(self) -> dict:
         """Returns the handshake result -- P9(b): the caller MUST check this and refuse to make
         any model call if it didn't cleanly succeed.
@@ -1111,6 +1251,29 @@ class PersistentShell:
         scripted-fake-process seam, unchanged since long before this round) is left alone, and the
         now-unused master fd is simply closed -- the fake ignores the pty plumbing entirely by
         design, same as it always ignored `stdin=PIPE`/`stdout=PIPE`."""
+        # 17th round: ONE session uuid, and the marker state built from it. 19th round: moved
+        # BEFORE the pty is even allocated -- `_install_bashrc_marker()` (below) needs
+        # `self._session_uuid` to write the SAME marker text into the container, and must run
+        # before the interactive shell starts so every bash it (or anything it execs/su's into)
+        # ever spawns sources it from the very first prompt.
+        self._init_marker_state()
+        # 19th cold review round 19 (HIGH, live chain-3 row std-004-3: a start script ending in
+        # `su - jack` -> setup_error, 0 turns, "timed_out"): `su -` starts jack's login shell with
+        # a FRESH environment -- our PROMPT_COMMAND, exported only in THIS session's own bash
+        # (the 17th/18th round handshake below), does not survive the switch, so no marker is
+        # EVER printed again and every later round times out waiting for one. Upstream is immune
+        # because its own end-of-round signal is a PROMPT REGEX (`\x1b.+@.+[#|$] `) that matches
+        # ANY user's prompt, not an exported variable. Fixed the same way upstream is immune: the
+        # marker machinery is installed CONTAINER-WIDE, in `/etc/bash.bashrc` -- sourced by EVERY
+        # interactive bash on a Debian/Ubuntu image (`local-os/*`), regardless of user or how the
+        # shell started (`su -`, `bash --login`, `exec bash`, a nested `bash`) -- so a NEW shell
+        # spawned ANY of those ways re-establishes the SAME PROMPT_COMMAND on its own, without
+        # depending on inherited environment at all. The exported-env path (the handshake below)
+        # is KEPT alongside this, never replaced by it -- belt and suspenders: the top-level
+        # session gets the marker machinery twice (bashrc on login/interactive-shell startup, AND
+        # the handshake's own `export`), while a `su`'d-into or exec'd-into shell gets it from
+        # bashrc alone.
+        self._install_bashrc_marker()
         master_fd, slave_fd = self._openpty()
         try:
             self.proc = self._popen(
@@ -1119,17 +1282,16 @@ class PersistentShell:
         finally:
             os.close(slave_fd)
         if self.proc.stdout is None:
+            # 19th round (A): non-blocking, BEFORE handing the fd to either wrapper -- O_NONBLOCK
+            # is a file-STATUS flag, shared by `os.dup()`'d descriptors referring to the same open
+            # file description, so this one call covers both the reader's and the writer's copy.
+            os.set_blocking(master_fd, False)
             self.proc.stdout = _PtyReader(master_fd)
             self.proc.stdin = _PtyWriter(os.dup(master_fd))
         else:
             os.close(master_fd)
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
-        # 17th round: ONE session uuid, and the marker state built from it, BEFORE the handshake's
-        # own run() call -- the handshake IS the first round that waits for this exact marker (its
-        # own PROMPT_COMMAND assignment is what causes the FIRST firing, right as it returns to the
-        # prompt -- "the handshake's own first marker is consumed as the start-of-session sync").
-        self._init_marker_state()
         # N8 (unaffected by the pty switch): a login shell sources profile scripts that can print
         # banners/MOTD/warnings before anything we asked for -- discarded along with everything
         # else in this one throwaway handshake round. `stty -echo` disables the pty's own echo of
@@ -1148,6 +1310,19 @@ class PersistentShell:
         # live: a heredoc containing a tab-indented line paused on completion mid-round, which
         # went quiet long enough to satisfy the 50ms confirmation window on its own (compounding
         # the stale-marker desync above). `disable-completion` makes a bare TAB a no-op insert.
+        # 19th round (su/bashrc item): `_install_bashrc_marker()` already installed THIS session's
+        # PROMPT_COMMAND into `/etc/bash.bashrc`, sourced by the login shell as part of its OWN
+        # startup (before we write anything at all) -- its FIRST return-to-prompt, reached while
+        # sourcing its own startup files, fires that PROMPT_COMMAND once, producing an EARLY
+        # marker (plus whatever banner/MOTD preceded it) with no round of ours to attribute it to.
+        # Reproduced live: this early marker raced the handshake's own discard-before-write,
+        # arriving just late enough to survive it and get wrongly consumed as the HANDSHAKE's own
+        # marker -- shifting every LATER round's output by one, permanently (the true handshake
+        # marker then became the NEXT round's wrongly-inherited stale state). Drained explicitly,
+        # before the handshake's own write: wait (bounded) for the shell to go quiet, discarding
+        # everything seen -- the early marker if bashrc fired one, or simply nothing if it didn't
+        # (e.g. an image without `/etc/bash.bashrc`, where `_install_bashrc_marker` already warned).
+        self._drain_startup_noise()
         rc_printf = ('printf "\\n__M54_RC__%d__' + self._session_uuid + '__\\n" $?')
         result = self.run(f"export PS1='' PS2='' PROMPT_COMMAND='{rc_printf}'; stty -echo 2>/dev/null; "
                           "bind 'set enable-bracketed-paste off' 2>/dev/null; "
@@ -1219,8 +1394,25 @@ class PersistentShell:
                         return
                     piece = bytes(view[off:off + chunk_size])
                     n = self.proc.stdin.write(piece)
-                    if not n:
+                    if n is None:
                         n = len(piece)   # some stream wrappers return None on success
+                    elif n == 0:
+                        # 19th round (A): the real pty's `_PtyWriter` is non-blocking and returns
+                        # 0 when the kernel's input queue is currently full (the shell is busy,
+                        # not reading stdin) -- NEVER treat this as "wrote everything" (the old
+                        # `if not n` conflated the two). Wait briefly for writability via
+                        # select(), bounded, so `box["abort"]` (this round's timeout, or
+                        # close()'s own shutdown) is re-checked promptly instead of blocking
+                        # inside one unbounded syscall.
+                        fd = getattr(self.proc.stdin, "_fd", None)
+                        if fd is not None:
+                            try:
+                                select.select([], [fd], [], 0.1)
+                            except (OSError, ValueError):
+                                return
+                        else:
+                            time.sleep(0.01)   # a test double with no fd -- should not normally
+                        continue              # return 0 at all; just avoid a busy-loop if it does
                     off += n
                 self.proc.stdin.flush()
             except Exception as e:  # noqa: BLE001
@@ -1249,7 +1441,59 @@ class PersistentShell:
         # PROMPT_COMMAND (set once, in the handshake), never queued through stdin alongside the
         # command (see the class docstring/SHELL_MODE note: that queuing is what a stdin-draining
         # program like apt/dpkg/sudo/readline could swallow).
-        full = f"{command}\n"
+        #
+        # 19th cold review round 19 item (B) (HIGH, data validity -- 16th cold review finding on
+        # 0fd31a9, reproduced on a real pty): a MULTI-LINE command (e.g. `echo a\nsleep 1; echo b`)
+        # is two SEPARATE top-level commands as far as bash's own read-eval loop is concerned --
+        # PROMPT_COMMAND fires once after `echo a` alone, and `run()` (under the 17th/18th round's
+        # first-marker-after-quiet-confirmation design) returned 'a\n' after ~60ms, with `b`
+        # leaking into the NEXT round's observation. Nondeterministic across arms (timing-
+        # dependent: whether 'b' arrives before or after the confirmation window) and measured on
+        # 4.3% of real bash_actions (any multi-line one) -- a DATA VALIDITY defect, not just a
+        # latency one.
+        #
+        # RULING (whole-script semantics, matching upstream/chain-1's own `Container.execute`,
+        # which sends the FULL script as one `/bin/bash -c` argument): every round sends the
+        # command as ONE BASH COMPOUND COMMAND, so bash's read-eval loop treats the ENTIRE
+        # (possibly multi-line) command as a SINGLE top-level unit and PROMPT_COMMAND fires
+        # EXACTLY ONCE, after the whole thing completes, regardless of how many internal
+        # lines/statements it contains. This made the 17th/18th round's quiet-confirmation window
+        # and "is there a LATER, complete marker" eager-disqualify logic both OBSOLETE: with the
+        # whole script as one unit, the FIRST complete marker carrying this session's uuid IS
+        # unambiguously the round's own marker -- accepted immediately in the scan loop below, no
+        # quiet window -- see the module docstring's protocol ruling and item (D) for the one
+        # residual edge case this does not cover.
+        #
+        # MECHANISM: `eval "$(cat <<'<delim>' ... <delim> )"`, NOT a bare brace group (`{ ... }`,
+        # first tried during this round's own implementation). A brace group looked right -- it
+        # runs in the CURRENT shell, not a subshell, so `cd`/variable assignments inside persist,
+        # same requirement -- but has a real bug: a SYNTAX ERROR partway through the group's body
+        # makes bash ABANDON the `{ ... }` parse entirely and resume at the NEXT line, which is
+        # this wrapper's own closing `}` -- an ORPHANED token that is ITSELF a syntax error,
+        # firing a SECOND, spurious PROMPT_COMMAND. Reproduced directly against a real pty
+        # (`{\nfi\n}\n` prints the `fi` error, a prompt, THEN a separate `unexpected token '}'`
+        # error and a SECOND prompt) -- the exact 17th/18th-round "two markers for one round"
+        # failure mode this ruling exists to eliminate, just triggered by a syntax error instead
+        # of a multi-line command. A quoted heredoc has no such failure mode: its body is read as
+        # PURE TEXT (no bash syntax parsing at all, by construction) until the literal delimiter
+        # line, so a syntax error anywhere inside it is only ever discovered later, by `eval`'s
+        # OWN sub-parse, which cannot un-complete the OUTER command bash already finished parsing
+        # successfully -- exactly one top-level command, exactly one PROMPT_COMMAND, regardless of
+        # what the command's own text contains. `eval` (a builtin) executes in the CURRENT shell,
+        # not a subshell, so `cd`/variable persistence holds exactly as the brace group intended.
+        # Verified against a real pty for every edge case this round enumerates: heredoc nested
+        # inside (a different, non-colliding delimiter), `cd`/var persistence, a syntax error
+        # (single marker, nonzero rc, shell alive, NEXT round unaffected), an unbalanced quote
+        # (bash waits at a continuation prompt -- Python's own timeout fires, unchanged), `exit`
+        # inside (the CURRENT shell truly exits -- EOF, shell_died), `exec bash` inside (survives;
+        # `exec` preserves the exported environment, PROMPT_COMMAND included), and a trailing `&`
+        # (backgrounds normally, round still ends at the real marker).
+        #
+        # The delimiter embeds this session's uuid (astronomically unlikely to collide with a
+        # line the command's own text genuinely contains) and is QUOTED (`<<'...'`), so the body
+        # undergoes NO expansion while being read -- `eval` performs it exactly once, at execution.
+        wrap_delim = f"M54_WRAP_{self._session_uuid}_EOF"
+        full = f"eval \"$(cat <<'{wrap_delim}'\n{command}\n{wrap_delim}\n)\"\n"
         data = full.encode("utf-8")
 
         # 18th cold review round 18 (HIGH, live smoke on b9415d9 against local-os/default): this
@@ -1319,9 +1563,10 @@ class PersistentShell:
             byte-for-byte; then strip a leading echo of the EXACT text we just wrote -- the
             fallback for when `stty -echo` (sent in the handshake) did not fully suppress it (see
             the class docstring). Applied ONLY to genuinely decoded text, never to the fixed
-            UPSTREAM_DECODE_ERROR_TEXT sentinel string. 17th round: `full` is now JUST
-            `f"{command}\\n"` (no trailing printf of our own ever gets echoed, since there is no
-            longer a printf of our own at all -- see SHELL_MODE/_MARKER_CONFIRM_QUIET_S above).
+            UPSTREAM_DECODE_ERROR_TEXT sentinel string. 17th round: no trailing printf of our own
+            ever gets echoed, since there is no printf of our own at all (PROMPT_COMMAND reports
+            `$?` instead). 19th round: `full` is now the WHOLE brace-group-wrapped write (see its
+            own construction note above) -- the echo-strip fallback matches it verbatim.
 
             16th round: a bracketed-paste-off toggle's own artifact `\\r?\\n` is stripped at the
             BYTE level, by `_strip_ansi_bytes` (`_BRACKETED_PASTE_OFF_NEWLINE`), coupled to the
@@ -1434,97 +1679,32 @@ class PersistentShell:
             except UnicodeDecodeError:
                 decode_broken = True
 
-        # 17th round: a FULL marker match is never trusted the instant it's found -- it is a
-        # CANDIDATE until nothing else arrives for `_MARKER_CONFIRM_QUIET_S` (see the class
-        # docstring: the genuine PROMPT_COMMAND marker is always immediately followed by bash
-        # blocking on read() for the NEXT command -- pure silence -- whereas a marker-shaped
-        # string printed by the command's OWN output is followed by whatever it prints next).
-        # `(m_start, m_end, exit_code, confirm_deadline)` or None.
-        pending_confirm = None
-
+        # 19th cold review round 19 item (B): the FIRST complete marker found IS the round's own
+        # marker, accepted IMMEDIATELY -- no quiet-confirmation window, no "is there a later,
+        # complete marker" eager-disqualify check (both RETIRED; see the module docstring's
+        # protocol ruling and this method's own note above `full`'s construction). This is sound
+        # ONLY because `full` now wraps the WHOLE command in a single `eval`+heredoc compound
+        # command, so PROMPT_COMMAND fires EXACTLY ONCE per round -- a second, later marker-shaped occurrence
+        # can therefore only be the command's OWN output coincidentally containing this session's
+        # uuid (item (D) in the class docstring: accepted as a residual, intentionally unfixed
+        # edge case, since forging it requires a command that reads `$PROMPT_COMMAND` itself).
         try:
             while True:
-                if pending_confirm is None:
-                    # FAST stage: a literal scan (bytearray.find(), cheap even over megabytes of
-                    # non-matching content) for the session's fixed `__M54_RC__` prefix -- never
-                    # the full regex over the whole buffer (that reintroduces R1's own O(n^2)).
-                    idx = raw.find(marker_literal, search_from)
-                    if idx != -1:
-                        # SLOW stage, but BOUNDED: verify digits/uuid/terminators (and capture an
-                        # optional leading \r\n) against a short window, never the whole buffer.
-                        window_start = max(0, idx - 2)
-                        window = bytes(raw[window_start:idx + window_len])
-                        m = marker_re.search(window)
-                        if m:
-                            abs_start, abs_end = window_start + m.start(), window_start + m.end()
-                            # 18th round (HIGH, live smoke on b9415d9 against local-os/default):
-                            # a heredoc immediately followed by a SEPARATE top-level command on
-                            # its own line (`cat > f <<'EOF' ... EOF` then `cat f`, NOT joined by
-                            # `;`/`&&`) fires PROMPT_COMMAND once per command -- reproduced: BOTH
-                            # markers plus the real content arrived in ONE read() chunk, so the
-                            # "invalidate when a NEW chunk arrives" check below never fired (there
-                            # was no new chunk -- everything had already arrived at once) and the
-                            # FIRST marker was wrongly confirmed, 50ms later, with raw_output_len=0
-                            # and the genuine output (plus the real marker) left stranded in
-                            # `_carry` for the NEXT round to wrongly inherit. Checked EAGERLY, not
-                            # just on later arrival: if ANOTHER complete, well-formed marker
-                            # ALREADY exists later in the buffer, THIS one cannot be the last line
-                            # -- never even start a quiet-confirmation window for it. Deliberately
-                            # narrower than "any bytes follow this match" (that wrongly starved a
-                            # genuinely-last marker whose trailing content is never another marker
-                            # at all -- e.g. a backgrounded job's stray output -- forcing a full
-                            # timeout waiting for a second marker that will never arrive; P11/P51's
-                            # own leftover-content case, still covered by the quiet-confirm path
-                            # below and the ordinary end-of-round leftover capture).
-                            next_idx = raw.find(marker_literal, abs_end)
-                            next_is_complete_marker = False
-                            if next_idx != -1:
-                                nxt_start = max(0, next_idx - 2)
-                                nxt_window = bytes(raw[nxt_start:next_idx + window_len])
-                                next_is_complete_marker = bool(marker_re.search(nxt_window))
-                            if next_is_complete_marker:
-                                # this marker's OWN bytes must never be fed as content (they are
-                                # a genuine, well-formed marker -- just not the LAST one) and must
-                                # never be left sitting in `unfed` for the LATER, genuine marker
-                                # to wrongly inherit as part of ITS own content.
-                                offset = len(raw) - len(unfed)
-                                del unfed[abs_start - offset:abs_end - offset]
-                                search_from = abs_end
-                            else:
-                                pending_confirm = (abs_start, abs_end, int(m.group(1)),
-                                                  time.monotonic() + self._MARKER_CONFIRM_QUIET_S)
-                                # if invalidated (more bytes arrive before the quiet window
-                                # elapses), the NEXT search must re-find this SAME span (now
-                                # followed by more content) or a LATER, genuinely-quiet one --
-                                # never skip past it.
-                                search_from = abs_start
-                        elif len(raw) - window_start < window_len:
-                            # not enough bytes yet to know either way (R4-equivalent: never guess
-                            # a partial exit code) -- re-examine this SAME literal position once
-                            # more data arrives; it might still complete into a real marker.
-                            search_from = idx
-                        else:
-                            # a FULL window's worth of bytes is already available and it still
-                            # doesn't match -- this occurrence can never complete (some OTHER
-                            # command output coincidentally contains "__M54_RC__", e.g. a
-                            # different uuid or shape) -- advance past it so a LATER, genuine
-                            # occurrence can still be found, instead of looping on it forever.
-                            search_from = idx + len(marker_literal)
-                    else:
-                        # no literal anywhere in the searched span -- safe to feed everything
-                        # except a small margin (long enough to hold a literal prefix that might
-                        # just be starting at the very end of what's arrived so far).
-                        safe_len = max(0, len(unfed) - margin)
-                        if safe_len > 0:
-                            _feed(bytes(unfed[:safe_len]))
-                            del unfed[:safe_len]
-                        search_from = max(0, len(raw) - margin)
-                else:
-                    m_start, m_end, exit_code, confirm_deadline = pending_confirm
-                    if time.monotonic() >= confirm_deadline:
-                        # CONFIRMED: nothing arrived for the whole quiet window -- this is the
-                        # genuine end-of-command marker PROMPT_COMMAND printed.
-                        trailer_len = len(raw) - m_start
+                # FAST stage: a literal scan (bytearray.find(), cheap even over megabytes of
+                # non-matching content) for the session's fixed `__M54_RC__` prefix -- never the
+                # full regex over the whole buffer (that reintroduces R1's own O(n^2)).
+                idx = raw.find(marker_literal, search_from)
+                if idx != -1:
+                    # SLOW stage, but BOUNDED: verify digits/uuid/terminators (and capture an
+                    # optional leading \r\n) against a short window, never the whole buffer.
+                    window_start = max(0, idx - 2)
+                    window = bytes(raw[window_start:idx + window_len])
+                    m = marker_re.search(window)
+                    if m:
+                        # CONFIRMED, immediately: this is the round's own genuine marker.
+                        abs_start, abs_end = window_start + m.start(), window_start + m.end()
+                        exit_code = int(m.group(1))
+                        trailer_len = len(raw) - abs_start
                         raw_output_len = total_bytes_in - trailer_len
                         command_part = (bytes(unfed[:len(unfed) - trailer_len])
                                        if len(unfed) >= trailer_len else b"")
@@ -1532,7 +1712,7 @@ class PersistentShell:
                             _feed(command_part)
                         _finalize()
                         output = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else _postprocess(decoded_text)
-                        leftover = bytes(raw[m_end:])
+                        leftover = bytes(raw[abs_end:])
                         # 14th round item (a): bytes past the marker that are PURE terminal noise
                         # (escape sequences and/or \r\n) are EXPECTED, not evidence of a real
                         # protocol anomaly -- no warning, discarded outright. A leftover with ANY
@@ -1552,6 +1732,27 @@ class PersistentShell:
                         return {"output": output, "exit_code": exit_code, "timed_out": False,
                                "shell_died": False, "raw_output_len": raw_output_len,
                                "wall_s": round(time.monotonic() - start_time, 2)}
+                    elif len(raw) - window_start < window_len:
+                        # not enough bytes yet to know either way (R4-equivalent: never guess
+                        # a partial exit code) -- re-examine this SAME literal position once
+                        # more data arrives; it might still complete into a real marker.
+                        search_from = idx
+                    else:
+                        # a FULL window's worth of bytes is already available and it still
+                        # doesn't match -- this occurrence can never complete (some OTHER
+                        # command output coincidentally contains "__M54_RC__", e.g. a
+                        # different uuid or shape) -- advance past it so a LATER, genuine
+                        # occurrence can still be found, instead of looping on it forever.
+                        search_from = idx + len(marker_literal)
+                else:
+                    # no literal anywhere in the searched span -- safe to feed everything
+                    # except a small margin (long enough to hold a literal prefix that might
+                    # just be starting at the very end of what's arrived so far).
+                    safe_len = max(0, len(unfed) - margin)
+                    if safe_len > 0:
+                        _feed(bytes(unfed[:safe_len]))
+                        del unfed[:safe_len]
+                    search_from = max(0, len(raw) - margin)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     writer_box["abort"] = True
@@ -1563,16 +1764,9 @@ class PersistentShell:
                     return {"output": out, "exit_code": None, "timed_out": True,
                            "shell_died": False, "raw_output_len": total_bytes_in,
                            "wall_s": wall_s}
-                read_timeout = min(remaining, 0.1)
-                if pending_confirm is not None:
-                    # never oversleep the quiet window -- a candidate's confirmation must be
-                    # checked the MOMENT it elapses, not up to 100ms late.
-                    read_timeout = max(0.0, min(read_timeout, pending_confirm[3] - time.monotonic()))
                 try:
-                    chunk = self._q.get(timeout=read_timeout)
+                    chunk = self._q.get(timeout=min(remaining, 0.1))
                 except queue.Empty:
-                    if pending_confirm is not None:
-                        continue   # top of loop re-checks confirm_deadline -- likely now confirmed
                     if writer_box["done"] and writer_box["error"] is not None:
                         # the write itself failed (broken pipe / shell gone) AND nothing more is
                         # arriving on this pass -- the shell is dead.
@@ -1592,12 +1786,6 @@ class PersistentShell:
                     return {"output": out, "exit_code": None, "timed_out": False,
                            "shell_died": True, "raw_output_len": total_bytes_in,
                            "wall_s": round(time.monotonic() - start_time, 2)}
-                # a chunk arrived -- if a candidate was pending, it is INVALIDATED: the genuine
-                # marker is never followed by anything (bash is blocked on read() for our next
-                # command), so more bytes means this candidate was the command's OWN output,
-                # coincidentally marker-shaped. Re-enter the search unconfirmed; `search_from`
-                # already points at its start, so the SAME (now longer) or a LATER span is found.
-                pending_confirm = None
                 total_bytes_in += len(chunk)
                 raw += chunk
                 unfed += chunk
@@ -1668,7 +1856,15 @@ class PersistentShell:
         own put-retry loop notices it and returns), the stdout PIPE HANDLE is explicitly closed
         (unblocks a reader stuck in `.read()` instead of `.put()`, by making that read raise), and
         then both threads are joined with a bounded timeout -- this method now actually PROVES
-        nothing is left running, not just that close() itself returned quickly."""
+        nothing is left running, not just that close() itself returned quickly.
+
+        19th cold review round 19 item (A) (HIGH, reproduced: a 300 KiB script into a shell busy
+        in `sleep 2`, 0.5s timeout -- the whole process wedged in state U, only `kill -9` worked):
+        the writer thread for THIS method's own `exit\n` is now joined (bounded) BEFORE
+        `self.proc.stdin.close()` runs, never after -- closing the pty master fd out from under a
+        thread that might still be inside a write-retry loop on it is unsafe regardless of how
+        unlikely, now that `_PtyWriter.write()` is non-blocking and bounded by its own short
+        `select()` polls (see its own docstring), this join should return almost immediately."""
         if self.proc is None:
             return
         self._cancel.set()
@@ -1682,6 +1878,8 @@ class PersistentShell:
             while not writer_box["done"] and time.monotonic() < write_deadline:
                 time.sleep(0.02)
             writer_box["abort"] = True
+            if writer_box.get("thread") is not None:
+                writer_box["thread"].join(timeout=1.0)
         try:
             self.proc.wait(timeout=2.0)
         except Exception:  # noqa: BLE001
@@ -1694,7 +1892,8 @@ class PersistentShell:
             pass
         # 13th round: `self.proc.stdin` now owns an INDEPENDENT dup() of the pty master fd (see
         # start()) rather than being a subprocess.PIPE Python manages for us -- it needs its own
-        # explicit close, or that fd leaks for the life of the process.
+        # explicit close, or that fd leaks for the life of the process. 19th round: the writer
+        # thread that might still be using it was ALREADY joined above, before this runs.
         try:
             if self.proc.stdin is not None:
                 self.proc.stdin.close()
@@ -1702,8 +1901,6 @@ class PersistentShell:
             pass
         if self._reader_thread is not None:
             self._reader_thread.join(timeout=1.0)
-        if writer_box is not None and writer_box.get("thread") is not None:
-            writer_box["thread"].join(timeout=0.5)
 
 
 # --------------------------------------------------------------------------- evaluation
