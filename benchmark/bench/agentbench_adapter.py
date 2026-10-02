@@ -996,7 +996,41 @@ class PersistentShell:
     # fallback (if `stty -echo` didn't take for some reason -- e.g. a `su -` sub-shell resetting
     # terminal settings) and normalises `\r\n` -> `\n` in the returned text, matching the
     # pre-pty (`docker exec -i`, no tty) output byte-for-byte.
-    SHELL_MODE = "pty"
+    # 17th cold review round 17 (HIGH, live reproduction on 909b1e0 against local-os/default):
+    # `apt-get install -y sudo >/dev/null 2>&1; echo apt_rc=$?` produced the correct output
+    # ('apt_rc=0\n') but STILL timed out after the full `timeout_s` and killed the shell -- every
+    # LATER run() then reported shell_died. Mechanism: the OLD protocol queued its OWN rc marker
+    # through STDIN, appended right after the command (`{command}\nprintf '...' $?\n`, written as
+    # ONE blob) -- any program that itself reads/drains terminal input (`apt`/`dpkg`, `sudo`,
+    # `visudo`, anything using readline or `stty`) consumes OUR marker line TOGETHER WITH the
+    # command, so it never reaches bash's own prompt loop to be echoed back. A plain pipe
+    # (`docker exec -i`, pre-13th-round) never showed this: stdin isn't a tty, so those programs
+    # don't read from it at all. This silently biased every sudo/apt/dpkg-shaped task's measured
+    # wall time downward (observed 4-8s rounds reported as full-timeout 30s failures).
+    #
+    # Fix (upstream-equivalent -- upstream's OWN marker is bash's interactive PROMPT, printed by
+    # BASH ITSELF once a command fully completes and control returns to the read-eval loop, never
+    # written by us through stdin at all): `start()`'s handshake sets `PROMPT_COMMAND` to a printf
+    # carrying `$?` and a PER-SESSION uuid (generated ONCE, not per call); every `run(command)`
+    # writes ONLY `command + "\n"` -- no trailing printf of our own, ever, so there is nothing a
+    # stdin-draining program CAN consume except the command text itself (exactly upstream's own
+    # exposure, no worse). PROMPT_COMMAND fires exactly once per return to the top-level prompt,
+    # which includes after a multi-line heredoc (bash's own PS2, also emptied here, governs
+    # continuation lines; nothing fires until the whole compound command is done).
+    #
+    # A marker-shaped line can still appear INSIDE a command's own legitimate output (printed by
+    # the command itself, not by PROMPT_COMMAND) -- the per-session uuid makes an ACCIDENTAL
+    # collision astronomically unlikely, but never IMPOSSIBLE, so a second, cheap check is applied
+    # before a match is trusted: a candidate is accepted as the genuine end-of-command marker only
+    # once NOTHING ELSE arrives for `_MARKER_CONFIRM_QUIET_S` after it -- the real PROMPT_COMMAND
+    # marker is always immediately followed by bash blocking on read() for our NEXT command (pure
+    # silence); a marker-shaped string INSIDE the command's own output is followed by whatever the
+    # command prints next (and is retried against a LATER, genuinely-quiet candidate instead).
+    SHELL_MODE = "pty-prompt"
+
+    # Upper bound on bash's own `$?`: POSIX exit statuses are 0-255 (3 digits); never negative.
+    _MARKER_MAX_RC_DIGITS = 3
+    _MARKER_CONFIRM_QUIET_S = 0.05
 
     def __init__(self, container: str, popen=subprocess.Popen, runner=subprocess.run,
                 read_chunk: int = 65536, queue_maxsize: int = 256, openpty=None):
@@ -1015,6 +1049,46 @@ class PersistentShell:
         # `Queue.put()` on a full queue nobody is draining any more (a timed `Thread.join()` alone
         # cannot interrupt a thread parked in a blocking call).
         self._cancel = threading.Event()
+        # 17th round: ONE uuid for the whole session (PROMPT_COMMAND is set ONCE, in the
+        # handshake) -- never per-call, unlike the retired per-call sentinel.
+        self._session_uuid = None
+        self._marker_re = None
+        self._marker_margin = 0
+
+    def _init_marker_state(self) -> None:
+        """17th round: generates the ONE per-session uuid and the marker-matching state derived
+        from it -- called from `start()`, right before its own handshake `run()` call (which is
+        the FIRST round that waits for this exact marker). Pulled out as its own method so a test
+        that bypasses the real handshake entirely (a fake process that would hang on a real
+        start() round) can still establish valid marker state before calling `run()` directly.
+
+        P22/R1-equivalent (HIGH, 17th round regression caught against a REAL 20MB-output real-bash
+        test): searching the WHOLE accumulated buffer with the FULL regex on every chunk
+        reintroduced the exact O(bytes-received^2) cost the 3rd cold review's R1 fix eliminated --
+        a regex engine is far slower per byte than `bytearray.find()`'s literal scan, and a
+        bulk-output round re-triggers `_cap_buffer` (and this scan) on every ~64KB chunk. Fixed
+        the same way R1 did: a FAST literal `bytearray.find()` for the session's fixed
+        `__M54_RC__` prefix (cheap over megabytes of non-matching content, which is the common
+        case for any bulk-output round) locates a CANDIDATE position; the FULL regex -- digits,
+        uuid, terminators -- is then matched against only a short, BOUNDED window right after it,
+        never the whole buffer."""
+        self._session_uuid = uuid.uuid4().hex
+        self._marker_literal = b"__M54_RC__"
+        marker_body = rb"__M54_RC__(\d+)__" + re.escape(self._session_uuid.encode("ascii")) + rb"__"
+        self._marker_re = re.compile(rb"\r?\n" + marker_body + rb"\r?\n")
+        # the bounded verification window: 2 bytes for an optional leading \r\n BEFORE the literal
+        # (accounted for by starting the window 2 bytes early, see `run()`) + the longest realistic
+        # marker span after it (worst-case 3-digit rc, both optional \r bytes present) + headroom.
+        self._marker_window_len = len(
+            ("__M54_RC__" + "9" * self._MARKER_MAX_RC_DIGITS + "__" + self._session_uuid
+            + "__\r\n").encode("ascii")) + 4
+        # safety margin for the incremental "never feed a possibly-developing marker" withholding
+        # (see `run()`) -- only needs to cover the FIXED literal prefix itself (plus its own
+        # optional leading \r\n) now that the digits/uuid/terminator are verified separately, in
+        # a BOUNDED window, once the literal is actually found -- MUCH smaller than searching for
+        # the whole marker shape, which is exactly what keeps the common "no match anywhere yet"
+        # scan cheap.
+        self._marker_margin = len(self._marker_literal) + 1
 
     def start(self) -> dict:
         """Returns the handshake result -- P9(b): the caller MUST check this and refuse to make
@@ -1051,6 +1125,11 @@ class PersistentShell:
             os.close(master_fd)
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
+        # 17th round: ONE session uuid, and the marker state built from it, BEFORE the handshake's
+        # own run() call -- the handshake IS the first round that waits for this exact marker (its
+        # own PROMPT_COMMAND assignment is what causes the FIRST firing, right as it returns to the
+        # prompt -- "the handshake's own first marker is consumed as the start-of-session sync").
+        self._init_marker_state()
         # N8 (unaffected by the pty switch): a login shell sources profile scripts that can print
         # banners/MOTD/warnings before anything we asked for -- discarded along with everything
         # else in this one throwaway handshake round. `stty -echo` disables the pty's own echo of
@@ -1061,8 +1140,11 @@ class PersistentShell:
         # enable-bracketed-paste off'` reduces readline's bracketed-paste noise at the source --
         # kept ALONGSIDE, never instead of, the byte-level strip regexes in `run()` (item (b)):
         # a model's own `bash_action` could still re-enable it (e.g. `bind` inside a sub-shell),
-        # and the regexes are what actually guarantee correctness regardless.
-        return self.run("export PS1='' PS2='' PROMPT_COMMAND=; stty -echo 2>/dev/null; "
+        # and the regexes are what actually guarantee correctness regardless. 17th round:
+        # PROMPT_COMMAND replaces the retired per-call stdin-queued printf marker (see the class
+        # docstring/SHELL_MODE note above) -- PS1/PS2 stay empty exactly as before.
+        rc_printf = ('printf "\\n__M54_RC__%d__' + self._session_uuid + '__\\n" $?')
+        return self.run(f"export PS1='' PS2='' PROMPT_COMMAND='{rc_printf}'; stty -echo 2>/dev/null; "
                         "bind 'set enable-bracketed-paste off' 2>/dev/null; true",
                         timeout_s=10.0)
 
@@ -1134,23 +1216,30 @@ class PersistentShell:
         return box
 
     def run(self, command: str, timeout_s: float = DEFAULT_EXEC_TIMEOUT_S) -> dict:
-        """Returns {output, exit_code, timed_out, shell_died, raw_output_len}."""
+        """Returns {output, exit_code, timed_out, shell_died, raw_output_len, wall_s}."""
         if self.proc is None:
             raise RuntimeError("PersistentShell.run() called before start()")
         if self.dead or self.proc.poll() is not None:
             self.dead = True
             return {"output": "", "exit_code": None, "timed_out": False, "shell_died": True,
-                   "raw_output_len": 0}
+                   "raw_output_len": 0, "wall_s": 0.0}
 
         # P8: the deadline is set BEFORE anything is written, and covers the write itself.
-        deadline = time.monotonic() + timeout_s
-        sentinel = f"__M54_SENTINEL_{uuid.uuid4().hex}__"
-        full = f"{command}\nprintf '\\n%s%d\\n' {sentinel} $?\n"
+        start_time = time.monotonic()
+        deadline = start_time + timeout_s
+        # 17th round: NO trailing printf of our own -- the command's OWN rc is reported by
+        # PROMPT_COMMAND (set once, in the handshake), never queued through stdin alongside the
+        # command (see the class docstring/SHELL_MODE note: that queuing is what a stdin-draining
+        # program like apt/dpkg/sudo/readline could swallow).
+        full = f"{command}\n"
         data = full.encode("utf-8")
         # P22: start the write CONCURRENTLY -- never await it before draining the reader queue.
         writer_box = self._start_writer(data)
 
-        marker = ("\n" + sentinel).encode("ascii")
+        marker_literal = self._marker_literal
+        marker_re = self._marker_re
+        margin = self._marker_margin
+        window_len = self._marker_window_len
 
         def _postprocess(text: str) -> str:
             """13th round pty fidelity: normalise \\r\\n -> \\n (the pty's own ONLCR line
@@ -1159,13 +1248,16 @@ class PersistentShell:
             byte-for-byte; then strip a leading echo of the EXACT text we just wrote -- the
             fallback for when `stty -echo` (sent in the handshake) did not fully suppress it (see
             the class docstring). Applied ONLY to genuinely decoded text, never to the fixed
-            UPSTREAM_DECODE_ERROR_TEXT sentinel string.
+            UPSTREAM_DECODE_ERROR_TEXT sentinel string. 17th round: `full` is now JUST
+            `f"{command}\\n"` (no trailing printf of our own ever gets echoed, since there is no
+            longer a printf of our own at all -- see SHELL_MODE/_MARKER_CONFIRM_QUIET_S above).
 
-            14th round: readline's bracketed-paste toggle at the START of every round (off while
-            it reads our line, back on once consumed -- stripped as BYTES by `_strip_ansi_bytes`
-            above) leaves its own leading \\r\\n behind once the escape bytes are gone -- strip
-            exactly ONE leading newline so a command with NO real output at all (e.g. `printf
-            ''`) produces the empty string, not a lone blank line."""
+            16th round: a bracketed-paste-off toggle's own artifact `\\r?\\n` is stripped at the
+            BYTE level, by `_strip_ansi_bytes` (`_BRACKETED_PASTE_OFF_NEWLINE`), coupled to the
+            actual escape sequence it follows -- NEVER unconditionally here. An earlier version of
+            this function stripped ANY leading `\\n` after normalising, which wrongly ate a
+            GENUINE leading blank line in the command's own output whenever no bracketed-paste
+            prefix was present that round (`echo; echo x` -> 'x\\n' instead of '\\nx\\n')."""
             if not text:
                 return text
             text = text.replace("\r\n", "\n")
@@ -1272,32 +1364,62 @@ class PersistentShell:
             except UnicodeDecodeError:
                 decode_broken = True
 
+        # 17th round: a FULL marker match is never trusted the instant it's found -- it is a
+        # CANDIDATE until nothing else arrives for `_MARKER_CONFIRM_QUIET_S` (see the class
+        # docstring: the genuine PROMPT_COMMAND marker is always immediately followed by bash
+        # blocking on read() for the NEXT command -- pure silence -- whereas a marker-shaped
+        # string printed by the command's OWN output is followed by whatever it prints next).
+        # `(m_start, m_end, exit_code, confirm_deadline)` or None.
+        pending_confirm = None
+
         try:
             while True:
-                idx = raw.find(marker, max(0, search_from - len(marker)))
-                if idx != -1:
-                    # 13th round pty fidelity: the pty's own ONLCR line discipline translates the
-                    # printf's trailing `\n` (after the exit-code digits) to `\r\n` -- `\r?` makes
-                    # the terminator tolerant of that extra byte without weakening R4's own rule
-                    # (never guess a partial exit code: a lone `\r` with no `\n` yet still fails
-                    # to match, same as before, and re-checks from the SAME offset next chunk).
-                    m = re.match(rb"(\d+)\r?\n", bytes(raw[idx + len(marker):]))
-                    if m:
-                        exit_code = int(m.group(1))
-                        # 13th round pty fidelity: the marker is `"\n" + sentinel` -- printf's OWN
-                        # leading format-string `\n` (right before the sentinel) is what becomes
-                        # that `\n`, pty-translated from `\r\n`. The marker match only consumes
-                        # the `\n` itself, leaving its own `\r` as the LAST byte of what would
-                        # otherwise look like "real" content -- a dangling, unpaired `\r` with no
-                        # following `\n` to normalise away. Excluded here from the CONTENT span
-                        # (never from the trailer/marker span used by `consumed_end`/`leftover`
-                        # below, which still starts at the UNCHANGED `idx`).
-                        trailer_extra = 1 if (idx > 0 and raw[idx - 1:idx] == b"\r") else 0
-                        # bytes after idx were never touched by capping (capping only ever drops a
-                        # MIDDLE span strictly before the eventual sentinel position) -- so
-                        # total_bytes_in minus that trailing length is the exact TRUE output
-                        # length.
-                        trailer_len = len(raw) - idx + trailer_extra
+                if pending_confirm is None:
+                    # FAST stage: a literal scan (bytearray.find(), cheap even over megabytes of
+                    # non-matching content) for the session's fixed `__M54_RC__` prefix -- never
+                    # the full regex over the whole buffer (that reintroduces R1's own O(n^2)).
+                    idx = raw.find(marker_literal, search_from)
+                    if idx != -1:
+                        # SLOW stage, but BOUNDED: verify digits/uuid/terminators (and capture an
+                        # optional leading \r\n) against a short window, never the whole buffer.
+                        window_start = max(0, idx - 2)
+                        window = bytes(raw[window_start:idx + window_len])
+                        m = marker_re.search(window)
+                        if m:
+                            pending_confirm = (window_start + m.start(), window_start + m.end(),
+                                              int(m.group(1)),
+                                              time.monotonic() + self._MARKER_CONFIRM_QUIET_S)
+                            # if invalidated (more bytes arrive before the quiet window elapses),
+                            # the NEXT search must re-find this SAME span (now followed by more
+                            # content) or a LATER, genuinely-quiet one -- never skip past it.
+                            search_from = window_start + m.start()
+                        elif len(raw) - window_start < window_len:
+                            # not enough bytes yet to know either way (R4-equivalent: never guess
+                            # a partial exit code) -- re-examine this SAME literal position once
+                            # more data arrives; it might still complete into a real marker.
+                            search_from = idx
+                        else:
+                            # a FULL window's worth of bytes is already available and it still
+                            # doesn't match -- this occurrence can never complete (some OTHER
+                            # command output coincidentally contains "__M54_RC__", e.g. a
+                            # different uuid or shape) -- advance past it so a LATER, genuine
+                            # occurrence can still be found, instead of looping on it forever.
+                            search_from = idx + len(marker_literal)
+                    else:
+                        # no literal anywhere in the searched span -- safe to feed everything
+                        # except a small margin (long enough to hold a literal prefix that might
+                        # just be starting at the very end of what's arrived so far).
+                        safe_len = max(0, len(unfed) - margin)
+                        if safe_len > 0:
+                            _feed(bytes(unfed[:safe_len]))
+                            del unfed[:safe_len]
+                        search_from = max(0, len(raw) - margin)
+                else:
+                    m_start, m_end, exit_code, confirm_deadline = pending_confirm
+                    if time.monotonic() >= confirm_deadline:
+                        # CONFIRMED: nothing arrived for the whole quiet window -- this is the
+                        # genuine end-of-command marker PROMPT_COMMAND printed.
+                        trailer_len = len(raw) - m_start
                         raw_output_len = total_bytes_in - trailer_len
                         command_part = (bytes(unfed[:len(unfed) - trailer_len])
                                        if len(unfed) >= trailer_len else b"")
@@ -1305,14 +1427,10 @@ class PersistentShell:
                             _feed(command_part)
                         _finalize()
                         output = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else _postprocess(decoded_text)
-                        consumed_end = idx + len(marker) + m.end()
-                        leftover = bytes(raw[consumed_end:])
-                        # 14th round item (a): bytes past the sentinel that are PURE terminal
-                        # noise (escape sequences and/or \r\n -- readline re-enabling bracketed-
-                        # paste right after our sentinel line, before we've even sent the next
-                        # command) are EXPECTED, not evidence of a real protocol anomaly -- no
-                        # warning, and discarded outright (never carried forward; there is
-                        # nothing genuine in it for the next round to use). A leftover with ANY
+                        leftover = bytes(raw[m_end:])
+                        # 14th round item (a): bytes past the marker that are PURE terminal noise
+                        # (escape sequences and/or \r\n) are EXPECTED, not evidence of a real
+                        # protocol anomaly -- no warning, discarded outright. A leftover with ANY
                         # other bytes remaining after the SAME stripping is still a real anomaly
                         # (P51's own case) and keeps warning + carrying the RAW, unstripped bytes.
                         leftover_is_pure_noise = (leftover and not _strip_ansi_bytes(leftover)
@@ -1322,21 +1440,13 @@ class PersistentShell:
                             leftover = b""
                         elif leftover:
                             print(f"[PersistentShell] WARNING: {len(leftover)} unexpected byte(s) "
-                                 "past the sentinel; carrying to the next run() call",
+                                 "past the marker; carrying to the next run() call",
                                  file=sys.stderr)
                         self._carry = leftover
                         writer_box["abort"] = True
                         return {"output": output, "exit_code": exit_code, "timed_out": False,
-                               "shell_died": False, "raw_output_len": raw_output_len}
-                    # digits present but not yet newline-terminated -- re-check from the SAME
-                    # offset once more data arrives (R4: never guess a partial exit code).
-                    search_from = idx
-                else:
-                    safe_len = max(0, len(unfed) - (len(marker) - 1))
-                    if safe_len > 0:
-                        _feed(bytes(unfed[:safe_len]))
-                        del unfed[:safe_len]
-                    search_from = len(raw)
+                               "shell_died": False, "raw_output_len": raw_output_len,
+                               "wall_s": round(time.monotonic() - start_time, 2)}
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     writer_box["abort"] = True
@@ -1344,11 +1454,20 @@ class PersistentShell:
                     _flush_unfed()
                     _finalize()
                     out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else _postprocess(decoded_text)
+                    wall_s = round(time.monotonic() - start_time, 2)
                     return {"output": out, "exit_code": None, "timed_out": True,
-                           "shell_died": False, "raw_output_len": total_bytes_in}
+                           "shell_died": False, "raw_output_len": total_bytes_in,
+                           "wall_s": wall_s}
+                read_timeout = min(remaining, 0.1)
+                if pending_confirm is not None:
+                    # never oversleep the quiet window -- a candidate's confirmation must be
+                    # checked the MOMENT it elapses, not up to 100ms late.
+                    read_timeout = max(0.0, min(read_timeout, pending_confirm[3] - time.monotonic()))
                 try:
-                    chunk = self._q.get(timeout=min(remaining, 0.1))
+                    chunk = self._q.get(timeout=read_timeout)
                 except queue.Empty:
+                    if pending_confirm is not None:
+                        continue   # top of loop re-checks confirm_deadline -- likely now confirmed
                     if writer_box["done"] and writer_box["error"] is not None:
                         # the write itself failed (broken pipe / shell gone) AND nothing more is
                         # arriving on this pass -- the shell is dead.
@@ -1357,7 +1476,8 @@ class PersistentShell:
                         _finalize()
                         out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else _postprocess(decoded_text)
                         return {"output": out, "exit_code": None, "timed_out": False,
-                               "shell_died": True, "raw_output_len": total_bytes_in}
+                               "shell_died": True, "raw_output_len": total_bytes_in,
+                               "wall_s": round(time.monotonic() - start_time, 2)}
                     continue
                 if chunk is None:   # EOF -- the shell process exited (e.g. the command ran `exit`)
                     self.dead = True
@@ -1365,7 +1485,14 @@ class PersistentShell:
                     _finalize()
                     out = self.UPSTREAM_DECODE_ERROR_TEXT if decode_broken else _postprocess(decoded_text)
                     return {"output": out, "exit_code": None, "timed_out": False,
-                           "shell_died": True, "raw_output_len": total_bytes_in}
+                           "shell_died": True, "raw_output_len": total_bytes_in,
+                           "wall_s": round(time.monotonic() - start_time, 2)}
+                # a chunk arrived -- if a candidate was pending, it is INVALIDATED: the genuine
+                # marker is never followed by anything (bash is blocked on read() for our next
+                # command), so more bytes means this candidate was the command's OWN output,
+                # coincidentally marker-shaped. Re-enter the search unconfirmed; `search_from`
+                # already points at its start, so the SAME (now longer) or a LATER span is found.
+                pending_confirm = None
                 total_bytes_in += len(chunk)
                 raw += chunk
                 unfed += chunk
@@ -2017,7 +2144,12 @@ def build_tools(shell: PersistentShell, timeout: float = DEFAULT_EXEC_TIMEOUT_S,
         if res["timed_out"]:
             counters["tool_timeouts"] += 1
             exec_timeout_flag["hit"] = True
-            msg = f"command timed out after {timeout:.0f}s and the shell was killed"
+            # 17th round: report the MEASURED wall, not the fixed configured timeout -- `timeout`
+            # is what we ASKED for; `res["wall_s"]` is what ACTUALLY elapsed before the deadline
+            # fired (always >= timeout, but the Python-side poll granularity and the writer's own
+            # bounded chunking can push it noticeably past the nominal value, which the fixed
+            # "after {timeout}s" message silently hid).
+            msg = f"command timed out after {res.get('wall_s', timeout):.1f}s and the shell was killed"
             if transcript_turns:
                 transcript_turns[-1]["tool_result"] = msg
                 transcript_turns[-1]["raw_output_len"] = res.get("raw_output_len")

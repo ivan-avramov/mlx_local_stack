@@ -1388,6 +1388,14 @@ class _FakeProc:
         self.returncode = -15
 
 
+def _rc_marker(session_uuid_hex: str, rc: int) -> bytes:
+    """17th round: the COMPLETE bytes PROMPT_COMMAND's own printf produces for one round --
+    `\\n__M54_RC__<rc>__<session-uuid>__\\n` -- replacing the retired per-call
+    `("\\n" + sentinel).encode() + b"<rc>\\n"` pair (the sentinel/exit-code were two SEPARATE
+    pieces before; the exit code now lives INSIDE the single marker PROMPT_COMMAND prints)."""
+    return f"\n__M54_RC__{rc}__{session_uuid_hex}__\n".encode("ascii")
+
+
 @_timeout(10)
 def test_persistent_shell_leftover_bytes_past_sentinel_carried_raw_not_decoded_P51(monkeypatch):
     """8th cold review round 8 P51 (MEDIUM): 'ABCD' + sentinel + an UNEXPECTED multibyte leftover
@@ -1398,19 +1406,18 @@ def test_persistent_shell_leftover_bytes_past_sentinel_carried_raw_not_decoded_P
     breaks that assumption and can corrupt real output."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
     # the handshake run("true", ...) inside start() -- a clean, empty-output, exit-0 round.
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
         # the real round: "ABCD" + marker + exit 0 + newline + an unexpected leftover '€',
         # ALL in a single chunk (the exact scenario the byte-count trim got wrong).
-        proc.stdout.push(b"ABCD" + marker + b"0\n" + "€".encode("utf-8"))
+        proc.stdout.push(b"ABCD" + marker + "€".encode("utf-8"))
         res = shell.run("printf ABCD", timeout_s=5)
         assert res["output"] == "ABCD"
         assert res["exit_code"] == 0
@@ -1433,16 +1440,15 @@ def test_persistent_shell_trailer_never_influences_preceding_output_P11(monkeypa
     trailer bytes forward raw, unmodified."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
-        proc.stdout.push(b"ABCD" + marker + b"0\n" + trailer)
+        proc.stdout.push(b"ABCD" + marker + trailer)
         res = shell.run("printf ABCD", timeout_s=5)
         assert res["output"] == "ABCD", f"trailer={trailer_name}"
         assert res["exit_code"] == 0
@@ -1460,18 +1466,17 @@ def test_persistent_shell_command_outputs_own_trailing_partial_lead_byte_is_deco
     the command's real output), not an unexpected byte AFTER it."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
         # "ABCD" + a LONE lead byte of a 3-byte UTF-8 sequence (e.g. printf's own real stdout),
         # immediately followed by the clean sentinel -- no unexpected trailer at all.
-        proc.stdout.push(b"ABCD\xe2" + marker + b"0\n")
+        proc.stdout.push(b"ABCD\xe2" + marker)
         res = shell.run("printf 'ABCD\\342'", timeout_s=5)
         assert res["output"] == AB.PersistentShell.UPSTREAM_DECODE_ERROR_TEXT
         assert res["exit_code"] == 0
@@ -1494,16 +1499,15 @@ def test_persistent_shell_scripted_strips_bracketed_paste_around_echo_hi_P14(mon
     '\\x1b[?2004h\\x1b[?2004l\\r\\nhi\\n...' -- must strip to exactly 'hi\\n'."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
-        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\nhi\n" + marker + b"0\n")
+        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\nhi\n" + marker)
         res = shell.run("echo hi")
         assert res["output"] == "hi\n"
         assert res["exit_code"] == 0
@@ -1519,16 +1523,15 @@ def test_persistent_shell_scripted_printf_empty_strips_to_empty_string_P14(monke
     the OS is empty." path fires), never a lone blank line."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
-        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\n" + marker + b"0\n")
+        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\n" + marker)
         res = shell.run("printf ''")
         assert res["output"] == ""
     finally:
@@ -1541,18 +1544,17 @@ def test_persistent_shell_scripted_strips_ls_colour_aliases_P14(monkeypatch):
     .bashrc aliases ls/grep with --color=auto) -- must strip to the plain names."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
         colour_ls = (b"\x1b[?2004h\x1b[?2004l\r\n"
                     b"\x1b[0m\x1b[01;36mbin\x1b[0m  \x1b[01;36metc\x1b[0m\n")
-        proc.stdout.push(colour_ls + marker + b"0\n")
+        proc.stdout.push(colour_ls + marker)
         res = shell.run("ls")
         assert res["output"] == "bin  etc\n"
         assert "\x1b" not in res["output"]
@@ -1569,16 +1571,15 @@ def test_persistent_shell_scripted_trailing_noise_past_sentinel_no_warning_disca
     must still warn and carry (P51, unaffected by this change)."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
-        proc.stdout.push(b"hi\n" + marker + b"0\n" + b"\x1b[?2004h\x1b[?2004l\r\n")
+        proc.stdout.push(b"hi\n" + marker + b"\x1b[?2004h\x1b[?2004l\r\n")
         res = shell.run("echo hi", timeout_s=5)
         assert res["output"] == "hi\n"
         err = capsys.readouterr().err
@@ -1594,16 +1595,15 @@ def test_persistent_shell_scripted_genuinely_unexpected_leftover_still_warns_and
     bytes) must still warn and carry forward -- P51's own mechanism, unaffected by the (a) fix."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
-        proc.stdout.push(b"ABCD" + marker + b"0\n" + "€".encode("utf-8"))
+        proc.stdout.push(b"ABCD" + marker + "€".encode("utf-8"))
         res = shell.run("printf ABCD", timeout_s=5)
         assert res["output"] == "ABCD"
         err = capsys.readouterr().err
@@ -1621,18 +1621,17 @@ def test_persistent_shell_scripted_echo_strip_fallback_when_stty_echo_fails_P14(
     must still strip a leading echo of the EXACT text it just wrote."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
-        full = f"echo hi\nprintf '\\n%s%d\\n' {sentinel} $?\n"
+        full = "echo hi\n"
         echoed = full.replace("\n", "\r\n").encode("utf-8")   # echo still ON: reflects the WHOLE write
-        proc.stdout.push(echoed + b"hi\n" + marker + b"0\n")
+        proc.stdout.push(echoed + b"hi\n" + marker)
         res = shell.run("echo hi")
         assert res["output"] == "hi\n"
         assert "echo hi" not in res["output"]
@@ -1648,17 +1647,17 @@ def test_persistent_shell_start_handshake_output_never_leaks_command_text_P14(mo
     clean regardless, via the SAME strip pipeline every other round gets."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
-    handshake_cmd = ("export PS1='' PS2='' PROMPT_COMMAND=; stty -echo 2>/dev/null; "
+    marker = _rc_marker(fixed.hex, 0)
+    rc_printf = 'printf "\\n__M54_RC__%d__' + fixed.hex + '__\\n" $?'
+    handshake_cmd = (f"export PS1='' PS2='' PROMPT_COMMAND='{rc_printf}'; stty -echo 2>/dev/null; "
                      "bind 'set enable-bracketed-paste off' 2>/dev/null; true")
-    full = f"{handshake_cmd}\nprintf '\\n%s%d\\n' {sentinel} $?\n"
+    full = f"{handshake_cmd}\n"
     echoed = full.replace("\n", "\r\n").encode("utf-8")
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(b"\x1b]0;root@container: ~\x07root@container:~# " + echoed + marker + b"0\n")
+    proc.stdout.push(b"\x1b]0;root@container: ~\x07root@container:~# " + echoed + marker)
     try:
         res = shell.start()
         assert res["output"] == ""
@@ -1676,8 +1675,7 @@ def test_persistent_shell_start_uses_docker_exec_it_not_dash_i_P14(monkeypatch):
     shell_died defect) survived every existing test."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
     captured = {}
 
     def fake_popen(cmd, **kw):
@@ -1687,7 +1685,7 @@ def test_persistent_shell_start_uses_docker_exec_it_not_dash_i_P14(monkeypatch):
     proc = _FakeProc()
     shell = AB.PersistentShell("my-container", popen=fake_popen,
                               runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
         assert captured["cmd"] == ["docker", "exec", "-it", "my-container", "/bin/bash", "--login"]
@@ -1701,12 +1699,11 @@ def test_persistent_shell_start_handshake_disables_bracketed_paste_P14(monkeypat
     noise-reduction measure, kept ALONGSIDE (never instead of) the strip regexes."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
         assert b"enable-bracketed-paste off" in bytes(proc.stdin.written)
@@ -1739,13 +1736,12 @@ def test_persistent_shell_scripted_csi_colour_code_split_across_chunks_is_still_
     expected clean result once `_split_pending_escape` is applied."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
         proc.stdout.push(b"x" * 60)
@@ -1754,7 +1750,7 @@ def test_persistent_shell_scripted_csi_colour_code_split_across_chunks_is_still_
         time.sleep(0.05)
         proc.stdout.push(b"1;34m" + b"." * 42)         # completes it; no marker yet
         time.sleep(0.05)
-        proc.stdout.push(b"ZZZ\n" + marker + b"0\n")
+        proc.stdout.push(b"ZZZ\n" + marker)
         res = shell.run("ls")
         assert res["output"] == "x" * 100 + "." * 42 + "ZZZ\n"
         assert "\x1b" not in res["output"]
@@ -1771,15 +1767,14 @@ def test_persistent_shell_scripted_osc_title_split_across_chunks_is_still_stripp
     VERIFIED against the pre-fix code before locking in, same as the CSI test."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
     osc = b"\x1b]0;root@container: ~\x07"
     osc_part1, osc_part2 = osc[:15], osc[15:]
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
         proc.stdout.push(b"x" * 60)
@@ -1788,7 +1783,7 @@ def test_persistent_shell_scripted_osc_title_split_across_chunks_is_still_stripp
         time.sleep(0.05)
         proc.stdout.push(osc_part2 + b"." * 42)   # BEL + rest; no marker yet
         time.sleep(0.05)
-        proc.stdout.push(b"ZZZ\n" + marker + b"0\n")
+        proc.stdout.push(b"ZZZ\n" + marker)
         res = shell.run("some_command")
         assert res["output"] == "x" * 100 + "." * 42 + "ZZZ\n"
         assert "\x1b" not in res["output"]
@@ -1803,18 +1798,17 @@ def test_persistent_shell_scripted_bare_escape_byte_not_withheld_forever_P15(mon
     eventually passes through as plain content once enough unrelated bytes follow it."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
         # a bare ESC followed by 40 plain bytes (well past the 32-byte withholding bound), then
         # the sentinel -- the whole thing must still reach `output`, never silently dropped.
-        proc.stdout.push(b"\x1b" + b"x" * 40 + b"\n" + marker + b"0\n")
+        proc.stdout.push(b"\x1b" + b"x" * 40 + b"\n" + marker)
         res = shell.run("weird_output")
         assert res["output"] == "\x1b" + "x" * 40 + "\n"
     finally:
@@ -1838,16 +1832,15 @@ def test_persistent_shell_scripted_preserves_genuine_leading_blank_line_P16(monk
     it) -- a genuine leading blank line in the command's own output must survive."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
-        proc.stdout.push(b"\nx\n" + marker + b"0\n")
+        proc.stdout.push(b"\nx\n" + marker)
         res = shell.run("echo; echo x")
         assert res["output"] == "\nx\n"
     finally:
@@ -1860,16 +1853,15 @@ def test_persistent_shell_scripted_bracketed_paste_prefix_still_strips_to_hi_P16
     exactly 'hi\\n' under the 16th round's byte-level, conditional newline strip."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
-        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\nhi\n" + marker + b"0\n")
+        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\nhi\n" + marker)
         res = shell.run("echo hi")
         assert res["output"] == "hi\n"
     finally:
@@ -1882,16 +1874,15 @@ def test_persistent_shell_scripted_printf_empty_with_paste_pair_still_empty_P16(
     string under the 16th round's fix."""
     fixed = uuid.UUID(int=0)
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
-    sentinel = f"__M54_SENTINEL_{fixed.hex}__"
-    marker = ("\n" + sentinel).encode("ascii")
+    marker = _rc_marker(fixed.hex, 0)
 
     proc = _FakeProc()
     shell = AB.PersistentShell("c", popen=lambda *a, **k: proc,
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
-    proc.stdout.push(marker + b"0\n")
+    proc.stdout.push(marker)
     shell.start()
     try:
-        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\n" + marker + b"0\n")
+        proc.stdout.push(b"\x1b[?2004h\x1b[?2004l\r\n" + marker)
         res = shell.run("printf ''")
         assert res["output"] == ""
     finally:
@@ -2132,6 +2123,90 @@ def test_persistent_shell_real_bash_timeout_kill_P13(tmp_path):
         shell.close()
 
 
+# --------------------------------------------------------------------------- PersistentShell PROMPT_COMMAND marker protocol (17th round)
+# 17th cold review round 17 (HIGH, live reproduction on 909b1e0 against local-os/default):
+# `apt-get install -y sudo >/dev/null 2>&1; echo apt_rc=$?` produced the correct output but STILL
+# timed out after the full `timeout_s` and killed the shell -- every LATER run() then reported
+# shell_died. Mechanism: the retired protocol queued ITS OWN rc marker through stdin, appended
+# right after the command in ONE write -- any program that itself reads/drains terminal input
+# (apt/dpkg, sudo, visudo, anything using readline or `stty`) consumes that marker line TOGETHER
+# with the command, so it never reaches bash's own prompt loop to be echoed back. Fixed:
+# PROMPT_COMMAND (bash's OWN prompt machinery, never written through stdin) now carries the rc.
+@_timeout(10)
+def test_persistent_shell_real_bash_stdin_draining_program_no_longer_hangs_P17(tmp_path):
+    """The actual Round 17 reproduction, minus docker/apt (a REAL local program that reads from
+    the tty is the exact mechanism, regardless of which program does it): `bash -c 'read -t 1 x;
+    echo drained'` reads from (and briefly blocks on) the terminal, exactly like apt/dpkg/sudo
+    would -- under the retired protocol this consumed our own rc marker and the round timed out
+    at the full budget. Must complete almost immediately (bounded by the inner `read -t 1`, not
+    `timeout_s`), and the FOLLOWING round must still work -- proving the shell was never killed."""
+    shell = _real_shell(tmp_path)
+    try:
+        t0 = time.monotonic()
+        res = shell.run("bash -c 'read -t 1 x; echo drained'", timeout_s=10)
+        elapsed = time.monotonic() - t0
+        assert res["output"] == "drained\n"
+        assert res["exit_code"] == 0
+        assert res["timed_out"] is False
+        assert res["shell_died"] is False
+        assert elapsed < 3.0, f"took {elapsed:.2f}s -- should be bounded by the inner `read -t 1`"
+
+        res2 = shell.run("echo after", timeout_s=5)
+        assert res2["output"] == "after\n"
+        assert res2["exit_code"] == 0
+        assert res2["shell_died"] is False
+    finally:
+        shell.close()
+
+
+@_timeout(10)
+def test_persistent_shell_real_bash_heredoc_multiline_command_P17(tmp_path):
+    """Item (1) from the round's own fix plan: bash prints an (empty) PS2 for heredoc
+    continuation lines and PROMPT_COMMAND fires exactly ONCE at the true end, after the whole
+    compound command (including the redirected `cat`) completes -- never mid-heredoc."""
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("cat <<'EOF_MARKER'\nline1\nline2\nEOF_MARKER", timeout_s=5)
+        assert res["output"] == "line1\nline2\n"
+        assert res["exit_code"] == 0
+        assert res["timed_out"] is False
+        assert res["shell_died"] is False
+    finally:
+        shell.close()
+
+
+@_timeout(10)
+def test_persistent_shell_real_bash_marker_shaped_output_does_not_fool_the_real_marker_P17(tmp_path):
+    """Item (2) from the round's own fix plan, the HARD case: a command that prints a line
+    EXACTLY shaped like the real marker -- same session uuid included -- with MORE genuine output
+    following it. The uuid match alone would wrongly accept this fake line as the real
+    end-of-command marker; the quiet-confirmation requirement (nothing else arrives for
+    `_MARKER_CONFIRM_QUIET_S`) is what actually saves it, since more output keeps arriving right
+    after. The real marker (PROMPT_COMMAND, fired only once the command genuinely completes) must
+    still be the one that ends the round, with the fake line folded into the real output."""
+    shell = _real_shell(tmp_path)
+    try:
+        fake_marker = f"__M54_RC__0__{shell._session_uuid}__"
+        res = shell.run(f"echo '{fake_marker}'; sleep 0.2; echo genuine_after", timeout_s=5)
+        assert res["output"] == f"{fake_marker}\ngenuine_after\n"
+        assert res["exit_code"] == 0
+        assert res["timed_out"] is False
+        assert res["shell_died"] is False
+    finally:
+        shell.close()
+
+
+def test_persistent_shell_mode_is_pty_prompt_real_bash_P17(tmp_path):
+    """SHELL_MODE is a CLASS constant (not fixture-specific), but confirm a real session built the
+    normal way still reports it -- the comparability gate (agentbench_compare) keys off this
+    exact string."""
+    shell = _real_shell(tmp_path)
+    try:
+        assert AB.PersistentShell.SHELL_MODE == "pty-prompt"
+    finally:
+        shell.close()
+
+
 @_timeout(15)
 def test_persistent_shell_real_bash_close_bounded_with_a_background_job_P13(tmp_path):
     """A backgrounded job holding the pty open (`sleep 30 &`) must not wedge close() -- same
@@ -2214,6 +2289,7 @@ def test_persistent_shell_timeout_kills_process_and_reports_timed_out():
     runner_calls = []
     shell = AB.PersistentShell("c1", popen=make_proc,
                               runner=lambda cmd, **kw: runner_calls.append(cmd) or FakeRunner.Proc(0, "", ""))
+    shell._init_marker_state()
     shell.proc = make_proc()    # bypass start()'s own no-op sentinel round (it would also hang)
     res = shell.run("sleep 999", timeout_s=0.02)
     assert res["timed_out"] is True
@@ -2229,14 +2305,16 @@ def test_persistent_shell_exit_code_137_is_NOT_treated_as_timed_out_G1():
     killer, not our Python-side deadline -- mis-scoring it as `exec_timeout` would hide a real
     memory failure behind the wrong label. Only OUR OWN deadline firing sets timed_out."""
     class _Proc137:
-        def __init__(self):
+        def __init__(self, session_uuid):
             self.stdin = self
             self.stdout = self
+            self._session_uuid = session_uuid
             self._pending = None   # None = nothing written yet; the reader must wait, not EOF
 
         def write(self, s):
-            m = re.search(rb"printf '\\n%s%d\\n' (\S+) \$\?", s)
-            self._pending = b"\n" + m.group(1) + b"137\n"
+            # 17th round: no printf of our own is written any more -- the fake proc responds
+            # with the marker PROMPT_COMMAND would print, using the session uuid directly.
+            self._pending = f"\n__M54_RC__137__{self._session_uuid}__\n".encode("ascii")
 
         def flush(self):
             pass
@@ -2244,15 +2322,20 @@ def test_persistent_shell_exit_code_137_is_NOT_treated_as_timed_out_G1():
         def read(self, n):
             while self._pending is None:
                 time.sleep(0.01)
-            data, self._pending = self._pending, b""
+            # 17th round: reset to None (never-produced), not b"" (EOF) -- a 2nd read() call now
+            # legitimately happens while confirming the marker is genuinely followed by silence
+            # (see _MARKER_CONFIRM_QUIET_S); it must keep blocking, not signal EOF/shell_died.
+            data, self._pending = self._pending, None
             return data
 
         def poll(self):
             return None
 
     import threading as _threading
-    shell = AB.PersistentShell("c1", popen=lambda *a, **k: _Proc137())
-    shell.proc = _Proc137()
+    shell = AB.PersistentShell("c1", popen=lambda *a, **k: None)
+    shell._init_marker_state()   # bypasses start()'s own handshake round (it would also hang)
+    proc = _Proc137(shell._session_uuid)
+    shell.proc = proc
     _threading.Thread(target=shell._reader_loop, daemon=True).start()
     res = shell.run("kill -KILL $$", timeout_s=5)
     assert res["exit_code"] == 137 and res["timed_out"] is False
@@ -2263,15 +2346,13 @@ def test_persistent_shell_sentinel_tail_split_across_two_reads_parses_137_and_le
     (`...137` | `\\n...`) must not be misread as a shorter code, and nothing from that split must
     leak into the following run() call's output."""
     class _SplitProc:
-        def __init__(self):
+        def __init__(self, session_uuid):
             self.stdin = self
             self.stdout = self
-            self._sentinel = None
+            self._session_uuid = session_uuid
             self._stage = 0   # 0=not written, 1=first half sent, 2=second half sent
 
         def write(self, s):
-            m = re.search(rb"printf '\\n%s%d\\n' (\S+) \$\?", s)
-            self._sentinel = m.group(1)
             self._stage = 1
 
         def flush(self):
@@ -2282,10 +2363,10 @@ def test_persistent_shell_sentinel_tail_split_across_two_reads_parses_137_and_le
                 time.sleep(0.01)
             if self._stage == 1:
                 self._stage = 2
-                return b"\n" + self._sentinel + b"13"      # digits split mid-number
+                return f"\n__M54_RC__13".encode("ascii")      # digits split mid-number
             if self._stage == 2:
                 self._stage = 3
-                return b"7\n"                              # the rest, in a SEPARATE read()
+                return f"7__{self._session_uuid}__\n".encode("ascii")   # the rest, SEPARATE read()
             while True:
                 time.sleep(0.05)   # next run() call hasn't written yet; just block harmlessly
 
@@ -2293,8 +2374,9 @@ def test_persistent_shell_sentinel_tail_split_across_two_reads_parses_137_and_le
             return None
 
     import threading as _threading
-    proc = _SplitProc()
-    shell = AB.PersistentShell("c1", popen=lambda *a, **k: proc)
+    shell = AB.PersistentShell("c1", popen=lambda *a, **k: None)
+    shell._init_marker_state()
+    proc = _SplitProc(shell._session_uuid)
     shell.proc = proc
     _threading.Thread(target=shell._reader_loop, daemon=True).start()
     res = shell.run("whatever", timeout_s=5)
@@ -2308,19 +2390,22 @@ def test_persistent_shell_leftover_bytes_carry_forward_G5():
     onto the next round's raw buffer -- deleting the carry-forward (`self._carry = b""`
     unconditionally, discarding whatever was captured) must fail this test."""
     class _LeftoverProc:
-        def __init__(self):
+        def __init__(self, session_uuid):
             self.stdin = self
             self.stdout = self
+            self._session_uuid = session_uuid
             self._pending = None
             self._round = 0
 
         def write(self, s):
-            m = re.search(rb"printf '\\n%s%d\\n' (\S+) \$\?", s)
-            sentinel = m.group(1)
+            marker = f"\n__M54_RC__0__{self._session_uuid}__\n".encode("ascii")
             if self._round == 0:
-                self._pending = b"\n" + sentinel + b"0\nEXTRA-LEFTOVER-BYTES"
+                self._pending = marker + b"EXTRA-LEFTOVER-BYTES"
             else:
-                self._pending = b"second-output\n" + sentinel + b"0\n"
+                # NO extra "\n" here -- the marker's OWN leading \n is shared with/stands in for
+                # the command's own trailing newline (same as the retired sentinel protocol: a
+                # bare sentinel with no leading \n of its own, relying on the content's newline).
+                self._pending = b"second-output" + marker
             self._round += 1
 
         def flush(self):
@@ -2336,16 +2421,17 @@ def test_persistent_shell_leftover_bytes_carry_forward_G5():
             return None
 
     import threading as _threading
-    proc = _LeftoverProc()
-    shell = AB.PersistentShell("c1", popen=lambda *a, **k: proc)
+    shell = AB.PersistentShell("c1", popen=lambda *a, **k: None)
+    shell._init_marker_state()
+    proc = _LeftoverProc(shell._session_uuid)
     shell.proc = proc
     _threading.Thread(target=shell._reader_loop, daemon=True).start()
     res1 = shell.run("first", timeout_s=5)
     assert res1["exit_code"] == 0
     assert shell._carry == b"EXTRA-LEFTOVER-BYTES"
     res2 = shell.run("second", timeout_s=5)
-    # the protocol's own leading "\n" (from `printf '\n%s%d\n' ...`) is indistinguishable from the
-    # command's own trailing newline and is consumed as part of the sentinel match either way.
+    # the protocol's own leading "\n" (PROMPT_COMMAND's own printf) is indistinguishable from the
+    # command's own trailing newline and is consumed as part of the marker match either way.
     assert res2["output"] == "EXTRA-LEFTOVER-BYTESsecond-output"
 
 
@@ -2354,14 +2440,15 @@ def test_persistent_shell_invalid_utf8_reproduces_upstream_message_P15b():
     commit) strict-decodes with `.decode('utf-8')` and on failure the WHOLE result text becomes the
     literal string 'OS Environment output cannot be decoded as UTF-8' -- not per-byte mojibake."""
     class _BadUtf8Proc:
-        def __init__(self):
+        def __init__(self, session_uuid):
             self.stdin = self
             self.stdout = self
+            self._session_uuid = session_uuid
             self._pending = None
 
         def write(self, s):
-            m = re.search(rb"printf '\\n%s%d\\n' (\S+) \$\?", s)
-            self._pending = b"\xff\xfe" + b"\n" + m.group(1) + b"0\n"
+            marker = f"\n__M54_RC__0__{self._session_uuid}__\n".encode("ascii")
+            self._pending = b"\xff\xfe" + marker
 
         def flush(self):
             pass
@@ -2376,8 +2463,9 @@ def test_persistent_shell_invalid_utf8_reproduces_upstream_message_P15b():
             return None
 
     import threading as _threading
-    proc = _BadUtf8Proc()
-    shell = AB.PersistentShell("c1", popen=lambda *a, **k: proc)
+    shell = AB.PersistentShell("c1", popen=lambda *a, **k: None)
+    shell._init_marker_state()
+    proc = _BadUtf8Proc(shell._session_uuid)
     shell.proc = proc
     _threading.Thread(target=shell._reader_loop, daemon=True).start()
     res = shell.run("whatever", timeout_s=5)
@@ -2782,6 +2870,7 @@ def test_bash_tool_timeout_kills_shell_sets_flag_and_aborts_episode():
     def make_proc(*a, **k):
         return _HangingFakeProc()
     shell = AB.PersistentShell("c1", popen=make_proc)
+    shell._init_marker_state()
     shell.proc = make_proc()   # bypass the no-op start() round, which would also hang
     counters, flag = {}, {}
     tools = AB.build_tools(shell, timeout=0.02, counters=counters, exec_timeout_flag=flag)
@@ -3578,8 +3667,13 @@ def test_run_task_harness_valueerror_unrelated_to_argv_is_NOT_labelled_unreprese
     assert row.get("error") is None or "unrepresentable answer" not in row["error"]
 
 
-def test_persistent_shell_mode_constant_is_pty_P13():
-    assert AB.PersistentShell.SHELL_MODE == "pty"
+def test_persistent_shell_mode_constant_is_pty_prompt_P17():
+    """17th round: SHELL_MODE changed from "pty" to "pty-prompt" -- the stdin-queued-marker
+    protocol and the PROMPT_COMMAND-marker protocol are not the same measurement (the whole point
+    of this round's fix), and `agentbench_compare`'s existing generic shell_mode gate already
+    refuses to pool arms recorded under different shell_mode STRING VALUES -- no gate code change
+    needed, just this constant."""
+    assert AB.PersistentShell.SHELL_MODE == "pty-prompt"
 
 
 def test_run_task_row_records_shell_mode_on_a_normal_pass_P13():
@@ -3591,7 +3685,7 @@ def test_run_task_row_records_shell_mode_on_a_normal_pass_P13():
     driver = FakeDriver(script=[complete_result(tool_calls=[tool_call("answer_action", {"answer": "love"})])])
     task = _match_cfg_task()
     row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
-    assert row["shell_mode"] == "pty"
+    assert row["shell_mode"] == "pty-prompt"
 
 
 def test_run_task_row_records_shell_mode_on_a_setup_error_P13():
@@ -3605,7 +3699,7 @@ def test_run_task_row_records_shell_mode_on_a_setup_error_P13():
     task = _check_cfg_task()
     row = AB.run_task("m", task, SCRIPTS_ROOT, driver, {}, runner=runner, popen=_shell_popen_ok())
     assert row["setup_error"] is True
-    assert row["shell_mode"] == "pty"
+    assert row["shell_mode"] == "pty-prompt"
 
 
 def test_run_task_a_valid_submit_followed_by_a_stray_empty_call_in_the_SAME_turn_still_solves_P10():

@@ -1713,7 +1713,7 @@ def test_manifest_records_shell_mode_P13(tmp_path, monkeypatch):
     rc = R.main(_args(tmp_path, llm_timeout="60"))
     assert rc == 0
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
-    assert man["runtime"]["shell_mode"] == AB.PersistentShell.SHELL_MODE == "pty"
+    assert man["runtime"]["shell_mode"] == AB.PersistentShell.SHELL_MODE == "pty-prompt"
 
 
 def test_deadline_defaults_to_eight_times_the_per_turn_timeout(tmp_path, monkeypatch):
