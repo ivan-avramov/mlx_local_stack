@@ -1332,11 +1332,16 @@ def _real_shell(tmp_path, banner=None):
 class _FakeStdin:
     """Swallows writes -- P51's test cares only about SCRIPTED stdout bytes, never about re-running
     a real command."""
-    def __init__(self):
+    def __init__(self, stdout=None):
         self.written = bytearray()
+        # 18th round: see `_ScriptedStdout._release_staged` -- a write RELEASES whatever the test
+        # has `.push()`-ed so far but not yet made readable.
+        self._stdout = stdout
 
     def write(self, data):
         self.written += data
+        if self._stdout is not None:
+            self._stdout._release_staged()
 
     def flush(self):
         pass
@@ -1346,15 +1351,37 @@ class _FakeStdin:
 
 
 class _ScriptedStdout:
-    """`.read()` blocks (polling, cancellable) until the test `.push()`es a chunk -- mirrors a real
-    pipe's blocking read without needing a real subprocess, so the exact byte layout around the
-    sentinel is fully under the test's control."""
+    """`.read()` blocks (polling, cancellable) until a chunk is READABLE -- mirrors a real pipe's
+    blocking read without needing a real subprocess, so the exact byte layout around the marker
+    is fully under the test's control.
+
+    18th cold review round 18: `.push()`-ed chunks are STAGED, not immediately readable -- they
+    become readable only once `_release_staged()` fires, which `_FakeStdin.write()` calls. This
+    mirrors the real fix's own premise (a marker is only trusted if it arrives AFTER the write):
+    the OLD immediate-push model let a test's `proc.stdout.push(marker)` BEFORE `shell.start()`
+    land in `PersistentShell`'s own queue before the reader thread even exists, racing ahead of
+    `_init_marker_state()`/the handshake's write -- `run()`'s 18th-round "discard anything already
+    queued before this round's write" fix (correctly) discarded it every time, since by the
+    production code's own rules it HAD arrived before the write. Staging makes every existing
+    test's "push the round's response, then trigger the round" pattern correct by construction,
+    instead of requiring ~20 individual tests to be rewritten to push asynchronously. A push that
+    happens WHILE a round is already underway (e.g. the P15 split-across-chunks tests, which push
+    several pieces with real sleeps between them, all before calling `run()`) stages all of them
+    at once on that SAME write -- released together, but still delivered to the reader thread as
+    SEPARATE queued chunks (FIFO, one per `.get()`), which is the only property those tests
+    actually depend on; the real-time gaps between pushes were never load-bearing on their own."""
     def __init__(self):
         self._q: "queue.Queue" = queue.Queue()
+        self._staged: list = []
         self._closed = False
 
     def push(self, chunk: bytes):
-        self._q.put(chunk)
+        self._staged.append(chunk)
+
+    def _release_staged(self):
+        for chunk in self._staged:
+            self._q.put(chunk)
+        self._staged = []
 
     def read(self, n):
         while not self._closed:
@@ -1370,8 +1397,8 @@ class _ScriptedStdout:
 
 class _FakeProc:
     def __init__(self):
-        self.stdin = _FakeStdin()
         self.stdout = _ScriptedStdout()
+        self.stdin = _FakeStdin(self.stdout)
         self.returncode = None
 
     def poll(self):
@@ -1649,8 +1676,12 @@ def test_persistent_shell_start_handshake_output_never_leaks_command_text_P14(mo
     monkeypatch.setattr(AB.uuid, "uuid4", lambda: fixed)
     marker = _rc_marker(fixed.hex, 0)
     rc_printf = 'printf "\\n__M54_RC__%d__' + fixed.hex + '__\\n" $?'
+    # 18th round: the handshake also sets `disable-completion` (item c, literal-TAB round-trip) --
+    # kept in step with `start()`'s own exact text, since the echo-strip fallback matches it
+    # verbatim.
     handshake_cmd = (f"export PS1='' PS2='' PROMPT_COMMAND='{rc_printf}'; stty -echo 2>/dev/null; "
-                     "bind 'set enable-bracketed-paste off' 2>/dev/null; true")
+                     "bind 'set enable-bracketed-paste off' 2>/dev/null; "
+                     "bind 'set disable-completion on' 2>/dev/null; true")
     full = f"{handshake_cmd}\n"
     echoed = full.replace("\n", "\r\n").encode("utf-8")
 
@@ -2176,6 +2207,35 @@ def test_persistent_shell_real_bash_heredoc_multiline_command_P17(tmp_path):
 
 
 @_timeout(10)
+def test_persistent_shell_real_bash_heredoc_with_tab_and_redirect_then_separate_command_P18(tmp_path):
+    """18th cold review round 18 (HIGH), the EXACT live reproduction on local-os/default: a
+    heredoc with a TAB-INDENTED line, redirected to a FILE, immediately followed by a SEPARATE
+    top-level command on its own line (NOT joined by `;`/`&&`) -- `cat > f <<'EOF' ... EOF` then
+    `cat f`. Two distinct bugs compounded here: (a) `cat > f <<EOF ... EOF` then `cat f` fires
+    PROMPT_COMMAND once per top-level command, so the FIRST (intermediate) marker must never be
+    mistaken for the round's end; (b) a literal TAB in the heredoc body must be INSERTED by
+    readline, not trigger completion (`bind 'set disable-completion on'`) -- reproduced live: the
+    heredoc round returned '' immediately and the TAB triggered a readline pause that went on to
+    desync every later round."""
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run(
+            "cat > /tmp/p18_heredoc.txt <<'EOF'\nline1\n\tindented\nEOF\ncat /tmp/p18_heredoc.txt",
+            timeout_s=5)
+        assert res["output"] == "line1\n\tindented\n"
+        assert res["exit_code"] == 0
+        assert res["timed_out"] is False
+        assert res["shell_died"] is False
+
+        # the round AFTER it must be unaffected -- no desync, no inherited stale state.
+        res2 = shell.run("echo after_heredoc", timeout_s=5)
+        assert res2["output"] == "after_heredoc\n"
+        assert res2["exit_code"] == 0
+    finally:
+        shell.close()
+
+
+@_timeout(10)
 def test_persistent_shell_real_bash_marker_shaped_output_does_not_fool_the_real_marker_P17(tmp_path):
     """Item (2) from the round's own fix plan, the HARD case: a command that prints a line
     EXACTLY shaped like the real marker -- same session uuid included -- with MORE genuine output
@@ -2384,11 +2444,18 @@ def test_persistent_shell_sentinel_tail_split_across_two_reads_parses_137_and_le
     assert shell._carry == b""   # nothing leaked past the sentinel+newline
 
 
-def test_persistent_shell_leftover_bytes_carry_forward_G5():
-    """G5, mutation-sensitive: if a round's sentinel match leaves unexpected trailing bytes (e.g. a
-    background job's output racing the sentinel), those bytes MUST be carried into and PREFIXED
-    onto the next round's raw buffer -- deleting the carry-forward (`self._carry = b""`
-    unconditionally, discarding whatever was captured) must fail this test."""
+def test_persistent_shell_leftover_bytes_are_discarded_never_carried_forward_G5_P18():
+    """18th cold review round 18 (HIGH, live smoke on b9415d9 against local-os/default): the 9th
+    round's P11/P51 guarantee -- unexpected trailing bytes past a round's marker are carried
+    forward and PREFIXED onto the next round's buffer -- is DELIBERATELY RETIRED. Reproduced
+    live: the handshake round left a SECOND, marker-shaped sequence behind; carrying it forward
+    made it a PERMANENT candidate that a later round going quiet (bash paused on readline
+    TAB-completion inside a heredoc) would confirm as ITS OWN marker 50ms after ITS OWN write --
+    a silent, one-round desync (every later round returned the PREVIOUS round's output). Fixed by
+    discarding anything buffered/carried from before the CURRENT round's own write, logged at
+    debug level -- a marker is only trusted if it arrives strictly AFTER this round's write; a
+    rare genuine race (a backgrounded job's stray output) is a far smaller cost than a silent,
+    permanent round-to-round desync."""
     class _LeftoverProc:
         def __init__(self, session_uuid):
             self.stdin = self
@@ -2428,11 +2495,83 @@ def test_persistent_shell_leftover_bytes_carry_forward_G5():
     _threading.Thread(target=shell._reader_loop, daemon=True).start()
     res1 = shell.run("first", timeout_s=5)
     assert res1["exit_code"] == 0
-    assert shell._carry == b"EXTRA-LEFTOVER-BYTES"
+    assert shell._carry == b"EXTRA-LEFTOVER-BYTES"   # still CAPTURED/logged at round end...
     res2 = shell.run("second", timeout_s=5)
-    # the protocol's own leading "\n" (PROMPT_COMMAND's own printf) is indistinguishable from the
-    # command's own trailing newline and is consumed as part of the marker match either way.
-    assert res2["output"] == "EXTRA-LEFTOVER-BYTESsecond-output"
+    # ...but DISCARDED at the start of the next round, never fed as content, and never eligible
+    # to be matched as a marker -- round 2's output is exactly its OWN content, nothing inherited.
+    assert res2["output"] == "second-output"
+    assert shell._carry == b""
+
+
+def test_persistent_shell_stale_queued_marker_never_wrongly_confirms_a_quiet_round_P18():
+    """18th round, the EXACT desync mechanism, including the gap `self._carry` discard alone does
+    NOT close: a well-formed, correctly-shaped SECOND marker can arrive AFTER round N has already
+    confirmed its OWN (first) marker and returned -- too late to become `self._carry` (computed
+    from `raw` at confirmation time, before the second marker exists) -- and sits queued,
+    untouched, in `self._q`, pulled off the pty by the reader thread entirely independent of
+    whether anyone has called `run()` yet. If round N+1 only discarded `self._carry`, this queued
+    marker would still be sitting there when round N+1 starts scanning, and (going genuinely
+    quiet -- bash paused on readline TAB-completion inside a heredoc, in the live reproduction --
+    satisfies the 50ms confirmation window) would be wrongly confirmed as round N+1's OWN marker.
+    Fixed by ALSO draining (and discarding, logged) anything already queued before writing the
+    next round's command -- those bytes necessarily arrived before that write too. Proven here by
+    TIMING: a wrongly-confirmed stale marker resolves in ~50ms; the correct behavior waits for
+    round N+1's OWN genuine marker, arriving well after that."""
+    class _StaleQueuedMarkerProc:
+        def __init__(self, session_uuid):
+            self.stdin = self
+            self.stdout = self
+            self._session_uuid = session_uuid
+            self._q = queue.Queue()
+            self._round = 0
+
+        def write(self, s):
+            marker = lambda rc: f"\n__M54_RC__{rc}__{self._session_uuid}__\n".encode("ascii")
+            if self._round == 0:
+                self._q.put(marker(0))   # round 0's OWN genuine marker -- confirms almost at once
+
+                def _late_second_marker():
+                    time.sleep(0.3)   # arrives AFTER round 0 has already confirmed (~50ms) and
+                    self._q.put(marker(99))   # returned -- a SECOND, well-formed marker, now stale
+                import threading as _t
+                _t.Thread(target=_late_second_marker, daemon=True).start()
+            else:
+                def _delayed_genuine_marker():
+                    time.sleep(0.4)   # well after the stale marker would already be queued
+                    self._q.put(marker(0))
+                import threading as _t
+                _t.Thread(target=_delayed_genuine_marker, daemon=True).start()
+            self._round += 1
+
+        def flush(self):
+            pass
+
+        def read(self, n):
+            return self._q.get()   # blocks until something is pushed -- exactly a real pty read
+
+        def poll(self):
+            return None
+
+    import threading as _threading
+    shell = AB.PersistentShell("c1", popen=lambda *a, **k: None)
+    shell._init_marker_state()
+    proc = _StaleQueuedMarkerProc(shell._session_uuid)
+    shell.proc = proc
+    _threading.Thread(target=shell._reader_loop, daemon=True).start()
+    res1 = shell.run("first", timeout_s=5)
+    assert res1["exit_code"] == 0
+
+    # give the scheduled second marker time to actually reach shell._q (the reader thread pulls
+    # it off `proc` and queues it independently of whether `run()` is executing) BEFORE round 2
+    # starts -- proving the stale marker is sitting in the QUEUE, not in `self._carry`, when
+    # round 2's own drain-before-write runs.
+    time.sleep(0.35)
+
+    t0 = time.monotonic()
+    res2 = shell.run("second", timeout_s=5)
+    elapsed = time.monotonic() - t0
+    assert res2["exit_code"] == 0
+    assert elapsed > 0.3, f"resolved in {elapsed:.3f}s -- the stale queued marker was wrongly confirmed"
 
 
 def test_persistent_shell_invalid_utf8_reproduces_upstream_message_P15b():

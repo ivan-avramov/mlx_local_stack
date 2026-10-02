@@ -1143,10 +1143,28 @@ class PersistentShell:
         # and the regexes are what actually guarantee correctness regardless. 17th round:
         # PROMPT_COMMAND replaces the retired per-call stdin-queued printf marker (see the class
         # docstring/SHELL_MODE note above) -- PS1/PS2 stay empty exactly as before.
+        # 18th round item (c): a literal TAB in a heredoc body (or anywhere else in a
+        # bash_action's input) must be INSERTED, not trigger readline's completion -- reproduced
+        # live: a heredoc containing a tab-indented line paused on completion mid-round, which
+        # went quiet long enough to satisfy the 50ms confirmation window on its own (compounding
+        # the stale-marker desync above). `disable-completion` makes a bare TAB a no-op insert.
         rc_printf = ('printf "\\n__M54_RC__%d__' + self._session_uuid + '__\\n" $?')
-        return self.run(f"export PS1='' PS2='' PROMPT_COMMAND='{rc_printf}'; stty -echo 2>/dev/null; "
-                        "bind 'set enable-bracketed-paste off' 2>/dev/null; true",
-                        timeout_s=10.0)
+        result = self.run(f"export PS1='' PS2='' PROMPT_COMMAND='{rc_printf}'; stty -echo 2>/dev/null; "
+                          "bind 'set enable-bracketed-paste off' 2>/dev/null; "
+                          "bind 'set disable-completion on' 2>/dev/null; true",
+                          timeout_s=10.0)
+        # 18th round item (b): the handshake is the ONE round most likely to carry something
+        # unexpected (echo is still on while bash reads this very line, and the line is long
+        # enough to wrap) -- `run()` now discards any NEXT round's stale carry automatically (see
+        # its own 18th-round note), but the handshake gets an explicit check too: a leftover here
+        # means session setup itself was anomalous, worth a loud signal, never silently carried
+        # into what the caller believes is a clean start.
+        if self._carry:
+            print(f"[PersistentShell] WARNING: {len(self._carry)} unexpected byte(s) carried out "
+                 "of the handshake round -- discarding (a stale marker must never survive into "
+                 "the first real round)", file=sys.stderr)
+            self._carry = b""
+        return result
 
     def _put_until_cancelled(self, item) -> None:
         """P41: retry `put(timeout=...)` in a loop, checking `self._cancel` between attempts --
@@ -1233,6 +1251,59 @@ class PersistentShell:
         # program like apt/dpkg/sudo/readline could swallow).
         full = f"{command}\n"
         data = full.encode("utf-8")
+
+        # 18th cold review round 18 (HIGH, live smoke on b9415d9 against local-os/default): this
+        # discard/drain MUST happen strictly BEFORE the write below -- it was originally placed
+        # lower in this function (right before `raw`/`unfed` are initialized) and the write had
+        # ALREADY started by the time it ran, creating a race where it could (and did, in testing)
+        # consume THIS round's own genuine marker as if it were stale leftover, rather than only
+        # ever touching bytes that genuinely arrived before the write.
+        #
+        # Anything carried forward from a PREVIOUS round used to be PREPENDED to this round's own
+        # buffer -- including, on the live container, a SECOND marker-shaped sequence the
+        # handshake round left behind (root cause not fully isolated; readline/PROMPT_COMMAND
+        # interaction during the one round where echo is still on and a long command line wraps --
+        # see the handshake's own leftover check in `start()` below). Reproduced live: the
+        # heredoc round returned '' immediately and EVERY LATER round returned the PREVIOUS
+        # round's output -- a one-round desync -- because the stale carried marker was a
+        # PERMANENT candidate that any later round going quiet (bash paused on readline
+        # TAB-completion inside the heredoc) would confirm as ITS OWN marker, 50ms after its own
+        # write, even though those bytes arrived BEFORE that write. Fixed at the root: a marker
+        # can only be genuine if it arrived AFTER this round's OWN write, which is automatic once
+        # NOTHING from before the write is ever fed into the search buffer at all -- carried bytes
+        # are discarded here (logged, never silently dropped) rather than prepended. This is a
+        # DELIBERATE behavior change from the 9th round's P11/P51 "leftover carries forward as
+        # content" guarantee: under the new protocol, trusting ANYTHING from before this round's
+        # write is no longer safe, and a rare genuine race (a backgrounded job's stray output)
+        # is a far smaller cost than a silent, permanent round-to-round desync.
+        if self._carry:
+            print(f"[PersistentShell] DEBUG: discarding {len(self._carry)} carried byte(s) from "
+                 "a previous round -- a marker is only trusted if it arrives AFTER this round's "
+                 "own write", file=sys.stderr)
+        self._carry = b""
+        # the SAME policy extends to anything the reader thread ALREADY pulled off the pty and
+        # queued, but that this round never got around to examining -- those bytes necessarily
+        # arrived BEFORE this round's write too (the shell cannot have produced output for a
+        # command we have not sent yet), so they are exactly as untrustworthy as `self._carry`
+        # and are drained (discarded, logged) for the same reason, strictly BEFORE the write -- a
+        # non-blocking drain, since the reader thread puts chunks as they arrive and this must
+        # never wait for one that may never come.
+        _drained = 0
+        while True:
+            try:
+                _leftover_chunk = self._q.get_nowait()
+            except queue.Empty:
+                break
+            if _leftover_chunk is None:
+                # EOF reached the queue from a PRIOR round's poll -- put it back so this round's
+                # own EOF handling still observes it; nothing more could be queued behind it.
+                self._put_until_cancelled(None)
+                break
+            _drained += len(_leftover_chunk)
+        if _drained:
+            print(f"[PersistentShell] DEBUG: discarded {_drained} already-queued byte(s) from "
+                 "before this round's write", file=sys.stderr)
+
         # P22: start the write CONCURRENTLY -- never await it before draining the reader queue.
         writer_box = self._start_writer(data)
 
@@ -1304,8 +1375,8 @@ class PersistentShell:
             except UnicodeDecodeError:
                 decode_broken = True
 
-        raw = bytearray(self._carry)
-        total_bytes_in = len(self._carry)   # G2: tracked INDEPENDENTLY of capping, so
+        raw = bytearray()
+        total_bytes_in = 0   # G2: tracked INDEPENDENTLY of capping, so
         # 9th cold review round 9 P11 (refines P51): `unfed` holds bytes received but NOT YET fed
         # to the decoder -- never the full chunk blindly. Splitting happens at the RAW BYTE level,
         # BEFORE any decoding: once the sentinel is found, only the bytes STRICTLY BEFORE the
@@ -1319,8 +1390,7 @@ class PersistentShell:
         # produced the upstream decode-error message for "ABCD" too. While no sentinel has been
         # found yet, it is only safe to feed everything EXCEPT the last `len(marker)-1` bytes
         # (which might be the START of a marker that only completes once the next chunk arrives).
-        unfed = bytearray(self._carry)
-        self._carry = b""                   # `raw_output_len` stays exact regardless of how many
+        unfed = bytearray()                 # `raw_output_len` stays exact regardless of how many
         search_from = 0                     # times the retained buffer gets compacted.
 
         def _flush_unfed() -> None:
@@ -1386,13 +1456,48 @@ class PersistentShell:
                         window = bytes(raw[window_start:idx + window_len])
                         m = marker_re.search(window)
                         if m:
-                            pending_confirm = (window_start + m.start(), window_start + m.end(),
-                                              int(m.group(1)),
-                                              time.monotonic() + self._MARKER_CONFIRM_QUIET_S)
-                            # if invalidated (more bytes arrive before the quiet window elapses),
-                            # the NEXT search must re-find this SAME span (now followed by more
-                            # content) or a LATER, genuinely-quiet one -- never skip past it.
-                            search_from = window_start + m.start()
+                            abs_start, abs_end = window_start + m.start(), window_start + m.end()
+                            # 18th round (HIGH, live smoke on b9415d9 against local-os/default):
+                            # a heredoc immediately followed by a SEPARATE top-level command on
+                            # its own line (`cat > f <<'EOF' ... EOF` then `cat f`, NOT joined by
+                            # `;`/`&&`) fires PROMPT_COMMAND once per command -- reproduced: BOTH
+                            # markers plus the real content arrived in ONE read() chunk, so the
+                            # "invalidate when a NEW chunk arrives" check below never fired (there
+                            # was no new chunk -- everything had already arrived at once) and the
+                            # FIRST marker was wrongly confirmed, 50ms later, with raw_output_len=0
+                            # and the genuine output (plus the real marker) left stranded in
+                            # `_carry` for the NEXT round to wrongly inherit. Checked EAGERLY, not
+                            # just on later arrival: if ANOTHER complete, well-formed marker
+                            # ALREADY exists later in the buffer, THIS one cannot be the last line
+                            # -- never even start a quiet-confirmation window for it. Deliberately
+                            # narrower than "any bytes follow this match" (that wrongly starved a
+                            # genuinely-last marker whose trailing content is never another marker
+                            # at all -- e.g. a backgrounded job's stray output -- forcing a full
+                            # timeout waiting for a second marker that will never arrive; P11/P51's
+                            # own leftover-content case, still covered by the quiet-confirm path
+                            # below and the ordinary end-of-round leftover capture).
+                            next_idx = raw.find(marker_literal, abs_end)
+                            next_is_complete_marker = False
+                            if next_idx != -1:
+                                nxt_start = max(0, next_idx - 2)
+                                nxt_window = bytes(raw[nxt_start:next_idx + window_len])
+                                next_is_complete_marker = bool(marker_re.search(nxt_window))
+                            if next_is_complete_marker:
+                                # this marker's OWN bytes must never be fed as content (they are
+                                # a genuine, well-formed marker -- just not the LAST one) and must
+                                # never be left sitting in `unfed` for the LATER, genuine marker
+                                # to wrongly inherit as part of ITS own content.
+                                offset = len(raw) - len(unfed)
+                                del unfed[abs_start - offset:abs_end - offset]
+                                search_from = abs_end
+                            else:
+                                pending_confirm = (abs_start, abs_end, int(m.group(1)),
+                                                  time.monotonic() + self._MARKER_CONFIRM_QUIET_S)
+                                # if invalidated (more bytes arrive before the quiet window
+                                # elapses), the NEXT search must re-find this SAME span (now
+                                # followed by more content) or a LATER, genuinely-quiet one --
+                                # never skip past it.
+                                search_from = abs_start
                         elif len(raw) - window_start < window_len:
                             # not enough bytes yet to know either way (R4-equivalent: never guess
                             # a partial exit code) -- re-examine this SAME literal position once
