@@ -1,6 +1,6 @@
 # M54 — AgentBench OS (multi-step shell-tool agent axis)
 
-Status 2026-09-30: **BUILD IN PROGRESS** (C107 ruled: own loop, mechanical exclusion, predictor OFF, round limit 8). Images built from `ubuntu:24.04@sha256:11dc1ccb…` (arm64); first live `--prepare` (rule v1) over-excluded 11 randomized-init tasks — rule v2 above replaces it. Proposed after P2 (2026-09-30): the only axis the B ladder lacks is a multi-step tool loop with self-correction; BFCL is single-step, polyglot is edit-via-instruction, the SWE-bench probe never ran at scale.
+Status 2026-10-02: **COMPLETE.** Record = chain 3 (`df3b65c`, pty whole-script shell); results in `docs/campaign-results.md` 2026-10-02. Protocol rulings beyond C107: pty shell with bash-emitted marker, whole-script rounds, upstream escape stripping, `set +m` and readline completion off, session max 1 on bench routers (C108). Images built from `ubuntu:24.04@sha256:11dc1ccb…` (arm64); first live `--prepare` (rule v1) over-excluded 11 randomized-init tasks — rule v2 above replaces it. Proposed after P2 (2026-09-30): the only axis the B ladder lacks is a multi-step tool loop with self-correction; BFCL is single-step, polyglot is edit-via-instruction, the SWE-bench probe never ran at scale.
 
 ## Corpus
 
