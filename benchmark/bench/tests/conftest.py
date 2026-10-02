@@ -16,10 +16,66 @@ Two things make harness tests silently useless, and both are addressed here.
    their script runs out.
 """
 import json
+import os
+import signal
+import subprocess
+import sys
 
 import pytest
 
 import bench.generate as G
+
+
+# --------------------------------------------------------------------------- orphan-shell sweep
+def pytest_sessionfinish(session, exitstatus):
+    """20th cold review round 20 (HIGH, box stability): 71 orphaned `/bin/bash --login`
+    processes (ppid 1, no tty, 4-13h old, 15-43% CPU EACH, load average 92) were found
+    accumulated on the live box -- real-bash `PersistentShell` test shells left behind whenever a
+    pytest run was killed, alarmed, or a test raised before `close()`, slowing MLX decode 2-3x on
+    the live arms. `test_agentbench_adapter.py`'s own per-test autouse fixture
+    (`_killpg_leaked_real_shells`) is the first line of defence; THIS hook is the session-wide
+    backstop for anything that escapes it (a shell built outside that module's `_real_shell()`
+    helper, or a process whose per-test cleanup itself never ran because the whole worker
+    process was signalled). Scope is deliberately narrow and SAFE: only DIRECT children of THIS
+    pytest process (`ppid == os.getpid()`), command exactly containing both `bash` and
+    `--login` -- never a system-wide sweep, so a live chain's own worktree processes elsewhere on
+    the box are never touched. A leak found here is a TEST BUG, not expected load: it kills the
+    survivor(s) AND fails the session loudly (nonzero exit) so the leak shows up as a CI/test
+    failure instead of silent box load -- see also `scripts/sweep_orphan_shells.sh` for the
+    external, system-wide (ppid==1) backstop this hook does not attempt to replace."""
+    pid = os.getpid()
+    try:
+        out = subprocess.run(["ps", "-eo", "pid=,ppid=,command="],
+                              capture_output=True, text=True, timeout=10).stdout
+    except Exception:  # noqa: BLE001 -- best-effort; never let the sweep itself break the run
+        return
+    killed = []
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        cpid_s, ppid_s, command = parts
+        try:
+            cpid, ppid = int(cpid_s), int(ppid_s)
+        except ValueError:
+            continue
+        if ppid != pid or cpid == pid:
+            continue
+        if "bash" not in command or "--login" not in command:
+            continue
+        try:
+            os.killpg(cpid, signal.SIGKILL)
+        except Exception:  # noqa: BLE001
+            try:
+                os.kill(cpid, signal.SIGKILL)
+            except Exception:  # noqa: BLE001
+                pass
+        killed.append((cpid, command))
+    if killed:
+        print(f"\n[conftest] pytest_sessionfinish: killed {len(killed)} leaked real-bash "
+              f"PersistentShell process(es) still alive as direct children of this pytest "
+              f"session (test bug, not expected load): {killed}", file=sys.stderr)
+        session.exitstatus = 1
 
 
 # --------------------------------------------------------------------------- results tree

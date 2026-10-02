@@ -100,6 +100,7 @@ import queue
 import random
 import re
 import select
+import signal
 import statistics
 import subprocess
 import sys
@@ -1175,7 +1176,17 @@ class PersistentShell:
         container without `bash`, docker exec itself failing) is logged, never raised -- the
         exported-env path in `start()`'s own handshake still covers the TOP-LEVEL session even if
         this step fails; only a LATER `su`/`exec bash`/nested shell loses marker coverage, the
-        same gap that existed before this round."""
+        same gap that existed before this round.
+
+        20th cold review round 20 (HIGH, box stability): `set +m` (job control OFF) is now part
+        of this block too, for the same reason it is in the handshake (see `start()`). Measured
+        directly (real pty, `start_new_session=True`): an interactive bash with job control ON
+        puts EVERY backgrounded job (`cmd &`) into its OWN process group, separate from bash's --
+        so `os.killpg(bash_pid, ...)` in `close()`/`kill()` kills bash but leaves a backgrounded
+        descendant (e.g. a task's own `sleep 30 &`) running and ORPHANED the moment bash exits.
+        With `set +m`, a background job stays in the shell's OWN process group, so one killpg
+        call reliably takes out everything -- confirmed empirically to flip `os.getpgid(bg_pid)`
+        from a fresh pgid to the shell's own."""
         rc_printf = ('printf "\\n__M54_RC__%d__' + self._session_uuid + '__\\n" $?')
         script = (
             f"if grep -qF '{self._BASHRC_MARKER_BEGIN}' /etc/bash.bashrc 2>/dev/null; then "
@@ -1189,6 +1200,7 @@ class PersistentShell:
             "bind 'set enable-bracketed-paste off' 2>/dev/null\n"
             "bind 'set disable-completion on' 2>/dev/null\n"
             "stty -echo 2>/dev/null\n"
+            "set +m 2>/dev/null\n"
             f"{self._BASHRC_MARKER_END}\n"
             "M54_BASHRC_EOF\n"
         )
@@ -1276,9 +1288,19 @@ class PersistentShell:
         self._install_bashrc_marker()
         master_fd, slave_fd = self._openpty()
         try:
+            # 20th cold review round 20 (HIGH, box stability): 71 orphaned `/bin/bash --login`
+            # processes (ppid 1, no tty, 4-13h old, 15-43% CPU EACH) were found accumulated on the
+            # live box -- every real-bash PersistentShell test shell left behind whenever a pytest
+            # run was killed, alarmed, or a test raised before close(), slowing MLX decode 2-3x.
+            # `start_new_session=True` makes this process (the `docker exec` client here; a real
+            # bash directly in tests) the leader of its OWN new session/process group, so
+            # `os.killpg` below can reliably take out it AND any descendants (the docker CLI's own
+            # children, or anything bash itself backgrounds) with one call, regardless of whether
+            # Python's own reference to any individual pid is still accurate.
             self.proc = self._popen(
                 ["docker", "exec", "-it", self.container, "/bin/bash", "--login"],
-                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, close_fds=True)
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, close_fds=True,
+                start_new_session=True)
         finally:
             os.close(slave_fd)
         if self.proc.stdout is None:
@@ -1326,7 +1348,12 @@ class PersistentShell:
         rc_printf = ('printf "\\n__M54_RC__%d__' + self._session_uuid + '__\\n" $?')
         result = self.run(f"export PS1='' PS2='' PROMPT_COMMAND='{rc_printf}'; stty -echo 2>/dev/null; "
                           "bind 'set enable-bracketed-paste off' 2>/dev/null; "
-                          "bind 'set disable-completion on' 2>/dev/null; true",
+                          "bind 'set disable-completion on' 2>/dev/null; "
+                          # 20th round: job control OFF -- keeps a backgrounded job (`cmd &`) in
+                          # THIS shell's own process group instead of a fresh one of its own, so
+                          # close()/kill()'s single os.killpg() call actually reaches it (see
+                          # _install_bashrc_marker()'s own note for the measured mechanism).
+                          "set +m 2>/dev/null; true",
                           timeout_s=10.0)
         # 18th round item (b): the handshake is the ONE round most likely to carry something
         # unexpected (echo is still on while bash reads this very line, and the line is long
@@ -1837,6 +1864,21 @@ class PersistentShell:
             self.proc.kill()
         except Exception:  # noqa: BLE001 -- best-effort
             pass
+        # 20th round: with `start_new_session=True` (see start()), this process is the leader of
+        # its OWN process group -- `os.killpg` takes out it AND any descendants (the docker CLI's
+        # own children, or anything bash backgrounded) in one call, the actual fix for the
+        # orphaned-shell accumulation this round exists to stop. `self.proc.kill()` above alone
+        # only ever killed the ONE pid Python still had a handle on; a backgrounded descendant
+        # (or, for a test's real local bash, bash itself if the pid tracking ever drifted) could
+        # survive it. Best-effort: ProcessLookupError (already dead), PermissionError (not the
+        # group leader for some reason), and a `None`/scripted-fake-proc pid (no real OS process
+        # at all) are all swallowed -- this is a backstop, never the only cleanup path.
+        try:
+            pid = getattr(self.proc, "pid", None)
+            if pid is not None:
+                os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError, TypeError):
+            pass
         self.dead = True
 
     def close(self) -> None:
@@ -1884,6 +1926,18 @@ class PersistentShell:
             self.proc.wait(timeout=2.0)
         except Exception:  # noqa: BLE001
             self.kill()
+        # 20th round: ALWAYS sweep the process group here, even when `proc.wait()` above
+        # succeeded cleanly -- bash itself exiting does not guarantee a DESCENDANT it backgrounded
+        # (e.g. a prior round's `sleep 30 &`) has exited too; descendants inherit the same process
+        # group by default, so this is the one call that actually guarantees nothing survives,
+        # the root fix for the 71 orphaned `/bin/bash --login` processes this round was opened
+        # over. Idempotent with `kill()`'s own killpg above when that path already ran.
+        try:
+            pid = getattr(self.proc, "pid", None)
+            if pid is not None:
+                os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError, TypeError):
+            pass
         self.dead = True
         try:
             if self.proc.stdout is not None:
@@ -1901,6 +1955,28 @@ class PersistentShell:
             pass
         if self._reader_thread is not None:
             self._reader_thread.join(timeout=1.0)
+
+    def __del__(self) -> None:
+        """20th cold review round 20 (HIGH, box stability): a LAST-RESORT safety net, never the
+        primary cleanup path (GC timing is not deterministic/guaranteed -- callers must still
+        call `close()` explicitly; `run_task`'s own `finally` already does). Catches the case this
+        round exists to stop: a `PersistentShell` whose `close()` was never reached at all (a
+        test killed/alarmed before its own `finally`, or any caller forgetting it) -- if the
+        object is GC'd with the real OS process group still alive, sweep it rather than let it
+        become one of the 71 orphaned `/bin/bash --login` processes found accumulated on the live
+        box. Deliberately minimal and exception-swallowing: `__del__` runs in an unpredictable
+        interpreter state (module globals may already be torn down at shutdown), so this reaches
+        for the OS call directly rather than any of this class's own richer (but more failure-
+        prone, here) methods."""
+        proc = getattr(self, "proc", None)
+        pid = getattr(proc, "pid", None) if proc is not None else None
+        if pid is None:
+            return
+        try:
+            if proc.poll() is None:
+                os.killpg(pid, signal.SIGKILL)
+        except Exception:  # noqa: BLE001 -- __del__ must never raise
+            pass
 
 
 # --------------------------------------------------------------------------- evaluation

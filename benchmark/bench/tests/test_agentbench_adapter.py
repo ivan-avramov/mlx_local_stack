@@ -1315,6 +1315,16 @@ def _real_bash_popen_factory(home_dir=None):
     return _popen
 
 
+# 20th cold review round 20 (HIGH, box stability): registry of every real-bash shell `_real_shell`
+# has spawned in the CURRENT test, drained by the `_killpg_leaked_real_shells` autouse fixture
+# below. A test's own `finally: shell.close()` removing nothing from this list is fine -- the
+# fixture's teardown sweep is a harmless no-op over an already-dead process group in that case
+# (see `PersistentShell.kill()`'s own idempotent killpg). This is the fix for the 71 orphaned
+# `/bin/bash --login` processes (ppid 1, no tty) found accumulated on the live box: every one of
+# them traces back to a real-bash test shell that outlived a killed/alarmed/raising test.
+_LIVE_REAL_SHELLS = []
+
+
 def _real_shell(tmp_path, banner=None):
     """A PersistentShell over a REAL bash, with its own empty $HOME (optionally seeded with a
     `.bash_profile` banner line) so login-shell sourcing is controlled and reproducible."""
@@ -1325,7 +1335,28 @@ def _real_shell(tmp_path, banner=None):
     shell = AB.PersistentShell("unused-container", popen=_real_bash_popen_factory(home),
                                runner=lambda *a, **k: FakeRunner.Proc(0, "", ""))
     shell.start()
+    _LIVE_REAL_SHELLS.append(shell)
     return shell
+
+
+@pytest.fixture(autouse=True)
+def _killpg_leaked_real_shells():
+    """20th cold review round 20 (HIGH): runs around EVERY test in this module, not just the
+    real-bash ones -- pytest guarantees fixture teardown runs regardless of the test's own
+    outcome (an uncaught exception from the test body, or a `_TestHang`/SIGALRM firing mid-test),
+    unlike a bare `try/finally` INSIDE the test, which is exactly the gap that let 71 real-bash
+    `PersistentShell` shells leak into orphaned `ppid 1` processes on the live box. Sweeps
+    whatever `_real_shell()` registered and was not already cleaned up by the test's own
+    `close()`."""
+    _LIVE_REAL_SHELLS.clear()
+    yield
+    leaked = list(_LIVE_REAL_SHELLS)
+    _LIVE_REAL_SHELLS.clear()
+    for shell in leaked:
+        try:
+            shell.kill()
+        except Exception:  # noqa: BLE001 -- best-effort cleanup, never fail the fixture itself
+            pass
 
 
 # ----------------------------------------------------------- PersistentShell (scripted fake proc, P51)
@@ -1688,10 +1719,12 @@ def test_persistent_shell_start_handshake_output_never_leaks_command_text_P14(mo
     rc_printf = 'printf "\\n__M54_RC__%d__' + fixed.hex + '__\\n" $?'
     # 18th round: the handshake also sets `disable-completion` (item c, literal-TAB round-trip) --
     # kept in step with `start()`'s own exact text, since the echo-strip fallback matches it
-    # verbatim.
+    # verbatim. 20th round: `set +m` (job control OFF, see PersistentShell._install_bashrc_marker's
+    # docstring for the mechanism) added at the end, also kept in step.
     handshake_cmd = (f"export PS1='' PS2='' PROMPT_COMMAND='{rc_printf}'; stty -echo 2>/dev/null; "
                      "bind 'set enable-bracketed-paste off' 2>/dev/null; "
-                     "bind 'set disable-completion on' 2>/dev/null; true")
+                     "bind 'set disable-completion on' 2>/dev/null; "
+                     "set +m 2>/dev/null; true")
     full = _wrapped_command_text(fixed.hex, handshake_cmd)
     echoed = full.replace("\n", "\r\n").encode("utf-8")
 
@@ -2298,6 +2331,39 @@ def test_persistent_shell_real_bash_close_bounded_with_a_background_job_P13(tmp_
         shell.close()
         elapsed = time.monotonic() - t0
         assert elapsed < 5.0, f"close() took {elapsed:.1f}s -- should be bounded"
+
+
+@_timeout(10)
+def test_persistent_shell_real_bash_close_kills_a_backgrounded_descendant_R20(tmp_path):
+    """20th cold review round 20 (HIGH, box stability): close() must kill not just the login bash
+    itself but any descendant it backgrounded (e.g. a task's own `sleep 30 &`) -- this, not the
+    login shell itself, was the actual survivor behind the 71 orphaned `/bin/bash --login`
+    processes found on the live box in some cases (a backgrounded job can itself re-exec into
+    something matching that pattern, or simply pin CPU indefinitely). Measured directly (real
+    pty, start_new_session=True): with job control ON, a backgrounded job gets its OWN process
+    group, separate from bash's, so a plain `os.killpg(bash_pid, ...)` leaves it running; the
+    handshake's `set +m` (job control OFF) keeps it in bash's own group so one killpg reaches it.
+    This test fails on bash_pid's group alone if `set +m` regresses."""
+    shell = _real_shell(tmp_path)
+    try:
+        res = shell.run("sleep 30 < /dev/null > /dev/null 2>&1 & echo $!")
+        # bash's own `[N] <pid>` job-control notification line (printed whenever a job is
+        # backgrounded, independent of whether monitor mode put it in its own process group) can
+        # precede the `echo $!` line -- take the LAST whitespace-separated token, not the whole
+        # blob.
+        bg_pid = int(res["output"].split()[-1])
+        os.kill(bg_pid, 0)  # sanity: really alive before close()
+    finally:
+        shell.close()
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(bg_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    with pytest.raises(ProcessLookupError):
+        os.kill(bg_pid, 0)
 
 
 def test_persistent_shell_run_before_start_raises():
