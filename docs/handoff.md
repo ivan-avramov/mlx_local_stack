@@ -1,4 +1,4 @@
-# Handoff — 2026-10-02: M54 AgentBench OS COMPLETE (chain 3 = record); daily driver restored; nothing pushed
+# Handoff — 2026-10-02 (checkpoint 23:55 UTC): M54 record landed and PUSHED; chain 4 CLEAN CAPTURE RUNNING on the lean router; daily driver DOWN
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (the only queue) and
 `docs/open-questions.md` (C107 closed, C108 ruled). Results: `docs/campaign-results.md` 2026-10-02 (record) and
@@ -6,9 +6,22 @@ THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `d
 
 ## State of the world
 
-- **Git: NOT pushed.** Stack main at `3807998` (operator said: push at wrap-up, on their word). Forks unchanged. Tree clean.
-- **Daily driver is UP** (restored 11:10 UTC via `runserver.sh`): router pid 18697 on :8000, `MLX_SERVE_CONFIG=main_models.yaml`,
-  `MLX_VLM_CACHE_SESSION_MAX=2`, APC absent, OpenWebUI + SearXNG healthy. No serving config changed; registry of record untouched.
+- **Git:** pushed through `7baa6dc` (operator, 2026-10-02). One later commit NOT pushed: `886b78d` (C108 follow-up closed). Tree clean.
+- **CHAIN 4 (clean latency capture) IS RUNNING** — the daily driver is DOWN for it. Lean router pid 90462 on :8000,
+  `MLX_SERVE_CONFIG=$STACK_WORKDIR/m54/overlay_m54_draft_off.yaml` (sha `81fa0c15…`), `MLX_VLM_CACHE_SESSION_MAX=1`, APC absent.
+  Runner `$STACK_WORKDIR/m54/arms_aac939b/run_arms.py` (pid in `runner.pid`; nohup — survives the Claude session), harness
+  `aac939b` from worktree `$STACK_WORKDIR/m54/wt-aac939b`, five arms in the standard order, per-arm `driver.log`/`watch.log`,
+  `RUNLOG.md` with RESULT lines and `ALL ARMS COMPLETE` at the end. Started 23:00 UTC; arm 1 was at ~125/142 at checkpoint;
+  expect ~4 h more (the `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` arm carries two ~85-min runaways). Watchers are per-arm daemons
+  spawned by the runner (they survive too). **The Claude-side Monitor loops do NOT survive a session — re-arm a 5-min
+  reader of `watch.log` SUMMARY/ALARM lines + `uptime` + the orphan-shell count in the new session.**
+  Purpose: chains 1 and 3 have poisoned wall-clock/rate numbers (71 orphaned test shells, load 92, plus a desktop-activity
+  window at 23:51 UTC noted in `pilot/RUNLOG.md`); chain 4 is the only chain whose latency is citable. acc/tokens should
+  reproduce chain 3 (same seeds, same protocol).
+  **When it finishes:** `scripts/stack_stop.sh` → `./runserver.sh` (daily driver back), run `bench.agentbench_compare` on the
+  five `arms_aac939b` rows (see the chain-3 command in the notebook), land rows as `agentbench_os.v1.chain4.*` under
+  `benchmark/results/` (scrub `$STACK_WORKDIR`/`$STACK_REPO`/`$HOME` placeholders as for chain 3), update campaign-results
+  (latency/rate columns now citable; acc/tokens cross-check vs chain 3), README evidence rows, PLAN M54 row, notebook.
 - **Picks unchanged.** M54 proposes no ladder change (see Results).
 - Pinned worktree kept: `$STACK_WORKDIR/m54/wt-df3b65c` (the record's harness); all others removed. Run artifacts, review reports
   (`codex_review_1..8.md`), run logs (`pilot/RUNLOG.md`) and all chain rows live under `$STACK_WORKDIR/m54/`.
@@ -40,8 +53,14 @@ busy/idle), `bench/agentbench_compare.py` (paired report; refuses mixed harness/
 
 ## Pending
 
-1. Operator: push (all commits through `3807998`).
-2. Latency per task on this axis is contaminated by the load incident for some arms; re-measure on a quiet box if ever cited.
-3. Future M54 runs: harness ≥ `aac939b`, one chain, pilot-twice gate; consider a pressure-aware session eviction in the fork (C108 follow-up).
+1. Chain 4 completion + landing (above). Then push (`886b78d` + the landing commits) on the operator's word.
+2. **P17 awaiting operator decision:** adopt EvoEval (`difficult` + `subtle`, frozen, execution-graded) as the coding
+   de-saturation axis — LiveCodeBench rejected for the ladder because a frozen window loses contamination resistance.
+   Neither B pick has a LiveCodeBench row today (P14 verified). If approved → queue as M55 in PLAN with pre-registered ACs;
+   build via the M54 funnel (Sonnet implementer from the spec, cold reviews by a Claude reviewer and Codex `gpt-6-astra`).
+3. Declined from the quanteval question: aider_polyglot (we run the full corpus via opencode), QuixBugs (saturated),
+   quantevallab2.0 (proprietary). C108 follow-up closed: no pressure-based session eviction (operator).
+4. Reviewer residuals accepted as low-severity (documented in campaign-results/spec): job control + readline completion off in the
+   shell; marker forgeable only by reading `$PROMPT_COMMAND`; eval wrapper depends on `cat` on PATH.
 
 Next decision id C109; discussion ids continue from P8.
