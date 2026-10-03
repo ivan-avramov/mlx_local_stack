@@ -2,6 +2,52 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-03 — M54 chain 4 COMPLETE: the CLEAN LATENCY CAPTURE (quiet box, same seeds) + a second same-harness acc sample
+
+Purpose (operator P11): chains 1 and 3 carry wall-clock/rate numbers poisoned by the host-load incident; chain 4 is the only chain whose
+latency per task, decode rate and runaway wall-share are citable. Harness `aac939b` (= `df3b65c` + process-group cleanup + `set +m`), lean
+router pid 90462 on the draft-OFF overlay (`MLX_VLM_CACHE_SESSION_MAX=1`, APC absent), deployed sampling, thinking ON (81920), `--llm-timeout 6000`,
+pilot ×2 byte-identical before launch, 0 orphan shells throughout, no router 500s. Rows `benchmark/results/<model>/agentbench_os.v1.chain4.*`;
+report `benchmark/results/agentbench_os_compare_chain4.md`. **The acc record stays chain 3**; chain 4 supplies latency/rate and a repeatability sample.
+
+**Incident and re-run (full narrative in the notebook):** the laptop lost mains during arm 1; macOS cut performance at 10 % battery (23:08 UTC,
+decode 25–26 → 16–17 tok/s), hibernated at 1 % (23:14:57–23:50:08 UTC) and, after the wake, the MagSafe link sat at 100 W / 20 V until 00:48 UTC
+(identical items 7–10 % slow). Arms 1–2 were re-run on the same router session after arm 5 (`arms_aac939b_redo`, launched by an unattended
+precondition-checked launcher); arms 3–5 ran clean on the 140 W adapter. The landed arms 1–2 are the re-run. Decode vs chain 1's clean rows,
+same items, 20-row blocks: arm 1 0.98–1.01; arm 2 0.96–1.00 (rows 61–100 at 0.957–0.961, cause not identified, under the 5 % lever bar — noted, not re-run).
+
+| model | acc / acc_strict@81920 (chain 4) | chain 3 → 4 flips | tokens/task mean (median, max) | **wall/task mean / p90 / max (s)** | decode tok/s median | runaway tax (turn_cap+exec_timeout share / wall share) |
+|---|---:|---:|---:|---:|---:|---:|
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | 0.620 / **0.620** | 4 (all 3→4 pass) | 369 (232, 3363) | **18.5** / 33.3 / 145 | 25.5 | 1.4 % / 3.3 % |
+| `Qwen3.8-27B-mlx-uniform-4bit` | 0.585 / **0.585** | 5 (split) | 704 (431, 6289) | **29.6** / 63.7 / 246 | 28.0 | 5.6 % / 15.2 % |
+| `Ornith-1.0-35B-mlx-uniform-4bit` | 0.542 / **0.535** | 6 (3:3) | 1175 (532, 82351) | **14.2** / 13.3 / 977 | 105.8 | 6.3 % / 5.1 % |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | 0.613 / **0.613** | 5 (3 pass→fail) | 769 (531, 6770) | **35.5** / 75.9 / 290 | 24.4 | 11.3 % / 27.6 % |
+| `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` | 0.394 / **0.394** | 4 (all pass→fail) | 1401 (895, 11637) | **12.2** / 23.1 / 83 | 139.4 | 12.7 % / 22.4 % |
+
+Pairwise acc_strict on chain 4 (same machinery as chain 3, nominal MDE ±10.5 pp): first pick vs second pick +3.5 pp [−2.1, +9.2], exclusive
+11:6, Holm p=1.0 — inconclusive; first pick vs `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` +0.7 pp [−6.3, +7.0], exclusive 12:11 — inconclusive;
+first pick vs `Ornith-1.0-35B-mlx-uniform-4bit` +8.5 pp [+1.4, +15.5], McNemar p=0.03 (Holm 0.17) — TOST `a_better`, Holm not significant;
+every arm beats `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` (+22.5 pp [+14.8, +30.3] vs the first pick, Holm p<0.001). Ranks unchanged vs chain 3
+(the nominal top two swap inside the interval). Same-harness repeatability across a router restart: 4–6 discordant tasks per arm; 77–106/142
+rows token-identical.
+
+**Latency per task is now citable** (bold column). At equal quality `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` is faster per task than `Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (18.5 s/task, 1.4 % runaway share,
+3.3 % of wall in runaways); the second pick costs 1.6× the wall and 1.9× the tokens; `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` costs 1.9× the wall
+with 28 % of it in turn-capped tasks. `Ornith-1.0-35B-mlx-uniform-4bit` is the fastest per task (14.2 s) but one task (std-007-37) ran 977 s and
+hit the budget in BOTH chains (token-identical 82351) — a deterministic runaway for that model.
+
+**Finding (runaway tax is session-stochastic):** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s two chain-3 runaways (std-007-3 85001 tok / 4865 s,
+std-007-18 88773 tok / 5026 s) did NOT recur on chain 4 (6770 / 290 s and 3315 / 144 s, converged, still failed) — tokens/task 1892 → 769.
+The chain-3 "two 80-minute runaways, 5× tokens" characterization is one draw; report the runaway tax as a rate with an interval across sessions
+(C109). What does reproduce: its turn-cap share (16/142 in both chains) and 28 % of wall in capped tasks.
+
+**Finding (determinism scope):** seeded rows are byte-identical within one LOADED-MODEL lifetime only. The redo of arm 1 on the SAME router pid,
+after an unload/reload, differed in token count on 55/142 rows from the first chain-4 pass (2 pass flips) — `docs/metrics.md` seeds section updated.
+
+**Ladder (recommendation, no change proposed):** unchanged — B order stands; the clean latency numbers strengthen the first pick's position
+(tie on quality, fastest dense arm, lowest runaway share). `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` remains 4th; its chain-4 draw shows the runaway
+cost is not a fixed property, but the turn-cap share is.
+
 ## 2026-10-02 — M54 chain 3 COMPLETE (THE RECORD): AgentBench OS on the upstream-faithful pty harness, five arms × 142 tasks, draft OFF
 
 Harness `df3b65c` (20 cold-review rounds; pty-backed interactive bash like upstream AgentRL `tty=True`, marker emitted by bash's own `PROMPT_COMMAND` so tty-reading programs cannot eat it, whole-script rounds via `eval` of a quoted heredoc, upstream's five escape-strip regexes, marker installed in `/etc/bash.bashrc` so `su -`/`exec bash` survive), lean router on the draft-OFF overlay with `MLX_VLM_CACHE_SESSION_MAX=1` (C108), deployed sampling, thinking ON (81920), explicit `--llm-timeout 6000`. Gates before launch: live smoke on `local-os/default` (28 checks incl. apt/sudo/visudo, heredoc with TAB, multi-line whole output, su round-trip), bash-5.2 parser cases, full suite 2559 green, seeded 5-item pilot run twice byte-identical and identical to the 2026-09-30 pilot. All 710 rows graded, 0 setup errors, 0 shell deaths; 2 exec timeouts are models running interactive `visudo`/`adduser` (upstream-equivalent). Rows `benchmark/results/<model>/agentbench_os.v1.chain3.*`; report `benchmark/results/agentbench_os_compare_chain3.md`.

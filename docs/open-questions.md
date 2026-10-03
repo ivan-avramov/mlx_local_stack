@@ -15,6 +15,18 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### C109 — How to report the runaway tax now that it is session-stochastic (M54 chain 4, 2026-10-03)
+
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s two chain-3 runaways (85k/89k tokens, ~85 min each) did not recur on chain 4 (same seeds, same
+harness family, clean box): tokens/task 1892 → 769, wall share in runaways 43 % → 0 %. Its turn-cap share (16/142) reproduced exactly, as did
+`Ornith-1.0-35B-mlx-uniform-4bit`'s single budget-hit task (std-007-37, token-identical 82351 in both chains). The record's "two 80-minute
+runaways, 5× tokens" is one draw. Options: (a) report runaway tax as a per-arm RATE with a cluster-bootstrap interval pooled over same-harness
+sessions (chains 3 + 4 → n=284 task-sessions, never pooling acc); (b) keep per-chain reporting and label the chain-3 figure "one session";
+(c) add a k=2 seeded re-sample to every future agentic chain so the rate always has ≥2 sessions. Recommend (a) for the existing rows plus (c)
+as the standing rule for chains where runaways carry the cost story. Determinism scope narrowed the same day (`docs/metrics.md`: loaded-model
+lifetime, not router pid), so "same seeds" no longer implies "same runaways" across any reload.
+
+
 ### O41 — DECIDED 2026-08-24 (operator): FIX APPROVED AND LANDED (`ede38e6`) — derived timeout + retries=0 + fail-loud escalation + grader poison guard. Original entry kept below.
 
 `bench.run_bfcl_fc` inherits bfcl_eval's generation loop, which catches a failed request and

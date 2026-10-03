@@ -4336,3 +4336,36 @@ Scope ruled C107 (2026-09-30): own tool loop, mechanical exclusion rule, predict
 ## 2026-10-02 — M54 chains 2–3, harness defects found live, host-load incident, record landed
 
 Chain 2 (`909b1e0`, first pty) was voided: under a tty, apt/dpkg/sudo/visudo drain terminal input and ate the sentinel line queued with the command → false timeouts (walls 4–8 s), uniformly −3 to −5 pp. Fixed by letting bash emit the marker via `PROMPT_COMMAND` (round 17), then: stale-marker desync (round 18), timing-dependent multi-line output and a pty close/write kernel wedge (round 19: whole-script rounds via `eval` of a quoted heredoc — a brace group double-fires on a syntax error — and a non-blocking select-based writer), `su - jack` login shells without the marker (bashrc install), and 71 orphaned real-bash test shells (load average 92, decode 2–3× slower; round 20 adds process groups, `set +m`, fixture finalizers, a session-finish sweep and `scripts/sweep_orphan_shells.sh`). The pty close() wedge also left state-U pytest processes that only `kill -9` freed. Chain 3 (`df3b65c`) passed every gate (28-check live smoke, bash-5.2 parser cases, suite 2559, pilot ×2 byte-identical) and completed 710/710 rows with 0 setup errors; two legit runaways on `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (85 min each) and one on `Ornith-1.0-35B-mlx-uniform-4bit`. Daily driver restored 11:10 UTC. Memory: retained native16 sessions at full prealloc (~16 GB each) produced deterministic router 500s on one task until the model was unloaded; C108 ruled session max 1 for bench routers.
+
+## 2026-10-03 — M54 chain 4: laptop power incident mid-chain, two contamination mechanisms, arms 1–2 re-run, clean latency landed
+
+**What happened.** Chain 4 (clean latency capture, harness `aac939b`, lean router pid 90462) was running arm 1 when the laptop lost mains.
+`pmset -g log`: BatteryHealth warning cap 10 % at 23:04 UTC; decode on `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` fell from 25–26 to
+16–17 tok/s at row 107 (23:08 UTC); cap 2 % at 23:12; `Low Power Sleep` (hibernate) 23:14:57 at 1 %; <!-- allow-shorthand --> `Wake from Hibernate` 23:50:08 on AC
+attach. Router, runner, driver and watcher all survived (no reboot); the in-flight task (std-007-72) straddled the hibernate (92 s wall,
+excluded sleep time because the harness clocks are monotonic). The previous session's "desktop GUI load at 23:51" note was the wake storm.
+
+**Second mechanism, found by instrument.** Arm 2 started at 23:57 UTC 11 % slow, recovered to chain-1 parity by row ~20 (battery 15–18 %),
+then slid monotonically from 00:20 UTC (ratio vs chain 1 on identical items 1.00 → 0.92 by 00:47). No thermal/performance warning, no
+orphans, load 2.4. `ioreg AppleSmartBattery AdapterDetails` showed the MagSafe link negotiated at **100 W / 20 V** with no manufacturer string
+(the operator's brick is the Apple 140 W). At 00:48 UTC it renegotiated to 140 W / 28 V (operator re-plugged) and the ratio returned to
+0.98–0.99 within three rows while the battery charged at 59 W. Mechanism: with a 100 W budget macOS trims SoC power as charging current
+rises; the slide tracked charging, not temperature. Battery > 10 % is necessary but not sufficient; the adapter negotiation is the second check.
+
+**Decision (operator, 00:55 UTC).** Keep the runner going as the recovery instrument; re-run arms 1–2 on the same router session after arm 5.
+Arms 3–5 ran clean on 140 W (decode at or above chain-1 references: 106 / 24.4 / 139 tok/s). An unattended launcher
+(`$STACK_WORKDIR/m54/launch_redo.sh`) waited for `ALL ARMS COMPLETE`, verified router owner, 0 driver/probe/watch processes, 0 orphans,
+140 W, battery ≥ 20 %, overlay sha, no APC, then started `run_arms_redo.py` (03:37 UTC). Redo arm 1: 18.5 s/task, decode 0.98–1.01 of chain 1;
+redo arm 2: 29.6 s/task, 0.96–1.00 (rows 61–100 at 0.957, cause not found — an XProtect scan ran on one core for part of it; under the 5 % bar).
+
+**Findings.** (1) Latency per task is citable for the first time; `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` is faster per task than `Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` at equal quality (campaign-results
+2026-10-03). (2) `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s chain-3 runaways did not recur; turn-cap share did → C109. (3) Seeded determinism is
+per loaded-model lifetime: the redo on the same router pid after unload/reload differed on 55/142 rows (2 pass flips) → `docs/metrics.md`.
+(4) Same-harness repeatability across the restart: 4–6 discordant tasks per arm (chain 3 vs 4), 77–106/142 token-identical; ranks unchanged.
+
+**Rules added (AGENTS.md).** Laptop power check before/during any latency capture: `pmset -g ac` = 140 W / 28 V and battery > 20 %; monitors
+print adapter W + battery % every tick. macOS specifics bitten today: `/bin/bash` is 3.2 (no `declare -A`), `wc -l` pads its count, and
+`grep -E` has no lookahead — the landing script and the first monitor filter each failed once on these.
+
+**Daily driver restored** 05:36 UTC (`runserver.sh`, router pid 40777, `MLX_VLM_CACHE_SESSION_MAX=2`, APC absent, OWUI healthy).
+
