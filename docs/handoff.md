@@ -35,7 +35,14 @@ any latency capture; monitors print both every tick.
 ## Pending
 
 1. **Push** (`886b78d` … this session's commits) — on the operator's word only.
-2. **M55 polyglot gap (QUEUED, approved 2026-10-03):** spec `docs/specs/m55-polyglot-gap.md` (pre-registered ACs). Next step: lean router on the
+2. **M55 polyglot gap: CHAIN RUNNING since 2026-10-03 08:07 UTC** on lean router pid 86904 (draft-OFF overlay, session max 1, APC absent;
+   daily driver DOWN). Runner `$STACK_WORKDIR/m55/run_m55.py s1 s2` (pid in `runner.pid`, nohup; leg-resumable: skips legs with 22 rows;
+   `RUNLOG.md` ends with `ALL LEGS DONE`), order s1 → s2, per session first pick → second pick → `Ornith-1.0-35B-mlx-uniform-4bit`,
+   langs rust/java/javascript, out `m55/s{1,2}/<model>.opencode_<lang>.jsonl`. Pilot: 5/5 pass on pass A, 4/5 pass-identical on pass B
+   (AC2 amended — opencode loop is not byte-deterministic), wall mean 379 s / max 636 s → first pick ≈ 7 h per session; whole chain ≈ 40 h
+   (C37 means for the baselines). Monitor every 5 min: RUNLOG END lines, adapter 140 W, battery, orphans, worker busy. On completion:
+   `scripts/stack_stop.sh` → `./runserver.sh`; then land rows under `benchmark/results/<model>/opencode_<lang>.m55.s{1,2}.jsonl` (scrub),
+   per-language paired report, README/campaign-results/PLAN/notebook. (Original queue entry:) spec `docs/specs/m55-polyglot-gap.md` (pre-registered ACs). Next step: lean router on the
    draft-OFF overlay (session max 1), 140 W + battery check, 5-item seeded pilot ×2 byte-identical on the loaded instance, then the 3-model × 2-session
    chain (~12 h). No build needed (M9 harness + grading containers).
 3. **M56 LiveCodeBench rolling window: PARKED** (eligibility count = 0: newest release v6 ends Apr 2025; candidates trained to ≥ May 2026).
