@@ -38,10 +38,11 @@ any latency capture; monitors print both every tick.
 2. **M55 polyglot gap (QUEUED, approved 2026-10-03):** spec `docs/specs/m55-polyglot-gap.md` (pre-registered ACs). Next step: lean router on the
    draft-OFF overlay (session max 1), 140 W + battery check, 5-item seeded pilot ×2 byte-identical on the loaded instance, then the 3-model × 2-session
    chain (~12 h). No build needed (M9 harness + grading containers).
-3. **M56 LiveCodeBench rolling window (QUEUED, gated):** run the eligibility count (problems newer than every candidate's cutoff) before any spec work;
-   park if n < 100. EvoEval demoted to optional diagnostic.
+3. **M56 LiveCodeBench rolling window: PARKED** (eligibility count = 0: newest release v6 ends Apr 2025; candidates trained to ≥ May 2026).
+   **C110 open:** wait for a post-2026-06 release (recommended) vs collect our own post-cutoff contest set vs no coding decider.
+   EvoEval demoted to optional diagnostic.
 4. C109 RULED (open-questions): k=2 sessions for every agentic chain; runaway flags split; no pooled interval. AGENTS.md + metrics updated.
 5. Declined earlier: aider_polyglot full corpus via aider, QuixBugs, quantevallab2.0; C108 follow-up closed.
 6. Reviewer residuals accepted as low-severity (job control + readline completion off; marker forgeable only via `$PROMPT_COMMAND`; eval wrapper needs `cat`).
 
-Next decision id C110; discussion ids continue from P25.
+Next decision id C111; discussion ids continue from P25.

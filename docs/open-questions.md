@@ -15,6 +15,17 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### C110 — Contamination-resistant coding decider when no public set post-dates the candidates (2026-10-03)
+
+M56 (LiveCodeBench rolling window) parked: the newest official release (`release_v6`) ends April 2025; the candidates' training extends
+to at least May 2026 (`NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` post-training cutoff), with the `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` base (released 2026-08-14) and
+`Ornith-1.0-35B-mlx-uniform-4bit` (2026-06-25) undisclosed. Eligible post-cutoff problems today: 0. Options: (a) wait — re-check on every LiveCodeBench
+release and queue M56 when a window starting after 2026-06 reaches ≥100 problems; (b) collect our own post-cutoff contest set with the
+LiveCodeBench collection pipeline (LeetCode/AtCoder/Codeforces problems dated after 2026-06, tests generated and independently validated;
+~days of build via the M54 funnel; becomes a private held-out set, the strongest evidence class per Codex review 9); (c) treat M55 (polyglot
+gap) + the agentic axis as sufficient and make no coding decider. Recommend (a) now with (b) queued only if M55 surfaces a rank reversal
+that the existing axes cannot resolve; (c) is the de-facto state and should be stated in the README as such.
+
 ### C109 — RULED 2026-10-03 (operator, after Codex review 9): per-session reporting; flags split (budget hit / turn cap / exec timeout) + deduplicated union; a pooled DESCRIPTIVE rate may be shown labelled "142 tasks × k sessions" with NO interval; chain 3 wall never pooled; every future agentic chain runs k=2 independent loaded instances with distinct paired seed schedules (+ a same-seed reload control); acc paired per session. Original entry kept below.
 
 ### C109 — How to report the runaway tax now that it is session-stochastic (M54 chain 4, 2026-10-03)
