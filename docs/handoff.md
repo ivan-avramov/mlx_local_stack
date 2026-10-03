@@ -29,6 +29,14 @@ THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `d
   4 pass flips, 55 rows differ in tokens from row 1 on = cross-restart nondeterminism, not the incident. Arm 2 started 23:57 UTC still ~11 %
   slow (26 vs 29.4 tok/s chain-1 clean reference) with the battery charging; the runner continues as the recovery instrument — any arm with
   rows below its clean reference is re-run after arm 5. Details: `$STACK_WORKDIR/m54/pilot/RUNLOG.md` 2026-10-03T00:02Z.
+  Second cause found 00:50 UTC: after the wake the MagSafe link had negotiated 100 W / 20 V; identical items ran 7–10 % slow until
+  it renegotiated to 140 W / 28 V at 00:48 UTC (arm 2 rows 83–99 contaminated; rows 100+ at 0.98–1.00 of chain 1). **Operator
+  approved (00:55 UTC): re-run arms 1 and 2 after arm 5.** Unattended launcher `$STACK_WORKDIR/m54/launch_redo.sh` (pid in
+  `launch_redo.log`) waits for `ALL ARMS COMPLETE`, verifies router pid 90462 owns :8000, 0 driver/probe/watch processes, 0 orphans,
+  adapter 140 W, battery ≥ 20 %, overlay sha, no APC, then starts `run_arms_redo.py` → rows in `arms_aac939b_redo/<model>/`
+  (RUNLOG there; `ALL ARMS COMPLETE` at the end). Landing uses redo rows for arms 1–2 and `arms_aac939b` rows for arms 3–5;
+  superseded arm 1–2 rows are kept as a same-harness repeatability sample (not graded into the record). Precondition failure
+  → `launch_redo.log` says `PRECONDITIONS FAILED`; fix and run `launch_redo.sh --now`. Pre-chain check added: `pmset -g ac` = 140 W.
 - **Picks unchanged.** M54 proposes no ladder change (see Results).
 - Pinned worktree kept: `$STACK_WORKDIR/m54/wt-df3b65c` (the record's harness); all others removed. Run artifacts, review reports
   (`codex_review_1..8.md`), run logs (`pilot/RUNLOG.md`) and all chain rows live under `$STACK_WORKDIR/m54/`.
