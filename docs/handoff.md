@@ -34,7 +34,14 @@ any latency capture; monitors print both every tick.
 
 ## Pending
 
-1. **Operator:** approve push; rule on C109 (recommend (a) pooled rate + interval for existing rows, (c) k=2 re-sample rule for future agentic chains).
+1. **Operator:** approve push; rule on C109 and P17. Both were cold-reviewed by Codex `gpt-6-astra` (review 9, 2026-10-03,
+   `$STACK_WORKDIR/m54/codex_review_9.md`) under a quality-maximizing brief. C109: AGREE-WITH-CHANGES → revised rec = per-session
+   reporting + labelled descriptive union rate, flags split (budget hit / turn cap / exec timeout), no pooled interval, k=2 independent
+   sessions with distinct seed schedules for every agentic chain (entry updated in open-questions). P17: DISAGREE with EvoEval as the
+   principal axis → revised rec = (1) close the aider polyglot Rust/Java/JavaScript gap for the first pick first (existing harness),
+   (2) LiveCodeBench on a per-campaign frozen post-cutoff window as the contamination-resistant decider, (3) EvoEval `subtle`+`difficult`
+   only as a supplementary specification-sensitivity diagnostic; a private fresh repository-task set is the strongest evidence but has no
+   inventory yet. Operator decision pending.
 2. **P17 awaiting operator decision:** EvoEval (`difficult` + `subtle`, frozen, execution-graded) as the coding de-saturation axis — if approved →
    queue as M55 in PLAN with pre-registered ACs; build via the M54 funnel (Sonnet implementer from the spec, cold reviews by a Claude reviewer
    and Codex `gpt-6-astra`), live-gated, pilot twice before any arm.

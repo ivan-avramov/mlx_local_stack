@@ -18,13 +18,22 @@ is the record that stops it being re-asked.
 ### C109 — How to report the runaway tax now that it is session-stochastic (M54 chain 4, 2026-10-03)
 
 `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s two chain-3 runaways (85k/89k tokens, ~85 min each) did not recur on chain 4 (same seeds, same
-harness family, clean box): tokens/task 1892 → 769, wall share in runaways 43 % → 0 %. Its turn-cap share (16/142) reproduced exactly, as did
+harness family, clean box): tokens/task 1892 → 769; the two budget-hit tasks held 68 % of its chain-3 wall (0 % on chain 4). CORRECTION 2026-10-03 (Codex review 9): the report's "runaway tax" column is `turn_cap ∪ exec_timeout` (`agentbench_compare.py` ~196) and does NOT include budget hits — std-007-3 was `failed_tests` with a budget hit and sits outside it; the 43 % → 27.6 % wall-share column is the turn-cap figure, not the runaway figure. Before any pooling the three flags (budget hit, turn cap, exec timeout) must be reported separately plus their deduplicated union. Its turn-cap share (16/142) reproduced exactly, as did
 `Ornith-1.0-35B-mlx-uniform-4bit`'s single budget-hit task (std-007-37, token-identical 82351 in both chains). The record's "two 80-minute
 runaways, 5× tokens" is one draw. Options: (a) report runaway tax as a per-arm RATE with a cluster-bootstrap interval pooled over same-harness
 sessions (chains 3 + 4 → n=284 task-sessions, never pooling acc); (b) keep per-chain reporting and label the chain-3 figure "one session";
 (c) add a k=2 seeded re-sample to every future agentic chain so the rate always has ≥2 sessions. Recommend (a) for the existing rows plus (c)
 as the standing rule for chains where runaways carry the cost story. Determinism scope narrowed the same day (`docs/metrics.md`: loaded-model
 lifetime, not router pid), so "same seeds" no longer implies "same runaways" across any reload.
+
+**Cold review (Codex `gpt-6-astra`, review 9, `$STACK_WORKDIR/m54/codex_review_9.md`): AGREE-WITH-CHANGES.** (b) as the primary presentation
+with an optional pooled DESCRIPTIVE frequency labelled "142 tasks × two sessions"; no interval claimed from two sessions (item clustering
+misses shared session effects; same-seed reloads do not measure fresh-seed variability); chain 3 wall excluded from any pooled wall figure
+(only chain 4 wall is citable); (c) amended to require independent loaded instances AND distinct paired seed schedules with a same-seed
+reload control; keep acc and exclusive solves primary and never let a cost figure dismiss an uncertain quality edge (`metrics.md` §successes_per_hour).
+**Author's revised recommendation (quality-maximizing):** adopt the review's version — (b) + labelled descriptive union rate, flags reported
+separately, no pooled interval; (c) as "k=2 independent sessions with distinct seed schedules for EVERY agentic chain" (acc per session, paired;
+session noise then enters the interval instead of being hidden).
 
 
 ### O41 — DECIDED 2026-08-24 (operator): FIX APPROVED AND LANDED (`ede38e6`) — derived timeout + retries=0 + fail-loud escalation + grader poison guard. Original entry kept below.

@@ -4369,3 +4369,9 @@ print adapter W + battery % every tick. macOS specifics bitten today: `/bin/bash
 
 **Daily driver restored** 05:36 UTC (`runserver.sh`, router pid 40777, `MLX_VLM_CACHE_SESSION_MAX=2`, APC absent, OWUI healthy).
 
+**Cold review 9 (Codex `gpt-6-astra`, design review of C109 + P17 under a quality-maximizing brief).** Found a definitional slip in C109
+(the report's runaway-tax column is `turn_cap ∪ exec_timeout`, budget hits sit outside it; chain 3's two budget-hit tasks held 68 % of
+wall, not 43 %); argued two sessions cannot support an interval and that chain 3 wall must stay out of any pooled figure; rejected EvoEval
+as a principal axis (public tests, HumanEval ancestry → correlated items, short synthesis only) and the LiveCodeBench rejection as a false
+tradeoff (freeze per campaign, refresh between campaigns). Both recommendations revised accordingly (open-questions C109, handoff Pending 1).
+
