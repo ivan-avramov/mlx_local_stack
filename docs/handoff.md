@@ -22,6 +22,13 @@ THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `d
   five `arms_aac939b` rows (see the chain-3 command in the notebook), land rows as `agentbench_os.v1.chain4.*` under
   `benchmark/results/` (scrub `$STACK_WORKDIR`/`$STACK_REPO`/`$HOME` placeholders as for chain 3), update campaign-results
   (latency/rate columns now citable; acc/tokens cross-check vs chain 3), README evidence rows, PLAN M54 row, notebook.
+- **POWER INCIDENT 2026-10-02 23:04–23:50 UTC (found at session restart, 2026-10-03 00:00 UTC):** the laptop lost mains, throttled at 10 % battery
+  (23:08 UTC), hibernated at 1 % (23:14:57) and woke on AC at 23:50:08. Router pid 90462, runner, driver and watcher all survived; no reboot.
+  Arm 1 (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`) rows 107–142 ran throttled (16–17 tok/s vs 25–26 clean; row 128 straddled the
+  hibernate) → its latency is NOT citable and the arm must be re-run on the same router session. acc/tokens vs chain 3: 0.620 vs 0.592,
+  4 pass flips, 55 rows differ in tokens from row 1 on = cross-restart nondeterminism, not the incident. Arm 2 started 23:57 UTC still ~11 %
+  slow (26 vs 29.4 tok/s chain-1 clean reference) with the battery charging; the runner continues as the recovery instrument — any arm with
+  rows below its clean reference is re-run after arm 5. Details: `$STACK_WORKDIR/m54/pilot/RUNLOG.md` 2026-10-03T00:02Z.
 - **Picks unchanged.** M54 proposes no ladder change (see Results).
 - Pinned worktree kept: `$STACK_WORKDIR/m54/wt-df3b65c` (the record's harness); all others removed. Run artifacts, review reports
   (`codex_review_1..8.md`), run logs (`pilot/RUNLOG.md`) and all chain rows live under `$STACK_WORKDIR/m54/`.
