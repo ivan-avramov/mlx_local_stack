@@ -1,7 +1,7 @@
-# Handoff — 2026-10-03 (05:40 UTC): M54 chain 4 (clean latency capture) COMPLETE and LANDED; daily driver UP; push pending operator
+# Handoff — 2026-10-03 (06:30 UTC): M54 chain 4 landed; C109 ruled; M55 polyglot gap + M56 LiveCodeBench queued; daily driver UP; push pending operator
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (the only queue) and
-`docs/open-questions.md` (C109 OPEN: runaway-tax reporting). Results: `docs/campaign-results.md` 2026-10-03 (chain 4 latency + re-sample),
+`docs/open-questions.md` (C109 RULED 2026-10-03). Results: `docs/campaign-results.md` 2026-10-03 (chain 4 latency + re-sample),
 2026-10-02 (acc record = chain 3). History: `docs/lab-notebook.md` 2026-10-03 (power incident). Spec: `docs/specs/m54-agentbench-os.md`.
 
 ## State of the world
@@ -34,18 +34,14 @@ any latency capture; monitors print both every tick.
 
 ## Pending
 
-1. **Operator:** approve push; rule on C109 and P17. Both were cold-reviewed by Codex `gpt-6-astra` (review 9, 2026-10-03,
-   `$STACK_WORKDIR/m54/codex_review_9.md`) under a quality-maximizing brief. C109: AGREE-WITH-CHANGES → revised rec = per-session
-   reporting + labelled descriptive union rate, flags split (budget hit / turn cap / exec timeout), no pooled interval, k=2 independent
-   sessions with distinct seed schedules for every agentic chain (entry updated in open-questions). P17: DISAGREE with EvoEval as the
-   principal axis → revised rec = (1) close the aider polyglot Rust/Java/JavaScript gap for the first pick first (existing harness),
-   (2) LiveCodeBench on a per-campaign frozen post-cutoff window as the contamination-resistant decider, (3) EvoEval `subtle`+`difficult`
-   only as a supplementary specification-sensitivity diagnostic; a private fresh repository-task set is the strongest evidence but has no
-   inventory yet. Operator decision pending.
-2. **P17 awaiting operator decision:** EvoEval (`difficult` + `subtle`, frozen, execution-graded) as the coding de-saturation axis — if approved →
-   queue as M55 in PLAN with pre-registered ACs; build via the M54 funnel (Sonnet implementer from the spec, cold reviews by a Claude reviewer
-   and Codex `gpt-6-astra`), live-gated, pilot twice before any arm.
-3. Declined from the quanteval question: aider_polyglot, QuixBugs, quantevallab2.0. C108 follow-up closed (no pressure-based eviction).
-4. Reviewer residuals accepted as low-severity (job control + readline completion off; marker forgeable only via `$PROMPT_COMMAND`; eval wrapper needs `cat`).
+1. **Push** (`886b78d` … this session's commits) — on the operator's word only.
+2. **M55 polyglot gap (QUEUED, approved 2026-10-03):** spec `docs/specs/m55-polyglot-gap.md` (pre-registered ACs). Next step: lean router on the
+   draft-OFF overlay (session max 1), 140 W + battery check, 5-item seeded pilot ×2 byte-identical on the loaded instance, then the 3-model × 2-session
+   chain (~12 h). No build needed (M9 harness + grading containers).
+3. **M56 LiveCodeBench rolling window (QUEUED, gated):** run the eligibility count (problems newer than every candidate's cutoff) before any spec work;
+   park if n < 100. EvoEval demoted to optional diagnostic.
+4. C109 RULED (open-questions): k=2 sessions for every agentic chain; runaway flags split; no pooled interval. AGENTS.md + metrics updated.
+5. Declined earlier: aider_polyglot full corpus via aider, QuixBugs, quantevallab2.0; C108 follow-up closed.
+6. Reviewer residuals accepted as low-severity (job control + readline completion off; marker forgeable only via `$PROMPT_COMMAND`; eval wrapper needs `cat`).
 
 Next decision id C110; discussion ids continue from P25.

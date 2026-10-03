@@ -15,6 +15,8 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### C109 — RULED 2026-10-03 (operator, after Codex review 9): per-session reporting; flags split (budget hit / turn cap / exec timeout) + deduplicated union; a pooled DESCRIPTIVE rate may be shown labelled "142 tasks × k sessions" with NO interval; chain 3 wall never pooled; every future agentic chain runs k=2 independent loaded instances with distinct paired seed schedules (+ a same-seed reload control); acc paired per session. Original entry kept below.
+
 ### C109 — How to report the runaway tax now that it is session-stochastic (M54 chain 4, 2026-10-03)
 
 `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s two chain-3 runaways (85k/89k tokens, ~85 min each) did not recur on chain 4 (same seeds, same
