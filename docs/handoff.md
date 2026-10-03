@@ -39,7 +39,7 @@ any latency capture; monitors print both every tick.
    draft-OFF overlay (session max 1), 140 W + battery check, 5-item seeded pilot ×2 byte-identical on the loaded instance, then the 3-model × 2-session
    chain (~12 h). No build needed (M9 harness + grading containers).
 3. **M56 LiveCodeBench rolling window: PARKED** (eligibility count = 0: newest release v6 ends Apr 2025; candidates trained to ≥ May 2026).
-   **C110 open:** wait for a post-2026-06 release (recommended) vs collect our own post-cutoff contest set vs no coding decider.
+   **C110 RULED (operator 2026-10-03): wait and watch** — re-check on each LiveCodeBench release; queue M56 at ≥100 post-2026-06 problems.
    EvoEval demoted to optional diagnostic.
 4. C109 RULED (open-questions): k=2 sessions for every agentic chain; runaway flags split; no pooled interval. AGENTS.md + metrics updated.
 5. Declined earlier: aider_polyglot full corpus via aider, QuixBugs, quantevallab2.0; C108 follow-up closed.

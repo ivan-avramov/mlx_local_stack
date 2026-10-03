@@ -15,6 +15,8 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### C110 — RULED 2026-10-03 (operator): (a) wait and watch — re-check on every LiveCodeBench release; queue M56 when a window starting after 2026-06 reaches ≥100 problems. No self-collected set unless M55 surfaces an unresolved rank reversal. Original entry kept below.
+
 ### C110 — Contamination-resistant coding decider when no public set post-dates the candidates (2026-10-03)
 
 M56 (LiveCodeBench rolling window) parked: the newest official release (`release_v6`) ends April 2025; the candidates' training extends
