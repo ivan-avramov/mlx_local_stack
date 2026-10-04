@@ -469,3 +469,51 @@ only).** 79 rounds, 131.5 ms per round, 2.61 tokens emitted per round: verify 12
 rollback 0.7. Decode at long context IS the target verification forward. E8 puts its key/value scans at 16 × 3.45 = 55 ms in the
 verifier's per-query pattern; a joint scan would be 39 ms (−16 ms, ≈ +14 % tok/s at 128K), a single-pass kernel ≈ 20 ms (−35 ms,
 ≈ +36 %). Estimates from kernel timings, not measured on the served path.
+
+**E12 — Component profile of a served cold 127K-token prefill (fork branch `m57-prefill-profile` @ `aef10c6e` via `PYTHONPATH`,
+`MLX_VLM_PREFILL_PROFILE=1`, one session per arm; outputs in `$STACK_WORKDIR/m57/profile/`).** Profiler overhead < 1 % (2.373 vs
+2.359 ms per token unprofiled), so absolute times stand. Means per 512 tokens over the whole prefill:
+
+| component | step 512, `auto` (unfused) | step 1024, `auto` (fused chunks) | change |
+|---|---:|---:|---:|
+| full-attention kernel (15 live layers) | 538 ms | 394 ms | −27 % |
+| MLP (64 layers) | 410 ms | 425 ms | +4 % |
+| GatedDeltaNet layers (48) | 207 ms | 209 ms | +1 % |
+| attention projections + output | 52 ms | 48 ms | |
+| cache update, state eval, cache clear, other | 6 ms | 4 ms | |
+| chunk wall per 512 tokens | 1212 ms | 1080 ms | −11 % |
+| request prefill | 301.9 s | 270.1 s | −10.5 % |
+
+  The terminal (64th) layer's attention is dead code in prefill — 15 attention computations per chunk, not 16. Step-1024 windows by
+  key length (per 1024-token chunk): attention 195 → 608 → 1046 → 1356 ms at 32K / 64K / 96K / 127K keys while MLP (852 / 838 / 867 /
+  842) and GatedDeltaNet (418 / 412 / 426 / 416) stay FLAT. In the step-512 arm the late windows show MLP 440 → 456 → 467 ms and
+  GatedDeltaNet 222 → 230 → 236 ms against run means of 410 and 207: with unfused attention, context-independent work slows as
+  context grows. (The first five step-512 windows were lost to a collection bug — the worker log is recreated at worker start; to be
+  re-run on the final branch.)
+- **E13 — GatedDeltaNet recurrence, no model.** Existing Metal per-token kernel 1.62 ms at 512 tokens (1.74 ms at 1024); the
+  chunk-parallel formulation 3.54 ms (5.29 ms). The existing kernel wins; it is ≈ 38 % of a GatedDeltaNet layer's 4.3 ms, the rest
+  is projections.
+- **E14 — MLP-shaped matmul (5120 → 17408), no model.** Quantized matmul 39–41 TFLOP/s at 4 and 8 bits, flat in chunk size; dense
+  bf16 / fp16 GEMM 55–63 TFLOP/s. Dequantising one weight costs ≈ 2 ms, so dequantise-then-dense is slower at 512 tokens (3.44 vs
+  2.32 ms), 13 % faster at 2048 and 24 % faster at 4096 (13.4 vs 17.7 ms). Relative RMS error against an fp32 reference: quantized
+  matmul 0.00041, dense fp16 0.00029, dense bf16 0.0023.
+
+**What E10–E14 settle**
+
+- P70 — Attention is 44 % of a 128K prefill today and would be ≈ 36 % once fused; MLP ≈ 39 %, GatedDeltaNet ≈ 19 %. Below 32K the
+  quantized projections are nearly everything. No exact lever on this box is a 2× lever; the earlier "2.1× at 256K" is retired.
+- P71 — The "unattributed third" of the quadratic term is (a) the unfused kernel running ≈ 17 % slower in situ than in the
+  microbench and (b) collateral slowdown of MLP / GatedDeltaNet under the unfused path's multi-GB scratch. Cache bookkeeping is
+  ruled out (≈ 2 ms per chunk). Since the fused arm shows no such drift, the 256K gain should exceed the kernel-only estimate:
+  prediction 1063 → ≈ 740 s (−30 %), peak −7.9 GB — to be measured.
+- P72 — Chunk size does not help the linear part (P51 refuted at 1024: per-token MLP + GatedDeltaNet + projections +2 %). The M57
+  recipe keeps step 512 with fused dispatch for chunks and tails; step 1024 remains a screen arm only.
+- P73 — A chunk-parallel GatedDeltaNet kernel (X11) is NOT worth building (E13).
+- P74 — New candidate behind M57, "dense prefill path": dequantise each projection once per chunk and use dense GEMM, at chunk sizes
+  ≥ 2048 (which need fused attention for memory). Bound from E14: −24 % of quantized-projection time at 4096 ≈ −8…14 % TTFT, more at
+  short context. fp16 is more accurate than the quantized kernel but risks overflow on bf16 activations; bf16 is 5.7× less
+  accurate. Needs its own design; not queued.
+- P75 — Ranking of exact levers by measured share at 128K after M57: fused-kernel tuning (36 % share, in-situ 52 ms vs 40–45 ms
+  microbench per 512-equivalent), dense prefill path (≈ 60 % share, ≤ 24 % of it), decode joint verification scan (+14 % tok/s,
+  bit-identical) and single-pass verification kernel (+36 %). Sparse retrofits stay probe-gated; their ceiling is the attention
+  share (36 % at 128K, ≈ 53 % at 256K after fusion).
