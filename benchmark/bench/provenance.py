@@ -319,7 +319,13 @@ _FINGERPRINT_KV_EXTRA = ("hf_path", "kv_quant_scheme", "quantized_kv_start", "pr
 # text-invariant (the prefill_step_size lesson), so rows at different states never pool. Observed
 # from the worker cmdline, else the fork's own default (same src/mlx-vlm the worker serves), else
 # "unknown" (wildcard). See session_retention_state().
-FINGERPRINT_VERSION = 6
+# v7 (M57, 2026-10-04): the fused-attention dispatch policy (`--attention-policy`, registry
+# `attention_policy`) joins the runtime slice. It selects WHICH attention kernel runs, so rows at
+# different policies never pool and never compare. Observed from the worker cmdline (flag absent
+# = "auto"), else the registry; a worker/registry disagreement refuses (registry_attention_policy).
+# Manifests < v7 compare as "auto" (attention_policy_of), so a v7 `fused_v1` row never resumes
+# onto a pre-v7 row even though the negotiated min-version slice omits the key.
+FINGERPRINT_VERSION = 7
 
 
 def config_fingerprint(manifest, version: int | None = None):
@@ -381,6 +387,8 @@ def config_fingerprint(manifest, version: int | None = None):
         fp["code"] = {k: gsp.get(k) for k in ("src/mlx-vlm", "src/mlx-serve")}
     if version >= 6:
         fp.setdefault("runtime", {})["session_retain_prompt_end"] = r.get("session_retain_prompt_end")
+    if version >= 7:
+        fp.setdefault("runtime", {})["attention_policy"] = attention_policy_of(manifest)[0]
     return fp
 
 
@@ -403,6 +411,11 @@ def is_compatible(existing, current) -> bool:
     if v < 2:
         return a == b
     ra, rb = a.pop("runtime", {}), b.pop("runtime", {})
+    if v < 7:
+        # M57: the negotiated slice omits attention_policy, but a pre-v7 row IS "auto"
+        # (attention_policy_of), so a v7 `fused_v1` row must still read incompatible with it.
+        ra["attention_policy"] = attention_policy_of(existing)[0]
+        rb["attention_policy"] = attention_policy_of(current)[0]
     return a == b and _runtime_compatible(ra, rb)
 
 
@@ -530,6 +543,57 @@ def session_retention_state(worker_lookup=_worker_cmdline) -> dict:
         return {"session_retain_prompt_end": "off", "session_retain_source": "fork-without-feature"}
     return {"session_retain_prompt_end": "on" if session_retain_prompt_end() else "off",
             "session_retain_source": "fork-default"}
+
+
+def attention_policy_of(manifest: dict) -> tuple[str, str]:
+    """(attention_policy, source) a manifest stands for. fingerprint_version < 7 predates the
+    key and every such row ran the native dispatch, so it reads ("auto", "default-pre-v7") — a
+    KNOWN value, not a wildcard, regardless of anything its runtime block claims. A v7 manifest
+    reports what it recorded (None when absent, which `_unobserved` treats as a wildcard)."""
+    if (manifest.get("fingerprint_version") or 1) < 7:
+        return "auto", "default-pre-v7"
+    r = manifest.get("runtime") or {}
+    return r.get("attention_policy"), r.get("attention_policy_source")
+
+
+def registry_attention_policy(model: str, registry_path: str | None = None,
+                              worker_lookup=_worker_cmdline) -> dict:
+    """M57 served attention policy: {"attention_policy", "attention_policy_source"}.
+
+    A live worker whose `--model` carries the entry's hf_path is the SERVING truth: its
+    `--attention-policy <v>` flag (absent = "auto"), source "worker". Otherwise the registry
+    entry's `attention_policy` (absent/empty = "auto"), source "registry". Both available and
+    disagreeing REFUSES the run (same shape as the C35 draft tripwire). "unknown" (wildcard) is
+    reserved for an unreadable registry or a model absent from it — a worker cannot be matched
+    to the model without its registry entry."""
+    registry_path = str(paths.registry_path()) if registry_path is None else registry_path
+    try:
+        with open(registry_path) as f:
+            doc = yaml.safe_load(f)
+    except Exception:  # noqa: BLE001 — never block a run on provenance
+        return {"attention_policy": "unknown", "attention_policy_source": "unreadable-registry"}
+    entries = doc.get("models", doc) if isinstance(doc, dict) else doc
+    for e in entries or []:
+        if isinstance(e, dict) and e.get("name") == model:
+            declared = e.get("attention_policy") or "auto"
+            try:
+                cmd = worker_lookup() if worker_lookup else None
+            except Exception:  # noqa: BLE001
+                cmd = None
+            hf = e.get("hf_path") or ""
+            if cmd and hf and hf in cmd:
+                m = re.search(r"--attention-policy\s+(\S+)", cmd)
+                served = m.group(1) if m else "auto"
+                if served != declared:
+                    raise RuntimeError(
+                        f"C35 tripwire: registry {registry_path!r} declares attention_policy="
+                        f"{declared!r} for {model!r} but the live worker serves "
+                        f"attention_policy={served!r}. Launch the driver with MLX_SERVE_CONFIG "
+                        f"pointed at the served registry/overlay; refusing to record false "
+                        f"attention-policy provenance.")
+                return {"attention_policy": served, "attention_policy_source": "worker"}
+            return {"attention_policy": declared, "attention_policy_source": "registry"}
+    return {"attention_policy": "unknown", "attention_policy_source": "model-not-in-registry"}
 
 
 # ----------------------------------------------------- M50 served-config tripwire (2026-09-28)
@@ -967,6 +1031,8 @@ def _runtime_block(runtime: dict = None, model: str = None,
     block.update(registry_draft(model, registry_path) if model
                  else {"draft_kind": "unknown", "draft_source": "no-model-given"})
     block.update(session_retention_state())
+    block.update(registry_attention_policy(model, registry_path) if model
+                 else {"attention_policy": "unknown", "attention_policy_source": "no-model-given"})
     if runtime:
         block.update(runtime)
     return block
