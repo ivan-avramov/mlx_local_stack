@@ -15,6 +15,8 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### C111 — RULED 2026-10-04 (operator: "accepted: proceed with your recs"): (1) run the step-1 evidence (CPU transcript accounting, ≈ 1 box-hour of no-model GPU microbenchmarks, one 128K step-1024 probe); (2) fund the env-gated component profiler in the fork; (3) M57 is the versioned shape-aware dispatch policy with chunk size chosen jointly (P63 item 3), NOT the `auto | force_fused` flag. Standing lens for this track: maximise performance potential without sacrificing output quality beyond a negligible amount; implementation time is not a constraint. Record: `docs/proposal-flash-attention.md`.
+
 ### C110 — RULED 2026-10-03 (operator): (a) wait and watch — re-check on every LiveCodeBench release; queue M56 when a window starting after 2026-06 reaches ≥100 problems. No self-collected set unless M55 surfaces an unresolved rank reversal. Original entry kept below.
 
 ### C110 — Contamination-resistant coding decider when no public set post-dates the candidates (2026-10-03)

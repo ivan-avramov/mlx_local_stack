@@ -1,0 +1,76 @@
+# M57 step 2 — env-gated prefill component profiler in the fork (spec, 2026-10-04)
+
+Approved C111. Purpose: attribute served prefill time per chunk to components. Step-1 evidence
+(`docs/proposal-flash-attention.md`, E1–E10) left about a third of the context-proportional prefill cost unattributed.
+Diagnostic only: no behaviour change when the switch is unset.
+
+## Deliverable
+
+- Parent fork `../mlx-vlm`, branch `m57-prefill-profile` from `main`. Fork only; no stack change, no submodule bump, no push.
+- New module `mlx_vlm/prefill_profile.py`. Reuse `_PhaseTimer` from `mlx_vlm/speculative/mtp_profile.py` if it imports without
+  a cycle; otherwise copy the minimum. Same conventions as that module: a phase mark is `mx.eval(outputs)` then
+  `mx.synchronize()` then a timestamp; reporting never raises.
+- Switch: `MLX_VLM_PREFILL_PROFILE=1`. Unset → the profiler object is `None` and every hook is a single `is not None` check:
+  no added `mx.eval`, no `mx.synchronize`, no timers, one env lookup per generation.
+- Scope: the single-sequence chunked prefill loop in `mlx_vlm/generate/ar.py` (the loop that calls `model.language_model` per
+  chunk) and the `qwen3_5` language model. Other model families: hooks absent, profiler reports only chunk-level phases.
+- Active-profiler handle: set by the chunk loop for the duration of one chunk, cleared in `finally`. Layer code reads it through
+  `prefill_profile.active()`. Document it as single-request diagnostic state; it must be `None` outside a profiled chunk.
+
+## Phases (per chunk)
+
+| phase | where | covers |
+|---|---|---|
+| `attn_prep` | `Qwen3_5Attention` | q/k/v projections, norms, rotary — everything in `_prepare_projected_qkv` before the cache update |
+| `kv_update` | `Qwen3_5Attention` | `cache.update_and_fetch` (and any preallocation it triggers) |
+| `sdpa` | `Qwen3_5Attention` | the `scaled_dot_product_attention` call only |
+| `attn_out` | `Qwen3_5Attention` | gate, transpose/reshape, `o_proj` |
+| `gdn` | `Qwen3_5DecoderLayer` | the whole `linear_attn` call |
+| `mlp` | `Qwen3_5DecoderLayer` | residual add, post-norm, `mlp` (both layer kinds) |
+| `cache_post` | chunk loop | `quantize_cache_fn`, `preallocate_cache_fn`, `mx.eval([c.state ...])`, eviction hook |
+| `clear_cache` | chunk loop | `mx.clear_cache()` |
+| `other` | chunk loop | chunk wall minus the sum of the above (embedding, final norm, Python, snapshot handling) |
+
+If `_prepare_projected_qkv` cannot be split without changing its behaviour, time it as one phase `attn_prep_kv` and say so in the
+commit message. Do not restructure model code to make a phase boundary.
+
+Per chunk also record: tokens in the chunk, key length after the chunk (cumulative offset).
+
+## Report
+
+One stderr line every 32 chunks and one final line per generation, values are means over the window:
+
+`[prefill_profile] chunks=<n> tokens=<n> keys=<key length at window end> wall=<ms/chunk> sdpa=<ms/chunk> kv_update=… attn_prep=… attn_out=… gdn=… mlp=… cache_post=… clear_cache=… other=… final=<0|1>`
+
+## Tests (`mlx_vlm/tests/test_prefill_profile.py`, CPU-pinned, tiny fake model — no real checkpoint, no GPU)
+
+Write each test first and watch it fail.
+
+1. Switch unset: profiler code calls `mx.synchronize` zero times (monkeypatch counter), emits no line, `active()` is `None`.
+2. Switch set: a 3-chunk run emits window/final lines with every field; `chunks` and `tokens` are exact; every phase ≥ 0;
+   `other` ≥ 0 within timer tolerance.
+3. Outputs (logits and cache state) with the switch set equal outputs with it unset, exactly, on CPU.
+4. A raising profiler (monkeypatched `mark`) does not break generation and clears the active handle.
+5. `active()` is `None` after a profiled generation and after an exception inside a chunk.
+
+## Rules
+
+- Minimal hunks in upstream-owned files, each marked `# Fork:`. black, line length 88.
+- No real model loads, no Metal workloads, no servers. Run only the new tests and the existing
+  `mlx_vlm/tests/test_mtp_profile.py`.
+- Commit on the branch. Do not push. Report: files changed, test output, any phase that could not be separated.
+
+## Run (operator session, after cold review; server path only)
+
+- Lean router with `PYTHONPATH=<parent fork>` and `MLX_VLM_PREFILL_PROFILE=1` in its environment, overlays
+  `$STACK_WORKDIR/m57/overlays/step512.yaml` and `step1024.yaml`, one 64K and one 128K cold prompt each. Read
+  `[prefill_profile]` lines from `$TMPDIR/mlx-manager-logs/<model>.log`.
+- Rows from profiled runs go to `$STACK_WORKDIR/m57/` only — the worker serves the branch, not the pinned submodule, and the eval
+  fences perturb timing; nothing from these runs enters `benchmark/results/`.
+
+## Pre-registered reading
+
+- The largest context-proportional phase other than `sdpa` is fixed first, losslessly, inside M57.
+- Per-token `gdn + mlp + attn_prep + attn_out` falling ≥ 10 % from step 512 to 1024 puts chunk size into the M57 recipe.
+- Fused `sdpa` ≥ 40 % of the 128K chunk wall after those fixes funds the pinned-commit kernel comparison (P54 / X10).
+- Profiled wall more than 25 % above the unprofiled wall for the same prompt: report shares only, not absolute times.

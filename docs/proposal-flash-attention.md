@@ -379,3 +379,93 @@ doubles again; review 2 bounds it at ≲ 20 %. The same captured-tensor benchmar
 4. Next milestone candidate: long-context decode — joint verification scan, MTP-ON requalified.
 5. Then, each behind its measurement: GatedDeltaNet / MLP prefill work, upstream report and pinned-commit kernel comparison, fused
    low-precision cache, sparse decode, sparse prefill last.
+
+## Step-1 evidence, 2026-10-04 (C111 approved; M5 Max, MLX 0.32.2, stack down, 140 W, battery 96–97 %, no swap)
+
+No model loaded for E1–E8: synthetic bf16 arrays at the first pick's attention shape (24 query / 4 KV heads, head dim 256), keys sliced
+from a 262144-token buffer as the preallocated cache does. Scripts and raw JSON: `$STACK_WORKDIR/m57/` (`sdpa_microbench.py`,
+`sdpa_serving_like.py`, `transcript_accounting.py`). Times are the minimum of 3–5 warm repetitions. PROBES, not gradable results.
+
+- **E1 — Raise boundary (runtime-confirmed).** `force_fused=True` raises `ValueError` at query lengths 6, 7 and 8; 1–5 and ≥ 9 run.
+- **E2 — Crossover, isolated warm kernel, ms per layer (`auto` / forced).**
+
+  | query length | 16384 keys | 131072 keys | 262144 keys | forced vs `auto` |
+  |---:|---:|---:|---:|---|
+  | 16 | 0.77 / 1.88 | 5.39 / 14.0 | 10.9 / 27.9 | forced 2.4–2.6× SLOWER |
+  | 64 | 1.22 / 1.89 | 11.9 / 14.0 | 24.0 / 28.0 | forced 1.2–1.5× slower |
+  | 128 | 2.05 / 1.95 | 17.5 / 14.7 | 37.4 / 30.6 | forced 1.05–1.22× faster |
+  | 256 | 3.72 / 3.74 | 30.4 / 28.9 | 65.5 / 58.4 | forced 1.00–1.12× faster |
+  | 512 | 6.94 / 5.70 | 61.8 / 45.3 | 245 / 91.7 | forced 1.22× / 1.36× / 2.67× faster (the last includes pool misses) |
+  | 1024 | 9.57 / 9.55 | 80.4 / 79.6 | 165 / 167 | identical — `auto` is already fused |
+  | 2048 | 18.5 / 18.6 | 172 / 169 | 375 / 356 | identical |
+  | 4096 | 33.7 / 33.4 | 334 / 346 | 712 / 726 | identical |
+
+  The forced kernel has a floor of ≈ 14 ms at 131072 keys for any query length ≤ 128. Per 512-query equivalent at 131072 keys:
+  forced-512 45.3 ms, 1024 → 40.2, 2048 → 43.1, 4096 → 41.8.
+- **E3 — fp16 tie-back.** 512 × 131072: `auto` 62.8 ms, forced 46.8 ms. The first review's 144 ms default is not reproduced warm — it
+  was a cold-buffer measurement. The "3.1×" was never a kernel ratio.
+- **E4 — Serving-like chunk** (pool cleared, 16 dependent layers in one eval, pool limit 9 GiB), ms per layer `auto` / forced:
+  65536 keys 33.0 / 22.3 (1.48×); 131072 keys 68.0 / 45.1 (1.51×); 262144 keys 150 / 93.1 (1.61×). 1024-query chunks under `auto`:
+  92.3 ms at 131072 keys (46.2 per 512-equivalent — no gain over forced-512 in this setting). Transient peak: `auto` 6.6 / 9.9 /
+  19.8 GB (about three score-sized buffers); forced 0.15 GB; 1024-query `auto` 0.30 GB.
+- **E5 — Memory instrument.** Run 1 read 0.0 GB for a known 3.22 GB tensor (the base still counted the previous, not-yet-released
+  buffer); the serving-like script reads it correctly (3.221 GB). The first review's "no memory benefit" was this artifact. The
+  unfused path DOES materialise score-sized buffers; the fused path does not (P49's mechanism holds at kernel level).
+- **E6 — Masks.** None / causal string / boolean array / additive array all run forced at 512 queries (48.5 / 47.0 / 54.3 / 52.1 ms
+  at 131072 keys).
+- **E7 — Accuracy against an independent fp32 CPU reference (relative RMS error).** Unfused bf16: 0.0044 with flat logits, 0.023 with
+  peaky logits (max abs 0.096). Fused: 0.0017 in both. Decode's vector kernel: 0.0018–0.0024. The fused path is 2.6–14× CLOSER to
+  exact arithmetic than what is served today, and brings prefill to the accuracy decode already has.
+- **E8 — Vector kernel (decode / verification), ms per layer at 65536 / 131072 / 262144 keys.** 1 query: 0.71 / 1.25 / 2.36 (≈ 455 GB/s
+  over keys + values — at memory bandwidth, no single-scan headroom). 3 queries jointly: 1.34 / 2.44 / 4.75. 3 separate single-query
+  calls (the verifier's pattern): 1.79 / 3.45 / 6.58. Joint and per-query outputs are BIT-IDENTICAL (max abs 0.0, at 3 and 5
+  queries). `MLX_SDPA_BLOCKS`: the default is already optimal (256 is 1.3–1.7× slower, 2048 equal, 8192 slower).
+- **E9 — Workload accounting (CPU).** opencode M55 (60 surviving transcripts, 561 turns; per-turn cache counts read from the
+  transcripts): context p50 14.0K, max 27.8K; prefilled tokens per turn p50 543, p90 8647; 47.6 % of turns prefill 9–511 tokens,
+  19.1 % 512–1023, 33.3 % ≥ 1024; no turn prefills 1–8; turn 1 (≈ 8650 tokens, always cold) is 49 % of all prefilled tokens; one cold
+  replay in 561 turns. AgentBench OS M54 (426 sessions, 1423 turns): context max 3.8K; cached-token counts not recorded (prefill
+  estimated from prompt deltas). Worker log 2026-09-21…29 (656 requests, daily driver and probes mixed): prompt p50 589, p90 32K, max
+  79K; 71 % of prefilled tokens at 16–64K context, 5 % above 64K, none above 128K. **Neither benchmark harness ever reaches the
+  long-key regime; the M57 time benefit lands on long daily-driver sessions and on capacity, not on the current agentic axes.**
+
+**What the evidence changes**
+
+- P65 — The kernel-level time gain of fused over unfused at 512-query chunks is ≈ 1.5–1.6× in serving-like conditions, not 3.1×.
+  The ladder fit puts the in-situ unfused quadratic cost at ≈ 102 ms per layer-chunk at 131072 keys; the serving-like microbench
+  explains 68 ms of it. About a third of the quadratic cost is NOT the attention kernel and is not yet attributed (the component
+  profiler's job). Revised TTFT predictions if only the kernel changes: 64K 111 → 82–99 s, 128K 325 → 209–278 s, 256K 1063 →
+  600–873 s (P26's 76 / 185 / 500 s are withdrawn).
+- P66 — Memory is confirmed at kernel level and becomes the lead benefit: GBs of score scratch per chunk under `auto`, ≈ 0.15 GB fused.
+- P67 — Accuracy is a benefit, not a risk (E7).
+- P68 — The dispatch policy needs a QUERY-length threshold, not a key-length crossover: fused wins from ≈ 128 queries up at every key
+  length, loses below it (floor ≈ 14 ms at 131072 keys), and is identical to `auto` from 1024. Short tails cost little in absolute
+  terms either way (≤ 17 ms per layer at 262144 keys) but an unfused 100-query tail still materialises GBs at long context, so the
+  threshold is a memory/time trade to set in the spec.
+- P69 — Decode (revises P60): a single scan is already at memory bandwidth; a joint verification scan is bit-identical to the
+  per-query pattern and saves 28 % of verification attention (≈ 29 ms of a ≈ 221 ms round at 261K → ≈ +15 % tok/s, estimate), not the
+  ≈ 2× claimed in P60. A single-pass kernel that reads keys and values once for all queries would save about twice that. About 58 ms
+  per round of context-proportional decode time is not attention scans and is unattributed.
+
+**E10 — Served-path overlay probe at 128K (one session per arm, fresh lean router, shipped state, same 130783-token prompt;
+rows `capacity_ladder.m57probe-step{512,1024}-20261004`).** Worker command lines recorded; `APC_ENABLED` absent;
+`MLX_VLM_CACHE_SESSION_MAX=1`; pool limit pinned at 9 GiB in the 1024 arm.
+
+| arm | prefill s | MLX peak GB | decode tok/s | retrieval | MTP acceptance |
+|---|---:|---:|---:|---:|---:|
+| step 512, `auto` (127 unfused chunks of 512 + tail) | 308.5 | 42.52 | 21.6 | 1.0 | 0.806 |
+| step 1024, `auto` (127 FUSED chunks + a 734-token UNFUSED tail) | 269.0 | 44.23 | 21.2 | 1.0 | 0.800 |
+
+- Time: −12.8 % TTFT at 128K with fused chunks — at the pessimistic end of P65's range. The fused kernel removes about a fifth of the
+  quadratic term; extrapolated ≈ −9 % at 64K and ≈ −16 % at 256K (estimate). Fused attention ALONE is a modest time win.
+- Memory: the peak ROSE 1.71 GB, as the scratch mechanism predicts when the largest unfused chunk grows from 512 to 734 queries:
+  (734 − 512) × 24 heads × 130783 keys × 2 B = 1.39 GB per score tensor, × 1.23 = 1.71 GB. So the served peak tracks ≈ 1.23 score
+  tensors of the LARGEST UNFUSED chunk — the mechanism is confirmed on the serving path, and a policy that also fuses tails should
+  take ≈ 3.9 GB off the 128K peak and ≈ 7.9 GB off the 256K peak (prediction). `prefill_step_size: 1024` under `auto` WITHOUT a tail
+  policy is a memory regression at any prompt whose tail exceeds 512 tokens.
+- One session per arm: a probe, not a result (no interval; the two arms ran back to back).
+
+**E11 — MTP round profile at 128K (existing `MLX_VLM_MTP_PROFILE=1`, same prompt, one session; profiled rows kept in the workdir
+only).** 79 rounds, 131.5 ms per round, 2.61 tokens emitted per round: verify 120.0 ms (91 %), draft 3.4, walk 3.8, accept 3.6,
+rollback 0.7. Decode at long context IS the target verification forward. E8 puts its key/value scans at 16 × 3.45 = 55 ms in the
+verifier's per-query pattern; a joint scan would be 39 ms (−16 ms, ≈ +14 % tok/s at 128K), a single-pass kernel ≈ 20 ms (−35 ms,
+≈ +36 %). Estimates from kernel timings, not measured on the served path.
