@@ -42,7 +42,10 @@ record: proposal → reviews → design P25–P44 → reviews 2/3 → reconcilia
 2. **M58 queued** (joint MTP verification scan) — spec owed after the M57 build.
 3. **Push: NOT approved** (operator undecided, C112). Nothing pushed: stack commits since `bd2823d`, fork branches. Recommendation
    on record: do not merge the fork branches into fork `main` before M57 passes review — one serving-path hash change, not two.
-4. Not queued: dense prefill path (dequantise-then-dense at chunks ≥ 2048). Carried: P41 / P42 into `docs/open-questions.md`?
+4. **Found, NOT fixed (needs a go):** `bench/tests/test_m50_entrypoints.py::test_run_opencode_probe_refuses_before_the_manifest` fails on
+   `main` — since `3948528` the opencode probe creates its scratch directory BEFORE the M50 refusal, which breaks the "refuse before
+   the first write" rule. Proposed fix: create the scratch root after the router check.
+5. Not queued: dense prefill path (dequantise-then-dense at chunks ≥ 2048). Carried: P41 / P42 into `docs/open-questions.md`?
    M56 stays PARKED (C110).
 
 ## Rules learned this session
