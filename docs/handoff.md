@@ -1,4 +1,4 @@
-# Handoff — 2026-10-04 (19:30 UTC): M55 polyglot gap COMPLETE and LANDED; daily driver UP; push pending operator
+# Handoff — 2026-10-04 (21:00 UTC): M55 landed and PUSHED; proposals reviewed (flash attention → discuss next session); daily driver UP
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (the only queue) and
 `docs/open-questions.md` (C109 ruled, C110 ruled: wait-and-watch). Results: `docs/campaign-results.md` 2026-10-04 (M55) and 2026-10-03
@@ -6,8 +6,7 @@ THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `d
 
 ## State of the world
 
-- **Git:** pushed through `7baa6dc`. NOT pushed: everything since (M54 chain 4 landing, C109/C110 rulings, M55 queue + landing, scrubber fix).
-  **Push only on the operator's word** ("we push after the results are done" — results are done; awaiting the word).
+- **Git:** pushed through `bd2823d` (2026-10-04, operator's word). Tree clean after this handoff commit.
 - **Daily driver is UP** (router pid 74568, `MLX_VLM_CACHE_SESSION_MAX=2`, APC absent, OWUI healthy). No lean router, no benchmark processes,
   0 orphan shells. Battery 100 %, adapter 140 W. Scratch dir is `$STACK_WORKDIR/scratch/octmp.noindex` with a symlink at `octmp`.
 - **M55 landed:** rows `benchmark/results/<model>/opencode_<lang>.m55.s{1,2}.{jsonl,manifest.json}` (18 + 18), report
@@ -25,8 +24,11 @@ THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `d
 
 ## Pending
 
-1. **Operator:** push.
-2. Small follow-up (no GPU): make the probe's scratch default `$STACK_WORKDIR/scratch/octmp.noindex` in code/config so the symlink is not load-bearing.
+1. **Next session (operator): dedicated discussion of `docs/proposal-flash-attention.md`** — reviewed 2026-10-04 (verdict: pick up as M57;
+   measured 144 → 46 ms per full-attention layer at the first pick's prefill shape with `force_fused=True`; the memory benefit is NOT
+   measured, only time). `docs/proposal-image-gen.md` reviewed and stays deferred. Nothing queued in PLAN for either yet.
+2. DONE 2026-10-04: probe scratch default is `<STACK_WORKDIR>/scratch/octmp.noindex` in code (`OPENCODE_PROBE_SCRATCH` overrides); the
+   workdir symlink `scratch/octmp → octmp.noindex` can be removed at leisure. Pushed through `bd2823d`+.
 3. M56 LiveCodeBench rolling window: PARKED (C110 wait-and-watch) — re-check on each LiveCodeBench release for a window starting after 2026-06.
 4. Declined earlier: aider_polyglot full corpus via aider, QuixBugs, quantevallab2.0; C108 follow-up closed.
 

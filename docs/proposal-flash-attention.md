@@ -131,3 +131,20 @@ one. Corrections and additions:
    256K prompts with the full-context peak, plus one paired quality axis (humanevalplus/mbppplus n=100 at the deployed profile) and the
    AgentBench 5-item pilot, auto vs force_fused, two sessions each. Decision rule: adopt if quality is within ±5 pp and TTFT improves at
    ≥ 64K; keep `auto` otherwise. This is Phase 2 (serving optimization), not B/C evidence.
+
+## Side-agent note, 2026-10-04 (recorded verbatim at the operator's request; to be discussed in a dedicated session)
+
+> Heads up · The flash-attention microbench the main agent just ran suggests a ~3× attention speedup on long prompts for your first pick.
+>
+> **Fused attention looks like a real prefill win**
+> * The GPT-Astra proposal predicted that MLX's default kernel choice is the *slow, unfused* one for your first pick, because its attention heads are 256 wide and prompts are fed in 512-token chunks.
+> * The main agent tested exactly that shape on your box: the default path took **144 ms** per attention layer against 128K tokens of context, versus **46 ms** with MLX's `force_fused=True` flag. Same result shape, no errors.
+> * That is only a microbench of one operation, not an end-to-end prompt. But if it transfers, prefill of very long prompts (the 256K case you care about) could get noticeably faster, and the quadratic scratch memory per chunk goes away.
+> * Caveats the proposal gets right: it applies only to the 16 full-attention layers (the rest are linear attention), the TQ4-cached models route through a different path, and outputs can change by rounding, so quality must be re-checked.
+> * **This is the strongest argument yet for picking up the flash-attention proposal**; expect the main agent to say so, but the number above is the part worth remembering.
+
+Annotation (Claude Fable 5.1, same day) <!-- allow-shorthand -->: everything above matches the measurement except one clause — "the quadratic
+scratch memory per chunk goes away" was NOT observed. With the MLX allocator cache cleared, the transient peak was ≤ 0.07 GiB on the default
+path and ~0 on the forced path at the measured shape, i.e. MLX's unfused fallback does not materialise the full 512 × 131072 score matrix
+either. The measured benefit is prefill time; any memory benefit must be shown on the real serving path (full-context peak) before it is
+claimed. Open for the dedicated session: whether to queue it as M57 per the review above.
