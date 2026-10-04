@@ -15,6 +15,8 @@ def _manifest(model, bench, *, tune=None, version=7, policy=None, draft="off",
     p = G.result_path(model, bench, tune=tune).with_suffix(".manifest.json")
     p.parent.mkdir(parents=True, exist_ok=True)
     rt = {"apc_enabled": "0", "draft_kind": draft}
+    if version >= 7:
+        rt["lazy_prompt_embeddings"] = False   # S5: v7 rows carry both controls
     if policy is not None:
         rt["attention_policy"] = policy
         rt["attention_policy_source"] = source
@@ -55,14 +57,14 @@ def test_ac11_compare_pre_v7_row_reads_as_auto(write_rows, tmp_results):
     assert r["comparable"] is False and "attention_policy" in r["reason"]
 
 
-def test_ac11_compare_unobserved_policy_warns(write_rows, tmp_results):
+def test_ac11_compare_unresolved_policy_refuses(write_rows, tmp_results):   # S1: no warning path
     write_rows("A", "math500", _cmp_rows(["a", "b"]))
     write_rows("B", "math500", _cmp_rows(["a", "b"]))
     _manifest("A", "math500", policy="unknown")
     _manifest("B", "math500", policy="fused_v1")
     r = CMP.compare("A", "B", "math500")
-    assert r["comparable"] is True
-    assert any("attention_policy" in w for w in r["warnings"])
+    assert r["comparable"] is False
+    assert "attention_policy" in r["reason"]
 
 
 # ----------------------------------------------------------------------- compare_predictor.py

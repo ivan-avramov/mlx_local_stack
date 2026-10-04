@@ -87,6 +87,20 @@ def _worker_cmdline() -> str | None:
     return None
 
 
+def _worker_cmdlines() -> list[str]:
+    """Command lines of ALL live `mlx_vlm.server` workers ([] when none/unobservable)."""
+    out = []
+    try:
+        import psutil
+        for p in psutil.process_iter(["pid", "cmdline"]):
+            cmd = " ".join(p.info.get("cmdline") or [])
+            if "mlx_vlm.server" in cmd:
+                out.append(cmd)
+    except Exception:  # noqa: BLE001 — best-effort; absent psutil / AccessDenied / gone
+        return out
+    return out
+
+
 def registry_draft(model: str, registry_path: str | None = None,
                    worker_lookup=_worker_cmdline) -> dict:
     """Speculative-decoding state for ``model``, NORMALISED so that "off" is an OBSERVATION.
@@ -388,7 +402,8 @@ def config_fingerprint(manifest, version: int | None = None):
     if version >= 6:
         fp.setdefault("runtime", {})["session_retain_prompt_end"] = r.get("session_retain_prompt_end")
     if version >= 7:
-        fp.setdefault("runtime", {})["attention_policy"] = attention_policy_of(manifest)[0]
+        for k in _SERVING_CONTROLS:
+            fp.setdefault("runtime", {})[k] = control_of(manifest, k)[0]
     return fp
 
 
@@ -408,14 +423,19 @@ def is_compatible(existing, current) -> bool:
     v = min(existing.get("fingerprint_version", 1), current.get("fingerprint_version", 1))
     a, b = config_fingerprint(existing, v), config_fingerprint(current, v)
     _overlay_serving_path_code(existing, current, a, b)
+    # M57 serving controls (S1/S2): the negotiated slice may omit them (v < 7), but a pre-v7 row IS
+    # the default, so they are compared on EVERY path (incl. the v1 early return) and STRICTLY:
+    # an unresolved ("unknown"/absent) value on a v7 row never pools with anything but an
+    # identical unresolved value (same-run resume).
+    for k in _SERVING_CONTROLS:
+        if control_of(existing, k)[0] != control_of(current, k)[0]:
+            return False
     if v < 2:
         return a == b
     ra, rb = a.pop("runtime", {}), b.pop("runtime", {})
-    if v < 7:
-        # M57: the negotiated slice omits attention_policy, but a pre-v7 row IS "auto"
-        # (attention_policy_of), so a v7 `fused_v1` row must still read incompatible with it.
-        ra["attention_policy"] = attention_policy_of(existing)[0]
-        rb["attention_policy"] = attention_policy_of(current)[0]
+    for k in _SERVING_CONTROLS:
+        ra.pop(k, None)
+        rb.pop(k, None)
     return a == b and _runtime_compatible(ra, rb)
 
 
@@ -545,55 +565,101 @@ def session_retention_state(worker_lookup=_worker_cmdline) -> dict:
             "session_retain_source": "fork-default"}
 
 
-def attention_policy_of(manifest: dict) -> tuple[str, str]:
-    """(attention_policy, source) a manifest stands for. fingerprint_version < 7 predates the
-    key and every such row ran the native dispatch, so it reads ("auto", "default-pre-v7") — a
-    KNOWN value, not a wildcard, regardless of anything its runtime block claims. A v7 manifest
-    reports what it recorded (None when absent, which `_unobserved` treats as a wildcard)."""
+# name -> default value for a pre-v7 manifest / an entry that declares nothing.
+_SERVING_CONTROLS = {"attention_policy": "auto", "lazy_prompt_embeddings": False}
+
+
+def control_of(manifest: dict, key: str):
+    """(value, source) a manifest stands for on a v7 serving control. fingerprint_version < 7
+    predates the keys and every such row ran the default, so it reads (default, "default-pre-v7")
+    — a KNOWN value regardless of anything its runtime block claims. A v7 manifest reports what
+    it recorded; an absent value reads "unknown" (unresolved: never pools, never compares)."""
     if (manifest.get("fingerprint_version") or 1) < 7:
-        return "auto", "default-pre-v7"
+        return _SERVING_CONTROLS[key], "default-pre-v7"
     r = manifest.get("runtime") or {}
-    return r.get("attention_policy"), r.get("attention_policy_source")
+    v = r.get(key)
+    return ("unknown" if v is None else v), r.get(key + "_source")
 
 
-def registry_attention_policy(model: str, registry_path: str | None = None,
-                              worker_lookup=_worker_cmdline) -> dict:
-    """M57 served attention policy: {"attention_policy", "attention_policy_source"}.
+def attention_policy_of(manifest: dict) -> tuple[str, str]:
+    return control_of(manifest, "attention_policy")
 
-    A live worker whose `--model` carries the entry's hf_path is the SERVING truth: its
-    `--attention-policy <v>` flag (absent = "auto"), source "worker". Otherwise the registry
-    entry's `attention_policy` (absent/empty = "auto"), source "registry". Both available and
-    disagreeing REFUSES the run (same shape as the C35 draft tripwire). "unknown" (wildcard) is
-    reserved for an unreadable registry or a model absent from it — a worker cannot be matched
-    to the model without its registry entry."""
+
+def _worker_for(entry: dict, worker_lookup):
+    """The ONE live worker cmdline whose `--model` argument EXACTLY equals the entry's hf_path,
+    else None; RuntimeError when more than one matches. `worker_lookup` returns None, a cmdline
+    string, or a list of them."""
+    try:
+        got = worker_lookup() if worker_lookup else None
+    except Exception:  # noqa: BLE001 — never block a run on provenance
+        got = None
+    cmds = [got] if isinstance(got, str) else list(got or [])
+    hf = entry.get("hf_path") or ""
+    hits = []
+    for cmd in cmds:
+        m = re.search(r"--model(?:=|\s+)(\S+)", cmd or "")
+        if hf and m and m.group(1) == hf:
+            hits.append(cmd)
+    if len(hits) > 1:
+        raise RuntimeError(f"C35 tripwire: more than one live worker serves {hf!r} "
+                           f"({len(hits)} matches) — worker attribution is ambiguous; "
+                           f"refusing to record serving provenance.")
+    return hits[0] if hits else None
+
+
+def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, parse_registry):
     registry_path = str(paths.registry_path()) if registry_path is None else registry_path
     try:
         with open(registry_path) as f:
             doc = yaml.safe_load(f)
     except Exception:  # noqa: BLE001 — never block a run on provenance
-        return {"attention_policy": "unknown", "attention_policy_source": "unreadable-registry"}
+        return {key: "unknown", key + "_source": "unreadable-registry"}
     entries = doc.get("models", doc) if isinstance(doc, dict) else doc
     for e in entries or []:
         if isinstance(e, dict) and e.get("name") == model:
-            declared = e.get("attention_policy") or "auto"
-            try:
-                cmd = worker_lookup() if worker_lookup else None
-            except Exception:  # noqa: BLE001
-                cmd = None
-            hf = e.get("hf_path") or ""
-            if cmd and hf and hf in cmd:
-                m = re.search(r"--attention-policy\s+(\S+)", cmd)
-                served = m.group(1) if m else "auto"
+            declared = parse_registry(e.get(key))
+            cmd = _worker_for(e, worker_lookup)
+            if cmd is not None:
+                served = parse_worker(cmd)
                 if served != declared:
                     raise RuntimeError(
-                        f"C35 tripwire: registry {registry_path!r} declares attention_policy="
+                        f"C35 tripwire: registry {registry_path!r} declares {key}="
                         f"{declared!r} for {model!r} but the live worker serves "
-                        f"attention_policy={served!r}. Launch the driver with MLX_SERVE_CONFIG "
+                        f"{key}={served!r}. Launch the driver with MLX_SERVE_CONFIG "
                         f"pointed at the served registry/overlay; refusing to record false "
-                        f"attention-policy provenance.")
-                return {"attention_policy": served, "attention_policy_source": "worker"}
-            return {"attention_policy": declared, "attention_policy_source": "registry"}
-    return {"attention_policy": "unknown", "attention_policy_source": "model-not-in-registry"}
+                        f"{key} provenance.")
+                return {key: served, key + "_source": "worker"}
+            return {key: declared, key + "_source": "registry"}
+    return {key: "unknown", key + "_source": "model-not-in-registry"}
+
+
+def registry_attention_policy(model: str, registry_path: str | None = None,
+                              worker_lookup=_worker_cmdlines) -> dict:
+    """M57 served attention policy: {"attention_policy", "attention_policy_source"}.
+
+    The live worker whose `--model` argument exactly equals the entry's hf_path is the SERVING
+    truth: its `--attention-policy <v>` flag (absent = "auto"), source "worker". Otherwise the
+    registry entry's `attention_policy` (absent/empty = "auto"), source "registry". Both
+    available and disagreeing REFUSES the run (C35 shape); two matching workers refuse too.
+    "unknown" is reserved for an unreadable registry or a model absent from it, and is
+    UNRESOLVED: it never pools and never compares (S1)."""
+    def from_worker(cmd):
+        m = re.search(r"--attention-policy(?:=|\s+)(\S+)", cmd)
+        return m.group(1) if m else "auto"
+    return _resolve_control(model, registry_path, worker_lookup, "attention_policy",
+                            from_worker, lambda v: v or "auto")
+
+
+def registry_lazy_prompt_embeddings(model: str, registry_path: str | None = None,
+                                    worker_lookup=_worker_cmdlines) -> dict:
+    """M57 served lazy-prompt-embeddings state: bare worker flag `--lazy-prompt-embeddings`
+    present -> True, absent -> False (source "worker"); else the registry entry's boolean
+    (absent -> False, source "registry"). Same attribution, refusal and "unknown" rules as
+    registry_attention_policy."""
+    def from_worker(cmd):
+        return re.search(r"(?:^|\s)--lazy-prompt-embeddings(?:\s|$)", cmd) is not None
+    return _resolve_control(model, registry_path, worker_lookup, "lazy_prompt_embeddings",
+                            from_worker, bool)
 
 
 # ----------------------------------------------------- M50 served-config tripwire (2026-09-28)
@@ -1031,8 +1097,10 @@ def _runtime_block(runtime: dict = None, model: str = None,
     block.update(registry_draft(model, registry_path) if model
                  else {"draft_kind": "unknown", "draft_source": "no-model-given"})
     block.update(session_retention_state())
-    block.update(registry_attention_policy(model, registry_path) if model
-                 else {"attention_policy": "unknown", "attention_policy_source": "no-model-given"})
+    for key, fn in (("attention_policy", registry_attention_policy),
+                    ("lazy_prompt_embeddings", registry_lazy_prompt_embeddings)):
+        block.update(fn(model, registry_path) if model
+                     else {key: "unknown", key + "_source": "no-model-given"})
     if runtime:
         block.update(runtime)
     return block

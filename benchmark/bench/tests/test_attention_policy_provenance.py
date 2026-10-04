@@ -90,7 +90,7 @@ def test_ac11_runtime_block_carries_policy_and_source(monkeypatch, tmp_path):
 
 
 def _man(v, policy=None, source=None):
-    rt = {}
+    rt = {"lazy_prompt_embeddings": False} if v >= 7 else {}   # S5: v7 rows carry both controls
     if policy is not None:
         rt["attention_policy"] = policy
     if source is not None:
@@ -126,5 +126,5 @@ def test_ac11_pre_v7_compatible_with_v7_auto_incompatible_with_v7_fused():
     assert P.is_compatible(_man(5), _man(7, "fused_v1", "worker")) is False
 
 
-def test_ac11_unknown_policy_on_a_v7_row_is_a_wildcard():
-    assert P.is_compatible(_man(7, "unknown"), _man(7, "fused_v1", "worker")) is True
+def test_ac11_unknown_policy_on_a_v7_row_is_NOT_a_wildcard():   # S1 supersedes the v7 draft
+    assert P.is_compatible(_man(7, "unknown"), _man(7, "fused_v1", "worker")) is False

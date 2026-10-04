@@ -300,21 +300,21 @@ def _bench_gate(model_a, model_b, bench, *, metric="acc", intersect=False):
                                f"generate/ar.py:163), so the arms ran different serving paths "
                                f"even though the registry says both were {da!r}")
 
-    # ATTENTION POLICY (M57, fingerprint v7) — fatal for EVERY metric, like draft_kind: it picks
-    # which attention kernel runs, so rows at different policies differ in numerics (text) and in
-    # latency/memory. Pre-v7 manifests read as "auto" (a KNOWN value, provenance.attention_policy_of),
-    # so a pre-v7 baseline still compares with a v7 `auto` row and refuses against `fused_v1`.
-    # A v7 row whose policy is unobserved ("unknown") warns rather than refuses (same never-condemn-
-    # on-ignorance rule as draft_kind).
-    pa = provenance.attention_policy_of(ma)[0]
-    pb = provenance.attention_policy_of(mb)[0]
-    if pa in _unobserved or pb in _unobserved:
-        warnings.append(f"attention_policy is UNOBSERVED on at least one side ({pa} vs {pb}) — "
-                        f"cannot rule out a (model x attention-kernel) composite")
-    elif pa != pb:
-        return _refuse(f"attention_policy differs ({pa} vs {pb}) — it selects the attention "
-                       f"kernel, which changes numerics and latency/memory, so the delta would be "
-                       f"a (model x serving-path) composite rather than a model comparison")
+    # SERVING CONTROLS (M57, fingerprint v7: attention_policy, lazy_prompt_embeddings) — fatal for
+    # EVERY metric, like draft_kind: they change the executed kernels/graph, so rows differ in
+    # numerics and in latency/memory. Pre-v7 manifests read as the default (a KNOWN value,
+    # provenance.control_of), so a pre-v7 baseline compares with a v7 default row and refuses
+    # against a non-default one. An UNRESOLVED value on a v7 row ("unknown"/absent) REFUSES
+    # (amendment 1 S1): there is no warning path, ignorance is not a wildcard here.
+    for k in provenance._SERVING_CONTROLS:
+        va, vb = provenance.control_of(ma, k)[0], provenance.control_of(mb, k)[0]
+        if va == "unknown" or vb == "unknown":
+            return _refuse(f"{k} is UNRESOLVED on at least one side ({va} vs {vb}) — the served "
+                           f"state could not be established, so the rows cannot be compared")
+        if va != vb:
+            return _refuse(f"{k} differs ({va} vs {vb}) — it changes the executed kernels, hence "
+                           f"numerics and latency/memory, so the delta would be a "
+                           f"(model x serving-path) composite rather than a model comparison")
 
     if metric == "peak_mem_gb":
         # Operator ruling 2026-08-17. The per-row field is the server's SESSION-CUMULATIVE

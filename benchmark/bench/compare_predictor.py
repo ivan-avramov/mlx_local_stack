@@ -54,15 +54,19 @@ _PENALTY_FIELDS = ("presence_penalty", "repetition_penalty")
 
 # M57: the tool accepts exactly ONE named must-differ key. Everything else — including the OTHER
 # member of this tuple, which then MUST MATCH — keeps its must-match rule.
-_MUST_DIFFER_KEYS = ("draft_kind", "attention_policy")
+_MUST_DIFFER_KEYS = ("draft_kind", "attention_policy", "lazy_prompt_embeddings")
 
 
 def _differ_value(manifest, key):
     """The value of a must-differ-capable key for one manifest. attention_policy goes through
     provenance.attention_policy_of so pre-v7 manifests read as "auto"."""
-    if key == "attention_policy":
-        return provenance.attention_policy_of(manifest)[0]
+    if key in provenance._SERVING_CONTROLS:
+        return provenance.control_of(manifest, key)[0]
     return (manifest.get("runtime") or {}).get(key)
+
+
+def _known(v):
+    return v is not None and v != "unknown"
 
 # Relabel stats.paired_delta's generic positional a_better/b_better (it is called (B, A) below,
 # so its "a" is our B) to name the actual tune instead of the function's argument order.
@@ -109,7 +113,10 @@ def _manifest_diffs(ma, mb, must_differ="draft_kind"):
         if k == must_differ:
             continue
         va, vb = _differ_value(ma, k), _differ_value(mb, k)
-        if va != vb:
+        if not (_known(va) and _known(vb)):
+            diffs.append(f"{k} is unrecorded/unresolved on at least one side ({va!r} vs {vb!r}) "
+                         f"— every selectable control must be KNOWN on both sides")
+        elif va != vb:
             diffs.append(f"{k} differs ({va!r} vs {vb!r}) — it must MATCH when the tool's "
                          f"must-differ key is {must_differ}")
 
@@ -178,7 +185,7 @@ def _gate(model, bench, tune_a, tune_b, must_differ="draft_kind"):
     ra_rt, rb_rt = ma.get("runtime") or {}, mb.get("runtime") or {}
     draft_a, draft_b = ra_rt.get("draft_kind"), rb_rt.get("draft_kind")
     val_a, val_b = _differ_value(ma, must_differ), _differ_value(mb, must_differ)
-    if val_a in (None, "unknown") or val_b in (None, "unknown"):
+    if not (_known(val_a) and _known(val_b)):
         return _refuse(f"{must_differ} is unrecorded on at least one side (tune {tune_a}={val_a!r}, "
                        f"tune {tune_b}={val_b!r}) — compare_predictor exists to measure a known "
                        f"{must_differ} delta and cannot when the state is unobserved")
