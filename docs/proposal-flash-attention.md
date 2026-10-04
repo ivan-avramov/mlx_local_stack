@@ -148,3 +148,234 @@ scratch memory per chunk goes away" was NOT observed. With the MLX allocator cac
 path and ~0 on the forced path at the measured shape, i.e. MLX's unfused fallback does not materialise the full 512 × 131072 score matrix
 either. The measured benefit is prefill time; any memory benefit must be shown on the real serving path (full-context peak) before it is
 claimed. Open for the dedicated session: whether to queue it as M57 per the review above.
+
+## Design session 2026-10-04 (Claude Fable 5.1) — M57 design AS PRESENTED; NOT approved, nothing built or run <!-- allow-shorthand -->
+
+Record of the design the operator was shown (ids P25–P44). Superseded where the reviews below say so.
+
+**Corrections to the 2026-10-04 review**
+
+- P25 — One call site. The prefill path of `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` reaches attention only through
+  `Qwen3_5Attention` (`mlx_vlm/models/qwen3_5/language.py`) into the native branch of `base.py::scaled_dot_product_attention`.
+  `chunked_attention` and `ensure_fused_sdpa` are vision-tower helpers, not chunked-prefill sites; chunking is the generation loop
+  reading `PREFILL_STEP_SIZE`.
+- P26 — Predicted TTFT from a linear + quadratic fit of the C82 ladder rows (325 s at 131K, 1063 s at 261K; quadratic share 64 % /
+  78 %) with the microbench 3.1× applied to the quadratic part: 8K ≈ unchanged, 64K 111 → 76 s, 128K 325 → 185 s, 256K 1063 → 500 s.
+  The review's "~3 s per 64K prompt" was ~10× too small; the microbench over-predicts the in-situ quadratic time ~1.4×.
+- P27 — Claimed that MTP verification is multi-query and unfused under `auto` (REFUTED in the review below).
+- P28 — The microbench was fp16; the served dtype was not instrumented.
+- P29 — humanevalplus/mbppplus prompts never exercise the long-key regime; add a long-context gate.
+- P30 — Two zero-build probes before funding a build: a no-model microbench matrix (dtype × query length × mask × key count: raises,
+  time, max-abs-diff) and an overlay-only 128K probe at `prefill_step_size: 1024` under `auto`.
+
+**Proposed M57 row** (P31–P33): registry `attention_policy: auto | force_fused` → mlx-serve `--attention-policy` → resolved once at
+worker model load → attribute on the instance's `Qwen3_5Attention` modules → keyword into the native branch only. Acceptance AC1–AC10:
+default preservation (byte-identical cmdline, no keyword reaches MLX), propagation (+ a forced-call counter in timings), loud failure
+(config-load errors, worker exits nonzero before READY, startup self-test at the real shape/dtype, runtime raise → 500 never graded),
+per-instance isolation, unchanged quantized-cache dispatch, scope (single-query, batch, linear-attention, vision untouched), numeric
+parity at up to 262K keys, fingerprint v7 (`attention_policy`, absent = `auto`, registry/worker mismatch refuses, `compare.py` refuses
+across policy, one parametrised A/B tool), live gate, pilot twice.
+
+**Qualification** (P34–P36): `auto` vs `force_fused` at step 512, shipped state (native16, MTP ON, deployed profile), k=2 order-balanced
+sessions with paired seed schedules + a same-seed reload control on `auto`. Per arm-session: latency ladder 8K/64K/128K/256K (TTFT,
+decode, `mx.get_peak_memory`, retrieval check, MTP counters, one cached continuation at 128K); humanevalplus/mbppplus n=100 paired
+`acc_strict@81920`; AgentBench 5-item pilot (smoke); a seeded 5 + 5 long-context retrieval / chain-reasoning subset near 128K. Adopt
+iff in both sessions: Q1 strict delta ≥ −5 pp and convergence no worse by > 5 pp; Q2 TTFT −15 % at 64K, −25 % at 128K, −30 % at 256K;
+Q3 decode ≥ −5 %; Q4 256K completes, peak ≤ auto + 0.5 GB, retrieval 1.0, long-context subset ≤ 1 loss of 10; Q5 no raise.
+`prefill_step_size: 1024` is a separate second arm against the arm-1 winner (derived pool limit 9 → 15 GB is a confound to pin).
+
+**Risks** (P37): hash changes; raises (sinks, masks, dtype, odd lengths); prealloc slices forcing a contiguous copy; Neural Accelerator /
+pool interaction and MLX-version dependence of `auto`; MTP verification; serving-path hash change; stacking a second provisional numerics
+change on native16 (C81).
+
+**Cost** (P38–P39): build 1.5–2 days CPU; qualification 12–18 box-hours (lower bound, re-sized from the seeded pilot).
+
+**Video / HySparse2 follow-up** (P40–P44; arXiv 2609.26368, DeepSeek V4.1-Flash): trained-in architectures (few full-attention layers,
+sparse layers reusing the preceding full layer's KV and top-k, prefill exiting at a mid-network handoff). P40/P44 — CPU-only pre-step:
+distribution of new tokens, tool-output tokens and context size per turn in the M54/M55 transcripts, to weight the benefit. P41 —
+watch-list entry for an open ~30B checkpoint of that family. P42 — MRCR-v2 / RULER-v2 / NoLiMa as a possible long-context axis (not M57).
+P43 — no inference-time sparse retrofit (position re-examined in the reviews below).
+
+## Review 2, 2026-10-04 (Claude Fable 5.1) — performance-maximizing lens <!-- allow-shorthand -->
+
+Operator's lens: maximise the performance potential (prefill, decode, memory) without sacrificing output quality beyond a negligible
+amount; implementation time is not a constraint. Evidence: MLX 0.32.2 / 0.32.3 / main dispatch source
+(`mlx/backend/metal/scaled_dot_product_attention.cpp`), the fork, the checkpoint config, existing ladder rows. NO new measurements; every
+number below is either cited or an estimate with its arithmetic. Written before reading the Codex review.
+
+**Source-verified corrections to the design record**
+
+- P45 — P27 is REFUTED. The drafter's `block_size` is 3, so verification queries are a handful of tokens. For query length ≤ 8 MLX uses
+  the fused *vector* kernel whenever `query_len × gqa ≤ 32` (gqa = 24 / 4 = 6 → ≤ 5 tokens), and `auto` falls back there only for head
+  dim 192. Single-token decode and MTP verification are ALREADY fused under `auto`; the flag changes only query lengths > 8.
+- P46 — Blanket `force_fused` would 500 in normal traffic. Query lengths 6–8 have no fused kernel at gqa 6 (vector kernel needs
+  `query_len × gqa ≤ 32`; the full kernel needs query length > 8), and `force_fused` raises when no kernel exists. The prefill loop's
+  tail is `(N − 1) mod step`, snapshot-landing shrinks chunks, and short continuation turns exist — 6–8 is routine. The other raise
+  conditions in 0.32.2: non-GPU stream, logsumexp (training), unsupported head dim, causal with query longer than keys. Sinks, array
+  masks and boolean masks do NOT raise (P37's list was wrong). The full kernel copies inputs only when the last-dim stride ≠ 1, so
+  preallocated-buffer slices are not copied (that risk is retired).
+- P47 — The checkpoint is `bfloat16`; the Neural-Accelerator kernel is selected for any non-fp32 dtype. The fp16 microbench has to be
+  repeated at bf16.
+- P48 — Upstream's rule for head dim 256 with 8 < query length < 1024 is literally "unfused path is faster", unchanged in v0.32.3
+  (2026-09-29) and on main. Our 512 × 131072 microbench says the opposite, so the heuristic is blind to KEY length. Upstream is reworking
+  these kernels (0.32.3: head-dim 512 and head-dim padding paths; main: blocked kernels).
+
+**New finding from existing rows — the 256K peak is unfused score scratch**
+
+- P49 — Native16 ladder peaks 42.52 / 44.84 / 47.14 GB at 130783 / 196115 / 261449 prompt tokens: slope 35.3–35.4 KB per token,
+  intercept 37.90 GB (independently measured short-prompt peaks: 37.70–37.85 GB). KV is preallocated at the cap, so it contributes no
+  slope. One 512-row score tensor (24 heads × 512 × 2 B = 24.6 KB/token) plus the whole-prompt input embeddings (5120 × 2 B =
+  10.2 KB/token) = 34.8 KB/token — 98.5 % of the observed slope. At 261449 tokens that is 6.43 GB of score scratch + 2.68 GB of
+  embeddings. PREDICTION: fused attention removes the 6.4 GB (peak 47.1 → ≈ 40.7 GB); embedding per chunk instead of up front removes
+  up to 2.7 GB more, bit-identically. This contradicts the microbench annotation ("no memory benefit"): that instrument never showed the
+  known positive (a 3.2 GB score tensor on the default path at 131072 keys), so its zero is void. Inference from three rows — to be
+  confirmed on the serving path. Consequences: (a) the pool-limit derivation (`_derive_cache_limit_gb`: heads × step × cap × 2 B +
+  2 GB = 9 GB) must become policy-aware, or a 2048 step derives 28 GB; (b) chunk size stops being memory-bound; (c) 6–9 GB of headroom
+  at 256K is a capacity result in its own right (C108 memory-pressure 500s; room for a higher-precision weight quant — a quality lever
+  outside this track).
+
+**Is `auto | force_fused` the maximal design? No.** Ranked by expected gain × confidence:
+
+- P50 — DO; replaces the flag. **Shape-aware policy in the fork**: force fused iff query length > 8 AND the key length is past a
+  measured crossover for that query length; otherwise MLX `auto`. Upstream claims unfused wins at these shapes, most turns live at short
+  keys, and a blanket force could slow them. The crossover comes from a bf16 no-model microbench (query length 9 … 4096 × key length
+  512 … 262144; raises, ms, max-abs-diff, peak with a validated instrument). Expected: TTFT ≈ 2.1× at 256K, 1.75× at 128K, 1.45× at
+  64K (P26) and peak −6.4 GB at 256K (P49). Confidence: high (time), medium-high (memory).
+- P51 — DO, same campaign. **Chunk size as a joint sweep under the fused policy** {512, 1024, 2048, 4096}. After fusion the
+  non-attention work is ≈ 47 % of a 256K prefill and > 85 % below 32K, i.e. it is what most turns pay. Larger chunks fill the
+  accelerator kernel (84 ms per 1024 vs 46 ms per 512 in the microbench), give larger weight GEMMs and 2–8× fewer chunk round-trips
+  (each ends in `mx.eval` + `mx.clear_cache()`). Estimate +5–20 % at every context size, weak confidence, ~1 box-hour latency-only
+  screen. Qualify quality ONCE on the winning (policy, step) pair against the `auto`@512 baseline, keeping fused@512 as a latency-only
+  attribution arm; fall back to OFAT only if quality fails. Supersedes P36's sequential second arm.
+- P52 — DO, small. Lazy per-chunk embedding (−2.7 GB at 256K, exact); care needed for prompts with merged image features.
+- P53 — PROBE, then build if it holds: **long-context decode kernel.** Decode drops 44 → 20 → 16 → 13 tok/s from short context to
+  131K / 196K / 261K, so ≈ 55 of 77 ms per token at 261K is context-proportional. Per verification round that is ≈ 8 ms per
+  full-attention layer to read ≈ 1.07 GB of keys + values, ≈ 130 GB/s effective (estimate; assumes ≈ 2.4 tokens per round) — well under
+  what unified memory should deliver (not measured). The path is MLX's generic two-pass vector kernel: its specialised GQA variant
+  exists only for gqa 8 with head dim 64/128, and its block count tops out at 1024 with an env override (`MLX_SDPA_BLOCKS`).
+  (i) No-model microbench at query length 1/3/4/5, 131K/262K keys, bf16, sweeping `MLX_SDPA_BLOCKS`, against a pure-read floor
+  (`mx.sum` over the same arrays) — minutes. (ii) If ≥ 1.5× headroom remains, a GQA-6 / head-dim-256 few-query kernel in the fork
+  (precedent: `_qwen3_5_ragged_sdpa_*` and the gated-delta kernels already use `mx.fast.metal_kernel`). Potential 13 → ≈ 25–30 tok/s at
+  256K and 20 → ≈ 30 at 128K — speculative until (i). Exact up to summation order. This is where a new kernel is most likely to pay.
+- P54 — DON'T (unless P50's microbench contradicts): custom exact PREFILL kernel. The fused kernel does ≈ 1.65e12 FLOP per layer-chunk
+  in 46 ms ≈ 36 TFLOP/s; the weight GEMMs imply the GPU sustains ≳ 59 TFLOP/s (1100 tok/s × 54 GFLOP/token, rough). Headroom ≲ 1.6× on
+  what will be about half of prefill → ≲ 20 % TTFT, against a vendor kernel upstream is still tuning.
+- P55 — PROBE ONLY; I expect it to fail. Sparse / approximate retrofit. Prefill: after P50/P51 the quadratic term is ≈ 265 s of ≈ 500 s
+  at 256K, so even a perfect scheme caps at another ≈ 2×. Training-free selection needs scores cheaper than QKᵀ; safe bound-based block
+  pruning prunes little; the only candidate with a mechanism is the HySparse shortcut (alternate full layers attend to the previous
+  full layer's top-k ∪ a recent window), which upstream TRAINED in. Errors land in the cache, compound over 16 layers and persist for
+  every later turn. Decisive experiment: an offline attention-mass recall probe on real 64K–128K prompts (share of layer j's softmax
+  mass captured by layer j−1's top-k ∪ last 128, k ∈ {1024, 4096, 16384}); fund a build only at ≥ 99.9 % mass with k ≤ 4096 for ≥ 99 %
+  of queries in every layer. My estimate of a retrofit passing quality with ≥ 1.5× extra speedup: 15–25 %, for weeks of work. Decode
+  sparsity rides the same probe but sits behind P53's exact kernel.
+- P56 — DO, cheap. Upstream: report the key-length blindness with the crossover table; read the 0.32.3 / main kernel changes before
+  writing any kernel. An MLX upgrade is its own numerics-changing arm — not folded into M57.
+- P57 — MEASURE, CPU-only. Avoided re-prefill: extend P40/P44 to count turns with zero cached tokens at large context (prefix drift,
+  compaction, eviction). One full re-prefill at 128K costs 185–325 s, more than dozens of ordinary turns; if frequent, retention beats
+  every kernel.
+- P58 — LATER, gated on P53(i). Cache-precision redesign: int8 keys/values with a purpose-built fused kernel would halve decode
+  bandwidth and save ≈ 8 GiB; uniform8 lost in C82 because its path is unfused, not because of its precision.
+
+**Changes to acceptance and qualification (P59)**: the startup self-test and scope tests sweep query lengths 1–9 and odd tails; add a
+criterion that the pool-limit derivation is policy-aware; parity at bf16; Q4 becomes a prediction test (256K peak ≤ auto − 5 GB, else
+the P49 mechanism is wrong — investigate; report peak and pool separately); add Q6 (8K and 32K TTFT no worse than −3 %); decode is
+expected UNCHANGED (its kernels are untouched), so a decode shift beyond noise is a red flag, not a bonus. The overlay-only step-1024
+probe stays as the zero-build mechanism check and now also tests P49 (128K peak should fall ≈ 3.2 GB) — valid only if the prompt's
+tail `(N − 1) mod 1024` is short, because an unfused tail re-creates the scratch.
+
+**Roadmap**: (1) zero-build probes, ≈ 1 box-hour + CPU: bf16 crossover/raise/parity matrix, vector-kernel decode microbench with the
+read floor, step-1024 overlay probe with peak, transcript analysis (P40/P44/P57). (2) Build M57 as shape-aware policy + policy-aware
+pool limit + lazy embeddings + provenance, 2–3 days. (3) Latency/peak screen of policy × step, 1–2 box-hours. (4) Qualify the winner,
+12–18 box-hours. (5) Decode kernel as a separate milestone if (1) shows ≥ 1.5× headroom. (6) Sparse probe and int8 cache only behind
+their gates.
+
+## Review 3, 2026-10-04 (Codex CLI, model `gpt-6-astra`, cold, read-only) — condensed <!-- allow-shorthand -->
+
+Brief: the design record above plus the operator's performance-maximizing lens; no conclusions from review 2 were given to it. Raw text:
+`$STACK_WORKDIR/m57/codex_review_1.md` (not committed — it carries absolute paths). Verdict: **revise M57 before implementation;
+`auto | force_fused` is a useful experimental control, not a performance-maximal design.** It fetched the MLX 0.32.2 and main sources.
+
+- X2 — Ordinary prefill path confirmed (P25). MTP verification does NOT go through `Qwen3_5Attention.__call__`: a separate verifier
+  (`mlx_vlm/models/qwen3_5/speculative_verifier.py`) attends a length-2 block jointly with an array mask and longer unpadded blocks as
+  individual single-query calls. An attribute threaded only through the ordinary call misses these sites.
+- X3 — Dispatch table for head dim 256, GQA 6 (source prediction): 512-token chunk and 9–511 tails fall back under `auto`, fused when
+  forced; 6–8 fall back under `auto` and RAISE when forced; 1–5 and single-token decode are already the fused vector family; ≥ 1024
+  with a causal string is fused under `auto`, with an array mask it falls back. An unrestricted multi-query policy can pass the
+  headline benchmark and fail legitimate continuations. Preallocation does not force a contiguous copy.
+- X4 — bf16 is the expectation, still needing live observation. The fallback explicitly builds QKᵀ, masks, softmaxes and multiplies V;
+  the recorded ≤ 0.07 GiB transient does not establish absence of score materialisation (one logical score tensor is 3 GiB at 131072
+  keys) — the instrument needs validating.
+- X5 — P26 arithmetic approximately confirmed (fit `T(N) ≈ 0.0008986 N + 1.21209e-8 N²` s; 64K 111 → 76 s, 128K 325 → 184 s,
+  256K 1063 → 502 s); the fit is not a component profile, and the 12–18 box-hour figure is not supportable before a pilot.
+- X6 — P29 confirmed; a random-tensor matrix cannot establish served dtype or layout; the pool limit is applied in GiB; P40/P44
+  should count actually reprocessed tokens, cache misses and retirement work; P43's blanket exclusion of sparse retrofits is rejected.
+- Ranked options: X7 versioned shape/dtype/mask dispatch policy + chunk-size co-design (512/1024/2048, boundary-aware; ≈ 9 % further
+  attention time at 1024). X8 eliminate remaining avoidable re-prefill (M48 already took 64K continuation 130 → 1.2 s; do not count it
+  twice; decide by transcript/cache-event accounting). X9 exact long-context decode / verification kernels — the verifier's per-query
+  decomposition means up to 3× more logical KV scans than a joint pass. X10 exact prefill kernels / upstream (another 2× on attention
+  would be ≈ 1.36× beyond the forced result; main keeps the 512-query fallback heuristic; pin a commit). X11 GatedDeltaNet and MLP share:
+  the Metal recurrent kernel loops through time while a chunk-parallel formulation exists only on the non-Metal route; profile first.
+  X12 fused low-precision cache (8 GiB at 8 bits; uniform8 lost on its unfused path; the TurboQuant fused MSE prefill kernel is a
+  `NotImplementedError` stub). X13 sparse / approximate attention: decode first, prefill behind a stronger gate, both behind a replay of
+  captured queries measuring missed attention mass.
+- X14 — AC1–AC10 are not executable yet: add an eligibility table (tails, both verifier branches, snapshot cuts, cache
+  retirement/refloor, near-cap appends); independent numerical references with relative/RMS error, NaN and causal-leakage checks;
+  actual kernel evidence (a forced-call counter only proves an argument was passed); worker readback of the resolved policy; historical
+  absence must not be recorded as observed `auto`; a narrowly scoped A/B exception; a startup self-test bounded under the 300 s
+  readiness timeout.
+- X15 — Q1/Q4 can accept material damage (one loss in 5 + 5 is 10–20 pp) and reject a harmless stochastic miss (retrieval 1.0);
+  n=100 is not automatically powered for ±5 pp; stratify retrieval / reasoning / agentic code with distractors and sustained
+  continuations.
+- X16 — Q2/Q3/Q5 can reject good designs: mandatory wins at every cold rung exclude memory or decode gains; one cached continuation is
+  not the workload; use pre-registered workload weights, repeated timing blocks and tail latency. The 261449-token rung leaves 695
+  tokens (≤ 556 thinking tokens), so capacity completion is not reasoning qualification.
+- X17 — Roadmap: correct the record → validate instruments and capture component costs → qualify dispatch × chunking → fund exact
+  prefill / decode / recurrent work from measured bottlenecks → fused cache precision and sparse decode → pinned recipe after
+  multi-turn quality and full-context stability.
+
+## Reconciliation, 2026-10-04 (Claude Fable 5.1) — where the two reviews stand <!-- allow-shorthand -->
+
+Codex's code claims were re-checked against the fork before recording (verifier branches, GatedDeltaNet routes, TurboQuant stub, GiB
+units: all confirmed).
+
+**Both reviews, independently**: no blanket `force_fused` (query lengths 6–8 raise); the policy must be shape-aware and versioned;
+chunk size is co-designed with the policy, not a later arm; bf16; the microbench's memory zero is void; measure avoidable re-prefill
+before funding kernels; sparse retrofits are probe-gated with decode ahead of prefill; upstream main keeps the 512-query heuristic.
+
+**Codex found, review 2 missed**
+
+- P60 — The verifier is a second attention site (X2). The policy has to cover or explicitly exclude it, and it REVISES P53: with block
+  3 a verification round makes up to three full scans of each layer's keys and values, so review 2's "≈ 130 GB/s effective" is ≈ 390
+  GB/s per scan — the vector kernel is probably already near the memory-bandwidth limit. The decode lever is therefore a JOINT
+  verification scan (the existing fused vector kernel accepts up to 5 queries at GQA 6), not a faster single-query kernel. Estimate if
+  the context-proportional decode term is all attention and scans drop 3 → 1: 77 → ≈ 40 ms per token at 261K (13 → ≈ 25 tok/s),
+  50 → ≈ 31 ms at 131K (20 → ≈ 32 tok/s). Cost: the per-query decomposition is deliberate (the fork's "exact" verifier keeps
+  verification numerics identical to plain decode); a joint scan gives that up and requalifies MTP-ON. After that, bandwidth is the
+  wall and only a narrower cache (P58 / X12) moves it.
+- P61 — GatedDeltaNet on Metal is a per-token kernel while a chunk-parallel form exists in the same file (X11). Review 2 assumed the
+  non-attention share was weight-GEMM-bound; a component profile has to settle it before any chunk-size conclusion.
+- P62 — Qualification defects accepted (X14–X16): replace "≤ 1 loss of 10" with stratified, discordance-sized long-context sets; the
+  256K rung is a capacity/retrieval rung only (≤ 556 thinking tokens of headroom); adoption by pre-registered workload weights rather
+  than a win at every cold rung; kernel evidence beyond a call counter; pre-v7 manifests record `auto` with source `default`, never
+  `observed`; self-test bounded under the readiness timeout.
+
+**Review 2 found, Codex did not have**: P49 (ladder-slope evidence that ≈ 6.4 GB of the 256K peak is score scratch and ≈ 2.7 GB is
+whole-prompt embeddings), P52 (lazy embeddings), the `MLX_SDPA_BLOCKS` override, and the bound on a custom prefill kernel (P54).
+
+**Remaining disagreement**: none on direction. On the custom exact prefill kernel, Codex ranks it fourth with ≈ 1.36× if attention
+doubles again; review 2 bounds it at ≲ 20 %. The same captured-tensor benchmark decides it.
+
+**P63 — Consolidated recommendation** (supersedes the roadmap in review 2):
+
+1. Evidence before any build. CPU: transcript and cache-event accounting (new / tool-output / reprocessed tokens, context size, cold
+   replays). GPU, no model, ≈ 1 box-hour: bf16 matrix (crossover by query × key length, raises, parity against an independent fp32
+   reference, a memory instrument validated on the known positive), vector-kernel scan time against a read floor with
+   `MLX_SDPA_BLOCKS`. One overlay probe at 128K with `prefill_step_size: 1024` under `auto` (TTFT and peak).
+2. A component profiler in the fork (env-gated, off by default): attention / GatedDeltaNet / MLP / verifier time per chunk and per
+   round on the served path. This is the instrument every later funding decision needs.
+3. M57 = versioned shape-aware dispatch policy over ALL native call sites (attention module, verifier, tails, snapshot cuts) + chunk
+   size chosen jointly + policy-aware pool limit + lazy embeddings + provenance; qualified once on the winning recipe with the
+   corrected, stratified quality design.
+4. Next milestone candidate: long-context decode — joint verification scan, MTP-ON requalified.
+5. Then, each behind its measurement: GatedDeltaNet / MLP prefill work, upstream report and pinned-commit kernel comparison, fused
+   low-precision cache, sparse decode, sparse prefill last.
