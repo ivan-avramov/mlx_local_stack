@@ -580,3 +580,16 @@ def test_traffic_metrics_handles_empty_or_malformed_export():
     assert P.traffic_metrics({}) == {"turns": 0, "input_tokens_incremental": 0, "input_tokens_cumulative": 0,
                                      "output_tokens": 0, "max_context": 0}
     assert P.traffic_metrics({"messages": [{"info": {"role": "assistant"}}]})["turns"] == 1
+
+
+def test_scrub_pii_replaces_login_name_in_ls_owner_column(monkeypatch, tmp_path):
+    """`ls -l` output captured in log tails carries the login name in the owner column
+    ("drwxr-xr-x@ 7 <user>  staff ..."), which the path-only scrub left in 6 landed M55 rows
+    (2026-10-04). The whole-word login name must become $USER; substrings inside other words
+    must not be touched."""
+    import run_opencode_probe as p
+    monkeypatch.setattr(p, "_stack_workdir", lambda required=False: None)
+    monkeypatch.setattr(p.os.path, "expanduser", lambda s: "/Users/zed" if s == "~" else s)  # allow-pii-pattern (synthetic)
+    monkeypatch.setattr(p, "_login_name", lambda: "zed")
+    out = p._scrub_pii("drwxr-xr-x@ 7 zed  staff   224 Oct  4 .\n/Users/zed/x zedx dazed")  # allow-pii-pattern (synthetic)
+    assert out == "drwxr-xr-x@ 7 $USER  staff   224 Oct  4 .\n$HOME/x zedx dazed"

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import getpass
 import os
 import re
 import shutil
@@ -108,7 +109,19 @@ def _scrub_pii(s: str) -> str:
     home = os.path.expanduser("~")
     if home and home != "~":
         s = s.replace(home, "$HOME")
+    # `ls -l` output echoed into log tails carries the login name in the owner column
+    # ("drwxr-xr-x@ 7 <user>  staff ..."); 6 landed M55 rows leaked it (2026-10-04). Whole-word only.
+    name = _login_name()
+    if name and len(name) >= 3:
+        s = re.sub(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])", "$USER", s)
     return s
+
+
+def _login_name() -> str:
+    try:
+        return getpass.getuser()
+    except Exception:
+        return os.path.basename(os.path.expanduser("~"))
 
 
 def _scrub_then_tail(s: str, n: int) -> str:
