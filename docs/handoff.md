@@ -1,4 +1,4 @@
-# Handoff — 2026-10-04 (23:00 UTC): M57 approved (C111); evidence steps 1–2 COMPLETE; build NOT started — operator confirmation owed
+# Handoff — 2026-10-04 (23:15 UTC): M57 build IN FLIGHT (C112); evidence steps 1–2 complete; M58 queued; push NOT approved
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/proposal-flash-attention.md` (the whole M57
 record: proposal → reviews → design P25–P44 → reviews 2/3 → reconciliation → evidence E1–E15 with P65–P75), `docs/PLAN.md` (M57 row),
@@ -33,17 +33,17 @@ record: proposal → reviews → design P25–P44 → reviews 2/3 → reconcilia
 - Warm-state drift (new AGENTS.md rule): ≈ 20 % slower prefill work when a run follows a five-minute GPU load; compare latency arms
   only in matched state with a ≥ 10 min cooldown.
 
-## Pending (operator)
+## In flight / pending
 
-1. **Confirm the M57 build on the measured case** (approved when the expected gain was ≈ 2×). Recommendation: build — 256K memory
-   headroom, better accuracy, −16…−22 % TTFT at 128K and ≈ −30 % predicted at 256K, and it unlocks larger chunks for the dense path.
-   On go: M54 funnel from `docs/specs/m57-attention-policy.md` (Sonnet implementer per repo: fork, mlx-serve, stack provenance;
-   cold reviews by a Claude reviewer and Codex; live gate; pilot twice; qualification design frozen before the first arm).
-2. Queue or not: joint MTP verification scan as the next milestone; dense prefill path (dequantise-then-dense at chunks ≥ 2048) as a
-   later candidate. Neither is in PLAN.
-3. Push approvals: stack commits since `bd2823d`; fork branch `m57-prefill-profile` (merge to fork `main` or keep as a branch).
-4. Carried: record P41 (watch-list for an open HySparse2-class checkpoint) and P42 (harder long-context benchmarks) in
-   `docs/open-questions.md`? M56 stays PARKED (C110).
+1. **M57 build (C112: go on the measured case).** Three implementers from `docs/specs/m57-attention-policy.md`: fork branch
+   `m57-attention-policy` (on top of `m57-prefill-profile`), `../mlx-serve` branch `m57-attention-policy`, stack provenance
+   (fingerprint v7, compare) on a worktree branch. Then: cold reviews (Claude reviewer + Codex `gpt-6-astra`, prompt on stdin),
+   GPU parity gate AC12, live gate, pilot twice, qualification design frozen before the first arm (matched machine state).
+2. **M58 queued** (joint MTP verification scan) — spec owed after the M57 build.
+3. **Push: NOT approved** (operator undecided, C112). Nothing pushed: stack commits since `bd2823d`, fork branches. Recommendation
+   on record: do not merge the fork branches into fork `main` before M57 passes review — one serving-path hash change, not two.
+4. Not queued: dense prefill path (dequantise-then-dense at chunks ≥ 2048). Carried: P41 / P42 into `docs/open-questions.md`?
+   M56 stays PARKED (C110).
 
 ## Rules learned this session
 
@@ -56,4 +56,4 @@ record: proposal → reviews → design P25–P44 → reviews 2/3 → reconcilia
 - The worker's stderr log (`$TMPDIR/mlx-manager-logs/<model>.log`) is recreated at worker start — read the whole file per arm.
 - Profiled or fork-branch runs write to the workdir only; nothing from them enters `benchmark/results/`.
 
-Next decision id C112; discussion ids continue from P80.
+Next decision id C113; discussion ids continue from P80.

@@ -15,6 +15,8 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
+### C112 — RULED 2026-10-04 (operator: "go with your recs"): (1) the M57 build proceeds on the MEASURED case (128K TTFT −16…−22 %, predicted 256K −30 % and −7.9 GB peak, better numerical accuracy; not a 2× lever; no effect expected on the current agentic axes); (2) the joint MTP verification scan is queued as M58; (3) PUSH NOT APPROVED — operator undecided; nothing is pushed. Record: `docs/proposal-flash-attention.md` E1–E15.
+
 ### C111 — RULED 2026-10-04 (operator: "accepted: proceed with your recs"): (1) run the step-1 evidence (CPU transcript accounting, ≈ 1 box-hour of no-model GPU microbenchmarks, one 128K step-1024 probe); (2) fund the env-gated component profiler in the fork; (3) M57 is the versioned shape-aware dispatch policy with chunk size chosen jointly (P63 item 3), NOT the `auto | force_fused` flag. Standing lens for this track: maximise performance potential without sacrificing output quality beyond a negligible amount; implementation time is not a constraint. Record: `docs/proposal-flash-attention.md`.
 
 ### C110 — RULED 2026-10-03 (operator): (a) wait and watch — re-check on every LiveCodeBench release; queue M56 when a window starting after 2026-06 reaches ≥100 problems. No self-collected set unless M55 surfaces an unresolved rank reversal. Original entry kept below.

@@ -16,7 +16,7 @@ Applies to the NATIVE branch of `mlx_vlm/models/base.py::scaled_dot_product_atte
 Otherwise call MLX exactly as today (no `force_fused` keyword at all). Constants 8, 128 and 2**28 belong to the policy version;
 changing one is a new version name. Rationale is in the proposal doc (E1, E2, E4, E10); do not restate it in code beyond one line.
 
-## Fork (`../mlx-vlm`, branch `m57-attention-policy` from `main`)
+## Fork (`../mlx-vlm`, branch `m57-attention-policy` from `m57-prefill-profile` @ `21d62fe6` — one lineage, one later merge and submodule bump)
 
 - CLI `--attention-policy {auto,fused_v1}` (default `auto`) → env handoff like the other worker arguments → resolved ONCE at model
   load into a policy object stored on the model instance and on each qualified attention module (plain attribute, not a
