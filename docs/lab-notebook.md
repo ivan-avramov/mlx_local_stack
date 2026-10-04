@@ -4375,3 +4375,26 @@ wall, not 43 %); argued two sessions cannot support an interval and that chain 3
 as a principal axis (public tests, HumanEval ancestry → correlated items, short synthesis only) and the LiveCodeBench rejection as a false
 tradeoff (freeze per campaign, refresh between campaigns). Both recommendations revised accordingly (open-questions C109, handoff Pending 1).
 
+## 2026-10-04 — M55 polyglot gap: 18 legs over ~35 h, three box-level traps found, landed
+
+**Run.** `$STACK_WORKDIR/m55/run_m55.py s1 s2` (leg-resumable, RUNLOG) on lean router pid 86904 (draft-OFF overlay, session max 1, APC
+absent), launched 2026-10-03 08:05 UTC after a 5-item seeded pilot run twice on the loaded first pick (4/5 pass-identical, wall diverging
+up to 1.8× — the opencode loop is unseeded, so AC2 became pass-identity with the discordance recorded). Order s1 → s2, each session
+first pick → second pick → `Ornith-1.0-35B-mlx-uniform-4bit`, rust → java → javascript. ALL LEGS DONE 2026-10-04 19:05 UTC. Results and
+mechanisms: `campaign-results.md` 2026-10-04; report `benchmark/results/m55_polyglot_gap_report.md`.
+
+**Traps.** (1) The runner's unload liveness check `pgrep -f mlx_vlm.server` matched the Claude-side Monitor shell whose command line
+contained that literal string: one FATAL (2-min window, misdiagnosed as slow teardown and "fixed" by lengthening the wait) and one 6-minute
+stall until the monitor was stopped. Rule: `pgrep -f` liveness patterns must be self-safe (`mlx_vlm[.]server`); checkers' own command lines
+can contain the pattern text. (2) Spotlight indexed the per-item node_modules trees the javascript grading writes under the scratch dir
+(5+ `mdworker` at 35–57 % CPU, load 12); folder-level fix is the `.noindex` directory suffix (`.metadata_never_index` is volume-root only
+on current macOS): `scratch/octmp → octmp.noindex` + symlink, applied live (the sub-second unload gap made an idle-window waiter impossible);
+no item was affected. (3) The login name leaked through the owner column of `ls -l` output captured in log tails (6 rows); `_scrub_pii` now
+replaces the whole-word login name with `$USER` (test added), landed rows were scrubbed by hand before commit.
+
+**Readings.** First pick Rust 19/19, Java 17/17, JavaScript 15/19; second pick 15/14, 15/12, 18/20; `Ornith-1.0-35B-mlx-uniform-4bit`
+15/17, 11/14, 15/17. The second pick's losses are stall kills (31/132), `Ornith-1.0-35B-mlx-uniform-4bit`'s are loop kills and sandbox-rejected absolute paths;
+JavaScript is the second pick's only lead, consistent in both sessions but inside ±27 pp. No ladder change proposed.
+
+**Daily driver restored** 2026-10-04 19:08 UTC (router pid 74568, session max 2, APC absent, OWUI healthy).
+

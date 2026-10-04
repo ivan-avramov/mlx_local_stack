@@ -2,6 +2,45 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-04 — M55 COMPLETE: polyglot language gap (Rust / Java / JavaScript), three models × two sessions, opencode 1.18.30
+
+Spec `docs/specs/m55-polyglot-gap.md` (P17 ruling after Codex review 9). C37 22-exercise draws per language (66 items), `run_opencode_probe`
+(pinned opencode 1.18.30, M9 grading containers, progress gate 300 s ticks / 2-tick stall / loop detector / 1 h ceiling), lean router on the
+draft-OFF overlay (`MLX_VLM_CACHE_SESSION_MAX=1`, APC absent, 140 W + battery gate every leg), deployed sampling, thinking ON. k=2 sessions
+(fresh loaded instance per model per session, C109). Pilot: 5 seeded items ×2 → 4/5 pass-identical (opencode loop is not byte-deterministic;
+AC2 amended). Rows `benchmark/results/<model>/opencode_<lang>.m55.s{1,2}.jsonl`; report `benchmark/results/m55_polyglot_gap_report.md`.
+Baselines re-measured in the same chain; the C37 rows (opencode 1.18.15) are not pooled.
+
+| passes / 22 (s1 / s2) | `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | `Qwen3.8-27B-mlx-uniform-4bit` | `Ornith-1.0-35B-mlx-uniform-4bit` |
+|---|---:|---:|---:|
+| rust | **19 / 19** | 15 / 14 | 15 / 17 |
+| java | **17 / 17** | 15 / 12 | 11 / 14 |
+| javascript | 15 / 19 | **18 / 20** | 15 / 17 |
+| all 66 | **51 / 55** | 48 / 46 | 41 / 48 |
+| stall / loop kills (2 sessions) | 10 / 2 | 31 / 0 | 7 / 7 |
+| mean wall s/item | 351 | 382 | 207 |
+
+Paired vs the first pick (cluster bootstrap 95 % CI, TOST ±5 pp, exact McNemar; per-language MDE ±27 pp, all-66 ±16 pp):
+- rust: second pick −18 pp [−36, 0] (s1), −23 pp [−41, −5] **a_better for the first pick** (s2, 5:0 exclusive); `Ornith-1.0-35B-mlx-uniform-4bit` −18 / −9 pp, inconclusive.
+- java: second pick −9 / −23 pp, `Ornith-1.0-35B-mlx-uniform-4bit` −27 / −14 pp — all inconclusive, all in the first pick's favour in both sessions.
+- javascript: second pick **+14 / +5 pp** (its only lead, consistent across sessions, inconclusive; s1 exclusive 6:3); `Ornith-1.0-35B-mlx-uniform-4bit` 0 / −9 pp.
+- all 66: second pick −4.5 pp [−9, +20] (s1), −13.6 pp [−24, −3] **a_better for the first pick** (s2, McNemar p=0.035); `Ornith-1.0-35B-mlx-uniform-4bit` −15 / −11 pp (inconclusive).
+
+**Session repeatability** (same model, discordant items of 22): first pick 2 / 4 / 6, second pick 1 / 7 / 4, `Ornith-1.0-35B-mlx-uniform-4bit`
+8 / 9 / 8 — `Ornith-1.0-35B-mlx-uniform-4bit` is the noisiest; its s2 gains (rust +2, java +3, javascript +2) are inside that noise.
+
+**Mechanisms.** The second pick's losses are stall kills (31 across 132 items: 4–5 read turns then no further tool call until the 2-tick gate),
+not wrong code; the first pick stalls at a third of that rate. `Ornith-1.0-35B-mlx-uniform-4bit` fails by loop kills and sandbox-rejected
+absolute paths instead. Sandbox rejections (opencode's project-boundary check on absolute paths) are model behaviour, matched across arms,
+mostly recovered by a relative-path retry. JavaScript is the first pick's weakest language and the second pick's strongest, reproducing the
+README's historical note. Wall per item is not citable to ±5 %: Spotlight indexing of the grading trees inflated some javascript items until
+the scratch dir was renamed `.noindex` mid-chain (s2 is cleaner than s1).
+
+**Ladder (recommendation, no change proposed):** B order stands and is strengthened: the first pick covers Rust and Java (its two previously
+unmeasured languages) ahead of both comparators in both sessions and is ahead on the 66-item total in both. The second pick's JavaScript edge
+is consistent but inconclusive (AC6 not triggered: no CI upper bound < −5 pp against the first pick). `Ornith-1.0-35B-mlx-uniform-4bit`
+stays 3rd. Coverage gap closed; the README's "Rust/Java/JavaScript unmeasured" is retired.
+
 ## 2026-10-03 — M54 chain 4 COMPLETE: the CLEAN LATENCY CAPTURE (quiet box, same seeds) + a second same-harness acc sample
 
 Purpose (operator P11): chains 1 and 3 carry wall-clock/rate numbers poisoned by the host-load incident; chain 4 is the only chain whose
