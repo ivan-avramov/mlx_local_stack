@@ -99,3 +99,50 @@ changing one is a new version name. Rationale is in the proposal doc (E1, E2, E4
 - Adopt (operator approval, PROVISIONAL) iff quality holds (paired strict delta ≥ −5 pp in both sessions, long-context subsets
   with no paired loss beyond their pre-registered bound) AND no rung is slower by more than 3 % AND at least one of: 256K peak
   lower by ≥ 5 GB; TTFT lower by ≥ 8 % at 128K. A red flag, not a bonus: decode moving by more than 5 %.
+
+## Amendment 1 (2026-10-04, after the first cold reviews of the build — a Claude reviewer and Codex `gpt-6-astra`: router SHIP, fork and stack FIX-THEN-SHIP — and a live smoke)
+
+Binding; where it conflicts with the text above, this wins.
+
+**Policy `fused_v1` — two more conditions (rules 5 and 6), same version name (nothing has shipped):**
+
+5. batch size is 1 and the cache carries no left padding (single-sequence path only; the left-padded / ragged batch prefill —
+   including its row-by-row recursion into the same model — must never be forced);
+6. with a causal string mask, `qL <= key_length`.
+
+A non-`auto` policy on a worker whose default device is not the GPU: refuse at load (exit nonzero before READY). No skip.
+
+**Fork**
+
+- F1 Counters: `sdpa_forced` / `sdpa_auto` appear in the `timings` object of the HTTP response (non-streaming and streaming
+  session-cache path) and on the "Request completed" log line, ONLY when the policy is not `auto` — under `auto` the response bytes
+  are unchanged (no `null` keys). Endpoint-level test on the non-streaming cached path.
+- F2 Scope: test rules 5 with a real padded batch (B > 1, eligible row lengths) and the row recursion.
+- F3 Self-test: take the force decision at `key_length = max_kv` (so 9 and 127 are forced by rule 4) but issue the calls at 4096
+  keys; query dtype from the model's actual attention computation, not a stand-in; on GPU, zero forced calls executed is a
+  FAILURE; log calls run and elapsed time. A hung self-test is bounded by the router's readiness timeout — state that in the
+  docstring instead of a post-hoc check that cannot fire.
+- F4 Exit before READY: test the lifespan / readiness path with a failing policy resolution (no uvicorn), not `issubclass`.
+- F5 Lazy prompt embeddings are OFF by default and enabled only by the worker flag `--lazy-prompt-embeddings` (env handoff,
+  resolved once at load onto the model instance). Without the flag every path is byte-identical to before the commit.
+- F6 Lazy-embedding tests against the eager path: RAW logits, prompt-end cache arrays and offsets, a warm session cache with a
+  non-zero initial offset, snapshot landing and prompt-end retention boundaries, the MTP capture flow if a tiny model can drive
+  it, and a real multimodal merge (must take the eager path).
+
+**Router**
+
+- `ModelConfig.lazy_prompt_embeddings: bool | None = None` (bool or null, vision type only, same validation style as
+  `cache_session_shrink`); `_build_command` appends `--lazy-prompt-embeddings` only when it is `True`. Default command unchanged.
+
+**Stack**
+
+- S1 An unresolved policy on a v7 manifest (`unknown`) never pools and never compares: `is_compatible` treats it as incompatible
+  with everything except an identical `unknown` on resume of the SAME run, and `compare.py` REFUSES (no warning path).
+- S2 Pre-v7 normalisation applies to every older version, including the v1 early return in `is_compatible`; test v1–v6.
+- S3 `compare_predictor.py`: both selectable controls (`draft_kind`, `attention_policy`, `lazy_prompt_embeddings`) must be KNOWN
+  on both sides in every mode; exactly the named one differs.
+- S4 Worker attribution: consider ALL worker processes, match the exact value of the `--model` argument, refuse on ambiguity.
+- S5 `lazy_prompt_embeddings` joins the v7 fingerprint with the same rules as `attention_policy` (worker flag presence, else
+  registry, pre-v7 = false / `default-pre-v7`, mismatch refusal, compare refusal, selectable must-differ key).
+
+**Qualification** gains arm E: `fused_v1` + `lazy_prompt_embeddings` (latency / peak screen; quality only if adopted).
