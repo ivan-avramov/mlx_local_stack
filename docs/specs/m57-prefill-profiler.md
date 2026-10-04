@@ -104,3 +104,20 @@ Binding; where it conflicts with the text above, this wins.
 
 Known and accepted: the batched (non-session) prefill path has no hooks — a profiled run must confirm lines appear before trusting
 an empty log; with the switch unset each layer hook costs one function call returning `None`.
+
+## Amendment 2 (2026-10-04, after review round 2 of `aef10c6e` — both reviewers: correct for the planned qwen3_5 / MTP / native16 run; FIX-THEN-SHIP for the rest)
+
+Binding.
+
+1. Entry fence also evaluates precomputed `position_embeddings` when they exist. Its time is reported as its own field `entry=`
+   (not `other`): the first chunk's value contains the whole-prompt embedding (and any vision work), as in production.
+2. Every line carries `layers=<decoder layers that declared themselves in the window, per chunk>`. When it is 0 the cache state is
+   evaluated right after the model call and reported as `forward=`; `cache_post` then never contains the forward pass.
+3. The terminal layer is treated as dead only when the chunk kwargs carry no `capture_layer_ids` / `return_hidden`; "terminal" is
+   the last layer actually executed, not a stored index.
+4. An `observe` hook on a cache (EpiCache) is closed on the arrays it creates and reported as `observe=`; queries it consumes are
+   live even in the terminal layer. Fix the module docstring accordingly.
+5. A profiler that breaks before its first complete chunk prints one `[prefill_profile] chunks=0 broken=1 reason=<repr>` line.
+6. Tests: execution-sensitive sentinels (wrap the terminal layer's `o_proj`, `linear_attn.out_proj`, `mlp`, the final norm and the
+   head; assert none is evaluated with the switch set, with a positive control proving the sentinel fires when consumed); terminal
+   KV update and terminal recurrent state ARE evaluated before their phase closes; the no-line test reads stderr once.
