@@ -139,7 +139,18 @@ def _scratch_dir(name: str):
     # root by the given path STRING while its tools canonicalize, so a symlinked component
     # makes every absolute tool path fail the project-boundary prefix check and auto-reject
     # in non-interactive `run` mode (sessions "complete" in seconds with no edits).
-    with tempfile.TemporaryDirectory(prefix=f"oc-{name}-") as tmp:
+    # 2026-10-04 (M55): Spotlight indexes the per-item node_modules trees and storms the box
+    # (load 12). macOS skips `*.noindex` directories, so the scratch root defaults to
+    # `<STACK_WORKDIR>/scratch/octmp.noindex` (created on demand); `OPENCODE_PROBE_SCRATCH`
+    # overrides it. TMPDIR is no longer load-bearing for the probe.
+    root = os.environ.get("OPENCODE_PROBE_SCRATCH")
+    if not root:
+        workdir = _stack_workdir(required=False)
+        if workdir:
+            root = str(Path(workdir) / "scratch" / "octmp.noindex")
+    if root:
+        os.makedirs(root, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f"oc-{name}-", dir=root) as tmp:
         yield Path(os.path.realpath(tmp))
 
 
