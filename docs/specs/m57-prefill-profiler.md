@@ -74,3 +74,33 @@ Write each test first and watch it fail.
 - Per-token `gdn + mlp + attn_prep + attn_out` falling ≥ 10 % from step 512 to 1024 puts chunk size into the M57 recipe.
 - Fused `sdpa` ≥ 40 % of the 128K chunk wall after those fixes funds the pinned-commit kernel comparison (P54 / X10).
 - Profiled wall more than 25 % above the unprofiled wall for the same prompt: report shares only, not absolute times.
+
+## Amendment 1 (2026-10-04, after two cold reviews of `924e5c3f` — a Claude reviewer and Codex `gpt-6-astra` — both FIX-THEN-SHIP)
+
+Binding; where it conflicts with the text above, this wins.
+
+1. **Profile only the work production prefill does.** The chunk loop discards the chunk output; production evaluates cache state
+   only. Never pass the chunk output (or logits) to a mark. The TERMINAL decoder layer's attention output, `o_proj`, and MLP, the
+   final norm and the head are dead in production prefill: with the switch set they must stay unevaluated (marks for them take no
+   arrays and add no time to a named phase). Test: a lazy sentinel on the chunk output / terminal-layer output is never evaluated
+   with the switch set.
+2. **Entry fence.** Before the first layer, evaluate this chunk's input embeddings and any position/mask setup under `other`
+   (not a named phase), so layer 0 does not absorb embeddings, the vision tower or setup.
+3. **Phase closure covers the state the phase writes.** `gdn` closes on the layer output AND the recurrent/conv state it stores in
+   its cache entry. `attn_prep` includes an array mask when one is returned. `cache_post` closes on the cache state AFTER the
+   eviction hook.
+4. **Request-local handle.** The active handle is thread-local and owned by the profiler that published it; code running in
+   another thread, or outside the profiled chunk in the same thread, sees `None`. Test with two threads.
+5. **Layer hooks are valid only inside `Qwen3_5DecoderLayer`.** Attention marks are no-ops unless the enclosing decoder layer
+   declared itself (models that reuse `Qwen3_5Attention` in another layer class report chunk-level phases only). Test with a tiny
+   `qwen3_5_moe` model if one can be built without a checkpoint; otherwise a fake layer class reusing `Qwen3_5Attention`.
+6. **Report.** Window lines every 32 chunks cover exactly those 32 chunks. The last line of a generation covers the REMAINING
+   chunks since the previous window line (`final=1`; omitted if none remain). One extra line `[prefill_profile_total] …` gives
+   generation-wide means, with the same fields. A profiler that disabled itself prints `broken=1` on its lines and never `final=1`
+   for a partial record set. Finalisation runs from an outer `finally` and never masks the original exception.
+7. **Tests really on CPU.** Fixtures bind the streams generation actually uses (including any stream object created at import
+   time) to the CPU and assert CPU placement inside the model call. If that cannot be done, say so in the report.
+8. Every changed line in an upstream-owned file carries or sits under a `# Fork (M57)` marker.
+
+Known and accepted: the batched (non-session) prefill path has no hooks — a profiled run must confirm lines appear before trusting
+an empty log; with the switch unset each layer hook costs one function call returning `None`.
