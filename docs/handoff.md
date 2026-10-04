@@ -7,8 +7,9 @@ THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `d
 ## State of the world
 
 - **Git:** pushed through `bd2823d` (2026-10-04, operator's word). Tree clean after this handoff commit.
-- **Daily driver is UP** (router pid 74568, `MLX_VLM_CACHE_SESSION_MAX=2`, APC absent, OWUI healthy). No lean router, no benchmark processes,
-  0 orphan shells. Battery 100 %, adapter 140 W. Scratch dir is `$STACK_WORKDIR/scratch/octmp.noindex` with a symlink at `octmp`.
+- **Stack is DOWN by operator instruction (2026-10-04): do NOT auto-start `runserver.sh`; the operator runs it when they want it.**
+  `scripts/stack_stop.sh` applied: :8000 free, no router/worker/task-model processes, 0 orphan shells. Lean benchmark routers are still
+  started as a measurement requires. Scratch dir is `$STACK_WORKDIR/scratch/octmp.noindex` with a symlink at `octmp`.
 - **M55 landed:** rows `benchmark/results/<model>/opencode_<lang>.m55.s{1,2}.{jsonl,manifest.json}` (18 + 18), report
   `benchmark/results/m55_polyglot_gap_report.md`, campaign-results 2026-10-04, README rows (first-pick coverage gap retired), PLAN M55
   COMPLETE, notebook. Workdir keeps everything under `$STACK_WORKDIR/m55/` (RUNLOG, per-leg logs, pilot, scripts).
