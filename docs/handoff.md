@@ -1,75 +1,59 @@
-# Handoff — 2026-10-04 (late): M57 attention design reviewed twice under the performance-maximizing lens; NOTHING approved, built or run
+# Handoff — 2026-10-04 (23:00 UTC): M57 approved (C111); evidence steps 1–2 COMPLETE; build NOT started — operator confirmation owed
 
-THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/proposal-flash-attention.md` (the whole M57 record:
-GPT-Astra proposal → review 1 → design session P25–P44 → review 2 (Claude) → review 3 (Codex) → reconciliation), then `docs/PLAN.md` <!-- allow-shorthand -->
-(the only queue; M57 is NOT in it yet) and `docs/open-questions.md`. Results: `docs/campaign-results.md` 2026-10-04 (M55).
+THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/proposal-flash-attention.md` (the whole M57
+record: proposal → reviews → design P25–P44 → reviews 2/3 → reconciliation → evidence E1–E15 with P65–P75), `docs/PLAN.md` (M57 row),
+`docs/specs/m57-attention-policy.md` (build spec, AC1–AC12) and `docs/specs/m57-prefill-profiler.md`.
 
 ## State of the world
 
-- **Git:** pushed through `bd2823d`; later commits are local only (handoff/stack-down note, this session's docs). Push needs the operator's word.
-- **Stack is DOWN by operator instruction (2026-10-04): do NOT auto-start `runserver.sh`.** Verified this session: :8000 free, no router /
-  worker processes. Power gate read 140 W / 28 V, battery 96 %.
-- **This session was design + review only.** No GPU work, no model load, no fork or harness change. Workdir: `$STACK_WORKDIR/m57/`
-  (Codex brief, log and raw review).
-- **Picks unchanged.** M55 landed (previous handoff); M56 parked (C110 wait-and-watch).
-- `ts.md` at the repo root is the operator's untracked video transcript (HySparse2 / DeepSeek V4.1-Flash) — not committed.
+- **Git (stack):** pushed through `bd2823d`; everything after is LOCAL ONLY (handoff, M57 docs, specs, probe rows, AGENTS.md rule).
+  Push needs the operator's word.
+- **Fork `../mlx-vlm`:** branch `m57-prefill-profile` @ `21d62fe6` (4 commits on `main` `1bd249d3`; env-gated prefill component
+  profiler; 71 CPU tests; three cold-review rounds by a Claude reviewer and Codex `gpt-6-astra`; live gate passed). NOT pushed, NOT
+  merged, submodule NOT bumped. The fork's working tree is left on that branch. `../mlx-serve` untouched.
+- **Stack is DOWN by operator instruction: do NOT auto-start `runserver.sh`.** :8000 free, no router/worker. 140 W, battery 100 %.
+- **Picks unchanged.** `main_models.yaml` untouched.
+- Workdir `$STACK_WORKDIR/m57/`: microbench scripts + JSON, `probe/` (128K overlay probe, MTP round profile), `profile/` (component
+  profiles, three runs), `overlays/step{512,1024}.yaml`, Codex prompts/reviews 1–4, `transcript_accounting.{py,json}`.
+- `ts.md` at the repo root is the operator's untracked video transcript — not committed.
 
-## M57 — where the design stands
+## What the evidence says (first pick `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, native16, MTP ON; all PROBES, one session per arm)
 
-Operator's lens for this track (2026-10-04): maximise the performance potential (prefill, decode, memory) without sacrificing output
-quality beyond a negligible amount; implementation time is not a constraint; new kernels or a sparse retrofit are acceptable if they
-are believed to lead to a better outcome.
-
-Source-verified facts that changed the design (MLX 0.32.2 dispatch source; full text in review 2):
-
-- Single-token decode and MTP verification (drafter block 3) are ALREADY on MLX's fused vector kernel under `auto`; a flag changes only
-  query lengths > 8.
-- A blanket `force_fused` raises for query lengths 6–8 at this model's GQA factor 6 — routine for chunk tails and short turns. The
-  policy must be shape-aware in the fork.
-- The checkpoint is bf16; the only microbench so far was fp16.
-- Upstream's `auto` rule for head dim 256 ignores key length (unchanged in 0.32.3 and main).
-- The existing ladder peaks fit "one 512-row score tensor + whole-prompt embeddings" to 98.5 % of the slope: ≈ 6.4 GB of the 47.1 GB
-  256K peak is unfused score scratch, ≈ 2.7 GB is embeddings. Prediction, not yet measured on the serving path.
-
-- MTP verification is a SECOND attention site (`qwen3_5/speculative_verifier.py`, found by Codex, re-checked): length 2 jointly,
-  longer blocks as separate single-query calls — up to three full key/value scans per round with block 3. That, not a slow kernel,
-  explains the long-context decode drop (44 → 13 tok/s at 261K); the decode lever is a joint verification scan.
-
-Both reviews agree on direction (no blanket force; versioned shape-aware policy; chunk size co-designed; evidence before build; sparse
-retrofits probe-gated, decode before prefill). Consolidated recommendation (P63 in the proposal doc):
-
-1. Evidence before any build: CPU transcript / cache-event accounting of M54/M55 (new, tool-output and reprocessed tokens, context
-   size, cold replays); ≈ 1 box-hour of no-model GPU microbenchmarks (bf16 crossover / raise / parity matrix with a validated memory
-   instrument; vector-kernel scan time against a read floor, `MLX_SDPA_BLOCKS`); one overlay probe at 128K with
-   `prefill_step_size: 1024` under `auto` (TTFT and peak).
-2. An env-gated component profiler in the fork (attention / GatedDeltaNet / MLP / verifier time on the served path).
-3. M57 = versioned shape-aware dispatch policy over ALL native call sites (attention module, verifier, tails, snapshot cuts) + chunk
-   size chosen jointly + policy-aware pool limit + lazy per-chunk embeddings + fingerprint v7; qualified once on the winning recipe
-   with the corrected, stratified quality design (Codex X14–X16).
-4. Next milestone candidate: long-context decode — joint verification scan, MTP-ON requalified (estimate 13 → ≈ 25 tok/s at 261K).
-5. Then, each behind its measurement: GatedDeltaNet / MLP prefill work, upstream report + pinned-commit kernel comparison, fused
-   low-precision cache, sparse decode, sparse prefill last.
-
-Predictions on record (to be falsified): TTFT 64K 111 → 76 s, 128K 325 → 185 s, 256K 1063 → 500 s; 256K peak 47.1 → ≈ 40.7 GB
-(≈ 38 GB with lazy embeddings).
+- Fused attention is NOT a 2× lever. At 128K, fused chunks give −16 % (warm vs warm) to −22 % (cool vs cool) TTFT. A 128K prefill is
+  44 % attention, 34 % MLP, 17 % GatedDeltaNet; below 32K the weight projections (quantized matmuls) are nearly everything.
+- Memory is the stronger benefit: the served peak tracks ≈ 1.23 score tensors of the LARGEST UNFUSED chunk (confirmed by a 1.71 GB
+  rise when the tail grew from 512 to 734 queries). Predicted with a tail-fusing policy: −3.9 GB at 128K, −7.9 GB at 256K.
+- Fused is 2.6–14× closer to an fp32 reference than the unfused bf16 path served today.
+- `force_fused` raises at query lengths 6–8 and is slower below ≈ 128 queries → policy `fused_v1` in the build spec.
+- Chunk size 1024 does not speed up MLP / GatedDeltaNet per token; without a tail policy it RAISES the peak.
+- Decode at long context is the MTP verification forward (91 % of a round at 128K). A joint verification scan is bit-identical to
+  the per-query pattern at kernel level; estimate +14 % tok/s at 128K. MLX's vector kernel is already at memory bandwidth.
+- Neither agentic harness reaches long context (opencode max 27.8K, AgentBench OS max 3.8K): the time benefit lands on long
+  daily-driver sessions and capacity.
+- Warm-state drift (new AGENTS.md rule): ≈ 20 % slower prefill work when a run follows a five-minute GPU load; compare latency arms
+  only in matched state with a ≥ 10 min cooldown.
 
 ## Pending (operator)
 
-1. Decide the M57 scope after reading the two reviews. Three rulings needed: (a) run the step-1 evidence (≈ 1 box-hour GPU, no model
-   load, + CPU); (b) fund the env-gated component profiler in the fork; (c) accept M57 as scoped in P63 item 3 instead of the
-   `auto | force_fused` flag.
-2. Open design decisions carried from the design session: long-context quality subset in the qualification; Q2 thresholds; whether to
-   record P41 (watch-list for an open HySparse2-class checkpoint) and P42 (harder long-context benchmarks) in `docs/open-questions.md`.
-3. Nothing is queued in `docs/PLAN.md` for M57 until (1) is ruled. On approval: PLAN row, `docs/specs/m57-attention-policy.md`,
-   C111 in `docs/open-questions.md`, then the M54 funnel (Sonnet implementer, cold reviews Claude + Codex `gpt-6-astra`, live gate,
-   pilot twice).
-4. M56 LiveCodeBench window: PARKED (C110) — re-check on each release for a window starting after 2026-06.
+1. **Confirm the M57 build on the measured case** (approved when the expected gain was ≈ 2×). Recommendation: build — 256K memory
+   headroom, better accuracy, −16…−22 % TTFT at 128K and ≈ −30 % predicted at 256K, and it unlocks larger chunks for the dense path.
+   On go: M54 funnel from `docs/specs/m57-attention-policy.md` (Sonnet implementer per repo: fork, mlx-serve, stack provenance;
+   cold reviews by a Claude reviewer and Codex; live gate; pilot twice; qualification design frozen before the first arm).
+2. Queue or not: joint MTP verification scan as the next milestone; dense prefill path (dequantise-then-dense at chunks ≥ 2048) as a
+   later candidate. Neither is in PLAN.
+3. Push approvals: stack commits since `bd2823d`; fork branch `m57-prefill-profile` (merge to fork `main` or keep as a branch).
+4. Carried: record P41 (watch-list for an open HySparse2-class checkpoint) and P42 (harder long-context benchmarks) in
+   `docs/open-questions.md`? M56 stays PARKED (C110).
 
 ## Rules learned this session
 
-- Read the dispatch source before designing around a kernel flag: three claims in the first design (MTP verification unfused, raise
-  conditions, contiguity copies) were wrong and one hazard (query lengths 6–8) was invisible without it.
-- A memory instrument that has not shown the known positive cannot report a zero (the microbench's "no memory benefit").
-- Codex cold design review: `codex exec -m gpt-6-astra -s read-only -o <file>`; give it the design record and the lens, not conclusions.
+- Read the kernel dispatch source and measure before designing around a flag: the "3.1×" was a cold-buffer artifact, and three
+  claims in the first design were wrong.
+- A memory instrument must show its known positive first (`get_active_memory` still counts a just-released buffer).
+- A single back-to-back latency pair is order-biased on this laptop (E15) — matched state or no delta.
+- `scripts/stack_stop.sh` kills ANY process whose command line matches the worker pattern, including a Codex review whose prompt
+  was passed as an argument. Pass review prompts on stdin (`codex exec … - < prompt.md`); don't stop the stack while reviewers run.
+- The worker's stderr log (`$TMPDIR/mlx-manager-logs/<model>.log`) is recreated at worker start — read the whole file per arm.
+- Profiled or fork-branch runs write to the workdir only; nothing from them enters `benchmark/results/`.
 
-Next decision id C111; discussion ids continue from P60.
+Next decision id C112; discussion ids continue from P80.

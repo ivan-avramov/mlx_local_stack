@@ -517,3 +517,28 @@ verifier's per-query pattern; a joint scan would be 39 ms (−16 ms, ≈ +14 % t
   microbench per 512-equivalent), dense prefill path (≈ 60 % share, ≤ 24 % of it), decode joint verification scan (+14 % tok/s,
   bit-identical) and single-pass verification kernel (+36 %). Sparse retrofits stay probe-gated; their ceiling is the attention
   share (36 % at 128K, ≈ 53 % at 256K after fusion).
+
+**E15 — Final profile on the reviewed profiler branch (`50081280` / `21d62fe6`, three cold-review rounds) and a REVERSED-ORDER run
+after a 10-minute idle cooldown. CORRECTS E10, E12, P71 and the −13 % figure.** Same 127K-token prompt, one session per arm; the
+arm that runs second starts on a warm machine.
+
+| arm | start state | prefill s | attention ms / 512 tok | MLP ms / 512 tok (first → last window) | GatedDeltaNet ms / 512 tok (first → last) |
+|---|---|---:|---:|---|---|
+| step 512 unfused | cool (ran first) | 301.9, 305.1 | 538, 540 | 354 → 460 | 179 → 236 |
+| step 1024 fused | warm (ran second) | 270.1, 269.7 | 394, 386 | 428 → 425 (flat) | 211 → 210 (flat) |
+| step 1024 fused | COOL (ran first, reversed) | 236.5 | 344 | 353 → 392 | 173 → 195 |
+| step 512 unfused | WARM (ran second, reversed) | 322.2 | 555 | 429 → 470 | 216 → 240 |
+
+- **Warm-state slowdown is real and large.** The same quantized-projection work costs ≈ 354 ms per 512 tokens at a cool start and
+  ≈ 429 ms at the start of a run that follows a five-minute prefill (+21 %); a cool run drifts ≈ +11 % within five minutes. The
+  mechanism is presumed thermal; no temperature was instrumented and macOS reported no thermal warning. Back-to-back arms are
+  therefore order-biased by roughly 10 % of total prefill. E10's −12.8 % had the fused arm in the warm slot.
+- **Matched-state gain of fused chunks at 128K: −22 % cool vs cool (301.9–305.1 → 236.5 s), −16 % warm vs warm (322.2 → 270 s).**
+  Attention term: −36 % cool, −30 % warm.
+- **A context-dependent collateral slowdown under unfused attention survives the control, smaller than P71 claimed:** warm + unfused
+  MLP rises 429 → 470 (+10 %) and GatedDeltaNet 216 → 240 (+11 %) as keys grow past 64K, while warm + fused stays flat. P71's
+  "+30 %" mixed this with warm-up.
+- 256K prediction, restated: ≈ −30 % TTFT (range 700–780 s against 1063 s) and −7.9 GB peak; still a prediction. The existing
+  capacity ladders ran their rungs back to back, so their context-proportional terms include warm-state drift.
+- Method rule adopted (AGENTS.md): latency arms are compared only in matched machine state — order-balanced with a fixed idle
+  cooldown, start state recorded — and a single back-to-back pair is never quoted as a delta.

@@ -87,13 +87,14 @@ changing one is a new version name. Rationale is in the proposal doc (E1, E2, E4
 
 ## Qualification (operator session, after cold reviews and the live gate; design to be frozen before the first arm)
 
-- Arms on fresh lean routers, shipped state otherwise, k=2 sessions each, order-balanced: A `auto`@512; B `fused_v1`@512 with the
+- Arms on fresh lean routers, shipped state otherwise, k=2 sessions each, order-balanced, ≥ 10 min idle cooldown between arms
+  with the start state recorded (AGENTS.md warm-state rule): A `auto`@512; B `fused_v1`@512 with the
   pool limit pinned at 9; latency-only screens: C `fused_v1`@512 with the derived pool limit, D `fused_v1`@1024.
 - Latency ladder 8K / 32K / 64K / 128K / 256K cold + cached continuations of 100, 600 and 5000 new tokens at 64K and 128K
   (the opencode turn-size bands); TTFT, decode, `mx.get_peak_memory`, counters. The 256K rung is capacity + retrieval only.
 - Quality: humanevalplus/mbppplus n=100 paired `acc_strict@81920`; long-context retrieval and chain-reasoning subsets at 64K–128K
   sized from the pilot's discordance; AgentBench 5-item smoke. Seeded 5-item pilot twice per loaded instance first.
-- Predictions on record: 128K TTFT −13 %, 256K ≈ −30 %; peak −3.9 GB at 128K, −7.9 GB at 256K (+ ≈ 2.7 GB from lazy embeddings);
+- Predictions on record (E15, matched machine state): 128K TTFT −16 % warm / −22 % cool, 256K ≈ −30 %; peak −3.9 GB at 128K, −7.9 GB at 256K (+ ≈ 2.7 GB from lazy embeddings);
   decode unchanged; 8K / 32K TTFT within ±3 %.
 - Adopt (operator approval, PROVISIONAL) iff quality holds (paired strict delta ≥ −5 pp in both sessions, long-context subsets
   with no paired loss beyond their pre-registered bound) AND no rung is slower by more than 3 % AND at least one of: 256K peak
