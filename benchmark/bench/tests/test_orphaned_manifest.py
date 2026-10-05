@@ -206,6 +206,12 @@ def test_current_manifest_lite_INCLUDES_the_git_block(monkeypatch):
     monkeypatch.setattr(P, "_git_shas", lambda: {"stack_head": "abc",
                                                 "submodules": {"src/mlx-vlm": "0c1c8b17",
                                                                "src/mlx-serve": "83412c8e"}})
+    # M57 T2: model "M" is not in the registry, so its serving controls would read unresolved
+    # (never compatible); pin them to known defaults — this test is about the git block.
+    monkeypatch.setattr(P, "registry_attention_policy", lambda m, path=None: {
+        "attention_policy": "auto", "attention_policy_source": "registry"})
+    monkeypatch.setattr(P, "registry_lazy_prompt_embeddings", lambda m, path=None: {
+        "lazy_prompt_embeddings": False, "lazy_prompt_embeddings_source": "registry"})
     lite = P.current_manifest_lite("M", "deployed")
     assert (lite.get("git") or {}).get("submodules", {}).get("src/mlx-vlm") == "0c1c8b17", (
         "current_manifest_lite has no git block — every row would compare as stale forever")

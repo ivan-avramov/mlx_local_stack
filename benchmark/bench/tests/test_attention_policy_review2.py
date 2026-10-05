@@ -100,11 +100,11 @@ def test_t2_two_unknown_values_are_incompatible():
 
 
 # ------------------------------------------------------------------ T3 argv, exact tokens
-SPACED = ["python", "-m", "mlx_vlm.server", "--model", "/Users/x/my models/m 4bit", "--port", "1"]
+SPACED = ["python", "-m", "mlx_vlm.server", "--model", "/models/my models/m 4bit", "--port", "1"]
 
 
 def _spaced_registry(tmp_path, **extra):
-    entry = {"name": "m", "hf_path": "/Users/x/my models/m 4bit", **extra}
+    entry = {"name": "m", "hf_path": "/models/my models/m 4bit", **extra}
     p = tmp_path / "sp.yaml"
     p.write_text(yaml.safe_dump({"models": [entry]}))
     return str(p)
@@ -121,7 +121,7 @@ def test_t3_model_path_with_spaces_matches_and_disagreement_refuses(tmp_path):
 
 def test_t3_equals_forms_for_model_and_flags(tmp_path):
     reg = _spaced_registry(tmp_path, attention_policy="fused_v1", lazy_prompt_embeddings=True)
-    argv = ["python", "-m", "mlx_vlm.server", "--model=/Users/x/my models/m 4bit",
+    argv = ["python", "-m", "mlx_vlm.server", "--model=/models/my models/m 4bit",
             "--attention-policy=fused_v1", "--lazy-prompt-embeddings"]
     assert P.registry_attention_policy("m", reg, worker_lookup=lambda: [argv])[
         "attention_policy_source"] == "worker"
