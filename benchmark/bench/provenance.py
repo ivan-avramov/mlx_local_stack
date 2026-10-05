@@ -87,8 +87,11 @@ def _worker_cmdline() -> str | None:
     return None
 
 
+_DEFAULT_LOOKUP = object()   # sentinel: identify the worker by the mlx_port listener (_worker_argvs)
+
+
 def registry_draft(model: str, registry_path: str | None = None,
-                   worker_lookup=_worker_cmdline) -> dict:
+                   worker_lookup=_DEFAULT_LOOKUP) -> dict:
     """Speculative-decoding state for ``model``, NORMALISED so that "off" is an OBSERVATION.
 
     That normalisation is the whole point of v3. `draft_kind` was already named in
@@ -124,15 +127,13 @@ def registry_draft(model: str, registry_path: str | None = None,
             # C35 tripwire (2026-08-26): the registry of record and the SERVED config can
             # legitimately diverge (bench routers run a draft-stripped overlay), and recording
             # the yaml answer alone stamped `draft_kind: mtp` on a verified draft-OFF run.
-            # When a live worker is observably serving THIS model (its `--model` carries the
+            # When a live worker is observably serving THIS model (its `--model` EQUALS the
             # entry's hf_path), its cmdline is the truth: a mismatch REFUSES the run rather
             # than record false provenance on either side. A worker for another model, or no
             # worker at all, says nothing — the yaml answer stands, source "registry".
-            cmd = worker_lookup() if worker_lookup else None
-            hf = e.get("hf_path") or ""
-            if cmd and hf and hf in cmd:
-                m = re.search(r"--draft-kind\s+(\S+)", cmd)
-                served = m.group(1) if m else "off"
+            argv = _worker_for(e, worker_lookup, doc)    # exact `--model`, mlx_port listener
+            if argv is not None:
+                served = _flag_value(argv, "--draft-kind") or "off"
                 if served != ans["draft_kind"]:
                     raise ServingStateError(
                         f"C35 tripwire: registry {registry_path!r} declares draft_kind="
@@ -579,8 +580,6 @@ class ServedConfigError(RuntimeError):
     re-raises it instead of recording an error row (a refusal after an auto-restart must stop the
     run, not become one more row)."""
 
-
-_DEFAULT_LOOKUP = object()
 
 
 class ServingStateError(ServedConfigError):
