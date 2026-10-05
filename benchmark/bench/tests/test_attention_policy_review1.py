@@ -38,7 +38,7 @@ def test_s1_unknown_policy_incompatible_with_known_and_pre_v7():
     assert P.is_compatible(_v7("fused_v1"), _v7("unknown")) is False
     assert P.is_compatible(_v7("unknown"), _v7("auto")) is False
     assert P.is_compatible(_man(6), _v7("unknown")) is False
-    assert P.is_compatible(_v7("unknown"), _v7("unknown")) is True     # same-run resume
+    assert P.is_compatible(_v7("unknown"), _v7("unknown")) is False   # T2: no same-run exception
 
 
 def test_s1_missing_policy_key_on_a_v7_row_is_unresolved_too():
@@ -109,8 +109,8 @@ def test_s4_default_lookup_returns_all_workers(monkeypatch):
     fake = types.SimpleNamespace(process_iter=lambda attrs: [
         Pr("python mlx_vlm.server --model a"), Pr("vim x"), Pr("python mlx_vlm.server --model b")])
     monkeypatch.setitem(sys.modules, "psutil", fake)
-    assert P._worker_cmdlines() == ["python mlx_vlm.server --model a",
-                                    "python mlx_vlm.server --model b"]
+    assert P._worker_cmdlines() == [["python", "mlx_vlm.server", "--model", "a"],
+                                    ["python", "mlx_vlm.server", "--model", "b"]]
 
 
 # ------------------------------------------------------------------ S5 lazy_prompt_embeddings

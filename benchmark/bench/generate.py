@@ -318,6 +318,8 @@ def provenance_precheck(models, benches, profile="production", clean_stale=False
     for m in models:
         try:
             cur = provenance.current_manifest_lite(m, profile, overrides=overrides)
+        except provenance.ServedConfigError:
+            raise                           # T1: a serving-state refusal is never "skipped"
         except Exception as e:  # noqa: BLE001 — never block a run on the precheck
             print(f"  [provenance] precheck skipped {m}: {type(e).__name__}: {str(e)[:60]}", flush=True)
             continue
@@ -546,6 +548,11 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                 _tm = p.get("raw_timings") or {}
                 row["draft"] = {k: _tm.get(k) for k in
                                 ("draft_kind", "draft_rounds", "draft_n", "draft_n_accepted")}
+                # M57 dispatch counters: present only when the server sends them (policy != auto),
+                # so rows under `auto` are unchanged.
+                _sd = {k: _tm[k] for k in ("sdpa_forced", "sdpa_auto") if k in _tm}
+                if _sd:
+                    row["sdpa"] = _sd
                 # Convergence guard: a thinking-budget / max_tokens hit is NOT convergence
                 # even though finish_reason can be "stop". Recorded per item; a run with any
                 # non-converged item is flagged INVALID at grade time (never silently scored).

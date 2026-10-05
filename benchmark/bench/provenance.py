@@ -87,17 +87,17 @@ def _worker_cmdline() -> str | None:
     return None
 
 
-def _worker_cmdlines() -> list[str]:
-    """Command lines of ALL live `mlx_vlm.server` workers ([] when none/unobservable)."""
+def _worker_cmdlines() -> list[list[str]]:
+    """argv LISTS of ALL live `mlx_vlm.server` workers ([] when there is none). A failed
+    observation RAISES (never reads as "no worker"): the caller refuses rather than fall back to
+    the registry on ignorance. A process whose argv is unreadable is skipped (it cannot be
+    attributed)."""
     out = []
-    try:
-        import psutil
-        for p in psutil.process_iter(["pid", "cmdline"]):
-            cmd = " ".join(p.info.get("cmdline") or [])
-            if "mlx_vlm.server" in cmd:
-                out.append(cmd)
-    except Exception:  # noqa: BLE001 — best-effort; absent psutil / AccessDenied / gone
-        return out
+    import psutil
+    for p in psutil.process_iter(["pid", "cmdline"]):
+        argv = p.info.get("cmdline")
+        if argv and "mlx_vlm.server" in " ".join(argv):
+            out.append(list(argv))
     return out
 
 
@@ -425,10 +425,11 @@ def is_compatible(existing, current) -> bool:
     _overlay_serving_path_code(existing, current, a, b)
     # M57 serving controls (S1/S2): the negotiated slice may omit them (v < 7), but a pre-v7 row IS
     # the default, so they are compared on EVERY path (incl. the v1 early return) and STRICTLY:
-    # an unresolved ("unknown"/absent) value on a v7 row never pools with anything but an
-    # identical unresolved value (same-run resume).
+    # an unresolved ("unknown"/absent) value on a v7 row never pools with anything, itself
+    # included (T2: nothing verifies run identity, so there is no same-run exception).
     for k in _SERVING_CONTROLS:
-        if control_of(existing, k)[0] != control_of(current, k)[0]:
+        va, vb = control_of(existing, k)[0], control_of(current, k)[0]
+        if va != vb or va == "unknown":     # T2: unresolved is incompatible with EVERYTHING
             return False
     if v < 2:
         return a == b
@@ -573,7 +574,9 @@ def control_of(manifest: dict, key: str):
     """(value, source) a manifest stands for on a v7 serving control. fingerprint_version < 7
     predates the keys and every such row ran the default, so it reads (default, "default-pre-v7")
     — a KNOWN value regardless of anything its runtime block claims. A v7 manifest reports what
-    it recorded; an absent value reads "unknown" (unresolved: never pools, never compares)."""
+    it recorded; an absent value reads "unknown" (unresolved: never pools, never compares).
+    (A v7 manifest lacking a key that a later version adds also reads unknown; no v7 manifest
+    exists on disk yet, so that is intentional.)"""
     if (manifest.get("fingerprint_version") or 1) < 7:
         return _SERVING_CONTROLS[key], "default-pre-v7"
     r = manifest.get("runtime") or {}
@@ -585,25 +588,53 @@ def attention_policy_of(manifest: dict) -> tuple[str, str]:
     return control_of(manifest, "attention_policy")
 
 
+class ServedConfigError(RuntimeError):
+    """M50 refusal. FATAL by contract: entry points exit nonzero; `generate`'s per-item error handler
+    re-raises it instead of recording an error row (a refusal after an auto-restart must stop the
+    run, not become one more row)."""
+
+
+_DEFAULT_LOOKUP = object()
+
+
+class ServingStateError(ServedConfigError):
+    """M57: the served attention/lazy-embedding state cannot be established or contradicts the
+    registry. A ServedConfigError subclass, so `generate` and the drivers that re-raise
+    ServedConfigError REFUSE the run instead of treating it as best-effort provenance."""
+
+
+def _flag_value(argv, flag):
+    """Value of `--flag value` / `--flag=value` in an argv list (last wins); None if absent."""
+    val = None
+    for i, tok in enumerate(argv):
+        if tok == flag and i + 1 < len(argv):
+            val = argv[i + 1]
+        elif tok.startswith(flag + "="):
+            val = tok[len(flag) + 1:]
+    return val
+
+
 def _worker_for(entry: dict, worker_lookup):
-    """The ONE live worker cmdline whose `--model` argument EXACTLY equals the entry's hf_path,
-    else None; RuntimeError when more than one matches. `worker_lookup` returns None, a cmdline
-    string, or a list of them."""
+    """The ONE live worker argv whose `--model` argument EXACTLY equals the entry's hf_path, else
+    None ("no worker for this model" -> registry fallback). A failed observation or more than one
+    match raises ServingStateError. `worker_lookup` returns None, an argv list, a cmdline string
+    (whitespace-split) or a list of those."""
     try:
-        got = worker_lookup() if worker_lookup else None
-    except Exception:  # noqa: BLE001 — never block a run on provenance
-        got = None
-    cmds = [got] if isinstance(got, str) else list(got or [])
+        got = _worker_cmdlines() if worker_lookup is _DEFAULT_LOOKUP else (
+            worker_lookup() if worker_lookup else None)
+    except Exception as e:  # noqa: BLE001 — re-raised as a refusal, never swallowed
+        raise ServingStateError(f"C35 tripwire: cannot observe the live workers "
+                                f"({type(e).__name__}: {str(e)[:80]}); refusing to fall back to "
+                                f"the registry on ignorance.") from e
+    if isinstance(got, str):
+        got = [got.split()]
+    argvs = [a.split() if isinstance(a, str) else list(a) for a in (got or [])]
     hf = entry.get("hf_path") or ""
-    hits = []
-    for cmd in cmds:
-        m = re.search(r"--model(?:=|\s+)(\S+)", cmd or "")
-        if hf and m and m.group(1) == hf:
-            hits.append(cmd)
+    hits = [a for a in argvs if hf and _flag_value(a, "--model") == hf]
     if len(hits) > 1:
-        raise RuntimeError(f"C35 tripwire: more than one live worker serves {hf!r} "
-                           f"({len(hits)} matches) — worker attribution is ambiguous; "
-                           f"refusing to record serving provenance.")
+        raise ServingStateError(f"C35 tripwire: more than one live worker serves {hf!r} "
+                                f"({len(hits)} matches) — worker attribution is ambiguous; "
+                                f"refusing to record serving provenance.")
     return hits[0] if hits else None
 
 
@@ -622,7 +653,7 @@ def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, par
             if cmd is not None:
                 served = parse_worker(cmd)
                 if served != declared:
-                    raise RuntimeError(
+                    raise ServingStateError(
                         f"C35 tripwire: registry {registry_path!r} declares {key}="
                         f"{declared!r} for {model!r} but the live worker serves "
                         f"{key}={served!r}. Launch the driver with MLX_SERVE_CONFIG "
@@ -634,7 +665,7 @@ def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, par
 
 
 def registry_attention_policy(model: str, registry_path: str | None = None,
-                              worker_lookup=_worker_cmdlines) -> dict:
+                              worker_lookup=_DEFAULT_LOOKUP) -> dict:
     """M57 served attention policy: {"attention_policy", "attention_policy_source"}.
 
     The live worker whose `--model` argument exactly equals the entry's hf_path is the SERVING
@@ -643,21 +674,20 @@ def registry_attention_policy(model: str, registry_path: str | None = None,
     available and disagreeing REFUSES the run (C35 shape); two matching workers refuse too.
     "unknown" is reserved for an unreadable registry or a model absent from it, and is
     UNRESOLVED: it never pools and never compares (S1)."""
-    def from_worker(cmd):
-        m = re.search(r"--attention-policy(?:=|\s+)(\S+)", cmd)
-        return m.group(1) if m else "auto"
+    def from_worker(argv):
+        return _flag_value(argv, "--attention-policy") or "auto"
     return _resolve_control(model, registry_path, worker_lookup, "attention_policy",
                             from_worker, lambda v: v or "auto")
 
 
 def registry_lazy_prompt_embeddings(model: str, registry_path: str | None = None,
-                                    worker_lookup=_worker_cmdlines) -> dict:
+                                        worker_lookup=_DEFAULT_LOOKUP) -> dict:
     """M57 served lazy-prompt-embeddings state: bare worker flag `--lazy-prompt-embeddings`
     present -> True, absent -> False (source "worker"); else the registry entry's boolean
     (absent -> False, source "registry"). Same attribution, refusal and "unknown" rules as
     registry_attention_policy."""
-    def from_worker(cmd):
-        return re.search(r"(?:^|\s)--lazy-prompt-embeddings(?:\s|$)", cmd) is not None
+    def from_worker(argv):
+        return "--lazy-prompt-embeddings" in argv
     return _resolve_control(model, registry_path, worker_lookup, "lazy_prompt_embeddings",
                             from_worker, bool)
 
@@ -677,10 +707,6 @@ _WILDCARDS = {"0.0.0.0", "::", "*"}
 _LAST_VERIFIED: dict = {}   # port -> block from the most recent assert_served_config in this process
 
 
-class ServedConfigError(RuntimeError):
-    """M50 refusal. FATAL by contract: entry points exit nonzero; `generate`'s per-item error handler
-    re-raises it instead of recording an error row (a refusal after an auto-restart must stop the
-    run, not become one more row)."""
 
 
 def _is_router_argv(argv) -> bool:
