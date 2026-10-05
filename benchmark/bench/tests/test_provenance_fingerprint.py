@@ -251,6 +251,12 @@ def test_a_v3_current_does_NOT_condemn_the_REAL_corpus_on_disk():
     assert real, "no manifests found — this test would vacuously pass"
     for f in real:
         existing = json.loads(f.read_text())
+        # v7 manifests record the served attention policy / lazy-embedding state; a v3 harness
+        # cannot express those, so a v3 `current` legitimately reads as `auto` and a manifest
+        # written under `fused_v1` SHOULD refuse it (M57, 2026-10-05). They are not this test's
+        # subject (v2 -> v3 non-destructiveness), so they are skipped here.
+        if (existing.get("fingerprint_version") or 1) >= 7:
+            continue
         # `current` = the SAME config, re-fingerprinted by a v3 harness: only the version and the
         # newly-populated draft key differ. Anything else differing would be a real config change.
         current = dict(existing)

@@ -1,4 +1,4 @@
-# Handoff — 2026-10-05 (22:45 UTC): M57 QUALIFIED (fused attention + lazy embeddings); adoption decision pending (C115); stack down
+# Handoff — 2026-10-06 (00:10 UTC): M57 ADOPTED and SHIPPED (fused attention + lazy embeddings for the first pick, provisional); stack down
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/proposal-flash-attention.md` (the whole M57
 record: proposal → reviews → design P25–P44 → reviews 2/3 → reconciliation → evidence E1–E15 with P65–P75), `docs/PLAN.md` (M57 row),
@@ -35,16 +35,13 @@ record: proposal → reviews → design P25–P44 → reviews 2/3 → reconcilia
 
 ## In flight / pending
 
-1. **M57 is QUALIFIED; adoption is the operator's open decision (C115).** `docs/campaign-results.md` 2026-10-05 has three entries
-   (stage 1 latency/capacity, stage 2 quality, lazy embeddings). Headline, order-balanced over two sessions against `auto`:
-   prefill −14.6 % at 128K and −24.9 % at 256K; peak 47.14 → 40.65 GB with `attention_policy: fused_v1`, → 37.97 GB (flat from 8K
-   to 256K) with `lazy_prompt_embeddings: true` as well; decode, retrieval, MTP acceptance unchanged; coding axis +2 pp / 0;
-   long-context retrieval and chain-4 reasoning 12/12 in every session; AgentBench 5-item smoke identical across arms.
-   On approval, in this order: publish fork `m57-attention-policy` @ `fbe2775e` and router @ `7be6bfd` (merge to the forks' `main` or
-   keep as branches) → bump both submodules → add the two registry fields to `main_models.yaml` with a PROVISIONAL certification
-   note in the SAME commit → refresh the README capacity row → push. Nothing of this is done.
-2. **Unpushed stack commits** since `f2223b5`: stage-1 rows, stage-2 rows, lazy-arm rows, README / PLAN / C115. Operator: hold the push
-   until the adoption decision.
+1. **M57 is ADOPTED and SHIPPED (C115, 2026-10-05).** Registry of record carries `attention_policy: fused_v1` and
+   `lazy_prompt_embeddings: true` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (PROVISIONAL note in the entry); fork `main`
+   `fbe2775e` and router `main` `7be6bfd` pushed; submodules bumped; vision gate 20/20 in the adopted state; verified live on the
+   registry of record. The daily driver picks this up on its next `runserver.sh` start (operator starts it). Every manifest
+   written from now on is fingerprint v7 with both controls; pre-M57 first-pick rows do not pool with post-M57 rows (serving-path
+   hash and policy both changed) — expected.
+2. **Push:** stack `main` pushed after the vision gate (operator ruling); forks pushed.
 3. **M58 queued** (joint MTP verification scan) — spec owed.
 4. Runners and raw logs: `$STACK_WORKDIR/m57/qual/` (latency; `RUNLOG.md`, continuation JSON per session) and
    `$STACK_WORKDIR/m57/qual2/` (quality; `RUNLOG.md`, grade logs, `ab/` smoke, `collided/` archived rows from a double launch).
@@ -72,4 +69,4 @@ record: proposal → reviews → design P25–P44 → reviews 2/3 → reconcilia
 - The worker's stderr log (`$TMPDIR/mlx-manager-logs/<model>.log`) is recreated at worker start — read the whole file per arm.
 - Profiled or fork-branch runs write to the workdir only; nothing from them enters `benchmark/results/`.
 
-Next decision id C116; discussion ids continue from P83.
+Next decision id C116; discussion ids continue from P88.

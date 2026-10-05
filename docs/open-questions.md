@@ -15,7 +15,9 @@ is the record that stops it being re-asked.
 
 ## OPEN — needs operator judgement
 
-### C115 — OPEN (2026-10-05): adopt `attention_policy: fused_v1` and `lazy_prompt_embeddings: true` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`?
+### C115 — RULED 2026-10-05 (operator): adopt BOTH; merge the fork and router branches into their `main`; vision gate re-run BEFORE shipping (20/20 PASS); push after it. Shipped the same day. Original entry kept below.
+
+### C115 — (original) adopt `attention_policy: fused_v1` and `lazy_prompt_embeddings: true` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`?
 
 M57 qualification complete (`docs/campaign-results.md` 2026-10-05): 256K prefill −24.9 %, MLX peak 47.14 → 40.65 GB with the policy and → 37.97 GB with lazy embeddings as well; decode, retrieval, MTP acceptance unchanged; coding axis within tolerance (+2 pp / 0, not proven equivalent at n=100); long-context retrieval and chain-4 reasoning 12/12 in every session; lazy embeddings byte-identical on all 200 coding outputs. Recommendation: adopt both, labelled PROVISIONAL (it stacks on the still-provisional native16 default, C81). Not covered: image prompts under lazy embeddings (eager path by construction); the wider certification axes (judge panel, Math500, vision gate) were not re-run. Adoption steps, each needing operator approval: publish the fork and router branches (merge to the forks' `main` or keep as branches), bump both submodules, add the two registry fields with a certification note, push the stack. Sub-question: re-run the vision gate and one judge/Math axis in the adopted state before or after shipping?
 

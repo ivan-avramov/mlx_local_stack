@@ -2,6 +2,16 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-05 — M57 ADOPTED (C115): `attention_policy: fused_v1` + `lazy_prompt_embeddings: true` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, PROVISIONAL
+
+Operator ruling 2026-10-05: adopt both; merge the fork and router branches into their `main`; re-run the vision gate before shipping.
+Vision gate in the adopted state (branch code, overlay with both fields): **20 / 20 PASS, 20 / 20 converged, 0 errors**
+(`benchmark/results/<model>/vision_gate.m57-adopted-20261005.*`; worker flags `--attention-policy fused_v1 --lazy-prompt-embeddings`).
+Shipped: fork `main` → `fbe2775e`, router `main` → `7be6bfd` (pushed), submodules bumped, registry fields added with the certification
+note in the same commit. Verified on the registry of record after the bump: worker carries both flags, a 415-token prompt reports
+`sdpa_forced=16`, provenance reads both controls from the worker. Structural change (registry → worker), no client carrier touched.
+Not re-run in the adopted state: the judge panel and Math500 (native16 itself is still provisional on those, C81). No B/C ladder change.
+
 ## 2026-10-05 — M57 qualification, lazy prompt embeddings (arm E = `fused_v1` + `lazy_prompt_embeddings`) — quality identical to `fused_v1` alone
 
 Same model, design, code and protocol as the stage-2 entry below; two fresh loaded instances (`e-q1` seed base 0, `e-q2` seed base

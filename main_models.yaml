@@ -504,6 +504,15 @@ models:
     # Weights, repaired MTP and tune unchanged. C84/C88/C89 qualify the documented runtime, vision and depth scopes.
     quantized_kv_start: 0
     prefill_step_size: 512
+    # CERTIFIED M57 2026-10-05 (PROVISIONAL, stacks on the provisional native16 default C81): fused attention dispatch policy
+    # (force MLX's fused SDPA kernel for native-KV full attention from 128 queries or a 256 MB unfused score tensor; single-sequence
+    # path only) + per-chunk prompt embeddings for text prompts. Qualified vs `auto` in matched machine state, two sessions each:
+    # prefill -14.6 % at 128K / -24.9 % at 256K; MLX peak 47.14 -> 37.97 GB at 256K (flat from 8K); decode, retrieval, MTP acceptance
+    # unchanged; humanevalplus/mbppplus strict +2 pp / 0 (n=100 per session); long-context retrieval + chain-4 12/12 everywhere; lazy
+    # embeddings byte-identical on 200/200 coding outputs; vision gate 20/20 in the adopted state. Structural (registry -> worker
+    # only, no client carrier). Fingerprint v7 records both. docs/campaign-results.md 2026-10-05; docs/specs/m57-attention-policy.md.
+    attention_policy: fused_v1
+    lazy_prompt_embeddings: true
     # CERTIFIED M32/M32b/S2b 2026-09-07 — PROMOTED to B 3RD CHOICE (operator C50 ruling 2026-09-07, C48 logic:
     # tied quality, usability decides): vs Qwen3.8-27B-mlx-uniform-4bit at medium-vs-medium pooled hep+mbpp n=214
     # strict +0.8pp CI [-1.2, +3.0] EQUIVALENT; opencode python 22/22 with ZERO stall-kills (vs 19/22 with 3, 3:0 on
