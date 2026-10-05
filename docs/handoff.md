@@ -1,4 +1,4 @@
-# Handoff — 2026-10-05 (00:45 UTC): M57 build reviewed (fork + router SHIP, stack in its last fix round); qualification design awaits sign-off; push NOT approved
+# Handoff — 2026-10-05 (01:15 UTC): M57 build review-complete (fork + router SHIP on branches, stack merged locally); qualification design awaits sign-off; push NOT approved
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/proposal-flash-attention.md` (the whole M57
 record: proposal → reviews → design P25–P44 → reviews 2/3 → reconciliation → evidence E1–E15 with P65–P75), `docs/PLAN.md` (M57 row),
@@ -42,10 +42,14 @@ record: proposal → reviews → design P25–P44 → reviews 2/3 → reconcilia
      requests 200). GPU parity gate AC12 PASSED 24/24 cells (`$STACK_WORKDIR/m57/ac12_parity.run1.json`).
    - Router `../mlx-serve` branch `m57-attention-policy` @ `7be6bfd`: registry fields `attention_policy`,
      `lazy_prompt_embeddings`. Cold reviews: SHIP. 152 tests.
-   - Stack: worktree branch `worktree-agent-a6011ca833d3e6e68` (under `.claude/worktrees/`), fingerprint v7, strict serving-state
-     refusals, driver prechecks. Round 5 of review fixes IN FLIGHT (observation completeness, late-refusal handling); NOT merged
-     into `main`. Live resolver check passed (registry fallback / worker / mismatch refusal).
-   - Next: final review pass on the stack → merge it into local `main` → operator sign-off on
+   - Stack: MERGED into local `main` as `601979e` (fingerprint v7 with `attention_policy` + `lazy_prompt_embeddings`, strict
+     serving-state refusals, worker identified as the `mlx_port` listener descended from the router, prechecks in
+     `run_capacity` / `run_retrieval` / `run_reasoning`, staged result + manifest publication with `result_sha256`). Six review
+     rounds; the last commit (`396319a`, pair publication) was read and suite-checked by the session, not cold-reviewed. Full
+     suite on merged `main`: 2705 passed, 1 known failure (twice); `test_work_queue::test_PAUSE_logs_…` failed once in four
+     full runs and passes alone — an order-dependent flake, not investigated. Live resolver check passed (registry fallback /
+     worker / mismatch refusal). The agent worktree `.claude/worktrees/agent-a6011ca833d3e6e68` can be removed.
+   - Next: operator sign-off on
      `docs/specs/m57-qualification.md` → pilots → arms (matched machine state).
 2. **M58 queued** (joint MTP verification scan) — spec owed after M57.
 3. **Push: NOT approved** (operator undecided). Recommendation on record: push the stack docs commits when convenient; do NOT
