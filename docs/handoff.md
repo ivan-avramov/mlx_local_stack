@@ -1,4 +1,4 @@
-# Handoff — 2026-10-05 (01:15 UTC): M57 build review-complete (fork + router SHIP on branches, stack merged locally); qualification design awaits sign-off; push NOT approved
+# Handoff — 2026-10-05 (04:45 UTC): M57 build review-complete; qualification APPROVED (C113), latency stage about to start; provenance gaps fixed; stack `main` pushed
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/proposal-flash-attention.md` (the whole M57
 record: proposal → reviews → design P25–P44 → reviews 2/3 → reconciliation → evidence E1–E15 with P65–P75), `docs/PLAN.md` (M57 row),
@@ -49,18 +49,24 @@ record: proposal → reviews → design P25–P44 → reviews 2/3 → reconcilia
      suite on merged `main`: 2705 passed, 1 known failure (twice); `test_work_queue::test_PAUSE_logs_…` failed once in four
      full runs and passes alone — an order-dependent flake, not investigated. Live resolver check passed (registry fallback /
      worker / mismatch refusal). The agent worktree `.claude/worktrees/agent-a6011ca833d3e6e68` can be removed.
-   - Qualification design APPROVED (C113). Next:
+   - Qualification design APPROVED (C113). Stage 1 (latency) runner: `$STACK_WORKDIR/m57/qual/run_latency.py` — sessions S, A, B, B,
+     A, C, D, E; submodules are switched to the branch commits by local fetch for the duration and restored at the end. Next:
      `docs/specs/m57-qualification.md` → pilots → arms (matched machine state).
 2. **M58 queued** (joint MTP verification scan) — spec owed after M57.
-3. **Push: NOT approved** (operator undecided). Recommendation on record: push the stack docs commits when convenient; do NOT
-   merge fork branches into fork `main` or bump submodules until M57 qualifies — one serving-path hash change, not two.
-4. **Found, NOT fixed (operator go needed):**
-   - `test_m50_entrypoints::test_run_opencode_probe_refuses_before_the_manifest` fails on `main` — since `3948528` the opencode
-     probe creates its scratch directory BEFORE the M50 refusal.
-   - The C35 `draft_kind` tripwire raises a plain `RuntimeError` that `generate.py` swallows ("never block a run on provenance"):
-     a predictor-state mismatch does not stop a `generate` run.
-   - `run_capacity`, `run_retrieval`, `run_reasoning` never call the M50 router check (`assert_served_config`); only `generate`,
-     AgentBench, the session-cache probe, the stack smoke and the parity replay do.
+3. **Push:** stack `main` push authorised 2026-10-05 (C114) once the gap fixes were merged and the suite green. Fork and router
+   branches stay UNPUSHED and unmerged until M57 qualifies — one serving-path hash change, not two. A second session is trimming
+   `AGENTS.md` (7 bytes under its 28000-byte limit); this session does not edit that file.
+4. **Pre-existing gaps: FIXED and merged locally (`6d6556a`, C113; two cold-review rounds + a confirming pass).** The opencode
+   probe checks the router before creating anything (its single discovery call is the operator-approved M50 exception, C114);
+   the C35 `draft_kind` tripwire is fatal and uses the exact worker identification; `run_capacity` / `run_retrieval` /
+   `run_reasoning` run the M50 entry check and a shared exit guard (gather → verify → publish; refused runs are moved aside);
+   reasoning `--resume` needs a compatible provenance sidecar and a fresh run refuses an existing journal. Full suite on merged
+   `main`: 2762 passed, 0 failed (twice). Live check on a real router passed (no router → refusal; unloaded → registry; loaded →
+   `registry+worker`; wrong config → refusal). The flaky `test_work_queue` PAUSE tests are fixed (`a86a666`, root cause found by
+   Codex `gpt-6-sol`: they patched the process-wide `time.sleep`).
+   Still open, NOT fixed: `run_dsh_probe.py` has no M50 check; pair-publication residuals (a legacy manifest without a digest is
+   indistinguishable from a malformed one; identical result bytes from two runs read as a match); the exit guard's last review
+   findings were fixed without a further cold pass.
 5. Not queued: dense prefill path (dequantise-then-dense at chunks ≥ 2048). Carried: P41 / P42 into `docs/open-questions.md`?
    M56 stays PARKED (C110).
 
