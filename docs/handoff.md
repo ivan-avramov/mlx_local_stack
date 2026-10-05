@@ -1,4 +1,4 @@
-# Handoff — 2026-10-04 (23:15 UTC): M57 build IN FLIGHT (C112); evidence steps 1–2 complete; M58 queued; push NOT approved
+# Handoff — 2026-10-05 (00:45 UTC): M57 build reviewed (fork + router SHIP, stack in its last fix round); qualification design awaits sign-off; push NOT approved
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/proposal-flash-attention.md` (the whole M57
 record: proposal → reviews → design P25–P44 → reviews 2/3 → reconciliation → evidence E1–E15 with P65–P75), `docs/PLAN.md` (M57 row),
@@ -35,16 +35,28 @@ record: proposal → reviews → design P25–P44 → reviews 2/3 → reconcilia
 
 ## In flight / pending
 
-1. **M57 build (C112: go on the measured case).** Three implementers from `docs/specs/m57-attention-policy.md`: fork branch
-   `m57-attention-policy` (on top of `m57-prefill-profile`), `../mlx-serve` branch `m57-attention-policy`, stack provenance
-   (fingerprint v7, compare) on a worktree branch. Then: cold reviews (Claude reviewer + Codex `gpt-6-astra`, prompt on stdin),
-   GPU parity gate AC12, live gate, pilot twice, qualification design frozen before the first arm (matched machine state).
-2. **M58 queued** (joint MTP verification scan) — spec owed after the M57 build.
-3. **Push: NOT approved** (operator undecided, C112). Nothing pushed: stack commits since `bd2823d`, fork branches. Recommendation
-   on record: do not merge the fork branches into fork `main` before M57 passes review — one serving-path hash change, not two.
-4. **Found, NOT fixed (needs a go):** `bench/tests/test_m50_entrypoints.py::test_run_opencode_probe_refuses_before_the_manifest` fails on
-   `main` — since `3948528` the opencode probe creates its scratch directory BEFORE the M50 refusal, which breaks the "refuse before
-   the first write" rule. Proposed fix: create the scratch root after the router check.
+1. **M57 build (C112).** Spec `docs/specs/m57-attention-policy.md` (+ Amendments 1, 2). Nothing merged, nothing pushed.
+   - Fork `../mlx-vlm` branch `m57-attention-policy` @ `fbe2775e` (on top of the profiler branch): policy `fused_v1`, counters in
+     HTTP timings, startup self-test, lazy embeddings behind `--lazy-prompt-embeddings`. Cold reviews: SHIP (3 rounds). Full fork
+     suite 5309 passed. Live gate PASSED (self-test 12 forced calls; cold 20819-token prompt `sdpa_forced=656 / sdpa_auto=16`; all
+     requests 200). GPU parity gate AC12 PASSED 24/24 cells (`$STACK_WORKDIR/m57/ac12_parity.run1.json`).
+   - Router `../mlx-serve` branch `m57-attention-policy` @ `7be6bfd`: registry fields `attention_policy`,
+     `lazy_prompt_embeddings`. Cold reviews: SHIP. 152 tests.
+   - Stack: worktree branch `worktree-agent-a6011ca833d3e6e68` (under `.claude/worktrees/`), fingerprint v7, strict serving-state
+     refusals, driver prechecks. Round 5 of review fixes IN FLIGHT (observation completeness, late-refusal handling); NOT merged
+     into `main`. Live resolver check passed (registry fallback / worker / mismatch refusal).
+   - Next: final review pass on the stack → merge it into local `main` → operator sign-off on
+     `docs/specs/m57-qualification.md` → pilots → arms (matched machine state).
+2. **M58 queued** (joint MTP verification scan) — spec owed after M57.
+3. **Push: NOT approved** (operator undecided). Recommendation on record: push the stack docs commits when convenient; do NOT
+   merge fork branches into fork `main` or bump submodules until M57 qualifies — one serving-path hash change, not two.
+4. **Found, NOT fixed (operator go needed):**
+   - `test_m50_entrypoints::test_run_opencode_probe_refuses_before_the_manifest` fails on `main` — since `3948528` the opencode
+     probe creates its scratch directory BEFORE the M50 refusal.
+   - The C35 `draft_kind` tripwire raises a plain `RuntimeError` that `generate.py` swallows ("never block a run on provenance"):
+     a predictor-state mismatch does not stop a `generate` run.
+   - `run_capacity`, `run_retrieval`, `run_reasoning` never call the M50 router check (`assert_served_config`); only `generate`,
+     AgentBench, the session-cache probe, the stack smoke and the parity replay do.
 5. Not queued: dense prefill path (dequantise-then-dense at chunks ≥ 2048). Carried: P41 / P42 into `docs/open-questions.md`?
    M56 stays PARKED (C110).
 
