@@ -603,7 +603,11 @@ def main() -> int:
     # M50: refuse before anything is read, written or requested unless :port serves this registry.
     try:  # opencode sends to what ITS resolved config says (never MLX_SERVE_BASE): verify THAT,
         # resolved by `opencode debug config` under the probe's env from a neutral scratch cwd.
-        with _scratch_dir("m50") as neutral:
+        # The resolver needs a cwd (and opencode writes its own data home there), so it gets a
+        # TRANSIENT directory in the system temp, removed on exit. The workdir scratch root
+        # (`_scratch_dir`) is created only AFTER this check has passed.
+        with tempfile.TemporaryDirectory(prefix="oc-m50-") as neutral_raw:
+            neutral = Path(os.path.realpath(neutral_raw))
             oc_base = provenance.opencode_router_base(neutral, _opencode_env(Path(neutral) / "xdg-data"))
         router = provenance.assert_served_config(oc_base)
     except (RuntimeError, OSError, KeyError, ValueError) as e:
