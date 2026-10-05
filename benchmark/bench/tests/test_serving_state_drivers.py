@@ -63,9 +63,9 @@ def _setup(monkeypatch, tmp_path, mod, ladder_name, canned, worker_script):
                         lambda *a, **k: ladder_calls.append(1) or canned)
     script = list(worker_script)
 
-    def lookup():
+    def lookup(doc):
         return script.pop(0) if len(script) > 1 else script[0]
-    monkeypatch.setattr(P, "_worker_cmdlines", lookup)
+    monkeypatch.setattr(P, "_worker_argvs", lookup)
     return drv, ladder_calls, results
 
 

@@ -102,17 +102,6 @@ def test_s4_model_equals_form_is_read(tmp_path):
     assert st["attention_policy_source"] == "worker"
 
 
-def test_s4_default_lookup_returns_all_workers(monkeypatch):
-    class Pr:
-        def __init__(self, c):
-            self.info = {"pid": 1, "cmdline": c.split()}
-    fake = types.SimpleNamespace(process_iter=lambda attrs: [
-        Pr("python mlx_vlm.server --model a"), Pr("vim x"), Pr("python mlx_vlm.server --model b")])
-    monkeypatch.setitem(sys.modules, "psutil", fake)
-    assert P._worker_cmdlines() == [["python", "mlx_vlm.server", "--model", "a"],
-                                    ["python", "mlx_vlm.server", "--model", "b"]]
-
-
 # ------------------------------------------------------------------ S5 lazy_prompt_embeddings
 def test_s5_registry_default_false(tmp_path):
     st = P.registry_lazy_prompt_embeddings("modelX", _registry(tmp_path), worker_lookup=lambda: None)
@@ -180,7 +169,7 @@ def test_s5_runtime_block_carries_both(monkeypatch, tmp_path):
     monkeypatch.setattr(P, "apc_state", lambda: {"apc_enabled": "0", "source": "process"})
     monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "off"})
     monkeypatch.setattr(P, "session_retention_state", lambda: {})
-    monkeypatch.setattr(P, "_worker_cmdlines", lambda: [])
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [])
     block = P._runtime_block(None, model="modelX",
                              registry_path=_registry(tmp_path, lazy_prompt_embeddings=True))
     assert block["lazy_prompt_embeddings"] is True

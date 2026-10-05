@@ -87,20 +87,6 @@ def _worker_cmdline() -> str | None:
     return None
 
 
-def _worker_cmdlines() -> list[list[str]]:
-    """argv LISTS of ALL live `mlx_vlm.server` workers ([] when there is none). A failed
-    observation RAISES (never reads as "no worker"): the caller refuses rather than fall back to
-    the registry on ignorance. A process whose argv is unreadable is skipped (it cannot be
-    attributed)."""
-    out = []
-    import psutil
-    for p in psutil.process_iter(["pid", "cmdline"]):
-        argv = p.info.get("cmdline")
-        if argv and "mlx_vlm.server" in " ".join(argv):
-            out.append(list(argv))
-    return out
-
-
 def registry_draft(model: str, registry_path: str | None = None,
                    worker_lookup=_worker_cmdline) -> dict:
     """Speculative-decoding state for ``model``, NORMALISED so that "off" is an OBSERVATION.
@@ -614,14 +600,77 @@ def _flag_value(argv, flag):
     return val
 
 
-def _worker_for(entry: dict, worker_lookup):
+def _port_listener_pids(port: int) -> list[int]:
+    """Sorted pids with a LISTEN socket on `port`, via the per-process walk (unrelated
+    AccessDenied / zombie processes are skipped: they cannot be the listener we own) united with
+    `lsof`. RAISES when the lookup itself fails (psutil missing, lsof missing/timed out/errored)
+    — "could not look" is never "nothing listens"."""
+    import psutil
+    pids = set()
+    for p in psutil.process_iter(["pid"]):
+        try:
+            conns = getattr(p, "net_connections", None) or getattr(p, "connections")
+            for c in conns(kind="inet"):
+                if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port:
+                    pids.add(p.pid)
+        except Exception:  # noqa: BLE001 — AccessDenied / gone / zombie: not attributable
+            continue
+    r = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
+                       capture_output=True, text=True, timeout=20)
+    if r.returncode not in (0, 1):                  # lsof: 1 = no match
+        raise OSError(f"lsof rc={r.returncode}: {r.stderr[:80]}")
+    for line in r.stdout.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            pids.add(int(line[1:]))
+    return sorted(pids)
+
+
+def _worker_argvs(doc) -> list[list[str]]:
+    """argv list of THE worker: the process listening on the registry's `mlx_port` (the port the
+    router's worker subprocess serves), identified independently of any all-process argv scan.
+    [] when nothing listens (no worker) or no stack is up. Refuses (ServingStateError) when the
+    listener's argv is unreadable, more than one process listens, the lookup fails while a router
+    (`manager_port` owner) is up."""
+    doc = doc if isinstance(doc, dict) else {}
+    mlx_port, manager_port = doc.get("mlx_port"), doc.get("manager_port", 8000)
+
+    def router_up():
+        try:
+            return bool(_port_listener_pids(manager_port))
+        except Exception:  # noqa: BLE001 — cannot tell: treat as up (refuse), never as absent
+            return True
+    if mlx_port is None:
+        return []           # registry names no worker port: nothing to identify, registry stands
+    try:
+        pids = _port_listener_pids(int(mlx_port))
+    except Exception as e:  # noqa: BLE001
+        if not router_up():
+            return []
+        raise ServingStateError(f"C35 tripwire: cannot observe the listener on mlx_port "
+                                f"{mlx_port} ({type(e).__name__}: {str(e)[:80]}) while a router is "
+                                f"up; refusing to fall back to the registry on ignorance.") from e
+    if not pids:
+        return []
+    if len(pids) > 1:
+        raise ServingStateError(f"C35 tripwire: more than one process listens on mlx_port "
+                                f"{mlx_port} (pids {pids}) — worker attribution is ambiguous.")
+    argv = _process_facts(pids[0]).get("argv")
+    if not argv:
+        raise ServingStateError(f"C35 tripwire: the worker (pid {pids[0]}, mlx_port {mlx_port}) "
+                                f"has an unreadable argv; cannot establish its served state.")
+    return [list(argv)]
+
+
+def _worker_for(entry: dict, worker_lookup, doc=None):
     """The ONE live worker argv whose `--model` argument EXACTLY equals the entry's hf_path, else
     None ("no worker for this model" -> registry fallback). A failed observation or more than one
     match raises ServingStateError. `worker_lookup` returns None, an argv list, a cmdline string
     (whitespace-split) or a list of those."""
     try:
-        got = _worker_cmdlines() if worker_lookup is _DEFAULT_LOOKUP else (
+        got = _worker_argvs(doc) if worker_lookup is _DEFAULT_LOOKUP else (
             worker_lookup() if worker_lookup else None)
+    except ServingStateError:
+        raise
     except Exception as e:  # noqa: BLE001 — re-raised as a refusal, never swallowed
         raise ServingStateError(f"C35 tripwire: cannot observe the live workers "
                                 f"({type(e).__name__}: {str(e)[:80]}); refusing to fall back to "
@@ -649,7 +698,7 @@ def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, par
     for e in entries or []:
         if isinstance(e, dict) and e.get("name") == model:
             declared = parse_registry(e.get(key))
-            cmd = _worker_for(e, worker_lookup)
+            cmd = _worker_for(e, worker_lookup, doc)
             if cmd is not None:
                 served = parse_worker(cmd)
                 if served != declared:

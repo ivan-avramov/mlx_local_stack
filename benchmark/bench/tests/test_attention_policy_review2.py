@@ -57,7 +57,7 @@ def _setup_run(tmp_path, monkeypatch, **reg_extra):
 
 def test_t1_generate_run_refuses_on_worker_registry_disagreement(tmp_path, monkeypatch):
     calls = _setup_run(tmp_path, monkeypatch, attention_policy="fused_v1")
-    monkeypatch.setattr(P, "_worker_cmdlines", lambda: [_ARGV])    # worker serves auto
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [_ARGV])    # worker serves auto
     with pytest.raises(P.ServedConfigError):
         G.run(["m"], ["aime"], {})
     assert calls["probe"] == 0 and calls["preload"] == 0
@@ -66,7 +66,7 @@ def test_t1_generate_run_refuses_on_worker_registry_disagreement(tmp_path, monke
 
 def test_t1_generate_run_refuses_on_lazy_disagreement(tmp_path, monkeypatch):
     calls = _setup_run(tmp_path, monkeypatch, lazy_prompt_embeddings=True)
-    monkeypatch.setattr(P, "_worker_cmdlines", lambda: [_ARGV])
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [_ARGV])
     with pytest.raises(P.ServedConfigError):
         G.run(["m"], ["aime"], {})
     assert calls["probe"] == 0 and not list(tmp_path.glob("m/*"))
@@ -74,7 +74,7 @@ def test_t1_generate_run_refuses_on_lazy_disagreement(tmp_path, monkeypatch):
 
 def test_t1_generate_run_refuses_on_ambiguous_workers(tmp_path, monkeypatch):
     calls = _setup_run(tmp_path, monkeypatch)
-    monkeypatch.setattr(P, "_worker_cmdlines", lambda: [_ARGV, _ARGV])
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [_ARGV, _ARGV])
     with pytest.raises(P.ServedConfigError):
         G.run(["m"], ["aime"], {})
     assert calls["probe"] == 0 and not list(tmp_path.glob("m/*"))
@@ -82,7 +82,7 @@ def test_t1_generate_run_refuses_on_ambiguous_workers(tmp_path, monkeypatch):
 
 def test_t1_generate_run_still_runs_when_worker_matches(tmp_path, monkeypatch):
     calls = _setup_run(tmp_path, monkeypatch, attention_policy="fused_v1")
-    monkeypatch.setattr(P, "_worker_cmdlines", lambda: [_ARGV + ["--attention-policy", "fused_v1"]])
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [_ARGV + ["--attention-policy", "fused_v1"]])
     G.run(["m"], ["aime"], {})
     assert calls["probe"] == 1
     man = json.loads((tmp_path / "m" / "aime.manifest.json").read_text())
@@ -148,25 +148,6 @@ def test_t3_observation_failure_refuses_but_no_worker_falls_back(tmp_path):
     for none in (lambda: None, lambda: [], lambda: [["python", "-m", "mlx_vlm.server", "--model", "other"]]):
         st = P.registry_attention_policy("m", reg, worker_lookup=none)
         assert st["attention_policy_source"] == "registry"
-
-
-def test_t3_default_lookup_keeps_argv_lists_and_raises_on_failure(monkeypatch):
-    import sys
-    import types
-
-    class Pr:
-        def __init__(self, c):
-            self.info = {"pid": 1, "cmdline": c}
-    fake = types.SimpleNamespace(process_iter=lambda attrs: [
-        Pr(SPACED), Pr(["vim", "x"]), Pr(None)])
-    monkeypatch.setitem(sys.modules, "psutil", fake)
-    assert P._worker_cmdlines() == [SPACED]
-
-    def bad(attrs):
-        raise RuntimeError("no")
-    monkeypatch.setitem(sys.modules, "psutil", types.SimpleNamespace(process_iter=bad))
-    with pytest.raises(Exception):
-        P._worker_cmdlines()
 
 
 # ------------------------------------------------------------------ T4 sdpa counters
