@@ -37,8 +37,10 @@ def _q(tmp_path, entries):
 
 def _mock_pause_sleep(monkeypatch, sleep):
     # Replace only workqueue's clock; patching workqueue.time.sleep changes global time.sleep.
+    real = workqueue.time
     monkeypatch.setattr(workqueue, "time", SimpleNamespace(
-        sleep=sleep, strftime=workqueue.time.strftime))
+        **{k: getattr(real, k) for k in dir(real) if not k.startswith("_") and k != "sleep"},
+        sleep=sleep))
 
 
 def test_runs_entries_in_order(tmp_path):
