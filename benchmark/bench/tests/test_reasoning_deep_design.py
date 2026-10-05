@@ -4,7 +4,7 @@ import json
 import bench.run_reasoning as R
 from bench.reasoning import run_reasoning_ladder
 
-from .test_run_reasoning import FakeSampler
+from .test_run_reasoning import FakeSampler, stub_manifest_lite
 
 PARAMS = {"max_tokens": 1024, "thinking_budget": 100}
 
@@ -62,6 +62,7 @@ def test_shallow_rungs_unaffected_by_early_stop_rule():
 
 
 def _patch_cli(monkeypatch, tmp_path, driver):
+    stub_manifest_lite(monkeypatch)
     monkeypatch.setattr(R, "MlxServeDriver", lambda: driver)
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))

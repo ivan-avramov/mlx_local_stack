@@ -9,7 +9,7 @@ import math
 import os
 from pathlib import Path
 
-from . import provenance
+from . import client, provenance
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, await_model_pid, system_used_gb
 from .model_params import params_for, profile_names, registry_context_limit
@@ -67,12 +67,26 @@ def main(argv=None) -> int:
             raise ValueError("out-tag must be a filename suffix")
     except ValueError as exc:
         ap.error(str(exc))
+    # M50: the process owning the router port must serve THIS driver's registry; checked before
+    # anything is read (the destination-exists probe below), written or requested.
+    router = provenance.assert_served_config(client.BASE)
+    # Everything after the entry check runs under the shared exit protocol (C106 re-verification,
+    # journal + scorecard quarantine and drift stamp on a refused run, original exception kept).
+    guard = provenance.ExitGuard(router, client.BASE, label="capacity")
+    with guard:
+        return _run(ap, args, grid, expected, router, guard)
+
+
+def _run(ap, args, grid, expected, router, guard) -> int:
     out_dir = Path(RESULTS) / args.model
     cl = "capacity_ladder" + (f".{args.out_tag}" if args.out_tag else "")
     cr = "capacity_retrieval" + (f".{args.out_tag}" if args.out_tag else "")
     destinations = [out_dir / f"{cl}.jsonl", out_dir / f"{cr}.json", out_dir / f"{cl}.manifest.json"]
     if any(p.exists() for p in destinations):
         ap.error("capacity output already exists; preserve it and use a fresh --out-tag")
+    # Nothing consumable may stand under a canonical name after a refused run (review C2).
+    guard.track(destinations[0])
+    guard.track(destinations[1])
     # M57: serving controls are resolved BEFORE anything is created or requested.
     provenance.assert_serving_state(args.model)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -124,9 +138,14 @@ def main(argv=None) -> int:
         sc["idle_baseline_gb"] = round(idle_baseline, 2)
         sc["requested_grid"] = list(grid)
         sc["grid_completed"] = len(records) == len(grid) and sc["execution_status"] == "completed"
-        with destinations[1].open("x") as f:
+        # The scorecard is STAGED, never written under its canonical name before the exit
+        # verification (a refused run must have no canonical scorecard at any instant).
+        sc_stage = f"{destinations[1]}.pending-{os.getpid()}"
+        guard.track(sc_stage, destinations[1])
+        with open(sc_stage, "x") as f:
             json.dump(sc, f, indent=2, allow_nan=False)
         manifest_ok = True
+        man = None
         try:
             man = provenance.gather(args.model, profile=args.sampling_profile,
                                     overrides={"max_tokens": 256, "thinking_budget": 256, "seed": args.seed},
@@ -134,15 +153,26 @@ def main(argv=None) -> int:
                                              "capacity_schema_version": 2,
                                              "memory_target_gb": args.memory_target_gb,
                                              "expected_rung_seconds": expected,
-                                             "idle_baseline_gb": round(idle_baseline, 2)})
-            with destinations[2].open("x") as f:
-                json.dump(man, f, indent=2, allow_nan=False)
+                                             "idle_baseline_gb": round(idle_baseline, 2)},
+                                    router=router)
         except provenance.ServedConfigError:
             raise                           # M57: a serving-state refusal is never swallowed
         except Exception as exc:
             # Preserve completed rows, but do not label a provenance failure successful.
             manifest_ok = False
             print(f"[capacity] ERROR: manifest not written: {exc}", flush=True)
+        # C106: order is gather -> verify -> publish. A drift raises; the guard stamps and sets
+        # aside the journal and the staged scorecard, and no manifest is written.
+        exit_blk = guard.verify()
+        os.replace(sc_stage, destinations[1])
+        if man is not None:
+            man["router_exit"] = exit_blk
+            try:
+                with destinations[2].open("x") as f:
+                    json.dump(man, f, indent=2, allow_nan=False)
+            except Exception as exc:
+                manifest_ok = False
+                print(f"[capacity] ERROR: manifest not written: {exc}", flush=True)
         print(f"[capacity] execution={sc['execution_status']} grid_completed={sc['grid_completed']} "
               f"max_completed_ctx={sc['max_completed_ctx']} "
               f"max_within_memory_target_ctx={sc['max_within_memory_target_ctx']} "

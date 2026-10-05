@@ -78,6 +78,27 @@ def test_main_refuses_version_drift_without_the_escape_hatch(monkeypatch, tmp_pa
     assert "9.9.9" in str(e.value) and P.PINNED_DSH_VERSION in str(e.value)
 
 
+def test_main_does_not_swallow_a_C35_serving_state_refusal(monkeypatch, tmp_path):
+    """The manifest stamp is best-effort, but a ServedConfigError (C35 draft_kind disagreement,
+    M57 serving state) is a refusal: it must stop the run before any item is attempted."""
+    import bench.provenance as BP
+    out = tmp_path / "dsh.jsonl"
+    monkeypatch.setattr(sys, "argv", ["run_dsh_probe.py", "--model", "m", "--tune", "t0.5",
+                                      "--items", "x", "--out", str(out)])
+    monkeypatch.setattr(P, "_dsh_bin", lambda: Path("/x/dsh"))
+    monkeypatch.setattr(P, "_dsh_version", lambda b: P.PINNED_DSH_VERSION)
+    monkeypatch.setattr(P, "_polyglot_root", lambda: tmp_path / "poly")
+    monkeypatch.setattr(P, "_polyglot_sha", lambda p: "deadbeef")
+    monkeypatch.setattr(P, "_stack_workdir", lambda: tmp_path)
+
+    def refuse(*a, **k):
+        raise BP.ServingStateError("C35 tripwire: registry declares draft_kind='mtp' but off")
+    monkeypatch.setattr(BP, "gather", refuse)
+    with pytest.raises(BP.ServedConfigError, match="C35 tripwire"):
+        P.main()
+    assert not out.with_suffix(".manifest.json").exists()
+
+
 # --------------------------------------------------------------------------- _dsh_env
 
 def test_dsh_env_redirects_home_and_sets_provider_and_safety_vars(tmp_path, monkeypatch):

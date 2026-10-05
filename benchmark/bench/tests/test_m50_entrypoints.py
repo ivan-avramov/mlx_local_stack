@@ -180,12 +180,81 @@ def test_run_opencode_probe_refuses_before_the_manifest(tmp_path, monkeypatch, c
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     monkeypatch.setattr(OP, "_opencode_version", lambda: OP.PINNED_OPENCODE_VERSION)
     monkeypatch.setattr(OP, "_polyglot_root", lambda: pytest.fail("polyglot before tripwire"))
+    # The real discovery call makes opencode write its own data home (the one accepted pre-check
+    # side effect, see the entry point); stub it so this test pins OUR writes at zero.
+    monkeypatch.setattr(P, "opencode_router_base",
+                        lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8000/v1")
     _refusing(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--out", str(tmp_path / "oc.jsonl")])
     with pytest.raises(SystemExit) as ei:
         OP.main()
     assert ei.value.code not in (0, None) and "M50" in str(ei.value.code)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_run_opencode_probe_does_only_the_discovery_call_before_the_check(tmp_path, monkeypatch):
+    """Review C4: before the M50 check the ONLY I/O is config resolution plus ONE opencode
+    discovery call, run with cwd = the existing STACK_WORKDIR (same ancestry as the item
+    directories). No docker/--version preflight, no temp directory, no directory creation."""
+    import os
+    import subprocess
+    import tempfile
+    import run_opencode_probe as OP
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    boom = lambda *a, **k: pytest.fail("preflight I/O before the M50 check")   # noqa: E731
+    monkeypatch.setattr(OP, "_docker_available", boom)
+    monkeypatch.setattr(OP, "_opencode_version", boom)
+    monkeypatch.setattr(OP, "_polyglot_root", boom)
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", boom)
+    monkeypatch.setattr(tempfile, "mkdtemp", boom)
+    monkeypatch.setattr(os, "makedirs", boom)
+    monkeypatch.setattr(subprocess, "check_output", boom)
+    monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    calls = []
+
+    def discovery(cwd=None, env=None, provider="mlx-local"):
+        calls.append(cwd)
+        raise P.ServedConfigError("M50 tripwire: refused in discovery")
+    monkeypatch.setattr(P, "opencode_router_base", discovery)
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--lang", "go",
+                                      "--out", str(tmp_path / "oc.jsonl")])
+    with pytest.raises(SystemExit) as ei:
+        OP.main()
+    assert "M50" in str(ei.value.code)
+    assert [str(c) for c in calls] == [str(tmp_path)]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_run_opencode_probe_passes_a_workdir_data_home_to_discovery_and_creates_nothing_itself(
+        tmp_path, monkeypatch):
+    """Documents the pending-approval fact (D2): discovery is launched with an XDG_DATA_HOME under
+    <STACK_WORKDIR>/scratch that opencode itself will create; OUR code creates no directory."""
+    import run_opencode_probe as OP
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    seen = {}
+
+    def discovery(cwd=None, env=None, provider="mlx-local"):
+        seen["data_home"] = env["XDG_DATA_HOME"]
+        raise P.ServedConfigError("M50 tripwire: stop after discovery")
+    monkeypatch.setattr(P, "opencode_router_base", discovery)
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--out", str(tmp_path / "oc.jsonl")])
+    with pytest.raises(SystemExit):
+        OP.main()
+    assert seen["data_home"] == str(tmp_path / "scratch" / "m50-discovery-xdg-data")
+    assert not (tmp_path / "scratch").exists()          # we did not create it
+
+
+def test_run_opencode_probe_refuses_when_stack_workdir_does_not_exist(tmp_path, monkeypatch):
+    import run_opencode_probe as OP
+    gone = tmp_path / "nope"
+    monkeypatch.setenv("STACK_WORKDIR", str(gone))
+    monkeypatch.setattr(P, "opencode_router_base",
+                        lambda *a, **k: pytest.fail("discovery ran without a workdir"))
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--out", str(tmp_path / "oc.jsonl")])
+    with pytest.raises(SystemExit) as ei:
+        OP.main()
+    assert "M50" in str(ei.value.code) and not gone.exists()
 
 
 # --------------------------------------------------------------------------- round 2 (Codex cold review)
@@ -504,3 +573,156 @@ def test_run_opencode_probe_item_refusal_records_no_manifest(tmp_path, monkeypat
     with pytest.raises(P.ServedConfigError):
         OP.main()
     assert not out.with_suffix(".manifest.json").exists() and not out.exists()
+
+
+# --------------------------------------------------------------------------- C35 through generate.run
+def _c35_generate_setup(tmp_path, monkeypatch, served_draft):
+    """generate.run against a registry declaring draft_kind=mtp, with a live worker whose cmdline
+    says `served_draft`. Returns (G, probes, results) — `probes` collects every request."""
+    import yaml
+    import bench.generate as G
+    import bench.benchmarks as B
+    import bench.client as C
+    from bench import paths
+    reg = tmp_path / "reg.yaml"
+    reg.write_text(yaml.safe_dump({"models": [{"name": "m", "hf_path": "caslca/m-4bit",
+                                              "draft_kind": "mtp"}]}))
+    monkeypatch.setattr(paths, "registry_path", lambda: reg)
+    res = tmp_path / "results"
+    res.mkdir()
+    monkeypatch.setattr(G, "RESULTS", res)
+    monkeypatch.setattr(B, "load", lambda b, lim, seed: [{"id": "t1", "prompt": "p"}])
+    cmd = f"python -m mlx_vlm.server --model caslca/m-4bit --draft-kind {served_draft}"
+    monkeypatch.setattr(P.registry_draft, "__defaults__", (lambda: cmd,))
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [])
+    probes = []
+    monkeypatch.setattr(C, "preload", lambda m, **k: probes.append("preload") or 0.0)
+    monkeypatch.setattr(C, "probe", lambda m, msgs, params, timeout=3600, tools=None: (
+        probes.append("probe"), {
+            "content": "ok", "reasoning": "", "tool_calls": [], "prompt_tokens": 1,
+            "completion_tokens": 10, "decode_tps": 1.0, "peak_mem_gb": 1.0,
+            "finish_reason": "stop", "wall_s": 0.1, "raw_timings": {}})[1])
+    return G, probes, res
+
+
+def test_c35_tripwire_is_a_served_config_error_and_still_a_runtime_error():
+    assert issubclass(P.ServingStateError, P.ServedConfigError)
+    assert issubclass(P.ServedConfigError, RuntimeError)
+
+
+def test_generate_run_refuses_on_a_draft_kind_disagreement(tmp_path, monkeypatch):
+    """C35 must stop a generate run: no request, no manifest, no rows (it used to be swallowed
+    by the 'never block a run on provenance' handlers and printed as 'skipped')."""
+    G, probes, res = _c35_generate_setup(tmp_path, monkeypatch, served_draft="off")
+    with pytest.raises(P.ServedConfigError, match="C35 tripwire"):
+        G.run(["m"], ["aime"], {})
+    assert probes == []
+    assert list(res.rglob("*")) == []
+
+
+def test_generate_run_proceeds_when_the_worker_draft_kind_matches(tmp_path, monkeypatch):
+    G, probes, res = _c35_generate_setup(tmp_path, monkeypatch, served_draft="mtp")
+    G.run(["m"], ["aime"], {})
+    assert probes == ["preload", "probe"]
+    man = json.loads((res / "m" / "aime.manifest.json").read_text())
+    assert man["runtime"]["draft_kind"] == "mtp"
+
+
+# --------------------------------------------------------------------------- capacity / retrieval / reasoning
+# (2026-10-04: these three drivers lacked the M50 entry check and the C106 exit re-verification)
+from bench.tests import test_serving_state_drivers as _SSD   # noqa: E402  (shared fakes)
+
+_STAT_DRIVERS = list(_SSD.DRIVERS)
+_MANIFEST_NAME = {"capacity": "capacity_ladder.manifest.json", "retrieval": "retrieval.manifest.json",
+                  "reasoning": "reasoning.manifest.json"}
+
+
+def _stat_setup(monkeypatch, tmp_path, name):
+    mod, lad, canned, extra = _SSD.DRIVERS[name]
+    drv, ladder_calls, results = _SSD._setup(monkeypatch, tmp_path, mod, lad, canned, [[_SSD.GOOD]])
+    return mod, lad, canned, extra, drv, ladder_calls, results
+
+
+@pytest.mark.parametrize("name", _STAT_DRIVERS)
+def test_stat_drivers_refuse_before_anything_else_when_no_router_owns_the_port(monkeypatch, tmp_path, name):
+    mod, lad, canned, extra, drv, ladder_calls, results = _stat_setup(monkeypatch, tmp_path, name)
+    monkeypatch.setattr(P, "assert_serving_state",
+                        lambda *a, **k: pytest.fail("serving-state precheck ran before the M50 check"))
+    monkeypatch.setattr(mod, "MlxServeDriver", lambda: pytest.fail("driver built before the M50 check"))
+    monkeypatch.setattr(mod, "await_model_pid", lambda: pytest.fail("worker lookup before the M50 check"))
+    _refusing(monkeypatch)
+    with pytest.raises(P.ServedConfigError, match="M50"):
+        mod.main(_SSD._argv(extra))
+    assert drv.calls == [] and ladder_calls == []
+    assert list(results.iterdir()) == []              # not even the model directory
+
+
+@pytest.mark.parametrize("name", _STAT_DRIVERS)
+def test_stat_drivers_refuse_on_a_registry_mismatch(monkeypatch, tmp_path, name):
+    mod, lad, canned, extra, drv, ladder_calls, results = _stat_setup(monkeypatch, tmp_path, name)
+    monkeypatch.setattr(P, "router_owner", lambda port: {
+        "pid": 1, "cmdline": "mlx-serve start", "cwd": str(tmp_path),
+        "env": {"MLX_SERVE_CONFIG": str(tmp_path / "other.yaml")}})
+    with pytest.raises(P.ServedConfigError, match="M50"):
+        mod.main(_SSD._argv(extra))
+    assert drv.calls == [] and list(results.iterdir()) == []
+
+
+@pytest.mark.parametrize("name", _STAT_DRIVERS)
+def test_stat_drivers_stamp_router_and_exit_block_in_the_manifest(monkeypatch, tmp_path, name):
+    mod, lad, canned, extra, drv, ladder_calls, results = _stat_setup(monkeypatch, tmp_path, name)
+    _passing(monkeypatch, tmp_path, pid=31337)
+    assert mod.main(_SSD._argv(extra)) == 0
+    man = json.loads((results / _SSD.MODEL / _MANIFEST_NAME[name]).read_text())
+    assert man["router"]["pid"] == 31337 and man["router"]["config"] and man["router"]["config_sha256"]
+    assert man["router_exit"]["verified_at"] == "exit" and man["router_exit"]["pid"] == 31337
+
+
+def _arm_drift(monkeypatch, tmp_path, mod, lad, canned, mode):
+    """After the ladder has run, change what the router serves: a new pid or an edited file."""
+    from bench import paths
+    state = {"drift": False}
+
+    def owner(port):
+        pid = 8 if (state["drift"] and mode == "pid") else 7
+        return {"pid": pid, "cmdline": "mlx-serve start", "cwd": str(tmp_path),
+                "env": {"MLX_SERVE_CONFIG": str(paths.registry_path())}}
+    monkeypatch.setattr(P, "router_owner", owner)
+
+    def ladder(*a, **k):
+        state["drift"] = True
+        if mode == "sha":
+            with open(paths.registry_path(), "a") as f:
+                f.write("\n# edited while the run was live\n")
+        return canned
+    monkeypatch.setattr(mod, lad, ladder)
+
+
+@pytest.mark.parametrize("mode", ["pid", "sha"])
+@pytest.mark.parametrize("name", ["retrieval", "reasoning"])
+def test_ladder_drivers_quarantine_the_result_on_exit_drift(monkeypatch, tmp_path, name, mode):
+    mod, lad, canned, extra, drv, ladder_calls, results = _stat_setup(monkeypatch, tmp_path, name)
+    _arm_drift(monkeypatch, tmp_path, mod, lad, canned, mode)
+    with pytest.raises(P.ServedConfigError, match="C106"):
+        mod.main(_SSD._argv(extra))
+    mdir = results / _SSD.MODEL
+    assert not (mdir / f"{name}.json").exists() and not (mdir / f"{name}.manifest.json").exists()
+    aside = [p for p in mdir.iterdir() if p.name.startswith(f"{name}.json.refused-")]
+    assert len(aside) == 1
+    assert "served_config_drift" in json.loads(aside[0].read_text())
+    assert not [p for p in mdir.iterdir() if ".pending-" in p.name]
+
+
+@pytest.mark.parametrize("mode", ["pid", "sha"])
+def test_capacity_writes_no_manifest_and_stamps_drift_on_exit_drift(monkeypatch, tmp_path, mode):
+    mod, lad, canned, extra, drv, ladder_calls, results = _stat_setup(monkeypatch, tmp_path, "capacity")
+    _arm_drift(monkeypatch, tmp_path, mod, lad, canned, mode)
+    with pytest.raises(P.ServedConfigError, match="C106"):
+        mod.main(_SSD._argv(extra))
+    mdir = results / _SSD.MODEL
+    # Review C2: nothing consumable under a canonical name; the scorecard is set aside stamped.
+    assert not (mdir / "capacity_ladder.manifest.json").exists()
+    assert not (mdir / "capacity_retrieval.json").exists()
+    aside = list(mdir.glob("capacity_retrieval.json.refused-*"))
+    assert len(aside) == 1
+    assert "C106" in json.loads(aside[0].read_text())["served_config_drift"]["error"]

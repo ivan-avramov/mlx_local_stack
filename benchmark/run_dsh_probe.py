@@ -450,8 +450,8 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     existing_ids = _existing_row_ids(out)
 
+    from bench import provenance
     try:
-        from bench import provenance
         man = provenance.gather(a.model, profile="deployed",
                                 runtime={"client": "dsh", "edit_format": "tools",
                                          "dsh_version": dsh_version,
@@ -461,6 +461,8 @@ def main() -> int:
                                          "stall_ticks": a.stall_ticks,
                                          "loop_repeats": a.loop_repeats})
         out.with_suffix(".manifest.json").write_text(json.dumps(man, indent=2))
+    except provenance.ServedConfigError:
+        raise                       # C35/M57: a serving-state refusal is never "provenance best-effort"
     except Exception as e:  # noqa: BLE001 — never block a run on provenance, but say so loudly
         print(f"!! manifest not written: {e}", flush=True)
 

@@ -373,6 +373,42 @@ def test_c35_tripwire_skips_when_no_worker_observable(tmp_path):
     assert st["draft_source"] == "registry"
 
 
+def test_c35_worker_path_that_merely_extends_the_requested_path_is_not_this_model(tmp_path):
+    """Review C3: exact `--model` identification. A previous model whose hf_path EXTENDS the
+    requested one must not trip the (now fatal) tripwire."""
+    reg = _c35_registry(tmp_path, draft="mtp")
+    cmd = "python mlx_vlm.server --model caslca/modelX-4bit-v2 --draft-kind off"
+    st = P.registry_draft("modelX", reg, worker_lookup=lambda: cmd)
+    assert st["draft_kind"] == "mtp" and st["draft_source"] == "registry"
+
+
+def test_c35_an_unrelated_matching_process_does_not_hide_the_real_worker(tmp_path):
+    reg = _c35_registry(tmp_path, draft="mtp")
+    decoy = ["python", "other.py", "--note", "caslca/modelX-4bit-v2"]
+    real = ["python", "mlx_vlm.server", "--model", "caslca/modelX-4bit", "--draft-kind", "off"]
+    with pytest.raises(P.ServingStateError, match="C35 tripwire"):
+        P.registry_draft("modelX", reg, worker_lookup=lambda: [decoy, real])
+
+
+def test_c35_a_failed_worker_observation_refuses(tmp_path):
+    reg = _c35_registry(tmp_path, draft="mtp")
+
+    def boom():
+        raise OSError("lsof failed")
+    with pytest.raises(P.ServingStateError, match="C35 tripwire"):
+        P.registry_draft("modelX", reg, worker_lookup=boom)
+
+
+def test_c35_default_lookup_is_the_listener_based_worker_identification(tmp_path, monkeypatch):
+    reg = _c35_registry(tmp_path, draft="mtp")
+    seen = []
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: seen.append(doc) or [
+        ["python", "mlx_vlm.server", "--model", "caslca/modelX-4bit", "--draft-kind", "off"]])
+    with pytest.raises(P.ServingStateError, match="C35 tripwire"):
+        P.registry_draft("modelX", reg)
+    assert seen, "registry_draft did not use _worker_argvs"
+
+
 # ----------------------------------------------------- M34 (moe_expand joins kv_extra)
 def _moe_man(v, expand):
     return {"sampling_profile": "deployed", "fingerprint_version": v,

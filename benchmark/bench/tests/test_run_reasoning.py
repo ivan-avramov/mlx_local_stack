@@ -21,6 +21,18 @@ class FakeDriver:
         }
 
 
+def stub_manifest_lite(monkeypatch):
+    """The CLI tests use a model that is not in the registry; the journal sidecar (C1) needs a
+    manifest-to-be, so give `current_manifest_lite` a registry-free answer shaped like the real one."""
+    import bench.provenance as P
+    monkeypatch.setattr(P, "current_manifest_lite",
+                        lambda model, profile="production", registry_path=None, overrides=None, runtime=None:
+                        {"sampling_profile": profile, "sampling": dict(overrides or {}), "kv": {},
+                         "git": {}, "fingerprint_version": P.FINGERPRINT_VERSION,
+                         "runtime": {"draft_kind": "off", "attention_policy": "auto",
+                                     "lazy_prompt_embeddings": False}})
+
+
 class FakeSampler:
     def __init__(self, pid=None, interval=0.2):
         pass

@@ -87,8 +87,11 @@ def _worker_cmdline() -> str | None:
     return None
 
 
+_DEFAULT_LOOKUP = object()   # sentinel: identify the worker by the mlx_port listener (_worker_argvs)
+
+
 def registry_draft(model: str, registry_path: str | None = None,
-                   worker_lookup=_worker_cmdline) -> dict:
+                   worker_lookup=_DEFAULT_LOOKUP) -> dict:
     """Speculative-decoding state for ``model``, NORMALISED so that "off" is an OBSERVATION.
 
     That normalisation is the whole point of v3. `draft_kind` was already named in
@@ -124,17 +127,15 @@ def registry_draft(model: str, registry_path: str | None = None,
             # C35 tripwire (2026-08-26): the registry of record and the SERVED config can
             # legitimately diverge (bench routers run a draft-stripped overlay), and recording
             # the yaml answer alone stamped `draft_kind: mtp` on a verified draft-OFF run.
-            # When a live worker is observably serving THIS model (its `--model` carries the
+            # When a live worker is observably serving THIS model (its `--model` EQUALS the
             # entry's hf_path), its cmdline is the truth: a mismatch REFUSES the run rather
             # than record false provenance on either side. A worker for another model, or no
             # worker at all, says nothing — the yaml answer stands, source "registry".
-            cmd = worker_lookup() if worker_lookup else None
-            hf = e.get("hf_path") or ""
-            if cmd and hf and hf in cmd:
-                m = re.search(r"--draft-kind\s+(\S+)", cmd)
-                served = m.group(1) if m else "off"
+            argv = _worker_for(e, worker_lookup, doc)    # exact `--model`, mlx_port listener
+            if argv is not None:
+                served = _flag_value(argv, "--draft-kind") or "off"
                 if served != ans["draft_kind"]:
-                    raise RuntimeError(
+                    raise ServingStateError(
                         f"C35 tripwire: registry {registry_path!r} declares draft_kind="
                         f"{ans['draft_kind']!r} for {model!r} but the live worker serves "
                         f"draft_kind={served!r}. Launch the driver with MLX_SERVE_CONFIG "
@@ -579,8 +580,6 @@ class ServedConfigError(RuntimeError):
     re-raises it instead of recording an error row (a refusal after an auto-restart must stop the
     run, not become one more row)."""
 
-
-_DEFAULT_LOOKUP = object()
 
 
 class ServingStateError(ServedConfigError):
@@ -1225,6 +1224,121 @@ def assert_served_config_unchanged(entry: dict, base_url: str | None = None, *, 
                                 "on the intended config and rerun.")
     exit_blk["verified_at"] = "exit"
     return exit_blk
+
+
+def served_config_drift_record(entry: dict, base_url: str | None, error) -> dict:
+    """The `served_config_drift` stamp every driver records when its C106 exit check refuses:
+    entry and (best-effort) exit content hashes plus the refusal text."""
+    try:
+        exit_sha = assert_served_config(base_url).get("config_sha256")
+    except Exception:  # noqa: BLE001 — forensic only
+        exit_sha = None
+    return {"entry_sha256": entry.get("config_sha256"), "exit_sha256": exit_sha, "error": str(error)}
+
+
+class ExitGuard:
+    """Shared exit protocol for the ladder drivers (capacity / retrieval / reasoning).
+
+    Wrap everything AFTER the M50 entry check in `with ExitGuard(entry, base_url) as g:`.
+      * `g.track(path, name=None)` registers an artifact that must never stand under its canonical
+        name after a refused run (`name` is the base the `.refused-<utc>` marker is appended to).
+      * `g.verify()` is the C106 exit re-verification; call it right before publication. A drift
+        records `g.drift` (the `served_config_drift` stamp) and raises ServedConfigError.
+      * On ANY exception the guard runs the verification best-effort (so a drift is stamped even
+        when the run died earlier). If the exception is a ServedConfigError or a drift was found,
+        every tracked artifact is stamped with `served_config_drift` (when drift is known) and set
+        aside as `.refused-<utc>`. The ORIGINAL exception always propagates: failures while
+        verifying or quarantining are printed, never raised in its place.
+      * A clean body that never called `verify()` is verified here (and refused on drift)."""
+
+    def __init__(self, entry: dict, base_url: str | None = None, *, label: str = "driver"):
+        self.entry, self.base_url, self.label = entry, base_url, label
+        self.artifacts: list = []
+        self.exit_blk = None
+        self.drift = None
+        self._verified = False
+
+    def track(self, path, name=None) -> None:
+        self.artifacts.append((str(path), str(name) if name else None))
+
+    def verify(self) -> dict:
+        try:
+            self.exit_blk = assert_served_config_unchanged(self.entry, self.base_url)
+        except ServedConfigError as e:
+            self.drift = served_config_drift_record(self.entry, self.base_url, e)
+            raise
+        self._verified = True
+        return self.exit_blk
+
+    def _say(self, msg: str) -> None:
+        """Diagnostics inside the guard never throw: a closed or broken stdout must not replace
+        the original exception."""
+        try:
+            print(f"[{self.label}] {msg}", flush=True)
+        except (OSError, ValueError):
+            pass
+
+    def _stamp(self, path: str) -> None:
+        if path.endswith(".jsonl"):
+            with open(path, "a") as f:
+                f.write(json.dumps({"event": "served_config_drift",
+                                    "served_config_drift": self.drift}) + "\n")
+        elif ".json" in os.path.basename(path):
+            with open(path) as f:
+                doc = json.load(f)
+            if isinstance(doc, dict):
+                doc["served_config_drift"] = self.drift
+                with open(path, "w") as f:
+                    json.dump(doc, f, indent=2)
+
+    def _quarantine(self) -> None:
+        for path, name in self.artifacts:
+            stamp_error = None
+            try:
+                if not os.path.exists(path):
+                    continue
+                if self.drift is not None:
+                    try:
+                        self._stamp(path)
+                    except Exception as e:  # noqa: BLE001 — the rename below does NOT depend on this
+                        stamp_error = f"{type(e).__name__}: {e}"
+                dest = set_aside_refused(path, name)
+            except Exception as e:  # noqa: BLE001 — never replace the original exception
+                self._say(f"WARNING: could not quarantine {path}: {type(e).__name__}: {e}")
+                continue
+            if stamp_error:
+                try:
+                    with open(dest + ".stamp-error", "w") as f:
+                        f.write(f"served_config_drift could not be stamped into this artifact: "
+                                f"{stamp_error}\ndrift: {json.dumps(self.drift)}\n")
+                except Exception:  # noqa: BLE001
+                    pass
+                self._say(f"WARNING: drift stamp failed for {os.path.basename(path)}: {stamp_error}")
+            self._say(f"REFUSED: {os.path.basename(path)} set aside at {dest}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et, ev, tb):
+        err, raised_here = ev, False
+        if err is None:
+            if not self._verified:
+                try:
+                    self.verify()
+                except ServedConfigError as e:
+                    err, raised_here = e, True
+        elif not self._verified and self.drift is None:
+            try:
+                self.verify()
+            except ServedConfigError:
+                pass
+            except Exception as e:  # noqa: BLE001
+                self._say(f"WARNING: exit verification failed: {type(e).__name__}: {e}")
+        if err is not None and (isinstance(err, ServedConfigError) or self.drift is not None):
+            self._quarantine()
+        if raised_here:
+            raise err
+        return False
 
 
 def router_block(base_url: str | None = None) -> dict:
