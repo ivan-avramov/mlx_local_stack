@@ -557,3 +557,100 @@ def test_generate_run_proceeds_when_the_worker_draft_kind_matches(tmp_path, monk
     assert probes == ["preload", "probe"]
     man = json.loads((res / "m" / "aime.manifest.json").read_text())
     assert man["runtime"]["draft_kind"] == "mtp"
+
+
+# --------------------------------------------------------------------------- capacity / retrieval / reasoning
+# (2026-10-04: these three drivers lacked the M50 entry check and the C106 exit re-verification)
+from bench.tests import test_serving_state_drivers as _SSD   # noqa: E402  (shared fakes)
+
+_STAT_DRIVERS = list(_SSD.DRIVERS)
+_MANIFEST_NAME = {"capacity": "capacity_ladder.manifest.json", "retrieval": "retrieval.manifest.json",
+                  "reasoning": "reasoning.manifest.json"}
+
+
+def _stat_setup(monkeypatch, tmp_path, name):
+    mod, lad, canned, extra = _SSD.DRIVERS[name]
+    drv, ladder_calls, results = _SSD._setup(monkeypatch, tmp_path, mod, lad, canned, [[_SSD.GOOD]])
+    return mod, lad, canned, extra, drv, ladder_calls, results
+
+
+@pytest.mark.parametrize("name", _STAT_DRIVERS)
+def test_stat_drivers_refuse_before_anything_else_when_no_router_owns_the_port(monkeypatch, tmp_path, name):
+    mod, lad, canned, extra, drv, ladder_calls, results = _stat_setup(monkeypatch, tmp_path, name)
+    monkeypatch.setattr(P, "assert_serving_state",
+                        lambda *a, **k: pytest.fail("serving-state precheck ran before the M50 check"))
+    monkeypatch.setattr(mod, "MlxServeDriver", lambda: pytest.fail("driver built before the M50 check"))
+    monkeypatch.setattr(mod, "await_model_pid", lambda: pytest.fail("worker lookup before the M50 check"))
+    _refusing(monkeypatch)
+    with pytest.raises(P.ServedConfigError, match="M50"):
+        mod.main(_SSD._argv(extra))
+    assert drv.calls == [] and ladder_calls == []
+    assert list(results.iterdir()) == []              # not even the model directory
+
+
+@pytest.mark.parametrize("name", _STAT_DRIVERS)
+def test_stat_drivers_refuse_on_a_registry_mismatch(monkeypatch, tmp_path, name):
+    mod, lad, canned, extra, drv, ladder_calls, results = _stat_setup(monkeypatch, tmp_path, name)
+    monkeypatch.setattr(P, "router_owner", lambda port: {
+        "pid": 1, "cmdline": "mlx-serve start", "cwd": str(tmp_path),
+        "env": {"MLX_SERVE_CONFIG": str(tmp_path / "other.yaml")}})
+    with pytest.raises(P.ServedConfigError, match="M50"):
+        mod.main(_SSD._argv(extra))
+    assert drv.calls == [] and list(results.iterdir()) == []
+
+
+@pytest.mark.parametrize("name", _STAT_DRIVERS)
+def test_stat_drivers_stamp_router_and_exit_block_in_the_manifest(monkeypatch, tmp_path, name):
+    mod, lad, canned, extra, drv, ladder_calls, results = _stat_setup(monkeypatch, tmp_path, name)
+    _passing(monkeypatch, tmp_path, pid=31337)
+    assert mod.main(_SSD._argv(extra)) == 0
+    man = json.loads((results / _SSD.MODEL / _MANIFEST_NAME[name]).read_text())
+    assert man["router"]["pid"] == 31337 and man["router"]["config"] and man["router"]["config_sha256"]
+    assert man["router_exit"]["verified_at"] == "exit" and man["router_exit"]["pid"] == 31337
+
+
+def _arm_drift(monkeypatch, tmp_path, mod, lad, canned, mode):
+    """After the ladder has run, change what the router serves: a new pid or an edited file."""
+    from bench import paths
+    state = {"drift": False}
+
+    def owner(port):
+        pid = 8 if (state["drift"] and mode == "pid") else 7
+        return {"pid": pid, "cmdline": "mlx-serve start", "cwd": str(tmp_path),
+                "env": {"MLX_SERVE_CONFIG": str(paths.registry_path())}}
+    monkeypatch.setattr(P, "router_owner", owner)
+
+    def ladder(*a, **k):
+        state["drift"] = True
+        if mode == "sha":
+            with open(paths.registry_path(), "a") as f:
+                f.write("\n# edited while the run was live\n")
+        return canned
+    monkeypatch.setattr(mod, lad, ladder)
+
+
+@pytest.mark.parametrize("mode", ["pid", "sha"])
+@pytest.mark.parametrize("name", ["retrieval", "reasoning"])
+def test_ladder_drivers_quarantine_the_result_on_exit_drift(monkeypatch, tmp_path, name, mode):
+    mod, lad, canned, extra, drv, ladder_calls, results = _stat_setup(monkeypatch, tmp_path, name)
+    _arm_drift(monkeypatch, tmp_path, mod, lad, canned, mode)
+    with pytest.raises(P.ServedConfigError, match="C106"):
+        mod.main(_SSD._argv(extra))
+    mdir = results / _SSD.MODEL
+    assert not (mdir / f"{name}.json").exists() and not (mdir / f"{name}.manifest.json").exists()
+    aside = [p for p in mdir.iterdir() if p.name.startswith(f"{name}.json.refused-")]
+    assert len(aside) == 1
+    assert "served_config_drift" in json.loads(aside[0].read_text())
+    assert not [p for p in mdir.iterdir() if ".pending-" in p.name]
+
+
+@pytest.mark.parametrize("mode", ["pid", "sha"])
+def test_capacity_writes_no_manifest_and_stamps_drift_on_exit_drift(monkeypatch, tmp_path, mode):
+    mod, lad, canned, extra, drv, ladder_calls, results = _stat_setup(monkeypatch, tmp_path, "capacity")
+    _arm_drift(monkeypatch, tmp_path, mod, lad, canned, mode)
+    with pytest.raises(P.ServedConfigError, match="C106"):
+        mod.main(_SSD._argv(extra))
+    mdir = results / _SSD.MODEL
+    assert not (mdir / "capacity_ladder.manifest.json").exists()
+    sc = json.loads((mdir / "capacity_retrieval.json").read_text())
+    assert "C106" in sc["served_config_drift"]["error"]

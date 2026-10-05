@@ -7,7 +7,7 @@ import argparse
 import json
 import os
 
-from . import provenance
+from . import client, provenance
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, await_model_pid, system_used_gb
 from .model_params import params_for
@@ -67,6 +67,9 @@ def main(argv=None) -> int:
 
     grid = tuple(int(x) for x in args.grid.split(","))
 
+    # M50: the process owning the router port must serve THIS driver's registry; checked before
+    # anything is read, written or requested (the serving-state precheck below already reads).
+    router = provenance.assert_served_config(client.BASE)
     provenance.assert_serving_state(args.model)        # M57: before the first model request
     driver = MlxServeDriver()
 
@@ -195,7 +198,8 @@ def main(argv=None) -> int:
                                 overrides=manifest_overrides,
                                 runtime={"probe": "reasoning", "grid": list(grid),
                                          "samples": args.samples,
-                                         "chain_len": args.chain_len})
+                                         "chain_len": args.chain_len},
+                                router=router)
     except provenance.ServedConfigError:
         # M57: a late serving-state refusal is never swallowed; the new result and this run's
         # journal are set aside under an explicit refused marker, an older manifest is untouched.
@@ -204,6 +208,20 @@ def main(argv=None) -> int:
         raise
     except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
         print(f"[reasoning] WARNING: manifest not written: {e}", flush=True)
+    # C106: publish only if the served runtime is still the one verified at entry. A drift stamps
+    # `served_config_drift` into the result and takes the same .refused-<utc> quarantine path.
+    try:
+        exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
+    except provenance.ServedConfigError as e:
+        result["served_config_drift"] = provenance.served_config_drift_record(router, client.BASE, e)
+        with open(stage_path, "w") as f:
+            json.dump(result, f, indent=2)
+        print(f"[reasoning] REFUSED: result set aside at "
+              f"{provenance.set_aside_refused(stage_path, final_path)}; "
+              f"journal at {provenance.set_aside_refused(partial_path) or '(none)'}", flush=True)
+        raise
+    if man is not None:
+        man["router_exit"] = exit_blk
     # Stage the manifest too (it names the sha256 of the result it describes), then publish the
     # pair back to back. Anything raised before publication leaves only .pending-<pid> files.
     manifest_final = os.path.join(out_dir, f"{stem}.manifest.json")

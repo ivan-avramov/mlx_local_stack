@@ -1227,6 +1227,16 @@ def assert_served_config_unchanged(entry: dict, base_url: str | None = None, *, 
     return exit_blk
 
 
+def served_config_drift_record(entry: dict, base_url: str | None, error) -> dict:
+    """The `served_config_drift` stamp every driver records when its C106 exit check refuses:
+    entry and (best-effort) exit content hashes plus the refusal text."""
+    try:
+        exit_sha = assert_served_config(base_url).get("config_sha256")
+    except Exception:  # noqa: BLE001 — forensic only
+        exit_sha = None
+    return {"entry_sha256": entry.get("config_sha256"), "exit_sha256": exit_sha, "error": str(error)}
+
+
 def router_block(base_url: str | None = None) -> dict:
     """Best-effort manifest block for gather(): the block verified at this process's entry for
     that port (no second process walk per manifest), else a fresh check, else {pid: None, error}."""

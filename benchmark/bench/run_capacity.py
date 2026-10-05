@@ -9,7 +9,7 @@ import math
 import os
 from pathlib import Path
 
-from . import provenance
+from . import client, provenance
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, await_model_pid, system_used_gb
 from .model_params import params_for, profile_names, registry_context_limit
@@ -67,8 +67,11 @@ def main(argv=None) -> int:
             raise ValueError("out-tag must be a filename suffix")
     except ValueError as exc:
         ap.error(str(exc))
+    # M50: the process owning the router port must serve THIS driver's registry; checked before
+    # anything is read (the destination-exists probe below), written or requested.
+    router = provenance.assert_served_config(client.BASE)
     out_dir = Path(RESULTS) / args.model
-    cl = "capacity_ladder" + (f".{args.out_tag}" if args.out_tag else "")
+    cl ="capacity_ladder" + (f".{args.out_tag}" if args.out_tag else "")
     cr = "capacity_retrieval" + (f".{args.out_tag}" if args.out_tag else "")
     destinations = [out_dir / f"{cl}.jsonl", out_dir / f"{cr}.json", out_dir / f"{cl}.manifest.json"]
     if any(p.exists() for p in destinations):
@@ -120,12 +123,24 @@ def main(argv=None) -> int:
                                  sampler_factory=MemorySampler, request_timeout=args.request_timeout,
                                  on_start=lambda ctx: monitor.stage(f"rung {ctx}"), on_record=save)
         monitor.stage("reporting")
+        # C106: the run is complete only if the served runtime is still the one verified at entry.
+        drift_error = exit_blk = None
+        try:
+            exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
+        except provenance.ServedConfigError as exc:
+            drift_error = exc
         sc = capacity_retrieval_scorecard(args.model, records, memory_target_gb=args.memory_target_gb)
         sc["idle_baseline_gb"] = round(idle_baseline, 2)
         sc["requested_grid"] = list(grid)
         sc["grid_completed"] = len(records) == len(grid) and sc["execution_status"] == "completed"
+        if drift_error is not None:
+            sc["served_config_drift"] = provenance.served_config_drift_record(router, client.BASE, drift_error)
         with destinations[1].open("x") as f:
             json.dump(sc, f, indent=2, allow_nan=False)
+        if drift_error is not None:
+            # Rows and scorecard stay on disk, stamped; NO manifest is written for them.
+            print(f"[capacity] REFUSED: {drift_error}", flush=True)
+            raise drift_error
         manifest_ok = True
         try:
             man = provenance.gather(args.model, profile=args.sampling_profile,
@@ -134,7 +149,9 @@ def main(argv=None) -> int:
                                              "capacity_schema_version": 2,
                                              "memory_target_gb": args.memory_target_gb,
                                              "expected_rung_seconds": expected,
-                                             "idle_baseline_gb": round(idle_baseline, 2)})
+                                             "idle_baseline_gb": round(idle_baseline, 2)},
+                                    router=router)
+            man["router_exit"] = exit_blk
             with destinations[2].open("x") as f:
                 json.dump(man, f, indent=2, allow_nan=False)
         except provenance.ServedConfigError:
