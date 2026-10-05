@@ -54,7 +54,7 @@ Select local LLMs for 256K agentic coding on the M5 Max 64GB; prioritize quality
 
 ## Analysis and reporting
 
-- Rank by matched-budget `acc_strict@budget`, DNF included; report `(acc, acc_strict@budget, conv%, nonconv_kinds)`. Never rank on `pass@1|converged`, composites or `successes_per_hour`.
+- `acc_strict@budget` IS THE RANKING KEY at a MATCHED budget, DNF included; report `(acc, acc_strict@budget, conv%, nonconv_kinds)`. `pass@1|converged` is DEMOTED to a DIAGNOSTIC and must NEVER rank; no composites or `successes_per_hour`.
 - Report capability/exclusive solves, edit competence, latency and runaway tax separately. Tax: budget-hit, turn-cap, exec-timeout flags plus deduplicated union per session; pooled rates descriptive only, no interval; wall-clock from clean-box chains.
 - Deltas require intervals and axis MDE; use two-stage cluster bootstrap, not pooled Wilson; Holm across families, TOST ±5pp for equivalence. Lossy levers: ≤5% quality drop OFAT. Effective context: accuracy ≥0.85; separate retrieval/reasoning curves and prefill-TTFT/decode-tok/s.
 - Recall/reasoning: exact-match; code: execution; subjective quality: blind mixed-family panel over execution-PASSING outputs. Execution accuracy is not code quality.
