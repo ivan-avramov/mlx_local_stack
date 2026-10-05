@@ -319,7 +319,13 @@ _FINGERPRINT_KV_EXTRA = ("hf_path", "kv_quant_scheme", "quantized_kv_start", "pr
 # text-invariant (the prefill_step_size lesson), so rows at different states never pool. Observed
 # from the worker cmdline, else the fork's own default (same src/mlx-vlm the worker serves), else
 # "unknown" (wildcard). See session_retention_state().
-FINGERPRINT_VERSION = 6
+# v7 (M57, 2026-10-04): the fused-attention dispatch policy (`--attention-policy`, registry
+# `attention_policy`) joins the runtime slice. It selects WHICH attention kernel runs, so rows at
+# different policies never pool and never compare. Observed from the worker cmdline (flag absent
+# = "auto"), else the registry; a worker/registry disagreement refuses (registry_attention_policy).
+# Manifests < v7 compare as "auto" (attention_policy_of), so a v7 `fused_v1` row never resumes
+# onto a pre-v7 row even though the negotiated min-version slice omits the key.
+FINGERPRINT_VERSION = 7
 
 
 def config_fingerprint(manifest, version: int | None = None):
@@ -381,6 +387,9 @@ def config_fingerprint(manifest, version: int | None = None):
         fp["code"] = {k: gsp.get(k) for k in ("src/mlx-vlm", "src/mlx-serve")}
     if version >= 6:
         fp.setdefault("runtime", {})["session_retain_prompt_end"] = r.get("session_retain_prompt_end")
+    if version >= 7:
+        for k in _SERVING_CONTROLS:
+            fp.setdefault("runtime", {})[k] = control_of(manifest, k)[0]
     return fp
 
 
@@ -400,9 +409,20 @@ def is_compatible(existing, current) -> bool:
     v = min(existing.get("fingerprint_version", 1), current.get("fingerprint_version", 1))
     a, b = config_fingerprint(existing, v), config_fingerprint(current, v)
     _overlay_serving_path_code(existing, current, a, b)
+    # M57 serving controls (S1/S2): the negotiated slice may omit them (v < 7), but a pre-v7 row IS
+    # the default, so they are compared on EVERY path (incl. the v1 early return) and STRICTLY:
+    # an unresolved ("unknown"/absent) value on a v7 row never pools with anything, itself
+    # included (T2: nothing verifies run identity, so there is no same-run exception).
+    for k in _SERVING_CONTROLS:
+        va, vb = control_of(existing, k)[0], control_of(current, k)[0]
+        if va != vb or va == "unknown":     # T2: unresolved is incompatible with EVERYTHING
+            return False
     if v < 2:
         return a == b
     ra, rb = a.pop("runtime", {}), b.pop("runtime", {})
+    for k in _SERVING_CONTROLS:
+        ra.pop(k, None)
+        rb.pop(k, None)
     return a == b and _runtime_compatible(ra, rb)
 
 
@@ -532,6 +552,325 @@ def session_retention_state(worker_lookup=_worker_cmdline) -> dict:
             "session_retain_source": "fork-default"}
 
 
+# name -> default value for a pre-v7 manifest / an entry that declares nothing.
+_SERVING_CONTROLS = {"attention_policy": "auto", "lazy_prompt_embeddings": False}
+
+
+def control_of(manifest: dict, key: str):
+    """(value, source) a manifest stands for on a v7 serving control. fingerprint_version < 7
+    predates the keys and every such row ran the default, so it reads (default, "default-pre-v7")
+    — a KNOWN value regardless of anything its runtime block claims. A v7 manifest reports what
+    it recorded; an absent value reads "unknown" (unresolved: never pools, never compares).
+    (A v7 manifest lacking a key that a later version adds also reads unknown; no v7 manifest
+    exists on disk yet, so that is intentional.)"""
+    if (manifest.get("fingerprint_version") or 1) < 7:
+        return _SERVING_CONTROLS[key], "default-pre-v7"
+    r = manifest.get("runtime") or {}
+    v = r.get(key)
+    return ("unknown" if v is None else v), r.get(key + "_source")
+
+
+def attention_policy_of(manifest: dict) -> tuple[str, str]:
+    return control_of(manifest, "attention_policy")
+
+
+class ServedConfigError(RuntimeError):
+    """M50 refusal. FATAL by contract: entry points exit nonzero; `generate`'s per-item error handler
+    re-raises it instead of recording an error row (a refusal after an auto-restart must stop the
+    run, not become one more row)."""
+
+
+_DEFAULT_LOOKUP = object()
+
+
+class ServingStateError(ServedConfigError):
+    """M57: the served attention/lazy-embedding state cannot be established or contradicts the
+    registry. A ServedConfigError subclass, so `generate` and the drivers that re-raise
+    ServedConfigError REFUSE the run instead of treating it as best-effort provenance."""
+
+
+def _flag_value(argv, flag):
+    """Value of `--flag value` / `--flag=value` in an argv list (last wins); None if absent."""
+    val = None
+    for i, tok in enumerate(argv):
+        if tok == flag and i + 1 < len(argv):
+            val = argv[i + 1]
+        elif tok.startswith(flag + "="):
+            val = tok[len(flag) + 1:]
+    return val
+
+
+def _listeners_via_psutil(port: int):
+    """Pids listening on `port` per the per-process walk, or None when the observation is
+    INCOMPLETE (psutil missing, or some process refused inspection — it could be the listener).
+    Gone/zombie processes are benign."""
+    try:
+        import psutil
+    except Exception:  # noqa: BLE001
+        return None
+    benign = tuple(c for c in (getattr(psutil, "NoSuchProcess", None),
+                               getattr(psutil, "ZombieProcess", None)) if c)
+    pids, complete = set(), True
+    try:
+        for p in psutil.process_iter(["pid"]):
+            try:
+                conns = getattr(p, "net_connections", None) or getattr(p, "connections")
+                for c in conns(kind="inet"):
+                    if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port:
+                        pids.add(p.pid)
+            except benign:
+                continue
+            except Exception:  # noqa: BLE001 — AccessDenied etc.: this process stays uninspected
+                complete = False
+    except Exception:  # noqa: BLE001
+        return None
+    return sorted(pids) if complete else None
+
+
+def _listeners_via_lsof(port: int):
+    """Pids listening on `port` per `lsof`, or None when lsof is unavailable or reported anything
+    other than a clean result. macOS lsof exits 1 both for "no match" and for errors: only
+    exit 1 with EMPTY stdout AND EMPTY stderr is a clean "nobody listens"."""
+    try:
+        r = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
+                           capture_output=True, text=True, timeout=20)
+    except Exception:  # noqa: BLE001 — missing binary, timeout, permission
+        return None
+    if r.stderr.strip() or r.returncode not in (0, 1):
+        return None
+    pids = sorted({int(l[1:]) for l in r.stdout.splitlines() if l.startswith("p") and l[1:].isdigit()})
+    if r.returncode == 1 and (pids or r.stdout.strip()):
+        return None
+    return pids
+
+
+def _port_listener_pids(port: int) -> list[int]:
+    """Sorted pids with a LISTEN socket on `port`. Each backend (psutil walk, lsof) reports a
+    COMPLETE observation or nothing; a completed backend is authoritative and two completed
+    backends are united. When NEITHER can establish the state this RAISES ("router/worker state
+    unknown") — "could not look" is never "nothing listens"."""
+    seen = [r for r in (_listeners_via_psutil(port), _listeners_via_lsof(port)) if r is not None]
+    if not seen:
+        raise OSError(f"router/worker state unknown: neither the psutil walk nor lsof could "
+                      f"establish who listens on :{port}")
+    return sorted(set().union(*seen))
+
+
+def result_digest(path: str) -> str:
+    """sha256 hex of a result file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def manifest_matches_result(manifest_path: str, result_path: str):
+    """True iff the manifest's recorded `result_sha256` (and `result_file` basename, when
+    present) describe `result_path`; None when the manifest carries no digest (an older
+    manifest); False for a mismatch or an unreadable manifest/result (a mixed or damaged pair)."""
+    try:
+        with open(manifest_path) as f:
+            man = json.load(f)
+    except Exception:  # noqa: BLE001
+        return False
+    want = man.get("result_sha256") if isinstance(man, dict) else None
+    if want is None:
+        return None
+    if man.get("result_file") not in (None, os.path.basename(result_path)):
+        return False
+    try:
+        return result_digest(result_path) == want
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def publish_pair(result_stage: str, result_final: str, manifest_stage, manifest_final) -> None:
+    """Publish a staged result and (when given) its staged manifest back to back — result
+    first, manifest second, nothing in between. A tear after the first replace leaves the OLD
+    manifest beside the NEW result, which `manifest_matches_result` reports as False."""
+    os.replace(result_stage, result_final)
+    if manifest_stage:
+        os.replace(manifest_stage, manifest_final)
+
+
+def set_aside_refused(path: str, name: str | None = None) -> str:
+    """Rename a file produced by a REFUSED run to `<path>.refused-<utc timestamp>` (never deleted,
+    never left under its normal name). `name` (default `path`) is the base the marker is appended
+    to. Returns the new path; a missing file is a no-op ("")."""
+    if not os.path.exists(path):
+        return ""
+    base = name or path
+    ts = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+    dest, n = f"{base}.refused-{ts}", 0
+    while os.path.exists(dest):
+        n += 1
+        dest = f"{base}.refused-{ts}-{n}"
+    os.replace(path, dest)
+    return dest
+
+
+def _ppid(pid: int):
+    """Parent pid of `pid` (None at the root); raises when unreadable."""
+    import psutil
+    return psutil.Process(pid).ppid() or None
+
+
+def _is_mlx_vlm_server(argv) -> bool:
+    return any(t == "mlx_vlm.server" or t.endswith("/mlx_vlm.server") for t in argv)
+
+
+def _descends_from(pid: int, ancestors: set) -> bool:
+    seen = set()
+    while pid and pid not in seen:
+        if pid in ancestors:
+            return True
+        seen.add(pid)
+        pid = _ppid(pid)
+    return False
+
+
+def _worker_argvs(doc) -> list[list[str]]:
+    """argv list of THE worker: the process listening on the registry's `mlx_port` (the port the
+    router's worker subprocess serves), identified independently of any all-process argv scan.
+    [] when nothing listens (no worker) or no stack is up. Refuses (ServingStateError) when the
+    listener's argv is unreadable, more than one process listens, the lookup fails while a router
+    (`manager_port` owner) is up."""
+    doc = doc if isinstance(doc, dict) else {}
+    mlx_port, manager_port = doc.get("mlx_port"), doc.get("manager_port", 8000)
+
+    if mlx_port is None:
+        return []           # registry names no worker port: nothing to identify, registry stands
+    try:
+        pids = _port_listener_pids(int(mlx_port))
+    except Exception as e:  # noqa: BLE001
+        try:
+            router_up = bool(_port_listener_pids(manager_port))
+        except Exception:  # noqa: BLE001 — cannot tell either: refuse, never assume absent
+            router_up = True
+        if not router_up:
+            return []
+        raise ServingStateError(f"C35 tripwire: router/worker state unknown — cannot observe the "
+                                f"listener on mlx_port {mlx_port} ({type(e).__name__}: "
+                                f"{str(e)[:80]}) while a router is up; refusing to fall back to "
+                                f"the registry on ignorance.") from e
+    if not pids:
+        return []
+    if len(pids) > 1:
+        raise ServingStateError(f"C35 tripwire: more than one process listens on mlx_port "
+                                f"{mlx_port} (pids {pids}) — worker attribution is ambiguous.")
+    argv = _process_facts(pids[0]).get("argv")
+    if not argv:
+        raise ServingStateError(f"C35 tripwire: the worker (pid {pids[0]}, mlx_port {mlx_port}) "
+                                f"has an unreadable argv; cannot establish its served state.")
+    if not _is_mlx_vlm_server(argv):
+        raise ServingStateError(f"C35 tripwire: the process listening on mlx_port {mlx_port} "
+                                f"(pid {pids[0]}) is not an mlx_vlm.server process — it is "
+                                f"squatting the worker port; no measurement here is trustworthy.")
+    try:
+        routers = set(_port_listener_pids(manager_port))
+        if routers and not _descends_from(pids[0], routers):
+            raise ServingStateError(f"C35 tripwire: the listener on mlx_port {mlx_port} (pid "
+                                    f"{pids[0]}) does not descend from the router on "
+                                    f"manager_port {manager_port} (pids {sorted(routers)}); it is "
+                                    f"squatting the worker port.")
+    except ServingStateError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise ServingStateError(f"C35 tripwire: router/worker state unknown — cannot verify the "
+                                f"worker's parentage ({type(e).__name__}: {str(e)[:80]}).") from e
+    return [list(argv)]
+
+
+def _worker_for(entry: dict, worker_lookup, doc=None):
+    """The ONE live worker argv whose `--model` argument EXACTLY equals the entry's hf_path, else
+    None ("no worker for this model" -> registry fallback). A failed observation or more than one
+    match raises ServingStateError. `worker_lookup` returns None, an argv list, a cmdline string
+    (whitespace-split) or a list of those."""
+    try:
+        got = _worker_argvs(doc) if worker_lookup is _DEFAULT_LOOKUP else (
+            worker_lookup() if worker_lookup else None)
+    except ServingStateError:
+        raise
+    except Exception as e:  # noqa: BLE001 — re-raised as a refusal, never swallowed
+        raise ServingStateError(f"C35 tripwire: cannot observe the live workers "
+                                f"({type(e).__name__}: {str(e)[:80]}); refusing to fall back to "
+                                f"the registry on ignorance.") from e
+    if isinstance(got, str):
+        got = [got.split()]
+    argvs = [a.split() if isinstance(a, str) else list(a) for a in (got or [])]
+    hf = entry.get("hf_path") or ""
+    hits = [a for a in argvs if hf and _flag_value(a, "--model") == hf]
+    if len(hits) > 1:
+        raise ServingStateError(f"C35 tripwire: more than one live worker serves {hf!r} "
+                                f"({len(hits)} matches) — worker attribution is ambiguous; "
+                                f"refusing to record serving provenance.")
+    return hits[0] if hits else None
+
+
+def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, parse_registry):
+    registry_path = str(paths.registry_path()) if registry_path is None else registry_path
+    try:
+        with open(registry_path) as f:
+            doc = yaml.safe_load(f)
+    except Exception:  # noqa: BLE001 — never block a run on provenance
+        return {key: "unknown", key + "_source": "unreadable-registry"}
+    entries = doc.get("models", doc) if isinstance(doc, dict) else doc
+    for e in entries or []:
+        if isinstance(e, dict) and e.get("name") == model:
+            declared = parse_registry(e.get(key))
+            cmd = _worker_for(e, worker_lookup, doc)
+            if cmd is not None:
+                served = parse_worker(cmd)
+                if served != declared:
+                    raise ServingStateError(
+                        f"C35 tripwire: registry {registry_path!r} declares {key}="
+                        f"{declared!r} for {model!r} but the live worker serves "
+                        f"{key}={served!r}. Launch the driver with MLX_SERVE_CONFIG "
+                        f"pointed at the served registry/overlay; refusing to record false "
+                        f"{key} provenance.")
+                return {key: served, key + "_source": "worker"}
+            return {key: declared, key + "_source": "registry"}
+    return {key: "unknown", key + "_source": "model-not-in-registry"}
+
+
+def assert_serving_state(model: str, registry_path: str | None = None) -> dict:
+    """Resolve BOTH M57 serving controls for `model` and let any ServingStateError propagate
+    (worker/registry disagreement, ambiguity, failed observation). Drivers call this before their
+    first model request and once more after the model is loaded."""
+    out = dict(registry_attention_policy(model, registry_path))
+    out.update(registry_lazy_prompt_embeddings(model, registry_path))
+    return out
+
+
+def registry_attention_policy(model: str, registry_path: str | None = None,
+                              worker_lookup=_DEFAULT_LOOKUP) -> dict:
+    """M57 served attention policy: {"attention_policy", "attention_policy_source"}.
+
+    The live worker whose `--model` argument exactly equals the entry's hf_path is the SERVING
+    truth: its `--attention-policy <v>` flag (absent = "auto"), source "worker". Otherwise the
+    registry entry's `attention_policy` (absent/empty = "auto"), source "registry". Both
+    available and disagreeing REFUSES the run (C35 shape); two matching workers refuse too.
+    "unknown" is reserved for an unreadable registry or a model absent from it, and is
+    UNRESOLVED: it never pools and never compares (S1)."""
+    def from_worker(argv):
+        return _flag_value(argv, "--attention-policy") or "auto"
+    return _resolve_control(model, registry_path, worker_lookup, "attention_policy",
+                            from_worker, lambda v: v or "auto")
+
+
+def registry_lazy_prompt_embeddings(model: str, registry_path: str | None = None,
+                                        worker_lookup=_DEFAULT_LOOKUP) -> dict:
+    """M57 served lazy-prompt-embeddings state: bare worker flag `--lazy-prompt-embeddings`
+    present -> True, absent -> False (source "worker"); else the registry entry's boolean
+    (absent -> False, source "registry"). Same attribution, refusal and "unknown" rules as
+    registry_attention_policy."""
+    def from_worker(argv):
+        return "--lazy-prompt-embeddings" in argv
+    return _resolve_control(model, registry_path, worker_lookup, "lazy_prompt_embeddings",
+                            from_worker, bool)
+
+
 # ----------------------------------------------------- M50 served-config tripwire (2026-09-28)
 # The process that OWNS the router port is the serving truth for WHICH registry is live. C35 only
 # checks draft_kind, and only when a worker for the requested model is already up; on 2026-09-28 a
@@ -547,10 +886,6 @@ _WILDCARDS = {"0.0.0.0", "::", "*"}
 _LAST_VERIFIED: dict = {}   # port -> block from the most recent assert_served_config in this process
 
 
-class ServedConfigError(RuntimeError):
-    """M50 refusal. FATAL by contract: entry points exit nonzero; `generate`'s per-item error handler
-    re-raises it instead of recording an error row (a refusal after an auto-restart must stop the
-    run, not become one more row)."""
 
 
 def _is_router_argv(argv) -> bool:
@@ -967,6 +1302,10 @@ def _runtime_block(runtime: dict = None, model: str = None,
     block.update(registry_draft(model, registry_path) if model
                  else {"draft_kind": "unknown", "draft_source": "no-model-given"})
     block.update(session_retention_state())
+    for key, fn in (("attention_policy", registry_attention_policy),
+                    ("lazy_prompt_embeddings", registry_lazy_prompt_embeddings)):
+        block.update(fn(model, registry_path) if model
+                     else {key: "unknown", key + "_source": "no-model-given"})
     if runtime:
         block.update(runtime)
     return block

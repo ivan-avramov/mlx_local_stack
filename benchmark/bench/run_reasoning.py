@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 
+from . import provenance
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, await_model_pid, system_used_gb
 from .model_params import params_for
@@ -66,6 +67,7 @@ def main(argv=None) -> int:
 
     grid = tuple(int(x) for x in args.grid.split(","))
 
+    provenance.assert_serving_state(args.model)        # M57: before the first model request
     driver = MlxServeDriver()
 
     if not args.no_preload:
@@ -78,6 +80,7 @@ def main(argv=None) -> int:
               "memory sampling disabled", flush=True)
 
     cpt = calibrate_cpt(driver, args.model)
+    provenance.assert_serving_state(args.model)        # M57: re-resolve once loaded
 
     # Build profile params; apply any CLI overrides
     params = params_for(args.model, profile=args.sampling_profile)
@@ -172,13 +175,15 @@ def main(argv=None) -> int:
         "reasoning_effective_ctx": reasoning_effective_ctx,
     }
 
-    with open(os.path.join(out_dir, f"{stem}.json"), "w") as f:
+    final_path = os.path.join(out_dir, f"{stem}.json")
+    stage_path = final_path + f".pending-{os.getpid()}"     # never overwrites an older result
+    with open(stage_path, "w") as f:
         json.dump(result, f, indent=2)
 
     # Provenance beside the ladder (same pattern as run_retrieval.py T1.6 / run_capacity.py):
     # best-effort, never lose a finished ladder to a provenance failure.
+    man = None
     try:
-        from . import provenance
         # F4 (review defect 10): overrides = CLI deltas only, not the full resolved params
         # dict -- a run with only --temp 0.7 must not report top_p/top_k/etc as overridden.
         manifest_overrides = {k: v for k, v in (
@@ -191,10 +196,25 @@ def main(argv=None) -> int:
                                 runtime={"probe": "reasoning", "grid": list(grid),
                                          "samples": args.samples,
                                          "chain_len": args.chain_len})
-        with open(os.path.join(out_dir, f"{stem}.manifest.json"), "w") as f:
-            json.dump(man, f, indent=2)
+    except provenance.ServedConfigError:
+        # M57: a late serving-state refusal is never swallowed; the new result and this run's
+        # journal are set aside under an explicit refused marker, an older manifest is untouched.
+        print(f"[reasoning] REFUSED: result set aside at {provenance.set_aside_refused(stage_path, final_path)}; "
+              f"journal at {provenance.set_aside_refused(partial_path) or '(none)'}", flush=True)
+        raise
     except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
         print(f"[reasoning] WARNING: manifest not written: {e}", flush=True)
+    # Stage the manifest too (it names the sha256 of the result it describes), then publish the
+    # pair back to back. Anything raised before publication leaves only .pending-<pid> files.
+    manifest_final = os.path.join(out_dir, f"{stem}.manifest.json")
+    manifest_stage = None
+    if man is not None:
+        man["result_file"] = os.path.basename(final_path)
+        man["result_sha256"] = provenance.result_digest(stage_path)
+        manifest_stage = manifest_final + f".pending-{os.getpid()}"
+        with open(manifest_stage, "w") as f:
+            json.dump(man, f, indent=2)
+    provenance.publish_pair(stage_path, final_path, manifest_stage, manifest_final)
 
     print(f"[reasoning] REASONING_EFFECTIVE_CTX={reasoning_effective_ctx}", flush=True)
     return 0

@@ -562,6 +562,12 @@ def test_m50_router_block_rides_the_manifest_but_not_the_fingerprint(monkeypatch
     monkeypatch.setattr(P, "registry_kv", lambda m, path: {"kv_bits": 4})
     monkeypatch.setattr(P, "apc_state", lambda **k: {"apc_enabled": "0", "source": "env"})
     monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "off"})
+    # M57 T2: an unresolved control (model "m" is not in the registry) is incompatible with
+    # everything, so resolve both controls to known defaults for this router-block test.
+    monkeypatch.setattr(P, "registry_attention_policy", lambda m, path=None: {
+        "attention_policy": "auto", "attention_policy_source": "registry"})
+    monkeypatch.setattr(P, "registry_lazy_prompt_embeddings", lambda m, path=None: {
+        "lazy_prompt_embeddings": False, "lazy_prompt_embeddings_source": "registry"})
     monkeypatch.setattr(P, "router_owner", lambda port: _owner(tmp_path, "main_models.yaml", pid=1))
     P.assert_served_config("http://localhost:8000")            # entry
     a = P.gather("m", profile="deployed")

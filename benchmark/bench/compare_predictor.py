@@ -52,6 +52,22 @@ _RUNTIME_MUST_MATCH = tuple(CMP._MUST_MATCH_RUNTIME) + ("apc_enabled",)
 # the penalty value — a matched nonzero penalty is just as broken as a mismatched one).
 _PENALTY_FIELDS = ("presence_penalty", "repetition_penalty")
 
+# M57: the tool accepts exactly ONE named must-differ key. Everything else — including the OTHER
+# member of this tuple, which then MUST MATCH — keeps its must-match rule.
+_MUST_DIFFER_KEYS = ("draft_kind", "attention_policy", "lazy_prompt_embeddings")
+
+
+def _differ_value(manifest, key):
+    """The value of a must-differ-capable key for one manifest. attention_policy goes through
+    provenance.attention_policy_of so pre-v7 manifests read as "auto"."""
+    if key in provenance._SERVING_CONTROLS:
+        return provenance.control_of(manifest, key)[0]
+    return (manifest.get("runtime") or {}).get(key)
+
+
+def _known(v):
+    return v is not None and v != "unknown"
+
 # Relabel stats.paired_delta's generic positional a_better/b_better (it is called (B, A) below,
 # so its "a" is our B) to name the actual tune instead of the function's argument order.
 _VERDICT_RELABEL = {"a_better": "tune_b_better", "b_better": "tune_a_better",
@@ -62,9 +78,10 @@ def _refuse(reason):
     return {"comparable": False, "reason": reason}
 
 
-def _manifest_diffs(ma, mb):
-    """Every output-determining mismatch between manifests A and B EXCEPT `draft_kind` (checked
-    separately in `_gate`, and required to DIFFER) and `probe_timeout_s` (needs rows; checked
+def _manifest_diffs(ma, mb, must_differ="draft_kind"):
+    """Every output-determining mismatch between manifests A and B EXCEPT the `must_differ` key
+    (`draft_kind` by default; checked separately in `_gate`, and required to DIFFER — the other
+    member of _MUST_DIFFER_KEYS is checked here and must MATCH) and `probe_timeout_s` (needs rows; checked
     separately by `_probe_timeout_gate` once rows are available). Returns (diffs, warnings) —
     diffs are fatal, warnings are recorded but do not refuse."""
     diffs, warnings = [], []
@@ -92,6 +109,16 @@ def _manifest_diffs(ma, mb):
     for k in _RUNTIME_MUST_MATCH:
         if ra.get(k) != rb.get(k):
             diffs.append(f"runtime.{k} differs ({ra.get(k)!r} vs {rb.get(k)!r})")
+    for k in _MUST_DIFFER_KEYS:
+        if k == must_differ:
+            continue
+        va, vb = _differ_value(ma, k), _differ_value(mb, k)
+        if not (_known(va) and _known(vb)):
+            diffs.append(f"{k} is unrecorded/unresolved on at least one side ({va!r} vs {vb!r}) "
+                         f"— every selectable control must be KNOWN on both sides")
+        elif va != vb:
+            diffs.append(f"{k} differs ({va!r} vs {vb!r}) — it must MATCH when the tool's "
+                         f"must-differ key is {must_differ}")
 
     # Serving-path (C47): the tree hash when either side can produce one, else the raw commit
     # sha — same fallback compare.py's DEPLOYED CODE block uses (compare.py:218-256), ported via
@@ -140,11 +167,15 @@ def _probe_timeout_gate(ma, mb, rows_a, rows_b, tune_a, tune_b):
                  f"near the smaller bound) — rows are bound-invariant")
 
 
-def _gate(model, bench, tune_a, tune_b):
+def _gate(model, bench, tune_a, tune_b, must_differ="draft_kind"):
     """Every comparability check this tool runs, short of the actual scoring. Returns a refusal
     dict (`_refuse(...)`) or `{"comparable": True, "tune_a", "tune_b", "rows_a", "rows_b",
-    "n_items", "draft_a", "draft_b", "ma", "mb", "warnings"}`.
+    "n_items", "draft_a", "draft_b", "ma", "mb", "warnings"}`. `must_differ` names the ONE key
+    that must differ between the tunes (`draft_kind` or `attention_policy`).
     """
+    if must_differ not in _MUST_DIFFER_KEYS:
+        raise ValueError(f"compare_predictor: must_differ must be one of {_MUST_DIFFER_KEYS}, "
+                         f"got {must_differ!r}")
     tune_a, tune_b = generate.validate_tune(tune_a), generate.validate_tune(tune_b)
     ma, mb = CMP._manifest(model, bench, tune=tune_a), CMP._manifest(model, bench, tune=tune_b)
     if ma is None or mb is None:
@@ -153,19 +184,20 @@ def _gate(model, bench, tune_a, tune_b):
 
     ra_rt, rb_rt = ma.get("runtime") or {}, mb.get("runtime") or {}
     draft_a, draft_b = ra_rt.get("draft_kind"), rb_rt.get("draft_kind")
-    if draft_a is None or draft_b is None:
-        return _refuse(f"draft_kind is unrecorded on at least one side (tune {tune_a}={draft_a!r}, "
-                       f"tune {tune_b}={draft_b!r}) — compare_predictor exists to measure a known "
-                       f"predictor ON/OFF delta and cannot when the state is unobserved")
-    if draft_a == draft_b:
-        return _refuse(f"draft_kind is the SAME on both tunes ({draft_a!r}) — compare_predictor "
-                       f"is for a same-model, DIFFERENT-predictor-state pair; use compare.py for "
+    val_a, val_b = _differ_value(ma, must_differ), _differ_value(mb, must_differ)
+    if not (_known(val_a) and _known(val_b)):
+        return _refuse(f"{must_differ} is unrecorded on at least one side (tune {tune_a}={val_a!r}, "
+                       f"tune {tune_b}={val_b!r}) — compare_predictor exists to measure a known "
+                       f"{must_differ} delta and cannot when the state is unobserved")
+    if val_a == val_b:
+        return _refuse(f"{must_differ} is the SAME on both tunes ({val_a!r}) — compare_predictor "
+                       f"is for a same-model, DIFFERENT-{must_differ} pair; use compare.py for "
                        f"a same-state comparison")
 
-    diffs, warnings = _manifest_diffs(ma, mb)
+    diffs, warnings = _manifest_diffs(ma, mb, must_differ)
     if diffs:
         return _refuse(f"tune {tune_a} vs {tune_b} differ on output-determining fields other "
-                       f"than draft_kind — not a clean predictor ON/OFF pair: " + "; ".join(diffs))
+                       f"than {must_differ} — not a clean {must_differ} pair: " + "; ".join(diffs))
 
     rows_a = grade._rows(model, bench, tune=tune_a)
     rows_b = grade._rows(model, bench, tune=tune_b)
@@ -196,7 +228,8 @@ def _gate(model, bench, tune_a, tune_b):
 
     return {"comparable": True, "tune_a": tune_a, "tune_b": tune_b,
             "rows_a": rows_a, "rows_b": rows_b, "n_items": len(ids_a),
-            "draft_a": draft_a, "draft_b": draft_b, "ma": ma, "mb": mb, "warnings": warnings}
+            "draft_a": draft_a, "draft_b": draft_b, "must_differ": must_differ,
+            "differ_a": val_a, "differ_b": val_b, "ma": ma, "mb": mb, "warnings": warnings}
 
 
 def _numeric_per_item(rows, field):
@@ -333,7 +366,7 @@ def _verdict(chosen, margin):
 
 
 def compare_predictor(model, bench, tune_a, tune_b, *, key="acc_strict", margin=0.05,
-                      iters=4000, seed=0):
+                      iters=4000, seed=0, must_differ="draft_kind"):
     """The full M40 paired ON-vs-OFF report for one (model, bench), or a refusal.
 
     `key` picks which delta ("acc" or "acc_strict") the top-line PASS/FAIL/INCONCLUSIVE verdict
@@ -343,7 +376,7 @@ def compare_predictor(model, bench, tune_a, tune_b, *, key="acc_strict", margin=
     if key not in ("acc", "acc_strict"):
         raise ValueError(f"compare_predictor: key must be 'acc' or 'acc_strict', got {key!r}")
 
-    gate = _gate(model, bench, tune_a, tune_b)
+    gate = _gate(model, bench, tune_a, tune_b, must_differ=must_differ)
     if not gate["comparable"]:
         return gate
     tune_a, tune_b = gate["tune_a"], gate["tune_b"]
@@ -394,6 +427,7 @@ def compare_predictor(model, bench, tune_a, tune_b, *, key="acc_strict", margin=
     return {
         "comparable": True, "model": model, "bench": bench,
         "tune_a": tune_a, "tune_b": tune_b, "draft_a": gate["draft_a"], "draft_b": gate["draft_b"],
+        "must_differ": must_differ, "differ_a": gate["differ_a"], "differ_b": gate["differ_b"],
         "key": key, "margin": margin, "n_items": gate["n_items"], "verdict": verdict,
         "delta": deltas,
         "tokens_per_task_ratio_b_over_a": tokens_ratio,
@@ -416,9 +450,12 @@ def _out_path(model, bench, tune_a, tune_b):
 
 def _summary_line(result):
     d = result["delta"][result["key"]]
+    md = result.get("must_differ", "draft_kind")
+    lab_b = f"draft={result['draft_b']}" if md == "draft_kind" else f"{md}={result['differ_b']}"
+    lab_a = f"draft={result['draft_a']}" if md == "draft_kind" else f"{md}={result['differ_a']}"
     return (f"{result['verdict']}: {result['model']} {result['bench']} "
-            f"{result['tune_b']}(draft={result['draft_b']}) vs "
-            f"{result['tune_a']}(draft={result['draft_a']}) — {result['key']} "
+            f"{result['tune_b']}({lab_b}) vs "
+            f"{result['tune_a']}({lab_a}) — {result['key']} "
             f"delta(B-A)={d['delta']:+.4f} CI[{d['lo']:+.4f},{d['hi']:+.4f}] "
             f"n_items={result['n_items']} margin=±{result['margin']:.2f}")
 
@@ -436,13 +473,16 @@ def _parse_args(argv=None):
     p.add_argument("--margin", type=float, default=0.05)
     p.add_argument("--iters", type=int, default=4000)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--must-differ", default="draft_kind", choices=_MUST_DIFFER_KEYS,
+                   help="the ONE key the two tunes must differ in (the other must match)")
     return p.parse_args(argv)
 
 
 def main(argv=None):
     args = _parse_args(argv)
     result = compare_predictor(args.model, args.bench, args.tune_a, args.tune_b,
-                               key=args.key, margin=args.margin, iters=args.iters, seed=args.seed)
+                               key=args.key, margin=args.margin, iters=args.iters, seed=args.seed,
+                               must_differ=args.must_differ)
     if not result["comparable"]:
         print(f"REFUSED: {result['reason']}", file=sys.stderr)
         return 1

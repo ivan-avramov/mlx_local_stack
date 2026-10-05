@@ -51,6 +51,7 @@ def main(argv=None) -> int:
 
     grid = tuple(int(x) for x in args.grid.split(","))
 
+    provenance.assert_serving_state(args.model)        # M57: before the first model request
     driver = MlxServeDriver()
     if not args.no_preload:
         driver.preload(args.model)
@@ -62,6 +63,7 @@ def main(argv=None) -> int:
               "memory sampling disabled", flush=True)
 
     cpt = calibrate_cpt(driver, args.model)
+    provenance.assert_serving_state(args.model)        # M57: re-resolve once loaded
 
     # Profile params verbatim; apply explicit CLI overrides only.
     params = params_for(args.model, profile=args.sampling_profile)
@@ -106,20 +108,38 @@ def main(argv=None) -> int:
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
     stem = "retrieval" if not args.out_tag else f"retrieval.{args.out_tag}"
-    with open(os.path.join(out_dir, f"{stem}.json"), "w") as f:
+    final_path = os.path.join(out_dir, f"{stem}.json")
+    stage_path = final_path + f".pending-{os.getpid()}"     # never overwrites an older result
+    with open(stage_path, "w") as f:
         json.dump(result, f, indent=2)
 
     # Provenance beside the ladder (same pattern as run_capacity.py, T1.6): best-effort,
     # never lose a finished ladder to a provenance failure.
+    man = None
     try:
         man = provenance.gather(args.model, profile=args.sampling_profile,
                                 overrides=overrides,
                                 runtime={"probe": "retrieval", "grid": list(grid),
                                          "samples": args.samples})
-        with open(os.path.join(out_dir, f"{stem}.manifest.json"), "w") as f:
-            json.dump(man, f, indent=2)
+    except provenance.ServedConfigError:
+        # M57: a late serving-state refusal is never swallowed, and the new result must not
+        # stand beside an older manifest: it is set aside under an explicit refused marker.
+        print(f"[retrieval] REFUSED: result set aside at {provenance.set_aside_refused(stage_path, final_path)}",
+              flush=True)
+        raise
     except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
         print(f"[retrieval] WARNING: manifest not written: {e}", flush=True)
+    # Stage the manifest too (it names the sha256 of the result it describes), then publish the
+    # pair back to back. Anything raised before publication leaves only .pending-<pid> files.
+    manifest_final = os.path.join(out_dir, f"{stem}.manifest.json")
+    manifest_stage = None
+    if man is not None:
+        man["result_file"] = os.path.basename(final_path)
+        man["result_sha256"] = provenance.result_digest(stage_path)
+        manifest_stage = manifest_final + f".pending-{os.getpid()}"
+        with open(manifest_stage, "w") as f:
+            json.dump(man, f, indent=2)
+    provenance.publish_pair(stage_path, final_path, manifest_stage, manifest_final)
 
     print(f"[retrieval] RETRIEVAL_EFFECTIVE_CTX={retrieval_effective_ctx}", flush=True)
     return 0
