@@ -51,6 +51,7 @@ def main(argv=None) -> int:
 
     grid = tuple(int(x) for x in args.grid.split(","))
 
+    provenance.assert_serving_state(args.model)        # M57: before the first model request
     driver = MlxServeDriver()
     if not args.no_preload:
         driver.preload(args.model)
@@ -62,6 +63,7 @@ def main(argv=None) -> int:
               "memory sampling disabled", flush=True)
 
     cpt = calibrate_cpt(driver, args.model)
+    provenance.assert_serving_state(args.model)        # M57: re-resolve once loaded
 
     # Profile params verbatim; apply explicit CLI overrides only.
     params = params_for(args.model, profile=args.sampling_profile)
@@ -118,6 +120,8 @@ def main(argv=None) -> int:
                                          "samples": args.samples})
         with open(os.path.join(out_dir, f"{stem}.manifest.json"), "w") as f:
             json.dump(man, f, indent=2)
+    except provenance.ServedConfigError:
+        raise                           # M57: a serving-state refusal is never swallowed
     except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
         print(f"[retrieval] WARNING: manifest not written: {e}", flush=True)
 

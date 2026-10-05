@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 
+from . import provenance
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, await_model_pid, system_used_gb
 from .model_params import params_for
@@ -66,6 +67,7 @@ def main(argv=None) -> int:
 
     grid = tuple(int(x) for x in args.grid.split(","))
 
+    provenance.assert_serving_state(args.model)        # M57: before the first model request
     driver = MlxServeDriver()
 
     if not args.no_preload:
@@ -78,6 +80,7 @@ def main(argv=None) -> int:
               "memory sampling disabled", flush=True)
 
     cpt = calibrate_cpt(driver, args.model)
+    provenance.assert_serving_state(args.model)        # M57: re-resolve once loaded
 
     # Build profile params; apply any CLI overrides
     params = params_for(args.model, profile=args.sampling_profile)
@@ -178,7 +181,6 @@ def main(argv=None) -> int:
     # Provenance beside the ladder (same pattern as run_retrieval.py T1.6 / run_capacity.py):
     # best-effort, never lose a finished ladder to a provenance failure.
     try:
-        from . import provenance
         # F4 (review defect 10): overrides = CLI deltas only, not the full resolved params
         # dict -- a run with only --temp 0.7 must not report top_p/top_k/etc as overridden.
         manifest_overrides = {k: v for k, v in (
@@ -193,6 +195,8 @@ def main(argv=None) -> int:
                                          "chain_len": args.chain_len})
         with open(os.path.join(out_dir, f"{stem}.manifest.json"), "w") as f:
             json.dump(man, f, indent=2)
+    except provenance.ServedConfigError:
+        raise                           # M57: a serving-state refusal is never swallowed
     except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
         print(f"[reasoning] WARNING: manifest not written: {e}", flush=True)
 

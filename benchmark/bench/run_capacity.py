@@ -9,6 +9,7 @@ import math
 import os
 from pathlib import Path
 
+from . import provenance
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, await_model_pid, system_used_gb
 from .model_params import params_for, profile_names, registry_context_limit
@@ -72,6 +73,8 @@ def main(argv=None) -> int:
     destinations = [out_dir / f"{cl}.jsonl", out_dir / f"{cr}.json", out_dir / f"{cl}.manifest.json"]
     if any(p.exists() for p in destinations):
         ap.error("capacity output already exists; preserve it and use a fresh --out-tag")
+    # M57: serving controls are resolved BEFORE anything is created or requested.
+    provenance.assert_serving_state(args.model)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with CapacityMonitor(len(grid), expected) as monitor:
@@ -89,6 +92,12 @@ def main(argv=None) -> int:
                 return 1
             monitor.stage("calibration")
             cpt = calibrate_cpt(driver, args.model)
+            try:        # M57: re-resolve once the model is loaded, before any measured request
+                provenance.assert_serving_state(args.model)
+            except provenance.ServedConfigError:
+                journal.close()
+                destinations[0].unlink()    # reserved by this run ("x"); nothing was written
+                raise
             print(f"[capacity] {args.model} cpt={cpt:.2f} grid={grid} "
                   f"memory_target={args.memory_target_gb}GB (guideline)", flush=True)
             params = {**params_for(args.model, profile=args.sampling_profile),
@@ -119,7 +128,6 @@ def main(argv=None) -> int:
             json.dump(sc, f, indent=2, allow_nan=False)
         manifest_ok = True
         try:
-            from . import provenance
             man = provenance.gather(args.model, profile=args.sampling_profile,
                                     overrides={"max_tokens": 256, "thinking_budget": 256, "seed": args.seed},
                                     runtime={"probe": "capacity_ladder", "grid": list(grid),
@@ -129,6 +137,8 @@ def main(argv=None) -> int:
                                              "idle_baseline_gb": round(idle_baseline, 2)})
             with destinations[2].open("x") as f:
                 json.dump(man, f, indent=2, allow_nan=False)
+        except provenance.ServedConfigError:
+            raise                           # M57: a serving-state refusal is never swallowed
         except Exception as exc:
             # Preserve completed rows, but do not label a provenance failure successful.
             manifest_ok = False

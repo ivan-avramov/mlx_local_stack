@@ -664,6 +664,15 @@ def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, par
     return {key: "unknown", key + "_source": "model-not-in-registry"}
 
 
+def assert_serving_state(model: str, registry_path: str | None = None) -> dict:
+    """Resolve BOTH M57 serving controls for `model` and let any ServingStateError propagate
+    (worker/registry disagreement, ambiguity, failed observation). Drivers call this before their
+    first model request and once more after the model is loaded."""
+    out = dict(registry_attention_policy(model, registry_path))
+    out.update(registry_lazy_prompt_embeddings(model, registry_path))
+    return out
+
+
 def registry_attention_policy(model: str, registry_path: str | None = None,
                               worker_lookup=_DEFAULT_LOOKUP) -> dict:
     """M57 served attention policy: {"attention_policy", "attention_policy_source"}.
