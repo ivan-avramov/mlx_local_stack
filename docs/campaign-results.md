@@ -2,6 +2,44 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-05 — M57 qualification, stage 2 (quality) for `fused_v1` vs `auto` COMPLETE — every pre-registered criterion passes; lazy-embedding arm and AgentBench smoke still to run
+
+Design `docs/specs/m57-qualification.md`. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, shipped state, same branch code as stage 1
+(fork `fbe2775e`, router `7be6bfd`, in the submodule directories by local fetch). Four fresh loaded instances, order A B B A
+(`a-q1`, `b-q1`, `b-q2`, `a-q2`); seed base 0 in session 1 and 1000 in session 2, paired across arms. Deployed sampling, thinking ON,
+budget 81920, MTP ON. Rows `benchmark/results/<model>/{humanevalplus,mbppplus}.m57{a,b}-q{1,2}.*` and
+`{retrieval,reasoning}.m57q-{a,b}-q{1,2}-20261005.*`; manifests carry fingerprint v7 with the arm's `attention_policy`.
+
+| axis (n per arm-session) | `auto` s1 | `fused_v1` s1 | `auto` s2 | `fused_v1` s2 |
+|---|---:|---:|---:|---:|
+| humanevalplus `acc_strict@81920` (50) | 0.90 | 0.92 | 0.90 | 0.90 |
+| mbppplus `acc_strict@81920` (50) | 0.76 | 0.76 | 0.80 | 0.80 |
+| converged (100) | 100 | 100 | 100 | 100 |
+| retrieval 65536 / 98304 / 131072 (12 prompts, 5 codes each) | 12 / 12 | 12 / 12 | 12 / 12 | 12 / 12 |
+| chain-4 reasoning 65536 / 98304 / 131072 (12 prompts) | 12 / 12 | 12 / 12 | 12 / 12 | 12 / 12 |
+
+Paired strict delta (B − A), `compare_predictor --must-differ attention_policy`: humanevalplus s1 +2.0 pp CI [0, +6] (one extra pass
+for `fused_v1`, no loss); mbppplus s1 0; humanevalplus s2 0; mbppplus s2 0 (no discordant items). Pooled n=100: 83 vs 84 and 85 vs 85.
+Axis MDE at n=100 is ±12.5 pp, so this is "within tolerance, not proven equivalent". Long-context axes: zero paired losses on either
+axis in either session; no budget hits; no errors.
+
+**How much each axis exercises the policy:** the policy forces from 128 queries. mbppplus prompts have a median of 86 tokens
+(max 158) — 98 of 100 paired outputs are byte-identical across arms; humanevalplus median 158 (max 368) — 58 of 100 fully identical
+(content, reasoning head/tail, lengths), 76 of 100 identical in content. The long-context axes are where every chunk is forced.
+
+**Pilot twice:** 5 seeded items × 2 per benchmark per arm on one loaded instance — identical 5 / 5 everywhere (content, reasoning
+head/tail, reasoning length, completion tokens). The runner's original check compared unset sha fields and was vacuous; the result
+above is the re-check from the stored rows (correction logged in the run log).
+
+**Pre-registered rule, complete for `fused_v1`:** Q1 short-context quality PASS (each session ≥ −5 pp; convergence equal). Q2
+long-context quality PASS (losses − wins = 0 per axis per session). Q3 no rung or turn slower PASS. Q4 no raise / 500 PASS. Q5 benefit
+PASS (256K peak −6.49 GB; 128K TTFT −12.6 % / −16.4 %). No red flag tripped. Still owed from the design: the AgentBench OS 5-item smoke.
+
+**Recommendation (operator approval required, PROVISIONAL label):** adopt `attention_policy: fused_v1` for
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. It is a serving change with no B/C ladder implication; the first pick's native16
+state stays PROVISIONAL (C81) and this stacks a second provisional numerics change on it. Adoption needs the fork and router
+branches published and the submodules bumped.
+
 ## 2026-10-05 — M57 qualification, stage 1 (latency / capacity) COMPLETE — `fused_v1` vs `auto`; quality stage NOT yet run
 
 Design `docs/specs/m57-qualification.md` (C113). `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, shipped state (native16 KV, MTP ON,
