@@ -70,6 +70,70 @@ def main(argv=None) -> int:
     # M50: the process owning the router port must serve THIS driver's registry; checked before
     # anything is read, written or requested (the serving-state precheck below already reads).
     router = provenance.assert_served_config(client.BASE)
+    # Everything after the entry check runs under the shared exit protocol (C106 re-verification,
+    # quarantine + drift stamp on a refused run, original exception always preserved).
+    guard = provenance.ExitGuard(router, client.BASE, label="reasoning")
+    with guard:
+        return _run(args, grid, router, guard)
+
+
+def _journal_sidecar_doc(args, grid, router, serving, history, manifest_overrides):
+    """What the journal's rows were produced under (C1): router block incl. the served file's
+    sha256, the driver registry's sha256, the cheap manifest of the run (`fingerprint` is its
+    config fingerprint) and the resolved serving controls."""
+    from . import paths
+    doc = {"router": router, "router_history": history,
+           "registry_sha256": provenance._file_sha256(str(paths.registry_path())),
+           "manifest": None, "fingerprint": None, "serving_controls": serving}
+    try:
+        lite = provenance.current_manifest_lite(
+            args.model, args.sampling_profile, overrides=manifest_overrides,
+            runtime={"probe": "reasoning", "grid": list(grid), "samples": args.samples,
+                     "chain_len": args.chain_len})
+        doc["manifest"], doc["fingerprint"] = lite, repr(provenance.config_fingerprint(lite))
+    except provenance.ServedConfigError:
+        raise
+    except Exception as e:  # noqa: BLE001 — a sidecar without a manifest can never be resumed from
+        doc["manifest_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    return doc
+
+
+def _check_resume_sidecar(sidecar_path, current):
+    """C1: a journal may only be resumed by a run whose served runtime is the one that wrote it.
+    Returns the router history to carry forward; raises ServedConfigError otherwise."""
+    if not os.path.exists(sidecar_path):
+        raise provenance.ServedConfigError(
+            f"C1 resume refused: {os.path.basename(sidecar_path)} is missing next to the journal; "
+            f"its rows carry no router/registry/serving identity. Start a fresh --out-tag.")
+    try:
+        with open(sidecar_path) as f:
+            old = json.load(f)
+        old_sha = old["router"]["config_sha256"]
+    except Exception as e:  # noqa: BLE001
+        raise provenance.ServedConfigError(
+            f"C1 resume refused: unreadable journal sidecar {sidecar_path}: {type(e).__name__}: {e}")
+    if old_sha != current["router"].get("config_sha256"):
+        raise provenance.ServedConfigError(
+            f"C1 resume refused: the journal was produced under served config sha256 "
+            f"{str(old_sha)[:12]}, this router serves {str(current['router'].get('config_sha256'))[:12]}.")
+    if not provenance.is_compatible(old.get("manifest"), current["manifest"]):
+        raise provenance.ServedConfigError(
+            "C1 resume refused: the journal's manifest is not compatible with this run "
+            "(sampling / KV / draft / serving controls / code differ).")
+    hist = list(old.get("router_history") or [])
+    prev = old["router"]
+    if prev.get("pid") != current["router"].get("pid"):
+        hist.append(prev)
+    return hist
+
+
+def _write_sidecar(path, doc):
+    # Plain write: a torn sidecar is unreadable, which REFUSES a resume (safe direction).
+    with open(path, "w") as f:
+        json.dump(doc, f, indent=2, default=str)
+
+
+def _run(args, grid, router, guard) -> int:
     provenance.assert_serving_state(args.model)        # M57: before the first model request
     driver = MlxServeDriver()
 
@@ -83,7 +147,7 @@ def main(argv=None) -> int:
               "memory sampling disabled", flush=True)
 
     cpt = calibrate_cpt(driver, args.model)
-    provenance.assert_serving_state(args.model)        # M57: re-resolve once loaded
+    serving = provenance.assert_serving_state(args.model)   # M57: re-resolve once loaded
 
     # Build profile params; apply any CLI overrides
     params = params_for(args.model, profile=args.sampling_profile)
@@ -121,6 +185,25 @@ def main(argv=None) -> int:
             d.update({"deep_from": args.deep_from, "deep_samples": args.deep_samples,
                       "early_stop_budget_hits": args.early_stop_budget_hits})
         return json.dumps(d, sort_keys=True)
+
+    # F4 (review defect 10): overrides = CLI deltas only, not the full resolved params
+    # dict -- a run with only --temp 0.7 must not report top_p/top_k/etc as overridden.
+    manifest_overrides = {k: v for k, v in (
+        ("max_tokens", args.max_tokens),
+        ("thinking_budget", args.thinking_budget),
+        ("temperature", args.temp),
+    ) if v is not None}
+    # C1: what this journal's rows are produced under travels beside it. A resume is accepted
+    # only against a compatible sidecar (same served config sha256 + compatible manifest).
+    sidecar_path = partial_path + ".provenance.json"
+    history = []
+    sidecar = _journal_sidecar_doc(args, grid, router, serving, history, manifest_overrides)
+    if args.resume and os.path.exists(partial_path):
+        history = _check_resume_sidecar(sidecar_path, sidecar)
+        sidecar["router_history"] = history
+    guard.track(partial_path)
+    guard.track(sidecar_path)
+    _write_sidecar(sidecar_path, sidecar)
 
     resume = None
     if args.resume and os.path.exists(partial_path):
@@ -180,6 +263,7 @@ def main(argv=None) -> int:
 
     final_path = os.path.join(out_dir, f"{stem}.json")
     stage_path = final_path + f".pending-{os.getpid()}"     # never overwrites an older result
+    guard.track(stage_path, final_path)
     with open(stage_path, "w") as f:
         json.dump(result, f, indent=2)
 
@@ -187,13 +271,6 @@ def main(argv=None) -> int:
     # best-effort, never lose a finished ladder to a provenance failure.
     man = None
     try:
-        # F4 (review defect 10): overrides = CLI deltas only, not the full resolved params
-        # dict -- a run with only --temp 0.7 must not report top_p/top_k/etc as overridden.
-        manifest_overrides = {k: v for k, v in (
-            ("max_tokens", args.max_tokens),
-            ("thinking_budget", args.thinking_budget),
-            ("temperature", args.temp),
-        ) if v is not None}
         man = provenance.gather(args.model, profile=args.sampling_profile,
                                 overrides=manifest_overrides,
                                 runtime={"probe": "reasoning", "grid": list(grid),
@@ -201,27 +278,19 @@ def main(argv=None) -> int:
                                          "chain_len": args.chain_len},
                                 router=router)
     except provenance.ServedConfigError:
-        # M57: a late serving-state refusal is never swallowed; the new result and this run's
-        # journal are set aside under an explicit refused marker, an older manifest is untouched.
-        print(f"[reasoning] REFUSED: result set aside at {provenance.set_aside_refused(stage_path, final_path)}; "
-              f"journal at {provenance.set_aside_refused(partial_path) or '(none)'}", flush=True)
+        # M57: a late serving-state refusal is never swallowed; the guard sets the new result, this
+        # run's journal and its sidecar aside under an explicit refused marker; an older manifest
+        # is untouched.
         raise
     except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
         print(f"[reasoning] WARNING: manifest not written: {e}", flush=True)
-    # C106: publish only if the served runtime is still the one verified at entry. A drift stamps
-    # `served_config_drift` into the result and takes the same .refused-<utc> quarantine path.
-    try:
-        exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
-    except provenance.ServedConfigError as e:
-        result["served_config_drift"] = provenance.served_config_drift_record(router, client.BASE, e)
-        with open(stage_path, "w") as f:
-            json.dump(result, f, indent=2)
-        print(f"[reasoning] REFUSED: result set aside at "
-              f"{provenance.set_aside_refused(stage_path, final_path)}; "
-              f"journal at {provenance.set_aside_refused(partial_path) or '(none)'}", flush=True)
-        raise
+    # C106: publish only if the served runtime is still the one verified at entry (a drift
+    # raises; the guard stamps `served_config_drift` and quarantines result, journal, sidecar).
+    exit_blk = guard.verify()
     if man is not None:
         man["router_exit"] = exit_blk
+        if history:
+            man["router_history"] = history
     # Stage the manifest too (it names the sha256 of the result it describes), then publish the
     # pair back to back. Anything raised before publication leaves only .pending-<pid> files.
     manifest_final = os.path.join(out_dir, f"{stem}.manifest.json")

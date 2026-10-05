@@ -70,12 +70,23 @@ def main(argv=None) -> int:
     # M50: the process owning the router port must serve THIS driver's registry; checked before
     # anything is read (the destination-exists probe below), written or requested.
     router = provenance.assert_served_config(client.BASE)
+    # Everything after the entry check runs under the shared exit protocol (C106 re-verification,
+    # journal + scorecard quarantine and drift stamp on a refused run, original exception kept).
+    guard = provenance.ExitGuard(router, client.BASE, label="capacity")
+    with guard:
+        return _run(ap, args, grid, expected, router, guard)
+
+
+def _run(ap, args, grid, expected, router, guard) -> int:
     out_dir = Path(RESULTS) / args.model
-    cl ="capacity_ladder" + (f".{args.out_tag}" if args.out_tag else "")
+    cl = "capacity_ladder" + (f".{args.out_tag}" if args.out_tag else "")
     cr = "capacity_retrieval" + (f".{args.out_tag}" if args.out_tag else "")
     destinations = [out_dir / f"{cl}.jsonl", out_dir / f"{cr}.json", out_dir / f"{cl}.manifest.json"]
     if any(p.exists() for p in destinations):
         ap.error("capacity output already exists; preserve it and use a fresh --out-tag")
+    # Nothing consumable may stand under a canonical name after a refused run (review C2).
+    guard.track(destinations[0])
+    guard.track(destinations[1])
     # M57: serving controls are resolved BEFORE anything is created or requested.
     provenance.assert_serving_state(args.model)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -123,24 +134,15 @@ def main(argv=None) -> int:
                                  sampler_factory=MemorySampler, request_timeout=args.request_timeout,
                                  on_start=lambda ctx: monitor.stage(f"rung {ctx}"), on_record=save)
         monitor.stage("reporting")
-        # C106: the run is complete only if the served runtime is still the one verified at entry.
-        drift_error = exit_blk = None
-        try:
-            exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
-        except provenance.ServedConfigError as exc:
-            drift_error = exc
-        sc = capacity_retrieval_scorecard(args.model, records, memory_target_gb=args.memory_target_gb)
+        sc =capacity_retrieval_scorecard(args.model, records, memory_target_gb=args.memory_target_gb)
         sc["idle_baseline_gb"] = round(idle_baseline, 2)
         sc["requested_grid"] = list(grid)
         sc["grid_completed"] = len(records) == len(grid) and sc["execution_status"] == "completed"
-        if drift_error is not None:
-            sc["served_config_drift"] = provenance.served_config_drift_record(router, client.BASE, drift_error)
         with destinations[1].open("x") as f:
             json.dump(sc, f, indent=2, allow_nan=False)
-        if drift_error is not None:
-            # Rows and scorecard stay on disk, stamped; NO manifest is written for them.
-            print(f"[capacity] REFUSED: {drift_error}", flush=True)
-            raise drift_error
+        # C106: verify before the manifest; a drift raises and the guard stamps and sets aside BOTH
+        # the journal and the scorecard, and no manifest is written.
+        exit_blk = guard.verify()
         manifest_ok = True
         try:
             man = provenance.gather(args.model, profile=args.sampling_profile,

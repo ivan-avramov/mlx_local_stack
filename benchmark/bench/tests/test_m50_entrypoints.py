@@ -701,6 +701,9 @@ def test_capacity_writes_no_manifest_and_stamps_drift_on_exit_drift(monkeypatch,
     with pytest.raises(P.ServedConfigError, match="C106"):
         mod.main(_SSD._argv(extra))
     mdir = results / _SSD.MODEL
+    # Review C2: nothing consumable under a canonical name; the scorecard is set aside stamped.
     assert not (mdir / "capacity_ladder.manifest.json").exists()
-    sc = json.loads((mdir / "capacity_retrieval.json").read_text())
-    assert "C106" in sc["served_config_drift"]["error"]
+    assert not (mdir / "capacity_retrieval.json").exists()
+    aside = list(mdir.glob("capacity_retrieval.json.refused-*"))
+    assert len(aside) == 1
+    assert "C106" in json.loads(aside[0].read_text())["served_config_drift"]["error"]

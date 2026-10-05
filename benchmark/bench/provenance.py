@@ -1236,6 +1236,89 @@ def served_config_drift_record(entry: dict, base_url: str | None, error) -> dict
     return {"entry_sha256": entry.get("config_sha256"), "exit_sha256": exit_sha, "error": str(error)}
 
 
+class ExitGuard:
+    """Shared exit protocol for the ladder drivers (capacity / retrieval / reasoning).
+
+    Wrap everything AFTER the M50 entry check in `with ExitGuard(entry, base_url) as g:`.
+      * `g.track(path, name=None)` registers an artifact that must never stand under its canonical
+        name after a refused run (`name` is the base the `.refused-<utc>` marker is appended to).
+      * `g.verify()` is the C106 exit re-verification; call it right before publication. A drift
+        records `g.drift` (the `served_config_drift` stamp) and raises ServedConfigError.
+      * On ANY exception the guard runs the verification best-effort (so a drift is stamped even
+        when the run died earlier). If the exception is a ServedConfigError or a drift was found,
+        every tracked artifact is stamped with `served_config_drift` (when drift is known) and set
+        aside as `.refused-<utc>`. The ORIGINAL exception always propagates: failures while
+        verifying or quarantining are printed, never raised in its place.
+      * A clean body that never called `verify()` is verified here (and refused on drift)."""
+
+    def __init__(self, entry: dict, base_url: str | None = None, *, label: str = "driver"):
+        self.entry, self.base_url, self.label = entry, base_url, label
+        self.artifacts: list = []
+        self.exit_blk = None
+        self.drift = None
+        self._verified = False
+
+    def track(self, path, name=None) -> None:
+        self.artifacts.append((str(path), str(name) if name else None))
+
+    def verify(self) -> dict:
+        try:
+            self.exit_blk = assert_served_config_unchanged(self.entry, self.base_url)
+        except ServedConfigError as e:
+            self.drift = served_config_drift_record(self.entry, self.base_url, e)
+            raise
+        self._verified = True
+        return self.exit_blk
+
+    def _quarantine(self) -> None:
+        for path, name in self.artifacts:
+            try:
+                if not os.path.exists(path):
+                    continue
+                if self.drift is not None:
+                    if path.endswith(".jsonl"):
+                        with open(path, "a") as f:
+                            f.write(json.dumps({"event": "served_config_drift",
+                                                "served_config_drift": self.drift}) + "\n")
+                    elif ".json" in os.path.basename(path):
+                        with open(path) as f:
+                            doc = json.load(f)
+                        if isinstance(doc, dict):
+                            doc["served_config_drift"] = self.drift
+                            with open(path, "w") as f:
+                                json.dump(doc, f, indent=2)
+                print(f"[{self.label}] REFUSED: {os.path.basename(path)} set aside at "
+                      f"{set_aside_refused(path, name)}", flush=True)
+            except Exception as e:  # noqa: BLE001 — never replace the original exception
+                print(f"[{self.label}] WARNING: could not quarantine {path}: {type(e).__name__}: {e}",
+                      flush=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et, ev, tb):
+        err, raised_here = ev, False
+        if err is None:
+            if not self._verified:
+                try:
+                    self.verify()
+                except ServedConfigError as e:
+                    err, raised_here = e, True
+        elif not self._verified and self.drift is None:
+            try:
+                self.verify()
+            except ServedConfigError:
+                pass
+            except Exception as e:  # noqa: BLE001
+                print(f"[{self.label}] WARNING: exit verification failed: {type(e).__name__}: {e}",
+                      flush=True)
+        if err is not None and (isinstance(err, ServedConfigError) or self.drift is not None):
+            self._quarantine()
+        if raised_here:
+            raise err
+        return False
+
+
 def router_block(base_url: str | None = None) -> dict:
     """Best-effort manifest block for gather(): the block verified at this process's entry for
     that port (no second process walk per manifest), else a fresh check, else {pid: None, error}."""

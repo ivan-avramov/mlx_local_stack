@@ -4,7 +4,7 @@ import pytest
 import bench.run_reasoning as R
 from bench.reasoning import run_reasoning_ladder
 
-from .test_run_reasoning import FakeDriver, FakeSampler
+from .test_run_reasoning import FakeDriver, FakeSampler, stub_manifest_lite
 
 
 class CountingDriver(FakeDriver):
@@ -48,6 +48,7 @@ def test_transport_error_escalates_not_graded():
 
 
 def _patch_cli(monkeypatch, tmp_path):
+    stub_manifest_lite(monkeypatch)
     monkeypatch.setattr(R, "MlxServeDriver", lambda: CountingDriver())
     monkeypatch.setattr(R, "MemorySampler", FakeSampler)
     monkeypatch.setattr(R, "RESULTS", str(tmp_path))
