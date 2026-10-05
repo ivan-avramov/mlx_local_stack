@@ -49,7 +49,7 @@ record: proposal → reviews → design P25–P44 → reviews 2/3 → reconcilia
      suite on merged `main`: 2705 passed, 1 known failure (twice); `test_work_queue::test_PAUSE_logs_…` failed once in four
      full runs and passes alone — an order-dependent flake, not investigated. Live resolver check passed (registry fallback /
      worker / mismatch refusal). The agent worktree `.claude/worktrees/agent-a6011ca833d3e6e68` can be removed.
-   - Next: operator sign-off on
+   - Qualification design APPROVED (C113). Next:
      `docs/specs/m57-qualification.md` → pilots → arms (matched machine state).
 2. **M58 queued** (joint MTP verification scan) — spec owed after M57.
 3. **Push: NOT approved** (operator undecided). Recommendation on record: push the stack docs commits when convenient; do NOT
@@ -75,4 +75,4 @@ record: proposal → reviews → design P25–P44 → reviews 2/3 → reconcilia
 - The worker's stderr log (`$TMPDIR/mlx-manager-logs/<model>.log`) is recreated at worker start — read the whole file per arm.
 - Profiled or fork-branch runs write to the workdir only; nothing from them enters `benchmark/results/`.
 
-Next decision id C113; discussion ids continue from P80.
+Next decision id C114; discussion ids continue from P82.
