@@ -182,6 +182,7 @@ def main(argv=None) -> int:
 
     # Provenance beside the ladder (same pattern as run_retrieval.py T1.6 / run_capacity.py):
     # best-effort, never lose a finished ladder to a provenance failure.
+    man = None
     try:
         # F4 (review defect 10): overrides = CLI deltas only, not the full resolved params
         # dict -- a run with only --temp 0.7 must not report top_p/top_k/etc as overridden.
@@ -195,8 +196,6 @@ def main(argv=None) -> int:
                                 runtime={"probe": "reasoning", "grid": list(grid),
                                          "samples": args.samples,
                                          "chain_len": args.chain_len})
-        with open(os.path.join(out_dir, f"{stem}.manifest.json"), "w") as f:
-            json.dump(man, f, indent=2)
     except provenance.ServedConfigError:
         # M57: a late serving-state refusal is never swallowed; the new result and this run's
         # journal are set aside under an explicit refused marker, an older manifest is untouched.
@@ -205,8 +204,17 @@ def main(argv=None) -> int:
         raise
     except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
         print(f"[reasoning] WARNING: manifest not written: {e}", flush=True)
-    if os.path.exists(stage_path):
-        os.replace(stage_path, final_path)
+    # Stage the manifest too (it names the sha256 of the result it describes), then publish the
+    # pair back to back. Anything raised before publication leaves only .pending-<pid> files.
+    manifest_final = os.path.join(out_dir, f"{stem}.manifest.json")
+    manifest_stage = None
+    if man is not None:
+        man["result_file"] = os.path.basename(final_path)
+        man["result_sha256"] = provenance.result_digest(stage_path)
+        manifest_stage = manifest_final + f".pending-{os.getpid()}"
+        with open(manifest_stage, "w") as f:
+            json.dump(man, f, indent=2)
+    provenance.publish_pair(stage_path, final_path, manifest_stage, manifest_final)
 
     print(f"[reasoning] REASONING_EFFECTIVE_CTX={reasoning_effective_ctx}", flush=True)
     return 0

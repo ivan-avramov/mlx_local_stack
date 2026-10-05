@@ -656,6 +656,44 @@ def _port_listener_pids(port: int) -> list[int]:
     return sorted(set().union(*seen))
 
 
+def result_digest(path: str) -> str:
+    """sha256 hex of a result file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def manifest_matches_result(manifest_path: str, result_path: str):
+    """True iff the manifest's recorded `result_sha256` (and `result_file` basename, when
+    present) describe `result_path`; None when the manifest carries no digest (an older
+    manifest); False for a mismatch or an unreadable manifest/result (a mixed or damaged pair)."""
+    try:
+        with open(manifest_path) as f:
+            man = json.load(f)
+    except Exception:  # noqa: BLE001
+        return False
+    want = man.get("result_sha256") if isinstance(man, dict) else None
+    if want is None:
+        return None
+    if man.get("result_file") not in (None, os.path.basename(result_path)):
+        return False
+    try:
+        return result_digest(result_path) == want
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def publish_pair(result_stage: str, result_final: str, manifest_stage, manifest_final) -> None:
+    """Publish a staged result and (when given) its staged manifest back to back — result
+    first, manifest second, nothing in between. A tear after the first replace leaves the OLD
+    manifest beside the NEW result, which `manifest_matches_result` reports as False."""
+    os.replace(result_stage, result_final)
+    if manifest_stage:
+        os.replace(manifest_stage, manifest_final)
+
+
 def set_aside_refused(path: str, name: str | None = None) -> str:
     """Rename a file produced by a REFUSED run to `<path>.refused-<utc timestamp>` (never deleted,
     never left under its normal name). `name` (default `path`) is the base the marker is appended
