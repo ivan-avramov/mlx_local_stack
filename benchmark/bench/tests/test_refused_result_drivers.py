@@ -54,7 +54,10 @@ def test_late_refusal_moves_the_new_result_aside_and_leaves_the_old_pair(monkeyp
     (out / f"{stem}.manifest.json").write_bytes(b'{"old": "manifest"}\n')
     journal = out / f"{stem}.partial.jsonl"
     if name == "reasoning":
-        journal.write_text('{"rung": 1}\n')
+        # A fresh run refuses an existing journal (D1), so the journal is the run's OWN: the
+        # mocked ladder persists a rung through the real callback.
+        orig = getattr(mod, ladder)
+        monkeypatch.setattr(mod, ladder, lambda *a, **k: (k["on_rung"](dict(canned[0])), orig(*a, **k))[1])
     with pytest.raises(P.ServedConfigError):
         mod.main(["--model", MODEL, "--sampling-profile", "production", "--grid", "8000"])
     assert (out / f"{stem}.manifest.json").read_bytes() == b'{"old": "manifest"}\n'

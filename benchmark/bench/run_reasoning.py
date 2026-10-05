@@ -134,6 +134,14 @@ def _write_sidecar(path, doc):
 
 
 def _run(args, grid, router, guard) -> int:
+    # D1: a fresh (non---resume) run never appends to, or re-stamps, an existing journal: its
+    # rows were produced under unknown controls. Refuse before anything is requested or created.
+    _stem = "reasoning" if not args.out_tag else f"reasoning.{args.out_tag}"
+    _journal = os.path.join(RESULTS, args.model, f"{_stem}.partial.jsonl")
+    if not args.resume and (os.path.exists(_journal) or os.path.exists(_journal + ".provenance.json")):
+        raise SystemExit(f"REFUSED: a journal already exists for {_stem!r} ({_journal}); a run without "
+                         f"--resume would mix its rows with a different design/serving state. Use "
+                         f"--resume or a fresh --out-tag.")
     provenance.assert_serving_state(args.model)        # M57: before the first model request
     driver = MlxServeDriver()
 

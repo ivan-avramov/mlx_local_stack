@@ -1270,28 +1270,51 @@ class ExitGuard:
         self._verified = True
         return self.exit_blk
 
+    def _say(self, msg: str) -> None:
+        """Diagnostics inside the guard never throw: a closed or broken stdout must not replace
+        the original exception."""
+        try:
+            print(f"[{self.label}] {msg}", flush=True)
+        except (OSError, ValueError):
+            pass
+
+    def _stamp(self, path: str) -> None:
+        if path.endswith(".jsonl"):
+            with open(path, "a") as f:
+                f.write(json.dumps({"event": "served_config_drift",
+                                    "served_config_drift": self.drift}) + "\n")
+        elif ".json" in os.path.basename(path):
+            with open(path) as f:
+                doc = json.load(f)
+            if isinstance(doc, dict):
+                doc["served_config_drift"] = self.drift
+                with open(path, "w") as f:
+                    json.dump(doc, f, indent=2)
+
     def _quarantine(self) -> None:
         for path, name in self.artifacts:
+            stamp_error = None
             try:
                 if not os.path.exists(path):
                     continue
                 if self.drift is not None:
-                    if path.endswith(".jsonl"):
-                        with open(path, "a") as f:
-                            f.write(json.dumps({"event": "served_config_drift",
-                                                "served_config_drift": self.drift}) + "\n")
-                    elif ".json" in os.path.basename(path):
-                        with open(path) as f:
-                            doc = json.load(f)
-                        if isinstance(doc, dict):
-                            doc["served_config_drift"] = self.drift
-                            with open(path, "w") as f:
-                                json.dump(doc, f, indent=2)
-                print(f"[{self.label}] REFUSED: {os.path.basename(path)} set aside at "
-                      f"{set_aside_refused(path, name)}", flush=True)
+                    try:
+                        self._stamp(path)
+                    except Exception as e:  # noqa: BLE001 — the rename below does NOT depend on this
+                        stamp_error = f"{type(e).__name__}: {e}"
+                dest = set_aside_refused(path, name)
             except Exception as e:  # noqa: BLE001 — never replace the original exception
-                print(f"[{self.label}] WARNING: could not quarantine {path}: {type(e).__name__}: {e}",
-                      flush=True)
+                self._say(f"WARNING: could not quarantine {path}: {type(e).__name__}: {e}")
+                continue
+            if stamp_error:
+                try:
+                    with open(dest + ".stamp-error", "w") as f:
+                        f.write(f"served_config_drift could not be stamped into this artifact: "
+                                f"{stamp_error}\ndrift: {json.dumps(self.drift)}\n")
+                except Exception:  # noqa: BLE001
+                    pass
+                self._say(f"WARNING: drift stamp failed for {os.path.basename(path)}: {stamp_error}")
+            self._say(f"REFUSED: {os.path.basename(path)} set aside at {dest}")
 
     def __enter__(self):
         return self
@@ -1310,8 +1333,7 @@ class ExitGuard:
             except ServedConfigError:
                 pass
             except Exception as e:  # noqa: BLE001
-                print(f"[{self.label}] WARNING: exit verification failed: {type(e).__name__}: {e}",
-                      flush=True)
+                self._say(f"WARNING: exit verification failed: {type(e).__name__}: {e}")
         if err is not None and (isinstance(err, ServedConfigError) or self.drift is not None):
             self._quarantine()
         if raised_here:

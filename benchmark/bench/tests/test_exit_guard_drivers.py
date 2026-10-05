@@ -263,3 +263,123 @@ def test_resume_refuses_a_journal_without_a_sidecar(monkeypatch, tmp_path):
     with pytest.raises(P.ServedConfigError, match="missing"):
         mod.main(_argv(extra, "--resume"))
     assert (out / "reasoning.partial.jsonl").exists()
+
+
+# --------------------------------------------------------------------------- D1: no append to a journal
+def test_a_fresh_run_refuses_an_existing_journal_and_changes_nothing(monkeypatch, tmp_path):
+    mod, canned, extra, out, r = _first_run(monkeypatch, tmp_path)
+    before = {p.name: p.read_bytes() for p in out.iterdir()}
+    monkeypatch.setattr(mod, "MlxServeDriver", lambda: pytest.fail("driver built"))
+    monkeypatch.setattr(mod, "run_reasoning_ladder", lambda *a, **k: pytest.fail("ladder ran"))
+    with pytest.raises(SystemExit, match="--resume or a fresh --out-tag"):
+        mod.main(_argv(extra))
+    assert {p.name: p.read_bytes() for p in out.iterdir()} == before
+
+
+def test_a_fresh_run_refuses_a_leftover_sidecar_alone(monkeypatch, tmp_path):
+    mod, canned, extra, out, r = _first_run(monkeypatch, tmp_path)
+    (out / "reasoning.partial.jsonl").unlink()
+    with pytest.raises(SystemExit, match="--resume or a fresh --out-tag"):
+        mod.main(_argv(extra))
+    assert (out / "reasoning.partial.jsonl.provenance.json").exists()
+
+
+def test_a_fresh_out_tag_is_not_blocked_by_another_tags_journal(monkeypatch, tmp_path):
+    mod, canned, extra, out, r = _first_run(monkeypatch, tmp_path)
+    assert mod.main(_argv(extra, "--out-tag", "t2")) == 0
+    assert (out / "reasoning.t2.partial.jsonl").exists()
+
+
+# --------------------------------------------------------------------------- D3: gather -> verify -> publish
+@pytest.mark.parametrize("name", ["capacity", "retrieval", "reasoning"])
+def test_an_overlay_change_during_gather_is_caught_and_the_run_refused(monkeypatch, tmp_path, name):
+    mod, lad, canned, extra, out = _setup(monkeypatch, tmp_path, name)
+    Router(monkeypatch, tmp_path)
+    if name == "capacity":
+        _cap_ladder(monkeypatch, mod, canned)
+    elif name == "reasoning":
+        _rea_ladder(monkeypatch, mod, canned)
+    real_gather = P.gather
+
+    def gather(*a, **k):
+        man = real_gather(*a, **k)
+        with open(paths.registry_path(), "a") as f:
+            f.write("\n# overlay changed while gathering\n")
+        return man
+    monkeypatch.setattr(P, "gather", gather)
+    canonical_at_verify = []
+    real_verify = P.assert_served_config_unchanged
+
+    def verify(*a, **k):
+        canonical_at_verify.append((out / "capacity_retrieval.json").exists())
+        return real_verify(*a, **k)
+    monkeypatch.setattr(P, "assert_served_config_unchanged", verify)
+    with pytest.raises(P.ServedConfigError, match="C106"):
+        mod.main(_argv(extra))
+    assert canonical_at_verify == [False] * len(canonical_at_verify) and canonical_at_verify
+    canon = [p.name for p in out.iterdir() if p.name.endswith((".json", ".jsonl"))
+             and ".refused-" not in p.name and "provenance" not in p.name]
+    assert canon == []
+
+
+# --------------------------------------------------------------------------- D4 / D5: guard cleanup
+def _drift_guard(monkeypatch, tmp_path):
+    r = Router(monkeypatch, tmp_path)
+    entry = P.assert_served_config("http://localhost:8000")
+    r.pid = 8                                            # drift: exit check will refuse
+    return P.ExitGuard(entry, "http://localhost:8000", label="t")
+
+
+def test_malformed_artifact_json_is_still_moved_aside(monkeypatch, tmp_path):
+    art = tmp_path / "x.json.pending-1"
+    art.write_text("{not json")
+    g = _drift_guard(monkeypatch, tmp_path)
+    g.track(art, tmp_path / "x.json")
+    with pytest.raises(ValueError, match="orig"):
+        with g:
+            raise ValueError("orig")
+    assert not art.exists() and not (tmp_path / "x.json").exists()
+    aside = [p for p in tmp_path.glob("x.json.refused-*") if not p.name.endswith(".stamp-error")]
+    assert len(aside) == 1 and aside[0].read_text() == "{not json"
+    assert list(tmp_path.glob("x.json.refused-*.stamp-error"))
+
+
+def test_a_failing_drift_append_still_moves_the_journal_aside(monkeypatch, tmp_path):
+    art = tmp_path / "j.jsonl"
+    art.write_text('{"ctx": 1}\n')
+    art.chmod(0o444)                                    # append fails
+    g = _drift_guard(monkeypatch, tmp_path)
+    g.track(art)
+    with pytest.raises(ValueError, match="orig"):
+        with g:
+            raise ValueError("orig")
+    assert not art.exists()
+    assert len(list(tmp_path.glob("j.jsonl.refused-*"))) >= 1
+    assert list(tmp_path.glob("j.jsonl.refused-*.stamp-error"))
+
+
+def test_a_print_raising_broken_pipe_never_replaces_the_original_exception(monkeypatch, tmp_path):
+    art = tmp_path / "x.json"
+    art.write_text("{}")
+    g = _drift_guard(monkeypatch, tmp_path)
+    g.track(art)
+
+    def boom(*a, **k):
+        raise BrokenPipeError("stdout closed")
+    monkeypatch.setattr("builtins.print", boom)
+    with pytest.raises(ValueError, match="orig"):
+        with g:
+            raise ValueError("orig")
+    assert not art.exists() and len(list(tmp_path.glob("x.json.refused-*"))) == 1
+
+
+def test_a_broken_pipe_on_the_verification_warning_is_swallowed(monkeypatch, tmp_path):
+    Router(monkeypatch, tmp_path)
+    entry = P.assert_served_config("http://localhost:8000")
+    monkeypatch.setattr(P, "assert_served_config_unchanged",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("lsof exploded")))
+    monkeypatch.setattr("builtins.print",
+                        lambda *a, **k: (_ for _ in ()).throw(BrokenPipeError("closed")))
+    with pytest.raises(KeyError, match="orig"):
+        with P.ExitGuard(entry, "http://localhost:8000"):
+            raise KeyError("orig")

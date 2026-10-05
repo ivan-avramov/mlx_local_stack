@@ -583,8 +583,11 @@ def main() -> int:
     # the polyglot checkout and every output path come AFTER it.
     # Discovery runs with cwd = the EXISTING $STACK_WORKDIR so opencode's upward config discovery
     # sees the same ancestry as the item directories (`<STACK_WORKDIR>/scratch/...`); we create no
-    # directory. The one accepted pre-check side effect is opencode's OWN data-home write during
-    # `debug config` (its XDG_DATA_HOME points under the workdir scratch, never the real one).
+    # directory. The one remaining pre-check side effect is opencode's OWN data-home write during
+    # `debug config`: its XDG_DATA_HOME points under the workdir scratch (never the real one) and
+    # opencode creates that directory itself. Whether that is an acceptable exception to "no
+    # write before the check" is PENDING OPERATOR APPROVAL (open question D2); until then it is
+    # documented, not blessed (see test_..._passes_a_workdir_data_home_to_discovery).
     if not workdir.is_dir():
         sys.exit(f"REFUSED: M50 STACK_WORKDIR {str(workdir)!r} does not exist; discovery needs an "
                  f"existing directory (nothing is created before the router check).")

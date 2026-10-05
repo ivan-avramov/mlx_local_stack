@@ -134,16 +134,18 @@ def _run(ap, args, grid, expected, router, guard) -> int:
                                  sampler_factory=MemorySampler, request_timeout=args.request_timeout,
                                  on_start=lambda ctx: monitor.stage(f"rung {ctx}"), on_record=save)
         monitor.stage("reporting")
-        sc =capacity_retrieval_scorecard(args.model, records, memory_target_gb=args.memory_target_gb)
+        sc = capacity_retrieval_scorecard(args.model, records, memory_target_gb=args.memory_target_gb)
         sc["idle_baseline_gb"] = round(idle_baseline, 2)
         sc["requested_grid"] = list(grid)
         sc["grid_completed"] = len(records) == len(grid) and sc["execution_status"] == "completed"
-        with destinations[1].open("x") as f:
+        # The scorecard is STAGED, never written under its canonical name before the exit
+        # verification (a refused run must have no canonical scorecard at any instant).
+        sc_stage = f"{destinations[1]}.pending-{os.getpid()}"
+        guard.track(sc_stage, destinations[1])
+        with open(sc_stage, "x") as f:
             json.dump(sc, f, indent=2, allow_nan=False)
-        # C106: verify before the manifest; a drift raises and the guard stamps and sets aside BOTH
-        # the journal and the scorecard, and no manifest is written.
-        exit_blk = guard.verify()
         manifest_ok = True
+        man = None
         try:
             man = provenance.gather(args.model, profile=args.sampling_profile,
                                     overrides={"max_tokens": 256, "thinking_budget": 256, "seed": args.seed},
@@ -153,15 +155,24 @@ def _run(ap, args, grid, expected, router, guard) -> int:
                                              "expected_rung_seconds": expected,
                                              "idle_baseline_gb": round(idle_baseline, 2)},
                                     router=router)
-            man["router_exit"] = exit_blk
-            with destinations[2].open("x") as f:
-                json.dump(man, f, indent=2, allow_nan=False)
         except provenance.ServedConfigError:
             raise                           # M57: a serving-state refusal is never swallowed
         except Exception as exc:
             # Preserve completed rows, but do not label a provenance failure successful.
             manifest_ok = False
             print(f"[capacity] ERROR: manifest not written: {exc}", flush=True)
+        # C106: order is gather -> verify -> publish. A drift raises; the guard stamps and sets
+        # aside the journal and the staged scorecard, and no manifest is written.
+        exit_blk = guard.verify()
+        os.replace(sc_stage, destinations[1])
+        if man is not None:
+            man["router_exit"] = exit_blk
+            try:
+                with destinations[2].open("x") as f:
+                    json.dump(man, f, indent=2, allow_nan=False)
+            except Exception as exc:
+                manifest_ok = False
+                print(f"[capacity] ERROR: manifest not written: {exc}", flush=True)
         print(f"[capacity] execution={sc['execution_status']} grid_completed={sc['grid_completed']} "
               f"max_completed_ctx={sc['max_completed_ctx']} "
               f"max_within_memory_target_ctx={sc['max_within_memory_target_ctx']} "

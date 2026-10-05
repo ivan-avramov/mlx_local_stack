@@ -226,6 +226,25 @@ def test_run_opencode_probe_does_only_the_discovery_call_before_the_check(tmp_pa
     assert list(tmp_path.iterdir()) == []
 
 
+def test_run_opencode_probe_passes_a_workdir_data_home_to_discovery_and_creates_nothing_itself(
+        tmp_path, monkeypatch):
+    """Documents the pending-approval fact (D2): discovery is launched with an XDG_DATA_HOME under
+    <STACK_WORKDIR>/scratch that opencode itself will create; OUR code creates no directory."""
+    import run_opencode_probe as OP
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    seen = {}
+
+    def discovery(cwd=None, env=None, provider="mlx-local"):
+        seen["data_home"] = env["XDG_DATA_HOME"]
+        raise P.ServedConfigError("M50 tripwire: stop after discovery")
+    monkeypatch.setattr(P, "opencode_router_base", discovery)
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--out", str(tmp_path / "oc.jsonl")])
+    with pytest.raises(SystemExit):
+        OP.main()
+    assert seen["data_home"] == str(tmp_path / "scratch" / "m50-discovery-xdg-data")
+    assert not (tmp_path / "scratch").exists()          # we did not create it
+
+
 def test_run_opencode_probe_refuses_when_stack_workdir_does_not_exist(tmp_path, monkeypatch):
     import run_opencode_probe as OP
     gone = tmp_path / "nope"
