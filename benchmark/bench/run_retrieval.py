@@ -108,7 +108,9 @@ def main(argv=None) -> int:
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
     stem = "retrieval" if not args.out_tag else f"retrieval.{args.out_tag}"
-    with open(os.path.join(out_dir, f"{stem}.json"), "w") as f:
+    final_path = os.path.join(out_dir, f"{stem}.json")
+    stage_path = final_path + f".pending-{os.getpid()}"     # never overwrites an older result
+    with open(stage_path, "w") as f:
         json.dump(result, f, indent=2)
 
     # Provenance beside the ladder (same pattern as run_capacity.py, T1.6): best-effort,
@@ -121,9 +123,15 @@ def main(argv=None) -> int:
         with open(os.path.join(out_dir, f"{stem}.manifest.json"), "w") as f:
             json.dump(man, f, indent=2)
     except provenance.ServedConfigError:
-        raise                           # M57: a serving-state refusal is never swallowed
+        # M57: a late serving-state refusal is never swallowed, and the new result must not
+        # stand beside an older manifest: it is set aside under an explicit refused marker.
+        print(f"[retrieval] REFUSED: result set aside at {provenance.set_aside_refused(stage_path, final_path)}",
+              flush=True)
+        raise
     except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
         print(f"[retrieval] WARNING: manifest not written: {e}", flush=True)
+    if os.path.exists(stage_path):
+        os.replace(stage_path, final_path)
 
     print(f"[retrieval] RETRIEVAL_EFFECTIVE_CTX={retrieval_effective_ctx}", flush=True)
     return 0

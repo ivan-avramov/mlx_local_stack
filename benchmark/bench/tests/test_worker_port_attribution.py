@@ -32,6 +32,11 @@ def _ports(monkeypatch, table):
     monkeypatch.setattr(P, "_port_listener_pids", fake)
 
 
+@pytest.fixture(autouse=True)
+def _default_tree(monkeypatch):
+    monkeypatch.setattr(P, "_ppid", lambda pid: 1 if pid != 1 else 0)   # every worker child of the router
+
+
 def _facts(monkeypatch, by_pid):
     monkeypatch.setattr(P, "_process_facts", lambda pid: dict(
         {"pid": pid, "argv": None, "cmdline": None}, **by_pid[pid]))
@@ -107,38 +112,3 @@ def test_no_stack_and_no_mlx_port_falls_back(monkeypatch, tmp_path):
     _ports(monkeypatch, {})
     st = P.registry_attention_policy("m", _registry(tmp_path, mlx_port=None))
     assert st["attention_policy_source"] == "registry"
-
-
-def test_unrelated_unreadable_and_zombie_processes_do_not_refuse(monkeypatch):
-    class Denied(Exception):
-        pass
-
-    class Proc:
-        def __init__(self, pid, conns):
-            self.pid, self._c = pid, conns
-
-        def net_connections(self, kind="inet"):
-            if isinstance(self._c, Exception):
-                raise self._c
-            return self._c
-
-    ok = [types.SimpleNamespace(status="LISTEN", laddr=types.SimpleNamespace(ip="127.0.0.1", port=8091))]
-    fake = types.SimpleNamespace(
-        CONN_LISTEN="LISTEN",
-        process_iter=lambda attrs=None: [Proc(5, Denied("AccessDenied")), Proc(6, Denied("zombie")),
-                                         Proc(7, ok)])
-    monkeypatch.setitem(sys.modules, "psutil", fake)
-    monkeypatch.setattr(P.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
-        a, 1, stdout="", stderr=""))                          # lsof: rc 1 = no match
-    assert P._port_listener_pids(8091) == [7]
-
-
-def test_lsof_failure_is_an_observation_failure(monkeypatch):
-    monkeypatch.setitem(sys.modules, "psutil", types.SimpleNamespace(
-        CONN_LISTEN="LISTEN", process_iter=lambda attrs=None: []))
-
-    def boom(*a, **k):
-        raise FileNotFoundError("lsof")
-    monkeypatch.setattr(P.subprocess, "run", boom)
-    with pytest.raises(Exception):
-        P._port_listener_pids(8091)

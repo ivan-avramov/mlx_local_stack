@@ -600,29 +600,96 @@ def _flag_value(argv, flag):
     return val
 
 
+def _listeners_via_psutil(port: int):
+    """Pids listening on `port` per the per-process walk, or None when the observation is
+    INCOMPLETE (psutil missing, or some process refused inspection — it could be the listener).
+    Gone/zombie processes are benign."""
+    try:
+        import psutil
+    except Exception:  # noqa: BLE001
+        return None
+    benign = tuple(c for c in (getattr(psutil, "NoSuchProcess", None),
+                               getattr(psutil, "ZombieProcess", None)) if c)
+    pids, complete = set(), True
+    try:
+        for p in psutil.process_iter(["pid"]):
+            try:
+                conns = getattr(p, "net_connections", None) or getattr(p, "connections")
+                for c in conns(kind="inet"):
+                    if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port:
+                        pids.add(p.pid)
+            except benign:
+                continue
+            except Exception:  # noqa: BLE001 — AccessDenied etc.: this process stays uninspected
+                complete = False
+    except Exception:  # noqa: BLE001
+        return None
+    return sorted(pids) if complete else None
+
+
+def _listeners_via_lsof(port: int):
+    """Pids listening on `port` per `lsof`, or None when lsof is unavailable or reported anything
+    other than a clean result. macOS lsof exits 1 both for "no match" and for errors: only
+    exit 1 with EMPTY stdout AND EMPTY stderr is a clean "nobody listens"."""
+    try:
+        r = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
+                           capture_output=True, text=True, timeout=20)
+    except Exception:  # noqa: BLE001 — missing binary, timeout, permission
+        return None
+    if r.stderr.strip() or r.returncode not in (0, 1):
+        return None
+    pids = sorted({int(l[1:]) for l in r.stdout.splitlines() if l.startswith("p") and l[1:].isdigit()})
+    if r.returncode == 1 and (pids or r.stdout.strip()):
+        return None
+    return pids
+
+
 def _port_listener_pids(port: int) -> list[int]:
-    """Sorted pids with a LISTEN socket on `port`, via the per-process walk (unrelated
-    AccessDenied / zombie processes are skipped: they cannot be the listener we own) united with
-    `lsof`. RAISES when the lookup itself fails (psutil missing, lsof missing/timed out/errored)
-    — "could not look" is never "nothing listens"."""
+    """Sorted pids with a LISTEN socket on `port`. Each backend (psutil walk, lsof) reports a
+    COMPLETE observation or nothing; a completed backend is authoritative and two completed
+    backends are united. When NEITHER can establish the state this RAISES ("router/worker state
+    unknown") — "could not look" is never "nothing listens"."""
+    seen = [r for r in (_listeners_via_psutil(port), _listeners_via_lsof(port)) if r is not None]
+    if not seen:
+        raise OSError(f"router/worker state unknown: neither the psutil walk nor lsof could "
+                      f"establish who listens on :{port}")
+    return sorted(set().union(*seen))
+
+
+def set_aside_refused(path: str, name: str | None = None) -> str:
+    """Rename a file produced by a REFUSED run to `<path>.refused-<utc timestamp>` (never deleted,
+    never left under its normal name). `name` (default `path`) is the base the marker is appended
+    to. Returns the new path; a missing file is a no-op ("")."""
+    if not os.path.exists(path):
+        return ""
+    base = name or path
+    ts = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+    dest, n = f"{base}.refused-{ts}", 0
+    while os.path.exists(dest):
+        n += 1
+        dest = f"{base}.refused-{ts}-{n}"
+    os.replace(path, dest)
+    return dest
+
+
+def _ppid(pid: int):
+    """Parent pid of `pid` (None at the root); raises when unreadable."""
     import psutil
-    pids = set()
-    for p in psutil.process_iter(["pid"]):
-        try:
-            conns = getattr(p, "net_connections", None) or getattr(p, "connections")
-            for c in conns(kind="inet"):
-                if c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port:
-                    pids.add(p.pid)
-        except Exception:  # noqa: BLE001 — AccessDenied / gone / zombie: not attributable
-            continue
-    r = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fp"],
-                       capture_output=True, text=True, timeout=20)
-    if r.returncode not in (0, 1):                  # lsof: 1 = no match
-        raise OSError(f"lsof rc={r.returncode}: {r.stderr[:80]}")
-    for line in r.stdout.splitlines():
-        if line.startswith("p") and line[1:].isdigit():
-            pids.add(int(line[1:]))
-    return sorted(pids)
+    return psutil.Process(pid).ppid() or None
+
+
+def _is_mlx_vlm_server(argv) -> bool:
+    return any(t == "mlx_vlm.server" or t.endswith("/mlx_vlm.server") for t in argv)
+
+
+def _descends_from(pid: int, ancestors: set) -> bool:
+    seen = set()
+    while pid and pid not in seen:
+        if pid in ancestors:
+            return True
+        seen.add(pid)
+        pid = _ppid(pid)
+    return False
 
 
 def _worker_argvs(doc) -> list[list[str]]:
@@ -634,21 +701,21 @@ def _worker_argvs(doc) -> list[list[str]]:
     doc = doc if isinstance(doc, dict) else {}
     mlx_port, manager_port = doc.get("mlx_port"), doc.get("manager_port", 8000)
 
-    def router_up():
-        try:
-            return bool(_port_listener_pids(manager_port))
-        except Exception:  # noqa: BLE001 — cannot tell: treat as up (refuse), never as absent
-            return True
     if mlx_port is None:
         return []           # registry names no worker port: nothing to identify, registry stands
     try:
         pids = _port_listener_pids(int(mlx_port))
     except Exception as e:  # noqa: BLE001
-        if not router_up():
+        try:
+            router_up = bool(_port_listener_pids(manager_port))
+        except Exception:  # noqa: BLE001 — cannot tell either: refuse, never assume absent
+            router_up = True
+        if not router_up:
             return []
-        raise ServingStateError(f"C35 tripwire: cannot observe the listener on mlx_port "
-                                f"{mlx_port} ({type(e).__name__}: {str(e)[:80]}) while a router is "
-                                f"up; refusing to fall back to the registry on ignorance.") from e
+        raise ServingStateError(f"C35 tripwire: router/worker state unknown — cannot observe the "
+                                f"listener on mlx_port {mlx_port} ({type(e).__name__}: "
+                                f"{str(e)[:80]}) while a router is up; refusing to fall back to "
+                                f"the registry on ignorance.") from e
     if not pids:
         return []
     if len(pids) > 1:
@@ -658,6 +725,22 @@ def _worker_argvs(doc) -> list[list[str]]:
     if not argv:
         raise ServingStateError(f"C35 tripwire: the worker (pid {pids[0]}, mlx_port {mlx_port}) "
                                 f"has an unreadable argv; cannot establish its served state.")
+    if not _is_mlx_vlm_server(argv):
+        raise ServingStateError(f"C35 tripwire: the process listening on mlx_port {mlx_port} "
+                                f"(pid {pids[0]}) is not an mlx_vlm.server process — it is "
+                                f"squatting the worker port; no measurement here is trustworthy.")
+    try:
+        routers = set(_port_listener_pids(manager_port))
+        if routers and not _descends_from(pids[0], routers):
+            raise ServingStateError(f"C35 tripwire: the listener on mlx_port {mlx_port} (pid "
+                                    f"{pids[0]}) does not descend from the router on "
+                                    f"manager_port {manager_port} (pids {sorted(routers)}); it is "
+                                    f"squatting the worker port.")
+    except ServingStateError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise ServingStateError(f"C35 tripwire: router/worker state unknown — cannot verify the "
+                                f"worker's parentage ({type(e).__name__}: {str(e)[:80]}).") from e
     return [list(argv)]
 
 
