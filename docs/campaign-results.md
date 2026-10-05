@@ -2,6 +2,34 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-05 — M57 qualification, lazy prompt embeddings (arm E = `fused_v1` + `lazy_prompt_embeddings`) — quality identical to `fused_v1` alone
+
+Same model, design, code and protocol as the stage-2 entry below; two fresh loaded instances (`e-q1` seed base 0, `e-q2` seed base
+1000), compared with the `fused_v1` sessions of the same seed base (`compare_predictor --must-differ lazy_prompt_embeddings`). Rows
+`benchmark/results/<model>/{humanevalplus,mbppplus}.m57e-q{1,2}.*`, `{retrieval,reasoning}.m57q-e-q{1,2}-20261005.*`; manifests record
+`attention_policy: fused_v1` and `lazy_prompt_embeddings: true`, both observed from the worker.
+
+| axis (n per session) | `fused_v1` s1 | + lazy s1 | `fused_v1` s2 | + lazy s2 |
+|---|---:|---:|---:|---:|
+| humanevalplus `acc_strict@81920` (50) | 0.92 | 0.92 | 0.90 | 0.90 |
+| mbppplus `acc_strict@81920` (50) | 0.76 | 0.76 | 0.80 | 0.80 |
+| retrieval 65536 / 98304 / 131072 (12 prompts) | 12 / 12 | 12 / 12 | 12 / 12 | 12 / 12 |
+| chain-4 reasoning 65536 / 98304 / 131072 (12 prompts) | 12 / 12 | 12 / 12 | 12 / 12 | 12 / 12 |
+
+All 200 coding outputs are byte-identical between the two arms (content, reasoning head and tail, reasoning length, completion
+tokens) although every pair comes from two different loaded instances — per-chunk embedding changes no output on these prompts, as the
+CPU tests predicted. Paired strict delta 0 with no discordant item in all four comparisons; all rows converged; pilot twice identical
+5 / 5 per benchmark. Latency and memory (stage 1, arm E): prefill within 1 % of `fused_v1` alone; peak FLAT at 37.96–37.97 GB from 8K
+to 256K (−2.68 GB against `fused_v1` alone and −9.17 GB against `auto` at 256K).
+
+**Not covered:** prompts with image features take the eager path by construction (untested here); the MTP capture flow with lazy
+embeddings has no unit test (it ran in every row above, MTP ON, without a discrepancy); the collision at the start of this arm
+(two runner instances; both refused by the M50 exit check) produced 5 rows that were archived in the workdir and regenerated.
+
+**Recommendation (operator approval required, PROVISIONAL):** adopt `lazy_prompt_embeddings: true` together with
+`attention_policy: fused_v1` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`. Combined effect at 256K: peak 47.14 → 37.97 GB and
+TTFT −25 %, with decode, retrieval and every measured quality axis unchanged.
+
 ## 2026-10-05 — M57 qualification, stage 2 (quality) for `fused_v1` vs `auto` COMPLETE — every pre-registered criterion passes; lazy-embedding arm and AgentBench smoke still to run
 
 Design `docs/specs/m57-qualification.md`. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, shipped state, same branch code as stage 1
