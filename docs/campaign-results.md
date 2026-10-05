@@ -2,6 +2,63 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-05 — M57 qualification, stage 1 (latency / capacity) COMPLETE — `fused_v1` vs `auto`; quality stage NOT yet run
+
+Design `docs/specs/m57-qualification.md` (C113). `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, shipped state (native16 KV, MTP ON,
+deployed sampling), MLX 0.32.2, single box, 140 W, battery 100 %, no swap growth. One fresh lean router per session
+(`MLX_VLM_CACHE_SESSION_MAX=1`, APC absent), 10 min idle before each, rungs always ascending. Code: fork `m57-attention-policy` @
+`fbe2775e` and router @ `7be6bfd` checked out in the submodule directories by local fetch (branches NOT pushed) for arms A–E; recorded
+submodule commits for the control S. Session order: S-s1, A-s1, B-s1, B-s2, A-s2, C, D, E, S-s2. Rows
+`benchmark/results/<model>/capacity_ladder.m57q-<session>-20261005.*`; continuation rows in `$STACK_WORKDIR/m57/qual/`. Serving
+optimization — NO B/C ladder implication; nothing here changes a pick.
+
+Arms: A `auto`; B `attention_policy: fused_v1`; C = B + 3 GB pool; D = B + `prefill_step_size: 1024`; E = B + lazy prompt
+embeddings; S = shipped code. Cold prefill seconds / MLX peak GB:
+
+| session | 8K | 32K | 64K | 128K | 256K |
+|---|---:|---:|---:|---:|---:|
+| S-s1 (first run of the day) | 9.5 / 38.25 | 44.7 / 39.10 | 107.7 / 40.23 | 309.1 / 42.52 | 1003.6 / 47.14 |
+| A-s1 | 9.5 / 38.25 | 45.4 / 39.10 | 111.0 / 40.23 | 320.3 / 42.52 | 1024.1 / 47.14 |
+| B-s1 | 9.4 / 38.05 | 44.2 / 38.30 | 101.4 / 38.63 | 279.8 / 39.31 | 780.0 / 40.65 |
+| B-s2 | 9.4 / 38.05 | 44.6 / 38.30 | 104.7 / 38.63 | 295.6 / 39.31 | 830.0 / 40.65 |
+| A-s2 | 9.5 / 38.25 | 46.1 / 39.10 | 117.6 / 40.23 | 353.8 / 42.52 | 1118.4 / 47.14 |
+| C-s1 | 9.4 / 38.05 | 44.6 / 38.30 | 105.9 / 38.63 | 298.3 / 39.31 | 831.6 / 40.65 |
+| D-s1 | 9.2 / 38.74 | 43.8 / 38.99 | 104.6 / 39.34 | 285.1 / 40.00 | 803.6 / 41.34 |
+| E-s1 | 9.4 / 37.96 | 44.5 / 37.96 | 104.9 / 37.96 | 294.0 / 37.97 | 826.8 / 37.97 |
+| S-s2 (last run) | 9.5 / 38.25 | 45.9 / 39.10 | 116.0 / 40.23 | 347.0 / 42.52 | 1099.8 / 47.14 |
+
+**B vs A, order-balanced means of two sessions (and each session):** TTFT 8K −1 %; 32K −3.0 % (−2.6 / −3.3); 64K −9.8 %
+(−8.7 / −11.0); 128K −14.6 % (−12.6 / −16.4); 256K −24.9 % (−23.8 / −25.8). Peak −0.20 / −0.80 / −1.60 / −3.21 / −6.49 GB,
+identical in both sessions. Decode within ±3 % at every rung (e.g. 128K 21.4 → 21.5 and 19.2 → 19.9 tok/s); retrieval 1.0 at every
+rung in every session; MTP acceptance within 0.007. Cached continuations (s1 / s2): +100 tokens unchanged at 64K and 128K; +600 tokens
+−11 % / −10 % at 64K, −14 % / −13 % at 128K; +5000 tokens −15 % / −16 % at 64K, −23 % / −24 % at 128K; +64K tokens (64K → 128K)
+−22 % / −24 %. Forced-call counters on the continuation rows: B/C/E 1984 forced on the cold 64K turn, 160 on a +5000 turn, 0–32 on
+small turns; A and S none. (The capacity rows do not carry the counters — instrument gap.)
+
+**Pre-registered rule, latency half:** Q3 no rung or turn slower — PASS in both sessions. Q4 no raise / no 500 — PASS. Q5 benefit —
+PASS on both counts in both sessions (256K peak −6.49 GB ≥ 5 GB; 128K TTFT −12.6 % / −16.4 % ≥ 8 %). Red flags: decode ≤ 3 %, S vs A
+≤ 3.6 %, acceptance ≤ 0.007 — none tripped. Q1 / Q2 (quality) are NOT measured yet; no adoption decision is possible before them.
+
+**Predictions vs observed:** 128K TTFT predicted −16…−22 %, observed −12.6 / −16.4 %; 256K predicted ≈ −30 %, observed −24 / −26 %;
+peak predicted −3.9 / −7.9 GB, observed −3.21 / −6.49 GB; lazy embeddings predicted a further −1.3 / −2.7 GB, observed −1.34 / −2.68 GB.
+
+**Mechanisms and learnings**
+
+- The served peak under `auto` is unfused score scratch plus whole-prompt embeddings: with both removed (arm E) the peak is FLAT at
+  37.96–37.97 GB from 8K to 256K — 9.17 GB below `auto` at 256K, with prefill time unchanged against B.
+- The pool limit (arm C, 3 GB instead of the derived 9 GB) costs no time (128K +0.9 %, 256K +0.2 % against B-s2) and does not move the
+  MLX peak; its effect on resident memory was not measured here.
+- Step 1024 (arm D) is 3–4 % faster at 128K–256K than B-s2 and costs +0.69 GB of peak at every rung: not worth a second numerics
+  change. The recipe stays at step 512.
+- Branch `auto` (A) ran 1.4–3.6 % slower than shipped code (S) at 64K–256K in both adjacent comparisons. Below the 5 % flag; not
+  resolved between machine state and a small default-path overhead.
+- Slow campaign drift survives the 10-minute idle: the same arm is 5–12 % slower from the second hour on (S 309 → 347 s, A 320 →
+  354 s, B 280 → 296 s at 128K) and then plateaus (B-s2 / C / E within 1.5 % over three hours). Decode shows it too (128K 22.2 → 19.6
+  tok/s under S). Only the order-balanced comparison is valid; single cross-session ratios are not.
+
+**Recommendation (provisional, latency half only):** `fused_v1` meets every latency and memory criterion; lazy prompt embeddings
+are the stronger memory lever and deserve their own quality arm. No registry change is proposed until the quality stage is in.
+
 ## 2026-10-04 — M55 COMPLETE: polyglot language gap (Rust / Java / JavaScript), three models × two sessions, opencode 1.18.30
 
 Spec `docs/specs/m55-polyglot-gap.md` (P17 ruling after Codex review 9). C37 22-exercise draws per language (66 items), `run_opencode_probe`
