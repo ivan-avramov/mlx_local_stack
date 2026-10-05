@@ -22,6 +22,9 @@ CPU tests predicted. Paired strict delta 0 with no discordant item in all four c
 5 / 5 per benchmark. Latency and memory (stage 1, arm E): prefill within 1 % of `fused_v1` alone; peak FLAT at 37.96–37.97 GB from 8K
 to 256K (−2.68 GB against `fused_v1` alone and −9.17 GB against `auto` at 256K).
 
+**AgentBench OS 5-item seeded smoke (seed 57; multi-turn tool continuation, not a quality axis):** `auto` 3 / 5, `fused_v1` 3 / 5,
+`fused_v1` + lazy 3 / 5 — the same three items solved and the same two failed in every arm; no errors, no refusals.
+
 **Not covered:** prompts with image features take the eager path by construction (untested here); the MTP capture flow with lazy
 embeddings has no unit test (it ran in every row above, MTP ON, without a discrepancy); the collision at the start of this arm
 (two runner instances; both refused by the M50 exit check) produced 5 rows that were archived in the workdir and regenerated.
