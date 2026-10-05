@@ -146,3 +146,32 @@ A non-`auto` policy on a worker whose default device is not the GPU: refuse at l
   registry, pre-v7 = false / `default-pre-v7`, mismatch refusal, compare refusal, selectable must-differ key).
 
 **Qualification** gains arm E: `fused_v1` + `lazy_prompt_embeddings` (latency / peak screen; quality only if adopted).
+
+## Amendment 2 (2026-10-04, after review round 2 — router SHIP; fork and stack FIX-THEN-SHIP; live gate and AC12 parity gate PASSED)
+
+Binding.
+
+**Fork**
+
+- G1 Counters appear in EVERY terminal response shape that carries timings on the session-cache path: the streamed tool-call
+  final chunk and its fallback construction, the `/v1/completions` streaming final chunk, and the Responses API if it carries
+  timings — through one helper. Test a streamed turn ending in tool calls without a usage chunk.
+- G2 Policy suspension during row recursion is local to the executing thread / context, not an instance-wide counter. Tests:
+  exception, nesting, two threads.
+- G3 AC9 is REVISED: the derived pool limit under `fused_v1` equals the `auto` derivation (the batched path and the row recursion
+  still run unfused at full size). A smaller pool is an explicit `cache_limit_gb` choice, qualified as arm C.
+- G4 Self-test dtype: read the query dtype where the policy decides (a recording policy on a one-token forward), or keep the probe
+  but route ANY probe error through the one-line `attention-policy` failure. Tests that distinguish activation dtype from weight
+  dtype; the F4 lifespan test asserts the specific failure, not an or-chain.
+
+**Stack**
+
+- T1 Worker/registry disagreement and ambiguity for `attention_policy` and `lazy_prompt_embeddings` raise the exception class the
+  drivers already re-raise (`ServedConfigError` or a subclass): a `generate` run REFUSES before its first request and before any
+  manifest stamp. Test at the `generate.run` level. Report (do not change) whether the pre-existing `draft_kind` tripwire's
+  `RuntimeError` is swallowed by the same handlers.
+- T2 No "same run" exception: an unresolved control is incompatible with everything, including another `unknown`.
+- T3 Worker matching keeps argv as a list and parses exact tokens (`--model value` and `--model=value`); a failed observation is
+  distinguished from "no worker" (the former refuses, the latter falls back to the registry).
+- T4 `bench/client.py` keeps `sdpa_forced` / `sdpa_auto` from response timings in the row's raw timings (as it does the draft
+  counters), absent when the server omits them.
