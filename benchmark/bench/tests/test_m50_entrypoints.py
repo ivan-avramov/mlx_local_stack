@@ -180,12 +180,62 @@ def test_run_opencode_probe_refuses_before_the_manifest(tmp_path, monkeypatch, c
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     monkeypatch.setattr(OP, "_opencode_version", lambda: OP.PINNED_OPENCODE_VERSION)
     monkeypatch.setattr(OP, "_polyglot_root", lambda: pytest.fail("polyglot before tripwire"))
+    # The real discovery call makes opencode write its own data home (the one accepted pre-check
+    # side effect, see the entry point); stub it so this test pins OUR writes at zero.
+    monkeypatch.setattr(P, "opencode_router_base",
+                        lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8000/v1")
     _refusing(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--out", str(tmp_path / "oc.jsonl")])
     with pytest.raises(SystemExit) as ei:
         OP.main()
     assert ei.value.code not in (0, None) and "M50" in str(ei.value.code)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_run_opencode_probe_does_only_the_discovery_call_before_the_check(tmp_path, monkeypatch):
+    """Review C4: before the M50 check the ONLY I/O is config resolution plus ONE opencode
+    discovery call, run with cwd = the existing STACK_WORKDIR (same ancestry as the item
+    directories). No docker/--version preflight, no temp directory, no directory creation."""
+    import os
+    import subprocess
+    import tempfile
+    import run_opencode_probe as OP
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    boom = lambda *a, **k: pytest.fail("preflight I/O before the M50 check")   # noqa: E731
+    monkeypatch.setattr(OP, "_docker_available", boom)
+    monkeypatch.setattr(OP, "_opencode_version", boom)
+    monkeypatch.setattr(OP, "_polyglot_root", boom)
+    monkeypatch.setattr(tempfile, "TemporaryDirectory", boom)
+    monkeypatch.setattr(tempfile, "mkdtemp", boom)
+    monkeypatch.setattr(os, "makedirs", boom)
+    monkeypatch.setattr(subprocess, "check_output", boom)
+    monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    calls = []
+
+    def discovery(cwd=None, env=None, provider="mlx-local"):
+        calls.append(cwd)
+        raise P.ServedConfigError("M50 tripwire: refused in discovery")
+    monkeypatch.setattr(P, "opencode_router_base", discovery)
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--lang", "go",
+                                      "--out", str(tmp_path / "oc.jsonl")])
+    with pytest.raises(SystemExit) as ei:
+        OP.main()
+    assert "M50" in str(ei.value.code)
+    assert [str(c) for c in calls] == [str(tmp_path)]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_run_opencode_probe_refuses_when_stack_workdir_does_not_exist(tmp_path, monkeypatch):
+    import run_opencode_probe as OP
+    gone = tmp_path / "nope"
+    monkeypatch.setenv("STACK_WORKDIR", str(gone))
+    monkeypatch.setattr(P, "opencode_router_base",
+                        lambda *a, **k: pytest.fail("discovery ran without a workdir"))
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--out", str(tmp_path / "oc.jsonl")])
+    with pytest.raises(SystemExit) as ei:
+        OP.main()
+    assert "M50" in str(ei.value.code) and not gone.exists()
 
 
 # --------------------------------------------------------------------------- round 2 (Codex cold review)

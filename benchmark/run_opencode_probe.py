@@ -572,6 +572,31 @@ def main() -> int:
     if a.lang not in SUPPORTED_LANGS:
         sys.exit(f"unsupported --lang {a.lang!r}; supported: {sorted(SUPPORTED_LANGS)}")
 
+    # M53: STACK_WORKDIR resolves HERE (env / config.sh, a read the M50 check needs), before the
+    # guard and before any request. (2026-09-29: a missing STACK_WORKDIR surfaced only in the
+    # transcript writer, after item 1 ran.)
+    workdir = _stack_workdir()
+
+    # M50: refuse before anything is read, written or requested unless :port serves this registry.
+    # The ONLY I/O allowed before this check is what the check itself needs: resolving the
+    # configuration and ONE `opencode debug config` discovery call. Docker, `opencode --version`,
+    # the polyglot checkout and every output path come AFTER it.
+    # Discovery runs with cwd = the EXISTING $STACK_WORKDIR so opencode's upward config discovery
+    # sees the same ancestry as the item directories (`<STACK_WORKDIR>/scratch/...`); we create no
+    # directory. The one accepted pre-check side effect is opencode's OWN data-home write during
+    # `debug config` (its XDG_DATA_HOME points under the workdir scratch, never the real one).
+    if not workdir.is_dir():
+        sys.exit(f"REFUSED: M50 STACK_WORKDIR {str(workdir)!r} does not exist; discovery needs an "
+                 f"existing directory (nothing is created before the router check).")
+    try:  # opencode sends to what ITS resolved config says (never MLX_SERVE_BASE): verify THAT.
+        oc_base = provenance.opencode_router_base(
+            workdir, _opencode_env(workdir / "scratch" / "m50-discovery-xdg-data"))
+        router = provenance.assert_served_config(oc_base)
+    except (RuntimeError, OSError, KeyError, ValueError) as e:
+        sys.exit(f"REFUSED: M50 {type(e).__name__}: {e}")
+    print(f"M50 served-config OK: opencode -> {oc_base}: router pid {router['pid']} serves "
+          f"{router['config']}", flush=True)
+
     # go/rust/java/javascript grade inside docker; probe availability ONCE per run rather than
     # per-item, so a down daemon degrades to skipped/acc:null rows instead of a `docker info`
     # timeout on every single exercise.
@@ -595,25 +620,6 @@ def main() -> int:
         sys.exit(f"opencode {oc_version} != pinned {PINNED_OPENCODE_VERSION}; a scaffold version "
                  f"is output-determining. Bump PINNED_OPENCODE_VERSION deliberately or pass "
                  f"--allow-version-drift to record the drift.")
-
-    # M53: every late precondition fails HERE, before the M50 guard and before any request.
-    # (2026-09-29: a missing STACK_WORKDIR surfaced only in the transcript writer, after item 1 ran.)
-    _stack_workdir()
-
-    # M50: refuse before anything is read, written or requested unless :port serves this registry.
-    try:  # opencode sends to what ITS resolved config says (never MLX_SERVE_BASE): verify THAT,
-        # resolved by `opencode debug config` under the probe's env from a neutral scratch cwd.
-        # The resolver needs a cwd (and opencode writes its own data home there), so it gets a
-        # TRANSIENT directory in the system temp, removed on exit. The workdir scratch root
-        # (`_scratch_dir`) is created only AFTER this check has passed.
-        with tempfile.TemporaryDirectory(prefix="oc-m50-") as neutral_raw:
-            neutral = Path(os.path.realpath(neutral_raw))
-            oc_base = provenance.opencode_router_base(neutral, _opencode_env(Path(neutral) / "xdg-data"))
-        router = provenance.assert_served_config(oc_base)
-    except (RuntimeError, OSError, KeyError, ValueError) as e:
-        sys.exit(f"REFUSED: M50 {type(e).__name__}: {e}")
-    print(f"M50 served-config OK: opencode -> {oc_base}: router pid {router['pid']} serves "
-          f"{router['config']}", flush=True)
 
     polyglot = _polyglot_root()
     poly_sha = _polyglot_sha(polyglot)
