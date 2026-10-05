@@ -22,6 +22,7 @@ previous exits. Consequences that shaped the design:
     invocation (`run.py generate ...`), and inventing a job schema would just re-encode it.
 """
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,6 +33,12 @@ def _q(tmp_path, entries):
     p = tmp_path / "queue.json"
     p.write_text(json.dumps(entries, indent=1))
     return p
+
+
+def _mock_pause_sleep(monkeypatch, sleep):
+    # Replace only workqueue's clock; patching workqueue.time.sleep changes global time.sleep.
+    monkeypatch.setattr(workqueue, "time", SimpleNamespace(
+        sleep=sleep, strftime=workqueue.time.strftime))
 
 
 def test_runs_entries_in_order(tmp_path):
@@ -348,7 +355,7 @@ def test_PAUSE_blocks_between_items_polling_until_removed_then_resumes(tmp_path,
         calls.append(secs)
         (control / "PAUSE").unlink()
 
-    monkeypatch.setattr(workqueue.time, "sleep", fake_sleep)
+    _mock_pause_sleep(monkeypatch, fake_sleep)
     q = _q(tmp_path, [{"name": "a", "cmd": "a"}])
     ran = []
     workqueue.run(q, runner=lambda c: ran.append(c) or 0, control_dir=control, poll_interval=0.01)
@@ -360,8 +367,7 @@ def test_PAUSE_logs_entering_and_leaving_the_paused_state(tmp_path, monkeypatch)
     control = tmp_path / "control"
     control.mkdir()
     (control / "PAUSE").touch()
-    monkeypatch.setattr(workqueue.time, "sleep",
-                         lambda secs: (control / "PAUSE").unlink(missing_ok=True))
+    _mock_pause_sleep(monkeypatch, lambda secs: (control / "PAUSE").unlink(missing_ok=True))
     logged = []
     q = _q(tmp_path, [{"name": "a", "cmd": "a"}])
     workqueue.run(q, runner=lambda c: 0, control_dir=control, poll_interval=0.01, log=logged.append)
@@ -380,8 +386,7 @@ def test_PAUSE_is_rechecked_after_each_completed_item(tmp_path, monkeypatch):
             (control / "PAUSE").touch()          # dropped mid-run, takes effect after 'a'
         return 0
 
-    monkeypatch.setattr(workqueue.time, "sleep",
-                         lambda secs: (control / "PAUSE").unlink(missing_ok=True))
+    _mock_pause_sleep(monkeypatch, lambda secs: (control / "PAUSE").unlink(missing_ok=True))
     q = _q(tmp_path, [{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}])
     workqueue.run(q, runner=runner, control_dir=control, poll_interval=0.01)
     assert ran == ["a", "b"]
@@ -407,8 +412,7 @@ def test_control_precedence_SKIP_beats_PAUSE(tmp_path, monkeypatch):
     control.mkdir()
     (control / "SKIP").touch()
     (control / "PAUSE").touch()
-    monkeypatch.setattr(workqueue.time, "sleep",
-                         lambda secs: (control / "PAUSE").unlink(missing_ok=True))
+    _mock_pause_sleep(monkeypatch, lambda secs: (control / "PAUSE").unlink(missing_ok=True))
     q = _q(tmp_path, [{"name": "a", "cmd": "a"}, {"name": "b", "cmd": "b"}])
     ran = []
     workqueue.run(q, runner=lambda c: ran.append(c) or 0, control_dir=control, poll_interval=0.01)
