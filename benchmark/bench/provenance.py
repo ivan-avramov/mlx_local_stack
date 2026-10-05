@@ -134,7 +134,7 @@ def registry_draft(model: str, registry_path: str | None = None,
                 m = re.search(r"--draft-kind\s+(\S+)", cmd)
                 served = m.group(1) if m else "off"
                 if served != ans["draft_kind"]:
-                    raise RuntimeError(
+                    raise ServingStateError(
                         f"C35 tripwire: registry {registry_path!r} declares draft_kind="
                         f"{ans['draft_kind']!r} for {model!r} but the live worker serves "
                         f"draft_kind={served!r}. Launch the driver with MLX_SERVE_CONFIG "

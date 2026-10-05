@@ -504,3 +504,56 @@ def test_run_opencode_probe_item_refusal_records_no_manifest(tmp_path, monkeypat
     with pytest.raises(P.ServedConfigError):
         OP.main()
     assert not out.with_suffix(".manifest.json").exists() and not out.exists()
+
+
+# --------------------------------------------------------------------------- C35 through generate.run
+def _c35_generate_setup(tmp_path, monkeypatch, served_draft):
+    """generate.run against a registry declaring draft_kind=mtp, with a live worker whose cmdline
+    says `served_draft`. Returns (G, probes, results) — `probes` collects every request."""
+    import yaml
+    import bench.generate as G
+    import bench.benchmarks as B
+    import bench.client as C
+    from bench import paths
+    reg = tmp_path / "reg.yaml"
+    reg.write_text(yaml.safe_dump({"models": [{"name": "m", "hf_path": "caslca/m-4bit",
+                                              "draft_kind": "mtp"}]}))
+    monkeypatch.setattr(paths, "registry_path", lambda: reg)
+    res = tmp_path / "results"
+    res.mkdir()
+    monkeypatch.setattr(G, "RESULTS", res)
+    monkeypatch.setattr(B, "load", lambda b, lim, seed: [{"id": "t1", "prompt": "p"}])
+    cmd = f"python -m mlx_vlm.server --model caslca/m-4bit --draft-kind {served_draft}"
+    monkeypatch.setattr(P.registry_draft, "__defaults__", (lambda: cmd,))
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [])
+    probes = []
+    monkeypatch.setattr(C, "preload", lambda m, **k: probes.append("preload") or 0.0)
+    monkeypatch.setattr(C, "probe", lambda m, msgs, params, timeout=3600, tools=None: (
+        probes.append("probe"), {
+            "content": "ok", "reasoning": "", "tool_calls": [], "prompt_tokens": 1,
+            "completion_tokens": 10, "decode_tps": 1.0, "peak_mem_gb": 1.0,
+            "finish_reason": "stop", "wall_s": 0.1, "raw_timings": {}})[1])
+    return G, probes, res
+
+
+def test_c35_tripwire_is_a_served_config_error_and_still_a_runtime_error():
+    assert issubclass(P.ServingStateError, P.ServedConfigError)
+    assert issubclass(P.ServedConfigError, RuntimeError)
+
+
+def test_generate_run_refuses_on_a_draft_kind_disagreement(tmp_path, monkeypatch):
+    """C35 must stop a generate run: no request, no manifest, no rows (it used to be swallowed
+    by the 'never block a run on provenance' handlers and printed as 'skipped')."""
+    G, probes, res = _c35_generate_setup(tmp_path, monkeypatch, served_draft="off")
+    with pytest.raises(P.ServedConfigError, match="C35 tripwire"):
+        G.run(["m"], ["aime"], {})
+    assert probes == []
+    assert list(res.rglob("*")) == []
+
+
+def test_generate_run_proceeds_when_the_worker_draft_kind_matches(tmp_path, monkeypatch):
+    G, probes, res = _c35_generate_setup(tmp_path, monkeypatch, served_draft="mtp")
+    G.run(["m"], ["aime"], {})
+    assert probes == ["preload", "probe"]
+    man = json.loads((res / "m" / "aime.manifest.json").read_text())
+    assert man["runtime"]["draft_kind"] == "mtp"
