@@ -315,9 +315,12 @@ def provenance_precheck(models, benches, profile="production", clean_stale=False
     are folded into the current config so an OFAT sweep correctly treats prior-temperature
     results as stale. Returns a list of (model, bench, action) for the affected pairs."""
     from . import provenance
-    actions = []
+    # Phase 1 — validate EVERY selected model and build the whole cleanup plan; nothing is touched
+    # until all models resolved (a refusal on model N must never follow a deletion for model 1).
     for m in models:
-        provenance.assert_serving_state(m)   # D3: unresolved/invalid serving state refuses BEFORE any cleanup
+        provenance.assert_serving_state(m)   # unresolved/invalid serving state refuses BEFORE cleanup
+    plan = []                                # (model, bench, jsonl, manifest path, compatible)
+    for m in models:
         try:
             cur = provenance.current_manifest_lite(m, profile, overrides=overrides)
         except provenance.ServedConfigError:
@@ -338,18 +341,22 @@ def provenance_precheck(models, benches, profile="production", clean_stale=False
                     existing = None
             if provenance.is_compatible(existing, cur):
                 continue
-            if clean_stale:
-                jsonl.unlink()
-                if mp.exists():
-                    mp.unlink()
-                actions.append((m, b, "cleaned"))
-                print(f"  [provenance] CLEANED stale {m}/{b} (config differs from this run) "
-                      f"— regenerating fresh", flush=True)
-            else:
-                actions.append((m, b, "stale"))
-                print(f"  [provenance] ⚠️  STALE {m}/{b}: existing results were produced under a "
-                      f"DIFFERENT config — resume would MIX provenance. Re-run with --clean-stale "
-                      f"(or delete the file).", flush=True)
+            plan.append((m, b, jsonl, mp))
+    # Phase 2 — execute.
+    actions = []
+    for m, b, jsonl, mp in plan:
+        if clean_stale:
+            jsonl.unlink()
+            if mp.exists():
+                mp.unlink()
+            actions.append((m, b, "cleaned"))
+            print(f"  [provenance] CLEANED stale {m}/{b} (config differs from this run) "
+                  f"— regenerating fresh", flush=True)
+        else:
+            actions.append((m, b, "stale"))
+            print(f"  [provenance] ⚠️  STALE {m}/{b}: existing results were produced under a "
+                  f"DIFFERENT config — resume would MIX provenance. Re-run with --clean-stale "
+                  f"(or delete the file).", flush=True)
     return actions
 
 

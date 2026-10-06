@@ -25,6 +25,7 @@ TIMINGS = {"predicted_per_second": 20.0, "draft_kind": "mtp", "draft_rounds": 7,
            "draft_n_accepted": 14, **VERIFY}
 RUNTIME = {"draft_kind": "mtp", "mtp_verify_scan": "joint_v1", "mtp_verify_scan_source": "worker",
            "attention_policy": "fused_v1", "lazy_prompt_embeddings": False}
+CODE = {"src/mlx-vlm": "aaa111", "src/mlx-serve": "bbb222"}
 WORKER = {"model": "caslca/m", "draft_kind": "mtp", "mtp_verify_scan": "joint_v1",
           "mtp_verify_ab": False}
 
@@ -64,6 +65,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(R.provenance, "worker_serving_facts",
                         lambda model, registry_path=None, worker_lookup=None: dict(WORKER))
     monkeypatch.setattr(R.provenance, "assert_serving_state", _serving_state)
+    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": dict(CODE)})
     _passing(monkeypatch, tmp_path, pid=616)
     return state
 
@@ -252,7 +254,7 @@ def _row(key, content="x", **kw):
            "payload_sha256": R._payload_sha(_reqs([key])[0]["payload"], 11),
            "prompt_tokens": 5, "completion_tokens": 3, "content": content,
            "content_sha256": R._sha(content), "reasoning_sha256": R._sha("r"), "reasoning": "r",
-           "runtime": dict(RUNTIME),
+           "runtime": dict(RUNTIME), "code": dict(CODE),
            "draft": {"draft_kind": "mtp", "draft_rounds": 7, "draft_n": 21, "draft_n_accepted": 14},
            "verify": dict(VERIFY)}
     row.update(kw)
@@ -454,6 +456,7 @@ def test_b4_the_whole_request_sequence_is_authenticated(monkeypatch, tmp_path):
     monkeypatch.setattr(R.provenance, "_runtime_block", lambda *a, **k: dict(RUNTIME))
     monkeypatch.setattr(R.provenance, "worker_serving_facts", lambda *a, **k: dict(WORKER))
     monkeypatch.setattr(R.provenance, "assert_serving_state", _serving_state)
+    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": dict(CODE)})
     _passing(monkeypatch, tmp_path, pid=616)
     assert R.run(_args(tmp_path)) == 0
     urls = [u for u, _ in seen]
@@ -858,3 +861,91 @@ def test_run_records_the_serving_code_state(env, monkeypatch, tmp_path):
     monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": {"src/mlx-vlm": "abc"}})
     assert R.run(_args(tmp_path)) == 0
     assert _doc(tmp_path)["code"] == {"src/mlx-vlm": "abc"}
+    assert all(r["code"] == {"src/mlx-vlm": "abc"} for r in _doc(tmp_path)["rows"])
+
+
+# --------------------------------------------------------------------------- round 3
+def test_r3_d1_resume_refuses_a_retained_row_produced_by_other_code(env, monkeypatch, tmp_path):
+    doc = _journal(env, tmp_path)
+    doc["rows"][0]["code"] = {"src/mlx-vlm": "OLD", "src/mlx-serve": "bbb222"}
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    before = (tmp_path / "rep.json").read_text()
+    assert _resume(tmp_path) == 2
+    assert (tmp_path / "rep.json").read_text() == before        # attribution never rewritten
+    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": {"src/mlx-vlm": "NEW"}})
+    honest = json.loads(json.dumps(doc))
+    honest["rows"][0]["code"] = dict(CODE)
+    (tmp_path / "rep.json").write_text(json.dumps(honest))
+    assert _resume(tmp_path) == 2                                # the CURRENT code moved on
+
+
+def test_r3_d1_a_retained_row_without_code_is_refused_and_a_run_needs_code(env, monkeypatch, tmp_path):
+    doc = _journal(env, tmp_path)
+    del doc["rows"][1]["code"]
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2
+    (tmp_path / "rep.json").unlink()
+    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {})      # code unobtainable
+    assert R.run(_args(tmp_path)) == 2
+    assert not (tmp_path / "rep.json").exists() and env["posted"] == env["posted"][:3]
+
+
+def test_r3_d1_compare_requires_code_on_every_row_and_equal_across_sides(tmp_path):
+    def drop(r):
+        r.pop("code")
+    rc, out = _mod(tmp_path, None, drop)                      # one side missing code
+    assert rc == 2 and any("code" in p for p in out["integrity"])
+    rc, out = _mod(tmp_path, drop, drop)                      # both missing
+    assert rc == 2
+    rc, out = _mod(tmp_path, None, lambda r: r.update(code={"src/mlx-vlm": "other"}))
+    assert rc == 2 and any("code" in p for p in out["integrity"])
+
+
+def test_r3_d3_non_string_content_or_reasoning_is_an_integrity_failure(tmp_path):
+    def objs(r):
+        r["content"] = {"a": 1}
+    rc, out = _mod(tmp_path, objs, lambda r: r.update(content={"a": 2}))
+    assert rc == 2 and any("content" in p and "string" in p for p in out["integrity"])
+
+    def robj(r):
+        r["reasoning"] = ["x"]
+    rc, out = _mod(tmp_path, robj, robj)
+    assert rc == 2 and any("reasoning" in p and "string" in p for p in out["integrity"])
+
+
+def test_r3_d3_a_drift_stamped_journal_never_compares_clean(tmp_path):
+    rows = [_row(k) for k in KEYS]
+    a = argparse.Namespace(a=_write(tmp_path, "A.json", rows, "A"),
+                           b=_write(tmp_path, "B.json", [dict(r) for r in rows], "B"),
+                           out=str(tmp_path / "o.json"))
+    for name in ("A.json", "B.json"):
+        doc = json.loads((tmp_path / name).read_text())
+        doc["served_config_drift"] = {"error": "C106 drift"}
+        (tmp_path / name).write_text(json.dumps(doc))
+        assert R.compare(a) == 2
+    out = json.loads((tmp_path / "o.json").read_text())
+    assert any("served_config_drift" in p for p in out["integrity"])
+
+
+def test_r3_d4_a_keyboard_interrupt_mid_replay_is_finalised_then_reraised(env, monkeypatch, tmp_path):
+    calls = _spy_exit(monkeypatch)
+
+    def interrupt(payload, timeout):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(R, "_post", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        R.run(_args(tmp_path))
+    doc = _doc(tmp_path)
+    assert len(calls) == 1 and doc["status"] == "aborted" and "KeyboardInterrupt" in doc["error"]
+
+
+def test_r3_d4_an_interrupt_during_preload_is_finalised_too(env, monkeypatch, tmp_path):
+    calls = _spy_exit(monkeypatch, drift="C106: drifted")
+
+    def interrupt(model, **kw):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(R.client, "preload", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        R.run(_args(tmp_path))
+    doc = _doc(tmp_path)
+    assert len(calls) == 1 and "served_config_drift" in doc

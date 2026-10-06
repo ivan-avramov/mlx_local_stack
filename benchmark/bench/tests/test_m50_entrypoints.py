@@ -100,6 +100,7 @@ def _stub_parity_state(monkeypatch, R):
         "mtp_verify_scan": "per_query", "mtp_verify_scan_source": "worker"})
     monkeypatch.setattr(R.provenance, "_runtime_block", lambda *a, **k: {"mtp_verify_scan": "per_query"})
     monkeypatch.setattr(R.provenance, "worker_serving_facts", lambda *a, **k: {"model": "m"})
+    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": {"src/mlx-vlm": "c"}})
 
 
 def _parity_args(tmp_path, frozen):
@@ -495,7 +496,8 @@ def test_parity_resume_keeps_prior_router_attribution_and_refuses_config_change(
     Path(a.out).write_text(json.dumps({"status": "running", "router": prev,
                                        "rows": [{"model": "m", "bench": "b", "id": "i",
                                                  "payload_sha256": R._payload_sha({"max_tokens": 10}, 1),
-                                                 "runtime": {"mtp_verify_scan": "per_query"}}]}))
+                                                 "runtime": {"mtp_verify_scan": "per_query"},
+                                                 "code": {"src/mlx-vlm": "c"}}]}))
     assert R.run(a) == 0
     doc = json.loads(Path(a.out).read_text())
     assert doc["router"]["pid"] == 2 and doc["router_history"] == [prev] and len(doc["rows"]) == 1

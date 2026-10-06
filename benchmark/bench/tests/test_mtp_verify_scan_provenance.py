@@ -588,3 +588,25 @@ def test_d3_build_manifest_refuses_a_missing_unknown_or_invalid_scan(runtime):
     kw = dict(model="m", box="b", ts="t", git_shas={}, kv={}, quant={}, sampling={})
     with pytest.raises(P.ServingStateError):
         P.build_manifest(runtime=runtime, **kw)
+
+
+def test_r3_d2_valid_then_unresolved_model_deletes_nothing(tmp_path, monkeypatch):
+    import bench.paths as paths
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    reg = _registry(tmp_path, "joint_v1")                       # declares modelX only
+    monkeypatch.setattr(paths, "registry_path", lambda: __import__("pathlib").Path(reg))
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [])
+    monkeypatch.setattr(P, "current_manifest_lite", lambda m, profile, **k:
+                        _man(8, "joint_v1", "registry", policy="fused_v1"))
+    _write_existing(tmp_path, "modelX", "aime", _man(7, policy="auto"))        # stale for modelX
+    _write_existing(tmp_path, "ghost", "aime", _man(7))
+    snap = {p.relative_to(tmp_path): p.read_text() for p in tmp_path.rglob("*") if p.is_file()
+            and p.parent.name in ("modelX", "ghost")}
+    with pytest.raises(P.ServedConfigError, match=KEY):
+        G.provenance_precheck(["modelX", "ghost"], ["aime"], profile="deployed", clean_stale=True)
+    after = {p.relative_to(tmp_path): p.read_text() for p in tmp_path.rglob("*") if p.is_file()
+             and p.parent.name in ("modelX", "ghost")}
+    assert after == snap and len(snap) == 4                       # nothing deleted, anywhere
+    # and with only the valid model the stale rows ARE cleaned (the plan still executes)
+    assert G.provenance_precheck(["modelX"], ["aime"], profile="deployed", clean_stale=True) == [
+        ("modelX", "aime", "cleaned")]

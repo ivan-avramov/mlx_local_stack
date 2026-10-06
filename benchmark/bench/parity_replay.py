@@ -132,7 +132,7 @@ def load_requests(frozen_path: str, models: list[str] | None) -> list[dict]:
 _RUNTIME_IDENTITY = ("attention_policy", "lazy_prompt_embeddings", "mtp_verify_scan", "draft_kind")
 
 
-def _resume_refusal(doc, router, entry_state, entry_runtime, hashes) -> str | None:
+def _resume_refusal(doc, router, entry_state, entry_runtime, hashes, entry_code) -> str | None:
     """Why `doc` may not be resumed, else None. Validated BEFORE `done` is computed."""
     if doc.get("served_config_drift"):
         return "it carries a served_config_drift stamp (its rows are not trustworthy)"
@@ -146,6 +146,8 @@ def _resume_refusal(doc, router, entry_state, entry_runtime, hashes) -> str | No
         k = _key(r)
         if hashes.get(k) is None or r.get("payload_sha256") != hashes[k]:
             return f"row {k} does not match the frozen payload+seed hash"
+        if r.get("code") != entry_code:  # retained rows keep their ORIGINAL attribution: never mixed
+            return f"row {k} was produced by different serving code than the current one"
         rt = r.get("runtime")
         if not isinstance(rt, dict):
             return f"row {k} has no runtime slice"
@@ -210,10 +212,14 @@ def _abort(out, status_doc, error, rows, router=None, check_exit=True, drift=Non
 
 
 def _finalise_unexpected(out, base, rows, router, e) -> int:
-    """One failure-finalisation path for anything unexpected after entry: the original error is
-    kept, the C106 exit check runs, drift is recorded."""
+    """One failure-finalisation path for anything unexpected after entry (KeyboardInterrupt and
+    SystemExit included): the original error is kept, the C106 exit check runs, drift is recorded;
+    a non-Exception (interrupt) is then RE-RAISED so the process still stops as asked."""
     print(f"[parity_replay] UNEXPECTED {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-    return _abort(out, base, f"unexpected: {type(e).__name__}: {e}", rows, router)
+    rc = _abort(out, base, f"unexpected: {type(e).__name__}: {e}", rows, router)
+    if not isinstance(e, Exception):
+        raise e
+    return rc
 
 
 def run(a) -> int:
@@ -232,6 +238,11 @@ def run(a) -> int:
         print(f"[parity_replay] REFUSED: duplicate frozen key(s) {dupes}", file=sys.stderr, flush=True)
         return 2
     hashes = {_key(r): _payload_sha(r["payload"], r["seed"]) for r in reqs}
+    entry_code = _code_state()
+    if not entry_code:  # every row is attributed to the serving code that produced it
+        print("[parity_replay] REFUSED: the serving-path code state cannot be established",
+              file=sys.stderr, flush=True)
+        return 2
     entry_state = {}
     try:  # B3: the served scan must be resolved, in the closed set and agree with the worker NOW
         for m in sorted({r["model"] for r in reqs}):
@@ -248,7 +259,7 @@ def run(a) -> int:
     rows = []; history = []
     if out.exists() and a.resume:
         prev_doc = json.load(open(out))
-        why = _resume_refusal(prev_doc, router, entry_state, entry_runtime, hashes)
+        why = _resume_refusal(prev_doc, router, entry_state, entry_runtime, hashes, entry_code)
         if why:  # D1: a journal is resumable only if it is a clean, same-identity, running one
             print(f"[parity_replay] REFUSED: cannot resume {out}: {why}", file=sys.stderr, flush=True)
             return 2
@@ -269,7 +280,7 @@ def run(a) -> int:
     todo = [r for r in reqs if _key(r) not in done]
     print(f"{len(todo)} requests to run ({len(done)} already done) tag={a.tag}", flush=True)
     base = {"tag": a.tag, "base": client.BASE, "router": router, "router_history": history,
-            "frozen": a.frozen, "expected_keys": [list(k) for k in keys], "code": _code_state()}
+            "frozen": a.frozen, "expected_keys": [list(k) for k in keys], "code": entry_code}
     cur_model = None
     try:
         for i, r in enumerate(todo, 1):
@@ -277,7 +288,7 @@ def run(a) -> int:
                 try:
                     client.preload(r["model"])
                     provenance.assert_serving_state(r["model"], expect=entry_state[r["model"]])
-                except Exception as e:  # noqa: BLE001 - never leaves a half-written run unfinalised
+                except Exception as e:  # noqa: BLE001 - an interrupt falls through to the outer finaliser
                     print(f"[parity_replay] PRELOAD/RE-RESOLVE FAILED {r['model']}: {e}", file=sys.stderr,
                           flush=True)
                     return _abort(out, base, f"preload: {type(e).__name__}: {e}", rows, router)
@@ -329,13 +340,13 @@ def run(a) -> int:
                    "draft": {k: tm.get(k) for k in
                              ("draft_kind", "draft_rounds", "draft_n", "draft_n_accepted")},
                    "verify": {k: v for k, v in tm.items() if k.startswith("verify_")},
-                   "runtime": runtime, "worker": worker}
+                   "runtime": runtime, "worker": worker, "code": entry_code}
             rows.append(row)
             print(f"[{i}/{len(todo)}] {r['bench']:14s} {r['id'][:28]:28s} finish={row['finish_reason']} "
                   f"ctok={row['completion_tokens']} wall={row['wall_s']}s", flush=True)
             json.dump({**base, "status": "running",
                        "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
-    except Exception as e:  # noqa: BLE001 - D4: nothing after entry escapes finalisation
+    except BaseException as e:  # noqa: BLE001 - nothing after entry escapes finalisation
         return _finalise_unexpected(out, base, rows, router, e)
     got = [_key(r) for r in rows]
     if sorted(got) != sorted(keys):  # AC11: complete only with every frozen key exactly once
@@ -377,7 +388,7 @@ def _audit(doc) -> tuple[dict, list]:
         bad = _row_malformed(r)
         if bad:
             problems.append(f"malformed row {k}: {bad}")
-        for f in _IDENTITY + ("payload_sha256", "content", "reasoning", "runtime"):
+        for f in _IDENTITY + ("payload_sha256", "content", "reasoning", "runtime", "code"):
             if r.get(f) is None:
                 problems.append(f"row {k} lacks the mandatory field {f} (absent or null)")
         draft = r.get("draft")
@@ -387,12 +398,13 @@ def _audit(doc) -> tuple[dict, list]:
                     problems.append(f"row {k} draft member {m} is null")
         elif draft is not None:
             problems.append(f"row {k} draft is not an object")
-        if isinstance(r.get("content"), str) and r.get("content_sha256") is not None \
-                and _sha(r["content"]) != r["content_sha256"]:
-            problems.append(f"row {k} content_sha256 does not match the stored content")
-        if isinstance(r.get("reasoning"), str) and r.get("reasoning_sha256") is not None \
-                and _sha(r["reasoning"]) != r["reasoning_sha256"]:
-            problems.append(f"row {k} reasoning_sha256 does not match the stored reasoning")
+        for f, digest in (("content", "content_sha256"), ("reasoning", "reasoning_sha256")):
+            if r.get(f) is None:
+                continue                                     # absence already reported above
+            if not isinstance(r[f], str):
+                problems.append(f"row {k} {f} is not a string ({type(r[f]).__name__})")
+            elif r.get(digest) is not None and _sha(r[f]) != r[digest]:
+                problems.append(f"row {k} {digest} does not match the stored {f}")
         rt = r.get("runtime")
         if isinstance(rt, dict):
             v = rt.get("mtp_verify_scan")
@@ -437,6 +449,15 @@ def compare(a) -> int:
     A = json.load(open(a.a)); B = json.load(open(a.b))
     if not (isinstance(A.get("expected_keys"), list) and isinstance(B.get("expected_keys"), list)):
         return _compare_legacy(A, B, a)
+    drifted = [n for n, d in (("A", A), ("B", B)) if d.get("served_config_drift")]
+    if drifted:  # a journal that carries drift never pairs, whatever else it says
+        msg = f"journal(s) {drifted} carry a served_config_drift stamp; refusing to compare"
+        print(" INTEGRITY", msg)
+        if a.out:
+            json.dump({"a": A.get("tag"), "b": B.get("tag"), "integrity": [msg], "pairs": 0,
+                       "identical": 0, "differing": 0, "missing": 0, "statuses": []},
+                      open(a.out, "w"), indent=1)
+        return 2
     ka, pa = _audit(A)
     kb, pb = _audit(B)
     integrity = [f"A: {p}" for p in pa] + [f"B: {p}" for p in pb]
@@ -483,6 +504,8 @@ def compare(a) -> int:
             statuses.append({"key": list(k), "status": "missing", "missing_in": absent})
             continue
         x, y = ka[k], kb[k]
+        if x.get("code") != y.get("code"):
+            integrity.append(f"serving code differs for {k} between the two sides")
         if x.get("payload_sha256") != y.get("payload_sha256"):
             integrity.append(f"request hash differs for {k}: the two sides did not answer the same request")
         ident = all(x.get(f) == y.get(f) for f in _IDENTITY)
