@@ -227,8 +227,11 @@ relaxation would be a separately approved lossy-lever qualification under AGENTS
   a same-policy reload control (`per_query` twice, separate loads). Decision: if the control is byte-identical, G1b requires
   20/20 identical content, reasoning and MTP counters across policies AND `verify_blocks_joint_v1 > 0` on ≥ 18/20 rows (proof
   the joint path ran). C120 carve-out (Claude build review 3, E1): a row whose joint-side `verify_blocks_straddle_len2 > 0` ran a
-  length-2 block per-query where `per_query` used the shipped joint call, so its content MAY differ by design; such rows are
-  listed separately as C120-expected divergence and do not fail G1b on content alone (everything else must still match). If the control itself differs (reload nondeterminism, `docs/metrics.md` 59–69), G1b is informative only
+  length-2 block per-query where `per_query` used the shipped joint call, so its generation MAY diverge by design; such rows
+  are listed separately as C120-expected divergence when ALL differences lie in the generation-dependent fields
+  {`content_sha256`, `reasoning_sha256`, `completion_tokens`, `finish_reason`, `draft_rounds`, `draft_n`, `draft_n_accepted`}
+  (a diverged token stream changes all of them); `code`, the request hash, the scan and the verify-counter sanity checks stay
+  strict (integrity exit 2). The arms must report how many C120 rows occurred; > 2 of 20 is a red flag for the rung design. If the control itself differs (reload nondeterminism, `docs/metrics.md` 59–69), G1b is informative only
   and G1a decides; the divergence is recorded, not blamed on M58 (Codex S5, Claude S4).
 
 **Latency (after gate 1):** arms A `per_query`, B `joint_v1` (AB off), same branch code, k=2 sessions each, order A→B then B→A.
