@@ -217,8 +217,10 @@ relaxation would be a separately approved lossy-lever qualification under AGENTS
 - G1a Same-instance, production path served: worker under `joint_v1+ab`; `run_capacity` cold rungs 8192 / 65536 / 131072 /
   262144 (`--sampling-profile deployed`) plus the sustained-decode runner (below) at 65536 and 131072, plus four STRADDLE
   requests whose prompt length is ≈ T − 64 for T ∈ {1024, 8192, 32768, 65536} so the decode crosses each threshold (Claude
-  S1). PASS iff `verify_ab_mismatch == 0` on every request, `verify_ab_blocks > 0` on every rung, `verify_ab_straddle_blocks
-  > 0` and `verify_ab_straddle_mismatch > 0` on the straddle requests (the live known positive: the mirror predicted them),
+  S1). PASS iff `verify_ab_mismatch == 0` AND `verify_ab_invalid == 0` (shape/dtype/non-finite outputs on ANY block, straddles
+  included — Codex closure review D3) on every request, `verify_ab_blocks > 0` on every rung, `verify_ab_straddle_blocks > 0`
+  and `verify_ab_straddle_mismatch > 0` (finite, valid, representation-level differences only) on the straddle requests (the
+  live known positive: the mirror predicted them),
   and an EMPTY `verify_fallback_reasons` histogram inside the domain (build judgement call 2, accepted by both reviews:
   the histogram counts only `per_query` fallbacks; `len1` and `straddle` are their own counters).
 - G1b Cross-load: `bench.parity_replay` (AC11) on the first pick's C84 frozen 20 pairs under `per_query`, under `joint_v1`, and
