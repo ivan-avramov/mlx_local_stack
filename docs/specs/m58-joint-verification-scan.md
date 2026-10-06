@@ -120,6 +120,30 @@ call (AC7). Not a production mode; never in the registry.
    mirror `_qwen3_5_sdpa_vector_plan` predicts EXACTLY the mismatching cells (every straddle mismatches as predicted, nothing
    else mismatches), and (b) the boolean-mask joint call is faster at ≥ 65536 keys. Otherwise record the number and close M58.
 
+## STEP 1 RESULT (2026-10-06 02:39 UTC, quiet box, 140 W, battery 100 %; `$STACK_WORKDIR/m58/verify_microbench.run1.json`, script `verify_microbench.py`)
+
+MLX 0.32.2, `applegpu_g17s`, `MLX_SDPA_BLOCKS` unset; the script's copy of the plan mirror matches the fork's
+`_qwen3_5_sdpa_vector_plan` on 14 probe lengths. bf16, GQA 6, head dim 256, synthetic arrays, 5 reps median.
+
+- **(a) PASS — the mirror predicts exactly the mismatching cells.** Threshold sweep 208/208 cells exact (keys 1018–1030,
+  8188–8200, 32764–32776, 65532–65544 × `qL ∈ {2,3,4,5}`): mismatches only at keys 1024–1028, 8193–8196, 32769–32772,
+  65537–65540, always the first `qL − d` query positions, as rule 7 predicts; every other cell bitwise identical. Boolean step
+  mask and `"causal"` string give the identical pattern. Main grid `qL ∈ {2..5}` × keys {8192, 65536, 131072, 262144}: all
+  bitwise identical, all finite.
+- **`V` confirmed empirically: `qL = 6` (6 × GQA 6 = 36 > 32) is NOT identical at any key length and is not faster** — the joint
+  call leaves the vector kernel. Rule 5's bound is 32 on this box; `qL ≤ 5`.
+- **(b) PASS — faster at ≥ 65536 keys.** Per layer, median ms, per-query → joint (bool mask) → joint (`"causal"`):
+  65536: `qL 3` 1.82 → 1.47 → 1.39; `qL 5` 2.93 → 2.25 → 1.99. 131072: `qL 3` 3.42 → 2.70 → 2.50; `qL 5` 5.51 → 4.23 →
+  3.72. 262144: `qL 3` 6.58 → 5.20 → 4.75; `qL 5` 10.89 → 8.73 → 7.35. Consistent with E8 (3.45 → 2.44 at 131072).
+- **8192 keys: joint is NOT faster** (`qL 3` 0.306 → 0.325 ms, +6 %, +0.02 ms absolute per layer). Prediction for the 8K rung
+  revised: decode within ±2 % (16 layers × 0.02 ms ≈ 0.3 ms of a ≈ 50 ms round); the arms measure it.
+- **Mask-form amendment (measured, adopted):** the `"causal"` string is 5–16 % faster than the boolean step mask at every
+  cell with the same identity pattern. Rule 3 becomes: incoming `mask` `None` or `"causal"` → joint call with `mask="causal"`
+  (identical support when `key_length ≥ length`, rule 4); incoming 4-D boolean array → AND with the step mask. AC2/AC3 cover
+  both forms.
+
+Decision: STEP 1 passes both rules; the build is now the operator's call (C118, build held).
+
 ## Build (Sonnet implementer, M54 funnel; CPU tests only, no loads, no pushes, no submodule bumps) (P93)
 
 Acceptance criteria — each needs a named test written first and watched failing:

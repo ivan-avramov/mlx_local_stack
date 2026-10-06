@@ -4398,3 +4398,20 @@ JavaScript is the second pick's only lead, consistent in both sessions but insid
 
 **Daily driver restored** 2026-10-04 19:08 UTC (router pid 74568, session max 2, APC absent, OWUI healthy).
 
+## 2026-10-06 — M58 STEP 1: joint MTP verification scan is bitwise identical to the per-query pattern EXCEPT across MLX key-length thresholds — and the fork's plan mirror predicts every exception
+
+No model; synthetic bf16 arrays at the first pick's attention shape (24/4 heads, head dim 256), MLX 0.32.2, `applegpu_g17s`,
+quiet box at 140 W. Script and JSON: `$STACK_WORKDIR/m58/verify_microbench.py`, `verify_microbench.run1.json`.
+
+- **Mechanism (found by the Claude cold review of the M58 spec, confirmed here):** MLX chooses one-pass vs two-pass and the two-pass
+  `blocks` count per call from the key length; a different `blocks` is a different summation order. The verifier's per-query calls
+  use key lengths `prefix+1 … K`, the joint call uses `K`, so a verification block whose key range crosses 1024 / 8192 / 32768 /
+  65536 differs bitwise in its first `qL − d` positions. The fork's `_qwen3_5_sdpa_vector_plan` predicted all 44 mismatching cells
+  of a 208-cell sweep and no others. E8's cells (65536 / 131072 / 262144) were all away from thresholds, which is why E8 saw identity.
+- **Consequence for the shipped code:** the verifier's `length == 2` branch already runs jointly, so plain decode and MTP
+  verification are NOT bit-identical at those thresholds today (C120; folded into M58 under `joint_v1`).
+- **Query bound:** `qL = 6` at GQA 6 (36 threads × 32 > 1024) leaves the vector kernel: non-identical and no faster. `qL ≤ 5`.
+- **Speed:** joint vs per-query per layer, `qL 3`: 65536 1.82 → 1.39 ms (`"causal"`), 131072 3.42 → 2.50, 262144 6.58 → 4.75;
+  the `"causal"` string beats the boolean step mask by 5–16 % with the same identity. 8192 keys: no gain (+0.02 ms).
+- **Rule learned:** "bit-identical" is a property of (kernel plan, key length), not of the math — test identity across every
+  dispatch threshold, and make the fallback rule use the same predicate the kernel dispatch uses.

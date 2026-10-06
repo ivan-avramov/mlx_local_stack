@@ -1,73 +1,44 @@
-# Handoff — 2026-10-06 (00:20 UTC): M57 ADOPTED and SHIPPED (fused attention + lazy embeddings, first pick, provisional); everything pushed; stack down
+# Handoff — 2026-10-06 (03:00 UTC): harness gaps fixed (C116), dsh frozen (C117), M58 spec v3.1 + STEP 1 PASSED (build held, C118), ReviewBench DEFERRED (C122); stack down, nothing pushed
 
-THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (the only queue; M57 COMPLETE, M58 queued) and `docs/open-questions.md`
-(C115 ruled). M57 record: `docs/campaign-results.md` 2026-10-05, `docs/proposal-flash-attention.md`, `docs/specs/m57-*.md`.
+THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M58 row) and `docs/open-questions.md`
+(C116–C122). Previous handoff (M57 adoption narrative, mechanisms, leftovers): `git show d92c741:docs/handoff.md`.
 
-## What M57 established (first pick `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`; qualified, two order-balanced sessions)
+## Done this session (all committed on `main`, NOT pushed: `64bea61`, `80bc755`, `4d2f3fd`, `2cbd5fe` + this)
 
-- `fused_v1` vs `auto`: prefill −14.6 % at 128K, −24.9 % at 256K; peak −3.21 / −6.49 GB; with lazy embeddings the peak is flat at
-  37.97 GB from 8K to 256K. Decode, retrieval, MTP acceptance unchanged; coding axis +2 pp / 0 (n=100 per session, within tolerance,
-  not proven equivalent); long-context retrieval and chain-4 reasoning 12/12 in every session; lazy embeddings byte-identical on
-  200/200 coding outputs; AgentBench 5-item smoke identical across arms; vision gate 20/20 in the adopted state.
-- Mechanisms: a 128K prefill is 44 % attention, 34 % MLP, 17 % GatedDeltaNet — fused attention is a 1.5× kernel, not a 2× lever;
-  the served peak under `auto` was unfused score scratch (≈ 1.23 score tensors of the largest unfused chunk) plus the whole-prompt
-  embeddings; `force_fused` raises at query lengths 6–8 and loses below ≈ 128 queries, hence the shape-aware policy; chunk 1024 buys
-  nothing on the linear part; decode at long context is the MTP verifier reading the cache up to three times per round (M58).
-- Neither agentic harness reaches long context (opencode ≤ 27.8K, AgentBench OS ≤ 3.8K): the gain lands on long daily-driver sessions
-  and on memory headroom. Warm-state drift (AGENTS.md rule): compare latency arms only in matched machine state.
+- **Harness gaps (handoff item 4) — `64bea61`.** Central placeholder scrub of every manifest `runtime` string (`$STACK_WORKDIR`, `$HOME`,
+  boundary-aware; `provenance.portable_path` / `expand_portable`); C116: ladders run a provenance PREFLIGHT gather at entry and never
+  publish a result whose end-of-run gather failed (`.pending-<pid>`, rc 3); capacity rows carry `sdpa`; generate rows carry
+  `content_sha256` / `reasoning_sha256`; Codex review 10 B2/B3 closed. Two cold reviews folded (Claude, Codex `gpt-6-astra`).
+  Test suite: identical failure set to baseline (13 `test_agentbench_adapter` tests need the repo-relative corpus cwd; pre-existing).
+- **dsh runner FROZEN (C117)** like aider; rows retained; M50 tests parked in `$STACK_WORKDIR/harness-gaps/`.
+- **M58 spec v3.1** `docs/specs/m58-joint-verification-scan.md` after two cold reviews (`$STACK_WORKDIR/m58/*review*`). Key finding
+  (Claude review, measured): joint ≠ per-query bitwise across MLX key-length thresholds → rule 7 straddle fallback using the fork's
+  plan mirror; the shipped `length == 2` branch is already inexact there (C120, folded in).
+- **M58 STEP 1 PASSED** (`$STACK_WORKDIR/m58/verify_microbench.run1.json`; lab notebook 2026-10-06): mirror exact 208/208; `qL ≤ 5`
+  identical; −19…−21 % per-layer scan time at 64K–256K; not faster at 8K; `"causal"` string beats the bool mask. **BUILD HELD — operator
+  decision C118.**
+- **ReviewBench DEFERRED (C122)**; reasons annotated at the top of `docs/proposal-reviewbench.md`. Cold review kept in
+  `$STACK_WORKDIR/reviewbench/`.
 
-## State of the world (end of session, 2026-10-06 00:20 UTC)
+## Open items, in priority order
 
-- **Everything is pushed.** Stack `main` = `origin/main` = `d92c741`; fork `mlx-vlm` `main` = `fbe2775e`; fork `mlx-serve`
-  `main` = `7be6bfd`; submodule pointers on the remote match. Tree clean except the operator's untracked `ts.md`.
-- **Stack is DOWN** (operator instruction stands: do not auto-start `runserver.sh`). Docker (OrbStack) was started by the operator
-  for grading and is still up. Power 140 W.
-- **M57 is ADOPTED and SHIPPED (C115, PROVISIONAL).** The first pick's registry entry carries `attention_policy: fused_v1` and
-  `lazy_prompt_embeddings: true`; the daily driver picks them up at its next start. Every manifest written from now on is
-  fingerprint v7 with both controls; pre-M57 first-pick rows do not pool with post-M57 rows (serving-path hash and policy both
-  changed) — expected, not a bug. Record: `docs/campaign-results.md` 2026-10-05 (four entries), `docs/proposal-flash-attention.md`,
-  `docs/specs/m57-*.md`.
-
-## Leftovers, in priority order
-
-1. **First daily-driver start under M57 is unverified.** The shipped state was verified on a LEAN router (`MLX_VLM_CACHE_SESSION_MAX=1`).
-   `runserver.sh` runs `=2` with OWUI and the task model; nothing in M57 depends on session count, but the first real session should
-   check the worker command line (`--attention-policy fused_v1 --lazy-prompt-embeddings`), one `Request completed` log line with
-   `sdpa_forced` > 0 on a long prompt, and a vision turn through OWUI.
-2. **Certification debt on the shipped state:** the judge panel (M38/M40 style) and Math500 were NOT re-run under M57; native16 itself
-   (C81) is still provisional on the broader axes. One re-run on the FINAL state (native16 + M57) rather than two.
-3. **M58 — joint MTP verification scan** (queued, spec owed): the verifier in `mlx_vlm/models/qwen3_5/speculative_verifier.py` attends
-   blocks longer than 2 as separate single-query calls; a joint call is bit-identical at kernel level and saves ≈ 28 % of
-   verification attention (estimate +14 % decode at 128K). Gate 1 = byte-identical outputs within one loaded instance.
-4. **Harness gaps found, not fixed:** `benchmark/vision_gate.py` writes an unscrubbed absolute `corpus` path into its manifest (the
-   adoption manifest was hand-scrubbed; the PII hook caught it); `run_dsh_probe.py` has no M50 check; capacity-ladder rows do not
-   carry the `sdpa_*` counters; `generate` rows leave `content_sha256` / `reasoning_sha256` unset (identity checks must use the
-   content); pair-publication residuals (`docs/handoff.md` previous entry; Codex review 10 in `$STACK_WORKDIR/m57/`).
-5. **Unresolved observation:** branch `auto` ran 1.4–3.6 % slower than the previous shipped code at 64K–256K in both adjacent
-   comparisons (under the 5 % flag). Could be machine state or a small default-path overhead (profiler hooks / policy checks); a
-   profiled A-vs-shipped pair in matched state would settle it. Moot for the first pick (it ships `fused_v1`), relevant for any
-   other model served by the bumped fork under `auto`.
-6. **Suggested `AGENTS.md` additions** (operator owns that file; 7 bytes of headroom were freed by the trim): PYTHONPATH runs are
-   probes, never graded (the harness hashes `src/*`); a 10-minute idle does not reset a multi-hour campaign — only the
-   order-balanced comparison is valid.
-7. Candidates not queued: dense prefill path (dequantise-then-dense at chunks ≥ 2048; ≤ −8…14 % TTFT); fused-kernel tuning
-   (≲ 20 %); P41 watch-list (open HySparse2-class checkpoint); P42 harder long-context benchmarks. M56 stays PARKED (C110).
-8. Workdir: `$STACK_WORKDIR/m57/` holds every script, overlay, Codex review (1–12), microbench JSON, profile and run log of this
-   milestone; `qual2/collided/` holds the archived double-launch rows. Agent worktrees under `.claude/worktrees/` can be removed.
+1. **First daily-driver start under M57 is still unverified** (worker cmdline `--attention-policy fused_v1 --lazy-prompt-embeddings`; one
+   `Request completed` line with `sdpa_forced > 0` on a long prompt; one vision turn through OWUI). Operator starts `runserver.sh`.
+2. **C121 — opencode sessions are UNSEEDED** (found by the ReviewBench review, verified): proposal owed BEFORE any new opencode rows —
+   per-session seed in provider options, a captured request body proving it reaches the router, lab-notebook retraction of the
+   "distinct paired seeds" wording (no rerun; ranks were stable). Same proposal: `OPENCODE_DISABLE_CLAUDE_CODE` never set (R8).
+3. **C118 — M58 build go/no-go.** If go: Sonnet implementer from spec v3.1 (AC1–AC12), two cold reviews, live smoke, then gate 1.
+4. **M57 certification debt** (judge panel + Math500 on the FINAL state) — after M58 if M58 is built, else now.
+5. **C119** — `generate` records transport errors as rows (pre-existing; needs its own proposal).
+6. Unresolved: branch `auto` 1.4–3.6 % slower than previous shipped code (handoff d92c741 item 5).
 
 ## Rules learned this session
 
-- Read the kernel dispatch source and measure before designing around a flag: the "3.1×" was a cold-buffer artifact, and three
-  claims in the first design were wrong.
-- A memory instrument must show its known positive first (`get_active_memory` still counts a just-released buffer).
-- A single back-to-back latency pair is order-biased on this laptop (E15) — matched state or no delta.
-- Process-pattern checks bit three times in one campaign (a gate matching an idle app helper, a waiter matching itself, a guard
-  counting its own launching shell): match on the executable and exclude your own pid, and never launch by hand while a waiter
-  may still be alive — verify zero runner processes first.
-- Smoke every runner script end to end on a real router before a multi-hour run (an import-path bug cost a session).
-- `scripts/stack_stop.sh` kills ANY process whose command line matches the worker pattern, including a Codex review whose prompt
-  was passed as an argument. Pass review prompts on stdin (`codex exec … - < prompt.md`); don't stop the stack while reviewers run.
-- The worker's stderr log (`$TMPDIR/mlx-manager-logs/<model>.log`) is recreated at worker start — read the whole file per arm.
-- Profiled or fork-branch runs write to the workdir only; nothing from them enters `benchmark/results/`.
+- "Bit-identical" is a property of the kernel plan at each key length, not of the math: sweep every dispatch threshold and make the
+  fallback predicate the same one the kernel uses.
+- Cold reviewers that MEASURE (a 5-second GPU check) beat reviewers that read; ask for known-positive checks in the brief.
+- A best-effort provenance path hides mixed pairs; preflight at entry is what makes strictness affordable.
+- `codex exec -s read-only -C <repo> - < prompt.md` with a workdir `TMPDIR`; the review text lands in the stderr log, not stdout.
+- The naming hook rejects external judge/gold model names too; mark such lines `allow-shorthand` with a reason.
 
-Next decision id C116; discussion ids continue from P88.
+Next decision id C123; discussion ids continue from P106.
