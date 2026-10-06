@@ -45,8 +45,8 @@ existing rows; this changes the scaffold for FUTURE opencode rows and corrects t
   when opencode is absent; version-pinned.
 - AC4 Pre-check: `opencode debug config --dir <cwd>` shows unchanged baseURL and the seed in the resolved options; a baseURL change
   refuses (M50 shape).
-- AC5 R8 switch set and recorded; config/skill-policy hash changes; old rows do not pool (compare refuses).
-- AC6 Re-pin: `PINNED_OPENCODE_VERSION` bumped to the box's 2.0.20 with the P88 note; 1.18.x rows labelled non-poolable.
+- AC5 [resolved: 1.18.30 has `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` and the broad `OPENCODE_DISABLE_CLAUDE_CODE`; `~/.claude/CLAUDE.md` exists on the box; manifest records `claude_md_present`] R8 switch set and recorded; config/skill-policy hash changes; old rows do not pool (compare refuses).
+- AC6 [REPLACED by C123, 2026-10-06] Re-pin to 2.0.20 is WRONG: v2.0.20 lacks `--dir`/`--pure` and forwards no model `options` into the request. Keep `PINNED_OPENCODE_VERSION = "1.18.30"`; the probe resolves the binary from `$STACK_WORKDIR/opencode-1.18.30/node_modules/.bin/opencode` (or `OPENCODE_PROBE_BIN`) and records its portable path in the manifest.
 - AC7 Record: lab-notebook retraction entry; `docs/specs/m55-polyglot-gap.md` and `m54-agentbench-os.md` annotated "sessions were
   unseeded"; README/campaign-results evidence rows carry the label where they cite k=2 sessions.
 

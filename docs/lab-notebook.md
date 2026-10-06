@@ -4415,3 +4415,33 @@ quiet box at 140 W. Script and JSON: `$STACK_WORKDIR/m58/verify_microbench.py`, 
   the `"causal"` string beats the boolean step mask by 5–16 % with the same identity. 8192 keys: no gain (+0.02 ms).
 - **Rule learned:** "bit-identical" is a property of (kernel plan, key length), not of the math — test identity across every
   dispatch threshold, and make the fallback rule use the same predicate the kernel dispatch uses.
+
+## 2026-10-06 — C121: the opencode probe never sent a seed; "two independent sessions" were correlated replays (paired-seed wording RETRACTED)
+
+Found by the ReviewBench cold review (R1, R8), verified against the code and against a request capture.
+
+- **Facts.** `benchmark/run_opencode_probe.py` built `opencode run ... <prompt>` with no seed; rows hard-coded `"sample": 0`; the shipped
+  `opencode_config/opencode.json` model `options` carry sampling fields but no `seed`. The fork server normalizes a missing `seed` to
+  `DEFAULT_SEED`, so every opencode request in M53/M54-era opencode chains and M55 ran on the same server default seed.
+- **Retraction.** M55's "same seeds as M9/M32" and the "distinct paired seed schedules + same-seed reload control" wording (C109) described
+  intent, not behaviour. The k=2 sessions are correlated replays (same seed, same prompts; only server/loop state differed), so k=2
+  variance is understated and the reload control proved nothing it was meant to. Rows are relabelled "unseeded (server default seed)".
+- **No rerun.** Ranks were stable across the arms; the rows stay. They never pool with seeded rows (new scaffold policy hash below).
+- **AgentBench (checked, not assumed).** `benchmark/bench/run_agentbench_os.py` talks to the router directly and DID send
+  `seed = rowschema.sample_seed(task_id, 0)` per item (base 0, identical schedule in every session). Seeded, but sessions share one
+  schedule, so they are not independent draws either; the opencode-probe retraction does not apply to M54's seeding.
+- **Fix (feature branch `c121-seeded-opencode`).** The probe writes `<scratch>/opencode.json` per item containing only
+  `{"provider": {"mlx-local": {"models": {"<model>": {"options": {"seed": N}}}}}}`, `N = rowschema.sample_seed(item, 0, base=--seed-base)`
+  (`--seed-base` required); rows carry `sampler_seed`, `seed_base`, `overlay_sha256`; the pre-check asserts via `opencode debug config`
+  that the baseURL is unchanged and the resolved model options carry the seed. Proven against a mock OpenAI-compatible endpoint:
+  opencode 1.18.30 forwards `seed` plus every shipped sampling option, in a NON-git scratch dir.
+- **Scaffold (C123, replaces proposal AC6).** The brew install is opencode 2.0.20, which must NOT be used: no `--dir`/`--pure`,
+  `run`/`debug config` go through a shared background service, `debug config` lists unmerged sources in a new schema
+  (`providers`/`settings`), project config is only found inside a git repo, and NO model `options` (temperature, top_p, seed, ...)
+  reach the request body (mock capture). `PINNED_OPENCODE_VERSION` stays 1.18.30; the probe resolves
+  `$STACK_WORKDIR/opencode-1.18.30/node_modules/.bin/opencode` (or `OPENCODE_PROBE_BIN`) and records it in the manifest.
+- **R8.** opencode 1.18.30 has `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` (and the broad `OPENCODE_DISABLE_CLAUDE_CODE`); the probe now sets
+  `..._PROMPT=true` next to `OPENCODE_DISABLE_EXTERNAL_SKILLS=true`, and both feed `scaffold_policy_sha256`. `~/.claude/CLAUDE.md` EXISTS
+  on this box (the proposal assumed absent), so rows before this change may have carried it in the system prompt; the manifest now records
+  `claude_md_present`.
+
