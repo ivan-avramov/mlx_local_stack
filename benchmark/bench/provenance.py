@@ -1175,6 +1175,25 @@ def _scrub(v, extra_homes=()):
     return v
 
 
+def _login_name() -> str:
+    import getpass
+    try:
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def scrub_tail(text, n: int) -> str:
+    """Error text built from subprocess output: scrub the COMPLETE text (home/workdir placeholders and the
+    whole-word login name) and only then take its last `n` characters, so a cut can never leave a
+    fragment of a home path or login (C121 review)."""
+    t = portable_path(_scrub(str(text or "")))
+    name = _login_name()
+    if name and len(name) >= 3:
+        t = re.sub(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])", "$USER", t)
+    return t[-n:]
+
+
 def _placeholder_roots(*, for_write: bool = False) -> list[tuple[str, str]]:
     """(placeholder, absolute root) pairs, longest root first: `$STACK_WORKDIR` nests under
     `$HOME`, so it must be tried before `$HOME` or every workdir path would come out as
@@ -1501,14 +1520,14 @@ def opencode_router_base(cwd=None, env=None, provider: str = "mlx-local",
         raise ServedConfigError(f"M50 tripwire: cannot run `opencode debug config`: {type(e).__name__}: {e}")
     if r.returncode != 0:      # C121: valid-looking JSON from a failed discovery is not evidence
         raise ServedConfigError(f"M50 tripwire: `opencode debug config` exit {r.returncode}; stderr "
-                                f"{(r.stderr or '')[-300:]!r}")
+                                f"{scrub_tail(r.stderr, 300)!r}")
     out = r.stdout or ""
     try:
         data = json.loads(out[out.index("{"):])
         base = data["provider"][provider]["options"]["baseURL"]
     except Exception as e:  # noqa: BLE001
         raise ServedConfigError(f"M50 tripwire: `opencode debug config` (rc={r.returncode}) gave no "
-                                f"{provider!r} baseURL: {type(e).__name__}: {e}; stderr {r.stderr[-300:]!r}")
+                                f"{provider!r} baseURL: {type(e).__name__}: {e}; stderr {scrub_tail(r.stderr, 300)!r}")
     # An empty/non-string baseURL is NOT "default 8000": opencode then falls back to the model's
     # `api.url` — a destination this tripwire does not resolve. Refuse rather than guess.
     if not isinstance(base, str) or not base.lower().startswith(("http://", "https://")):

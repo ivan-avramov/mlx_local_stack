@@ -192,8 +192,8 @@ def test_run_opencode_hard_ceiling_backstops_endless_progress(tmp_path, monkeypa
     # a wrapped grade() call, so the NEXT tick sees a changed file.
     real_snapshot_fn = ROP._tick_snapshot_fn
 
-    def _snapshot_fn_that_keeps_editing(cwd, sol_path, test_path, before_sol, grade, log_path):
-        inner = real_snapshot_fn(cwd, sol_path, test_path, before_sol, grade, log_path)
+    def _snapshot_fn_that_keeps_editing(cwd, sol_path, test_path, before_sol, grade, log_path, **kw):
+        inner = real_snapshot_fn(cwd, sol_path, test_path, before_sol, grade, log_path, **kw)
 
         def _wrapped(elapsed_s):
             counter["n"] += 1

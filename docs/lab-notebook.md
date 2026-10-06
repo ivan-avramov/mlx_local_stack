@@ -4456,7 +4456,7 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   `XDG_CONFIG_HOME` set to it. The personal config dir is never read, hashed or modified; the per-item check requires the resolved baseURL
   unchanged, the resolved model options == bench block plus the seed, the resolved `limit` == the bench `limit`, and no `instructions` key
   (a mismatch is an opencode merge bug). The seed receipt binds
-  the executable, the bench carrier, integration test and instruction-source inventory; resume identity is `seed_base`, `scaffold_policy_sha256`,
+  the executable, the bench carrier and the integration test (the instruction inventory is observation only); resume identity is `seed_base`, `scaffold_policy_sha256`,
   the full recorded scaffold/seed runtime identity plus the router `config_sha256`; a manifest carrying `served_config_drift` is never continued;
   earlier identities and `router_exit` are kept in `continuation_history`. Rows whose overlay the model rewrote are not graded
   (`passed: null`, `acc: null`). Side effect of the per-item `git init`: opencode sees a git repo and enables snapshot tracking; docker grading
@@ -4476,8 +4476,10 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   `@opencode-ai/plugin` into the fresh config home and fetched the `superpowers` plugin from GitHub before the router check, and the per-item
   check validated a config `run --pure` never uses (Claude review). The bench now has its OWN HOME (`$STACK_WORKDIR/opencode-probe/home`,
   persistent; state under it; cache home pinned explicitly to the real default; shared, but its `bin` content is hashed, not catalogue-only), so `~/.opencode`,
-  `~/.claude`, `~/AGENTS.md`, `~/.npm` are unreachable (belt-and-braces: a manual run showed none of them reaching the prompt under git init +
-  the R8 switch anyway). The child env is built from the parent env minus every `OPENCODE_*` variable plus exactly the policy switches
+  `~/.claude`, `~/AGENTS.md`, `~/.npm` are unreachable (LOAD-BEARING, not belt-and-braces: with `--pure`, 1.18.30 still merges `$HOME/.opencode/opencode.json` and
+  `$HOME/.opencode/agent/*.md` — a sentinel `agent.build.prompt` replaced the system prompt in the cold review; the probe refuses at run start and
+  before every item if the bench HOME holds `.opencode`, `AGENTS.md`, `CLAUDE.md` or `.claude`, re-verifies the per-run config copy sha, and
+  records `bench_home_clean`). The child env is built from the parent env minus every `OPENCODE_*` variable plus exactly the policy switches
   (`env_switches` in the manifest). `scaffold_policy_sha256` hashes only effective inputs (bench carrier sha, overlay schema, switches,
   `scratch_git_init`, bench-HOME isolation, opencode version + exe sha, empty `instructions` key); the instruction-file inventory is an
   observation. `passed: null` (grade-excluded) rows are counted separately by the M55 report script. The session-title request (which would
@@ -4487,4 +4489,12 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   scrubbed (`_scrub_pii` + `portable_path`) before truncation; the identity check runs whenever a manifest exists, a corrupt or unterminated row
   file refuses naming the line, and a failed run-dir creation leaves nothing behind. The HOME-sentinel test now has a positive control (all of
   switches, git init and bench HOME off lets a sentinel reach the prompt).
+- **Round 6.** Subprocess stderr is scrubbed (home/workdir placeholders + login name) over the COMPLETE text before its tail is taken, in the
+  probe and in `provenance`; the tick snapshots copy into the run's own `TMPDIR` (not the system temp dir); the shared tool cache is re-hashed
+  after every item (`cache_drift` on the row, `cache_bin_inventory_drift` on the manifest; kept and flagged, not refused); a refusal before this
+  session wrote the manifest no longer stamps drift on a previous clean session; the overlay also sets `snapshot: false` (git init would
+  otherwise enable snapshot tracking) and the per-item check asserts it resolved; the probe's own source (`run_opencode_probe.py`,
+  `progress_gate.py`) is part of the resume identity (`probe_code_sha256`). Residual, recorded not fixed: the shared cache dir is written
+  (`mkdir bin`) and is not in the AGENTS.md exception list (C125 ratification); the first session after the HOME move runs with cold
+  cargo/go/gradle/npm tool caches.
 

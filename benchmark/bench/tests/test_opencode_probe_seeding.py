@@ -162,10 +162,10 @@ def test_opencode_version_runs_the_given_binary(monkeypatch, tmp_path):
 
 
 # ------------------------------------------------------------------ AC1: overlay
-def test_overlay_is_the_seed_plus_the_title_generation_switch_and_nothing_else():
+def test_overlay_is_the_seed_plus_title_and_snapshot_switches_and_nothing_else():
     assert P._seed_overlay(MODEL, 123) == {
         "provider": {"mlx-local": {"models": {MODEL: {"options": {"seed": 123}}}}},
-        "agent": {"title": {"disable": True}}}
+        "agent": {"title": {"disable": True}}, "snapshot": False}
 
 
 def test_write_overlay_writes_json_and_returns_sha(tmp_path):
@@ -253,12 +253,12 @@ def _bench_limit():
 
 
 def _fake_debug(models_options, base="http://localhost:8000/v1", limit=True, instructions=None, limit_override=None,
-                title_disabled=True):
+                title_disabled=True, snapshot=False):
     entry = {"options": models_options}
     if limit:
         entry["limit"] = limit_override or _bench_limit()
     doc = {"provider": {"mlx-local": {"options": {"baseURL": base}, "models": {MODEL: entry}}},
-           "agent": {"title": {"disable": title_disabled}}}
+           "agent": {"title": {"disable": title_disabled}}, "snapshot": snapshot}
     if instructions is not None:
         doc["instructions"] = instructions
 
@@ -317,6 +317,12 @@ def test_overlay_check_refuses_when_title_generation_is_not_disabled(monkeypatch
         P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
 
 
+def test_overlay_check_refuses_when_snapshot_tracking_is_on(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9), snapshot=True))
+    with pytest.raises(provenance.ServedConfigError, match="M50.*snapshot"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+
+
 def test_overlay_check_refuses_a_drifted_limit(monkeypatch, tmp_path):
     lim = dict(_bench_limit()); lim["output"] = lim["output"] + 1
     monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9), limit_override=lim))
@@ -341,6 +347,7 @@ def test_overlay_check_refuses_a_model_absent_from_the_bench_config(monkeypatch,
 
 
 def test_overlay_check_rejects_nonzero_exit_even_with_valid_json(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "wd"))        # the stderr scrub resolves the workdir
     ok = _fake_debug(_resolved(9))
 
     def run(cmd, **kw):
@@ -574,7 +581,8 @@ def test_resume_refuses_a_different_seed_base_naming_both(tmp_path, monkeypatch,
                                        ("tick_s", 1), ("hard_ceiling_s", 1), ("stall_ticks", 99),
                                        ("loop_repeats", 99), ("opencode_exe_sha256", "other"),
                                        ("env_policy", {"XDG_STATE_HOME": "default"}),
-                                       ("poll_s", 99.0), ("cache_bin_inventory_sha256", "changed-cache")])
+                                       ("poll_s", 99.0), ("cache_bin_inventory_sha256", "changed-cache"),
+                                       ("probe_code_sha256", "changed-probe")])
 def test_resume_refuses_scaffold_identity_drift(tmp_path, monkeypatch, _stub_bin, field, val):
     OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
     out = tmp_path / "oc.jsonl"; _prior(OP, out, [ROW], **{field: val})
@@ -722,15 +730,42 @@ def test_ancestor_agents_md_reaches_the_prompt_without_git_init_and_not_with_it(
 
 
 # ------------------------------------------------------------------ B6b: refusal at an item leaves the exit stamp
-def test_item_refusal_stamps_served_config_drift_on_an_existing_manifest(tmp_path, monkeypatch, _stub_bin):
+def _add_exercise(tmp_path, name):
+    (tmp_path / "poly" / "python" / "exercises" / "practice" / name).mkdir(parents=True, exist_ok=True)
+
+
+def _second_item_refusal(OP, monkeypatch, tmp_path, message):
+    """Item 1 runs (stubs); the overlay check refuses at item 2."""
+    _add_exercise(tmp_path, "ex2")
+    _stub_full_item(OP, monkeypatch)
+    n = {"calls": 0}
+
+    def check(*a, **k):
+        n["calls"] += 1
+        if n["calls"] >= 2:
+            raise provenance.ServedConfigError(message)
+    monkeypatch.setattr(OP, "_assert_overlay_resolved", check)
+
+
+def test_a_refusal_before_this_session_wrote_anything_leaves_the_previous_manifest_untouched(tmp_path, monkeypatch, _stub_bin):
     OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
-    out = tmp_path / "oc.jsonl"; _prior(OP, out, [])           # manifest of earlier items exists
+    out = tmp_path / "oc.jsonl"; _prior(OP, out, [])           # a clean earlier session's manifest
+    before = out.with_suffix(".manifest.json").read_bytes()
     monkeypatch.setattr(OP, "_assert_overlay_resolved",
-                        lambda *a, **k: (_ for _ in ()).throw(provenance.ServedConfigError("M50 tripwire: overlay")))
+                        lambda *a, **k: (_ for _ in ()).throw(provenance.ServedConfigError("M50 tripwire: transient")))
     with pytest.raises(SystemExit, match="M50"):
         _resume_main(OP, monkeypatch, out)
+    assert out.with_suffix(".manifest.json").read_bytes() == before
+
+
+def test_item_refusal_after_this_session_wrote_the_manifest_stamps_drift(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"
+    _second_item_refusal(OP, monkeypatch, tmp_path, "M50 tripwire: overlay")
+    with pytest.raises(SystemExit, match="M50"):
+        _resume_main(OP, monkeypatch, out, items="ex,ex2")
     man = json.loads(out.with_suffix(".manifest.json").read_text())
-    assert "overlay" in man["served_config_drift"]["error"]
+    assert "overlay" in man["served_config_drift"]["error"] and man["served_config_drift"]["item"] == "python/ex2"
 
 
 # ------------------------------------------------------------------ B7: overlay rewritten by the model
@@ -939,7 +974,7 @@ def _recording_bin(tmp_path_factory, monkeypatch, seed):
     doc = {"provider": {"mlx-local": {"options": {"baseURL": "http://localhost:8000/v1"},
                                       "models": {MODEL: {"options": {**blk["options"], "seed": seed},
                                                          "limit": blk["limit"]}}}},
-           "agent": {"title": {"disable": True}}}
+           "agent": {"title": {"disable": True}}, "snapshot": False}
     (d / "resolved.json").write_text(json.dumps(doc))
     log = d / "spawns.txt"
     b = _exe(d / "opencode", f"#!/bin/sh\necho \"$*|$XDG_CONFIG_HOME|$XDG_DATA_HOME|$XDG_STATE_HOME|$TMPDIR|$HOME|$OPENCODE_DISABLE_CLAUDE_CODE_SKILLS\" >> {log}\n"
@@ -1025,12 +1060,11 @@ def test_an_all_skipped_resume_leaves_the_manifest_byte_identical(tmp_path, monk
 
 def test_persisted_error_strings_are_scrubbed_of_home_paths(tmp_path, monkeypatch, _stub_bin):
     OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
-    out = tmp_path / "oc.jsonl"; _prior(OP, out, [])
+    out = tmp_path / "oc.jsonl"
     leak = f"M50 tripwire: overlay failed at {Path.home()}/ws/scratch/oc-x/ex via {Path.home()}/bin/opencode"
-    monkeypatch.setattr(OP, "_assert_overlay_resolved",
-                        lambda *a, **k: (_ for _ in ()).throw(provenance.ServedConfigError(leak)))
+    _second_item_refusal(OP, monkeypatch, tmp_path, leak)
     with pytest.raises(SystemExit):
-        _resume_main(OP, monkeypatch, out)
+        _resume_main(OP, monkeypatch, out, items="ex,ex2")
     text = out.with_suffix(".manifest.json").read_text()
     assert str(Path.home()) not in text and "$HOME" in text
 
@@ -1073,6 +1107,11 @@ SENTINELS = ("SENTINEL-OPENCODE-AGENT-77a1", "SENTINEL-CLAUDE-MD-77a2", "SENTINE
 
 
 def _sentinel_run(tmp_path, monkeypatch, production, b):
+    with monkeypatch.context() as mp:      # every env/attr change is undone when this arm ends
+        return _sentinel_run_inner(tmp_path, mp, production, b)
+
+
+def _sentinel_run_inner(tmp_path, monkeypatch, production, b):
     """Real-HOME stand-in with instruction sentinels; production=True is the probe's configuration (bench
     HOME + the two switches + git init); False turns all three OFF (the positive control)."""
     fake_real = tmp_path / "realhome"
@@ -1122,6 +1161,7 @@ def test_real_home_instruction_sentinels_never_reach_the_prompt_under_the_probe_
     (tmp_path / "pos").mkdir(); (tmp_path / "neg").mkdir()
     leaked = _sentinel_run(tmp_path / "pos", monkeypatch, production=False, b=b)
     assert [t for t in SENTINELS if t in leaked], "positive control failed: no sentinel reached the prompt"
+    assert P.SCAFFOLD_ENV_POLICY["OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"] == "true"   # positive arm's patch was undone
     clean = _sentinel_run(tmp_path / "neg", monkeypatch, production=True, b=b)
     assert not [t for t in SENTINELS if t in clean]
 
@@ -1232,3 +1272,165 @@ def test_failed_run_dir_creation_leaves_nothing_behind(tmp_path, monkeypatch, _s
         OP._make_run_dirs(tmp_path, "direct")
     assert not (tmp_path / "opencode-probe" / "config-direct").exists()
     assert not (tmp_path / "opencode-probe" / "tmp-direct").exists()
+
+
+# ------------------------------------------------------------------ round 6
+def test_provenance_scrubs_complete_stderr_before_taking_the_tail(monkeypatch, tmp_path):
+    """E1: sweep every cut position of a home path + login through the 300-char tail."""
+    monkeypatch.setattr(provenance, "_login_name", lambda: "zqxloginname")
+    home = str(Path.home())
+    secret = f"{home}/ws/zqxloginname/scratch"
+    for j in range(len(secret) + 2):
+        stderr = "y" * 400 + secret + "z" * (300 - j)
+        monkeypatch.setattr(subprocess, "run",
+                            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 3, stdout="", stderr=stderr))
+        with pytest.raises(provenance.ServedConfigError) as e:
+            provenance.opencode_router_base(tmp_path, {}, opencode_bin="/x")
+        m = str(e.value)
+        assert "/Users/" not in m and home not in m and "zqxlogin" not in m and "loginname" not in m, (j, m[-120:])
+
+
+def test_probe_overlay_check_scrubs_complete_stderr_before_the_tail(monkeypatch, tmp_path):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "wd"))
+    monkeypatch.setattr(P, "_login_name", lambda: "zqxloginname")
+    home = str(Path.home())
+    secret = f"{home}/ws/zqxloginname/scratch"
+    for j in range(len(secret) + 2):
+        stderr = "y" * 400 + secret + "z" * (200 - j if j < 200 else 0)
+        monkeypatch.setattr(subprocess, "run",
+                            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 3, stdout="", stderr=stderr))
+        with pytest.raises(provenance.ServedConfigError) as e:
+            P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+        m = str(e.value)
+        assert home not in m and "/Users/" not in m and "loginname" not in m, (j, m[-120:])
+
+
+def test_manifest_drift_error_has_no_home_or_login_fragment_through_the_real_path(tmp_path, tmp_path_factory, monkeypatch):
+    """E1 through main(): item 1 passes, then the destination `debug config` fails (nonzero) at item 2."""
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    monkeypatch.setattr(OP, "_opencode_version", _REAL_VERSION)
+    monkeypatch.setattr(OP, "_login_name", lambda: "zqxloginname")
+    monkeypatch.setattr(provenance, "_login_name", lambda: "zqxloginname")
+    _add_exercise(tmp_path, "ex2"); _stub_full_item(OP, monkeypatch)
+    home = str(Path.home())
+    secret = f"{home}/ws/zqxloginname/scratch"
+    d = tmp_path_factory.mktemp("failbin")
+    (d / "stderr.txt").write_text("y" * 400 + secret + "z" * 290)       # the 300-char tail cuts through `secret`
+    good = {"provider": {"mlx-local": {"options": {"baseURL": "http://localhost:8000/v1"}}}}
+    (d / "good.json").write_text(json.dumps(good))
+    b = _exe(d / "opencode", f"#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 1.18.30; exit 0; fi\n"
+                             f"echo x >> {d}/n\nif [ $(wc -l < {d}/n) -ge 3 ]; then cat {d}/stderr.txt >&2; exit 3; fi\n"
+                             f"cat {d}/good.json\n")
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(b))
+    out = tmp_path / "oc.jsonl"
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex,ex2", "--seed-base", "1", "--out", str(out)])
+    with pytest.raises(provenance.ServedConfigError):
+        OP.main()
+    text = out.with_suffix(".manifest.json").read_text()
+    assert "served_config_drift" in text
+    assert home not in text and "/Users/" not in text and "loginname" not in text
+
+
+def test_tick_snapshots_are_confined_to_the_run_temp_dir(tmp_path):
+    work = tmp_path / "work"; work.mkdir()
+    sol = work / "sol.py"; test = work / "t.py"
+    sol.write_text("before"); test.write_text("x"); log = work / "log.txt"; log.write_text("")
+    runtmp = tmp_path / "runtmp"; runtmp.mkdir()
+    seen = []
+
+    def grade(w, t):
+        seen.append(Path(w)); return True, ""
+    snap = P._tick_snapshot_fn(work, sol, test, "before", grade, log, tmp_dir=runtmp)
+    sol.write_text("after")
+    snap(1.0)
+    assert seen and str(seen[0]).startswith(str(runtmp)), seen
+
+
+def test_run_opencode_passes_its_env_tmpdir_to_the_tick_snapshots(monkeypatch, tmp_path):
+    got = {}
+    real = P._tick_snapshot_fn
+
+    class Boom(Exception):
+        pass
+
+    def spy(*a, **k):
+        got["tmp_dir"] = k.get("tmp_dir")
+        raise Boom()
+    monkeypatch.setattr(P, "_tick_snapshot_fn", spy)
+    monkeypatch.setattr(P.subprocess, "Popen", lambda *a, **k: type("X", (), {"returncode": 0, "poll": lambda self: 0})())
+    work = tmp_path / "w"; work.mkdir(); (work / "s.py").write_text("a"); (work / "t.py").write_text("b")
+    with pytest.raises(Boom):
+        P._run_opencode(MODEL, work, "p", work / "s.py", work / "t.py", lambda w, t: (False, ""), "a",
+                        tick_s=1, hard_ceiling_s=1, poll_s=1, stall_ticks=1, loop_repeats=1, pure=True,
+                        env={"TMPDIR": str(tmp_path / "rt")}, opencode_bin="/x")
+    assert got["tmp_dir"] == str(tmp_path / "rt")
+
+
+@pytest.mark.parametrize("mutate", [False, True])
+def test_cache_mutation_during_an_item_flags_the_row_and_the_manifest(tmp_path, monkeypatch, _stub_bin, mutate):
+    cache = tmp_path / "xdgcache"; (cache / "opencode" / "bin").mkdir(parents=True)
+    (cache / "opencode" / "bin" / "rg").write_text("rg-1")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    seen = _stub_full_item(OP, monkeypatch)
+    inner = OP._run_opencode
+
+    def run(*a, **k):
+        if mutate:
+            (cache / "opencode" / "bin" / "lsp").write_text("installed lazily during the item")
+        return inner(*a, **k)
+    monkeypatch.setattr(OP, "_run_opencode", run)
+    out = tmp_path / "oc.jsonl"
+    assert _resume_main(OP, monkeypatch, out) == 0
+    row = json.loads(out.read_text().splitlines()[-1])
+    man = json.loads(out.with_suffix(".manifest.json").read_text())
+    assert row["cache_drift"] is mutate
+    if mutate:
+        d = man["cache_bin_inventory_drift"]
+        assert d["observed"] != d["entry"] and d["item"] == "python/ex" and d["entry"] == man["runtime"]["cache_bin_inventory_sha256"]
+    else:
+        assert "cache_bin_inventory_drift" not in man
+
+
+# ------------------------------------------------------------------ round 6b: bench HOME is load-bearing
+@pytest.mark.parametrize("planted", [".opencode", "AGENTS.md", "CLAUDE.md", ".claude"])
+def test_bench_home_must_stay_clean(tmp_path, planted):
+    home = tmp_path / "home"; home.mkdir()
+    P._assert_bench_home_clean(home)                       # clean passes
+    (home / planted).mkdir() if planted.startswith(".") else (home / planted).write_text("x")
+    with pytest.raises(SystemExit, match=planted.replace(".", r"\.")):
+        P._assert_bench_home_clean(home)
+
+
+def test_sentinel_planted_between_items_refuses_the_second_item(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    _add_exercise(tmp_path, "ex2")
+    seen = _stub_full_item(OP, monkeypatch)
+    inner = OP._run_opencode
+
+    def run(*a, **k):
+        (tmp_path / "opencode-probe" / "home" / ".opencode" / "agent").mkdir(parents=True, exist_ok=True)   # the "model" plants it
+        (tmp_path / "opencode-probe" / "home" / ".opencode" / "agent" / "build.md").write_text("SENTINEL")
+        return inner(*a, **k)
+    monkeypatch.setattr(OP, "_run_opencode", run)
+    out = tmp_path / "oc.jsonl"
+    with pytest.raises(SystemExit, match=r"\.opencode"):
+        _resume_main(OP, monkeypatch, out, items="ex,ex2")
+    assert seen["runs"] == 1                                 # item 2 never ran
+    man = json.loads(out.with_suffix(".manifest.json").read_text())
+    assert man["runtime"]["bench_home_clean"] is True       # as of the run start
+
+
+def test_a_modified_per_run_config_copy_refuses_the_next_item(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    _add_exercise(tmp_path, "ex2")
+    _stub_full_item(OP, monkeypatch)
+    inner = OP._run_opencode
+
+    def run(*a, **k):
+        for p in (tmp_path / "opencode-probe").glob("config-*/opencode/opencode.json"):
+            p.write_text("{}")
+        return inner(*a, **k)
+    monkeypatch.setattr(OP, "_run_opencode", run)
+    with pytest.raises(SystemExit, match="config copy"):
+        _resume_main(OP, monkeypatch, tmp_path / "oc.jsonl", items="ex,ex2")

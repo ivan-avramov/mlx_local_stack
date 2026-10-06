@@ -264,7 +264,8 @@ def _solution_and_test(d: Path, src: Path, lang: str) -> tuple[Path, Path]:
     return sols[0], test
 
 
-def _tick_snapshot_fn(cwd: Path, sol: Path, test: Path, before_sol: str, grade, log_path: Path):
+def _tick_snapshot_fn(cwd: Path, sol: Path, test: Path, before_sol: str, grade, log_path: Path,
+                      tmp_dir: str | Path | None = None):
     """Build the progress-gate's per-tick `snapshot_fn`.
 
     NEVER grades or hashes the LIVE `cwd` in place — a still-running opencode session can be
@@ -285,7 +286,7 @@ def _tick_snapshot_fn(cwd: Path, sol: Path, test: Path, before_sol: str, grade, 
         log_text = log_path.read_text(errors="replace") if log_path.exists() else ""
         signature = progress_gate.tail_signature(log_text)
         try:
-            with tempfile.TemporaryDirectory(prefix="oc-tick-") as tickdir:
+            with tempfile.TemporaryDirectory(prefix="oc-tick-", dir=tmp_dir) as tickdir:   # run temp dir, not /tmp
                 snap = Path(tickdir) / "snap"
                 shutil.copytree(cwd, snap)
                 snap_sol = snap / rel_sol
@@ -345,7 +346,8 @@ def _run_opencode(model: str, cwd: Path, prompt: str, sol: Path, test: Path, gra
     with log_path.open("w") as log_f:
         proc = subprocess.Popen(cmd, cwd=cwd, stdout=log_f, stderr=subprocess.STDOUT, text=True,
                                 env=env)
-        snapshot_fn = _tick_snapshot_fn(cwd, sol, test, before_sol, grade, log_path)
+        snapshot_fn = _tick_snapshot_fn(cwd, sol, test, before_sol, grade, log_path,
+                                        tmp_dir=(env or {}).get("TMPDIR"))
         result = progress_gate.run_progress_gated(
             proc, snapshot_fn, tick_s=tick_s, hard_ceiling_s=hard_ceiling_s, poll_s=poll_s,
             stall_ticks=stall_ticks, loop_repeats=loop_repeats)
@@ -406,14 +408,16 @@ SCAFFOLD_ENV_POLICY = {"OPENCODE_DISABLE_EXTERNAL_SKILLS": "true",
 # Per-item PROJECT config `<cwd>/opencode.json` carrying ONLY the seed for the served model;
 # opencode deep-merges it over the global/shipped config (verified 2026-10-06 against a mock
 # endpoint on 1.18.30, in a NON-git dir: request body carried `seed` plus every shipped option).
-OVERLAY_SCHEMA = "provider.mlx-local.models.<model>.options.seed + agent.title.disable"
+OVERLAY_SCHEMA = "provider.mlx-local.models.<model>.options.seed + agent.title.disable + snapshot:false"
 
 
 def _seed_overlay(model: str, seed: int) -> dict:
     # `agent.title.disable`: 1.18.30's session-title request would otherwise go UN-SEEDED to the small_model
     # provider (the task model, max_tokens 2048); a mock capture on 2026-10-06 showed the switch removes it.
     return {"provider": {"mlx-local": {"models": {model: {"options": {"seed": int(seed)}}}}},
-            "agent": {"title": {"disable": True}}}
+            "agent": {"title": {"disable": True}},
+            # `snapshot: false` (valid 1.18.30 key): `git init` would otherwise turn on snapshot tracking
+            "snapshot": False}
 
 
 def _write_seed_overlay(cwd: Path, model: str, seed: int) -> str:
@@ -481,6 +485,20 @@ ENV_POLICY = {
 BENCH_HOME_ISOLATION = True
 
 
+BENCH_HOME_FORBIDDEN = (".opencode", "AGENTS.md", "CLAUDE.md", ".claude")
+
+
+def _assert_bench_home_clean(bench_home: Path) -> None:
+    """The bench HOME is LOAD-BEARING and persistent (and writable by the model): with `--pure`,
+    1.18.30 still merges `$HOME/.opencode/opencode.json` and `$HOME/.opencode/agent/*.md` (a sentinel
+    `agent.build.prompt` replaced the system prompt in the cold review), and it reads HOME-level
+    `AGENTS.md` / `CLAUDE.md` / `.claude`. Refuse if any exists (checked at run start and before each item)."""
+    for name in BENCH_HOME_FORBIDDEN:
+        if (Path(bench_home) / name).exists():
+            sys.exit(f"REFUSED: the bench HOME holds {name!r} ({_portable(Path(bench_home) / name)}); opencode "
+                     f"would load it as instructions/config. Remove it and rerun.")
+
+
 def _make_run_dirs(workdir: Path, run_id: str) -> tuple:
     """(config home, state home, tmp dir, bench HOME) under `<workdir>/opencode-probe/`; the bench HOME
     and its state dir are persistent across runs, the config home and tmp dir are per run."""
@@ -501,6 +519,15 @@ def _make_run_dirs(workdir: Path, run_id: str) -> tuple:
 def _cleanup_run_dirs(dirs) -> None:
     for d in dirs:
         shutil.rmtree(d, ignore_errors=True)
+
+
+def _probe_code_sha256() -> str:
+    """sha256 over this probe's own source and the progress gate's: the harness code is part of the identity."""
+    import hashlib
+    h = hashlib.sha256()
+    for f in (Path(__file__), Path(progress_gate.__file__)):
+        h.update(f.name.encode()); h.update(f.read_bytes())
+    return h.hexdigest()
 
 
 def _real_cache_home() -> Path:
@@ -536,6 +563,7 @@ def _run_identity(*, lang, pure, poly_sha, tick_s, hard_ceiling_s, stall_ticks, 
             "lang": lang, "pure": pure, "polyglot_sha": poly_sha, "tick_s": tick_s,
             "hard_ceiling_s": hard_ceiling_s, "stall_ticks": stall_ticks, "loop_repeats": loop_repeats,
             "poll_s": poll_s, "cache_bin_inventory_sha256": cache_sha,
+            "probe_code_sha256": _probe_code_sha256(),
             "opencode_exe_sha256": exe, "env_policy": ENV_POLICY}
 
 
@@ -596,7 +624,7 @@ def _assert_overlay_resolved(cwd: Path, env: dict, model: str, seed: int, expect
                                            f"{type(e).__name__}: {e}")
     if r.returncode != 0:
         raise provenance.ServedConfigError(f"M50 tripwire: `opencode debug config` exit {r.returncode} "
-                                           f"while resolving the seeded overlay; stderr {(r.stderr or '')[-200:]!r}")
+                                           f"while resolving the seeded overlay; stderr {provenance.scrub_tail(_scrub_pii(r.stderr or ''), 200)!r}")
     out = r.stdout or ""
     try:
         data = json.loads(out[out.index("{"):])
@@ -625,6 +653,9 @@ def _assert_overlay_resolved(cwd: Path, env: dict, model: str, seed: int, expect
     except Exception as e:  # noqa: BLE001
         raise provenance.ServedConfigError(f"M50 tripwire: the bench opencode config has no deployed "
                                            f"options for {model!r}: {type(e).__name__}: {e}")
+    if data.get("snapshot") is not False:
+        raise provenance.ServedConfigError("M50 tripwire: opencode's resolved config does not disable "
+                                           "snapshot tracking (snapshot:false).")
     if (data.get("agent") or {}).get("title", {}).get("disable") is not True:
         raise provenance.ServedConfigError("M50 tripwire: opencode's resolved config does not disable title "
                                            "generation (agent.title.disable); the un-seeded title request "
@@ -1003,6 +1034,7 @@ def _main(ctx: dict) -> int:
     ctx["dirs"] = [workdir / "opencode-probe" / f"config-{run_id}", workdir / "opencode-probe" / f"tmp-{run_id}",
                    disc_data]                          # registered BEFORE creation; the bench HOME is persistent
     cfg_home, state_home, tmp_dir, bench_home = _make_run_dirs(workdir, run_id)
+    _assert_bench_home_clean(bench_home)             # before the first spawn under it
     boot_env = _opencode_env(disc_data, cfg_home, state_home, tmp_dir, bench_home)
     # C121 C1 / C125: the pinned binary's read-only `--version` runs BEFORE discovery, so an override
     # pointing at another version (brew v2 ...) never executes `debug config`.
@@ -1037,7 +1069,7 @@ def _main(ctx: dict) -> int:
     }
     grade = graders[a.lang]
 
-    # C121 B5/B3: what the probe really loads. One extra spawn (`debug paths`), after the M50 check.
+    # C121 B5/B3: the instruction-file inventory (observation only), after the M50 check.
     scratch_start = Path(_scratch_root() or (workdir / "scratch"))
     ancestors = _ancestor_instruction_files(scratch_start)
     instr_sources = _instruction_sources(scratch_start)
@@ -1101,6 +1133,7 @@ def _main(ctx: dict) -> int:
                                          **identity,
                                          "opencode_config_home": _portable(cfg_home),
                                          "opencode_bench_home": _portable(bench_home),
+                                         "bench_home_clean": True,
                                          "instruction_sources_sha256": instr_sha,
                                          "opencode_config_copy_sha256": _sha_of(cfg_home / "opencode" / "opencode.json"),
                                          "ancestor_instruction_files": ancestors,
@@ -1126,6 +1159,10 @@ def _main(ctx: dict) -> int:
         if (f"{a.lang}/{name}", 0) in done:
             print(f"[resume] {a.lang}/{name} already recorded in {out.name}; skipped", flush=True)
             continue
+        _assert_bench_home_clean(bench_home)
+        if _sha_of(cfg_home / "opencode" / "opencode.json") != _sha_of(BENCH_OPENCODE_CONFIG):
+            sys.exit(f"REFUSED: the per-run config copy changed since it was seeded ({_portable(cfg_home)}); "
+                     f"it must stay a verbatim copy of {BENCH_OPENCODE_CONFIG.name}.")
         src = root / name
         if not src.is_dir():
             print(f"!! {name}: no such exercise at {src}", flush=True)
@@ -1145,6 +1182,8 @@ def _main(ctx: dict) -> int:
             # (cold review E4); accepted. A refusal at item k leaves the C106 drift stamp on the
             # manifest of items 1..k-1.
             def _drift_stamp(e):
+                if not manifest_written:        # a refusal before THIS session wrote anything must not
+                    return                      # mark a previous (clean) session's rows as drifted
                 _stamp_manifest(mp, {"served_config_drift": {"entry_sha256": router.get("config_sha256"),
                                                              "exit_sha256": _exit_sha(oc_base),
                                                              "error": _scrub_error(e),
@@ -1175,6 +1214,7 @@ def _main(ctx: dict) -> int:
                 f"The specification is in .docs/instructions.md — read it first. "
                 f"Do NOT modify {test.name}. Do not create new files unless required by the spec."
             )
+            cache_entry = identity["cache_bin_inventory_sha256"]
             rc, log, dur, gate_result = _run_opencode(
                 a.model, work, prompt, sol, test, grade, before,
                 tick_s=a.tick_s, hard_ceiling_s=hard_ceiling_s, poll_s=a.poll_s,
@@ -1189,6 +1229,16 @@ def _main(ctx: dict) -> int:
             overlay_rewritten = overlay_after != overlay_sha
             if overlay_rewritten:
                 _write_seed_overlay(work, a.model, item_seed)
+            # E3: tools (ripgrep/LSP) can be installed lazily into the shared cache during an item. Recompute
+            # after every item; a difference from the entry inventory flags this row (kept, not refused: a
+            # first-use install is legitimate) and stamps the manifest once.
+            cache_obs = _cache_bin_inventory_sha256(Path(boot_env["XDG_CACHE_HOME"]))
+            cache_drift = cache_obs != cache_entry
+            if cache_drift:
+                _stamp_manifest(mp, {"cache_bin_inventory_drift": (
+                    json.loads(mp.read_text()).get("cache_bin_inventory_drift")
+                    if mp.exists() and "cache_bin_inventory_drift" in json.loads(mp.read_text())
+                    else {"entry": cache_entry, "observed": cache_obs, "item": item_id})})
             export = _export_latest_session(oc_env, cwd=work, opencode_bin=oc_bin)
             transcript_rel = None
             if export is not None:
@@ -1229,6 +1279,7 @@ def _main(ctx: dict) -> int:
                 "traffic": traffic,
                 **_seed_row_fields(item_id, a.seed_base, overlay_sha),
                 "overlay_sha256_after": overlay_after, "overlay_rewritten_by_model": overlay_rewritten,
+                "cache_drift": cache_drift,
                 **({"acc": None, "grade_excluded_reason": excluded_reason} if excluded_reason else {}),
             }
             with out.open("a") as f:
@@ -1261,7 +1312,8 @@ RESUME_IDENTITY_KEYS = ("seed_base", "overlay_schema", "scaffold_policy_sha256",
                         "scratch_git_init", "env_switches", "bench_home_isolation", "opencode_bin",
                         "opencode_version", "opencode_bench_config", "opencode_bench_config_sha256",
                         "lang", "pure", "polyglot_sha", "tick_s", "hard_ceiling_s", "stall_ticks",
-                        "loop_repeats", "poll_s", "cache_bin_inventory_sha256", "opencode_exe_sha256",
+                        "loop_repeats", "poll_s", "cache_bin_inventory_sha256", "probe_code_sha256",
+                        "opencode_exe_sha256",
                         "env_policy")
 
 

@@ -19,8 +19,8 @@ existing rows; this changes the scaffold for FUTURE opencode rows and corrects t
 
 ## Design (P107–P110)
 
-- P107 Mechanism: per-item PROJECT config written by the probe into the item's scratch dir — `<cwd>/opencode.json` containing ONLY
-  `{"provider": {"mlx-local": {"models": {"<model>": {"options": {"seed": <N>}}}}}}` — merged by opencode over the shipped global config.
+- P107 Mechanism: per-item PROJECT config written by the probe into the item's scratch dir — `<cwd>/opencode.json` containing the seed
+  `{"provider": {"mlx-local": {"models": {"<model>": {"options": {"seed": <N>}}}}}}` plus `agent.title.disable: true` and `snapshot: false` — merged by opencode over the shipped global config.
   No `OPENCODE_CONFIG*` env (the M50 tripwire refuses those, by design). The probe hashes the overlay and asserts, via
   `opencode debug config --dir <cwd>` on the pre-check item, that the resolved provider baseURL is unchanged and the resolved model
   options contain the seed. The model can see the file in its cwd (one small JSON; harmless, recorded as scaffold).
@@ -51,8 +51,8 @@ existing rows; this changes the scaffold for FUTURE opencode rows and corrects t
   else refuse (M50 shape). The personal `~/.config/opencode` is never read.
 - AC5 [resolved: the bench config home carries no global `AGENTS.md`; ancestor-chain instruction files and `~/.claude/CLAUDE.md` are an OBSERVED inventory (`instruction_sources_sha256`, manifest only; NOT part of the scaffold-policy hash, the resume identity or the receipt, because git init blocks them); the scaffold-policy hash covers the bench carrier sha, overlay schema, applied switches, `scratch_git_init`, bench-HOME isolation, opencode version + exe sha and the empty `instructions` rule; item dirs are `git init`-ed; 1.18.30 has `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` and the broad `OPENCODE_DISABLE_CLAUDE_CODE`; `~/.claude/CLAUDE.md` exists on the box; manifest records `claude_md_present`] R8 switch set and recorded; config/skill-policy hash changes; old rows do not pool (compare refuses).
 - AC6 [REPLACED by C123, 2026-10-06] Re-pin to 2.0.20 is WRONG: v2.0.20 lacks `--dir`/`--pure` and forwards no model `options` into the request. Keep `PINNED_OPENCODE_VERSION = "1.18.30"`; the probe resolves the binary from `$STACK_WORKDIR/opencode-1.18.30/node_modules/.bin/opencode` (or `OPENCODE_PROBE_BIN`) and records its portable path in the manifest.
-- AC7 Record: lab-notebook retraction entry; `docs/specs/m55-polyglot-gap.md` and `m54-agentbench-os.md` annotated "sessions were
-  unseeded"; README/campaign-results evidence rows carry the label where they cite k=2 sessions.
+- AC7 Record: lab-notebook retraction entry; `docs/specs/m55-polyglot-gap.md` annotated "sessions were unseeded" and `m54-agentbench-os.md`
+  annotated "seeded, base 0, same schedule every session"; README/campaign-results evidence rows carry the label where they cite k=2 sessions.
 
-Out of scope: rerunning M53/M55; AgentBench OS (`run_agentbench_os.py` talks to the router directly and already seeds per item —
-verify and state it in the notebook entry rather than assume).
+Out of scope: rerunning M53/M55; AgentBench OS (`run_agentbench_os.py` talks to the router directly and DID seed per item, base 0 —
+verified: M54 was seeded, with the same schedule in every session; not "unseeded").
