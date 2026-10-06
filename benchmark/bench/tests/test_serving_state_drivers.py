@@ -163,3 +163,31 @@ def test_ordinary_gather_failure_at_entry_refuses_every_driver_before_the_ladder
     assert rc == 3
     assert ladder_calls == []
     assert not list((tmp_path / "results").iterdir())     # nothing created, not even the model dir
+
+
+@pytest.mark.parametrize("name", list(DRIVERS))
+def test_m58_scan_changing_between_entry_and_the_loaded_worker_refuses_before_a_measured_request(
+    monkeypatch, tmp_path, name
+):
+    """`assert_serving_state(..., expect=entry)` after the load: an entry value of joint_v1 and a
+    loaded value of joint_v1+ab (an AB gate worker) must not stamp a latency manifest."""
+    mod, lad, canned, extra = DRIVERS[name]
+    drv, ladder_calls, results = _setup(monkeypatch, tmp_path, mod, lad, canned, [[]])
+
+    def scan(model, registry_path=None, worker_lookup=None):
+        value = "joint_v1+ab" if drv.calls else "joint_v1"        # changes once the model is loaded
+        return {"mtp_verify_scan": value, "mtp_verify_scan_source": "worker" if drv.calls else "registry"}
+    monkeypatch.setattr(P, "registry_mtp_verify_scan", scan)
+    with pytest.raises(P.ServedConfigError, match="changed"):
+        mod.main(_argv(extra))
+    assert drv.calls and ladder_calls == []                      # loaded, but nothing measured
+    assert _files(results) == []
+
+
+@pytest.mark.parametrize("name", list(DRIVERS))
+def test_m58_an_unchanged_scan_runs_normally(monkeypatch, tmp_path, name):
+    mod, lad, canned, extra = DRIVERS[name]
+    drv, ladder_calls, results = _setup(monkeypatch, tmp_path, mod, lad, canned, [[]])
+    monkeypatch.setattr(P, "registry_mtp_verify_scan", lambda m, registry_path=None, worker_lookup=None: {
+        "mtp_verify_scan": "joint_v1", "mtp_verify_scan_source": "registry"})
+    assert mod.main(_argv(extra)) == 0 and ladder_calls == [1]

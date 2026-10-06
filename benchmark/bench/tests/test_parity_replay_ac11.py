@@ -949,3 +949,118 @@ def test_r3_d4_an_interrupt_during_preload_is_finalised_too(env, monkeypatch, tm
         R.run(_args(tmp_path))
     doc = _doc(tmp_path)
     assert len(calls) == 1 and "served_config_drift" in doc
+
+
+# --------------------------------------------------------------------------- round 3b
+def _g1b_rows(joint_extra=None, other_content=None):
+    """per_query side vs joint_v1 side over 20 keys; `joint_extra` maps index -> verify overrides,
+    `other_content` maps index -> differing content on the joint side."""
+    a, b = _side_rows("per_query", joint_rows=0), _side_rows("joint_v1", 20)
+    for i, extra in (joint_extra or {}).items():
+        b[i]["verify"] = dict(b[i]["verify"], **extra)
+    for i, text in (other_content or {}).items():
+        b[i]["content"] = text
+        b[i]["content_sha256"] = R._sha(text)
+    return a, b
+
+
+def test_e1_a_length_two_straddle_row_may_diverge_without_failing_g1b(tmp_path, capsys):
+    a, b = _g1b_rows({4: {"verify_blocks_straddle_len2": 2}}, {4: "different"})
+    rc, out = _g1b(tmp_path, a, b)
+    assert rc == 0, out["integrity"]
+    assert out["c120_rows"] == [["m", "math500", "i4"]] and out["differing"] == 0
+    statuses = {tuple(s["key"]): s["status"] for s in out["statuses"]}
+    assert statuses[("m", "math500", "i4")] == "c120_expected_divergence"
+    assert "c120_expected=1" in capsys.readouterr().out
+
+
+def test_e1_every_other_divergent_row_still_fails_g1b(tmp_path):
+    a, b = _g1b_rows({4: {"verify_blocks_straddle_len2": 2}}, {4: "different", 7: "also different"})
+    rc, out = _g1b(tmp_path, a, b)
+    assert rc == 1 and out["differing"] == 1 and out["c120_rows"] == [["m", "math500", "i4"]]
+
+
+def test_e1_the_carve_out_needs_the_len2_counter_on_the_JOINT_side_only(tmp_path):
+    a, b = _g1b_rows(None, {4: "different"})                    # no len2 straddle anywhere
+    assert _g1b(tmp_path, a, b)[0] == 1
+    a, b = _g1b_rows(None, {4: "different"})
+    a[4]["verify"] = {"verify_blocks_straddle_len2": 3}          # on the per_query side: no carve-out
+    assert _g1b(tmp_path, a, b)[0] == 1
+
+
+def test_e1_identical_rows_with_the_counter_stay_identical_and_the_same_scan_never_carves_out(tmp_path):
+    a, b = _g1b_rows({4: {"verify_blocks_straddle_len2": 2}})
+    rc, out = _g1b(tmp_path, a, b)
+    assert rc == 0 and out["identical"] == 20 and out["c120_rows"] == []
+    x, y = _side_rows("per_query", joint_rows=0), _side_rows("per_query", joint_rows=0)
+    x[4]["verify"] = {"verify_blocks_straddle_len2": 2}
+    y[4]["content"], y[4]["content_sha256"] = "different", R._sha("different")
+    assert _g1b(tmp_path, x, y)[0] == 1                          # reload control: no carve-out
+
+
+def test_e8_ab_versus_ab_is_refused(tmp_path):
+    rc, out = _g1b(tmp_path, _side_rows("joint_v1+ab", 20), _side_rows("joint_v1+ab", 20))
+    assert rc == 2 and sum("joint_v1+ab" in p for p in out["integrity"]) == 2
+
+
+@pytest.mark.parametrize("bad", [None, "5", 1.5, True, -1])
+def test_e6_counters_must_be_non_negative_integers(tmp_path, bad):
+    def corrupt(r):
+        r["verify"] = dict(r["verify"], verify_blocks_joint_v1=bad)
+    rc, out = _mod(tmp_path, corrupt, corrupt)
+    assert rc == 2 and any("verify_blocks_joint_v1" in p for p in out["integrity"])
+
+
+def test_e6_verify_must_be_an_object_and_reasons_an_object(tmp_path):
+    def not_obj(r):
+        r["verify"] = [1]
+    assert _mod(tmp_path, not_obj, not_obj)[0] == 2
+
+    def bad_reasons(r):
+        r["verify"] = dict(r["verify"], verify_fallback_reasons="domain")
+    assert _mod(tmp_path, bad_reasons, bad_reasons)[0] == 2
+
+
+def test_e6_any_unexpected_exception_in_compare_is_exit_2_never_1(tmp_path, monkeypatch, capsys):
+    rows = [_row(k) for k in KEYS]
+    a = argparse.Namespace(a=_write(tmp_path, "A.json", rows, "A"),
+                           b=_write(tmp_path, "B.json", rows, "B"), out=None)
+    assert R.compare(a) == 0
+    monkeypatch.setattr(R, "_audit", lambda doc: (_ for _ in ()).throw(TypeError("surprise")))
+    assert R.compare(a) == 2 and "surprise" in capsys.readouterr().out
+    monkeypatch.undo()
+    (tmp_path / "A.json").write_text("{not json")
+    assert R.compare(a) == 2
+    (tmp_path / "A.json").write_text(json.dumps({"expected_keys": [["m", "b", "i"]], "rows": [7]}))
+    assert R.compare(a) == 2
+
+
+def test_e7_run_without_resume_never_overwrites_an_existing_journal(env, tmp_path, capsys):
+    assert R.run(_args(tmp_path)) == 0
+    before = (tmp_path / "rep.json").read_text()
+    posted = len(env["posted"])
+    assert R.run(_args(tmp_path)) == 2
+    assert (tmp_path / "rep.json").read_text() == before and len(env["posted"]) == posted
+    assert "already exists" in capsys.readouterr().err
+    stamped = json.loads(before)
+    stamped["served_config_drift"] = {"error": "x"}
+    (tmp_path / "rep.json").write_text(json.dumps(stamped))
+    kept = (tmp_path / "rep.json").read_text()
+    assert R.run(_args(tmp_path)) == 2 and (tmp_path / "rep.json").read_text() == kept
+
+
+def test_e10_the_completion_tail_is_inside_the_finalising_try(env, monkeypatch, tmp_path):
+    calls = _spy_exit(monkeypatch)
+    real_dump = json.dump
+    state = {"n": 0}
+
+    def flaky_dump(obj, fp, *a, **k):
+        if isinstance(obj, dict) and obj.get("status") == "complete":
+            state["n"] += 1
+            raise OSError("disk full while completing")
+        return real_dump(obj, fp, *a, **k)
+    monkeypatch.setattr(R.json, "dump", flaky_dump)
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert state["n"] == 1 and doc["status"] == "aborted" and "disk full" in doc["error"]
+    assert len(calls) == 2       # the tail's own C106 check, then the finaliser's

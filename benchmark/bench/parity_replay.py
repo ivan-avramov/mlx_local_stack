@@ -161,6 +161,12 @@ def _resume_refusal(doc, router, entry_state, entry_runtime, hashes, entry_code)
     return None
 
 
+def _count(row, key) -> int:
+    """A verify counter as an int; anything else is 0 here (the audit reports it separately)."""
+    v = (row.get("verify") or {}).get(key, 0) if isinstance(row.get("verify"), dict) else 0
+    return v if isinstance(v, int) and not isinstance(v, bool) else 0
+
+
 def _code_state():
     """The serving-path code hashes this replay ran against (best effort; None when unavailable)."""
     try:
@@ -255,7 +261,12 @@ def run(a) -> int:
     except provenance.ServedConfigError as e:
         print(f"[parity_replay] REFUSED: {e}", file=sys.stderr, flush=True)
         return 2
-    out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(a.out)
+    if out.exists() and not a.resume:  # E7: never overwrite a finished side or a drift stamp
+        print(f"[parity_replay] REFUSED: {out} already exists; use --resume or a fresh --out",
+              file=sys.stderr, flush=True)
+        return 2
+    out.parent.mkdir(parents=True, exist_ok=True)
     rows = []; history = []
     if out.exists() and a.resume:
         prev_doc = json.load(open(out))
@@ -346,22 +357,21 @@ def run(a) -> int:
                   f"ctok={row['completion_tokens']} wall={row['wall_s']}s", flush=True)
             json.dump({**base, "status": "running",
                        "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
+        got = [_key(r) for r in rows]
+        if sorted(got) != sorted(keys):  # AC11: complete only with every frozen key exactly once
+            return _abort(out, base, f"rows {sorted(set(keys) ^ set(got))} do not match the frozen keys",
+                          rows, router)
+        try:  # C106: complete only if the served runtime is unchanged since entry
+            exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
+        except provenance.ServedConfigError as e:
+            print(f"[parity_replay] REFUSED: {e}", file=sys.stderr, flush=True)
+            return _abort(out, base, f"{e}", rows, router, check_exit=False, drift=e)
+        json.dump({**base, "status": "complete", "router_exit": exit_blk,
+                   "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
+        print(f"complete: {len(rows)} rows -> {out}")
+        return 0
     except BaseException as e:  # noqa: BLE001 - nothing after entry escapes finalisation
         return _finalise_unexpected(out, base, rows, router, e)
-    got = [_key(r) for r in rows]
-    if sorted(got) != sorted(keys):  # AC11: complete only with every frozen key exactly once
-        return _abort(out, base, f"rows {sorted(set(keys) ^ set(got))} do not match the frozen keys",
-                      rows, router)
-    try:  # C106: complete only if the served runtime is unchanged since entry
-        exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
-    except provenance.ServedConfigError as e:
-        print(f"[parity_replay] REFUSED: {e}", file=sys.stderr, flush=True)
-        return _abort(out, base, f"{e}", rows, router, check_exit=False, drift=e)
-    json.dump({**base, "status": "complete", "router_exit": exit_blk,
-               "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
-    print(f"complete: {len(rows)} rows -> {out}")
-    return 0
-
 
 _IDENTITY = ("finish_reason", "completion_tokens", "content_sha256", "reasoning_sha256", "draft")
 
@@ -391,6 +401,16 @@ def _audit(doc) -> tuple[dict, list]:
         for f in _IDENTITY + ("payload_sha256", "content", "reasoning", "runtime", "code"):
             if r.get(f) is None:
                 problems.append(f"row {k} lacks the mandatory field {f} (absent or null)")
+        verify = r.get("verify")
+        if not isinstance(verify, dict):
+            problems.append(f"row {k} verify is not an object")
+        else:
+            for ck, cv in verify.items():
+                if ck == "verify_fallback_reasons":
+                    if not isinstance(cv, dict):
+                        problems.append(f"row {k} {ck} is not an object")
+                elif isinstance(cv, bool) or not isinstance(cv, int) or cv < 0:
+                    problems.append(f"row {k} counter {ck} is not a non-negative integer ({cv!r})")
         draft = r.get("draft")
         if isinstance(draft, dict):
             for m in _DRAFT_MEMBERS:
@@ -446,6 +466,15 @@ def _compare_legacy(A, B, a) -> int:
 
 
 def compare(a) -> int:
+    """Exit 0 identical, 1 differing, 2 integrity/missing/ANY unexpected error, 3 legacy."""
+    try:
+        return _compare(a)
+    except Exception as e:  # noqa: BLE001 - an unreadable or malformed input is never "differing"
+        print(f" INTEGRITY unexpected {type(e).__name__} while comparing: {e}")
+        return 2
+
+
+def _compare(a) -> int:
     A = json.load(open(a.a)); B = json.load(open(a.b))
     if not (isinstance(A.get("expected_keys"), list) and isinstance(B.get("expected_keys"), list)):
         return _compare_legacy(A, B, a)
@@ -475,6 +504,9 @@ def compare(a) -> int:
                 for k in sorted(set(d) - e):
                     integrity.append(f"{side}: unexpected row {k} (not in expected_keys)")
     sa, sb = _side_state(ka, "A", integrity), _side_state(kb, "B", integrity)
+    joint_side = None   # the side serving joint_v1 when the scans differ (C120 carve-out applies)
+    if sa is not None and sb is not None and sa[0] != sb[0]:
+        joint_side = "A" if sa[0] == "joint_v1" else "B" if sb[0] == "joint_v1" else None
     if sa is not None and sb is not None:
         for i, f in enumerate(_SIDE_STATE[1:], 1):
             if sa[i] != sb[i]:
@@ -487,7 +519,7 @@ def compare(a) -> int:
             else:
                 n_rows = len(sides[joint[0]][1])
                 got = sum(1 for r in sides[joint[0]][1].values()
-                          if (r.get("verify") or {}).get("verify_blocks_joint_v1", 0) > 0)
+                          if _count(r, "verify_blocks_joint_v1") > 0)
                 need = math.ceil(G1B_MIN_JOINT_FRACTION * n_rows)
                 if got < need:
                     integrity.append(f"the joint path ran on only {got} of {n_rows} rows of side "
@@ -496,7 +528,7 @@ def compare(a) -> int:
     if ca is not None and cb is not None and ca != cb:
         integrity.append("the two sides ran different serving code")
     expected = (ea or set()) | (eb or set()) if not legacy else (set(ka) | set(kb))
-    same = diff = miss = 0; statuses = []; details = []
+    same = diff = miss = 0; statuses = []; details = []; c120_rows = []
     for k in sorted(expected | set(ka) | set(kb)):
         absent = [n for n, d in (("A", ka), ("B", kb)) if k not in d]
         if absent:
@@ -510,17 +542,26 @@ def compare(a) -> int:
             integrity.append(f"request hash differs for {k}: the two sides did not answer the same request")
         ident = all(x.get(f) == y.get(f) for f in _IDENTITY)
         same += ident; diff += not ident
-        statuses.append({"key": list(k), "status": "identical" if ident else "differing"})
-        if not ident:
+        jrow = {"A": x, "B": y}.get(joint_side)
+        c120 = (not ident and jrow is not None
+                and _count(jrow, "verify_blocks_straddle_len2") > 0)
+        if c120:   # C120: a length-2 straddle runs per-query under joint_v1: expected divergence
+            diff -= 1
+            c120_rows.append(list(k))
+        statuses.append({"key": list(k), "status": "identical" if ident else
+                         "c120_expected_divergence" if c120 else "differing"})
+        if not ident and not c120:
             details.append({"key": list(k), "a": {f: x.get(f) for f in _IDENTITY},
                             "b": {f: y.get(f) for f in _IDENTITY}})
-    if same + diff == 0 and not legacy:
+    if same + diff + len(c120_rows) == 0 and not legacy:
         integrity.append("no comparable pairs (pairs == 0)")
-    joint = {n: sum(1 for r in d.values()
-                    if (r.get("verify") or {}).get("verify_blocks_joint_v1", 0) > 0)
+    joint = {n: sum(1 for r in d.values() if _count(r, "verify_blocks_joint_v1") > 0)
              for n, d in (("A", ka), ("B", kb))}
-    print(f"pairs={same + diff} identical={same} differing={diff} missing={miss} "
-          f"(A={A.get('tag')} B={B.get('tag')}) joint_rows A={joint['A']} B={joint['B']}")
+    print(f"pairs={same + diff + len(c120_rows)} identical={same} differing={diff} missing={miss} "
+          f"c120_expected={len(c120_rows)} (A={A.get('tag')} B={B.get('tag')}) "
+          f"joint_rows A={joint['A']} B={joint['B']}")
+    for k in c120_rows:
+        print(" C120-EXPECTED-DIVERGENCE", tuple(k), "(length-2 straddle ran per-query under joint_v1)")
     for d in details:
         print(" DIFF", tuple(d["key"]), "A:", d["a"]["finish_reason"], d["a"]["completion_tokens"],
               "B:", d["b"]["finish_reason"], d["b"]["completion_tokens"])
@@ -533,8 +574,9 @@ def compare(a) -> int:
         print("NON-GATING: a replay without expected_keys (pre-M58 form) cannot establish exact "
               "key coverage; this comparison is informational only (exit 3).")
     if a.out:
-        json.dump({"a": A.get("tag"), "b": B.get("tag"), "pairs": same + diff, "identical": same,
-                   "differing": diff, "missing": miss, "statuses": statuses, "details": details,
+        json.dump({"a": A.get("tag"), "b": B.get("tag"), "pairs": same + diff + len(c120_rows),
+                   "identical": same, "differing": diff, "missing": miss,
+                   "c120_rows": c120_rows, "statuses": statuses, "details": details,
                    "integrity": integrity, "joint_rows": joint, "legacy": legacy},
                   open(a.out, "w"), indent=1)
     if miss or integrity:
