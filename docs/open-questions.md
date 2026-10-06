@@ -35,7 +35,7 @@ is the record that stops it being re-asked.
 
 ### C116 — RULED 2026-10-06 (operator: "approved but could the provenance be gathered at the start … so that we don't have to waste work?"): the retrieval / reasoning ladders no longer publish a result whose end-of-run provenance gather failed (result stays `.pending-<pid>`, rc 3; Codex review 10 B1), AND all three ladders (capacity too) run a provenance preflight gather at entry — after the M50 and serving-state checks, before any model request — refusing with rc 3 if it fails. Capacity's end-of-run behaviour (rows preserved, rc 1, no manifest) is unchanged.
 
-### C115 — RULED 2026-10-05 (operator): adopt BOTH; merge the fork and router branches into their `main`; vision gate re-run BEFORE shipping (20/20 PASS); push after it. Shipped the same day. Original entry kept below.
+### C115 — RULED 2026-10-05 (operator): adopt BOTH; merge the fork and router branches into their `main`; vision gate re-run BEFORE shipping (20/20 PASS); push after it. Shipped the same day. Original entry kept below. **First daily-driver start verified 2026-10-06 (worker flags, self-test line, `sdpa_forced=528` on a 16.7K prompt, OWUI vision turn OK; `docs/handoff.md`).**
 
 ### C115 — (original) adopt `attention_policy: fused_v1` and `lazy_prompt_embeddings: true` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`?
 

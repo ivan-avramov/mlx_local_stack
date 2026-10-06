@@ -20,10 +20,17 @@ THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `d
 - **ReviewBench DEFERRED (C122)**; reasons annotated at the top of `docs/proposal-reviewbench.md`. Cold review kept in
   `$STACK_WORKDIR/reviewbench/`.
 
+- **First daily-driver start under M57 VERIFIED (2026-10-06 02:45 UTC, `runserver.sh`, `MLX_VLM_CACHE_SESSION_MAX=2`, `APC_ENABLED` absent
+  on router and worker):** worker cmdline carries `--attention-policy fused_v1 --lazy-prompt-embeddings --draft-kind mtp` (full line in
+  `logs/mlx_vlm.log`); startup lines `attention_policy=fused_v1 self-test: 12 forced calls in 0.03s` and `lazy_prompt_embeddings=on`;
+  a 16,745-token prompt → `Request completed … prefill=818.7 tok/s decode=44.0 tok/s sdpa_forced=528 sdpa_auto=16`, cold TTFT 27.5 s
+  incl. load; one vision turn through OWUI (generated red/white PNG → "Red and white", 1.6 s, `sdpa_auto=32`). Observation, no action:
+  the router logged `memory.pressure.warn ram_percent=87.2 ram_available_gb=8.8` during the cold load (OWUI/docker + task model +
+  main model; 82 % free afterwards). Artifacts: `$STACK_WORKDIR/m57/start_verify/`.
+
 ## Open items, in priority order
 
-1. **First daily-driver start under M57 is still unverified** (worker cmdline `--attention-policy fused_v1 --lazy-prompt-embeddings`; one
-   `Request completed` line with `sdpa_forced > 0` on a long prompt; one vision turn through OWUI). Operator starts `runserver.sh`.
+1. ~~First daily-driver start under M57~~ verified (above).
 2. **C121 — opencode sessions are UNSEEDED** (found by the ReviewBench review, verified): proposal owed BEFORE any new opencode rows —
    per-session seed in provider options, a captured request body proving it reaches the router, lab-notebook retraction of the
    "distinct paired seeds" wording (no rerun; ranks were stable). Same proposal: `OPENCODE_DISABLE_CLAUDE_CODE` never set (R8).
