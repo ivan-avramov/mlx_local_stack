@@ -11,6 +11,13 @@ from .retrieval import build_context, make_question, score
 DEFAULT_GRID = (160_000, 192_000, 224_000, 256_000)
 
 
+def _sdpa_from_raw(raw_timings: dict) -> dict | None:
+    """M57 dispatch counters (`sdpa_forced` / `sdpa_auto`) from the timings block, or None when
+    the server sends none (policy `auto`, or a pre-M57 server). Same shape as `generate` rows."""
+    sd = {k: raw_timings[k] for k in ("sdpa_forced", "sdpa_auto") if k in (raw_timings or {})}
+    return sd or None
+
+
 def _draft_from_raw(raw_timings: dict) -> dict | None:
     """Speculative-decoding engagement counters from `out["raw_timings"]`, or None when
     the server reports no drafter (draft_kind absent -> suffix/MTP was not engaged)."""
@@ -108,7 +115,7 @@ def run_ladder(driver, model: str, chars_per_token: float,
                    "memory_target_gb": memory_target_gb, "retrieval_acc": None,
                    "execution_status": "error", "within_memory_target": None,
                    "elapsed_s": time.monotonic() - started,
-                   "draft": None, "acceptance": None,
+                   "draft": None, "acceptance": None, "sdpa": None,
                    "error": f"{type(e).__name__}: {str(e)[:160]}",
                    "error_kind": "timeout" if _is_timeout_error(e) else "request_error"}
             records.append(row)
@@ -143,7 +150,8 @@ def run_ladder(driver, model: str, chars_per_token: float,
                "within_memory_target": target_flag,
                "memory_telemetry_note": "Missing or invalid MLX peak" if target_flag is None else None,
                "draft": draft,
-               "acceptance": _acceptance_from_draft(draft)}
+               "acceptance": _acceptance_from_draft(draft),
+               "sdpa": _sdpa_from_raw(out.get("raw_timings") or {})}
         records.append(row)
         if on_record:
             on_record(row)

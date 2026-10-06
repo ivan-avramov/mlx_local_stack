@@ -588,6 +588,29 @@ class ServingStateError(ServedConfigError):
     ServedConfigError REFUSE the run instead of treating it as best-effort provenance."""
 
 
+class ProvenancePreflightError(RuntimeError):
+    """`preflight_gather` could not assemble a manifest at ENTRY: the run is refused before any
+    model request rather than discovering at exit that its result cannot be published."""
+
+
+def preflight_gather(model: str, *, profile: str, router: dict, label: str,
+                     registry_path: str | None = None) -> dict:
+    """Operator ruling 2026-10-06 (on Codex review 10 B1): an end-of-run gather failure now leaves
+    the ladder STAGED and exits nonzero; to not waste a multi-hour ladder on a provenance problem
+    that was already present at entry, run the same gather once here, right after the M50 /
+    serving-state checks and before the first measured request. A ServedConfigError propagates
+    (it is a refusal in its own right); any other failure becomes ProvenancePreflightError."""
+    try:
+        return gather(model, registry_path, profile=profile, router=router,
+                      runtime={"probe": label, "preflight": True})
+    except ServedConfigError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise ProvenancePreflightError(
+            f"provenance preflight for {label!r} failed: {type(e).__name__}: {e} — the end-of-run "
+            f"gather would fail the same way; nothing was requested or created.") from e
+
+
 def _flag_value(argv, flag):
     """Value of `--flag value` / `--flag=value` in an argv list (last wins); None if absent."""
     val = None
@@ -666,16 +689,21 @@ def result_digest(path: str) -> str:
 
 def manifest_matches_result(manifest_path: str, result_path: str):
     """True iff the manifest's recorded `result_sha256` (and `result_file` basename, when
-    present) describe `result_path`; None when the manifest carries no digest (an older
-    manifest); False for a mismatch or an unreadable manifest/result (a mixed or damaged pair)."""
+    present) describe `result_path`; None when a well-formed manifest carries no digest (an older
+    manifest beside an existing result — a legacy pair this helper cannot judge); False for a
+    mismatch, a non-object manifest, an unreadable manifest/result or a missing result (a mixed
+    or damaged pair). Content equality is NOT run identity: two runs with different provenance
+    but byte-identical results also return True (Codex review 10, B1)."""
     try:
         with open(manifest_path) as f:
             man = json.load(f)
     except Exception:  # noqa: BLE001
         return False
-    want = man.get("result_sha256") if isinstance(man, dict) else None
-    if want is None:
-        return None
+    if not isinstance(man, dict):
+        return False                                    # B2: `[]` / `"x"` is damage, not legacy
+    want = man.get("result_sha256")
+    if want is None:                                    # legacy: judge only that a result is readable
+        return None if os.path.isfile(result_path) and os.access(result_path, os.R_OK) else False
     if man.get("result_file") not in (None, os.path.basename(result_path)):
         return False
     try:
@@ -687,7 +715,10 @@ def manifest_matches_result(manifest_path: str, result_path: str):
 def publish_pair(result_stage: str, result_final: str, manifest_stage, manifest_final) -> None:
     """Publish a staged result and (when given) its staged manifest back to back — result
     first, manifest second, nothing in between. A tear after the first replace leaves the OLD
-    manifest beside the NEW result, which `manifest_matches_result` reports as False."""
+    manifest beside the NEW result; `manifest_matches_result` reports that as False when the old
+    manifest carries a digest and the bytes differ, None for a digestless legacy manifest (B1:
+    the tear is detectable, not always provably mixed). Callers must not reach this function
+    with `manifest_stage=None` after a failed gather — see run_retrieval / run_reasoning."""
     os.replace(result_stage, result_final)
     if manifest_stage:
         os.replace(manifest_stage, manifest_final)
@@ -1131,6 +1162,82 @@ def _scrub(v, extra_homes=()):
     return v
 
 
+def _placeholder_roots(*, for_write: bool = False) -> list[tuple[str, str]]:
+    """(placeholder, absolute root) pairs, longest root first: `$STACK_WORKDIR` nests under
+    `$HOME`, so it must be tried before `$HOME` or every workdir path would come out as
+    `$HOME/ws/...` (a real path shape, just not a portable one). `for_write=True` resolves the
+    workdir through the trapped `paths.stack_workdir` (the result will be used as a filesystem
+    path); display-only callers use the untrapped resolver."""
+    roots = []
+    try:
+        wd = (paths.stack_workdir(required=False) if for_write
+              else paths.resolve_stack_workdir(required=False))
+    except Exception:  # noqa: BLE001 — a malformed config.sh must not break manifest writing
+        wd = None
+    if wd:
+        roots.append(("$STACK_WORKDIR", str(wd)))
+    home = os.path.expanduser("~")
+    if home and home != "/":
+        roots.append(("$HOME", home))
+    return sorted(roots, key=lambda r: len(r[1]), reverse=True)
+
+
+# A root is replaced only as a whole path component: not inside a word or a longer path
+# (`/backup/Users/x`, `/Users/xy`), but after a separator-like character, a URL scheme or `//`.
+_PATH_BOUNDARY_BEFORE = r"(?<![\w.\-~$])(?<![\w.\-~$]/)"
+_PATH_BOUNDARY_AFTER = r"(?=/|$|\.(?!\w)|[\s'\":,;)\]}])"
+
+
+def portable_path(v, _roots=None):
+    """Placeholder form of a persisted string: each BOUNDED occurrence of the resolved
+    `$STACK_WORKDIR` or `$HOME` root becomes its placeholder (handoff 2026-10-06 item 4:
+    `vision_gate` wrote an absolute `corpus` path into a committed manifest — the public-repo PII
+    hook caught it; this is the one place every driver's `runtime` strings pass through).
+    PathLike values are converted; other non-strings pass through."""
+    if hasattr(v, "__fspath__"):
+        v = os.fspath(v)
+    if not isinstance(v, str):
+        return v
+    for placeholder, root in (_roots if _roots is not None else _placeholder_roots()):
+        v = re.sub(_PATH_BOUNDARY_BEFORE + re.escape(root) + _PATH_BOUNDARY_AFTER,
+                   lambda m, ph=placeholder: ph, v)
+    return v
+
+
+class UnresolvedPlaceholderError(ValueError):
+    """`expand_portable(strict=True)` found a placeholder it could not resolve (no workdir
+    configured): the string must not be used as a filesystem path."""
+
+
+def expand_portable(v, *, strict: bool = False):
+    """Inverse of `portable_path` for readers that turn a manifest path back into a filesystem
+    path (e.g. an AgentBench resume reading `runtime.transcripts_dir`). Only a BOUNDED placeholder
+    expands: a literal `$HOME` inside a longer path (`.../runs/$HOME/x`) or a word (`$HOMEwork`)
+    stays as written (cold review 1, B1). The workdir is resolved through the trapped writer
+    resolver. `strict=True` raises when a bounded placeholder survives (e.g. `$STACK_WORKDIR` with
+    no workdir configured) instead of handing back a relative path that would land under the cwd."""
+    if not isinstance(v, str):
+        return v
+    for placeholder, root in _placeholder_roots(for_write=True):
+        v = re.sub(_PATH_BOUNDARY_BEFORE + re.escape(placeholder) + _PATH_BOUNDARY_AFTER,
+                   lambda m: root, v)
+    if strict:
+        for placeholder in ("$STACK_WORKDIR", "$HOME"):
+            if re.search(_PATH_BOUNDARY_BEFORE + re.escape(placeholder) + _PATH_BOUNDARY_AFTER, v):
+                raise UnresolvedPlaceholderError(
+                    f"{placeholder} in {v!r} cannot be expanded (not configured); refusing to use it as a path")
+    return v
+
+
+def _portable_deep(v, _roots=None):
+    roots = _placeholder_roots() if _roots is None else _roots
+    if isinstance(v, dict):
+        return {portable_path(k, roots): _portable_deep(x, roots) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_portable_deep(x, roots) for x in v]
+    return portable_path(v, roots)
+
+
 def assert_served_config(base_url: str | None = None, *, port: int | None = None,
                          lookup=None, env: dict | None = None) -> dict:
     """M50 tripwire. Returns {"pid", "config" ($HOME-form), "config_raw", "port", "cmdline"} for
@@ -1421,7 +1528,7 @@ def _runtime_block(runtime: dict = None, model: str = None,
         block.update(fn(model, registry_path) if model
                      else {key: "unknown", key + "_source": "no-model-given"})
     if runtime:
-        block.update(runtime)
+        block.update(_portable_deep(runtime))   # no absolute home/workdir path reaches a manifest
     return block
 
 

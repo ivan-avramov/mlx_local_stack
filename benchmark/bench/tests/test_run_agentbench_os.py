@@ -1969,7 +1969,7 @@ def test_resume_reuses_the_same_run_id_transcripts_dir_P29(tmp_path, monkeypatch
     assert rc == 0
     man2 = json.loads((workdir / "rows.manifest.json").read_text())
     assert man2["runtime"]["transcripts_dir"] == first_dir
-    assert (Path(first_dir) / "m1.json").exists()
+    assert (Path(R.provenance.expand_portable(first_dir)) / "m1.json").exists()
 
 
 def test_resume_refuses_when_the_resolved_transcripts_dir_is_outside_confinement_P42(tmp_path, monkeypatch, capsys):
@@ -2044,7 +2044,7 @@ def test_resume_does_not_rewrite_an_existing_transcript(tmp_path, monkeypatch):
     rc = R.main(_args(tmp_path, limit=1, **{"transcripts-dir": str(tdir)}))
     assert rc == 0 and seen == ["m0"]
     man1 = json.loads((tmp_path / "rows.manifest.json").read_text())
-    real_tdir = Path(man1["runtime"]["transcripts_dir"])   # <tdir>/m/<run_id>/, not <tdir>/ flat
+    real_tdir = Path(R.provenance.expand_portable(man1["runtime"]["transcripts_dir"]))   # <tdir>/m/<run_id>/, not flat
 
     # overwrite m0's REAL transcript with a sentinel, simulating a pre-existing file a resume
     # must never touch again.
@@ -2073,7 +2073,7 @@ def test_manifest_records_transcripts_dir(tmp_path, monkeypatch):
     man = json.loads((tmp_path / "rows.manifest.json").read_text())
     # 10th cold review (between-arms fix 1): nested <tdir>/<model>/<run_id>/, not the bare
     # explicit --transcripts-dir flat.
-    recorded = Path(man["runtime"]["transcripts_dir"])
+    recorded = Path(R.provenance.expand_portable(man["runtime"]["transcripts_dir"]))
     assert recorded.parent == tdir / "m"
     assert recorded != tdir
 
@@ -2130,7 +2130,7 @@ def test_transcripts_dir_defaults_to_stack_workdir_m54_transcripts_model(tmp_pat
     matches = list(base.glob("*/m0.json"))
     assert len(matches) == 1, f"expected exactly one run-id subdir under {base}, found {matches}"
     man = json.loads((workdir / "rows.manifest.json").read_text())
-    assert man["runtime"]["transcripts_dir"] == str(matches[0].parent)
+    assert R.provenance.expand_portable(man["runtime"]["transcripts_dir"]) == str(matches[0].parent)
 
 
 # --------------------------------------------------------------------------- scripts_root migration CLI (17th round)

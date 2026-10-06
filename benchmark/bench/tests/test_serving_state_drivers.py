@@ -105,8 +105,10 @@ def test_refuses_before_the_first_request_on_a_disagreement_known_at_start(monke
 @pytest.mark.parametrize("name", list(DRIVERS))
 def test_refuses_after_load_when_the_worker_that_came_up_disagrees(monkeypatch, tmp_path, name):
     mod, lad, canned, extra = DRIVERS[name]
-    # first lookup (start): no worker yet; later lookups: a worker WITHOUT the declared flag
-    drv, ladder_calls, results = _setup(monkeypatch, tmp_path, mod, lad, canned, [[], [ARGV]])
+    # before the load: no worker yet (however many lookups the entry checks + the provenance
+    # preflight make); once the driver has loaded: a worker WITHOUT the declared flag
+    drv, ladder_calls, results = _setup(monkeypatch, tmp_path, mod, lad, canned, [[]])
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [ARGV] if drv.calls else [])
     with pytest.raises(P.ServedConfigError):
         mod.main(_argv(extra))
     assert "preload" in drv.calls or "complete" in drv.calls     # the load did happen
@@ -133,22 +135,31 @@ def test_no_worker_at_all_falls_back_to_the_registry(monkeypatch, tmp_path, name
 @pytest.mark.parametrize("name", list(DRIVERS))
 def test_end_of_run_gather_no_longer_swallows_a_served_config_error(monkeypatch, tmp_path, name):
     mod, lad, canned, extra = DRIVERS[name]
-    _setup(monkeypatch, tmp_path, mod, lad, canned, [[GOOD]])
+    _, ladder_calls, _ = _setup(monkeypatch, tmp_path, mod, lad, canned, [[GOOD]])
+    real, n = P.gather, {"calls": 0}
 
-    def boom(*a, **k):
+    def boom_late(*a, **k):               # the entry preflight passes; the END-of-run gather raises
+        n["calls"] += 1
+        if n["calls"] == 1:
+            return real(*a, **k)
         raise P.ServingStateError("C35 tripwire: attention_policy changed")
-    monkeypatch.setattr(P, "gather", boom)
+    monkeypatch.setattr(P, "gather", boom_late)
     with pytest.raises(P.ServedConfigError):
         mod.main(_argv(extra))
+    assert ladder_calls == [1]            # it really was the end-of-run gather that refused
 
 
 @pytest.mark.parametrize("name", list(DRIVERS))
-def test_end_of_run_gather_still_swallows_ordinary_errors(monkeypatch, tmp_path, name):
+def test_ordinary_gather_failure_at_entry_refuses_every_driver_before_the_ladder(monkeypatch, tmp_path, name):
+    """Operator ruling 2026-10-06 (Codex review 10 B1): an ordinary gather failure is a refusal
+    at entry (rc 3, ladder never called), distinct from a ServedConfigError (which raises)."""
     mod, lad, canned, extra = DRIVERS[name]
-    _setup(monkeypatch, tmp_path, mod, lad, canned, [[GOOD]])
+    _, ladder_calls, _ = _setup(monkeypatch, tmp_path, mod, lad, canned, [[GOOD]])
 
     def boom(*a, **k):
         raise ValueError("ordinary")
     monkeypatch.setattr(P, "gather", boom)
     rc = mod.main(_argv(extra))
-    assert rc in (0, 1)                  # capacity exits 1 on a missing manifest; others stay 0
+    assert rc == 3
+    assert ladder_calls == []
+    assert not list((tmp_path / "results").iterdir())     # nothing created, not even the model dir

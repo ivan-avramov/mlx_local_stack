@@ -108,3 +108,24 @@ def test_generate_run_persists_draft_counters(tmp_path, monkeypatch):
     row = json.loads((tmp_path / "m" / "aime.jsonl").read_text().splitlines()[0])
     assert row["draft"] == {"draft_kind": "mtp", "draft_rounds": 3, "draft_n": 7,
                             "draft_n_accepted": 5}
+
+
+def test_generate_run_persists_content_and_reasoning_digests(tmp_path, monkeypatch):
+    """Handoff 2026-10-06 item 4: identity checks between rows (lazy-embeddings parity, M58 gate 1)
+    need a digest per row. `content_sha256` digests the persisted (thinking-stripped) content so a
+    reader can recompute it from the row; `reasoning_sha256` digests the FULL reasoning text, which
+    the row otherwise keeps only in compressed form."""
+    import hashlib
+    import json
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    monkeypatch.setattr(B, "load", lambda b, lim, seed: [{"id": "t1", "prompt": "p"}])
+    monkeypatch.setattr(C, "preload", lambda m, **k: 0.0)
+    r = _fake_probe_result()
+    r["content"] = "<think>tt</think>final answer"
+    r["reasoning"] = "long trace " * 50
+    monkeypatch.setattr(C, "probe", lambda m, msgs, params, timeout=3600, tools=None: r)
+    G.run(["m"], ["aime"], {})
+    row = json.loads((tmp_path / "m" / "aime.jsonl").read_text().splitlines()[0])
+    assert row["content_sha256"] == hashlib.sha256(row["content"].encode()).hexdigest()
+    assert row["reasoning_sha256"] == hashlib.sha256(r["reasoning"].encode()).hexdigest()
+    assert row.get("reasoning") != r["reasoning"]              # the full trace is still not persisted

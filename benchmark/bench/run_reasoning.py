@@ -6,6 +6,7 @@ Writes benchmark/results/<model>/reasoning.json."""
 import argparse
 import json
 import os
+import sys
 
 from . import client, provenance
 from .driver import MlxServeDriver
@@ -143,6 +144,12 @@ def _run(args, grid, router, guard) -> int:
                          f"--resume would mix its rows with a different design/serving state. Use "
                          f"--resume or a fresh --out-tag.")
     provenance.assert_serving_state(args.model)        # M57: before the first model request
+    try:    # provenance preflight: refuse now rather than fail to publish after the ladder
+        provenance.preflight_gather(args.model, profile=args.sampling_profile, router=router,
+                                    label="reasoning")
+    except provenance.ProvenancePreflightError as e:
+        print(f"[reasoning] REFUSED: {e}", file=sys.stderr, flush=True)
+        return 3
     driver = MlxServeDriver()
 
     if not args.no_preload:
@@ -275,8 +282,8 @@ def _run(args, grid, router, guard) -> int:
     with open(stage_path, "w") as f:
         json.dump(result, f, indent=2)
 
-    # Provenance beside the ladder (same pattern as run_retrieval.py T1.6 / run_capacity.py):
-    # best-effort, never lose a finished ladder to a provenance failure.
+    # Provenance beside the ladder (same pattern as run_retrieval.py T1.6 / run_capacity.py).
+    # C116 (2026-10-06): no longer best-effort — a failed gather leaves the result staged, rc 3.
     man = None
     try:
         man = provenance.gather(args.model, profile=args.sampling_profile,
@@ -290,8 +297,15 @@ def _run(args, grid, router, guard) -> int:
         # run's journal and its sidecar aside under an explicit refused marker; an older manifest
         # is untouched.
         raise
-    except Exception as e:  # noqa: BLE001 — never lose a finished ladder to provenance
-        print(f"[reasoning] WARNING: manifest not written: {e}", flush=True)
+    except Exception as e:  # noqa: BLE001
+        # Codex review 10 B1: a result published WITHOUT its manifest would stand beside an OLDER
+        # manifest under canonical names — the mixed pair the digest exists to prevent. The ladder
+        # is not lost: it stays staged as `.pending-<pid>` for inspection; the run exits nonzero so
+        # a queue never treats it as complete. Recovery: `--resume` (the journal has every rung);
+        # a hand re-gather would stamp the wrong git/registry/router state.
+        print(f"[reasoning] ERROR: provenance gather failed ({e}); result left staged at {stage_path}, "
+              f"nothing published", flush=True)
+        return 3
     # C106: publish only if the served runtime is still the one verified at entry (a drift
     # raises; the guard stamps `served_config_drift` and quarantines result, journal, sidecar).
     exit_blk = guard.verify()

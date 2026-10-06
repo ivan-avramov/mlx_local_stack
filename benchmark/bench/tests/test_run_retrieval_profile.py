@@ -102,16 +102,44 @@ def test_manifest_tag_filename(monkeypatch, tmp_path):
     assert (tmp_path / "M" / "retrieval.t07.manifest.json").exists()
 
 
-def test_manifest_never_blocks_a_finished_ladder(monkeypatch, tmp_path):
-    """provenance failures are best-effort: main() must still return 0 and the ladder
-    output must still be written."""
+def test_gather_failure_at_entry_refuses_before_any_model_request(monkeypatch, tmp_path):
+    """Operator ruling 2026-10-06 (Codex review 10 B1): provenance is no longer best-effort. A
+    gather that fails at ENTRY refuses the run (rc 3) before the ladder runs or anything is
+    written, so a multi-hour ladder is never spent on a result that could not be published."""
     _patch(monkeypatch, tmp_path)
+    import os
     import bench.provenance as P
+    calls = []
+    monkeypatch.setattr(R, "run_retrieval_ladder", lambda *a, **kw: calls.append(1) or CANNED_PASS_FAIL)
 
     def boom_gather(*a, **kw):
         raise RuntimeError("provenance backend down")
     monkeypatch.setattr(P, "gather", boom_gather)
     rc = R.main(["--model", "M", "--no-preload", "--sampling-profile", "production"])
-    assert rc == 0
-    assert os.path.exists(os.path.join(tmp_path, "M", "retrieval.json"))
-    assert not os.path.exists(os.path.join(tmp_path, "M", "retrieval.manifest.json"))
+    assert rc == 3
+    assert calls == []
+    assert not os.path.exists(os.path.join(str(tmp_path), "M", "retrieval.json"))
+    assert not os.path.exists(os.path.join(str(tmp_path), "M", "retrieval.manifest.json"))
+
+
+def test_gather_failure_at_exit_leaves_the_result_staged_and_exits_3(monkeypatch, tmp_path):
+    """The preflight passed but the end-of-run gather failed: the finished ladder is NOT lost
+    (it stays `.pending-<pid>`), nothing is published under a canonical name, rc 3."""
+    _patch(monkeypatch, tmp_path)
+    import os
+    import bench.provenance as P
+    real = P.gather
+    n = {"calls": 0}
+
+    def flaky_gather(*a, **kw):
+        n["calls"] += 1
+        if n["calls"] == 1:
+            return real(*a, **kw)
+        raise RuntimeError("provenance backend down")
+    monkeypatch.setattr(P, "gather", flaky_gather)
+    rc = R.main(["--model", "M", "--no-preload", "--sampling-profile", "production"])
+    assert rc == 3
+    d = os.path.join(str(tmp_path), "M")
+    assert not os.path.exists(os.path.join(d, "retrieval.json"))
+    assert not os.path.exists(os.path.join(d, "retrieval.manifest.json"))
+    assert [f for f in os.listdir(d) if f.startswith("retrieval.json.pending-")]

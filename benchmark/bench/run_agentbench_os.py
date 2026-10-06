@@ -190,7 +190,7 @@ def run_transcripts_dir(args, mp: Path, is_resume: bool) -> Path:
         except Exception:  # noqa: BLE001
             prev_td = None
         if prev_td:
-            return Path(prev_td)
+            return Path(provenance.expand_portable(prev_td, strict=True))   # manifests hold placeholder form
     run_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     return base / run_id
 

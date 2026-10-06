@@ -7,6 +7,7 @@ import argparse
 import json
 import math
 import os
+import sys
 from pathlib import Path
 
 from . import client, provenance
@@ -89,6 +90,12 @@ def _run(ap, args, grid, expected, router, guard) -> int:
     guard.track(destinations[1])
     # M57: serving controls are resolved BEFORE anything is created or requested.
     provenance.assert_serving_state(args.model)
+    try:    # provenance preflight: refuse now rather than finish a ladder with no manifest
+        provenance.preflight_gather(args.model, profile=args.sampling_profile, router=router,
+                                    label="capacity_ladder")
+    except provenance.ProvenancePreflightError as e:
+        print(f"[capacity] REFUSED: {e}", file=sys.stderr, flush=True)
+        return 3
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with CapacityMonitor(len(grid), expected) as monitor:

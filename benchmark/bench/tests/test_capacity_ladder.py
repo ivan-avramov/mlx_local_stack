@@ -178,3 +178,31 @@ def test_ladder_params_forwarded_to_driver():
     assert received[0]["temperature"] == 0.6
     assert received[0]["max_tokens"] == 256
     assert received[0]["thinking_budget"] == 256
+
+
+# --------------------------------------------------------------------------- M57 sdpa counters (handoff 2026-10-06 item 4)
+class SdpaDriver(DraftDriver):
+    """A policy != auto server adds `sdpa_forced` / `sdpa_auto` to the timings block."""
+    def complete(self, model, messages, params, timeout=3600):
+        out = super().complete(model, messages, params, timeout)
+        out["raw_timings"] = {**out["raw_timings"], "sdpa_forced": 12, "sdpa_auto": 3}
+        return out
+
+
+def test_ladder_rows_carry_the_sdpa_dispatch_counters_when_the_server_sends_them():
+    recs = L.run_ladder(SdpaDriver(), "m", chars_per_token=4.0, idle_baseline_gb=0.0,
+                        model_pid=99999, params=_PARAMS, grid=(160000,), sampler_factory=FakeSampler)
+    assert recs[0]["sdpa"] == {"sdpa_forced": 12, "sdpa_auto": 3}
+
+
+def test_ladder_rows_sdpa_is_none_under_auto_and_on_error_rungs():
+    recs = L.run_ladder(DraftDriver(), "m", chars_per_token=4.0, idle_baseline_gb=0.0,
+                        model_pid=99999, params=_PARAMS, grid=(160000,), sampler_factory=FakeSampler)
+    assert recs[0]["sdpa"] is None
+
+    class OOMDriver:
+        def complete(self, model, messages, params, timeout=3600):
+            raise RuntimeError("HTTP Error 500: Internal Server Error")
+    recs = L.run_ladder(OOMDriver(), "m", chars_per_token=4.0, idle_baseline_gb=0.0,
+                        model_pid=99999, params=_PARAMS, grid=(160000,), sampler_factory=FakeSampler)
+    assert recs[0]["execution_status"] == "error" and recs[0]["sdpa"] is None

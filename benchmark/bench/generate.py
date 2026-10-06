@@ -6,6 +6,7 @@
 - Work runs in ~chunk-minutes time boxes; at each breakpoint we print progress + ETA.
   `chunks="all"` runs to completion; `chunks=N` auto-runs N chunks then stops (runway).
 """
+import hashlib
 import json
 import os
 import re
@@ -553,6 +554,14 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                 _sd = {k: _tm[k] for k in ("sdpa_forced", "sdpa_auto") if k in _tm}
                 if _sd:
                     row["sdpa"] = _sd
+                # Row identity digests (handoff 2026-10-06): `content_sha256` is over the PERSISTED
+                # content (thinking-stripped; recomputable from the row — NOT the raw wire content
+                # that parity_replay digests under the same key); `reasoning_sha256` is over the
+                # FULL reasoning text, which the row keeps only compressed below — the only durable
+                # identity of the trace; null when the server sent no reasoning field.
+                row["content_sha256"] = hashlib.sha256(row["content"].encode()).hexdigest()
+                row["reasoning_sha256"] = (hashlib.sha256(p["reasoning"].encode()).hexdigest()
+                                           if p.get("reasoning") else None)
                 # Convergence guard: a thinking-budget / max_tokens hit is NOT convergence
                 # even though finish_reason can be "stop". Recorded per item; a run with any
                 # non-converged item is flagged INVALID at grade time (never silently scored).

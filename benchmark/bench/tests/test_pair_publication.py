@@ -121,3 +121,68 @@ def test_helper_true_false_and_unreadable(tmp_path):
     (tmp_path / "bad.json").write_text("{not json")
     assert P.manifest_matches_result(str(tmp_path / "bad.json"), str(tmp_path / "r.json")) is False
     assert P.manifest_matches_result(str(tmp_path / "gone.json"), str(tmp_path / "r.json")) is False
+
+
+# --------------------------------------------------------------------------- Codex review 10 residuals B2/B3
+def test_helper_treats_a_non_object_manifest_as_damaged_not_legacy(tmp_path):
+    """B2: valid JSON that is not an object (`[]`, `"x"`) is damage, not a digestless legacy manifest."""
+    (tmp_path / "r.json").write_text("x")
+    for body in ("[]", '"s"', "null", "3"):
+        (tmp_path / "m.json").write_text(body)
+        assert P.manifest_matches_result(str(tmp_path / "m.json"), str(tmp_path / "r.json")) is False
+
+
+def test_helper_digestless_manifest_beside_a_missing_result_is_damaged(tmp_path):
+    """B2: `None` means 'legacy pair, cannot judge'; it must not be returned when there is no
+    result to judge at all."""
+    (tmp_path / "m.json").write_text(json.dumps({"model": "m"}))
+    assert P.manifest_matches_result(str(tmp_path / "m.json"), str(tmp_path / "gone.json")) is False
+
+
+@pytest.mark.parametrize("name", list(CASES))
+def test_manifest_write_failure_leaves_the_old_pair_and_only_pending_files(monkeypatch, tmp_path, name):
+    """B3: a failure while WRITING the staged manifest (after gather succeeded) must publish
+    nothing — the old pair stays byte-identical and the new result stays `.pending-<pid>`."""
+    mod, ladder, canned = CASES[name]
+    out = _setup(monkeypatch, tmp_path, mod, ladder, canned)
+    _agree(monkeypatch)
+    old_manifest = _old_pair(out, name)
+    real_dump = json.dump
+
+    def dump(obj, fp, *a, **k):
+        if isinstance(obj, dict) and "result_sha256" in obj:
+            raise OSError("injected manifest write failure")
+        return real_dump(obj, fp, *a, **k)
+    monkeypatch.setattr(json, "dump", dump)
+    with pytest.raises(OSError, match="injected"):
+        _run(mod)
+    assert (out / f"{name}.json").read_text() == OLD_RESULT
+    assert (out / f"{name}.manifest.json").read_bytes() == old_manifest
+    assert [p.name for p in out.iterdir() if ".pending-" in p.name]
+
+
+@pytest.mark.parametrize("name", list(CASES))
+def test_ordinary_gather_failure_never_publishes_a_result_beside_the_old_manifest(monkeypatch, tmp_path, name):
+    """B1/B3: an ordinary `gather` exception used to fall through to a result-only publication,
+    leaving NEW result / OLD manifest under canonical names — exactly the mixed pair the digest
+    exists to prevent. Now nothing is published: the new result stays `.pending-<pid>`, the old
+    pair is untouched, and the run exits nonzero."""
+    mod, ladder, canned = CASES[name]
+    out = _setup(monkeypatch, tmp_path, mod, ladder, canned)
+    _agree(monkeypatch)
+    old_manifest = _old_pair(out, name)
+
+    real, n = P.gather, {"calls": 0}
+
+    def boom_after_preflight(*a, **k):
+        n["calls"] += 1
+        if n["calls"] == 1:
+            return real(*a, **k)            # the entry preflight passes
+        raise RuntimeError("registry unreadable")
+    monkeypatch.setattr(P, "gather", boom_after_preflight)
+    rc = _run(mod)
+    assert rc == 3
+    assert (out / f"{name}.json").read_text() == OLD_RESULT
+    assert (out / f"{name}.manifest.json").read_bytes() == old_manifest
+    pending = [p.name for p in out.iterdir() if ".pending-" in p.name]
+    assert pending and all(p.startswith(f"{name}.json") for p in pending)

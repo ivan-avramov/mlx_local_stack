@@ -71,6 +71,13 @@ _CONFIG_SH_WORKDIR = re.compile(r'^\s*(?:export\s+)?STACK_WORKDIR=["\']?([^"\'\n
 
 
 def stack_workdir(*, required: bool = True) -> Path | None:
+    """The out-of-repo artifact home for WRITERS (the test conftest wraps this name to trap any
+    call that resolves outside a test's tmp_path). Read-only consumers that only need the value
+    for string display — `provenance.portable_path` — use `resolve_stack_workdir` directly."""
+    return resolve_stack_workdir(required=required)
+
+
+def resolve_stack_workdir(*, required: bool = True) -> Path | None:
     """The out-of-repo artifact home (AGENTS.md: NO FILESYSTEM POLLUTION OUTSIDE $STACK_WORKDIR).
 
     `STACK_WORKDIR` in the environment wins; otherwise `${XDG_CONFIG_HOME:-~/.config}/mlx_local_stack/

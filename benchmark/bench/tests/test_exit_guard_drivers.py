@@ -98,14 +98,29 @@ def test_capacity_late_serving_state_error_also_sets_both_aside(monkeypatch, tmp
     mod, lad, canned, extra, out = _setup(monkeypatch, tmp_path, "capacity")
     _cap_ladder(monkeypatch, mod, canned)
 
-    def boom(*a, **k):
-        raise P.ServingStateError("C35 tripwire: changed late")
+    boom = _late_serving_state_boom()
     monkeypatch.setattr(P, "gather", boom)
     with pytest.raises(P.ServingStateError):
         mod.main(_argv(extra))
+    assert boom.calls["calls"] == 2                      # preflight passed; the END gather refused
     assert not (out / "capacity_ladder.jsonl").exists() and not (out / "capacity_retrieval.json").exists()
     assert len(list(out.glob("capacity_ladder.jsonl.refused-*"))) == 1
     assert len(list(out.glob("capacity_retrieval.json.refused-*"))) == 1
+
+
+def _late_serving_state_boom():
+    """A gather that passes the ENTRY preflight (operator ruling 2026-10-06) and raises the C35
+    serving-state error only on the end-of-run call — the "changed late" scenario these tests
+    are about; an always-raising stub would now be caught at entry with nothing to quarantine."""
+    real, n = P.gather, {"calls": 0}
+
+    def boom(*a, **k):
+        n["calls"] += 1
+        if n["calls"] == 1:
+            return real(*a, **k)
+        raise P.ServingStateError("C35 tripwire: changed late")
+    boom.calls = n
+    return boom
 
 
 # --------------------------------------------------------------------------- C5: exception paths
@@ -148,11 +163,11 @@ def test_late_gather_refusal_after_drift_stamps_the_quarantined_result(monkeypat
     else:
         monkeypatch.setattr(mod, lad, lambda *a, **k: (late(), canned)[1])
 
-    def boom(*a, **k):
-        raise P.ServingStateError("C35 tripwire: changed late")
+    boom = _late_serving_state_boom()
     monkeypatch.setattr(P, "gather", boom)
     with pytest.raises(P.ServingStateError, match="C35 tripwire"):
         mod.main(_argv(extra))
+    assert boom.calls["calls"] == 2                      # preflight passed; the END gather refused
     aside = list(out.glob(f"{name}.json.refused-*"))
     assert len(aside) == 1
     assert "served_config_drift" in json.loads(aside[0].read_text())
