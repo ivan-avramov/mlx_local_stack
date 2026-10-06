@@ -2,6 +2,44 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-06 — M58 qualification COMPLETE: joint MTP verification scan (`mtp_verify_scan: joint_v1`) for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` — gate 1 PASSED (bitwise identity), decode +15 % at 128K / +19 % at 256K; adoption decision C126
+
+Code under test: fork `m58-joint-verify` @ 664c2ead, router `m58-joint-verify` @ 3f2c87c, stack `m58-provenance` @ e4d3652 (merged
+locally into main; submodules checked out at the branch commits — NOT bumped, NOT pushed). Shipped M57 state otherwise (native16, MTP
+ON, `fused_v1` + lazy embeddings, deployed sampling). Spec `docs/specs/m58-joint-verification-scan.md` v3.2; design, STEP 1 and every
+artefact under `$STACK_WORKDIR/m58/` (`gate1_summary.md`, `gate/`, `g1b/`, `arms/`, `mechanism/`, overlays, scripts, review logs).
+
+**Gate 1 — PASSED (identity).** G1a (same loaded instance, production joint output served, per-query shadow compare under
+`joint_v1+ab`): 24 requests from 8K to 256K (seeded pilot ×10, straddle probe ×4, cold capacity rungs ×4, sustained decode ×6) — ≈ 170K
+shadow-compared blocks, `verify_ab_mismatch = 0` and `verify_ab_invalid = 0` on every request; the live known positive fired exactly as
+the fork's kernel-plan mirror predicts (16 straddle blocks / 16 predicted mismatches at each crossing of 1024, 8192, 32768 and 65536
+keys, plus two 64K decodes that crossed 65536). Load-time self-test on the GPU: `mtp_verify_scan=joint_v1 self-test: 2 cells`.
+G1b (cross-load, `bench.parity_replay` on the C84 frozen 20 requests): `per_query` → `joint_v1` **20/20 identical** (content and
+reasoning digests, finish reason, completion tokens, MTP counters) with the joint path confirmed on 20/20 rows; reload control
+`per_query` → `per_query` 20/20 identical; 0 C120 (length-2 straddle) rows.
+
+**Latency — arms A `per_query` vs B `joint_v1` (AB off), same branch code, k=2 sessions, order A→B then B→A, fresh lean router per
+session, 10-minute idle before every session with the start state logged (140 W, battery 100 %, swap ≈ 6 MB):**
+
+| rung | decode tok/s A → B, session 1 | session 2 | Δ decode s1 / s2 | Δ prefill s1 / s2 | MLX peak |
+|---|---|---|---|---|---|
+| 8K cold | 49.3 → 49.6 | 49.0 → 49.6 | +0.6 % / +1.2 % | +0.2 % / +0.4 % | 37.96 GB both |
+| 64K cold | 33.7 → 36.8 | 33.8 → 36.7 | +9.2 % / +8.6 % | −0.5 % / 0.0 % | 37.96 GB |
+| 128K cold | 21.2 → 24.7 | 21.6 → 24.9 | +16.6 % / +15.6 % | −1.2 % / 0.0 % | 37.97 GB |
+| 256K cold | 13.0 → 15.6 | 13.4 → 16.0 | +19.7 % / +19.0 % | −1.0 % / +0.5 % | 37.97 GB |
+
+Sustained decode (`decode_probe.py`, 1536 emitted tokens per prompt, 3 seeded paired prompts per rung per session, 6 pairs per rung,
+bootstrap interval over prompts × sessions): 64K **+8.1 %** median (mean paired +7.0 %, CI95 [+1.5, +10.7]); 128K **+14.8 %**
+(+15.2 %, CI95 [+13.3, +16.1]); 240K **+19.7 %** (+19.2 %, CI95 [+16.6, +21.0]). `draft_rounds` and acceptance identical in every
+pair (rounds_differ = 0) — the identity result seen from the latency side. Prediction on record was +14 % at 128K, ≈ +15 % at 256K,
+within ±2 % at 8K: met or exceeded. Nothing slower by > 3 % in either session; prefill and peak unchanged.
+
+**Adoption rule (spec P94):** gate 1 PASS ✓; sustained decode at 128K ≥ +8 % in both sessions with the interval excluding 0 ✓; no
+rung or instrument slower by > 3 % in both sessions ✓; prefill / peak within ±3 % ✓. **Recommendation: ADOPT (PROVISIONAL)** —
+registry `mtp_verify_scan: joint_v1` for the first pick, fork + router branches merged and pushed, submodules bumped, fingerprint v8.
+Identity replaces quality requalification; the M57 certification debt (judge panel, Math500) stays separate. Serving optimization —
+no B/C ladder implication. Mechanism session: see the line appended below.
+
 ## 2026-10-05 — M57 ADOPTED (C115): `attention_policy: fused_v1` + `lazy_prompt_embeddings: true` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, PROVISIONAL
 
 Operator ruling 2026-10-05: adopt both; merge the fork and router branches into their `main`; re-run the vision gate before shipping.
