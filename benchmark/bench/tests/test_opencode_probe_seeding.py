@@ -490,10 +490,49 @@ from bench.tests.test_m50_entrypoints import _oc_probe_setup  # noqa: E402
 
 
 @pytest.fixture
-def _stub_bin(monkeypatch, tmp_path_factory):
+def fake_model_mtp_scan(monkeypatch):
+    """Resolve M58 only for the synthetic model used by the probe fixtures."""
+    real = provenance.registry_mtp_verify_scan
+
+    def resolve(model, registry_path=None, worker_lookup=provenance._DEFAULT_LOOKUP):
+        if model == "m":
+            return {"mtp_verify_scan": "per_query", "mtp_verify_scan_source": "registry"}
+        return real(model, registry_path, worker_lookup)
+
+    monkeypatch.setattr(provenance, "registry_mtp_verify_scan", resolve)
+
+
+@pytest.fixture
+def _stub_bin(monkeypatch, tmp_path_factory, fake_model_mtp_scan):
     b = _exe(tmp_path_factory.mktemp("stub") / "opencode", "#!/bin/sh\necho 1.18.30\n")
     monkeypatch.setenv("OPENCODE_PROBE_BIN", str(b))
     return b
+
+
+@pytest.fixture
+def _manifest_without_workers(monkeypatch, tmp_path):
+    """Use the real registry without observing live processes or cached model weights."""
+    monkeypatch.delenv("MLX_SERVE_CONFIG", raising=False)
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    monkeypatch.setattr(provenance, "_worker_argvs", lambda doc: [])
+    monkeypatch.setattr(provenance, "apc_state", lambda: {"apc_enabled": "0", "source": "test"})
+    monkeypatch.setattr(provenance, "session_retention_state", lambda: {})
+    monkeypatch.setattr(provenance, "_resolve_snapshot", lambda hf_path: None)
+    monkeypatch.setattr(provenance, "_git_shas", lambda: {})
+    monkeypatch.setattr(provenance, "_box", lambda: "test")
+
+
+def test_probe_manifest_records_real_registry_mtp_scan(_manifest_without_workers):
+    assert provenance.paths.registry_path() == Path(P.REPO) / "main_models.yaml"
+    man = provenance.gather(MODEL, profile="deployed", runtime={"client": "opencode"}, router={})
+    assert man["runtime"]["mtp_verify_scan"] == "joint_v1"
+    assert man["runtime"]["mtp_verify_scan_source"] == "registry"
+
+
+def test_probe_manifest_refuses_unresolved_fake_model_scan(_manifest_without_workers):
+    # No fake_model_mtp_scan fixture: the real resolver must leave this model unresolved.
+    with pytest.raises(provenance.ServingStateError, match="M58: build_manifest needs a RESOLVED mtp_verify_scan"):
+        provenance.gather("m", profile="deployed", runtime={"client": "opencode"}, router={})
 
 
 def _identity_now(OP):
@@ -1305,7 +1344,7 @@ def test_probe_overlay_check_scrubs_complete_stderr_before_the_tail(monkeypatch,
         assert home not in m and "/Users/" not in m and "loginname" not in m, (j, m[-120:])
 
 
-def test_manifest_drift_error_has_no_home_or_login_fragment_through_the_real_path(tmp_path, tmp_path_factory, monkeypatch):
+def test_manifest_drift_error_has_no_home_or_login_fragment_through_the_real_path(tmp_path, tmp_path_factory, monkeypatch, fake_model_mtp_scan):
     """E1 through main(): item 1 passes, then the destination `debug config` fails (nonzero) at item 2."""
     OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
     monkeypatch.setattr(OP, "_opencode_version", _REAL_VERSION)

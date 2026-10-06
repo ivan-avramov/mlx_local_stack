@@ -7,6 +7,7 @@ import bench.compare as CMP
 import bench.generate as G
 from bench import provenance
 from bench.tests.test_compare import _rows as _cmp_rows
+from bench.tests.test_opencode_probe_seeding import fake_model_mtp_scan  # noqa: F401
 
 
 def _manifest(model, bench, *, policy=None, client="opencode", version=7):
@@ -72,7 +73,7 @@ def test_is_compatible_refuses_differing_or_legacy_scaffold_policy():
 
 
 # ---------------------------------------------------------------- C4: generate never cleans opencode rows
-def test_clean_stale_never_deletes_legacy_opencode_rows(tmp_path, monkeypatch):
+def test_clean_stale_never_deletes_legacy_opencode_rows(tmp_path, monkeypatch, fake_model_mtp_scan):
     G.RESULTS  # noqa: B018
     monkeypatch.setattr(G, "RESULTS", tmp_path)
     d = tmp_path / "m"; d.mkdir()

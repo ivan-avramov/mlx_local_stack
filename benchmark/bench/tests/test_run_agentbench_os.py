@@ -19,6 +19,8 @@ def _stack_workdir_is_tmp_path(monkeypatch, tmp_path):
     STACK_WORKDIR. Every test in this file writes under pytest's own `tmp_path`, which is neither
     -- treat it as this test's STACK_WORKDIR so the existing fixtures keep working unmodified."""
     monkeypatch.setattr(paths, "stack_workdir", lambda required=True: tmp_path)
+    # Portable encoding and decoding must follow the same root, including per-test overrides.
+    monkeypatch.setattr(paths, "resolve_stack_workdir", lambda required=True: paths.stack_workdir(required=required))
 
 
 def _passing(monkeypatch, tmp_path, pid=999):
