@@ -4426,8 +4426,8 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 - **Retraction.** M55's "same seeds as M9/M32" and the "distinct paired seed schedules + same-seed reload control" wording (C109) described
   intent, not behaviour. The k=2 sessions are correlated replays (same seed, same prompts; only server/loop state differed), so k=2
   variance is understated and the reload control could not separate seed from state (every session ran the same seed, so a same-seed reload
-  was valid but there was no distinct-seed contrast). Rows are annotated "unseeded (server default seed)" in README/campaign-results;
-  no result row changed.
+  was valid but there was no distinct-seed contrast). Rows are annotated "unseeded (server default seed)" in README/campaign-results
+  on main (commit a7cffc8); no result row changed.
 - **No rerun.** Ranks were stable across the arms; the rows stay. They never pool with seeded rows (new scaffold policy hash below).
 - **AgentBench (checked, not assumed).** `benchmark/bench/run_agentbench_os.py` talks to the router directly and DID send
   `seed = rowschema.sample_seed(task_id, 0)` per item (base 0, identical schedule in every session). Seeded, but sessions share one
@@ -4464,4 +4464,12 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   instruction inventory covers `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` up the ancestor chain plus `~/.claude/CLAUDE.md` (`.cursor/rules` is not
   read by 1.18.30); `git init` blocks the ancestor ones (`instruction_files_blocked_by_git_init`). The integration test shows a fake personal config's sampling and global `AGENTS.md` reach the request without the
   bench config home and never with it.
+- **Round 4 (Codex/Claude review).** Every spawn, including the pre-M50 `--version`, runs under the bench-owned env (config home, state home,
+  `TMPDIR` inside the workdir; the cache home stays default for the models.dev catalogue; `env_policy` is recorded in the manifest); the
+  discovery data dir is per-run and a refusal before any item removes the run's dirs. Resume identity now also covers model, lang, polyglot
+  sha, progress-gate settings, pure mode, executable sha, serving-code identity (`git.serving_path`) and the env policy; the whole prior
+  runtime/router/`router_exit` is kept in `continuation_history`, an all-skipped resume leaves the manifest untouched, duplicate `--items`
+  run once, and persisted error strings are scrubbed of `$HOME`/`$STACK_WORKDIR`. The per-item overlay also sets `agent.title.disable`
+  (mock capture 2026-10-06: without it 1.18.30 sends an UN-SEEDED title request, max_tokens 2048, to the task provider; with it none),
+  recorded as `title_generation` / `title_request_provider: null`. `opencode debug config` discovery now refuses a nonzero exit.
 

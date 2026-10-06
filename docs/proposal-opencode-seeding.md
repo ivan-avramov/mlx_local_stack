@@ -8,14 +8,14 @@ existing rows; this changes the scaffold for FUTURE opencode rows and corrects t
 - `benchmark/run_opencode_probe.py` never sends a seed: the command is `opencode run --dir <cwd> --model mlx-local/<model> [--pure] <prompt>`;
   rows hard-code `"sample": 0`; `opencode_config/opencode.json` model `options` carry sampling fields but no `seed`.
 - The fork server normalizes a missing `seed` to `DEFAULT_SEED` (`mlx_vlm/server/generation.py`, O30 comment): every opencode request
-  so far ran on the same seed. M53/M54/M55 "two independent sessions" were therefore correlated replays (same seed, same prompts;
+  so far ran on the same seed. M53/M55 "two independent sessions" were therefore correlated replays (M54 AgentBench was seeded, base 0, with the same schedule in every session) (same seed, same prompts;
   only the server state differed); k=2 variance is understated; the same-seed reload control proved nothing it was meant to.
 - `docs/specs/m55-polyglot-gap.md` says "same seeds as M9/M32" — not what happened. Retract in `docs/lab-notebook.md`; label the
   rows "unseeded (server default seed)"; keep them (ranks were stable across arms; no rerun).
-- R8: the probe never sets opencode's Claude-Code-instruction-file switch, so opencode may load `~/.claude/CLAUDE.md` (absent on the
-  box today) into the system prompt. Not observable from transcripts. Fix in the same change; record the switch in the manifest.
-- Scaffold drift: the box has opencode v2.0.20; the probe pins 1.18.30 (refuses to run). Any seeded row is on a NEW scaffold version
-  and never pools with 1.18.x rows anyway — re-pin deliberately as part of this change (P88 precedent).
+- R8: the probe never sets opencode's Claude-Code-instruction-file switch, so opencode may load `~/.claude/CLAUDE.md` (the file exists on the
+  box, dated 2026-09-08; the first draft assumed it absent) into the system prompt. Not observable from transcripts. Fix in the same change; record the switch in the manifest.
+- Scaffold: the probe pins opencode 1.18.30, installed outside the repo under `$STACK_WORKDIR` (C123); the brew-installed binary is a
+  different major version and is never used. Seeded rows are a NEW scaffold epoch and never pool with earlier rows.
 
 ## Design (P107–P110)
 
@@ -32,7 +32,7 @@ existing rows; this changes the scaffold for FUTURE opencode rows and corrects t
   config; skipped with a reason when opencode is not installed. The probe's manifest records `seed_propagation: "verified-by-test"`
   only when that test passed in CI for the pinned version; otherwise `"unverified"` and the row is flagged.
 - P110 R8 switch: set the opencode environment variable that disables Claude-Code instruction-file loading (verify the exact name for
-  v2.0.20 in opencode's docs/source; do not guess), alongside `OPENCODE_DISABLE_EXTERNAL_SKILLS=true`; fold both into the recorded
+  1.18.30's binary strings; do not guess), alongside `OPENCODE_DISABLE_EXTERNAL_SKILLS=true`; fold both into the recorded
   skill-policy/config hash so pre- and post-change rows never pool.
 
 ## Acceptance criteria
@@ -52,5 +52,5 @@ existing rows; this changes the scaffold for FUTURE opencode rows and corrects t
 - AC7 Record: lab-notebook retraction entry; `docs/specs/m55-polyglot-gap.md` and `m54-agentbench-os.md` annotated "sessions were
   unseeded"; README/campaign-results evidence rows carry the label where they cite k=2 sessions.
 
-Out of scope: rerunning M53/M54/M55; AgentBench OS (`run_agentbench_os.py` talks to the router directly and already seeds per item —
+Out of scope: rerunning M53/M55; AgentBench OS (`run_agentbench_os.py` talks to the router directly and already seeds per item —
 verify and state it in the notebook entry rather than assume).
