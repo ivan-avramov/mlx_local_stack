@@ -17,6 +17,31 @@ Because every completed item is written to disk immediately, generation is **saf
 interrupt** — Ctrl+C, close the laptop, change locations — and rerunning the same command
 resumes where it left off (already-done items are skipped; errored items are retried).
 
+`generate` classifies failures with a fail-closed allowlist (C119):
+
+| Class | Definition | Action |
+|-------|------------|--------|
+| Generation outcome | Valid server response, including model budget hits | Append a row; grade; continue. |
+| Probe-timeout DNF (O35) | Raw client read `TimeoutError` (including `socket.timeout`) from the item’s first probe request, whose own elapsed time is ≥ 0.9 × the probe timeout | Append a `probe_timeout` error row; strict failure (O31); continue; skip on resume. |
+| Transport / harness failure | Every other exception, including every `URLError`, HTTP errors of any status, early timeouts, malformed responses, row-building errors, and restart / recovery-preload / second-probe failures | No row for the in-flight item; stamp existing manifests for pairs with pending items in this run; raise `TransportAbort`; CLI exits 1 with a traceback whose last line names the item. No further generation request. |
+| Served-config refusal (M50/C106) | `ServedConfigError` | Propagate unchanged; never convert to a DNF or transport-abort stamp. |
+
+Transport-abort stamps include the item, sample, benchmark, model, scrubbed cause, elapsed
+time, per-file row count, timestamp, and best-effort C106 exit-check result. Only pairs with
+pending items at the start of the aborted run are stamped. A pair whose manifest does not
+exist gets no stamp; stderr is then its only record. Per-manifest failures print a stderr
+warning and appear under `transport_abort.stamp_errors` on manifests that can be written;
+they never mask the original abort.
+
+Resume retries the aborted draw with the same seed. A previous `transport_abort` stamp moves
+to `transport_abort_history` as soon as a later run starts on that pair with pending items,
+including when its manifest is restamped. Completion also archives old stamps for selected
+pairs, but only after the C106 exit check passes; archival failures warn and continue.
+A probe-timeout DNF's `wall_s` measures only its first request, excluding message preparation
+and recovery. Initial preload failures always abort. Legacy error rows without `error_kind`
+remain retryable on resume and strict failures when graded. The opencode probe's classification
+is separate (C124).
+
 ### Chunks and overnight runway
 
 Generation runs in time-boxed **chunks** (default 30 min). At each breakpoint it prints

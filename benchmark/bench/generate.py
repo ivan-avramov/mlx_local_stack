@@ -11,6 +11,8 @@ import json
 import os
 import re
 import time
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import benchmarks, client, convergence, depth, model_params, paths, rowschema, traces
@@ -260,6 +262,7 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
         if b in _SCAFFOLD_BENCHES:
             continue                        # C121 C4: opencode rows are the probe's, never generate's
         mp = result_path(m, b, tune=tune).with_suffix(".manifest.json")
+        existing = None
         try:
             if mp.exists():
                 if m not in cur_by_model:
@@ -271,6 +274,8 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
                     existing = None
                 if provenance.is_compatible(existing, cur_by_model[m]):
                     _refresh_router(mp, existing, provenance)
+                    if _archive_transport_abort(existing):
+                        _write_manifest(mp, existing)
                     continue
                 print(f"  [provenance] RESTAMPED {m}/{b} — the manifest on disk describes a "
                       f"different config than this run", flush=True)
@@ -279,6 +284,12 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
             # the corpus. `compare` decides per pair whether it COULD have bound.
             provenance.write(m, b, profile=profile, overrides=overrides, tune=tune,
                              runtime={"probe_timeout_s": probe_timeout} if probe_timeout else None)
+            if isinstance(existing, dict):
+                _archive_transport_abort(existing)
+                if existing.get("transport_abort_history"):
+                    current = json.loads(mp.read_text())
+                    current["transport_abort_history"] = existing["transport_abort_history"]
+                    _write_manifest(mp, current)
         except provenance.ServedConfigError:
             raise                           # M50: a failed router attribution is never "skipped"
         except Exception as e:  # noqa: BLE001 — never block a run on provenance
@@ -287,6 +298,101 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
 
 # C121 C4: benches whose rows come from a scaffold probe (run_opencode_probe.py), not from `generate`.
 _SCAFFOLD_BENCHES = frozenset({"opencode"})
+
+
+def _write_manifest(path, manifest):
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(manifest, indent=2))
+    os.replace(tmp, path)
+
+
+def _archive_transport_abort(manifest):
+    if "transport_abort" not in manifest:
+        return False
+    manifest.setdefault("transport_abort_history", []).append(manifest.pop("transport_abort"))
+    return True
+
+
+def _archive_completed_aborts(models, benches, tune):
+    for model in models:
+        for bench in benches:
+            if bench in _SCAFFOLD_BENCHES:
+                continue
+            mp = result_path(model, bench, tune=tune).with_suffix(".manifest.json")
+            try:
+                if mp.exists():
+                    manifest = json.loads(mp.read_text())
+                    if _archive_transport_abort(manifest):
+                        _write_manifest(mp, manifest)
+            except Exception as e:  # noqa: BLE001 — archival cannot invalidate a completed run
+                print(f"[generate] warning: cannot archive {model}/{bench}: {_abort_error(e)}",
+                      file=sys.stderr, flush=True)
+
+
+def _abort_error(error):
+    from . import provenance
+    text = f"{type(error).__name__}: {error}"
+    text = provenance.portable_path(text)
+    text = provenance.scrub_tail(text, len(text))
+    text = re.sub(r"/(?:Users|home)/[^/\s]+", "$HOME", text)
+    return " ".join(text.split())[:200]
+
+
+def _transport_abort(pairs, model, bench, item, sample, error, elapsed, served, tune):
+    from . import provenance
+    summary = type(error).__name__
+    try:
+        summary = _abort_error(error)
+        stamp = {"item": item, "sample": sample, "bench": bench, "model": model,
+                 "error": summary, "elapsed_s": float(elapsed),
+                 "ts": datetime.now(timezone.utc).isoformat()}
+        manifests = []
+        stamp_errors = []
+
+        def stamp_failed(m, b, exc):
+            detail = f"{m}/{b}: {_abort_error(exc)}"
+            stamp_errors.append(detail)
+            print(f"[generate] warning: transport-abort stamp for item {item}: {detail}",
+                  file=sys.stderr, flush=True)
+
+        for m, b in sorted(pairs):
+            try:
+                path = result_path(m, b, tune=tune)
+                mp = path.with_suffix(".manifest.json")
+                if not mp.exists():
+                    raise FileNotFoundError("manifest does not exist; no stamp written")
+                manifest = json.loads(mp.read_text())
+                _archive_transport_abort(manifest)
+                rows = sum(bool(line.strip()) for line in path.read_text().splitlines()) if path.exists() else 0
+                manifest["transport_abort"] = {**stamp, "rows_on_disk": rows}
+                _write_manifest(mp, manifest)
+                manifests.append((m, b, mp, manifest))
+            except BaseException as exc:  # the original transport error must remain fatal
+                stamp_failed(m, b, exc)
+        try:
+            provenance.assert_served_config_unchanged(served, client.BASE)
+            served_check = "unchanged"
+        except BaseException as exc:  # includes interrupts: never escape into run's Ctrl+C handler
+            served_check = _abort_error(exc)
+        # A failed final write must also be recorded on earlier successful manifests.
+        # Each failed manifest is removed, so retries are bounded by the pair count.
+        while manifests:
+            written = []
+            for m, b, mp, manifest in manifests:
+                try:
+                    manifest["transport_abort"]["served_check"] = served_check
+                    if stamp_errors:
+                        manifest["transport_abort"]["stamp_errors"] = list(stamp_errors)
+                    _write_manifest(mp, manifest)
+                    written.append((m, b, mp, manifest))
+                except BaseException as exc:
+                    stamp_failed(m, b, exc)
+            if len(written) == len(manifests):
+                break
+            manifests = written
+    finally:
+        raise client.TransportAbort(
+            f"[generate] aborted {model}/{bench}/{item} sample {sample}: {summary}") from error
 
 
 def _refresh_router(mp, existing, provenance):
@@ -463,8 +569,18 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # Per-probe HTTP timeout, bound via a closure so probe_with_recovery's (model, msg, params)
     # call signature is unchanged. The default 3600s is too short for a slow dense model whose
     # thinking budget implies >60min of generation (e.g. Qwen3.6-27B @ ~13.5 tok/s, 80K budget).
+    probe_state = {}
+
     def _probe(m, msg, pa):
-        return client.probe(m, msg, pa, timeout=probe_timeout)
+        probe_state["calls"] += 1
+        start = time.perf_counter()
+        try:
+            return client.probe(m, msg, pa, timeout=probe_timeout)
+        except TimeoutError as exc:
+            probe_state["timeout"] = exc
+            raise
+        finally:
+            probe_state["elapsed"] = time.perf_counter() - start
     # M50 (2026-09-28): the process owning the router port must serve THIS driver's registry;
     # refuse before anything is cleaned, written or requested (RuntimeError -> nonzero exit).
     from . import provenance
@@ -480,6 +596,8 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                                ids=ids, tune=tune)
     total = sum(counts.values()) * len(models) * samples
     if not queue:
+        provenance.assert_served_config_unchanged(served["entry"], client.BASE)
+        _archive_completed_aborts(models, counts, tune)
         print(f"[generate] nothing to do — all {total} items already generated.", flush=True)
         return
     print(f"[generate] {len(queue)} items remaining of {total} "
@@ -524,7 +642,14 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
         while i < len(queue):
             model, b, it, sample = queue[i]
             if model != cur_model:
-                load_s = client.preload(model)
+                load_start = time.perf_counter()
+                try:
+                    load_s = client.preload(model)
+                except provenance.ServedConfigError:
+                    raise
+                except Exception as e:  # noqa: BLE001 — preload failures are never model outcomes
+                    _transport_abort(pairs, model, b, it["id"], sample, e,
+                                     time.perf_counter() - load_start, served["entry"], tune)
                 print(f"  >> loaded {model} ({load_s}s)", flush=True)
                 loaded_scan = provenance.registry_mtp_verify_scan(model)["mtp_verify_scan"]
                 if loaded_scan != scan_entry[model]:     # M58: before the first measured request
@@ -533,6 +658,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                         f"(stamped in the manifest) to {loaded_scan!r} once loaded; refusing")
                 cur_model = model
             t0 = time.perf_counter()
+            probe_state = {"calls": 0, "timeout": None}
             try:
                 params = model_params.params_for(model, profile=sampling_profile)
                 params.update(overrides)
@@ -620,20 +746,22 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                     row["contaminated"] = "stale_router"
             except provenance.ServedConfigError:
                 raise                       # M50: a refusal is FATAL, never an error row
-            except Exception as e:  # noqa: BLE001 — network/OOM; record & continue
-                # An error row carries the same (id, sample) identity: resume retries errored
-                # rows, and without `sample` it could not tell which draw to redo. A probe that
-                # ran to the timeout is classified error_kind=probe_timeout and is NOT retried
-                # (O35 — the seeded retry is byte-identical, so it is a DNF, not a transient).
+            except Exception as e:  # noqa: BLE001 — fail closed; only full client timeouts are DNFs
                 elapsed = time.perf_counter() - t0
+                first_probe_timeout = (probe_state["calls"] == 1
+                                       and probe_state["timeout"] is e)
+                if (not first_probe_timeout
+                        or error_kind(probe_state["elapsed"], probe_timeout) != "probe_timeout"):
+                    _transport_abort(pairs, model, b, it["id"], sample, e,
+                                     elapsed, served["entry"], tune)
+                elapsed = probe_state["elapsed"]
+                # O35: only the first request's raw timeout is a DNF, counted done on resume.
                 row = {"id": it["id"], "sample": sample,
                        "schema_version": rowschema.SCHEMA_VERSION,
                        "sampler_seed": rowschema.sample_seed(it["id"], sample, base=seed_base),
                        "seed_base": seed_base, "wall_s": round(elapsed, 3),
                        "bench": b, "model": model, "error": str(e)[:200]}
-                kind = error_kind(elapsed, probe_timeout)
-                if kind:
-                    row["error_kind"] = kind
+                row["error_kind"] = "probe_timeout"
             _append(result_path(model, b, tune=tune), row)
             dt = time.perf_counter() - t0
             per_item.setdefault(model, []).append(dt)
@@ -659,6 +787,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
         # C106: the run is complete only if the served runtime is still the one verified at entry
         # (raises ServedConfigError — rows stay, nothing is declared clean).
         provenance.assert_served_config_unchanged(served["entry"], client.BASE)
+        _archive_completed_aborts(models, counts, tune)
         print(f"[generate] COMPLETE — {i} items generated. Run `grade` next.", flush=True)
     except KeyboardInterrupt:
         print(f"\n[generate] interrupted at {i}/{len(queue)} — progress saved. "

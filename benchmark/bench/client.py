@@ -38,6 +38,10 @@ class MalformedResponseError(RuntimeError):
     TransportFailure with no row at all."""
 
 
+class TransportAbort(RuntimeError):
+    """Transport or harness failure: no row for this draw; stop the run."""
+
+
 def auth_headers() -> dict:
     """The router's optional bearer auth (mlx-serve `MLX_API_KEY`): sent on EVERY request when set."""
     key = os.environ.get("MLX_API_KEY")
