@@ -4422,7 +4422,7 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 
 - **Facts.** `benchmark/run_opencode_probe.py` built `opencode run ... <prompt>` with no seed; rows hard-coded `"sample": 0`; the shipped
   `opencode_config/opencode.json` model `options` carry sampling fields but no `seed`. The fork server normalizes a missing `seed` to
-  `DEFAULT_SEED`, so every opencode request in M53/M54-era opencode chains and M55 ran on the same server default seed.
+  `DEFAULT_SEED`, so every opencode request in the opencode-probe chains (M53, M55 and earlier) ran on the same server default seed.
 - **Retraction.** M55's "same seeds as M9/M32" and the "distinct paired seed schedules + same-seed reload control" wording (C109) described
   intent, not behaviour. The k=2 sessions are correlated replays (same seed, same prompts; only server/loop state differed), so k=2
   variance is understated and the reload control proved nothing it was meant to. Rows are relabelled "unseeded (server default seed)".

@@ -178,12 +178,12 @@ def test_run_opencode_probe_refuses_before_the_manifest(tmp_path, monkeypatch, c
     import run_opencode_probe as OP
     # 10th cold review (between-arms fix 2): see _oc_probe_setup's identical comment.
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(OP, "_opencode_version", lambda: OP.PINNED_OPENCODE_VERSION)
+    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: OP.PINNED_OPENCODE_VERSION)
     monkeypatch.setattr(OP, "_polyglot_root", lambda: pytest.fail("polyglot before tripwire"))
     # The real discovery call makes opencode write its own data home (the one accepted pre-check
     # side effect, see the entry point); stub it so this test pins OUR writes at zero.
     monkeypatch.setattr(P, "opencode_router_base",
-                        lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8000/v1")
+                        lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8000/v1")
     _refusing(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
     with pytest.raises(SystemExit) as ei:
@@ -213,7 +213,7 @@ def test_run_opencode_probe_does_only_the_discovery_call_before_the_check(tmp_pa
     monkeypatch.setattr(subprocess, "Popen", boom)
     calls = []
 
-    def discovery(cwd=None, env=None, provider="mlx-local"):
+    def discovery(cwd=None, env=None, provider="mlx-local", **_k):
         calls.append(cwd)
         raise P.ServedConfigError("M50 tripwire: refused in discovery")
     monkeypatch.setattr(P, "opencode_router_base", discovery)
@@ -234,7 +234,7 @@ def test_run_opencode_probe_passes_a_workdir_data_home_to_discovery_and_creates_
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     seen = {}
 
-    def discovery(cwd=None, env=None, provider="mlx-local"):
+    def discovery(cwd=None, env=None, provider="mlx-local", **_k):
         seen["data_home"] = env["XDG_DATA_HOME"]
         raise P.ServedConfigError("M50 tripwire: stop after discovery")
     monkeypatch.setattr(P, "opencode_router_base", discovery)
@@ -329,7 +329,7 @@ def test_session_cache_probe_leg_b_verifies_opencodes_own_destination(tmp_path, 
     from bench import session_cache_probe as SCP
     from bench import paths
     monkeypatch.setenv("MLX_SERVE_BASE", "http://localhost:8123")
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8000/v1")
+    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8000/v1")
 
     def owner(port):
         return {"pid": 100 + port, "cmdline": "mlx-serve start", "cwd": str(tmp_path),
@@ -345,9 +345,9 @@ def test_run_opencode_probe_checks_opencodes_destination_not_MLX_SERVE_BASE(tmp_
     import run_opencode_probe as OP
     # 10th cold review (between-arms fix 2): see _oc_probe_setup's identical comment.
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(OP, "_opencode_version", lambda: OP.PINNED_OPENCODE_VERSION)
+    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: OP.PINNED_OPENCODE_VERSION)
     monkeypatch.setenv("MLX_SERVE_BASE", "http://localhost:8000")
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8123/v1")
+    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8123/v1")
     seen = []
     monkeypatch.setattr(P, "router_owner", lambda port: seen.append(port))
     monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
@@ -447,7 +447,7 @@ def test_run_opencode_probe_manifest_carries_the_verified_opencode_router(tmp_pa
     """Codex #2 P15: the manifest must carry the block verified for opencode's destination, not a
     fresh `client.BASE` lookup. (Defined after the round-5 helper; see bottom of file.)"""
     OP = _oc_probe_setup(tmp_path, monkeypatch, pid=0)
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8123/v1")
+    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8123/v1")
     monkeypatch.setattr(P, "router_owner", lambda port: {**_good(tmp_path, 900 + port)})
     monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (_ for _ in ()).throw(StopIteration("stop after manifest")))
     out = tmp_path / "oc.jsonl"
@@ -508,14 +508,14 @@ def test_run_opencode_probe_rechecks_destination_inside_each_item(tmp_path, monk
     import run_opencode_probe as OP
     # 10th cold review (between-arms fix 2): see _oc_probe_setup's identical comment.
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(OP, "_opencode_version", lambda: OP.PINNED_OPENCODE_VERSION)
+    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: OP.PINNED_OPENCODE_VERSION)
     root = tmp_path / "poly" / "python" / "exercises" / "practice"; (root / "ex").mkdir(parents=True)
     monkeypatch.setattr(OP, "_polyglot_root", lambda: tmp_path / "poly")
     monkeypatch.setattr(OP, "_polyglot_sha", lambda p: "deadbeef")
     monkeypatch.setattr(OP, "_prepare", lambda src, work: work.mkdir(parents=True, exist_ok=True))
     monkeypatch.setattr(OP, "_run_opencode", lambda *a, **k: pytest.fail("opencode ran after a refused item check"))
     bases = iter(["http://localhost:8000/v1", "http://localhost:8123/v1"])   # entry OK, item differs
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": next(bases))
+    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: next(bases))
     monkeypatch.setattr(P, "router_owner", lambda port: {**_good(tmp_path, 900 + port)})
     monkeypatch.setattr(P.model_params, "params_for", lambda m, profile, **k: {"temperature": 0.4})
     monkeypatch.setattr(P, "registry_kv", lambda m, path: {"kv_bits": 4})
@@ -526,13 +526,21 @@ def test_run_opencode_probe_rechecks_destination_inside_each_item(tmp_path, monk
 
 
 # --------------------------------------------------------------------------- round 5 (Codex cold review #4)
+@pytest.fixture(autouse=True)
+def _pinned_opencode_stub(monkeypatch, tmp_path_factory):
+    """C121 B1: the probe refuses without an absolute executable pinned binary; a stub OUTSIDE tmp_path."""
+    b = tmp_path_factory.mktemp("ocstub") / "opencode"
+    b.write_text("#!/bin/sh\nexit 0\n"); b.chmod(0o755)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(b))
+
+
 def _oc_probe_setup(tmp_path, monkeypatch, pid):
     import run_opencode_probe as OP
     # 10th cold review (live-pilot finding, between-arms fix 2): OP.main()'s own log-tail
     # scrubbing calls the REAL bench.paths.stack_workdir (for a PII pattern to scrub, never a
     # write target) -- redirect it under tmp_path so that incidental call stays confined.
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(OP, "_opencode_version", lambda: OP.PINNED_OPENCODE_VERSION)
+    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: OP.PINNED_OPENCODE_VERSION)
     root = tmp_path / "poly" / "python" / "exercises" / "practice"; (root / "ex").mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(OP, "_polyglot_root", lambda: tmp_path / "poly")
     monkeypatch.setattr(OP, "_polyglot_sha", lambda p: "deadbeef")
@@ -551,7 +559,7 @@ def test_run_opencode_probe_rerun_preserves_attribution_and_refuses_config_chang
     """Codex #4 P27: a rerun must not rewrite who produced the existing rows."""
     OP = _oc_probe_setup(tmp_path, monkeypatch, pid=222)
     monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (_ for _ in ()).throw(StopIteration("stop after manifest")))
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8000/v1")
+    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8000/v1")
     out = tmp_path / "oc.jsonl"; mp = out.with_suffix(".manifest.json")
     cfg = P.router_block("http://localhost:8000")["config"]
     mp.write_text(json.dumps({"router": {"pid": 111, "config": cfg, "port": 8000}, "router_history": [{"pid": 7}]}))
@@ -569,7 +577,7 @@ def test_run_opencode_probe_item_refusal_records_no_manifest(tmp_path, monkeypat
     """Codex #4 P29: the manifest is written only right before the first item RUNS."""
     OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
     bases = iter(["http://localhost:8000/v1", "http://localhost:8123/v1"])
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": next(bases))
+    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: next(bases))
     monkeypatch.setattr(P, "router_owner", lambda port: {**_good(tmp_path, 900 + port)})
     out = tmp_path / "oc.jsonl"
     monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "1", "--out", str(out)])
@@ -735,10 +743,10 @@ def test_run_opencode_probe_writes_the_seed_overlay_and_checks_it_before_the_man
     """C121 AC1/AC4 wiring: the item's overlay exists (with the item seed) and is checked against the
     entry-verified baseURL BEFORE any manifest is written; a refusal records nothing."""
     OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8000/v1")
+    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8000/v1")
     seen = {}
 
-    def check(cwd, env, model, seed, base):
+    def check(cwd, env, model, seed, base, **_k):
         seen.update(seed=seed, base=base, overlay=json.loads((cwd / "opencode.json").read_text()), model=model)
         raise P.ServedConfigError("M50 tripwire: stop at the overlay check")
     monkeypatch.setattr(OP, "_assert_overlay_resolved", check)

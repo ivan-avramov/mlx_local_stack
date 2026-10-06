@@ -45,6 +45,88 @@ def test_opencode_version_refuses_a_missing_binary(tmp_path):
     assert "nope" in str(e.value) or "missing" in str(e.value)
 
 
+# ------------------------------------------------------------------ B1: fail-closed binary resolution
+def _exe(path, body="#!/bin/sh\nexit 0\n", mode=0o755):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body); path.chmod(mode)
+    return path
+
+
+def test_require_opencode_bin_returns_the_exact_absolute_executable(monkeypatch, tmp_path):
+    b = _exe(tmp_path / "x" / "opencode")
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(b))
+    assert P._require_opencode_bin() == str(b)
+
+
+def test_require_opencode_bin_refuses_relative_missing_and_non_executable(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", "opencode")           # bare name would be a PATH lookup
+    with pytest.raises(SystemExit, match="absolute"):
+        P._require_opencode_bin()
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(tmp_path / "gone" / "opencode"))
+    with pytest.raises(SystemExit, match="gone"):
+        P._require_opencode_bin()
+    nx = _exe(tmp_path / "nx" / "opencode", mode=0o644)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(nx))
+    with pytest.raises(SystemExit, match="executable"):
+        P._require_opencode_bin()
+
+
+def test_missing_pin_refuses_naming_the_path_and_never_spawns_a_path_opencode(monkeypatch, tmp_path):
+    rec = tmp_path / "invocations.txt"
+    fake = _exe(tmp_path / "brewbin" / "opencode", f"#!/bin/sh\necho \"$@\" >> {rec}\nexit 0\n")
+    monkeypatch.setenv("PATH", str(fake.parent) + os.pathsep + os.environ["PATH"])
+    wd = tmp_path / "wd"; wd.mkdir()
+    monkeypatch.setenv("STACK_WORKDIR", str(wd))
+    monkeypatch.delenv("OPENCODE_PROBE_BIN", raising=False)       # default path under wd: absent
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1"])
+    with pytest.raises(SystemExit) as e:
+        P.main()
+    assert "opencode-1.18.30" in str(e.value) and "REFUSED" in str(e.value)
+    assert not rec.exists(), "the PATH opencode was spawned"
+
+
+def test_router_discovery_spawns_the_given_binary(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake(cmd, **kw):
+        seen["cmd0"] = cmd[0]
+        doc = {"provider": {"mlx-local": {"options": {"baseURL": "http://localhost:8000/v1"}}}}
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(doc), stderr="")
+    monkeypatch.setattr(subprocess, "run", fake)
+    assert provenance.opencode_router_base(tmp_path, {}, opencode_bin="/pinned/opencode") == "http://localhost:8000/v1"
+    assert seen["cmd0"] == "/pinned/opencode"
+
+
+def test_export_and_overlay_check_spawn_the_given_binary(monkeypatch, tmp_path):
+    cmds = []
+
+    def fake_co(cmd, **kw):
+        cmds.append(cmd[0])
+        return "Session ID\nses_a1  t\n" if cmd[1] == "session" else json.dumps({"messages": []})
+    monkeypatch.setattr(subprocess, "check_output", fake_co)
+    P._export_latest_session({}, cwd=tmp_path, opencode_bin="/pinned/opencode")
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: (cmds.append(cmd[0]) or _fake_debug({"seed": 9})(cmd)))
+    P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/pinned/opencode")
+    assert cmds == ["/pinned/opencode"] * 3
+
+
+def test_run_opencode_spawns_the_given_binary(monkeypatch, tmp_path):
+    seen = {}
+
+    class Boom(Exception):
+        pass
+
+    def popen(cmd, **kw):
+        seen["cmd0"] = cmd[0]
+        raise Boom()
+    monkeypatch.setattr(P.subprocess, "Popen", popen)
+    with pytest.raises(Boom):
+        P._run_opencode(MODEL, tmp_path, "p", tmp_path / "s", tmp_path / "t", lambda w, t: (False, ""), "",
+                        tick_s=1, hard_ceiling_s=1, poll_s=1, stall_ticks=1, loop_repeats=1, pure=True,
+                        opencode_bin="/pinned/opencode")
+    assert seen["cmd0"] == "/pinned/opencode"
+
+
 def test_opencode_version_runs_the_given_binary(monkeypatch, tmp_path):
     b = tmp_path / "opencode"; b.write_text("")
     seen = {}
@@ -55,12 +137,6 @@ def test_opencode_version_runs_the_given_binary(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "check_output", fake)
     assert P._opencode_version(b) == "1.18.30"
     assert seen["cmd"] == [str(b), "--version"]
-
-
-def test_opencode_env_puts_the_pinned_binary_dir_first_on_path(monkeypatch, tmp_path):
-    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(tmp_path / "bin" / "opencode"))
-    env = P._opencode_env(tmp_path / "xdg")
-    assert env["PATH"].split(os.pathsep)[0] == str(tmp_path / "bin")
 
 
 # ------------------------------------------------------------------ AC1: overlay
@@ -120,17 +196,50 @@ def test_row_seed_fields():
                  "overlay_sha256": "abc"}
 
 
-def test_manifest_runtime_records_seed_provenance(monkeypatch, tmp_path):
+def _receipt_env(monkeypatch, tmp_path):
+    """A fake pinned install + config + test file, all under tmp_path."""
+    b = _exe(tmp_path / "opencode-1.18.30" / "node_modules" / ".bin" / "opencode", "#!/bin/sh\necho 1.18.30\n")
+    cfg = tmp_path / "shipped.json"; cfg.write_text('{"a": 1}')
+    tf = tmp_path / "the_test.py"; tf.write_text("# test v1")
     monkeypatch.delenv("OPENCODE_PROBE_BIN", raising=False)
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    monkeypatch.setattr(P, "SHIPPED_OPENCODE_CONFIG", cfg)
+    monkeypatch.setattr(P, "SEED_TEST_FILE", tf)
+    return b, cfg, tf
+
+
+def test_manifest_runtime_records_seed_provenance(monkeypatch, tmp_path):
+    b, cfg, tf = _receipt_env(monkeypatch, tmp_path)
     rt = P._seed_runtime(7)
     assert rt["seed_base"] == 7 and rt["overlay_schema"] == "provider.mlx-local.models.<model>.options.seed"
     assert rt["opencode_bin"] == "$STACK_WORKDIR/opencode-1.18.30/node_modules/.bin/opencode"
     assert str(tmp_path) not in json.dumps(rt)
-    assert rt["seed_propagation"] == "unverified"          # no marker from the integration test
-    (tmp_path / "opencode-1.18.30").mkdir()
-    (tmp_path / "opencode-1.18.30" / "seed_propagation_verified").write_text(P.PINNED_OPENCODE_VERSION)
+    assert rt["seed_propagation"] == "unverified"          # no receipt yet
+    P._record_seed_propagation_verified(b)
     assert P._seed_runtime(7)["seed_propagation"] == "verified-by-test"
+
+
+def test_receipt_is_bound_to_exe_config_and_test_file_hashes(monkeypatch, tmp_path):
+    b, cfg, tf = _receipt_env(monkeypatch, tmp_path)
+    P._record_seed_propagation_verified(b)
+    r = json.loads(P._seed_marker_path(b).read_text())
+    assert set(r) >= {"version", "exe_sha256", "config_sha256", "test_sha256"}
+    assert P._seed_runtime(7)["seed_propagation"] == "verified-by-test"
+    cfg.write_text('{"a": 2}')                                       # shipped config changed
+    assert P._seed_runtime(7)["seed_propagation"] == "unverified"
+    cfg.write_text('{"a": 1}')
+    assert P._seed_runtime(7)["seed_propagation"] == "verified-by-test"
+    tf.write_text("# test v2")                                       # integration test changed
+    assert P._seed_runtime(7)["seed_propagation"] == "unverified"
+    tf.write_text("# test v1")
+    b.write_text("#!/bin/sh\necho 1.18.30 # rebuilt\n")            # executable changed
+    assert P._seed_runtime(7)["seed_propagation"] == "unverified"
+
+
+def test_legacy_text_marker_reads_unverified(monkeypatch, tmp_path):
+    b, cfg, tf = _receipt_env(monkeypatch, tmp_path)
+    P._seed_marker_path(b).write_text(P.PINNED_OPENCODE_VERSION)
+    assert P._seed_runtime(7)["seed_propagation"] == "unverified"
 
 
 # ------------------------------------------------------------------ AC4: pre-check
@@ -145,19 +254,41 @@ def _fake_debug(models_options, base="http://localhost:8000/v1"):
 
 def test_overlay_check_passes_when_seed_resolved_and_base_unchanged(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", _fake_debug({"temperature": 0.5, "seed": 9}))
-    P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1")
+    P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
 
 
 def test_overlay_check_refuses_when_seed_not_resolved(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", _fake_debug({"temperature": 0.5}))
     with pytest.raises(provenance.ServedConfigError, match="M50.*seed"):
-        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1")
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
 
 
 def test_overlay_check_refuses_when_base_url_changed(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", _fake_debug({"seed": 9}, base="http://localhost:9999/v1"))
     with pytest.raises(provenance.ServedConfigError, match="M50.*baseURL"):
-        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1")
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+
+
+def test_overlay_check_rejects_nonzero_exit_even_with_valid_json(monkeypatch, tmp_path):
+    ok = _fake_debug({"seed": 9})
+
+    def run(cmd, **kw):
+        r = ok(cmd); r.returncode = 3
+        return r
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(provenance.ServedConfigError, match="M50.*exit"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+
+
+def test_overlay_check_rejects_timeout_and_malformed_json(monkeypatch, tmp_path):
+    def timeout(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 120)
+    monkeypatch.setattr(subprocess, "run", timeout)
+    with pytest.raises(provenance.ServedConfigError, match="M50.*(timeout|Timeout)"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="{not json", stderr=""))
+    with pytest.raises(provenance.ServedConfigError, match="M50.*JSON"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
 
 
 # ------------------------------------------------------------------ AC5: R8 + policy hash
@@ -239,11 +370,12 @@ def test_pinned_opencode_forwards_seed_and_deployed_sampling_to_the_endpoint(tmp
         proj = tmp_path / "proj"; proj.mkdir()          # NON-git scratch dir, as the probe uses
         P._write_seed_overlay(proj, MODEL, 424242)
         env = P._opencode_env(tmp_path / "xdgd")
-        env.update(XDG_CONFIG_HOME=str(xdgc), OPENCODE_PROBE_BIN=str(b))
-        env["PATH"] = str(b.parent) + os.pathsep + env["PATH"]
-        subprocess.run([str(b), "run", "--dir", str(proj), "--model", f"mlx-local/{MODEL}", "--pure", "say hi"],
-                       cwd=proj, env=env, capture_output=True, text=True, timeout=180,
-                       stdin=subprocess.DEVNULL)
+        env.update(XDG_CONFIG_HOME=str(xdgc))
+        # PRODUCTION wiring only: the probe's own spawn function with the exact pinned executable
+        # (no test-side PATH repair; `opencode` is not on this env's PATH ahead of anything).
+        P._run_opencode(MODEL, proj, "say hi", proj / "sol.py", proj / "t.py", lambda w, t: (False, ""),
+                        "", tick_s=300, hard_ceiling_s=170, poll_s=1.0, stall_ticks=50, loop_repeats=50,
+                        pure=True, env=env, opencode_bin=str(b))
     finally:
         srv.shutdown()
     assert _Mock.bodies, "opencode sent no request to the mock endpoint"
@@ -256,9 +388,93 @@ def test_pinned_opencode_forwards_seed_and_deployed_sampling_to_the_endpoint(tmp
         P._record_seed_propagation_verified(b)
 
 
-def test_record_seed_propagation_writes_the_marker_next_to_the_default_install(monkeypatch, tmp_path):
-    monkeypatch.delenv("OPENCODE_PROBE_BIN", raising=False)
-    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    (tmp_path / "opencode-1.18.30").mkdir()
-    P._record_seed_propagation_verified()
-    assert (tmp_path / "opencode-1.18.30" / "seed_propagation_verified").read_text() == "1.18.30"
+# ------------------------------------------------------------------ B2: continuation / resume; B9: overlay map
+from bench.tests.test_m50_entrypoints import _oc_probe_setup  # noqa: E402
+
+
+@pytest.fixture
+def _stub_bin(monkeypatch, tmp_path_factory):
+    b = _exe(tmp_path_factory.mktemp("stub") / "opencode", "#!/bin/sh\necho 1.18.30\n")
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(b))
+    return b
+
+
+def _prior(OP, out, rows=(), **over):
+    rt = {"client": "opencode", "opencode_version": OP.PINNED_OPENCODE_VERSION,
+          **OP._scaffold_runtime(), **OP._seed_runtime(1)}
+    rt.update(over)
+    rt = {k: v for k, v in rt.items() if v is not None}
+    cfg = provenance.router_block("http://localhost:8000")["config"]
+    out.with_suffix(".manifest.json").write_text(json.dumps(
+        {"router": {"pid": 5, "config": cfg, "port": 8000}, "runtime": rt}))
+    out.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def _resume_main(OP, monkeypatch, out, seed_base="1"):
+    monkeypatch.setattr(provenance, "opencode_router_base", lambda *a, **k: "http://localhost:8000/v1")
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", seed_base, "--out", str(out)])
+    return OP.main()
+
+
+ROW = {"id": "python/ex", "sample": 0, "passed": True}
+
+
+def test_resume_refuses_a_different_seed_base_naming_both(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"; _prior(OP, out, [ROW], seed_base=9)
+    with pytest.raises(SystemExit) as e:
+        _resume_main(OP, monkeypatch, out, seed_base="1")
+    m = str(e.value)
+    assert "seed_base" in m and "9" in m and "1" in m
+
+
+@pytest.mark.parametrize("field,val", [("scaffold_policy_sha256", "deadbeef"),
+                                       ("opencode_bin", "$STACK_WORKDIR/other/opencode"),
+                                       ("opencode_version", "9.9.9")])
+def test_resume_refuses_scaffold_identity_drift(tmp_path, monkeypatch, _stub_bin, field, val):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"; _prior(OP, out, [ROW], **{field: val})
+    with pytest.raises(SystemExit) as e:
+        _resume_main(OP, monkeypatch, out)
+    assert field in str(e.value)
+
+
+def test_resume_refuses_a_pre_c121_manifest_with_rows(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"; _prior(OP, out, [ROW], seed_base=None, scaffold_policy_sha256=None)
+    with pytest.raises(SystemExit, match="pre-C121"):
+        _resume_main(OP, monkeypatch, out)
+
+
+def test_resume_skips_items_already_present_and_writes_no_duplicate(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"; _prior(OP, out, [ROW])
+    monkeypatch.setattr(OP, "_run_opencode", lambda *a, **k: pytest.fail("an already-recorded item re-ran"))
+    before = out.read_text()
+    assert _resume_main(OP, monkeypatch, out) == 0
+    assert out.read_text() == before
+
+
+def test_resume_with_matching_identity_continues_other_items(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"; _prior(OP, out, [{"id": "python/other", "sample": 0}])
+    monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (_ for _ in ()).throw(StopIteration("reached item")))
+    with pytest.raises(StopIteration):          # `ex` is not recorded, so it proceeds to run
+        _resume_main(OP, monkeypatch, out)
+
+
+def test_manifest_records_the_overlay_sha_per_item_before_any_traffic(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"
+    monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (_ for _ in ()).throw(StopIteration("stop")))
+    captured = {}
+    real = OP._write_seed_overlay
+
+    def spy(cwd, model, seed):
+        captured["sha"] = real(cwd, model, seed)
+        return captured["sha"]
+    monkeypatch.setattr(OP, "_write_seed_overlay", spy)
+    with pytest.raises(StopIteration):
+        _resume_main(OP, monkeypatch, out)
+    man = json.loads(out.with_suffix(".manifest.json").read_text())
+    assert man["overlay_sha256_by_item"] == {"python/ex": captured["sha"]}

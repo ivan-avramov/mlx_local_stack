@@ -459,14 +459,14 @@ def test_export_latest_session_uses_the_isolated_data_home(monkeypatch, tmp_path
 
     monkeypatch.setattr(P.subprocess, "check_output", fake_check_output)
     data_home = tmp_path / "xdg"
-    out = P._export_latest_session(P._opencode_env(data_home), cwd=tmp_path)
+    out = P._export_latest_session(P._opencode_env(data_home), cwd=tmp_path, opencode_bin="/pinned/opencode")
     assert out["info"]["id"] == "ses_new111"
     assert all(h == str(data_home) for _, h in calls)
 
 
 def test_export_latest_session_degrades_to_none_when_no_session(monkeypatch, tmp_path):
     monkeypatch.setattr(P.subprocess, "check_output", lambda cmd, **kw: "Session ID   Title\n")
-    assert P._export_latest_session(P._opencode_env(tmp_path), cwd=tmp_path) is None
+    assert P._export_latest_session(P._opencode_env(tmp_path), cwd=tmp_path, opencode_bin="/pinned/opencode") is None
 
 
 def test_opencode_env_redirects_only_the_data_home(tmp_path):
@@ -545,7 +545,7 @@ def test_entry_refuses_missing_workdir_before_m50_and_before_any_request(monkeyp
     from bench import provenance
     monkeypatch.delenv("STACK_WORKDIR", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty"))
-    monkeypatch.setattr(P, "_opencode_version", lambda: P.PINNED_OPENCODE_VERSION)
+    monkeypatch.setattr(P, "_opencode_version", lambda *a, **k: P.PINNED_OPENCODE_VERSION)
 
     def boom(*a, **k):
         raise AssertionError("reached M50 / the router before the workdir check")
