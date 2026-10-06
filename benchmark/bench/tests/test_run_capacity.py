@@ -1,6 +1,10 @@
 import json, os
+import pytest
 import bench.run_capacity as R
 from bench.model_params import params_for
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
 
 class FakeDriver:
     def preload(self, model, timeout=900): return 1.0

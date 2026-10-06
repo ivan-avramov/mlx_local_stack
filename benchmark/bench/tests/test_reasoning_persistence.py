@@ -6,6 +6,9 @@ from bench.reasoning import run_reasoning_ladder
 
 from .test_run_reasoning import FakeDriver, FakeSampler, stub_manifest_lite
 
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
+
 
 class CountingDriver(FakeDriver):
     def __init__(self):

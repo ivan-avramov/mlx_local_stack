@@ -16,7 +16,6 @@ import bench.provenance as P
 from bench import parity_replay as R
 from bench.tests.test_m50_entrypoints import _passing, _refusing
 
-pytestmark = pytest.mark.real_mtp_scan
 
 KEYS = [("m", "math500", "a"), ("m", "math500", "b"), ("m", "mbpp", "c")]
 VERIFY = {"verify_blocks_joint_v1": 9, "verify_blocks_per_query": 1,

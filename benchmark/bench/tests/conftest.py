@@ -79,20 +79,12 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 # --------------------------------------------------------------------------- M58 scan pin
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers", "real_mtp_scan: exercise the real mtp_verify_scan resolution (no conftest pin)")
-
-
-@pytest.fixture(autouse=True)
-def _pin_unresolved_mtp_scan(request, monkeypatch):
-    """M58: `assert_serving_state` REFUSES an unresolved `mtp_verify_scan` (spec AC10), and the
-    entry-point tests drive fake model names that no registry declares. As the M57 tests pin the
-    other two controls, resolve ONLY the "unresolved" outcome to the default here, so those tests
-    keep exercising what they were written for. Tests of the resolution itself opt out with
-    `@pytest.mark.real_mtp_scan` (module-level `pytestmark` works too)."""
-    if request.node.get_closest_marker("real_mtp_scan"):
-        return
+@pytest.fixture
+def pin_mtp_scan(monkeypatch):
+    """OPT-IN (M58): `assert_serving_state` refuses an unresolved `mtp_verify_scan`, and tests that
+    drive synthetic model names no registry declares cannot resolve it. Such a test requests this
+    fixture (or `pytestmark = pytest.mark.usefixtures("pin_mtp_scan")`), which resolves ONLY the
+    "unresolved" outcome to the default. The production refusal is active in every other test."""
     import bench.provenance as P
     real = P.registry_mtp_verify_scan
 

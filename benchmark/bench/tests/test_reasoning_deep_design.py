@@ -5,6 +5,10 @@ import bench.run_reasoning as R
 from bench.reasoning import run_reasoning_ladder
 
 from .test_run_reasoning import FakeSampler, stub_manifest_lite
+import pytest
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
 
 PARAMS = {"max_tokens": 1024, "thinking_budget": 100}
 

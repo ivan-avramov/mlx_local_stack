@@ -10,6 +10,9 @@ import bench.run_retrieval as R
 
 from .test_run_retrieval import FakeDriver, FakeSampler, CANNED_PASS_FAIL
 
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
+
 
 def _patch(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())

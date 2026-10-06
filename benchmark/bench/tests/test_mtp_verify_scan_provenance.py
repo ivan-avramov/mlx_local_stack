@@ -18,7 +18,6 @@ import bench.provenance as P
 from bench.tests.test_compare import _rows as _cmp_rows
 from bench.tests.test_compare_predictor import _rows as _cp_rows, _write_rows
 
-pytestmark = pytest.mark.real_mtp_scan      # exercise the real resolution (see conftest)
 KEY = "mtp_verify_scan"
 _WORKER = ["python", "-m", "mlx_vlm.server", "--model", "caslca/modelX-4bit", "--port", "8091"]
 

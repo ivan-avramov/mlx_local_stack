@@ -4,6 +4,9 @@ import bench.run_reasoning as R
 
 from .test_run_reasoning import FakeDriver, FakeSampler, CANNED_RECORDS_ALL_PASS
 
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
+
 
 def _patch(monkeypatch, tmp_path):
     monkeypatch.setattr(R, "MlxServeDriver", lambda: FakeDriver())
