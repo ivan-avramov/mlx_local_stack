@@ -1,6 +1,32 @@
 # Proposal: ReviewBench as a code-review selection axis
 
-Recorded: 2026-10-05. Status: proposed; document creation authorized, implementation and model calls not authorized. No milestone assigned or execution queued. `PLAN.md` remains the sole queue.
+Recorded: 2026-10-05. **Status: DEFERRED 2026-10-06 (operator, C122) — no work queued, no design audit, no model calls.** Nothing
+below is approved; the proposal is kept as the record of what was evaluated and why it was set aside.
+
+## Why it is deferred (operator ruling 2026-10-06, after a cold review — `$STACK_WORKDIR/reviewbench/cold_review_claude_1.md`, R1–R23)
+
+1. **The instrument cannot separate our two candidates on review skill.** The golden set is ≈ 90 % LLM-written (46 % Claude
+   Sonnet 4.6, 36.5 % Copilot on GPT-5.5, 8.7 % Copilot on Claude Opus 4.7, 1.5 % human) <!-- allow-shorthand: upstream judge/gold producers, not registry models --> and the matcher/judge is a Claude model.
+   A `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` vs `Qwen3.8-27B-mlx-uniform-4bit` comparison would measure judge/gold style
+   affinity as much as reviewing; a second-family judge fixes the matcher, not the gold.
+2. **It needs three exceptions to the ranking rules for one axis** (execution-graded `acc_strict@budget`, the blind mixed-family
+   panel over execution-passing outputs, explicit paired seeds) — the signature of a diagnostic, not a decider.
+3. **It cannot be run safely on the daily machine today.** The shipped opencode scaffold has no permission block (untrusted
+   code from 187 repositories would execute locally; the public gold is one `curl` away); the M50 tripwire refuses the config
+   overlay that read-only isolation needs; upstream's own runner leaks post-review commits through the real remotes and its
+   minimised-repo tool is unpublished.
+4. **The scaffold is unseeded (C121).** Until a per-session seed provably reaches the router, paired sessions are correlated
+   replays and the reload control proves nothing — a prerequisite for any new paired-session axis.
+5. **Cost against decision value.** 876 reviewer episodes ≈ 150–365 box-hours for an axis that changes no pick automatically, on
+   a corpus whose contamination status is unknown for both candidates, with the bias running toward the model already ranked first.
+6. **Upstream scoring quirks would have to be reimplemented** (PRs without a candidate file silently dropped, nulls skipped in
+   macro averages, multiple files per PR pooled, missing classifications defaulting to false positive, no judge temperature).
+
+Re-open only with: C121 fixed, an approved read-only opencode overlay, and a reason to believe the two candidates differ on
+reviewing beyond the judge's measured flip rate. The original proposal text follows unchanged.
+
+---
+
 
 ## Recommendation and purpose
 
