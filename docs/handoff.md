@@ -1,66 +1,60 @@
-# Handoff — 2026-10-06 (18:00 UTC): M58 ADOPTED+SHIPPED (C126) and verified on the daily driver; C121 merged; queue accepted by the operator (items 1–6 below); stack UP, everything pushed
+# Handoff — 2026-10-06 (late): queue items 1–3 worked — M60 design awaits approval (C127); C125 follow-ups built and committed (not pushed); transport-abort proposal awaits approval; stack UP, no GPU work done
 
-THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M58 ADOPTED, M59 queued) and
-`docs/open-questions.md` (C116–C126, all ruled except C119/C124 which await proposals). Day narrative: `docs/campaign-results.md`
-2026-10-06 (two entries), `docs/lab-notebook.md` 2026-10-06, `docs/specs/m58-joint-verification-scan.md` v3.2,
-`docs/proposal-opencode-seeding.md`. Artefacts: `$STACK_WORKDIR/m58/` (gate1_summary.md, gate/, g1b/, arms/, mechanism/, overlays/,
-decode_probe.py + tests, straddle_probe.py, review logs), `$STACK_WORKDIR/c121/` (reviews, docker known-positives),
-`$STACK_WORKDIR/harness-gaps/`, `$STACK_WORKDIR/reviewbench/`.
+THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M60 row: design awaiting approval; M59
+queued) and `docs/open-questions.md` (C127, C128, C129 OPEN; C119/C124 proposal written). Day narrative: `docs/lab-notebook.md`
+2026-10-06 (late), `docs/campaign-results.md` 2026-10-06 (two entries, unchanged today). Artefacts: `$STACK_WORKDIR/c125/` (review
+prompts, Codex + Claude reviews, `run_codex_review.sh`), `$STACK_WORKDIR/opencode-probe/version-env/` (new fixed preflight directory).
 
 ## State of the world
 
-- Stack `main` = `539315d`+ = `origin/main`; mlx-vlm `main` = 664c2ead, mlx-serve `main` = 3f2c87c, both pushed; submodules match.
-- **Daily driver is UP and verified under M58** (18:00 UTC): router `MLX_SERVE_CONFIG=main_models.yaml`, `MLX_VLM_CACHE_SESSION_MAX=2`;
-  worker `--attention-policy fused_v1 --lazy-prompt-embeddings --mtp-verify-scan joint_v1 --draft-kind mtp`; log line
-  `mtp_verify_scan=joint_v1 self-test: 2 cells`; a 16,745-token request: `verify_blocks_joint_v1=208`, `verify_fallback_reasons={}`,
-  `sdpa_forced=528`, decode 44.9 tok/s. Same output and MTP counters as under `per_query` (identity holds on the daily driver too).
-- Every manifest from now on is fingerprint v8 (`mtp_verify_scan`); pre-M58 first-pick rows do not pool with post-M58 rows (expected).
-- Bench opencode: pinned 1.18.30 at `$STACK_WORKDIR/opencode-1.18.30/` (receipt stamped); the brew v2.0.20 is the operator's daily
-  tool only. Bench HOME `$STACK_WORKDIR/opencode-probe/home/`. `benchmark/opencode_bench.json` is the bench carrier (9 models).
-- Two stale agent worktrees `.claude/worktrees/agent-*` can be removed. `ts.md` is the operator's untracked note.
+- Stack `main` = `40197b5` + this docs commit, **2 code commits ahead of `origin/main` (`4edf1d3`), NOT pushed**. Forks unchanged:
+  mlx-vlm `main` 664c2ead, mlx-serve `main` 3f2c87c; submodules match.
+- Daily driver UP under M58 since 18:00 UTC; this session sent it no request and ran no model. No bench router was started.
+- Test baseline (`benchmark/bench/tests`, default `TMPDIR`): **20 failed, 3176 passed, 3 skipped** — the 20 predate this session (C128: C121
+  tests use a model absent from the registry; the M58 manifest guard refuses). Every file touched today is green.
+- Bench opencode: pinned 1.18.30 at `$STACK_WORKDIR/opencode-1.18.30/`; `session_cache_probe` leg B and
+  `scripts/session_pinning_gate.py` now use it too (never PATH). The gate script was changed but NOT run (needs the live router).
+- `ts.md` is the operator's untracked note. Two stale agent worktrees under `.claude/worktrees/agent-*` can still be removed.
 
-## What this day established (headlines)
+## What this session did
 
-- M58: a joint MTP verification scan is bitwise identical to the per-query scan EXCEPT across MLX key-length thresholds (1024 / 8192 /
-  32768 / 65536 — the two-pass `blocks` count changes with key length); the fork's kernel-plan mirror predicts every exception, so
-  `joint_v1` falls back per-query exactly there (rule 7) and the live gate counts those as known positives. Result: decode +14.8 % at
-  128K, +19.7 % at 240K, +8.1 % at 64K, unchanged prefill/peak/acceptance; verify 110 → 96 ms per round. The shipped `length == 2`
-  branch was already inexact at those thresholds (C120, folded in).
-- C121: every opencode bench row before today ran on the server's default seed and carried the operator's private `~/.claude/CLAUDE.md`
-  and `~/AGENTS.md` in the system prompt (rows annotated, no rerun). The probe now runs under a bench-owned HOME/config/state/tmp with a
-  per-item seed overlay, `--pure` everywhere, and a full resume identity.
-- A review-driven router "tightening" would have refused the shipped first pick (`kv_quant_scheme: turboquant` + `kv_bits: 0`) — fork and
-  router now carry golden tests against the real registry.
+1. **Queue item 1 — M60 design (C127, awaiting approval; nothing built or run).** Certification of the final shipped state of
+   `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on Math500 and the judge panel. PLAN row M60 carries the arm, criteria and cost.
+   Scope correction: the M40 Math500/judge rows predate native16 too (TQ4 KV, fork `420c01e1`), so one arm covers four provisional
+   serving changes and cannot attribute a failure (bisect pre-registered as an escalation). Open sub-rulings: no shipped-state
+   predictor-OFF arm; the seeded pilot is phase A of the night, not run before approval (stack is up as the daily driver).
+2. **Queue item 2 — C125 follow-ups, built, reviewed, committed.** `4080a43`: required `--seed-base` for `run_agentbench_os.py`
+   (resume identity; compare gate checks manifests and rows; the M54 chain 3/4 arms still pass it). `40197b5`: `session_cache_probe`
+   leg B + the session-pinning gate pinned to the bench opencode, `--pure` on the discovery call, version preflight under a bench-owned
+   environment. One cold review each (Claude + Codex `gpt-6-astra`); all findings folded in.
+3. **Queue item 3 — transport-abort proposal written** (`docs/proposal-transport-abort.md`, P126–P132; C119 + C124). Fail-closed
+   allowlist: only the probe-timeout DNF keeps an error row in `generate`; the opencode probe grades only a clean completed session or
+   a gate kill with a verified-alive router. Step 1 of the build measures opencode 1.18.30's failure signatures on the mock endpoint.
+   No regrade or rerun asked (the gaps are latent in the committed corpus).
 
-## Queue (operator accepted 2026-10-06), in order
+## Queue, in order
 
-1. **Certification debt on the final shipped state** (native16 + M57 + M58): judge panel (M38/M40 style) and Math500 were never re-run
-   under `fused_v1` + lazy embeddings; M58 is identity-gated so one run covers both. Box-evening; stack down; lean router; k per the
-   earlier panel design; regrade-first where possible. Closes the "provisional" on the first pick's quality axes.
-2. **C125 follow-ups (CPU, small):** required `--seed-base` for `run_agentbench_os.py` (distinct paired schedules; new rows only; M54
-   annotated) and pin `benchmark/session_cache_probe.py` to the bench's opencode binary (`OPENCODE_PROBE_BIN` resolution) or freeze it.
-   TDD + one cold review each.
-3. **C119 + C124 transport-abort proposals:** `generate` records network/OOM exceptions as error rows and continues; the opencode probe
-   proceeds to grading on a nonzero opencode exit. Classify transport vs generation vs gate; abort nonzero with nothing graded on
-   transport; tests that no further request/item follows. Proposal first (AGENTS.md), then build.
-4. **M59 — opencode v2 scaffold migration** (PLAN row): `--standalone`, git-initialised scratch dirs, native `providers/settings` schema,
-   a sanctioned route for sampling + seed (v2 forwards NO model options today), verified by request capture; new scaffold version, never
-   pools with 1.18.x rows. Spec via the M54 funnel.
-5. **First seeded opencode chain** when a B question needs it (after 2): `--seed-base` per session, two bases, reload control; the probe
-   is smoke-tested on the real binary but has NOT run a full item against a real model yet — `--limit 5` smoke first.
-6. **Candidates not queued:** dense prefill path (≤ −14 % TTFT at chunks ≥ 2048); fused-kernel tuning; the unresolved 1.4–3.6 % `auto`-path
-   slowdown for other models under the bumped fork (profiled pair in matched state); P41 watch-list; P42 harder long-context benchmarks.
-   M56 PARKED (C110). ReviewBench DEFERRED (C122).
+1. **M60** — on approval of C127: write `docs/specs/m60-shipped-state-certification.md` (terse), build the self-contained phase script
+   under `$STACK_WORKDIR/m60/` with a dry-run, then run when the operator says the stack is down. Judge pass afterwards (no GPU).
+2. **C128** — repair the 20 red tests (fixture resolves the scan for the fake model + one golden test on the real registry); needs a go.
+3. **Transport abort** — on approval of the proposal: P129 measurement first, then `generate`, then the probe; TDD + cold reviews.
+4. **C129** — rulings: ratify the version-env preflight write; isolate leg B's environment (recommended) or record/freeze.
+5. **M59 — opencode v2 scaffold migration** (PLAN row). Add to its scope: the session-pinning gate's A4 leg covers only v1 today.
+6. **First seeded opencode chain** when a B question needs it; `run_agentbench_os.py` chains now need `--seed-base` per session (two
+   bases, the reload control reuses its session's base).
+7. **Candidates not queued:** unchanged from the previous handoff (dense prefill path; fused-kernel tuning; the 1.4–3.6 % `auto`-path
+   slowdown; P41 watch-list; P42). M56 PARKED (C110). ReviewBench DEFERRED (C122).
 
-## Rules learned (this day)
+## Rules learned (this session)
 
-- Golden tests against the REAL registry for any validation change in fork or router.
-- Self-contained review prompts (Codex replays a prior review verbatim if pointed at its file); ask reviewers for known positives and
-  measured checks — those found every load-bearing defect.
-- Isolation beats equality checks (bench-owned HOME/config instead of asserting the operator's files match).
-- `--pure` on every opencode spawn; discovery without it npm-installs and runs a GitHub plugin before the router check.
-- Phase scripts must be self-contained (a `source <(sed …)` lost a function and silently skipped three arm sessions); the decode
-  runner's headroom refusal is right — top sustained rung is 245760, not 262144; a straddle probe needs its own filler's chars/token.
-- Never rename/move the main checkout from an agent; monkeypatch paths instead.
+- After merging two reviewed branches, run the full suite on the MERGED tree; "green on each branch" produced 20 red tests on `main`.
+- A refusal test asserts the SPECIFIC refusal text; exit code plus a generic word let a test keep passing after its target check became
+  unreachable.
+- `opencode --version` is not read-only: 1.18.30 creates its config/data/state/tmp directories first. Any opencode spawn, including
+  `--version`, runs under a bench-owned environment.
+- Only an ABSENT seed base means legacy base 0; a present null hashes to a different schedule and must refuse.
+- Codex reviews: launch detached with an exit-code marker file (`$STACK_WORKDIR/c125/run_codex_review.sh`); a tool-bound background
+  command is capped at 10 minutes. Do not put a reviewer's `TMPDIR` under `$STACK_WORKDIR` when it runs `test_run_agentbench_os.py`
+  (four fixture-dependent failures).
 
-Next decision id C127; discussion ids continue from P116.
+Next decision id C130; discussion ids continue from P138.

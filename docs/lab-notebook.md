@@ -4502,3 +4502,36 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   continued, like `served_config_drift`, even if the cache was restored since.
 - **Docker grading with `.git` (verified 2026-10-06).** Known-positive grades (`book-store`, `.meta` example solution over the stub, probe `_prepare` + `_git_init_scratch` + `_grade_<lang>(docker_ok=True)`): go, rust, java, javascript all PASS with `.git` present and without it; an unmodified stub FAILs in all four (positive and negative controls); no root-owned files left in the scratch dirs. This closes the "UNVERIFIED" note above (report under `$STACK_WORKDIR/c121/docker_known_positive/`).
 
+
+## 2026-10-06 (late) — C125 follow-ups built; what the cold reviews measured; 20 red tests found on `main`
+
+- **AgentBench `--seed-base` (`4080a43`).** Required in generate mode; item seed `sample_seed(item, 0, base=B)`; manifest + rows record it;
+  resume identity key; the compare gate checks manifests AND rows. Traced and then tested through the real adapter → agent loop →
+  driver → `client.probe`: every turn of an item (including the no-tool-call reprompt) sends the same base-derived seed; there is no
+  retry and no other model call. `sample_seed(id, 0, base=None)` hashes the string `None` — a DIFFERENT schedule from base 0 — which is
+  why a null base is refused rather than read as legacy. Legacy rule: only an ABSENT `runtime.seed_base` means base 0 (the M54 rows; the
+  seed call has been `sample_seed(task, 0)` since the file was created, `28a89af`). The committed M54 chain 3 / chain 4 arms still pass
+  the tightened gate (checked on the real files). Mutations that drop the seed in `client.probe`, or reset it after turn 1 in
+  `agent_loop`, fail the integration test.
+- **`session_cache_probe` pin (`40197b5`).** Measured on the real opencode 1.18.30 by both reviewers: `--version` needs no network and
+  parses no config, but before argument handling it `mkdir -p`s `$XDG_CONFIG_HOME/opencode`, `$XDG_DATA_HOME/opencode/{log,repos}`,
+  `$XDG_STATE_HOME/opencode`, `$XDG_CACHE_HOME/opencode/bin` and `$TMPDIR/opencode`; with uncreatable paths it exits 1 (ENOTDIR). So a
+  "read-only" `--version` under the operator's environment writes to the operator's home before the router check. The preflight now
+  runs under a bench-owned env in `$STACK_WORKDIR/opencode-probe/version-env/` (checked with the real binary and a fake home: home left
+  empty). The pinned launcher is a symlink to a native arm64 Mach-O (no shell/node shim, nothing re-resolves through PATH); the only
+  bare `opencode` spawns inside the binary are in its `pr` checkout flow. A decoy `opencode` first on PATH is the known positive.
+- **A test that passed for the wrong reason.** `test_m50_entrypoints.py::test_session_cache_probe_leg_b_verifies_opencodes_own_destination`
+  kept passing after the pin because its stub binary printed no version, so the run refused on the version check with the same exit
+  code and the word the test looked for; the destination check it exists to verify was never reached. Found by the Claude reviewer with
+  a spy; repaired (stubbed preflight, destination-specific assertion; fails with the check removed). Rule: a refusal test asserts the
+  SPECIFIC refusal text, never only the exit code plus a generic word.
+- **20 red tests on `main` at `4edf1d3` (C128).** 19 in `test_opencode_probe_seeding.py`, 1 in `test_scaffold_policy_compare.py`: the
+  C121 tests use `--model m`, absent from the registry, and the M58 manifest guard refuses an unresolved `mtp_verify_scan`. Each branch
+  was green alone; the merged tree was not run. Verified in a clean worktree at HEAD. Not caused by today's commits. Rule: after merging
+  two reviewed branches, run the full suite on the MERGED tree before calling it green. Full baseline after today's commits is in the
+  handoff. Separate: four transcripts-dir tests fail only when `TMPDIR` is under `$STACK_WORKDIR`.
+- **Judge model availability (for M60).** `codex exec -m gpt-5.6-terra` is still accepted on this account (one-line probe today); the
+  Claude subagent judges are now Opus 5.5 / Sonnet 5.5, not the versions gated in M38/M40. <!-- allow-shorthand -->
+- **Corpus counts behind the transport-abort proposal (`docs/proposal-transport-abort.md`).** `generate`-style error rows: 36
+  `probe_timeout`, 58 without `error_kind` (all `timed out`, 18 files). opencode rows: 625 completed with exit 0, 0 completed with a
+  nonzero exit, 100 gate kills (86 stalled, 14 looping; one looping row passed), 4 pre-gate rows.
