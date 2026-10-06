@@ -326,7 +326,15 @@ _FINGERPRINT_KV_EXTRA = ("hf_path", "kv_quant_scheme", "quantized_kv_start", "pr
 # = "auto"), else the registry; a worker/registry disagreement refuses (registry_attention_policy).
 # Manifests < v7 compare as "auto" (attention_policy_of), so a v7 `fused_v1` row never resumes
 # onto a pre-v7 row even though the negotiated min-version slice omits the key.
-FINGERPRINT_VERSION = 7
+# v8 (M58, 2026-10-06): the MTP verification-scan policy (`--mtp-verify-scan` [+ `--mtp-verify-ab`],
+# registry `mtp_verify_scan`) joins the runtime slice with the values `per_query`, `joint_v1`,
+# `joint_v1+ab` (AB is a distinct served mode: gate rows only, never from the registry). It selects
+# WHICH attention call the verifier makes, so rows at different values never pool and never compare.
+# Controls carry PER-CONTROL introduction versions (_SERVING_CONTROLS): a pre-v8 manifest reads
+# `per_query` / "default-pre-v8" for it, so the v7 (M57) rows on disk stay compatible with a v8
+# `per_query` row and incompatible with a v8 `joint_v1` row. A v8 manifest with a missing or
+# unrecognised value reads "unknown" and refuses everywhere.
+FINGERPRINT_VERSION = 8
 
 
 def config_fingerprint(manifest, version: int | None = None):
@@ -388,8 +396,8 @@ def config_fingerprint(manifest, version: int | None = None):
         fp["code"] = {k: gsp.get(k) for k in ("src/mlx-vlm", "src/mlx-serve")}
     if version >= 6:
         fp.setdefault("runtime", {})["session_retain_prompt_end"] = r.get("session_retain_prompt_end")
-    if version >= 7:
-        for k in _SERVING_CONTROLS:
+    for k, (intro, _default) in _SERVING_CONTROLS.items():
+        if version >= intro:
             fp.setdefault("runtime", {})[k] = control_of(manifest, k)[0]
     return fp
 
@@ -410,10 +418,12 @@ def is_compatible(existing, current) -> bool:
     v = min(existing.get("fingerprint_version", 1), current.get("fingerprint_version", 1))
     a, b = config_fingerprint(existing, v), config_fingerprint(current, v)
     _overlay_serving_path_code(existing, current, a, b)
-    # M57 serving controls (S1/S2): the negotiated slice may omit them (v < 7), but a pre-v7 row IS
-    # the default, so they are compared on EVERY path (incl. the v1 early return) and STRICTLY:
-    # an unresolved ("unknown"/absent) value on a v7 row never pools with anything, itself
-    # included (T2: nothing verifies run identity, so there is no same-run exception).
+    # Serving controls (M57 S1/S2, M58 per-control versions): the negotiated slice may omit them
+    # (v below a control's introduction), but a row older than that IS the default, so they are
+    # compared on EVERY path (incl. the v1 early return) and STRICTLY: an unresolved
+    # ("unknown"/absent/unrecognised) value on a row new enough to carry it never pools with
+    # anything, itself included (T2: nothing verifies run identity, so there is no same-run
+    # exception).
     for k in _SERVING_CONTROLS:
         va, vb = control_of(existing, k)[0], control_of(current, k)[0]
         if va != vb or va == "unknown":     # T2: unresolved is incompatible with EVERYTHING
@@ -553,21 +563,29 @@ def session_retention_state(worker_lookup=_worker_cmdline) -> dict:
             "session_retain_source": "fork-default"}
 
 
-# name -> default value for a pre-v7 manifest / an entry that declares nothing.
-_SERVING_CONTROLS = {"attention_policy": "auto", "lazy_prompt_embeddings": False}
+# name -> (introduction fingerprint version, default value). A manifest older than the control's
+# introduction version predates the key and every such row ran the default.
+_SERVING_CONTROLS = {"attention_policy": (7, "auto"), "lazy_prompt_embeddings": (7, False),
+                     "mtp_verify_scan": (8, "per_query")}
+
+# Closed value sets (M58): a recorded value outside the set is unrecognised and reads "unknown".
+_CONTROL_VALUES = {"mtp_verify_scan": ("per_query", "joint_v1", "joint_v1+ab")}
 
 
 def control_of(manifest: dict, key: str):
-    """(value, source) a manifest stands for on a v7 serving control. fingerprint_version < 7
-    predates the keys and every such row ran the default, so it reads (default, "default-pre-v7")
-    — a KNOWN value regardless of anything its runtime block claims. A v7 manifest reports what
-    it recorded; an absent value reads "unknown" (unresolved: never pools, never compares).
-    (A v7 manifest lacking a key that a later version adds also reads unknown; no v7 manifest
-    exists on disk yet, so that is intentional.)"""
-    if (manifest.get("fingerprint_version") or 1) < 7:
-        return _SERVING_CONTROLS[key], "default-pre-v7"
+    """(value, source) a manifest stands for on a serving control. A manifest whose
+    fingerprint_version is below the control's introduction version predates the key and every
+    such row ran the default, so it reads (default, "default-pre-v<N>") — a KNOWN value regardless
+    of anything its runtime block claims. A newer manifest reports what it recorded; an absent or
+    unrecognised value reads "unknown" (unresolved: never pools, never compares)."""
+    intro, default = _SERVING_CONTROLS[key]
+    if (manifest.get("fingerprint_version") or 1) < intro:
+        return default, f"default-pre-v{intro}"
     r = manifest.get("runtime") or {}
     v = r.get(key)
+    allowed = _CONTROL_VALUES.get(key)
+    if v is not None and allowed is not None and v not in allowed:
+        return "unknown", f"unrecognised:{v}"
     return ("unknown" if v is None else v), r.get(key + "_source")
 
 
@@ -838,7 +856,8 @@ def _worker_for(entry: dict, worker_lookup, doc=None):
     return hits[0] if hits else None
 
 
-def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, parse_registry):
+def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, parse_registry,
+                     compare_value=None):
     registry_path = str(paths.registry_path()) if registry_path is None else registry_path
     try:
         with open(registry_path) as f:
@@ -849,13 +868,14 @@ def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, par
     for e in entries or []:
         if isinstance(e, dict) and e.get("name") == model:
             declared = parse_registry(e.get(key))
+            compared = compare_value(e) if compare_value else declared
             cmd = _worker_for(e, worker_lookup, doc)
             if cmd is not None:
                 served = parse_worker(cmd)
-                if served != declared:
+                if served != compared:
                     raise ServingStateError(
                         f"C35 tripwire: registry {registry_path!r} declares {key}="
-                        f"{declared!r} for {model!r} but the live worker serves "
+                        f"{compared!r} for {model!r} but the live worker serves "
                         f"{key}={served!r}. Launch the driver with MLX_SERVE_CONFIG "
                         f"pointed at the served registry/overlay; refusing to record false "
                         f"{key} provenance.")
@@ -865,11 +885,20 @@ def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, par
 
 
 def assert_serving_state(model: str, registry_path: str | None = None) -> dict:
-    """Resolve BOTH M57 serving controls for `model` and let any ServingStateError propagate
-    (worker/registry disagreement, ambiguity, failed observation). Drivers call this before their
-    first model request and once more after the model is loaded."""
+    """Resolve the serving controls (M57 attention policy and lazy embeddings, M58 verification
+    scan) for `model` and let any ServingStateError propagate (worker/registry disagreement,
+    ambiguity, failed observation). The M58 scan additionally REFUSES when it cannot be resolved
+    ("unknown": unreadable registry / model absent): a v8 row with an unresolved value could never
+    pool or compare. Drivers call this before their first model request and once more after the
+    model is loaded."""
     out = dict(registry_attention_policy(model, registry_path))
     out.update(registry_lazy_prompt_embeddings(model, registry_path))
+    out.update(registry_mtp_verify_scan(model, registry_path))
+    if out["mtp_verify_scan"] == "unknown":
+        raise ServingStateError(
+            f"M58: mtp_verify_scan is UNRESOLVED for {model!r} "
+            f"({out['mtp_verify_scan_source']}); refusing — a v8 row without a known scan value "
+            f"could never pool or compare.")
     return out
 
 
@@ -899,6 +928,28 @@ def registry_lazy_prompt_embeddings(model: str, registry_path: str | None = None
         return "--lazy-prompt-embeddings" in argv
     return _resolve_control(model, registry_path, worker_lookup, "lazy_prompt_embeddings",
                             from_worker, bool)
+
+
+def registry_mtp_verify_scan(model: str, registry_path: str | None = None,
+                             worker_lookup=_DEFAULT_LOOKUP) -> dict:
+    """M58 served verification scan: {"mtp_verify_scan", "mtp_verify_scan_source"}.
+
+    The live worker whose `--model` equals the entry's hf_path is the SERVING truth:
+    `--mtp-verify-scan <v>` (flag absent = "per_query") plus the bare `--mtp-verify-ab` flag
+    ("joint_v1+ab"), source "worker". Otherwise the registry entry's `mtp_verify_scan` (absent or
+    empty = "per_query"), source "registry" — the registry fallback NEVER yields "+ab" (AB rows are
+    gate rows observed from a live worker). A worker that disagrees with the registry REFUSES (C35
+    shape); an overlay declaring `mtp_verify_ab: true` is compared against the worker's AB flag.
+    "unknown" is reserved for an unreadable registry or a model absent from it."""
+    def from_worker(argv):
+        scan = _flag_value(argv, "--mtp-verify-scan") or "per_query"
+        return scan + "+ab" if "--mtp-verify-ab" in argv else scan
+
+    def declared_with_ab(entry):
+        scan = entry.get("mtp_verify_scan") or "per_query"
+        return scan + "+ab" if entry.get("mtp_verify_ab") else scan
+    return _resolve_control(model, registry_path, worker_lookup, "mtp_verify_scan",
+                            from_worker, lambda v: v or "per_query", declared_with_ab)
 
 
 # ----------------------------------------------------- M50 served-config tripwire (2026-09-28)
@@ -1524,7 +1575,8 @@ def _runtime_block(runtime: dict = None, model: str = None,
                  else {"draft_kind": "unknown", "draft_source": "no-model-given"})
     block.update(session_retention_state())
     for key, fn in (("attention_policy", registry_attention_policy),
-                    ("lazy_prompt_embeddings", registry_lazy_prompt_embeddings)):
+                    ("lazy_prompt_embeddings", registry_lazy_prompt_embeddings),
+                    ("mtp_verify_scan", registry_mtp_verify_scan)):
         block.update(fn(model, registry_path) if model
                      else {key: "unknown", key + "_source": "no-model-given"})
     if runtime:

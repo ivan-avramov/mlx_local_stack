@@ -78,6 +78,33 @@ def pytest_sessionfinish(session, exitstatus):
         session.exitstatus = 1
 
 
+# --------------------------------------------------------------------------- M58 scan pin
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "real_mtp_scan: exercise the real mtp_verify_scan resolution (no conftest pin)")
+
+
+@pytest.fixture(autouse=True)
+def _pin_unresolved_mtp_scan(request, monkeypatch):
+    """M58: `assert_serving_state` REFUSES an unresolved `mtp_verify_scan` (spec AC10), and the
+    entry-point tests drive fake model names that no registry declares. As the M57 tests pin the
+    other two controls, resolve ONLY the "unresolved" outcome to the default here, so those tests
+    keep exercising what they were written for. Tests of the resolution itself opt out with
+    `@pytest.mark.real_mtp_scan` (module-level `pytestmark` works too)."""
+    if request.node.get_closest_marker("real_mtp_scan"):
+        return
+    import bench.provenance as P
+    real = P.registry_mtp_verify_scan
+
+    def tolerant(model, registry_path=None, worker_lookup=P._DEFAULT_LOOKUP):
+        out = real(model, registry_path, worker_lookup)
+        if out["mtp_verify_scan"] == "unknown":
+            return {"mtp_verify_scan": "per_query", "mtp_verify_scan_source": "registry"}
+        return out
+
+    monkeypatch.setattr(P, "registry_mtp_verify_scan", tolerant)
+
+
 # --------------------------------------------------------------------------- results tree
 @pytest.fixture
 def tmp_results(tmp_path, monkeypatch):

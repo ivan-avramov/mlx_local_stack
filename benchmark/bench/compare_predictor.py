@@ -54,7 +54,8 @@ _PENALTY_FIELDS = ("presence_penalty", "repetition_penalty")
 
 # M57: the tool accepts exactly ONE named must-differ key. Everything else — including the OTHER
 # member of this tuple, which then MUST MATCH — keeps its must-match rule.
-_MUST_DIFFER_KEYS = ("draft_kind", "attention_policy", "lazy_prompt_embeddings")
+_MUST_DIFFER_KEYS = ("draft_kind", "attention_policy", "lazy_prompt_embeddings",
+                      "mtp_verify_scan")
 
 
 def _differ_value(manifest, key):
@@ -171,7 +172,7 @@ def _gate(model, bench, tune_a, tune_b, must_differ="draft_kind"):
     """Every comparability check this tool runs, short of the actual scoring. Returns a refusal
     dict (`_refuse(...)`) or `{"comparable": True, "tune_a", "tune_b", "rows_a", "rows_b",
     "n_items", "draft_a", "draft_b", "ma", "mb", "warnings"}`. `must_differ` names the ONE key
-    that must differ between the tunes (`draft_kind` or `attention_policy`).
+    that must differ between the tunes (`draft_kind`, `attention_policy`, `lazy_prompt_embeddings` or `mtp_verify_scan`).
     """
     if must_differ not in _MUST_DIFFER_KEYS:
         raise ValueError(f"compare_predictor: must_differ must be one of {_MUST_DIFFER_KEYS}, "

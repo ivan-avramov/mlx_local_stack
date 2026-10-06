@@ -22,8 +22,9 @@ def _registry(tmp_path, policy=None):
 _WORKER = "python mlx_vlm.server --model caslca/modelX-4bit --port 8091"
 
 
-def test_ac11_fingerprint_version_is_7():
-    assert P.FINGERPRINT_VERSION == 7
+def test_ac11_fingerprint_version_covers_the_v7_controls():
+    assert P.FINGERPRINT_VERSION >= 7          # v8 (M58) supersedes the exact-7 assertion
+    assert P._SERVING_CONTROLS["attention_policy"][0] == 7
 
 
 def test_ac11_registry_default_is_auto_when_field_absent_or_empty(tmp_path):

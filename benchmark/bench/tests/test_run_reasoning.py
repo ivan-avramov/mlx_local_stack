@@ -30,7 +30,8 @@ def stub_manifest_lite(monkeypatch):
                         {"sampling_profile": profile, "sampling": dict(overrides or {}), "kv": {},
                          "git": {}, "fingerprint_version": P.FINGERPRINT_VERSION,
                          "runtime": {"draft_kind": "off", "attention_policy": "auto",
-                                     "lazy_prompt_embeddings": False}})
+                                     "lazy_prompt_embeddings": False,
+                                     "mtp_verify_scan": "per_query"}})   # v8 carries all 3
 
 
 class FakeSampler:
