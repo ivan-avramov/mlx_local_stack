@@ -2,6 +2,14 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-06 — M58 ADOPTED (C126): `mtp_verify_scan: joint_v1` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, PROVISIONAL
+
+Operator ruling 2026-10-06 ("adopt it and push"). Vision gate on the registry of record with the field set: **20 / 20 PASS, 20 / 20
+converged, 0 errors** (`benchmark/results/<model>/vision_gate.m58-adopted-20261006.*`; worker flags `--attention-policy fused_v1
+--mtp-verify-scan joint_v1`). Shipped: fork `main` → `664c2ead`, router `main` → `3f2c87c` (pushed), submodules bumped, registry field
+with the PROVISIONAL note in the same commit, fingerprint v8. Structural change (registry → worker), no client carrier touched.
+Not re-run in the adopted state: the judge panel and Math500 (M57 certification debt stays open on the final state). No B/C ladder change.
+
 ## 2026-10-06 — M58 qualification COMPLETE: joint MTP verification scan (`mtp_verify_scan: joint_v1`) for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` — gate 1 PASSED (bitwise identity), decode +15 % at 128K / +19 % at 256K; adoption decision C126
 
 Code under test: fork `m58-joint-verify` @ 664c2ead, router `m58-joint-verify` @ 3f2c87c, stack `m58-provenance` @ e4d3652 (merged

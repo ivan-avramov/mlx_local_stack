@@ -1,16 +1,14 @@
-# Handoff — 2026-10-06 (16:00 UTC): M58 QUALIFIED (gate 1 bitwise identity PASSED; decode +15 % at 128K / +20 % at 240K) — ADOPTION DECISION C126 OPEN; C121 merged; stack STOPPED, `src/*` at the M58 branch commits (uncommitted), nothing pushed
+# Handoff — 2026-10-06 (17:00 UTC): M58 ADOPTED and SHIPPED (C126, PROVISIONAL; forks + stack pushed); C121 merged; stack DOWN (operator restarts)
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M58, M59 rows) and
 `docs/open-questions.md` (C116–C125). Earlier narrative of this same day (M57 start verification, STEP 1 result): `git show dbc546c:docs/handoff.md`.
 
 ## State of the world
 
-- Stack `main` = `f148a46`+ (local only; `origin/main` is still `d92c741` — NOTHING PUSHED this session; push needs the operator's go).
-- Forks: `../mlx-vlm` branch `m58-joint-verify` @ 664c2ead and `../mlx-serve` branch `m58-joint-verify` @ 3f2c87c — NOT merged, NOT
-  pushed, submodules NOT bumped, registry unchanged. Stack branch `m58-provenance` @ e4d3652 lives in worktree `.claude/worktrees/m58`
-  (fingerprint v8, compare tools, parity_replay AC11, row persistence) — NOT merged into main (merge together with the submodule bump).
+- Stack `main` pushed (adoption commit); forks pushed. Daily driver must be restarted by the operator (`runserver.sh`): first start under M58 should show `mtp_verify_scan=joint_v1 self-test` in the worker log and `verify_blocks_joint_v1` on a Request-completed line.
+- Forks merged (fast-forward) and pushed; stack branch `m58-provenance` merged into main; worktree `.claude/worktrees/m58` can be removed.
 - Worktree `.claude/worktrees/c121` removed after the merge (branch kept). Two stale agent worktrees under `.claude/worktrees/agent-*` can be removed.
-- Stack is STOPPED (M58 qualification ran on lean routers; operator restarts the daily driver — note `src/*` state above). The box also runs opencode v2.0.20 (brew); the
+- Stack is STOPPED (operator restarts the daily driver). The box also runs opencode v2.0.20 (brew); the
   bench pins 1.18.30 at `$STACK_WORKDIR/opencode-1.18.30/` (C123). `~/.config/opencode/service.json` was created by a v2 probe (harmless).
 
 ## Done this session (chronological)
@@ -42,10 +40,7 @@ chars-per-token (4.42 here), not the retrieval filler's 4.61.
 
 ## Open items, in priority order
 
-0. **C126 — adopt M58?** If yes: merge fork `m58-joint-verify` (664c2ead) and router `m58-joint-verify` (3f2c87c) into their `main`,
-   bump submodules (`src/*` already at those commits in the working tree), registry `mtp_verify_scan: joint_v1` + PROVISIONAL note on
-   the first pick, refresh the README latency citations, then push (separate go). If no: `git -C src/mlx-vlm checkout fbe2775e`,
-   `git -C src/mlx-serve checkout 7be6bfd`, keep the branches. Either way the operator restarts the daily driver.
+0. ~~C126~~ RULED: adopted, pushed. Fork `main` = 664c2ead, router `main` = 3f2c87c, stack `main` pushed with the bump + registry field; every manifest from now on is fingerprint v8 (`mtp_verify_scan`); pre-M58 first-pick rows do not pool with post-M58 rows (expected).
 1. ~~M58 live smoke + gate 1 + latency arms~~ DONE (above). Gate rows `capacity_ladder.m58-g1a-ab.*` (fingerprint `joint_v1+ab`) and
    arm rows `capacity_ladder.m58-{A,B}-s{1,2}.*` are in `benchmark/results/<model>/` (uncommitted until C126). (operator session; stack STOPPED; lean router). Steps: build a qualification worktree
    under `$STACK_WORKDIR/m58/wt-<sha>` whose `src/mlx-vlm` / `src/mlx-serve` point at 664c2ead / 3f2c87c and whose stack code is
