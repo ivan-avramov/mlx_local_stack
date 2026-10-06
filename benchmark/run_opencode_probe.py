@@ -184,6 +184,15 @@ def _scrub_then_tail(s: str, n: int) -> str:
     return _scrub_pii(s)[-n:]
 
 
+def _scratch_root() -> str | None:
+    root = os.environ.get("OPENCODE_PROBE_SCRATCH")
+    if not root:
+        workdir = _stack_workdir(required=False)
+        if workdir:
+            root = str(Path(workdir) / "scratch" / "octmp.noindex")
+    return root
+
+
 @contextmanager
 def _scratch_dir(name: str):
     # macOS tempdirs live under /var -> /private/var; opencode registers the --dir project
@@ -194,11 +203,7 @@ def _scratch_dir(name: str):
     # (load 12). macOS skips `*.noindex` directories, so the scratch root defaults to
     # `<STACK_WORKDIR>/scratch/octmp.noindex` (created on demand); `OPENCODE_PROBE_SCRATCH`
     # overrides it. TMPDIR is no longer load-bearing for the probe.
-    root = os.environ.get("OPENCODE_PROBE_SCRATCH")
-    if not root:
-        workdir = _stack_workdir(required=False)
-        if workdir:
-            root = str(Path(workdir) / "scratch" / "octmp.noindex")
+    root = _scratch_root()
     if root:
         os.makedirs(root, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f"oc-{name}-", dir=root) as tmp:
@@ -424,32 +429,53 @@ def _seed_marker_path(binary: Path | None = None) -> Path:
     return (b.parents[2] if b.parent.name == ".bin" else b.parent) / "seed_propagation_verified"
 
 
-def _receipt_now(binary: Path) -> dict:
+def _receipt_now(binary: Path, global_sha: str | None) -> dict:
     return {"version": PINNED_OPENCODE_VERSION, "exe_sha256": _sha_of(binary),
-            "config_sha256": _sha_of(SHIPPED_OPENCODE_CONFIG), "test_sha256": _sha_of(SEED_TEST_FILE)}
+            "config_sha256": _sha_of(SHIPPED_OPENCODE_CONFIG), "test_sha256": _sha_of(SEED_TEST_FILE),
+            "global_config_sha256": global_sha}
 
 
-def _record_seed_propagation_verified(binary: Path | None = None) -> None:
+def _record_seed_propagation_verified(binary: Path | None = None, global_sha: str | None = None) -> None:
     """Called by the integration test (only when OPENCODE_PROBE_RECORD_VERIFIED=1) after it proved
     seed + deployed fields reach the endpoint: stamps a receipt bound to the sha256 of the executable,
-    the shipped config and the integration test file (C121 B5)."""
+    the shipped config, the integration test file AND the global opencode config the probe actually
+    loads (C121 B5; an unresolvable global config records nothing)."""
     b = Path(binary) if binary is not None else _opencode_bin()
     m = _seed_marker_path(b)
-    if m.parent.is_dir():
-        m.write_text(json.dumps(_receipt_now(b), indent=2))
+    if m.parent.is_dir() and global_sha:
+        m.write_text(json.dumps(_receipt_now(b, global_sha), indent=2))
 
 
-def _seed_runtime(seed_base: int) -> dict:
+def _global_config_sha256(opencode_bin: str, env: dict) -> str | None:
+    """sha256 over the global opencode config files in the config dir opencode itself reports
+    (`opencode debug paths`): the config the probe really loads, not the repo copy. None when
+    unresolvable."""
+    import hashlib
+    try:
+        r = subprocess.run([str(opencode_bin), "debug", "paths"], env=env, capture_output=True, text=True,
+                           timeout=60, stdin=subprocess.DEVNULL)
+        m = re.search(r"^config\s+(\S.*)$", r.stdout or "", re.M)
+        if r.returncode != 0 or not m:
+            return None
+        d = Path(m.group(1).strip())
+        parts = [f"{n}:{hashlib.sha256((d / n).read_bytes()).hexdigest()}"
+                 for n in ("opencode.json", "opencode.jsonc") if (d / n).is_file()]
+        return hashlib.sha256("\n".join(parts).encode()).hexdigest() if parts else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _seed_runtime(seed_base: int, global_sha: str | None = None) -> dict:
     b = _opencode_bin()
     try:
         rec = json.loads(_seed_marker_path(b).read_text())
         verified = (isinstance(rec, dict) and None not in rec.values()
-                    and rec == _receipt_now(b))
+                    and rec == _receipt_now(b, global_sha))
     except (OSError, ValueError):
         verified = False
     return {"seed_base": seed_base, "overlay_schema": OVERLAY_SCHEMA,
             "seed_propagation": "verified-by-test" if verified else "unverified",
-            "opencode_bin": _portable(b)}
+            "opencode_bin": _portable(b), "opencode_global_config_sha256": global_sha}
 
 
 def _assert_overlay_resolved(cwd: Path, env: dict, model: str, seed: int, expected_base: str, *,
@@ -488,9 +514,66 @@ def _assert_overlay_resolved(cwd: Path, env: dict, model: str, seed: int, expect
     if opts.get("seed") != seed:
         raise provenance.ServedConfigError(f"M50 tripwire: opencode's resolved options for {model!r} do not "
                                            f"carry the overlay seed {seed} (got {opts.get('seed')!r}).")
+    # C121 B2: the overlay must not turn "model not configured" into a silent run without the deployed
+    # sampling. Resolved options minus `seed` must EQUAL the shipped config's block for this model.
+    try:
+        expected = json.loads(SHIPPED_OPENCODE_CONFIG.read_text())["provider"]["mlx-local"]["models"][model]["options"]
+    except Exception as e:  # noqa: BLE001
+        raise provenance.ServedConfigError(f"M50 tripwire: the shipped opencode config has no deployed "
+                                           f"options for {model!r}: {type(e).__name__}: {e}")
+    got = {k: v for k, v in opts.items() if k != "seed"}
+    bad = [f"{k} (resolved {got.get(k, '<missing>')!r}, deployed {expected.get(k, '<absent>')!r})"
+           for k in sorted(set(expected) | set(got)) if got.get(k, object()) != expected.get(k, object())]
+    if bad:
+        raise provenance.ServedConfigError(f"M50 tripwire: opencode's resolved options for {model!r} differ "
+                                           f"from the deployed sampling fields: {'; '.join(bad)}.")
+    if not isinstance(prov["models"][model].get("limit"), dict) or not prov["models"][model]["limit"]:
+        raise provenance.ServedConfigError(f"M50 tripwire: opencode's resolved model {model!r} has no "
+                                           f"`limit` block (not the shipped model entry).")
 
 
 SHIPPED_OPENCODE_CONFIG = REPO / "opencode_config" / "opencode.json"
+
+# C121 B3: opencode 1.18.30 searches UPWARD from a non-git project dir for AGENTS.md (no switch
+# disables that; verified by the cold review's mock capture), so the operator's `~/AGENTS.md` would
+# enter every system prompt. `git init` in each item scratch dir makes it a repo root and stops the
+# search while the seed overlay still merges. Part of the scaffold-policy hash.
+SCRATCH_GIT_INIT = True
+
+
+def _git_init_scratch(work: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(work)], check=True, capture_output=True, timeout=60,
+                   stdin=subprocess.DEVNULL)
+
+
+def _ancestor_instruction_files(start: Path) -> dict:
+    """{portable path: sha256} of every AGENTS.md / CLAUDE.md / .cursor/rules from `start` up to `/`,
+    plus `~/.claude/CLAUDE.md` -- the instruction files opencode could pick up, so exposure is observable."""
+    import hashlib
+
+    def digest(p: Path) -> str | None:
+        try:
+            if p.is_file():
+                return hashlib.sha256(p.read_bytes()).hexdigest()
+            if p.is_dir():
+                h = hashlib.sha256()
+                for f in sorted(x for x in p.rglob("*") if x.is_file()):
+                    h.update(str(f.relative_to(p)).encode()); h.update(f.read_bytes())
+                return h.hexdigest()
+        except OSError:
+            return None
+        return None
+    found = {}
+    start = Path(os.path.realpath(start))
+    cands = []
+    for d in [start, *start.parents]:
+        cands += [d / "AGENTS.md", d / "CLAUDE.md", d / ".cursor" / "rules"]
+    cands.append(Path.home() / ".claude" / "CLAUDE.md")
+    for c in cands:
+        h = digest(c)
+        if h:
+            found[_portable(c)] = h
+    return found
 
 
 def _scaffold_runtime() -> dict:
@@ -503,8 +586,10 @@ def _scaffold_runtime() -> dict:
     except OSError:
         digest = None
     policy = ",".join(f"{k}={v}" for k, v in sorted(SCAFFOLD_ENV_POLICY.items()))
+    full = f"{policy}|scratch_git_init={str(SCRATCH_GIT_INIT).lower()}"
     return {"skill_policy": policy,
-            "scaffold_policy_sha256": hashlib.sha256(policy.encode()).hexdigest(),
+            "scratch_git_init": SCRATCH_GIT_INIT,
+            "scaffold_policy_sha256": hashlib.sha256(full.encode()).hexdigest(),
             "claude_md_present": (Path.home() / ".claude" / "CLAUDE.md").exists(),
             "opencode_config": "opencode_config/opencode.json",
             "opencode_config_sha256": digest}
@@ -810,6 +895,13 @@ def main() -> int:
                  f"is output-determining. Bump PINNED_OPENCODE_VERSION deliberately or pass "
                  f"--allow-version-drift to record the drift.")
 
+    # C121 B5/B3: what the probe really loads. One extra spawn (`debug paths`), after the M50 check.
+    global_sha = _global_config_sha256(oc_bin, _opencode_env(workdir / "scratch" / "m50-discovery-xdg-data"))
+    ancestors = _ancestor_instruction_files(Path(_scratch_root() or (workdir / "scratch")))
+    if ancestors:
+        print(f"!! instruction files in the ancestor chain (recorded in the manifest): {sorted(ancestors)}",
+              flush=True)
+
     polyglot = _polyglot_root()
     poly_sha = _polyglot_sha(polyglot)
     root = polyglot / a.lang / "exercises/practice"
@@ -859,7 +951,8 @@ def main() -> int:
                                          "tick_s": a.tick_s, "hard_ceiling_s": hard_ceiling_s,
                                          "stall_ticks": a.stall_ticks,
                                          "loop_repeats": a.loop_repeats,
-                                         **_scaffold_runtime(), **_seed_runtime(a.seed_base)},
+                                         **_scaffold_runtime(), **_seed_runtime(a.seed_base, global_sha),
+                                         "ancestor_instruction_files": ancestors},
                                 router=router)
         if history:
             man["router_history"] = history
@@ -881,16 +974,30 @@ def main() -> int:
         with _scratch_dir(name) as tmp:
             work = Path(tmp) / name
             _prepare(src, work)
+            if SCRATCH_GIT_INIT:
+                _git_init_scratch(work)         # C121 B3: repo root stops opencode's upward AGENTS.md search
             oc_env = _opencode_env(Path(tmp) / "xdg-data")      # M46: isolated session store
             # M50: the destination opencode resolves from INSIDE this item's project must be the
             # router verified at entry (a project-level config in the exercise would win otherwise).
             item_id = f"{a.lang}/{name}"
             item_seed = _item_seed(item_id, a.seed_base)
             overlay_sha = _write_seed_overlay(work, a.model, item_seed)   # C121: per-item seed overlay
-            provenance.assert_opencode_destination(work, oc_env, router["pid"], opencode_bin=oc_bin)
+            # Two `opencode debug config` spawns per item (destination + overlay), ~0.7 s total
+            # (cold review E4); accepted. A refusal at item k leaves the C106 drift stamp on the
+            # manifest of items 1..k-1.
+            def _drift_stamp(e):
+                _stamp_manifest(mp, {"served_config_drift": {"entry_sha256": router.get("config_sha256"),
+                                                             "exit_sha256": _exit_sha(oc_base),
+                                                             "error": str(e), "item": item_id}})
+            try:
+                provenance.assert_opencode_destination(work, oc_env, router["pid"], opencode_bin=oc_bin)
+            except provenance.ServedConfigError as e:
+                _drift_stamp(e)
+                raise
             try:
                 _assert_overlay_resolved(work, oc_env, a.model, item_seed, oc_base, opencode_bin=oc_bin)
             except provenance.ServedConfigError as e:
+                _drift_stamp(e)
                 sys.exit(f"REFUSED: {e}")
             try:
                 _write_manifest()           # first RUNNING item: attribution on disk before traffic
@@ -911,6 +1018,15 @@ def main() -> int:
                 tick_s=a.tick_s, hard_ceiling_s=hard_ceiling_s, poll_s=a.poll_s,
                 stall_ticks=a.stall_ticks, loop_repeats=a.loop_repeats, pure=not a.no_pure,
                 env=oc_env, opencode_bin=oc_bin)
+            # C121 B7: the overlay sits in the model's edit surface. Re-hash, flag a rewrite, and
+            # restore the original bytes BEFORE the session export so it never runs under a rewritten file.
+            try:
+                overlay_after = _sha_of(work / "opencode.json")
+            except Exception:  # noqa: BLE001
+                overlay_after = None
+            overlay_rewritten = overlay_after != overlay_sha
+            if overlay_rewritten:
+                _write_seed_overlay(work, a.model, item_seed)
             export = _export_latest_session(oc_env, cwd=work, opencode_bin=oc_bin)
             transcript_rel = None
             if export is not None:
@@ -947,6 +1063,7 @@ def main() -> int:
                 # D12: harness traffic (turns, incremental + cumulative input, output, max context).
                 "traffic": traffic,
                 **_seed_row_fields(item_id, a.seed_base, overlay_sha),
+                "overlay_sha256_after": overlay_after, "overlay_rewritten_by_model": overlay_rewritten,
             }
             with out.open("a") as f:
                 f.write(json.dumps(row) + "\n")

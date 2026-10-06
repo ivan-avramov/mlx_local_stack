@@ -692,7 +692,7 @@ separately from the daily-driver configs for exactly this reason).
 
 ```
 uv run python benchmark/run_opencode_probe.py --model <full-registry-name> \
-    --items <comma-list-of-exercise-names> [--lang <lang>] [--tick-s 300] \
+    --items <comma-list-of-exercise-names> --seed-base <int> [--lang <lang>] [--tick-s 300] \
     [--hard-ceiling-s 3600] [--stall-ticks 2] [--loop-repeats 3] [--out <path>] \
     [--allow-version-drift]
 ```

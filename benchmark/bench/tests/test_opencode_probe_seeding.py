@@ -24,8 +24,9 @@ SHIPPED = Path(P.SHIPPED_OPENCODE_CONFIG)
 
 
 # ------------------------------------------------------------------ pinned binary (C123, replaces AC6)
-def test_pin_stays_at_1_18_30():
+def test_pin_and_binary_install_dir_name_the_same_version():
     assert P.PINNED_OPENCODE_VERSION == "1.18.30"
+    assert f"opencode-{P.PINNED_OPENCODE_VERSION}/" in P.OPENCODE_BIN_RELPATH
 
 
 def test_opencode_bin_defaults_under_stack_workdir(monkeypatch, tmp_path):
@@ -105,7 +106,7 @@ def test_export_and_overlay_check_spawn_the_given_binary(monkeypatch, tmp_path):
         return "Session ID\nses_a1  t\n" if cmd[1] == "session" else json.dumps({"messages": []})
     monkeypatch.setattr(subprocess, "check_output", fake_co)
     P._export_latest_session({}, cwd=tmp_path, opencode_bin="/pinned/opencode")
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: (cmds.append(cmd[0]) or _fake_debug({"seed": 9})(cmd)))
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: (cmds.append(cmd[0]) or _fake_debug(_resolved(9))(cmd)))
     P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/pinned/opencode")
     assert cmds == ["/pinned/opencode"] * 3
 
@@ -152,29 +153,6 @@ def test_write_overlay_writes_json_and_returns_sha(tmp_path):
     assert sha == hashlib.sha256(raw).hexdigest()
 
 
-def _deep_merge(a, b):
-    out = copy.deepcopy(a)
-    for k, v in b.items():
-        out[k] = _deep_merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
-    return out
-
-
-def _diff_paths(a, b, pre=()):
-    if isinstance(a, dict) and isinstance(b, dict):
-        out = []
-        for k in set(a) | set(b):
-            out += _diff_paths(a.get(k), b.get(k), pre + (k,))
-        return out
-    return [] if a == b else [pre]
-
-
-def test_overlay_overrides_nothing_but_the_seed_in_the_shipped_config():
-    shipped = json.loads(SHIPPED.read_text())
-    assert MODEL in shipped["provider"]["mlx-local"]["models"]
-    merged = _deep_merge(shipped, P._seed_overlay(MODEL, 5))
-    assert _diff_paths(shipped, merged) == [("provider", "mlx-local", "models", MODEL, "options", "seed")]
-
-
 # ------------------------------------------------------------------ AC2: seeds
 def test_item_seed_is_distinct_per_item_reproducible_and_base_dependent():
     s = {i: P._item_seed(i, 1) for i in ("python/a", "python/b", "go/c")}
@@ -210,67 +188,123 @@ def _receipt_env(monkeypatch, tmp_path):
 
 def test_manifest_runtime_records_seed_provenance(monkeypatch, tmp_path):
     b, cfg, tf = _receipt_env(monkeypatch, tmp_path)
-    rt = P._seed_runtime(7)
+    rt = P._seed_runtime(7, global_sha="g1")
     assert rt["seed_base"] == 7 and rt["overlay_schema"] == "provider.mlx-local.models.<model>.options.seed"
     assert rt["opencode_bin"] == "$STACK_WORKDIR/opencode-1.18.30/node_modules/.bin/opencode"
     assert str(tmp_path) not in json.dumps(rt)
     assert rt["seed_propagation"] == "unverified"          # no receipt yet
-    P._record_seed_propagation_verified(b)
-    assert P._seed_runtime(7)["seed_propagation"] == "verified-by-test"
+    assert rt["opencode_global_config_sha256"] == "g1"
+    P._record_seed_propagation_verified(b, "g1")
+    assert P._seed_runtime(7, global_sha="g1")["seed_propagation"] == "verified-by-test"
 
 
-def test_receipt_is_bound_to_exe_config_and_test_file_hashes(monkeypatch, tmp_path):
+def test_receipt_is_bound_to_exe_config_test_and_global_config_hashes(monkeypatch, tmp_path):
     b, cfg, tf = _receipt_env(monkeypatch, tmp_path)
-    P._record_seed_propagation_verified(b)
+    P._record_seed_propagation_verified(b, "g1")
     r = json.loads(P._seed_marker_path(b).read_text())
-    assert set(r) >= {"version", "exe_sha256", "config_sha256", "test_sha256"}
-    assert P._seed_runtime(7)["seed_propagation"] == "verified-by-test"
+    assert set(r) >= {"version", "exe_sha256", "config_sha256", "test_sha256", "global_config_sha256"}
+    ok = lambda: P._seed_runtime(7, global_sha="g1")["seed_propagation"]   # noqa: E731
+    assert ok() == "verified-by-test"
+    assert P._seed_runtime(7, global_sha="g2")["seed_propagation"] == "unverified"   # global config changed
+    assert P._seed_runtime(7, global_sha=None)["seed_propagation"] == "unverified"   # unresolvable
     cfg.write_text('{"a": 2}')                                       # shipped config changed
-    assert P._seed_runtime(7)["seed_propagation"] == "unverified"
+    assert ok() == "unverified"
     cfg.write_text('{"a": 1}')
-    assert P._seed_runtime(7)["seed_propagation"] == "verified-by-test"
+    assert ok() == "verified-by-test"
     tf.write_text("# test v2")                                       # integration test changed
-    assert P._seed_runtime(7)["seed_propagation"] == "unverified"
+    assert ok() == "unverified"
     tf.write_text("# test v1")
     b.write_text("#!/bin/sh\necho 1.18.30 # rebuilt\n")            # executable changed
-    assert P._seed_runtime(7)["seed_propagation"] == "unverified"
+    assert ok() == "unverified"
+
+
+def test_global_config_sha_follows_the_config_dir_opencode_reports(tmp_path):
+    cfgdir = tmp_path / "gcfg"; cfgdir.mkdir()
+    (cfgdir / "opencode.json").write_text('{"x": 1}')
+    b = _exe(tmp_path / "opencode", f"#!/bin/sh\necho 'home   /h'\necho 'config   {cfgdir}'\n")
+    h1 = P._global_config_sha256(str(b), {})
+    assert h1 and len(h1) == 64
+    (cfgdir / "opencode.json").write_text('{"x": 2}')
+    assert P._global_config_sha256(str(b), {}) != h1
+    assert P._global_config_sha256(str(tmp_path / "missing"), {}) is None
 
 
 def test_legacy_text_marker_reads_unverified(monkeypatch, tmp_path):
     b, cfg, tf = _receipt_env(monkeypatch, tmp_path)
     P._seed_marker_path(b).write_text(P.PINNED_OPENCODE_VERSION)
-    assert P._seed_runtime(7)["seed_propagation"] == "unverified"
+    assert P._seed_runtime(7, global_sha="g1")["seed_propagation"] == "unverified"
 
 
 # ------------------------------------------------------------------ AC4: pre-check
-def _fake_debug(models_options, base="http://localhost:8000/v1"):
-    doc = {"provider": {"mlx-local": {"options": {"baseURL": base},
-                                      "models": {MODEL: {"options": models_options}}}}}
+def _shipped_opts():
+    return dict(json.loads(SHIPPED.read_text())["provider"]["mlx-local"]["models"][MODEL]["options"])
+
+
+def _fake_debug(models_options, base="http://localhost:8000/v1", limit=True):
+    entry = {"options": models_options}
+    if limit:
+        entry["limit"] = {"context": 262144, "output": 102400}
+    doc = {"provider": {"mlx-local": {"options": {"baseURL": base}, "models": {MODEL: entry}}}}
 
     def run(cmd, **kw):
         return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(doc), stderr="")
     return run
 
 
+def _resolved(seed=9, **over):
+    return {**_shipped_opts(), **over, "seed": seed}
+
+
 def test_overlay_check_passes_when_seed_resolved_and_base_unchanged(monkeypatch, tmp_path):
-    monkeypatch.setattr(subprocess, "run", _fake_debug({"temperature": 0.5, "seed": 9}))
+    monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9)))
     P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
 
 
 def test_overlay_check_refuses_when_seed_not_resolved(monkeypatch, tmp_path):
-    monkeypatch.setattr(subprocess, "run", _fake_debug({"temperature": 0.5}))
+    monkeypatch.setattr(subprocess, "run", _fake_debug(_shipped_opts()))
     with pytest.raises(provenance.ServedConfigError, match="M50.*seed"):
         P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
 
 
 def test_overlay_check_refuses_when_base_url_changed(monkeypatch, tmp_path):
-    monkeypatch.setattr(subprocess, "run", _fake_debug({"seed": 9}, base="http://localhost:9999/v1"))
+    monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9), base="http://localhost:9999/v1"))
     with pytest.raises(provenance.ServedConfigError, match="M50.*baseURL"):
         P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
 
 
+def test_overlay_check_refuses_a_model_missing_from_the_global_config(monkeypatch, tmp_path):
+    """B2: overlay-only model entry (seed, no deployed sampling, no limit) must NOT pass."""
+    monkeypatch.setattr(subprocess, "run", _fake_debug({"seed": 9}, limit=False))
+    with pytest.raises(provenance.ServedConfigError, match="M50.*deployed"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+
+
+def test_overlay_check_refuses_one_drifted_field_naming_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9, temperature=0.99)))
+    with pytest.raises(provenance.ServedConfigError, match="M50.*temperature"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+
+
+def test_overlay_check_refuses_a_missing_field_and_missing_limit(monkeypatch, tmp_path):
+    o = _resolved(9); o.pop("top_k")
+    monkeypatch.setattr(subprocess, "run", _fake_debug(o))
+    with pytest.raises(provenance.ServedConfigError, match="M50.*top_k"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+    monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9), limit=False))
+    with pytest.raises(provenance.ServedConfigError, match="M50.*limit"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+
+
+def test_overlay_check_refuses_a_model_absent_from_the_shipped_config(monkeypatch, tmp_path):
+    cfg = tmp_path / "shipped.json"; cfg.write_text(json.dumps({"provider": {"mlx-local": {"models": {}}}}))
+    monkeypatch.setattr(P, "SHIPPED_OPENCODE_CONFIG", cfg)
+    monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9)))
+    with pytest.raises(provenance.ServedConfigError, match="M50.*shipped"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+
+
 def test_overlay_check_rejects_nonzero_exit_even_with_valid_json(monkeypatch, tmp_path):
-    ok = _fake_debug({"seed": 9})
+    ok = _fake_debug(_resolved(9))
 
     def run(cmd, **kw):
         r = ok(cmd); r.returncode = 3
@@ -385,7 +419,7 @@ def test_pinned_opencode_forwards_seed_and_deployed_sampling_to_the_endpoint(tmp
         for k, v in deployed.items():
             assert body[k] == v, (k, body.get(k), v)
     if os.environ.get("OPENCODE_PROBE_RECORD_VERIFIED") == "1":   # operator opt-in: stamps the manifest marker
-        P._record_seed_propagation_verified(b)
+        P._record_seed_propagation_verified(b, P._global_config_sha256(str(b), dict(os.environ)))
 
 
 # ------------------------------------------------------------------ B2: continuation / resume; B9: overlay map
@@ -478,3 +512,142 @@ def test_manifest_records_the_overlay_sha_per_item_before_any_traffic(tmp_path, 
         _resume_main(OP, monkeypatch, out)
     man = json.loads(out.with_suffix(".manifest.json").read_text())
     assert man["overlay_sha256_by_item"] == {"python/ex": captured["sha"]}
+
+
+# ------------------------------------------------------------------ B3: ancestor instruction files + git-init'd item dirs
+def test_git_init_scratch_creates_a_repo_boundary(tmp_path):
+    P._git_init_scratch(tmp_path)
+    assert (tmp_path / ".git").is_dir()
+
+
+def test_scaffold_runtime_folds_scratch_git_init_into_the_policy_hash(monkeypatch):
+    rt = P._scaffold_runtime()
+    assert rt["scratch_git_init"] is True
+    monkeypatch.setattr(P, "SCRATCH_GIT_INIT", False)
+    rt2 = P._scaffold_runtime()
+    assert rt2["scratch_git_init"] is False
+    assert rt2["scaffold_policy_sha256"] != rt["scaffold_policy_sha256"]
+
+
+def test_ancestor_instruction_files_are_hashed_with_portable_paths(monkeypatch, tmp_path):
+    home = tmp_path / "home"; scratch = home / "wd" / "scratch" / "octmp"
+    scratch.mkdir(parents=True)
+    (home / "AGENTS.md").write_text("operator instructions")
+    (home / "wd" / "CLAUDE.md").write_text("claude")
+    (home / "wd" / ".cursor").mkdir(); (home / "wd" / ".cursor" / "rules").write_text("r")
+    monkeypatch.setenv("HOME", str(home))
+    got = P._ancestor_instruction_files(scratch)
+    import hashlib
+    assert got["~/AGENTS.md"] == hashlib.sha256(b"operator instructions").hexdigest()
+    assert "~/wd/CLAUDE.md" in got and "~/wd/.cursor/rules" in got
+    assert str(home) not in json.dumps(got)
+
+
+def test_manifest_lists_ancestor_instruction_files(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    (tmp_path / "AGENTS.md").write_text("sentinel instructions")      # ancestor of <workdir>/scratch
+    monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (_ for _ in ()).throw(StopIteration("stop")))
+    out = tmp_path / "oc.jsonl"
+    with pytest.raises(StopIteration):
+        _resume_main(OP, monkeypatch, out)
+    rt = json.loads(out.with_suffix(".manifest.json").read_text())["runtime"]
+    assert rt["scratch_git_init"] is True
+    assert any(k.endswith("AGENTS.md") for k in rt["ancestor_instruction_files"])
+    assert "opencode_global_config_sha256" in rt
+
+
+def test_item_dir_is_git_initialised_before_the_overlay_check(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    seen = {}
+
+    def check(cwd, *a, **k):
+        seen["git"] = (cwd / ".git").is_dir()
+        raise provenance.ServedConfigError("M50 tripwire: stop")
+    monkeypatch.setattr(OP, "_assert_overlay_resolved", check)
+    with pytest.raises(SystemExit, match="M50"):
+        _resume_main(OP, monkeypatch, tmp_path / "oc.jsonl")
+    assert seen["git"] is True
+
+
+def _run_with_mock(tmp_path, ancestor_sentinel, git_init):
+    """Pinned opencode against a mock endpoint, item dir BELOW an ancestor AGENTS.md; returns the
+    captured system prompts."""
+    b = _pinned_bin()
+    if b is None:
+        pytest.skip("pinned opencode binary absent")
+    _Mock.bodies = []
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Mock)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        cfg = json.loads(SHIPPED.read_text()); cfg.pop("plugin", None); cfg.pop("mcp", None)
+        prov = cfg["provider"]["mlx-local"]
+        prov["options"]["baseURL"] = f"http://127.0.0.1:{srv.server_address[1]}/v1"
+        cfg["provider"] = {"mlx-local": prov}
+        xdgc = tmp_path / "xdgc"; (xdgc / "opencode").mkdir(parents=True)
+        (xdgc / "opencode" / "opencode.json").write_text(json.dumps(cfg))
+        (tmp_path / "AGENTS.md").write_text(ancestor_sentinel)
+        proj = tmp_path / "scratch" / "item"; proj.mkdir(parents=True)
+        if git_init:
+            P._git_init_scratch(proj)
+        P._write_seed_overlay(proj, MODEL, 7)
+        env = P._opencode_env(tmp_path / "xdgd"); env.update(XDG_CONFIG_HOME=str(xdgc))
+        P._run_opencode(MODEL, proj, "say hi", proj / "s.py", proj / "t.py", lambda w, t: (False, ""), "",
+                        tick_s=300, hard_ceiling_s=170, poll_s=1.0, stall_ticks=50, loop_repeats=50,
+                        pure=True, env=env, opencode_bin=str(b))
+    finally:
+        srv.shutdown()
+    assert _Mock.bodies
+    return json.dumps([m for body in _Mock.bodies for m in body.get("messages", [])
+                       if m.get("role") == "system"])
+
+
+def test_ancestor_agents_md_reaches_the_prompt_without_git_init_and_not_with_it(tmp_path):
+    sentinel = "SENTINEL-ANCESTOR-INSTRUCTIONS-8c1f"
+    (tmp_path / "a").mkdir(); (tmp_path / "b").mkdir()
+    leaked = _run_with_mock(tmp_path / "a", sentinel, git_init=False)
+    assert sentinel in leaked, "known positive: the upward AGENTS.md search should reach the prompt"
+    assert sentinel not in _run_with_mock(tmp_path / "b", sentinel, git_init=True)
+
+
+# ------------------------------------------------------------------ B6b: refusal at an item leaves the exit stamp
+def test_item_refusal_stamps_served_config_drift_on_an_existing_manifest(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"; _prior(OP, out, [])           # manifest of earlier items exists
+    monkeypatch.setattr(OP, "_assert_overlay_resolved",
+                        lambda *a, **k: (_ for _ in ()).throw(provenance.ServedConfigError("M50 tripwire: overlay")))
+    with pytest.raises(SystemExit, match="M50"):
+        _resume_main(OP, monkeypatch, out)
+    man = json.loads(out.with_suffix(".manifest.json").read_text())
+    assert "overlay" in man["served_config_drift"]["error"]
+
+
+# ------------------------------------------------------------------ B7: overlay rewritten by the model
+def test_overlay_after_run_is_restored_flagged_and_exported_under_the_original(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"
+    seen = {}
+
+    class Gate:
+        stop_reason = "completed"; ticks = []; elapsed_s = 1.0
+
+    def fake_run(model, cwd, *a, **k):
+        (cwd / "opencode.json").write_text('{"provider": {"rewritten": true}}')   # the "model" rewrote it
+        return 0, "", 1.0, Gate()
+
+    def fake_export(env, *, cwd, opencode_bin):
+        seen["overlay_at_export"] = json.loads((cwd / "opencode.json").read_text())
+        return None
+    monkeypatch.setattr(OP, "_run_opencode", fake_run)
+    monkeypatch.setattr(OP, "_export_latest_session", fake_export)
+    monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (w / "s.py", w / "t.py"))
+    monkeypatch.setattr(OP, "_grade_result", lambda *a, **k: (False, "", False))
+    monkeypatch.setattr(OP, "_scrub_then_tail", lambda t, n: t)
+
+    def mk(w, s, l):
+        (w / "s.py").write_text("x"); (w / "t.py").write_text("y"); return w / "s.py", w / "t.py"
+    monkeypatch.setattr(OP, "_solution_and_test", mk)
+    assert _resume_main(OP, monkeypatch, out) == 0
+    row = json.loads(out.read_text().splitlines()[-1])
+    assert row["overlay_rewritten_by_model"] is True
+    assert row["overlay_sha256_after"] != row["overlay_sha256"]
+    assert seen["overlay_at_export"] == OP._seed_overlay("m", row["sampler_seed"])   # restored before export
