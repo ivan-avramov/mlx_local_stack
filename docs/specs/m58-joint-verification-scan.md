@@ -1,4 +1,4 @@
-# M58 — joint MTP verification scan for long-context decode (spec v3.1, 2026-10-06; C118: STEP 1 approved, build held)
+# M58 — joint MTP verification scan for long-context decode (spec v3.2, 2026-10-06; C118: BUILD GO — in cold review)
 
 Queue row: `docs/PLAN.md` M58 (C112). Evidence: `docs/proposal-flash-attention.md` E8, E11, P60, P69, X2, X9. Scope: first pick
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, native16 KV, MTP ON, shipped M57 state. Phase 2 serving optimization; no B/C
@@ -145,6 +145,15 @@ MLX 0.32.2, `applegpu_g17s`, `MLX_SDPA_BLOCKS` unset; the script's copy of the p
 
 Decision: STEP 1 passes both rules; the build is now the operator's call (C118, build held).
 
+## Build status (2026-10-06)
+
+Built by the Sonnet implementer on fork `m58-joint-verify`, router `m58-joint-verify`, stack worktree `m58-provenance`; cold
+reviews round 1: Codex `gpt-6-astra` (fork BLOCKING, router SHIP, stack BLOCKING; B1–B12) and Claude (fork FIX-THEN-SHIP, router
+SHIP, stack FIX-THEN-SHIP; F1–F9, R1, S1–S6) — both in `$STACK_WORKDIR/m58/`. Fix round in progress. Accepted implementer
+judgement calls: 1–5, 7–9; rejected 6 (recheck the RESOLVED drafter) and 10 (AB finalisation on every exit path); the autouse
+conftest provenance pin is rejected in favour of per-module opt-in. Known, documented: the continuous-batching `_step` path
+reports no `verify_*` counters (same as M57's `sdpa_*`).
+
 ## Build (Sonnet implementer, M54 funnel; CPU tests only, no loads, no pushes, no submodule bumps) (P93)
 
 Acceptance criteria — each needs a named test written first and watched failing:
@@ -211,11 +220,14 @@ relaxation would be a separately approved lossy-lever qualification under AGENTS
   requests whose prompt length is ≈ T − 64 for T ∈ {1024, 8192, 32768, 65536} so the decode crosses each threshold (Claude
   S1). PASS iff `verify_ab_mismatch == 0` on every request, `verify_ab_blocks > 0` on every rung, `verify_ab_straddle_blocks
   > 0` and `verify_ab_straddle_mismatch > 0` on the straddle requests (the live known positive: the mirror predicted them),
-  and no `verify_fallback_reasons` other than `length<3` / `straddle` inside the domain.
+  and an EMPTY `verify_fallback_reasons` histogram inside the domain (build judgement call 2, accepted by both reviews:
+  the histogram counts only `per_query` fallbacks; `len1` and `straddle` are their own counters).
 - G1b Cross-load: `bench.parity_replay` (AC11) on the first pick's C84 frozen 20 pairs under `per_query`, under `joint_v1`, and
   a same-policy reload control (`per_query` twice, separate loads). Decision: if the control is byte-identical, G1b requires
   20/20 identical content, reasoning and MTP counters across policies AND `verify_blocks_joint_v1 > 0` on ≥ 18/20 rows (proof
-  the joint path ran). If the control itself differs (reload nondeterminism, `docs/metrics.md` 59–69), G1b is informative only
+  the joint path ran). C120 carve-out (Claude build review 3, E1): a row whose joint-side `verify_blocks_straddle_len2 > 0` ran a
+  length-2 block per-query where `per_query` used the shipped joint call, so its content MAY differ by design; such rows are
+  listed separately as C120-expected divergence and do not fail G1b on content alone (everything else must still match). If the control itself differs (reload nondeterminism, `docs/metrics.md` 59–69), G1b is informative only
   and G1a decides; the divergence is recorded, not blamed on M58 (Codex S5, Claude S4).
 
 **Latency (after gate 1):** arms A `per_query`, B `joint_v1` (AB off), same branch code, k=2 sessions each, order A→B then B→A.

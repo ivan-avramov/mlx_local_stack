@@ -140,6 +140,8 @@ are the stronger memory lever and deserve their own quality arm. No registry cha
 
 ## 2026-10-04 — M55 COMPLETE: polyglot language gap (Rust / Java / JavaScript), three models × two sessions, opencode 1.18.30
 
+>**Seed note (C121, 2026-10-06): opencode 1.18.30 sessions sent no sampler seed — both sessions ran on the server's default seed; they are repeated draws under different server state, not independent seeded sessions. Ranks were stable; no rerun.**
+
 Spec `docs/specs/m55-polyglot-gap.md` (P17 ruling after Codex review 9). C37 22-exercise draws per language (66 items), `run_opencode_probe`
 (pinned opencode 1.18.30, M9 grading containers, progress gate 300 s ticks / 2-tick stall / loop detector / 1 h ceiling), lean router on the
 draft-OFF overlay (`MLX_VLM_CACHE_SESSION_MAX=1`, APC absent, 140 W + battery gate every leg), deployed sampling, thinking ON. k=2 sessions
@@ -178,6 +180,8 @@ is consistent but inconclusive (AC6 not triggered: no CI upper bound < −5 pp a
 stays 3rd. Coverage gap closed; the README's "Rust/Java/JavaScript unmeasured" is retired.
 
 ## 2026-10-03 — M54 chain 4 COMPLETE: the CLEAN LATENCY CAPTURE (quiet box, same seeds) + a second same-harness acc sample
+
+>**Seed note (C121, 2026-10-06): AgentBench seeds every item with base 0, so both sessions used the identical seed schedule; sessions differ by server state only. Ranks were stable; no rerun.**
 
 Purpose (operator P11): chains 1 and 3 carry wall-clock/rate numbers poisoned by the host-load incident; chain 4 is the only chain whose
 latency per task, decode rate and runaway wall-share are citable. Harness `aac939b` (= `df3b65c` + process-group cleanup + `set +m`), lean
@@ -225,6 +229,8 @@ cost is not a fixed property, but the turn-cap share is.
 
 ## 2026-10-02 — M54 chain 3 COMPLETE (THE RECORD): AgentBench OS on the upstream-faithful pty harness, five arms × 142 tasks, draft OFF
 
+>**Seed note (C121, 2026-10-06): AgentBench seeds every item with base 0, so both sessions used the identical seed schedule; sessions differ by server state only. Ranks were stable; no rerun.**
+
 Harness `df3b65c` (20 cold-review rounds; pty-backed interactive bash like upstream AgentRL `tty=True`, marker emitted by bash's own `PROMPT_COMMAND` so tty-reading programs cannot eat it, whole-script rounds via `eval` of a quoted heredoc, upstream's five escape-strip regexes, marker installed in `/etc/bash.bashrc` so `su -`/`exec bash` survive), lean router on the draft-OFF overlay with `MLX_VLM_CACHE_SESSION_MAX=1` (C108), deployed sampling, thinking ON (81920), explicit `--llm-timeout 6000`. Gates before launch: live smoke on `local-os/default` (28 checks incl. apt/sudo/visudo, heredoc with TAB, multi-line whole output, su round-trip), bash-5.2 parser cases, full suite 2559 green, seeded 5-item pilot run twice byte-identical and identical to the 2026-09-30 pilot. All 710 rows graded, 0 setup errors, 0 shell deaths; 2 exec timeouts are models running interactive `visudo`/`adduser` (upstream-equivalent). Rows `benchmark/results/<model>/agentbench_os.v1.chain3.*`; report `benchmark/results/agentbench_os_compare_chain3.md`.
 
 | model | acc = acc_strict@81920 | conv | tokens/task mean (median, max) | runaway tax (turn_cap+exec_timeout share / wall share) |
@@ -244,6 +250,8 @@ Pairwise acc_strict (paired, items as clusters, cluster-bootstrap 95 % CI, exact
 **Ladder (recommendation, no change proposed):** B order stands. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` and `Qwen3.8-27B-mlx-uniform-4bit` tie on quality; the first pick does it at half the tokens and a quarter of the second pick's runaway share. `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`'s nominal lead is inside the interval and bought with runaways; it stays 4th. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is not a shell-agent model. Axis added to the B ladder as "AgentBench OS (M54)"; future runs on harness ≥ `aac939b` (adds process-group cleanup and `set +m`), one chain per campaign, pilot-twice repeatability gate before every chain.
 
 ## 2026-10-01 — M54 chain 1 COMPLETE: AgentBench OS (multi-step shell-tool agent axis), five arms, 142 tasks each, draft OFF
+
+>**Seed note (C121, 2026-10-06): AgentBench seeds every item with base 0, so both sessions used the identical seed schedule; sessions differ by server state only. Ranks were stable; no rerun.**
 
 New B-ladder axis (C107): upstream `THUDM/AgentBench` `os-std` (144 tasks; 2 excluded by the rule-v2 exclusion pass: std-004-8 broken upstream init, std-007-84 reference reads the answer), run through our own tool loop with the upstream system prompt, three native tools and the 8-round limit, one docker container per task, grading inside the container. Harness `b43c8e5` (16 cold-review rounds by two independent reviewers against pre-registered AC1–AC9; `docs/specs/m54-agentbench-os.md`), lean router on the draft-OFF overlay (`$STACK_WORKDIR/m54/overlay_m54_draft_off.yaml`, sha `81fa0c15…`), `--sampling-profile deployed`, thinking ON (budget 81920), explicit `--llm-timeout 6000` (UNVALIDATED override, logged), native16 KV for the first pick and `Ornith-1.0-35B-mlx-uniform-4bit`, TQ4 for the others, cap/prealloc 262144. One resident model; all 710 rows graded; 0 setup errors; every arm's manifest carries router pid 70408, config sha, image ids and the exit re-verification. Rows: `benchmark/results/<model>/agentbench_os.v1.chain1.jsonl`; report: `benchmark/results/agentbench_os_compare_chain1.md`.
 
