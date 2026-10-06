@@ -4472,4 +4472,14 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   run once, and persisted error strings are scrubbed of `$HOME`/`$STACK_WORKDIR`. The per-item overlay also sets `agent.title.disable`
   (mock capture 2026-10-06: without it 1.18.30 sends an UN-SEEDED title request, max_tokens 2048, to the task provider; with it none),
   recorded as `title_generation` / `title_request_provider: null`. `opencode debug config` discovery now refuses a nonzero exit.
+- **Round 4b.** Every `debug config` spawn (discovery, destination, overlay check) passes `--pure` like `run`: without it the discovery npm-installed
+  `@opencode-ai/plugin` into the fresh config home and fetched the `superpowers` plugin from GitHub before the router check, and the per-item
+  check validated a config `run --pure` never uses (Claude review). The bench now has its OWN HOME (`$STACK_WORKDIR/opencode-probe/home`,
+  persistent; state under it; cache home pinned explicitly to the real default so the models.dev catalogue stays shared), so `~/.opencode`,
+  `~/.claude`, `~/AGENTS.md`, `~/.npm` are unreachable (belt-and-braces: a manual run showed none of them reaching the prompt under git init +
+  the R8 switch anyway). The child env is built from the parent env minus every `OPENCODE_*` variable plus exactly the policy switches
+  (`env_switches` in the manifest). `scaffold_policy_sha256` hashes only effective inputs (bench carrier sha, overlay schema, switches,
+  `scratch_git_init`, bench-HOME isolation, opencode version + exe sha, empty `instructions` key); the instruction-file inventory is an
+  observation. `passed: null` (grade-excluded) rows are counted separately by the M55 report script. The session-title request (which would
+  go un-seeded to the task provider on :8092, not M50-checked) is disabled; a down task server therefore cannot affect a row.
 

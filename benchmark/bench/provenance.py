@@ -1479,7 +1479,7 @@ def router_block(base_url: str | None = None) -> dict:
 
 
 def opencode_router_base(cwd=None, env=None, provider: str = "mlx-local",
-                         opencode_bin: str = "opencode") -> str:
+                         opencode_bin: str = "opencode", pure: bool = False) -> str:
     """The base URL opencode will ACTUALLY send to, from `opencode debug config` run in the child's
     cwd with the child's env — i.e. every source opencode merges (global json/jsonc, config dir,
     ancestor project configs, inline content) resolved by opencode itself, not by us. The three
@@ -1494,7 +1494,8 @@ def opencode_router_base(cwd=None, env=None, provider: str = "mlx-local",
                                     f"that the recorded scaffold identity does not describe. Unset it "
                                     f"(probes run the shipped/global scaffold only).")
     try:
-        r = subprocess.run([str(opencode_bin), "debug", "config"], cwd=str(cwd) if cwd else None, env=env,
+        r = subprocess.run([str(opencode_bin), "debug", "config", *(["--pure"] if pure else [])],
+                           cwd=str(cwd) if cwd else None, env=env,
                            capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
     except Exception as e:  # noqa: BLE001
         raise ServedConfigError(f"M50 tripwire: cannot run `opencode debug config`: {type(e).__name__}: {e}")
@@ -1517,10 +1518,11 @@ def opencode_router_base(cwd=None, env=None, provider: str = "mlx-local",
     return base
 
 
-def assert_opencode_destination(cwd, env, expected_pid: int, opencode_bin: str = "opencode") -> str:
+def assert_opencode_destination(cwd, env, expected_pid: int, opencode_bin: str = "opencode",
+                                pure: bool = False) -> str:
     """Per opencode invocation: the destination opencode resolves in THIS cwd/env must be owned by
     the router verified at entry (`expected_pid`). Returns the base URL."""
-    base = opencode_router_base(cwd, env, opencode_bin=opencode_bin)
+    base = opencode_router_base(cwd, env, opencode_bin=opencode_bin, pure=pure)
     blk = assert_served_config(base, env=env)           # the CHILD's proxy settings apply
     if blk["pid"] != expected_pid:
         raise ServedConfigError(f"M50 tripwire: opencode in {str(cwd)!r} resolves {base!r}, owned by pid "

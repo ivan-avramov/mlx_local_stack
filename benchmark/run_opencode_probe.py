@@ -357,29 +357,30 @@ def _run_opencode(model: str, cwd: Path, prompt: str, sol: Path, test: Path, gra
 # (placeholder form) + `loop_metrics`.
 
 def _opencode_env(data_home: Path, config_home: Path | None = None, state_home: Path | None = None,
-                  tmp_dir: Path | None = None) -> dict:
-    """opencode's env for one item: only the DATA home is redirected (session store). The cache
-    home stays default on purpose — it holds the models.dev catalogue, and redirecting it would
-    make every item re-fetch over the network."""
-    env = dict(os.environ)
+                  tmp_dir: Path | None = None, bench_home: Path | None = None) -> dict:
+    """opencode's child env, built from a CLEAN base: the parent env minus EVERY `OPENCODE_*` variable
+    (so a stray operator switch cannot leak in), then exactly the policy switches (`SCAFFOLD_ENV_POLICY`).
+    With the bench dirs given: its own HOME (`~/.opencode`, `~/.claude`, `~/AGENTS.md`, `~/.npm` become
+    unreachable), config, data, state and tmp homes; the cache home is pointed EXPLICITLY at the real
+    default cache dir (the models.dev catalogue stays shared; operator rule)."""
+    real_cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("OPENCODE_")}
     env["XDG_DATA_HOME"] = str(data_home)
     if config_home is not None:
         # Operator ruling 2026-10-06 (C121): the bench owns its opencode config home; the personal
         # `~/.config/opencode` is never read, hashed or modified.
         env["XDG_CONFIG_HOME"] = str(config_home)
     if state_home is not None:
-        env["XDG_STATE_HOME"] = str(state_home)     # opencode's initialisation writes stay in the workdir
+        env["XDG_STATE_HOME"] = str(state_home)
     if tmp_dir is not None:
         env["TMPDIR"] = str(tmp_dir)
-    # C103 (2026-09-27): opencode embeds every skill it discovers under ~/.claude/skills (including
-    # synced/<uuid>/ and .trash/) and ~/.agents/skills in its system prompt, with file paths. That
-    # made the scaffold depend on what Claude Code had synced on this machine (17 skills, half the
-    # system prompt, paths that changed between processes). Exclude both external trees so the
-    # scaffold is opencode + this repo only; repo-local .opencode/skills would still be discovered.
-    # C121/R8: the policy lives in SCAFFOLD_ENV_POLICY (one source for the env AND the recorded hash).
+    if bench_home is not None:
+        env["HOME"] = str(bench_home)
+        env["XDG_CACHE_HOME"] = real_cache
+    # C103 (2026-09-27): opencode embeds every skill it discovers under ~/.claude/skills and
+    # ~/.agents/skills in its system prompt; C121/R8: the policy lives in SCAFFOLD_ENV_POLICY (one source
+    # for the env AND the recorded hash). The binary is NOT selected through PATH (C121 B1).
     env.update(SCAFFOLD_ENV_POLICY)
-    # The binary is NOT selected through PATH (C121 B1): every spawn receives the exact absolute
-    # executable from `_require_opencode_bin()`.
     return env
 
 
@@ -441,40 +442,44 @@ def _seed_marker_path(binary: Path | None = None) -> Path:
     return (b.parents[2] if b.parent.name == ".bin" else b.parent) / "seed_propagation_verified"
 
 
-def _receipt_now(binary: Path, instr_sha: str | None) -> dict:
+def _receipt_now(binary: Path) -> dict:
     return {"version": PINNED_OPENCODE_VERSION, "exe_sha256": _sha_of(binary),
             "bench_config_sha256": _sha_of(BENCH_OPENCODE_CONFIG), "test_sha256": _sha_of(SEED_TEST_FILE),
-            "instruction_sources_sha256": instr_sha}
+            }
 
 
-def _record_seed_propagation_verified(binary: Path | None = None, instr_sha: str | None = None) -> None:
+def _record_seed_propagation_verified(binary: Path | None = None) -> None:
     """Called by the integration test (only when OPENCODE_PROBE_RECORD_VERIFIED=1) after it proved
     seed + deployed fields reach the endpoint: stamps a receipt bound to the sha256 of the executable,
-    the shipped config, the integration test file and the instruction-source inventory (C121 B5/C3)."""
+    the bench carrier and the integration test file (C121 B5)."""
     b = Path(binary) if binary is not None else _opencode_bin()
     m = _seed_marker_path(b)
-    if m.parent.is_dir() and instr_sha:
-        m.write_text(json.dumps(_receipt_now(b, instr_sha), indent=2))
+    if m.parent.is_dir():
+        m.write_text(json.dumps(_receipt_now(b), indent=2))
 
 
 ENV_POLICY = {
+    "OPENCODE_*": "every parent OPENCODE_* variable dropped, then exactly SCAFFOLD_ENV_POLICY applied",
+    "HOME": "$STACK_WORKDIR/opencode-probe/home (bench-owned, persistent; ~/.opencode, ~/.claude, ~/AGENTS.md, ~/.npm unreachable)",
     "XDG_CONFIG_HOME": "$STACK_WORKDIR/opencode-probe/config-<run-id> (bench carrier copy; personal config never read)",
     "XDG_DATA_HOME": "per-item scratch dir (discovery: $STACK_WORKDIR/scratch/m50-discovery-xdg-data-<run-id>)",
-    "XDG_STATE_HOME": "$STACK_WORKDIR/opencode-probe/state-<run-id>",
+    "XDG_STATE_HOME": "<bench home>/.local/state",
     "TMPDIR": "$STACK_WORKDIR/opencode-probe/tmp-<run-id>",
-    "XDG_CACHE_HOME": "default (models.dev catalogue; the one permitted initialisation write outside the workdir)",
-    "HOME": "unchanged",
+    "XDG_CACHE_HOME": "the real default cache dir (shared models.dev catalogue; the one permitted initialisation write outside the workdir)",
 }
+BENCH_HOME_ISOLATION = True
 
 
 def _make_run_dirs(workdir: Path, run_id: str) -> tuple:
-    """(config home, state home, tmp dir) for one run, all under `<workdir>/opencode-probe/`."""
+    """(config home, state home, tmp dir, bench HOME) under `<workdir>/opencode-probe/`; the bench HOME
+    and its state dir are persistent across runs, the config home and tmp dir are per run."""
     cfg_home = _make_bench_config_home(workdir, run_id)
-    state_home = Path(workdir) / "opencode-probe" / f"state-{run_id}"
+    bench_home = Path(workdir) / "opencode-probe" / "home"
+    state_home = bench_home / ".local" / "state"
     tmp_dir = Path(workdir) / "opencode-probe" / f"tmp-{run_id}"
     state_home.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    return cfg_home, state_home, tmp_dir
+    return cfg_home, state_home, tmp_dir, bench_home
 
 
 def _cleanup_run_dirs(dirs) -> None:
@@ -483,13 +488,15 @@ def _cleanup_run_dirs(dirs) -> None:
 
 
 def _run_identity(*, lang, pure, poly_sha, tick_s, hard_ceiling_s, stall_ticks, loop_repeats, seed_base,
-                  oc_bin, oc_version, instr_sha) -> dict:
-    """The output-determining identity of a run (recorded in the manifest runtime, compared on resume)."""
-    return {**_scaffold_runtime(instr_sha), **_seed_runtime(seed_base, instr_sha),
-            "opencode_version": oc_version, "instruction_sources_sha256": instr_sha,
+                  oc_bin, oc_version) -> dict:
+    """The output-determining identity of a run (recorded in the manifest runtime, compared on resume).
+    The instruction-file inventory is NOT part of it (observation only; git init blocks those files)."""
+    exe = _sha_of(oc_bin)
+    return {**_scaffold_runtime(opencode_version=oc_version, exe_sha=exe), **_seed_runtime(seed_base),
+            "opencode_version": oc_version,
             "lang": lang, "pure": pure, "polyglot_sha": poly_sha, "tick_s": tick_s,
             "hard_ceiling_s": hard_ceiling_s, "stall_ticks": stall_ticks, "loop_repeats": loop_repeats,
-            "opencode_exe_sha256": _sha_of(oc_bin), "env_policy": ENV_POLICY}
+            "opencode_exe_sha256": exe, "env_policy": ENV_POLICY}
 
 
 def _make_bench_config_home(workdir: Path, run_id: str, source: Path | None = None) -> Path:
@@ -520,12 +527,12 @@ def _instruction_sources_sha256(src: dict) -> str:
     return hashlib.sha256(json.dumps(src, sort_keys=True).encode()).hexdigest()
 
 
-def _seed_runtime(seed_base: int, instr_sha: str | None = None) -> dict:
+def _seed_runtime(seed_base: int) -> dict:
     b = _opencode_bin()
     try:
         rec = json.loads(_seed_marker_path(b).read_text())
         verified = (isinstance(rec, dict) and None not in rec.values()
-                    and rec == _receipt_now(b, instr_sha))
+                    and rec == _receipt_now(b))
     except (OSError, ValueError):
         verified = False
     return {"seed_base": seed_base, "overlay_schema": OVERLAY_SCHEMA,
@@ -534,13 +541,13 @@ def _seed_runtime(seed_base: int, instr_sha: str | None = None) -> dict:
 
 
 def _assert_overlay_resolved(cwd: Path, env: dict, model: str, seed: int, expected_base: str, *,
-                             opencode_bin: str) -> None:
+                             opencode_bin: str, pure: bool = True) -> None:
     """AC4: what opencode ITSELF resolves for this item must keep the verified baseURL and carry
     the seed in the served model's options. Refuses (M50 shape) otherwise; a nonzero exit, a
     timeout or malformed JSON is a refusal, never a parse of whatever stdout held (C121 B6)."""
     try:
-        r = subprocess.run([str(opencode_bin), "debug", "config"], cwd=str(cwd), env=env,
-                           capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
+        r = subprocess.run([str(opencode_bin), "debug", "config", *(["--pure"] if pure else [])],
+                           cwd=str(cwd), env=env, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired as e:
         raise provenance.ServedConfigError(f"M50 tripwire: `opencode debug config` timeout after "
                                            f"{e.timeout}s while resolving the seeded overlay.")
@@ -649,24 +656,27 @@ def _ancestor_instruction_files(start: Path) -> dict:
     return found
 
 
-def _scaffold_runtime(instruction_sources_sha256: str | None = None) -> dict:
-    """Scaffold identity fields for the manifest (C103): rows across a change in any of these must
-    never be pooled silently. The global ~/.config/opencode config the probe actually runs under is
-    expected to be the shipped file; the hash is of the shipped file."""
+def _scaffold_runtime(*, opencode_version: str | None = None, exe_sha: str | None = None) -> dict:
+    """Scaffold identity fields for the manifest (C103). `scaffold_policy_sha256` hashes ONLY effective
+    inputs: the bench carrier sha, the overlay schema, the applied env switches, `scratch_git_init`, the
+    bench-HOME isolation flag, the opencode version and executable sha, and the rule that the resolved
+    `instructions` key is empty. Observations (the client config sha, `claude_md_present`, the
+    instruction-file inventory) are recorded elsewhere and never hashed."""
     import hashlib
-    digest = _sha_of(SHIPPED_OPENCODE_CONFIG)
     policy = ",".join(f"{k}={v}" for k, v in sorted(SCAFFOLD_ENV_POLICY.items()))
-    full = f"{policy}|scratch_git_init={str(SCRATCH_GIT_INIT).lower()}"
-    if instruction_sources_sha256 is not None:
-        full += f"|instruction_sources={instruction_sources_sha256}"
-    return {"skill_policy": policy,
-            "scratch_git_init": SCRATCH_GIT_INIT,
+    bench_sha = _sha_of(BENCH_OPENCODE_CONFIG)
+    full = "|".join([f"bench_config={bench_sha}", f"overlay={OVERLAY_SCHEMA}", f"switches={policy}",
+                     f"scratch_git_init={str(SCRATCH_GIT_INIT).lower()}",
+                     f"bench_home_isolation={str(BENCH_HOME_ISOLATION).lower()}",
+                     f"opencode_version={opencode_version}", f"exe={exe_sha}", "instructions_key=empty"])
+    return {"skill_policy": policy, "env_switches": dict(SCAFFOLD_ENV_POLICY),
+            "scratch_git_init": SCRATCH_GIT_INIT, "bench_home_isolation": BENCH_HOME_ISOLATION,
             "scaffold_policy_sha256": hashlib.sha256(full.encode()).hexdigest(),
             "claude_md_present": (Path.home() / ".claude" / "CLAUDE.md").exists(),
             "opencode_config": "opencode_config/opencode.json",
-            "opencode_config_sha256": digest,
+            "opencode_config_sha256": _sha_of(SHIPPED_OPENCODE_CONFIG),
             "opencode_bench_config": "benchmark/opencode_bench.json",
-            "opencode_bench_config_sha256": _sha_of(BENCH_OPENCODE_CONFIG)}
+            "opencode_bench_config_sha256": bench_sha}
 
 
 def _export_latest_session(env: dict, *, cwd: Path, opencode_bin: str) -> dict | None:
@@ -950,9 +960,9 @@ def _main(ctx: dict) -> int:
     # the models.dev catalogue; see ENV_POLICY). The personal ~/.config/opencode is never read.
     run_id = f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}"
     disc_data = workdir / "scratch" / f"m50-discovery-xdg-data-{run_id}"
-    cfg_home, state_home, tmp_dir = _make_run_dirs(workdir, run_id)
-    ctx["dirs"] = [cfg_home, state_home, tmp_dir, disc_data]
-    boot_env = _opencode_env(disc_data, cfg_home, state_home, tmp_dir)
+    cfg_home, state_home, tmp_dir, bench_home = _make_run_dirs(workdir, run_id)
+    ctx["dirs"] = [cfg_home, tmp_dir, disc_data]       # per-run; the bench HOME is persistent
+    boot_env = _opencode_env(disc_data, cfg_home, state_home, tmp_dir, bench_home)
     # C121 C1 / C125: the pinned binary's read-only `--version` runs BEFORE discovery, so an override
     # pointing at another version (brew v2 ...) never executes `debug config`.
     oc_version = _opencode_version(oc_bin, boot_env)
@@ -961,7 +971,7 @@ def _main(ctx: dict) -> int:
                  f"is output-determining. Bump PINNED_OPENCODE_VERSION deliberately or pass "
                  f"--allow-version-drift to record the drift.")
     try:  # opencode sends to what ITS resolved config says (never MLX_SERVE_BASE): verify THAT.
-        oc_base = provenance.opencode_router_base(workdir, boot_env, opencode_bin=oc_bin)
+        oc_base = provenance.opencode_router_base(workdir, boot_env, opencode_bin=oc_bin, pure=not a.no_pure)
         router = provenance.assert_served_config(oc_base)
     except (RuntimeError, OSError, KeyError, ValueError) as e:
         sys.exit(f"REFUSED: M50 {type(e).__name__}: {e}")
@@ -1029,7 +1039,7 @@ def _main(ctx: dict) -> int:
     identity = _run_identity(lang=a.lang, pure=not a.no_pure, poly_sha=poly_sha, tick_s=a.tick_s,
                              hard_ceiling_s=hard_ceiling_s, stall_ticks=a.stall_ticks,
                              loop_repeats=a.loop_repeats, seed_base=a.seed_base, oc_bin=oc_bin,
-                             oc_version=oc_version, instr_sha=instr_sha)
+                             oc_version=oc_version)
     if done:
         git_now = provenance._git_shas()
         _check_resume(prev_doc, identity, out, router, model=a.model, git_now=git_now)
@@ -1048,6 +1058,8 @@ def _main(ctx: dict) -> int:
                                 runtime={"client": "opencode", "edit_format": "tools",
                                          **identity,
                                          "opencode_config_home": _portable(cfg_home),
+                                         "opencode_bench_home": _portable(bench_home),
+                                         "instruction_sources_sha256": instr_sha,
                                          "opencode_config_copy_sha256": _sha_of(cfg_home / "opencode" / "opencode.json"),
                                          "ancestor_instruction_files": ancestors,
                                          "effective_instruction_sources": instr_sources,
@@ -1081,7 +1093,7 @@ def _main(ctx: dict) -> int:
             _prepare(src, work)
             if SCRATCH_GIT_INIT:
                 _git_init_scratch(work)         # C121 B3: repo root stops opencode's upward AGENTS.md search
-            oc_env = _opencode_env(Path(tmp) / "xdg-data", cfg_home, state_home, tmp_dir)   # M46 + bench homes
+            oc_env = _opencode_env(Path(tmp) / "xdg-data", cfg_home, state_home, tmp_dir, bench_home)   # M46 + bench homes
             # M50: the destination opencode resolves from INSIDE this item's project must be the
             # router verified at entry (a project-level config in the exercise would win otherwise).
             item_id = f"{a.lang}/{name}"
@@ -1096,12 +1108,14 @@ def _main(ctx: dict) -> int:
                                                              "error": provenance.portable_path(str(e)),
                                                              "item": item_id}})
             try:
-                provenance.assert_opencode_destination(work, oc_env, router["pid"], opencode_bin=oc_bin)
+                provenance.assert_opencode_destination(work, oc_env, router["pid"], opencode_bin=oc_bin,
+                                                       pure=not a.no_pure)
             except provenance.ServedConfigError as e:
                 _drift_stamp(e)
                 raise
             try:
-                _assert_overlay_resolved(work, oc_env, a.model, item_seed, oc_base, opencode_bin=oc_bin)
+                _assert_overlay_resolved(work, oc_env, a.model, item_seed, oc_base, opencode_bin=oc_bin,
+                                         pure=not a.no_pure)
             except provenance.ServedConfigError as e:
                 _drift_stamp(e)
                 sys.exit(f"REFUSED: {e}")
@@ -1202,9 +1216,8 @@ def _main(ctx: dict) -> int:
 # The full output-determining identity (everything `_run_identity` records except per-run observations:
 # seed_propagation; the model and the serving-code identity are checked separately from the manifest top).
 RESUME_IDENTITY_KEYS = ("seed_base", "overlay_schema", "scaffold_policy_sha256", "skill_policy",
-                        "scratch_git_init", "claude_md_present", "opencode_bin", "opencode_version",
-                        "opencode_config", "opencode_config_sha256", "opencode_bench_config",
-                        "opencode_bench_config_sha256", "instruction_sources_sha256",
+                        "scratch_git_init", "env_switches", "bench_home_isolation", "opencode_bin",
+                        "opencode_version", "opencode_bench_config", "opencode_bench_config_sha256",
                         "lang", "pure", "polyglot_sha", "tick_s", "hard_ceiling_s", "stall_ticks",
                         "loop_repeats", "opencode_exe_sha256", "env_policy")
 

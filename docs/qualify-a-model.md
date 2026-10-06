@@ -696,8 +696,9 @@ uv run python benchmark/run_opencode_probe.py --model <full-registry-name> \
     [--hard-ceiling-s 3600] [--stall-ticks 2] [--loop-repeats 3] [--out <path>] \
     [--allow-version-drift]
 ```
-The bench never uses the personal opencode config: the probe runs opencode under its own `XDG_CONFIG_HOME`
-(`$STACK_WORKDIR/opencode-probe/config-<run-id>/`, a verbatim copy of `benchmark/opencode_bench.json`).
+The bench never uses the personal opencode config or home: the probe runs opencode under its own `HOME`
+(`$STACK_WORKDIR/opencode-probe/home`) and `XDG_CONFIG_HOME` (`$STACK_WORKDIR/opencode-probe/config-<run-id>/`, a verbatim
+copy of `benchmark/opencode_bench.json`); only the models.dev cache dir is shared.
 Run the seed-propagation integration test once per executable/config change with `OPENCODE_PROBE_RECORD_VERIFIED=1`
 (`benchmark/bench/tests/test_opencode_probe_seeding.py`) to stamp the receipt that makes the manifest read `seed_propagation:
 verified-by-test`. Before the first go/rust/java/javascript chain on the per-item `git init`-ed scratch dirs, grade one known-positive
