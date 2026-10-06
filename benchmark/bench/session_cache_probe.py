@@ -16,8 +16,9 @@ LEGS.
      must grow each turn. Known-negative: the same conversation with an edited system prompt →
      cached_tokens must be 0. A probe that cannot show both is not looking.
   B  opencode: 10 `opencode run … --continue` turns in a scratch project (anonymous hash-chain
-     routing, exactly what the daily driver does). Per-request reuse fraction, per-turn prefilled
-     tokens, wall per turn.
+     routing). Since C125 (2026-10-06) leg B runs the PINNED bench opencode (1.18.30, resolved via
+     run_opencode_probe, never PATH), not the box's opencode v2; the v2 scaffold is PLAN M59.
+     Per-request reuse fraction, per-turn prefilled tokens, wall per turn.
   C  eviction: build a pinned session at N tokens (cold), resume it (warm), evict it with two fresh
      sessions (MLX_VLM_CACHE_SESSION_MAX=2, LRU), resume it again (cold-after-eviction). Records
      prefill seconds + cached_tokens per leg and the worker's `footprint` (Metal-inclusive
@@ -93,8 +94,9 @@ def parse_footprint(text: str) -> dict:
     return out
 
 
-def opencode_cmd(model: str, cwd: Path, prompt: str, *, first: bool) -> list[str]:
-    cmd = ["opencode", "run", "--dir", str(cwd), "--model", f"mlx-local/{model}", "--pure"]
+def opencode_cmd(model: str, cwd: Path, prompt: str, *, first: bool, binary: str) -> list[str]:
+    """`binary` is the absolute pinned opencode (C125); a bare name would be a PATH lookup."""
+    cmd = [binary, "run", "--dir", str(cwd), "--model", f"mlx-local/{model}", "--pure"]
     if not first:
         cmd.append("--continue")
     cmd.append(prompt)
@@ -250,26 +252,55 @@ def _write_big_file(proj: Path, approx_tokens: int) -> int:
     return marker
 
 
+def _pinned_opencode() -> tuple[str, str]:
+    """C125: (absolute pinned binary, its `--version`), resolved by run_opencode_probe's single source
+    of truth (never PATH). Lazy import: legs A and C must work with no opencode installed. Refuses
+    (SystemExit with a message naming the path/pin) on unset+missing, relative, non-executable or a
+    version other than PINNED_OPENCODE_VERSION."""
+    import run_opencode_probe as oc
+    binary = oc._require_opencode_bin()
+    # `--version` mkdirs opencode's config/data/state/cache/tmp homes before argument handling
+    # (measured on 1.18.30), so it runs under a bench-owned env in a FIXED dir under STACK_WORKDIR
+    # (reused across runs), never in the operator's home. `_opencode_env` keeps the shared cache.
+    wd = oc._stack_workdir()
+    if not wd.is_dir():
+        sys.exit(f"REFUSED: STACK_WORKDIR {str(wd)!r} does not exist; the version preflight needs it "
+                 f"(nothing is created outside it)")
+    v = wd / "opencode-probe" / "version-env"
+    dirs = {k: v / k for k in ("data", "config", "state", "tmp", "home")}
+    for d in dirs.values():
+        d.mkdir(parents=True, exist_ok=True)
+    env = oc._opencode_env(data_home=dirs["data"], config_home=dirs["config"], state_home=dirs["state"],
+                           tmp_dir=dirs["tmp"], bench_home=dirs["home"])
+    version = oc._opencode_version(Path(binary), env)
+    if version != oc.PINNED_OPENCODE_VERSION:
+        sys.exit(f"REFUSED: opencode {version} at {oc._portable(Path(binary))} != pinned "
+                 f"{oc.PINNED_OPENCODE_VERSION}; a scaffold version is output-determining")
+    return binary, version
+
+
 def _leg_b_env(root: Path) -> dict:
-    """daily-driver shape: Claude Code's skill tree excluded (C103), .agents kept."""
+    """The PINNED bench opencode 1.18.30 under the OPERATOR's HOME and `~/.config/opencode`, with
+    `OPENCODE_*` passed through; Claude Code's skill tree excluded (C103), .agents kept. NOT hermetic
+    and NOT the daily driver's v2; isolation is an open item (C129)."""
     return dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), XDG_CACHE_HOME=str(root / "xdg-cache"),
                 OPENCODE_DISABLE_CLAUDE_CODE_SKILLS="true")
 
 
 def leg_b_opencode(model, log, pid, *, root: Path, turns: int, timeout: float,
-                   big_file_tokens: int = 0) -> dict:
+                   opencode_bin: str, big_file_tokens: int = 0) -> dict:
     proj = _scratch_project(root)
     from . import provenance
     env = _leg_b_env(root)
     # M50: the scratch project now exists — re-resolve opencode's destination from INSIDE it (a
     # project-level config there would win) before the first opencode turn.
     provenance.assert_opencode_destination(proj, env, provenance.assert_served_config(
-        os.environ.get("MLX_SERVE_BASE"))["pid"])
+        os.environ.get("MLX_SERVE_BASE"))["pid"], opencode_bin=opencode_bin, pure=True)
     marker = _write_big_file(proj, big_file_tokens) if big_file_tokens > 0 else None
     per_turn = []
     log.new_rows()
     for i, prompt in enumerate(leg_b_prompts(turns, big_file_tokens)):
-        cmd = opencode_cmd(model, proj, prompt, first=(i == 0))
+        cmd = opencode_cmd(model, proj, prompt, first=(i == 0), binary=opencode_bin)
         t0 = time.perf_counter()
         out_path = root / f"opencode_turn_{i + 1:02d}.txt"
         with out_path.open("w") as f:
@@ -356,6 +387,17 @@ def main(argv=None) -> int:
 
     legs = [x.strip().upper() for x in a.legs.split(",") if x.strip()]
     wd = Path(a.workdir or os.path.join(os.environ.get("STACK_WORKDIR", "/tmp"), "m45"))
+    oc_bin = oc_version = None
+    if "B" in legs:  # C125: the pinned binary is resolved + version-checked before M50 and any write
+        try:
+            oc_bin, oc_version = _pinned_opencode()
+        except OSError as e:
+            print(f"[m45] REFUSED: pinned opencode preflight failed: {type(e).__name__}: {e}",
+                  file=sys.stderr, flush=True)
+            return 2
+        except SystemExit as e:
+            print(f"[m45] {e.code}", file=sys.stderr, flush=True)
+            return 2
     try:  # M50: refuse before anything is written or requested unless :port serves this registry.
         from . import provenance
         router = provenance.assert_served_config(os.environ.get("MLX_SERVE_BASE"))
@@ -367,7 +409,7 @@ def main(argv=None) -> int:
             while not probe_cwd.exists():
                 probe_cwd = probe_cwd.parent
             router["opencode_base"] = provenance.assert_opencode_destination(
-                probe_cwd, _leg_b_env(wd), router["pid"])
+                probe_cwd, _leg_b_env(wd), router["pid"], opencode_bin=oc_bin, pure=True)
     except RuntimeError as e:
         print(f"[m45] REFUSED: {e}", file=sys.stderr, flush=True)
         return 2
@@ -381,11 +423,16 @@ def main(argv=None) -> int:
     result = {"model": a.model, "tag": a.tag, "started": datetime.now().isoformat(timespec="seconds"),
               "worker_pid": pid, "router": router, "footprint_start": footprint(pid),
               "session_max_env": os.environ.get("MLX_VLM_CACHE_SESSION_MAX"), "legs": {}}
+    if oc_bin:
+        import run_opencode_probe as oc
+        result["opencode_bin"] = oc._scrub_pii(oc._portable(Path(oc_bin)))
+        result["opencode_exe_sha256"] = oc._sha_of(Path(oc_bin))
+        result["opencode_version"] = oc_version
     if "A" in legs:
         result["legs"]["A_control"] = leg_a_control(a.model, log, pid, turns=a.turns, timeout=a.timeout)
     if "B" in legs:
         result["legs"]["B_opencode"] = leg_b_opencode(a.model, log, pid, root=wd, turns=a.turns, timeout=a.timeout,
-                                                      big_file_tokens=a.big_file_tokens)
+                                                      opencode_bin=oc_bin, big_file_tokens=a.big_file_tokens)
     if "C" in legs:
         result["legs"]["C_eviction"] = leg_c_eviction(a.model, log, pid, sizes=[int(x) for x in a.sizes.split(",")], timeout=a.timeout)
     result["finished"] = datetime.now().isoformat(timespec="seconds")

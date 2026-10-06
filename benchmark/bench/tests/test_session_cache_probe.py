@@ -36,9 +36,13 @@ def test_footprint_parse_reads_phys_footprint_in_gb():
 
 
 def test_opencode_command_continues_after_first_turn(tmp_path):
-    first = scp.opencode_cmd("M", tmp_path, "q1", first=True)
-    later = scp.opencode_cmd("M", tmp_path, "q2", first=False)
-    assert first[:2] == ["opencode", "run"] and "--continue" not in first and first[-1] == "q1"
+    pinned = str(tmp_path / "pinned-bin" / "opencode")
+    first = scp.opencode_cmd("M", tmp_path, "q1", first=True, binary=pinned)
+    later = scp.opencode_cmd("M", tmp_path, "q2", first=False, binary=pinned)
+    # C125: argv[0] is the absolute pinned binary, never the bare (PATH-resolved) name
+    assert first[0] == pinned and later[0] == pinned and first[1] == "run"
+    assert "opencode" not in (first[0], later[0])
+    assert "--continue" not in first and first[-1] == "q1" and "--pure" in first
     assert "--continue" in later and "--pure" in later and f"mlx-local/M" in later
     assert "--dir" in later and later[later.index("--dir") + 1] == str(tmp_path)
 
@@ -67,3 +71,229 @@ def test_write_big_file_puts_the_marker_first(tmp_path):
     assert body.startswith(f"MARKER NUMBER: {marker}\n")
     assert len(body) > 20000 * 3  # ~4 chars/token filler
     assert body.count("\n") > 400  # line-shaped, so opencode's read tool returns it whole
+
+
+# ----------------------------------------------------------------------------- C125: pinned opencode for leg B
+import json
+import os
+import stat
+
+import pytest
+
+from bench import provenance
+
+PIN = "1.18.30"
+
+
+def _fake_bin(path, version, log=None, envlog=None):
+    """Executable stand-in: prints `version` for --version, records every argv line to `log` and,
+    on --version, the env that matters to `envlog`."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rec = f'echo "$0 $@" >> "{log}"\n' if log else ""
+    if envlog:
+        rec += (f'if [ "$1" = "--version" ]; then env | /usr/bin/grep -E '
+                f'"^(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_STATE_HOME|TMPDIR|OPENCODE_[A-Z_]*)=" >> "{envlog}"; fi\n')
+    path.write_text(f'#!/bin/sh\n{rec}if [ "$1" = "--version" ]; then echo {version}; exit 0; fi\nexit 0\n')
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
+class _NoLog:
+    def __init__(self, path):
+        pass
+
+    def new_rows(self):
+        return []
+
+
+@pytest.fixture
+def probe(tmp_path, monkeypatch):
+    """Everything network/process-shaped is stubbed; returns the call recorders."""
+    calls = {"served": 0, "dest": [], "post": 0}
+
+    def served(base=None, *a, **k):
+        calls["served"] += 1
+        return {"pid": 4242, "config_sha256": "x"}
+
+    def dest(cwd, env, expected_pid, opencode_bin="opencode", pure=False):
+        calls["dest"].append({"opencode_bin": opencode_bin, "pure": pure})
+        return "http://localhost:8000"
+
+    def post(*a, **k):
+        calls["post"] += 1
+        return {}
+
+    monkeypatch.setattr(provenance, "assert_served_config", served)
+    monkeypatch.setattr(provenance, "assert_opencode_destination", dest)
+    monkeypatch.setattr(provenance, "assert_served_config_unchanged", lambda *a, **k: {})
+    monkeypatch.setattr(scp, "_post", post)
+    monkeypatch.setattr(scp, "worker_pid", lambda hint: 1)
+    monkeypatch.setattr(scp, "footprint", lambda pid: {})
+    monkeypatch.setattr(scp, "LogTail", _NoLog)
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "stack"))
+    (tmp_path / "stack").mkdir()
+    calls["home"] = tmp_path / "fake-operator-home"      # the preflight must never touch the operator's home
+    calls["home"].mkdir()
+    monkeypatch.setenv("HOME", str(calls["home"]))
+    for v in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "TMPDIR"):
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.delenv("OPENCODE_PROBE_BIN", raising=False)
+    calls["wd"] = tmp_path / "stack" / "wd"
+    calls["out"] = tmp_path / "out.json"
+    return calls
+
+
+def _run(calls, legs="B", extra=()):
+    return scp.main(["--model", "M", "--legs", legs, "--turns", "2", "--workdir", str(calls["wd"]),
+                     "--out", str(calls["out"]), "--log", str(calls["wd"] / "x.log"), *extra])
+
+
+def _refused(calls, rc, *, spawned=False):
+    assert rc not in (0, None)
+    assert calls["served"] == 0 and calls["post"] == 0 and not calls["wd"].exists()
+    assert not list(calls["home"].iterdir())
+    if not spawned:   # refused before any spawn: nothing was created under the workdir either
+        assert not (calls["wd"].parent / "opencode-probe").exists()
+
+
+def test_leg_b_refuses_when_no_pinned_binary_is_installed(probe, capsys):
+    rc = _run(probe)
+    _refused(probe, rc)
+    assert "opencode-1.18.30" in capsys.readouterr().err
+
+
+def test_leg_b_refuses_a_relative_binary_override(probe, monkeypatch, capsys):
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", "opencode")
+    _refused(probe, _run(probe))
+    assert "absolute" in capsys.readouterr().err
+
+
+def test_leg_b_refuses_a_non_executable_binary(probe, monkeypatch, tmp_path, capsys):
+    b = _fake_bin(tmp_path / "b" / "opencode", PIN)
+    b.chmod(0o644)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(b))
+    _refused(probe, _run(probe))
+    assert "not executable" in capsys.readouterr().err
+
+
+def test_leg_b_refuses_a_wrong_version_and_names_the_pin(probe, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(_fake_bin(tmp_path / "b" / "opencode", "2.0.20")))
+    _refused(probe, _run(probe), spawned=True)
+    err = capsys.readouterr().err
+    assert PIN in err and "2.0.20" in err
+
+
+def test_leg_b_with_the_pinned_version_proceeds_and_records_it(probe, monkeypatch, tmp_path):
+    bin_ = _fake_bin(tmp_path / "stack" / "bin" / "opencode", PIN)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(bin_))
+    assert _run(probe) == 0
+    res = json.loads(probe["out"].read_text())
+    assert res["opencode_version"] == PIN
+    assert res["opencode_bin"] == "$STACK_WORKDIR/bin/opencode"
+    import hashlib
+    assert res["opencode_exe_sha256"] == hashlib.sha256(bin_.read_bytes()).hexdigest()
+    assert str(tmp_path) not in probe["out"].read_text()
+
+
+def test_leg_b_never_resolves_opencode_through_path(probe, monkeypatch, tmp_path):
+    """KNOWN POSITIVE: a decoy `opencode` first on PATH writes a marker if it is ever invoked."""
+    marker = tmp_path / "decoy-invoked"
+    decoy = tmp_path / "decoy" / "opencode"
+    decoy.parent.mkdir()
+    decoy.write_text(f'#!/bin/sh\necho "$@" >> "{marker}"\nexit 0\n')
+    decoy.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{decoy.parent}{os.pathsep}{os.environ['PATH']}")
+    spawn_log = tmp_path / "spawns.log"
+    bin_ = _fake_bin(tmp_path / "stack" / "bin" / "opencode", PIN, log=spawn_log)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(bin_))
+    assert _run(probe) == 0
+    assert not marker.exists(), "decoy opencode on PATH was invoked"
+    runs = [ln for ln in spawn_log.read_text().splitlines() if " run " in ln]
+    assert len(runs) == 2
+    assert all(ln.startswith(str(bin_) + " run") and "--pure" in ln.split() for ln in runs)
+    assert len(probe["dest"]) == 2
+    assert all(d == {"opencode_bin": str(bin_), "pure": True} for d in probe["dest"])
+
+
+def test_legs_a_and_c_never_resolve_a_binary(probe, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("binary resolution attempted without leg B")
+
+    monkeypatch.setattr(scp, "leg_a_control", lambda *a, **k: {})
+    monkeypatch.setattr(scp, "leg_c_eviction", lambda *a, **k: {})
+    import run_opencode_probe as oc
+    for fn in ("_require_opencode_bin", "_opencode_version", "_opencode_bin"):
+        monkeypatch.setattr(oc, fn, boom)
+    assert _run(probe, legs="A,C") == 0
+    res = json.loads(probe["out"].read_text())
+    assert "opencode_bin" not in res and "opencode_version" not in res
+
+
+# ----------------------------------------------------------------------------- C125 review fixes
+def test_preflight_version_runs_in_a_bench_owned_env(probe, monkeypatch, tmp_path):
+    envlog = tmp_path / "env.log"
+    bin_ = _fake_bin(tmp_path / "stack" / "bin" / "opencode", PIN, envlog=envlog)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(bin_))
+    monkeypatch.setenv("OPENCODE_CONFIG", "/x")        # a stray operator switch must not reach the child
+    assert _run(probe) == 0
+    got = dict(ln.split("=", 1) for ln in envlog.read_text().splitlines())
+    v = str(tmp_path / "stack" / "opencode-probe" / "version-env")
+    for k in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "TMPDIR"):
+        assert got[k].startswith(v + "/"), (k, got[k])
+    assert "OPENCODE_CONFIG" not in got      # only the bench policy switches survive (SCAFFOLD_ENV_POLICY)
+    assert not list(probe["home"].iterdir())
+
+
+def test_preflight_refuses_when_stack_workdir_is_not_a_directory(probe, monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "nonexistent"))
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(_fake_bin(tmp_path / "b" / "opencode", PIN)))
+    _refused(probe, _run(probe))
+    assert "STACK_WORKDIR" in capsys.readouterr().err
+    assert not (tmp_path / "nonexistent").exists()
+
+
+def test_persisted_binary_path_scrubs_the_login_name(probe, monkeypatch, tmp_path):
+    import run_opencode_probe as oc
+    monkeypatch.setattr(oc, "_login_name", lambda: "zzfakeuser")
+    bin_ = _fake_bin(tmp_path / "zzfakeuser" / "opencode", PIN)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(bin_))
+    assert _run(probe) == 0
+    text = probe["out"].read_text()
+    assert "zzfakeuser" not in text and json.loads(text)["opencode_bin"].endswith("/$USER/opencode")
+
+
+def test_preflight_stat_permission_error_is_a_refusal(probe, monkeypatch, tmp_path, capsys):
+    bin_ = _fake_bin(tmp_path / "b" / "opencode", PIN)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(bin_))
+    real = type(bin_).is_file
+
+    def is_file(self):
+        if self.name == "opencode":
+            raise PermissionError(13, "denied", str(self))
+        return real(self)
+
+    monkeypatch.setattr(type(bin_), "is_file", is_file)
+    _refused(probe, _run(probe))
+    assert "[m45] REFUSED" in capsys.readouterr().err
+
+
+def test_preflight_version_exiting_nonzero_is_a_refusal(probe, monkeypatch, tmp_path, capsys):
+    b = tmp_path / "b" / "opencode"
+    b.parent.mkdir()
+    b.write_text("#!/bin/sh\nexit 1\n")
+    b.chmod(0o755)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(b))
+    _refused(probe, _run(probe), spawned=True)
+    assert "version" in capsys.readouterr().err
+
+
+def test_preflight_version_timeout_is_a_refusal(probe, monkeypatch, tmp_path, capsys):
+    import subprocess as sp
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(_fake_bin(tmp_path / "b" / "opencode", PIN)))
+
+    def hang(*a, **k):
+        raise sp.TimeoutExpired("opencode", 30)
+
+    monkeypatch.setattr(sp, "check_output", hang)
+    _refused(probe, _run(probe), spawned=True)
+    assert "version" in capsys.readouterr().err

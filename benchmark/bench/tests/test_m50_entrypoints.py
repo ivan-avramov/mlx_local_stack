@@ -358,9 +358,12 @@ def test_session_cache_probe_leg_b_verifies_opencodes_own_destination(tmp_path, 
                 "env": {"MLX_SERVE_CONFIG": str(paths.registry_path())}}
     monkeypatch.setattr(P, "router_owner", owner)
     monkeypatch.setattr(SCP, "_post", lambda *a, **k: pytest.fail("request before tripwire"))
+    # C125: get PAST the pinned-binary preflight so the refusal below is the destination check's
+    monkeypatch.setattr(SCP, "_pinned_opencode", lambda: ("/stub/opencode", "1.18.30"))
     rc = SCP.main(["--model", "m", "--legs", "B", "--workdir", str(tmp_path), "--out", str(tmp_path / "o.json"),
                    "--log", str(tmp_path / "none.log")])
-    assert rc == 2 and "opencode" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert rc == 2 and "not the router verified at entry" in err and "pinned" not in err
 
 
 def test_run_opencode_probe_checks_opencodes_destination_not_MLX_SERVE_BASE(tmp_path, monkeypatch):

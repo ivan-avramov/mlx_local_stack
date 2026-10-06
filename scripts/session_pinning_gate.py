@@ -1,7 +1,8 @@
 """C102(a) live gate — do client session ids reach the worker and pin the prompt cache?
 
 Pass/fail on the pre-registered criteria in docs/specs/c102a-session-headers.md:
-  A4 opencode: `opencode run` turn → worker log `session=ses_…` on every request (pinned). The
+  A4 opencode (bench opencode 1.18.30, pinned, C125 -- the box's opencode v2 is NOT covered, PLAN M59):
+     `opencode run` turn → worker log `session=ses_…` on every request (pinned). The
      `--continue` turn's prefix reuse is reported (`cross_process_reuse`), not gated — see the
      2026-09-27 note in a4_opencode().
   A5 OpenWebUI: a saved-chat completion → worker log `session=<chat id>`; a 2nd turn reuses.
@@ -28,6 +29,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "benchmark"))
 sys.path.insert(0, str(REPO / "scripts" / "websearch"))
 from bench.session_cache_probe import LogTail, chat, filler, opencode_cmd  # noqa: E402
+from bench.session_cache_probe import _pinned_opencode as pinned_opencode  # noqa: E402
 import owui_e2e_gate as owui  # noqa: E402
 
 
@@ -56,14 +58,14 @@ def a6_bare(model, log, timeout) -> dict:
     return {"pass": ok, "requests": out}
 
 
-def a4_opencode(model, log, root: Path, timeout) -> dict:
+def a4_opencode(model, log, root: Path, timeout, oc_bin: str) -> dict:
     proj = root / "oc-proj"; proj.mkdir(parents=True, exist_ok=True)
     (proj / "hello.py").write_text("def hello(name):\n    return f'hello {name}'\n")
-    env = dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), OPENCODE_DISABLE_CLAUDE_CODE_SKILLS="true")  # daily-driver shape (C103)
+    env = dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), OPENCODE_DISABLE_CLAUDE_CODE_SKILLS="true")  # pinned bench opencode under the operator's HOME (C103 skill policy); not hermetic (C129)
     turns = []
     for i, prompt in enumerate(("In one sentence, what does hello.py do?", "One line: what does it return for 'x'?")):
         log.new_rows()
-        cmd = opencode_cmd(model, proj, prompt, first=(i == 0))
+        cmd = opencode_cmd(model, proj, prompt, first=(i == 0), binary=oc_bin)
         with (root / f"oc_turn_{i + 1}.txt").open("w") as f:
             try:
                 rc = subprocess.run(cmd, cwd=proj, env=env, stdout=f, stderr=subprocess.STDOUT, timeout=timeout).returncode
@@ -124,11 +126,19 @@ def main(argv=None) -> int:
     ap.add_argument("--timeout", type=float, default=600)
     ap.add_argument("--workdir", default=os.path.join(os.environ.get("STACK_WORKDIR", "/tmp"), "c102a"))
     a = ap.parse_args(argv)
+    try:  # C125: resolve + version-check the pinned opencode BEFORE any request or directory
+        oc_bin, oc_version = pinned_opencode()
+    except (SystemExit, OSError) as e:
+        print(f"[gate] REFUSED: {getattr(e, 'code', None) or e}", file=sys.stderr, flush=True)
+        return 2
+    import run_opencode_probe as oc
     root = Path(a.workdir); root.mkdir(parents=True, exist_ok=True)
     log = LogTail(Path(a.log))
-    res = {"model": a.model, "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    res = {"model": a.model, "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+           "opencode_bin": oc._scrub_pii(oc._portable(Path(oc_bin))), "opencode_version": oc_version,
+           "opencode_exe_sha256": oc._sha_of(Path(oc_bin))}
     res["A6_bare_anonymous"] = a6_bare(a.model, log, a.timeout); print("[A6]", res["A6_bare_anonymous"]["pass"], flush=True)
-    res["A4_opencode"] = a4_opencode(a.model, log, root, a.timeout); print("[A4]", res["A4_opencode"]["pass"], res["A4_opencode"]["sessions"], flush=True)
+    res["A4_opencode"] = a4_opencode(a.model, log, root, a.timeout, oc_bin); print("[A4 bench opencode " + oc_version + " pinned (C125); box opencode v2 NOT covered, PLAN M59]", res["A4_opencode"]["pass"], res["A4_opencode"]["sessions"], flush=True)
     if not a.skip_owui:
         res["A5_openwebui"] = a5_owui(a.model, log, a.owui_url, os.environ.get("OWUI_ADMIN_EMAIL", "admin@a.a"),
                                       os.environ.get("OWUI_ADMIN_PASSWORD", "admin"), a.timeout)
