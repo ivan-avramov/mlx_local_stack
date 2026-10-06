@@ -418,6 +418,8 @@ def is_compatible(existing, current) -> bool:
         va, vb = control_of(existing, k)[0], control_of(current, k)[0]
         if va != vb or va == "unknown":     # T2: unresolved is incompatible with EVERYTHING
             return False
+    if scaffold_policy_of(existing) != scaffold_policy_of(current):   # C121 B3: every path, like the controls
+        return False
     if v < 2:
         return a == b
     ra, rb = a.pop("runtime", {}), b.pop("runtime", {})
@@ -569,6 +571,17 @@ def control_of(manifest: dict, key: str):
     r = manifest.get("runtime") or {}
     v = r.get(key)
     return ("unknown" if v is None else v), r.get(key + "_source")
+
+
+def scaffold_policy_of(manifest: dict) -> str:
+    """C121 B3: the opencode scaffold-policy hash a manifest stands for. An opencode manifest from
+    before C121 carries none and reads "pre-C121" (a KNOWN value that never equals a post-C121 hash);
+    non-opencode manifests have no scaffold and read "n/a" on both sides."""
+    r = manifest.get("runtime") or {}
+    v = r.get("scaffold_policy_sha256")
+    if v:
+        return v
+    return "pre-C121" if r.get("client") == "opencode" else "n/a"
 
 
 def attention_policy_of(manifest: dict) -> tuple[str, str]:
@@ -1162,6 +1175,25 @@ def _scrub(v, extra_homes=()):
     return v
 
 
+def _login_name() -> str:
+    import getpass
+    try:
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def scrub_tail(text, n: int) -> str:
+    """Error text built from subprocess output: scrub the COMPLETE text (home/workdir placeholders and the
+    whole-word login name) and only then take its last `n` characters, so a cut can never leave a
+    fragment of a home path or login (C121 review)."""
+    t = portable_path(_scrub(str(text or "")))
+    name = _login_name()
+    if name and len(name) >= 3:
+        t = re.sub(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])", "$USER", t)
+    return t[-n:]
+
+
 def _placeholder_roots(*, for_write: bool = False) -> list[tuple[str, str]]:
     """(placeholder, absolute root) pairs, longest root first: `$STACK_WORKDIR` nests under
     `$HOME`, so it must be tried before `$HOME` or every workdir path would come out as
@@ -1465,12 +1497,15 @@ def router_block(base_url: str | None = None) -> dict:
                 "error": _scrub(f"{type(e).__name__}: {str(e)[:300]}")}
 
 
-def opencode_router_base(cwd=None, env=None, provider: str = "mlx-local") -> str:
+def opencode_router_base(cwd=None, env=None, provider: str = "mlx-local",
+                         opencode_bin: str = "opencode", pure: bool = False) -> str:
     """The base URL opencode will ACTUALLY send to, from `opencode debug config` run in the child's
     cwd with the child's env — i.e. every source opencode merges (global json/jsonc, config dir,
     ancestor project configs, inline content) resolved by opencode itself, not by us. The three
     override variables are refused outright: the probes record the SHIPPED config's hash as
-    scaffold identity, so a run under an override would carry false scaffold provenance."""
+    scaffold identity, so a run under an override would carry false scaffold provenance.
+    `opencode_bin` is the EXACT executable to spawn (C121 B1: callers that pin a binary pass its
+    absolute path; the bare default resolves through PATH and is for legacy callers only)."""
     env = dict(env if env is not None else os.environ)
     for var in ("OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR"):
         if env.get(var):
@@ -1478,17 +1513,21 @@ def opencode_router_base(cwd=None, env=None, provider: str = "mlx-local") -> str
                                     f"that the recorded scaffold identity does not describe. Unset it "
                                     f"(probes run the shipped/global scaffold only).")
     try:
-        r = subprocess.run(["opencode", "debug", "config"], cwd=str(cwd) if cwd else None, env=env,
+        r = subprocess.run([str(opencode_bin), "debug", "config", *(["--pure"] if pure else [])],
+                           cwd=str(cwd) if cwd else None, env=env,
                            capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
     except Exception as e:  # noqa: BLE001
         raise ServedConfigError(f"M50 tripwire: cannot run `opencode debug config`: {type(e).__name__}: {e}")
+    if r.returncode != 0:      # C121: valid-looking JSON from a failed discovery is not evidence
+        raise ServedConfigError(f"M50 tripwire: `opencode debug config` exit {r.returncode}; stderr "
+                                f"{scrub_tail(r.stderr, 300)!r}")
     out = r.stdout or ""
     try:
         data = json.loads(out[out.index("{"):])
         base = data["provider"][provider]["options"]["baseURL"]
     except Exception as e:  # noqa: BLE001
         raise ServedConfigError(f"M50 tripwire: `opencode debug config` (rc={r.returncode}) gave no "
-                                f"{provider!r} baseURL: {type(e).__name__}: {e}; stderr {r.stderr[-300:]!r}")
+                                f"{provider!r} baseURL: {type(e).__name__}: {e}; stderr {scrub_tail(r.stderr, 300)!r}")
     # An empty/non-string baseURL is NOT "default 8000": opencode then falls back to the model's
     # `api.url` — a destination this tripwire does not resolve. Refuse rather than guess.
     if not isinstance(base, str) or not base.lower().startswith(("http://", "https://")):
@@ -1498,10 +1537,11 @@ def opencode_router_base(cwd=None, env=None, provider: str = "mlx-local") -> str
     return base
 
 
-def assert_opencode_destination(cwd, env, expected_pid: int) -> str:
+def assert_opencode_destination(cwd, env, expected_pid: int, opencode_bin: str = "opencode",
+                                pure: bool = False) -> str:
     """Per opencode invocation: the destination opencode resolves in THIS cwd/env must be owned by
     the router verified at entry (`expected_pid`). Returns the base URL."""
-    base = opencode_router_base(cwd, env)
+    base = opencode_router_base(cwd, env, opencode_bin=opencode_bin, pure=pure)
     blk = assert_served_config(base, env=env)           # the CHILD's proxy settings apply
     if blk["pid"] != expected_pid:
         raise ServedConfigError(f"M50 tripwire: opencode in {str(cwd)!r} resolves {base!r}, owned by pid "

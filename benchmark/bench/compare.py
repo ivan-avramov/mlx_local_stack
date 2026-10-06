@@ -316,6 +316,14 @@ def _bench_gate(model_a, model_b, bench, *, metric="acc", intersect=False):
                            f"numerics and latency/memory, so the delta would be a "
                            f"(model x serving-path) composite rather than a model comparison")
 
+    # C121 B3: opencode scaffold policy (CLAUDE.md/skills switches) is output-determining: rows
+    # under different policy hashes, or a pre-C121 row vs a post-C121 one, never compare.
+    sp_a, sp_b = provenance.scaffold_policy_of(ma), provenance.scaffold_policy_of(mb)
+    if sp_a != sp_b:
+        return _refuse(f"scaffold_policy_sha256 differs ({sp_a} vs {sp_b}) — the opencode scaffold's "
+                       f"instruction/skill loading policy changed, so the rows ran different system "
+                       f"prompts and cannot be pooled or compared")
+
     if metric == "peak_mem_gb":
         # Operator ruling 2026-08-17. The per-row field is the server's SESSION-CUMULATIVE
         # mx.get_peak_memory (verified monotone non-decreasing across all 8 suffix-OFAT arms), so

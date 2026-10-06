@@ -336,7 +336,7 @@ def test_grade_result_grades_when_untampered_and_changed(tmp_path):
 
 def test_unsupported_lang_exits_with_clear_message(monkeypatch):
     monkeypatch.setattr(sys, "argv",
-                        ["run_opencode_probe.py", "--model", "m", "--items", "x", "--lang", "cobol"])
+                        ["run_opencode_probe.py", "--model", "m", "--items", "x", "--lang", "cobol", "--seed-base", "1"])
     try:
         P.main()
         raised = False
@@ -407,7 +407,7 @@ def test_row_assembly_uses_scrub_then_tail_not_the_broken_slice_then_scrub_order
     """Regression guard for the M2 call-site bug itself (not just the helper): the row-building
     code in `main()` must call `_scrub_then_tail`, never the old `_scrub_pii(x[-n:])` shape."""
     import inspect
-    src = inspect.getsource(P.main)
+    src = inspect.getsource(P._main)
     assert "_scrub_then_tail(tail, 300)" in src
     assert "_scrub_then_tail(log, 500)" in src
     assert "_scrub_pii(tail[-300:])" not in src
@@ -450,23 +450,23 @@ def test_export_latest_session_uses_the_isolated_data_home(monkeypatch, tmp_path
 
     def fake_check_output(cmd, **kw):
         calls.append((cmd, kw.get("env", {}).get("XDG_DATA_HOME")))
-        if cmd[:3] == ["opencode", "session", "list"]:
+        if cmd[1:3] == ["session", "list"]:
             return "Session ID   Title\n────\nses_new111  New session\nses_old222  Older\n"
-        if cmd[:2] == ["opencode", "export"]:
-            assert cmd[2] == "ses_new111"
+        if cmd[1] == "export":
+            assert cmd[2] == "ses_new111" and cmd[0].endswith("opencode")
             return json.dumps({"info": {"id": "ses_new111"}, "messages": []})
         raise AssertionError(cmd)
 
     monkeypatch.setattr(P.subprocess, "check_output", fake_check_output)
     data_home = tmp_path / "xdg"
-    out = P._export_latest_session(P._opencode_env(data_home), cwd=tmp_path)
+    out = P._export_latest_session(P._opencode_env(data_home), cwd=tmp_path, opencode_bin="/pinned/opencode")
     assert out["info"]["id"] == "ses_new111"
     assert all(h == str(data_home) for _, h in calls)
 
 
 def test_export_latest_session_degrades_to_none_when_no_session(monkeypatch, tmp_path):
     monkeypatch.setattr(P.subprocess, "check_output", lambda cmd, **kw: "Session ID   Title\n")
-    assert P._export_latest_session(P._opencode_env(tmp_path), cwd=tmp_path) is None
+    assert P._export_latest_session(P._opencode_env(tmp_path), cwd=tmp_path, opencode_bin="/pinned/opencode") is None
 
 
 def test_opencode_env_redirects_only_the_data_home(tmp_path):
@@ -496,7 +496,8 @@ def test_manifest_runtime_records_the_skill_policy_and_config_hash(monkeypatch, 
     cfg = tmp_path / "opencode.json"; cfg.write_text('{"model": "x"}')
     monkeypatch.setattr(P, "SHIPPED_OPENCODE_CONFIG", cfg)
     rt = P._scaffold_runtime()
-    assert rt["skill_policy"] == "OPENCODE_DISABLE_EXTERNAL_SKILLS=true"
+    assert rt["skill_policy"] == ("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=true,"
+                                  "OPENCODE_DISABLE_EXTERNAL_SKILLS=true")   # C121/R8 adds the first
     import hashlib
     assert rt["opencode_config_sha256"] == hashlib.sha256(cfg.read_bytes()).hexdigest()
     assert rt["opencode_config"] == "opencode_config/opencode.json"
@@ -544,13 +545,13 @@ def test_entry_refuses_missing_workdir_before_m50_and_before_any_request(monkeyp
     from bench import provenance
     monkeypatch.delenv("STACK_WORKDIR", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "empty"))
-    monkeypatch.setattr(P, "_opencode_version", lambda: P.PINNED_OPENCODE_VERSION)
+    monkeypatch.setattr(P, "_opencode_version", lambda *a, **k: P.PINNED_OPENCODE_VERSION)
 
     def boom(*a, **k):
         raise AssertionError("reached M50 / the router before the workdir check")
     monkeypatch.setattr(provenance, "opencode_router_base", boom)
     monkeypatch.setattr(provenance, "assert_served_config", boom)
-    monkeypatch.setattr(sys, "argv", ["run_opencode_probe.py", "--model", "m", "--items", "x", "--lang", "python"])
+    monkeypatch.setattr(sys, "argv", ["run_opencode_probe.py", "--model", "m", "--items", "x", "--lang", "python", "--seed-base", "1"])
     try:
         P.main()
         raised = False

@@ -257,6 +257,8 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
     from . import provenance  # lazy (provenance imports generate)
     cur_by_model = {}
     for m, b in sorted(pairs):
+        if b in _SCAFFOLD_BENCHES:
+            continue                        # C121 C4: opencode rows are the probe's, never generate's
         mp = result_path(m, b, tune=tune).with_suffix(".manifest.json")
         try:
             if mp.exists():
@@ -281,6 +283,10 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
             raise                           # M50: a failed router attribution is never "skipped"
         except Exception as e:  # noqa: BLE001 — never block a run on provenance
             print(f"  [provenance] skipped {m}/{b}: {type(e).__name__}: {str(e)[:60]}", flush=True)
+
+
+# C121 C4: benches whose rows come from a scaffold probe (run_opencode_probe.py), not from `generate`.
+_SCAFFOLD_BENCHES = frozenset({"opencode"})
 
 
 def _refresh_router(mp, existing, provenance):
@@ -325,6 +331,10 @@ def provenance_precheck(models, benches, profile="production", clean_stale=False
             print(f"  [provenance] precheck skipped {m}: {type(e).__name__}: {str(e)[:60]}", flush=True)
             continue
         for b in benches:
+            if b in _SCAFFOLD_BENCHES:
+                print(f"  [provenance] skipped {m}/{b}: scaffold-probe rows are not regenerable by "
+                      f"`generate` and are never cleaned or restamped here", flush=True)
+                continue
             jsonl = result_path(m, b, tune=tune)
             if not jsonl.exists():
                 continue

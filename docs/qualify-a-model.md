@@ -692,10 +692,17 @@ separately from the daily-driver configs for exactly this reason).
 
 ```
 uv run python benchmark/run_opencode_probe.py --model <full-registry-name> \
-    --items <comma-list-of-exercise-names> [--lang <lang>] [--tick-s 300] \
+    --items <comma-list-of-exercise-names> --seed-base <int> [--lang <lang>] [--tick-s 300] \
     [--hard-ceiling-s 3600] [--stall-ticks 2] [--loop-repeats 3] [--out <path>] \
     [--allow-version-drift]
 ```
+The bench never uses the personal opencode config or home: the probe runs opencode under its own `HOME`
+(`$STACK_WORKDIR/opencode-probe/home`) and `XDG_CONFIG_HOME` (`$STACK_WORKDIR/opencode-probe/config-<run-id>/`, a verbatim
+copy of `benchmark/opencode_bench.json`); only the opencode cache dir is shared, and its `bin` tool content (ripgrep/LSP) is hashed into the run identity (`cache_bin_inventory_sha256`) - it is not catalogue-only.
+Run the seed-propagation integration test once per executable/config change with `OPENCODE_PROBE_RECORD_VERIFIED=1`
+(`benchmark/bench/tests/test_opencode_probe_seeding.py`) to stamp the receipt that makes the manifest read `seed_propagation:
+verified-by-test`. Before the first go/rust/java/javascript chain on the per-item `git init`-ed scratch dirs, grade one known-positive
+exercise per language through docker: grading with a `.git` directory present is UNVERIFIED.
 No `--tune` flag — opencode rows are tagged by `--lang`/`--out`, not a harness tune label. Pin
 opencode **1.18.30** (bumped 2026-09-29; drift is recorded, not silently tolerated — pass `--allow-version-drift`
 only when you mean it). Use the M3 22-item python set (or the matching per-language set) named

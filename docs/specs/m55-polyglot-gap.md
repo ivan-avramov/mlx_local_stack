@@ -7,10 +7,10 @@ Queued 2026-10-03 (P17 ruling after Codex cold review 9; operator approval). Ter
 
 - Models, same chain, same session pair: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (t0.5, medium), `Qwen3.8-27B-mlx-uniform-4bit`
   (t0.6, medium), `Ornith-1.0-35B-mlx-uniform-4bit` (deployed). Deployed sampling via `params_for(model, profile="deployed")`.
-- Items: the M9 22-exercise draws for rust, java, javascript (66 items); same seeds as the existing M9/M32 rows (`rowschema.sample_seed`).
+- Items: the M9 22-exercise draws for rust, java, javascript (66 items); same seeds as the existing M9/M32 rows (`rowschema.sample_seed`). **[2026-10-06, C121: sessions were unseeded — the opencode probe never sent a seed, so the server's default seed applied; see `docs/lab-notebook.md` 2026-10-06.]**
 - Harness: `benchmark/run_opencode_probe.py`, opencode pinned (V4), `OPENCODE_DISABLE_EXTERNAL_SKILLS=true`, M9 grading containers.
 - Serving: lean router, draft-OFF overlay, `MLX_VLM_CACHE_SESSION_MAX=1`, APC absent, M50/C106 provenance; one resident model.
-- Sessions: k=2 independent loaded instances per model with distinct paired seed schedules + a 5-item same-seed reload control (C109).
+- Sessions: k=2 independent loaded instances per model with distinct paired seed schedules + a 5-item same-seed reload control (C109). **[2026-10-06, C121: no seed was sent, so the schedules were not distinct — every session ran the server default seed.]**
 
 ## Pre-registered acceptance criteria
 

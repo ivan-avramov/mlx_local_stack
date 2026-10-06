@@ -20,7 +20,7 @@ Status 2026-10-02: **COMPLETE.** Record = chain 3 (`df3b65c`, pty whole-script s
 ## Arms and reads
 
 - Models: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`; shortlist models only on operator request.
-- `--sampling-profile deployed`, thinking ON, budget unchanged, predictor state per C107 D3. k=1, seeds `(item, 0)`.
+- `--sampling-profile deployed`, thinking ON, budget unchanged, predictor state per C107 D3. k=1, seeds `(item, 0)`. **[2026-10-06, C121 check: unlike the opencode probe, `run_agentbench_os.py` DID send `seed = rowschema.sample_seed(task, 0)` per item to the router (base 0, the same schedule in every session) — so M54 sessions were seeded but not independent draws; the "sessions were unseeded" retraction applies to the opencode probe (M53/M55), not here.]**
 - Pre-registered read: `acc_strict@budget` per model, paired difference with cluster-bootstrap CI, nominal MDE at n=144 ≈ ±10pp (paired, binary); exclusive-solve sets; per-label breakdown is DIAGNOSTIC only; tokens per task and wall per task reported beside. Outcome mix (`turn_cap`, `no_submit`, `tool_error_loop`, `deadline`) reported as counts.
 - No ladder change without operator approval.
 

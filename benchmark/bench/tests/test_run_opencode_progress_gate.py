@@ -146,7 +146,8 @@ def test_run_opencode_reports_completed_and_captures_the_log(tmp_path, monkeypat
     monkeypatch.setattr(ROP.subprocess, "Popen", _FakePopenCompletesImmediately)
     rc, log, dur, result = ROP._run_opencode(
         "some-model", work, "do the thing", sol, test, lambda w, t: (True, ""), "before",
-        tick_s=300, hard_ceiling_s=3600, poll_s=1.0, stall_ticks=2, loop_repeats=3, pure=True)
+        tick_s=300, hard_ceiling_s=3600, poll_s=1.0, stall_ticks=2, loop_repeats=3, pure=True,
+        opencode_bin="/pinned/opencode")
     assert rc == 0
     assert "fake opencode ran and exited" in log
     assert result.stop_reason == "completed"
@@ -166,7 +167,8 @@ def test_run_opencode_stalls_and_kills_a_wedged_session(tmp_path, monkeypatch):
     t0 = time.time()
     rc, log, dur, result = ROP._run_opencode(
         "some-model", work, "do the thing", sol, test, grade, "before",
-        tick_s=0.05, hard_ceiling_s=5.0, poll_s=0.01, stall_ticks=2, loop_repeats=3, pure=False)
+        tick_s=0.05, hard_ceiling_s=5.0, poll_s=0.01, stall_ticks=2, loop_repeats=3, pure=False,
+        opencode_bin="/pinned/opencode")
     wall = time.time() - t0
     assert result.stop_reason == "stalled"
     assert rc == -9   # killed
@@ -190,8 +192,8 @@ def test_run_opencode_hard_ceiling_backstops_endless_progress(tmp_path, monkeypa
     # a wrapped grade() call, so the NEXT tick sees a changed file.
     real_snapshot_fn = ROP._tick_snapshot_fn
 
-    def _snapshot_fn_that_keeps_editing(cwd, sol_path, test_path, before_sol, grade, log_path):
-        inner = real_snapshot_fn(cwd, sol_path, test_path, before_sol, grade, log_path)
+    def _snapshot_fn_that_keeps_editing(cwd, sol_path, test_path, before_sol, grade, log_path, **kw):
+        inner = real_snapshot_fn(cwd, sol_path, test_path, before_sol, grade, log_path, **kw)
 
         def _wrapped(elapsed_s):
             counter["n"] += 1
@@ -208,6 +210,7 @@ def test_run_opencode_hard_ceiling_backstops_endless_progress(tmp_path, monkeypa
 
     rc, log, dur, result = ROP._run_opencode(
         "some-model", work, "do the thing", sol, test, _touch_and_grade_fail, "before",
-        tick_s=0.05, hard_ceiling_s=0.2, poll_s=0.01, stall_ticks=2, loop_repeats=3, pure=False)
+        tick_s=0.05, hard_ceiling_s=0.2, poll_s=0.01, stall_ticks=2, loop_repeats=3, pure=False,
+        opencode_bin="/pinned/opencode")
     assert result.stop_reason == "hard_ceiling"
     assert rc == -9
