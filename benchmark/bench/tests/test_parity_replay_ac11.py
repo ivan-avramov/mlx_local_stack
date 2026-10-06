@@ -594,10 +594,41 @@ def test_d1_a_drift_stamped_journal_is_never_resumed_and_keeps_its_stamp(env, tm
     assert len(env["posted"]) == posted
 
 
-@pytest.mark.parametrize("status", ["complete", "aborted", None])
-def test_d1_only_a_running_journal_resumes(env, tmp_path, status):
+@pytest.mark.parametrize("status", ["complete", None, "weird"])
+def test_d1_complete_or_statusless_journals_are_not_resumed(env, tmp_path, status):
     doc = _journal(env, tmp_path)
     doc["status"] = status
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2
+
+
+def test_d2_an_aborted_journal_with_a_clean_identity_IS_resumable(env, monkeypatch, tmp_path):
+    # a transport abort after two rows: the point of resume
+    calls = {"n": 0}
+    real_post = R._post
+
+    def flaky(payload, timeout):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise OSError("connection reset")
+        return real_post(payload, timeout)
+    monkeypatch.setattr(R, "_post", flaky)
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert doc["status"] == "aborted" and len(doc["rows"]) == 2 and "served_config_drift" not in doc
+    monkeypatch.setattr(R, "_post", real_post)
+    assert _resume(tmp_path) == 0
+    out = _doc(tmp_path)
+    assert out["status"] == "complete" and len(out["rows"]) == 3
+
+
+def test_d2_an_aborted_journal_with_drift_or_a_mismatched_identity_is_refused(env, tmp_path):
+    doc = _journal(env, tmp_path, status="aborted")
+    doc["rows"][0]["runtime"]["mtp_verify_scan"] = "per_query"
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2
+    doc["rows"][0]["runtime"]["mtp_verify_scan"] = "joint_v1"
+    doc["served_config_drift"] = {"error": "x"}
     (tmp_path / "rep.json").write_text(json.dumps(doc))
     assert _resume(tmp_path) == 2
 
@@ -755,3 +786,75 @@ def test_d4_the_final_c106_refusal_stamps_drift_without_a_second_exit_check(
     doc = _doc(tmp_path)
     assert doc["status"] == "aborted" and len(calls) == 1
     assert "C106" in json.dumps(doc["served_config_drift"])
+
+
+# --------------------------------------------------------------------------- G1b serving-state sides
+def _side_rows(scan, joint_rows=None, n=20, **runtime):
+    rows = []
+    for i in range(n):
+        key = ("m", "math500", f"i{i}")
+        verify = {"verify_blocks_joint_v1": 5} if (joint_rows is None or i < joint_rows) else {}
+        r = _row(key, runtime=dict(RUNTIME, mtp_verify_scan=scan, **runtime), verify=verify)
+        rows.append(r)
+    return rows
+
+
+def _g1b(tmp_path, a, b):
+    keys = [("m", "math500", f"i{i}") for i in range(20)]
+    return _cmp(tmp_path, a, b, expected=keys)
+
+
+def test_g1b_per_query_vs_joint_with_the_joint_path_on_enough_rows_passes(tmp_path):
+    rc, out = _g1b(tmp_path, _side_rows("per_query", joint_rows=0), _side_rows("joint_v1", 18))
+    assert rc == 0, out["integrity"]
+
+
+@pytest.mark.parametrize("joint_rows", [0, 17])
+def test_g1b_refuses_when_the_joint_side_barely_ran_the_joint_path(tmp_path, joint_rows):
+    rc, out = _g1b(tmp_path, _side_rows("per_query", joint_rows=0), _side_rows("joint_v1", joint_rows))
+    assert rc == 2 and any(f"only {joint_rows} of 20" in p for p in out["integrity"])
+    rc, out = _g1b(tmp_path, _side_rows("joint_v1", joint_rows), _side_rows("per_query", joint_rows=0))
+    assert rc == 2                                        # either side order
+
+
+def test_g1b_refuses_a_joint_v1_plus_ab_side(tmp_path):
+    rc, out = _g1b(tmp_path, _side_rows("per_query", joint_rows=0), _side_rows("joint_v1+ab", 20))
+    assert rc == 2 and any("joint_v1+ab" in p for p in out["integrity"])
+
+
+def test_g1b_a_side_must_have_one_serving_state(tmp_path):
+    b = _side_rows("joint_v1", 20)
+    b[3]["runtime"]["mtp_verify_scan"] = "per_query"
+    rc, out = _g1b(tmp_path, _side_rows("per_query", joint_rows=0), b)
+    assert rc == 2 and any("do not share one serving state" in p for p in out["integrity"])
+
+
+@pytest.mark.parametrize("field,value", [("attention_policy", "auto"), ("draft_kind", "off"),
+                                         ("lazy_prompt_embeddings", True)])
+def test_g1b_only_the_scan_may_differ_between_sides(tmp_path, field, value):
+    rc, out = _g1b(tmp_path, _side_rows("per_query", joint_rows=0),
+                   _side_rows("joint_v1", 20, **{field: value}))
+    assert rc == 2 and any(field in p for p in out["integrity"])
+
+
+def test_g1b_same_scan_reload_control_needs_no_joint_rows(tmp_path):
+    rc, out = _g1b(tmp_path, _side_rows("per_query", joint_rows=0), _side_rows("per_query", joint_rows=0))
+    assert rc == 0, out["integrity"]
+
+
+def test_g1b_different_serving_code_between_sides_is_refused(tmp_path):
+    keys = [("m", "math500", f"i{i}") for i in range(20)]
+    pa = _write(tmp_path, "A.json", _side_rows("per_query", joint_rows=0), "A", expected=keys)
+    pb = _write(tmp_path, "B.json", _side_rows("joint_v1", 20), "B", expected=keys)
+    for name, code in (("A.json", {"src/mlx-vlm": "aaa"}), ("B.json", {"src/mlx-vlm": "bbb"})):
+        doc = json.loads((tmp_path / name).read_text()); doc["code"] = code
+        (tmp_path / name).write_text(json.dumps(doc))
+    a = argparse.Namespace(a=pa, b=pb, out=str(tmp_path / "o.json"))
+    assert R.compare(a) == 2
+    assert any("serving code" in p for p in json.loads((tmp_path / "o.json").read_text())["integrity"])
+
+
+def test_run_records_the_serving_code_state(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": {"src/mlx-vlm": "abc"}})
+    assert R.run(_args(tmp_path)) == 0
+    assert _doc(tmp_path)["code"] == {"src/mlx-vlm": "abc"}

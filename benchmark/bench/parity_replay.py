@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 import time
@@ -135,8 +136,8 @@ def _resume_refusal(doc, router, entry_state, entry_runtime, hashes) -> str | No
     """Why `doc` may not be resumed, else None. Validated BEFORE `done` is computed."""
     if doc.get("served_config_drift"):
         return "it carries a served_config_drift stamp (its rows are not trustworthy)"
-    if doc.get("status") != "running":
-        return f"its status is {doc.get('status')!r}, not 'running'"
+    if doc.get("status") not in ("running", "aborted"):   # an aborted (e.g. transport) run resumes
+        return f"its status is {doc.get('status')!r}; only 'running'/'aborted' journals resume"
     sha = router.get("config_sha256")
     for blk in [doc.get("router")] + list(doc.get("router_history") or []):
         if not isinstance(blk, dict) or blk.get("config_sha256") != sha or not sha:
@@ -156,6 +157,30 @@ def _resume_refusal(doc, router, entry_state, entry_runtime, hashes) -> str | No
         if rt.get("mtp_verify_scan") != entry_state[k[0]]["mtp_verify_scan"]:
             return f"row {k} mtp_verify_scan differs from the entry value"
     return None
+
+
+def _code_state():
+    """The serving-path code hashes this replay ran against (best effort; None when unavailable)."""
+    try:
+        return (provenance._git_shas() or {}).get("serving_path")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+G1B_MIN_JOINT_FRACTION = 0.9      # spec G1b: verify_blocks_joint_v1 > 0 on >= 18 of 20 rows
+_SIDE_STATE = ("mtp_verify_scan", "draft_kind", "attention_policy", "lazy_prompt_embeddings")
+
+
+def _side_state(rows, side, problems):
+    """The serving state a replay's ROWS record; it must be uniform within the side."""
+    states = {tuple((r.get("runtime") or {}).get(f) for f in _SIDE_STATE) for r in rows.values()}
+    if len(states) > 1:
+        problems.append(f"{side}: rows do not share one serving state ({sorted(map(str, states))})")
+    state = next(iter(states)) if len(states) == 1 else None
+    if state is not None and state[0] == "joint_v1+ab":
+        problems.append(f"{side}: rows were produced under joint_v1+ab (gate-1 AB instrument); "
+                        f"never a parity or latency side")
+    return state
 
 
 def _key(r) -> tuple:
@@ -244,7 +269,7 @@ def run(a) -> int:
     todo = [r for r in reqs if _key(r) not in done]
     print(f"{len(todo)} requests to run ({len(done)} already done) tag={a.tag}", flush=True)
     base = {"tag": a.tag, "base": client.BASE, "router": router, "router_history": history,
-            "frozen": a.frozen, "expected_keys": [list(k) for k in keys]}
+            "frozen": a.frozen, "expected_keys": [list(k) for k in keys], "code": _code_state()}
     cur_model = None
     try:
         for i, r in enumerate(todo, 1):
@@ -428,6 +453,27 @@ def compare(a) -> int:
             if e is not None:
                 for k in sorted(set(d) - e):
                     integrity.append(f"{side}: unexpected row {k} (not in expected_keys)")
+    sa, sb = _side_state(ka, "A", integrity), _side_state(kb, "B", integrity)
+    if sa is not None and sb is not None:
+        for i, f in enumerate(_SIDE_STATE[1:], 1):
+            if sa[i] != sb[i]:
+                integrity.append(f"sides differ in {f} ({sa[i]!r} vs {sb[i]!r}); only the scan may differ")
+        if sa[0] != sb[0]:
+            sides = {"A": (sa[0], ka), "B": (sb[0], kb)}
+            joint = [n for n, (v, _) in sides.items() if v == "joint_v1"]
+            if len(joint) != 1 or {sa[0], sb[0]} != {"per_query", "joint_v1"}:
+                integrity.append(f"scans {sa[0]!r} vs {sb[0]!r}: G1b compares per_query with joint_v1")
+            else:
+                n_rows = len(sides[joint[0]][1])
+                got = sum(1 for r in sides[joint[0]][1].values()
+                          if (r.get("verify") or {}).get("verify_blocks_joint_v1", 0) > 0)
+                need = math.ceil(G1B_MIN_JOINT_FRACTION * n_rows)
+                if got < need:
+                    integrity.append(f"the joint path ran on only {got} of {n_rows} rows of side "
+                                     f"{joint[0]} (need >= {need}): identical output proves nothing")
+    ca, cb = A.get("code"), B.get("code")
+    if ca is not None and cb is not None and ca != cb:
+        integrity.append("the two sides ran different serving code")
     expected = (ea or set()) | (eb or set()) if not legacy else (set(ka) | set(kb))
     same = diff = miss = 0; statuses = []; details = []
     for k in sorted(expected | set(ka) | set(kb)):
