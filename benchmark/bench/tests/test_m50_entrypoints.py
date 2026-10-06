@@ -91,6 +91,14 @@ def test_stack_smoke_records_router_on_pass(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- parity_replay
+def _stub_parity_state(monkeypatch, R):
+    """M58: parity_replay resolves the served scan at entry and records the worker per row."""
+    monkeypatch.setattr(R.provenance, "assert_serving_state", lambda m, registry_path=None, expect=None: {
+        "mtp_verify_scan": "per_query", "mtp_verify_scan_source": "worker"})
+    monkeypatch.setattr(R.provenance, "_runtime_block", lambda *a, **k: {"mtp_verify_scan": "per_query"})
+    monkeypatch.setattr(R.provenance, "worker_serving_facts", lambda *a, **k: {"model": "m"})
+
+
 def _parity_args(tmp_path, frozen):
     import argparse
     return argparse.Namespace(frozen=str(frozen), models=None, out=str(tmp_path / "rep.json"),
@@ -118,8 +126,7 @@ def test_parity_replay_records_router_on_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "_post", lambda payload, timeout: {
         "choices": [{"message": {"content": "x"}, "finish_reason": "stop"}],
         "usage": {"prompt_tokens": 1, "completion_tokens": 1}})   # M58 AC11: usage is required
-    monkeypatch.setattr(R.provenance, "_runtime_block", lambda *a, **k: {})
-    monkeypatch.setattr(R.provenance, "worker_serving_facts", lambda *a, **k: None)
+    _stub_parity_state(monkeypatch, R)
     _passing(monkeypatch, tmp_path, pid=616)
     a = _parity_args(tmp_path, tmp_path / "frozen.json")
     assert R.run(a) == 0
@@ -302,6 +309,7 @@ def test_parity_replay_abort_record_carries_router(tmp_path, monkeypatch):
     def boom(payload, timeout):
         raise ConnectionError("transport")
     monkeypatch.setattr(R, "_post", boom)
+    _stub_parity_state(monkeypatch, R)
     _passing(monkeypatch, tmp_path, pid=78)
     a = _parity_args(tmp_path, tmp_path / "frozen.json")
     assert R.run(a) == 2
@@ -476,11 +484,13 @@ def test_parity_resume_keeps_prior_router_attribution_and_refuses_config_change(
     monkeypatch.setattr(R, "load_requests", lambda f, models: [
         {"model": "m", "bench": "b", "id": "i", "seed": 1, "payload": {"max_tokens": 10}}])
     monkeypatch.setattr(R.client, "preload", lambda m, **k: 0.0)
+    _stub_parity_state(monkeypatch, R)
     _passing(monkeypatch, tmp_path, pid=2)
     a = _parity_args(tmp_path, tmp_path / "frozen.json"); a.resume = True
     prev = {"pid": 1, "config": P.router_block("http://localhost:8000")["config"], "port": 8000}
     Path(a.out).write_text(json.dumps({"status": "complete", "router": prev,
-                                       "rows": [{"model": "m", "bench": "b", "id": "i"}]}))
+                                       "rows": [{"model": "m", "bench": "b", "id": "i",
+                                                 "payload_sha256": R._payload_sha({"max_tokens": 10}, 1)}]}))
     assert R.run(a) == 0
     doc = json.loads(Path(a.out).read_text())
     assert doc["router"]["pid"] == 2 and doc["router_history"] == [prev] and len(doc["rows"]) == 1

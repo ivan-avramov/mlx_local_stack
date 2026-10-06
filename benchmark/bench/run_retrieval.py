@@ -63,7 +63,7 @@ def main(argv=None) -> int:
 
 
 def _run(args, grid, router, guard) -> int:
-    provenance.assert_serving_state(args.model)        # M57: before the first model request
+    serving_entry = provenance.assert_serving_state(args.model)   # M57: before the first model request
     try:    # provenance preflight: refuse now rather than fail to publish after the ladder
         provenance.preflight_gather(args.model, profile=args.sampling_profile, router=router,
                                     label="retrieval")
@@ -81,7 +81,7 @@ def _run(args, grid, router, guard) -> int:
               "memory sampling disabled", flush=True)
 
     cpt = calibrate_cpt(driver, args.model)
-    provenance.assert_serving_state(args.model)        # M57: re-resolve once loaded
+    provenance.assert_serving_state(args.model, expect=serving_entry)   # M57/M58: re-resolve once loaded; the scan must not change
 
     # Profile params verbatim; apply explicit CLI overrides only.
     params = params_for(args.model, profile=args.sampling_profile)

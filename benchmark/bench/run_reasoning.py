@@ -143,7 +143,7 @@ def _run(args, grid, router, guard) -> int:
         raise SystemExit(f"REFUSED: a journal already exists for {_stem!r} ({_journal}); a run without "
                          f"--resume would mix its rows with a different design/serving state. Use "
                          f"--resume or a fresh --out-tag.")
-    provenance.assert_serving_state(args.model)        # M57: before the first model request
+    serving_entry = provenance.assert_serving_state(args.model)   # M57: before the first model request
     try:    # provenance preflight: refuse now rather than fail to publish after the ladder
         provenance.preflight_gather(args.model, profile=args.sampling_profile, router=router,
                                     label="reasoning")
@@ -162,7 +162,7 @@ def _run(args, grid, router, guard) -> int:
               "memory sampling disabled", flush=True)
 
     cpt = calibrate_cpt(driver, args.model)
-    serving = provenance.assert_serving_state(args.model)   # M57: re-resolve once loaded
+    serving = provenance.assert_serving_state(args.model, expect=serving_entry)   # M57/M58: re-resolve once loaded
 
     # Build profile params; apply any CLI overrides
     params = params_for(args.model, profile=args.sampling_profile)

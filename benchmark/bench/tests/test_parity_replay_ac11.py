@@ -63,8 +63,16 @@ def env(monkeypatch, tmp_path):
                         lambda runtime=None, model=None, registry_path=None: dict(RUNTIME))
     monkeypatch.setattr(R.provenance, "worker_serving_facts",
                         lambda model, registry_path=None, worker_lookup=None: dict(WORKER))
+    monkeypatch.setattr(R.provenance, "assert_serving_state", _serving_state)
     _passing(monkeypatch, tmp_path, pid=616)
     return state
+
+
+def _serving_state(model, registry_path=None, expect=None):
+    out = {"mtp_verify_scan": "joint_v1", "mtp_verify_scan_source": "worker"}
+    if expect is not None and expect["mtp_verify_scan"] != out["mtp_verify_scan"]:
+        raise P.ServingStateError("changed")
+    return out
 
 
 def _doc(tmp_path):
@@ -171,11 +179,12 @@ def test_verify_counters_absent_under_per_query_record_an_empty_dict(env, tmp_pa
     assert all(r["verify"] == {} for r in _doc(tmp_path)["rows"])
 
 
-def test_worker_not_observable_is_recorded_as_none(env, monkeypatch, tmp_path):
+def test_s3_a_null_worker_command_line_is_refused_not_recorded(env, monkeypatch, tmp_path):
     monkeypatch.setattr(R.provenance, "worker_serving_facts",
                         lambda model, registry_path=None, worker_lookup=None: None)
-    assert R.run(_args(tmp_path)) == 0
-    assert _doc(tmp_path)["rows"][0]["worker"] is None
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert doc["status"] == "aborted" and doc["rows"] == [] and "worker" in doc["error"]
 
 
 # --------------------------------------------------------------------------- auth header
@@ -234,6 +243,7 @@ def test_resume_keeps_rows_and_refuses_duplicates_in_the_journal(env, monkeypatc
 def _row(key, content="x", **kw):
     m, b, i = key
     row = {"model": m, "bench": b, "id": i, "seed": 11, "finish_reason": "stop",
+           "payload_sha256": R._payload_sha(_reqs([key])[0]["payload"], 11),
            "prompt_tokens": 5, "completion_tokens": 3, "content": content,
            "content_sha256": R._sha(content), "reasoning_sha256": R._sha("r"),
            "draft": {"draft_kind": "mtp", "draft_rounds": 7, "draft_n": 21, "draft_n_accepted": 14},
@@ -242,9 +252,9 @@ def _row(key, content="x", **kw):
     return row
 
 
-def _write(tmp_path, name, rows, tag, expected=KEYS):
+def _write(tmp_path, name, rows, tag, expected=KEYS, status="complete"):
     p = tmp_path / name
-    p.write_text(json.dumps({"status": "complete", "tag": tag, "rows": rows,
+    p.write_text(json.dumps({"status": status, "tag": tag, "rows": rows,
                              "expected_keys": [list(k) for k in expected]}))
     return str(p)
 
@@ -319,10 +329,229 @@ def test_compare_reports_the_joint_path_row_counts(tmp_path):
     assert out["joint_rows"] == {"A": 0, "B": 2}
 
 
-def test_compare_with_legacy_docs_without_expected_keys_uses_the_union(tmp_path):
+def test_b1_legacy_docs_without_expected_keys_are_non_gating_exit_3(tmp_path, capsys):
     rows = [_row(k) for k in KEYS]
     pa, pb = tmp_path / "A.json", tmp_path / "B.json"
-    pa.write_text(json.dumps({"tag": "A", "rows": rows}))
+    for p, tag in ((pa, "A"), (pb, "B")):
+        p.write_text(json.dumps({"status": "complete", "tag": tag, "rows": rows}))
+    assert R.compare(argparse.Namespace(a=str(pa), b=str(pb), out=None)) == 3   # never 0
+    assert "NON-GATING" in capsys.readouterr().out
     pb.write_text(json.dumps({"tag": "B", "rows": rows[:2]}))
-    a = argparse.Namespace(a=str(pa), b=str(pb), out=None)
-    assert R.compare(a) == 2                                     # the third key is missing in B
+    assert R.compare(argparse.Namespace(a=str(pa), b=str(pb), out=None)) == 2   # a gap is still 2
+
+
+def test_b1_empty_inputs_exit_2(tmp_path):
+    rc, out = _cmp(tmp_path, [], [], expected=[])
+    assert rc == 2 and out["integrity"]
+
+
+def test_b1_expected_sets_must_be_equal_unique_and_cover_the_rows_exactly(tmp_path):
+    rows = [_row(k) for k in KEYS]
+    a = argparse.Namespace(a=_write(tmp_path, "A.json", rows, "A"),
+                           b=_write(tmp_path, "B.json", rows, "B", expected=KEYS[:2]), out=None)
+    assert R.compare(a) == 2                                   # unequal expected sets
+    dup = argparse.Namespace(a=_write(tmp_path, "A.json", rows, "A", expected=KEYS + [KEYS[0]]),
+                             b=_write(tmp_path, "B.json", rows, "B", expected=KEYS + [KEYS[0]]),
+                             out=None)
+    assert R.compare(dup) == 2                                 # duplicate expected entry
+    extra = rows + [_row(("m", "mbpp", "zzz"))]                # a row nobody expected
+    rc, out = _cmp(tmp_path, extra, rows)
+    assert rc == 2 and any("unexpected" in p for p in out["integrity"])
+
+
+def test_b2_compare_requires_complete_journals(tmp_path):
+    rows = [_row(k) for k in KEYS]
+    a = argparse.Namespace(a=_write(tmp_path, "A.json", rows, "A", status="running"),
+                           b=_write(tmp_path, "B.json", rows, "B"), out=None)
+    assert R.compare(a) == 2
+    a.a = _write(tmp_path, "A.json", rows, "A", status="aborted")
+    assert R.compare(a) == 2
+
+
+@pytest.mark.parametrize("field", ["finish_reason", "completion_tokens", "content_sha256",
+                                   "reasoning_sha256", "draft"])
+def test_b2_identity_fields_are_mandatory(tmp_path, field):
+    a = [_row(KEYS[0])] + [_row(k) for k in KEYS[1:]]
+    b = [_row(k) for k in KEYS]
+    del a[0][field]
+    del b[0][field]                                            # absent on BOTH: still a failure
+    rc, out = _cmp(tmp_path, a, b)
+    assert rc == 2 and any(field in p for p in out["integrity"])
+
+
+def test_b2_request_hashes_must_exist_and_agree_across_sides(tmp_path):
+    a = [_row(k) for k in KEYS]
+    b = [_row(KEYS[0], payload_sha256="0" * 64)] + [_row(k) for k in KEYS[1:]]
+    rc, out = _cmp(tmp_path, a, b)
+    assert rc == 2 and any("request hash" in p for p in out["integrity"])
+    c = [_row(k) for k in KEYS]
+    for r in c:
+        del r["payload_sha256"]
+    rc, out = _cmp(tmp_path, c, [dict(r) for r in c])
+    assert rc == 2 and any("payload_sha256" in p for p in out["integrity"])
+
+
+def test_b2_resume_validates_journal_rows_against_the_frozen_request_hash(
+    env, monkeypatch, tmp_path
+):
+    a = _args(tmp_path)
+    assert R.run(a) == 0
+    base = _doc(tmp_path)
+    posted_before = len(env["posted"])
+    a.resume = True
+    for mutate in (lambda r: r.update(payload_sha256="f" * 64), lambda r: r.pop("payload_sha256")):
+        doc = json.loads(json.dumps(base))
+        mutate(doc["rows"][0])
+        (tmp_path / "rep.json").write_text(json.dumps(doc))
+        assert R.run(a) == 2
+    assert len(env["posted"]) == posted_before                 # nothing was re-requested
+    (tmp_path / "rep.json").write_text(json.dumps(base))
+    assert R.run(a) == 0                                       # an honest journal still resumes
+
+
+# --------------------------------------------------------------------------- B3 closed set
+def test_b3_parity_run_refuses_an_unrecognised_scan_before_any_request(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(R.provenance, "_runtime_block",
+                        lambda runtime=None, model=None, registry_path=None: dict(
+                            RUNTIME, mtp_verify_scan="joint_v2"))
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert doc["status"] == "aborted" and "joint_v2" in doc["error"]
+
+
+# --------------------------------------------------------------------------- B4 auth
+def test_b4_the_whole_request_sequence_is_authenticated(monkeypatch, tmp_path):
+    seen = []
+
+    class Resp:
+        def __init__(self, body):
+            self.body = body
+
+        def read(self):
+            return json.dumps(self.body).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def urlopen(req, timeout=None):
+        seen.append((req.full_url, {k.lower(): v for k, v in req.header_items()}))
+        return Resp(_resp() if "chat/completions" in req.full_url else {"loaded": True})
+    monkeypatch.setattr(R.urllib.request, "urlopen", urlopen)
+    monkeypatch.setenv("MLX_API_KEY", "sekret")
+    monkeypatch.setattr(R, "load_requests", lambda f, models: _reqs())
+    monkeypatch.setattr(R.provenance, "_runtime_block", lambda *a, **k: dict(RUNTIME))
+    monkeypatch.setattr(R.provenance, "worker_serving_facts", lambda *a, **k: dict(WORKER))
+    monkeypatch.setattr(R.provenance, "assert_serving_state", _serving_state)
+    _passing(monkeypatch, tmp_path, pid=616)
+    assert R.run(_args(tmp_path)) == 0
+    urls = [u for u, _ in seen]
+    assert any("/v1/models/load" in u for u in urls) and sum("chat/completions" in u for u in urls) == 3
+    assert all(h.get("authorization") == "Bearer sekret" for _, h in seen), seen
+
+
+def test_b4_client_get_and_post_send_the_bearer_header_only_when_configured(monkeypatch):
+    import bench.client as C
+    seen = []
+
+    class Resp:
+        def read(self):
+            return b"{}"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    monkeypatch.setattr(C.urllib.request, "urlopen",
+                        lambda req, timeout=None: seen.append(
+                            {k.lower(): v for k, v in req.header_items()}) or Resp())
+    monkeypatch.setenv("MLX_API_KEY", "k1")
+    C._post("/x", {}); C._get("/y")
+    assert all(h["authorization"] == "Bearer k1" for h in seen)
+    seen.clear()
+    monkeypatch.delenv("MLX_API_KEY")
+    C._post("/x", {}); C._get("/y")
+    assert all("authorization" not in h for h in seen)
+
+
+# --------------------------------------------------------------------------- B5 failure exits
+def _spy_exit(monkeypatch, drift=None):
+    calls = []
+
+    def unchanged(entry, base):
+        calls.append(entry)
+        if drift:
+            raise P.ServedConfigError(drift)
+        return {"pid": 616}
+    monkeypatch.setattr(R.provenance, "assert_served_config_unchanged", unchanged)
+    return calls
+
+
+def test_b5_c106_runs_on_a_transport_abort_and_a_drift_is_recorded_without_masking(
+    env, monkeypatch, tmp_path
+):
+    def boom(payload, timeout):
+        raise OSError("connection reset")
+    monkeypatch.setattr(R, "_post", boom)
+    calls = _spy_exit(monkeypatch, drift="C106: router pid changed")
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert len(calls) == 1 and doc["status"] == "aborted"
+    assert "connection reset" in doc["error"]                  # the original failure survives
+    assert "served_config_drift" in doc and "C106" in json.dumps(doc["served_config_drift"])
+
+
+def test_b5_c106_runs_on_a_malformed_response_abort(env, monkeypatch, tmp_path):
+    env["responses"] = [{"choices": []}]
+    calls = _spy_exit(monkeypatch)
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert len(calls) == 1 and "malformed" in doc["error"] and doc["router_exit"] == {"pid": 616}
+    assert "served_config_drift" not in doc
+
+
+def test_b5_a_preload_exception_aborts_cleanly_with_the_exit_check(env, monkeypatch, tmp_path):
+    def bad_preload(model, **kw):
+        raise OSError("load failed")
+    monkeypatch.setattr(R.client, "preload", bad_preload)
+    calls = _spy_exit(monkeypatch, drift="C106: drifted")
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert len(calls) == 1 and doc["status"] == "aborted" and "load failed" in doc["error"]
+    assert "served_config_drift" in doc
+
+
+def test_b5_a_failing_exit_check_itself_never_replaces_the_original_failure(
+    env, monkeypatch, tmp_path
+):
+    def crash(entry, base):
+        raise RuntimeError("lsof exploded")
+    monkeypatch.setattr(R.provenance, "assert_served_config_unchanged", crash)
+    env["responses"] = [{"choices": []}]
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert "malformed" in doc["error"] and "lsof exploded" in json.dumps(doc["served_config_drift"])
+
+
+def test_s2_empty_selection_is_refused_and_never_complete(env, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(R, "load_requests", lambda f, models: [])
+    assert R.run(_args(tmp_path)) == 2
+    assert not (tmp_path / "rep.json").exists() and "empty" in capsys.readouterr().err
+
+
+def test_s1_scan_change_between_entry_and_load_refuses(env, monkeypatch, tmp_path):
+    calls = {"n": 0}
+
+    def drifting(model, registry_path=None, expect=None):
+        calls["n"] += 1
+        if expect is None:
+            return {"mtp_verify_scan": "joint_v1"}                 # entry value
+        raise P.ServingStateError("M58: mtp_verify_scan changed (joint_v1 -> joint_v1+ab)")
+    monkeypatch.setattr(R.provenance, "assert_serving_state", drifting)
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert doc["status"] == "aborted" and doc["rows"] == [] and "changed" in doc["error"]
+    assert env["posted"] == []

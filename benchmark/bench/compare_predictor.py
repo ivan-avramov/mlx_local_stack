@@ -195,6 +195,10 @@ def _gate(model, bench, tune_a, tune_b, must_differ="draft_kind"):
                        f"is for a same-model, DIFFERENT-{must_differ} pair; use compare.py for "
                        f"a same-state comparison")
 
+    for side, m in (("A", ma), ("B", mb)):      # S5: AB gate rows are never latency/token arms
+        if provenance.control_of(m, "mtp_verify_scan")[0] == "joint_v1+ab":
+            return _refuse(f"tune {side} ran under mtp_verify_scan 'joint_v1+ab' (the gate-1 AB "
+                           f"instrument): gate rows are never latency or token arms")
     diffs, warnings = _manifest_diffs(ma, mb, must_differ)
     if diffs:
         return _refuse(f"tune {tune_a} vs {tune_b} differ on output-determining fields other "

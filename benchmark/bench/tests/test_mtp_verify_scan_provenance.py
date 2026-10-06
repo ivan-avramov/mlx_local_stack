@@ -93,9 +93,43 @@ def test_ac10_registry_joint_v1_is_read_when_no_worker(tmp_path):
     assert _resolve(tmp_path, "joint_v1") == {KEY: "joint_v1", KEY + "_source": "registry"}
 
 
-def test_ac10_registry_never_yields_the_ab_value(tmp_path):
-    # `joint_v1+ab` rows are gate rows: observed from a live worker, never from the registry
-    assert _resolve(tmp_path, "joint_v1", ab=True)[KEY] == "joint_v1"
+def test_s1_an_ab_overlay_with_no_worker_resolves_to_joint_v1_plus_ab(tmp_path):
+    # the registry fallback must not stamp a plain joint_v1 for an AB gate overlay
+    assert _resolve(tmp_path, "joint_v1", ab=True) == {KEY: "joint_v1+ab", KEY + "_source": "registry"}
+    assert _resolve(tmp_path, "joint_v1", ab=False)[KEY] == "joint_v1"
+    assert _resolve(tmp_path, "joint_v1", ab=True)[KEY] != _resolve(tmp_path, "joint_v1")[KEY]
+
+
+def test_s1_entry_joint_v1_then_an_ab_worker_refuses_at_the_loaded_re_resolve(tmp_path, monkeypatch):
+    reg = _registry(tmp_path, "joint_v1")
+    entry = P.assert_serving_state("modelX", reg)
+    assert entry[KEY] == "joint_v1"
+    ab_worker = _WORKER + ["--mtp-verify-scan", "joint_v1", "--mtp-verify-ab"]
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [ab_worker])
+    # the worker/registry tripwire already refuses; with an AB overlay the change is a scan change
+    reg_ab = _registry(tmp_path, "joint_v1", ab=True)
+    with pytest.raises(P.ServingStateError, match="changed"):
+        P.assert_serving_state("modelX", reg_ab, expect=entry)
+    same = P.assert_serving_state("modelX", reg_ab)           # no expectation: resolves fine
+    assert same[KEY] == "joint_v1+ab"
+
+
+def test_s1_generate_refuses_a_scan_change_between_stamp_and_loaded_worker(tmp_path, monkeypatch):
+    import bench.client as C
+    calls = _stage_generate(tmp_path, monkeypatch, "joint_v1")
+    state = {"loaded": False}
+    monkeypatch.setattr(C, "preload", lambda m, **k: state.__setitem__("loaded", True) or 0.0)
+    monkeypatch.setattr(P, "registry_mtp_verify_scan", lambda m, path=None, worker_lookup=None: {
+        KEY: "joint_v1+ab" if state["loaded"] else "joint_v1", KEY + "_source": "x"})
+    with pytest.raises(P.ServedConfigError, match="changed"):
+        G.run(["modelX"], ["aime"], {})
+    assert "probe" not in calls
+
+
+def test_s1_ab_manifests_never_pool_with_latency_manifests():
+    ab, lat = _man(8, "joint_v1+ab", "registry"), _man(8, "joint_v1", "worker")
+    assert P.is_compatible(ab, lat) is False and P.is_compatible(lat, ab) is False
+    assert P.is_compatible(ab, _man(8, "joint_v1+ab", "worker")) is True
 
 
 def test_ac10_worker_without_flags_means_per_query_source_worker(tmp_path):
@@ -396,3 +430,106 @@ def test_worker_serving_facts_none_without_a_matching_worker_and_refuses_ambigui
     assert P.worker_serving_facts("nope", reg, worker_lookup=lambda: [_WORKER]) is None
     with pytest.raises(P.ServingStateError):
         P.worker_serving_facts("modelX", reg, worker_lookup=lambda: [_WORKER, _WORKER])
+
+
+# --------------------------------------------------------------------------- B3 closed set, every path
+def test_b3_unrecognised_registry_value_refuses_in_the_resolver(tmp_path):
+    with pytest.raises(P.ServingStateError, match="joint_v2"):
+        _resolve(tmp_path, "joint_v2")
+
+
+def test_b3_unrecognised_value_served_by_a_matching_worker_refuses(tmp_path):
+    argv = _WORKER + ["--mtp-verify-scan", "joint_v2"]
+    with pytest.raises(P.ServingStateError, match="joint_v2"):
+        _resolve(tmp_path, "joint_v2", argv=argv)
+    with pytest.raises(P.ServedConfigError):
+        _resolve(tmp_path, "joint_v1", argv=argv)             # mismatch refuses regardless
+
+
+def test_b3_assert_serving_state_and_runtime_block_refuse(tmp_path, monkeypatch):
+    reg = _registry(tmp_path, "joint_v2")
+    with pytest.raises(P.ServingStateError, match="joint_v2"):
+        P.assert_serving_state("modelX", reg)
+    monkeypatch.setattr(P, "apc_state", lambda: {"apc_enabled": "0", "source": "process"})
+    monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "mtp"})
+    monkeypatch.setattr(P, "session_retention_state",
+                        lambda: {"session_retain_prompt_end": "on", "session_retain_source": "w"})
+    with pytest.raises(P.ServingStateError, match="joint_v2"):
+        P._runtime_block(None, model="modelX", registry_path=reg)
+
+
+def test_b3_build_manifest_refuses_an_unrecognised_value():
+    kw = dict(model="m", box="b", ts="t", git_shas={}, kv={}, quant={}, sampling={})
+    assert P.build_manifest(runtime={"mtp_verify_scan": "joint_v1+ab"}, **kw)
+    with pytest.raises(P.ServingStateError, match="joint_v2"):
+        P.build_manifest(runtime={"mtp_verify_scan": "joint_v2"}, **kw)
+
+
+def _stage_generate(tmp_path, monkeypatch, value):
+    import bench.benchmarks as B
+    import bench.client as C
+    import bench.paths as paths
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    reg = _registry(tmp_path, value)
+    monkeypatch.setattr(paths, "registry_path", lambda: __import__("pathlib").Path(reg))
+    monkeypatch.setattr(B, "load", lambda b, lim, seed: [{"id": "t1", "prompt": "p"}])
+    calls = []
+    monkeypatch.setattr(C, "probe", lambda *a, **k: calls.append("probe"))
+    monkeypatch.setattr(C, "preload", lambda m, **k: calls.append("preload") or 0.0)
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [])
+    return calls
+
+
+def test_b3_generate_refuses_before_cleanup_manifest_and_requests(tmp_path, monkeypatch):
+    calls = _stage_generate(tmp_path, monkeypatch, "joint_v2")
+    old = _man(7)
+    _write_existing(tmp_path, "modelX", "aime", old)
+    before = (tmp_path / "modelX" / "aime.jsonl").read_text()
+    with pytest.raises(P.ServedConfigError, match="joint_v2"):
+        G.run(["modelX"], ["aime"], {}, clean_stale=True)
+    assert calls == []
+    assert (tmp_path / "modelX" / "aime.jsonl").read_text() == before     # nothing cleaned
+    assert json.loads((tmp_path / "modelX" / "aime.manifest.json").read_text()) == old
+    assert sorted(p.name for p in (tmp_path / "modelX").iterdir()) == [
+        "aime.jsonl", "aime.manifest.json"]
+
+
+def test_b3_provenance_precheck_refuses_instead_of_skipping(tmp_path, monkeypatch):
+    _stage_generate(tmp_path, monkeypatch, "joint_v2")
+    monkeypatch.setattr(P.model_params, "params_for", lambda m, profile=None, **k: {"temperature": 0.4})
+    monkeypatch.setattr(P, "registry_kv", lambda m, r=None: {"kv_bits": 0})
+    with pytest.raises(P.ServedConfigError):
+        G.provenance_precheck(["modelX"], ["aime"], profile="deployed", clean_stale=True)
+
+
+def test_b3_parity_replay_refuses_at_entry(tmp_path, monkeypatch):
+    import argparse
+    import bench.paths as paths
+    from bench import parity_replay as R
+    from bench.tests.test_m50_entrypoints import _passing
+    reg = _registry(tmp_path, "joint_v2")
+    monkeypatch.setattr(paths, "registry_path", lambda: __import__("pathlib").Path(reg))
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [])
+    monkeypatch.setattr(R, "load_requests", lambda f, models: [
+        {"model": "modelX", "bench": "b", "id": "i", "seed": 1, "payload": {"max_tokens": 5}}])
+    monkeypatch.setattr(R.client, "preload", lambda m, **k: pytest.fail("request before refusal"))
+    monkeypatch.setattr(R, "_post", lambda *a, **k: pytest.fail("request before refusal"))
+    _passing(monkeypatch, tmp_path)
+    out = tmp_path / "rep.json"
+    a = argparse.Namespace(frozen="f", models=None, out=str(out), resume=False, tag="t")
+    assert R.run(a) == 2
+    assert not out.exists()
+
+
+def test_b3_the_unpinned_suite_refuses_an_unknown_model_by_default():
+    # B12: no autouse pin — the production refusal is active unless a test opts in.
+    with pytest.raises(P.ServingStateError, match=KEY):
+        P.assert_serving_state("surely-not-in-the-registry")
+
+
+def test_s5_predictor_rejects_an_ab_gate_row_as_an_arm(tmp_results):
+    _pair(tmp_results, scan_a="per_query", scan_b="joint_v1+ab")
+    r = CP.compare_predictor("M", "math500", "ta", "tb", must_differ=KEY)
+    assert r["comparable"] is False and "gate" in r["reason"]
+    _pair(tmp_results, scan_a="joint_v1+ab", scan_b="joint_v1")
+    assert CP.compare_predictor("M", "math500", "ta", "tb", must_differ=KEY)["comparable"] is False

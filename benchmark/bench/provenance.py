@@ -880,11 +880,11 @@ def _resolve_control(model, registry_path, worker_lookup, key, parse_worker, par
                         f"pointed at the served registry/overlay; refusing to record false "
                         f"{key} provenance.")
                 return {key: served, key + "_source": "worker"}
-            return {key: declared, key + "_source": "registry"}
+            return {key: compared, key + "_source": "registry"}
     return {key: "unknown", key + "_source": "model-not-in-registry"}
 
 
-def assert_serving_state(model: str, registry_path: str | None = None) -> dict:
+def assert_serving_state(model: str, registry_path: str | None = None, expect: dict | None = None) -> dict:
     """Resolve the serving controls (M57 attention policy and lazy embeddings, M58 verification
     scan) for `model` and let any ServingStateError propagate (worker/registry disagreement,
     ambiguity, failed observation). The M58 scan additionally REFUSES when it cannot be resolved
@@ -899,6 +899,12 @@ def assert_serving_state(model: str, registry_path: str | None = None) -> dict:
             f"M58: mtp_verify_scan is UNRESOLVED for {model!r} "
             f"({out['mtp_verify_scan_source']}); refusing — a v8 row without a known scan value "
             f"could never pool or compare.")
+    if expect is not None and expect.get("mtp_verify_scan") != out["mtp_verify_scan"]:
+        raise ServingStateError(
+            f"M58: mtp_verify_scan changed for {model!r} between entry "
+            f"({expect.get('mtp_verify_scan')!r}) and the loaded worker "
+            f"({out['mtp_verify_scan']!r}); refusing — the manifest would stamp the wrong mode "
+            f"(an AB gate row must never pool with a latency row).")
     return out
 
 
@@ -930,17 +936,29 @@ def registry_lazy_prompt_embeddings(model: str, registry_path: str | None = None
                             from_worker, bool)
 
 
+def check_mtp_verify_scan_value(value, where: str) -> str:
+    """The ONE closed-set check for `mtp_verify_scan` (`per_query`, `joint_v1`, `joint_v1+ab`),
+    called on every production path (resolver, runtime block, manifest construction, parity
+    replay). "unknown" is the UNRESOLVED outcome and passes here (the callers that require a
+    resolved value refuse it themselves); anything else outside the set refuses."""
+    if value != "unknown" and value not in _CONTROL_VALUES["mtp_verify_scan"]:
+        raise ServingStateError(
+            f"M58: mtp_verify_scan {value!r} ({where}) is not one of "
+            f"{_CONTROL_VALUES['mtp_verify_scan']}; refusing.")
+    return value
+
+
 def registry_mtp_verify_scan(model: str, registry_path: str | None = None,
                              worker_lookup=_DEFAULT_LOOKUP) -> dict:
     """M58 served verification scan: {"mtp_verify_scan", "mtp_verify_scan_source"}.
 
     The live worker whose `--model` equals the entry's hf_path is the SERVING truth:
     `--mtp-verify-scan <v>` (flag absent = "per_query") plus the bare `--mtp-verify-ab` flag
-    ("joint_v1+ab"), source "worker". Otherwise the registry entry's `mtp_verify_scan` (absent or
-    empty = "per_query"), source "registry" — the registry fallback NEVER yields "+ab" (AB rows are
-    gate rows observed from a live worker). A worker that disagrees with the registry REFUSES (C35
-    shape); an overlay declaring `mtp_verify_ab: true` is compared against the worker's AB flag.
-    "unknown" is reserved for an unreadable registry or a model absent from it."""
+    ("joint_v1+ab"), source "worker". Otherwise the registry/overlay entry: `mtp_verify_scan`
+    (absent or empty = "per_query"), with `mtp_verify_ab: true` giving "joint_v1+ab", source
+    "registry" — an AB overlay must never stamp a plain `joint_v1` before the worker is up. A
+    worker that disagrees with the registry REFUSES (C35 shape). A value outside the closed set
+    refuses; "unknown" is reserved for an unreadable registry or a model absent from it."""
     def from_worker(argv):
         scan = _flag_value(argv, "--mtp-verify-scan") or "per_query"
         return scan + "+ab" if "--mtp-verify-ab" in argv else scan
@@ -948,8 +966,10 @@ def registry_mtp_verify_scan(model: str, registry_path: str | None = None,
     def declared_with_ab(entry):
         scan = entry.get("mtp_verify_scan") or "per_query"
         return scan + "+ab" if entry.get("mtp_verify_ab") else scan
-    return _resolve_control(model, registry_path, worker_lookup, "mtp_verify_scan",
-                            from_worker, lambda v: v or "per_query", declared_with_ab)
+    out = _resolve_control(model, registry_path, worker_lookup, "mtp_verify_scan",
+                           from_worker, lambda v: v or "per_query", declared_with_ab)
+    check_mtp_verify_scan_value(out["mtp_verify_scan"], out["mtp_verify_scan_source"])
+    return out
 
 
 def worker_serving_facts(model: str, registry_path: str | None = None,
@@ -1633,6 +1653,8 @@ def current_manifest_lite(model: str, profile: str = "production",
 
 def build_manifest(*, model, box, ts, git_shas, kv, quant, sampling, runtime=None) -> dict:
     """Pure assembly of a provenance record from its parts."""
+    if runtime and "mtp_verify_scan" in runtime:
+        check_mtp_verify_scan_value(runtime["mtp_verify_scan"], "manifest runtime block")
     return {
         "model": model,
         "box": box,

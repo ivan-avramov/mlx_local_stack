@@ -89,7 +89,7 @@ def _run(ap, args, grid, expected, router, guard) -> int:
     guard.track(destinations[0])
     guard.track(destinations[1])
     # M57: serving controls are resolved BEFORE anything is created or requested.
-    provenance.assert_serving_state(args.model)
+    serving_entry = provenance.assert_serving_state(args.model)
     try:    # provenance preflight: refuse now rather than finish a ladder with no manifest
         provenance.preflight_gather(args.model, profile=args.sampling_profile, router=router,
                                     label="capacity_ladder")
@@ -114,7 +114,7 @@ def _run(ap, args, grid, expected, router, guard) -> int:
             monitor.stage("calibration")
             cpt = calibrate_cpt(driver, args.model)
             try:        # M57: re-resolve once the model is loaded, before any measured request
-                provenance.assert_serving_state(args.model)
+                provenance.assert_serving_state(args.model, expect=serving_entry)
             except provenance.ServedConfigError:
                 journal.close()
                 destinations[0].unlink()    # reserved by this run ("x"); nothing was written

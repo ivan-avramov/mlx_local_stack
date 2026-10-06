@@ -38,16 +38,23 @@ class MalformedResponseError(RuntimeError):
     TransportFailure with no row at all."""
 
 
+def auth_headers() -> dict:
+    """The router's optional bearer auth (mlx-serve `MLX_API_KEY`): sent on EVERY request when set."""
+    key = os.environ.get("MLX_API_KEY")
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
 def _post(path: str, payload: dict, timeout: float = 3600) -> dict:
     req = urllib.request.Request(
         BASE + path, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"}, method="POST")
+        headers={"Content-Type": "application/json", **auth_headers()}, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
 
 def _get(path: str, timeout: float = 60) -> dict:
-    with urllib.request.urlopen(BASE + path, timeout=timeout) as r:
+    req = urllib.request.Request(BASE + path, headers=auth_headers())
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
 

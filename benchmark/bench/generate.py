@@ -471,6 +471,8 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # Provenance: stamp every (model, bench) with its exact config (box, code SHAs, quant
     # effective-bits, KV config, sampling) so results are never silently cross-compared.
     pairs = {(m, b) for m, b, _it, _s in queue}
+    # M58: the scan each manifest is about to stamp; re-resolved once the model is loaded (below).
+    scan_entry = {m: provenance.registry_mtp_verify_scan(m)["mtp_verify_scan"] for m in models}
     stamp_manifests(pairs, profile=sampling_profile, overrides=overrides, tune=tune,
                     probe_timeout=probe_timeout)
     if restart_fn is not None:
@@ -506,6 +508,11 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
             if model != cur_model:
                 load_s = client.preload(model)
                 print(f"  >> loaded {model} ({load_s}s)", flush=True)
+                loaded_scan = provenance.registry_mtp_verify_scan(model)["mtp_verify_scan"]
+                if loaded_scan != scan_entry[model]:     # M58: before the first measured request
+                    raise provenance.ServedConfigError(
+                        f"M58: mtp_verify_scan for {model!r} changed from {scan_entry[model]!r} "
+                        f"(stamped in the manifest) to {loaded_scan!r} once loaded; refusing")
                 cur_model = model
             t0 = time.perf_counter()
             try:
