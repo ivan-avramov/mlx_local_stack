@@ -336,7 +336,7 @@ def test_grade_result_grades_when_untampered_and_changed(tmp_path):
 
 def test_unsupported_lang_exits_with_clear_message(monkeypatch):
     monkeypatch.setattr(sys, "argv",
-                        ["run_opencode_probe.py", "--model", "m", "--items", "x", "--lang", "cobol"])
+                        ["run_opencode_probe.py", "--model", "m", "--items", "x", "--lang", "cobol", "--seed-base", "1"])
     try:
         P.main()
         raised = False
@@ -450,10 +450,10 @@ def test_export_latest_session_uses_the_isolated_data_home(monkeypatch, tmp_path
 
     def fake_check_output(cmd, **kw):
         calls.append((cmd, kw.get("env", {}).get("XDG_DATA_HOME")))
-        if cmd[:3] == ["opencode", "session", "list"]:
+        if cmd[1:3] == ["session", "list"]:
             return "Session ID   Title\n────\nses_new111  New session\nses_old222  Older\n"
-        if cmd[:2] == ["opencode", "export"]:
-            assert cmd[2] == "ses_new111"
+        if cmd[1] == "export":
+            assert cmd[2] == "ses_new111" and cmd[0].endswith("opencode")
             return json.dumps({"info": {"id": "ses_new111"}, "messages": []})
         raise AssertionError(cmd)
 
@@ -496,7 +496,8 @@ def test_manifest_runtime_records_the_skill_policy_and_config_hash(monkeypatch, 
     cfg = tmp_path / "opencode.json"; cfg.write_text('{"model": "x"}')
     monkeypatch.setattr(P, "SHIPPED_OPENCODE_CONFIG", cfg)
     rt = P._scaffold_runtime()
-    assert rt["skill_policy"] == "OPENCODE_DISABLE_EXTERNAL_SKILLS=true"
+    assert rt["skill_policy"] == ("OPENCODE_DISABLE_CLAUDE_CODE_PROMPT=true,"
+                                  "OPENCODE_DISABLE_EXTERNAL_SKILLS=true")   # C121/R8 adds the first
     import hashlib
     assert rt["opencode_config_sha256"] == hashlib.sha256(cfg.read_bytes()).hexdigest()
     assert rt["opencode_config"] == "opencode_config/opencode.json"
@@ -550,7 +551,7 @@ def test_entry_refuses_missing_workdir_before_m50_and_before_any_request(monkeyp
         raise AssertionError("reached M50 / the router before the workdir check")
     monkeypatch.setattr(provenance, "opencode_router_base", boom)
     monkeypatch.setattr(provenance, "assert_served_config", boom)
-    monkeypatch.setattr(sys, "argv", ["run_opencode_probe.py", "--model", "m", "--items", "x", "--lang", "python"])
+    monkeypatch.setattr(sys, "argv", ["run_opencode_probe.py", "--model", "m", "--items", "x", "--lang", "python", "--seed-base", "1"])
     try:
         P.main()
         raised = False

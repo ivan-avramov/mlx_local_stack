@@ -185,7 +185,7 @@ def test_run_opencode_probe_refuses_before_the_manifest(tmp_path, monkeypatch, c
     monkeypatch.setattr(P, "opencode_router_base",
                         lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8000/v1")
     _refusing(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--out", str(tmp_path / "oc.jsonl")])
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
     with pytest.raises(SystemExit) as ei:
         OP.main()
     assert ei.value.code not in (0, None) and "M50" in str(ei.value.code)
@@ -217,7 +217,7 @@ def test_run_opencode_probe_does_only_the_discovery_call_before_the_check(tmp_pa
         calls.append(cwd)
         raise P.ServedConfigError("M50 tripwire: refused in discovery")
     monkeypatch.setattr(P, "opencode_router_base", discovery)
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--lang", "go",
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--lang", "go",
                                       "--out", str(tmp_path / "oc.jsonl")])
     with pytest.raises(SystemExit) as ei:
         OP.main()
@@ -238,7 +238,7 @@ def test_run_opencode_probe_passes_a_workdir_data_home_to_discovery_and_creates_
         seen["data_home"] = env["XDG_DATA_HOME"]
         raise P.ServedConfigError("M50 tripwire: stop after discovery")
     monkeypatch.setattr(P, "opencode_router_base", discovery)
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--out", str(tmp_path / "oc.jsonl")])
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
     with pytest.raises(SystemExit):
         OP.main()
     assert seen["data_home"] == str(tmp_path / "scratch" / "m50-discovery-xdg-data")
@@ -251,7 +251,7 @@ def test_run_opencode_probe_refuses_when_stack_workdir_does_not_exist(tmp_path, 
     monkeypatch.setenv("STACK_WORKDIR", str(gone))
     monkeypatch.setattr(P, "opencode_router_base",
                         lambda *a, **k: pytest.fail("discovery ran without a workdir"))
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--out", str(tmp_path / "oc.jsonl")])
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
     with pytest.raises(SystemExit) as ei:
         OP.main()
     assert "M50" in str(ei.value.code) and not gone.exists()
@@ -350,7 +350,7 @@ def test_run_opencode_probe_checks_opencodes_destination_not_MLX_SERVE_BASE(tmp_
     monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8123/v1")
     seen = []
     monkeypatch.setattr(P, "router_owner", lambda port: seen.append(port))
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--out", str(tmp_path / "oc.jsonl")])
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
     with pytest.raises(SystemExit) as ei:
         OP.main()
     assert seen == [8123] and "M50" in str(ei.value.code)
@@ -451,7 +451,7 @@ def test_run_opencode_probe_manifest_carries_the_verified_opencode_router(tmp_pa
     monkeypatch.setattr(P, "router_owner", lambda port: {**_good(tmp_path, 900 + port)})
     monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (_ for _ in ()).throw(StopIteration("stop after manifest")))
     out = tmp_path / "oc.jsonl"
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--out", str(out)])
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "1", "--out", str(out)])
     with pytest.raises(StopIteration):
         OP.main()
     man = json.loads(out.with_suffix(".manifest.json").read_text())
@@ -520,7 +520,7 @@ def test_run_opencode_probe_rechecks_destination_inside_each_item(tmp_path, monk
     monkeypatch.setattr(P.model_params, "params_for", lambda m, profile, **k: {"temperature": 0.4})
     monkeypatch.setattr(P, "registry_kv", lambda m, path: {"kv_bits": 4})
     monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "off"})
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--out", str(tmp_path / "oc.jsonl")])
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
     with pytest.raises(P.ServedConfigError, match="not the router verified at entry"):
         OP.main()
 
@@ -536,6 +536,9 @@ def _oc_probe_setup(tmp_path, monkeypatch, pid):
     root = tmp_path / "poly" / "python" / "exercises" / "practice"; (root / "ex").mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(OP, "_polyglot_root", lambda: tmp_path / "poly")
     monkeypatch.setattr(OP, "_polyglot_sha", lambda p: "deadbeef")
+    # C121: the per-item overlay check shells out to `opencode debug config`; covered on its own in
+    # test_opencode_probe_seeding.py, stubbed here.
+    monkeypatch.setattr(OP, "_assert_overlay_resolved", lambda *a, **k: None)
     monkeypatch.setattr(OP, "_prepare", lambda src, work: work.mkdir(parents=True, exist_ok=True))
     monkeypatch.setattr(P, "router_owner", lambda port: {**_good(tmp_path, pid)})
     monkeypatch.setattr(P.model_params, "params_for", lambda m, profile, **k: {"temperature": 0.4})
@@ -552,7 +555,7 @@ def test_run_opencode_probe_rerun_preserves_attribution_and_refuses_config_chang
     out = tmp_path / "oc.jsonl"; mp = out.with_suffix(".manifest.json")
     cfg = P.router_block("http://localhost:8000")["config"]
     mp.write_text(json.dumps({"router": {"pid": 111, "config": cfg, "port": 8000}, "router_history": [{"pid": 7}]}))
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--out", str(out)])
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "1", "--out", str(out)])
     with pytest.raises(StopIteration):
         OP.main()
     man = json.loads(mp.read_text())
@@ -569,7 +572,7 @@ def test_run_opencode_probe_item_refusal_records_no_manifest(tmp_path, monkeypat
     monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": next(bases))
     monkeypatch.setattr(P, "router_owner", lambda port: {**_good(tmp_path, 900 + port)})
     out = tmp_path / "oc.jsonl"
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--out", str(out)])
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "1", "--out", str(out)])
     with pytest.raises(P.ServedConfigError):
         OP.main()
     assert not out.with_suffix(".manifest.json").exists() and not out.exists()
@@ -726,3 +729,23 @@ def test_capacity_writes_no_manifest_and_stamps_drift_on_exit_drift(monkeypatch,
     aside = list(mdir.glob("capacity_retrieval.json.refused-*"))
     assert len(aside) == 1
     assert "C106" in json.loads(aside[0].read_text())["served_config_drift"]["error"]
+
+
+def test_run_opencode_probe_writes_the_seed_overlay_and_checks_it_before_the_manifest(tmp_path, monkeypatch):
+    """C121 AC1/AC4 wiring: the item's overlay exists (with the item seed) and is checked against the
+    entry-verified baseURL BEFORE any manifest is written; a refusal records nothing."""
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local": "http://localhost:8000/v1")
+    seen = {}
+
+    def check(cwd, env, model, seed, base):
+        seen.update(seed=seed, base=base, overlay=json.loads((cwd / "opencode.json").read_text()), model=model)
+        raise P.ServedConfigError("M50 tripwire: stop at the overlay check")
+    monkeypatch.setattr(OP, "_assert_overlay_resolved", check)
+    out = tmp_path / "oc.jsonl"
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "3", "--out", str(out)])
+    with pytest.raises(SystemExit, match="M50"):
+        OP.main()
+    assert seen["seed"] == OP._item_seed("python/ex", 3) and seen["base"] == "http://localhost:8000/v1"
+    assert seen["overlay"] == OP._seed_overlay("m", seen["seed"])
+    assert not out.with_suffix(".manifest.json").exists()

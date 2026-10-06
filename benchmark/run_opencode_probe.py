@@ -59,6 +59,13 @@ from bench import progress_gate  # noqa: E402 — needs the sys.path insert abov
 # The scaffold is part of the serving path (the suffix lesson): an unpinned client version is an
 # unrecorded output-determining knob. Bump this deliberately, never implicitly.
 PINNED_OPENCODE_VERSION = "1.18.30"  # bumped 2026-09-29 (P88); 1.18.15 rows do not pool
+# C123 (2026-10-06): do NOT re-pin to the brew-installed 2.0.20 (C121 proposal AC6 is REPLACED by
+# this note). v2.0.20 has no `--dir`/`--pure`, routes `debug config`/`run` through a shared
+# background service, and forwards NO model `options` (temperature, top_p, seed ...) into the
+# request body -- measured against a mock endpoint 2026-10-06. The pinned v1 binary lives OUTSIDE
+# the repo and the brew install is never used by the probe:
+#   npm install --prefix "$STACK_WORKDIR/opencode-1.18.30" opencode-ai@1.18.30
+OPENCODE_BIN_RELPATH = "opencode-1.18.30/node_modules/.bin/opencode"
 
 
 def _polyglot_root() -> Path:
@@ -74,11 +81,47 @@ def _polyglot_root() -> Path:
     sys.exit("polyglot exercises not found (set POLYGLOT_DIR — see config.sh)")
 
 
-def _opencode_version() -> str:
+def _opencode_bin() -> Path:
+    """The pinned opencode binary: `$OPENCODE_PROBE_BIN`, else `$STACK_WORKDIR/<OPENCODE_BIN_RELPATH>`."""
+    env = os.environ.get("OPENCODE_PROBE_BIN")
+    if env:
+        return Path(env)
+    return _stack_workdir() / OPENCODE_BIN_RELPATH
+
+
+def _opencode_bin_if_known() -> Path | None:
+    """`_opencode_bin()` without resolving config.sh: only OPENCODE_PROBE_BIN / an exported
+    STACK_WORKDIR. `main()` exports the resolved workdir at entry, so a real run always knows it."""
+    env = os.environ.get("OPENCODE_PROBE_BIN")
+    if env:
+        return Path(env)
+    wd = os.environ.get("STACK_WORKDIR")
+    return Path(wd) / OPENCODE_BIN_RELPATH if wd else None
+
+
+def _opencode_version(binary: Path | None = None) -> str:
+    binary = Path(binary) if binary is not None else _opencode_bin()
+    if not binary.is_file():
+        sys.exit(f"pinned opencode binary missing at {binary.name!r} ({_portable(binary)}); install: "
+                 f"npm install --prefix \"$STACK_WORKDIR/opencode-{PINNED_OPENCODE_VERSION}\" "
+                 f"opencode-ai@{PINNED_OPENCODE_VERSION}, or set OPENCODE_PROBE_BIN")
     try:
-        return subprocess.check_output(["opencode", "--version"], text=True, timeout=30).strip()
+        return subprocess.check_output([str(binary), "--version"], text=True, timeout=30).strip()
     except Exception as e:  # noqa: BLE001
         sys.exit(f"cannot determine opencode version ({e}); refusing to run unversioned")
+
+
+def _portable(path: Path) -> str:
+    """Manifest-safe form: `$STACK_WORKDIR/...` / `~/...`, never an absolute home path."""
+    p = str(path)
+    for var in ("STACK_WORKDIR",):
+        root = os.environ.get(var)
+        if root and (p == root or p.startswith(root.rstrip("/") + "/")):
+            return "$" + var + p[len(root.rstrip("/")):]
+    home = str(Path.home())
+    if p.startswith(home.rstrip("/") + "/"):
+        return "~" + p[len(home.rstrip("/")):]
+    return p
 
 
 def _polyglot_sha(root: Path) -> str | None:
@@ -310,8 +353,99 @@ def _opencode_env(data_home: Path) -> dict:
     # made the scaffold depend on what Claude Code had synced on this machine (17 skills, half the
     # system prompt, paths that changed between processes). Exclude both external trees so the
     # scaffold is opencode + this repo only; repo-local .opencode/skills would still be discovered.
-    env["OPENCODE_DISABLE_EXTERNAL_SKILLS"] = "true"
+    # C121/R8: the policy lives in SCAFFOLD_ENV_POLICY (one source for the env AND the recorded hash).
+    env.update(SCAFFOLD_ENV_POLICY)
+    # The pinned binary's directory goes FIRST on PATH, so every `opencode ...` the probe or the
+    # M50 discovery spawns with this env resolves to it (Popen searches the child env's PATH), never
+    # to a brew install. No filesystem access here (the M50 pre-check precedes any read).
+    known = _opencode_bin_if_known()
+    if known is not None:
+        env["PATH"] = str(known.parent) + os.pathsep + env.get("PATH", "")
     return env
+
+
+# R8 (C121, evidence 2026-10-06, opencode 1.18.30 binary strings): opencode builds
+# `disableClaudeCodePrompt = OPENCODE_DISABLE_CLAUDE_CODE || OPENCODE_DISABLE_CLAUDE_CODE_PROMPT`
+# and `disableClaudeCodeSkills = OPENCODE_DISABLE_CLAUDE_CODE || OPENCODE_DISABLE_CLAUDE_CODE_SKILLS`;
+# `OPENCODE_DISABLE_EXTERNAL_SKILLS` (C103) is also present. The targeted `_PROMPT` switch stops
+# `~/.claude/CLAUDE.md` entering the system prompt (the file EXISTS on this box as of 2026-10-06);
+# external skills stay disabled by C103's switch. Both are folded into the scaffold-policy hash.
+SCAFFOLD_ENV_POLICY = {"OPENCODE_DISABLE_EXTERNAL_SKILLS": "true",
+                       "OPENCODE_DISABLE_CLAUDE_CODE_PROMPT": "true"}
+
+
+# ----------------------------------------------------------------------------- C121 seeded sessions
+# Per-item PROJECT config `<cwd>/opencode.json` carrying ONLY the seed for the served model;
+# opencode deep-merges it over the global/shipped config (verified 2026-10-06 against a mock
+# endpoint on 1.18.30, in a NON-git dir: request body carried `seed` plus every shipped option).
+OVERLAY_SCHEMA = "provider.mlx-local.models.<model>.options.seed"
+
+
+def _seed_overlay(model: str, seed: int) -> dict:
+    return {"provider": {"mlx-local": {"models": {model: {"options": {"seed": int(seed)}}}}}}
+
+
+def _write_seed_overlay(cwd: Path, model: str, seed: int) -> str:
+    """Write the overlay into the item's scratch dir; return its sha256."""
+    import hashlib
+    raw = (json.dumps(_seed_overlay(model, seed), indent=2, sort_keys=True) + "\n").encode()
+    (Path(cwd) / "opencode.json").write_bytes(raw)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _item_seed(item_id: str, seed_base: int) -> int:
+    from bench import rowschema
+    return rowschema.sample_seed(item_id, 0, base=seed_base)
+
+
+def _seed_row_fields(item_id: str, seed_base: int, overlay_sha256: str) -> dict:
+    return {"sampler_seed": _item_seed(item_id, seed_base), "seed_base": seed_base,
+            "overlay_sha256": overlay_sha256}
+
+
+def _seed_marker_path(binary: Path | None = None) -> Path:
+    b = Path(binary) if binary is not None else _opencode_bin()
+    return (b.parents[2] if b.parent.name == ".bin" else b.parent) / "seed_propagation_verified"
+
+
+def _record_seed_propagation_verified(binary: Path | None = None) -> None:
+    """Called by the integration test (only when OPENCODE_PROBE_RECORD_VERIFIED=1) after it proved
+    seed + deployed fields reach the endpoint: stamps the marker the manifest reads."""
+    m = _seed_marker_path(binary)
+    if m.parent.is_dir():
+        m.write_text(PINNED_OPENCODE_VERSION)
+
+
+def _seed_runtime(seed_base: int) -> dict:
+    try:
+        verified = _seed_marker_path().read_text().strip() == PINNED_OPENCODE_VERSION
+    except OSError:
+        verified = False
+    return {"seed_base": seed_base, "overlay_schema": OVERLAY_SCHEMA,
+            "seed_propagation": "verified-by-test" if verified else "unverified",
+            "opencode_bin": _portable(_opencode_bin())}
+
+
+def _assert_overlay_resolved(cwd: Path, env: dict, model: str, seed: int, expected_base: str) -> None:
+    """AC4: what opencode ITSELF resolves for this item must keep the verified baseURL and carry
+    the seed in the served model's options. Refuses (M50 shape) otherwise."""
+    try:
+        r = subprocess.run(["opencode", "debug", "config"], cwd=str(cwd), env=env, capture_output=True,
+                           text=True, timeout=120, stdin=subprocess.DEVNULL)
+        out = r.stdout or ""
+        data = json.loads(out[out.index("{"):])
+        prov = data["provider"]["mlx-local"]
+        base = prov["options"]["baseURL"]
+        opts = prov["models"][model]["options"]
+    except Exception as e:  # noqa: BLE001
+        raise provenance.ServedConfigError(f"M50 tripwire: cannot resolve the seeded overlay via "
+                                           f"`opencode debug config`: {type(e).__name__}: {e}")
+    if base != expected_base:
+        raise provenance.ServedConfigError(f"M50 tripwire: the seed overlay changed opencode's resolved "
+                                           f"baseURL ({expected_base!r} -> {base!r}).")
+    if opts.get("seed") != seed:
+        raise provenance.ServedConfigError(f"M50 tripwire: opencode's resolved options for {model!r} do not "
+                                           f"carry the overlay seed {seed} (got {opts.get('seed')!r}).")
 
 
 SHIPPED_OPENCODE_CONFIG = REPO / "opencode_config" / "opencode.json"
@@ -326,7 +460,10 @@ def _scaffold_runtime() -> dict:
         digest = hashlib.sha256(SHIPPED_OPENCODE_CONFIG.read_bytes()).hexdigest()
     except OSError:
         digest = None
-    return {"skill_policy": "OPENCODE_DISABLE_EXTERNAL_SKILLS=true",
+    policy = ",".join(f"{k}={v}" for k, v in sorted(SCAFFOLD_ENV_POLICY.items()))
+    return {"skill_policy": policy,
+            "scaffold_policy_sha256": hashlib.sha256(policy.encode()).hexdigest(),
+            "claude_md_present": (Path.home() / ".claude" / "CLAUDE.md").exists(),
             "opencode_config": "opencode_config/opencode.json",
             "opencode_config_sha256": digest}
 
@@ -560,6 +697,10 @@ def main() -> int:
                     help="DEPRECATED alias for --hard-ceiling-s, kept for old invocations. There "
                          "is no longer a flat kill timeout -- see bench/progress_gate.py.")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--seed-base", type=int, required=True,
+                    help="C121: per-session sampler seed base (no default). Item seed = "
+                         "rowschema.sample_seed(item, 0, base=); two sessions use distinct bases, a "
+                         "reload control reuses one.")
     ap.add_argument("--no-pure", action="store_true", help="load external plugins too")
     ap.add_argument("--allow-version-drift", action="store_true",
                     help=f"run even if opencode != {PINNED_OPENCODE_VERSION} (drift is recorded)")
@@ -576,6 +717,7 @@ def main() -> int:
     # guard and before any request. (2026-09-29: a missing STACK_WORKDIR surfaced only in the
     # transcript writer, after item 1 ran.)
     workdir = _stack_workdir()
+    os.environ.setdefault("STACK_WORKDIR", str(workdir))   # pinned-binary lookup + portable paths
 
     # M50: refuse before anything is read, written or requested unless :port serves this registry.
     # The ONLY I/O allowed before this check is what the check itself needs: resolving the
@@ -662,7 +804,7 @@ def main() -> int:
                                          "tick_s": a.tick_s, "hard_ceiling_s": hard_ceiling_s,
                                          "stall_ticks": a.stall_ticks,
                                          "loop_repeats": a.loop_repeats,
-                                         **_scaffold_runtime()},
+                                         **_scaffold_runtime(), **_seed_runtime(a.seed_base)},
                                 router=router)
         if history:
             man["router_history"] = history
@@ -682,7 +824,14 @@ def main() -> int:
             oc_env = _opencode_env(Path(tmp) / "xdg-data")      # M46: isolated session store
             # M50: the destination opencode resolves from INSIDE this item's project must be the
             # router verified at entry (a project-level config in the exercise would win otherwise).
+            item_id = f"{a.lang}/{name}"
+            item_seed = _item_seed(item_id, a.seed_base)
+            overlay_sha = _write_seed_overlay(work, a.model, item_seed)   # C121: per-item seed overlay
             provenance.assert_opencode_destination(work, oc_env, router["pid"])
+            try:
+                _assert_overlay_resolved(work, oc_env, a.model, item_seed, oc_base)
+            except provenance.ServedConfigError as e:
+                sys.exit(f"REFUSED: {e}")
             try:
                 _write_manifest()           # first RUNNING item: attribution on disk before traffic
             except Exception as e:  # noqa: BLE001
@@ -735,6 +884,7 @@ def main() -> int:
                 "transcript_path": transcript_rel, "loop_metrics": metrics,
                 # D12: harness traffic (turns, incremental + cumulative input, output, max context).
                 "traffic": traffic,
+                **_seed_row_fields(item_id, a.seed_base, overlay_sha),
             }
             with out.open("a") as f:
                 f.write(json.dumps(row) + "\n")
