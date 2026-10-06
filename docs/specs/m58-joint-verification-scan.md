@@ -1,4 +1,4 @@
-# M58 — joint MTP verification scan for long-context decode (spec v3, 2026-10-06; NOT approved — C118)
+# M58 — joint MTP verification scan for long-context decode (spec v3.1, 2026-10-06; C118: STEP 1 approved, build held)
 
 Queue row: `docs/PLAN.md` M58 (C112). Evidence: `docs/proposal-flash-attention.md` E8, E11, P60, P69, X2, X9. Scope: first pick
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, native16 KV, MTP ON, shipped M57 state. Phase 2 serving optimization; no B/C
@@ -24,13 +24,14 @@ SDPA API, same `cache=` / `scale` / dtype / head layout, `policy` and `force_fus
 anyway). One kernel launch per layer instead of `length`; still about one key/value pass per query (L2-shared), per E8 / P69 —
 the single-pass kernel is out of scope. Identity: bitwise equal away from the MLX key-length thresholds (Claude S1, measured);
 rule 7 keeps straddling blocks on the per-query path so the served numerics never change. Speed: the arms decide.
-Nothing else changes: lengths 1 and 2, the left-padded / ragged path, quantized caches, the drafter, acceptance, rollback and
+Nothing else changes: length 1, the left-padded / ragged path, quantized caches, the drafter, acceptance, rollback and
 cache state keep their code verbatim (S6).
 
 Policy `joint_v1` (default `per_query` = today) takes the joint branch iff ALL hold; otherwise the existing per-query code runs
 with its exact arguments and call count:
 
-1. `output is None` and `length >= 3`;
+1. `output is None` and `length >= 2` (C120 RULED 2026-10-06: the shipped length-2 joint branch is folded in — it already runs
+   jointly and is non-identical at the thresholds, so rule 7 now protects it too; length 1 untouched);
 2. native cache (no `bits` attribute), keys/values plain 4-D `mx.array`, batch 1;
 3. `mask` is `None`, the string `"causal"`, or a 4-D `mx.array` of dtype `bool` whose last two extents are ≥ `length` and
    ≥ `key_length` (sliced to `[..., :length, :key_length]`, ANDed with the step mask). Additive (float) masks, 2-D / 3-D masks,
@@ -67,7 +68,7 @@ Constants, thresholds and the domain belong to the version name.
   module singleton — Claude S9), in the response `timings` and on the "Request completed" line ONLY when the policy is not
   `per_query` (response bytes unchanged under the default, as M57 F1): `verify_blocks_joint_v1`, `verify_blocks_per_query`
   (fell back inside the domain; reason histogram `verify_fallback_reasons`), `verify_blocks_straddle`, `verify_blocks_len1`,
-  `verify_blocks_len2_legacy`, and under AB `verify_ab_blocks`, `verify_ab_mismatch`, `verify_ab_straddle_blocks`,
+  and under AB `verify_ab_blocks`, `verify_ab_mismatch`, `verify_ab_straddle_blocks`,
   `verify_ab_straddle_mismatch`. Every `verify_*` key is persisted by capacity and `generate` rows when sent.
 - Router: `ModelConfig.mtp_verify_scan: str = ""`, `mtp_verify_ab: bool = False`; validated in `__post_init__` (``,
   `per_query`, `joint_v1`; `joint_v1` requires `draft_kind == "mtp"` and `kv_bits == 0`; `mtp_verify_ab` requires `joint_v1`);
@@ -250,10 +251,9 @@ requalification; the M57 certification debt (handoff leftover 2) stays separate 
 
 - Codex S5 "cross-load divergence should trigger investigation, not close M58": adopted for G1b; G1a remains a hard stop.
 - Codex S8 "add a matched default-path regression screen": adopted as optional-but-required-if-claimed (second pick).
-- Claude S2 "let rule 7 cover `length == 2` under the same version": NOT folded into M58 — the shipped length-2 branch is a
-  pre-existing exactness defect (non-identical to plain decode at the thresholds) and AGENTS.md says a newly discovered bug
-  needs its own proposal → C120. If the operator rules to fix it in M58, rule 7 extends to length 2 under `joint_v1` and the
-  threshold sweep / AC2 / G1a straddle requests cover `length = 2`; otherwise it stays untouched and documented.
+- Claude S2 "let rule 7 cover `length == 2` under the same version": filed as C120 (pre-existing defect) and RULED
+  2026-10-06 — folded in: rule 1 admits `length >= 2`, rule 7 protects it, the STEP 1 sweep, AC2 and the G1a straddle
+  requests cover `length = 2`. Under `per_query` the shipped length-2 branch stays byte-identical to today.
 - Claude S10 "under AB the served path is per-query": v2 chose to serve the JOINT output under AB (Codex S4) so the production
   path runs downstream during the gate; kept.
 

@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Agentic-edit probe through DSH (DeepSeek Harness), a second scaffold beside opencode (M35).
 
+FROZEN (C117, operator 2026-10-06): like the aider runner — refuses to run, rows retained
+(`benchmark/results/*/dsh.*.jsonl`), no further maintenance (it never gained the M50 router check).
+M35 (2026-09-08) found no consistent dsh advantage and closed expansion. To revive: a proposal,
+then flip FROZEN and add the M50 entry/exit check (tests drafted in `$STACK_WORKDIR/harness-gaps/`).
+
 WHY THIS EXISTS. `docs/campaign-results.md` already carries opencode agentic evidence as a
 scaffold-sensitivity check on the B recommendation (`run_opencode_probe.py`), but the community
 ranks dsh first on n=1 vibe tasks WITHOUT ever testing opencode. This probe answers the same
@@ -391,7 +396,14 @@ def _existing_row_ids(out: Path) -> set:
     return ids
 
 
+FROZEN = True   # C117 (2026-10-06): see the module docstring
+
+
 def main() -> int:
+    if FROZEN:
+        sys.exit("REFUSED: the dsh runner is FROZEN (C117, 2026-10-06): opencode is the primary scaffold, "
+                 "M35 closed dsh expansion, and this runner has no M50 router check. Rows are retained; "
+                 "reviving needs a proposal.")
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--tune", required=True,

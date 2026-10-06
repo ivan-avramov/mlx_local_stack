@@ -68,6 +68,24 @@ def test_dsh_version_check_failure_refuses_to_run_unversioned(monkeypatch):
         P._dsh_version(Path("/x/dsh"))
 
 
+@pytest.fixture(autouse=True)
+def _unfreeze_for_retained_logic(request, monkeypatch):
+    """C117: the runner is frozen in production; every test except the freeze test exercises the
+    retained logic behind it."""
+    if "frozen" not in request.node.name:
+        monkeypatch.setattr(P, "FROZEN", False)
+
+
+def test_main_is_frozen_and_refuses_before_parsing_anything(monkeypatch):
+    """C117 (2026-10-06): frozen like aider — no run, no write, no router contact."""
+    monkeypatch.setattr(sys, "argv", ["run_dsh_probe.py", "--model", "m", "--tune", "t0.5", "--items", "x"])
+    monkeypatch.setattr(P, "_dsh_bin", lambda: (_ for _ in ()).throw(AssertionError("must not resolve dsh")))
+    monkeypatch.setattr(P, "FROZEN", True)
+    with pytest.raises(SystemExit) as e:
+        P.main()
+    assert "FROZEN" in str(e.value) and "C117" in str(e.value)
+
+
 def test_main_refuses_version_drift_without_the_escape_hatch(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv",
                         ["run_dsh_probe.py", "--model", "m", "--tune", "t0.5", "--items", "x"])
