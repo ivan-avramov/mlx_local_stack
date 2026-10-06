@@ -4535,3 +4535,30 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 - **Corpus counts behind the transport-abort proposal (`docs/proposal-transport-abort.md`).** `generate`-style error rows: 36
   `probe_timeout`, 58 without `error_kind` (all `timed out`, 18 files). opencode rows: 625 completed with exit 0, 0 completed with a
   nonzero exit, 100 gate kills (86 stalled, 14 looping; one looping row passed), 4 pre-gate rows.
+
+## 2026-10-06 (night) — where the stack stands: opencode 2.x facts, upstream delta, judge blindness, suite green
+
+- **opencode v2.0.20, read from source at the matching tag (`$STACK_WORKDIR/m59_research/REPORT.md`; nothing run except `--help` and
+  `debug paths` under a redirected home).** (1) Every command except `--standalone` talks to a shared background service that keeps
+  the ENVIRONMENT OF WHOEVER STARTED IT — that, not a bug, is why C123 saw a redirected `XDG_CONFIG_HOME` ignored. (2) v2 loads
+  AGENTS.md only (never CLAUDE.md); the ancestor walk goes up to HOME, so `~/AGENTS.md` and the `~/.claude|.agents/skills` dirs load for
+  any scratch dir under the real home. (3) The native openai-compatible provider drops model `options` (temperature, top_p, top_k,
+  min_p, seed, thinking fields); the only config route to the wire is a provider/model `body` overlay, deep-merged after validation —
+  read, NOT captured. (4) Session-level retries: up to 10, no config switch. (5) The vllm discovery plugin defaults to polling
+  `127.0.0.1:8000` (`/health`, `/v1/models`, every 30 s) — a daily-driver v2 service left running would poll a bench router; the router
+  logs do not record GETs, so this is unverified on this box. (6) No `--dir`: the working directory comes from `PWD` before the real
+  cwd — a Python `subprocess(cwd=…)` must also set `PWD`. (7) Terminal provider error = exit 1 + a JSON `error` event.
+- **Operator's daily opencode v2, consequence of (3):** the personal config is still v1-schema, so its sampling block is inert on v2;
+  requests run on the server's generation defaults (= the deployed profile today). A v2-native client config is M59 scope.
+- **Upstream `mlx-vlm` (C130).** 33 commits behind; nothing on the served path. The default-on compaction threshold with deployed
+  values is `limit − max_tokens` = 159,744 prompt tokens — the same number as the derived max prompt in `docs/box-notes.md`: above it
+  the fork clamps `max_tokens`, upstream would summarize the history. The fork's parity audits were already red against the merge-base.
+- **Judge blindness.** Claude Code subagents inherit the user and project instruction files by default (docs check); the M38/M40 judge
+  packets therefore ran with AGENTS.md (which names the picks) in context. Outputs were still presented blind and both orders were
+  judged; no rerun. M60 judges run without those files, verified by a canary.
+- **Session-pinning gate, live on the daily driver (OpenWebUI leg skipped):** A6 bare PASS, A4 PASS on the pinned bench opencode
+  1.18.30 (one `ses_…` session, cross-process reuse true); result `$STACK_WORKDIR/c125/gate-run/gate.json`. The documented invocation
+  sources `./.env`, which does not exist on this box.
+- **C128.** The 20 red tests are repaired (`946290e`); `benchmark/bench/tests` is 3199 passed, 0 failed.
+- **M60 runner selftest (dry-run):** regrading `math500.m40on` / `m37med` with today's grader moves nothing (0.99 / 0.97), and the
+  runner's paired read reproduces the M40 record (+2 pp, CI [0, +5], 2 discordant, 0 reference-only).

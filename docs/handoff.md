@@ -1,60 +1,64 @@
-# Handoff — 2026-10-06 (late): queue items 1–3 worked — M60 design awaits approval (C127); C125 follow-ups built and committed (not pushed); transport-abort proposal awaits approval; stack UP, no GPU work done
+# Handoff — 2026-10-06 (night): re-evaluation done — M60 approved and built (not run); opencode 1.18 wrapped; opencode 2.x researched; upstream merge assessed; suite green; stack UP, no bench run
 
-THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M60 row: design awaiting approval; M59
-queued) and `docs/open-questions.md` (C127, C128, C129 OPEN; C119/C124 proposal written). Day narrative: `docs/lab-notebook.md`
-2026-10-06 (late), `docs/campaign-results.md` 2026-10-06 (two entries, unchanged today). Artefacts: `$STACK_WORKDIR/c125/` (review
-prompts, Codex + Claude reviews, `run_codex_review.sh`), `$STACK_WORKDIR/opencode-probe/version-env/` (new fixed preflight directory).
+THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M60 row: approved, built, not run; M59
+row: research done) and `docs/open-questions.md` (C130 plan awaiting approval; C119 awaiting a ruling; C127/C128/C129 ruled or done).
+Day narrative: `docs/lab-notebook.md` 2026-10-06 (late) and (night). Artefacts: `$STACK_WORKDIR/m60/` (runner, tests, `JUDGE.md`,
+dry-run output), `$STACK_WORKDIR/m59_research/` (`REPORT.md`, opencode v2.0.20 source clone), `$STACK_WORKDIR/upstream/2026-10-06/`
+(`ASSESSMENT.md`), `$STACK_WORKDIR/c125/` and `c128/` (review and worker prompts, outputs, `run_codex_review.sh`, `run_codex_work.sh`).
 
 ## State of the world
 
-- Stack `main` = `40197b5` + this docs commit, **2 code commits ahead of `origin/main` (`4edf1d3`), NOT pushed**. Forks unchanged:
-  mlx-vlm `main` 664c2ead, mlx-serve `main` 3f2c87c; submodules match.
-- Daily driver UP under M58 since 18:00 UTC; this session sent it no request and ran no model. No bench router was started.
-- Test baseline (`benchmark/bench/tests`, default `TMPDIR`): **20 failed, 3176 passed, 3 skipped** — the 20 predate this session (C128: C121
-  tests use a model absent from the registry; the M58 manifest guard refuses). Every file touched today is green.
-- Bench opencode: pinned 1.18.30 at `$STACK_WORKDIR/opencode-1.18.30/`; `session_cache_probe` leg B and
-  `scripts/session_pinning_gate.py` now use it too (never PATH). The gate script was changed but NOT run (needs the live router).
-- `ts.md` is the operator's untracked note. Two stale agent worktrees under `.claude/worktrees/agent-*` can still be removed.
+- Stack `main` = `946290e` + this docs commit, **ahead of `origin/main` (`4edf1d3`), NOT pushed**: `4080a43` (AgentBench `--seed-base`),
+  `40197b5` (session-cache probe + gate pinned to the bench opencode), `f7172d5` (docs), `946290e` (red tests repaired), this commit.
+- Forks unchanged: mlx-vlm `main` 664c2ead (33 commits behind upstream, tags v0.7.4–v0.7.6 fetched), mlx-serve `main` 3f2c87c.
+- `benchmark/bench/tests`: **3199 passed, 3 skipped, 0 failed.** Fork suite on `main`: 5477 passed (run by the assessment, 61 s).
+- Daily driver UP under M58. The only model traffic this session: one run of `scripts/session_pinning_gate.py` (OpenWebUI leg
+  skipped) — PASS. No bench router started; nothing measured.
+- The operator's opencode v2 background service (`opencode serve --service`, started 2026-10-05) is running; see M60 note below.
 
-## What this session did
+## Operator rulings this session (2026-10-06)
 
-1. **Queue item 1 — M60 design (C127, awaiting approval; nothing built or run).** Certification of the final shipped state of
-   `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on Math500 and the judge panel. PLAN row M60 carries the arm, criteria and cost.
-   Scope correction: the M40 Math500/judge rows predate native16 too (TQ4 KV, fork `420c01e1`), so one arm covers four provisional
-   serving changes and cannot attribute a failure (bisect pre-registered as an escalation). Open sub-rulings: no shipped-state
-   predictor-OFF arm; the seeded pilot is phase A of the night, not run before approval (stack is up as the daily driver).
-2. **Queue item 2 — C125 follow-ups, built, reviewed, committed.** `4080a43`: required `--seed-base` for `run_agentbench_os.py`
-   (resume identity; compare gate checks manifests and rows; the M54 chain 3/4 arms still pass it). `40197b5`: `session_cache_probe`
-   leg B + the session-pinning gate pinned to the bench opencode, `--pure` on the discovery call, version preflight under a bench-owned
-   environment. One cold review each (Claude + Codex `gpt-6-astra`); all findings folded in.
-3. **Queue item 3 — transport-abort proposal written** (`docs/proposal-transport-abort.md`, P126–P132; C119 + C124). Fail-closed
-   allowlist: only the probe-timeout DNF keeps an error row in `generate`; the opencode probe grades only a clean completed session or
-   a gate kill with a verified-alive router. Step 1 of the build measures opencode 1.18.30's failure signatures on the mock endpoint.
-   No regrade or rerun asked (the gaps are latent in the committed corpus).
+- C127: M60 design approved as P116–P125 (pilot as phase A; no shipped-state predictor-OFF arm; lift PROVISIONAL labels on PASS).
+- Direction: no further work on opencode 1.18 — wrap to a stable state, then move to opencode 2.x. C124 folded into M59.
+- C129 (1): the bench-owned `--version` preflight directory is ratified. C128: fix the red tests if relevant to 2.x (done).
+- Asked: consider merging upstream `mlx-vlm` before new work (C130, assessed; plan below awaits approval); parallelise through
+  subagents, with Codex `gpt-6-astra` as worker as well as reviewer.
 
-## Queue, in order
+## Recommended sequence (awaiting the operator's confirmation)
 
-1. **M60** — on approval of C127: write `docs/specs/m60-shipped-state-certification.md` (terse), build the self-contained phase script
-   under `$STACK_WORKDIR/m60/` with a dry-run, then run when the operator says the stack is down. Judge pass afterwards (no GPU).
-2. **C128** — repair the 20 red tests (fixture resolves the scan for the fake model + one golden test on the real registry); needs a go.
-3. **Transport abort** — on approval of the proposal: P129 measurement first, then `generate`, then the probe; TDD + cold reviews.
-4. **C129** — rulings: ratify the version-env preflight write; isolate leg B's environment (recommended) or record/freeze.
-5. **M59 — opencode v2 scaffold migration** (PLAN row). Add to its scope: the session-pinning gate's A4 leg covers only v1 today.
-6. **First seeded opencode chain** when a B question needs it; `run_agentbench_os.py` chains now need `--seed-base` per session (two
-   bases, the reload control reuses its session's base).
-7. **Candidates not queued:** unchanged from the previous handoff (dense prefill path; fused-kernel tuning; the 1.4–3.6 % `auto`-path
-   slowdown; P41 watch-list; P42). M56 PARKED (C110). ReviewBench DEFERRED (C122).
+1. **Upstream merge build, CPU, now** (C130): fix the parity-audit baseline first; branch `sync/upstream-v0.7.6`; merge the v0.7.6 TAG;
+   compaction opt-in (failing test first); `_strip_assistant_thinking` moved into the normalization helper; lazy `cryptography`;
+   C104 test reconciliation; full fork suite; prompt-render identity gate on recorded requests (CPU); cold review.
+2. **M59 step 1, CPU, in parallel:** mock-endpoint capture of the eight items listed in `m59_research/REPORT.md` (body overlay on the
+   wire, system prompt contents, side requests, polling, `--standalone` cleanliness, error paths and the 10× retry, export, `PWD`).
+   Needs a ruling on the M50 policy for v2 (`OPENCODE_CONFIG_DIR` + `OPENCODE_CONFIG_CONTENT` are refused by today's tripwire).
+3. **One stack-down night:** identity gate for the merge (same seeded requests on the old and the new source, plus one ~200K prompt
+   showing no compaction) → if byte-identical, M60 on the merged state; if not, revert the submodule, run M60 on `664c2ead`, hold the
+   merge for attribution. Then the judge pass (no GPU; judges without instruction files, canary first).
+4. **M59 build** from the capture facts: v2 probe with the transport classification built in, v2-native client config through
+   configgen, then `--limit 5` smoke and the first seeded chain; freeze the 1.18 probe once the v2 smoke passes.
+5. **C119** (`generate` transport abort) — small, opencode-independent; awaiting a go.
+6. Candidates not queued: unchanged (dense prefill path; fused-kernel tuning; the 1.4–3.6 % `auto`-path slowdown; P41; P42). M56 PARKED
+   (C110). ReviewBench DEFERRED (C122).
 
-## Rules learned (this session)
+## Before the M60 night
 
-- After merging two reviewed branches, run the full suite on the MERGED tree; "green on each branch" produced 20 red tests on `main`.
-- A refusal test asserts the SPECIFIC refusal text; exit code plus a generic word let a test keep passing after its target check became
-  unreachable.
-- `opencode --version` is not read-only: 1.18.30 creates its config/data/state/tmp directories first. Any opencode spawn, including
-  `--version`, runs under a bench-owned environment.
-- Only an ABSENT seed base means legacy base 0; a present null hashes to a different schedule and must refuse.
-- Codex reviews: launch detached with an exit-code marker file (`$STACK_WORKDIR/c125/run_codex_review.sh`); a tool-bound background
-  command is capped at 10 minutes. Do not put a reviewer's `TMPDIR` under `$STACK_WORKDIR` when it runs `test_run_agentbench_os.py`
-  (four fixture-dependent failures).
+- `run_m60.py --dry-run` must exit 0 with only the expected would-refuse lines; `test_run_m60.py` must pass.
+- Decide whether the operator's opencode v2 service must be stopped for the night: by source it polls `127.0.0.1:8000` every 30 s
+  unless its vllm plugin is disabled (unverified on this box; the router logs do not record GETs).
+- The real-run path of the runner (router start, generation, monitor loop) is unexercised; the first minutes of the night are its test.
 
-Next decision id C130; discussion ids continue from P138.
+## Rules learned (this session, both halves)
+
+- After merging two reviewed branches, run the full suite on the MERGED tree.
+- A refusal test asserts the SPECIFIC refusal text, never only an exit code plus a generic word.
+- Any opencode spawn, including `--version`, runs under a bench-owned environment (1.18.30 creates its directories first).
+- Only an ABSENT seed base means legacy base 0; a present null hashes to a different schedule.
+- opencode 2.x: per-run environment exists only under `--standalone`; `debug config` reports the shared service, not the run; set
+  `PWD` as well as `cwd`; model `options` are not sampling — use `body`.
+- Subagent judges are not blind to the repo's instruction files unless the agent definition says so.
+- Codex: launch detached with an exit-code marker (`run_codex_review.sh` / `run_codex_work.sh`); its sandbox cannot bind sockets, so
+  mock-server tests must be verified outside it.
+- A subagent of the research type cannot write report files; extract its report from the task transcript instead.
+
+Next decision id C131; discussion ids continue from P146.
