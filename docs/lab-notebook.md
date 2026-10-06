@@ -4465,7 +4465,7 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   read by 1.18.30); `git init` blocks the ancestor ones (`instruction_files_blocked_by_git_init`). The integration test shows a fake personal config's sampling and global `AGENTS.md` reach the request without the
   bench config home and never with it.
 - **Round 4 (Codex/Claude review).** Every spawn, including the pre-M50 `--version`, runs under the bench-owned env (config home, state home,
-  `TMPDIR` inside the workdir; the cache home stays default for the models.dev catalogue; `env_policy` is recorded in the manifest); the
+  `TMPDIR` inside the workdir; the cache home stays the shared real one, whose `bin` tool content (ripgrep/LSP) is hashed into the run identity as `cache_bin_inventory_sha256`; `env_policy` is recorded in the manifest); the
   discovery data dir is per-run and a refusal before any item removes the run's dirs. Resume identity now also covers model, lang, polyglot
   sha, progress-gate settings, pure mode, executable sha, serving-code identity (`git.serving_path`) and the env policy; the whole prior
   runtime/router/`router_exit` is kept in `continuation_history`, an all-skipped resume leaves the manifest untouched, duplicate `--items`
@@ -4475,11 +4475,16 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 - **Round 4b.** Every `debug config` spawn (discovery, destination, overlay check) passes `--pure` like `run`: without it the discovery npm-installed
   `@opencode-ai/plugin` into the fresh config home and fetched the `superpowers` plugin from GitHub before the router check, and the per-item
   check validated a config `run --pure` never uses (Claude review). The bench now has its OWN HOME (`$STACK_WORKDIR/opencode-probe/home`,
-  persistent; state under it; cache home pinned explicitly to the real default so the models.dev catalogue stays shared), so `~/.opencode`,
+  persistent; state under it; cache home pinned explicitly to the real default; shared, but its `bin` content is hashed, not catalogue-only), so `~/.opencode`,
   `~/.claude`, `~/AGENTS.md`, `~/.npm` are unreachable (belt-and-braces: a manual run showed none of them reaching the prompt under git init +
   the R8 switch anyway). The child env is built from the parent env minus every `OPENCODE_*` variable plus exactly the policy switches
   (`env_switches` in the manifest). `scaffold_policy_sha256` hashes only effective inputs (bench carrier sha, overlay schema, switches,
   `scratch_git_init`, bench-HOME isolation, opencode version + exe sha, empty `instructions` key); the instruction-file inventory is an
   observation. `passed: null` (grade-excluded) rows are counted separately by the M55 report script. The session-title request (which would
   go un-seeded to the task provider on :8092, not M50-checked) is disabled; a down task server therefore cannot affect a row.
+- **Round 5.** The seed-receipt opt-in path is tested (`OPENCODE_PROBE_RECEIPT` overrides the receipt file); `--no-pure` is removed from the probe
+  (discovery and checks are always `--pure`); `poll_s` and `cache_bin_inventory_sha256` join the resume identity; persisted errors are
+  scrubbed (`_scrub_pii` + `portable_path`) before truncation; the identity check runs whenever a manifest exists, a corrupt or unterminated row
+  file refuses naming the line, and a failed run-dir creation leaves nothing behind. The HOME-sentinel test now has a positive control (all of
+  switches, git init and bench HOME off lets a sentinel reach the prompt).
 

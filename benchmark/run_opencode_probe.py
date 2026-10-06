@@ -175,6 +175,13 @@ def _login_name() -> str:
         return os.path.basename(os.path.expanduser("~"))
 
 
+def _scrub_error(msg, limit: int | None = None) -> str:
+    """Persisted error text: the COMPLETE message goes through `_scrub_pii` (workdir/home/login name) and
+    `portable_path` BEFORE any truncation, so a cut can never leave half a home prefix."""
+    out = provenance.portable_path(_scrub_pii(str(msg)))
+    return out[:limit] if limit else out
+
+
 def _scrub_then_tail(s: str, n: int) -> str:
     """Scrub PII from the WHOLE string, then take the tail — never the reverse. Slicing first can
     cut a `/Users/<name>/...` boundary in half, leaving a fragment `_scrub_pii` no longer
@@ -362,7 +369,8 @@ def _opencode_env(data_home: Path, config_home: Path | None = None, state_home: 
     (so a stray operator switch cannot leak in), then exactly the policy switches (`SCAFFOLD_ENV_POLICY`).
     With the bench dirs given: its own HOME (`~/.opencode`, `~/.claude`, `~/AGENTS.md`, `~/.npm` become
     unreachable), config, data, state and tmp homes; the cache home is pointed EXPLICITLY at the real
-    default cache dir (the models.dev catalogue stays shared; operator rule)."""
+    default cache dir (operator rule: the cache stays shared; its `bin` tool content is hashed into the
+    run identity because ripgrep/LSP executables shape tool feedback)."""
     real_cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     env = {k: v for k, v in os.environ.items() if not k.startswith("OPENCODE_")}
     env["XDG_DATA_HOME"] = str(data_home)
@@ -438,6 +446,9 @@ def _sha_of(path) -> str | None:
 
 
 def _seed_marker_path(binary: Path | None = None) -> Path:
+    override = os.environ.get("OPENCODE_PROBE_RECEIPT")      # tests / operator: receipt destination
+    if override:
+        return Path(override)
     b = Path(binary) if binary is not None else _opencode_bin()
     return (b.parents[2] if b.parent.name == ".bin" else b.parent) / "seed_propagation_verified"
 
@@ -465,7 +476,7 @@ ENV_POLICY = {
     "XDG_DATA_HOME": "per-item scratch dir (discovery: $STACK_WORKDIR/scratch/m50-discovery-xdg-data-<run-id>)",
     "XDG_STATE_HOME": "<bench home>/.local/state",
     "TMPDIR": "$STACK_WORKDIR/opencode-probe/tmp-<run-id>",
-    "XDG_CACHE_HOME": "the real default cache dir (shared models.dev catalogue; the one permitted initialisation write outside the workdir)",
+    "XDG_CACHE_HOME": "the real default cache dir (shared; its opencode/bin tool content is hashed into the run identity; the one permitted initialisation write outside the workdir)",
 }
 BENCH_HOME_ISOLATION = True
 
@@ -473,12 +484,17 @@ BENCH_HOME_ISOLATION = True
 def _make_run_dirs(workdir: Path, run_id: str) -> tuple:
     """(config home, state home, tmp dir, bench HOME) under `<workdir>/opencode-probe/`; the bench HOME
     and its state dir are persistent across runs, the config home and tmp dir are per run."""
-    cfg_home = _make_bench_config_home(workdir, run_id)
+    cfg_dir = Path(workdir) / "opencode-probe" / f"config-{run_id}"
+    tmp_dir = Path(workdir) / "opencode-probe" / f"tmp-{run_id}"
     bench_home = Path(workdir) / "opencode-probe" / "home"
     state_home = bench_home / ".local" / "state"
-    tmp_dir = Path(workdir) / "opencode-probe" / f"tmp-{run_id}"
-    state_home.mkdir(parents=True, exist_ok=True)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        cfg_home = _make_bench_config_home(workdir, run_id)
+        state_home.mkdir(parents=True, exist_ok=True)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+    except BaseException:
+        _cleanup_run_dirs([cfg_dir, tmp_dir])       # no partial initialisation survives a failure
+        raise
     return cfg_home, state_home, tmp_dir, bench_home
 
 
@@ -487,8 +503,31 @@ def _cleanup_run_dirs(dirs) -> None:
         shutil.rmtree(d, ignore_errors=True)
 
 
+def _real_cache_home() -> Path:
+    return Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+
+
+def _cache_bin_inventory_sha256(cache_home: Path) -> str:
+    """sha256 over the sorted (relative path, size, sha256) list of every file under
+    `<cache>/opencode/bin` (and `packages` if present). The shared cache is NOT catalogue-only: `bin`
+    holds ripgrep / LSP executables that shape tool feedback, so its content is observed and part of the
+    run identity (the models.dev catalogue file itself is deliberately not inventoried)."""
+    import hashlib
+    entries = []
+    for sub in ("bin", "packages"):
+        root = Path(cache_home) / "opencode" / sub
+        if not root.is_dir():
+            continue
+        for f in sorted(x for x in root.rglob("*") if x.is_file()):
+            try:
+                entries.append([f"{sub}/{f.relative_to(root)}", f.stat().st_size, _sha_of(f)])
+            except OSError:
+                entries.append([f"{sub}/{f.relative_to(root)}", None, None])
+    return hashlib.sha256(json.dumps(entries).encode()).hexdigest()
+
+
 def _run_identity(*, lang, pure, poly_sha, tick_s, hard_ceiling_s, stall_ticks, loop_repeats, seed_base,
-                  oc_bin, oc_version) -> dict:
+                  oc_bin, oc_version, poll_s, cache_sha) -> dict:
     """The output-determining identity of a run (recorded in the manifest runtime, compared on resume).
     The instruction-file inventory is NOT part of it (observation only; git init blocks those files)."""
     exe = _sha_of(oc_bin)
@@ -496,6 +535,7 @@ def _run_identity(*, lang, pure, poly_sha, tick_s, hard_ceiling_s, stall_ticks, 
             "opencode_version": oc_version,
             "lang": lang, "pure": pure, "polyglot_sha": poly_sha, "tick_s": tick_s,
             "hard_ceiling_s": hard_ceiling_s, "stall_ticks": stall_ticks, "loop_repeats": loop_repeats,
+            "poll_s": poll_s, "cache_bin_inventory_sha256": cache_sha,
             "opencode_exe_sha256": exe, "env_policy": ENV_POLICY}
 
 
@@ -921,7 +961,6 @@ def _main(ctx: dict) -> int:
                     help="C121: per-session sampler seed base (no default). Item seed = "
                          "rowschema.sample_seed(item, 0, base=); two sessions use distinct bases, a "
                          "reload control reuses one.")
-    ap.add_argument("--no-pure", action="store_true", help="load external plugins too")
     ap.add_argument("--allow-version-drift", action="store_true",
                     help=f"run even if opencode != {PINNED_OPENCODE_VERSION} (drift is recorded)")
     a = ap.parse_args()
@@ -957,11 +996,13 @@ def _main(ctx: dict) -> int:
     # Operator ruling 2026-10-06 + review E1: the bench owns the opencode config, state and tmp homes,
     # created right after the workdir check; EVERY spawn (including the pre-M50 `--version`) runs under
     # this env, so opencode's initialisation writes land inside the workdir (the cache home stays default:
-    # the models.dev catalogue; see ENV_POLICY). The personal ~/.config/opencode is never read.
+    # the shared cache, whose `bin` content is hashed into the identity; see ENV_POLICY). The personal
+    # ~/.config/opencode is never read.
     run_id = f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}"
     disc_data = workdir / "scratch" / f"m50-discovery-xdg-data-{run_id}"
+    ctx["dirs"] = [workdir / "opencode-probe" / f"config-{run_id}", workdir / "opencode-probe" / f"tmp-{run_id}",
+                   disc_data]                          # registered BEFORE creation; the bench HOME is persistent
     cfg_home, state_home, tmp_dir, bench_home = _make_run_dirs(workdir, run_id)
-    ctx["dirs"] = [cfg_home, tmp_dir, disc_data]       # per-run; the bench HOME is persistent
     boot_env = _opencode_env(disc_data, cfg_home, state_home, tmp_dir, bench_home)
     # C121 C1 / C125: the pinned binary's read-only `--version` runs BEFORE discovery, so an override
     # pointing at another version (brew v2 ...) never executes `debug config`.
@@ -971,7 +1012,7 @@ def _main(ctx: dict) -> int:
                  f"is output-determining. Bump PINNED_OPENCODE_VERSION deliberately or pass "
                  f"--allow-version-drift to record the drift.")
     try:  # opencode sends to what ITS resolved config says (never MLX_SERVE_BASE): verify THAT.
-        oc_base = provenance.opencode_router_base(workdir, boot_env, opencode_bin=oc_bin, pure=not a.no_pure)
+        oc_base = provenance.opencode_router_base(workdir, boot_env, opencode_bin=oc_bin, pure=True)
         router = provenance.assert_served_config(oc_base)
     except (RuntimeError, OSError, KeyError, ValueError) as e:
         sys.exit(f"REFUSED: M50 {type(e).__name__}: {e}")
@@ -1034,13 +1075,14 @@ def _main(ctx: dict) -> int:
         overlay_map = dict(prev_doc.get("overlay_sha256_by_item") or {})
     # C121 B2: continuation. Rows already on disk fix the identity of this run: same seed base, same
     # scaffold policy, same binary and version -- else refuse; recorded (id, sample) keys are skipped.
-    done = _recorded_keys(out)
+    done = _load_rows(out)
     continuation: list = []
-    identity = _run_identity(lang=a.lang, pure=not a.no_pure, poly_sha=poly_sha, tick_s=a.tick_s,
+    identity = _run_identity(lang=a.lang, pure=True, poly_sha=poly_sha, tick_s=a.tick_s,
                              hard_ceiling_s=hard_ceiling_s, stall_ticks=a.stall_ticks,
                              loop_repeats=a.loop_repeats, seed_base=a.seed_base, oc_bin=oc_bin,
-                             oc_version=oc_version)
-    if done:
+                             oc_version=oc_version, poll_s=a.poll_s,
+                             cache_sha=_cache_bin_inventory_sha256(Path(boot_env["XDG_CACHE_HOME"])))
+    if done or prev_doc is not None:        # the identity check runs whenever a manifest exists
         git_now = provenance._git_shas()
         _check_resume(prev_doc, identity, out, router, model=a.model, git_now=git_now)
         continuation = list(prev_doc.get("continuation_history") or []) + [
@@ -1105,17 +1147,17 @@ def _main(ctx: dict) -> int:
             def _drift_stamp(e):
                 _stamp_manifest(mp, {"served_config_drift": {"entry_sha256": router.get("config_sha256"),
                                                              "exit_sha256": _exit_sha(oc_base),
-                                                             "error": provenance.portable_path(str(e)),
+                                                             "error": _scrub_error(e),
                                                              "item": item_id}})
             try:
                 provenance.assert_opencode_destination(work, oc_env, router["pid"], opencode_bin=oc_bin,
-                                                       pure=not a.no_pure)
+                                                       pure=True)
             except provenance.ServedConfigError as e:
                 _drift_stamp(e)
                 raise
             try:
                 _assert_overlay_resolved(work, oc_env, a.model, item_seed, oc_base, opencode_bin=oc_bin,
-                                         pure=not a.no_pure)
+                                         pure=True)
             except provenance.ServedConfigError as e:
                 _drift_stamp(e)
                 sys.exit(f"REFUSED: {e}")
@@ -1136,7 +1178,7 @@ def _main(ctx: dict) -> int:
             rc, log, dur, gate_result = _run_opencode(
                 a.model, work, prompt, sol, test, grade, before,
                 tick_s=a.tick_s, hard_ceiling_s=hard_ceiling_s, poll_s=a.poll_s,
-                stall_ticks=a.stall_ticks, loop_repeats=a.loop_repeats, pure=not a.no_pure,
+                stall_ticks=a.stall_ticks, loop_repeats=a.loop_repeats, pure=True,
                 env=oc_env, opencode_bin=oc_bin)
             # C121 B7: the overlay sits in the model's edit surface. Re-hash, flag a rewrite, and
             # restore the original bytes BEFORE the session export so it never runs under a rewritten file.
@@ -1205,7 +1247,7 @@ def _main(ctx: dict) -> int:
         if manifest_written:
             _stamp_manifest(mp, {"served_config_drift": {"entry_sha256": router.get("config_sha256"),
                                                          "exit_sha256": _exit_sha(oc_base),
-                                                         "error": provenance.portable_path(str(e))}})
+                                                         "error": _scrub_error(e)}})
         sys.exit(f"REFUSED: {e}")
     if manifest_written:
         _stamp_manifest(mp, {"router_exit": exit_blk})
@@ -1219,7 +1261,29 @@ RESUME_IDENTITY_KEYS = ("seed_base", "overlay_schema", "scaffold_policy_sha256",
                         "scratch_git_init", "env_switches", "bench_home_isolation", "opencode_bin",
                         "opencode_version", "opencode_bench_config", "opencode_bench_config_sha256",
                         "lang", "pure", "polyglot_sha", "tick_s", "hard_ceiling_s", "stall_ticks",
-                        "loop_repeats", "opencode_exe_sha256", "env_policy")
+                        "loop_repeats", "poll_s", "cache_bin_inventory_sha256", "opencode_exe_sha256",
+                        "env_policy")
+
+
+def _load_rows(out: Path) -> set:
+    """`(id, sample)` of every row already in `out`. The row file must be intact: a malformed line or an
+    unterminated tail refuses (naming the line) instead of being skipped or masked by a newline guard."""
+    keys = set()
+    try:
+        text = out.read_text()
+    except OSError:
+        return keys
+    if text and not text.endswith("\n"):
+        sys.exit(f"REFUSED: {out.name} line {len(text.splitlines())} is unterminated (a truncated write); "
+                 f"it is never repaired silently. Inspect or move the file.")
+    for n, line in enumerate(text.splitlines(), 1):
+        try:
+            r = json.loads(line)
+            keys.add((r["id"], int(r.get("sample", 0))))
+        except (ValueError, KeyError, TypeError):
+            sys.exit(f"REFUSED: {out.name} line {n} is not a valid row; a corrupt row file is never "
+                     f"continued. Inspect or move the file.")
+    return keys
 
 
 def _recorded_keys(out: Path) -> set:

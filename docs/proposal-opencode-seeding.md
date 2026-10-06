@@ -37,17 +37,19 @@ existing rows; this changes the scaffold for FUTURE opencode rows and corrects t
 
 ## Acceptance criteria
 
-- AC1 Overlay: for item X and seed base B the probe writes `<cwd>/opencode.json` with exactly the one seed key for the served model;
-  sha256 recorded in the row and manifest; nothing else in the shipped config is overridden (deep-diff test).
+- AC1 Overlay [amended]: for item X and seed base B the probe writes `<cwd>/opencode.json` with exactly the seed key for the served
+  model PLUS the session-title switch `agent.title.disable: true` (1.18.30 would otherwise send an un-seeded title request to the task
+  provider); sha256 recorded in the row and in the manifest per item; nothing else is overridden.
 - AC2 Seeds: distinct per item within a session, reproducible across sessions with the same base, distinct across bases
   (`rowschema.sample_seed`); `--seed-base` required.
-- AC3 Propagation: mock-endpoint integration test captures the request body with `seed` and the deployed fields; skip-with-reason
-  when opencode is absent; version-pinned.
+- AC3 Propagation [amended]: mock-endpoint integration test, in a git-initialised dir under the bench config home with a hermetic env, captures
+  the request body with `seed` and the deployed fields and no title request; skip-with-reason when opencode is absent; version-pinned. The
+  receipt (`seed_propagation: verified-by-test`) binds the executable, the bench carrier and the test file.
 - AC4 Pre-check [amended 2026-10-06, operator]: the probe runs opencode under a bench-owned `XDG_CONFIG_HOME`
   (`$STACK_WORKDIR/opencode-probe/config-<run-id>/`, a verbatim copy of `benchmark/opencode_bench.json`, nothing else); M50 discovery and the
   per-item `opencode debug config` run under that env; resolved baseURL unchanged and resolved model options == bench block plus the seed (and `limit` == bench `limit`, no `instructions` key),
   else refuse (M50 shape). The personal `~/.config/opencode` is never read.
-- AC5 [resolved: the bench config home carries no global `AGENTS.md`; ancestor-chain instruction files and `~/.claude/CLAUDE.md` are hashed into `instruction_sources_sha256` and the scaffold-policy hash; item dirs are `git init`-ed; 1.18.30 has `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` and the broad `OPENCODE_DISABLE_CLAUDE_CODE`; `~/.claude/CLAUDE.md` exists on the box; manifest records `claude_md_present`] R8 switch set and recorded; config/skill-policy hash changes; old rows do not pool (compare refuses).
+- AC5 [resolved: the bench config home carries no global `AGENTS.md`; ancestor-chain instruction files and `~/.claude/CLAUDE.md` are an OBSERVED inventory (`instruction_sources_sha256`, manifest only; NOT part of the scaffold-policy hash, the resume identity or the receipt, because git init blocks them); the scaffold-policy hash covers the bench carrier sha, overlay schema, applied switches, `scratch_git_init`, bench-HOME isolation, opencode version + exe sha and the empty `instructions` rule; item dirs are `git init`-ed; 1.18.30 has `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` and the broad `OPENCODE_DISABLE_CLAUDE_CODE`; `~/.claude/CLAUDE.md` exists on the box; manifest records `claude_md_present`] R8 switch set and recorded; config/skill-policy hash changes; old rows do not pool (compare refuses).
 - AC6 [REPLACED by C123, 2026-10-06] Re-pin to 2.0.20 is WRONG: v2.0.20 lacks `--dir`/`--pure` and forwards no model `options` into the request. Keep `PINNED_OPENCODE_VERSION = "1.18.30"`; the probe resolves the binary from `$STACK_WORKDIR/opencode-1.18.30/node_modules/.bin/opencode` (or `OPENCODE_PROBE_BIN`) and records its portable path in the manifest.
 - AC7 Record: lab-notebook retraction entry; `docs/specs/m55-polyglot-gap.md` and `m54-agentbench-os.md` annotated "sessions were
   unseeded"; README/campaign-results evidence rows carry the label where they cite k=2 sessions.

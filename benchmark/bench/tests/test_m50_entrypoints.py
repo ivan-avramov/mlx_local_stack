@@ -568,8 +568,10 @@ def test_run_opencode_probe_rerun_preserves_attribution_and_refuses_config_chang
     monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (_ for _ in ()).throw(StopIteration("stop after manifest")))
     monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8000/v1")
     out = tmp_path / "oc.jsonl"; mp = out.with_suffix(".manifest.json")
-    cfg = P.router_block("http://localhost:8000")["config"]
-    mp.write_text(json.dumps({"router": {"pid": 111, "config": cfg, "port": 8000}, "router_history": [{"pid": 7}]}))
+    # (a full prior manifest is required now: the identity check runs whenever a manifest exists)
+    from bench.tests.test_opencode_probe_seeding import _prior
+    _prior(OP, out, [], doc_extra={"router_history": [{"pid": 7}]})
+    doc = json.loads(mp.read_text()); doc["router"]["pid"] = 111; mp.write_text(json.dumps(doc))
     monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "1", "--out", str(out)])
     with pytest.raises(StopIteration):
         OP.main()

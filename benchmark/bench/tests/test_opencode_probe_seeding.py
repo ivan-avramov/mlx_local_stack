@@ -401,6 +401,12 @@ def _pinned_bin():
     return b if b.is_file() else None
 
 
+def _maybe_stamp_receipt(binary):
+    """The operator opt-in branch of the AC3 test (OPENCODE_PROBE_RECORD_VERIFIED=1)."""
+    if os.environ.get("OPENCODE_PROBE_RECORD_VERIFIED") == "1":
+        P._record_seed_propagation_verified(binary)
+
+
 def _hermetic_env(base, config_home=None, home=None):
     """E6: one controlled env for every integration spawn (incl. `--version`): temp HOME, XDG
     config/data/state/cache and TMPDIR all under `base`."""
@@ -469,11 +475,7 @@ def test_pinned_opencode_forwards_seed_and_deployed_sampling_to_the_endpoint(tmp
     assert _real_dirs_listing() == before, "an integration spawn wrote under the operator's real opencode dirs"
     cfg_home = tmp_path / "wd" / "opencode-probe" / "config-t1" / "opencode"
     assert not (cfg_home / "node_modules").exists(), "plugin install ran (network/npm activity)"
-    if os.environ.get("OPENCODE_PROBE_RECORD_VERIFIED") == "1":   # operator opt-in: stamps the manifest marker
-        from bench import paths
-        wd = paths.resolve_stack_workdir(required=False)
-        start = Path(os.environ.get("OPENCODE_PROBE_SCRATCH") or (wd / "scratch" / "octmp.noindex"))
-        P._record_seed_propagation_verified(_pinned_bin(), P._instruction_sources_sha256(P._instruction_sources(start)))
+    _maybe_stamp_receipt(_pinned_bin())
 
 
 # ------------------------------------------------------------------ B2: continuation / resume; B9: overlay map
@@ -493,7 +495,8 @@ def _identity_now(OP):
     pg = OP.progress_gate
     ident = OP._run_identity(lang="python", pure=True, poly_sha="deadbeef", tick_s=pg.DEFAULT_TICK_S,
                              hard_ceiling_s=pg.DEFAULT_HARD_CEILING_S, stall_ticks=pg.DEFAULT_STALL_TICKS,
-                             loop_repeats=pg.DEFAULT_LOOP_REPEATS, seed_base=1,
+                             loop_repeats=pg.DEFAULT_LOOP_REPEATS, seed_base=1, poll_s=5.0,
+                             cache_sha=OP._cache_bin_inventory_sha256(OP._real_cache_home()),
                              oc_bin=os.environ["OPENCODE_PROBE_BIN"], oc_version=OP.PINNED_OPENCODE_VERSION)
     return {"client": "opencode", **ident, "effective_instruction_sources": instr,
             "instruction_sources_sha256": OP._instruction_sources_sha256(instr)}
@@ -570,7 +573,8 @@ def test_resume_refuses_a_different_seed_base_naming_both(tmp_path, monkeypatch,
                                        ("lang", "go"), ("pure", False), ("polyglot_sha", "other"),
                                        ("tick_s", 1), ("hard_ceiling_s", 1), ("stall_ticks", 99),
                                        ("loop_repeats", 99), ("opencode_exe_sha256", "other"),
-                                       ("env_policy", {"XDG_STATE_HOME": "default"})])
+                                       ("env_policy", {"XDG_STATE_HOME": "default"}),
+                                       ("poll_s", 99.0), ("cache_bin_inventory_sha256", "changed-cache")])
 def test_resume_refuses_scaffold_identity_drift(tmp_path, monkeypatch, _stub_bin, field, val):
     OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
     out = tmp_path / "oc.jsonl"; _prior(OP, out, [ROW], **{field: val})
@@ -1065,48 +1069,61 @@ def test_bench_home_redirects_home_and_pins_the_real_cache_dir(monkeypatch, tmp_
     assert env["XDG_CACHE_HOME"] == str(Path(os.path.expanduser("~")) / ".cache")     # the REAL cache dir
 
 
-def test_real_home_instruction_sentinels_never_reach_the_prompt_under_the_bench_home(tmp_path, monkeypatch):
-    """Sentinels in a real-HOME stand-in (~/.opencode/agent/build.md, ~/.claude/CLAUDE.md, ~/AGENTS.md).
-    NEGATIVE check only: a manual run with HOME left at the stand-in (git init + the R8 switch on) showed none
-    of the three reaching the prompt either, so the bench HOME is belt-and-braces (operator/architect ruling
-    2026-10-06) and this test has no known positive."""
+SENTINELS = ("SENTINEL-OPENCODE-AGENT-77a1", "SENTINEL-CLAUDE-MD-77a2", "SENTINEL-HOME-AGENTS-77a3")
+
+
+def _sentinel_run(tmp_path, monkeypatch, production, b):
+    """Real-HOME stand-in with instruction sentinels; production=True is the probe's configuration (bench
+    HOME + the two switches + git init); False turns all three OFF (the positive control)."""
     fake_real = tmp_path / "realhome"
     (fake_real / ".opencode" / "agent").mkdir(parents=True)
-    (fake_real / ".opencode" / "agent" / "build.md").write_text("SENTINEL-OPENCODE-AGENT-77a1")
-    (fake_real / ".claude").mkdir(); (fake_real / ".claude" / "CLAUDE.md").write_text("SENTINEL-CLAUDE-MD-77a2")
-    (fake_real / "AGENTS.md").write_text("SENTINEL-HOME-AGENTS-77a3")
-    sentinels = ("SENTINEL-OPENCODE-AGENT-77a1", "SENTINEL-CLAUDE-MD-77a2", "SENTINEL-HOME-AGENTS-77a3")
-    b = _pinned_bin()
-    if b is None:
-        pytest.skip("pinned opencode binary absent")
-    cfgdir = tmp_path / "cfgsrc"; cfgdir.mkdir()
+    (fake_real / ".opencode" / "agent" / "build.md").write_text(SENTINELS[0])
+    (fake_real / ".claude").mkdir(); (fake_real / ".claude" / "CLAUDE.md").write_text(SENTINELS[1])
+    (fake_real / "AGENTS.md").write_text(SENTINELS[2])
     _Mock.bodies = []
     srv = ThreadingHTTPServer(("127.0.0.1", 0), _Mock)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         cfg = json.loads(SHIPPED.read_text())
-        prov = cfg["provider"]["mlx-local"]
-        prov["options"]["baseURL"] = f"http://127.0.0.1:{srv.server_address[1]}/v1"
-        src = cfgdir / "bench.json"; src.write_text(json.dumps(cfg))
+        cfg["provider"]["mlx-local"]["options"]["baseURL"] = f"http://127.0.0.1:{srv.server_address[1]}/v1"
+        src = tmp_path / "bench.json"; src.write_text(json.dumps(cfg))
         wd = fake_real / "wd"
         cfg_home = P._make_bench_config_home(wd, "r1", source=src)
         bench_home = wd / "opencode-probe" / "home"; state = bench_home / ".local" / "state"
         tmpd = wd / "opencode-probe" / "tmp-r1"
         for d in (state, tmpd):
             d.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setenv("HOME", str(fake_real))                  # the "real" home the parent process has
+        monkeypatch.setenv("HOME", str(fake_real))
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-        env = P._opencode_env(tmp_path / "data", cfg_home, state, tmpd, bench_home)
+        if not production:
+            monkeypatch.setattr(P, "SCAFFOLD_ENV_POLICY", {})
+        env = P._opencode_env(tmp_path / "data", cfg_home, state, tmpd, bench_home if production else None)
+        if not production:
+            env["HOME"] = str(fake_real); env["XDG_CACHE_HOME"] = str(tmp_path / "cache")
         proj = wd / "scratch" / "item"; proj.mkdir(parents=True)
-        P._git_init_scratch(proj); P._write_seed_overlay(proj, MODEL, 5)
+        if production:
+            P._git_init_scratch(proj)
+        P._write_seed_overlay(proj, MODEL, 5)
         P._run_opencode(MODEL, proj, "say hi", proj / "s.py", proj / "t.py", lambda w, t: (False, ""), "",
                         tick_s=300, hard_ceiling_s=170, poll_s=1.0, stall_ticks=50, loop_repeats=50,
                         pure=True, env=env, opencode_bin=str(b))
     finally:
         srv.shutdown()
     assert _Mock.bodies
-    text = json.dumps([m for body in _Mock.bodies for m in body.get("messages", [])])
-    assert not [t for t in sentinels if t in text]
+    return json.dumps([m for body in _Mock.bodies for m in body.get("messages", [])])
+
+
+def test_real_home_instruction_sentinels_never_reach_the_prompt_under_the_probe_configuration(tmp_path, monkeypatch):
+    """With a POSITIVE control: the same scenario with the two switches, git init and the bench HOME all OFF
+    must let a sentinel through, otherwise the negative result proves nothing."""
+    b = _pinned_bin()                    # resolved BEFORE the test points HOME at the stand-in
+    if b is None:
+        pytest.skip("pinned opencode binary absent")
+    (tmp_path / "pos").mkdir(); (tmp_path / "neg").mkdir()
+    leaked = _sentinel_run(tmp_path / "pos", monkeypatch, production=False, b=b)
+    assert [t for t in SENTINELS if t in leaked], "positive control failed: no sentinel reached the prompt"
+    clean = _sentinel_run(tmp_path / "neg", monkeypatch, production=True, b=b)
+    assert not [t for t in SENTINELS if t in clean]
 
 
 def test_m55_report_counts_grade_excluded_rows_separately(tmp_path):
@@ -1132,3 +1149,86 @@ def test_m55_report_counts_grade_excluded_rows_separately(tmp_path):
                        capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stderr[-600:]
     assert "excl" in out.read_text()
+
+
+# ------------------------------------------------------------------ round 5
+def test_the_opt_in_receipt_branch_writes_a_readable_receipt(monkeypatch, tmp_path):
+    b, cfg, tf = _receipt_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("OPENCODE_PROBE_RECORD_VERIFIED", "1")
+    monkeypatch.setenv("OPENCODE_PROBE_RECEIPT", str(tmp_path / "receipt.json"))
+    assert P._seed_runtime(7)["seed_propagation"] == "unverified"
+    _maybe_stamp_receipt(b)
+    assert (tmp_path / "receipt.json").is_file()
+    assert P._seed_runtime(7)["seed_propagation"] == "verified-by-test"
+    monkeypatch.delenv("OPENCODE_PROBE_RECORD_VERIFIED")
+    (tmp_path / "receipt.json").unlink()
+    _maybe_stamp_receipt(b)                       # not opted in: nothing written
+    assert not (tmp_path / "receipt.json").exists()
+
+
+def test_cache_bin_inventory_hash_tracks_files_under_the_shared_cache(tmp_path):
+    cache = tmp_path / "cache"; (cache / "opencode" / "bin").mkdir(parents=True)
+    (cache / "opencode" / "bin" / "rg").write_text("ripgrep-1")
+    h1 = P._cache_bin_inventory_sha256(cache)
+    assert h1 == P._cache_bin_inventory_sha256(cache)
+    (cache / "opencode" / "bin" / "lsp-server").write_text("x")          # a new tool appears
+    h2 = P._cache_bin_inventory_sha256(cache)
+    assert h2 != h1
+    (cache / "opencode" / "bin" / "rg").write_text("ripgrep-2")           # same size, different content
+    assert P._cache_bin_inventory_sha256(cache) != h2
+    (cache / "opencode" / "models.json").write_text("{}")                 # the catalogue is NOT inventoried
+    h3 = P._cache_bin_inventory_sha256(cache)
+    (cache / "opencode" / "models.json").write_text('{"a": 1}')
+    assert P._cache_bin_inventory_sha256(cache) == h3
+    assert P._cache_bin_inventory_sha256(tmp_path / "absent") == P._cache_bin_inventory_sha256(tmp_path / "absent2")
+
+
+def test_no_pure_flag_is_gone(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--no-pure"])
+    with pytest.raises(SystemExit) as e:
+        P.main()
+    assert e.value.code == 2
+
+
+def test_error_strings_are_pii_scrubbed_before_truncation(monkeypatch, tmp_path):
+    home = str(Path.home())
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "wd"))
+    monkeypatch.setattr(P, "_login_name", lambda: "someoperator")
+    msg = "x" * 5 + f" failed in {home}/ws/scratch/oc-1/ex as someoperator ({home}/.cache/opencode)"
+    out = P._scrub_error(msg, limit=40)
+    assert home not in out and "someoperator" not in out
+    # a cut through the home prefix cannot leave a partial prefix: scrub the whole text first, then cut
+    cut = P._scrub_error("a" * 20 + home + "/deep/path", limit=len("a" * 20) + 6)
+    assert home not in cut and "$HOME" in cut[:30]
+
+
+def test_resume_check_runs_for_a_manifest_without_rows_and_refuses_a_drift_stamp(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"
+    _prior(OP, out, [], doc_extra={"served_config_drift": {"error": "router changed"}})
+    with pytest.raises(SystemExit, match="served_config_drift"):
+        _resume_main(OP, monkeypatch, out)
+
+
+@pytest.mark.parametrize("tail,needle", [('{"id": "python/x", "sam', "line 2"),
+                                         ('{"id": "python/x", "sample": 0}', "unterminated"),
+                                         ('not json\n', "line 2")])
+def test_resume_refuses_a_corrupt_row_file_naming_the_line(tmp_path, monkeypatch, _stub_bin, tail, needle):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"; _prior(OP, out, [ROW])
+    out.write_text(out.read_text() + tail)
+    with pytest.raises(SystemExit, match=needle):
+        _resume_main(OP, monkeypatch, out)
+
+
+def test_failed_run_dir_creation_leaves_nothing_behind(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    monkeypatch.setattr(OP, "BENCH_OPENCODE_CONFIG", tmp_path / "missing-carrier.json")
+    with pytest.raises(Exception):
+        _resume_main(OP, monkeypatch, tmp_path / "oc.jsonl")
+    left = [p.name for p in (tmp_path / "opencode-probe").iterdir()] if (tmp_path / "opencode-probe").exists() else []
+    assert not [n for n in left if n.startswith(("config-", "tmp-"))], left
+    with pytest.raises(Exception):                       # and directly, without main()'s cleanup
+        OP._make_run_dirs(tmp_path, "direct")
+    assert not (tmp_path / "opencode-probe" / "config-direct").exists()
+    assert not (tmp_path / "opencode-probe" / "tmp-direct").exists()
