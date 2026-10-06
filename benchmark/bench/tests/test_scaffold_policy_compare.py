@@ -69,3 +69,20 @@ def test_is_compatible_refuses_differing_or_legacy_scaffold_policy():
     assert provenance.is_compatible(m("a"), m("a")) is True
     assert provenance.is_compatible(m("a"), m("b")) is False
     assert provenance.is_compatible(m(None), m("a")) is False
+
+
+# ---------------------------------------------------------------- C4: generate never cleans opencode rows
+def test_clean_stale_never_deletes_legacy_opencode_rows(tmp_path, monkeypatch):
+    G.RESULTS  # noqa: B018
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    d = tmp_path / "m"; d.mkdir()
+    (d / "opencode.jsonl").write_text('{"id": "python/x", "sample": 0}\n')
+    (d / "opencode.manifest.json").write_text(json.dumps(
+        {"sampling_profile": "deployed", "sampling": {}, "kv": {}, "fingerprint_version": 7,
+         "runtime": {"client": "opencode", "attention_policy": "auto", "lazy_prompt_embeddings": False}}))
+    monkeypatch.setattr(provenance, "current_manifest_lite", lambda m, profile, **k:
+                        {"sampling_profile": "deployed", "sampling": {}, "kv": {}, "fingerprint_version": 7,
+                         "runtime": {"attention_policy": "auto", "lazy_prompt_embeddings": False}})
+    acts = G.provenance_precheck(["m"], ["opencode"], profile="deployed", clean_stale=True)
+    assert (d / "opencode.jsonl").exists() and (d / "opencode.manifest.json").exists()
+    assert ("m", "opencode", "cleaned") not in acts

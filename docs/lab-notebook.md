@@ -4444,12 +4444,18 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   `$STACK_WORKDIR/opencode-1.18.30/node_modules/.bin/opencode` (or `OPENCODE_PROBE_BIN`) and records it in the manifest.
 - **R8.** opencode 1.18.30 has `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` (and the broad `OPENCODE_DISABLE_CLAUDE_CODE`); the probe now sets
   `..._PROMPT=true` next to `OPENCODE_DISABLE_EXTERNAL_SKILLS=true`, and both feed `scaffold_policy_sha256`. `~/.claude/CLAUDE.md` EXISTS
-  on this box (dated 2026-09-08; the proposal assumed absent) and v1 loads it when the switch is off, so rows before this change DID carry it
-  in the system prompt; the manifest now records `claude_md_present`. `~/AGENTS.md` (2026-09-07) is found by opencode's UPWARD search from a
-  non-git scratch dir and has NO switch in 1.18.30, so it reached the system prompt of every earlier row too and even of a CLAUDE.md-off row
-  (cold review mock capture). Fix: each item scratch dir is `git init`-ed (repo root stops the search; seed still merges), recorded as
+  on this box (dated 2026-09-08; the proposal assumed absent) and `~/AGENTS.md` (2026-09-07) is found by opencode's UPWARD search from a
+  non-git scratch dir (no switch exists for it in 1.18.30). Historical exposure: every earlier row ran with v1.18.30, the switch unset, the
+  files present and a non-git scratch dir, so they loaded on this box per the mechanism verified on 2026-10-06 (mock capture); the actual
+  prompts were not captured. The manifest now records `claude_md_present`. Fix: each item scratch dir is `git init`-ed (repo root stops the search; seed still merges), recorded as
   `scratch_git_init` in the scaffold-policy hash; the manifest lists `ancestor_instruction_files` with sha256 so exposure is observable.
-- **Overlay safety.** The per-item check also requires the resolved model options minus `seed` to equal the shipped config's deployed
-  sampling fields (a model missing from the global config would otherwise run with the seed only), and the manifest records
-  `opencode_global_config_sha256`, to which the seed-propagation receipt is bound.
+- **Isolated config home (operator ruling 2026-10-06).** The exact-equality check against the personal `~/.config/opencode` was rejected as
+  fragile. The probe now creates `<STACK_WORKDIR>/opencode-probe/config-<run-id>/opencode/opencode.json`, a verbatim copy of the shipped
+  `opencode_config/opencode.json` (the only file there; no global `AGENTS.md`), and runs M50 discovery, every item and the session export under
+  `XDG_CONFIG_HOME` set to it. The personal config dir is never read, hashed or modified; the per-item check requires the resolved baseURL
+  unchanged and the resolved model options == shipped block plus the seed (a mismatch is an opencode merge bug). The seed receipt binds
+  the executable, shipped config, integration test and instruction-source inventory; resume identity is `seed_base`, `scaffold_policy_sha256`,
+  `opencode_bin`, `opencode_version`, `opencode_config_sha256`, `instruction_sources_sha256`, with earlier identities kept in
+  `continuation_history`. The integration test shows a fake personal config's sampling and global `AGENTS.md` reach the request without the
+  bench config home and never with it.
 

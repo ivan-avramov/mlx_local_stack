@@ -189,7 +189,8 @@ def test_run_opencode_probe_refuses_before_the_manifest(tmp_path, monkeypatch, c
     with pytest.raises(SystemExit) as ei:
         OP.main()
     assert ei.value.code not in (0, None) and "M50" in str(ei.value.code)
-    assert list(tmp_path.iterdir()) == []
+    # the only thing created is the bench-owned opencode config home (operator ruling 2026-10-06)
+    assert [p.name for p in tmp_path.iterdir()] == ["opencode-probe"]
 
 
 def test_run_opencode_probe_does_only_the_discovery_call_before_the_check(tmp_path, monkeypatch):
@@ -203,7 +204,11 @@ def test_run_opencode_probe_does_only_the_discovery_call_before_the_check(tmp_pa
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     boom = lambda *a, **k: pytest.fail("preflight I/O before the M50 check")   # noqa: E731
     monkeypatch.setattr(OP, "_docker_available", boom)
-    monkeypatch.setattr(OP, "_opencode_version", boom)
+    # C125 (C121 review C1): the pinned binary's read-only `--version` now runs BEFORE discovery, so an
+    # override pointing at another version never executes `debug config`. It joins the pre-M50 stat of
+    # the binary; everything else here stays forbidden.
+    order = []
+    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: order.append("version") or OP.PINNED_OPENCODE_VERSION)
     monkeypatch.setattr(OP, "_polyglot_root", boom)
     monkeypatch.setattr(tempfile, "TemporaryDirectory", boom)
     monkeypatch.setattr(tempfile, "mkdtemp", boom)
@@ -214,7 +219,7 @@ def test_run_opencode_probe_does_only_the_discovery_call_before_the_check(tmp_pa
     calls = []
 
     def discovery(cwd=None, env=None, provider="mlx-local", **_k):
-        calls.append(cwd)
+        calls.append(cwd); order.append("discovery")
         raise P.ServedConfigError("M50 tripwire: refused in discovery")
     monkeypatch.setattr(P, "opencode_router_base", discovery)
     monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--lang", "go",
@@ -223,7 +228,8 @@ def test_run_opencode_probe_does_only_the_discovery_call_before_the_check(tmp_pa
         OP.main()
     assert "M50" in str(ei.value.code)
     assert [str(c) for c in calls] == [str(tmp_path)]
-    assert list(tmp_path.iterdir()) == []
+    assert order == ["version", "discovery"]
+    assert [p.name for p in tmp_path.iterdir()] == ["opencode-probe"]   # bench config home (ruling 2026-10-06)
 
 
 def test_run_opencode_probe_passes_a_workdir_data_home_to_discovery_and_creates_nothing_itself(
@@ -232,6 +238,7 @@ def test_run_opencode_probe_passes_a_workdir_data_home_to_discovery_and_creates_
     <STACK_WORKDIR>/scratch that opencode itself will create; OUR code creates no directory."""
     import run_opencode_probe as OP
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: OP.PINNED_OPENCODE_VERSION)
     seen = {}
 
     def discovery(cwd=None, env=None, provider="mlx-local", **_k):

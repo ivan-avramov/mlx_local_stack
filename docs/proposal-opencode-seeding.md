@@ -43,9 +43,11 @@ existing rows; this changes the scaffold for FUTURE opencode rows and corrects t
   (`rowschema.sample_seed`); `--seed-base` required.
 - AC3 Propagation: mock-endpoint integration test captures the request body with `seed` and the deployed fields; skip-with-reason
   when opencode is absent; version-pinned.
-- AC4 Pre-check: `opencode debug config --dir <cwd>` shows unchanged baseURL and the seed in the resolved options; a baseURL change
-  refuses (M50 shape).
-- AC5 [resolved: 1.18.30 has `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` and the broad `OPENCODE_DISABLE_CLAUDE_CODE`; `~/.claude/CLAUDE.md` exists on the box; manifest records `claude_md_present`] R8 switch set and recorded; config/skill-policy hash changes; old rows do not pool (compare refuses).
+- AC4 Pre-check [amended 2026-10-06, operator]: the probe runs opencode under a bench-owned `XDG_CONFIG_HOME`
+  (`$STACK_WORKDIR/opencode-probe/config-<run-id>/`, a verbatim copy of `opencode_config/opencode.json`, nothing else); M50 discovery and the
+  per-item `opencode debug config` run under that env; resolved baseURL unchanged and resolved model options == shipped block plus the seed,
+  else refuse (M50 shape). The personal `~/.config/opencode` is never read.
+- AC5 [resolved: the bench config home carries no global `AGENTS.md`; ancestor-chain instruction files and `~/.claude/CLAUDE.md` are hashed into `instruction_sources_sha256` and the scaffold-policy hash; item dirs are `git init`-ed; 1.18.30 has `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT` and the broad `OPENCODE_DISABLE_CLAUDE_CODE`; `~/.claude/CLAUDE.md` exists on the box; manifest records `claude_md_present`] R8 switch set and recorded; config/skill-policy hash changes; old rows do not pool (compare refuses).
 - AC6 [REPLACED by C123, 2026-10-06] Re-pin to 2.0.20 is WRONG: v2.0.20 lacks `--dir`/`--pure` and forwards no model `options` into the request. Keep `PINNED_OPENCODE_VERSION = "1.18.30"`; the probe resolves the binary from `$STACK_WORKDIR/opencode-1.18.30/node_modules/.bin/opencode` (or `OPENCODE_PROBE_BIN`) and records its portable path in the manifest.
 - AC7 Record: lab-notebook retraction entry; `docs/specs/m55-polyglot-gap.md` and `m54-agentbench-os.md` annotated "sessions were
   unseeded"; README/campaign-results evidence rows carry the label where they cite k=2 sessions.
