@@ -952,6 +952,31 @@ def registry_mtp_verify_scan(model: str, registry_path: str | None = None,
                             from_worker, lambda v: v or "per_query", declared_with_ab)
 
 
+def worker_serving_facts(model: str, registry_path: str | None = None,
+                         worker_lookup=_DEFAULT_LOOKUP) -> dict | None:
+    """The live worker's `--model` / `--draft-kind` / `--mtp-verify-scan` / `--mtp-verify-ab` flags
+    for `model`, or None when no worker serves it (or the registry is unreadable / lacks the model).
+    Same attribution as the serving controls: the ONE worker whose `--model` equals the entry's
+    hf_path; ambiguity or a failed observation raises ServingStateError."""
+    registry_path = str(paths.registry_path()) if registry_path is None else registry_path
+    try:
+        with open(registry_path) as f:
+            doc = yaml.safe_load(f)
+    except Exception:  # noqa: BLE001 — provenance is best-effort when the registry is unreadable
+        return None
+    entries = doc.get("models", doc) if isinstance(doc, dict) else doc
+    for e in entries or []:
+        if isinstance(e, dict) and e.get("name") == model:
+            argv = _worker_for(e, worker_lookup, doc)
+            if argv is None:
+                return None
+            return {"model": _flag_value(argv, "--model"),
+                    "draft_kind": _flag_value(argv, "--draft-kind"),
+                    "mtp_verify_scan": _flag_value(argv, "--mtp-verify-scan"),
+                    "mtp_verify_ab": "--mtp-verify-ab" in argv}
+    return None
+
+
 # ----------------------------------------------------- M50 served-config tripwire (2026-09-28)
 # The process that OWNS the router port is the serving truth for WHICH registry is live. C35 only
 # checks draft_kind, and only when a worker for the requested model is already up; on 2026-09-28 a

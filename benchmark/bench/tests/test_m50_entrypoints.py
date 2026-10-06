@@ -116,7 +116,10 @@ def test_parity_replay_records_router_on_pass(tmp_path, monkeypatch):
         {"model": "m", "bench": "b", "id": "i", "seed": 1, "payload": {"max_tokens": 10}}])
     monkeypatch.setattr(R.client, "preload", lambda m, **k: 0.0)
     monkeypatch.setattr(R, "_post", lambda payload, timeout: {
-        "choices": [{"message": {"content": "x"}, "finish_reason": "stop"}], "usage": {}})
+        "choices": [{"message": {"content": "x"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1}})   # M58 AC11: usage is required
+    monkeypatch.setattr(R.provenance, "_runtime_block", lambda *a, **k: {})
+    monkeypatch.setattr(R.provenance, "worker_serving_facts", lambda *a, **k: None)
     _passing(monkeypatch, tmp_path, pid=616)
     a = _parity_args(tmp_path, tmp_path / "frozen.json")
     assert R.run(a) == 0
@@ -469,7 +472,9 @@ def test_stack_smoke_refusal_exit_2_survives_the_exception_class_change(tmp_path
 # --------------------------------------------------------------------------- round 4 (Codex cold review #3)
 def test_parity_resume_keeps_prior_router_attribution_and_refuses_config_change(tmp_path, monkeypatch):
     from bench import parity_replay as R
-    monkeypatch.setattr(R, "load_requests", lambda f, models: [])
+    # M58 AC11: complete only with every frozen key exactly once, so the journal's row is frozen too
+    monkeypatch.setattr(R, "load_requests", lambda f, models: [
+        {"model": "m", "bench": "b", "id": "i", "seed": 1, "payload": {"max_tokens": 10}}])
     monkeypatch.setattr(R.client, "preload", lambda m, **k: 0.0)
     _passing(monkeypatch, tmp_path, pid=2)
     a = _parity_args(tmp_path, tmp_path / "frozen.json"); a.resume = True

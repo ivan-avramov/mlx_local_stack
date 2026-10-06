@@ -377,3 +377,23 @@ def test_ac10_predictor_cli_choice(tmp_results):
     _pair(tmp_results)
     assert CP.main(["--model", "M", "--bench", "math500", "--tune-a", "ta", "--tune-b", "tb",
                     "--must-differ", KEY]) == 0
+
+
+# --------------------------------------------------------------------------- worker facts
+def test_worker_serving_facts_reads_the_three_flags_from_the_matching_worker(tmp_path):
+    argv = _WORKER + ["--draft-kind", "mtp", "--mtp-verify-scan", "joint_v1", "--mtp-verify-ab"]
+    got = P.worker_serving_facts("modelX", _registry(tmp_path), worker_lookup=lambda: [argv])
+    assert got == {"model": "caslca/modelX-4bit", "draft_kind": "mtp",
+                   "mtp_verify_scan": "joint_v1", "mtp_verify_ab": True}
+    plain = P.worker_serving_facts("modelX", _registry(tmp_path), worker_lookup=lambda: [_WORKER])
+    assert plain["mtp_verify_scan"] is None and plain["mtp_verify_ab"] is False
+
+
+def test_worker_serving_facts_none_without_a_matching_worker_and_refuses_ambiguity(tmp_path):
+    reg = _registry(tmp_path)
+    assert P.worker_serving_facts("modelX", reg, worker_lookup=lambda: None) is None
+    other = ["python", "-m", "mlx_vlm.server", "--model", "caslca/other"]
+    assert P.worker_serving_facts("modelX", reg, worker_lookup=lambda: [other]) is None
+    assert P.worker_serving_facts("nope", reg, worker_lookup=lambda: [_WORKER]) is None
+    with pytest.raises(P.ServingStateError):
+        P.worker_serving_facts("modelX", reg, worker_lookup=lambda: [_WORKER, _WORKER])

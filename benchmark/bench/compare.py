@@ -300,10 +300,10 @@ def _bench_gate(model_a, model_b, bench, *, metric="acc", intersect=False):
                                f"generate/ar.py:163), so the arms ran different serving paths "
                                f"even though the registry says both were {da!r}")
 
-    # SERVING CONTROLS (M57, fingerprint v7: attention_policy, lazy_prompt_embeddings) — fatal for
+    # SERVING CONTROLS (M57 v7: attention_policy, lazy_prompt_embeddings; M58 v8: mtp_verify_scan) — fatal for
     # EVERY metric, like draft_kind: they change the executed kernels/graph, so rows differ in
-    # numerics and in latency/memory. Pre-v7 manifests read as the default (a KNOWN value,
-    # provenance.control_of), so a pre-v7 baseline compares with a v7 default row and refuses
+    # numerics and in latency/memory. Manifests older than a control read as its default (a KNOWN
+    # value, provenance.control_of), so a pre-v7/v8 baseline compares with a default row and refuses
     # against a non-default one. An UNRESOLVED value on a v7 row ("unknown"/absent) REFUSES
     # (amendment 1 S1): there is no warning path, ignorance is not a wildcard here.
     for k in provenance._SERVING_CONTROLS:
