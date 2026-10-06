@@ -18,7 +18,7 @@ _VERIFY = {"verify_blocks_joint_v1": 120, "verify_blocks_per_query": 3,
            "verify_blocks_straddle": 2, "verify_blocks_straddle_len2": 1, "verify_blocks_len1": 40,
            "verify_fallback_reasons": {"mask_form": 3},
            "verify_ab_blocks": 118, "verify_ab_mismatch": 0,
-           "verify_ab_straddle_blocks": 2, "verify_ab_straddle_mismatch": 2}
+           "verify_ab_straddle_blocks": 2, "verify_ab_straddle_mismatch": 2, "verify_ab_invalid": 0}
 
 
 class VerifyDriver(DraftDriver):

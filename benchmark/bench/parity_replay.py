@@ -138,6 +138,8 @@ def _resume_refusal(doc, router, entry_state, entry_runtime, hashes, entry_code)
         return "it carries a served_config_drift stamp (its rows are not trustworthy)"
     if doc.get("status") not in ("running", "aborted"):   # an aborted (e.g. transport) run resumes
         return f"its status is {doc.get('status')!r}; only 'running'/'aborted' journals resume"
+    if doc.get("code") != entry_code:  # the journal's own code identity must be the current one
+        return "the journal's code identity differs from the current serving code"
     sha = router.get("config_sha256")
     for blk in [doc.get("router")] + list(doc.get("router_history") or []):
         if not isinstance(blk, dict) or blk.get("config_sha256") != sha or not sha:
@@ -167,12 +169,22 @@ def _count(row, key) -> int:
     return v if isinstance(v, int) and not isinstance(v, bool) else 0
 
 
+_CODE_KEYS = ("src/mlx-vlm", "src/mlx-serve")
+
+
+def _code_ok(code) -> bool:
+    """BOTH serving-path hashes present and non-empty strings."""
+    return isinstance(code, dict) and all(isinstance(code.get(k), str) and code.get(k)
+                                          for k in _CODE_KEYS)
+
+
 def _code_state():
-    """The serving-path code hashes this replay ran against (best effort; None when unavailable)."""
+    """The serving-path code hashes this replay ran against, or None unless BOTH are established."""
     try:
-        return (provenance._git_shas() or {}).get("serving_path")
+        code = (provenance._git_shas() or {}).get("serving_path")
     except Exception:  # noqa: BLE001
         return None
+    return {k: code[k] for k in _CODE_KEYS} if _code_ok(code) else None
 
 
 G1B_MIN_JOINT_FRACTION = 0.9      # spec G1b: verify_blocks_joint_v1 > 0 on >= 18 of 20 rows
@@ -384,6 +396,8 @@ def _audit(doc) -> tuple[dict, list]:
     duplicates, malformed rows, absent or NULL identity fields and draft members, content and
     reasoning digests RECOMPUTED from the stored text, and a closed-set serving scan per row."""
     by, problems, seen = {}, [], set()
+    if not _code_ok(doc.get("code")):
+        problems.append("the journal's code identity is missing or has an empty serving hash")
     for r in doc.get("rows") or []:
         try:
             k = _key(r)
@@ -395,6 +409,10 @@ def _audit(doc) -> tuple[dict, list]:
             continue
         seen.add(k)
         by[k] = r
+        if r.get("code") is not None and r.get("code") != doc.get("code"):
+            problems.append(f"row {k} code differs from its journal's code (mixed within the side)")
+        elif r.get("code") is not None and not _code_ok(r.get("code")):
+            problems.append(f"row {k} code has an empty serving hash")
         bad = _row_malformed(r)
         if bad:
             problems.append(f"malformed row {k}: {bad}")
@@ -543,7 +561,11 @@ def _compare(a) -> int:
         ident = all(x.get(f) == y.get(f) for f in _IDENTITY)
         same += ident; diff += not ident
         jrow = {"A": x, "B": y}.get(joint_side)
-        c120 = (not ident and jrow is not None
+        # C120 exempts ONLY a content/reasoning digest divergence; finish reason, token count and
+        # the MTP counters (and, checked elsewhere, code/scan/request) must still match exactly
+        core_equal = all(x.get(f) == y.get(f) for f in _IDENTITY
+                         if f not in ("content_sha256", "reasoning_sha256"))
+        c120 = (not ident and core_equal and jrow is not None
                 and _count(jrow, "verify_blocks_straddle_len2") > 0)
         if c120:   # C120: a length-2 straddle runs per-query under joint_v1: expected divergence
             diff -= 1

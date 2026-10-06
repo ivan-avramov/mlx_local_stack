@@ -263,7 +263,7 @@ def _row(key, content="x", **kw):
 
 def _write(tmp_path, name, rows, tag, expected=KEYS, status="complete"):
     p = tmp_path / name
-    p.write_text(json.dumps({"status": status, "tag": tag, "rows": rows,
+    p.write_text(json.dumps({"status": status, "tag": tag, "rows": rows, "code": dict(CODE),
                              "expected_keys": [list(k) for k in expected]}))
     return str(p)
 
@@ -858,10 +858,11 @@ def test_g1b_different_serving_code_between_sides_is_refused(tmp_path):
 
 
 def test_run_records_the_serving_code_state(env, monkeypatch, tmp_path):
-    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": {"src/mlx-vlm": "abc"}})
+    code = {"src/mlx-vlm": "abc", "src/mlx-serve": "def"}
+    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": dict(code)})
     assert R.run(_args(tmp_path)) == 0
-    assert _doc(tmp_path)["code"] == {"src/mlx-vlm": "abc"}
-    assert all(r["code"] == {"src/mlx-vlm": "abc"} for r in _doc(tmp_path)["rows"])
+    assert _doc(tmp_path)["code"] == code
+    assert all(r["code"] == code for r in _doc(tmp_path)["rows"])
 
 
 # --------------------------------------------------------------------------- round 3
@@ -872,7 +873,8 @@ def test_r3_d1_resume_refuses_a_retained_row_produced_by_other_code(env, monkeyp
     before = (tmp_path / "rep.json").read_text()
     assert _resume(tmp_path) == 2
     assert (tmp_path / "rep.json").read_text() == before        # attribution never rewritten
-    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": {"src/mlx-vlm": "NEW"}})
+    monkeypatch.setattr(R.provenance, "_git_shas",
+                        lambda: {"serving_path": {"src/mlx-vlm": "NEW", "src/mlx-serve": "bbb222"}})
     honest = json.loads(json.dumps(doc))
     honest["rows"][0]["code"] = dict(CODE)
     (tmp_path / "rep.json").write_text(json.dumps(honest))
@@ -1064,3 +1066,105 @@ def test_e10_the_completion_tail_is_inside_the_finalising_try(env, monkeypatch, 
     doc = _doc(tmp_path)
     assert state["n"] == 1 and doc["status"] == "aborted" and "disk full" in doc["error"]
     assert len(calls) == 2       # the tail's own C106 check, then the finaliser's
+
+
+# --------------------------------------------------------------------------- round 4
+def _c120(tmp_path, mutate_joint_row):
+    """One C120-tagged row (joint side, len2 straddle counter set) whose content digest differs,
+    plus a mutation of another field on the same row."""
+    a, b = _g1b_rows({4: {"verify_blocks_straddle_len2": 2}}, {4: "different"})
+    mutate_joint_row(b[4])
+    return _g1b(tmp_path, a, b)
+
+
+def test_r4_d1_the_carve_out_still_works_for_a_digest_only_divergence(tmp_path):
+    rc, out = _c120(tmp_path, lambda r: None)
+    assert rc == 0 and out["c120_rows"] == [["m", "math500", "i4"]]
+    # a reasoning-only divergence is exempt too
+    a, b = _g1b_rows({4: {"verify_blocks_straddle_len2": 2}})
+    b[4]["reasoning"] = "other"
+    b[4]["reasoning_sha256"] = R._sha("other")
+    assert _g1b(tmp_path, a, b)[0] == 0
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r.update(finish_reason="length"),
+    lambda r: r.update(completion_tokens=99),
+    lambda r: r.update(draft=dict(r["draft"], draft_n_accepted=r["draft"]["draft_n_accepted"] + 1)),
+    lambda r: r.update(draft=dict(r["draft"], draft_rounds=r["draft"]["draft_rounds"] + 1)),
+    lambda r: r.update(draft=dict(r["draft"], draft_n=r["draft"]["draft_n"] + 3)),
+    lambda r: r.update(draft=dict(r["draft"], draft_kind="eagle3")),
+], ids=["finish_reason", "completion_tokens", "draft_n_accepted", "draft_rounds", "draft_n", "draft_kind"])
+def test_r4_d1_every_non_digest_identity_field_still_fails_on_a_c120_row(tmp_path, mutate):
+    rc, out = _c120(tmp_path, mutate)
+    assert rc == 1 and out["c120_rows"] == [] and out["differing"] == 1
+
+
+def test_r4_d1_only_the_draft_counter_changes_with_the_len2_counter_set_exits_1(tmp_path):
+    a, b = _g1b_rows({4: {"verify_blocks_straddle_len2": 2}})          # digests identical
+    b[4]["draft"] = dict(b[4]["draft"], draft_n_accepted=b[4]["draft"]["draft_n_accepted"] + 1)
+    assert _g1b(tmp_path, a, b)[0] == 1
+
+
+def test_r4_d1_code_request_and_scan_differences_on_a_c120_row_are_integrity_failures(tmp_path):
+    rc, out = _c120(tmp_path, lambda r: r.update(code={"src/mlx-vlm": "x", "src/mlx-serve": "y"}))
+    assert rc == 2
+    rc, out = _c120(tmp_path, lambda r: r.update(payload_sha256="0" * 64))
+    assert rc == 2
+    rc, out = _c120(tmp_path, lambda r: r.update(runtime=dict(r["runtime"], mtp_verify_scan="joint_v2")))
+    assert rc == 2
+
+
+@pytest.mark.parametrize("bad", [{"src/mlx-vlm": None, "src/mlx-serve": None},
+                                 {"src/mlx-vlm": "a", "src/mlx-serve": None},
+                                 {"src/mlx-vlm": "", "src/mlx-serve": "b"},
+                                 {"src/mlx-vlm": "a"}])
+def test_r4_d2_entry_refuses_when_either_serving_hash_is_missing(env, monkeypatch, tmp_path, bad):
+    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": bad})
+    assert R.run(_args(tmp_path)) == 2
+    assert not (tmp_path / "rep.json").exists() and env["posted"] == []
+
+
+def test_r4_d2_resume_refuses_null_members_and_a_journal_whose_code_differs_from_its_rows(
+    env, monkeypatch, tmp_path
+):
+    doc = _journal(env, tmp_path)
+    doc["code"] = {"src/mlx-vlm": "aaa111", "src/mlx-serve": "OTHER"}      # journal vs current
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2
+    monkeypatch.setattr(R.provenance, "_git_shas", lambda: {"serving_path": {"src/mlx-vlm": None,
+                                                                               "src/mlx-serve": None}})
+    doc["code"] = dict(CODE)
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2                                            # null state at entry
+
+
+def test_r4_d2_rows_must_equal_their_journal_code_the_same_mixture_on_both_sides_still_fails(tmp_path):
+    other = {"src/mlx-vlm": "zzz", "src/mlx-serve": "bbb222"}
+    a = [_row(k) for k in KEYS]
+    b = [_row(k) for k in KEYS]
+    for side in (a, b):
+        side[1]["code"] = dict(other)                                         # identical mixture
+    rc, out = _cmp(tmp_path, a, b)
+    assert rc == 2 and sum("mixed within the side" in p for p in out["integrity"]) == 2
+
+
+@pytest.mark.parametrize("bad", [{"src/mlx-vlm": None, "src/mlx-serve": None},
+                                 {"src/mlx-vlm": "a", "src/mlx-serve": ""},
+                                 {"src/mlx-vlm": "a"}])
+def test_r4_d2_null_or_empty_members_are_integrity_failures_in_compare(tmp_path, bad):
+    def corrupt(r):
+        r["code"] = dict(bad)
+    rows_a = [_row(k) for k in KEYS]
+    rows_b = [_row(k) for k in KEYS]
+    for rows in (rows_a, rows_b):
+        corrupt(rows[0])
+    pa = _write(tmp_path, "A.json", rows_a, "A")
+    pb = _write(tmp_path, "B.json", rows_b, "B")
+    for name in ("A.json", "B.json"):                      # journals carry the same corrupt code
+        doc = json.loads((tmp_path / name).read_text())
+        doc["code"] = dict(bad)
+        (tmp_path / name).write_text(json.dumps(doc))
+    a = argparse.Namespace(a=pa, b=pb, out=str(tmp_path / "o.json"))
+    assert R.compare(a) == 2
+    assert json.loads((tmp_path / "o.json").read_text())["integrity"]
