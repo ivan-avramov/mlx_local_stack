@@ -321,7 +321,11 @@ def provenance_precheck(models, benches, profile="production", clean_stale=False
     are folded into the current config so an OFAT sweep correctly treats prior-temperature
     results as stale. Returns a list of (model, bench, action) for the affected pairs."""
     from . import provenance
-    actions = []
+    # Phase 1 — validate EVERY selected model and build the whole cleanup plan; nothing is touched
+    # until all models resolved (a refusal on model N must never follow a deletion for model 1).
+    for m in models:
+        provenance.assert_serving_state(m)   # unresolved/invalid serving state refuses BEFORE cleanup
+    plan = []                                # (model, bench, jsonl, manifest path, compatible)
     for m in models:
         try:
             cur = provenance.current_manifest_lite(m, profile, overrides=overrides)
@@ -347,18 +351,22 @@ def provenance_precheck(models, benches, profile="production", clean_stale=False
                     existing = None
             if provenance.is_compatible(existing, cur):
                 continue
-            if clean_stale:
-                jsonl.unlink()
-                if mp.exists():
-                    mp.unlink()
-                actions.append((m, b, "cleaned"))
-                print(f"  [provenance] CLEANED stale {m}/{b} (config differs from this run) "
-                      f"— regenerating fresh", flush=True)
-            else:
-                actions.append((m, b, "stale"))
-                print(f"  [provenance] ⚠️  STALE {m}/{b}: existing results were produced under a "
-                      f"DIFFERENT config — resume would MIX provenance. Re-run with --clean-stale "
-                      f"(or delete the file).", flush=True)
+            plan.append((m, b, jsonl, mp))
+    # Phase 2 — execute.
+    actions = []
+    for m, b, jsonl, mp in plan:
+        if clean_stale:
+            jsonl.unlink()
+            if mp.exists():
+                mp.unlink()
+            actions.append((m, b, "cleaned"))
+            print(f"  [provenance] CLEANED stale {m}/{b} (config differs from this run) "
+                  f"— regenerating fresh", flush=True)
+        else:
+            actions.append((m, b, "stale"))
+            print(f"  [provenance] ⚠️  STALE {m}/{b}: existing results were produced under a "
+                  f"DIFFERENT config — resume would MIX provenance. Re-run with --clean-stale "
+                  f"(or delete the file).", flush=True)
     return actions
 
 
@@ -481,6 +489,8 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
     # Provenance: stamp every (model, bench) with its exact config (box, code SHAs, quant
     # effective-bits, KV config, sampling) so results are never silently cross-compared.
     pairs = {(m, b) for m, b, _it, _s in queue}
+    # M58: the scan each manifest is about to stamp; re-resolved once the model is loaded (below).
+    scan_entry = {m: provenance.registry_mtp_verify_scan(m)["mtp_verify_scan"] for m in models}
     stamp_manifests(pairs, profile=sampling_profile, overrides=overrides, tune=tune,
                     probe_timeout=probe_timeout)
     if restart_fn is not None:
@@ -516,6 +526,11 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
             if model != cur_model:
                 load_s = client.preload(model)
                 print(f"  >> loaded {model} ({load_s}s)", flush=True)
+                loaded_scan = provenance.registry_mtp_verify_scan(model)["mtp_verify_scan"]
+                if loaded_scan != scan_entry[model]:     # M58: before the first measured request
+                    raise provenance.ServedConfigError(
+                        f"M58: mtp_verify_scan for {model!r} changed from {scan_entry[model]!r} "
+                        f"(stamped in the manifest) to {loaded_scan!r} once loaded; refusing")
                 cur_model = model
             t0 = time.perf_counter()
             try:
@@ -564,6 +579,11 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                 _sd = {k: _tm[k] for k in ("sdpa_forced", "sdpa_auto") if k in _tm}
                 if _sd:
                     row["sdpa"] = _sd
+                # M58 joint-verification counters: EVERY `verify_*` key, present only when the
+                # server sends them (scan policy != per_query), so default rows are unchanged.
+                _vd = {k: v for k, v in _tm.items() if k.startswith("verify_")}
+                if _vd:
+                    row["verify"] = _vd
                 # Row identity digests (handoff 2026-10-06): `content_sha256` is over the PERSISTED
                 # content (thinking-stripped; recomputable from the row — NOT the raw wire content
                 # that parity_replay digests under the same key); `reasoning_sha256` is over the

@@ -24,6 +24,9 @@ import vision_gate as VG  # noqa: E402
 
 from bench.tests.conftest import FakeProbe, probe_result  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
+
 
 def _tiny_jpeg_path(tmp_path) -> str:
     """A real (tiny) JPEG-looking file is not needed -- resolve_image is stubbed in every test

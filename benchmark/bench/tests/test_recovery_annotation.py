@@ -17,6 +17,10 @@ import bench.convergence as CV
 import bench.generate as G
 
 from .conftest import probe_result
+import pytest
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
 
 
 def _looping():

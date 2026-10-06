@@ -54,7 +54,8 @@ _PENALTY_FIELDS = ("presence_penalty", "repetition_penalty")
 
 # M57: the tool accepts exactly ONE named must-differ key. Everything else — including the OTHER
 # member of this tuple, which then MUST MATCH — keeps its must-match rule.
-_MUST_DIFFER_KEYS = ("draft_kind", "attention_policy", "lazy_prompt_embeddings")
+_MUST_DIFFER_KEYS = ("draft_kind", "attention_policy", "lazy_prompt_embeddings",
+                      "mtp_verify_scan")
 
 
 def _differ_value(manifest, key):
@@ -171,7 +172,7 @@ def _gate(model, bench, tune_a, tune_b, must_differ="draft_kind"):
     """Every comparability check this tool runs, short of the actual scoring. Returns a refusal
     dict (`_refuse(...)`) or `{"comparable": True, "tune_a", "tune_b", "rows_a", "rows_b",
     "n_items", "draft_a", "draft_b", "ma", "mb", "warnings"}`. `must_differ` names the ONE key
-    that must differ between the tunes (`draft_kind` or `attention_policy`).
+    that must differ between the tunes (`draft_kind`, `attention_policy`, `lazy_prompt_embeddings` or `mtp_verify_scan`).
     """
     if must_differ not in _MUST_DIFFER_KEYS:
         raise ValueError(f"compare_predictor: must_differ must be one of {_MUST_DIFFER_KEYS}, "
@@ -194,6 +195,10 @@ def _gate(model, bench, tune_a, tune_b, must_differ="draft_kind"):
                        f"is for a same-model, DIFFERENT-{must_differ} pair; use compare.py for "
                        f"a same-state comparison")
 
+    for side, m in (("A", ma), ("B", mb)):      # S5: AB gate rows are never latency/token arms
+        if provenance.control_of(m, "mtp_verify_scan")[0] == "joint_v1+ab":
+            return _refuse(f"tune {side} ran under mtp_verify_scan 'joint_v1+ab' (the gate-1 AB "
+                           f"instrument): gate rows are never latency or token arms")
     diffs, warnings = _manifest_diffs(ma, mb, must_differ)
     if diffs:
         return _refuse(f"tune {tune_a} vs {tune_b} differ on output-determining fields other "

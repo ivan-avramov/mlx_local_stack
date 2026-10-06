@@ -78,6 +78,25 @@ def pytest_sessionfinish(session, exitstatus):
         session.exitstatus = 1
 
 
+# --------------------------------------------------------------------------- M58 scan pin
+@pytest.fixture
+def pin_mtp_scan(monkeypatch):
+    """OPT-IN (M58): `assert_serving_state` refuses an unresolved `mtp_verify_scan`, and tests that
+    drive synthetic model names no registry declares cannot resolve it. Such a test requests this
+    fixture (or `pytestmark = pytest.mark.usefixtures("pin_mtp_scan")`), which resolves ONLY the
+    "unresolved" outcome to the default. The production refusal is active in every other test."""
+    import bench.provenance as P
+    real = P.registry_mtp_verify_scan
+
+    def tolerant(model, registry_path=None, worker_lookup=P._DEFAULT_LOOKUP):
+        out = real(model, registry_path, worker_lookup)
+        if out["mtp_verify_scan"] == "unknown":
+            return {"mtp_verify_scan": "per_query", "mtp_verify_scan_source": "registry"}
+        return out
+
+    monkeypatch.setattr(P, "registry_mtp_verify_scan", tolerant)
+
+
 # --------------------------------------------------------------------------- results tree
 @pytest.fixture
 def tmp_results(tmp_path, monkeypatch):

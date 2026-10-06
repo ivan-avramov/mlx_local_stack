@@ -3,6 +3,10 @@ import json
 import os
 import bench.run_reasoning as R
 from bench.model_params import params_for
+import pytest
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
 
 
 class FakeDriver:
@@ -30,7 +34,8 @@ def stub_manifest_lite(monkeypatch):
                         {"sampling_profile": profile, "sampling": dict(overrides or {}), "kv": {},
                          "git": {}, "fingerprint_version": P.FINGERPRINT_VERSION,
                          "runtime": {"draft_kind": "off", "attention_policy": "auto",
-                                     "lazy_prompt_embeddings": False}})
+                                     "lazy_prompt_embeddings": False,
+                                     "mtp_verify_scan": "per_query"}})   # v8 carries all 3
 
 
 class FakeSampler:

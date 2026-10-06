@@ -2,6 +2,10 @@
 produced under, so results can never be silently compared across boxes / code versions /
 quant or KV configs (the apples-to-apples + quality-vs-bits requirement)."""
 import bench.provenance as P
+import pytest
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
 
 
 def test_config_fingerprint_is_output_determining_slice():
@@ -78,6 +82,7 @@ def test_build_manifest_assembles_full_config():
         kv={"kv_bits": 0, "kv_quant_scheme": None},
         quant={"effective_bits": 8.0, "footprint_gb": 34.7, "mixed": False},
         sampling={"temperature": 0.6, "min_p": 0.0, "thinking_budget": 49152},
+        runtime={"mtp_verify_scan": "per_query"},     # M58: a manifest needs a resolved scan
     )
     assert m["model"] == "qwen-8bit"
     assert m["box"] == "M5"

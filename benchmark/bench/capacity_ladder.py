@@ -18,6 +18,14 @@ def _sdpa_from_raw(raw_timings: dict) -> dict | None:
     return sd or None
 
 
+def _verify_from_raw(raw_timings: dict) -> dict | None:
+    """M58 joint-verification counters: EVERY `verify_*` key of the timings block (blocks by route,
+    the fallback-reason histogram, the AB instrument's counters), or None when the server sends
+    none (policy `per_query`, or a pre-M58 server). Same pattern as `_sdpa_from_raw`."""
+    vd = {k: v for k, v in (raw_timings or {}).items() if k.startswith("verify_")}
+    return vd or None
+
+
 def _draft_from_raw(raw_timings: dict) -> dict | None:
     """Speculative-decoding engagement counters from `out["raw_timings"]`, or None when
     the server reports no drafter (draft_kind absent -> suffix/MTP was not engaged)."""
@@ -115,7 +123,7 @@ def run_ladder(driver, model: str, chars_per_token: float,
                    "memory_target_gb": memory_target_gb, "retrieval_acc": None,
                    "execution_status": "error", "within_memory_target": None,
                    "elapsed_s": time.monotonic() - started,
-                   "draft": None, "acceptance": None, "sdpa": None,
+                   "draft": None, "acceptance": None, "sdpa": None, "verify": None,
                    "error": f"{type(e).__name__}: {str(e)[:160]}",
                    "error_kind": "timeout" if _is_timeout_error(e) else "request_error"}
             records.append(row)
@@ -151,7 +159,8 @@ def run_ladder(driver, model: str, chars_per_token: float,
                "memory_telemetry_note": "Missing or invalid MLX peak" if target_flag is None else None,
                "draft": draft,
                "acceptance": _acceptance_from_draft(draft),
-               "sdpa": _sdpa_from_raw(out.get("raw_timings") or {})}
+               "sdpa": _sdpa_from_raw(out.get("raw_timings") or {}),
+               "verify": _verify_from_raw(out.get("raw_timings") or {})}
         records.append(row)
         if on_record:
             on_record(row)

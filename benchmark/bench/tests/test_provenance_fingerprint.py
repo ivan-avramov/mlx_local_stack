@@ -16,7 +16,11 @@ So the fingerprint is VERSIONED and comparison happens on the slice both sides d
 the old behaviour — while two v2 manifests compare on the full set. The guard gets stronger for
 new results and cannot retroactively condemn old ones.
 """
+import pytest
 import bench.provenance as P
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
 
 
 def _v1(temp=0.7, profile="production", kv_bits=0):
@@ -610,6 +614,8 @@ def test_m50_router_block_rides_the_manifest_but_not_the_fingerprint(monkeypatch
         "attention_policy": "auto", "attention_policy_source": "registry"})
     monkeypatch.setattr(P, "registry_lazy_prompt_embeddings", lambda m, path=None: {
         "lazy_prompt_embeddings": False, "lazy_prompt_embeddings_source": "registry"})
+    monkeypatch.setattr(P, "registry_mtp_verify_scan", lambda m, path=None: {
+        "mtp_verify_scan": "per_query", "mtp_verify_scan_source": "registry"})
     monkeypatch.setattr(P, "router_owner", lambda port: _owner(tmp_path, "main_models.yaml", pid=1))
     P.assert_served_config("http://localhost:8000")            # entry
     a = P.gather("m", profile="deployed")

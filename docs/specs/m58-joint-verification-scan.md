@@ -70,6 +70,7 @@ Constants, thresholds and the domain belong to the version name.
   (fell back inside the domain; reason histogram `verify_fallback_reasons`), `verify_blocks_straddle`, `verify_blocks_len1`,
   and under AB `verify_ab_blocks`, `verify_ab_mismatch`, `verify_ab_straddle_blocks`,
   `verify_ab_straddle_mismatch`. Every `verify_*` key is persisted by capacity and `generate` rows when sent.
+- Stated limit (review F5): only the serial inline cached-session path reports `verify_*` counters; the continuous-batching `_step` path reports none, as M57's `sdpa_*`. MTP serving here uses the inline path.
 - Router: `ModelConfig.mtp_verify_scan: str = ""`, `mtp_verify_ab: bool = False`; validated in `__post_init__` (``,
   `per_query`, `joint_v1`; `joint_v1` requires `draft_kind == "mtp"` and `kv_bits == 0`; `mtp_verify_ab` requires `joint_v1`);
   `_build_command` appends the flags only for non-default values.
