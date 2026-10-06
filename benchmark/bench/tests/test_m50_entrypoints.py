@@ -14,6 +14,9 @@ import pytest
 
 import bench.provenance as P
 
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
+
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
 
@@ -487,14 +490,16 @@ def test_parity_resume_keeps_prior_router_attribution_and_refuses_config_change(
     _stub_parity_state(monkeypatch, R)
     _passing(monkeypatch, tmp_path, pid=2)
     a = _parity_args(tmp_path, tmp_path / "frozen.json"); a.resume = True
-    prev = {"pid": 1, "config": P.router_block("http://localhost:8000")["config"], "port": 8000}
-    Path(a.out).write_text(json.dumps({"status": "complete", "router": prev,
+    blk = P.router_block("http://localhost:8000")
+    prev = {"pid": 1, "config": blk["config"], "config_sha256": blk["config_sha256"], "port": 8000}
+    Path(a.out).write_text(json.dumps({"status": "running", "router": prev,
                                        "rows": [{"model": "m", "bench": "b", "id": "i",
-                                                 "payload_sha256": R._payload_sha({"max_tokens": 10}, 1)}]}))
+                                                 "payload_sha256": R._payload_sha({"max_tokens": 10}, 1),
+                                                 "runtime": {"mtp_verify_scan": "per_query"}}]}))
     assert R.run(a) == 0
     doc = json.loads(Path(a.out).read_text())
     assert doc["router"]["pid"] == 2 and doc["router_history"] == [prev] and len(doc["rows"]) == 1
-    Path(a.out).write_text(json.dumps({"status": "complete", "router": {"pid": 1, "config": "$HOME/other.yaml"},
+    Path(a.out).write_text(json.dumps({"status": "running", "router": {"pid": 1, "config": "$HOME/other.yaml"},
                                        "rows": []}))
     assert R.run(a) == 2                                     # served config changed: refuse
 

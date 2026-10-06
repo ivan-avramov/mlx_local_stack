@@ -1625,6 +1625,12 @@ def _runtime_block(runtime: dict = None, model: str = None,
         block.update(fn(model, registry_path) if model
                      else {key: "unknown", key + "_source": "no-model-given"})
     if runtime:
+        clash = sorted(k for k in runtime
+                       if k in _SERVING_CONTROLS or (k.endswith("_source")
+                                                     and k[:-len("_source")] in _SERVING_CONTROLS))
+        if clash:  # D3: an observed serving control is never overridable by a caller
+            raise ServingStateError(f"M58: runtime override of observed serving control(s) {clash}; "
+                                    f"refusing — those values come only from the worker/registry.")
         block.update(_portable_deep(runtime))   # no absolute home/workdir path reaches a manifest
     return block
 
@@ -1653,8 +1659,11 @@ def current_manifest_lite(model: str, profile: str = "production",
 
 def build_manifest(*, model, box, ts, git_shas, kv, quant, sampling, runtime=None) -> dict:
     """Pure assembly of a provenance record from its parts."""
-    if runtime and "mtp_verify_scan" in runtime:
-        check_mtp_verify_scan_value(runtime["mtp_verify_scan"], "manifest runtime block")
+    scan = (runtime or {}).get("mtp_verify_scan")
+    if scan is None or scan == "unknown":  # D3: a manifest never stamps an unresolved scan
+        raise ServingStateError("M58: build_manifest needs a RESOLVED mtp_verify_scan in the "
+                                "runtime block (missing or 'unknown'); refusing.")
+    check_mtp_verify_scan_value(scan, "manifest runtime block")
     return {
         "model": model,
         "box": box,

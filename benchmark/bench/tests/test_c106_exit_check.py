@@ -14,6 +14,9 @@ import pytest
 import bench.provenance as P
 from bench import paths
 
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
+
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
 

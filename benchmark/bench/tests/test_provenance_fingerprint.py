@@ -16,7 +16,11 @@ So the fingerprint is VERSIONED and comparison happens on the slice both sides d
 the old behaviour — while two v2 manifests compare on the full set. The guard gets stronger for
 new results and cannot retroactively condemn old ones.
 """
+import pytest
 import bench.provenance as P
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
 
 
 def _v1(temp=0.7, profile="production", kv_bits=0):

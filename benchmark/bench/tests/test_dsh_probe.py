@@ -23,6 +23,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # benchmark/ on sys.path
 import run_dsh_probe as P
 
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
+
 
 # --------------------------------------------------------------------------- _stack_workdir / _dsh_bin
 

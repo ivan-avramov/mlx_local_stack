@@ -317,6 +317,7 @@ def provenance_precheck(models, benches, profile="production", clean_stale=False
     from . import provenance
     actions = []
     for m in models:
+        provenance.assert_serving_state(m)   # D3: unresolved/invalid serving state refuses BEFORE any cleanup
         try:
             cur = provenance.current_manifest_lite(m, profile, overrides=overrides)
         except provenance.ServedConfigError:

@@ -10,6 +10,9 @@ import bench.generate as G
 import bench.paths as paths
 import bench.provenance as P
 
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
+
 
 def _registry(tmp_path, name="m", **extra):
     entry = {"name": name, "hf_path": "caslca/modelX-4bit", **extra}

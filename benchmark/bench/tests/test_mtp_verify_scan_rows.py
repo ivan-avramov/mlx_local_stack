@@ -9,6 +9,10 @@ import bench.client as C
 import bench.generate as G
 
 from bench.tests.test_capacity_ladder import DraftDriver, FakeDriver, FakeSampler, _PARAMS
+import pytest
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
 
 _VERIFY = {"verify_blocks_joint_v1": 120, "verify_blocks_per_query": 3,
            "verify_blocks_straddle": 2, "verify_blocks_len1": 40,

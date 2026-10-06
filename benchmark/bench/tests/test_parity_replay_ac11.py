@@ -120,7 +120,12 @@ def test_run_refuses_at_entry_before_anything(env, monkeypatch, tmp_path, capsys
 
 
 def test_run_serving_state_refusal_mid_run_aborts_nonzero(env, monkeypatch, tmp_path):
+    n = {"calls": 0}
+
     def refuse(runtime=None, model=None, registry_path=None):
+        n["calls"] += 1
+        if n["calls"] == 1:                      # the entry resolution passes; a later row drifts
+            return dict(RUNTIME)
         raise P.ServingStateError("C35 tripwire: worker/registry disagree")
     monkeypatch.setattr(R.provenance, "_runtime_block", refuse)
     assert R.run(_args(tmp_path)) == 2
@@ -233,6 +238,7 @@ def test_resume_keeps_rows_and_refuses_duplicates_in_the_journal(env, monkeypatc
     assert R.run(a) == 0
     doc = _doc(tmp_path)
     doc["rows"] = doc["rows"][:1] * 2                       # a corrupt journal: row 0 twice
+    doc["status"] = "running"
     (tmp_path / "rep.json").write_text(json.dumps(doc))
     a.resume = True
     assert R.run(a) == 2
@@ -245,7 +251,8 @@ def _row(key, content="x", **kw):
     row = {"model": m, "bench": b, "id": i, "seed": 11, "finish_reason": "stop",
            "payload_sha256": R._payload_sha(_reqs([key])[0]["payload"], 11),
            "prompt_tokens": 5, "completion_tokens": 3, "content": content,
-           "content_sha256": R._sha(content), "reasoning_sha256": R._sha("r"),
+           "content_sha256": R._sha(content), "reasoning_sha256": R._sha("r"), "reasoning": "r",
+           "runtime": dict(RUNTIME),
            "draft": {"draft_kind": "mtp", "draft_rounds": 7, "draft_n": 21, "draft_n_accepted": 14},
            "verify": dict(VERIFY)}
     row.update(kw)
@@ -337,7 +344,7 @@ def test_b1_legacy_docs_without_expected_keys_are_non_gating_exit_3(tmp_path, ca
     assert R.compare(argparse.Namespace(a=str(pa), b=str(pb), out=None)) == 3   # never 0
     assert "NON-GATING" in capsys.readouterr().out
     pb.write_text(json.dumps({"tag": "B", "rows": rows[:2]}))
-    assert R.compare(argparse.Namespace(a=str(pa), b=str(pb), out=None)) == 2   # a gap is still 2
+    assert R.compare(argparse.Namespace(a=str(pa), b=str(pb), out=None)) == 3   # legacy: never gating
 
 
 def test_b1_empty_inputs_exit_2(tmp_path):
@@ -401,11 +408,13 @@ def test_b2_resume_validates_journal_rows_against_the_frozen_request_hash(
     a.resume = True
     for mutate in (lambda r: r.update(payload_sha256="f" * 64), lambda r: r.pop("payload_sha256")):
         doc = json.loads(json.dumps(base))
+        doc["status"] = "running"
         mutate(doc["rows"][0])
         (tmp_path / "rep.json").write_text(json.dumps(doc))
         assert R.run(a) == 2
     assert len(env["posted"]) == posted_before                 # nothing was re-requested
-    (tmp_path / "rep.json").write_text(json.dumps(base))
+    honest = json.loads(json.dumps(base)); honest["status"] = "running"
+    (tmp_path / "rep.json").write_text(json.dumps(honest))
     assert R.run(a) == 0                                       # an honest journal still resumes
 
 
@@ -555,3 +564,194 @@ def test_s1_scan_change_between_entry_and_load_refuses(env, monkeypatch, tmp_pat
     doc = _doc(tmp_path)
     assert doc["status"] == "aborted" and doc["rows"] == [] and "changed" in doc["error"]
     assert env["posted"] == []
+
+
+# --------------------------------------------------------------------------- D1 resume identity
+def _journal(env, tmp_path, **patch):
+    """A finished honest journal, rewritten as a `running` one with `patch` applied."""
+    assert R.run(_args(tmp_path)) == 0
+    doc = _doc(tmp_path)
+    doc["status"] = "running"
+    for k, v in patch.items():
+        doc[k] = v
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    return doc
+
+
+def _resume(tmp_path):
+    a = _args(tmp_path)
+    a.resume = True
+    return R.run(a)
+
+
+def test_d1_a_drift_stamped_journal_is_never_resumed_and_keeps_its_stamp(env, tmp_path):
+    stamp = {"entry_sha256": "a", "exit_sha256": "b", "error": "C106 drift"}
+    _journal(env, tmp_path, status="aborted", served_config_drift=stamp)
+    before = (tmp_path / "rep.json").read_text()
+    posted = len(env["posted"])
+    assert _resume(tmp_path) == 2
+    assert (tmp_path / "rep.json").read_text() == before        # untouched: stamp not lost
+    assert len(env["posted"]) == posted
+
+
+@pytest.mark.parametrize("status", ["complete", "aborted", None])
+def test_d1_only_a_running_journal_resumes(env, tmp_path, status):
+    doc = _journal(env, tmp_path)
+    doc["status"] = status
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2
+
+
+def test_d1_row_serving_mode_must_match_the_entry_state(env, tmp_path):
+    doc = _journal(env, tmp_path)
+    doc["rows"][0]["runtime"]["mtp_verify_scan"] = "joint_v1+ab"     # an AB gate row
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2
+
+
+@pytest.mark.parametrize("field,value", [("attention_policy", "auto"), ("draft_kind", "off"),
+                                         ("lazy_prompt_embeddings", True)])
+def test_d1_row_runtime_slice_must_match_the_entry_state(env, tmp_path, field, value):
+    doc = _journal(env, tmp_path)
+    doc["rows"][1]["runtime"][field] = value
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2
+
+
+def test_d1_a_row_without_a_runtime_slice_is_refused(env, tmp_path):
+    doc = _journal(env, tmp_path)
+    del doc["rows"][0]["runtime"]
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2
+
+
+def test_d1_router_config_hash_must_match_including_history(env, tmp_path):
+    doc = _journal(env, tmp_path)
+    doc["router"]["config_sha256"] = "0" * 64
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2
+    doc = json.loads((tmp_path / "rep.json").read_text())
+    doc["router"]["config_sha256"] = _doc_sha(tmp_path)
+    doc["router_history"] = [{"pid": 1, "config": "x", "config_sha256": "f" * 64}]
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 2
+
+
+def _doc_sha(tmp_path):
+    return P.router_block(R.client.BASE)["config_sha256"]
+
+
+def test_d1_an_honest_running_journal_resumes_and_keeps_router_history(env, monkeypatch, tmp_path):
+    doc = _journal(env, tmp_path)
+    prev = dict(doc["router"], pid=1)                          # produced by an earlier router pid
+    doc["router"] = prev
+    doc["rows"] = doc["rows"][:2]
+    (tmp_path / "rep.json").write_text(json.dumps(doc))
+    assert _resume(tmp_path) == 0
+    out = _doc(tmp_path)
+    assert out["status"] == "complete" and len(out["rows"]) == 3 and out["router_history"] == [prev]
+
+
+# --------------------------------------------------------------------------- D2 compare rows
+def _mod(tmp_path, mutate_a=None, mutate_b=None):
+    a = [_row(k) for k in KEYS]
+    b = [_row(k) for k in KEYS]
+    if mutate_a:
+        mutate_a(a[0])
+    if mutate_b:
+        mutate_b(b[0])
+    return _cmp(tmp_path, a, b)
+
+
+@pytest.mark.parametrize("field", ["content_sha256", "reasoning_sha256", "finish_reason",
+                                   "completion_tokens", "draft", "content", "reasoning", "runtime"])
+def test_d2_null_identity_fields_are_integrity_failures_even_when_both_sides_agree(tmp_path, field):
+    def null(r):
+        r[field] = None
+    rc, out = _mod(tmp_path, null, null)
+    assert rc == 2 and any(field in p for p in out["integrity"])
+
+
+@pytest.mark.parametrize("member", ["draft_kind", "draft_rounds", "draft_n", "draft_n_accepted"])
+def test_d2_null_draft_members_are_integrity_failures(tmp_path, member):
+    def null(r):
+        r["draft"] = dict(r["draft"], **{member: None})
+    rc, out = _mod(tmp_path, null, null)
+    assert rc == 2 and any(member in p for p in out["integrity"])
+
+
+def test_d2_changed_content_with_a_stale_digest_is_refused(tmp_path):
+    def tamper(r):
+        r["content"] = "changed text"                          # digest left stale
+    rc, out = _mod(tmp_path, tamper, tamper)
+    assert rc == 2 and any("content_sha256" in p for p in out["integrity"])
+
+    def tamper_reasoning(r):
+        r["reasoning"] = "other"
+    rc, out = _mod(tmp_path, tamper_reasoning, tamper_reasoning)
+    assert rc == 2 and any("reasoning_sha256" in p for p in out["integrity"])
+
+
+@pytest.mark.parametrize("bad", ["joint_v2", "unknown", None])
+def test_d2_each_rows_scan_must_be_in_the_closed_set(tmp_path, bad):
+    def setscan(r):
+        r["runtime"] = dict(r["runtime"], mtp_verify_scan=bad)
+    rc, out = _mod(tmp_path, setscan, setscan)
+    assert rc == 2 and any("mtp_verify_scan" in p for p in out["integrity"])
+
+
+def test_d2_pre_m58_rows_exit_3_before_any_modern_audit(tmp_path, capsys):
+    legacy = [{"model": m, "bench": b, "id": i, "finish_reason": "stop", "completion_tokens": 3,
+               "content_sha256": "x", "reasoning_sha256": "y"} for m, b, i in KEYS]
+    for name, tag in (("A.json", "A"), ("B.json", "B")):
+        (tmp_path / name).write_text(json.dumps({"tag": tag, "rows": legacy}))   # no status either
+    a = argparse.Namespace(a=str(tmp_path / "A.json"), b=str(tmp_path / "B.json"),
+                           out=str(tmp_path / "o.json"))
+    assert R.compare(a) == 3
+    out = capsys.readouterr().out
+    assert "NON-GATING" in out and "INTEGRITY" not in out and "exit 3" in out
+    assert json.loads((tmp_path / "o.json").read_text())["legacy"] is True
+
+
+def test_d2_run_rows_pass_their_own_audit(env, tmp_path):
+    assert R.run(_args(tmp_path)) == 0
+    doc = _doc(tmp_path)
+    by, problems = R._audit(doc)
+    assert problems == [] and len(by) == 3
+
+
+# --------------------------------------------------------------------------- D4 finalisation
+@pytest.mark.parametrize("bad", [
+    {"choices": [{"message": {"content": "x"}, "finish_reason": "stop"}], "usage": [1]},
+    {"choices": [{"message": {"content": "x"}, "finish_reason": "stop"}], "usage": "n/a"},
+    {"choices": ["notadict"], "usage": {"prompt_tokens": 1, "completion_tokens": 1}},
+    {"choices": [{"message": [], "finish_reason": "stop"}], "usage": {"prompt_tokens": 1,
+                                                                         "completion_tokens": 1}},
+])
+def test_d4_unusual_response_structures_abort_through_the_finaliser(env, monkeypatch, tmp_path, bad):
+    calls = _spy_exit(monkeypatch)
+    env["responses"] = [bad]
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert doc["status"] == "aborted" and "malformed" in doc["error"] and len(calls) == 1
+
+
+def test_d4_an_unexpected_exception_after_entry_is_finalised_with_the_original_error(
+    env, monkeypatch, tmp_path
+):
+    calls = _spy_exit(monkeypatch, drift="C106: drifted")
+    monkeypatch.setattr(R.provenance, "worker_serving_facts",
+                        lambda *a, **k: (_ for _ in ()).throw(KeyError("surprise")))
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert len(calls) == 1 and "surprise" in doc["error"] and "served_config_drift" in doc
+
+
+def test_d4_the_final_c106_refusal_stamps_drift_without_a_second_exit_check(
+    env, monkeypatch, tmp_path
+):
+    calls = _spy_exit(monkeypatch, drift="C106: final drift")
+    assert R.run(_args(tmp_path)) == 2
+    doc = _doc(tmp_path)
+    assert doc["status"] == "aborted" and len(calls) == 1
+    assert "C106" in json.dumps(doc["served_config_drift"])

@@ -273,7 +273,7 @@ def _write_existing(tmp_path, model, bench, manifest):
     (d / f"{bench}.manifest.json").write_text(json.dumps(manifest))
 
 
-def test_ac12_clean_stale_never_archives_a_v7_row_for_the_missing_key(tmp_path, monkeypatch):
+def test_ac12_clean_stale_never_archives_a_v7_row_for_the_missing_key(tmp_path, monkeypatch, pin_mtp_scan):
     monkeypatch.setattr(G, "RESULTS", tmp_path)
     _write_existing(tmp_path, "m", "aime", _man(7, policy="fused_v1"))
     monkeypatch.setattr(P, "current_manifest_lite", lambda m, profile, **k:
@@ -284,7 +284,7 @@ def test_ac12_clean_stale_never_archives_a_v7_row_for_the_missing_key(tmp_path, 
     assert (tmp_path / "m" / "aime.manifest.json").exists()
 
 
-def test_ac12_resume_refuses_a_v7_row_under_joint_v1(tmp_path, monkeypatch):
+def test_ac12_resume_refuses_a_v7_row_under_joint_v1(tmp_path, monkeypatch, pin_mtp_scan):
     monkeypatch.setattr(G, "RESULTS", tmp_path)
     _write_existing(tmp_path, "m", "aime", _man(7, policy="fused_v1"))
     monkeypatch.setattr(P, "current_manifest_lite", lambda m, profile, **k:
@@ -294,7 +294,7 @@ def test_ac12_resume_refuses_a_v7_row_under_joint_v1(tmp_path, monkeypatch):
     assert (tmp_path / "m" / "aime.jsonl").exists()
 
 
-def test_ac12_resume_refuses_a_v8_row_with_a_missing_value(tmp_path, monkeypatch):
+def test_ac12_resume_refuses_a_v8_row_with_a_missing_value(tmp_path, monkeypatch, pin_mtp_scan):
     monkeypatch.setattr(G, "RESULTS", tmp_path)
     _write_existing(tmp_path, "m", "aime", _man(8, policy="fused_v1"))   # no scan value
     monkeypatch.setattr(P, "current_manifest_lite", lambda m, profile, **k:
@@ -533,3 +533,58 @@ def test_s5_predictor_rejects_an_ab_gate_row_as_an_arm(tmp_results):
     assert r["comparable"] is False and "gate" in r["reason"]
     _pair(tmp_results, scan_a="joint_v1+ab", scan_b="joint_v1")
     assert CP.compare_predictor("M", "math500", "ta", "tb", must_differ=KEY)["comparable"] is False
+
+
+# --------------------------------------------------------------------------- D3 unresolved state
+def test_d3_missing_model_refuses_before_cleanup_and_deletes_nothing(tmp_path, monkeypatch):
+    import bench.paths as paths
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    reg = _registry(tmp_path, "joint_v1")                    # declares modelX only
+    monkeypatch.setattr(paths, "registry_path", lambda: __import__("pathlib").Path(reg))
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [])
+    _write_existing(tmp_path, "ghost", "aime", _man(7))
+    before = (tmp_path / "ghost" / "aime.jsonl").read_text()
+    for clean in (True, False):
+        with pytest.raises(P.ServedConfigError, match=KEY):
+            G.provenance_precheck(["ghost"], ["aime"], profile="deployed", clean_stale=clean)
+    assert (tmp_path / "ghost" / "aime.jsonl").read_text() == before
+    assert (tmp_path / "ghost" / "aime.manifest.json").exists()
+
+
+def test_d3_generate_run_with_a_missing_model_refuses_before_any_effect(tmp_path, monkeypatch):
+    import bench.benchmarks as B
+    import bench.client as C
+    import bench.paths as paths
+    monkeypatch.setattr(G, "RESULTS", tmp_path)
+    reg = _registry(tmp_path, "joint_v1")
+    monkeypatch.setattr(paths, "registry_path", lambda: __import__("pathlib").Path(reg))
+    monkeypatch.setattr(P, "_worker_argvs", lambda doc: [])
+    monkeypatch.setattr(B, "load", lambda b, lim, seed: [{"id": "t1", "prompt": "p"}])
+    calls = []
+    monkeypatch.setattr(C, "preload", lambda *a, **k: calls.append("preload"))
+    monkeypatch.setattr(C, "probe", lambda *a, **k: calls.append("probe"))
+    _write_existing(tmp_path, "ghost", "aime", _man(7))
+    with pytest.raises(P.ServedConfigError):
+        G.run(["ghost"], ["aime"], {}, clean_stale=True)
+    assert calls == [] and (tmp_path / "ghost" / "aime.jsonl").exists()
+
+
+@pytest.mark.parametrize("key", ["mtp_verify_scan", "attention_policy", "lazy_prompt_embeddings",
+                                 "mtp_verify_scan_source"])
+def test_d3_runtime_block_refuses_an_override_of_an_observed_control(tmp_path, monkeypatch, key):
+    monkeypatch.setattr(P, "apc_state", lambda: {"apc_enabled": "0", "source": "process"})
+    monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "mtp"})
+    monkeypatch.setattr(P, "session_retention_state",
+                        lambda: {"session_retain_prompt_end": "on", "session_retain_source": "w"})
+    reg = _registry(tmp_path, "joint_v1")
+    with pytest.raises(P.ServingStateError, match="override"):
+        P._runtime_block({key: "per_query"}, model="modelX", registry_path=reg)
+    assert P._runtime_block({"probe": "x"}, model="modelX", registry_path=reg)["probe"] == "x"
+
+
+@pytest.mark.parametrize("runtime", [None, {}, {"mtp_verify_scan": None},
+                                     {"mtp_verify_scan": "unknown"}, {"mtp_verify_scan": "joint_v2"}])
+def test_d3_build_manifest_refuses_a_missing_unknown_or_invalid_scan(runtime):
+    kw = dict(model="m", box="b", ts="t", git_shas={}, kv={}, quant={}, sampling={})
+    with pytest.raises(P.ServingStateError):
+        P.build_manifest(runtime=runtime, **kw)

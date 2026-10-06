@@ -12,6 +12,10 @@ import bench.benchmarks as B
 import bench.client as C
 import bench.generate as G
 import bench.provenance as P
+import pytest
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
 
 
 def test_gather_stamps_tune_when_given(tmp_path, monkeypatch):

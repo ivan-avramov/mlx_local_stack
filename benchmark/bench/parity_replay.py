@@ -61,6 +61,13 @@ def _payload_sha(payload: dict, seed) -> str:
 
 
 def _malformed(resp) -> str | None:
+    try:
+        return _malformed_checked(resp)
+    except Exception as e:  # noqa: BLE001 - a structure we cannot even inspect is malformed
+        return f"unparseable response structure ({type(e).__name__}: {e})"
+
+
+def _malformed_checked(resp) -> str | None:
     """None for a well-formed chat completion, else why not: an object without `error`, a
     `choices[0].message` object, a string finish reason, NON-EMPTY content OR a finish reason, and
     integer usage. (Empty content with a finish reason is valid: a budget hit with reasoning only.)"""
@@ -81,8 +88,10 @@ def _malformed(resp) -> str | None:
     if not (msg.get("content") or finish):
         return "empty content and no finish_reason"
     us = resp.get("usage")
+    if not isinstance(us, dict):
+        return f"usage is {type(us).__name__}, not an object"
     for k in ("prompt_tokens", "completion_tokens"):
-        v = (us or {}).get(k)
+        v = us.get(k)
         if isinstance(v, bool) or not isinstance(v, int) or v < 0:
             return f"usage.{k} missing or not a non-negative integer ({v!r})"
     return None
@@ -119,11 +128,41 @@ def load_requests(frozen_path: str, models: list[str] | None) -> list[dict]:
     return out
 
 
+_RUNTIME_IDENTITY = ("attention_policy", "lazy_prompt_embeddings", "mtp_verify_scan", "draft_kind")
+
+
+def _resume_refusal(doc, router, entry_state, entry_runtime, hashes) -> str | None:
+    """Why `doc` may not be resumed, else None. Validated BEFORE `done` is computed."""
+    if doc.get("served_config_drift"):
+        return "it carries a served_config_drift stamp (its rows are not trustworthy)"
+    if doc.get("status") != "running":
+        return f"its status is {doc.get('status')!r}, not 'running'"
+    sha = router.get("config_sha256")
+    for blk in [doc.get("router")] + list(doc.get("router_history") or []):
+        if not isinstance(blk, dict) or blk.get("config_sha256") != sha or not sha:
+            return "a router block in the journal has a different (or no) served-config hash"
+    for r in doc.get("rows") or []:
+        k = _key(r)
+        if hashes.get(k) is None or r.get("payload_sha256") != hashes[k]:
+            return f"row {k} does not match the frozen payload+seed hash"
+        rt = r.get("runtime")
+        if not isinstance(rt, dict):
+            return f"row {k} has no runtime slice"
+        want = entry_runtime[k[0]]
+        for f in _RUNTIME_IDENTITY:
+            if rt.get(f) != want.get(f):
+                return (f"row {k} was produced with {f}={rt.get(f)!r}, the entry state is "
+                        f"{want.get(f)!r}")
+        if rt.get("mtp_verify_scan") != entry_state[k[0]]["mtp_verify_scan"]:
+            return f"row {k} mtp_verify_scan differs from the entry value"
+    return None
+
+
 def _key(r) -> tuple:
     return (r["model"], r["bench"], r["id"])
 
 
-def _abort(out, status_doc, error, rows, router=None, check_exit=True) -> int:
+def _abort(out, status_doc, error, rows, router=None, check_exit=True, drift=None) -> int:
     """Failure-safe finalization: write the aborted journal with the ORIGINAL error, after a C106
     exit verification whose own failure (drift or crash) is recorded beside it, never instead of it."""
     doc = {**status_doc, "status": "aborted", "error": error, "rows": rows}
@@ -136,8 +175,20 @@ def _abort(out, status_doc, error, rows, router=None, check_exit=True) -> int:
                     router, client.BASE, e)
             except Exception:  # noqa: BLE001
                 doc["served_config_drift"] = {"error": str(e)}
+    if drift is not None:  # the exit check already failed (final C106): stamp it, never drop it
+        try:
+            doc["served_config_drift"] = provenance.served_config_drift_record(router, client.BASE, drift)
+        except Exception:  # noqa: BLE001
+            doc["served_config_drift"] = {"error": str(drift)}
     json.dump(doc, open(out, "w"), indent=1)
     return 2
+
+
+def _finalise_unexpected(out, base, rows, router, e) -> int:
+    """One failure-finalisation path for anything unexpected after entry: the original error is
+    kept, the C106 exit check runs, drift is recorded."""
+    print(f"[parity_replay] UNEXPECTED {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+    return _abort(out, base, f"unexpected: {type(e).__name__}: {e}", rows, router)
 
 
 def run(a) -> int:
@@ -163,21 +214,25 @@ def run(a) -> int:
     except provenance.ServedConfigError as e:
         print(f"[parity_replay] REFUSED: {e}", file=sys.stderr, flush=True)
         return 2
+    try:  # the entry runtime slice every retained / new row must agree with
+        entry_runtime = {m: provenance._runtime_block(None, model=m) for m in entry_state}
+    except provenance.ServedConfigError as e:
+        print(f"[parity_replay] REFUSED: {e}", file=sys.stderr, flush=True)
+        return 2
     out = Path(a.out); out.parent.mkdir(parents=True, exist_ok=True)
     rows = []; history = []
     if out.exists() and a.resume:
         prev_doc = json.load(open(out))
+        why = _resume_refusal(prev_doc, router, entry_state, entry_runtime, hashes)
+        if why:  # D1: a journal is resumable only if it is a clean, same-identity, running one
+            print(f"[parity_replay] REFUSED: cannot resume {out}: {why}", file=sys.stderr, flush=True)
+            return 2
         rows = prev_doc["rows"]
         row_keys = [_key(r) for r in rows]
         if len(set(row_keys)) != len(row_keys):
             print(f"[parity_replay] REFUSED: the journal {out} holds a duplicate row", file=sys.stderr,
                   flush=True)
             return 2
-        for r in rows:  # B2: a resumed row must answer THE frozen request (payload + seed hash)
-            if hashes.get(_key(r)) is None or r.get("payload_sha256") != hashes[_key(r)]:
-                print(f"[parity_replay] REFUSED: journal row {_key(r)} does not match the frozen "
-                      f"payload+seed hash", file=sys.stderr, flush=True)
-                return 2
         prev = prev_doc.get("router"); history = list(prev_doc.get("router_history") or [])
         if isinstance(prev, dict) and prev.get("config") and prev.get("config") != router["config"]:
             print(f"[parity_replay] REFUSED: resuming {out} produced under served config "
@@ -191,68 +246,72 @@ def run(a) -> int:
     base = {"tag": a.tag, "base": client.BASE, "router": router, "router_history": history,
             "frozen": a.frozen, "expected_keys": [list(k) for k in keys]}
     cur_model = None
-    for i, r in enumerate(todo, 1):
-        if r["model"] != cur_model:
+    try:
+        for i, r in enumerate(todo, 1):
+            if r["model"] != cur_model:
+                try:
+                    client.preload(r["model"])
+                    provenance.assert_serving_state(r["model"], expect=entry_state[r["model"]])
+                except Exception as e:  # noqa: BLE001 - never leaves a half-written run unfinalised
+                    print(f"[parity_replay] PRELOAD/RE-RESOLVE FAILED {r['model']}: {e}", file=sys.stderr,
+                          flush=True)
+                    return _abort(out, base, f"preload: {type(e).__name__}: {e}", rows, router)
+                cur_model = r["model"]
+            mt = int(r["payload"].get("max_tokens") or 102400)
+            timeout = mt / FLOOR_DECODE_TPS + HEADROOM_S
+            t0 = time.perf_counter()
             try:
-                client.preload(r["model"])
-                provenance.assert_serving_state(r["model"], expect=entry_state[r["model"]])
-            except Exception as e:  # noqa: BLE001 - never leaves a half-written run unfinalised
-                print(f"[parity_replay] PRELOAD/RE-RESOLVE FAILED {r['model']}: {e}", file=sys.stderr,
-                      flush=True)
-                return _abort(out, base, f"preload: {type(e).__name__}: {e}", rows, router)
-            cur_model = r["model"]
-        mt = int(r["payload"].get("max_tokens") or 102400)
-        timeout = mt / FLOOR_DECODE_TPS + HEADROOM_S
-        t0 = time.perf_counter()
-        try:
-            resp = _post(r["payload"], timeout)
-        except Exception as e:  # transport: escalate
-            print(f"[{i}/{len(todo)}] TRANSPORT FAILURE {r['bench']} {r['id']}: {type(e).__name__}: {e}", flush=True)
-            return _abort(out, base, f"transport: {type(e).__name__}: {e}", rows, router)
-        wall = time.perf_counter() - t0
-        bad = _malformed(resp)
-        if bad:  # a malformed 200 is never graded: abort like a transport failure
-            print(f"[{i}/{len(todo)}] MALFORMED RESPONSE {r['bench']} {r['id']}: {bad}", flush=True)
-            return _abort(out, base, f"malformed response for {_key(r)}: {bad}", rows, router)
-        try:  # the served state AT this request (v8 runtime slice + worker flags); drift refuses
-            runtime = provenance._runtime_block(None, model=r["model"])
-            worker = provenance.worker_serving_facts(r["model"])
-            scan = provenance.check_mtp_verify_scan_value(runtime.get("mtp_verify_scan"),
-                                                          "parity_replay row")
-            if scan != entry_state[r["model"]]["mtp_verify_scan"]:
-                raise provenance.ServingStateError(
-                    f"M58: mtp_verify_scan {scan!r} at {_key(r)} differs from the entry value "
-                    f"{entry_state[r['model']]['mtp_verify_scan']!r}")
-            if not worker:  # S3: a null worker command line is refused, never recorded silently
-                raise provenance.ServingStateError(
-                    f"M58: no worker command line observable for {r['model']!r} while it serves "
-                    f"requests; refusing to record unattributed rows")
-        except provenance.ServedConfigError as e:
-            print(f"[parity_replay] REFUSED: {e}", file=sys.stderr, flush=True)
-            return _abort(out, base, f"{e}", rows, router)
-        ch = resp["choices"][0]
-        msg = ch.get("message") or {}
-        us = resp.get("usage") or {}
-        tm = resp.get("timings") or {}
-        content = msg.get("content") or ""
-        reasoning = msg.get("reasoning") or msg.get("reasoning_content") or ""
-        row = {"model": r["model"], "bench": r["bench"], "id": r["id"], "seed": r["seed"],
-               "payload_sha256": hashes[_key(r)],
-               "finish_reason": ch.get("finish_reason"), "prompt_tokens": us.get("prompt_tokens"),
-               "completion_tokens": us.get("completion_tokens"),
-               "cached_tokens": (us.get("prompt_tokens_details") or {}).get("cached_tokens"),
-               "content_sha256": _sha(content), "reasoning_sha256": _sha(reasoning),
-               "content": content, "reasoning_len": len(reasoning), "wall_s": round(wall, 1),
-               "decode_tps": tm.get("predicted_per_second"),
-               "draft": {k: tm.get(k) for k in
-                         ("draft_kind", "draft_rounds", "draft_n", "draft_n_accepted")},
-               "verify": {k: v for k, v in tm.items() if k.startswith("verify_")},
-               "runtime": runtime, "worker": worker}
-        rows.append(row)
-        print(f"[{i}/{len(todo)}] {r['bench']:14s} {r['id'][:28]:28s} finish={row['finish_reason']} "
-              f"ctok={row['completion_tokens']} wall={row['wall_s']}s", flush=True)
-        json.dump({**base, "status": "running",
-                   "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
+                resp = _post(r["payload"], timeout)
+            except Exception as e:  # transport: escalate
+                print(f"[{i}/{len(todo)}] TRANSPORT FAILURE {r['bench']} {r['id']}: {type(e).__name__}: {e}", flush=True)
+                return _abort(out, base, f"transport: {type(e).__name__}: {e}", rows, router)
+            wall = time.perf_counter() - t0
+            bad = _malformed(resp)
+            if bad:  # a malformed 200 is never graded: abort like a transport failure
+                print(f"[{i}/{len(todo)}] MALFORMED RESPONSE {r['bench']} {r['id']}: {bad}", flush=True)
+                return _abort(out, base, f"malformed response for {_key(r)}: {bad}", rows, router)
+            try:  # the served state AT this request (v8 runtime slice + worker flags); drift refuses
+                runtime = provenance._runtime_block(None, model=r["model"])
+                worker = provenance.worker_serving_facts(r["model"])
+                scan = provenance.check_mtp_verify_scan_value(runtime.get("mtp_verify_scan"),
+                                                              "parity_replay row")
+                if scan != entry_state[r["model"]]["mtp_verify_scan"]:
+                    raise provenance.ServingStateError(
+                        f"M58: mtp_verify_scan {scan!r} at {_key(r)} differs from the entry value "
+                        f"{entry_state[r['model']]['mtp_verify_scan']!r}")
+                if not worker:  # S3: a null worker command line is refused, never recorded silently
+                    raise provenance.ServingStateError(
+                        f"M58: no worker command line observable for {r['model']!r} while it serves "
+                        f"requests; refusing to record unattributed rows")
+            except provenance.ServedConfigError as e:
+                print(f"[parity_replay] REFUSED: {e}", file=sys.stderr, flush=True)
+                return _abort(out, base, f"{e}", rows, router)
+            ch = resp["choices"][0]
+            msg = ch.get("message") or {}
+            us = resp.get("usage") or {}
+            tm = resp.get("timings") or {}
+            content = msg.get("content") or ""
+            reasoning = msg.get("reasoning") or msg.get("reasoning_content") or ""
+            row = {"model": r["model"], "bench": r["bench"], "id": r["id"], "seed": r["seed"],
+                   "payload_sha256": hashes[_key(r)],
+                   "finish_reason": ch.get("finish_reason"), "prompt_tokens": us.get("prompt_tokens"),
+                   "completion_tokens": us.get("completion_tokens"),
+                   "cached_tokens": (us.get("prompt_tokens_details") or {}).get("cached_tokens"),
+                   "content_sha256": _sha(content), "reasoning_sha256": _sha(reasoning),
+                   "content": content, "reasoning": reasoning, "reasoning_len": len(reasoning),
+                   "wall_s": round(wall, 1),
+                   "decode_tps": tm.get("predicted_per_second"),
+                   "draft": {k: tm.get(k) for k in
+                             ("draft_kind", "draft_rounds", "draft_n", "draft_n_accepted")},
+                   "verify": {k: v for k, v in tm.items() if k.startswith("verify_")},
+                   "runtime": runtime, "worker": worker}
+            rows.append(row)
+            print(f"[{i}/{len(todo)}] {r['bench']:14s} {r['id'][:28]:28s} finish={row['finish_reason']} "
+                  f"ctok={row['completion_tokens']} wall={row['wall_s']}s", flush=True)
+            json.dump({**base, "status": "running",
+                       "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
+    except Exception as e:  # noqa: BLE001 - D4: nothing after entry escapes finalisation
+        return _finalise_unexpected(out, base, rows, router, e)
     got = [_key(r) for r in rows]
     if sorted(got) != sorted(keys):  # AC11: complete only with every frozen key exactly once
         return _abort(out, base, f"rows {sorted(set(keys) ^ set(got))} do not match the frozen keys",
@@ -261,7 +320,7 @@ def run(a) -> int:
         exit_blk = provenance.assert_served_config_unchanged(router, client.BASE)
     except provenance.ServedConfigError as e:
         print(f"[parity_replay] REFUSED: {e}", file=sys.stderr, flush=True)
-        return _abort(out, base, f"{e}", rows, router, check_exit=False)
+        return _abort(out, base, f"{e}", rows, router, check_exit=False, drift=e)
     json.dump({**base, "status": "complete", "router_exit": exit_blk,
                "when": datetime.now().isoformat(timespec="seconds"), "rows": rows}, open(out, "w"), indent=1)
     print(f"complete: {len(rows)} rows -> {out}")
@@ -271,9 +330,13 @@ def run(a) -> int:
 _IDENTITY = ("finish_reason", "completion_tokens", "content_sha256", "reasoning_sha256", "draft")
 
 
+_DRAFT_MEMBERS = ("draft_kind", "draft_rounds", "draft_n", "draft_n_accepted")
+
+
 def _audit(doc) -> tuple[dict, list]:
-    """(rows by key, integrity problems) for one replay: duplicates, malformed rows, missing
-    identity fields and a missing request hash."""
+    """(rows by key, integrity problems) for one MODERN replay (carries `expected_keys`):
+    duplicates, malformed rows, absent or NULL identity fields and draft members, content and
+    reasoning digests RECOMPUTED from the stored text, and a closed-set serving scan per row."""
     by, problems, seen = {}, [], set()
     for r in doc.get("rows") or []:
         try:
@@ -285,13 +348,35 @@ def _audit(doc) -> tuple[dict, list]:
             problems.append(f"duplicate row {k}")
             continue
         seen.add(k)
+        by[k] = r
         bad = _row_malformed(r)
         if bad:
             problems.append(f"malformed row {k}: {bad}")
-        for f in _IDENTITY + ("payload_sha256",):
-            if f not in r:
-                problems.append(f"row {k} lacks the mandatory field {f}")
-        by[k] = r
+        for f in _IDENTITY + ("payload_sha256", "content", "reasoning", "runtime"):
+            if r.get(f) is None:
+                problems.append(f"row {k} lacks the mandatory field {f} (absent or null)")
+        draft = r.get("draft")
+        if isinstance(draft, dict):
+            for m in _DRAFT_MEMBERS:
+                if draft.get(m) is None:
+                    problems.append(f"row {k} draft member {m} is null")
+        elif draft is not None:
+            problems.append(f"row {k} draft is not an object")
+        if isinstance(r.get("content"), str) and r.get("content_sha256") is not None \
+                and _sha(r["content"]) != r["content_sha256"]:
+            problems.append(f"row {k} content_sha256 does not match the stored content")
+        if isinstance(r.get("reasoning"), str) and r.get("reasoning_sha256") is not None \
+                and _sha(r["reasoning"]) != r["reasoning_sha256"]:
+            problems.append(f"row {k} reasoning_sha256 does not match the stored reasoning")
+        rt = r.get("runtime")
+        if isinstance(rt, dict):
+            v = rt.get("mtp_verify_scan")
+            try:
+                if v is None or v == "unknown":
+                    raise provenance.ServingStateError("missing or unknown")
+                provenance.check_mtp_verify_scan_value(v, f"row {k}")
+            except provenance.ServingStateError as e:
+                problems.append(f"row {k} runtime.mtp_verify_scan invalid: {e}")
     return by, problems
 
 
@@ -306,12 +391,31 @@ def _expected(doc, side, problems):
     return set(keys)
 
 
+def _compare_legacy(A, B, a) -> int:
+    """Pre-M58 replays (no `expected_keys`): informational only. No modern audit runs on them; the
+    result can never gate a decision, so the exit code is 3 whatever the contents."""
+    ka = {_key(r): r for r in A.get("rows") or [] if isinstance(r, dict) and "id" in r}
+    kb = {_key(r): r for r in B.get("rows") or [] if isinstance(r, dict) and "id" in r}
+    same = sum(1 for k in set(ka) & set(kb)
+               if all(ka[k].get(f) == kb[k].get(f) for f in _IDENTITY))
+    print(f"pairs={len(set(ka) & set(kb))} identical={same} (A={A.get('tag')} B={B.get('tag')}; "
+          f"only-in-A={len(set(ka) - set(kb))} only-in-B={len(set(kb) - set(ka))})")
+    print("NON-GATING: a replay without expected_keys (pre-M58 form) cannot establish exact "
+          "key coverage; this comparison is informational only (exit 3).")
+    if a.out:
+        json.dump({"a": A.get("tag"), "b": B.get("tag"), "legacy": True, "identical": same},
+                  open(a.out, "w"), indent=1)
+    return 3
+
+
 def compare(a) -> int:
     A = json.load(open(a.a)); B = json.load(open(a.b))
+    if not (isinstance(A.get("expected_keys"), list) and isinstance(B.get("expected_keys"), list)):
+        return _compare_legacy(A, B, a)
     ka, pa = _audit(A)
     kb, pb = _audit(B)
     integrity = [f"A: {p}" for p in pa] + [f"B: {p}" for p in pb]
-    legacy = "expected_keys" not in A or "expected_keys" not in B
+    legacy = False
     ea = eb = None
     if not legacy:
         ea, eb = _expected(A, "A", integrity), _expected(B, "B", integrity)

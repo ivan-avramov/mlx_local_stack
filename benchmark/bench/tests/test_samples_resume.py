@@ -21,6 +21,10 @@ import bench.generate as G
 import bench.rowschema as RS
 
 from .conftest import probe_result
+import pytest
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
 
 
 def _items(n):

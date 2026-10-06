@@ -22,6 +22,9 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")   # M58: synthetic models
+
+
 REPO = Path(__file__).resolve().parents[3]
 
 FAKE_UV = r'''#!/bin/bash
