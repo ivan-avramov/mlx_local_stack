@@ -31,7 +31,7 @@ def _refusing(monkeypatch):
     monkeypatch.setattr(P, "router_owner", lambda port: None)
 
 
-def _args(tmp_path, *, llm_timeout="60", **over):
+def _args(tmp_path, *, llm_timeout="60", seed_base=0, **over):
     """`llm_timeout="60"` by default (5th cold review P14: a per-turn timeout that cannot be SIZED
     now REFUSES the run) -- most tests here don't care about the exact derived value. The small
     number of tests that specifically exercise DERIVATION (no explicit override) pass
@@ -41,6 +41,8 @@ def _args(tmp_path, *, llm_timeout="60", **over):
            "--scripts-root", str(tmp_path / "scripts")]
     if llm_timeout is not None:
         base += ["--llm-timeout", str(llm_timeout)]
+    if seed_base is not None:    # C125: required in generate mode; None omits the flag
+        base += ["--seed-base", str(seed_base)]
     for k, v in over.items():
         flag = f"--{k.replace('_', '-')}"
         if v == "":              # store_true style flag (--prepare, --resume): no value
@@ -1045,7 +1047,8 @@ def test_main_refuses_out_outside_confined_roots_addendum_J(tmp_path, monkeypatc
     try:
         rc = R.main(["--model", "m", "--out", str(outside_dir / "rows.jsonl"),
                     "--corpus", str(tmp_path / "corpus.jsonl"),
-                    "--scripts-root", str(tmp_path / "scripts"), "--llm-timeout", "60"])
+                    "--scripts-root", str(tmp_path / "scripts"), "--llm-timeout", "60",
+                    "--seed-base", "0"])
         assert rc == 2
         assert "--out" in capsys.readouterr().err
         assert not (outside_dir / "rows.jsonl").exists()
@@ -2197,3 +2200,173 @@ def test_main_still_requires_model_outside_migrate_mode_P17(capsys):
         R.main(["--corpus", "x.jsonl"])
     assert ei.value.code == 2
     assert "--model" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- C125 seed base
+def _seeded_run(tmp_path, monkeypatch, tasks=("m0", "m1")):
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task(t) for t in tasks])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
+    fake, _ = _fake_run_task_factory()
+    seeds = {}
+
+    def capturing(model, task, scripts_root, driver, params, **kw):
+        seeds[task["id"]] = params["seed"]
+        return fake(model, task, scripts_root, driver, params, **kw)
+    monkeypatch.setattr(AB, "run_task", capturing)
+    return AB, seeds
+
+
+@pytest.mark.parametrize("extra", [[], ["--resume"], ["--pilot-seed", "1"], ["--limit", "1"]])
+def test_generate_without_seed_base_refuses_before_anything_C125(tmp_path, monkeypatch, extra):
+    import bench.agentbench_adapter as AB
+    monkeypatch.setattr(P, "router_owner", lambda port: pytest.fail("router checked before --seed-base"))
+    monkeypatch.setattr(AB, "docker_available", lambda *a, **k: pytest.fail("docker called"))
+    monkeypatch.setattr(AB, "run_task", lambda *a, **k: pytest.fail("driver called"))
+    with pytest.raises(SystemExit) as ei:
+        R.main(_args(tmp_path, seed_base=None) + extra)
+    assert ei.value.code == 2
+    assert list(tmp_path.iterdir()) == []      # nothing written
+
+
+@pytest.mark.parametrize("bad", [None, True, -1, "0", 1.5])
+def test_run_generate_validates_seed_base_at_its_own_boundary_C125(tmp_path, monkeypatch, capsys, bad):
+    """A direct caller bypassing main() must not reach the router check with base=None (which
+    would hash a schedule different from base 0)."""
+    import argparse
+    monkeypatch.setattr(P, "router_owner", lambda port: pytest.fail("router checked"))
+    args = R.build_argparser().parse_args(_args(tmp_path, seed_base=0))
+    args.seed_base = bad
+    assert isinstance(args, argparse.Namespace)
+    assert R.run_generate(args, tmp_path / "rows.jsonl") == 2
+    assert "REFUSED" in capsys.readouterr().err
+    assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
+def test_negative_seed_base_refused_C125(tmp_path, monkeypatch):
+    monkeypatch.setattr(P, "router_owner", lambda port: pytest.fail("router checked"))
+    with pytest.raises(SystemExit) as ei:
+        R.main(_args(tmp_path, seed_base=-1))
+    assert ei.value.code == 2
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_prepare_works_without_seed_base_C125(tmp_path, monkeypatch):
+    AB = _ready(tmp_path, monkeypatch)
+    _write_corpus(tmp_path, [{"id": "c0", "group": 1, "evaluation": {"check": [{"code": "x"}],
+                                                                     "example": {"code": "y"}},
+                             "description": "d"}])
+    monkeypatch.setattr(AB, "prepare_exclusions", lambda *a, **k: ({}, []))
+    assert R.main(_args(tmp_path, prepare="", seed_base=None)) == 0
+
+
+def test_migrate_exclusions_works_without_seed_base_C125(tmp_path, monkeypatch):
+    called = []
+    monkeypatch.setattr(R, "run_migrate_exclusions", lambda args: called.append(args) or 0)
+    assert R.main(_args(tmp_path, seed_base=None, **{"migrate-exclusions": ""})) == 0
+    assert called
+
+
+def test_item_seed_follows_seed_base_C125(tmp_path, monkeypatch):
+    from bench import rowschema
+    got = {}
+    for base in (1000, 2000):
+        sub = tmp_path / f"b{base}"
+        sub.mkdir()
+        _, seeds = _seeded_run(sub, monkeypatch)
+        assert R.main(_args(sub, seed_base=base)) == 0
+        got[base] = dict(seeds)
+        assert seeds == {t: rowschema.sample_seed(t, 0, base=base) for t in ("m0", "m1")}
+    assert all(got[1000][t] != got[2000][t] for t in ("m0", "m1"))
+
+
+def test_seed_base_zero_reproduces_the_legacy_seed_C125(tmp_path, monkeypatch):
+    from bench import rowschema
+    _, seeds = _seeded_run(tmp_path, monkeypatch)
+    assert R.main(_args(tmp_path, seed_base=0)) == 0
+    assert seeds == {t: rowschema.sample_seed(t, 0) for t in ("m0", "m1")}   # known positive
+
+
+def test_manifest_and_rows_record_seed_base_and_sampler_seed_C125(tmp_path, monkeypatch):
+    from bench import rowschema
+    _, seeds = _seeded_run(tmp_path, monkeypatch)
+    assert R.main(_args(tmp_path, seed_base=1000)) == 0
+    man = json.loads((tmp_path / "rows.manifest.json").read_text())
+    assert man["runtime"]["seed_base"] == 1000
+    rows = [json.loads(l) for l in (tmp_path / "rows.jsonl").read_text().splitlines()]
+    assert len(rows) == 2
+    for r in rows:
+        assert r["seed_base"] == 1000
+        assert r["sampler_seed"] == seeds[r["id"]] == rowschema.sample_seed(r["id"], 0, base=1000)
+
+
+def test_resume_same_seed_base_continues_C125(tmp_path, monkeypatch):
+    _, seeds = _seeded_run(tmp_path, monkeypatch)
+    assert R.main(_args(tmp_path, seed_base=1000, limit=1)) == 0
+    assert R.main(_args(tmp_path, seed_base=1000, resume="")) == 0
+    assert set(seeds) == {"m0", "m1"}
+
+
+def test_resume_refuses_different_seed_base_C125(tmp_path, monkeypatch, capsys):
+    _, seeds = _seeded_run(tmp_path, monkeypatch)
+    assert R.main(_args(tmp_path, seed_base=1000, limit=1)) == 0
+    seeds.clear()
+    capsys.readouterr()
+    assert R.main(_args(tmp_path, seed_base=2000, resume="")) == 2
+    assert seeds == {}
+    assert "seed_base" in capsys.readouterr().err
+
+
+def test_resume_refuses_legacy_manifest_without_seed_base_C125(tmp_path, monkeypatch, capsys):
+    """Every pre-C125 manifest lacks runtime.seed_base: new rows only, no legacy-default resume."""
+    _, seeds = _seeded_run(tmp_path, monkeypatch)
+    assert R.main(_args(tmp_path, seed_base=0, limit=1)) == 0
+    mp = tmp_path / "rows.manifest.json"
+    man = json.loads(mp.read_text())
+    del man["runtime"]["seed_base"]
+    mp.write_text(json.dumps(man), encoding="utf-8")
+    seeds.clear()
+    capsys.readouterr()
+    assert R.main(_args(tmp_path, seed_base=0, resume="")) == 2
+    assert seeds == {}
+    assert "missing" in capsys.readouterr().err
+
+
+def test_every_turn_request_carries_the_item_seed_through_the_real_stack_C125(tmp_path, monkeypatch):
+    """Real adapter -> agent loop -> MlxServeDriver -> client.probe; only the HTTP `_post` and
+    docker are faked. A multi-turn item with a no-tool-call reprompt: every request body must
+    carry seed == sample_seed(id, 0, base=B)."""
+    from bench import client, rowschema
+    from bench.tests.conftest import FakeRunner, tool_call
+    from bench.tests.test_agentbench_adapter import _shell_popen_ok
+    AB = _ready(tmp_path, monkeypatch)
+    _stub_registry(monkeypatch, tmp_path)
+    corpus = _write_corpus(tmp_path, [_match_task("m0")])
+    _write_complete_exclusions(tmp_path, AB, corpus)
+    monkeypatch.setattr(R, "_rate_rows_matching_identity", lambda model, bench, draft_kind: ([], []))
+    real_run_task = AB.run_task
+
+    def docker(cmd, **kw):      # `docker ps -a` empty -> container removal verifies
+        return FakeRunner.Proc(0, "" if cmd[:3] == ["docker", "ps", "-a"] else "ok", "")
+    monkeypatch.setattr(AB, "run_task", lambda *a, **k: real_run_task(
+        *a, **{**k, "runner": docker, "popen": _shell_popen_ok()}))
+
+    def reply(message):
+        return {"choices": [{"message": message, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                "timings": {"predicted_per_second": 10.0}}
+    script_msgs = [{"content": "thinking, no tool", "tool_calls": []},                  # reprompt
+                   {"content": "", "tool_calls": [tool_call("bash_action", {"script": "echo hi"})]},
+                   {"content": "", "tool_calls": [tool_call("answer_action", {"answer": "yes"}, "c2")]}]
+    for base in (1000, 2000):
+        sub = tmp_path / f"b{base}"
+        sub.mkdir()
+        bodies, msgs = [], list(script_msgs)
+        monkeypatch.setattr(client, "_post", lambda path, payload, timeout=3600: (
+            bodies.append(payload), reply(msgs.pop(0)))[1])
+        assert R.main(_args(tmp_path, seed_base=base, out=str(sub / "rows.jsonl"),
+                            **{"transcripts-dir": str(sub / "t")})) == 0
+        assert len(bodies) == 3, bodies
+        assert {b["seed"] for b in bodies} == {rowschema.sample_seed("m0", 0, base=base)}

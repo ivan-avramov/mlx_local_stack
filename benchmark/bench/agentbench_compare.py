@@ -17,6 +17,11 @@ that silently turn a model comparison into a (model x harness-config) composite.
 rows accumulate, same reasoning as run_agentbench_os's own resume-identity check) -- a
 difference there is recorded and printed, never refused on.
 
+C125 seed_base (manifest AND rows): arms must agree on the effective `runtime.seed_base` (an ABSENT
+key = a pre-flag manifest = base 0; a present non-int/negative/bool value refuses), and within each
+arm every row's `seed_base` (absent = 0) must equal that arm's manifest base and any row
+`sampler_seed` must equal `rowschema.sample_seed(id, 0, base=<base>)`.
+
 Per arm: n, graded_n (setup_error excluded from the denominator, same convention as
 `run_agentbench_os.summarize`), acc (capability ceiling -- raw `passed`, NOT gated by
 convergence), acc_strict@<thinking_budget> (passed AND converged -- the project's RANKING
@@ -56,6 +61,7 @@ import statistics
 import sys
 from pathlib import Path
 
+from . import rowschema
 from . import run_agentbench_os as R
 from . import stats
 
@@ -76,6 +82,24 @@ _GATE_FIELDS = (
     # fixed). Arms recorded under different shell_mode values must never be pooled/compared.
     (("runtime", "shell_mode"), "shell_mode"),
 )
+
+def _valid_seed_base(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _effective_seed_base(manifest: dict):
+    """C125: (base, problem). Only an ABSENT `runtime.seed_base` means a pre-flag manifest: those
+    rows were all generated with `sample_seed(id, 0)`, which IS base 0. A PRESENT value must be a
+    non-negative int (bool excluded); anything else (null, "0", -1, True) is a problem, never 0."""
+    runtime = manifest.get("runtime") if isinstance(manifest, dict) else None
+    if not isinstance(runtime, dict) or "seed_base" not in runtime:
+        return 0, None
+    v = runtime["seed_base"]
+    if _valid_seed_base(v):
+        return v, None
+    return None, f"runtime.seed_base={v!r} is not a non-negative int"
+
+
 _LLM_TIMEOUT_FIELD = ("runtime", "llm_timeout_s")
 
 
@@ -127,6 +151,36 @@ def check_comparability(arms: list) -> list:
             if val != base_val:
                 problems.append(f"{label} differs: {base['model']}={base_val!r} vs "
                                 f"{other['model']}={val!r}")
+    # C125: seed_base. Manifest level (absent counts as 0; invalid refuses), then ROW level.
+    bases = {}
+    for arm in arms:
+        sb, bad = _effective_seed_base(arm["manifest"])
+        if bad:
+            problems.append(f"seed_base invalid for {arm['model']}: {bad}")
+        bases[arm["model"]] = sb
+    first = bases[base["model"]]
+    for other in arms[1:]:
+        sb = bases[other["model"]]
+        if sb is not None and first is not None and sb != first:
+            problems.append(f"seed_base differs: {base['model']}={first!r} vs "
+                            f"{other['model']}={sb!r} (a missing runtime.seed_base counts as 0)")
+    for arm in arms:
+        sb = bases[arm["model"]]
+        if sb is None:
+            continue
+        for r in arm["rows"]:
+            rb = r.get("seed_base", 0)
+            if rb != sb or isinstance(rb, bool):
+                problems.append(f"seed_base row/manifest mismatch for {arm['model']}: item "
+                                f"{r.get('id')!r} row seed_base={rb!r} vs manifest {sb!r}")
+                break
+            if "sampler_seed" in r:
+                want = rowschema.sample_seed(r.get("id"), 0, base=sb)
+                if r["sampler_seed"] != want:
+                    problems.append(f"sampler_seed mismatch for {arm['model']}: item {r.get('id')!r} "
+                                    f"row sampler_seed={r['sampler_seed']!r} vs expected {want!r} "
+                                    f"for seed_base {sb!r}")
+                    break
     return problems
 
 

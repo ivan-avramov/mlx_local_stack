@@ -323,9 +323,17 @@ a defect:
 # docker running, images built, mlx-serve serving <model> at :8000:
 cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> --prepare
 cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> \
-    --pilot-seed 1 --pilot-n 5        # seeded random pilot, EXECUTED in sampled order
-cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> --resume
+    --seed-base B --pilot-seed 1 --pilot-n 5   # seeded random pilot, EXECUTED in sampled order
+cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> \
+    --seed-base B --resume
 ```
+
+`--seed-base` (C125) is required in generate mode (not for `--prepare`): item seed
+`rowschema.sample_seed(item, 0, base=B)`. Use a distinct base per independent session; the
+same-seed reload control reuses that session's base; the model arms of one session share one base.
+Rows whose manifest has no `runtime.seed_base` are base 0. `--prepare` / `--migrate-exclusions`
+ignore `--seed-base`. It is a resume-identity key, and `agentbench_compare` refuses arms (manifest
+or row level) with different bases (an absent manifest key counts as 0; an invalid one refuses).
 
 Same M50/C106 served-config discipline as `vision_gate.py`: refuses before the first request if
 the router at `--url` isn't serving this driver's registry, and refuses to declare the run

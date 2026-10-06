@@ -140,6 +140,89 @@ def test_check_comparability_missing_manifest_is_a_problem():
     assert MODEL_B in problems[0]
 
 
+def _with_seed_base(man, base):
+    if base is not None:
+        man["runtime"]["seed_base"] = base
+    return man
+
+
+def test_check_comparability_refuses_differing_seed_bases_C125():
+    problems = C.check_comparability(_arms_pair(
+        man_a=_with_seed_base(_manifest(), 0),
+        man_b=_with_seed_base(_manifest(model=MODEL_B), 1000)))
+    assert any("seed_base" in p for p in problems)
+
+
+def test_check_comparability_equal_seed_bases_is_clean_C125():
+    assert C.check_comparability(_arms_pair(
+        man_a=_with_seed_base(_manifest(), 1000),
+        man_b=_with_seed_base(_manifest(model=MODEL_B), 1000),
+        rows_a=[_sampled_row("std-001-0", 1000)], rows_b=[_sampled_row("std-001-0", 1000)])) == []
+
+
+@pytest.mark.parametrize("legacy_first", [True, False])
+def test_check_comparability_legacy_missing_seed_base_counts_as_zero_C125(legacy_first):
+    """Pre-C125 rows were all generated with sample_seed(id, 0) == base 0: a manifest without
+    runtime.seed_base compares with an explicit base 0 but not with any other base."""
+    legacy, explicit0 = _manifest(), _with_seed_base(_manifest(model=MODEL_B), 0)
+    assert "seed_base" not in legacy["runtime"]
+    ok = _arms_pair(man_a=legacy, man_b=explicit0) if legacy_first else \
+        _arms_pair(man_a=_with_seed_base(_manifest(), 0), man_b=_manifest(model=MODEL_B))
+    assert C.check_comparability(ok) == []
+    bad = _arms_pair(man_a=_manifest(), man_b=_with_seed_base(_manifest(model=MODEL_B), 1000)) \
+        if legacy_first else \
+        _arms_pair(man_a=_with_seed_base(_manifest(), 1000), man_b=_manifest(model=MODEL_B))
+    assert any("seed_base" in p for p in C.check_comparability(bad))
+
+
+@pytest.mark.parametrize("bad", [None, "0", True, False, -1, 1.0])
+def test_check_comparability_refuses_a_present_but_invalid_seed_base_C125(bad):
+    """Only an ABSENT key means legacy base 0; a present value must be a non-negative int."""
+    for pair in ((bad, 0), (0, bad), (bad, bad)):
+        man_a, man_b = _manifest(), _manifest(model=MODEL_B)
+        man_a["runtime"]["seed_base"], man_b["runtime"]["seed_base"] = pair
+        problems = C.check_comparability(_arms_pair(man_a=man_a, man_b=man_b))
+        assert any("seed_base" in p for p in problems), (pair, problems)
+
+
+def _sampled_row(id_, base, *, seed=None, **kw):
+    from bench import rowschema
+    r = _row(id_, **kw)
+    r["seed_base"] = base
+    r["sampler_seed"] = rowschema.sample_seed(id_, 0, base=base) if seed is None else seed
+    return r
+
+
+def test_check_comparability_refuses_rows_whose_seed_base_differs_from_the_manifest_C125():
+    """Known positive: both manifests declare 0 (gate passed before), but one arm's rows were
+    generated under 0 and 1000 (a resumed/mixed file)."""
+    man_a, man_b = _with_seed_base(_manifest(), 0), _with_seed_base(_manifest(model=MODEL_B), 0)
+    rows_b = [_sampled_row("std-001-0", 0), _sampled_row("std-002-0", 1000)]
+    problems = C.check_comparability(_arms_pair(man_a=man_a, man_b=man_b, rows_b=rows_b))
+    assert any(MODEL_B in p and "std-002-0" in p and "1000" in p for p in problems), problems
+
+
+def test_check_comparability_refuses_a_wrong_sampler_seed_for_the_declared_base_C125():
+    man_a, man_b = _with_seed_base(_manifest(), 1000), _with_seed_base(_manifest(model=MODEL_B), 1000)
+    rows_a = [_sampled_row("std-001-0", 1000)]
+    rows_b = [_sampled_row("std-001-0", 1000, seed=12345)]
+    problems = C.check_comparability(_arms_pair(man_a=man_a, man_b=man_b, rows_a=rows_a, rows_b=rows_b))
+    assert any(MODEL_B in p and "std-001-0" in p and "12345" in p for p in problems), problems
+
+
+def test_check_comparability_consistent_seeded_rows_are_clean_C125():
+    man_a, man_b = _with_seed_base(_manifest(), 1000), _with_seed_base(_manifest(model=MODEL_B), 1000)
+    assert C.check_comparability(_arms_pair(
+        man_a=man_a, man_b=man_b, rows_a=[_sampled_row("std-001-0", 1000)],
+        rows_b=[_sampled_row("std-001-0", 1000)])) == []
+
+
+def test_check_comparability_legacy_rows_without_seed_fields_are_clean_C125():
+    arms = _arms_pair()
+    assert all("seed_base" not in r and "sampler_seed" not in r for a in arms for r in a["rows"])
+    assert C.check_comparability(arms) == []
+
+
 def test_check_comparability_three_arms_checks_every_pair_against_the_first():
     man_c = _manifest(model=MODEL_C)
     man_c["runtime"]["round_limit"] = 15   # differs from arm A's 30

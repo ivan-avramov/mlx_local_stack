@@ -25,8 +25,11 @@ Two modes:
 
 Usage:
   cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> --prepare
-  cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> [--limit N]
-      [--pilot-seed S --pilot-n 5] [--resume]
+  cd benchmark && uv run python -m bench.run_agentbench_os --model <full-registry-name> --seed-base B
+      [--limit N] [--pilot-seed S --pilot-n 5] [--resume]
+  --seed-base (C125): distinct base per independent session; the same-seed reload control reuses
+  that session's base; the model arms of one session share one base. Rows whose manifest has no
+  `runtime.seed_base` are base 0. --prepare / --migrate-exclusions ignore --seed-base.
 """
 from __future__ import annotations
 
@@ -299,7 +302,7 @@ def _write_manifest(mp: Path, man: dict, *, history: list, segments: list | None
 # numbers that legitimately drift as more rows accumulate on this axis; identity compares the
 # derivation RULE and its inputs (already covered above), and a resume REUSES the previous
 # manifest's derived values outright rather than re-deriving and comparing them (see run_generate).
-RESUME_IDENTITY_KEYS = ("model", "round_limit", "exec_timeout_s", "sampling_profile",
+RESUME_IDENTITY_KEYS = ("seed_base", "model", "round_limit", "exec_timeout_s", "sampling_profile",
                        "image_ids", "corpus_sha256", "exclusions_sha256")
 
 
@@ -848,6 +851,14 @@ def _make_sigterm_sweep_handler(prefix: str, runner):
 def run_generate(args, out: Path) -> int:
     runner = subprocess.run
 
+    # C125: validate at this boundary too (a direct caller bypassing main() must not hash
+    # base=None, a schedule different from base 0) -- before the router check or any I/O.
+    sb = args.seed_base
+    if not isinstance(sb, int) or isinstance(sb, bool) or sb < 0:
+        print(f"[agentbench_os] REFUSED: --seed-base must be a non-negative int (got {sb!r})",
+              file=sys.stderr, flush=True)
+        return 2
+
     if args.url:
         from . import client
         client.BASE = args.url
@@ -1041,7 +1052,10 @@ def run_generate(args, out: Path) -> int:
               # the comparability gate in agentbench_compare.py refuses to compare arms recorded
               # under different shell_mode values (a non-interactive and an interactive shell are
               # not the same measurement).
-              "shell_mode": AB.PersistentShell.SHELL_MODE}
+              "shell_mode": AB.PersistentShell.SHELL_MODE,
+              # C125: per-session sampler seed base (see build_argparser); part of the resume
+              # identity and of the comparability gate.
+              "seed_base": args.seed_base}
     candidate_man = _gather_candidate_manifest(args.model, profile=args.sampling_profile,
                                                runtime=runtime, router=router)
     if done_ids:
@@ -1074,7 +1088,8 @@ def run_generate(args, out: Path) -> int:
             for i, task in enumerate(todo):
                 print(f"[agentbench_os] {args.model} {task['id']} ({i + 1}/{len(todo)})", flush=True)
                 current["container"] = AB.container_name(AB.GENERATE_CONTAINER_PREFIX, task["id"])
-                item_params = {**params, "seed": rowschema.sample_seed(task["id"], 0)}
+                item_seed = rowschema.sample_seed(task["id"], 0, base=args.seed_base)
+                item_params = {**params, "seed": item_seed}
                 # TransportFailure propagates OUT of this loop uncaught (cold-review F1): a
                 # transport failure ESCALATES, it is never graded, and no row -- and so no
                 # transcript either -- is written for the in-flight task.
@@ -1088,6 +1103,7 @@ def run_generate(args, out: Path) -> int:
                 turns = row.pop("_transcript_turns", [])
                 transcript_path = write_transcript(tdir, task, args.model, turns, row)
                 row["transcript_path"] = str(transcript_path)
+                row["seed_base"], row["sampler_seed"] = args.seed_base, item_seed   # C125
                 append_row(out, row)
                 print(f"[agentbench_os]   -> passed={row['passed']} outcome={row['outcome']} "
                      f"turns={row['turns']} setup_error={row['setup_error']}", flush=True)
@@ -1163,6 +1179,13 @@ def build_argparser() -> argparse.ArgumentParser:
                     help="seeded random pilot subset over the non-excluded corpus")
     ap.add_argument("--pilot-n", type=int, default=5)
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--seed-base", type=int, default=None,
+                    help="C125: per-session sampler seed base, REQUIRED in generate mode (no default; "
+                         "--prepare/--migrate-exclusions do not need it). Item seed = "
+                         "rowschema.sample_seed(item, 0, base=); distinct base per independent session, the "
+                         "same-seed reload control reuses that session's base, the model arms of one "
+                         "session share one base. Rows whose manifest has no runtime.seed_base are "
+                         "base 0. --prepare/--migrate-exclusions ignore it.")
     ap.add_argument("--sampling-profile", default="deployed")
     ap.add_argument("--allow-profile", action="store_true")
     ap.add_argument("--round-limit", type=int, default=AB.ROUND_LIMIT)
@@ -1189,6 +1212,11 @@ def main(argv=None) -> int:
         return run_migrate_exclusions(args)
     if not args.model:
         ap.error("the following arguments are required: --model")
+    if not args.prepare:        # C125: before any router check, request, docker call or write
+        if args.seed_base is None:
+            ap.error("the following arguments are required: --seed-base")
+        if args.seed_base < 0:
+            ap.error("--seed-base must be >= 0")
     args.scripts_root = Path(args.scripts_root)
     out = (Path(args.out) if args.out
           else paths.default_results_root() / args.model / f"{BENCH_NAME}.{TUNE}.jsonl")
