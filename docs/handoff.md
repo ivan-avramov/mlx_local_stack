@@ -9,7 +9,7 @@ THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `d
 - Forks: `../mlx-vlm` branch `m58-joint-verify` @ 664c2ead and `../mlx-serve` branch `m58-joint-verify` @ 3f2c87c — NOT merged, NOT
   pushed, submodules NOT bumped, registry unchanged. Stack branch `m58-provenance` @ e4d3652 lives in worktree `.claude/worktrees/m58`
   (fingerprint v8, compare tools, parity_replay AC11, row persistence) — NOT merged into main (merge together with the submodule bump).
-- Worktree `.claude/worktrees/c121` (merged; can be removed). Two stale agent worktrees under `.claude/worktrees/agent-*` can be removed.
+- Worktree `.claude/worktrees/c121` removed after the merge (branch kept). Two stale agent worktrees under `.claude/worktrees/agent-*` can be removed.
 - Daily driver is UP (operator started it; verified under M57, see `dbc546c` handoff). The box also runs opencode v2.0.20 (brew); the
   bench pins 1.18.30 at `$STACK_WORKDIR/opencode-1.18.30/` (C123). `~/.config/opencode/service.json` was created by a v2 probe (harmless).
 
@@ -37,13 +37,16 @@ THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `d
    `m58-provenance`; live smoke (worker starts under `--mtp-verify-scan joint_v1`, self-test line, counters on a request; then
    `--mtp-verify-ab`); seeded pilot (5 prompts at 8K and 128K under AB); gate 1 per spec §P94 (G1a incl. straddle requests at
    T−64 and `verify_ab_invalid == 0`; G1b parity replay with the per_query→per_query reload control); then arms A/B k=2 order-balanced
-   with the sustained-decode runner (`$STACK_WORKDIR/m58/decode_probe.py` — NOT yet written) and the mechanism session. Adoption per spec.
+   with the sustained-decode runner `$STACK_WORKDIR/m58/decode_probe.py` (built today, 19 mock tests; coded against the
+   `m58-provenance` provenance API — run with `PYTHONPATH=<worktree>/benchmark`; UNSMOKED: needs the 5-request real-router smoke first;
+   assumed timings keys `predicted_per_second`/`predicted_ms`/`prompt_ms`; prompt must elicit ≥ 1024 tokens — pilot confirms; prefill
+   floor 100 tok/s and decode floor 8 tok/s are placeholders) and the mechanism session. Adoption per spec.
 2. **C125 — operator rulings owed:** AgentBench base-0 schedule; `session_cache_probe.py` bare `opencode`; ratify the probe's pre-M50
    actions and the shared `~/.cache/opencode` write (not in the AGENTS.md exception list).
 3. **C124** `run_opencode_probe.py` transport-abort gap (inherited); **C119** `generate` transport error rows — own proposals.
 4. **M57 certification debt** (judge panel + Math500) on the FINAL state — after M58 adoption or rejection.
 5. **M59** opencode v2 scaffold migration (queued).
-6. Docker `.git` known-positive grades: see the C121 lab-notebook line (run at the end of this session).
+6. ~~Docker `.git` known-positive grades~~ DONE: go/rust/java/javascript PASS with and without `.git`; negative control fails (`$STACK_WORKDIR/c121/docker_known_positive/`). Receipt STAMPED (`seed_propagation: verified-by-test` from now on).
 7. `$STACK_WORKDIR/m55/m55_report.py` fixed for `passed: null` rows (workdir only, uncommitted — it is out-of-repo).
 
 ## Rules learned this session
