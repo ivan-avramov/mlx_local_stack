@@ -554,6 +554,11 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                 _sd = {k: _tm[k] for k in ("sdpa_forced", "sdpa_auto") if k in _tm}
                 if _sd:
                     row["sdpa"] = _sd
+                # M58 joint-verification counters: EVERY `verify_*` key, present only when the
+                # server sends them (scan policy != per_query), so default rows are unchanged.
+                _vd = {k: v for k, v in _tm.items() if k.startswith("verify_")}
+                if _vd:
+                    row["verify"] = _vd
                 # Row identity digests (handoff 2026-10-06): `content_sha256` is over the PERSISTED
                 # content (thinking-stripped; recomputable from the row — NOT the raw wire content
                 # that parity_replay digests under the same key); `reasoning_sha256` is over the
