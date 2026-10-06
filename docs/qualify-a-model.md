@@ -697,7 +697,7 @@ uv run python benchmark/run_opencode_probe.py --model <full-registry-name> \
     [--allow-version-drift]
 ```
 The bench never uses the personal opencode config: the probe runs opencode under its own `XDG_CONFIG_HOME`
-(`$STACK_WORKDIR/opencode-probe/config-<run-id>/`, a verbatim copy of `opencode_config/opencode.json`).
+(`$STACK_WORKDIR/opencode-probe/config-<run-id>/`, a verbatim copy of `benchmark/opencode_bench.json`).
 No `--tune` flag — opencode rows are tagged by `--lang`/`--out`, not a harness tune label. Pin
 opencode **1.18.30** (bumped 2026-09-29; drift is recorded, not silently tolerated — pass `--allow-version-drift`
 only when you mean it). Use the M3 22-item python set (or the matching per-language set) named

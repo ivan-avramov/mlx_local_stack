@@ -435,7 +435,7 @@ def _seed_marker_path(binary: Path | None = None) -> Path:
 
 def _receipt_now(binary: Path, instr_sha: str | None) -> dict:
     return {"version": PINNED_OPENCODE_VERSION, "exe_sha256": _sha_of(binary),
-            "config_sha256": _sha_of(SHIPPED_OPENCODE_CONFIG), "test_sha256": _sha_of(SEED_TEST_FILE),
+            "bench_config_sha256": _sha_of(BENCH_OPENCODE_CONFIG), "test_sha256": _sha_of(SEED_TEST_FILE),
             "instruction_sources_sha256": instr_sha}
 
 
@@ -454,7 +454,7 @@ def _make_bench_config_home(workdir: Path, run_id: str, source: Path | None = No
     is a VERBATIM copy of the shipped opencode config and the only file there (no global AGENTS.md).
     Returns the XDG_CONFIG_HOME root. Refuses if the copy's sha differs from the source's.
     (`source` exists for the integration test, which must point the baseURL at a mock.)"""
-    src = Path(source) if source is not None else SHIPPED_OPENCODE_CONFIG
+    src = Path(source) if source is not None else BENCH_OPENCODE_CONFIG
     home = Path(workdir) / "opencode-probe" / f"config-{run_id}"
     d = home / "opencode"
     d.mkdir(parents=True, exist_ok=True)
@@ -467,7 +467,7 @@ def _make_bench_config_home(workdir: Path, run_id: str, source: Path | None = No
 
 def _instruction_sources(start: Path) -> dict:
     """`effective_instruction_sources`: {portable path: sha256} of every AGENTS.md / CLAUDE.md /
-    .cursor/rules in the ancestor chain of `start` plus `~/.claude/CLAUDE.md`. The bench config home
+    CONTEXT.md in the ancestor chain of `start` plus `~/.claude/CLAUDE.md`. The bench config home
     holds no AGENTS.md and the personal opencode config dir is not read, so these are the sources left."""
     return _ancestor_instruction_files(start)
 
@@ -526,32 +526,45 @@ def _assert_overlay_resolved(cwd: Path, env: dict, model: str, seed: int, expect
     if opts.get("seed") != seed:
         raise provenance.ServedConfigError(f"M50 tripwire: opencode's resolved options for {model!r} do not "
                                            f"carry the overlay seed {seed} (got {opts.get('seed')!r}).")
-    # The bench's OWN config home holds the shipped config verbatim, so the resolved options minus
-    # `seed` must EQUAL the shipped block for this model; a difference is an opencode merge bug (or a
-    # model missing from the shipped config) and refuses (C121 B2 / operator ruling 2026-10-06).
+    # The bench's OWN config home holds the bench carrier verbatim, so the resolved options minus
+    # `seed` and the `limit` must EQUAL the carrier's block for this model; a difference is an opencode
+    # merge bug (or a model missing from the carrier) and refuses (C121 B2/C7, operator ruling 2026-10-06).
     try:
-        expected = json.loads(SHIPPED_OPENCODE_CONFIG.read_text())["provider"]["mlx-local"]["models"][model]["options"]
+        blk = json.loads(BENCH_OPENCODE_CONFIG.read_text())["provider"]["mlx-local"]["models"][model]
+        expected = blk["options"]
     except Exception as e:  # noqa: BLE001
-        raise provenance.ServedConfigError(f"M50 tripwire: the shipped opencode config has no deployed "
+        raise provenance.ServedConfigError(f"M50 tripwire: the bench opencode config has no deployed "
                                            f"options for {model!r}: {type(e).__name__}: {e}")
+    if data.get("instructions"):
+        raise provenance.ServedConfigError(f"M50 tripwire: opencode's resolved config has a non-empty "
+                                           f"`instructions` key {data['instructions']!r} (extra instruction files).")
     got = {k: v for k, v in opts.items() if k != "seed"}
     bad = [f"{k} (resolved {got.get(k, '<missing>')!r}, deployed {expected.get(k, '<absent>')!r})"
            for k in sorted(set(expected) | set(got)) if got.get(k, object()) != expected.get(k, object())]
     if bad:
         raise provenance.ServedConfigError(f"M50 tripwire: opencode's resolved options for {model!r} differ "
                                            f"from the deployed sampling fields: {'; '.join(bad)}.")
-    if not isinstance(prov["models"][model].get("limit"), dict) or not prov["models"][model]["limit"]:
-        raise provenance.ServedConfigError(f"M50 tripwire: opencode's resolved model {model!r} has no "
-                                           f"`limit` block (not the shipped model entry).")
+    if prov["models"][model].get("limit") != blk.get("limit") or not blk.get("limit"):
+        raise provenance.ServedConfigError(f"M50 tripwire: opencode's resolved `limit` for {model!r} "
+                                           f"({prov['models'][model].get('limit')!r}) != the bench carrier's "
+                                           f"({blk.get('limit')!r}).")
 
 
-SHIPPED_OPENCODE_CONFIG = REPO / "opencode_config" / "opencode.json"
+SHIPPED_OPENCODE_CONFIG = REPO / "opencode_config" / "opencode.json"     # the CLIENT config (7 models)
+# The bench carrier (superset: includes `role: candidate` models the client config excludes; see
+# docs/box-notes.md "A bench harness that mounts a CLIENT config silently excludes ..."). The bench-owned
+# opencode config home is a verbatim copy of THIS file.
+BENCH_OPENCODE_CONFIG = REPO / "benchmark" / "opencode_bench.json"
 
 # C121 B3: opencode 1.18.30 searches UPWARD from a non-git project dir for AGENTS.md (no switch
 # disables that; verified by the cold review's mock capture), so the operator's `~/AGENTS.md` would
 # enter every system prompt. `git init` in each item scratch dir makes it a repo root and stops the
 # search while the seed overlay still merges. Part of the scaffold-policy hash.
 SCRATCH_GIT_INIT = True
+# Side effect of `git init` (C121 review C6): opencode treats the dir as a git repo ("git repo: yes" in its
+# prompt) and turns on snapshot tracking in its data dir (which M46 isolates per item). Docker grading of
+# go/rust/java/javascript with a `.git` dir present is UNVERIFIED: check one known-positive grade per
+# language before relying on those legs.
 
 
 def _git_init_scratch(work: Path) -> None:
@@ -560,7 +573,7 @@ def _git_init_scratch(work: Path) -> None:
 
 
 def _ancestor_instruction_files(start: Path) -> dict:
-    """{portable path: sha256} of every AGENTS.md / CLAUDE.md / .cursor/rules from `start` up to `/`,
+    """{portable path: sha256} of every AGENTS.md / CLAUDE.md / CONTEXT.md from `start` up to `/`,
     plus `~/.claude/CLAUDE.md` -- the instruction files opencode could pick up, so exposure is observable."""
     import hashlib
 
@@ -580,7 +593,7 @@ def _ancestor_instruction_files(start: Path) -> dict:
     start = Path(os.path.realpath(start))
     cands = []
     for d in [start, *start.parents]:
-        cands += [d / "AGENTS.md", d / "CLAUDE.md", d / ".cursor" / "rules"]
+        cands += [d / "AGENTS.md", d / "CLAUDE.md", d / "CONTEXT.md"]
     cands.append(Path.home() / ".claude" / "CLAUDE.md")
     for c in cands:
         h = digest(c)
@@ -594,10 +607,7 @@ def _scaffold_runtime(instruction_sources_sha256: str | None = None) -> dict:
     never be pooled silently. The global ~/.config/opencode config the probe actually runs under is
     expected to be the shipped file; the hash is of the shipped file."""
     import hashlib
-    try:
-        digest = hashlib.sha256(SHIPPED_OPENCODE_CONFIG.read_bytes()).hexdigest()
-    except OSError:
-        digest = None
+    digest = _sha_of(SHIPPED_OPENCODE_CONFIG)
     policy = ",".join(f"{k}={v}" for k, v in sorted(SCAFFOLD_ENV_POLICY.items()))
     full = f"{policy}|scratch_git_init={str(SCRATCH_GIT_INIT).lower()}"
     if instruction_sources_sha256 is not None:
@@ -607,7 +617,9 @@ def _scaffold_runtime(instruction_sources_sha256: str | None = None) -> dict:
             "scaffold_policy_sha256": hashlib.sha256(full.encode()).hexdigest(),
             "claude_md_present": (Path.home() / ".claude" / "CLAUDE.md").exists(),
             "opencode_config": "opencode_config/opencode.json",
-            "opencode_config_sha256": digest}
+            "opencode_config_sha256": digest,
+            "opencode_bench_config": "benchmark/opencode_bench.json",
+            "opencode_bench_config_sha256": _sha_of(BENCH_OPENCODE_CONFIG)}
 
 
 def _export_latest_session(env: dict, *, cwd: Path, opencode_bin: str) -> dict | None:
@@ -957,14 +969,12 @@ def main() -> int:
     done = _recorded_keys(out)
     continuation: list = []
     if done:
-        _sr = _scaffold_runtime(instr_sha)
-        _check_resume(prev_doc, {"seed_base": a.seed_base, "opencode_version": oc_version,
-                                 "opencode_bin": _portable(Path(oc_bin)),
-                                 "scaffold_policy_sha256": _sr["scaffold_policy_sha256"],
-                                 "opencode_config_sha256": _sr["opencode_config_sha256"],
-                                 "instruction_sources_sha256": instr_sha}, out)
+        _check_resume(prev_doc, {**_scaffold_runtime(instr_sha), **_seed_runtime(a.seed_base, instr_sha),
+                                 "opencode_version": oc_version, "instruction_sources_sha256": instr_sha},
+                      out, router)
         continuation = list(prev_doc.get("continuation_history") or []) + [
             {"timestamp": prev_doc.get("timestamp"), "router": prev_doc.get("router"),
+             "router_exit": prev_doc.get("router_exit"),
              "runtime": {k: (prev_doc.get("runtime") or {}).get(k) for k in RESUME_IDENTITY_KEYS}}]
     manifest_written = False
 
@@ -986,7 +996,8 @@ def main() -> int:
                                          "opencode_config_copy_sha256": _sha_of(cfg_home / "opencode" / "opencode.json"),
                                          "ancestor_instruction_files": ancestors,
                                          "effective_instruction_sources": instr_sources,
-                                         "instruction_sources_sha256": instr_sha},
+                                         "instruction_sources_sha256": instr_sha,
+                                         "instruction_files_blocked_by_git_init": SCRATCH_GIT_INIT},
                                 router=router)
         if history:
             man["router_history"] = history
@@ -1077,6 +1088,9 @@ def main() -> int:
             # replacing it. Observed for real on the first run, which overwrote the test file
             # despite the prompt forbidding it — so this is a measured hazard, not a precaution.
             passed, tail, test_modified = _grade_result(work, test, test_before, changed, grade)
+            excluded_reason = None
+            if overlay_rewritten:       # C121 C10: the seed for later turns is unproven -> never graded
+                passed, excluded_reason = None, "overlay_rewritten_by_model: the sampler seed for later turns is unproven"
             row = {
                 "bench": "opencode", "id": f"{a.lang}/{name}", "model": a.model, "sample": 0,
                 "schema_version": 2, "scaffold": "opencode", "attempts": 1,
@@ -1100,6 +1114,7 @@ def main() -> int:
                 "traffic": traffic,
                 **_seed_row_fields(item_id, a.seed_base, overlay_sha),
                 "overlay_sha256_after": overlay_after, "overlay_rewritten_by_model": overlay_rewritten,
+                **({"acc": None, "grade_excluded_reason": excluded_reason} if excluded_reason else {}),
             }
             with out.open("a") as f:
                 f.write(json.dumps(row) + "\n")
@@ -1121,8 +1136,12 @@ def main() -> int:
     return 0
 
 
-RESUME_IDENTITY_KEYS = ("seed_base", "scaffold_policy_sha256", "opencode_bin", "opencode_version",
-                        "opencode_config_sha256", "instruction_sources_sha256")
+# The full output-determining scaffold/seed identity (everything recorded in the runtime except per-run
+# observations: seed_propagation, opencode_config_home, the instruction inventory dicts themselves).
+RESUME_IDENTITY_KEYS = ("seed_base", "overlay_schema", "scaffold_policy_sha256", "skill_policy",
+                        "scratch_git_init", "claude_md_present", "opencode_bin", "opencode_version",
+                        "opencode_config", "opencode_config_sha256", "opencode_bench_config",
+                        "opencode_bench_config_sha256", "instruction_sources_sha256")
 
 
 def _recorded_keys(out: Path) -> set:
@@ -1140,12 +1159,15 @@ def _recorded_keys(out: Path) -> set:
     return keys
 
 
-def _check_resume(prev_doc: dict | None, now: dict, out: Path) -> None:
+def _check_resume(prev_doc: dict | None, now: dict, out: Path, router_now: dict | None = None) -> None:
     """C121 B2: refuse to continue `out` under a different run identity. A pre-C121 manifest (no
     seed_base / scaffold hash) or a missing one cannot be continued with seeded rows."""
     if prev_doc is None:
         sys.exit(f"REFUSED: {out.name} has rows but no manifest; unknown provenance cannot be continued. "
                  f"Use a different --out.")
+    if prev_doc.get("served_config_drift"):
+        sys.exit(f"REFUSED: {out.name}'s manifest carries served_config_drift from a previous session; its "
+                 f"rows are not clean and must not be pooled with a continuation. Use a different --out.")
     prt = prev_doc.get("runtime") or {}
     for key in RESUME_IDENTITY_KEYS:
         pv = prt.get(key)
@@ -1155,6 +1177,11 @@ def _check_resume(prev_doc: dict | None, now: dict, out: Path) -> None:
         if pv != now[key]:
             sys.exit(f"REFUSED: cannot continue {out.name}: {key} differs (manifest {pv!r} vs this run "
                      f"{now[key]!r}). Use the original value or a different --out.")
+    if router_now and router_now.get("config_sha256"):
+        pr = (prev_doc.get("router") or {}).get("config_sha256")
+        if pr != router_now["config_sha256"]:
+            sys.exit(f"REFUSED: cannot continue {out.name}: router.config_sha256 differs (manifest {pr!r} vs "
+                     f"this run {router_now['config_sha256']!r}).")
 
 
 def _exit_sha(base: str) -> str | None:

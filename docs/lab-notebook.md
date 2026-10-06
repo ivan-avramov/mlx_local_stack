@@ -4450,12 +4450,18 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   prompts were not captured. The manifest now records `claude_md_present`. Fix: each item scratch dir is `git init`-ed (repo root stops the search; seed still merges), recorded as
   `scratch_git_init` in the scaffold-policy hash; the manifest lists `ancestor_instruction_files` with sha256 so exposure is observable.
 - **Isolated config home (operator ruling 2026-10-06).** The exact-equality check against the personal `~/.config/opencode` was rejected as
-  fragile. The probe now creates `<STACK_WORKDIR>/opencode-probe/config-<run-id>/opencode/opencode.json`, a verbatim copy of the shipped
-  `opencode_config/opencode.json` (the only file there; no global `AGENTS.md`), and runs M50 discovery, every item and the session export under
+  fragile. The probe now creates `<STACK_WORKDIR>/opencode-probe/config-<run-id>/opencode/opencode.json`, a verbatim copy of the BENCH carrier
+  `benchmark/opencode_bench.json` (9 models; the client `opencode_config/opencode.json` has 7 and excludes `role: candidate` models; the only
+  file there; no global `AGENTS.md`), and runs M50 discovery, every item and the session export under
   `XDG_CONFIG_HOME` set to it. The personal config dir is never read, hashed or modified; the per-item check requires the resolved baseURL
-  unchanged and the resolved model options == shipped block plus the seed (a mismatch is an opencode merge bug). The seed receipt binds
-  the executable, shipped config, integration test and instruction-source inventory; resume identity is `seed_base`, `scaffold_policy_sha256`,
-  `opencode_bin`, `opencode_version`, `opencode_config_sha256`, `instruction_sources_sha256`, with earlier identities kept in
-  `continuation_history`. The integration test shows a fake personal config's sampling and global `AGENTS.md` reach the request without the
+  unchanged, the resolved model options == bench block plus the seed, the resolved `limit` == the bench `limit`, and no `instructions` key
+  (a mismatch is an opencode merge bug). The seed receipt binds
+  the executable, the bench carrier, integration test and instruction-source inventory; resume identity is `seed_base`, `scaffold_policy_sha256`,
+  the full recorded scaffold/seed runtime identity plus the router `config_sha256`; a manifest carrying `served_config_drift` is never continued;
+  earlier identities and `router_exit` are kept in `continuation_history`. Rows whose overlay the model rewrote are not graded
+  (`passed: null`, `acc: null`). Side effect of the per-item `git init`: opencode sees a git repo and enables snapshot tracking; docker grading
+  of go/rust/java/javascript with `.git` present is UNVERIFIED (one known-positive grade per language is owed before the next chain). The
+  instruction inventory covers `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` up the ancestor chain plus `~/.claude/CLAUDE.md` (`.cursor/rules` is not
+  read by 1.18.30); `git init` blocks the ancestor ones (`instruction_files_blocked_by_git_init`). The integration test shows a fake personal config's sampling and global `AGENTS.md` reach the request without the
   bench config home and never with it.
 

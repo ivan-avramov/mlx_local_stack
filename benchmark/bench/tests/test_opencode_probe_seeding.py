@@ -20,7 +20,7 @@ import run_opencode_probe as P
 from bench import provenance, rowschema
 
 MODEL = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
-SHIPPED = Path(P.SHIPPED_OPENCODE_CONFIG)
+SHIPPED = Path(P.BENCH_OPENCODE_CONFIG)       # the bench carrier (benchmark/opencode_bench.json)
 
 
 # ------------------------------------------------------------------ pinned binary (C123, replaces AC6)
@@ -181,7 +181,7 @@ def _receipt_env(monkeypatch, tmp_path):
     tf = tmp_path / "the_test.py"; tf.write_text("# test v1")
     monkeypatch.delenv("OPENCODE_PROBE_BIN", raising=False)
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(P, "SHIPPED_OPENCODE_CONFIG", cfg)
+    monkeypatch.setattr(P, "BENCH_OPENCODE_CONFIG", cfg)
     monkeypatch.setattr(P, "SEED_TEST_FILE", tf)
     return b, cfg, tf
 
@@ -201,7 +201,7 @@ def test_receipt_is_bound_to_exe_config_test_and_instruction_hashes(monkeypatch,
     b, cfg, tf = _receipt_env(monkeypatch, tmp_path)
     P._record_seed_propagation_verified(b, "i1")
     r = json.loads(P._seed_marker_path(b).read_text())
-    assert set(r) >= {"version", "exe_sha256", "config_sha256", "test_sha256", "instruction_sources_sha256"}
+    assert set(r) >= {"version", "exe_sha256", "bench_config_sha256", "test_sha256", "instruction_sources_sha256"}
     ok = lambda: P._seed_runtime(7, "i1")["seed_propagation"]   # noqa: E731
     assert ok() == "verified-by-test"
     assert P._seed_runtime(7, "i2")["seed_propagation"] == "unverified"   # instruction inventory changed
@@ -228,11 +228,17 @@ def _shipped_opts():
     return dict(json.loads(SHIPPED.read_text())["provider"]["mlx-local"]["models"][MODEL]["options"])
 
 
-def _fake_debug(models_options, base="http://localhost:8000/v1", limit=True):
+def _bench_limit():
+    return json.loads(SHIPPED.read_text())["provider"]["mlx-local"]["models"][MODEL]["limit"]
+
+
+def _fake_debug(models_options, base="http://localhost:8000/v1", limit=True, instructions=None, limit_override=None):
     entry = {"options": models_options}
     if limit:
-        entry["limit"] = {"context": 262144, "output": 102400}
+        entry["limit"] = limit_override or _bench_limit()
     doc = {"provider": {"mlx-local": {"options": {"baseURL": base}, "models": {MODEL: entry}}}}
+    if instructions is not None:
+        doc["instructions"] = instructions
 
     def run(cmd, **kw):
         return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(doc), stderr="")
@@ -283,11 +289,26 @@ def test_overlay_check_refuses_a_missing_field_and_missing_limit(monkeypatch, tm
         P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
 
 
-def test_overlay_check_refuses_a_model_absent_from_the_shipped_config(monkeypatch, tmp_path):
-    cfg = tmp_path / "shipped.json"; cfg.write_text(json.dumps({"provider": {"mlx-local": {"models": {}}}}))
-    monkeypatch.setattr(P, "SHIPPED_OPENCODE_CONFIG", cfg)
+def test_overlay_check_refuses_a_drifted_limit(monkeypatch, tmp_path):
+    lim = dict(_bench_limit()); lim["output"] = lim["output"] + 1
+    monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9), limit_override=lim))
+    with pytest.raises(provenance.ServedConfigError, match="M50.*limit"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+
+
+def test_overlay_check_refuses_a_resolved_instructions_key(monkeypatch, tmp_path):
+    monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9), instructions=["~/private-rules.md"]))
+    with pytest.raises(provenance.ServedConfigError, match="M50.*instructions"):
+        P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+    monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9), instructions=[]))
+    P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
+
+
+def test_overlay_check_refuses_a_model_absent_from_the_bench_config(monkeypatch, tmp_path):
+    cfg = tmp_path / "bench.json"; cfg.write_text(json.dumps({"provider": {"mlx-local": {"models": {}}}}))
+    monkeypatch.setattr(P, "BENCH_OPENCODE_CONFIG", cfg)
     monkeypatch.setattr(subprocess, "run", _fake_debug(_resolved(9)))
-    with pytest.raises(provenance.ServedConfigError, match="M50.*shipped"):
+    with pytest.raises(provenance.ServedConfigError, match="M50.*bench"):
         P._assert_overlay_resolved(tmp_path, {}, MODEL, 9, "http://localhost:8000/v1", opencode_bin="/x")
 
 
@@ -371,47 +392,26 @@ class _Mock(BaseHTTPRequestHandler):
 
 
 def test_pinned_opencode_forwards_seed_and_deployed_sampling_to_the_endpoint(tmp_path):
-    """AC3. Run once with OPENCODE_PROBE_RECORD_VERIFIED=1 to stamp `seed_propagation: verified-by-test`."""
+    """AC3, in the configuration the probe really runs: a git-initialised item dir, the bench-owned
+    config home, the probe's own spawn function. Run once with OPENCODE_PROBE_RECORD_VERIFIED=1 to
+    stamp `seed_propagation: verified-by-test`."""
     b = _pinned_bin()
     if b is None:
         pytest.skip("pinned opencode binary absent (npm install --prefix $STACK_WORKDIR/opencode-1.18.30 "
                     "opencode-ai@1.18.30, or set OPENCODE_PROBE_BIN)")
     if P._opencode_version(b) != P.PINNED_OPENCODE_VERSION:
         pytest.skip("opencode binary is not the pinned version")
-    _Mock.bodies = []
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), _Mock)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    try:
-        cfg = json.loads(SHIPPED.read_text())
-        cfg.pop("plugin", None); cfg.pop("mcp", None)
-        prov = cfg["provider"]["mlx-local"]
-        prov["options"]["baseURL"] = f"http://127.0.0.1:{srv.server_address[1]}/v1"
-        cfg["provider"] = {"mlx-local": prov}
-        xdgc = tmp_path / "xdgc"; (xdgc / "opencode").mkdir(parents=True)
-        (xdgc / "opencode" / "opencode.json").write_text(json.dumps(cfg))
-        proj = tmp_path / "proj"; proj.mkdir()          # NON-git scratch dir, as the probe uses
-        P._write_seed_overlay(proj, MODEL, 424242)
-        env = P._opencode_env(tmp_path / "xdgd")
-        env.update(XDG_CONFIG_HOME=str(xdgc))
-        # PRODUCTION wiring only: the probe's own spawn function with the exact pinned executable
-        # (no test-side PATH repair; `opencode` is not on this env's PATH ahead of anything).
-        P._run_opencode(MODEL, proj, "say hi", proj / "sol.py", proj / "t.py", lambda w, t: (False, ""),
-                        "", tick_s=300, hard_ceiling_s=170, poll_s=1.0, stall_ticks=50, loop_repeats=50,
-                        pure=True, env=env, opencode_bin=str(b))
-    finally:
-        srv.shutdown()
-    assert _Mock.bodies, "opencode sent no request to the mock endpoint"
-    deployed = prov["models"][MODEL]["options"]
-    for body in _Mock.bodies:
-        assert body["seed"] == 424242
+    bodies, deployed = _isolation_run(tmp_path, isolate=True)
+    assert bodies, "opencode sent no request to the mock endpoint"
+    for body in bodies:
+        assert body["seed"] == 31337
         for k, v in deployed.items():
             assert body[k] == v, (k, body.get(k), v)
     if os.environ.get("OPENCODE_PROBE_RECORD_VERIFIED") == "1":   # operator opt-in: stamps the manifest marker
-        _env = dict(os.environ)
-        _cd = P._global_config_dir(str(b), _env)
-        P._record_seed_propagation_verified(
-            b, P._global_config_sha256(str(b), _env),
-            P._instruction_sources_sha256(P._instruction_sources(Path(P._scratch_root()), _cd)))
+        from bench import paths
+        wd = paths.resolve_stack_workdir(required=False)
+        start = Path(os.environ.get("OPENCODE_PROBE_SCRATCH") or (wd / "scratch" / "octmp.noindex"))
+        P._record_seed_propagation_verified(b, P._instruction_sources_sha256(P._instruction_sources(start)))
 
 
 # ------------------------------------------------------------------ B2: continuation / resume; B9: overlay map
@@ -434,16 +434,18 @@ def _identity_now(OP):
             "effective_instruction_sources": instr, "instruction_sources_sha256": isha}
 
 
-def _prior(OP, out, rows=(), **over):
+def _prior(OP, out, rows=(), doc_extra=None, **over):
+    doc_extra = doc_extra or {}
     rt = _identity_now(OP)
     for k, v in over.items():
         if v is None:
             rt.pop(k, None)
         else:
             rt[k] = v
-    cfg = provenance.router_block("http://localhost:8000")["config"]
-    out.with_suffix(".manifest.json").write_text(json.dumps(
-        {"router": {"pid": 5, "config": cfg, "port": 8000}, "runtime": rt}))
+    blk = {**provenance.router_block("http://localhost:8000"), "pid": 5}
+    doc = {"router": blk, "runtime": rt}
+    doc.update(doc_extra)
+    out.with_suffix(".manifest.json").write_text(json.dumps(doc))
     out.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
 
@@ -469,6 +471,11 @@ def test_resume_refuses_a_different_seed_base_naming_both(tmp_path, monkeypatch,
                                        ("opencode_bin", "$STACK_WORKDIR/other/opencode"),
                                        ("opencode_version", "9.9.9"),
                                        ("opencode_config_sha256", "changed-shipped"),
+                                       ("opencode_bench_config_sha256", "changed-bench"),
+                                       ("skill_policy", "OPENCODE_X=true"),
+                                       ("scratch_git_init", False),
+                                       ("claude_md_present", "flipped"),
+                                       ("overlay_schema", "other"),
                                        ("instruction_sources_sha256", "changed-instructions")])
 def test_resume_refuses_scaffold_identity_drift(tmp_path, monkeypatch, _stub_bin, field, val):
     OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
@@ -539,13 +546,15 @@ def test_ancestor_instruction_files_are_hashed_with_portable_paths(monkeypatch, 
     scratch.mkdir(parents=True)
     (home / "AGENTS.md").write_text("operator instructions")
     (home / "wd" / "CLAUDE.md").write_text("claude")
-    (home / "wd" / ".cursor").mkdir(); (home / "wd" / ".cursor" / "rules").write_text("r")
+    (home / "wd" / "CONTEXT.md").write_text("ctx")
+    (home / "wd" / ".cursor").mkdir(); (home / "wd" / ".cursor" / "rules").write_text("r")   # never read by 1.18.30
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "isolated-workdir"))   # not the caller's
     got = P._ancestor_instruction_files(scratch)
     import hashlib
     assert got["~/AGENTS.md"] == hashlib.sha256(b"operator instructions").hexdigest()
-    assert "~/wd/CLAUDE.md" in got and "~/wd/.cursor/rules" in got
+    assert "~/wd/CLAUDE.md" in got and "~/wd/CONTEXT.md" in got
+    assert "~/wd/.cursor/rules" not in got
     assert str(home) not in json.dumps(got)
 
 
@@ -559,7 +568,7 @@ def test_manifest_lists_ancestor_instruction_files(tmp_path, monkeypatch, _stub_
     rt = json.loads(out.with_suffix(".manifest.json").read_text())["runtime"]
     assert rt["scratch_git_init"] is True
     assert any(k.endswith("AGENTS.md") for k in rt["ancestor_instruction_files"])
-    assert rt["opencode_config_copy_sha256"] == rt["opencode_config_sha256"]
+    assert rt["opencode_config_copy_sha256"] == rt["opencode_bench_config_sha256"]
     assert "opencode-probe/config-" in rt["opencode_config_home"]
 
 
@@ -598,6 +607,7 @@ def _run_with_mock(tmp_path, ancestor_sentinel, git_init):
             P._git_init_scratch(proj)
         P._write_seed_overlay(proj, MODEL, 7)
         env = P._opencode_env(tmp_path / "xdgd"); env.update(XDG_CONFIG_HOME=str(xdgc))
+        env["XDG_CACHE_HOME"] = str(tmp_path / "xdgcache"); env["XDG_STATE_HOME"] = str(tmp_path / "xdgstate")
         P._run_opencode(MODEL, proj, "say hi", proj / "s.py", proj / "t.py", lambda w, t: (False, ""), "",
                         tick_s=300, hard_ceiling_s=170, poll_s=1.0, stall_ticks=50, loop_repeats=50,
                         pure=True, env=env, opencode_bin=str(b))
@@ -656,6 +666,7 @@ def test_overlay_after_run_is_restored_flagged_and_exported_under_the_original(t
     assert _resume_main(OP, monkeypatch, out) == 0
     row = json.loads(out.read_text().splitlines()[-1])
     assert row["overlay_rewritten_by_model"] is True
+    assert row["passed"] is None and row["acc"] is None and "overlay" in row["grade_excluded_reason"]
     assert row["overlay_sha256_after"] != row["overlay_sha256"]
     assert seen["overlay_at_export"] == OP._seed_overlay("m", row["sampler_seed"])   # restored before export
 
@@ -705,7 +716,7 @@ def test_bench_config_home_holds_only_a_verbatim_copy_of_the_shipped_config(tmp_
     home = P._make_bench_config_home(tmp_path, "run1")
     assert sorted(p.name for p in home.rglob("*") if p.is_file()) == ["opencode.json"]
     assert (home / "opencode" / "opencode.json").read_bytes() == SHIPPED.read_bytes()
-    assert P._sha_of(home / "opencode" / "opencode.json") == P._scaffold_runtime()["opencode_config_sha256"]
+    assert P._sha_of(home / "opencode" / "opencode.json") == P._scaffold_runtime()["opencode_bench_config_sha256"]
 
 
 def test_env_redirects_the_config_home_when_given(tmp_path):
@@ -766,6 +777,7 @@ def _isolation_run(tmp_path, isolate):
         P._git_init_scratch(proj)
         P._write_seed_overlay(proj, MODEL, 31337)
         env = P._opencode_env(tmp_path / "xdgd", cfg_home)
+        env["XDG_CACHE_HOME"] = str(tmp_path / "xdgcache"); env["XDG_STATE_HOME"] = str(tmp_path / "xdgstate")
         if not isolate:
             env.pop("XDG_CONFIG_HOME", None)
         env["HOME"] = str(home)                    # ~/.config/opencode is the fake personal dir
@@ -793,3 +805,47 @@ def test_personal_opencode_config_and_agents_md_never_reach_the_request(tmp_path
         for k, v in deployed.items():
             assert body[k] == v, (k, body.get(k), v)
         assert "SENTINEL-PERSONAL-GLOBAL-AGENTS-5e2a" not in json.dumps(body.get("messages", []))
+
+
+# ------------------------------------------------------------------ C1/C2 (round 2 review): drift, router sha, history
+def test_resume_refuses_when_the_previous_session_drifted(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"
+    _prior(OP, out, [ROW], doc_extra={"served_config_drift": {"error": "router changed"}})
+    with pytest.raises(SystemExit, match="served_config_drift"):
+        _resume_main(OP, monkeypatch, out)
+
+
+def test_resume_refuses_a_different_router_config_sha(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"; _prior(OP, out, [ROW])
+    doc = json.loads(out.with_suffix(".manifest.json").read_text())
+    doc["router"]["config_sha256"] = "0" * 64
+    out.with_suffix(".manifest.json").write_text(json.dumps(doc))
+    with pytest.raises(SystemExit, match="config_sha256"):
+        _resume_main(OP, monkeypatch, out)
+
+
+def test_continuation_keeps_the_previous_sessions_router_exit(tmp_path, monkeypatch, _stub_bin):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"
+    _prior(OP, out, [{"id": "python/other", "sample": 0}], doc_extra={"router_exit": {"pid": 5, "config_sha256": "x"}})
+    monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (_ for _ in ()).throw(StopIteration("stop")))
+    with pytest.raises(StopIteration):
+        _resume_main(OP, monkeypatch, out)
+    man = json.loads(out.with_suffix(".manifest.json").read_text())
+    assert man["continuation_history"][0]["router_exit"] == {"pid": 5, "config_sha256": "x"}
+
+
+# ------------------------------------------------------------------ registry coverage (source-of-truth carrier)
+def test_every_bench_role_registry_model_has_a_block_in_the_bench_config():
+    import yaml
+    reg = yaml.safe_load((Path(P.REPO) / "main_models.yaml").read_text())
+    blocks = json.loads(SHIPPED.read_text())["provider"]["mlx-local"]["models"]
+    need = [m["name"] for m in reg["models"] if (m.get("presentation") or {}).get("role") in ("main", "candidate")]
+    assert need and [n for n in need if n not in blocks] == []
+
+
+def test_bench_config_is_the_default_source_of_the_config_home(tmp_path):
+    home = P._make_bench_config_home(tmp_path, "r")
+    assert (home / "opencode" / "opencode.json").read_bytes() == Path(P.BENCH_OPENCODE_CONFIG).read_bytes()
