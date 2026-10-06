@@ -407,7 +407,7 @@ def test_row_assembly_uses_scrub_then_tail_not_the_broken_slice_then_scrub_order
     """Regression guard for the M2 call-site bug itself (not just the helper): the row-building
     code in `main()` must call `_scrub_then_tail`, never the old `_scrub_pii(x[-n:])` shape."""
     import inspect
-    src = inspect.getsource(P.main)
+    src = inspect.getsource(P._main)
     assert "_scrub_then_tail(tail, 300)" in src
     assert "_scrub_then_tail(log, 500)" in src
     assert "_scrub_pii(tail[-300:])" not in src

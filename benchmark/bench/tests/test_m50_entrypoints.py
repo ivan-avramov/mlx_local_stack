@@ -248,7 +248,7 @@ def test_run_opencode_probe_passes_a_workdir_data_home_to_discovery_and_creates_
     monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
     with pytest.raises(SystemExit):
         OP.main()
-    assert seen["data_home"] == str(tmp_path / "scratch" / "m50-discovery-xdg-data")
+    assert seen["data_home"].startswith(str(tmp_path / "scratch" / "m50-discovery-xdg-data-"))   # per-run
     assert not (tmp_path / "scratch").exists()          # we did not create it
 
 

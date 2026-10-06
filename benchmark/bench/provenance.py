@@ -1498,6 +1498,9 @@ def opencode_router_base(cwd=None, env=None, provider: str = "mlx-local",
                            capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
     except Exception as e:  # noqa: BLE001
         raise ServedConfigError(f"M50 tripwire: cannot run `opencode debug config`: {type(e).__name__}: {e}")
+    if r.returncode != 0:      # C121: valid-looking JSON from a failed discovery is not evidence
+        raise ServedConfigError(f"M50 tripwire: `opencode debug config` exit {r.returncode}; stderr "
+                                f"{(r.stderr or '')[-300:]!r}")
     out = r.stdout or ""
     try:
         data = json.loads(out[out.index("{"):])
