@@ -4500,4 +4500,5 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 - **Round 7.** Before every item the per-run opencode config dir must hold only the carrier copy and opencode's own `.gitignore` (an injected
   `AGENTS.md`, `opencode.jsonc` or `agent/*.md` refuses the next item), and a manifest carrying `cache_bin_inventory_drift` is never
   continued, like `served_config_drift`, even if the cache was restored since.
+- **Docker grading with `.git` (verified 2026-10-06).** Known-positive grades (`book-store`, `.meta` example solution over the stub, probe `_prepare` + `_git_init_scratch` + `_grade_<lang>(docker_ok=True)`): go, rust, java, javascript all PASS with `.git` present and without it; an unmodified stub FAILs in all four (positive and negative controls); no root-owned files left in the scratch dirs. This closes the "UNVERIFIED" note above (report under `$STACK_WORKDIR/c121/docker_known_positive/`).
 
