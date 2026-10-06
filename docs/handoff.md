@@ -1,16 +1,16 @@
-# Handoff — 2026-10-06 (late): C121 seeded opencode BUILT+MERGED; M58 BUILT (3 branches, reviewed to closure, live smoke + gate 1 owed); C116/C117/C122/C123 ruled; stack UP (daily driver), nothing pushed
+# Handoff — 2026-10-06 (16:00 UTC): M58 QUALIFIED (gate 1 bitwise identity PASSED; decode +15 % at 128K / +20 % at 240K) — ADOPTION DECISION C126 OPEN; C121 merged; stack STOPPED, `src/*` at the M58 branch commits (uncommitted), nothing pushed
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M58, M59 rows) and
 `docs/open-questions.md` (C116–C125). Earlier narrative of this same day (M57 start verification, STEP 1 result): `git show dbc546c:docs/handoff.md`.
 
 ## State of the world
 
-- Stack `main` = `28bb7ed`+ (local only; `origin/main` is still `d92c741` — NOTHING PUSHED this session; push needs the operator's go).
+- Stack `main` = `f148a46`+ (local only; `origin/main` is still `d92c741` — NOTHING PUSHED this session; push needs the operator's go).
 - Forks: `../mlx-vlm` branch `m58-joint-verify` @ 664c2ead and `../mlx-serve` branch `m58-joint-verify` @ 3f2c87c — NOT merged, NOT
   pushed, submodules NOT bumped, registry unchanged. Stack branch `m58-provenance` @ e4d3652 lives in worktree `.claude/worktrees/m58`
   (fingerprint v8, compare tools, parity_replay AC11, row persistence) — NOT merged into main (merge together with the submodule bump).
 - Worktree `.claude/worktrees/c121` removed after the merge (branch kept). Two stale agent worktrees under `.claude/worktrees/agent-*` can be removed.
-- Daily driver is UP (operator started it; verified under M57, see `dbc546c` handoff). The box also runs opencode v2.0.20 (brew); the
+- Stack is STOPPED (M58 qualification ran on lean routers; operator restarts the daily driver — note `src/*` state above). The box also runs opencode v2.0.20 (brew); the
   bench pins 1.18.30 at `$STACK_WORKDIR/opencode-1.18.30/` (C123). `~/.config/opencode/service.json` was created by a v2 probe (harmless).
 
 ## Done this session (chronological)
@@ -30,9 +30,24 @@ THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `d
    and their system prompts carried the operator's private `~/.claude/CLAUDE.md` / `~/AGENTS.md` (recorded; rows annotated, no rerun).
 5. Rulings: C116, C117, C118 (STEP 1 + build go), C120 (fold length-2 into M58), C122, C123 (option a; M59 queued for v2 migration).
 
+## M58 qualification (2026-10-06 05:51–15:15 UTC) — see `docs/campaign-results.md` 2026-10-06 and `$STACK_WORKDIR/m58/gate1_summary.md`
+
+Gate 1 PASSED on the live GPU (G1a 0 mismatch / 0 invalid over 24 requests, straddle known positives 16/16 at every threshold; G1b
+20/20 identical + reload control 20/20). Arms A/B k=2 order-balanced: sustained decode +8.1 % (64K), +14.8 % (128K, CI95 [13.3, 16.1]),
++19.7 % (240K); prefill/peak unchanged; rounds identical in every pair. Mechanism: verify 110.4 → 96.0 ms per round at 128K (E11
+confirmed). Every pre-registered adoption criterion met → **C126 (recommend ADOPT, PROVISIONAL)**. Lessons: the decode runner's
+headroom refusal is right (262144 + 1536 > limit — use 245760 for the top sustained rung); my resume wrapper lost a shell function
+(`source <(sed …)`) and silently skipped three sessions — keep phase scripts self-contained; the straddle probe needs the filler's own
+chars-per-token (4.42 here), not the retrieval filler's 4.61.
+
 ## Open items, in priority order
 
-1. **M58 live smoke + gate 1 + latency arms** (operator session; stack STOPPED; lean router). Steps: build a qualification worktree
+0. **C126 — adopt M58?** If yes: merge fork `m58-joint-verify` (664c2ead) and router `m58-joint-verify` (3f2c87c) into their `main`,
+   bump submodules (`src/*` already at those commits in the working tree), registry `mtp_verify_scan: joint_v1` + PROVISIONAL note on
+   the first pick, refresh the README latency citations, then push (separate go). If no: `git -C src/mlx-vlm checkout fbe2775e`,
+   `git -C src/mlx-serve checkout 7be6bfd`, keep the branches. Either way the operator restarts the daily driver.
+1. ~~M58 live smoke + gate 1 + latency arms~~ DONE (above). Gate rows `capacity_ladder.m58-g1a-ab.*` (fingerprint `joint_v1+ab`) and
+   arm rows `capacity_ladder.m58-{A,B}-s{1,2}.*` are in `benchmark/results/<model>/` (uncommitted until C126). (operator session; stack STOPPED; lean router). Steps: build a qualification worktree
    under `$STACK_WORKDIR/m58/wt-<sha>` whose `src/mlx-vlm` / `src/mlx-serve` point at 664c2ead / 3f2c87c and whose stack code is
    `m58-provenance`; live smoke (worker starts under `--mtp-verify-scan joint_v1`, self-test line, counters on a request; then
    `--mtp-verify-ab`); seeded pilot (5 prompts at 8K and 128K under AB); gate 1 per spec §P94 (G1a incl. straddle requests at

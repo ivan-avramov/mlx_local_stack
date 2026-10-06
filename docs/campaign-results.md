@@ -38,7 +38,13 @@ within ±2 % at 8K: met or exceeded. Nothing slower by > 3 % in either session; 
 rung or instrument slower by > 3 % in both sessions ✓; prefill / peak within ±3 % ✓. **Recommendation: ADOPT (PROVISIONAL)** —
 registry `mtp_verify_scan: joint_v1` for the first pick, fork + router branches merged and pushed, submodules bumped, fingerprint v8.
 Identity replaces quality requalification; the M57 certification debt (judge panel, Math500) stays separate. Serving optimization —
-no B/C ladder implication. Mechanism session: see the line appended below.
+no B/C ladder implication.
+
+**Mechanism session (non-latency, `MLX_VLM_MTP_PROFILE=1`, 131072 context, two seeded prompts per arm, `$STACK_WORKDIR/m58/mechanism/`):**
+per round at 400 rounds — `per_query`: verify 110.4 ms, draft 3.33, walk 3.61, accept 3.49, rollback 0.68, round 121.6 ms;
+`joint_v1`: verify **96.0 ms**, draft 3.32, walk 3.59, accept 3.47, rollback 0.68, round **107.1 ms**. Verification −14.4 ms (−13 %),
+everything else unchanged, emitted 2.35 and accepted 1.35 tokens per round identical in both arms. E11 predicted 120 → ≈ 104 ms
+(−16 ms): confirmed within 2 ms. Round-time saving −12 % ⇒ decode +13.5 % at 128K in this session (19.15 → 21.92 tok/s medians).
 
 ## 2026-10-05 — M57 ADOPTED (C115): `attention_policy: fused_v1` + `lazy_prompt_embeddings: true` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, PROVISIONAL
 
