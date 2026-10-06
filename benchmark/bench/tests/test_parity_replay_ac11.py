@@ -1093,15 +1093,43 @@ def test_r4_d1_the_carve_out_still_works_for_a_digest_only_divergence(tmp_path):
     lambda r: r.update(draft=dict(r["draft"], draft_n_accepted=r["draft"]["draft_n_accepted"] + 1)),
     lambda r: r.update(draft=dict(r["draft"], draft_rounds=r["draft"]["draft_rounds"] + 1)),
     lambda r: r.update(draft=dict(r["draft"], draft_n=r["draft"]["draft_n"] + 3)),
-    lambda r: r.update(draft=dict(r["draft"], draft_kind="eagle3")),
-], ids=["finish_reason", "completion_tokens", "draft_n_accepted", "draft_rounds", "draft_n", "draft_kind"])
-def test_r4_d1_every_non_digest_identity_field_still_fails_on_a_c120_row(tmp_path, mutate):
+], ids=["finish_reason", "completion_tokens", "draft_n_accepted", "draft_rounds", "draft_n"])
+def test_r4_d1_the_generation_dependent_fields_are_carved_out_on_a_c120_row(tmp_path, mutate):
     rc, out = _c120(tmp_path, mutate)
+    assert rc == 0, out["integrity"]
+    assert out["c120_rows"] == [["m", "math500", "i4"]] and out["differing"] == 0
+
+
+def test_r4_d1_a_non_generation_field_difference_on_a_c120_row_is_still_a_difference(tmp_path):
+    rc, out = _c120(tmp_path, lambda r: r.update(draft=dict(r["draft"], draft_kind="eagle3")))
     assert rc == 1 and out["c120_rows"] == [] and out["differing"] == 1
 
 
-def test_r4_d1_only_the_draft_counter_changes_with_the_len2_counter_set_exits_1(tmp_path):
-    a, b = _g1b_rows({4: {"verify_blocks_straddle_len2": 2}})          # digests identical
+def test_r4_d1_verify_counter_sanity_is_strict_on_a_c120_row(tmp_path):
+    # the joint side fell back inside the domain on the C120 row
+    rc, out = _c120(tmp_path, lambda r: r.update(
+        verify=dict(r["verify"], verify_blocks_per_query=2)))
+    assert rc == 2 and any("fell back inside the domain" in p for p in out["integrity"])
+    rc, out = _c120(tmp_path, lambda r: r.update(
+        verify=dict(r["verify"], verify_fallback_reasons={"domain": 1})))
+    assert rc == 2
+    # the per_query side reporting joint-path counters on that row
+    a, b = _g1b_rows({4: {"verify_blocks_straddle_len2": 2}}, {4: "different"})
+    a[4]["verify"] = {"verify_blocks_joint_v1": 3}
+    rc, out = _g1b(tmp_path, a, b)
+    assert rc == 2 and any("non-joint side" in p for p in out["integrity"])
+
+
+def test_r4_d1_the_count_of_c120_rows_per_run_is_reported(tmp_path, capsys):
+    a, b = _g1b_rows({4: {"verify_blocks_straddle_len2": 2}, 9: {"verify_blocks_straddle_len2": 1}},
+                     {4: "different"})
+    rc, out = _g1b(tmp_path, a, b)
+    assert rc == 0 and out["c120_len2_rows"] == {"A": 0, "B": 2}
+    assert "c120_len2_rows per run: A=0 B=2" in capsys.readouterr().out
+
+
+def test_r4_d1_a_draft_counter_difference_WITHOUT_the_len2_counter_is_still_exit_1(tmp_path):
+    a, b = _g1b_rows(None)
     b[4]["draft"] = dict(b[4]["draft"], draft_n_accepted=b[4]["draft"]["draft_n_accepted"] + 1)
     assert _g1b(tmp_path, a, b)[0] == 1
 

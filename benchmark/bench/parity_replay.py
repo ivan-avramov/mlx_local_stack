@@ -386,6 +386,22 @@ def run(a) -> int:
         return _finalise_unexpected(out, base, rows, router, e)
 
 _IDENTITY = ("finish_reason", "completion_tokens", "content_sha256", "reasoning_sha256", "draft")
+# generation-dependent fields: they may all differ on a C120 row (a different numeric path changes
+# the generated text, hence its length, finish and speculative rounds)
+_GEN_DEPENDENT = ("content_sha256", "reasoning_sha256", "completion_tokens", "finish_reason")
+_GEN_DEPENDENT_DRAFT = ("draft_rounds", "draft_n", "draft_n_accepted")
+
+
+def _only_generation_dependent_differences(x, y) -> bool:
+    for f in _IDENTITY:
+        if f in _GEN_DEPENDENT or x.get(f) == y.get(f):
+            continue
+        if f == "draft" and isinstance(x.get(f), dict) and isinstance(y.get(f), dict):
+            if all(x["draft"].get(m) == y["draft"].get(m) for m in x["draft"]
+                   if m not in _GEN_DEPENDENT_DRAFT) and set(x["draft"]) == set(y["draft"]):
+                continue
+        return False
+    return True
 
 
 _DRAFT_MEMBERS = ("draft_kind", "draft_rounds", "draft_n", "draft_n_accepted")
@@ -561,12 +577,20 @@ def _compare(a) -> int:
         ident = all(x.get(f) == y.get(f) for f in _IDENTITY)
         same += ident; diff += not ident
         jrow = {"A": x, "B": y}.get(joint_side)
-        # C120 exempts ONLY a content/reasoning digest divergence; finish reason, token count and
-        # the MTP counters (and, checked elsewhere, code/scan/request) must still match exactly
-        core_equal = all(x.get(f) == y.get(f) for f in _IDENTITY
-                         if f not in ("content_sha256", "reasoning_sha256"))
-        c120 = (not ident and core_equal and jrow is not None
-                and _count(jrow, "verify_blocks_straddle_len2") > 0)
+        # C120 (spec): on a joint-side row with a length-2 straddle, ALL differences may lie in the
+        # generation-dependent set; any other field difference is a real difference (exit 1), and
+        # code / request hash / scan / verify-counter sanity stay strict (integrity, exit 2).
+        c120 = (not ident and jrow is not None and _count(jrow, "verify_blocks_straddle_len2") > 0
+                and _only_generation_dependent_differences(x, y))
+        if jrow is not None and _count(jrow, "verify_blocks_straddle_len2") > 0:
+            other = y if jrow is x else x
+            vj = jrow.get("verify") or {}
+            if _count(jrow, "verify_blocks_per_query") > 0 or vj.get("verify_fallback_reasons"):
+                integrity.append(f"C120 row {k}: the joint side fell back inside the domain "
+                                 f"(verify_blocks_per_query / verify_fallback_reasons)")
+            if any(_count(other, c) > 0 for c in ("verify_blocks_joint_v1", "verify_blocks_straddle",
+                                                   "verify_blocks_straddle_len2")):
+                integrity.append(f"C120 row {k}: the non-joint side reports joint-path counters")
         if c120:   # C120: a length-2 straddle runs per-query under joint_v1: expected divergence
             diff -= 1
             c120_rows.append(list(k))
@@ -582,6 +606,9 @@ def _compare(a) -> int:
     print(f"pairs={same + diff + len(c120_rows)} identical={same} differing={diff} missing={miss} "
           f"c120_expected={len(c120_rows)} (A={A.get('tag')} B={B.get('tag')}) "
           f"joint_rows A={joint['A']} B={joint['B']}")
+    c120_len2 = {n: sum(1 for r in d.values() if _count(r, "verify_blocks_straddle_len2") > 0)
+                 for n, d in (("A", ka), ("B", kb))}
+    print(f"c120_len2_rows per run: A={c120_len2['A']} B={c120_len2['B']}")
     for k in c120_rows:
         print(" C120-EXPECTED-DIVERGENCE", tuple(k), "(length-2 straddle ran per-query under joint_v1)")
     for d in details:
@@ -598,7 +625,7 @@ def _compare(a) -> int:
     if a.out:
         json.dump({"a": A.get("tag"), "b": B.get("tag"), "pairs": same + diff + len(c120_rows),
                    "identical": same, "differing": diff, "missing": miss,
-                   "c120_rows": c120_rows, "statuses": statuses, "details": details,
+                   "c120_rows": c120_rows, "c120_len2_rows": c120_len2, "statuses": statuses, "details": details,
                    "integrity": integrity, "joint_rows": joint, "legacy": legacy},
                   open(a.out, "w"), indent=1)
     if miss or integrity:
