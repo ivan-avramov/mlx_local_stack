@@ -30,7 +30,8 @@ existing rows; this changes the scaffold for FUTURE opencode rows and corrects t
 - P109 Proof, not assumption: an integration test runs the pinned opencode against a local mock OpenAI-compatible HTTP server (no
   GPU, no router) and asserts the captured request body carries `"seed": N` and every deployed sampling field from the shipped
   config; skipped with a reason when opencode is not installed. The probe's manifest records `seed_propagation: "verified-by-test"`
-  only when that test passed in CI for the pinned version; otherwise `"unverified"` and the row is flagged.
+  only when the receipt written by an operator-run of that test (`OPENCODE_PROBE_RECORD_VERIFIED=1`) matches the executable, the bench
+  carrier and the test file; otherwise `"unverified"` in the manifest runtime (the manifest, not each row, carries it).
 - P110 R8 switch: set the opencode environment variable that disables Claude-Code instruction-file loading (verify the exact name for
   1.18.30's binary strings; do not guess), alongside `OPENCODE_DISABLE_EXTERNAL_SKILLS=true`; fold both into the recorded
   skill-policy/config hash so pre- and post-change rows never pool.
@@ -39,7 +40,7 @@ existing rows; this changes the scaffold for FUTURE opencode rows and corrects t
 
 - AC1 Overlay [amended]: for item X and seed base B the probe writes `<cwd>/opencode.json` with exactly the seed key for the served
   model PLUS the session-title switch `agent.title.disable: true` (1.18.30 would otherwise send an un-seeded title request to the task
-  provider); sha256 recorded in the row and in the manifest per item; nothing else is overridden.
+  provider) and `snapshot: false` (git init would otherwise enable snapshot tracking); sha256 recorded in the row and in the manifest per item; nothing else is overridden.
 - AC2 Seeds: distinct per item within a session, reproducible across sessions with the same base, distinct across bases
   (`rowschema.sample_seed`); `--seed-base` required.
 - AC3 Propagation [amended]: mock-endpoint integration test, in a git-initialised dir under the bench config home with a hermetic env, captures

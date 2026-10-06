@@ -4459,7 +4459,7 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   the executable, the bench carrier and the integration test (the instruction inventory is observation only); resume identity is `seed_base`, `scaffold_policy_sha256`,
   the full recorded scaffold/seed runtime identity plus the router `config_sha256`; a manifest carrying `served_config_drift` is never continued;
   earlier identities and `router_exit` are kept in `continuation_history`. Rows whose overlay the model rewrote are not graded
-  (`passed: null`, `acc: null`). Side effect of the per-item `git init`: opencode sees a git repo and enables snapshot tracking; docker grading
+  (`passed: null`, `acc: null`). Side effect of the per-item `git init`: opencode sees a git repo ("git repo: yes"); snapshot tracking is switched off by the overlay's `snapshot: false` (round 6); docker grading
   of go/rust/java/javascript with `.git` present is UNVERIFIED (one known-positive grade per language is owed before the next chain). The
   instruction inventory covers `AGENTS.md`, `CLAUDE.md`, `CONTEXT.md` up the ancestor chain plus `~/.claude/CLAUDE.md` (`.cursor/rules` is not
   read by 1.18.30); `git init` blocks the ancestor ones (`instruction_files_blocked_by_git_init`). The integration test shows a fake personal config's sampling and global `AGENTS.md` reach the request without the
@@ -4497,4 +4497,7 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   `progress_gate.py`) is part of the resume identity (`probe_code_sha256`). Residual, recorded not fixed: the shared cache dir is written
   (`mkdir bin`) and is not in the AGENTS.md exception list (C125 ratification); the first session after the HOME move runs with cold
   cargo/go/gradle/npm tool caches.
+- **Round 7.** Before every item the per-run opencode config dir must hold only the carrier copy and opencode's own `.gitignore` (an injected
+  `AGENTS.md`, `opencode.jsonc` or `agent/*.md` refuses the next item), and a manifest carrying `cache_bin_inventory_drift` is never
+  continued, like `served_config_drift`, even if the cache was restored since.
 

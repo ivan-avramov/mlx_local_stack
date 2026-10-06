@@ -499,6 +499,17 @@ def _assert_bench_home_clean(bench_home: Path) -> None:
                      f"would load it as instructions/config. Remove it and rerun.")
 
 
+def _assert_config_home_clean(cfg_home: Path) -> None:
+    """The per-run config dir may hold ONLY the carrier copy (`opencode.json`) and opencode's own
+    `.gitignore`: a file the model adds (`AGENTS.md`, `opencode.jsonc`, `agent/*.md`...) would be loaded by
+    1.18.30 for the next item under an unchanged scaffold hash."""
+    d = Path(cfg_home) / "opencode"
+    for entry in sorted(d.iterdir()) if d.is_dir() else []:
+        if entry.name not in ("opencode.json", ".gitignore"):
+            sys.exit(f"REFUSED: the per-run opencode config dir holds an unexpected {entry.name!r} "
+                     f"({_portable(entry)}); it would be loaded as config/instructions. Remove it and rerun.")
+
+
 def _make_run_dirs(workdir: Path, run_id: str) -> tuple:
     """(config home, state home, tmp dir, bench HOME) under `<workdir>/opencode-probe/`; the bench HOME
     and its state dir are persistent across runs, the config home and tmp dir are per run."""
@@ -1160,6 +1171,7 @@ def _main(ctx: dict) -> int:
             print(f"[resume] {a.lang}/{name} already recorded in {out.name}; skipped", flush=True)
             continue
         _assert_bench_home_clean(bench_home)
+        _assert_config_home_clean(cfg_home)
         if _sha_of(cfg_home / "opencode" / "opencode.json") != _sha_of(BENCH_OPENCODE_CONFIG):
             sys.exit(f"REFUSED: the per-run config copy changed since it was seeded ({_portable(cfg_home)}); "
                      f"it must stay a verbatim copy of {BENCH_OPENCODE_CONFIG.name}.")
@@ -1360,9 +1372,11 @@ def _check_resume(prev_doc: dict | None, now: dict, out: Path, router_now: dict 
     if prev_doc is None:
         sys.exit(f"REFUSED: {out.name} has rows but no manifest; unknown provenance cannot be continued. "
                  f"Use a different --out.")
-    if prev_doc.get("served_config_drift"):
-        sys.exit(f"REFUSED: {out.name}'s manifest carries served_config_drift from a previous session; its "
-                 f"rows are not clean and must not be pooled with a continuation. Use a different --out.")
+    for flag in ("served_config_drift", "cache_bin_inventory_drift"):
+        if prev_doc.get(flag):
+            sys.exit(f"REFUSED: {out.name}'s manifest carries {flag} from a previous session; its rows are "
+                     f"flagged and must not be pooled with a continuation (even if the state was since "
+                     f"restored). Use a different --out.")
     prt = prev_doc.get("runtime") or {}
     for key in RESUME_IDENTITY_KEYS:
         pv = prt.get(key)

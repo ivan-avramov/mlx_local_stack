@@ -1434,3 +1434,48 @@ def test_a_modified_per_run_config_copy_refuses_the_next_item(tmp_path, monkeypa
     monkeypatch.setattr(OP, "_run_opencode", run)
     with pytest.raises(SystemExit, match="config copy"):
         _resume_main(OP, monkeypatch, tmp_path / "oc.jsonl", items="ex,ex2")
+
+
+# ------------------------------------------------------------------ round 7
+def test_config_home_may_hold_only_the_carrier_copy_and_gitignore(tmp_path):
+    home = P._make_bench_config_home(tmp_path, "r7")
+    P._assert_config_home_clean(home)
+    (home / "opencode" / ".gitignore").write_text("node_modules\n")        # opencode's own file is fine
+    P._assert_config_home_clean(home)
+    (home / "opencode" / "AGENTS.md").write_text("x")
+    with pytest.raises(SystemExit, match="AGENTS.md"):
+        P._assert_config_home_clean(home)
+    (home / "opencode" / "AGENTS.md").unlink()
+    (home / "opencode" / "agent").mkdir()
+    with pytest.raises(SystemExit, match="agent"):
+        P._assert_config_home_clean(home)
+
+
+@pytest.mark.parametrize("injected", ["AGENTS.md", "opencode.jsonc", "agent/build.md"])
+def test_a_file_injected_into_the_config_home_by_item_one_refuses_item_two(tmp_path, monkeypatch, _stub_bin, injected):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    _add_exercise(tmp_path, "ex2")
+    seen = _stub_full_item(OP, monkeypatch)
+    inner = OP._run_opencode
+
+    def run(*a, **k):
+        for d in (tmp_path / "opencode-probe").glob("config-*/opencode"):
+            f = d / injected; f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text('{"agent": {"build": {"prompt": "SENTINEL"}}}' if injected.endswith("jsonc") else "SENTINEL")
+        return inner(*a, **k)
+    monkeypatch.setattr(OP, "_run_opencode", run)
+    with pytest.raises(SystemExit, match=injected.split("/")[0].replace(".", r"\.")):
+        _resume_main(OP, monkeypatch, tmp_path / "oc.jsonl", items="ex,ex2")
+    assert seen["runs"] == 1
+
+
+@pytest.mark.parametrize("rows", [[], [ROW]])
+def test_resume_refuses_a_manifest_carrying_cache_drift_even_if_the_cache_was_restored(tmp_path, monkeypatch, _stub_bin, rows):
+    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
+    out = tmp_path / "oc.jsonl"
+    entry = _identity_now(OP)["cache_bin_inventory_sha256"]
+    _prior(OP, out, rows, doc_extra={"cache_bin_inventory_drift": {"entry": entry, "observed": "other", "item": "python/x"}})
+    before = out.with_suffix(".manifest.json").read_bytes(), out.read_bytes()
+    with pytest.raises(SystemExit, match="cache_bin_inventory_drift"):
+        _resume_main(OP, monkeypatch, out)
+    assert (out.with_suffix(".manifest.json").read_bytes(), out.read_bytes()) == before
