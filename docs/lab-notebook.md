@@ -4625,3 +4625,44 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
      `mx.set_memory_limit` diagnostics if it ever matters (the served box has 64 GB).
 - Fork suite on the fix (fork venv, Python 3.12.13, MLX 0.32.2): **5829 passed, 12 skipped, 2 xfailed**. Stack submodule bumped to
   `58eb241b`; CI verification needs the push (operator go).
+
+## 2026-10-07 (early) — M59 built: opencode 2.x probe, client config, A4 on v2; eight smoke attempts, four prompt-identity leaks, no 2.x slowdown
+
+- **Build (branch `m59-opencode-v2`, base `b533fff`):** Codex `gpt-6-astra` workers from `docs/specs/m59-opencode-v2-probe.md` (probe + bench
+  carrier + M50 v2 tripwire: 4 rounds; client configgen + A4 leg: 2 rounds), Claude Opus 5.5 (allow-shorthand) cold reviews (client:
+  SHIP-WITH-RESIDUALS; probe: DO-NOT-SHIP → fold-in → SHIP-WITH-RESIDUALS → fold-in; architect's fixes: SHIP-WITH-RESIDUALS → fold-in).
+  Must-fix found by review: a gate-killed item left an `aborted` assistant error in the export and was classified as a transport abort
+  (≈ 1 halt per 4 items at the 1.18 stall rates). Merged-tree suites: bench 3419–3430 passed, configgen 75, `configgen check` green.
+- **What the mock capture missed (real runs):** (1) opencode SOMETIMES emits the final `step_finish` (FACTS 7b never saw it) — the
+  classifier now accepts starts == finishes or finishes + 1; (2) `/api/config` lists no document for the project when project config
+  is disabled (as predicted); (3) the gate-kill export signature above.
+- **Smoke attempts 1–4 (harness):** overlay carried `mtp_verify_scan: joint_v1` without `draft_kind` (mlx-serve refuses); the lean
+  worker logs to stdout unless `MLX_VLM_LOG_FILE` is set (the A4 gate read an empty log); an orphan gate from a killed runner overwrote
+  the receipt (kill process groups, never just the runner).
+- **Attempts 5–7 (pilot-twice, pick 1, 5 seeded-random Python items, seed base 1001):** p1 5/5 → p2 4/5 → … → attempt 7 p1 5/5 (301 s),
+  p2 5/5 (313 s). Same-seed passes were NOT identical until four prompt leaks were closed, each found by diffing per-request
+  `prompt_tokens` and transcripts: (a) the random scratch dir name (`oc-<item>-<random>`) is in the system prompt ("Working directory")
+  and every tool path → fixed `oc-<item>`; (b) `<TMPDIR>/opencode` is in the system prompt and TMPDIR carried the run id → stable
+  per-item TMPDIR cleared before the item's first spawn (a dir shared by back-to-back invocations clashed on leftovers); (c) the
+  prepared files' mtimes appear in the model's `ls -la` output → one fixed mtime on the prepared tree; (d) "Today's date" is in every
+  prompt → same-seed identity holds within one local day only; rows record `prompt_date` (C135). After (a)+(b), attempt 7: scaffold
+  prompt identity PASS on 5/5 items, 3/5 items byte-identical end to end (per-request prompt AND completion tokens equal), 2/5 diverge
+  at the `ls -la` turn. With identical prompts the model's outputs were byte-identical for 3–4 consecutive requests of 10–25K context,
+  so the server is deterministic at these lengths; the remaining divergences were all prompt differences.
+- **"2× slower on 2.x" (operator concern) — cold RCA (Claude Opus 5.5 (allow-shorthand), read-only):** no per-item slowdown: on the same five items v2 = 0.92× of the
+  1.18 xhigh rows and 1.08× of the 1.18 medium rows (wide CIs, n=5). The 203 s basis was the xhigh 22-item mean; the seeded five include
+  the two slowest items (1.18 mean 351 s); the watcher compared a heavy-first running mean against the corpus mean. The server decodes
+  15–30 % FASTER (24.5 vs 18–21 tok/s; native16 + fused_v1 vs TQ4) while the model writes ≈ 1.5× the tokens; 92 % of wall is decode;
+  harness overhead ≈ 2 s/item. All three v2 "stalls" were 13–14K-token single-turn thinks at steady 23–24 tok/s cut by the 600 s
+  no-write window (the 1.18 xhigh paasio stall has the same signature) → **C136**: the first-write allowance is token-denominated
+  (`--first-write-tokens` 16000 ÷ documented draft-OFF rate, `benchmark/decode_rates.json`; pick 1 window 662 s, pick 2 558 s).
+  Chain re-estimate: ≈ 14.5 h point, 13.3 h lower bound, ≤ 22 h heavy tail.
+- **C135 (operator):** seeds are an independence control (distinct base per session), never a reproducibility feature; byte-identity is
+  a harness check once per scaffold change (it found leaks a–c); the same-seed reload-control leg is dropped from the M59 chain
+  (cross-load determinism already shown by the merge identity gate).
+- **Daily driver:** the operator's `~/.config/opencode/opencode.json` was a verbatim copy of the generated v1 client config (`f5d71d3`);
+  replaced by the generated v2 config (body sampling, pollers off, compaction on, titles via the task model); `/api/config` loads all
+  seven models; backup under `$STACK_WORKDIR/m59/`.
+- **Pre-existing, not changed:** `test_dsh_probe.py::test_real_dsh_closed_port…` refuses when `STACK_WORKDIR` is inherited (run the
+  suite without it exported); `test_opencode_probe_seeding.py::test_every_spawn_runs_under_the_bench_owned_env` fails while a draft-OFF
+  worker is live (it reads the live worker against the registry's MTP setting) — suites must run with the stack down.
