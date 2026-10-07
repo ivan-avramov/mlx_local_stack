@@ -4666,3 +4666,9 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 - **Pre-existing, not changed:** `test_dsh_probe.py::test_real_dsh_closed_port…` refuses when `STACK_WORKDIR` is inherited (run the
   suite without it exported); `test_opencode_probe_seeding.py::test_every_spawn_runs_under_the_bench_owned_env` fails while a draft-OFF
   worker is live (it reads the live worker against the registry's MTP setting) — suites must run with the stack down.
+- **Attempt 8 (final code `09c00b8`'s probe, frozen mtimes, C136 window):** p1 5/5 (342 s), p2 4/5 (348 s; paasio stalled at the 662 s
+  window, not comparable anyway: local midnight fell inside p1 so its `prompt_date` differs — the C135 rule in action). Scaffold prompt
+  identity PASS on every same-date item; book-store, react, phone-number byte-identical end to end; forth diverged inside a reasoning
+  block of request 6 with all preceding tool outputs identical → residual server-side nondeterminism in long generations, **C137**
+  (open, not an M59 blocker). The 1.18 probe is FROZEN (`09c00b8`): `main()` refuses before any I/O; 82 integration tests deleted,
+  43 moved to `test_opencode_common.py`, 32 retained; the session gate defaults to `--opencode v2`.

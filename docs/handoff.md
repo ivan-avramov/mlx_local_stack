@@ -1,49 +1,50 @@
-# Handoff — 2026-10-06 (late, second session): fork CI diagnosed and fixed (push pending); M59 opencode 2.x spec written (C134, awaiting approval); stack STOPPED by operator choice
+# Handoff — 2026-10-07 (early morning): M59 BUILT and MERGED to main (opencode 2.x probe, v2 client config, A4 on v2, 1.18 frozen); smoke passed on the final code; chain awaits the operator's go; stack STOPPED
 
-THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M59 row: spec written) and
-`docs/open-questions.md` (C134 OPEN: the M59 design's judgement calls + two housekeeping asks; C133/C130/C119 done). History:
-`docs/lab-notebook.md` 2026-10-06 (late) "fork CI" entry. Artefacts: `$STACK_WORKDIR/ci_repro/` (Python 3.10 + MLX 0.32.3 repro venv,
-logs), `$STACK_WORKDIR/m59_research/` (REPORT.md, `capture/FACTS.md` + 22 runs, `capture/tools/{mock,run}.py`), `$STACK_WORKDIR/m60/`,
-`$STACK_WORKDIR/upstream/2026-10-06/`.
+THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M59 row) and `docs/open-questions.md`
+(C134–C136 RULED; C137 OPEN: residual long-generation nondeterminism). History: `docs/lab-notebook.md` 2026-10-06 (late, fork CI) and
+2026-10-07 (early, M59). Artefacts: `$STACK_WORKDIR/m59/` (RUNLOG.md, `run_m59.py` runner, `make_overlay.py` + `overlay_m59_draft_off.yaml`,
+`prompt_identity.py`, `items_python_go.json`, `smoke_attempt5..8/` rows + transcripts, Codex prompts/reports, review scratch dirs,
+`personal_opencode.v1.backup.json`), `$STACK_WORKDIR/m59_research/` (REPORT.md, capture/FACTS.md), `$STACK_WORKDIR/ci_repro/`.
 
 ## State of the world
 
-- **Stack is STOPPED** (operator's choice; stays down unless they say otherwise). Restart = `./runserver.sh`. No opencode service running.
-- Stack `main` = `f0ae091` (two commits past `origin/main` `c889661`): `b61221a` submodule bump + lab notebook, `f0ae091` M59 spec +
-  C134 + PLAN row. **NOT pushed.**
-- Fork `../mlx-vlm` `main` = `58eb241b` (one commit past `origin/main` `b17b12a9`, branch `ci/macos-runner-test-fixes` merged ff).
-  **NOT pushed.** Stack submodule `src/mlx-vlm` = `58eb241b`.
-- Fork CI on `b17b12a9`: `Upstream parity` green; `Test PRs` run 37558071759 **13 failed / 5807 passed** (macos-14 runner, MLX 0.32.3,
-  Python 3.10). All 13 pass on the box under the same pair → runner-specific; fixed in `58eb241b` (test/CI only). The CI rerun is the
-  red→green for the prefill-profile fix (mechanism inferred, see the notebook) and happens on push.
-- Tests: fork suite on `58eb241b` (fork venv, Py 3.12 / MLX 0.32.2) 5829 passed / 0 failed; `benchmark/bench/tests` unchanged since
-  3264 passed.
-- Worktrees pruned: stack `.claude/worktrees/agent-*` (both merged; branches deleted), fork `upstream/2026-09-13` (merged; branch deleted).
-  Left for the operator (C134): fork `f1-sync` (`sync/upstream-v0.6.15`, 3 commits never merged, superseded), stack `m54/wt-*`
-  (detached, clean, contained in main), fork `upstream/2026-10-06` (merge worktree, clean).
-- Untracked in the stack: `benchmark/results/judge_m60/.../gate.json` (naming hook; regenerable with `bench.judge_gate`) — commit with
-  a bypass is the operator's call; `ts.md` is an operator note (a talk transcript), not touched.
+- **Stack is STOPPED** (runner stops it after every smoke; operator's choice to keep the daily driver down). Restart = `./runserver.sh`.
+  The operator's `~/.config/opencode/opencode.json` is now the generated v2 client config (backup in `$STACK_WORKDIR/m59/`).
+- Stack `main` = `09c00b8` + this handoff commit; `origin/main` = `c889661`. **NOT pushed** (operator approved the fork push only).
+  Fork `../mlx-vlm` `main` = `58eb241b` = `origin/main` (pushed; `Test PRs` green on the macos-14 runner). Submodule = `58eb241b`.
+- **M59 (opencode 2.x probe) is BUILT and merged** (branch `m59-opencode-v2` fast-forwarded into main; 20 commits): `benchmark/run_opencode_probe_v2.py`,
+  `benchmark/bench/opencode_common.py` (shared pieces), M50 v2 tripwire in `provenance.py`, generated `benchmark/opencode_bench_v2.json` +
+  `benchmark/opencode_plugins/noretry.js`, `benchmark/decode_rates.json` (C136), v2 client config `opencode_config/opencode.json`, A4-on-v2 in
+  `scripts/session_pinning_gate.py` (default `--opencode v2`), the 1.18 probe FROZEN (refuses before any I/O; rows retained). Workers: Codex
+  `gpt-6-astra`; verifier: Claude Opus 5.5 (allow-shorthand) cold reviews (four passes, all findings folded in).
+- **Smoke (attempts 5–8, pick 1, 5 seeded-random Python items):** final attempt 8 on the final code: p1 5/5 (342 s/item), p2 4/5; A4 v2 PASS;
+  scaffold prompt identity PASS; 3 of 4 comparable items byte-identical end to end. Four prompt-identity leaks were found and closed on the
+  way (random scratch name, per-run TMPDIR, prepared-file mtimes, the date → `prompt_date` on rows). See the lab notebook.
+- **"2× slower on 2.x" was a basis error** (cold RCA): like-for-like v2 is 0.92–1.08× of 1.18; the server decodes 15–30 % faster, the model
+  writes ≈ 1.5× the tokens. Chain re-estimate ≈ 14.5 h point / 13.3 h lower bound / ≤ 22 h heavy tail.
+- Suites on main with the stack down: see the last line of `$STACK_WORKDIR/m59/suite_main.rc` and the logs beside it (expected green; run
+  without `STACK_WORKDIR` exported — the dsh guard test refuses an inherited one).
+- Untracked: `ts.md` (operator note; `rm` was denied to the session — operator deletes it).
 
 ## Queue, in order
 
-1. **Operator:** push go for fork `58eb241b` + stack `f0ae091`? (CI reruns on push.) Rule on C134 (M59 design judgement calls (1)–(5),
-   gate.json bypass, f1-sync).
-2. **M59 build** after approval (`docs/specs/m59-opencode-v2-probe.md`): Codex `gpt-6-astra` (probe v2 + provenance + tests) and
-   Sonnet (configgen v2 emitters + goldens + READMEs + 1.18 freeze) from self-contained prompts with known positives; Claude + Codex
-   cold reviews (Codex detached with an `.rc` marker); full suite on the merged tree; then the `--limit 5` smoke twice on the lean
-   router (`MLX_VLM_CACHE_SESSION_MAX=1`, draft-OFF overlay, M50/C106, daemon) ≈ 45 min box; A4-on-v2; then the re-baseline chain
-   (P161, ≈ 15 h lower bound / 18–20 h budget) only on the operator's go.
+1. **Operator:** go for the M59 re-baseline chain (`$STACK_WORKDIR/m59/run_m59.py chain` → s1 then s2: two B picks × Python + Go, 22 items,
+   seed bases 1001/2002, order-balanced, no reload leg per C135; detached with `nohup`, RUNLOG + five-minute WATCH lines; ≈ 14.5 h point).
+   Also: push go for stack main; whether to buy C137 (b) (≈ 15 min replay probe).
+2. After the chain: pair accuracy per session vs the 1.18 rows as a descriptive scaffold delta (never pooled); README evidence tables;
+   campaign-results entry. No pick/order change from the re-baseline.
 3. Blind-judge agent definition `.claude/agents/blind-judge.md` — loads only in a NEW session; canary before the next judge pass.
 4. Candidates not queued: unchanged (dense prefill path; fused-kernel tuning; `auto`-path slowdown; P41; P42). M56 PARKED. ReviewBench DEFERRED.
 
 ## Rules learned (this session)
 
-- An exported `TMPDIR` that does not exist breaks MLX's Metal JIT (`temp_directory_path … Not a directory`) and fails ~50 tests that
-  look unrelated; create the dir first.
-- zsh: `kill $(pgrep …)` with a multi-line result is one "illegal pid" string — loop over the pids.
-- macos-14 CI is ~4× slower than the box and releases Metal buffers late: absolute peak-memory thresholds are not portable; measure
-  deltas from a quiesced reset.
-- The box's `opencode` is the brew 2.0.20 symlink; the probe's 1.18.30 pin lives under `$STACK_WORKDIR/opencode-1.18.30/`. v2 facts of
-  record are in `capture/FACTS.md`, not the (stale v1) opencode docs.
+- Anything opencode can print into its prompt must be stable per item, never per run: scratch dir name, TMPDIR, file mtimes; the date is
+  a one-day window (`prompt_date`). Diff per-request `prompt_tokens` in the worker log to locate a leak before blaming the server.
+- The lean worker logs to stdout unless `MLX_VLM_LOG_FILE` is set (runserver sets it); set it in every lean start that an instrument reads.
+- A draft-OFF overlay must also drop `mtp_verify_scan` (it requires `draft_kind: mtp`).
+- Kill runners by process group: a killed runner left its gate child alive, which overwrote the A4 receipt of the next attempt.
+- Suites must run with the stack down and without `STACK_WORKDIR` exported.
+- opencode 2.0.20 sometimes emits the final `step_finish` (the capture never saw it); a mock capture is necessary, not sufficient.
+- Codex workers stop and ask when a ruling is needed; answer in a follow-up prompt file, keep the `.rc` launcher.
 
-Next decision id C135; discussion ids continue from P162.
+Next decision id C138; discussion ids continue from P175.
