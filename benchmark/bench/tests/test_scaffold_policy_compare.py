@@ -3,11 +3,25 @@ different hash refuses; a legacy opencode manifest (no hash) reads "pre-C121" an
 a post-C121 row; non-opencode manifests are unaffected."""
 import json
 
+import pytest
+
 import bench.compare as CMP
 import bench.generate as G
 from bench import provenance
 from bench.tests.test_compare import _rows as _cmp_rows
-from bench.tests.test_opencode_probe_seeding import fake_model_mtp_scan  # noqa: F401
+
+
+@pytest.fixture
+def fake_model_mtp_scan(monkeypatch):
+    """Resolve M58 only for the synthetic model used by the probe fixtures."""
+    real = provenance.registry_mtp_verify_scan
+
+    def resolve(model, registry_path=None, worker_lookup=provenance._DEFAULT_LOOKUP):
+        if model == "m":
+            return {"mtp_verify_scan": "per_query", "mtp_verify_scan_source": "registry"}
+        return real(model, registry_path, worker_lookup)
+
+    monkeypatch.setattr(provenance, "registry_mtp_verify_scan", resolve)
 
 
 def _manifest(model, bench, *, policy=None, client="opencode", version=7):

@@ -270,18 +270,18 @@ def test_a4_v2_m50_refuses_before_creating_run(gate, tmp_path, monkeypatch):
     assert not (tmp_path / "session_gate").exists()
 
 
-def test_gate_cli_defaults_to_v1_and_routes_explicit_v2(gate, tmp_path, monkeypatch):
+def test_gate_cli_defaults_to_v2_and_routes_explicit_v2(gate, tmp_path, monkeypatch):
     module, binary, _ = gate
     import run_opencode_probe as oc
 
-    monkeypatch.setattr(module, "pinned_opencode", lambda: (str(binary), "1.18.30"))
     monkeypatch.setenv("OPENCODE_PROBE_BIN", str(binary))
+    monkeypatch.setenv("MLX_SERVE_BASE", "http://localhost:8000/v1")
     monkeypatch.setattr(oc, "_sha_of", lambda path: "test-sha")
     monkeypatch.setattr(module, "LogTail", lambda path: object())
     monkeypatch.setattr(module, "a6_bare", lambda *args: {"pass": True})
     choices = []
 
-    def a4(*args, opencode="1.18", base=None):
+    def a4(*args, opencode="v2", base=None):
         choices.append((opencode, base))
         return {"pass": True, "sessions": ["ses_gate"], "opencode_version": "2.0.20", "exe_sha256": "test-sha"}
 
@@ -290,7 +290,33 @@ def test_gate_cli_defaults_to_v1_and_routes_explicit_v2(gate, tmp_path, monkeypa
     assert module.main(args) == 0
     monkeypatch.setenv("MLX_SERVE_BASE", "http://127.0.0.1:18000/v1")
     assert module.main(args + ["--opencode", "v2"]) == 0
-    assert choices == [("1.18", None), ("v2", "http://127.0.0.1:18000/v1")]
+    assert choices == [("v2", "http://localhost:8000/v1"), ("v2", "http://127.0.0.1:18000/v1")]
+
+
+@pytest.mark.parametrize("entry", ["cli", "a4"])
+def test_gate_v1_refuses_before_io(gate, tmp_path, monkeypatch, entry):
+    from bench import provenance
+
+    module, binary, _ = gate
+    root = tmp_path / "refused"
+
+    def no_io(*args, **kwargs):
+        pytest.fail("frozen gate leg attempted I/O")
+
+    monkeypatch.setattr(provenance, "assert_served_config", no_io)
+    monkeypatch.setattr(module.subprocess, "run", no_io)
+    monkeypatch.setattr(module.subprocess, "Popen", no_io)
+    monkeypatch.setattr(module, "LogTail", no_io)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(binary))
+    with pytest.raises(SystemExit) as error:
+        if entry == "cli":
+            module.main(["--model", "Test-Model", "--opencode", "1.18", "--workdir", str(root)])
+        else:
+            module.a4_opencode("Test-Model", None, root, 10, str(binary), opencode="1.18")
+    assert error.value.code == (
+        "REFUSED: the opencode 1.18 gate leg is frozen (M59, 2026-10-07); use --opencode v2"
+    )
+    assert not root.exists()
 
 
 def test_a4_v2_timeout_is_failed_and_recorded(gate, tmp_path):

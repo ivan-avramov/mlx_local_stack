@@ -35,7 +35,7 @@ Select local LLMs for 256K agentic coding on the M5 Max 64GB; prioritize quality
 - Full-sampling carriers retain temp, top_p, top_k, min_p, presence_penalty, max_tokens, enable_thinking and thinking_budget. Registration-only clients inherit omitted sampling from registry defaults.
 - Generate OWUI JSON/policy with `configgen`; never hand-edit. Use ordered `openwebui.models` C menu; task model active with `meta.hidden: true`; exclude other models. Enable `web_search`/`code_interpreter` capabilities/defaults and native function calling.
 - OWUI settings require `init.py` HTTP reconciliation/compose environment; no seed file. Verify live API config, allowlists, defaults, parameters and routing. Native `search_web`/`fetch_url`, no forced RAG; gate: `scripts/websearch/owui_e2e_gate.py`.
-- opencode is primary; aider harness retired, rows retained, runner frozen. Daily: `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true`; probes: `OPENCODE_DISABLE_EXTERNAL_SKILLS=true`. Record skill policy/config hash; never pool across scaffold changes.
+- opencode is primary (v2 probe `run_opencode_probe_v2.py`; the 1.18 probe is frozen 2026-10-07, rows retained); aider harness retired, rows retained, runner frozen. Daily: the generated v2 client config removes `opencode.config.compatibility`; probes: the hermetic v2 env (P149). Record skill policy/config hash; never pool across scaffold changes.
 
 ## Benchmark validity
 

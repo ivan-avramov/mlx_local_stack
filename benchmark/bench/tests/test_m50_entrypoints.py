@@ -187,97 +187,6 @@ def test_vision_gate_records_router_in_the_summary(tmp_path, monkeypatch):
     assert json.loads(VG.summary_path_for(out).read_text())["router"]["pid"] == 1701
 
 
-# --------------------------------------------------------------------------- run_opencode_probe
-def test_run_opencode_probe_refuses_before_the_manifest(tmp_path, monkeypatch, capsys):
-    import run_opencode_probe as OP
-    # 10th cold review (between-arms fix 2): see _oc_probe_setup's identical comment.
-    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: OP.PINNED_OPENCODE_VERSION)
-    monkeypatch.setattr(OP, "_polyglot_root", lambda: pytest.fail("polyglot before tripwire"))
-    # The real discovery call makes opencode write its own data home (the one accepted pre-check
-    # side effect, see the entry point); stub it so this test pins OUR writes at zero.
-    monkeypatch.setattr(P, "opencode_router_base",
-                        lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8000/v1")
-    _refusing(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
-    with pytest.raises(SystemExit) as ei:
-        OP.main()
-    assert ei.value.code not in (0, None) and "M50" in str(ei.value.code)
-    # the only thing created is the bench-owned opencode config home (operator ruling 2026-10-06)
-    assert [p.name for p in tmp_path.iterdir()] == ["opencode-probe"]
-
-
-def test_run_opencode_probe_does_only_the_discovery_call_before_the_check(tmp_path, monkeypatch):
-    """Review C4: before the M50 check the ONLY I/O is config resolution plus ONE opencode
-    discovery call, run with cwd = the existing STACK_WORKDIR (same ancestry as the item
-    directories). No docker/--version preflight, no temp directory, no directory creation."""
-    import os
-    import subprocess
-    import tempfile
-    import run_opencode_probe as OP
-    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    boom = lambda *a, **k: pytest.fail("preflight I/O before the M50 check")   # noqa: E731
-    monkeypatch.setattr(OP, "_docker_available", boom)
-    # C125 (C121 review C1): the pinned binary's read-only `--version` now runs BEFORE discovery, so an
-    # override pointing at another version never executes `debug config`. It joins the pre-M50 stat of
-    # the binary; everything else here stays forbidden.
-    order = []
-    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: order.append("version") or OP.PINNED_OPENCODE_VERSION)
-    monkeypatch.setattr(OP, "_polyglot_root", boom)
-    monkeypatch.setattr(tempfile, "TemporaryDirectory", boom)
-    monkeypatch.setattr(tempfile, "mkdtemp", boom)
-    monkeypatch.setattr(os, "makedirs", boom)
-    monkeypatch.setattr(subprocess, "check_output", boom)
-    monkeypatch.setattr(subprocess, "run", boom)
-    monkeypatch.setattr(subprocess, "Popen", boom)
-    calls = []
-
-    def discovery(cwd=None, env=None, provider="mlx-local", **_k):
-        calls.append(cwd); order.append("discovery")
-        raise P.ServedConfigError("M50 tripwire: refused in discovery")
-    monkeypatch.setattr(P, "opencode_router_base", discovery)
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--lang", "go",
-                                      "--out", str(tmp_path / "oc.jsonl")])
-    with pytest.raises(SystemExit) as ei:
-        OP.main()
-    assert "M50" in str(ei.value.code)
-    assert [str(c) for c in calls] == [str(tmp_path)]
-    assert order == ["version", "discovery"]
-    assert [p.name for p in tmp_path.iterdir()] == ["opencode-probe"]   # bench config home (ruling 2026-10-06)
-
-
-def test_run_opencode_probe_passes_a_workdir_data_home_to_discovery_and_creates_nothing_itself(
-        tmp_path, monkeypatch):
-    """Documents the pending-approval fact (D2): discovery is launched with an XDG_DATA_HOME under
-    <STACK_WORKDIR>/scratch that opencode itself will create; OUR code creates no directory."""
-    import run_opencode_probe as OP
-    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: OP.PINNED_OPENCODE_VERSION)
-    seen = {}
-
-    def discovery(cwd=None, env=None, provider="mlx-local", **_k):
-        seen["data_home"] = env["XDG_DATA_HOME"]
-        raise P.ServedConfigError("M50 tripwire: stop after discovery")
-    monkeypatch.setattr(P, "opencode_router_base", discovery)
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
-    with pytest.raises(SystemExit):
-        OP.main()
-    assert seen["data_home"].startswith(str(tmp_path / "scratch" / "m50-discovery-xdg-data-"))   # per-run
-    assert not (tmp_path / "scratch").exists()          # we did not create it
-
-
-def test_run_opencode_probe_refuses_when_stack_workdir_does_not_exist(tmp_path, monkeypatch):
-    import run_opencode_probe as OP
-    gone = tmp_path / "nope"
-    monkeypatch.setenv("STACK_WORKDIR", str(gone))
-    monkeypatch.setattr(P, "opencode_router_base",
-                        lambda *a, **k: pytest.fail("discovery ran without a workdir"))
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
-    with pytest.raises(SystemExit) as ei:
-        OP.main()
-    assert "M50" in str(ei.value.code) and not gone.exists()
-
-
 # --------------------------------------------------------------------------- round 2 (Codex cold review)
 def test_run_py_generate_refuses_before_the_roster_request(tmp_path, monkeypatch, capsys):
     """Without --models, `_resolve` GETs /v1/models — that is the first request and must come AFTER
@@ -364,21 +273,6 @@ def test_session_cache_probe_leg_b_verifies_opencodes_own_destination(tmp_path, 
                    "--log", str(tmp_path / "none.log")])
     err = capsys.readouterr().err
     assert rc == 2 and "not the router verified at entry" in err and "pinned" not in err
-
-
-def test_run_opencode_probe_checks_opencodes_destination_not_MLX_SERVE_BASE(tmp_path, monkeypatch):
-    import run_opencode_probe as OP
-    # 10th cold review (between-arms fix 2): see _oc_probe_setup's identical comment.
-    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: OP.PINNED_OPENCODE_VERSION)
-    monkeypatch.setenv("MLX_SERVE_BASE", "http://localhost:8000")
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8123/v1")
-    seen = []
-    monkeypatch.setattr(P, "router_owner", lambda port: seen.append(port))
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "x", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
-    with pytest.raises(SystemExit) as ei:
-        OP.main()
-    assert seen == [8123] and "M50" in str(ei.value.code)
 
 
 def test_generate_restart_re_verifies_the_new_router(monkeypatch):
@@ -468,21 +362,6 @@ def test_generate_successful_restart_refreshes_manifests_with_history(tmp_path, 
     assert calls == ["restart", "restart"]
 
 
-def test_run_opencode_probe_manifest_carries_the_verified_opencode_router(tmp_path, monkeypatch):
-    """Codex #2 P15: the manifest must carry the block verified for opencode's destination, not a
-    fresh `client.BASE` lookup. (Defined after the round-5 helper; see bottom of file.)"""
-    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=0)
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8123/v1")
-    monkeypatch.setattr(P, "router_owner", lambda port: {**_good(tmp_path, 900 + port)})
-    monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (_ for _ in ()).throw(StopIteration("stop after manifest")))
-    out = tmp_path / "oc.jsonl"
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "1", "--out", str(out)])
-    with pytest.raises(StopIteration):
-        OP.main()
-    man = json.loads(out.with_suffix(".manifest.json").read_text())
-    assert man["router"]["pid"] == 900 + 8123 and man["router"]["port"] == 8123
-
-
 def test_stack_smoke_refusal_exit_2_survives_the_exception_class_change(tmp_path, monkeypatch, capsys):
     from bench import stack_smoke as S
     monkeypatch.setattr(S, "params_for", lambda m, profile: {})
@@ -535,90 +414,6 @@ def test_stack_smoke_reads_params_only_after_verification(tmp_path, monkeypatch)
     _refusing(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["stack_smoke", "--model", "m", "--tag", "t", "--out", str(tmp_path / "s.json")])
     assert S.main() == 2
-
-
-def test_run_opencode_probe_rechecks_destination_inside_each_item(tmp_path, monkeypatch):
-    import run_opencode_probe as OP
-    # 10th cold review (between-arms fix 2): see _oc_probe_setup's identical comment.
-    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: OP.PINNED_OPENCODE_VERSION)
-    root = tmp_path / "poly" / "python" / "exercises" / "practice"; (root / "ex").mkdir(parents=True)
-    monkeypatch.setattr(OP, "_polyglot_root", lambda: tmp_path / "poly")
-    monkeypatch.setattr(OP, "_polyglot_sha", lambda p: "deadbeef")
-    monkeypatch.setattr(OP, "_prepare", lambda src, work: work.mkdir(parents=True, exist_ok=True))
-    monkeypatch.setattr(OP, "_run_opencode", lambda *a, **k: pytest.fail("opencode ran after a refused item check"))
-    bases = iter(["http://localhost:8000/v1", "http://localhost:8123/v1"])   # entry OK, item differs
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: next(bases))
-    monkeypatch.setattr(P, "router_owner", lambda port: {**_good(tmp_path, 900 + port)})
-    monkeypatch.setattr(P.model_params, "params_for", lambda m, profile, **k: {"temperature": 0.4})
-    monkeypatch.setattr(P, "registry_kv", lambda m, path: {"kv_bits": 4})
-    monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "off"})
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "1", "--out", str(tmp_path / "oc.jsonl")])
-    with pytest.raises(P.ServedConfigError, match="not the router verified at entry"):
-        OP.main()
-
-
-# --------------------------------------------------------------------------- round 5 (Codex cold review #4)
-@pytest.fixture(autouse=True)
-def _pinned_opencode_stub(monkeypatch, tmp_path_factory):
-    """C121 B1: the probe refuses without an absolute executable pinned binary; a stub OUTSIDE tmp_path."""
-    b = tmp_path_factory.mktemp("ocstub") / "opencode"
-    b.write_text("#!/bin/sh\nexit 0\n"); b.chmod(0o755)
-    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(b))
-
-
-def _oc_probe_setup(tmp_path, monkeypatch, pid):
-    import run_opencode_probe as OP
-    # 10th cold review (live-pilot finding, between-arms fix 2): OP.main()'s own log-tail
-    # scrubbing calls the REAL bench.paths.stack_workdir (for a PII pattern to scrub, never a
-    # write target) -- redirect it under tmp_path so that incidental call stays confined.
-    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
-    monkeypatch.setattr(OP, "_opencode_version", lambda *a, **k: OP.PINNED_OPENCODE_VERSION)
-    root = tmp_path / "poly" / "python" / "exercises" / "practice"; (root / "ex").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(OP, "_polyglot_root", lambda: tmp_path / "poly")
-    monkeypatch.setattr(OP, "_polyglot_sha", lambda p: "deadbeef")
-    # C121: the per-item overlay check shells out to `opencode debug config`; covered on its own in
-    # test_opencode_probe_seeding.py, stubbed here.
-    monkeypatch.setattr(OP, "_assert_overlay_resolved", lambda *a, **k: None)
-    monkeypatch.setattr(OP, "_prepare", lambda src, work: work.mkdir(parents=True, exist_ok=True))
-    monkeypatch.setattr(P, "router_owner", lambda port: {**_good(tmp_path, pid)})
-    monkeypatch.setattr(P.model_params, "params_for", lambda m, profile, **k: {"temperature": 0.4})
-    monkeypatch.setattr(P, "registry_kv", lambda m, path: {"kv_bits": 4})
-    monkeypatch.setattr(P, "registry_draft", lambda m, path=None: {"draft_kind": "off"})
-    return OP
-
-
-def test_run_opencode_probe_rerun_preserves_attribution_and_refuses_config_change(tmp_path, monkeypatch):
-    """Codex #4 P27: a rerun must not rewrite who produced the existing rows."""
-    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=222)
-    monkeypatch.setattr(OP, "_solution_and_test", lambda w, s, l: (_ for _ in ()).throw(StopIteration("stop after manifest")))
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8000/v1")
-    out = tmp_path / "oc.jsonl"; mp = out.with_suffix(".manifest.json")
-    # (a full prior manifest is required now: the identity check runs whenever a manifest exists)
-    from bench.tests.test_opencode_probe_seeding import _prior
-    _prior(OP, out, [], doc_extra={"router_history": [{"pid": 7}]})
-    doc = json.loads(mp.read_text()); doc["router"]["pid"] = 111; mp.write_text(json.dumps(doc))
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "1", "--out", str(out)])
-    with pytest.raises(StopIteration):
-        OP.main()
-    man = json.loads(mp.read_text())
-    assert man["router"]["pid"] == 222 and [h["pid"] for h in man["router_history"]] == [7, 111]
-    mp.write_text(json.dumps({"router": {"pid": 111, "config": "$HOME/other.yaml"}}))
-    with pytest.raises(SystemExit, match="served config"):
-        OP.main()
-
-
-def test_run_opencode_probe_item_refusal_records_no_manifest(tmp_path, monkeypatch):
-    """Codex #4 P29: the manifest is written only right before the first item RUNS."""
-    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
-    bases = iter(["http://localhost:8000/v1", "http://localhost:8123/v1"])
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: next(bases))
-    monkeypatch.setattr(P, "router_owner", lambda port: {**_good(tmp_path, 900 + port)})
-    out = tmp_path / "oc.jsonl"
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "1", "--out", str(out)])
-    with pytest.raises(P.ServedConfigError):
-        OP.main()
-    assert not out.with_suffix(".manifest.json").exists() and not out.exists()
 
 
 # --------------------------------------------------------------------------- C35 through generate.run
@@ -772,23 +567,3 @@ def test_capacity_writes_no_manifest_and_stamps_drift_on_exit_drift(monkeypatch,
     aside = list(mdir.glob("capacity_retrieval.json.refused-*"))
     assert len(aside) == 1
     assert "C106" in json.loads(aside[0].read_text())["served_config_drift"]["error"]
-
-
-def test_run_opencode_probe_writes_the_seed_overlay_and_checks_it_before_the_manifest(tmp_path, monkeypatch):
-    """C121 AC1/AC4 wiring: the item's overlay exists (with the item seed) and is checked against the
-    entry-verified baseURL BEFORE any manifest is written; a refusal records nothing."""
-    OP = _oc_probe_setup(tmp_path, monkeypatch, pid=5)
-    monkeypatch.setattr(P, "opencode_router_base", lambda cwd=None, env=None, provider="mlx-local", **_k: "http://localhost:8000/v1")
-    seen = {}
-
-    def check(cwd, env, model, seed, base, **_k):
-        seen.update(seed=seed, base=base, overlay=json.loads((cwd / "opencode.json").read_text()), model=model)
-        raise P.ServedConfigError("M50 tripwire: stop at the overlay check")
-    monkeypatch.setattr(OP, "_assert_overlay_resolved", check)
-    out = tmp_path / "oc.jsonl"
-    monkeypatch.setattr(sys, "argv", ["p", "--model", "m", "--items", "ex", "--seed-base", "3", "--out", str(out)])
-    with pytest.raises(SystemExit, match="M50"):
-        OP.main()
-    assert seen["seed"] == OP._item_seed("python/ex", 3) and seen["base"] == "http://localhost:8000/v1"
-    assert seen["overlay"] == OP._seed_overlay("m", seen["seed"])
-    assert not out.with_suffix(".manifest.json").exists()

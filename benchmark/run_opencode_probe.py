@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Agentic-edit probe through OPENCODE, the scaffold this stack actually ships.
 
+FROZEN 2026-10-07 (M59): main() refuses before I/O. Rows and functions are retained
+for provenance; use run_opencode_probe_v2.py.
+
 WHY THIS EXISTS. The B recommendation rests entirely on aider polyglot, and `docs/campaign-results.md`
 lists "opencode agentic evidence" as its top unresolved caveat: a scaffold change can plausibly move
 a repair-driven result. It became urgent when `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` was
@@ -567,12 +570,8 @@ def _export_latest_session(env: dict, *, cwd: Path, opencode_bin: str) -> dict |
 
 
 def main() -> int:
-    ctx = {"dirs": [], "ran": False}
-    try:
-        return _main(ctx)
-    finally:
-        if not ctx["ran"]:      # a refusal before any item ran leaves no per-run dirs behind
-            _cleanup_run_dirs(ctx["dirs"])
+    raise SystemExit("REFUSED: the opencode 1.18 probe is frozen (M59, 2026-10-07); "
+                     "rows are retained; use run_opencode_probe_v2.py")
 
 
 def _main(ctx: dict) -> int:

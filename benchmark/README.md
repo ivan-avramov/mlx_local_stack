@@ -40,7 +40,7 @@ pairs, but only after the C106 exit check passes; archival failures warn and con
 A probe-timeout DNF's `wall_s` measures only its first request, excluding message preparation
 and recovery. Initial preload failures always abort. Legacy error rows without `error_kind`
 remain retryable on resume and strict failures when graded. The opencode probe's classification
-is separate (C124). The 1.18 opencode probe is to be frozen after the M59 v2 smoke passes.
+is separate (C124).
 
 ### Chunks and overnight runway
 
@@ -155,6 +155,10 @@ If `bfcl-eval` is not installed, the probe writes `skipped: true` with a note an
 decode settings) is resolved on the box where `bfcl-eval` runs; confirm the handler mapping on
 first real run.
 
+### opencode 1.18 probe — FROZEN
+
+**FROZEN 2026-10-07 (M59).** `run_opencode_probe.py` refuses before any I/O with `REFUSED: the opencode 1.18 probe is frozen (M59, 2026-10-07); rows are retained; use run_opencode_probe_v2.py`. Rows are retained under `benchmark/results/*/opencode*.jsonl`; rows with `scaffold: "opencode"` / 1.18.x versions are never pooled with v2. The carrier `benchmark/opencode_bench.json` stays generated and drift-checked for provenance.
+
 ### opencode v2 probe (M59)
 
 **Progress gate (C136, 2026-10-07).** The first-write allowance is denominated in tokens: `--first-write-tokens` (default 16000) is converted per model from the documented draft-OFF decode rate in `benchmark/decode_rates.json` (`tick_s = ceil(tokens / (2 × rate))`; stall after two flat ticks; loop detection at three identical ticks; hard ceiling 3600 s). Every model gets the same tokens before a stall can fire, not the same seconds. A model without a rate entry refuses unless `--tick-s` is explicit (recorded as `manual:--tick-s`). The manifest records `first_write_tokens`, `decode_tok_s`, `decode_tok_s_source`, `first_write_window_s`; rows killed by the rule stay misses (`nonconv_kind: stalled`). Rows also record `prompt_date` (opencode prints the local date into every prompt, so same-seed identity holds only within one day; C135).
@@ -201,7 +205,7 @@ Both commands use cwd and PWD `<S>` and stdin DEVNULL. Save stdout events and st
 | Exit | `assert_served_config_unchanged` rechecks PID/hash; drift stamps `served_config_drift`, exits nonzero, and refuses later reuse. |
 | A4 prerequisite | Every run requires a valid A4 v2 receipt unless `--limit` ≤ 5. The gate's `pass` must be true, `run_id` nonempty, and `router.pid`, `router_pid`, `model`, `opencode_version`, `exe_sha256`, and `carrier_sha256` must match the run. When both are present, receipt `router.config_sha256` must match the entry router's `config_sha256`. Manifest records `a4_v2_pass` and gate run ID. |
 
-A4 runs with `scripts/session_pinning_gate.py --opencode v2`; the default remains `1.18` until the freeze. It creates a temporary root under `$STACK_WORKDIR/session_gate/`, copies the v2 bench carrier (or warns and copies the client config verbatim if absent), then runs two standalone turns with `--title gate`, resuming the first event's explicit `--session <id>`. PASS requires rc 0 and worker-log requests on both turns, all carrying that one `ses_…` ID. `cross_process_reuse` is reported, not gated. `$STACK_WORKDIR/session_gate/a4_v2_latest.json` records the result, model, router PID, executable SHA, `carrier_sha256`, version, and run ID; a drifted router cannot publish PASS. The v2 leg uses the same base URL validated by `main()` (`MLX_SERVE_BASE`, default `http://localhost:8000/v1`). It waits five seconds before the final worker-log read after turn 2. PASS removes the per-run `tmp/` directory (including bun dylibs); FAIL retains it for diagnosis.
+A4 runs with `scripts/session_pinning_gate.py --opencode v2`; `v2` is the default and choosing `1.18` refuses. It creates a temporary root under `$STACK_WORKDIR/session_gate/`, copies the v2 bench carrier (or warns and copies the client config verbatim if absent), then runs two standalone turns with `--title gate`, resuming the first event's explicit `--session <id>`. PASS requires rc 0 and worker-log requests on both turns, all carrying that one `ses_…` ID. `cross_process_reuse` is reported, not gated. `$STACK_WORKDIR/session_gate/a4_v2_latest.json` records the result, model, router PID, executable SHA, `carrier_sha256`, version, and run ID; a drifted router cannot publish PASS. The v2 leg uses the same base URL validated by `main()` (`MLX_SERVE_BASE`, default `http://localhost:8000/v1`). It waits five seconds before the final worker-log read after turn 2. PASS removes the per-run `tmp/` directory (including bun dylibs); FAIL retains it for diagnosis.
 
 **Transport classification (P152).**
 

@@ -1,10 +1,9 @@
 """C102(a) live gate — do client session ids reach the worker and pin the prompt cache?
 
 Pass/fail on the pre-registered criteria in docs/specs/c102a-session-headers.md:
-  A4 opencode (--opencode 1.18 by default until the M59 freeze; --opencode v2 opts in):
+  A4 opencode (--opencode v2; the 1.18 leg is frozen 2026-10-07):
      `opencode run` turn → worker log `session=ses_…` on every request (pinned). The
-     `--continue` turn's prefix reuse is reported (`cross_process_reuse`), not gated — see the
-     2026-09-27 note in a4_opencode().
+     resumed `--session` turn's prefix reuse is reported (`cross_process_reuse`), not gated.
   A5 OpenWebUI: a saved-chat completion → worker log `session=<chat id>`; a 2nd turn reuses.
   A6 no client id: a bare 3-request conversation still routes anonymously and reuses on request 3.
 
@@ -32,8 +31,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "benchmark"))
 sys.path.insert(0, str(REPO / "scripts" / "websearch"))
-from bench.session_cache_probe import LogTail, chat, filler, opencode_cmd, opencode_v2_cmd  # noqa: E402
-from bench.session_cache_probe import _pinned_opencode as pinned_opencode  # noqa: E402
+from bench.session_cache_probe import LogTail, chat, filler, opencode_v2_cmd  # noqa: E402
 import owui_e2e_gate as owui  # noqa: E402
 
 
@@ -62,34 +60,11 @@ def a6_bare(model, log, timeout) -> dict:
     return {"pass": ok, "requests": out}
 
 
-def a4_opencode(model, log, root: Path, timeout, oc_bin: str, *, opencode="1.18", base=None) -> dict:
-    if opencode == "v2":
-        return _a4_opencode_v2(model, log, timeout, oc_bin,
-                               base if base is not None else os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1"))
-    proj = root / "oc-proj"; proj.mkdir(parents=True, exist_ok=True)
-    (proj / "hello.py").write_text("def hello(name):\n    return f'hello {name}'\n")
-    env = dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), OPENCODE_DISABLE_CLAUDE_CODE_SKILLS="true")  # pinned bench opencode under the operator's HOME (C103 skill policy); not hermetic (C129)
-    turns = []
-    for i, prompt in enumerate(("In one sentence, what does hello.py do?", "One line: what does it return for 'x'?")):
-        log.new_rows()
-        cmd = opencode_cmd(model, proj, prompt, first=(i == 0), binary=oc_bin)
-        with (root / f"oc_turn_{i + 1}.txt").open("w") as f:
-            try:
-                rc = subprocess.run(cmd, cwd=proj, env=env, stdout=f, stderr=subprocess.STDOUT, timeout=timeout).returncode
-            except subprocess.TimeoutExpired:
-                rc = "timeout"
-        rows = wait_rows(log, 1, 30)
-        turns.append({"rc": rc, "requests": [{"session": r["session"], "cached": r["cached_tokens"], "prompt": r["prompt_tokens"]} for r in rows]})
-    sessions = {r["session"] for t in turns for r in t["requests"]}
-    pinned = bool(sessions) and all(s.startswith("ses_") for s in sessions) and len(sessions) == 1
-    reused = any((r["cached"] or 0) >= 5000 for r in turns[1]["requests"]) if len(turns) > 1 else False
-    # A4 = the session id reaches the worker on every request. Cross-process prefix reuse is
-    # REPORTED, not gated: measured 2026-09-27, opencode's system prompt embeds discovered skill
-    # paths, and Claude Code's synced-skills directory names rotate between runs, so a new
-    # `opencode run` process diverges inside the system prompt where no DeltaNet snapshot
-    # exists → full re-prefill regardless of pinning (see lab notebook 2026-09-27).
-    return {"pass": pinned and all(t["rc"] == 0 for t in turns), "cross_process_reuse": reused,
-            "sessions": sorted(sessions), "turns": turns}
+def a4_opencode(model, log, root: Path, timeout, oc_bin: str, *, opencode="v2", base=None) -> dict:
+    if opencode == "1.18":
+        raise SystemExit("REFUSED: the opencode 1.18 gate leg is frozen (M59, 2026-10-07); use --opencode v2")
+    return _a4_opencode_v2(model, log, timeout, oc_bin,
+                           base if base is not None else os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1"))
 
 
 def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str) -> dict:
@@ -250,8 +225,8 @@ def a5_owui(model, log, base, email, password, timeout) -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--opencode", choices=("1.18", "v2"), default="1.18",
-                    help="A4 client; default remains pinned 1.18 until the M59 v2 smoke/freeze")
+    ap.add_argument("--opencode", choices=("1.18", "v2"), default="v2",
+                    help="A4 client (default v2; the 1.18 leg is frozen)")
     ap.add_argument("--model", required=True)
     ap.add_argument("--log", default=str(REPO / "logs/mlx_vlm.log"))
     ap.add_argument("--owui-url", default=os.environ.get("OWUI_URL", "http://localhost:3000"))
@@ -259,14 +234,13 @@ def main(argv=None) -> int:
     ap.add_argument("--timeout", type=float, default=600)
     ap.add_argument("--workdir", default=os.path.join(os.environ.get("STACK_WORKDIR", "/tmp"), "c102a"))
     a = ap.parse_args(argv)
-    try:  # C125: resolve + version-check the pinned opencode BEFORE any request or directory
-        if a.opencode == "v2":
-            from bench import provenance
-            base = os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1")
-            provenance.assert_served_config(base)
-            oc_bin, oc_version = os.environ.get("OPENCODE_PROBE_BIN", "/opt/homebrew/bin/opencode"), "2.0.20"
-        else:
-            oc_bin, oc_version = pinned_opencode()
+    if a.opencode == "1.18":
+        raise SystemExit("REFUSED: the opencode 1.18 gate leg is frozen (M59, 2026-10-07); use --opencode v2")
+    try:
+        from bench import provenance
+        base = os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1")
+        provenance.assert_served_config(base)
+        oc_bin, oc_version = os.environ.get("OPENCODE_PROBE_BIN", "/opt/homebrew/bin/opencode"), "2.0.20"
     except (SystemExit, OSError) as e:
         print(f"[gate] REFUSED: {getattr(e, 'code', None) or e}", file=sys.stderr, flush=True)
         return 2
@@ -276,14 +250,11 @@ def main(argv=None) -> int:
     res = {"model": a.model, "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
            "opencode_bin": oc._scrub_pii(oc._portable(Path(oc_bin))), "opencode_version": oc_version,
            "opencode_exe_sha256": oc._sha_of(Path(oc_bin))}
-    if a.opencode == "v2":
-        # Validate the executable in its hermetic environment before any other gate requests.
-        res["A4_opencode"] = a4_opencode(a.model, log, root, a.timeout, oc_bin, opencode="v2", base=base)
-        res["opencode_version"] = res["A4_opencode"]["opencode_version"]
-        res["opencode_exe_sha256"] = res["A4_opencode"]["exe_sha256"]
+    # Validate the executable in its hermetic environment before any other gate requests.
+    res["A4_opencode"] = a4_opencode(a.model, log, root, a.timeout, oc_bin, opencode="v2", base=base)
+    res["opencode_version"] = res["A4_opencode"]["opencode_version"]
+    res["opencode_exe_sha256"] = res["A4_opencode"]["exe_sha256"]
     res["A6_bare_anonymous"] = a6_bare(a.model, log, a.timeout); print("[A6]", res["A6_bare_anonymous"]["pass"], flush=True)
-    if a.opencode == "1.18":
-        res["A4_opencode"] = a4_opencode(a.model, log, root, a.timeout, oc_bin)
     print(f"[A4 opencode {a.opencode}]", res["A4_opencode"]["pass"], res["A4_opencode"]["sessions"], flush=True)
     if not a.skip_owui:
         res["A5_openwebui"] = a5_owui(a.model, log, a.owui_url, os.environ.get("OWUI_ADMIN_EMAIL", "admin@a.a"),
