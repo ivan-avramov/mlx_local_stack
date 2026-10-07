@@ -4595,3 +4595,7 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   passed the anchor gate on their own (degrade 1.0, flip 0.0, κ 1.0, α 1.0, longer-pref 0.0, identity 1.0), so the Claude ITEM
   packets were dispatched before the three-judge gate of record existed. No item verdict was read before that gate; the gate of record
   is the three-judge anchor gate computed once the Codex rows are complete.
+
+- **Judge pass result (added after the Codex leg finished, 18:35 PDT):** gate of record PASS with all three judges (degrade 1.0, flip
+  codex 0.1 / claude 0.0, κ 1.0, α 0.950, longer-pref 0.0, identity 1.0; 0 null verdicts in 420 rows); pair `m40on` vs `m60ship`: shipped
+  state preferred 0.425 [0.312, 0.537], p = 0.19 — no detectable drift at n=40. Codex leg: 140 sequential calls in ~1 h 45 min.

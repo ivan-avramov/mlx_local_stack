@@ -2,6 +2,57 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-06 (night) — M60: the final shipped state of `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on Math500 and the judge panel — Math500 INCONCLUSIVE at the −5 pp edge, judge panel no detectable drift; PROVISIONAL labels retained (C133)
+
+Design `docs/specs/m60-shipped-state-certification.md` (C127). Serving state: `main_models.yaml` as shipped — native16 KV, `attention_policy:
+fused_v1`, `lazy_prompt_embeddings`, `mtp_verify_scan: joint_v1`, MTP ON — on the fork merged with upstream v0.7.6 (`b17b12a9`), which the
+same-night identity gate had shown byte-identical to `664c2ead` (below). References reused, never regenerated: `math500.m40on` (TQ4 KV, fork
+`420c01e1`, MTP ON), `math500.m37med` (OFF, descriptive), `cjudge.m40on`, the 30 M38 anchor pairs. Lean router, session max 1; worker cmdline and
+first manifests verified; pilot-twice identical 5/5; cost go/no-go 0.34 h / 1.07 h projected; power 140 W on every tick. Runner
+`$STACK_WORKDIR/m60/run_m60.py` (exit 0), rows `math500.m60ship.*`, `cjudge.m60ship.*`, diagnostic `math500.m60ship-p2.*` (never graded).
+
+| axis | reference | shipped (`m60ship`) | paired read | pre-registered verdict |
+|---|---|---|---|---|
+| Math500 `acc_strict@81920`, n=100, same ids and seeds | 0.99 (`m40on`) | **0.98** | −1 pp, CI95 [−5, +2] (two-stage cluster bootstrap, 10,000 iterations); 1 new-only win (`prealgebra/874`), 2 reference-only wins (`prealgebra/2066`: 23 vs 22; `precalculus/768`: the C63 universal miss, which `m40on` alone got right) | **INCONCLUSIVE** — PASS needs the lower bound > −5 pp; it sits on −5 pp |
+| Math500 vs predictor-OFF reference (descriptive) | 0.97 (`m37med`) | 0.98 | +1 pp [−2, +5] | — |
+| cjudge panel, 40 items × 2 orders × 3 judges, pair `m40on` vs `m60ship` | — | — | shipped state preferred **0.425 [0.312, 0.537]**, p = 0.19 (Holm trivial, one pair); family split anthropic 0.46 / openai 0.53 for the shipped state; gate of record PASS 6/6 with the panel of the run (degrade 1.0, flip ≤ 0.1, κ 1.0, α 0.95, longer-pref 0.0, identity 1.0; 0 null verdicts); token-length ratio 1.07, in band | **PASS** — "no detectable drift at n=40 (MDE ±20 pp)", underpowered by design |
+| convergence / red flags | 100/100, 40/40 | 100/100, 40/40 | 0 non-converged (red flag at ≥ 3) | none |
+
+Descriptive: decode 45.8 tok/s (Math500) / 35.4 (cjudge); MTP acceptance pooled 0.76 / 0.61; every verification block on `joint_v1`
+(1,067,200 + 1,040,032 blocks, 0 per-query, 864 + 928 threshold straddles = the known positives firing); Math500 tokens/task mean 1,685 vs
+1,806 (`m40on`), max 19,469 vs 18,774; cjudge 3,622 vs 3,386.
+
+**Decision (pre-registered):** Math500 INCONCLUSIVE ⇒ the PROVISIONAL labels on native16 (C81), M57 (C115) and M58 (C126) STAY; no
+registry, pick or order change. Both reads lean the same way by a hair — the old state ahead by 1 pp on Math500 and preferred 57.5 % by
+the panel — and neither is near significance; all three Math500 flips are genuine answer changes at the same seeds, the kind the M40
+record showed in the other direction (+2 pp, both discordant items ON-wins). What would move it: Math500 power (a same-code OFAT bundle vs
+shipped on 100 NEW items, ≈ 2.6 h box) — a decision for the operator (C133); nothing here supports reverting a lever.
+
+Judge pass mechanics (recorded in `benchmark/results/judge_m60/<model>/panel.json`): Codex `gpt-5.6-terra` medium in-process (140 calls);
+`opus`/`sonnet` labels = Claude Opus 5.5 / Claude Sonnet 5.5 as blind Claude Code subagents of the built-in Explore type — a canary showed <!-- allow-shorthand -->
+they receive no project/user instruction file or campaign model name; read-only sessions returned verdicts as text, converted to verdict
+files by `$STACK_WORKDIR/m60/{extract,write}_verdicts.py`. Deviation from the runbook: the Claude item packets were dispatched after the
+two Claude judges passed the anchor gate on their own, before the Codex rows existed (its leg ran at ~1 call/min); no item verdict was read
+before the three-judge gate of record. Verdicts are never pooled with M38/M40 (different judge versions, different mechanism).
+
+## 2026-10-06 (night) — C130 upstream merge identity gate: `sync/upstream-v0.7.6` (`b17b12a9`) is output-identical to `664c2ead`; adopted locally
+
+Branch: 10 commits over fork `main` — audit baseline, merge of tag v0.7.6 (31 upstream commits, no served-path change), chat compaction
+gated behind `MLX_VLM_CHAT_COMPACTION` / `--chat-compaction` (default OFF; `context_management` ignored while off), `cryptography` optional and
+out of `requirements.txt`, test/audit hygiene, pre-commit style over fork files, parity workflow pinned to the synced upstream ref. CPU: fork
+suite 5828 passed / 0 failed; 8 parity audits pass vs v0.7.6; prompt identity 158/158 (150 captured requests up to 261K tokens). Cold
+reviews (Claude, Codex `gpt-6-astra`): MERGE-WITH-RESIDUALS, all should-fix items folded in.
+
+GPU gate (`$STACK_WORKDIR/upstream/2026-10-06/run_merge_gate.py`, run `20261006-144125`, 13 min): 23 seeded requests — plain chat ×4,
+thinking ×4, code ×2, first tool turn ×4, tool-result follow-up ×3 (incl. inline `<think>` and `reasoning_content` in the prior turn),
+multi-turn with prior assistant reasoning ×4, vision ×2 — generated on the old source, the new source, and the new source after
+unload/reload: **0 differing fields** (content/reasoning digests, prompt and completion tokens, finish reasons, tool-call payloads, MTP
+counters) in all three comparisons. Long prompt on the new source: retrieval rung 196608 → `prompt_tokens` 196,111, 5/5, `stop`, prefill
+469 s — no compaction, clamp unchanged. Verdict IDENTICAL; `src/mlx-vlm` left on `b17b12a9` and M60 (above) ran on it. Not covered: SSE
+streaming, session-cache reuse paths, the second pick, draft OFF. Adoption: fork `main` fast-forwarded to `b17b12a9` locally and the stack
+submodule bumped in the same commit as the M60 rows; **publication (push of fork and stack) awaits the operator's go**; `uv.lock` unchanged
+(`requirements.txt` identical to before).
+
 ## 2026-10-06 — M58 ADOPTED (C126): `mtp_verify_scan: joint_v1` for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, PROVISIONAL
 
 Operator ruling 2026-10-06 ("adopt it and push"). Vision gate on the registry of record with the field set: **20 / 20 PASS, 20 / 20
