@@ -1,12 +1,10 @@
 # OpenCode config for mlx_local_stack
 
-`opencode.json` is generated from [main_models.yaml](../main_models.yaml). Change the registry, then run `uv run python -m configgen generate`; `uv run python -m configgen check` checks all generated carriers. Keep personal additions in your installed config rather than in generated files.
+`opencode.json` is generated from [main_models.yaml](../main_models.yaml) in the native OpenCode v2 schema (verified on 2.0.20). Change the registry, then run `uv run python -m configgen generate`; `uv run python -m configgen check` checks all generated carriers. Keep personal additions in your installed config rather than in generated files.
 
-The `mlx-local` provider uses `http://localhost:8000/v1`. It advertises the seven registry entries with `presentation.role: main`; candidates are available only in the benchmark carrier. The default is `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`; `Qwen3.8-27B-mlx-uniform-4bit` is the second approved pick. See the root README for current ranking and evidence.
+`providers.mlx-local` uses `package: "@opencode/ai/providers/openai-compatible"` and `settings.baseURL: "http://localhost:8000/v1"`. It advertises the seven registry entries with `presentation.role: main`; candidates are available only in benchmark carriers. The default is `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`; `Qwen3.8-27B-mlx-uniform-4bit` is the second approved pick. See the root README for current ranking and evidence. Switching main models can reload the router's single resident model.
 
-All seven main models support tools and thinking. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is text-only, so its `attachment` flag is false; the other six main registrations advertise vision. The separate `mlx-task` provider points to `http://localhost:8092/v1` and supplies the text-only `mlx-community/Qwen2.5-1.5B-Instruct-4bit` small model. Switching main models can reload the router's single resident model.
-
-Vision registrations also declare `modalities.input: ["text", "image"]`; text-only registrations, including the task model, declare `["text"]`. Every registration declares text output. OpenCode v1.18.30 [accepts these fields](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/core/src/v1/config/provider.ts#L52-L59) and [resolves image support independently of `attachment`](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/opencode/src/provider/provider.ts#L1427-L1447). Without explicit image input, a custom vision model's image parts can be replaced with an unsupported-input error before reaching the server.
+Main models declare `capabilities.tools: true`, `capabilities.output: ["text"]`, and `capabilities.input: ["text", "image"]` for vision models or `["text"]` for text-only models. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` is text-only. The separate `providers.mlx-task` points to `http://localhost:8092/v1`, declares text-only input/output and `tools: false`, and supplies `mlx-community/Qwen2.5-1.5B-Instruct-4bit` through `agents.title.model`. This replaces v1's `small_model`; the v1 `reasoning`, `tool_call`, `attachment`, `modalities`, and `options` keys are absent.
 
 ## Install and select
 
@@ -24,16 +22,23 @@ The task-model reference contains two slashes: `mlx-task/mlx-community/Qwen2.5-1
 | `limit.context` | Full context window |
 | `limit.input` | Context window minus output ceiling |
 | `limit.output` | Output ceiling |
-| `options` | Family-supported sampling and thinking parameters |
+| `body` | `sampling_openai` plus `sampling_extra`: family-supported sampling and thinking parameters |
+| `compatibility.maxTokensField` | `"max_tokens"`, the token-cap field honored by the serving fork |
 
-For both approved picks, these limits are 262144 context, 159744 input, and 102400 output tokens. OpenCode also reserves compaction headroom. Its [v1.18.30 overflow calculation](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/opencode/src/session/overflow.ts) treats context as the full window and handles an explicit input limit separately; supplying the input budget as context would subtract output space twice.
+For both approved picks, these limits are 262144 context, 159744 input, and 102400 output tokens. The four-carriers rule now lands in each model's `body`: temperature, top_p, max_tokens, top_k, min_p, presence_penalty, enable_thinking, and thinking_budget where declared and supported by the family. v2 sends this body overlay; putting sampling in v1 `options` silently loses it. An explicit `body.max_tokens` preserves the registry cap instead of relying on v2's room-based calculated cap. Task-model sampling is emitted only when the registry declares it.
 
 Both approved picks carry `top_p: 0.95`, `top_k: 20`, `min_p: 0`, `presence_penalty: 0`, `thinking_budget: 81920`, and `enable_thinking: true`. Their temperatures are 0.5 and 0.6 respectively. The registry's `reasoning_effort: medium` applies when the client omits that field. Other models retain their own registry settings; family filtering does not invent unsupported sampling keys.
 
-KV format, MTP configuration, cache retirement, and full-cap allocation belong to the server registry. They are not client options. This config retains the installed OpenCode v1 format; it is not a v2 migration.
+`compaction.auto: true` is deliberate for the daily driver: a human session can summarize context when it fills. The v2 benchmark carrier has compaction **OFF** so context overflow is a recorded generation outcome instead of an invisible summary. The retained `benchmark/opencode_bench.json` remains byte-identical v1 for the pinned 1.18 probe; the v2 carrier is `benchmark/opencode_bench_v2.json`. KV format, MTP configuration, cache retirement, and full-cap allocation belong to the server registry.
 
-## Prior transport validation
+`plugins` removes `opencode.provider.vllm`, `opencode.provider.ollama`, `opencode.provider.lmstudio`, and `opencode.config.compatibility`. This disables provider discovery/polling and legacy compatibility discovery. The existing `superpowers@git+https://github.com/obra/superpowers.git` entry is retained: 2.0.20's standalone `/api/config` accepted the entire plugins list. This proves schema acceptance, not successful execution of the external plugin. `update: "disable"` and `share: "disabled"` are explicit; the client imposes no permission denies.
 
-The P1a smoke on OpenCode 1.18.15 (2026-08-13) verified requests reaching the router and forwarding of `max_tokens`, `thinking_budget`, and `enable_thinking`. See [campaign results](../docs/campaign-results.md). Those measurements are historical; this config audit did not run a new client request.
+Registration-only clients (VS Code and Zed) are unchanged.
 
-OpenCode rejects unknown top-level config keys. A previous `_generated` marker prevented the entire config from loading, which is why provenance lives in this README. Check config-validation errors before diagnosing the serving endpoint.
+## Config validation evidence
+
+The CPU-only test in `configgen/tests/test_opencode.py` runs the brew binary only on 2.0.20, using redirected HOME/XDG/TMPDIR, an isolated git directory, disabled project config/model fetching, stdin DEVNULL, and `api GET /api/config --standalone`. All eight models (seven main plus task), every `body`, and the plugins list survive loading; model references are normalized into provider/model objects. No generation request is made.
+
+The unknown-key control showed that 2.0.20 **strips** unknown top-level keys while retaining the document, unlike v1's strict rejection. A second control with malformed JSON silently drops the entire document with rc 0. A successful command exit alone therefore does not prove the config loaded: inspect the returned document and model bodies. Generated-file provenance stays in this README.
+
+The P1a smoke on OpenCode 1.18.15 (2026-08-13) verified requests reaching the router and forwarding of `max_tokens`, `thinking_budget`, and `enable_thinking`; see [campaign results](../docs/campaign-results.md). Those measurements are historical and are not v2 server validation.

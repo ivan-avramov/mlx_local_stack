@@ -59,7 +59,7 @@ def test_bench_config_includes_the_candidate_at_its_tuned_sampling():
 
 def test_client_config_still_excludes_the_candidate():
     doc = json.loads(emit_opencode(_source_with_candidate()))
-    assert "Cand-N" not in doc["provider"]["mlx-local"]["models"]
+    assert "Cand-N" not in doc["providers"]["mlx-local"]["models"]
     for _n, emit, _d in targets.TARGETS:
         out = emit(_source_with_candidate())
         parts = out.values() if isinstance(out, dict) else [out]
@@ -86,3 +86,13 @@ def test_bench_target_is_registered_and_not_a_client_target():
     for _n, _e, d in targets.TARGETS:
         client.extend(d.values() if isinstance(d, dict) else [d])
     assert "benchmark/opencode_bench.json" not in client
+
+
+def test_v1_bench_carrier_remains_byte_identical():
+    from pathlib import Path
+    from configgen.source import load_source
+
+    root = Path(__file__).resolve().parents[2]
+    assert emit_opencode_bench(load_source(str(root / "main_models.yaml"))).encode() == (
+        root / "benchmark/opencode_bench.json"
+    ).read_bytes()

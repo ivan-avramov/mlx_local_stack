@@ -40,7 +40,7 @@ pairs, but only after the C106 exit check passes; archival failures warn and con
 A probe-timeout DNF's `wall_s` measures only its first request, excluding message preparation
 and recovery. Initial preload failures always abort. Legacy error rows without `error_kind`
 remain retryable on resume and strict failures when graded. The opencode probe's classification
-is separate (C124).
+is separate (C124). The 1.18 opencode probe is to be frozen after the M59 v2 smoke passes.
 
 ### Chunks and overnight runway
 
@@ -154,6 +154,73 @@ If `bfcl-eval` is not installed, the probe writes `skipped: true` with a note an
 — it never crashes the broader harness. The `--model` handler (which controls prompt format and
 decode settings) is resolved on the box where `bfcl-eval` runs; confirm the handler mapping on
 first real run.
+
+### opencode v2 probe (M59)
+
+The M59 scaffold uses opencode **2.0.20**, `scaffold: "opencode-v2"`, and `schema_version: 3`; never pool its rows with 1.18 rows. The implementation contract is [P149–P153](../docs/specs/m59-opencode-v2-probe.md). The v2 probe and bench carrier are separate M59 deliverables; this section documents their required behavior.
+
+**Hermetic recipe.** Per run, `<R> = $STACK_WORKDIR/opencode-probe-v2/run-<run_id>`; each exercise `<S>` is a git-initialized scratch directory outside `<R>/home`, with no AGENTS.md. Build the environment from an empty dictionary:
+
+```text
+PATH=/opt/homebrew/bin:/usr/bin:/bin
+HOME=<R>/home
+XDG_CONFIG_HOME=<R>/cfg
+XDG_DATA_HOME=<R>/data
+XDG_STATE_HOME=<R>/state
+XDG_CACHE_HOME=<R>/cache
+TMPDIR=<R>/tmp/
+OPENCODE_CONFIG_DIR=<R>/cfg/opencode
+OPENCODE_DISABLE_PROJECT_CONFIG=1
+OPENCODE_DISABLE_MODELS_FETCH=1
+OPENCODE_DISABLE_AUTOUPDATE=1
+OPENCODE_DISABLE_FILEWATCHER=1
+OPENCODE_CONFIG_CONTENT={"providers":{"mlx-local":{"models":{"<model>":{"body":{"seed":N}}}}}}
+PWD=<S>
+TERM=dumb
+NO_COLOR=1
+```
+
+Copy the generated `benchmark/opencode_bench_v2.json` verbatim to `<R>/cfg/opencode/opencode.json` and `benchmark/opencode_plugins/noretry.js` to its `plugins/` subdirectory; record both hashes. Seed the per-run cache with the box's `rg`. `N = rowschema.sample_seed(item, 0, base=seed_base)` is constant across the item's requests. Resolve `/opt/homebrew/bin/opencode` (or absolute `OPENCODE_PROBE_BIN`) and record its executable SHA and version; even `--version` must run in this environment.
+
+```text
+opencode run --standalone --model mlx-local/<model> --format json --title probe "<prompt>"
+opencode session export <sessionID> --standalone
+```
+
+Both commands use cwd and PWD `<S>` and stdin DEVNULL. Save stdout events and stderr separately. Read `sessionID` from the first JSON event; export using the same environment. `--standalone` avoids the operator's shared service; `--title` suppresses title requests. The carrier also disables the title agent, removes the vllm/ollama/lmstudio/compatibility plugins, denies external_directory/question/websearch/webfetch/execute, and puts the vllm discovery URL on `http://127.0.0.1:9/v1`. Native per-model `body` carries registry sampling plus `max_tokens`; `compatibility.maxTokensField: "max_tokens"` selects the field the fork honors. `noretry.js` vetoes retries; the preflight must see its `bench.noretry` loading log line.
+
+**M50 v2 rules (P151).** Every mismatch refuses with the M50 tripwire; the 1.18 policy is unchanged.
+
+| Check | Required proof |
+|---|---|
+| Environment and files | `OPENCODE_CONFIG` absent; config-dir realpath equals `<R>/cfg/opencode`; exactly the generated `opencode.json` and `plugins/noretry.js`, matching repository SHAs. CONTENT equals exactly the expected one-provider, one-model `body.seed` integer overlay, with no extra keys. Project config disabled with `"1"`; HOME and every XDG path under `<R>`. |
+| Destination from v2 | `api GET /api/config --standalone` with item env/cwd/PWD returns exactly the file document, config-directory entry, and null-path CONTENT document. No project document. At least one document declares `providers.mlx-local.settings.baseURL`; all such declarations equal the carrier URL, and no document declares another mlx-local settings key. File plugins equal the carrier list. Raw documents, not a merged view, are the proof. |
+| Router ownership | Pass the verified URL through `assert_served_config`: sole local owner is mlx-serve, using the driver's registry and entry PID; no proxy or remote destination. |
+| Exit | `assert_served_config_unchanged` rechecks PID/hash; drift stamps `served_config_drift`, exits nonzero, and refuses later reuse. |
+| A4 prerequisite | A chain with total n ≥ 40 requires A4 v2 PASS against the same router PID; manifest records `a4_v2_pass` and gate run ID. Five-item smokes may precede A4. |
+
+A4 runs with `scripts/session_pinning_gate.py --opencode v2`; the default remains `1.18` until the freeze. It creates a temporary root under `$STACK_WORKDIR/session_gate/`, copies the v2 bench carrier (or warns and copies the client config verbatim if absent), then runs two standalone turns with `--title gate`, resuming the first event's explicit `--session <id>`. PASS requires rc 0 and worker-log requests on both turns, all carrying that one `ses_…` ID. `cross_process_reuse` is reported, not gated. `$STACK_WORKDIR/session_gate/a4_v2_latest.json` records the result, router PID, executable SHA, version, and run ID; a drifted router cannot publish PASS.
+
+**Transport classification (P152).**
+
+| Observed outcome | Class | Action |
+|---|---|---|
+| rc 0, completed, no error event, starts = finishes + 1, no assistant error/retry in export | Generation outcome | Write and grade row. Final step_finish is absent in 2.0.20. |
+| rc 0 but consecutive step_start events | Transport: silently recovered provider error/re-sample | ABORT, ungraded. |
+| rc 1 plus provider.transport/internal/invalid-output error | Transport | ABORT. |
+| rc 1, provider.invalid-request status 400 with the fork's context-length message | Context overflow | Row with `nonconv_kind: "context_overflow"`, `passed: false`; budget-class strict miss. |
+| rc 1 without error event | Harness failure | ABORT. |
+| rc 130 / gate kill for stalled, looping, hard_ceiling; router verified unchanged immediately after kill | Gate outcome | Write and grade row. |
+| Gate kill with failed router check | Transport | ABORT with drift stamp. |
+| Export missing or unparsable | Harness failure | ABORT. |
+
+ABORT means no item row, no next item, nonzero exit, and PII-scrubbed logs/stderr/export under `$STACK_WORKDIR/opencode-probe-v2/aborted/<run>/<item>/`; stamp `transport_abort: {item, rc, stop_reason, signature}` in the manifest. A transport-abort stamp permits continuation; served-config drift does not.
+
+**Rows and progress (P153).** Each row carries `bench: "opencode"`, `scaffold: "opencode-v2"`, `schema_version: 3`, `id`, `model`, `sample: 0`, `passed`, `acc`, `file_changed`, `test_modified`, `opencode_rc`, `opencode_version`, `polyglot_sha`, `wall_s`, `stop_reason`, `timed_out`, existing `gate_*`, `nonconv_kind` (null/context_overflow/stalled/looping/hard_ceiling), `session_id`, `requests_observed` (step_start count), `events_path`, `transcript_path`, `loop_metrics`, `traffic`, `sampler_seed`, `seed_base`, `overlay_sha256`, `max_tokens_semantics`, `grade_tail`, and scrubbed `log_tail`. Traffic tokens come from the export, including the final turn. The progress gate retains tick 300 s, ceiling 3600 s, stall 2, loop 3, reading solution/test files and the events tail.
+
+Manifest runtime records client/scaffold, scaffold identity, config-dir, retry-plugin SHA, A4 result/run ID, `compaction: "off"`, disabled title generation, the hermetic switch set, and observed instruction sources (expected empty). The policy hash covers carrier/plugin SHAs, overlay schema, env switches, git initialization, standalone mode, binary version/SHA, and per-run cache policy; client-config SHA is observational. The cache inventory SHA is recorded after item one.
+
+**Compaction split.** Daily-driver `opencode_config/opencode.json` deliberately enables compaction to handle a human session's overflow. The v2 benchmark carrier disables it so overflow is measured as non-convergence, never hidden by summarization and never a DNF. `acc_strict@budget` remains the ranking key. Capture tests verify whether explicit `body.max_tokens` wins over v2's dynamic cap; if it does not, record `max_tokens_semantics: "v2-dynamic"` rather than hide the difference.
 
 ### Aider polyglot (agentic edit)
 

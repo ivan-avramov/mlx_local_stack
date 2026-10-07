@@ -12,14 +12,14 @@ def emit_opencode_bench(source: Source) -> str:
     carrier that makes a candidate's agentic row measured at `deployed` rather than at opencode's
     defaults. Deliberately NOT in TARGETS — see configgen/tests/test_opencode_bench.py.
     """
-    return _emit(source, roles=("main", "candidate"))
+    return _emit_v1(source, roles=("main", "candidate"))
 
 
 def emit_opencode(source: Source) -> str:
-    return _emit(source, roles=("main",))
+    return _emit(source)
 
 
-def _emit(source: Source, *, roles: tuple[str, ...]) -> str:
+def _emit_v1(source: Source, *, roles: tuple[str, ...]) -> str:
     main = [m for m in source.models if m.role in roles]
     task = next((m for m in source.models if m.role == "task"), None)
     local_models = {}
@@ -58,4 +58,46 @@ def _emit(source: Source, *, roles: tuple[str, ...]) -> str:
     if default:
         doc["model"] = f"mlx-local/{default}"
     doc.setdefault("plugin", ["superpowers@git+https://github.com/obra/superpowers.git"])
+    return json.dumps(doc, indent=2) + "\n"
+
+
+def _emit(source: Source) -> str:
+    """Native v2 daily-driver carrier; the pinned 1.18 benchmark stays on _emit_v1."""
+    def model(m, *, tools: bool) -> dict:
+        item = {
+            "name": m.display_name,
+            "capabilities": {"tools": tools,
+                             "input": ["text", "image"] if tools and "vision" in m.capabilities else ["text"],
+                             "output": ["text"]},
+            "limit": {"context": m.context, "input": input_limit(m), "output": m.output},
+            "compatibility": {"maxTokensField": "max_tokens"},
+        }
+        sampling = {**sampling_openai(m), **sampling_extra(m)}
+        if tools or sampling:
+            item["body"] = sampling
+        return item
+
+    doc = {
+        "$schema": "https://opencode.ai/config.json",
+        "update": "disable", "share": "disabled", "compaction": {"auto": True},
+        "plugins": ["-opencode.provider.vllm", "-opencode.provider.ollama",
+                    "-opencode.provider.lmstudio", "-opencode.config.compatibility",
+                    "superpowers@git+https://github.com/obra/superpowers.git"],
+        "providers": {"mlx-local": {
+            "name": "mlx-serve (local)", "package": "@opencode/ai/providers/openai-compatible",
+            "settings": {"baseURL": "http://localhost:8000/v1", "apiKey": "not-needed"},
+            "models": {m.name: model(m, tools=True) for m in source.models if m.role == "main"},
+        }},
+    }
+    task = next((m for m in source.models if m.role == "task"), None)
+    if task:
+        doc["providers"]["mlx-task"] = {
+            "name": "mlx task model (local)", "package": "@opencode/ai/providers/openai-compatible",
+            "settings": {"baseURL": f"http://localhost:{task.port}/v1", "apiKey": "not-needed"},
+            "models": {task.name: model(task, tools=False)},
+        }
+        doc["agents"] = {"title": {"model": f"mlx-task/{task.name}"}}
+    default = source.agent_defaults.get("opencode")
+    if default:
+        doc["model"] = f"mlx-local/{default}"
     return json.dumps(doc, indent=2) + "\n"
