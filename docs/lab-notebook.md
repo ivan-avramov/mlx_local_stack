@@ -4672,3 +4672,7 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   block of request 6 with all preceding tool outputs identical → residual server-side nondeterminism in long generations, **C137**
   (open, not an M59 blocker). The 1.18 probe is FROZEN (`09c00b8`): `main()` refuses before any I/O; 82 integration tests deleted,
   43 moved to `test_opencode_common.py`, 32 retained; the session gate defaults to `--opencode v2`.
+- **C137 replay (2026-10-07 01:37–02:05 local, pick 1 draft-OFF, 26,333-token prompt, 3000 completion tokens, seed 4242):** under `fused_v1`
+  AND `auto`, full-prefill runs are byte-identical (4/4 each: shas `65e696b06db2` / `3e0a2a0c78c2`), the cached-prefix run (`cached_tokens`
+  26332) diverges ≈ 8.6K chars in (common prefix 8725 / 8568 chars). The worker logged shrink-on-retire (1024 → 106 MiB) and the re-floor
+  between the two runs. Localized to the cached-prefix path, policy-independent; the shrink-off discriminator is queued after the chain.
