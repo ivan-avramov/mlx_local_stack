@@ -1,40 +1,32 @@
-# Handoff — 2026-10-07 (early morning): M59 BUILT and MERGED to main (opencode 2.x probe, v2 client config, A4 on v2, 1.18 frozen); smoke passed on the final code; chain awaits the operator's go; stack STOPPED
+# Handoff — 2026-10-07 (afternoon): M59 chain IN PROGRESS (s1 pick-2 re-run, then s2); session resumed by Claude Opus 5.5 (allow-shorthand) after the Fable limit; stack UP (bench router) until the chain ends
 
-THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M59 row) and `docs/open-questions.md`
-(C134–C136 RULED; C137 OPEN: residual long-generation nondeterminism). History: `docs/lab-notebook.md` 2026-10-06 (late, fork CI) and
-2026-10-07 (early, M59). Artefacts: `$STACK_WORKDIR/m59/` (RUNLOG.md, `run_m59.py` runner, `make_overlay.py` + `overlay_m59_draft_off.yaml`,
-`prompt_identity.py`, `items_python_go.json`, `smoke_attempt5..8/` rows + transcripts, Codex prompts/reports, review scratch dirs,
-`personal_opencode.v1.backup.json`), `$STACK_WORKDIR/m59_research/` (REPORT.md, capture/FACTS.md), `$STACK_WORKDIR/ci_repro/`.
+THE one handoff. Read this, then `docs/PLAN.md` (M59 row) and `docs/open-questions.md` (C136 addendum; C137 localized; C138 OPEN).
+History: `docs/lab-notebook.md` 2026-10-07 (early: build/smoke; afternoon: chain). Artefacts: `$STACK_WORKDIR/m59/` (RUNLOG.md is the
+live log; `run_m59.py` runner; `chain_resume.sh` detached driver → `chain.rc`; `s1/`, `s2/` rows; `archive/s1_pick2_window558/` the
+superseded pick-2 arm + original transcripts; `c137/` replay outputs; `smoke_attempt5..8/`).
 
 ## State of the world
 
-- **Stack is STOPPED** (runner stops it after every smoke; operator's choice to keep the daily driver down). Restart = `./runserver.sh`.
-  The operator's `~/.config/opencode/opencode.json` is now the generated v2 client config (backup in `$STACK_WORKDIR/m59/`).
-- Stack `main` = `09c00b8` + this handoff commit; `origin/main` = `c889661`. **NOT pushed** (operator approved the fork push only).
-  Fork `../mlx-vlm` `main` = `58eb241b` = `origin/main` (pushed; `Test PRs` green on the macos-14 runner). Submodule = `58eb241b`.
-- **M59 (opencode 2.x probe) is BUILT and merged** (branch `m59-opencode-v2` fast-forwarded into main; 20 commits): `benchmark/run_opencode_probe_v2.py`,
-  `benchmark/bench/opencode_common.py` (shared pieces), M50 v2 tripwire in `provenance.py`, generated `benchmark/opencode_bench_v2.json` +
-  `benchmark/opencode_plugins/noretry.js`, `benchmark/decode_rates.json` (C136), v2 client config `opencode_config/opencode.json`, A4-on-v2 in
-  `scripts/session_pinning_gate.py` (default `--opencode v2`), the 1.18 probe FROZEN (refuses before any I/O; rows retained). Workers: Codex
-  `gpt-6-astra`; verifier: Claude Opus 5.5 (allow-shorthand) cold reviews (four passes, all findings folded in).
-- **Smoke (attempts 5–8, pick 1, 5 seeded-random Python items):** final attempt 8 on the final code: p1 5/5 (342 s/item), p2 4/5; A4 v2 PASS;
-  scaffold prompt identity PASS; 3 of 4 comparable items byte-identical end to end. Four prompt-identity leaks were found and closed on the
-  way (random scratch name, per-run TMPDIR, prepared-file mtimes, the date → `prompt_date` on rows). See the lab notebook.
-- **"2× slower on 2.x" was a basis error** (cold RCA): like-for-like v2 is 0.92–1.08× of 1.18; the server decodes 15–30 % faster, the model
-  writes ≈ 1.5× the tokens. Chain re-estimate ≈ 14.5 h point / 13.3 h lower bound / ≤ 22 h heavy tail.
-- Suites on main with the stack down: see the last line of `$STACK_WORKDIR/m59/suite_main.rc` and the logs beside it (expected green; run
-  without `STACK_WORKDIR` exported — the dsh guard test refuses an inherited one).
-- Untracked: `ts.md` (operator note; `rm` was denied to the session — operator deletes it).
+- **Chain running** (detached `chain_resume.sh` → `run_m59.py chain s1 s2`, started 20:39Z): s1 re-runs ONLY pick 2
+  (`Qwen3.8-27B-mlx-uniform-4bit`, window 630 s) on a fresh instance; then s2 (seed base 2002; pick 2 then pick 1; fresh load at the
+  boundary; outputs tagged `.s2.`). ≈ 11 h from launch. The runner stops the stack at the end (`stack_stop`). Exit code in `chain.rc`.
+  Monitor: `tail -F RUNLOG.md` for END / RATE CHECK / FATAL lines; per-leg RATE CHECK flags a > 5 % decode gap.
+- **s1 done for pick 1** (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, window 662 s): Python 21/22, Go 20/22. Pick-2 558 s arm archived
+  (Python 19/22, Go 17/22; all misses stalls) — adaptive correction, disclose, never pool (C136 addendum).
+- Stack `main` = this commit; `origin/main` = `c889661` (**not pushed**; operator: "we push later"). Fork `58eb241b` pushed, CI green.
+- C137 localized: full prefill deterministic under `fused_v1` and `auto`; the cached-prefix run diverges (shrink/re-floor suspected).
+  Next: the shrink-off discriminator (≈ 15 min box) AFTER the chain.
+- Operator-only: delete `ts.md` and the fork `f1-sync` worktree + `sync/upstream-v0.6.15` branch (sandbox denied); push go.
 
 ## Queue, in order
 
-1. **Operator:** go for the M59 re-baseline chain (`$STACK_WORKDIR/m59/run_m59.py chain` → s1 then s2: two B picks × Python + Go, 22 items,
-   seed bases 1001/2002, order-balanced, no reload leg per C135; detached with `nohup`, RUNLOG + five-minute WATCH lines; ≈ 14.5 h point).
-   Also: push go for stack main; whether to buy C137 (b) (≈ 15 min replay probe).
-2. After the chain: pair accuracy per session vs the 1.18 rows as a descriptive scaffold delta (never pooled); README evidence tables;
-   campaign-results entry. No pick/order change from the re-baseline.
-3. Blind-judge agent definition `.claude/agents/blind-judge.md` — loads only in a NEW session; canary before the next judge pass.
-4. Candidates not queued: unchanged (dense prefill path; fused-kernel tuning; `auto`-path slowdown; P41; P42). M56 PARKED. ReviewBench DEFERRED.
+1. Let the chain finish; if it stops, read `chain.rc` + RUNLOG; an INCOMPLETE leg must be archived and re-run from item one on a fresh
+   instance (C138 — never resume across loaded instances).
+2. Analysis: per (model, language, session) `acc_strict@budget`, convergence, nonconv kinds, window/rate/probe-hash provenance; the
+   pick-2 558 s arm reported separately; descriptive scaffold delta vs the 1.18 medium rows (never pooled; Holm, TOST ±5 pp); README
+   evidence tables + campaign-results entry. No pick/order change from a re-baseline.
+3. C137 shrink-off discriminator; C138 proposal; push when the operator says.
+4. Blind-judge agent canary (new session); candidates not queued unchanged.
 
 ## Rules learned (this session)
 
