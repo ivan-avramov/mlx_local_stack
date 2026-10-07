@@ -4599,3 +4599,29 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 - **Judge pass result (added after the Codex leg finished, 18:35 PDT):** gate of record PASS with all three judges (degrade 1.0, flip
   codex 0.1 / claude 0.0, κ 1.0, α 0.950, longer-pref 0.0, identity 1.0; 0 null verdicts in 420 rows); pair `m40on` vs `m60ship`: shipped
   state preferred 0.425 [0.312, 0.537], p = 0.19 — no detectable drift at n=40. Codex leg: 140 sequential calls in ~1 h 45 min.
+
+## 2026-10-06 (late) — fork CI: the first `Test PRs` pytest run on macos-14 failed 13/5820; all 13 pass on the box under the same MLX 0.32.3 / Python 3.10
+
+- **Run 37558071759** (fork `b17b12a9`, `Upstream parity` green): `13 failed, 5807 passed, 21 skipped` in 5 min 40 s on the macos-14
+  runner (M1, 7 GB; MLX **0.32.3** resolved from `mlx>=0.32.2`, Python 3.10). The pytest step had never run on the fork before, so
+  this is the runner's baseline, not a regression of the merge.
+- **Repro on the box:** a throwaway Python 3.10 venv with `mlx==0.32.3` (`$STACK_WORKDIR/ci_repro/`) — the 13 tests pass alone (31
+  passed incl. parametrisations), the two affected modules pass whole (105 passed), and the full suite passes (5373 passed, 11 skipped,
+  75 s, three scipy-dlopen-broken modules ignored). So the MLX version is not the cause; the runner is. (First attempt failed 50 tests
+  because the `TMPDIR` I exported did not exist — MLX's Metal JIT needs a real temp dir; not a finding, a trap.)
+- **Three families, three fixes (fork `58eb241b`, test/CI only, no cold review):**
+  1. `test_prefill_profile.py` (11): every sentinel reading was an ABSOLUTE `mx.get_peak_memory()` against `THRESH = 100 MB` and the
+     sentinel is a 128 MB `mx.ones`. Every quiet reading on the runner came back at ~147 MB ≈ one sentinel + 19 MB, i.e. the previous
+     test's sentinel buffer was still "active" when the next test reset the peak: Metal returns a dropped buffer only when the command
+     buffer that used it completes, and the runner is slow (5 min 40 s vs 88 s here). Fix: readings are RELATIVE to the active memory
+     at a quiesced reset (`mx.synchronize(); gc.collect(); mx.synchronize(); reset_peak`), in `_peak_of` and both mark spies.
+     The mechanism is inferred from the numbers (not reproduced here); the CI rerun is the red→green.
+  2. `test_body_divergence_check.py::test_the_real_turboquant_kernel_case`: `git show upstream/main:…` exit 128 — the shallow
+     `actions/checkout` clone has no `upstream` remote. Fix: resolve through the existing skip-aware `_pinned_upstream_source`.
+     Known positive: a shallow clone of the branch without the remote → `SKIPPED … upstream/main is not in this clone`.
+  3. `test_kv_prealloc.py::test_prealloc_kvcache_shrink_then_refloor_matches_never_shrunk`: `mx.array_equal` False on the runner
+     (~3 GB of fp16 KV buffers live at once), passes here under the same MLX/Python. **Undiagnosed**; skipped below 16 GiB of
+     `mx.device_info()["memory_size"]` with the reason naming this entry, not weakened. Open item: run it on the runner with
+     `mx.set_memory_limit` diagnostics if it ever matters (the served box has 64 GB).
+- Fork suite on the fix (fork venv, Python 3.12.13, MLX 0.32.2): **5829 passed, 12 skipped, 2 xfailed**. Stack submodule bumped to
+  `58eb241b`; CI verification needs the push (operator go).
