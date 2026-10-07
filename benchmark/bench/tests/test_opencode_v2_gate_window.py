@@ -26,7 +26,7 @@ def test_rate_table_entries_carry_positive_rates_and_sources():
         assert entry["tok_s"] > 0 and "campaign-results" in entry["source"], name
 
 
-@pytest.mark.parametrize("model,rate", [(PICK1, 24.2), (PICK2, 28.7)])
+@pytest.mark.parametrize("model,rate", [(PICK1, 24.2), (PICK2, 25.4)])
 def test_window_is_token_denominated_per_model(model, rate):
     w = P2._gate_window(model, 16000, None)
     assert w["tick_s"] == math.ceil(16000 / (2 * rate))
@@ -57,3 +57,13 @@ def test_explicit_tick_overrides_and_is_recorded_as_manual():
 def test_identity_includes_the_allowance_and_rate():
     for key in ("first_write_tokens", "decode_tok_s"):
         assert key in P2.RESUME_IDENTITY_KEYS_V2
+
+
+def test_pick2_rate_is_the_in_situ_measurement_not_the_short_context_screen():
+    """2026-10-07: the M36 short-context screen's 28.7 tok/s overstated pick 2's decode under agentic load
+    (in-situ s1 median 25.4 over 51 requests of >= 500 tokens; 22.5 at >= 15K context), so its window
+    allowed ~14K tokens vs pick 1's ~16K and all eight of its s1 misses were stalls."""
+    entry = json.loads(P2.DECODE_RATES.read_text())["models"][PICK2]
+    assert entry["tok_s"] == 25.4
+    assert "in-situ" in entry["source"] and "M59 s1" in entry["source"]
+    assert P2._gate_window(PICK2, 16000, None)["tick_s"] == 315

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -568,8 +569,20 @@ def _instruction_sources(scratch, bench_home):
     return sources
 
 
+def _sigterm_exit(signum, frame):
+    """SIGTERM -> SystemExit(143) so `finally` blocks run: the scratch dir is removed and the opencode
+    child is killed. Python's default SIGTERM action skips them (2026-10-07: a stopped runner left
+    `oc-affine-cipher` behind and the relaunch refused on the stale-scratch guard)."""
+    raise SystemExit(143)
+
+
+def _install_sigterm_exit():
+    signal.signal(signal.SIGTERM, _sigterm_exit)
+
+
 def main():
     """Run the v2 probe, reporting policy refusals without grading them."""
+    _install_sigterm_exit()
     try:
         return _main()
     except provenance.ServedConfigError as e:

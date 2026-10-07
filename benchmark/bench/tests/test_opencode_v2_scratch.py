@@ -108,3 +108,36 @@ def test_gate_window_honours_stall_ticks():
     w4 = P2._gate_window("Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", 16000, None, stall_ticks=4)
     assert w4["tick_s"] * 4 == w4["first_write_window_s"] and w2["tick_s"] * 2 == w2["first_write_window_s"]
     assert abs(w4["first_write_window_s"] - w2["first_write_window_s"]) <= 4   # same tokens either way
+
+
+def test_sigterm_runs_cleanup_so_no_stale_scratch_is_left(monkeypatch, tmp_path):
+    """2026-10-07: the chain runner was stopped with SIGTERM mid-item; Python's default SIGTERM action
+    skips `finally`, so `oc-affine-cipher` survived and the relaunch refused on the stale-scratch guard.
+    The probe installs a SIGTERM handler that raises SystemExit(143), so context managers (scratch
+    removal, the child kill in `_run_opencode`) run."""
+    import signal
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        P2._install_sigterm_exit()
+        with pytest.raises(SystemExit) as e:
+            with P2._item_scratch_dir("affine-cipher") as d:
+                os.kill(os.getpid(), signal.SIGTERM)
+                for _ in range(100):          # the handler fires between bytecodes
+                    pass
+        assert e.value.code == 143
+        assert not d.exists()
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def test_main_installs_the_sigterm_handler_before_any_work(monkeypatch):
+    import signal
+    previous = signal.getsignal(signal.SIGTERM)
+    seen = {}
+    monkeypatch.setattr(P2, "_main", lambda: seen.setdefault("handler", signal.getsignal(signal.SIGTERM)) and 0)
+    try:
+        P2.main()
+        assert seen["handler"] is P2._sigterm_exit
+    finally:
+        signal.signal(signal.SIGTERM, previous)
