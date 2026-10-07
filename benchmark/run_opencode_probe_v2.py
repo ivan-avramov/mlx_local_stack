@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import getpass
 import hashlib
 import json
@@ -120,6 +121,29 @@ def _make_run_dir(workdir, run_id):
 
 def _scratch_root():
     return str(_stack_workdir() / "scratch/octmp.noindex")
+
+
+@contextmanager
+def _item_scratch_dir(name: str):
+    """A FIXED scratch path per item (`<root>/oc-<name>`), never a random one.
+
+    Smoke finding 2026-10-07: opencode's system prompt ("Working directory: ...") and every tool
+    path carry the scratch directory, so a random per-run name made two same-seed sessions see
+    different prompts and diverge (pilot-twice p1 vs p2 differed on all five items). A stale
+    directory from a crashed run refuses (nothing is deleted silently); the directory is removed
+    on exit, success or error. The 1.18 helper (`opencode_common._scratch_dir`) stays random.
+    """
+    root = Path(_scratch_root())
+    root.mkdir(parents=True, exist_ok=True)
+    path = Path(os.path.realpath(root / f"oc-{name}"))
+    if path.exists():
+        sys.exit(f"REFUSED: stale scratch directory {_portable(path)} exists (a crashed run?); "
+                 f"inspect and remove it before rerunning this item")
+    path.mkdir()
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def _spawn(cmd, scratch, env, **kwargs):
@@ -572,7 +596,7 @@ def _main():
             src = polyglot / a.lang / "exercises/practice" / name
             if not src.is_dir():
                 sys.exit("REFUSED: missing exercise " + item)
-            with _scratch_dir(name) as tmp:
+            with _item_scratch_dir(name) as tmp:   # fixed path: identical prompt across same-seed passes
                 work = tmp / name
                 _prepare(src, work)
                 _git_init_scratch(work)
