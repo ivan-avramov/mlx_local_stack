@@ -121,14 +121,17 @@ on the pre-check `api GET /api/config` call) contains the "loading plugin" line 
 
 ## P153 — progress gate, events, rows
 
-- The progress gate is unchanged (`bench/progress_gate.py`; tick 300 s, hard ceiling 3600 s, stall 2, loop 3): the tick snapshot
-  reads the solution/test files and the EVENTS file tail instead of the 1.18 text log. Policy identical across models.
+- The progress gate (`bench/progress_gate.py`; hard ceiling 3600 s, stall 2 ticks, loop 3) is TOKEN-denominated (C136,
+  2026-10-07): `--first-write-tokens` (default 16000) ÷ the model's documented draft-OFF decode rate (`benchmark/decode_rates.json`,
+  source recorded) gives the stall window; `tick_s = ceil(tokens / (2 × rate))`. Same tokens for every model, not the same seconds.
+  The tick snapshot reads the solution/test files and the EVENTS file tail instead of the 1.18 text log.
 - Row (v2): `bench: "opencode"`, `scaffold: "opencode-v2"`, `schema_version: 3`, `id`, `model`, `sample: 0`, `passed`, `acc`,
   `file_changed`, `test_modified`, `opencode_rc`, `opencode_version`, `polyglot_sha`, `wall_s`, `stop_reason`, `timed_out`,
   `gate_*` (as today), `nonconv_kind` (`null` | `context_overflow` | `stalled` | `looping` | `hard_ceiling`), `session_id`,
   `requests_observed` (= `step_start` count), `events_path`, `transcript_path`, `loop_metrics`, `traffic` (tokens from the export —
-  the final turn's tokens are only there, VERIFIED 7b), `sampler_seed`, `seed_base`, `overlay_sha256`, `max_tokens_semantics`,
-  `grade_tail`, `log_tail` (events tail, scrubbed).
+  the final turn's tokens are only there, VERIFIED 7b), `sampler_seed`, `seed_base`, `overlay_sha256`, `max_tokens_semantics`, `max_tokens_evidence`, `prompt_date`,
+  `grade_tail`, `log_tail` (events tail, scrubbed). Manifest runtime also carries `first_write_tokens`, `decode_tok_s`,
+  `decode_tok_s_source`, `first_write_window_s`, `tick_s` (C136).
 - Manifest `runtime`: `client: "opencode"`, `scaffold: "opencode-v2"`, identity (P150), `opencode_config_dir`, `noretry_plugin_sha256`,
   `a4_v2_pass`, `compaction: "off"`, `title_generation: "disabled (agents.title.disabled + --title; v2.0.20 capture 2026-10-06)"`,
   `hermetic_env: {...}` (the switch set), `instruction_sources` observation (AGENTS.md ancestors of `<S>` — expected empty, since

@@ -157,6 +157,8 @@ first real run.
 
 ### opencode v2 probe (M59)
 
+**Progress gate (C136, 2026-10-07).** The first-write allowance is denominated in tokens: `--first-write-tokens` (default 16000) is converted per model from the documented draft-OFF decode rate in `benchmark/decode_rates.json` (`tick_s = ceil(tokens / (2 × rate))`; stall after two flat ticks; loop detection at three identical ticks; hard ceiling 3600 s). Every model gets the same tokens before a stall can fire, not the same seconds. A model without a rate entry refuses unless `--tick-s` is explicit (recorded as `manual:--tick-s`). The manifest records `first_write_tokens`, `decode_tok_s`, `decode_tok_s_source`, `first_write_window_s`; rows killed by the rule stay misses (`nonconv_kind: stalled`). Rows also record `prompt_date` (opencode prints the local date into every prompt, so same-seed identity holds only within one day; C135).
+
 The M59 scaffold uses opencode **2.0.20**, `scaffold: "opencode-v2"`, and `schema_version: 3`; never pool its rows with 1.18 rows. The implementation contract is [P149–P153](../docs/specs/m59-opencode-v2-probe.md). The v2 probe and bench carrier are separate M59 deliverables; this section documents their required behavior.
 
 **Hermetic recipe.** Per run, `<R> = $STACK_WORKDIR/opencode-probe-v2/run-<run_id>`; each exercise `<S>` is a git-initialized scratch directory outside `<R>/home`, with no AGENTS.md. Build the environment from an empty dictionary:
