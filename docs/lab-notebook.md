@@ -4562,3 +4562,36 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 - **C128.** The 20 red tests are repaired (`946290e`); `benchmark/bench/tests` is 3199 passed, 0 failed.
 - **M60 runner selftest (dry-run):** regrading `math500.m40on` / `m37med` with today's grader moves nothing (0.99 / 0.97), and the
   runner's paired read reproduces the M40 record (+2 pp, CI [0, +5], 2 discordant, 0 reference-only).
+
+## 2026-10-06 (night) — merge identity gate IDENTICAL; M60 generated on the merged source; judge-pass mechanics
+
+- **Upstream merge identity gate** (`$STACK_WORKDIR/upstream/2026-10-06/run_merge_gate.py`, run `runs/20261006-144125/`): 23 seeded
+  requests (chat, thinking, code, tool turns, tool-result follow-ups, multi-turn with prior assistant reasoning, vision) on fork
+  `664c2ead`, then on `sync/upstream-v0.7.6` `b17b12a9`, then again after an unload/reload on the new source: **0 differing fields in
+  all three comparisons** (content and reasoning digests, token counts, finish reasons, tool-call payloads, MTP counters). Long prompt
+  on the new source: retrieval rung 196608 → `prompt_tokens` 196,111, 5/5 codes, `finish=stop`, prefill 469 s (the pre-M57 rows of the
+  same rung took 659–1066 s). Whole gate 13 min. Verdict IDENTICAL; `src/mlx-vlm` left detached at `b17b12a9` for M60.
+- **M60 generation on the merged source** (`$STACK_WORKDIR/m60/`): pilot-twice identical 5/5 (tokens, content, MTP counters);
+  go/no-go projected 0.34 h / 1.07 h; Math500 100/100 converged in 1.15 h (decode 45.8 tok/s, acceptance 0.76), cjudge 40/40 in
+  1.19 h (35.4 tok/s, 0.61); every verification block on `joint_v1` (0 per-query), 864 + 928 threshold straddles; power 140 W on
+  every tick. Math500 `acc_strict@81920` **0.98 vs `m40on` 0.99, −1 pp CI95 [−5, +2]** — INCONCLUSIVE under the pre-registered rule
+  (the lower bound sits exactly on −5 pp); discordant: `prealgebra/874` new-only win, `prealgebra/2066` (23 vs 22) and
+  `precalculus/768` (the C63 universal miss, which `m40on` alone got right: 2 of 4 roots) reference-only wins. vs `m37med` (OFF):
+  +1 pp [−2, +5]. All three flips are genuine answer changes, not parser effects.
+- **Monitor pipelines, again:** a `tail -F | grep --line-buffered | sed | cut` watcher delivered nothing for 30 min while the gate ran to
+  completion — `sed`/`cut` buffer (memory note `cut-buffers-monitor-pipelines` already said so). Filter with `grep --line-buffered`
+  only; prove with a known-positive line.
+- **Blind judges, what actually works in this harness today:** (1) a project agent definition (`.claude/agents/blind-judge.md`,
+  `omitClaudeMd: true`) is NOT loadable mid-session ("Agent type not found") — needs a fresh session; (2) headless `claude --bare -p`
+  reports "Not logged in" from the session's shell, with or without `CLAUDE_CONFIG_DIR`; (3) the built-in **Explore** agent type does
+  not receive the repo's AGENTS.md/CLAUDE.md or the user memory — canary on sonnet: no project/user instruction text, no campaign model
+  names, only harness boilerplate (commit attribution, Basic Memory note) and its own model name; (4) Explore agents are read-only for
+  some runs (every opus judge, two of eight sonnet judges reported "read-only mode") and could write verdict files via their shell in <!-- allow-shorthand -->
+  others — so judges deliver verdicts as one JSON line per packet in the final message when they cannot write, and
+  `$STACK_WORKDIR/m60/extract_verdicts.py` + `write_verdicts.py` turn the transcript into `<pkt>.verdict.json`. One sonnet judge ran a
+  stray `wc -c` over sibling packet directories (sizes only, no content, no manifest). Panel recorded in
+  `benchmark/results/judge_m60/<model>/panel.json`.
+- **Judge-pass ordering deviation:** the Codex leg (`gpt-5.6-terra`, 140 sequential calls) runs at ~1 call/min; the two Claude judges
+  passed the anchor gate on their own (degrade 1.0, flip 0.0, κ 1.0, α 1.0, longer-pref 0.0, identity 1.0), so the Claude ITEM
+  packets were dispatched before the three-judge gate of record existed. No item verdict was read before that gate; the gate of record
+  is the three-judge anchor gate computed once the Codex rows are complete.
