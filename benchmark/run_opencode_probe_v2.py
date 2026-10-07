@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import getpass
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -38,6 +39,8 @@ SCAFFOLD_ENV_POLICY_V2 = {
     "OPENCODE_DISABLE_FILEWATCHER": "1",
 }
 RESUME_IDENTITY_KEYS_V2 = (
+    "first_write_tokens",
+    "decode_tok_s",
     "scaffold",
     "seed_base",
     "overlay_schema",
@@ -109,6 +112,47 @@ def _fresh_tmpdir(env):
     path = Path(env["TMPDIR"])
     shutil.rmtree(path, ignore_errors=True)
     path.mkdir(parents=True, exist_ok=True)
+
+
+DECODE_RATES = REPO / "benchmark" / "decode_rates.json"
+DEFAULT_FIRST_WRITE_TOKENS = 16000
+
+
+def _gate_window(model, first_write_tokens, tick_s_override):
+    """C136: the first-write allowance is denominated in TOKENS. The documented draft-OFF decode
+    rate of `model` (benchmark/decode_rates.json, source line recorded) turns it into a per-model
+    window: tick_s = ceil(tokens / (2 * rate)), so the stall rule (2 flat ticks) equals the window
+    and loop detection (3 identical ticks) is 1.5 windows. An explicit --tick-s bypasses the table
+    and is recorded as a manual source; a model without an entry refuses otherwise."""
+    if tick_s_override is not None:
+        return {
+            "first_write_tokens": first_write_tokens,
+            "decode_tok_s": None,
+            "decode_tok_s_source": "manual:--tick-s",
+            "tick_s": int(tick_s_override),
+            "stall_ticks": progress_gate.DEFAULT_STALL_TICKS,
+            "first_write_window_s": int(tick_s_override) * progress_gate.DEFAULT_STALL_TICKS,
+        }
+    try:
+        entry = json.loads(DECODE_RATES.read_text())["models"][model]
+        rate = float(entry["tok_s"])
+        source = str(entry["source"])
+    except (OSError, ValueError, KeyError, TypeError):
+        sys.exit(
+            f"REFUSED: no documented draft-OFF decode rate for {model!r} in "
+            f"{DECODE_RATES.name}; add the measured rate with its source line, or pass --tick-s explicitly"
+        )
+    if rate <= 0 or first_write_tokens <= 0:
+        sys.exit("REFUSED: decode rate and --first-write-tokens must be positive")
+    tick = math.ceil(first_write_tokens / (progress_gate.DEFAULT_STALL_TICKS * rate))
+    return {
+        "first_write_tokens": int(first_write_tokens),
+        "decode_tok_s": rate,
+        "decode_tok_s_source": source,
+        "tick_s": tick,
+        "stall_ticks": progress_gate.DEFAULT_STALL_TICKS,
+        "first_write_window_s": tick * progress_gate.DEFAULT_STALL_TICKS,
+    }
 
 
 def _prompt_date():
@@ -396,6 +440,10 @@ def _identity(a, version, binary, run_dir, poly_sha):
             k: getattr(a, k)
             for k in ("tick_s", "hard_ceiling_s", "stall_ticks", "loop_repeats", "poll_s")
         },
+        **{
+            k: a.gate_window[k]
+            for k in ("first_write_tokens", "decode_tok_s", "decode_tok_s_source", "first_write_window_s")
+        },
         "cache_bin_inventory_sha256": _cache_bin_inventory_sha256(run_dir / "cache"),
     }
 
@@ -524,8 +572,16 @@ def _main():
     ap.add_argument("--chain-total", type=int, default=0)
     ap.add_argument("--a4-v2-receipt")
     ap.add_argument("--allow-version-drift", action="store_true")
+    ap.add_argument(
+        "--tick-s", type=int, default=None,
+        help="explicit gate tick (seconds); default: derived per model from --first-write-tokens (C136)",
+    )
+    ap.add_argument(
+        "--first-write-tokens", type=int, default=DEFAULT_FIRST_WRITE_TOKENS,
+        help="C136: token allowance before the stall rule may fire, converted per model with "
+             "benchmark/decode_rates.json",
+    )
     for key, default in [
-        ("tick-s", progress_gate.DEFAULT_TICK_S),
         ("hard-ceiling-s", progress_gate.DEFAULT_HARD_CEILING_S),
         ("stall-ticks", progress_gate.DEFAULT_STALL_TICKS),
         ("loop-repeats", progress_gate.DEFAULT_LOOP_REPEATS),
@@ -533,11 +589,13 @@ def _main():
         ap.add_argument("--" + key, type=int, default=default)
     ap.add_argument("--poll-s", type=float, default=5.0)
     a = ap.parse_args()
-    if any(
+    if (a.tick_s is not None and a.tick_s <= 0) or a.first_write_tokens <= 0 or any(
         getattr(a, k) <= 0
-        for k in ("tick_s", "hard_ceiling_s", "stall_ticks", "loop_repeats", "poll_s")
+        for k in ("hard_ceiling_s", "stall_ticks", "loop_repeats", "poll_s")
     ) or (a.limit is not None and a.limit <= 0):
         sys.exit("REFUSED: gate parameters and limit must be positive")
+    a.gate_window = _gate_window(a.model, a.first_write_tokens, a.tick_s)
+    a.tick_s = a.gate_window["tick_s"]
     items = list(dict.fromkeys(s.strip() for s in a.items.split(",") if s.strip()))
     if not items or any(Path(s).name != s or s in (".", "..") for s in items):
         sys.exit("REFUSED: items must be exercise basenames")
