@@ -103,6 +103,13 @@ def opencode_cmd(model: str, cwd: Path, prompt: str, *, first: bool, binary: str
     return cmd
 
 
+def opencode_v2_cmd(model: str, prompt: str, *, binary: str, session_id: str | None = None) -> list[str]:
+    """Native standalone v2: resume the explicit event session, never an implicit latest session."""
+    cmd = [binary, "run", "--standalone"]
+    cmd += ["--session", session_id] if session_id else ["--model", f"mlx-local/{model}"]
+    return cmd + ["--format", "json", "--title", "gate", prompt]
+
+
 def filler(idx: int, approx_tokens: int) -> str:
     head = f"Session {idx} of the M45 probe, marker {idx * 7919}. "
     n = max(1, int(approx_tokens * CPT / len(_FILLER)))
