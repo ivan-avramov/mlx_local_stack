@@ -91,7 +91,11 @@ def _opencode_env(run_dir, scratch, overlay):
         "XDG_DATA_HOME": str(root / "data"),
         "XDG_STATE_HOME": str(root / "state"),
         "XDG_CACHE_HOME": str(root / "cache"),
-        "TMPDIR": str(root / "tmp") + "/",
+        # Per ITEM with a stable name, never per run: opencode prints `<TMPDIR>/opencode` into its
+        # system prompt (capture r01 line 48), so a per-run id there made same-seed passes differ
+        # (smoke attempt 6). A dir shared by back-to-back invocations clashes on opencode's leftovers,
+        # so each spawn gets `<base>/tmp/<scratch name>`, cleared first (`_fresh_tmpdir`).
+        "TMPDIR": str(root.parent / "tmp" / Path(scratch).name) + "/",
         "OPENCODE_CONFIG_DIR": str(root / "cfg/opencode"),
         **SCAFFOLD_ENV_POLICY_V2,
         "OPENCODE_CONFIG_CONTENT": json.dumps(overlay, sort_keys=True),
@@ -99,11 +103,26 @@ def _opencode_env(run_dir, scratch, overlay):
     }
 
 
+def _fresh_tmpdir(env):
+    """Clear and recreate the item's TMPDIR before a spawn (no survivor is left from the previous
+    invocation, which the probe verifies, so nothing live is removed)."""
+    path = Path(env["TMPDIR"])
+    shutil.rmtree(path, ignore_errors=True)
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def _prompt_date():
+    """The local date exactly as opencode prints it into every system prompt ("Today's date: ...").
+    Same-seed identity holds only while this is equal (C135); recorded on every row."""
+    return time.strftime("%a %b %d %Y")
+
+
 def _make_run_dir(workdir, run_id):
     root = (workdir / "opencode-probe-v2" / ("run-" + run_id)).resolve()
     root.mkdir(parents=True, exist_ok=False)
-    for name in ("home", "cfg/opencode/plugins", "data", "state", "cache", "tmp"):
+    for name in ("home", "cfg/opencode/plugins", "data", "state", "cache"):
         (root / name).mkdir(parents=True, exist_ok=True)
+    (root.parent / "tmp").mkdir(parents=True, exist_ok=True)   # shared across runs: it reaches the prompt
     for source, target in [
         (BENCH_OPENCODE_CONFIG, root / "cfg/opencode/opencode.json"),
         (NORETRY_PLUGIN, root / "cfg/opencode/plugins/noretry.js"),
@@ -269,7 +288,11 @@ def _classify(events, rc, stop_reason):
         return stop_reason
     if rc != 0:
         raise TransportAbort(f"exit {rc} without an allowed context-overflow error")
-    if stop_reason != "completed" or kinds.count("step_start") != kinds.count("step_finish") + 1:
+    # The final `step_finish` is OPTIONAL: FACTS 7b saw it absent in every normal run, but a real
+    # run under test emitted it (stream-close timing), so starts == finishes or finishes + 1 are both
+    # complete sequences; a retry still shows as two consecutive `step_start` (checked above).
+    starts, finishes = kinds.count("step_start"), kinds.count("step_finish")
+    if stop_reason != "completed" or starts == 0 or starts not in (finishes, finishes + 1):
         raise TransportAbort("incomplete or unrecognised event sequence")
     return None
 
@@ -361,6 +384,7 @@ def _identity(a, version, binary, run_dir, poly_sha):
     return {
         **policy,
         "scaffold": "opencode-v2",
+        "prompt_date_at_start": _prompt_date(),
         "seed_base": a.seed_base,
         "scaffold_policy_sha256": hashlib.sha256(
             json.dumps(policy, sort_keys=True).encode()
@@ -549,6 +573,7 @@ def _main():
         _git_init_scratch(scratch)
         overlay = _seed_overlay(a.model, _item_seed(a.lang + "/" + items[0], a.seed_base))
         env = _opencode_env(run_dir, scratch, overlay)
+        _fresh_tmpdir(env)
         env_check(env, overlay)
         result = _capture([binary, "--version"], scratch, env, 30)
         version = _parse_version(result.stdout)
@@ -603,6 +628,7 @@ def _main():
                 seed = _item_seed(item, a.seed_base)
                 overlay = _seed_overlay(a.model, seed)
                 env = _opencode_env(run_dir, work, overlay)
+                _fresh_tmpdir(env)
                 env_check(env, overlay)
                 if not wrote:
                     runtime = {
@@ -700,6 +726,7 @@ def _main():
                 )
                 rc, stop_reason, session_id = None, "completed", None
                 try:
+                    prompt_date = _prompt_date()   # captured at spawn; opencode prints this date into the prompt
                     rc, log, duration, gate = _run_opencode(
                         a.model,
                         work,
@@ -771,6 +798,7 @@ def _main():
                         "id": item,
                         "model": a.model,
                         "sample": 0,
+                        "prompt_date": prompt_date,
                         "passed": passed,
                         "acc": None if passed is None else int(passed),
                         "file_changed": changed,

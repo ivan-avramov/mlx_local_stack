@@ -44,3 +44,30 @@ def test_item_scratch_path_is_removed_on_error(monkeypatch, tmp_path):
             (d / "x").write_text("x")
             raise RuntimeError("boom")
     assert not (tmp_path / "scratch/octmp.noindex" / "oc-forth").exists()
+
+
+def test_hermetic_env_paths_that_reach_the_prompt_are_stable_across_runs(tmp_path):
+    """opencode prints `<TMPDIR>/opencode` (and the scratch dir) into its system prompt (capture
+    r01, line 48). Smoke attempt 6: the first prompts of two same-seed passes differed by 4 tokens
+    because TMPDIR carried the per-run id. Every path the prompt can see must be identical across
+    runs; the per-run isolation (HOME, XDG_*, config dir) stays per run."""
+    base = tmp_path / "opencode-probe-v2"
+    a = base / "run-20261006T220344-e7fac9d70fc2"
+    b = base / "run-20261006T223615-2b7a480f3421"
+    overlay = P2._seed_overlay("m", 1)
+    ea = P2._opencode_env(a, tmp_path / "s", overlay)
+    eb = P2._opencode_env(b, tmp_path / "s", overlay)
+    assert ea["TMPDIR"] == eb["TMPDIR"]                      # stable, bench-owned, per item name
+    assert Path(ea["TMPDIR"]).resolve() == (base / "tmp" / "s").resolve()
+    ec = P2._opencode_env(a, tmp_path / "other", overlay)
+    assert ec["TMPDIR"] != ea["TMPDIR"]                      # another item: its own dir (no clash)
+    P2._fresh_tmpdir(ea)
+    (Path(ea["TMPDIR"]) / "opencode").mkdir()
+    P2._fresh_tmpdir(ea)
+    assert Path(ea["TMPDIR"]).is_dir() and not (Path(ea["TMPDIR"]) / "opencode").exists()
+    assert ea["HOME"] != eb["HOME"] and ea["XDG_DATA_HOME"] != eb["XDG_DATA_HOME"]   # isolation kept
+
+
+def test_prompt_date_is_recorded_in_the_shape_opencode_prints(monkeypatch):
+    import time
+    assert P2._prompt_date() == time.strftime("%a %b %d %Y")

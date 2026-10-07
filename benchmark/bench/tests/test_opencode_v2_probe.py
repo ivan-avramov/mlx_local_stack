@@ -242,6 +242,7 @@ def test_normal_events_export_and_row(probe, monkeypatch, tmp_path):
         assert probe._login_name() not in transcript.read_text()
         assert Path(row["events_path"].replace("$STACK_WORKDIR", str(tmp_path))).is_file()
         assert row["max_tokens_semantics"] == "fixed-by-carrier"
+        assert row["prompt_date"] == probe._prompt_date()
     overlays = [json.loads(s) for s in f["calls"].read_text().splitlines()]
     for row, overlay in zip(rows, overlays):
         assert overlay == probe._seed_overlay(MODEL, row["sampler_seed"])
