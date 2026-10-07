@@ -4676,3 +4676,18 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   AND `auto`, full-prefill runs are byte-identical (4/4 each: shas `65e696b06db2` / `3e0a2a0c78c2`), the cached-prefix run (`cached_tokens`
   26332) diverges ≈ 8.6K chars in (common prefix 8725 / 8568 chars). The worker logged shrink-on-retire (1024 → 106 MiB) and the re-floor
   between the two runs. Localized to the cached-prefix path, policy-independent; the shrink-off discriminator is queued after the chain.
+
+## 2026-10-07 (afternoon) — M59 chain: s1 done, pick-2 window corrected and s1 pick-2 re-run, s2 under way (session resumed by Claude Opus 5.5 (allow-shorthand) after the Fable limit)
+
+- **s1 (09:05–16:14Z, ≈ 7.2 h):** `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` Python 21/22 (1 stall), Go 20/22 (1 stall, 1 hard
+  ceiling: alphametics, 483 requests); `Qwen3.8-27B-mlx-uniform-4bit` Python 19/22 (3 stalls), Go 17/22 (5 stalls). No transport or
+  drift stamps. The runner then started s2 on s1's still-loaded pick-2 instance (k=2 independence violated); the leg was stopped
+  before any row, the runner patched to unload at every session boundary; the stopped probe left its scratch dir (SIGTERM skipped
+  `finally`) and the relaunch refused on the stale-scratch guard — fail-closed as designed; fixed in `da84cd8` (SIGTERM → SystemExit).
+- **In-situ decode rates (worker log, requests ≥ 500 generated tokens, s1):** pick 1 24.4 tok/s (table 24.2), pick 2 25.4 (table 28.7,
+  from a short-context screen; 22.5 at ≥ 15K context). The pick-2 window (558 s) allowed ≈ 14K tokens vs ≈ 16K for pick 1 and every pick-2
+  miss was a stall → rate corrected to 25.4 (630 s), s1 pick-2 legs re-run on a fresh instance, the 558 s arm archived (C136 addendum,
+  adaptive — disclose, never pool). The runner logs a per-leg RATE CHECK (> 5 % flags).
+- **Codex `gpt-6-astra` cold review** of `da84cd8` + runner: SOUND-WITH-RESIDUALS, no must-fix for an uninterrupted chain; residuals →
+  C138 (interruption-safe persistence; restart must not append across loaded instances). Wall times in this chain are descriptive only
+  (no ten-minute inter-arm cooldown; not a latency measurement).
