@@ -62,9 +62,10 @@ def a6_bare(model, log, timeout) -> dict:
     return {"pass": ok, "requests": out}
 
 
-def a4_opencode(model, log, root: Path, timeout, oc_bin: str, *, opencode="1.18") -> dict:
+def a4_opencode(model, log, root: Path, timeout, oc_bin: str, *, opencode="1.18", base=None) -> dict:
     if opencode == "v2":
-        return _a4_opencode_v2(model, log, timeout, oc_bin)
+        return _a4_opencode_v2(model, log, timeout, oc_bin,
+                               base if base is not None else os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1"))
     proj = root / "oc-proj"; proj.mkdir(parents=True, exist_ok=True)
     (proj / "hello.py").write_text("def hello(name):\n    return f'hello {name}'\n")
     env = dict(os.environ, XDG_DATA_HOME=str(root / "xdg"), OPENCODE_DISABLE_CLAUDE_CODE_SKILLS="true")  # pinned bench opencode under the operator's HOME (C103 skill policy); not hermetic (C129)
@@ -91,10 +92,9 @@ def a4_opencode(model, log, root: Path, timeout, oc_bin: str, *, opencode="1.18"
             "sessions": sorted(sessions), "turns": turns}
 
 
-def _a4_opencode_v2(model, log, timeout, oc_bin: str) -> dict:
+def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str) -> dict:
     from bench import provenance
 
-    base = "http://localhost:8000/v1"
     router = provenance.assert_served_config(base, env={})
     workdir = os.environ.get("STACK_WORKDIR")
     if not workdir or not Path(workdir).is_dir():
@@ -151,7 +151,7 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str) -> dict:
     version_text = version.stdout.strip().removeprefix("opencode v")
     if version.returncode or version_text != "2.0.20":
         raise SystemExit(f"REFUSED: A4 v2 requires opencode 2.0.20; got {version_text!r}")
-    result = {"pass": False, "opencode_version": version_text,
+    result = {"pass": False, "model": model, "opencode_version": version_text,
               "exe_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
               "run_id": root.name, "router": router, "router_pid": router["pid"],
               "carrier_sha256": hashlib.sha256(content).hexdigest()}
@@ -177,6 +177,8 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str) -> dict:
                     rc = "timeout"
         rows = wait_rows(log, 1, 30)
         # Include any trailing completions before starting the next process; never discard them.
+        if i == 1:
+            time.sleep(5)
         rows += log.new_rows()
         turns.append({"rc": rc, "requests": [
             {"session": r.get("session"), "cached": r["cached_tokens"], "prompt": r["prompt_tokens"]}
@@ -205,6 +207,8 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str) -> dict:
     except provenance.ServedConfigError:
         result["pass"] = False
         result["served_config_drift"] = True
+    if result["pass"]:
+        shutil.rmtree(root / "tmp")
     # Atomic publication prevents a probe reading a half-written PASS.
     pending = gate_dir / f".{root.name}.json"
     pending.write_text(json.dumps(result, indent=2) + "\n")
@@ -258,7 +262,8 @@ def main(argv=None) -> int:
     try:  # C125: resolve + version-check the pinned opencode BEFORE any request or directory
         if a.opencode == "v2":
             from bench import provenance
-            provenance.assert_served_config(os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1"))
+            base = os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1")
+            provenance.assert_served_config(base)
             oc_bin, oc_version = os.environ.get("OPENCODE_PROBE_BIN", "/opt/homebrew/bin/opencode"), "2.0.20"
         else:
             oc_bin, oc_version = pinned_opencode()
@@ -273,7 +278,7 @@ def main(argv=None) -> int:
            "opencode_exe_sha256": oc._sha_of(Path(oc_bin))}
     if a.opencode == "v2":
         # Validate the executable in its hermetic environment before any other gate requests.
-        res["A4_opencode"] = a4_opencode(a.model, log, root, a.timeout, oc_bin, opencode="v2")
+        res["A4_opencode"] = a4_opencode(a.model, log, root, a.timeout, oc_bin, opencode="v2", base=base)
         res["opencode_version"] = res["A4_opencode"]["opencode_version"]
         res["opencode_exe_sha256"] = res["A4_opencode"]["exe_sha256"]
     res["A6_bare_anonymous"] = a6_bare(a.model, log, a.timeout); print("[A6]", res["A6_bare_anonymous"]["pass"], flush=True)

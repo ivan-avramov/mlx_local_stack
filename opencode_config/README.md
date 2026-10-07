@@ -9,7 +9,7 @@ Main models declare `capabilities.tools: true`, `capabilities.output: ["text"]`,
 ## Install and select
 
 1. Start the stack when you intend to use these clients; do not interrupt an active benchmark.
-2. Merge `opencode.json` into your project config or `~/.config/opencode/opencode.json`.
+2. Merge `opencode.json` into your project config or `~/.config/opencode/opencode.json` (or `.jsonc`). **Migration warning:** a v1-shaped personal `provider.*.options` block in `~/.config/opencode/opencode.json` or `~/.config/opencode/opencode.jsonc` silently loses every sampling field on v2 (M59 FACTS row 1d). Migrate it to `providers.*.models.*.body`.
 3. The local API key is `not-needed`; register that placeholder if your client requires provider authentication.
 4. Restart OpenCode after changing its config. Select a model with `/models` or `--model mlx-local/<full-registry-name>`.
 
@@ -31,7 +31,7 @@ Both approved picks carry `top_p: 0.95`, `top_k: 20`, `min_p: 0`, `presence_pena
 
 `compaction.auto: true` is deliberate for the daily driver: a human session can summarize context when it fills. The v2 benchmark carrier has compaction **OFF** so context overflow is a recorded generation outcome instead of an invisible summary. The retained `benchmark/opencode_bench.json` remains byte-identical v1 for the pinned 1.18 probe; the v2 carrier is `benchmark/opencode_bench_v2.json`. KV format, MTP configuration, cache retirement, and full-cap allocation belong to the server registry.
 
-`plugins` removes `opencode.provider.vllm`, `opencode.provider.ollama`, `opencode.provider.lmstudio`, and `opencode.config.compatibility`. This disables provider discovery/polling and legacy compatibility discovery. The existing `superpowers@git+https://github.com/obra/superpowers.git` entry is retained: 2.0.20's standalone `/api/config` accepted the entire plugins list. This proves schema acceptance, not successful execution of the external plugin. `update: "disable"` and `share: "disabled"` are explicit; the client imposes no permission denies.
+`plugins` removes `opencode.provider.vllm`, `opencode.provider.ollama`, `opencode.provider.lmstudio`, and `opencode.config.compatibility`. This disables provider discovery/polling. Removing `opencode.config.compatibility` stops BOTH `~/.claude/skills` and `~/.agents/skills` from loading in daily use, broader than the v1 `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` policy. To re-enable compatibility discovery, delete `-opencode.config.compatibility` from `plugins`. The existing `superpowers@git+https://github.com/obra/superpowers.git` entry is retained: superpowers loads on 2.0.20 and clones from GitHub into the per-run cache on first use. The M59 cold review observed `loading plugin id=superpowers@git+…` after that clone on a dead-port run; the standalone `/api/config` test separately verifies schema acceptance. `update: "disable"` and `share: "disabled"` are explicit; the client imposes no permission denies.
 
 Registration-only clients (VS Code and Zed) are unchanged.
 

@@ -1,6 +1,9 @@
 import json
+import os
+import signal
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from configgen.source import load_source
 from configgen.transforms import sampling_openai, sampling_extra
@@ -152,6 +155,55 @@ def test_native_v2_policy_and_all_registry_sampling():
         assert not {"reasoning", "tool_call", "attachment", "modalities", "options"} & item.keys()
 
 
+def _run_isolated_opencode(cmd, *, env, cwd, run_root, timeout):
+    proc = subprocess.Popen(cmd, env=env, cwd=cwd, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.communicate()
+            raise
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+    finally:
+        processes = subprocess.run(["ps", "-axww", "-o", "pid=,command="], capture_output=True,
+                                   text=True, check=True, timeout=10)
+        survivors = [line for line in processes.stdout.splitlines() if str(run_root) in line]
+        assert not survivors, f"surviving process under isolated tmp root: {survivors}"
+
+
+def test_isolated_capture_kills_group_on_timeout(tmp_path, monkeypatch):
+    proc = MagicMock()
+    proc.pid = 12345
+    proc.communicate.side_effect = [subprocess.TimeoutExpired(["opencode"], 1), ("", "")]
+    popen = MagicMock(return_value=proc)
+    killpg = MagicMock()
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(os, "killpg", killpg)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, ""))
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run_isolated_opencode(["opencode"], env={}, cwd=tmp_path, run_root=tmp_path, timeout=1)
+    assert popen.call_args.kwargs["start_new_session"] is True
+    killpg.assert_called_once_with(12345, signal.SIGKILL)
+    assert proc.communicate.call_count == 2
+
+
+def test_isolated_capture_detects_surviving_process(tmp_path, monkeypatch):
+    proc = MagicMock()
+    proc.communicate.return_value = ("[]", "")
+    proc.returncode = 0
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: proc)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(
+        a[0], 0, f"12345 opencode serve --cwd {tmp_path}/scratch\n"))
+    with pytest.raises(AssertionError, match="surviving process"):
+        _run_isolated_opencode(["opencode"], env={}, cwd=tmp_path, run_root=tmp_path, timeout=1)
+
+
 def test_v2_real_config_load_and_unknown_key_control(tmp_path):
     """CPU-only schema proof: the standalone API must return the complete generated document."""
     binary = Path("/opt/homebrew/bin/opencode")
@@ -173,8 +225,8 @@ def test_v2_real_config_load_and_unknown_key_control(tmp_path):
         Path(env[key]).mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q", str(scratch)], env=env, cwd=scratch, check=True,
                    stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
-    version = subprocess.run([str(binary), "--version"], env=env, cwd=scratch,
-                             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+    version = _run_isolated_opencode([str(binary), "--version"], env=env, cwd=scratch,
+                                    run_root=tmp_path, timeout=30)
     if version.returncode != 0 or version.stdout.strip().removeprefix("opencode v") != "2.0.20":
         pytest.skip(f"brew schema capture requires 2.0.20; rc={version.returncode}, version={version.stdout.strip()!r}")
     expected = json.loads(emit_opencode(load_source(str(root / "main_models.yaml"))))
@@ -182,9 +234,8 @@ def test_v2_real_config_load_and_unknown_key_control(tmp_path):
     path.write_text(json.dumps(expected))
 
     def capture():
-        return subprocess.run([str(binary), "api", "GET", "/api/config", "--standalone"],
-                              env=env, cwd=scratch, stdin=subprocess.DEVNULL,
-                              capture_output=True, text=True, timeout=60)
+        return _run_isolated_opencode([str(binary), "api", "GET", "/api/config", "--standalone"],
+                                     env=env, cwd=scratch, run_root=tmp_path, timeout=60)
 
     result = capture()
     assert result.returncode == 0, result.stderr

@@ -4,6 +4,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +28,8 @@ def gate(monkeypatch, tmp_path):
     carrier.write_text(json.dumps({"providers": {"mlx-local": {"settings": {"baseURL": "http://localhost:8000/v1"}}}}) + "\n")
     (fake_repo / "benchmark/opencode_plugins/noretry.js").write_text("// fake plugin\n")
     monkeypatch.setattr(module, "REPO", fake_repo)
+    monkeypatch.setattr(module, "time", SimpleNamespace(
+        time=module.time.time, strftime=module.time.strftime, sleep=lambda seconds: None))
     binary = tmp_path / "fake-opencode"
     binary.write_text("#!" + sys.executable + "\n" + '''import hashlib, json, os, pathlib, sys
 state = pathlib.Path(os.environ["XDG_STATE_HOME"])
@@ -156,6 +159,92 @@ def test_a4_v2_nonzero_rc_fails(gate, tmp_path):
     assert result["turns"][0]["rc"] == 1
 
 
+def test_a4_v2_turn_two_nonzero_rc_fails(gate, tmp_path):
+    binary = gate[1]
+    binary.write_text(binary.read_text() + '\nif "--session" in sys.argv: sys.exit(1)\n')
+    result = run_gate(gate, tmp_path)
+    assert [turn["rc"] for turn in result["turns"]] == [0, 1]
+    assert all(turn["requests"] for turn in result["turns"])
+    assert result["sessions"] == ["ses_gate"]
+    assert result["pass"] is False
+
+
+def test_a4_v2_carrier_destination_refused(gate, tmp_path):
+    carrier = gate[2]
+    doc = json.loads(carrier.read_text())
+    doc["providers"]["mlx-local"]["settings"]["baseURL"] = "http://127.0.0.1:9/v1"
+    carrier.write_text(json.dumps(doc))
+    with pytest.raises(SystemExit) as error:
+        run_gate(gate, tmp_path)
+    assert str(error.value) == "M50 tripwire: A4 v2 carrier destination differs from the verified router"
+    assert not list((tmp_path / "session_gate").glob("*/state/calls.jsonl"))
+    print(f"REFUSED: {error.value}")
+
+
+def test_a4_v2_wrong_version_refused(gate, tmp_path):
+    binary = gate[1]
+    binary.write_text(binary.read_text().replace("opencode v2.0.20", "opencode v2.0.19"))
+    with pytest.raises(SystemExit) as error:
+        run_gate(gate, tmp_path)
+    assert str(error.value) == "REFUSED: A4 v2 requires opencode 2.0.20; got '2.0.19'"
+    calls_file, = (tmp_path / "session_gate").glob("*/state/calls.jsonl")
+    assert [json.loads(line)["args"] for line in calls_file.read_text().splitlines()] == [["--version"]]
+    print(error.value)
+
+
+def test_a4_v2_latest_records_model(gate, tmp_path):
+    run_gate(gate, tmp_path)
+    latest = json.loads((tmp_path / "session_gate/a4_v2_latest.json").read_text())
+    assert latest["model"] == "Test-Model"
+
+
+@pytest.mark.parametrize("passing", [True, False])
+def test_a4_v2_tmp_removed_only_on_pass(gate, tmp_path, passing):
+    binary = gate[1]
+    binary.write_text(binary.read_text() + '\n(pathlib.Path(os.environ["TMPDIR"]) / "bun.dylib").write_bytes(b"fixture")\n')
+    result = run_gate(gate, tmp_path, second=[row() if passing else row(None)])
+    assert result["pass"] is passing
+    run_root = tmp_path / "session_gate" / result["run_id"]
+    assert (run_root / "tmp").exists() is (not passing)
+    if not passing:
+        assert (run_root / "tmp/bun.dylib").read_bytes() == b"fixture"
+
+
+def test_a4_v2_settle_counts_late_turn_two_rows(gate, tmp_path, monkeypatch):
+    module, binary, _ = gate
+    settled = []
+    monkeypatch.setattr(module.time, "sleep", settled.append)
+
+    class LateLog(FakeLogTail):
+        def new_rows(self):
+            if len(self.batches) == 1:
+                return [row(None)] if settled == [5] else []
+            return super().new_rows()
+
+    result = module.a4_opencode("Test-Model", LateLog([row()], [row()]),
+                                tmp_path, 10, str(binary), opencode="v2")
+    assert result["pass"] is False
+    assert result["turns"][1]["requests"][-1]["session"] is None
+    assert settled == [5]
+
+
+def test_a4_v2_uses_validated_base_url(gate, tmp_path, monkeypatch):
+    from bench import provenance
+
+    module, binary, carrier = gate
+    base = "http://127.0.0.1:18000/v1"
+    doc = json.loads(carrier.read_text())
+    doc["providers"]["mlx-local"]["settings"]["baseURL"] = base
+    carrier.write_text(json.dumps(doc))
+    observed = []
+    monkeypatch.setattr(provenance, "assert_served_config", lambda url, **kw: observed.append(url) or {"pid": 4321})
+    monkeypatch.setattr(provenance, "assert_served_config_unchanged", lambda router, url, **kw: observed.append(url))
+    result = module.a4_opencode("Test-Model", FakeLogTail([row()], [row()]),
+                                tmp_path, 10, str(binary), opencode="v2", base=base)
+    assert result["pass"] is True
+    assert observed == [base, base]
+
+
 def test_a4_v2_drift_invalidates_latest_pass(gate, tmp_path, monkeypatch):
     from bench import provenance
 
@@ -192,15 +281,16 @@ def test_gate_cli_defaults_to_v1_and_routes_explicit_v2(gate, tmp_path, monkeypa
     monkeypatch.setattr(module, "a6_bare", lambda *args: {"pass": True})
     choices = []
 
-    def a4(*args, opencode="1.18"):
-        choices.append(opencode)
+    def a4(*args, opencode="1.18", base=None):
+        choices.append((opencode, base))
         return {"pass": True, "sessions": ["ses_gate"], "opencode_version": "2.0.20", "exe_sha256": "test-sha"}
 
     monkeypatch.setattr(module, "a4_opencode", a4)
     args = ["--model", "Test-Model", "--skip-owui", "--workdir", str(tmp_path / "cli")]
     assert module.main(args) == 0
+    monkeypatch.setenv("MLX_SERVE_BASE", "http://127.0.0.1:18000/v1")
     assert module.main(args + ["--opencode", "v2"]) == 0
-    assert choices == ["1.18", "v2"]
+    assert choices == [("1.18", None), ("v2", "http://127.0.0.1:18000/v1")]
 
 
 def test_a4_v2_timeout_is_failed_and_recorded(gate, tmp_path):
