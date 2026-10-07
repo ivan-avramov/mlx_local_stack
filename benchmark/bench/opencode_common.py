@@ -1,4 +1,4 @@
-"""Shared opencode probe mechanics. Legacy function bodies are retained verbatim."""
+"""Shared opencode probe mechanics. Legacy bodies are retained apart from statement-layout cleanup."""
 from __future__ import annotations
 import getpass
 import json
@@ -28,7 +28,6 @@ def _polyglot_root() -> Path:
     sys.exit("polyglot exercises not found (set POLYGLOT_DIR — see config.sh)")
 
 
-
 def _portable(path: Path) -> str:
     """Manifest-safe form: `$STACK_WORKDIR/...` / `~/...`, never an absolute home path."""
     p = str(path)
@@ -42,14 +41,12 @@ def _portable(path: Path) -> str:
     return p
 
 
-
 def _polyglot_sha(root: Path) -> str | None:
     try:
         return subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
                                        text=True, stderr=subprocess.DEVNULL).strip()
     except Exception:  # noqa: BLE001
         return None
-
 
 
 def _stack_workdir(*, required: bool = True) -> Path | None:
@@ -60,7 +57,6 @@ def _stack_workdir(*, required: bool = True) -> Path | None:
         return paths.stack_workdir(required=required)
     except paths.MissingWorkdirError as e:
         raise SystemExit(f"{e} Transcripts must live under it.") from None
-
 
 
 def _scrub_pii(s: str) -> str:
@@ -81,13 +77,11 @@ def _scrub_pii(s: str) -> str:
     return s
 
 
-
 def _login_name() -> str:
     try:
         return getpass.getuser()
     except Exception:
         return os.path.basename(os.path.expanduser("~"))
-
 
 
 def _scrub_error(msg, limit: int | None = None) -> str:
@@ -97,7 +91,6 @@ def _scrub_error(msg, limit: int | None = None) -> str:
     return out[:limit] if limit else out
 
 
-
 def _scrub_then_tail(s: str, n: int) -> str:
     """Scrub PII from the WHOLE string, then take the tail — never the reverse. Slicing first can
     cut a `/Users/<name>/...` boundary in half, leaving a fragment `_scrub_pii` no longer
@@ -105,7 +98,6 @@ def _scrub_then_tail(s: str, n: int) -> str:
     leaked the real username this way). Shared by both agentic probes (opencode, dsh) so the fix
     lives in exactly one place."""
     return _scrub_pii(s)[-n:]
-
 
 
 def _scratch_root() -> str | None:
@@ -135,7 +127,6 @@ def _scratch_dir(name: str):
         yield Path(os.path.realpath(tmp))
 
 
-
 def _prepare(src: Path, dst: Path) -> None:
     """Copy an exercise WITHOUT .meta (which holds the reference solution)."""
     shutil.copytree(src, dst, ignore=shutil.ignore_patterns(".meta"), dirs_exist_ok=True)
@@ -143,7 +134,6 @@ def _prepare(src: Path, dst: Path) -> None:
 
 
 _IGNORE_SOLUTION_FILES = {"Cargo.toml", "CMakeLists.txt", "build.gradle"}
-
 
 
 def _solution_and_test(d: Path, src: Path, lang: str) -> tuple[Path, Path]:
@@ -180,7 +170,6 @@ def _solution_and_test(d: Path, src: Path, lang: str) -> tuple[Path, Path]:
     if not sols or test is None:
         sys.exit(f"could not identify solution/test in {d}")
     return sols[0], test
-
 
 
 def _tick_snapshot_fn(cwd: Path, sol: Path, test: Path, before_sol: str, grade, log_path: Path,
@@ -237,17 +226,14 @@ def _tick_snapshot_fn(cwd: Path, sol: Path, test: Path, before_sol: str, grade, 
     return _snapshot
 
 
-
 def _item_seed(item_id: str, seed_base: int) -> int:
     from bench import rowschema
     return rowschema.sample_seed(item_id, 0, base=seed_base)
 
 
-
 def _seed_row_fields(item_id: str, seed_base: int, overlay_sha256: str) -> dict:
     return {"sampler_seed": _item_seed(item_id, seed_base), "seed_base": seed_base,
             "overlay_sha256": overlay_sha256}
-
 
 
 def _sha_of(path) -> str | None:
@@ -256,7 +242,6 @@ def _sha_of(path) -> str | None:
         return hashlib.sha256(Path(path).read_bytes()).hexdigest()
     except OSError:
         return None
-
 
 
 def _cache_bin_inventory_sha256(cache_home: Path) -> str:
@@ -278,11 +263,9 @@ def _cache_bin_inventory_sha256(cache_home: Path) -> str:
     return hashlib.sha256(json.dumps(entries).encode()).hexdigest()
 
 
-
 def _git_init_scratch(work: Path) -> None:
     subprocess.run(["git", "init", "-q", str(work)], check=True, capture_output=True, timeout=60,
                    stdin=subprocess.DEVNULL)
-
 
 
 def _tool_calls(export: dict) -> list[tuple[str, str, bool]]:
@@ -300,7 +283,6 @@ def _tool_calls(export: dict) -> list[tuple[str, str, bool]]:
     return calls
 
 
-
 def loop_metrics(export: dict) -> dict:
     """Per-row loop metric from the exported transcript.
     - repeat_identical_calls: calls identical (tool + input) to the IMMEDIATELY preceding call.
@@ -309,22 +291,28 @@ def loop_metrics(export: dict) -> dict:
       tool call re-issued — the thread-1 mechanism), consecutive or not.
     """
     calls = _tool_calls(export)
-    repeats = 0; run = 1; max_run = 1 if calls else 0
-    after_err = 0; errored_sigs: set[str] = set(); errors = 0
+    repeats = 0
+    run = 1
+    max_run = 1 if calls else 0
+    after_err = 0
+    errored_sigs: set[str] = set()
+    errors = 0
     prev = None
     for sig, _tool, err in calls:
         if prev is not None and sig == prev:
-            repeats += 1; run += 1; max_run = max(max_run, run)
+            repeats += 1
+            run += 1
+            max_run = max(max_run, run)
         else:
             run = 1
         if sig in errored_sigs:
             after_err += 1
         if err:
-            errors += 1; errored_sigs.add(sig)
+            errors += 1
+            errored_sigs.add(sig)
         prev = sig
     return {"tool_calls": len(calls), "error_calls": errors, "repeat_identical_calls": repeats,
             "max_identical_run": max_run, "calls_repeated_after_error": after_err}
-
 
 
 def traffic_metrics(export: dict) -> dict:
@@ -338,18 +326,25 @@ def traffic_metrics(export: dict) -> dict:
     prompt length. Reasoning tokens are not split out (the router reports none; thinking is inside
     `output`).
     """
-    turns = 0; inc = 0; cum = 0; out = 0; ctx = 0
+    turns = 0
+    inc = 0
+    cum = 0
+    out = 0
+    ctx = 0
     for m in (export or {}).get("messages") or []:
         info = m.get("info") or {}
         if info.get("role") != "assistant":
             continue
         turns += 1
         tok = info.get("tokens") or {}
-        i = int(tok.get("input") or 0); o = int(tok.get("output") or 0)
-        inc += i; ctx += i; cum += ctx; out += o
+        i = int(tok.get("input") or 0)
+        o = int(tok.get("output") or 0)
+        inc += i
+        ctx += i
+        cum += ctx
+        out += o
     return {"turns": turns, "input_tokens_incremental": inc, "input_tokens_cumulative": cum,
             "output_tokens": out, "max_context": ctx}
-
 
 
 def _transcript_target(model: str, lang: str, item: str, *, tag: str) -> tuple[Path, str]:
@@ -357,7 +352,6 @@ def _transcript_target(model: str, lang: str, item: str, *, tag: str) -> tuple[P
     workdir = _stack_workdir()
     rel = f"opencode_transcripts/{model}/{tag}/{lang}__{item}.json"
     return workdir / rel, f"$STACK_WORKDIR/{rel}"
-
 
 
 def _grade_python(cwd: Path, test: Path) -> tuple[bool, str]:
@@ -373,7 +367,6 @@ def _grade_python(cwd: Path, test: Path) -> tuple[bool, str]:
 _AIDER_IMAGE = "aider-benchmark"
 
 
-
 def _docker_available() -> bool:
     """Best-effort probe for a reachable docker daemon. Never raises — an unreachable/missing
     docker degrades grading to skipped/acc:null (requirement: never crash the batch), it does not
@@ -383,7 +376,6 @@ def _docker_available() -> bool:
         return True
     except Exception:  # noqa: BLE001 — daemon down, docker missing, anything: same outcome
         return False
-
 
 
 def _docker_grade(work: Path, cmd: list[str], *, docker_ok: bool, timeout: int = 300) -> tuple[bool, str]:
@@ -421,10 +413,8 @@ def _docker_grade(work: Path, cmd: list[str], *, docker_ok: bool, timeout: int =
     return p.returncode == 0, ((p.stdout or "") + (p.stderr or ""))[-600:]
 
 
-
 def _grade_go(work: Path, test: Path, *, docker_ok: bool) -> tuple[bool, str]:
     return _docker_grade(work, ["go", "test", "./..."], docker_ok=docker_ok, timeout=180)
-
 
 
 def _grade_rust(work: Path, test: Path, *, docker_ok: bool) -> tuple[bool, str]:
@@ -434,7 +424,6 @@ def _grade_rust(work: Path, test: Path, *, docker_ok: bool) -> tuple[bool, str]:
     # compiles the crate graph, not just this one exercise's code.
     return _docker_grade(work, ["cargo", "test", "--", "--include-ignored"],
                          docker_ok=docker_ok, timeout=600)
-
 
 
 def _grade_javascript(work: Path, test: Path, *, docker_ok: bool) -> tuple[bool, str]:
@@ -450,7 +439,6 @@ def _grade_javascript(work: Path, test: Path, *, docker_ok: bool) -> tuple[bool,
 _DISABLED_RE = re.compile(r"@Disabled\([^)]*\)\s*\n")
 
 
-
 def _grade_java(work: Path, test: Path, *, docker_ok: bool) -> tuple[bool, str]:
     # Exercism ships java tests with every case but the first `@Disabled` — aider's own harness
     # (benchmark/benchmark.py:run_unit_tests) strips this before running, else the suite "passes"
@@ -463,7 +451,6 @@ def _grade_java(work: Path, test: Path, *, docker_ok: bool) -> tuple[bool, str]:
         return False, f"could not prepare java test file: {e}"
     return _docker_grade(work, ["bash", "-lc", "chmod +x gradlew && ./gradlew test --no-daemon"],
                          docker_ok=docker_ok, timeout=600)
-
 
 
 def _grade_result(work: Path, test: Path, test_before: str, changed: bool,
@@ -494,7 +481,6 @@ RESUME_IDENTITY_KEYS = ("seed_base", "overlay_schema", "scaffold_policy_sha256",
                         "env_policy")
 
 
-
 def _load_rows(out: Path) -> set:
     """`(id, sample)` of every row already in `out`. The row file must be intact: a malformed line or an
     unterminated tail refuses (naming the line) instead of being skipped or masked by a newline guard."""
@@ -514,7 +500,6 @@ def _load_rows(out: Path) -> set:
             sys.exit(f"REFUSED: {out.name} line {n} is not a valid row; a corrupt row file is never "
                      f"continued. Inspect or move the file.")
     return keys
-
 
 
 def _check_resume(prev_doc: dict | None, now: dict, out: Path, router_now: dict | None = None, *,
@@ -553,7 +538,6 @@ def _check_resume(prev_doc: dict | None, now: dict, out: Path, router_now: dict 
                      f"this run {router_now['config_sha256']!r}).")
 
 
-
 def _stamp_manifest(mp: Path, fields: dict) -> None:
     """Merge `fields` into an existing manifest atomically; no manifest (no item ran) → no-op."""
     if not mp.exists():
@@ -565,7 +549,45 @@ def _stamp_manifest(mp: Path, fields: dict) -> None:
     os.replace(tmp, mp)
 
 
-SHARED_NAMES = ('_polyglot_root', '_polyglot_sha', '_portable', '_stack_workdir', '_scrub_pii', '_login_name', '_scrub_error', '_scrub_then_tail', '_scratch_root', '_scratch_dir', '_prepare', '_solution_and_test', '_tick_snapshot_fn', '_item_seed', '_seed_row_fields', '_sha_of', '_cache_bin_inventory_sha256', '_git_init_scratch', '_tool_calls', 'loop_metrics', 'traffic_metrics', '_transcript_target', '_grade_python', '_docker_available', '_docker_grade', '_grade_go', '_grade_rust', '_grade_javascript', '_grade_java', '_grade_result', '_load_rows', '_check_resume', '_stamp_manifest', '_IGNORE_SOLUTION_FILES', '_AIDER_IMAGE', '_DISABLED_RE', 'RESUME_IDENTITY_KEYS')
+SHARED_NAMES = (
+    "_polyglot_root",
+    "_polyglot_sha",
+    "_portable",
+    "_stack_workdir",
+    "_scrub_pii",
+    "_login_name",
+    "_scrub_error",
+    "_scrub_then_tail",
+    "_scratch_root",
+    "_scratch_dir",
+    "_prepare",
+    "_solution_and_test",
+    "_tick_snapshot_fn",
+    "_item_seed",
+    "_seed_row_fields",
+    "_sha_of",
+    "_cache_bin_inventory_sha256",
+    "_git_init_scratch",
+    "_tool_calls",
+    "loop_metrics",
+    "traffic_metrics",
+    "_transcript_target",
+    "_grade_python",
+    "_docker_available",
+    "_docker_grade",
+    "_grade_go",
+    "_grade_rust",
+    "_grade_javascript",
+    "_grade_java",
+    "_grade_result",
+    "_load_rows",
+    "_check_resume",
+    "_stamp_manifest",
+    "_IGNORE_SOLUTION_FILES",
+    "_AIDER_IMAGE",
+    "_DISABLED_RE",
+    "RESUME_IDENTITY_KEYS",
+)
 
 
 def reexport(namespace):
@@ -576,11 +598,13 @@ def reexport(namespace):
             decorated = hasattr(value, "__wrapped__")
             if decorated:
                 value = value.__wrapped__
-            fn = FunctionType(value.__code__, namespace, name, value.__defaults__, value.__closure__)
+            fn = FunctionType(
+                value.__code__, namespace, name, value.__defaults__, value.__closure__
+            )
             fn.__kwdefaults__ = value.__kwdefaults__
             fn.__annotations__ = value.__annotations__
             fn.__doc__ = value.__doc__
-            fn.__module__ = namespace['__name__']
+            fn.__module__ = namespace["__name__"]
             namespace[name] = contextmanager(fn) if decorated else fn
         else:
             namespace[name] = value

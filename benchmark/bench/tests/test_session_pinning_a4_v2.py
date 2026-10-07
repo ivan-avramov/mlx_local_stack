@@ -300,3 +300,13 @@ def test_a4_v2_timeout_is_failed_and_recorded(gate, tmp_path):
                                 tmp_path, 0.1, str(binary), opencode="v2")
     assert result["pass"] is False
     assert result["turns"][0]["rc"] == "timeout"
+
+
+def test_a4_written_receipt_is_consumed_by_probe(gate, tmp_path):
+    """Exercise the gate writer and probe reader together, with the actual receipt keys."""
+    import run_opencode_probe_v2 as probe
+
+    result = run_gate(gate, tmp_path)
+    path = tmp_path / "session_gate/a4_v2_latest.json"
+    assert probe._a4_receipt(path, {"pid": 4321}, None, "Test-Model",
+                             result["exe_sha256"], result["carrier_sha256"]) == result

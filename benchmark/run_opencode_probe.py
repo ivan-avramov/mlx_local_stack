@@ -69,7 +69,6 @@ OPENCODE_BIN_RELPATH = "opencode-1.18.30/node_modules/.bin/opencode"
 
 
 
-
 def _opencode_bin() -> Path:
     """The pinned opencode binary: `$OPENCODE_PROBE_BIN`, else `$STACK_WORKDIR/<OPENCODE_BIN_RELPATH>`."""
     env = os.environ.get("OPENCODE_PROBE_BIN")
@@ -106,35 +105,6 @@ def _opencode_version(binary: Path | None = None, env: dict | None = None) -> st
         return subprocess.check_output([str(binary), "--version"], text=True, timeout=30, env=env).strip()
     except Exception as e:  # noqa: BLE001
         sys.exit(f"cannot determine opencode version ({e}); refusing to run unversioned")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Listed in a `.meta/config.json`'s "solution" array but not actually part of what the model
-# should edit — exercism/aider both treat these as build manifests, not solution source. aider's
-# own benchmark.py (run_unit_tests / the solution-file filter) carries the same exclusion set.
-
-
-
-
 
 
 def _run_opencode(model: str, cwd: Path, prompt: str, sol: Path, test: Path, grade,
