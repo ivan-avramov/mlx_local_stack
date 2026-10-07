@@ -71,3 +71,40 @@ def test_hermetic_env_paths_that_reach_the_prompt_are_stable_across_runs(tmp_pat
 def test_prompt_date_is_recorded_in_the_shape_opencode_prints(monkeypatch):
     import time
     assert P2._prompt_date() == time.strftime("%a %b %d %Y")
+
+
+def test_prepared_tree_gets_fixed_mtimes(tmp_path):
+    """Attempt 7 (2026-10-07): with identical prompts the first divergence was the model's `ls -la`
+    output showing the prepared files' modification times (23:02 vs 23:27). Every file and dir of the
+    prepared tree, `.git` included, gets one fixed mtime so tool output is reproducible."""
+    import os
+    work = tmp_path / "ex"
+    (work / ".docs").mkdir(parents=True)
+    (work / "ex.py").write_text("x = 1\n")
+    (work / ".docs" / "instructions.md").write_text("spec\n")
+    (work / ".git").mkdir()
+    (work / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    P2._freeze_mtimes(work)
+    stats = {p: os.stat(p).st_mtime for p in [work, *work.rglob("*")]}
+    assert len(set(stats.values())) == 1
+    assert int(next(iter(stats.values()))) == P2.FIXED_MTIME
+
+
+def test_classifier_accepts_optional_final_step_finish_and_rejects_extra():
+    def ev(*kinds):
+        return [{"type": k, "sessionID": "ses_x"} for k in kinds]
+    assert P2._classify(ev("step_start", "tool_use", "step_finish", "step_start", "text"), 0, "completed") is None
+    assert P2._classify(ev("step_start", "tool_use", "step_finish", "step_start", "text", "step_finish"), 0, "completed") is None
+    with pytest.raises(P2.TransportAbort, match="incomplete or unrecognised"):
+        P2._classify(ev("step_start", "step_finish", "step_finish", "step_finish"), 0, "completed")
+    with pytest.raises(P2.TransportAbort, match="incomplete or unrecognised"):
+        P2._classify(ev("text"), 0, "completed")
+    with pytest.raises(P2.TransportAbort, match="consecutive step_start"):
+        P2._classify(ev("step_start", "step_start", "text"), 0, "completed")
+
+
+def test_gate_window_honours_stall_ticks():
+    w2 = P2._gate_window("Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", 16000, None, stall_ticks=2)
+    w4 = P2._gate_window("Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", 16000, None, stall_ticks=4)
+    assert w4["tick_s"] * 4 == w4["first_write_window_s"] and w2["tick_s"] * 2 == w2["first_write_window_s"]
+    assert abs(w4["first_write_window_s"] - w2["first_write_window_s"]) <= 4   # same tokens either way

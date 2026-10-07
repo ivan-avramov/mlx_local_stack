@@ -107,8 +107,9 @@ def _opencode_env(run_dir, scratch, overlay):
 
 
 def _fresh_tmpdir(env):
-    """Clear and recreate the item's TMPDIR before a spawn (no survivor is left from the previous
-    invocation, which the probe verifies, so nothing live is removed)."""
+    """Clear and recreate the item's TMPDIR once per item, before its first spawn (the destination
+    check); the run and the export reuse it. No survivor is left from the previous item, which the
+    probe verifies, so nothing live is removed."""
     path = Path(env["TMPDIR"])
     shutil.rmtree(path, ignore_errors=True)
     path.mkdir(parents=True, exist_ok=True)
@@ -118,7 +119,7 @@ DECODE_RATES = REPO / "benchmark" / "decode_rates.json"
 DEFAULT_FIRST_WRITE_TOKENS = 16000
 
 
-def _gate_window(model, first_write_tokens, tick_s_override):
+def _gate_window(model, first_write_tokens, tick_s_override, stall_ticks=progress_gate.DEFAULT_STALL_TICKS):
     """C136: the first-write allowance is denominated in TOKENS. The documented draft-OFF decode
     rate of `model` (benchmark/decode_rates.json, source line recorded) turns it into a per-model
     window: tick_s = ceil(tokens / (2 * rate)), so the stall rule (2 flat ticks) equals the window
@@ -130,8 +131,8 @@ def _gate_window(model, first_write_tokens, tick_s_override):
             "decode_tok_s": None,
             "decode_tok_s_source": "manual:--tick-s",
             "tick_s": int(tick_s_override),
-            "stall_ticks": progress_gate.DEFAULT_STALL_TICKS,
-            "first_write_window_s": int(tick_s_override) * progress_gate.DEFAULT_STALL_TICKS,
+            "stall_ticks": int(stall_ticks),
+            "first_write_window_s": int(tick_s_override) * int(stall_ticks),
         }
     try:
         entry = json.loads(DECODE_RATES.read_text())["models"][model]
@@ -144,15 +145,31 @@ def _gate_window(model, first_write_tokens, tick_s_override):
         )
     if rate <= 0 or first_write_tokens <= 0:
         sys.exit("REFUSED: decode rate and --first-write-tokens must be positive")
-    tick = math.ceil(first_write_tokens / (progress_gate.DEFAULT_STALL_TICKS * rate))
+    tick = math.ceil(first_write_tokens / (int(stall_ticks) * rate))
     return {
         "first_write_tokens": int(first_write_tokens),
         "decode_tok_s": rate,
         "decode_tok_s_source": source,
         "tick_s": tick,
-        "stall_ticks": progress_gate.DEFAULT_STALL_TICKS,
-        "first_write_window_s": tick * progress_gate.DEFAULT_STALL_TICKS,
+        "stall_ticks": int(stall_ticks),
+        "first_write_window_s": tick * int(stall_ticks),
     }
+
+
+FIXED_MTIME = 1759708800  # 2025-10-06 00:00:00 UTC: one constant mtime for every prepared file
+
+
+def _freeze_mtimes(work):
+    """Set one fixed mtime on the prepared tree (`.git` included). Attempt 7 (2026-10-07): with
+    identical prompts, the first divergence between two same-seed passes was the model's `ls -la`
+    output showing the prepared files' modification times. Files the model writes later carry real
+    times; those are the model's own actions, not the scaffold's."""
+    root = Path(work)
+    for path in [root, *root.rglob("*")]:
+        try:
+            os.utime(path, (FIXED_MTIME, FIXED_MTIME), follow_symlinks=False)
+        except OSError:
+            pass
 
 
 def _prompt_date():
@@ -594,7 +611,7 @@ def _main():
         for k in ("hard_ceiling_s", "stall_ticks", "loop_repeats", "poll_s")
     ) or (a.limit is not None and a.limit <= 0):
         sys.exit("REFUSED: gate parameters and limit must be positive")
-    a.gate_window = _gate_window(a.model, a.first_write_tokens, a.tick_s)
+    a.gate_window = _gate_window(a.model, a.first_write_tokens, a.tick_s, stall_ticks=a.stall_ticks)
     a.tick_s = a.gate_window["tick_s"]
     items = list(dict.fromkeys(s.strip() for s in a.items.split(",") if s.strip()))
     if not items or any(Path(s).name != s or s in (".", "..") for s in items):
@@ -652,6 +669,7 @@ def _main():
             raise provenance.ServedConfigError(
                 "M50 tripwire: discovery router pid differs from entry"
             )
+    shutil.rmtree(Path(env["TMPDIR"]), ignore_errors=True)   # the discovery TMPDIR is random-named: never leave it
     polyglot = _polyglot_root()
     identity = _identity(a, version, binary, run_dir, _polyglot_sha(polyglot))
     out = Path(a.out) if a.out else REPO / "benchmark/results" / a.model / "opencode-v2.jsonl"
@@ -683,6 +701,7 @@ def _main():
                 work = tmp / name
                 _prepare(src, work)
                 _git_init_scratch(work)
+                _freeze_mtimes(work)   # reproducible `ls -la` output (attempt 7)
                 seed = _item_seed(item, a.seed_base)
                 overlay = _seed_overlay(a.model, seed)
                 env = _opencode_env(run_dir, work, overlay)

@@ -170,7 +170,7 @@ XDG_CONFIG_HOME=<R>/cfg
 XDG_DATA_HOME=<R>/data
 XDG_STATE_HOME=<R>/state
 XDG_CACHE_HOME=<R>/cache
-TMPDIR=<R>/tmp/
+TMPDIR=$STACK_WORKDIR/opencode-probe-v2/tmp/<exercise>/   (stable per item, cleared before the item's first spawn: it reaches the prompt)
 OPENCODE_CONFIG_DIR=<R>/cfg/opencode
 OPENCODE_DISABLE_PROJECT_CONFIG=1
 OPENCODE_DISABLE_MODELS_FETCH=1
@@ -207,7 +207,7 @@ A4 runs with `scripts/session_pinning_gate.py --opencode v2`; the default remain
 
 | Observed outcome | Class | Action |
 |---|---|---|
-| rc 0, completed, no error event, starts = finishes + 1, no assistant error/retry in export | Generation outcome | Write and grade row. Final step_finish is absent in 2.0.20. |
+| rc 0, completed, no error event, starts = finishes or finishes + 1 (the final step_finish is optional: absent in the captures, present in one real run), no assistant error/retry in export | Generation outcome | Write and grade row. |
 | Consecutive step_start events, including on gate kills | Transport: silently recovered provider error/re-sample | ABORT, ungraded. |
 | rc 1 plus provider.transport/internal/invalid-output error | Transport | ABORT. |
 | rc 1, provider.invalid-request status 400 with the fork's context-length message | Context overflow | Row with `nonconv_kind: "context_overflow"`, `passed: false`; budget-class strict miss. |

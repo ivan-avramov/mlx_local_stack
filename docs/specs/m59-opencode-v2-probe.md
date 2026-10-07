@@ -18,14 +18,14 @@ runs; every claim below marked VERIFIED is from that table), `docs/proposal-tran
 
 ## P149 — hermetic invocation (VERIFIED recipe, FACTS "Hermetic recipe for 2.x")
 
-Per run `<R> = $STACK_WORKDIR/opencode-probe-v2/run-<run_id>/`; per item `<S> = $STACK_WORKDIR/scratch/<tmp>/<exercise>` (git-initialised,
+Per run `<R> = $STACK_WORKDIR/opencode-probe-v2/run-<run_id>/`; per item `<S> = $STACK_WORKDIR/scratch/octmp.noindex/oc-<exercise>/<exercise>` (FIXED name — it reaches the prompt; git-initialised, mtimes frozen,
 no AGENTS.md, NOT under `<R>/home`).
 
 Environment, built from an EMPTY base (not the parent env minus `OPENCODE_*`; v2 reads PATH/HOME/XDG only):
 
 ```
 PATH=/opt/homebrew/bin:/usr/bin:/bin  HOME=<R>/home  XDG_CONFIG_HOME=<R>/cfg  XDG_DATA_HOME=<R>/data  XDG_STATE_HOME=<R>/state
-XDG_CACHE_HOME=<R>/cache  TMPDIR=<R>/tmp/  OPENCODE_CONFIG_DIR=<R>/cfg/opencode  OPENCODE_DISABLE_PROJECT_CONFIG=1
+XDG_CACHE_HOME=<R>/cache  TMPDIR=$STACK_WORKDIR/opencode-probe-v2/tmp/<exercise>/ (stable per item; it reaches the prompt)  OPENCODE_CONFIG_DIR=<R>/cfg/opencode  OPENCODE_DISABLE_PROJECT_CONFIG=1
 OPENCODE_DISABLE_MODELS_FETCH=1  OPENCODE_DISABLE_AUTOUPDATE=1  OPENCODE_DISABLE_FILEWATCHER=1
 OPENCODE_CONFIG_CONTENT=<per-item seed overlay, P150>  PWD=<S>  TERM=dumb  NO_COLOR=1
 ```
@@ -104,7 +104,7 @@ Tripwire rule (fail-closed, every clause a refusal with the M50 text):
 
 | observed after `_run_opencode` | class | action |
 |---|---|---|
-| exit 0, stop_reason completed, no `error` event, `step_start` count == `step_finish` count + 1 (the final `step_finish` is not emitted — VERIFIED 7b), export has no assistant `error`/`retry` | generation outcome | row, graded |
+| exit 0, stop_reason completed, no `error` event, `step_start` count == `step_finish` count or count + 1 (the final `step_finish` is optional: absent in the captures — 7b — but emitted in one real run), export has no assistant `error`/`retry` | generation outcome | row, graded |
 | exit 0 but two CONSECUTIVE `step_start` events (a silently recovered provider error — VERIFIED 6a shows exit 0, no `error` event) | transport (retried request = re-sample under retries ≠ 0) | ABORT, ungraded |
 | exit 1 with a JSON `error` event (`provider.transport`, `provider.internal`, `provider.invalid-output`; VERIFIED 6b–6d, 6e) | transport | ABORT |
 | exit 1 with `error` `provider.invalid-request` status 400 whose body matches the fork's context-length message (VERIFIED 6c) | generation outcome: **context overflow** → `nonconv_kind: "context_overflow"`, `passed: false`, `acc_strict` counts it | row, graded as a budget-class miss (compaction is OFF by design; the 1.18 probe had no such path because 1.18 did not report it) |
