@@ -1,4 +1,4 @@
-# Handoff — 2026-10-06 (late night): night done — merge gate IDENTICAL and adopted locally; M60 run (Math500 inconclusive at the edge, judge no drift); stack STOPPED; fork + stack NOT pushed
+# Handoff — 2026-10-06 (late night): night done — merge gate IDENTICAL and ADOPTED (pushed); M60 run (Math500 inconclusive at the edge, judge no drift; C133 ruled: accept); stack STOPPED by operator choice
 
 THE one handoff (AGENTS.md: rewritten in place each session). Read this, then `docs/PLAN.md` (M60 row: run; M59 row: research +
 capture done) and `docs/open-questions.md` (C133 OPEN: M60 outcome; C130 adopted locally, push pending; C132 CI fixes on the branch;
@@ -11,14 +11,12 @@ C129 (2) answered; C119/C128 done). Day narrative: `docs/campaign-results.md` 20
 
 - **Stack is STOPPED** (router, OpenWebUI, compose down; the operator's opencode v2 background service was stopped for the night too).
   Restart = `./runserver.sh`; opencode v2 restarts its service on first use.
-- Stack `main` = this commit, **ahead of `origin/main` (`4edf1d3`) by 8 commits, NOT pushed**: `4080a43` seed-base, `40197b5` probe pin,
+- Stack `main` = `bcceede` = `origin/main` (pushed 2026-10-06 with the operator's go); fork `main` = `b17b12a9` = `origin/main`. Commits since `4edf1d3`: `4080a43` seed-base, `40197b5` probe pin,
   `f7172d5` docs, `946290e` red tests, `23f3147` transport abort, `4233247` docs, `9582d75` docs, + this (M60 rows, judge_m60, submodule
   bump to `b17b12a9`, docs).
-- **Fork `../mlx-vlm` `main` = `b17b12a9`** (fast-forwarded to `sync/upstream-v0.7.6` after the IDENTICAL gate), **NOT pushed**;
-  `origin/main` is still `664c2ead`. The stack submodule `src/mlx-vlm` points at `b17b12a9` — a clone of the stack cannot resolve it until
-  the fork is pushed. `uv.lock` unchanged (`requirements.txt` identical to before). mlx-serve unchanged (`3f2c87c`).
-- Fork CI (`ivan-avramov/mlx-vlm`): turns green only after the fork push (style commit + parity workflow on the synced ref are on `main`
-  now); `Upload Python Package` and `PR contributor reminder` workflows are disabled in the repo settings (reversible).
+- Fork `../mlx-vlm` `main` = `b17b12a9` (upstream v0.7.6 merged), pushed; stack submodule `src/mlx-vlm` = `b17b12a9`. `uv.lock`
+  unchanged (`requirements.txt` identical to before). mlx-serve unchanged (`3f2c87c`). Check the fork's GitHub Actions on the push run.
+- Fork CI (`ivan-avramov/mlx-vlm`): the style commit + parity workflow on the synced ref are on `main` and pushed — verify the run went green; `Upload Python Package` and `PR contributor reminder` workflows are disabled in the repo settings (reversible).
 - Tests: `benchmark/bench/tests` 3264 passed / 0 failed (default `TMPDIR`); fork suite 5828 passed / 0 failed; 8 parity audits pass.
 
 ## What the night established
@@ -37,8 +35,8 @@ C129 (2) answered; C119/C128 done). Day narrative: `docs/campaign-results.md` 20
 
 ## Queue, in order
 
-1. **Rulings owed:** C133 (M60 outcome); **push** of fork `main` (`b17b12a9`) then stack `main` (8 commits) — explicit go needed; both
-   together, fork first.
+1. C133 RULED (accept, labels stay PROVISIONAL); pushed. `judge_m60/.../gate.json` is uncommitted (naming hook on a fixed judge label;
+   regenerable with `bench.judge_gate`) — operator's call whether to commit it with a bypass.
 2. **M59 spec** (opencode 2.x probe) from the capture facts: v2 probe with the C124 transport classification (exit 1 + JSON `error` event;
    two consecutive `step_start` = a retried request → abort ungraded), `noretry.js` in the bench config dir and in the provenance hash,
    M50 policy change for `OPENCODE_CONFIG_DIR` + `OPENCODE_CONFIG_CONTENT` (accepted in principle, C131), v2-native client config through
