@@ -59,3 +59,32 @@ def _emit(source: Source, *, roles: tuple[str, ...]) -> str:
         doc["model"] = f"mlx-local/{default}"
     doc.setdefault("plugin", ["superpowers@git+https://github.com/obra/superpowers.git"])
     return json.dumps(doc, indent=2) + "\n"
+
+
+def emit_opencode_bench_v2(source: Source) -> str:
+    """M59 native 2.x benchmark carrier (main + candidate, fixed caps, no title)."""
+    models = {
+        m.name: {
+            'capabilities': {'tools': True,
+                             'input': ['text', 'image'] if 'vision' in m.capabilities else ['text'],
+                             'output': ['text']},
+            'limit': {'context': m.context, 'input': input_limit(m), 'output': m.output},
+            'compatibility': {'maxTokensField': 'max_tokens'},
+            'body': {**sampling_openai(m), **sampling_extra(m), 'seed': 0},
+        } for m in source.models if m.role in ('main', 'candidate')
+    }
+    return json.dumps({
+        '$schema': 'https://opencode.ai/config.json',
+        'plugins': ['-opencode.provider.vllm', '-opencode.provider.ollama',
+                    '-opencode.provider.lmstudio', '-opencode.config.compatibility'],
+        'compaction': {'auto': False}, 'agents': {'title': {'disabled': True}},
+        'update': 'disable', 'share': 'disabled',
+        'permissions': [dict(action=a, resource='*', effect='deny') for a in
+                        ('external_directory', 'question', 'websearch', 'webfetch', 'execute')],
+        'providers': {
+            'vllm': {'settings': {'baseURL': 'http://127.0.0.1:9/v1'}},
+            'mlx-local': {'name': 'mlx-serve (local)',
+                          'package': '@opencode/ai/providers/openai-compatible',
+                          'settings': {'baseURL': 'http://localhost:8000/v1', 'apiKey': 'not-needed'}, 'models': models},
+        },
+    }, indent=2) + '\n'

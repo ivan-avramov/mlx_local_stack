@@ -1884,3 +1884,118 @@ def write(model: str, bench: str, registry_path: str | None = None,
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(man, indent=2))
     return man
+
+
+def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overlay):
+    """P151: permit only the hashed carrier/plugin and the exact per-item seed overlay."""
+    from pathlib import Path
+
+    def refuse(reason):
+        raise ServedConfigError('M50 tripwire: ' + reason)
+
+    root = Path(run_dir).resolve()
+    config = root / 'cfg/opencode'
+    if 'OPENCODE_CONFIG' in env:
+        refuse('OPENCODE_CONFIG is present')
+    if env.get('OPENCODE_CONFIG_DIR') != str(config.resolve()):
+        refuse('OPENCODE_CONFIG_DIR is not the run config directory')
+    try:
+        entries = {str(p.relative_to(config)) for p in config.rglob('*')}
+        if entries != {'opencode.json', 'plugins', 'plugins/noretry.js'}:
+            refuse('config directory contains missing or unexpected entries')
+        if any(p.is_symlink() for p in config.rglob('*')) or config.is_symlink():
+            refuse('config directory contains symlinks')
+        for name, expected in [('opencode.json', carrier_sha), ('plugins/noretry.js', plugin_sha)]:
+            if not expected or _file_sha256(str(config / name)) != expected:
+                refuse(name + ' sha256 differs from the pinned source')
+        overlay = json.loads(env.get('OPENCODE_CONFIG_CONTENT', ''))
+        # JSON equality distinguishes bool from int (Python's True == 1 does not).
+        if not isinstance(overlay, dict) or json.dumps(overlay, sort_keys=True) != json.dumps(expected_overlay, sort_keys=True):
+            refuse('OPENCODE_CONFIG_CONTENT differs from the expected seed overlay')
+    except (OSError, ValueError, TypeError) as e:
+        refuse('cannot verify config/overlay: ' + str(e))
+    if env.get('OPENCODE_DISABLE_PROJECT_CONFIG') != '1':
+        refuse('OPENCODE_DISABLE_PROJECT_CONFIG must be 1')
+    for key in {'HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'} | {k for k in env if k.startswith('XDG_')}:
+        value = env.get(key)
+        if not value or not Path(value).is_absolute() or not Path(value).resolve().is_relative_to(root):
+            refuse(key + ' must be inside the run directory')
+
+
+def opencode_v2_destination(scratch, env, model, run_dir, opencode_bin, expected_overlay):
+    """Prove the destination from v2 raw config documents; directory entries are metadata."""
+    from pathlib import Path
+
+    def refuse(reason):
+        raise ServedConfigError('M50 tripwire: ' + reason)
+
+    config = Path(run_dir).resolve() / 'cfg/opencode/opencode.json'
+    if env.get('PWD') != str(scratch):
+        refuse('PWD differs from scratch cwd')
+    try:
+        carrier = json.loads(config.read_text())
+        base = carrier['providers']['mlx-local']['settings']['baseURL']
+        r = subprocess.run([str(opencode_bin), 'api', 'GET', '/api/config', '--standalone'],
+                           cwd=str(scratch), env=env, capture_output=True, text=True,
+                           timeout=120, stdin=subprocess.DEVNULL)
+        if r.returncode:
+            refuse(f'config discovery exit {r.returncode}: {scrub_tail(r.stderr, 300)}')
+        if env.get('OPENCODE_PRINT_LOGS') == '1':
+            import shlex
+            plugin = config.parent / 'plugins/noretry.js'
+            source = Path(__file__).resolve().parents[1] / 'opencode_plugins/noretry.js'
+            if not plugin.is_file() or _file_sha256(str(plugin)) != _file_sha256(str(source)):
+                refuse('pre-check plugin missing or sha256 differs from the repository plugin')
+            loaded = False
+            for line in r.stderr.splitlines():
+                try:
+                    fields = dict(token.split('=', 1) for token in shlex.split(line) if '=' in token)
+                except ValueError:
+                    continue
+                if (fields.get('msg') == 'loading plugin' and fields.get('role') == 'server'
+                        and fields.get('id') == str(plugin.resolve())):
+                    loaded = True
+                    break
+            if not loaded:
+                refuse('pre-check server log lacks loading plugin at the canonical noretry.js path')
+        entries = json.loads(r.stdout)
+        if not isinstance(entries, list):
+            refuse('config response is not a document list')
+        docs = []
+        directories = 0
+        for entry in entries:
+            if not isinstance(entry, dict):
+                refuse('invalid config entry')
+            if entry.get('type') == 'directory':
+                directories += 1
+                if entry.get('path') != str(config.parent) or 'info' in entry or directories > 1:
+                    refuse('unexpected config directory metadata')
+            elif entry.get('type', 'document') == 'document':
+                docs.append(entry)
+            else:
+                refuse('unknown config entry type')
+        files = [d for d in docs if d.get('path') == str(config)]
+        inline = [d for d in docs if d.get('path') is None]
+        if len(docs) != 2 or len(files) != 1 or len(inline) != 1:
+            refuse('expected exactly the carrier and CONTENT documents; extra/project documents refused')
+        if json.dumps(inline[0].get('info'), sort_keys=True) != json.dumps(expected_overlay, sort_keys=True):
+            refuse('CONTENT document differs from the expected seed overlay')
+        if files[0]['info'].get('plugins') != carrier.get('plugins'):
+            refuse('file document plugins differ from the carrier')
+        expected_settings = carrier['providers']['mlx-local']['settings']
+        if set(expected_settings) != {'baseURL', 'apiKey'}:
+            refuse('carrier mlx-local settings must contain exactly baseURL and apiKey')
+        for doc in docs:
+            local = doc['info'].get('providers', {}).get('mlx-local', {})
+            if doc is files[0]:
+                if local.get('settings') != expected_settings:
+                    refuse('file document mlx-local settings differ from the carrier')
+            elif 'settings' in local:
+                refuse('non-file document declares mlx-local settings')
+        if not isinstance(base, str) or not base.startswith(('http://', 'https://')):
+            refuse('missing/non-http mlx-local baseURL')
+        return base
+    except ServedConfigError:
+        raise
+    except Exception as e:
+        refuse(f'cannot verify v2 destination: {type(e).__name__}: {e}')
