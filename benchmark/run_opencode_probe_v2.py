@@ -294,9 +294,8 @@ def _metric_export(export):
 
 
 def _check_export(export, nonconv):
-    for message in export["messages"]:
-        if message.get("type") != "assistant":
-            continue
+    assistants = [message for message in export["messages"] if message.get("type") == "assistant"]
+    for index, message in enumerate(assistants):
         if message.get("retry"):
             raise TransportAbort("export records an assistant retry")
         error = message.get("error")
@@ -306,6 +305,7 @@ def _check_export(export, nonconv):
             continue
         if (
             nonconv in ("stalled", "looping", "hard_ceiling")
+            and index == len(assistants) - 1
             and isinstance(error, dict)
             and error.get("type") == "aborted"
         ):
@@ -391,6 +391,7 @@ def _abort(mp, run_id, item, work, rc, stop_reason, error, *, signature=None):
                 "rc": rc,
                 "stop_reason": stop_reason,
                 "signature": signature or _scrub_error(error, 1000),
+                "error": _scrub_error(error, 1000),
             }
         },
     )
@@ -427,6 +428,11 @@ def _a4_receipt(path, router, limit, model, exe_sha, carrier_sha):
         and receipt.get("opencode_version") == PINNED_OPENCODE_VERSION_V2
         and receipt.get("exe_sha256") == exe_sha
         and receipt.get("carrier_sha256") == carrier_sha
+        and (
+            receipt["router"].get("config_sha256") is None
+            or router.get("config_sha256") is None
+            or receipt["router"]["config_sha256"] == router["config_sha256"]
+        )
     )
     if not valid and (path or limit is None or limit > 5):
         sys.exit(

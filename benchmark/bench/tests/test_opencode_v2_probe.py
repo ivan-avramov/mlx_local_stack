@@ -208,7 +208,7 @@ def test_transport_matrix_aborts_before_grade(probe, monkeypatch, tmp_path, kind
     assert f["grades"] == [], "transport failure reached the grader"
     assert len(f["calls"].read_text().splitlines()) == 1, "probe continued after transport abort"
     stamp = json.loads(f["mp"].read_text())["transport_abort"]
-    assert set(stamp) == {"item", "rc", "stop_reason", "signature"}
+    assert set(stamp) == {"item", "rc", "stop_reason", "signature", "error"}
     assert stamp["item"] == "python/one"
     artifacts = list((tmp_path / "opencode-probe-v2/aborted").rglob("*"))
     assert any(p.name == "events.jsonl" for p in artifacts)
@@ -817,7 +817,10 @@ def test_unavailable_grader_is_skipped(probe, monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("reason", ["stalled", "looping", "hard_ceiling"])
 @pytest.mark.parametrize("error_type", ["aborted", "provider.transport"])
-def test_gate_kill_export_signature(probe, monkeypatch, tmp_path, reason, error_type):
+@pytest.mark.parametrize("final_assistant", [True, False])
+def test_gate_kill_export_signature(
+    probe, monkeypatch, tmp_path, reason, error_type, final_assistant
+):
     """Only the gate's interrupted-step export is a gradeable kill."""
     f = fixture_probe(probe, monkeypatch, tmp_path, "no_error")
     f["export"].write_text(
@@ -833,6 +836,10 @@ def test_gate_kill_export_signature(probe, monkeypatch, tmp_path, reason, error_
             }
         )
     )
+    if not final_assistant:
+        export = json.loads(f["export"].read_text())
+        export["messages"].append({"type": "assistant", "content": []})
+        f["export"].write_text(json.dumps(export))
     binary = Path(os.environ["OPENCODE_PROBE_BIN"])
     binary.write_text(
         binary.read_text().replace('exit "$(cat ', 'exec /bin/sleep 30\nexit "$(cat ')
@@ -858,7 +865,7 @@ def test_gate_kill_export_signature(probe, monkeypatch, tmp_path, reason, error_
         return original(*args, **kwargs)
 
     monkeypatch.setattr(progress_gate, "run_progress_gated", quick_gate)
-    if error_type == "aborted":
+    if error_type == "aborted" and final_assistant:
         assert f["run"]("one") == 0
         assert json.loads(f["out"].read_text())["nonconv_kind"] == reason
         assert final_grades
@@ -867,6 +874,20 @@ def test_gate_kill_export_signature(probe, monkeypatch, tmp_path, reason, error_
             f["run"]("one")
         assert not f["out"].exists() and not final_grades
         assert json.loads(f["mp"].read_text())["transport_abort"]
+
+
+@pytest.mark.parametrize("kind", ["ok", "ctx400"])
+def test_aborted_export_without_gate_kill_aborts(probe, monkeypatch, tmp_path, kind):
+    """An interrupted assistant is invalid on completion and context overflow."""
+    f = fixture_probe(probe, monkeypatch, tmp_path, kind)
+    export = json.loads(f["export"].read_text())
+    export["messages"][-1]["error"] = {"type": "aborted", "message": "Step interrupted"}
+    f["export"].write_text(json.dumps(export))
+    with pytest.raises(SystemExit, match="ABORT: .*assistant error"):
+        f["run"]()
+    assert not f["out"].exists() and not f["grades"]
+    assert len(f["calls"].read_text().splitlines()) == 1
+    assert json.loads(f["mp"].read_text())["transport_abort"]
 
 
 def test_real_gate_kill_interrupted_export_is_row(probe, real_binary, monkeypatch, tmp_path):
@@ -951,6 +972,37 @@ def test_a4_required_outside_explicit_smoke(probe, monkeypatch, tmp_path, limit)
     assert not f["calls"].exists()
 
 
+@pytest.mark.parametrize(
+    "receipt_sha,entry_sha",
+    [("same", "same"), ("stale", "current"), (None, "current"), ("old", None)],
+)
+def test_a4_receipt_config_hash(probe, tmp_path, receipt_sha, entry_sha):
+    """Compare router config hashes when both receipt and entry provide them."""
+    receipt = {
+        "pass": True,
+        "run_id": "gate-run",
+        "router": {"pid": 123},
+        "router_pid": 123,
+        "model": MODEL,
+        "opencode_version": "2.0.20",
+        "exe_sha256": "exe",
+        "carrier_sha256": "carrier",
+    }
+    router = {"pid": 123}
+    if receipt_sha is not None:
+        receipt["router"]["config_sha256"] = receipt_sha
+    if entry_sha is not None:
+        router["config_sha256"] = entry_sha
+    path = tmp_path / "receipt.json"
+    path.write_text(json.dumps(receipt))
+    args = (path, router, None, MODEL, "exe", "carrier")
+    if receipt_sha is not None and entry_sha is not None and receipt_sha != entry_sha:
+        with pytest.raises(SystemExit, match="REFUSED: A4"):
+            probe._a4_receipt(*args)
+    else:
+        assert probe._a4_receipt(*args) == receipt
+
+
 @pytest.mark.parametrize("failure", ["timeout", "malformed_list", "document_mismatch"])
 @pytest.mark.parametrize("first_item", [True, False])
 def test_destination_failure_is_resumable(probe, monkeypatch, tmp_path, failure, first_item):
@@ -958,14 +1010,20 @@ def test_destination_failure_is_resumable(probe, monkeypatch, tmp_path, failure,
     f = fixture_probe(probe, monkeypatch, tmp_path)
     original = provenance.opencode_v2_destination
     calls = []
+    errors = []
 
     def destination(*args, **kwargs):
         """Destination."""
         calls.append(args[0])
         if len(calls) == (2 if first_item else 3):
             if failure == "timeout":
-                raise subprocess.TimeoutExpired("/api/config", 120)
-            raise provenance.ServedConfigError("M50 tripwire: " + failure)
+                error = subprocess.TimeoutExpired(str(Path.home() / "api/config"), 120)
+            else:
+                error = provenance.ServedConfigError(
+                    "M50 tripwire: " + failure + " " + str(Path.home() / "api/config")
+                )
+            errors.append(error)
+            raise error
         return original(*args, **kwargs)
 
     monkeypatch.setattr(provenance, "opencode_v2_destination", destination)
@@ -973,6 +1031,8 @@ def test_destination_failure_is_resumable(probe, monkeypatch, tmp_path, failure,
         f["run"]()
     manifest = json.loads(f["mp"].read_text())
     assert manifest["transport_abort"]["signature"] == "destination_check"
+    assert manifest["transport_abort"]["error"] == probe._scrub_error(errors[0], 1000)
+    assert str(Path.home()) not in manifest["transport_abort"]["error"]
     assert "served_config_drift" not in manifest
     monkeypatch.setattr(provenance, "opencode_v2_destination", original)
     assert f["run"]() == 0
