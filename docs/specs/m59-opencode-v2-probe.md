@@ -258,11 +258,10 @@ Arms: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` and `Qwen3.8-27B-mlx-unifor
 |---|---|---|---|
 | s1 | 1001 | pick 1 → pick 2 | python, go per model |
 | s2 | 2002 | pick 2 → pick 1 | python, go per model |
-| reload control | 1001 (= s1) | pick 1 only, fresh load | python |
+| ~~reload control~~ | — | DROPPED (C135, 2026-10-07): cross-load determinism is established by the merge identity gate; opencode prints the local date into every prompt, so same-seed identity holds only within one calendar day — rows record `prompt_date` | — |
 
 Each (model, session) is ONE loaded instance (unload between models; `POST /v1/models/unload`, verify the worker is gone by PID).
-k = 2 independent instances with distinct seed bases → pair accuracy per session, never pooled; the same-seed reload separates seed from
-state. Pilot-twice precedes each loaded instance? No — the smoke's pilot-twice certifies one instance (rule: "pilot-twice certifies
+k = 2 independent instances with distinct seed bases → pair accuracy per session, never pooled (seeds are an independence control, C135). Pilot-twice precedes each loaded instance? No — the smoke's pilot-twice certifies one instance (rule: "pilot-twice certifies
 only one loaded instance"); the chain's own 5-item pilot runs on each loaded instance as the first 5 items of its Python leg (seeded-
 random; the runner refuses to continue past item 5 if any row aborted).
 
