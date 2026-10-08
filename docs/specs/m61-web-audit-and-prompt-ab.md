@@ -111,3 +111,29 @@ Mock-server tests with the real 2.0.20 binary (skipped with explanation elsewher
 
 - The C139(b) re-record (k=2 chain of both picks, Python + Go, 48K) runs under `opencode-v2-web` — needs its own operator go.
 - If P198 reads prompt-causal, a proposal for a daily-client instruction file (brevity/verification) with its own quality check.
+
+## P201 — web-destination audit by an LLM (operator 2026-10-08; build round 3)
+
+The URL denylist and the reference-overlap detector miss community solutions (GitHub repos not named after exercism; the
+1.18 `Qwen3.8-27B-mlx-uniform-4bit` rust/react session already tried `api.github.com/search/code`). Three additions:
+
+- **Deny code search** in the web carrier (appended after the P194 rules): webfetch `*api.github.com/search*`,
+  `*github.com/search*`, `*grep.app*`, `*sourcegraph.com*`, `*searchcode.com*`; the same patterns for `shell`.
+- **Keep the evidence**: every webfetch and network-shell output is saved verbatim to
+  `$STACK_WORKDIR/opencode_transcripts/.../<item>.web/<n>.txt` (path + sha256 + bytes on the row in `web_fetches`); the session
+  export already holds it, the sidecar makes the audit independent of the export format.
+- **Audit** `benchmark/web_audit.py <rows.jsonl>`, run after a leg (never inside the probe loop): for each row with
+  `web_fetches` or `net_shell`, one blind LLM call per fetch with the item name, language, the stub's public identifiers, the URL
+  and the first 6,000 characters of the fetched text, asking for exactly one label: `docs` (language/library documentation),
+  `generic` (snippet not specific to this exercise), `solution` (an implementation of THIS exercise, any author), `tests`
+  (this exercise's tests/canonical data), `unclear`. Auditor: Codex `gpt-6-astra`, read-only, fixed prompt file
+  `benchmark/web_audit_prompt.md` (sha recorded), JSON output. Writes `<rows>.webaudit.jsonl` keyed by row id (rows stay
+  append-only). A deterministic pre-flag forces `solution`-review priority when fetched text in the item's language contains
+  ≥ 3 of the stub's public identifiers.
+- **Reporting rule**: a row with any `solution` label, an `answer_key_contact` flag, or an `unclear` label not resolved by the
+  operator is excluded from `acc_strict` and reported as "flagged: web contact"; `tests` labels are reported, not excluded (the
+  tests are local anyway). The audit's known positives: the 1.18 go/matrix fetch (→ `solution`) and a synthetic community
+  solution of `python/bowling` written in a different style (→ `solution`); known negatives: a Go stdlib doc page (`docs`).
+- Tests: denied code-search URLs never reach the mock; sidecar files written and hashed; the audit script with a fake auditor
+  (labels from a fixture) produces the sidecar and the report exclusion; the real-auditor known positives run once manually and
+  are recorded in the build report (they cost Codex calls, so they are not in the suite).
