@@ -472,7 +472,7 @@ NET_SHELL = re.compile(
 )
 
 
-def _web_audit(export, item_dir):
+def _web_audit(export, item_dir, transcript_target):
     """Audit native v2 tool parts; permission.rejected is pinned by real mock captures."""
     fetches, commands, texts = [], [], []
     denied = 0
@@ -493,17 +493,28 @@ def _web_audit(export, item_dir):
                 c["text"] for c in content
                 if isinstance(c, dict) and c.get("type") == "text" and isinstance(c.get("text"), str)
             ])
-            text = "\n".join(chunks)
+            # Preserve text blocks verbatim, without injecting separator bytes.
+            text = "".join(chunks)
+            status = "denied" if rejected else (
+                "completed" if state.get("status") == "completed" else "error")
             if name == "webfetch":
                 source = inputs.get("url", "")
-                status = "completed" if state.get("status") == "completed" else "error"
-                fetches.append({"url": source, "status": "denied" if rejected else status,
-                                "bytes": sum(len(chunk.encode("utf-8")) for chunk in chunks)})
+                entry = {"url": source, "status": status}
+                fetches.append(entry)
             else:
                 source = inputs.get("command", "")
                 if not NET_SHELL.search(source):
                     continue
-                commands.append(source)
+                entry = {"command": source, "status": status}
+                commands.append(entry)
+            target = transcript_target.with_suffix(".web") / f"{len(fetches) + len(commands) - 1}.txt"
+            root = _stack_workdir().resolve()
+            relative = target.resolve().relative_to(root / "opencode_transcripts")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            data = text.encode("utf-8")
+            target.write_bytes(data)
+            entry.update(path="$STACK_WORKDIR/opencode_transcripts/" + relative.as_posix(),
+                         sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
             if text:
                 texts.append({"source": source, "text": text})
     contact = answer_key.contact(item_dir, texts)
@@ -988,7 +999,7 @@ def _main():
                     row = {
                         "bench": "opencode",
                         **selection["fields"],
-                        **json.loads(_scrub_pii(json.dumps(_web_audit(export, src)))),
+                        **json.loads(_scrub_pii(json.dumps(_web_audit(export, src, target)))),
                         "schema_version": 3,
                         "id": item,
                         "model": a.model,

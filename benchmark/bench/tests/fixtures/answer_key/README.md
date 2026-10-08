@@ -16,3 +16,12 @@ Its package line differs from the pinned corpus reference: 31 of 32 normalized r
 `../m59_policy.json` was computed by the unmodified `_identity` at stack commit `22288fc`, using executable
 fixture bytes `M59 fixed executable fixture\n`. It pins the carrier, the exact policy inputs, and their resulting hash;
 `probe_code_sha256` is deliberately not pinned.
+
+P201 controls:
+
+- `bowling/bowling.py` and `bowling/.meta/example.py`: verbatim Python-track stub/reference from the same pinned
+  polyglot commit, under `python/exercises/practice/bowling/` (Exercism Python track).
+- `../community_python_bowling.txt`: synthetic community-style solution authored for this test. A flat delivery ledger
+  and offset-based scoring deliberately differ from the reference's Frame-object implementation.
+- `../go_stdlib_docs.txt`: original paraphrase of Go string-splitting/integer-parsing APIs, not copied documentation.
+- `../web_audit_answers.json`: fake-auditor labels for the three P201 controls; these are test expectations, not real-auditor results.

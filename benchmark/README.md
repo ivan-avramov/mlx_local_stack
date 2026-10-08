@@ -227,7 +227,8 @@ ABORT means no item row, no next item, nonzero exit, and PII-scrubbed logs/stder
 Manifest runtime records client/scaffold, scaffold identity, config-dir, retry-plugin SHA, A4 result/run ID, `compaction: "off"`, disabled title generation, the hermetic switch set, and observed instruction sources (expected empty). The policy hash covers carrier/plugin SHAs, overlay schema, env switches, git initialization, standalone mode, binary version/SHA, and per-run cache policy; client-config SHA is observational. The cache inventory SHA is recorded after item one.
 
 **M61 scaffold and web audit.** The default is `--scaffold opencode-v2-web`: webfetch is allowed, with ordered URL/shell denies for
-`*xercism*` and `*problem-specifications*`; websearch stays denied. These rules deter direct answer-key access, while the output
+`*xercism*`, `*problem-specifications*`, `*api.github.com/search*`, `*github.com/search*`,
+`*grep.app*`, `*sourcegraph.com*`, and `*searchcode.com*`; websearch stays denied. These rules deter direct answer-key access, while the output
 contact detector independently checks returned text. `--scaffold opencode-v2` retains the exact M59 carrier bytes and policy-hash
 recipe. Never pool these scaffolds or different system-prompt variants.
 
@@ -239,7 +240,11 @@ copied verbatim. Manifest runtime and every row record `scaffold`, `carrier_sour
 policy hash for the web scaffold and every system override; the unmodified M59 policy recipe remains unchanged. Overrides label
 the scaffold `<scaffold>+sys:<sha8>`. A4 still requires the actual written carrier hash.
 
-Rows retain `web_fetches` (`url`, `status`, `bytes`), `net_shell` commands and `web_denied`. Bytes measure UTF-8 text in the export,
+Rows retain `web_fetches` (`url`, `status`, `path`, `sha256`, `bytes`), `net_shell` entries
+(`command`, `status`, `path`, `sha256`, `bytes`) and `web_denied`. Each output is saved under the item transcript
+as `$STACK_WORKDIR/opencode_transcripts/.../<item>.web/<n>.txt`; numbering spans both tool types. Text blocks are concatenated
+without adding bytes, encoded as UTF-8, and hashed exactly as saved. Empty denied/error outputs get empty evidence files.
+Evidence stays verbatim in the external workdir; row metadata remains PII-scrubbed. Bytes measure UTF-8 text in the export,
 not HTTP response size before opencode conversion/truncation. The real 2.0.20 mock capture shows completed content in
 `state.content[].text`; permission denials are `state.status="error"`, `state.error.type="permission.rejected"` for both fetch and
 shell. Ordinary tool errors are not counted as denials.
@@ -250,9 +255,31 @@ characters; at least five consecutive matching lines or 40% reference-line cover
 source URL/command, matched count, reference count and longest run. It detects text visible in the export; it cannot certify that
 unobserved or transformed answers were never accessed.
 
-Flagged rows remain graded and retained. New reports must use `bench.answer_key.report_rows(rows)` per session/scaffold: it excludes
-flagged rows from `acc_strict` and `strict_items`, keeps failed/DNF rows, and separately returns `flagged: answer-key contact`.
-The probe prints that label for each flagged item. Historical report scripts and existing result rows are unchanged.
+After a leg, run `.venv-bench/bin/python benchmark/web_audit.py <rows.jsonl>` (optional `--polyglot-root`, otherwise
+`POLYGLOT_DIR` or `$STACK_WORKDIR/polyglot-benchmark`; `--timeout` defaults to 180 seconds per call). It verifies evidence
+hashes/bytes and runs `codex exec -m gpt-6-astra -s read-only --skip-git-repo-check -o <tmpfile> -` with the fixed
+`benchmark/web_audit_prompt.md` plus a blind item/language/stub-identifiers/URL-or-command/first-6000-characters payload on
+STDIN. Tests inject a fake auditor. The parser accepts only a JSON object with exactly one allowed `label` and a nonempty
+single-line `reason`; malformed answers become `unclear`, failed calls or unreadable evidence become `audit_error`.
+
+The append-only `<rows.jsonl>.webaudit.jsonl` stores `row_id`, `sample`, `session_id`, tool-list `kind`/`index`, evidence
+`path`/`sha256`/`bytes`, `auditor: "codex:gpt-6-astra"`, `prompt_sha256`, `preflag`, `label`, and `reason`. Matching keys with the
+same prompt SHA are skipped, including errors; a changed prompt SHA creates a new audit version. Three whole public stub
+identifiers in content recognizable as the item's language set `preflag: true` and move that fetch ahead in review order.
+Python identifiers are top-level public def/class names; Go identifiers are exported func/type names, including methods.
+The pre-flag is a priority hint, not a substitute for an audit label; it is not shown to the auditor.
+
+Flagged rows remain graded and retained. New reports must use
+`bench.answer_key.report_rows(rows, audit_sidecar="<rows.jsonl>.webaudit.jsonl")` per session/scaffold. It joins by row id,
+sample, session, tool-list index and evidence identity, selecting the current prompt SHA by default (an explicit
+`prompt_sha256` selects a historical audit). Any `solution`, answer-key contact, unresolved `unclear`/`audit_error`, or missing
+current audit excludes the row from `acc_strict` and `strict_items`, reported as `flagged: web contact`. `tests` is counted
+separately as `web contact: tests` and does not exclude a row. Failed/DNF rows remain in the eligible denominator. The old
+`flagged: answer-key contact` count remains available; historical rows and report scripts are unchanged.
+
+To resolve `unclear` or `audit_error`, append a copy of that sidecar record with `operator_label` (`docs`, `generic`, `solution`,
+or `tests`) and a nonempty one-line `operator_reason`; the latest matching record wins. Resolutions do not override `solution`
+or reference-contact flags. Do not edit benchmark rows. An unchanged error is intentionally idempotent.
 
 **Compaction split.** Daily-driver `opencode_config/opencode.json` deliberately enables compaction to handle a human session's overflow. The v2 benchmark carrier disables it so overflow is measured as non-convergence, never hidden by summarization and never a DNF. `acc_strict@budget` remains the ranking key. Rows and manifest runtime record `max_tokens_semantics: "fixed-by-carrier"` and `max_tokens_evidence: "mock-capture:test_real_wire_seed_sampling_title_headers_and_export"`. That capture test verifies both facts at `limit.output=512`: `max_tokens=102400` is sent when the body cap is present, and `max_tokens=512` is sent without it.
 

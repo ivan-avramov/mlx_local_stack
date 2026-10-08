@@ -111,7 +111,9 @@ def test_web_carrier_changes_only_ordered_permissions():
             ('webfetch', '*', 'allow'), ('webfetch', '*xercism*', 'deny'),
             ('webfetch', '*problem-specifications*', 'deny'),
             ('shell', '*xercism*', 'deny'), ('shell', '*problem-specifications*', 'deny'),
-        ]
+        ] + [(action, pattern, 'deny') for action in ('webfetch', 'shell')
+             for pattern in ('*api.github.com/search*', '*github.com/search*', '*grep.app*',
+                             '*sourcegraph.com*', '*searchcode.com*')]
     ]
     old.pop('permissions')
     assert old == new

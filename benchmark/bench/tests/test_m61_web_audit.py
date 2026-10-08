@@ -135,9 +135,10 @@ def test_real_web_capture(probe, real_binary, monkeypatch, tmp_path, kind):
             assert len(site.requests) == (1 if kind == 'allowed' else 0)
             assert row['web_denied'] == (0 if kind == 'allowed' else 1)
             if kind == 'denied-shell':
-                assert row['net_shell'] == ['curl ' + url]
+                assert row['net_shell'][0]['command'] == 'curl ' + url
+                assert row['net_shell'][0]['status'] == 'denied'
             else:
-                assert row['web_fetches'] == [{'url': url, 'status': 'completed' if kind == 'allowed' else 'denied', 'bytes': len(b'{"status": "ok"}') if kind == 'allowed' else 0}]
+                assert [{k: e[k] for k in ('url', 'status', 'bytes')} for e in row['web_fetches']] == [{'url': url, 'status': 'completed' if kind == 'allowed' else 'denied', 'bytes': len(b'{"status": "ok"}') if kind == 'allowed' else 0}]
 
 
 def test_real_system_override(probe, real_binary, monkeypatch, tmp_path):
@@ -175,7 +176,8 @@ def test_flagged_row_is_graded_retained_and_reported(probe, monkeypatch, tmp_pat
     assert row['answer_key_evidence'][0]['source'] == 'curl https://mirror.invalid/reference'
 
 
-def test_audit_bytes_errors_and_all_network_commands(probe, tmp_path):
+def test_audit_bytes_errors_and_all_network_commands(probe, tmp_path, monkeypatch):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     parts = [
         {'type': 'tool', 'name': 'webfetch', 'state': {'status': 'completed',
          'input': {'url': 'https://docs.invalid'}, 'content': [{'type': 'text', 'text': 'é'},
@@ -193,12 +195,13 @@ def test_audit_bytes_errors_and_all_network_commands(probe, tmp_path):
     for command in commands + ['echo scurlish']:
         parts.append({'type': 'tool', 'name': 'shell', 'state': {
             'status': 'completed', 'input': {'command': command}, 'content': []}})
-    audit = probe._web_audit({'messages': [{'content': parts}]}, tmp_path)
-    assert audit['web_fetches'] == [
+    audit = probe._web_audit({'messages': [{'content': parts}]}, tmp_path,
+                             tmp_path / 'opencode_transcripts/fixture/item.json')
+    assert [{k: e[k] for k in ('url', 'status', 'bytes')} for e in audit['web_fetches']] == [
         {'url': 'https://docs.invalid', 'status': 'completed', 'bytes': 3},
         {'url': 'https://error.invalid', 'status': 'error', 'bytes': 0},
         {'url': 'https://exercism.invalid', 'status': 'denied', 'bytes': 0}]
-    assert audit['net_shell'] == commands
+    assert [e['command'] for e in audit['net_shell']] == commands
     assert audit['web_denied'] == 1
 
 

@@ -1,0 +1,58 @@
+A community implementation of the Python bowling exercise using a flat delivery
+ledger. Each frame consumes one delivery for a strike, otherwise two. Bonus
+balls contribute through lookahead; no separate Frame objects are needed.
+
+```python
+class BowlingGame:
+    def __init__(self):
+        self.deliveries = []
+
+    def _remaining(self):
+        cursor = 0
+        balls = self.deliveries
+        for frame_number in range(9):
+            if cursor == len(balls):
+                return 10
+            opening = balls[cursor]
+            cursor += 1
+            if opening < 10:
+                if cursor == len(balls):
+                    return 10 - opening
+                cursor += 1
+        final = balls[cursor:]
+        if not final:
+            return 10
+        if len(final) == 1:
+            return 10 if final[0] == 10 else 10 - final[0]
+        if len(final) == 2:
+            if final[0] == 10:
+                return 10 if final[1] == 10 else 10 - final[1]
+            if sum(final) == 10:
+                return 10
+        return None
+
+    def roll(self, pins):
+        available = self._remaining()
+        if available is None:
+            raise IndexError('game already finished')
+        if not 0 <= pins <= available:
+            raise ValueError('invalid delivery')
+        self.deliveries += [pins]
+
+    def score(self):
+        if self._remaining() is not None:
+            raise IndexError('game still in progress')
+        total, offset = 0, 0
+        for frame_number in range(10):
+            first = self.deliveries[offset]
+            if first == 10:
+                total += sum(self.deliveries[offset:offset + 3])
+                offset += 1
+            else:
+                pair = sum(self.deliveries[offset:offset + 2])
+                total += pair
+                if pair == 10:
+                    total += self.deliveries[offset + 2]
+                offset += 2
+        return total
+```

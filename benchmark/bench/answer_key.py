@@ -1,6 +1,8 @@
 """M61 reference-contact detector and strict-report exclusion for audited agent rows."""
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 
@@ -69,10 +71,60 @@ def contact(item_dir, texts) -> dict:
     return {'flag': flag, 'evidence': evidence}
 
 
-def report_rows(rows) -> dict:
-    """Single-session strict scores: exclude contact/skip rows, retain failed and DNF rows."""
+def web_entries(row):
+    """Yield stable per-list evidence indices, including unresolved legacy shell entries."""
+    for kind in ('web_fetches', 'net_shell'):
+        for index, entry in enumerate(row.get(kind, [])):
+            yield kind, index, entry if isinstance(entry, dict) else {'command': entry}
+
+
+def audit_record_key(record):
+    return tuple(record.get(key) for key in ('row_id', 'sample', 'session_id', 'kind', 'index',
+                                              'path', 'sha256', 'bytes', 'prompt_sha256', 'auditor'))
+
+
+def load_audits(path):
+    if path is None or not Path(path).exists():
+        return []
+    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
+    """Single-session strict scores; unresolved/missing audits fail closed.
+
+    Operator resolutions append the original record with operator_label/operator_reason.
+    Only unclear/audit_error decisions can be resolved; solution/contact flags stay excluded.
+    """
+    if prompt_sha256 is None:
+        prompt_sha256 = hashlib.sha256(
+            (Path(__file__).resolve().parents[1] / 'web_audit_prompt.md').read_bytes()).hexdigest()
+    audits = {audit_record_key(record): record for record in load_audits(audit_sidecar)}
     rows = list(rows)
-    eligible = [r for r in rows if not r.get('answer_key_contact') and not r.get('skipped')]
+    eligible, flagged, tests = [], 0, 0
+    for row in rows:
+        labels = []
+        for kind, index, entry in web_entries(row):
+            key = audit_record_key({'row_id': row['id'], 'sample': row.get('sample', 0),
+                                    'session_id': row.get('session_id'), 'kind': kind, 'index': index,
+                                    'path': entry.get('path'), 'sha256': entry.get('sha256'),
+                                    'bytes': entry.get('bytes'), 'prompt_sha256': prompt_sha256,
+                                    'auditor': 'codex:gpt-6-astra'})
+            audit = audits.get(key, {})
+            label = audit.get('label', 'unclear')
+            if label in ('unclear', 'audit_error'):
+                resolution = audit.get('operator_label')
+                reason = audit.get('operator_reason')
+                if (resolution in ('docs', 'generic', 'solution', 'tests')
+                        and isinstance(reason, str) and reason.strip()
+                        and reason.splitlines() == [reason]):
+                    label = resolution
+            labels.append(label)
+        exclude = bool(row.get('answer_key_contact')) or any(
+            label not in ('docs', 'generic', 'tests') for label in labels)
+        flagged += int(exclude)
+        tests += int('tests' in labels)
+        if not exclude and not row.get('skipped'):
+            eligible.append(row)
     items = {}
     for row in eligible:
         converged = not row.get('nonconv_kind') and row.get('stop_reason') in (None, 'completed')
@@ -80,4 +132,5 @@ def report_rows(rows) -> dict:
     scores = [sum(values) / len(values) for values in items.values()]
     return {'acc_strict': sum(scores) / len(scores) if scores else None,
             'strict_n': len(eligible), 'strict_items': items,
+            'flagged: web contact': flagged, 'web contact: tests': tests,
             'flagged: answer-key contact': sum(bool(r.get('answer_key_contact')) for r in rows)}
