@@ -1,36 +1,36 @@
-# Handoff — 2026-10-07 (afternoon): M59 chain IN PROGRESS (s1 pick-2 re-run, then s2); session resumed by Claude Opus 5.5 (allow-shorthand) after the Fable limit; stack UP (bench router) until the chain ends
+# Handoff — 2026-10-08: M59 COMPLETE (opencode 2.x re-baseline of the two B picks, stall re-run, C137 resolved); C139 awaits the operator; stack STOPPED
 
-THE one handoff. Read this, then `docs/PLAN.md` (M59 row) and `docs/open-questions.md` (C136 addendum; C137 localized; C138 OPEN).
-History: `docs/lab-notebook.md` 2026-10-07 (early: build/smoke; afternoon: chain). Artefacts: `$STACK_WORKDIR/m59/` (RUNLOG.md is the
-live log; `run_m59.py` runner; `chain_resume.sh` detached driver → `chain.rc`; `s1/`, `s2/` rows; `archive/s1_pick2_window558/` the
-superseded pick-2 arm + original transcripts; `c137/` replay outputs; `smoke_attempt5..8/`).
+THE one handoff. Read this, then `docs/PLAN.md` (M59 row) and `docs/open-questions.md` (C139 OPEN; C138 OPEN; C137 RESOLVED; C136
+addendum). Results: `docs/campaign-results.md` 2026-10-08; history: `docs/lab-notebook.md` 2026-10-07/08. Artefacts:
+`$STACK_WORKDIR/m59/` (M59_REPORT.md + `m59_report.py`, RUNLOG.md, `run_m59.py`, `mem_watchdog.py`, `s1/`, `s2/`, `stallprobe/`,
+`archive/`, `c137/`).
 
 ## State of the world
 
-- **Chain running** (detached `chain_resume.sh` → `run_m59.py chain s1 s2`, started 20:39Z): s1 re-runs ONLY pick 2
-  (`Qwen3.8-27B-mlx-uniform-4bit`, window 630 s) on a fresh instance; then s2 (seed base 2002; pick 2 then pick 1; fresh load at the
-  boundary; outputs tagged `.s2.`). ≈ 11 h from launch. The runner stops the stack at the end (`stack_stop`). Exit code in `chain.rc`.
-  Monitor: `tail -F RUNLOG.md` for END / RATE CHECK / FATAL lines; per-leg RATE CHECK flags a > 5 % decode gap.
-- **Memory watchdog armed** (P183, 04:05Z, `mem_watchdog.py`; exits when `after_chain.rc` appears): kills scratch processes > 8 GB RSS or orphaned from a finished item; kills are logged as `WATCHDOG KILL` in the RUNLOG. Reason: a model-written infinite loop reached 117 GB (C138 (3)).
-- **s1 done for pick 1** (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, window 662 s): Python 21/22, Go 20/22. Pick-2 558 s arm archived
-  (Python 19/22, Go 17/22; all misses stalls) — adaptive correction, disclose, never pool (C136 addendum).
+- **Stack is STOPPED**, box idle, no watchdog or runner alive. Restart = `./runserver.sh` (operator).
 - Stack `main` = this commit; `origin/main` = `c889661` (**not pushed**; operator: "we push later"). Fork `58eb241b` pushed, CI green.
-- C137 localized: full prefill deterministic under `fused_v1` and `auto`; the cached-prefix run diverges (shrink/re-floor suspected).
-  Next: the shrink-off discriminator (≈ 15 min box) AFTER the chain.
+- **M59 done:** Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed Python 21/22, 20/22, Go 20/22 ×2; Qwen3.8-27B-mlx-uniform-4bit Python
+  20/22 ×2, Go 18/22 ×2 (rows `benchmark/results/*/opencode_v2_*.m59.*`). Every head-to-head and scaffold-delta interval includes 0;
+  README evidence updated, no order change. P182: 14/18 stalls converted at 48K tokens; the 16K window under-scored the second pick
+  more (7 vs 3 window-attributable conversions) → C139.
 - Operator-only: delete `ts.md` and the fork `f1-sync` worktree + `sync/upstream-v0.6.15` branch (sandbox denied); push go.
 
 ## Queue, in order
 
-1. Let the chain finish; if it stops, read `chain.rc` + RUNLOG; an INCOMPLETE leg must be archived and re-run from item one on a fresh
-   instance (C138 — never resume across loaded instances).
-2. Analysis: per (model, language, session) `acc_strict@budget`, convergence, nonconv kinds, window/rate/probe-hash provenance; the
-   pick-2 558 s arm reported separately; descriptive scaffold delta vs the 1.18 medium rows (never pooled; Holm, TOST ±5 pp); README
-   evidence tables + campaign-results entry. No pick/order change from a re-baseline.
-3. C137 shrink-off discriminator; C138 proposal; push when the operator says.
-4. Blind-judge agent canary (new session); candidates not queued unchanged.
+1. **C139 (operator):** (a) v2 allowance 48K tokens — recommended; (b) re-record M59 at 48K (≈ 20 h box) — recommended; (c) keep 16K.
+   If (a)+(b): set `DEFAULT_FIRST_WRITE_TOKENS = 48000` in `run_opencode_probe_v2.py` (test first; spec P153 + README), arm
+   `mem_watchdog.py` for the run, launch `run_m59.py chain s1 s2` with session-tagged outputs (new suffix, e.g. `.w48k`) so the 16K
+   record stays intact.
+2. **C138 proposal** (probe interruption safety, resume-across-instances, in-probe memory cap replacing the watchdog).
+3. Push when the operator says. Blind-judge agent canary in a new session. Candidates not queued unchanged.
 
 ## Rules learned (this session)
 
+- A model-written loop can exhaust host memory through opencode's shell tool (opencode leaves timed-out commands running); arm the
+  memory watchdog for every unattended run until C138 lands.
+- Re-running items with the same seed separates "the gate cut it" from "run variance" only by wall time vs the original window — report
+  both kinds; only window-attributable conversions measure the gate's cost.
+- Estimates for runs with long per-item windows must budget the window per re-stalling item, not the typical item time.
 - Anything opencode can print into its prompt must be stable per item, never per run: scratch dir name, TMPDIR, file mtimes; the date is
   a one-day window (`prompt_date`). Diff per-request `prompt_tokens` in the worker log to locate a leak before blaming the server.
 - The lean worker logs to stdout unless `MLX_VLM_LOG_FILE` is set (runserver sets it); set it in every lean start that an instrument reads.
