@@ -71,9 +71,15 @@ def test_repository_patterns_match_roots_clones_and_casing(host):
 
 
 @pytest.mark.parametrize('url,expected', [
-    ('https://example.com/answer?q=1', ['*example.com/answer*']),
-    ('https://example.com/a/file', ['*example.com/a/file*']),
-    ('https://Example.com/a/b/file?q=1', ['*example.com/a/b/file*']),
+    ('https://example.com/answer?q=1', [
+        '*example.com/answer', '*example.com/answer/', '*example.com/answer#*', '*example.com/answer/#*']),
+    ('https://example.com/a/file', [
+        '*example.com/a/file', '*example.com/a/file/', '*example.com/a/file#*', '*example.com/a/file/#*']),
+    ('https://Example.com/a/b/file?q=1', [
+        '*Example.com/a/b/file', '*Example.com/a/b/file/', '*Example.com/a/b/file#*',
+        '*Example.com/a/b/file/#*', '*Example.com/a/b/file/*',
+        '*example.com/a/b/file', '*example.com/a/b/file/', '*example.com/a/b/file#*',
+        '*example.com/a/b/file/#*', '*example.com/a/b/file/*']),
     ('https://example.com/', []), ('https://github.com/Owner', []),
     ('https://github.com/Owner/*', []), ('https://github.com/Owner/Re%3Fpo/file', []),
     ('https://example.com/a*/b', []),

@@ -111,7 +111,15 @@ class AuditMissing(ValueError):
 
 
 def _strip_url_tail(url):
-    return url.rstrip(")]},;:.'\"")
+    url = re.split(r'&&|[|;`)><,\s]|\$\(', url, maxsplit=1)[0]
+    url = url.removeprefix('git+').rstrip(")]},;:.'\"")
+    # Strip transport refs only after the authority, retaining credential checks.
+    return re.sub(r'(https?://[^/]+/[^?#]*)@[^?#]+$', r'\1', url, flags=re.I)
+
+
+def _source_urls(text):
+    return [_strip_url_tail(url) for url in re.findall(
+        r"https?://(?:(?!&&|\$\()[^\s\"'<>|;`,)])+", text, re.I)]
 
 
 def deny_patterns_for(urls, *, dropped_urls=None):
@@ -130,6 +138,7 @@ def deny_patterns_for(urls, *, dropped_urls=None):
             port = parsed.port
             netloc = host if port is None or (parsed.scheme.lower(), port) in (
                 ('https', 443), ('http', 80)) else f'{host}:{port}'
+            domains = tuple(dict.fromkeys((parsed.netloc, netloc, netloc.removeprefix('www.'))))
             repo_host = canonical in ('github.com', 'gitlab.com', 'raw.githubusercontent.com')
             if (parsed.scheme.lower() not in ('http', 'https') or not host
                     or parsed.username or parsed.password or not parts
@@ -153,39 +162,39 @@ def deny_patterns_for(urls, *, dropped_urls=None):
                 continue
             for variant in dict.fromkeys((project, project.lower())):
                 domain = 'gitlab.com' if canonical == 'gitlab.com' else 'github.com'
-                for base in (f'{domain}/{variant}', f'{domain}:{variant}'):
+                bases = [f'{domain}/{variant}', f'{domain}:{variant}']
+                bases.extend(f'{name}/{variant}' for name in domains)
+                for base in bases:
                     patterns.extend('*' + base + suffix for suffix in ('', '/*', '.git*', '#*'))
                 if canonical != 'gitlab.com':
                     patterns.append(f'*raw.githubusercontent.com/{variant}/*')
                     patterns.extend(f'*api.github.com/repos/{variant}' + suffix for suffix in ('', '/*', '.git*', '#*'))
                     patterns.extend(f'*cdn.jsdelivr.net/gh/{variant}' + suffix for suffix in ('', '/*', '.git*', '@*', '#*'))
         else:
-            for domain in dict.fromkeys((netloc, netloc.removeprefix('www.'))):
+            for domain in domains:
                 for path in dict.fromkeys((parsed.path, parsed.path.lower())):
-                    for variant in dict.fromkeys((path, path.rstrip('/'))):
-                        patterns.append('*' + domain + variant + '*')
+                    base = '*' + domain + path.rstrip('/')
+                    patterns.extend(base + suffix for suffix in ('', '/', '#*', '/#*'))
+                    if len(parts) >= 3:
+                        patterns.append(base + '/*')
     return list(dict.fromkeys(patterns))
 
 
 def shell_deny_patterns(patterns):
-    """Match whole shell nodes; keep exact repository roots bounded at token ends."""
+    """Match whole shell nodes; keep exact URLs bounded at token ends."""
     result = []
+    boundaries = (' ', '\t', '\n', '"', "'", ';', '|', '&', ')', '>', '<', ',', '`', '$(', '@')
     for pattern in patterns:
-        repo_root = re.fullmatch(
-            r'\*(?:(?:github|gitlab)\.com[/:]|api\.github\.com/repos/|cdn\.jsdelivr\.net/gh/)([^*?#]+)',
-            pattern)
-        if repo_root:
-            # Blindly appending '*' here would deny sibling repositories.
-            result.append(pattern)
-            result.extend(pattern + boundary + '*' for boundary in (' ', '"', "'", ';', '|', '&', ')'))
-        else:
-            result.append('*' + pattern.strip('*') + '*')
+        pattern = '*' + pattern.lstrip('*')
+        result.append(pattern)
+        if not pattern.endswith('*'):
+            result.extend(pattern + boundary + '*' for boundary in boundaries)
         github = re.fullmatch(r'\*github\.com/([^/]+)/([^/*?#]+)', pattern)
         if github:
             project = '/'.join(github.groups())
             for command in (f'*gh repo clone {project}', f'*gh api repos/{project}'):
                 result.append(command)
-                result.extend(command + boundary + '*' for boundary in (' ', '"', "'", ';', '|', '&', ')', '/'))
+                result.extend(command + boundary + '*' for boundary in (*boundaries, '/'))
     return list(dict.fromkeys(result))
 
 
@@ -255,13 +264,13 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
             contact_source = entry.get('url') in contact_sources or entry.get('command') in contact_sources
             if contact_source or label in ('solution', 'unclear', 'audit_error'):
                 sources = ([entry['url']] if entry.get('url') else [])
-                sources.extend(re.findall(r"https?://[^\s\"'<>]+", entry.get('command', ''), re.I))
+                sources.extend(_source_urls(entry.get('command', '')))
                 unknown_source |= not sources
                 urls.extend(sources)
         if forced:
             for evidence in row.get('answer_key_evidence', []):
                 if evidence.get('flag'):
-                    urls.extend(re.findall(r"https?://[^\s\"'<>]+", evidence.get('source') or '', re.I))
+                    urls.extend(_source_urls(evidence.get('source') or ''))
         states.append({'row': row, 'labels': labels,
                        'urls': [] if unknown_source else list(dict.fromkeys(_strip_url_tail(url) for url in urls)),
                        'unknown_source': bool(unknown_source),

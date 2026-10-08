@@ -54,7 +54,9 @@ def test_partial_and_prompt_revision():
         '*raw.githubusercontent.com/owner/repo/*', '*github.com/owner/repo']),
     ('https://GitLab.com/Owner/Repo/-/blob/main/a.py', [
         '*gitlab.com/owner/repo', '*gitlab.com/Owner/Repo/*']),
-    ('https://Docs.invalid/topic/answer.html?q=1', ['*docs.invalid/topic/answer.html*']),
+    ('https://Docs.invalid/topic/answer.html?q=1', [
+        '*docs.invalid/topic/answer.html', '*Docs.invalid/topic/answer.html',
+        '*docs.invalid/topic/answer.html#*']),
 ])
 
 def test_deny_patterns(url, expected):

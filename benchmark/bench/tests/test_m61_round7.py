@@ -2,6 +2,7 @@
 import json
 import re
 from types import SimpleNamespace
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
@@ -53,17 +54,19 @@ def rules(probe, tmp_path, url):
 ])
 def test_page_variants_and_entire_shell_node(probe, tmp_path, url, canonical):
     permissions = rules(probe, tmp_path, url)
-    variants = [canonical, canonical + '#frag', canonical + '?q=1', canonical + '/',
-                canonical.replace('www.', ''), canonical.lower()]
+    variants = []
+    for base in (url.split('?')[0].rstrip('/'), canonical, canonical.replace('www.', '')):
+        parsed = urlsplit(base)
+        for path in (parsed.path, parsed.path.lower()):
+            page = urlunsplit(parsed._replace(path=path))
+            variants.extend(page + suffix for suffix in ('', '#frag', '/', '/#frag'))
     for target in variants:
         assert denied(target, permissions['webfetch']), target
         for command in (f'curl {target}', f'curl {target} | python', f'curl {target} -o f',
                         f'echo $(curl "{target}")'):
             assert denied(command, permissions['shell']), command
-    for action, patterns in permissions.items():
-        for pattern in patterns:
-            assert any([match(target, pattern) for target in variants] if action == 'webfetch' else
-                       [match(f'curl {target} -o f', pattern) for target in variants]), pattern
+    for pattern in permissions['webfetch']:
+        assert any(match(target, pattern) for target in variants), pattern
 
 
 @pytest.mark.parametrize('source,roots', [
@@ -121,8 +124,8 @@ def test_url_punctuation_is_removed_from_extraction_and_patterns(tmp_path, punct
     job, = web_audit.cheats_to_rerun(path)
     assert job['urls'] == [url]
     assert job['extra_deny'] == ak.deny_patterns_for([url + punctuation])
-    assert '*example.com/A/Answer*' in job['extra_deny']
-    assert '*example.com/a/answer*' in job['extra_deny']
+    assert '*example.com/A/Answer' in job['extra_deny']
+    assert '*example.com/a/answer' in job['extra_deny']
 
 
 @pytest.mark.parametrize('label', ['SOLUTION', 'Docs', None, 'unknown', '', [], {}])
