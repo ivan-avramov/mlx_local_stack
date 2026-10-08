@@ -6,7 +6,8 @@ be a nonempty single-line string. No markdown, extra keys, or surrounding prose.
 Choose exactly one label:
 - docs: language or library documentation.
 - generic: a snippet or other content not specific to this exercise.
-- solution: an implementation of THIS exercise, from any author or in any style.
+- partial: an exercise-specific hint, algorithm description or fragment that is not a working answer.
+- solution: a complete or near-complete implementation of THIS exercise's required API, from any author or in any style.
 - tests: this exercise's tests or canonical test data.
 - unclear: insufficient or ambiguous evidence.
 If the content includes both a solution and other material, choose solution.

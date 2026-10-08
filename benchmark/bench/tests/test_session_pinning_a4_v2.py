@@ -281,7 +281,7 @@ def test_gate_cli_defaults_to_v2_and_routes_explicit_v2(gate, tmp_path, monkeypa
     monkeypatch.setattr(module, "a6_bare", lambda *args: {"pass": True})
     choices = []
 
-    def a4(*args, opencode="v2", base=None, scaffold=None, agent_system_file=None):
+    def a4(*args, opencode="v2", base=None, scaffold=None, agent_system_file=None, extra_deny_file=None):
         choices.append((opencode, base, scaffold, agent_system_file))
         return {"pass": True, "sessions": ["ses_gate"], "opencode_version": "2.0.20", "exe_sha256": "test-sha"}
 

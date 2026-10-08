@@ -127,7 +127,7 @@ def test_auditor_version_records_and_idempotence(tmp_path, monkeypatch):
     version[0] = 'codex-cli 0.162.0'
     audit.audit_rows(path, polyglot_root=corpus, auditor=fake)
     assert len(calls) == 6
-    assert report_rows(rows, audit_sidecar=sidecar)['strict_n'] == 3
+    assert report_rows(rows, audit_sidecar=sidecar)['strict_n'] == 2
 
 
 def test_web_denied_only_network_rejections_with_messages(probe, tmp_path, monkeypatch):

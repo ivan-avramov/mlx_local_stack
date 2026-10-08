@@ -61,16 +61,16 @@ def a6_bare(model, log, timeout) -> dict:
 
 
 def a4_opencode(model, log, root: Path, timeout, oc_bin: str, *, opencode="v2", base=None,
-                scaffold="opencode-v2", agent_system_file=None) -> dict:
+                scaffold="opencode-v2", agent_system_file=None, extra_deny_file=None) -> dict:
     if opencode == "1.18":
         raise SystemExit("REFUSED: the opencode 1.18 gate leg is frozen (M59, 2026-10-07); use --opencode v2")
     return _a4_opencode_v2(model, log, timeout, oc_bin,
                            base if base is not None else os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1"),
-                           scaffold=scaffold, agent_system_file=agent_system_file)
+                           scaffold=scaffold, agent_system_file=agent_system_file, extra_deny_file=extra_deny_file)
 
 
 def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="opencode-v2",
-                    agent_system_file=None) -> dict:
+                    agent_system_file=None, extra_deny_file=None) -> dict:
     from bench import provenance
     from run_opencode_probe_v2 import _carrier_selection
 
@@ -101,7 +101,8 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="op
     if not carrier.is_file() and scaffold == "opencode-v2" and agent_system_file is None:
         carrier = REPO / "opencode_config/opencode.json"
         print("[A4 v2] WARNING: benchmark/opencode_bench_v2.json absent; copying the daily-driver carrier verbatim (compaction ON)", flush=True)
-    selection = _carrier_selection(scaffold, agent_system_file, repo=REPO, source=carrier)
+    selection = _carrier_selection(scaffold, agent_system_file, repo=REPO, source=carrier,
+                                   extra_deny_file=extra_deny_file)
     content = selection["bytes"]
     if json.loads(content)["providers"]["mlx-local"]["settings"]["baseURL"] != base:
         raise SystemExit("M50 tripwire: A4 v2 carrier destination differs from the verified router")
@@ -135,7 +136,9 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="op
     result = {"pass": False, "model": model, "opencode_version": version_text,
               "exe_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
               "run_id": root.name, "router": router, "router_pid": router["pid"],
-              "carrier_sha256": hashlib.sha256(content).hexdigest()}
+              "carrier_sha256": hashlib.sha256(content).hexdigest(),
+              "extra_deny": selection["fields"]["extra_deny"],
+              "extra_deny_sha256": selection["fields"]["extra_deny_sha256"]}
     turns, session_id = [], None
     log.new_rows()
     for i, prompt in enumerate(("In one sentence, what does hello.py do?", "One line: what does it return for 'x'?")):
@@ -235,6 +238,7 @@ def main(argv=None) -> int:
                     help="A4 client (default v2; the 1.18 leg is frozen)")
     ap.add_argument("--scaffold", choices=("opencode-v2", "opencode-v2-web"), default="opencode-v2")
     ap.add_argument("--agent-system-file")
+    ap.add_argument("--extra-deny-file", type=Path)
     ap.add_argument("--model", required=True)
     ap.add_argument("--log", default=str(REPO / "logs/mlx_vlm.log"))
     ap.add_argument("--owui-url", default=os.environ.get("OWUI_URL", "http://localhost:3000"))
@@ -242,6 +246,8 @@ def main(argv=None) -> int:
     ap.add_argument("--timeout", type=float, default=600)
     ap.add_argument("--workdir", default=os.path.join(os.environ.get("STACK_WORKDIR", "/tmp"), "c102a"))
     a = ap.parse_args(argv)
+    if a.extra_deny_file is not None and a.scaffold != "opencode-v2-web":
+        raise SystemExit("REFUSED: --extra-deny-file requires --scaffold opencode-v2-web")
     if a.opencode == "1.18":
         raise SystemExit("REFUSED: the opencode 1.18 gate leg is frozen (M59, 2026-10-07); use --opencode v2")
     try:
@@ -260,7 +266,8 @@ def main(argv=None) -> int:
            "opencode_exe_sha256": oc._sha_of(Path(oc_bin))}
     # Validate the executable in its hermetic environment before any other gate requests.
     res["A4_opencode"] = a4_opencode(a.model, log, root, a.timeout, oc_bin, opencode="v2", base=base,
-                                   scaffold=a.scaffold, agent_system_file=a.agent_system_file)
+                                   scaffold=a.scaffold, agent_system_file=a.agent_system_file,
+                                   extra_deny_file=a.extra_deny_file)
     res["opencode_version"] = res["A4_opencode"]["opencode_version"]
     res["opencode_exe_sha256"] = res["A4_opencode"]["exe_sha256"]
     res["A6_bare_anonymous"] = a6_bare(a.model, log, a.timeout); print("[A6]", res["A6_bare_anonymous"]["pass"], flush=True)

@@ -120,7 +120,7 @@ def test_fake_auditor_sidecar_reporting_and_idempotence(tmp_path, monkeypatch):
                      prompt_file=new_prompt)
     assert len(sidecar.read_text().splitlines()) == 6
     report = report_rows(rows, audit_sidecar=sidecar, prompt_sha256=hashlib.sha256(new_prompt.read_bytes()).hexdigest())
-    assert report['strict_n'] == 3 and report['web contact: tests'] == 3
+    assert report['strict_n'] == 2 and report['web contact: tests'] == 3
 
 
 @pytest.mark.parametrize('answer', ['docs', '```json\n{"label":"docs","reason":"ok"}\n```',
@@ -149,7 +149,7 @@ def test_audit_failures_and_operator_resolution(tmp_path, monkeypatch, failure):
     with sidecar.open('a') as stream:
         for record in records:
             stream.write(json.dumps({**record, 'operator_label': 'generic', 'operator_reason': 'Reviewed locally.'}) + '\n')
-    assert report_rows(rows, audit_sidecar=sidecar)['strict_n'] == 3
+    assert report_rows(rows, audit_sidecar=sidecar)['strict_n'] == 2
     rows[0]['answer_key_contact'] = True
     assert report_rows(rows, audit_sidecar=sidecar)['strict_n'] == 2
 

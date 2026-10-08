@@ -14,7 +14,7 @@ from bench.tests.opencode_v2_mock import MockServer
 FIXTURES = Path(__file__).parent / 'fixtures'
 SYSTEM = 'benchmark/opencode_prompts/opencode-1.18.15-default.txt'
 FIELDS = ('scaffold', 'carrier_source', 'carrier_source_sha256', 'agent_system_file',
-          'agent_system_sha256', 'opencode_bench_config_sha256')
+          'agent_system_sha256', 'opencode_bench_config_sha256', 'extra_deny', 'extra_deny_sha256')
 
 
 def test_m59_identity_recipe_and_carrier_bytes(probe, tmp_path):
