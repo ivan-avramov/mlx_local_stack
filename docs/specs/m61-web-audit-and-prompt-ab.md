@@ -137,3 +137,28 @@ The URL denylist and the reference-overlap detector miss community solutions (Gi
 - Tests: denied code-search URLs never reach the mock; sidecar files written and hashed; the audit script with a fake auditor
   (labels from a fixture) produces the sidecar and the report exclusion; the real-auditor known positives run once manually and
   are recorded in the build report (they cost Codex calls, so they are not in the suite).
+
+## P202 — cheat procedure: re-run on the same instance, do not discard (operator APPROVED 2026-10-08)
+
+Operator: "a clean-ish run (lookups are fine if they don't give the full answer) so we don't just want to discard that item";
+"Let's see if it is effective, and if not we can modify and rescore the cheat_unresolved items".
+
+- **Labels.** The auditor's label set becomes `docs`, `generic`, `partial` (exercise-specific hint, algorithm description or
+  fragment that is not a working answer), `solution` (a complete or near-complete implementation of THIS exercise's required API,
+  any author), `tests`, `unclear`. A **cheat** = any `solution` label or an `answer_key_contact` flag. `partial` is allowed and
+  reported. `unclear` is treated as a cheat for re-run purposes and listed for operator review.
+- **When.** The runner audits each leg as soon as it ends (synchronous `web_audit.py`), on the same loaded instance.
+- **Re-run.** Each cheated item is re-run immediately on the same instance with the SAME item seed and a per-item extra deny
+  list: the offending URL(s) plus their repository/page prefix (GitHub/GitLab: `https://<host>/<owner>/<repo>/*` and the matching
+  `raw.githubusercontent.com/<owner>/<repo>/*`; otherwise the URL without query plus its parent path `*`), written as webfetch
+  and shell deny rules appended after the carrier's rules. Probe option `--extra-deny-file <json>` (sha recorded on the row as
+  `extra_deny_sha256`, list as `extra_deny`); the row label stays `opencode-v2-web` (operator ruling: same scaffold for scoring);
+  the M50 env check accepts exactly the carrier + this recorded overlay. Re-run rows carry `rerun_of` (the superseded row's
+  session id), `rerun_index` (1..2) and are written to the same leg file.
+- **Scoring.** The item's score is its latest non-cheat attempt; the cheated rows stay in the file marked by the audit sidecar
+  and are superseded. After 2 re-runs still cheating → the item scores as a FAIL with `cheat_unresolved: true` (conservative;
+  rescoring later is allowed by the operator if the procedure proves ineffective). `report_rows` implements this and reports per
+  model: cheat attempts, re-runs, unresolved.
+- **Tests:** extra-deny composition and env-check acceptance (and refusal of any other overlay); a mock run where the first
+  attempt fetches a "solution" URL (fake auditor) → re-run with that URL denied never reaches the mock; scoring with superseded,
+  unresolved and partial cases; resume after an interrupted re-run.
