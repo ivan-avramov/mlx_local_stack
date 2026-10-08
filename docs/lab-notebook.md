@@ -4691,3 +4691,20 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 - **Codex `gpt-6-astra` cold review** of `da84cd8` + runner: SOUND-WITH-RESIDUALS, no must-fix for an uninterrupted chain; residuals →
   C138 (interruption-safe persistence; restart must not append across loaded instances). Wall times in this chain are descriptive only
   (no ten-minute inter-arm cooldown; not a latency measurement).
+
+## 2026-10-08 — M59 chain complete; P182 stall re-run; C137 resolved; P183 watchdog (Claude Opus 5.5 (allow-shorthand))
+
+- **Chain (s1 pick-2 re-run 20:39Z → s2 end 06:46Z, ≈ 10.1 h):** see campaign-results 2026-10-08. All per-leg RATE CHECKs within 5 % on
+  full legs (flags only on n ≤ 14 pilot/short legs, all in the benign direction: measured faster than the table).
+- **P182 stall re-run (06:47–12:24Z, ≈ 5.6 h for 18 items, one fresh instance per model, 48K-token window ≈ 1,890–1,980 s):** 14/18
+  converted; 10 only past the chain window. Real misses at 48K show either ~39K completed-request tokens without a correct write
+  (Go book-store) or a single killed long request (Go alphametics/connect, Python book-store: < 400 completed-request tokens recorded,
+  i.e. one long think cut at the window). Estimate correction: I told the operator 1–2 h for this re-run; the larger window makes a
+  re-stalling item cost ≈ 32 min, so the run took 5.6 h.
+- **C137 resolved:** shrink-off replay identical to shrink-on on both paths (full prefill `65e696b06db2`, cached prefix `43fd43cd11b3`).
+- **P183 memory watchdog:** armed 04:05Z after a model-written `while` loop (pick-1 s2 python/food-chain) grew to 117 GB via opencode's
+  shell tool (opencode reported its 120 s command timeout but left the process running); the item still passed (680 s). The watchdog
+  itself crashed once on a psutil race (`SystemError` from `proc_cmdline` on an exiting process) while only the C137 replay ran;
+  hardened (catch-all per process), self-test re-passed, re-armed. Zero kills on real items.
+- **Arithmetic slip, corrected before commit:** I first reported 8 window-attributable conversions for `Qwen3.8-27B-mlx-uniform-4bit` (84/88); the count is 7
+  (83/88). The data commit message was amended before any push.

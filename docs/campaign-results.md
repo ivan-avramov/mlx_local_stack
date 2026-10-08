@@ -2,6 +2,38 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-08 — M59: opencode 2.x re-baseline of the two B picks (Python + Go, k=2) — scores hold within intervals; the 16K-token stall window under-scored both, the second pick more
+
+**Setup.** opencode 2.0.20 hermetic probe (`run_opencode_probe_v2.py`), Python + Go C37 22-item draws, two independent loaded
+instances per model (seed bases 1001 / 2002, order-balanced, fresh load at every session boundary), draft OFF, deployed sampling,
+thinking ON at the registry budget, C136 token-denominated stall window (16K tokens → 662 s for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, 630 s for `Qwen3.8-27B-mlx-uniform-4bit` after the
+in-situ rate correction). Rows `benchmark/results/*/opencode_v2_*.m59.*`; report `$STACK_WORKDIR/m59/M59_REPORT.md`.
+
+| model | Python s1 / s2 | Go s1 / s2 | opencode 1.18 medium (Python / Go) | misses |
+|---|---|---|---|---|
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | 21/22, 20/22 | 20/22, 20/22 | 22/22 / 22/22 | 6 stalls, 1 hard ceiling |
+| `Qwen3.8-27B-mlx-uniform-4bit` | 20/22, 20/22 | 18/22, 18/22 | 19/22 / 16/22 | 12 stalls |
+
+**Scaffold delta vs 1.18 medium (descriptive, never pooled; 1.18 rows were unseeded, k=1, 600 s wall-clock gate):** `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` −4.5 to
+−9.1 pp, `Qwen3.8-27B-mlx-uniform-4bit` +4.5 to +9.1 pp; every interval includes 0 (Holm-adjusted p ≥ 0.47). **Head-to-head v2:** `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` minus `Qwen3.8-27B-mlx-uniform-4bit` Python
++4.5 / 0.0 pp, Go +9.1 / +9.1 pp per session; all inconclusive (TOST ±5 pp).
+
+**The stall window cost quality (P182).** Re-running all 18 stalls at 48K tokens with the same item seeds converted 14: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 6/6, `Qwen3.8-27B-mlx-uniform-4bit`
+8/12 (4 real misses: Go alphametics, Go book-store, Go connect, Python book-store). Ten conversions needed more room than the chain
+window (14K–39K output tokens; `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 3, `Qwen3.8-27B-mlx-uniform-4bit` 7); four finished inside it (run variance). Chain plus window-attributable conversions,
+descriptive: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 84/88, `Qwen3.8-27B-mlx-uniform-4bit` 83/88 versus the chain record 81/88 vs 76/88 — the gate biased the comparison against the second pick.
+→ C139 (allowance 48K; re-record).
+
+**Mechanisms.** No 2.x slowdown: in-situ decode `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 23.9–24.7, `Qwen3.8-27B-mlx-uniform-4bit` 25.4–26.7 tok/s; v2 writes ≈ 1.5× the tokens of 1.18 medium.
+Two stall types: long single-turn thinks before the first write (most), and busy-without-progress tool churn (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` python/poker,
+189 tool calls). C137 resolved: decoding from a cached prefix is deterministic but takes a different numeric path than a full prefill.
+Box safety: a model-written infinite loop reached 117 GB through opencode's shell tool (opencode does not kill a timed-out command);
+an interim memory watchdog (P183) guarded the rest of the run with zero further kills; proper fix → C138.
+
+**Recommendation.** No pick or order change: the approved order stands and both picks remain within intervals of each other on
+Python/Go under opencode 2.x. Adopt the 48K-token allowance for the v2 epoch and re-record this chain under it (C139) before any
+v2-based ordering argument. Status: v2 evidence PROVISIONAL until that re-record.
+
 ## 2026-10-06 (night) — M60: the final shipped state of `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on Math500 and the judge panel — Math500 INCONCLUSIVE at the −5 pp edge, judge panel no detectable drift; PROVISIONAL labels retained (C133)
 
 Design `docs/specs/m60-shipped-state-certification.md` (C127). Serving state: `main_models.yaml` as shipped — native16 KV, `attention_policy:
