@@ -1,4 +1,4 @@
-# Handoff — 2026-10-08: M59 COMPLETE (opencode 2.x re-baseline of the two B picks, stall re-run, C137 resolved); C139 awaits the operator; stack STOPPED
+# Handoff — 2026-10-08: M59 COMPLETE; C139(a) 48K default landed; C140 RCA (1.18 vs 2.x) recorded; C141 web-access design owed; superpowers uninstalled; stack STOPPED
 
 THE one handoff. Read this, then `docs/PLAN.md` (M59 row) and `docs/open-questions.md` (C139 OPEN; C138 OPEN; C137 RESOLVED; C136
 addendum). Results: `docs/campaign-results.md` 2026-10-08; history: `docs/lab-notebook.md` 2026-10-07/08. Artefacts:
@@ -17,12 +17,15 @@ addendum). Results: `docs/campaign-results.md` 2026-10-08; history: `docs/lab-no
 
 ## Queue, in order
 
-1. **C139 (operator):** (a) v2 allowance 48K tokens — recommended; (b) re-record M59 at 48K (≈ 20 h box) — recommended; (c) keep 16K.
-   If (a)+(b): set `DEFAULT_FIRST_WRITE_TOKENS = 48000` in `run_opencode_probe_v2.py` (test first; spec P153 + README), arm
-   `mem_watchdog.py` for the run, launch `run_m59.py chain s1 s2` with session-tagged outputs (new suffix, e.g. `.w48k`) so the 16K
-   record stays intact.
-2. **C138 proposal** (probe interruption safety, resume-across-instances, in-probe memory cap replacing the watchdog).
-3. Push when the operator says. Blind-judge agent canary in a new session. Candidates not queued unchanged.
+1. **C141 design (operator agreed direction, P187):** webfetch allowed + audited in the v2 bench (deny answer-key sources by
+   permission pattern on webfetch URL and shell command, record every fetch on the row, reference-solution overlap detector, flagged
+   rows never ranked). Present the spec, get go, build (Codex worker, cold-context verifier), new scaffold id, never pooled with M59.
+2. **C139(b) re-record** under the final scaffold (48K default already in `947c9cb`; C141 landed): one ≈ 20 h chain, arm
+   `mem_watchdog.py`, session-tagged outputs.
+3. **C140:** flag the 1.18-medium `Qwen3.8-27B-mlx-uniform-4bit` go/matrix row (answer-key webfetch) in reports. RCA artefacts:
+   `$STACK_WORKDIR/m59_debug/` (pair.py, firstwrite.py, capture/, ocdb copy, codex_rca.md).
+4. **C138 proposal** (probe interruption safety, in-probe memory cap replacing the watchdog).
+5. Push when the operator says. Blind-judge agent canary in a new session.
 
 ## Rules learned (this session)
 
@@ -40,4 +43,4 @@ addendum). Results: `docs/campaign-results.md` 2026-10-08; history: `docs/lab-no
 - opencode 2.0.20 sometimes emits the final `step_finish` (the capture never saw it); a mock capture is necessary, not sufficient.
 - Codex workers stop and ask when a ruling is needed; answer in a follow-up prompt file, keep the `.rc` launcher.
 
-Next decision id C138; discussion ids continue from P175.
+Next decision id C142; discussion ids continue from P190.
