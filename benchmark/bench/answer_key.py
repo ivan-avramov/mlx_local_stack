@@ -80,7 +80,21 @@ def web_entries(row):
 
 def audit_record_key(record):
     return tuple(record.get(key) for key in ('row_id', 'sample', 'session_id', 'kind', 'index',
-                                              'path', 'sha256', 'bytes', 'prompt_sha256', 'auditor'))
+                                              'path', 'sha256', 'bytes', 'prompt_sha256', 'auditor',
+                                              'auditor_version'))
+
+
+def needs_web_audit(row):
+    """Recognize audited scaffolds and evidence even on rows with a legacy label."""
+    return (str(row.get('scaffold', '')).startswith('opencode-v2-web') or any(
+        key in row for key in ('web_fetches', 'net_shell', 'web_denied', 'subagent_calls',
+                               'answer_key_contact', 'answer_key_evidence',
+                               'web_audit_error', 'web_audit_incomplete')))
+
+
+WEB_REPORT_REFUSAL = ('web-audit rows require answer_key.report_rows with the leg audit sidecar '
+                      'for exclusions and separate web-contact counts; this reporter cannot '
+                      'preserve those audit/session semantics')
 
 
 def load_audits(path):
@@ -98,7 +112,9 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
     if prompt_sha256 is None:
         prompt_sha256 = hashlib.sha256(
             (Path(__file__).resolve().parents[1] / 'web_audit_prompt.md').read_bytes()).hexdigest()
-    audits = {audit_record_key(record): record for record in load_audits(audit_sidecar)}
+    # The latest appended decision for the current prompt/auditor wins across CLI versions.
+    # Version remains part of the audit idempotence key, so upgrades force a fresh audit.
+    audits = {audit_record_key(record)[:-1]: record for record in load_audits(audit_sidecar)}
     rows = list(rows)
     eligible, flagged, tests = [], 0, 0
     for row in rows:
@@ -108,7 +124,7 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
                                     'session_id': row.get('session_id'), 'kind': kind, 'index': index,
                                     'path': entry.get('path'), 'sha256': entry.get('sha256'),
                                     'bytes': entry.get('bytes'), 'prompt_sha256': prompt_sha256,
-                                    'auditor': 'codex:gpt-6-astra'})
+                                    'auditor': 'codex:gpt-6-astra'})[:-1]
             audit = audits.get(key, {})
             label = audit.get('label', 'unclear')
             if label in ('unclear', 'audit_error'):
@@ -119,7 +135,8 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
                         and reason.splitlines() == [reason]):
                     label = resolution
             labels.append(label)
-        exclude = bool(row.get('answer_key_contact')) or any(
+        exclude = bool(row.get('answer_key_contact') or row.get('web_audit_incomplete')
+                       or row.get('web_audit_error')) or any(
             label not in ('docs', 'generic', 'tests') for label in labels)
         flagged += int(exclude)
         tests += int('tests' in labels)

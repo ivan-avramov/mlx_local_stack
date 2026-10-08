@@ -11,7 +11,14 @@ from bench.tests.opencode_v2_mock import MockServer
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 PATTERNS = ['api.github.com/search/code', 'github.com/search?q=code', 'grep.app/api/search',
-            'sourcegraph.com/search', 'searchcode.com/api']
+            'sourcegraph.com/search', 'searchcode.com/api', 'EXERCISM/example',
+            'PROBLEM-SPECIFICATIONS/example']
+
+
+@pytest.fixture(autouse=True)
+def fake_auditor_version(monkeypatch):
+    import web_audit as audit
+    monkeypatch.setattr(audit, 'auditor_version', lambda: 'codex-cli 0.161.0', raising=False)
 
 
 def test_evidence_verbatim_hashes_and_portable_paths(probe, tmp_path, monkeypatch):
@@ -99,7 +106,7 @@ def test_fake_auditor_sidecar_reporting_and_idempotence(tmp_path, monkeypatch):
     assert all(r['prompt_sha256'] == hashlib.sha256(audit.PROMPT.read_bytes()).hexdigest() for r in records)
     assert all('passed' not in prompt and 'answer_key_contact' not in prompt for prompt in prompts)
     assert records[0]['preflag'] is True
-    assert records[1]['preflag'] is False  # only one top-level public identifier
+    assert records[1]['preflag'] is True  # class and its public methods
     report = report_rows(rows, audit_sidecar=sidecar)
     assert report['strict_n'] == 1 and report['flagged: web contact'] == 2
     assert report['strict_items'] == {'go/matrix': [1]}  # session-specific joins
@@ -152,19 +159,20 @@ def test_evidence_tamper_is_unresolved(tmp_path, monkeypatch):
     path, corpus, rows = fixture_rows(tmp_path, monkeypatch)
     Path(rows[0]['web_fetches'][0]['path'].replace('$STACK_WORKDIR', str(tmp_path))).write_text('tampered')
     sidecar = audit.audit_rows(path, polyglot_root=corpus, auditor=lambda _: '{"label":"docs","reason":"docs"}')
-    assert json.loads(sidecar.read_text().splitlines()[0])['label'] == 'audit_error'
+    records = [json.loads(line) for line in sidecar.read_text().splitlines()]
+    assert next(r for r in records if r['session_id'] == rows[0]['session_id'])['label'] == 'audit_error'
 
 
 def test_codex_subprocess_stdin_timeout_and_output(tmp_path, monkeypatch):
     import web_audit as audit
     monkeypatch.setenv('STACK_WORKDIR', str(tmp_path))
     def run(argv, **kw):
-        assert argv[:8] == ['codex', 'exec', '-m', 'gpt-6-astra', '-s', 'read-only', '--skip-git-repo-check', '-o']
+        assert argv[:10] == ['codex', 'exec', '--ephemeral', '--ignore-user-config', '-m', 'gpt-6-astra', '-s', 'read-only', '--skip-git-repo-check', '-o']
         assert argv[-1] == '-' and 'secret fetched text' not in argv
         assert kw['input'] == 'secret fetched text'
         assert kw['timeout'] == 17 and kw['check'] is True
-        assert Path(argv[8]).is_relative_to(tmp_path)
-        Path(argv[8]).write_text('{"label":"docs","reason":"API reference."}')
+        assert Path(argv[10]).is_relative_to(tmp_path)
+        Path(argv[10]).write_text('{"label":"docs","reason":"API reference."}')
     monkeypatch.setattr(audit.subprocess, 'run', run)
     assert json.loads(audit.codex_auditor('secret fetched text', timeout=17))['label'] == 'docs'
 
@@ -173,7 +181,7 @@ def test_public_identifiers_and_language_gate(tmp_path):
     import web_audit as audit
     (tmp_path / 'stub.py').write_text('class Public:\n def method(self): pass\ndef alpha(): pass\nasync def beta(): pass\ndef _private(): pass\n')
     (tmp_path / 'stub_test.py').write_text('def test_noise(): pass\n')
-    assert audit.public_identifiers(tmp_path, 'python') == ['Public', 'alpha', 'beta']
+    assert audit.public_identifiers(tmp_path, 'python') == ['Public', 'alpha', 'beta', 'method']
     (tmp_path / 'stub.go').write_text('package fixture\ntype Public struct{}\nfunc Alpha() {}\nfunc (p Public) Beta() {}\nfunc private() {}\n')
     assert audit.public_identifiers(tmp_path, 'go') == ['Alpha', 'Beta', 'Public']
     assert audit.preflag('package fixture\nfunc Alpha() { Beta(Public{}) }', 'go', ['Alpha', 'Beta', 'Public'])
@@ -208,7 +216,7 @@ def test_network_shell_unclear_resolution_and_prompt_limit(tmp_path, monkeypatch
         payload = json.loads(prompt.split('\nINPUT_JSON\n', 1)[1])
         assert len(payload['text']) == 6000 and 'INVISIBLE_SUFFIX' not in prompt
         assert payload['command'] == entry['command']
-        assert payload['public_identifiers'] == ['BowlingGame']
+        assert payload['public_identifiers'] == ['BowlingGame', 'roll', 'score']
         return '{"label":"unclear","reason":"Needs review."}'
     sidecar = audit.audit_rows(path, polyglot_root=corpus, auditor=fake)
     record = json.loads(sidecar.read_text())

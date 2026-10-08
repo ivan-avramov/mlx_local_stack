@@ -184,14 +184,16 @@ def _prompt_date():
     return time.strftime("%a %b %d %Y")
 
 
-def _carrier_selection(scaffold, system_file):
+def _carrier_selection(scaffold, system_file, *, repo=None, source=None):
     """Resolve and snapshot approved inputs before creating a run or spawning a client."""
-    source = BENCH_OPENCODE_CONFIG if scaffold == "opencode-v2" else BENCH_OPENCODE_WEB_CONFIG
+    repo = REPO if repo is None else repo
+    if source is None:
+        source = BENCH_OPENCODE_CONFIG if scaffold == "opencode-v2" else BENCH_OPENCODE_WEB_CONFIG
     system_path, system_bytes = None, None
     if system_file is not None:
         relative = Path(system_file)
-        system_path = (REPO / relative).resolve()
-        allowed = (REPO / "benchmark/opencode_prompts").resolve()
+        system_path = (repo / relative).resolve()
+        allowed = (repo / "benchmark/opencode_prompts").resolve()
         if (relative.is_absolute() or not system_path.is_relative_to(allowed)
                 or not system_path.is_file()):
             sys.exit("REFUSED: --agent-system-file must be a repo-relative file "
@@ -210,10 +212,10 @@ def _carrier_selection(scaffold, system_file):
         raw = json.dumps(doc, sort_keys=True, indent=2).encode()
     fields = {
         "scaffold": scaffold + ("+sys:" + system_sha[:8] if system_sha else ""),
-        "carrier_source": (source.relative_to(REPO).as_posix()
-                           if source.is_relative_to(REPO) else _portable(source)),
+        "carrier_source": (source.relative_to(repo).as_posix()
+                           if source.is_relative_to(repo) else _portable(source)),
         "carrier_source_sha256": source_sha,
-        "agent_system_file": system_path.relative_to(REPO).as_posix() if system_path else None,
+        "agent_system_file": system_path.relative_to(repo).as_posix() if system_path else None,
         "agent_system_sha256": system_sha,
         "opencode_bench_config_sha256": hashlib.sha256(raw).hexdigest(),
     }
@@ -468,16 +470,34 @@ def _check_export(export, nonconv):
 
 
 NET_SHELL = re.compile(
-    r"\b(curl|wget|git\s+clone|go\s+get|pip\s+(download|install)|npm\s+(view|install)|https?://)"
+    r"\b(curl\b|wget\b|git\s+(clone|fetch|pull)\b|go\s+(get|install)\b|"
+    r"pip3?\s+(download|install)\b|uv\s+(pip|add)\b|cargo\s+(add|install)\b|"
+    r"npx\s|gh\s|brew\s|npm\s+(view|install)\b|https?://)"
 )
+NET_OUTPUT_FILE = re.compile(r"(?:^|\s)(?:-[oO](?:\s|$|[^\s]+)|--output(?:=|\s|$))|>|\btee\b")
 
 
-def _web_audit(export, item_dir, transcript_target):
+def _web_audit(export, item_dir, transcript_target, *, scaffold="opencode-v2-web"):
+    """Audit failures exclude a row without interrupting generation or grading."""
+    result = {"web_fetches": [], "net_shell": [], "web_denied": 0, "subagent_calls": 0,
+              "web_audit_incomplete": False, "answer_key_contact": False, "answer_key_evidence": []}
+    try:
+        _collect_web_audit(export, item_dir, transcript_target, scaffold, result)
+    except Exception as exc:
+        result["web_audit_error"] = f"{type(exc).__name__}: {exc}"
+    return result
+
+
+def _collect_web_audit(export, item_dir, transcript_target, scaffold, result):
     """Audit native v2 tool parts; permission.rejected is pinned by real mock captures."""
-    fetches, commands, texts = [], [], []
-    denied = 0
+    fetches, commands, texts = result["web_fetches"], result["net_shell"], []
+    result["subagent_calls"] = sum(
+        isinstance(part, dict) and part.get("type") == "tool" and part.get("name") == "subagent"
+        for message in export["messages"] for part in (message.get("content") or []))
+    result["web_audit_incomplete"] = (
+        scaffold.startswith("opencode-v2-web") and result["subagent_calls"] > 0)
     for message in export["messages"]:
-        for part in message.get("content", []):
+        for part in message.get("content") or []:
             if not isinstance(part, dict) or part.get("type") != "tool":
                 continue
             name, state = part.get("name"), part.get("state", {})
@@ -487,8 +507,13 @@ def _web_audit(export, item_dir, transcript_target):
             error = state.get("error", {})
             rejected = (state.get("status") == "error" and isinstance(error, dict)
                         and error.get("type") == "permission.rejected")
-            denied += int(rejected)
-            content = state.get("content", [])
+            source = inputs.get("url" if name == "webfetch" else "command", "")
+            if name == "shell" and not NET_SHELL.search(source):
+                continue
+            result["web_denied"] += int(rejected)
+            if name == "shell" and NET_OUTPUT_FILE.search(source):
+                result["web_audit_incomplete"] = True
+            content = state.get("content") or []
             chunks = ([content] if isinstance(content, str) else [
                 c["text"] for c in content
                 if isinstance(c, dict) and c.get("type") == "text" and isinstance(c.get("text"), str)
@@ -498,28 +523,25 @@ def _web_audit(export, item_dir, transcript_target):
             status = "denied" if rejected else (
                 "completed" if state.get("status") == "completed" else "error")
             if name == "webfetch":
-                source = inputs.get("url", "")
                 entry = {"url": source, "status": status}
                 fetches.append(entry)
             else:
-                source = inputs.get("command", "")
-                if not NET_SHELL.search(source):
-                    continue
                 entry = {"command": source, "status": status}
                 commands.append(entry)
+            if rejected:
+                entry["error"] = {"message": error.get("message")}
             target = transcript_target.with_suffix(".web") / f"{len(fetches) + len(commands) - 1}.txt"
             root = _stack_workdir().resolve()
             relative = target.resolve().relative_to(root / "opencode_transcripts")
             target.parent.mkdir(parents=True, exist_ok=True)
-            data = text.encode("utf-8")
+            data = text.encode("utf-8", errors="surrogatepass")
             target.write_bytes(data)
             entry.update(path="$STACK_WORKDIR/opencode_transcripts/" + relative.as_posix(),
                          sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
             if text:
                 texts.append({"source": source, "text": text})
     contact = answer_key.contact(item_dir, texts)
-    return {"web_fetches": fetches, "net_shell": commands, "web_denied": denied,
-            "answer_key_contact": contact["flag"], "answer_key_evidence": contact["evidence"]}
+    result.update(answer_key_contact=contact["flag"], answer_key_evidence=contact["evidence"])
 
 
 def _identity(a, version, binary, run_dir, poly_sha):
@@ -999,7 +1021,8 @@ def _main():
                     row = {
                         "bench": "opencode",
                         **selection["fields"],
-                        **json.loads(_scrub_pii(json.dumps(_web_audit(export, src, target)))),
+                        **json.loads(_scrub_pii(json.dumps(_web_audit(
+                            export, src, target, scaffold=a.scaffold)))),
                         "schema_version": 3,
                         "id": item,
                         "model": a.model,

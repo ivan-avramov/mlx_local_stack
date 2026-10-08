@@ -60,15 +60,19 @@ def a6_bare(model, log, timeout) -> dict:
     return {"pass": ok, "requests": out}
 
 
-def a4_opencode(model, log, root: Path, timeout, oc_bin: str, *, opencode="v2", base=None) -> dict:
+def a4_opencode(model, log, root: Path, timeout, oc_bin: str, *, opencode="v2", base=None,
+                scaffold="opencode-v2", agent_system_file=None) -> dict:
     if opencode == "1.18":
         raise SystemExit("REFUSED: the opencode 1.18 gate leg is frozen (M59, 2026-10-07); use --opencode v2")
     return _a4_opencode_v2(model, log, timeout, oc_bin,
-                           base if base is not None else os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1"))
+                           base if base is not None else os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1"),
+                           scaffold=scaffold, agent_system_file=agent_system_file)
 
 
-def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str) -> dict:
+def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="opencode-v2",
+                    agent_system_file=None) -> dict:
     from bench import provenance
+    from run_opencode_probe_v2 import _carrier_selection
 
     router = provenance.assert_served_config(base, env={})
     workdir = os.environ.get("STACK_WORKDIR")
@@ -92,11 +96,13 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str) -> dict:
     for key in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME",
                 "TMPDIR", "OPENCODE_CONFIG_DIR", "PWD"):
         Path(env[key]).mkdir(parents=True, exist_ok=True)
-    carrier = REPO / "benchmark/opencode_bench_v2.json"
-    if not carrier.is_file():
+    carrier = REPO / ("benchmark/opencode_bench_v2.json" if scaffold == "opencode-v2"
+                      else "benchmark/opencode_bench_v2_web.json")
+    if not carrier.is_file() and scaffold == "opencode-v2" and agent_system_file is None:
         carrier = REPO / "opencode_config/opencode.json"
         print("[A4 v2] WARNING: benchmark/opencode_bench_v2.json absent; copying the daily-driver carrier verbatim (compaction ON)", flush=True)
-    content = carrier.read_bytes()
+    selection = _carrier_selection(scaffold, agent_system_file, repo=REPO, source=carrier)
+    content = selection["bytes"]
     if json.loads(content)["providers"]["mlx-local"]["settings"]["baseURL"] != base:
         raise SystemExit("M50 tripwire: A4 v2 carrier destination differs from the verified router")
     (Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json").write_bytes(content)
@@ -227,6 +233,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--opencode", choices=("1.18", "v2"), default="v2",
                     help="A4 client (default v2; the 1.18 leg is frozen)")
+    ap.add_argument("--scaffold", choices=("opencode-v2", "opencode-v2-web"), default="opencode-v2")
+    ap.add_argument("--agent-system-file")
     ap.add_argument("--model", required=True)
     ap.add_argument("--log", default=str(REPO / "logs/mlx_vlm.log"))
     ap.add_argument("--owui-url", default=os.environ.get("OWUI_URL", "http://localhost:3000"))
@@ -251,7 +259,8 @@ def main(argv=None) -> int:
            "opencode_bin": oc._scrub_pii(oc._portable(Path(oc_bin))), "opencode_version": oc_version,
            "opencode_exe_sha256": oc._sha_of(Path(oc_bin))}
     # Validate the executable in its hermetic environment before any other gate requests.
-    res["A4_opencode"] = a4_opencode(a.model, log, root, a.timeout, oc_bin, opencode="v2", base=base)
+    res["A4_opencode"] = a4_opencode(a.model, log, root, a.timeout, oc_bin, opencode="v2", base=base,
+                                   scaffold=a.scaffold, agent_system_file=a.agent_system_file)
     res["opencode_version"] = res["A4_opencode"]["opencode_version"]
     res["opencode_exe_sha256"] = res["A4_opencode"]["exe_sha256"]
     res["A6_bare_anonymous"] = a6_bare(a.model, log, a.timeout); print("[A6]", res["A6_bare_anonymous"]["pass"], flush=True)

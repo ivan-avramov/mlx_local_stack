@@ -22,7 +22,7 @@ import argparse
 import json
 from pathlib import Path
 
-from bench import convergence, paths, traces
+from bench import answer_key, convergence, paths, traces
 
 # Which benchmarks speak to which stated goal. A bench may serve more than one role.
 # `opencode` is the primary agentic harness for "coding" (opencode is what this stack ships;
@@ -119,6 +119,8 @@ def collect() -> dict:
         if f.stem.endswith("_samples"):
             continue                             # evalplus/multi-draw sidecars, not a separate axis
         rows = _rows(f)
+        if any(answer_key.needs_web_audit(row) for row in rows):
+            raise ValueError(answer_key.WEB_REPORT_REFUSAL)
         live = [r for r in rows if not r.get("error")]
         if not live:
             continue

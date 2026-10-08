@@ -21,7 +21,7 @@ WHICH MISMATCHES ARE FATAL is a judgement, so it is written down rather than lef
                  those are each model's tuned operating point. A rule demanding identical sampling
                  would refuse every comparison we actually need — so it is recorded as a warning.
 """
-from . import generate, grade, provenance, rowschema, stats
+from . import answer_key, generate, grade, provenance, rowschema, stats
 
 # Metrics whose value depends on the machine and the serving configuration, not just the model.
 # A draw within this fraction of the client bound is treated as having REACHED it: the harness
@@ -352,6 +352,8 @@ def _bench_gate(model_a, model_b, bench, *, metric="acc", intersect=False):
                                f"24.7 vs 27.8 s in the 2026-08-14 OFAT")
 
     rows_a, rows_b = grade._rows(model_a, bench, tune=tune_a), grade._rows(model_b, bench, tune=tune_b)
+    if any(answer_key.needs_web_audit(row) for row in rows_a + rows_b):
+        return _refuse(answer_key.WEB_REPORT_REFUSAL)
     if not rows_a or not rows_b:
         empty = [m for m, r in ((model_a, rows_a), (model_b, rows_b)) if not r]
         return _refuse(f"no results for {', '.join(empty)}")

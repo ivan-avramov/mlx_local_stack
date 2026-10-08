@@ -47,11 +47,20 @@ def codex_auditor(prompt: str, *, timeout: float = 180) -> str:
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='web-auditor-', dir=root) as directory:
         output = Path(directory) / 'answer.json'
-        subprocess.run(['codex', 'exec', '-m', 'gpt-6-astra', '-s', 'read-only',
+        subprocess.run(['codex', 'exec', '--ephemeral', '--ignore-user-config',
+                        '-m', 'gpt-6-astra', '-s', 'read-only',
                         '--skip-git-repo-check', '-o', str(output), '-'],
                        input=prompt, text=True, capture_output=True, check=True, timeout=timeout,
                        cwd=directory)
         return output.read_text(encoding='utf-8')
+
+
+def auditor_version() -> str:
+    version = subprocess.run(['codex', '--version'], text=True, capture_output=True,
+                             check=True, timeout=30).stdout.strip()
+    if not version:
+        raise ValueError('empty codex --version')
+    return version
 
 
 def _go_code(text: str) -> str:
@@ -78,9 +87,15 @@ def public_identifiers(item_dir: Path, language: str) -> list[str]:
             raise ValueError('invalid solution stub path')
         text = path.read_text(encoding='utf-8')
         if language == 'python':
-            names.update(node.name for node in ast.parse(text).body
+            body = ast.parse(text).body
+            names.update(node.name for node in body
                          if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
                          and not node.name.startswith('_'))
+            for node in body:
+                if isinstance(node, ast.ClassDef) and not node.name.startswith('_'):
+                    names.update(method.name for method in node.body
+                                 if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                 and not (method.name.startswith('__') and method.name.endswith('__')))
         else:
             code = _go_code(text)
             names.update(re.findall(r'(?m)^\s*func\s+(?:\([^\n]*?\)\s*)?([A-Z]\w*)\b', code))
@@ -91,7 +106,7 @@ def public_identifiers(item_dir: Path, language: str) -> list[str]:
 
 
 def preflag(text: str, language: str, identifiers: list[str]) -> bool:
-    """Priority heuristic: language code plus three distinct whole identifiers."""
+    """Priority heuristic: language code plus up to three distinct whole identifiers."""
     if language == 'go':
         in_language = bool(re.search(r'(?m)^\s*(package\s+\w+|func\s+|type\s+)', _go_code(text)))
     elif language == 'python':
@@ -108,8 +123,9 @@ def preflag(text: str, language: str, identifiers: list[str]) -> bool:
                 break
     else:
         in_language = False
-    return in_language and sum(bool(re.search(r'\b' + re.escape(name) + r'\b', text))
-                               for name in set(identifiers)) >= 3
+    names = set(identifiers)
+    return bool(names) and in_language and sum(bool(re.search(r'\b' + re.escape(name) + r'\b', text))
+                                               for name in names) >= min(3, len(names))
 
 
 def _read_evidence(entry: dict) -> str:
@@ -124,11 +140,12 @@ def _read_evidence(entry: dict) -> str:
     data = path.read_bytes()
     if len(data) != entry['bytes'] or hashlib.sha256(data).hexdigest() != entry['sha256']:
         raise ValueError('evidence hash or byte count mismatch')
-    return data.decode('utf-8')
+    return data.decode('utf-8', errors='surrogatepass')
 
 
-def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMPT) -> Path:
-    """One call per evidence entry; unchanged prompt/evidence keys are never re-audited."""
+def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMPT,
+               retry_errors=False) -> Path:
+    """Audit once per evidence/prompt/auditor/version; optionally retry latest errors."""
     rows_path = Path(rows_path)
     sidecar = Path(str(rows_path) + '.webaudit.jsonl')
     refusal = paths.confine_path(sidecar, what='audit sidecar')
@@ -138,8 +155,16 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
         os.environ.get('POLYGLOT_DIR') or paths.stack_workdir() / 'polyglot-benchmark')
     template = Path(prompt_file).read_bytes()
     prompt_sha = hashlib.sha256(template).hexdigest()
+    version_error = None
+    try:
+        version = auditor_version()
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        version = None
+        version_error = f'Auditor version failed: {type(exc).__name__}.'
     existing = answer_key.load_audits(sidecar)
-    done = {answer_key.audit_record_key(record) for record in existing}
+    latest = {answer_key.audit_record_key(record): record for record in existing}
+    done = {key for key, record in latest.items()
+            if not retry_errors or record.get('label') != 'audit_error'}
     call = auditor if auditor is not None else codex_auditor
     pending = []
     for line in rows_path.read_text().splitlines():
@@ -148,7 +173,8 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
             record = {'row_id': row['id'], 'sample': row.get('sample', 0),
                       'session_id': row.get('session_id'), 'kind': kind, 'index': index,
                       'path': entry.get('path'), 'sha256': entry.get('sha256'),
-                      'bytes': entry.get('bytes'), 'auditor': AUDITOR, 'prompt_sha256': prompt_sha,
+                      'bytes': entry.get('bytes'), 'auditor': AUDITOR, 'auditor_version': version,
+                      'prompt_sha256': prompt_sha,
                       'preflag': False}
             key = answer_key.audit_record_key(record)
             if key in done:
@@ -169,6 +195,9 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
                 record.update(label='audit_error', reason=f'Evidence/stub failure: {type(exc).__name__}.')
                 prompt = None
             pending.append((record, prompt))
+            if version_error:
+                record.update(label='audit_error', reason=version_error)
+                pending[-1] = (record, None)
     # Review likely solutions first; priority never overrides the blind auditor's label.
     pending.sort(key=lambda pair: not pair[0]['preflag'])
     with sidecar.open('a', encoding='utf-8') as stream:
@@ -188,11 +217,13 @@ def main():
     parser.add_argument('rows', type=Path)
     parser.add_argument('--polyglot-root', type=Path)
     parser.add_argument('--timeout', type=float, default=180)
+    parser.add_argument('--retry-errors', action='store_true', help='retry entries whose latest result is audit_error')
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error('--timeout must be positive')
     sidecar = audit_rows(args.rows, polyglot_root=args.polyglot_root,
-                         auditor=lambda prompt: codex_auditor(prompt, timeout=args.timeout))
+                         auditor=lambda prompt: codex_auditor(prompt, timeout=args.timeout),
+                         retry_errors=args.retry_errors)
     print(sidecar)
 
 

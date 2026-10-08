@@ -102,7 +102,8 @@ def emit_opencode_bench_v2_web(source: Source) -> str:
             ("webfetch", "*problem-specifications*", "deny"),
             ("shell", "*xercism*", "deny"), ("shell", "*problem-specifications*", "deny"),
         ] + [(action, pattern, "deny") for action in ("webfetch", "shell")
-             for pattern in ("*api.github.com/search*", "*github.com/search*", "*grep.app*",
+             for pattern in ("*XERCISM*", "*PROBLEM-SPECIFICATIONS*",
+                             "*api.github.com/search*", "*github.com/search*", "*grep.app*",
                              "*sourcegraph.com*", "*searchcode.com*")]
     ]
     return json.dumps(doc, indent=2) + "\n"

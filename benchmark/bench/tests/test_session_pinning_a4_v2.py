@@ -281,8 +281,8 @@ def test_gate_cli_defaults_to_v2_and_routes_explicit_v2(gate, tmp_path, monkeypa
     monkeypatch.setattr(module, "a6_bare", lambda *args: {"pass": True})
     choices = []
 
-    def a4(*args, opencode="v2", base=None):
-        choices.append((opencode, base))
+    def a4(*args, opencode="v2", base=None, scaffold=None, agent_system_file=None):
+        choices.append((opencode, base, scaffold, agent_system_file))
         return {"pass": True, "sessions": ["ses_gate"], "opencode_version": "2.0.20", "exe_sha256": "test-sha"}
 
     monkeypatch.setattr(module, "a4_opencode", a4)
@@ -290,7 +290,11 @@ def test_gate_cli_defaults_to_v2_and_routes_explicit_v2(gate, tmp_path, monkeypa
     assert module.main(args) == 0
     monkeypatch.setenv("MLX_SERVE_BASE", "http://127.0.0.1:18000/v1")
     assert module.main(args + ["--opencode", "v2"]) == 0
-    assert choices == [("v2", "http://localhost:8000/v1"), ("v2", "http://127.0.0.1:18000/v1")]
+    system = 'benchmark/opencode_prompts/opencode-1.18.15-default.txt'
+    assert module.main(args + ['--scaffold', 'opencode-v2-web', '--agent-system-file', system]) == 0
+    assert choices == [("v2", "http://localhost:8000/v1", 'opencode-v2', None),
+                       ("v2", "http://127.0.0.1:18000/v1", 'opencode-v2', None),
+                       ("v2", "http://127.0.0.1:18000/v1", 'opencode-v2-web', system)]
 
 
 @pytest.mark.parametrize("entry", ["cli", "a4"])
