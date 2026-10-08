@@ -11,6 +11,7 @@ superseded pick-2 arm + original transcripts; `c137/` replay outputs; `smoke_att
   (`Qwen3.8-27B-mlx-uniform-4bit`, window 630 s) on a fresh instance; then s2 (seed base 2002; pick 2 then pick 1; fresh load at the
   boundary; outputs tagged `.s2.`). ≈ 11 h from launch. The runner stops the stack at the end (`stack_stop`). Exit code in `chain.rc`.
   Monitor: `tail -F RUNLOG.md` for END / RATE CHECK / FATAL lines; per-leg RATE CHECK flags a > 5 % decode gap.
+- **Memory watchdog armed** (P183, 04:05Z, `mem_watchdog.py`; exits when `after_chain.rc` appears): kills scratch processes > 8 GB RSS or orphaned from a finished item; kills are logged as `WATCHDOG KILL` in the RUNLOG. Reason: a model-written infinite loop reached 117 GB (C138 (3)).
 - **s1 done for pick 1** (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, window 662 s): Python 21/22, Go 20/22. Pick-2 558 s arm archived
   (Python 19/22, Go 17/22; all misses stalls) — adaptive correction, disclose, never pool (C136 addendum).
 - Stack `main` = this commit; `origin/main` = `c889661` (**not pushed**; operator: "we push later"). Fork `58eb241b` pushed, CI green.
