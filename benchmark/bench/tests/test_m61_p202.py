@@ -44,20 +44,19 @@ def test_partial_and_prompt_revision():
 
 @pytest.mark.parametrize('url,expected', [
     ('https://GitHub.com/Owner/Repo/blob/main/a.py?q=1', [
-        '*github.com/owner/repo*', '*GitHub.com/Owner/Repo*',
-        '*raw.githubusercontent.com/owner/repo*', '*raw.githubusercontent.com/Owner/Repo*']),
+        '*github.com/owner/repo', '*github.com/Owner/Repo/*',
+        '*raw.githubusercontent.com/owner/repo/*', '*raw.githubusercontent.com/Owner/Repo/*']),
     ('https://raw.githubusercontent.com/Owner/Repo/main/a.py', [
-        '*github.com/owner/repo*', '*github.com/Owner/Repo*',
-        '*raw.githubusercontent.com/owner/repo*', '*raw.githubusercontent.com/Owner/Repo*']),
+        '*github.com/owner/repo', '*github.com/Owner/Repo/*',
+        '*raw.githubusercontent.com/owner/repo/*', '*raw.githubusercontent.com/Owner/Repo/*']),
     ('https://RAW.GITHUBUSERCONTENT.COM/OWNER/REPO/main/a.py', [
-        '*RAW.GITHUBUSERCONTENT.COM/OWNER/REPO*',
-        '*raw.githubusercontent.com/owner/repo*', '*github.com/owner/repo*']),
+        '*raw.githubusercontent.com/OWNER/REPO/*',
+        '*raw.githubusercontent.com/owner/repo/*', '*github.com/owner/repo']),
     ('https://GitLab.com/Owner/Repo/-/blob/main/a.py', [
-        '*gitlab.com/owner/repo*', '*GitLab.com/Owner/Repo*',
-        '*raw.githubusercontent.com/owner/repo*']),
-    ('https://Docs.invalid/topic/answer.html?q=1', [
-        '*Docs.invalid/topic/answer.html', '*docs.invalid/topic/answer.html']),
+        '*gitlab.com/owner/repo', '*gitlab.com/Owner/Repo/*']),
+    ('https://Docs.invalid/topic/answer.html?q=1', ['*docs.invalid/topic/answer.html*']),
 ])
+
 def test_deny_patterns(url, expected):
     patterns = answer_key.deny_patterns_for([url, url])
     assert set(expected) <= set(patterns)
@@ -71,7 +70,7 @@ def test_extra_deny_composition_and_m50(probe, tmp_path):
     original = json.loads(probe.BENCH_OPENCODE_WEB_CONFIG.read_bytes())
     expected = original['permissions'] + [
         dict(action='webfetch', resource='https://fixture.invalid/repo/*', effect='deny'),
-        dict(action='shell', resource='https://fixture.invalid/repo/*', effect='deny')]
+        dict(action='shell', resource='*https://fixture.invalid/repo/*', effect='deny')]
     assert json.loads(selected['bytes'])['permissions'] == expected
     assert selected['fields']['extra_deny'] == json.loads(deny.read_text())
     assert selected['fields']['extra_deny_sha256'] == hashlib.sha256(deny.read_bytes()).hexdigest()
@@ -156,7 +155,8 @@ def test_rerun_append_resume_and_seed_guard(probe, monkeypatch, tmp_path):
     first = json.loads(f['out'].read_text()); first['answer_key_contact'] = True
     first['answer_key_evidence'] = [{'flag': True, 'source': 'https://fixture.invalid/answer'}]
     write_rows(f['out'], [first])
-    deny = tmp_path / 'deny.json'; deny.write_text('["https://fixture.invalid/*"]')
+    deny = tmp_path / 'deny.json'
+    deny.write_text(json.dumps(answer_key.deny_patterns_for(['https://fixture.invalid/answer'])))
     rerun = args + ['--extra-deny-file', str(deny), '--rerun-of', first['session_id'], '--rerun-index', '1']
     with pytest.raises(SystemExit, match='seed'):
         f['run']('one', extra=rerun + ['--seed-base', '78'])

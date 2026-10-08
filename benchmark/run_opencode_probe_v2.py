@@ -228,11 +228,11 @@ def _carrier_selection(scaffold, system_file, *, repo=None, source=None, extra_d
         if system_file is not None:
             doc.setdefault("agents", {}).setdefault("build", {})["system"] = system_text
         for pattern in extra_deny:
-            doc.setdefault("permissions", []).extend([
-                {"action": "webfetch", "resource": pattern, "effect": "deny"},
-                {"action": "shell", "resource": pattern,
-                 "effect": "deny"},
-            ])
+            doc.setdefault("permissions", []).append(
+                {"action": "webfetch", "resource": pattern, "effect": "deny"})
+        doc.setdefault("permissions", []).extend(
+            {"action": "shell", "resource": pattern, "effect": "deny"}
+            for pattern in answer_key.shell_deny_patterns(extra_deny))
         raw = json.dumps(doc, sort_keys=True, indent=2).encode()
     fields = {
         "scaffold": scaffold + ("+sys:" + system_sha[:8] if system_sha else ""),
@@ -695,7 +695,8 @@ def _rerun_resume(a, rows, out, previous, identity, router):
             # Reissuing a completed attempt is idempotent even if its audit still needs a retry.
             done.add((item, 0))
         else:
-            if (not latest_state['rerun_eligible'] or answer_key.rerun_plan(latest_state)['needs_operator']
+            plan = answer_key.rerun_plan(latest_state)
+            if (not latest_state['rerun_eligible'] or plan['needs_operator']
                     or not identity['extra_deny']):
                 sys.exit("REFUSED: cheat_review needs_operator; no re-run may launch")
             if (row.get('session_id') != a.rerun_of or not latest_state['cheat']
@@ -703,8 +704,8 @@ def _rerun_resume(a, rows, out, previous, identity, router):
                 sys.exit("REFUSED: rerun_of/index must link the latest cheated attempt")
             if row.get('sampler_seed') != _item_seed(item, a.seed_base):
                 sys.exit("REFUSED: rerun seed differs from the superseded attempt")
-            if not set(row.get('extra_deny', [])) <= set(identity['extra_deny']):
-                sys.exit("REFUSED: rerun must retain prior extra deny patterns")
+            if not set(plan['extra_deny']) <= set(identity['extra_deny']):
+                sys.exit("REFUSED: rerun must include all planned source and prior extra deny patterns")
             done.discard((item, 0))
             old = (previous or {}).get('runtime', {})
             # An interrupted attempt has already written its new identity: compare it exactly.

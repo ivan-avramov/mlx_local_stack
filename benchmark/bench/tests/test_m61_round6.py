@@ -1,5 +1,4 @@
 """Round six: fail-closed audit recovery, bounded denies and load identity."""
-import fnmatch
 import json
 from pathlib import Path
 
@@ -56,23 +55,25 @@ def test_missing_audit_resume_message(probe, monkeypatch, tmp_path):
 
 @pytest.mark.parametrize('host', ['GitHub.com', 'raw.githubusercontent.com', 'GitLab.com'])
 def test_repository_patterns_match_roots_clones_and_casing(host):
-    patterns = answer_key.deny_patterns_for([f'https://{host}/Owner/Repo/blob/main/a.py'])
+    from bench.tests.test_m61_round7 import denied
+    route = '-/blob/main/a.py' if host == 'GitLab.com' else 'blob/main/a.py'
+    patterns = answer_key.deny_patterns_for([f'https://{host}/Owner/Repo/{route}'])
+    host = host.lower()
     page = 'github.com' if host == 'raw.githubusercontent.com' else host
-    hosts = [host, page] + ([] if host == 'GitLab.com' else ['raw.githubusercontent.com'])
+    hosts = [host, page] + ([] if host == 'gitlab.com' else ['raw.githubusercontent.com'])
     for domain in hosts:
-        assert f'*{domain}/Owner/Repo*' in patterns
+        assert f'*{domain}/Owner/Repo/*' in patterns
         for scheme in ('https://', 'http://', 'https://www.'):
-            for suffix in ('', '.git', '/main/a.py', '-foo'):
+            for suffix in ('/main/a.py',) if domain == 'raw.githubusercontent.com' else ('', '.git', '/main/a.py'):
                 url = f'{scheme}{domain}/Owner/Repo{suffix}'
                 for resource in (url, url.lower(), 'git clone ' + url, 'curl ' + url):
-                    assert any(fnmatch.fnmatchcase(resource, p) for p in patterns), resource
+                    assert denied(resource, patterns), resource
 
 
 @pytest.mark.parametrize('url,expected', [
-    ('https://example.com/answer?q=1', ['*example.com/answer']),
-    ('https://example.com/a/file', ['*example.com/a/file']),
-    ('https://Example.com/a/b/file?q=1', ['*Example.com/a/b/file', '*Example.com/a/b/*',
-                                        '*example.com/a/b/file', '*example.com/a/b/*']),
+    ('https://example.com/answer?q=1', ['*example.com/answer*']),
+    ('https://example.com/a/file', ['*example.com/a/file*']),
+    ('https://Example.com/a/b/file?q=1', ['*example.com/a/b/file*']),
     ('https://example.com/', []), ('https://github.com/Owner', []),
     ('https://github.com/Owner/*', []), ('https://github.com/Owner/Re%3Fpo/file', []),
     ('https://example.com/a*/b', []),
@@ -126,6 +127,7 @@ def test_non_web_contact_is_flagged_never_rerun(tmp_path, index):
     assert web_audit.cheats_to_rerun(path) == []
     report = answer_key.report_rows([row])
     assert report['strict_n'] == 0 and report['flagged: answer-key contact'] == 1
+    assert report['cheat_review'] == 1 and report['provisional']
 
 
 @pytest.mark.parametrize('empty', [True, False])
@@ -230,8 +232,9 @@ def test_any_unlocated_contact_requires_operator(tmp_path):
 
 
 def test_www_source_also_denies_canonical_repo_root():
+    from bench.tests.test_m61_round7 import denied
     patterns = answer_key.deny_patterns_for(['https://www.GitHub.com/Owner/Repo.git'])
-    for resource in ('https://GitHub.com/Owner/Repo', 'git clone http://github.com/owner/repo.git'):
-        assert any(fnmatch.fnmatchcase(resource, p) for p in patterns)
+    for resource in ('https://github.com/Owner/Repo', 'git clone http://github.com/owner/repo.git'):
+        assert denied(resource, patterns)
     for resource in ('https://github.com/Owner', 'https://github.com/Owner/Other'):
-        assert not any(fnmatch.fnmatchcase(resource, p) for p in patterns)
+        assert not denied(resource, patterns)

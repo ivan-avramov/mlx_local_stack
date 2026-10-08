@@ -110,46 +110,83 @@ class AuditMissing(ValueError):
     """A latest attempt has evidence without a current audit."""
 
 
+def _strip_url_tail(url):
+    return url.rstrip(")]},;:.'\"")
+
+
 def deny_patterns_for(urls, *, dropped_urls=None):
-    """Bound URL-derived wildcards to a repository or a concrete page/path."""
+    """Bound URL-derived wildcards to a repository or a concrete page/path.
+
+    opencode's '?' is a wildcard with no literal escape. Do not emit root '?*'
+    or bare repository-prefix '*' rules: both also match sibling repositories.
+    """
     patterns = []
     for url in urls:
         try:
-            parsed = urlsplit(url)
+            parsed = urlsplit(_strip_url_tail(url))
             parts = [part for part in parsed.path.split('/') if part]
-            host = (parsed.hostname or '').removeprefix('www.')
-            repo_host = host in ('github.com', 'gitlab.com', 'raw.githubusercontent.com')
+            host = (parsed.hostname or '').lower()
+            canonical = host.removeprefix('www.')
+            port = parsed.port
+            netloc = host if port is None or (parsed.scheme.lower(), port) in (
+                ('https', 443), ('http', 80)) else f'{host}:{port}'
+            repo_host = canonical in ('github.com', 'gitlab.com', 'raw.githubusercontent.com')
             if (parsed.scheme.lower() not in ('http', 'https') or not host
                     or parsed.username or parsed.password or not parts
                     or '*' in url or any(c in unquote(parsed.netloc + parsed.path) for c in '*?')
                     or (repo_host and len(parts) < 2)):
                 raise ValueError('unsafe or unbounded deny URL')
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, AttributeError):
             if dropped_urls is not None:
                 dropped_urls.append(url)
             continue
         if repo_host:
-            owner_repo = '/'.join(parts[:2]).removesuffix('.git')
-            if not owner_repo.split('/')[-1]:
+            # GitLab uses /-/ before routes; everything before it is the project,
+            # including nested groups. Plain project/clone URLs keep the full path.
+            project_parts = parts[:2]
+            if canonical == 'gitlab.com':
+                project_parts = parts[:parts.index('-')] if '-' in parts else parts
+            project = '/'.join(project_parts).removesuffix('.git')
+            if len(project_parts) < 2 or not project.split('/')[-1]:
                 if dropped_urls is not None:
                     dropped_urls.append(url)
                 continue
-            hosts = list(dict.fromkeys((parsed.netloc, re.sub(r'^www\.', '', parsed.netloc, flags=re.I))))
-            if host == 'raw.githubusercontent.com':
-                hosts.append('github.com')
-            else:
-                hosts.append('raw.githubusercontent.com')
-            bases = [f'{domain}/{owner_repo}' for domain in hosts]
-            for base in bases:
-                patterns.extend('*' + variant + '*' for variant in dict.fromkeys((base, base.lower())))
+            for variant in dict.fromkeys((project, project.lower())):
+                domain = 'gitlab.com' if canonical == 'gitlab.com' else 'github.com'
+                for base in (f'{domain}/{variant}', f'{domain}:{variant}'):
+                    patterns.extend('*' + base + suffix for suffix in ('', '/*', '.git*', '#*'))
+                if canonical != 'gitlab.com':
+                    patterns.append(f'*raw.githubusercontent.com/{variant}/*')
+                    patterns.extend(f'*api.github.com/repos/{variant}' + suffix for suffix in ('', '/*', '.git*', '#*'))
+                    patterns.extend(f'*cdn.jsdelivr.net/gh/{variant}' + suffix for suffix in ('', '/*', '.git*', '@*', '#*'))
         else:
-            base = parsed.netloc + parsed.path
-            parent = parsed.path.rsplit('/', 1)[0]
-            for variant in dict.fromkeys((base, base.lower())):
-                patterns.append('*' + variant)
-                if len([p for p in parent.split('/') if p]) >= 2:
-                    patterns.append('*' + variant.rsplit('/', 1)[0] + '/*')
+            for domain in dict.fromkeys((netloc, netloc.removeprefix('www.'))):
+                for path in dict.fromkeys((parsed.path, parsed.path.lower())):
+                    for variant in dict.fromkeys((path, path.rstrip('/'))):
+                        patterns.append('*' + domain + variant + '*')
     return list(dict.fromkeys(patterns))
+
+
+def shell_deny_patterns(patterns):
+    """Match whole shell nodes; keep exact repository roots bounded at token ends."""
+    result = []
+    for pattern in patterns:
+        repo_root = re.fullmatch(
+            r'\*(?:(?:github|gitlab)\.com[/:]|api\.github\.com/repos/|cdn\.jsdelivr\.net/gh/)([^*?#]+)',
+            pattern)
+        if repo_root:
+            # Blindly appending '*' here would deny sibling repositories.
+            result.append(pattern)
+            result.extend(pattern + boundary + '*' for boundary in (' ', '"', "'", ';', '|', '&', ')'))
+        else:
+            result.append('*' + pattern.strip('*') + '*')
+        github = re.fullmatch(r'\*github\.com/([^/]+)/([^/*?#]+)', pattern)
+        if github:
+            project = '/'.join(github.groups())
+            for command in (f'*gh repo clone {project}', f'*gh api repos/{project}'):
+                result.append(command)
+                result.extend(command + boundary + '*' for boundary in (' ', '"', "'", ';', '|', '&', ')', '/'))
+    return list(dict.fromkeys(result))
 
 
 def rerun_plan(state):
@@ -178,6 +215,7 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
     if prompt_sha256 is None:
         prompt_sha256 = hashlib.sha256(
             (Path(__file__).resolve().parents[1] / 'web_audit_prompt.md').read_bytes()).hexdigest()
+    from web_audit import LABELS
     rows = list(rows)
     version = None
     if any(any(web_entries(row)) for row in rows):
@@ -204,6 +242,8 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
                                     'auditor': 'codex:gpt-6-astra', 'auditor_version': version})
             audit = audits.get(key, {}) if version else {}
             label = audit.get('label', 'missing')
+            if label not in (*LABELS, 'audit_error'):
+                label = 'missing'
             if label in ('unclear', 'audit_error'):
                 resolution = audit.get('operator_label')
                 reason = audit.get('operator_reason')
@@ -223,7 +263,7 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
                 if evidence.get('flag'):
                     urls.extend(re.findall(r"https?://[^\s\"'<>]+", evidence.get('source') or '', re.I))
         states.append({'row': row, 'labels': labels,
-                       'urls': [] if unknown_source else list(dict.fromkeys(urls)),
+                       'urls': [] if unknown_source else list(dict.fromkeys(_strip_url_tail(url) for url in urls)),
                        'unknown_source': bool(unknown_source),
                        'rerun_eligible': str(row.get('scaffold', '')).startswith('opencode-v2-web'),
                        'cheat': forced or any(label in ('solution', 'unclear', 'audit_error')
@@ -234,8 +274,9 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
 def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
     """Score one leg: latest non-cheat per item; exhausted cheating is a strict FAIL.
 
-    Missing audits and operator-review items are provisional. Counts describe all attempts; scored_rows
-    are copies and never rewrite the append-only evidence. Never pool independent legs.
+    Missing audits and operator-review items are provisional. Non-web cheats count as
+    cheat_review. Counts describe all attempts; scored_rows are copies and never rewrite
+    the append-only evidence. Never pool independent legs.
     """
     states = audit_states(rows, audit_sidecar=audit_sidecar, prompt_sha256=prompt_sha256)
     groups, per_model = {}, {}
@@ -256,17 +297,16 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
         latest_state = attempts[-1]
         latest = latest_state['row']
         counts = per_model[latest.get('model')]
+        if latest_state['cheat'] and (not latest_state['rerun_eligible']
+                                      or rerun_plan(latest_state)['needs_operator']):
+            counts['cheat_review'] += 1
+            counts['provisional'] = True
+            continue
         missing = latest_state['labels'].count('missing')
         if missing:
             counts['provisional'] = True
             continue
         if latest_state['cheat']:
-            if not latest_state['rerun_eligible']:
-                continue
-            if rerun_plan(latest_state)['needs_operator']:
-                counts['cheat_review'] += 1
-                counts['provisional'] = True
-                continue
             if latest.get('rerun_index', 0) < 2:
                 counts['pending_reruns'] += 1
                 counts['provisional'] = True

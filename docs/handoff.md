@@ -1,11 +1,23 @@
-# Handoff — 2026-10-08: M59 COMPLETE; C139(a) 48K default landed; C140 RCA (1.18 vs 2.x) recorded; C141 web-access design owed; superpowers uninstalled; stack STOPPED
+# Handoff — 2026-10-08: M61 implementer round seven; C142 blocks complete acceptance
 
 THE one handoff. Read this, then `docs/PLAN.md` (M59 row) and `docs/open-questions.md` (C139 OPEN; C138 OPEN; C137 RESOLVED; C136
 addendum). Results: `docs/campaign-results.md` 2026-10-08; history: `docs/lab-notebook.md` 2026-10-07/08. Artefacts:
 `$STACK_WORKDIR/m59/` (M59_REPORT.md + `m59_report.py`, RUNLOG.md, `run_m59.py`, `mem_watchdog.py`, `s1/`, `s2/`, `stallprobe/`,
 `archive/`, `c137/`).
 
-## State of the world
+## M61 round-seven worktree handoff
+
+- Operator reports a LIVE benchmark on this box. This implementer did not inspect or alter it. All edits,
+  scratch files and test environments stay in the implementer worktree; only targeted tests run at nice 19.
+- Round-seven fixes: page/command denial, URL normalization, planned-deny resume guard, missing invalid labels,
+  and provisional cheat-review accounting. Repository forms preserve subgroup and sibling boundaries.
+- C142 OPEN: the required root `?*` pattern and bare repository-prefix stars cannot satisfy sibling access
+  under opencode 2.0.20 wildcard semantics. A strict expected-failure test keeps the gap explicit.
+- Exact tests, generated pattern lists, scope and outstanding decision: `docs/m61-round7-report.md`.
+- No live benchmark/regrade, serving change, model load, full suite or push performed. Cold verification
+  remains owed after C142 is resolved. Earlier M59 state below is historical, not a current runtime claim.
+
+## Earlier M59 handoff (historical)
 
 - **Stack is STOPPED**, box idle, no watchdog or runner alive. Restart = `./runserver.sh` (operator).
 - Stack `main` = this commit; `origin/main` = `c889661` (**not pushed**; operator: "we push later"). Fork `58eb241b` pushed, CI green.
@@ -43,4 +55,4 @@ addendum). Results: `docs/campaign-results.md` 2026-10-08; history: `docs/lab-no
 - opencode 2.0.20 sometimes emits the final `step_finish` (the capture never saw it); a mock capture is necessary, not sufficient.
 - Codex workers stop and ask when a ruling is needed; answer in a follow-up prompt file, keep the `.rc` launcher.
 
-Next decision id C142; discussion ids continue from P190.
+Next decision id C143; C142 records the round-seven wildcard conflict.

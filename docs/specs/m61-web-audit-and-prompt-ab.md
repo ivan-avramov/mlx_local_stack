@@ -162,3 +162,23 @@ Operator: "a clean-ish run (lookups are fine if they don't give the full answer)
 - **Tests:** extra-deny composition and env-check acceptance (and refusal of any other overlay); a mock run where the first
   attempt fetches a "solution" URL (fake auditor) → re-run with that URL denied never reaches the mock; scoring with superseded,
   unresolved and partial cases; resume after an interrupted re-run.
+
+
+## Round-seven recovery semantics (2026-10-08)
+
+- Derive page patterns from the URL without query/fragment; strip trailing `)]},;:.'"`, lowercase hosts,
+  omit default ports, retain original and lowercase paths, and include no-www/no-trailing-slash variants.
+  Match the page and its suffix variants; do not widen to its parent directory.
+- Repository patterns retain boundaries at the root, slash, `.git`, and fragment. GitHub also covers raw,
+  API, CDN and SSH forms; shell rules add `gh repo clone` and `gh api repos`. GitLab retains the full project
+  path before `/-/`, including subgroups, and has no GitHub raw alias. Shell permissions match whole command
+  nodes with suffix wildcards, except exact repository roots, which use explicit token boundaries.
+- Root-query wildcard denial is unresolved: opencode's `?` matches sibling-name characters too. The broad
+  API/CDN/SSH/gh prefix-star spellings also violate sibling access. C142 records the conflict; round-seven
+  acceptance remains incomplete until resolved.
+- Resume requires every planned source deny (including inherited patterns) in `--extra-deny-file`.
+  An unrelated file or inherited-only file refuses before launching an attempt.
+- Latest cheats on non-web scaffolds or needing operator action count as `cheat_review`, are excluded from
+  scoring, and make both the model and overall result provisional, including when audits are also missing.
+- Labels outside `LABELS` plus `audit_error` are missing audits. Reports are provisional; execution raises
+  `AuditMissing`. Wrong case, null and unknown labels never count as clean.
