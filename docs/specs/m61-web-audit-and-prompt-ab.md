@@ -44,8 +44,9 @@ v2.0.20 source (`$STACK_WORKDIR/m59_research/src/opencode-v2.0.20`), the M59 spe
   deterministically (`json.dumps(sort_keys=True, indent=2)`). opencode 2.0.20 then uses that text INSTEAD of its base prompt and
   keeps the initial instructions (env block, skills, date) (`session/model-request.ts:110-113`).
 - Recorded in the manifest runtime and every row: `scaffold`, `carrier_source`, `carrier_source_sha256`, `agent_system_file`,
-  `agent_system_sha256` (null when absent), `opencode_bench_config_sha256` (= the written file). All are in
-  `scaffold_policy_sha256` and the resume identity. With a system file the row's `scaffold` label is `<scaffold>+sys:<sha8>`.
+  `agent_system_sha256` (null when absent), `opencode_bench_config_sha256` (= the written file). All are recorded and
+  resume-checked for every scaffold; they enter `scaffold_policy_sha256` only for `opencode-v2-web` and for runs with a system
+  file, so `opencode-v2` without one keeps the exact M59 policy hash (ruling 2026-10-08 on the implementer's question). With a system file the row's `scaffold` label is `<scaffold>+sys:<sha8>`.
 - `benchmark/opencode_prompts/opencode-1.18.15-default.txt` = `packages/opencode/src/session/prompt/default.txt` at opencode tag
   `v1.18.15`, verbatim (MIT; source commit and licence line recorded in `benchmark/opencode_prompts/README.md`).
 - AGENTS.md M50 sentence is amended: the bench-owned config dir holds exactly one generated v2 carrier (optionally with the
