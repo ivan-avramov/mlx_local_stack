@@ -122,7 +122,7 @@ on the pre-check `api GET /api/config` call) contains the "loading plugin" line 
 ## P153 — progress gate, events, rows
 
 - The progress gate (`bench/progress_gate.py`; hard ceiling 3600 s, stall 2 ticks, loop 3) is TOKEN-denominated (C136,
-  2026-10-07): `--first-write-tokens` (default 16000) ÷ the model's documented draft-OFF decode rate (`benchmark/decode_rates.json`,
+  2026-10-07): `--first-write-tokens` (default 48000 since C139, 2026-10-08; the M59 chain rows ran at 16000) ÷ the model's documented draft-OFF decode rate (`benchmark/decode_rates.json`,
   source recorded) gives the stall window; `tick_s = ceil(tokens / (2 × rate))`. Same tokens for every model, not the same seconds.
   The tick snapshot reads the solution/test files and the EVENTS file tail instead of the 1.18 text log.
 - Row (v2): `bench: "opencode"`, `scaffold: "opencode-v2"`, `schema_version: 3`, `id`, `model`, `sample: 0`, `passed`, `acc`,

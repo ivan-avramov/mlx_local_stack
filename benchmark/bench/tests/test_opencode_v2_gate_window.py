@@ -67,3 +67,15 @@ def test_pick2_rate_is_the_in_situ_measurement_not_the_short_context_screen():
     assert entry["tok_s"] == 25.4
     assert "in-situ" in entry["source"] and "M59 s1" in entry["source"]
     assert P2._gate_window(PICK2, 16000, None)["tick_s"] == 315
+
+
+def test_default_allowance_is_48k_and_fits_under_the_hard_ceiling():
+    """C139 (operator, 2026-10-08): the 16K default under-scored both picks (P182: 10 of 18 stalls passed only
+    with more room, using 14-39K tokens before the first write); the default is 48K. Loop detection (1.5
+    windows) must still fire before the unchanged hard ceiling."""
+    assert P2.DEFAULT_FIRST_WRITE_TOKENS == 48000
+    import bench.progress_gate as G
+    for model in (PICK1, PICK2):
+        w = P2._gate_window(model, P2.DEFAULT_FIRST_WRITE_TOKENS, None)
+        assert w["stall_ticks"] * w["tick_s"] < G.DEFAULT_HARD_CEILING_S
+        assert 3 * w["tick_s"] < G.DEFAULT_HARD_CEILING_S

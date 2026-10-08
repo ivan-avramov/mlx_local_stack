@@ -117,7 +117,7 @@ def _fresh_tmpdir(env):
 
 
 DECODE_RATES = REPO / "benchmark" / "decode_rates.json"
-DEFAULT_FIRST_WRITE_TOKENS = 16000
+DEFAULT_FIRST_WRITE_TOKENS = 48000  # C139 (operator, 2026-10-08); M59 chain rows ran at 16000
 
 
 def _gate_window(model, first_write_tokens, tick_s_override, stall_ticks=progress_gate.DEFAULT_STALL_TICKS):

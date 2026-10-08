@@ -605,9 +605,9 @@ def test_real_wire_seed_sampling_title_headers_and_export(
         assert manifest["runtime"]["max_tokens_semantics"] == rows[0]["max_tokens_semantics"]
         assert manifest["runtime"]["max_tokens_evidence"] == rows[0]["max_tokens_evidence"]
         # C136 wiring on the main path: the tick comes from the model's documented rate, not the default 300
-        assert manifest["runtime"]["tick_s"] == math.ceil(16000 / (2 * 24.2)) == 331
-        assert manifest["runtime"]["first_write_tokens"] == 16000
-        assert manifest["runtime"]["first_write_window_s"] == 662
+        assert manifest["runtime"]["tick_s"] == math.ceil(48000 / (2 * 24.2)) == 992
+        assert manifest["runtime"]["first_write_tokens"] == 48000
+        assert manifest["runtime"]["first_write_window_s"] == 1984
         # fixed per-item scratch path and per-item TMPDIR on the main path (attempts 5-6)
         assert (tmp_path / "opencode-probe-v2" / "tmp" / "one").is_dir()
         assert mock.tripwire_hits == 0
