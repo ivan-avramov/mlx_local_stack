@@ -12,7 +12,7 @@ addendum). Results: `docs/campaign-results.md` 2026-10-08; history: `docs/lab-no
 - **M59 done:** Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed Python 21/22, 20/22, Go 20/22 ×2; Qwen3.8-27B-mlx-uniform-4bit Python
   20/22 ×2, Go 18/22 ×2 (rows `benchmark/results/*/opencode_v2_*.m59.*`). Every head-to-head and scaffold-delta interval includes 0;
   README evidence updated, no order change. P182: 14/18 stalls converted at 48K tokens; the 16K window under-scored the second pick
-  more (7 vs 3 window-attributable conversions) → C139.
+  more (5 vs 2 window-attributable conversions, by first-write time; corrected from 7 vs 3) → C139.
 - Operator-only: delete `ts.md` and the fork `f1-sync` worktree + `sync/upstream-v0.6.15` branch (sandbox denied); push go.
 
 ## Queue, in order

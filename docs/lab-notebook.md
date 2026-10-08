@@ -4708,3 +4708,18 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   hardened (catch-all per process), self-test re-passed, re-armed. Zero kills on real items.
 - **Arithmetic slip, corrected before commit:** I first reported 8 window-attributable conversions for `Qwen3.8-27B-mlx-uniform-4bit` (84/88); the count is 7
   (83/88). The data commit message was amended before any push.
+
+## 2026-10-08 (later) — C140: is opencode 2.x worse than 1.18? No on accuracy; yes on tokens; the 1.18 baseline had an answer-key fetch; P182 classification corrected (Claude Opus 5.5 (allow-shorthand); Codex gpt-6-astra cold review)
+
+- **Accuracy:** per-model scaffold deltas have opposite signs and every interval includes 0 (n = 22, axis MDE ≈ 27 pp); not distinguishable.
+- **Tokens:** v2 spends a median 1.3–1.7× output tokens per commonly solved item (summed 1.05–1.36×), visible text 2.4–2.8×;
+  first-write tokens ≈ 1× / 1.2× for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, 1.9× / 1.5× for `Qwen3.8-27B-mlx-uniform-4bit` (Python / Go). Wall per arm ≈ unchanged.
+- **Leading mechanism, not yet causal:** mock wire capture + source — 1.18 sends unknown ids `default.txt` (brevity, "fewer than 4 lines", verify with tests),
+  2.0.20 a ≈ 900-token prompt without them; tools 5.1K → 2.2K tokens. Ruled out: reasoning replay (both resend it), token caps, reasoning
+  effort (medium in both; token-exact re-render of the M59 first request), superpowers (1.18 ran `--pure`). Serving also changed between eras.
+- **1.18 baseline contamination:** the Sept probe ran in the operator's environment (personal instruction files in the prompt) with webfetch
+  enabled; `Qwen3.8-27B-mlx-uniform-4bit` go/matrix fetched exercism's `.meta/example.go` and passed. No other answer-key access in any 1.18/v2 session.
+- **Correction (Codex):** P182 "allowance" conversions were classified by completion time; by first-write time they are 2 and 5, not 3 and 7
+  (descriptive totals 83/88 and 81/88, not 84 and 83). The report also labelled the 1.18 misses converged; all nine were stalls.
+  Ten s2 transcript files were overwritten by the 48K re-runs (same session tag) — keep re-run outputs under their own tag next time.
+- Operator: superpowers uninstalled from the daily client; webfetch to be allowed in the bench with an audit (C141).

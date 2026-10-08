@@ -70,8 +70,8 @@ def test_pick2_rate_is_the_in_situ_measurement_not_the_short_context_screen():
 
 
 def test_default_allowance_is_48k_and_fits_under_the_hard_ceiling():
-    """C139 (operator, 2026-10-08): the 16K default under-scored both picks (P182: 10 of 18 stalls passed only
-    with more room, using 14-39K tokens before the first write); the default is 48K. Loop detection (1.5
+    """C139 (operator, 2026-10-08): the 16K default under-scored both picks (P182: 7 of 18 stalls made their first
+    write only past the chain window); the default is 48K. Loop detection (1.5
     windows) must still fire before the unchanged hard ceiling."""
     assert P2.DEFAULT_FIRST_WRITE_TOKENS == 48000
     import bench.progress_gate as G

@@ -19,9 +19,11 @@ in-situ rate correction). Rows `benchmark/results/*/opencode_v2_*.m59.*`; report
 +4.5 / 0.0 pp, Go +9.1 / +9.1 pp per session; all inconclusive (TOST ±5 pp).
 
 **The stall window cost quality (P182).** Re-running all 18 stalls at 48K tokens with the same item seeds converted 14: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 6/6, `Qwen3.8-27B-mlx-uniform-4bit`
-8/12 (4 real misses: Go alphametics, Go book-store, Go connect, Python book-store). Ten conversions needed more room than the chain
-window (14K–39K output tokens; `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 3, `Qwen3.8-27B-mlx-uniform-4bit` 7); four finished inside it (run variance). Chain plus window-attributable conversions,
-descriptive: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 84/88, `Qwen3.8-27B-mlx-uniform-4bit` 83/88 versus the chain record 81/88 vs 76/88 — the gate biased the comparison against the second pick.
+8/12 (4 real misses: Go alphametics, Go book-store, Go connect, Python book-store). Seven conversions made their FIRST WRITE after the chain
+window (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 2, `Qwen3.8-27B-mlx-uniform-4bit` 5); seven wrote inside it (run variance). CORRECTED 2026-10-08 (Codex cold
+review): the first version classified by completion time and reported 3 and 7 (84/88, 83/88). Chain plus window-attributable conversions,
+descriptive: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 83/88, `Qwen3.8-27B-mlx-uniform-4bit` 81/88 versus the chain record 81/88 vs 76/88 — the gate cost the second pick
+more. All nine 1.18-medium misses (`Qwen3.8-27B-mlx-uniform-4bit`) were also stalls under the 600 s wall gate, so gate sensitivity predates v2.
 → C139 (allowance 48K; re-record).
 
 **Mechanisms.** No 2.x slowdown: in-situ decode `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 23.9–24.7, `Qwen3.8-27B-mlx-uniform-4bit` 25.4–26.7 tok/s; v2 writes ≈ 1.5× the tokens of 1.18 medium.
