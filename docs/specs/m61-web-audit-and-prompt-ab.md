@@ -173,9 +173,8 @@ Operator: "a clean-ish run (lookups are fine if they don't give the full answer)
   API, CDN and SSH forms; shell rules add `gh repo clone` and `gh api repos`. GitLab retains the full project
   path before `/-/`, including subgroups, and has no GitHub raw alias. Shell permissions match whole command
   nodes with suffix wildcards, except exact repository roots, which use explicit token boundaries.
-- Root-query wildcard denial is unresolved: opencode's `?` matches sibling-name characters too. The broad
-  API/CDN/SSH/gh prefix-star spellings also violate sibling access. C142 records the conflict; round-seven
-  acceptance remains incomplete until resolved.
+- Root-query denial is an ACCEPTED GAP (C142 ruled): opencode's `?` matches any character, so `O/R?*` would deny
+  sibling repositories; repository roots with a query string are left to the LLM audit.
 - Resume requires every planned source deny (including inherited patterns) in `--extra-deny-file`.
   An unrelated file or inherited-only file refuses before launching an attempt.
 - Latest cheats on non-web scaffolds or needing operator action count as `cheat_review`, are excluded from
