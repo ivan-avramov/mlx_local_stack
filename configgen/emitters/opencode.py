@@ -108,8 +108,7 @@ def _emit(source: Source) -> str:
         "$schema": "https://opencode.ai/config.json",
         "update": "disable", "share": "disabled", "compaction": {"auto": True},
         "plugins": ["-opencode.provider.vllm", "-opencode.provider.ollama",
-                    "-opencode.provider.lmstudio", "-opencode.config.compatibility",
-                    "superpowers@git+https://github.com/obra/superpowers.git"],
+                    "-opencode.provider.lmstudio", "-opencode.config.compatibility"],
         "providers": {"mlx-local": {
             "name": "mlx-serve (local)", "package": "@opencode/ai/providers/openai-compatible",
             "settings": {"baseURL": "http://localhost:8000/v1", "apiKey": "not-needed"},

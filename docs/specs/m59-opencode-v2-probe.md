@@ -151,8 +151,8 @@ file, no `_v2` sibling: the box runs v2 and a legacy-shaped file on v2 silently 
 - `plugins: ["-opencode.provider.vllm", "-opencode.provider.ollama", "-opencode.provider.lmstudio", "-opencode.config.compatibility",
   "superpowers@git+https://github.com/obra/superpowers.git"]`: the vllm poller off (it polls :8000 `/health` + `/v1/models` every
   30 s — VERIFIED 9 tripwire hits in r09); the compatibility plugin off preserves the daily-driver policy `OPENCODE_DISABLE_CLAUDE_CODE_
-  SKILLS=true` (AGENTS.md) by its v2 mechanism; the superpowers entry is carried over — whether v2 loads a git plugin from this list
-  is checked by the P155 config-load test, and if v2 rejects it the entry is dropped and the README says so.
+  SKILLS=true` (AGENTS.md) by its v2 mechanism; the superpowers entry was carried over (it loads on 2.0.20) and REMOVED 2026-10-08
+  (operator uninstalled it; the daily client and the bench carrier now load the same plugin set).
 - `compaction.auto`: **ON for the daily driver** (v2 default; a human session wants overflow handled), **OFF for the bench carrier**
   (an overflow is an outcome). Recorded in both READMEs as a deliberate split.
 - `model: "mlx-local/<agent_defaults.opencode>"` as today; `update: "disable"`, `share: "disabled"`. No permission denies in the

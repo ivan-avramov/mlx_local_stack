@@ -132,8 +132,7 @@ def test_native_v2_policy_and_all_registry_sampling():
     assert doc["plugins"] == [
         "-opencode.provider.vllm", "-opencode.provider.ollama",
         "-opencode.provider.lmstudio", "-opencode.config.compatibility",
-        "superpowers@git+https://github.com/obra/superpowers.git",
-    ]
+    ]  # superpowers uninstalled (operator, 2026-10-08): no external plugin in the daily client
     assert not {"provider", "plugin", "small_model", "permission", "permissions"} & doc.keys()
     for m in source.models:
         if m.role not in ("main", "task"):
