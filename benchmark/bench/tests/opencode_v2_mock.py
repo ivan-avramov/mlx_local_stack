@@ -106,7 +106,10 @@ class MockServer:
                 if finished:
                     chunks = [chunk({"role": "assistant", "content": "Done."}), chunk({}, "stop")]
                 else:
-                    args = json.dumps({"path": "solution.py", "content": "answer = 42\n"})
+                    tool = kind if isinstance(kind, dict) else {
+                        "name": "write", "input": {"path": "solution.py", "content": "answer = 42\n"}
+                    }
+                    args = json.dumps(tool["input"])
                     chunks = [
                         chunk(
                             {
@@ -117,7 +120,7 @@ class MockServer:
                                         "index": 0,
                                         "id": "call_write",
                                         "type": "function",
-                                        "function": {"name": "write", "arguments": ""},
+                                        "function": {"name": tool["name"], "arguments": ""},
                                     }
                                 ],
                             }

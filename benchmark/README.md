@@ -186,7 +186,7 @@ TERM=dumb
 NO_COLOR=1
 ```
 
-Copy the generated `benchmark/opencode_bench_v2.json` verbatim to `<R>/cfg/opencode/opencode.json` and `benchmark/opencode_plugins/noretry.js` to its `plugins/` subdirectory; record both hashes. Seed the per-run cache with the box's `rg`. `N = rowschema.sample_seed(item, 0, base=seed_base)` is constant across the item's requests. Resolve `/opt/homebrew/bin/opencode` (or absolute `OPENCODE_PROBE_BIN`) and record its executable SHA and version; even `--version` must run in this environment.
+Copy the selected generated v2 carrier to `<R>/cfg/opencode/opencode.json` (M61 defaults to `benchmark/opencode_bench_v2_web.json`; `--scaffold opencode-v2` selects the unchanged M59 carrier) and `benchmark/opencode_plugins/noretry.js` to its `plugins/` subdirectory; record both hashes. Seed the per-run cache with the box's `rg`. `N = rowschema.sample_seed(item, 0, base=seed_base)` is constant across the item's requests. Resolve `/opt/homebrew/bin/opencode` (or absolute `OPENCODE_PROBE_BIN`) and record its executable SHA and version; even `--version` must run in this environment.
 
 ```text
 opencode run --standalone --model mlx-local/<model> --format json --title probe "<prompt>"
@@ -199,7 +199,7 @@ Both commands use cwd and PWD `<S>` and stdin DEVNULL. Save stdout events and st
 
 | Check | Required proof |
 |---|---|
-| Environment and files | `OPENCODE_CONFIG` absent; config-dir realpath equals `<R>/cfg/opencode`; exactly the generated `opencode.json` and `plugins/noretry.js`, matching repository SHAs. CONTENT equals exactly the expected one-provider, one-model `body.seed` integer overlay, with no extra keys. Project config disabled with `"1"`; HOME and every XDG path under `<R>`. |
+| Environment and files | `OPENCODE_CONFIG` absent; config-dir realpath equals `<R>/cfg/opencode`; exactly the selected `opencode.json` (optionally with the recorded system overlay) and `plugins/noretry.js`, matching their expected SHAs. CONTENT equals exactly the expected one-provider, one-model `body.seed` integer overlay, with no extra keys. Project config disabled with `"1"`; HOME and every XDG path under `<R>`. |
 | Destination from v2 | `api GET /api/config --standalone` with item env/cwd/PWD returns exactly the file document, config-directory entry, and null-path CONTENT document. The null-path CONTENT document must EQUAL the per-item overlay, and the file document's `path` must equal `<R>/cfg/opencode/opencode.json`. No project document. At least one document declares `providers.mlx-local.settings.baseURL`; all such declarations equal the carrier URL, and no document declares another mlx-local settings key. File plugins equal the carrier list. Raw documents, not a merged view, are the proof. |
 | Router ownership | Pass the verified URL through `assert_served_config`: sole local owner is mlx-serve, using the driver's registry and entry PID; no proxy or remote destination. |
 | Exit | `assert_served_config_unchanged` rechecks PID/hash; drift stamps `served_config_drift`, exits nonzero, and refuses later reuse. |
@@ -225,6 +225,34 @@ ABORT means no item row, no next item, nonzero exit, and PII-scrubbed logs/stder
 **Rows and progress (P153).** Each row carries `bench: "opencode"`, `scaffold: "opencode-v2"`, `schema_version: 3`, `id`, `model`, `sample: 0`, `passed`, `acc`, `file_changed`, `test_modified`, `opencode_rc`, `opencode_version`, `polyglot_sha`, `wall_s`, `stop_reason`, `timed_out`, existing `gate_*`, `nonconv_kind` (null/context_overflow/stalled/looping/hard_ceiling), `session_id`, `requests_observed` (step_start count), `events_path`, `transcript_path`, `loop_metrics`, `traffic`, `sampler_seed`, `seed_base`, `overlay_sha256`, `max_tokens_semantics`, `grade_tail`, and scrubbed `log_tail`. Traffic tokens come from the export, including the final turn. The progress gate retains tick 300 s, ceiling 3600 s, stall 2, loop 3, reading solution/test files and the events tail.
 
 Manifest runtime records client/scaffold, scaffold identity, config-dir, retry-plugin SHA, A4 result/run ID, `compaction: "off"`, disabled title generation, the hermetic switch set, and observed instruction sources (expected empty). The policy hash covers carrier/plugin SHAs, overlay schema, env switches, git initialization, standalone mode, binary version/SHA, and per-run cache policy; client-config SHA is observational. The cache inventory SHA is recorded after item one.
+
+**M61 scaffold and web audit.** The default is `--scaffold opencode-v2-web`: webfetch is allowed, with ordered URL/shell denies for
+`*xercism*` and `*problem-specifications*`; websearch stays denied. These rules deter direct answer-key access, while the output
+contact detector independently checks returned text. `--scaffold opencode-v2` retains the exact M59 carrier bytes and policy-hash
+recipe. Never pool these scaffolds or different system-prompt variants.
+
+`--agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt` replaces the base prompt while retaining environment,
+skills and date instructions. Only repo-relative files resolving under `benchmark/opencode_prompts/` are accepted. The overlay
+preserves other agent fields and is serialized with `json.dumps(sort_keys=True, indent=2)`; without an overlay the carrier is
+copied verbatim. Manifest runtime and every row record `scaffold`, `carrier_source`, `carrier_source_sha256`, `agent_system_file`,
+`agent_system_sha256`, and `opencode_bench_config_sha256` (written bytes). Resume checks these for both scaffolds. They enter the
+policy hash for the web scaffold and every system override; the unmodified M59 policy recipe remains unchanged. Overrides label
+the scaffold `<scaffold>+sys:<sha8>`. A4 still requires the actual written carrier hash.
+
+Rows retain `web_fetches` (`url`, `status`, `bytes`), `net_shell` commands and `web_denied`. Bytes measure UTF-8 text in the export,
+not HTTP response size before opencode conversion/truncation. The real 2.0.20 mock capture shows completed content in
+`state.content[].text`; permission denials are `state.status="error"`, `state.error.type="permission.rejected"` for both fetch and
+shell. Ordinary tool errors are not counted as denials.
+
+`bench.answer_key.contact(item_dir, texts)` compares fetched/network-shell output against recursive `.meta/example*`, `exemplar*`,
+`proof*` references. Entries are `{source, text}`. It strips lines and drops blanks, comment-only lines and lines shorter than 12
+characters; at least five consecutive matching lines or 40% reference-line coverage flags contact. Evidence records reference,
+source URL/command, matched count, reference count and longest run. It detects text visible in the export; it cannot certify that
+unobserved or transformed answers were never accessed.
+
+Flagged rows remain graded and retained. New reports must use `bench.answer_key.report_rows(rows)` per session/scaffold: it excludes
+flagged rows from `acc_strict` and `strict_items`, keeps failed/DNF rows, and separately returns `flagged: answer-key contact`.
+The probe prints that label for each flagged item. Historical report scripts and existing result rows are unchanged.
 
 **Compaction split.** Daily-driver `opencode_config/opencode.json` deliberately enables compaction to handle a human session's overflow. The v2 benchmark carrier disables it so overflow is measured as non-convergence, never hidden by summarization and never a DNF. `acc_strict@budget` remains the ranking key. Rows and manifest runtime record `max_tokens_semantics: "fixed-by-carrier"` and `max_tokens_evidence: "mock-capture:test_real_wire_seed_sampling_title_headers_and_export"`. That capture test verifies both facts at `limit.output=512`: `max_tokens=102400` is sent when the body cap is present, and `max_tokens=512` is sent without it.
 

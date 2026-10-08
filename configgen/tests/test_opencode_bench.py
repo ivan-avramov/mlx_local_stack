@@ -96,3 +96,24 @@ def test_v1_bench_carrier_remains_byte_identical():
     assert emit_opencode_bench(load_source(str(root / "main_models.yaml"))).encode() == (
         root / "benchmark/opencode_bench.json"
     ).read_bytes()
+
+
+def test_web_carrier_changes_only_ordered_permissions():
+    from configgen.emitters.opencode import emit_opencode_bench_v2, emit_opencode_bench_v2_web
+    source = _source_with_candidate()
+    old = json.loads(emit_opencode_bench_v2(source))
+    new = json.loads(emit_opencode_bench_v2_web(source))
+    assert new.pop('permissions') == [
+        {'action': action, 'resource': resource, 'effect': effect}
+        for action, resource, effect in [
+            ('external_directory', '*', 'deny'), ('question', '*', 'deny'),
+            ('websearch', '*', 'deny'), ('execute', '*', 'deny'),
+            ('webfetch', '*', 'allow'), ('webfetch', '*xercism*', 'deny'),
+            ('webfetch', '*problem-specifications*', 'deny'),
+            ('shell', '*xercism*', 'deny'), ('shell', '*problem-specifications*', 'deny'),
+        ]
+    ]
+    old.pop('permissions')
+    assert old == new
+    assert ('opencode-bench-v2-web', emit_opencode_bench_v2_web,
+            'benchmark/opencode_bench_v2_web.json') in targets.BENCH_TARGETS

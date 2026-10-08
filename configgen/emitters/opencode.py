@@ -88,6 +88,24 @@ def emit_opencode_bench_v2(source: Source) -> str:
                           'settings': {'baseURL': 'http://localhost:8000/v1', 'apiKey': 'not-needed'}, 'models': models},
         },
     }, indent=2) + '\n'
+
+
+def emit_opencode_bench_v2_web(source: Source) -> str:
+    """M61 audited-web carrier; preserve every other M59 setting."""
+    doc = json.loads(emit_opencode_bench_v2(source))
+    doc["permissions"] = [
+        {"action": action, "resource": resource, "effect": effect}
+        for action, resource, effect in [
+            ("external_directory", "*", "deny"), ("question", "*", "deny"),
+            ("websearch", "*", "deny"), ("execute", "*", "deny"),
+            ("webfetch", "*", "allow"), ("webfetch", "*xercism*", "deny"),
+            ("webfetch", "*problem-specifications*", "deny"),
+            ("shell", "*xercism*", "deny"), ("shell", "*problem-specifications*", "deny"),
+        ]
+    ]
+    return json.dumps(doc, indent=2) + "\n"
+
+
 def _emit(source: Source) -> str:
     """Native v2 daily-driver carrier; the pinned 1.18 benchmark stays on _emit_v1."""
     def model(m, *, tools: bool) -> dict:

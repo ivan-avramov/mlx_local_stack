@@ -171,6 +171,8 @@ def fixture_probe(probe, monkeypatch, tmp_path, kind="ok"):
                 items,
                 "--seed-base",
                 "77",
+                "--scaffold",
+                "opencode-v2",
                 "--poll-s",
                 "0.01",
                 "--out",

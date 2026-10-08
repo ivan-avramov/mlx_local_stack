@@ -22,11 +22,12 @@ import uuid
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import opencode_common, progress_gate, provenance
+from bench import answer_key, opencode_common, progress_gate, provenance
 
 opencode_common.reexport(globals())
 PINNED_OPENCODE_VERSION_V2 = "2.0.20"
 BENCH_OPENCODE_CONFIG = REPO / "benchmark/opencode_bench_v2.json"
+BENCH_OPENCODE_WEB_CONFIG = REPO / "benchmark/opencode_bench_v2_web.json"
 NORETRY_PLUGIN = REPO / "benchmark/opencode_plugins/noretry.js"
 OVERLAY_SCHEMA_V2 = "OPENCODE_CONFIG_CONTENT:providers.mlx-local.models.<model>.body.seed"
 MAX_TOKENS_EVIDENCE = "mock-capture:test_real_wire_seed_sampling_title_headers_and_export"
@@ -43,6 +44,10 @@ RESUME_IDENTITY_KEYS_V2 = (
     "first_write_tokens",
     "decode_tok_s",
     "scaffold",
+    "carrier_source",
+    "carrier_source_sha256",
+    "agent_system_file",
+    "agent_system_sha256",
     "seed_base",
     "overlay_schema",
     "opencode_bench_config_sha256",
@@ -179,19 +184,59 @@ def _prompt_date():
     return time.strftime("%a %b %d %Y")
 
 
-def _make_run_dir(workdir, run_id):
+def _carrier_selection(scaffold, system_file):
+    """Resolve and snapshot approved inputs before creating a run or spawning a client."""
+    source = BENCH_OPENCODE_CONFIG if scaffold == "opencode-v2" else BENCH_OPENCODE_WEB_CONFIG
+    system_path, system_bytes = None, None
+    if system_file is not None:
+        relative = Path(system_file)
+        system_path = (REPO / relative).resolve()
+        allowed = (REPO / "benchmark/opencode_prompts").resolve()
+        if (relative.is_absolute() or not system_path.is_relative_to(allowed)
+                or not system_path.is_file()):
+            sys.exit("REFUSED: --agent-system-file must be a repo-relative file "
+                     "under benchmark/opencode_prompts/")
+        try:
+            system_bytes = system_path.read_bytes()
+            system_text = system_bytes.decode("utf-8")
+        except (OSError, UnicodeError):
+            sys.exit("REFUSED: --agent-system-file must be readable UTF-8")
+    raw = source.read_bytes()
+    source_sha = hashlib.sha256(raw).hexdigest()
+    system_sha = hashlib.sha256(system_bytes).hexdigest() if system_bytes is not None else None
+    if system_file is not None:
+        doc = json.loads(raw)
+        doc.setdefault("agents", {}).setdefault("build", {})["system"] = system_text
+        raw = json.dumps(doc, sort_keys=True, indent=2).encode()
+    fields = {
+        "scaffold": scaffold + ("+sys:" + system_sha[:8] if system_sha else ""),
+        "carrier_source": (source.relative_to(REPO).as_posix()
+                           if source.is_relative_to(REPO) else _portable(source)),
+        "carrier_source_sha256": source_sha,
+        "agent_system_file": system_path.relative_to(REPO).as_posix() if system_path else None,
+        "agent_system_sha256": system_sha,
+        "opencode_bench_config_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    return {"source": source, "system_path": system_path, "bytes": raw, "fields": fields}
+
+
+def _make_run_dir(workdir, run_id, selection=None):
+    selection = selection or _carrier_selection("opencode-v2", None)
     root = (workdir / "opencode-probe-v2" / ("run-" + run_id)).resolve()
     root.mkdir(parents=True, exist_ok=False)
     for name in ("home", "cfg/opencode/plugins", "data", "state", "cache"):
         (root / name).mkdir(parents=True, exist_ok=True)
     (root.parent / "tmp").mkdir(parents=True, exist_ok=True)   # shared across runs: it reaches the prompt
     for source, target in [
-        (BENCH_OPENCODE_CONFIG, root / "cfg/opencode/opencode.json"),
         (NORETRY_PLUGIN, root / "cfg/opencode/plugins/noretry.js"),
     ]:
         target.write_bytes(source.read_bytes())
         if _sha_of(target) != _sha_of(source):
             raise provenance.ServedConfigError("M50 tripwire: non-verbatim config/plugin copy")
+    config = root / "cfg/opencode/opencode.json"
+    config.write_bytes(selection["bytes"])
+    if _sha_of(config) != selection["fields"]["opencode_bench_config_sha256"]:
+        raise provenance.ServedConfigError("M50 tripwire: written carrier sha256 differs")
     rg = shutil.which("rg", path="/opt/homebrew/bin:/usr/bin:/bin")
     if rg:
         dest = root / "cache/opencode/bin/rg"
@@ -422,9 +467,55 @@ def _check_export(export, nonconv):
         raise TransportAbort("export records an assistant error")
 
 
+NET_SHELL = re.compile(
+    r"\b(curl|wget|git\s+clone|go\s+get|pip\s+(download|install)|npm\s+(view|install)|https?://)"
+)
+
+
+def _web_audit(export, item_dir):
+    """Audit native v2 tool parts; permission.rejected is pinned by real mock captures."""
+    fetches, commands, texts = [], [], []
+    denied = 0
+    for message in export["messages"]:
+        for part in message.get("content", []):
+            if not isinstance(part, dict) or part.get("type") != "tool":
+                continue
+            name, state = part.get("name"), part.get("state", {})
+            if name not in ("webfetch", "shell"):
+                continue
+            inputs = state.get("input", {})
+            error = state.get("error", {})
+            rejected = (state.get("status") == "error" and isinstance(error, dict)
+                        and error.get("type") == "permission.rejected")
+            denied += int(rejected)
+            content = state.get("content", [])
+            chunks = ([content] if isinstance(content, str) else [
+                c["text"] for c in content
+                if isinstance(c, dict) and c.get("type") == "text" and isinstance(c.get("text"), str)
+            ])
+            text = "\n".join(chunks)
+            if name == "webfetch":
+                source = inputs.get("url", "")
+                status = "completed" if state.get("status") == "completed" else "error"
+                fetches.append({"url": source, "status": "denied" if rejected else status,
+                                "bytes": sum(len(chunk.encode("utf-8")) for chunk in chunks)})
+            else:
+                source = inputs.get("command", "")
+                if not NET_SHELL.search(source):
+                    continue
+                commands.append(source)
+            if text:
+                texts.append({"source": source, "text": text})
+    contact = answer_key.contact(item_dir, texts)
+    return {"web_fetches": fetches, "net_shell": commands, "web_denied": denied,
+            "answer_key_contact": contact["flag"], "answer_key_evidence": contact["evidence"]}
+
+
 def _identity(a, version, binary, run_dir, poly_sha):
+    selection = a.carrier_selection
+    fields = selection["fields"]
     policy = {
-        "opencode_bench_config_sha256": _sha_of(BENCH_OPENCODE_CONFIG),
+        "opencode_bench_config_sha256": fields["opencode_bench_config_sha256"],
         "noretry_plugin_sha256": _sha_of(NORETRY_PLUGIN),
         "overlay_schema": OVERLAY_SCHEMA_V2,
         "env_switches": dict(SCAFFOLD_ENV_POLICY_V2),
@@ -434,18 +525,22 @@ def _identity(a, version, binary, run_dir, poly_sha):
         "opencode_exe_sha256": _sha_of(binary),
         "cache": "per-run",
     }
+    # Preserve the exact M59 recipe for the unmodified legacy scaffold.
+    if fields["scaffold"] != "opencode-v2":
+        policy.update(fields)
     digest = hashlib.sha256()
     for p in (
         Path(__file__),
         Path(opencode_common.__file__),
         Path(progress_gate.__file__),
         Path(provenance.__file__),
+        Path(answer_key.__file__),
     ):
         digest.update(p.name.encode())
         digest.update(p.read_bytes())
     return {
         **policy,
-        "scaffold": "opencode-v2",
+        **fields,
         "prompt_date_at_start": _prompt_date(),
         "seed_base": a.seed_base,
         "scaffold_policy_sha256": hashlib.sha256(
@@ -594,6 +689,8 @@ def _main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--items", required=True)
     ap.add_argument("--seed-base", type=int, required=True)
+    ap.add_argument("--scaffold", choices=["opencode-v2-web", "opencode-v2"], default="opencode-v2-web")
+    ap.add_argument("--agent-system-file")
     ap.add_argument(
         "--lang", choices=["python", "go", "rust", "java", "javascript"], default="python"
     )
@@ -619,6 +716,7 @@ def _main():
         ap.add_argument("--" + key, type=int, default=default)
     ap.add_argument("--poll-s", type=float, default=5.0)
     a = ap.parse_args()
+    a.carrier_selection = _carrier_selection(a.scaffold, a.agent_system_file)
     if (a.tick_s is not None and a.tick_s <= 0) or a.first_write_tokens <= 0 or any(
         getattr(a, k) <= 0
         for k in ("hard_ceiling_s", "stall_ticks", "loop_repeats", "poll_s")
@@ -635,7 +733,8 @@ def _main():
     if not workdir.is_dir():
         sys.exit("REFUSED: STACK_WORKDIR must exist")
     binary = _require_opencode_bin()
-    carrier = json.loads(BENCH_OPENCODE_CONFIG.read_text())
+    selection = a.carrier_selection
+    carrier = json.loads(selection["bytes"])
     model = carrier["providers"]["mlx-local"]["models"].get(a.model)
     if model is None:
         sys.exit("REFUSED: model absent from v2 bench carrier")
@@ -643,18 +742,23 @@ def _main():
     # Check the configured local owner before creating run directories or starting a client.
     router = provenance.assert_served_config(base, env={})
     receipt = _a4_receipt(
-        a.a4_v2_receipt, router, a.limit, a.model, _sha_of(binary), _sha_of(BENCH_OPENCODE_CONFIG)
+        a.a4_v2_receipt, router, a.limit, a.model, _sha_of(binary),
+        selection["fields"]["opencode_bench_config_sha256"],
     )
     run_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:12]
-    run_dir = _make_run_dir(workdir, run_id)
-    carrier_sha, plugin_sha = _sha_of(BENCH_OPENCODE_CONFIG), _sha_of(NORETRY_PLUGIN)
+    run_dir = _make_run_dir(workdir, run_id, selection)
+    carrier_sha = selection["fields"]["opencode_bench_config_sha256"]
+    plugin_sha = _sha_of(NORETRY_PLUGIN)
 
     def env_check(env, overlay):
         """Env check."""
         provenance.opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, overlay)
-        if _sha_of(BENCH_OPENCODE_CONFIG) != carrier_sha or _sha_of(NORETRY_PLUGIN) != plugin_sha:
+        if (_sha_of(selection["source"]) != selection["fields"]["carrier_source_sha256"]
+                or _sha_of(NORETRY_PLUGIN) != plugin_sha
+                or (selection["system_path"] and _sha_of(selection["system_path"])
+                    != selection["fields"]["agent_system_sha256"])):
             raise provenance.ServedConfigError(
-                "M50 tripwire: repository carrier/plugin changed during run"
+                "M50 tripwire: repository carrier/plugin/system prompt changed during run"
             )
 
     with _scratch_dir("discovery") as scratch:
@@ -883,7 +987,8 @@ def _main():
                         )
                     row = {
                         "bench": "opencode",
-                        "scaffold": "opencode-v2",
+                        **selection["fields"],
+                        **json.loads(_scrub_pii(json.dumps(_web_audit(export, src)))),
                         "schema_version": 3,
                         "id": item,
                         "model": a.model,
@@ -925,6 +1030,8 @@ def _main():
                 with out.open("a") as stream:
                     stream.write(json.dumps(row) + "\n")
                 done.add((item, 0))
+                if row["answer_key_contact"]:
+                    print(f"{item}: flagged: answer-key contact (excluded from acc_strict)", flush=True)
                 identity["cache_bin_inventory_sha256"] = _cache_bin_inventory_sha256(
                     run_dir / "cache"
                 )

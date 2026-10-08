@@ -1,4 +1,4 @@
-from .emitters.opencode import emit_opencode, emit_opencode_bench, emit_opencode_bench_v2
+from .emitters.opencode import emit_opencode, emit_opencode_bench, emit_opencode_bench_v2, emit_opencode_bench_v2_web
 from .emitters.aider import emit_aider, emit_aider_bench
 from .emitters.vscode import emit_vscode
 from .emitters.zed import emit_zed
@@ -32,5 +32,6 @@ DEPLOYMENT_TARGETS = [
 BENCH_TARGETS: list[tuple[str, callable, str | dict]] = [
     ("aider-bench", emit_aider_bench, "benchmark/aider_bench.model.settings.yml"),
     ("opencode-bench", emit_opencode_bench, "benchmark/opencode_bench.json"),
+    ("opencode-bench-v2-web", emit_opencode_bench_v2_web, "benchmark/opencode_bench_v2_web.json"),
     ("opencode-bench-v2", emit_opencode_bench_v2, "benchmark/opencode_bench_v2.json"),
 ]
