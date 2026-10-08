@@ -17,6 +17,7 @@ from bench.opencode_common import _scrub_pii
 
 PROMPT = Path(__file__).with_name('web_audit_prompt.md')
 AUDITOR = 'codex:gpt-6-astra'
+AuditMissing = answer_key.AuditMissing
 LABELS = ('docs', 'generic', 'partial', 'solution', 'tests', 'unclear')
 
 
@@ -218,7 +219,7 @@ def cheats_to_rerun(rows_path):
     Each job contains item (language/name), session_id (pass as --rerun-of), seed
     (the original sampler_seed), rerun_index (1 or 2), offending urls and extra_deny
     (JSON string array to write verbatim as --extra-deny-file). Prior deny patterns
-    accumulate. Empty URLs/denies are possible for incomplete exports. The caller
+    accumulate. needs_operator jobs MUST NOT launch; resolve them before retrying. The caller
     audits synchronously, keeps the loaded instance and seed base, and appends to
     the same leg. Missing session/seed provenance refuses instead of inventing it.
     """
@@ -226,17 +227,18 @@ def cheats_to_rerun(rows_path):
     rows = [json.loads(line) for line in rows_path.read_text().splitlines() if line.strip()]
     states = answer_key.audit_states(rows, audit_sidecar=str(rows_path) + '.webaudit.jsonl')
     latest = {answer_key.item_key(s['row']): s for s in states}
+    answer_key.require_audits(latest.values())
     jobs = []
     for state in latest.values():
         row = state['row']
         index = row.get('rerun_index', 0)
-        if not state['cheat'] or index == 2:
+        if not state['rerun_eligible'] or not state['cheat'] or index == 2:
             continue
         if index not in (0, 1) or not row.get('session_id') or type(row.get('sampler_seed')) is not int:
             raise ValueError('cannot re-run row without valid session/seed/index provenance')
-        patterns = list(dict.fromkeys(row.get('extra_deny', []) + answer_key.deny_patterns_for(state['urls'])))
+        plan = answer_key.rerun_plan(state)
         jobs.append({'item': row['id'], 'session_id': row['session_id'], 'seed': row['sampler_seed'],
-                     'urls': state['urls'], 'rerun_index': index + 1, 'extra_deny': patterns})
+                     'urls': state['urls'], 'rerun_index': index + 1, **plan})
     return jobs
 
 

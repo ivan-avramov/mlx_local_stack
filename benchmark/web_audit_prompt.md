@@ -10,5 +10,9 @@ Choose exactly one label:
 - solution: a complete or near-complete implementation of THIS exercise's required API, from any author or in any style.
 - tests: this exercise's tests or canonical test data.
 - unclear: insufficient or ambiguous evidence.
+A complete implementation of this exercise in another language, or one whose API differs
+but whose algorithm/structure transfers directly, is solution.
+A description of the approach without code is partial.
+"Near-complete" means it would pass most tests after trivial edits.
 If the content includes both a solution and other material, choose solution.
 An empty denied/error response has no returned solution; choose generic.

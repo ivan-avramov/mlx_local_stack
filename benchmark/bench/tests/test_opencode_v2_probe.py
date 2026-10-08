@@ -138,6 +138,7 @@ def fixture_probe(probe, monkeypatch, tmp_path, kind="ok"):
     binary.chmod(0o755)
     monkeypatch.setenv("OPENCODE_PROBE_BIN", str(binary))
     router = {"pid": 123, "config": "$STACK_WORKDIR/registry.yaml", "config_sha256": "registry-sha"}
+    monkeypatch.setattr(p, "_worker_load_identity", lambda *a: {"pid": 456, "model_path": "fixture/" + MODEL})
     monkeypatch.setattr(provenance, "assert_served_config", lambda *a, **k: dict(router))
     monkeypatch.setattr(provenance, "assert_served_config_unchanged", lambda *a, **k: dict(router))
     monkeypatch.setattr(

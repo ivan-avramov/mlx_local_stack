@@ -230,7 +230,7 @@ def _carrier_selection(scaffold, system_file, *, repo=None, source=None, extra_d
         for pattern in extra_deny:
             doc.setdefault("permissions", []).extend([
                 {"action": "webfetch", "resource": pattern, "effect": "deny"},
-                {"action": "shell", "resource": "*" + pattern + ("" if pattern.endswith("*") else "*"),
+                {"action": "shell", "resource": pattern,
                  "effect": "deny"},
             ])
         raw = json.dumps(doc, sort_keys=True, indent=2).encode()
@@ -645,10 +645,41 @@ def _check_resume_v2(previous, identity, router, model, *, rerun_transition=Fals
         sys.exit("REFUSED: resume serving-code identity differs")
 
 
+def _worker_load_identity(model, router):
+    """Observe the attributed worker; absence or a racing load cannot prove identity."""
+    try:
+        doc = provenance.yaml.safe_load(provenance.paths.registry_path().read_text())
+        before = provenance._port_listener_pids(int(doc['mlx_port']))
+        workers = provenance._worker_argvs(doc)
+        after = provenance._port_listener_pids(int(doc['mlx_port']))
+        if len(before) != 1 or before != after or len(workers) != 1:
+            return None
+        pid = before[0]
+        model_path = provenance._flag_value(workers[0], '--model')
+        entries = doc.get('models', [])
+        if (not model_path or not any(e.get('name') == model and e.get('hf_path') == model_path for e in entries)
+                or not provenance._descends_from(pid, {router['pid']})):
+            return None
+        return {'pid': pid, 'model_path': _scrub_pii(model_path)}
+    except (OSError, ValueError, TypeError, KeyError, provenance.ServingStateError):
+        return None
+
+
+def _same_worker(previous, current):
+    return (isinstance(previous, dict) and isinstance(current, dict)
+            and type(previous.get('pid')) is int and previous['pid'] > 0
+            and bool(previous.get('model_path'))
+            and all(previous.get(key) == current.get(key) for key in ('pid', 'model_path')))
+
+
 def _rerun_resume(a, rows, out, previous, identity, router):
     """Validate an explicit per-item continuation; keep ordinary resume fail-closed."""
     states = answer_key.audit_states(rows, audit_sidecar=str(out) + '.webaudit.jsonl')
     latest = {answer_key.item_key(s['row']): s for s in states}
+    try:
+        answer_key.require_audits(latest.values())
+    except answer_key.AuditMissing as exc:
+        sys.exit(str(exc))
     done = {(s['row']['id'], s['row'].get('sample', 0)) for s in latest.values()
             if not s['cheat'] or s['row'].get('rerun_index', 0) == 2}
     transition = False
@@ -664,6 +695,9 @@ def _rerun_resume(a, rows, out, previous, identity, router):
             # Reissuing a completed attempt is idempotent even if its audit still needs a retry.
             done.add((item, 0))
         else:
+            if (not latest_state['rerun_eligible'] or answer_key.rerun_plan(latest_state)['needs_operator']
+                    or not identity['extra_deny']):
+                sys.exit("REFUSED: cheat_review needs_operator; no re-run may launch")
             if (row.get('session_id') != a.rerun_of or not latest_state['cheat']
                     or a.rerun_index != row.get('rerun_index', 0) + 1):
                 sys.exit("REFUSED: rerun_of/index must link the latest cheated attempt")
@@ -678,6 +712,8 @@ def _rerun_resume(a, rows, out, previous, identity, router):
             transition = not same_attempt
         if (previous or {}).get('router', {}).get('pid') != router.get('pid'):
             sys.exit("REFUSED: rerun requires the same router instance")
+        if not _same_worker(row.get('worker'), _worker_load_identity(a.model, router)):
+            sys.exit("REFUSED: rerun requires the same worker load identity (pid + model_path)")
     elif any((a.lang + '/' + name.strip(), 0) not in done for name in a.items.split(',')
              if any(s['row']['id'] == a.lang + '/' + name.strip() for s in states)):
         sys.exit("REFUSED: cheated item requires explicit --rerun-of and --rerun-index")
@@ -1151,6 +1187,13 @@ def _main():
                     }
                 except Exception as e:
                     _abort(mp, run_id, item, work, rc, stop_reason, e)
+                if a.scaffold == "opencode-v2-web":
+                    row["worker"] = _worker_load_identity(a.model, router)
+                    if a.rerun_of:
+                        source = next(r for r in reversed(rows) if r.get('session_id') == a.rerun_of)
+                        if not _same_worker(source.get('worker'), row['worker']):
+                            _abort(mp, run_id, item, work, rc, stop_reason, "worker load identity changed during rerun")
+                    _stamp_manifest(mp, {"worker": row["worker"]})
                 with out.open("a") as stream:
                     stream.write(json.dumps(row) + "\n")
                 done.add((item, 0))

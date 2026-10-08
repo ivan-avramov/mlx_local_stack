@@ -12,6 +12,11 @@ from bench.tests.opencode_v2_mock import MockServer
 import web_audit
 
 
+@pytest.fixture(autouse=True)
+def fake_auditor_version(monkeypatch):
+    monkeypatch.setattr(web_audit, 'auditor_version', lambda: 'fake')
+
+
 def write_rows(path, rows):
     path.write_text(''.join(json.dumps(r) + '\n' for r in rows))
 
@@ -28,7 +33,7 @@ def decision(path, row, label, kind='web_fetches'):
 
 def attempt(session, **kw):
     return dict(id='python/one', model=MODEL, sample=0, session_id=session,
-                sampler_seed=123, passed=True, **kw)
+                sampler_seed=123, passed=True, **({'scaffold': 'opencode-v2-web'} | kw))
 
 
 def test_partial_and_prompt_revision():
@@ -39,24 +44,22 @@ def test_partial_and_prompt_revision():
 
 @pytest.mark.parametrize('url,expected', [
     ('https://GitHub.com/Owner/Repo/blob/main/a.py?q=1', [
-        'https://github.com/owner/repo/*', 'https://GitHub.com/Owner/Repo/*',
-        'https://raw.githubusercontent.com/owner/repo/*', 'https://raw.githubusercontent.com/Owner/Repo/*']),
+        '*github.com/owner/repo*', '*GitHub.com/Owner/Repo*',
+        '*raw.githubusercontent.com/owner/repo*', '*raw.githubusercontent.com/Owner/Repo*']),
     ('https://raw.githubusercontent.com/Owner/Repo/main/a.py', [
-        'https://github.com/owner/repo/*', 'https://github.com/Owner/Repo/*',
-        'https://raw.githubusercontent.com/owner/repo/*', 'https://raw.githubusercontent.com/Owner/Repo/*']),
+        '*github.com/owner/repo*', '*github.com/Owner/Repo*',
+        '*raw.githubusercontent.com/owner/repo*', '*raw.githubusercontent.com/Owner/Repo*']),
     ('https://RAW.GITHUBUSERCONTENT.COM/OWNER/REPO/main/a.py', [
-        'https://RAW.GITHUBUSERCONTENT.COM/OWNER/REPO/*',
-        'https://raw.githubusercontent.com/owner/repo/*', 'https://github.com/owner/repo/*']),
+        '*RAW.GITHUBUSERCONTENT.COM/OWNER/REPO*',
+        '*raw.githubusercontent.com/owner/repo*', '*github.com/owner/repo*']),
     ('https://GitLab.com/Owner/Repo/-/blob/main/a.py', [
-        'https://gitlab.com/owner/repo/*', 'https://GitLab.com/Owner/Repo/*',
-        'https://raw.githubusercontent.com/owner/repo/*']),
+        '*gitlab.com/owner/repo*', '*GitLab.com/Owner/Repo*',
+        '*raw.githubusercontent.com/owner/repo*']),
     ('https://Docs.invalid/topic/answer.html?q=1', [
-        'https://Docs.invalid/topic/answer.html', 'https://Docs.invalid/topic/*',
-        'https://docs.invalid/topic/*']),
+        '*Docs.invalid/topic/answer.html', '*docs.invalid/topic/answer.html']),
 ])
 def test_deny_patterns(url, expected):
     patterns = answer_key.deny_patterns_for([url, url])
-    assert url in patterns
     assert set(expected) <= set(patterns)
     assert len(patterns) == len(set(patterns))
 
@@ -68,7 +71,7 @@ def test_extra_deny_composition_and_m50(probe, tmp_path):
     original = json.loads(probe.BENCH_OPENCODE_WEB_CONFIG.read_bytes())
     expected = original['permissions'] + [
         dict(action='webfetch', resource='https://fixture.invalid/repo/*', effect='deny'),
-        dict(action='shell', resource='*https://fixture.invalid/repo/*', effect='deny')]
+        dict(action='shell', resource='https://fixture.invalid/repo/*', effect='deny')]
     assert json.loads(selected['bytes'])['permissions'] == expected
     assert selected['fields']['extra_deny'] == json.loads(deny.read_text())
     assert selected['fields']['extra_deny_sha256'] == hashlib.sha256(deny.read_bytes()).hexdigest()
@@ -114,7 +117,8 @@ def test_report_superseded_unresolved_partial_and_models(tmp_path):
     report = answer_key.report_rows(rows, audit_sidecar=str(path) + '.webaudit.jsonl')
     assert report['strict_n'] == 4
     assert report['acc_strict'] == .75
-    assert report['per_model'][MODEL] == dict(cheat_attempts=4, reruns=3, unresolved=1, partial_lookups=1)
+    assert report['per_model'][MODEL] == dict(cheat_attempts=4, reruns=3, unresolved=1, partial_lookups=1,
+                                                    pending_reruns=0, missing_audits=0, cheat_review=0, provisional=False)
     assert report['per_model']['Qwen3.8-27B-mlx-uniform-4bit']['cheat_attempts'] == 0
     scored = report['scored_rows']
     assert next(r for r in scored if r['session_id'] == 'e')['cheat_unresolved'] is True
@@ -127,17 +131,21 @@ def test_driver_contract_and_two_retry_limit(tmp_path, flag):
     path = tmp_path / 'rows.jsonl'
     r = attempt('a', **{flag: True}, net_shell=[{'command': 'curl https://GitHub.com/Owner/Repo/a.py'}])
     write_rows(path, [r])
+    decision(path, r, 'docs', 'net_shell')
     work, = web_audit.cheats_to_rerun(path)
     assert {k: work[k] for k in ('item', 'session_id', 'seed', 'rerun_index')} == dict(
         item='python/one', session_id='a', seed=123, rerun_index=1)
-    assert work['urls'] == ['https://GitHub.com/Owner/Repo/a.py']
+    assert work['urls'] == [] and work['needs_operator'] and work['extra_deny'] == []
     assert work['extra_deny'] == answer_key.deny_patterns_for(work['urls'])
     r2 = dict(r, session_id='b', rerun_of='a', rerun_index=1, extra_deny=work['extra_deny'])
     write_rows(path, [r, r2])
+    decision(path, r2, 'docs', 'net_shell')
     work2, = web_audit.cheats_to_rerun(path)
     assert work2['rerun_index'] == 2
     assert set(work['extra_deny']) <= set(work2['extra_deny'])
-    write_rows(path, [r, r2, dict(r2, session_id='c', rerun_of='b', rerun_index=2)])
+    r3 = dict(r2, session_id='c', rerun_of='b', rerun_index=2)
+    write_rows(path, [r, r2, r3])
+    decision(path, r3, 'docs', 'net_shell')
     assert web_audit.cheats_to_rerun(path) == []
 
 
@@ -146,6 +154,7 @@ def test_rerun_append_resume_and_seed_guard(probe, monkeypatch, tmp_path):
     args = ['--scaffold', 'opencode-v2-web']
     assert f['run']('one', extra=args) == 0
     first = json.loads(f['out'].read_text()); first['answer_key_contact'] = True
+    first['answer_key_evidence'] = [{'flag': True, 'source': 'https://fixture.invalid/answer'}]
     write_rows(f['out'], [first])
     deny = tmp_path / 'deny.json'; deny.write_text('["https://fixture.invalid/*"]')
     rerun = args + ['--extra-deny-file', str(deny), '--rerun-of', first['session_id'], '--rerun-index', '1']
@@ -257,8 +266,9 @@ def test_latest_noncheat_wins_and_pending_errors_do_not_score(tmp_path):
             attempt('three', rerun_of='two', rerun_index=2, audit_error=True)]
     rows[0]['passed'] = False
     report = answer_key.report_rows(rows)
-    assert report['strict_n'] == 1 and report['acc_strict'] == 1
-    assert report['scored_rows'][0]['session_id'] == 'two'
+    assert report['strict_n'] == 0 and report['cheat_review'] == 1
+    clean = answer_key.report_rows(rows[:2])
+    assert clean['strict_n'] == 1 and clean['scored_rows'][0]['session_id'] == 'two'
     assert not answer_key.report_rows([rows[2] | {'rerun_index': 1}])['scored_rows']
 
 

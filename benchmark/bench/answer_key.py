@@ -5,7 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from urllib.parse import urlsplit, urlunsplit
+import subprocess
+from urllib.parse import unquote, urlsplit
 
 
 def normalize(text: str) -> list[str]:
@@ -105,30 +106,66 @@ def load_audits(path):
     return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
 
 
-def deny_patterns_for(urls):
-    """Stable P202 URL/repository prefixes, retaining fetched and canonical casing."""
+class AuditMissing(ValueError):
+    """A latest attempt has evidence without a current audit."""
+
+
+def deny_patterns_for(urls, *, dropped_urls=None):
+    """Bound URL-derived wildcards to a repository or a concrete page/path."""
     patterns = []
     for url in urls:
-        parsed = urlsplit(url)
-        if parsed.scheme.lower() not in ('http', 'https') or not parsed.hostname:
-            raise ValueError('deny URL must be HTTP(S) with a host')
-        patterns.append(url)
-        # URL hosts are case insensitive; paths ordinarily are not.
-        for host in dict.fromkeys((parsed.netloc, parsed.netloc.lower())):
-            clean = urlunsplit((parsed.scheme, host, parsed.path, '', ''))
-            patterns.append(clean)
-            parts = parsed.path.strip('/').split('/')
-            if parsed.hostname in ('github.com', 'gitlab.com', 'raw.githubusercontent.com') and len(parts) >= 2:
-                owner_repo = '/'.join(parts[:2]).removesuffix('.git')
-                page_host = 'github.com' if parsed.hostname == 'raw.githubusercontent.com' else host
-                for repo in dict.fromkeys((owner_repo, owner_repo.lower())):
-                    patterns.append(f'https://{host}/{repo}/*')
-                    patterns.append(f'https://{page_host}/{repo}/*')
-                    patterns.append(f'https://raw.githubusercontent.com/{repo}/*')
+        try:
+            parsed = urlsplit(url)
+            parts = [part for part in parsed.path.split('/') if part]
+            host = (parsed.hostname or '').removeprefix('www.')
+            repo_host = host in ('github.com', 'gitlab.com', 'raw.githubusercontent.com')
+            if (parsed.scheme.lower() not in ('http', 'https') or not host
+                    or parsed.username or parsed.password or not parts
+                    or '*' in url or any(c in unquote(parsed.netloc + parsed.path) for c in '*?')
+                    or (repo_host and len(parts) < 2)):
+                raise ValueError('unsafe or unbounded deny URL')
+        except (ValueError, TypeError):
+            if dropped_urls is not None:
+                dropped_urls.append(url)
+            continue
+        if repo_host:
+            owner_repo = '/'.join(parts[:2]).removesuffix('.git')
+            if not owner_repo.split('/')[-1]:
+                if dropped_urls is not None:
+                    dropped_urls.append(url)
+                continue
+            hosts = list(dict.fromkeys((parsed.netloc, re.sub(r'^www\.', '', parsed.netloc, flags=re.I))))
+            if host == 'raw.githubusercontent.com':
+                hosts.append('github.com')
             else:
-                parent = parsed.path.rsplit('/', 1)[0] + '/'
-                patterns.append(urlunsplit((parsed.scheme, host, parent + '*', '', '')))
+                hosts.append('raw.githubusercontent.com')
+            bases = [f'{domain}/{owner_repo}' for domain in hosts]
+            for base in bases:
+                patterns.extend('*' + variant + '*' for variant in dict.fromkeys((base, base.lower())))
+        else:
+            base = parsed.netloc + parsed.path
+            parent = parsed.path.rsplit('/', 1)[0]
+            for variant in dict.fromkeys((base, base.lower())):
+                patterns.append('*' + variant)
+                if len([p for p in parent.split('/') if p]) >= 2:
+                    patterns.append('*' + variant.rsplit('/', 1)[0] + '/*')
     return list(dict.fromkeys(patterns))
+
+
+def rerun_plan(state):
+    """Share operator-review and deny decisions between reporting and execution."""
+    dropped = []
+    patterns = deny_patterns_for(state['urls'], dropped_urls=dropped)
+    needs_operator = bool(state['unknown_source'] or dropped or not patterns)
+    combined = list(dict.fromkeys(state['row'].get('extra_deny', []) + patterns))
+    return {'extra_deny': [] if state['unknown_source'] else combined,
+            'dropped_urls': dropped, 'needs_operator': needs_operator}
+
+
+def require_audits(states):
+    for state in states:
+        if 'missing' in state['labels']:
+            raise AuditMissing('audit first: missing/stale audit for ' + state['row']['id'])
 
 
 def item_key(row):
@@ -141,23 +178,32 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
     if prompt_sha256 is None:
         prompt_sha256 = hashlib.sha256(
             (Path(__file__).resolve().parents[1] / 'web_audit_prompt.md').read_bytes()).hexdigest()
-    audits = {audit_record_key(record)[:-1]: record for record in load_audits(audit_sidecar)}
+    rows = list(rows)
+    version = None
+    if any(any(web_entries(row)) for row in rows):
+        from web_audit import auditor_version
+        try:
+            version = auditor_version()
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass  # Unknown current version cannot validate any historical audit.
+    audits = {audit_record_key(record): record for record in load_audits(audit_sidecar)}
     states = []
     for row in rows:
         labels, urls = [], []
         incomplete = bool(row.get('web_audit_incomplete') or row.get('web_audit_error') or row.get('audit_error'))
-        contact_sources = {e['source'] for e in row.get('answer_key_evidence', [])
-                           if e.get('flag') and e.get('source')}
+        contact_evidence = [e for e in row.get('answer_key_evidence', []) if e.get('flag')]
+        contact_sources = {(e.get('source') or '') for e in contact_evidence}
         forced = bool(row.get('answer_key_contact') or incomplete)
-        unknown_source = incomplete or (row.get('answer_key_contact') and not contact_sources)
+        unknown_source = incomplete or bool(row.get('answer_key_contact') and (
+            not contact_sources or any(not re.search(r'https?://', source, re.I) for source in contact_sources)))
         for kind, index, entry in web_entries(row):
             key = audit_record_key({'row_id': row['id'], 'sample': row.get('sample', 0),
                                     'session_id': row.get('session_id'), 'kind': kind, 'index': index,
                                     'path': entry.get('path'), 'sha256': entry.get('sha256'),
                                     'bytes': entry.get('bytes'), 'prompt_sha256': prompt_sha256,
-                                    'auditor': 'codex:gpt-6-astra'})[:-1]
-            audit = audits.get(key, {})
-            label = audit.get('label', 'unclear')
+                                    'auditor': 'codex:gpt-6-astra', 'auditor_version': version})
+            audit = audits.get(key, {}) if version else {}
+            label = audit.get('label', 'missing')
             if label in ('unclear', 'audit_error'):
                 resolution = audit.get('operator_label')
                 reason = audit.get('operator_reason')
@@ -167,16 +213,20 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
                     label = resolution
             labels.append(label)
             contact_source = entry.get('url') in contact_sources or entry.get('command') in contact_sources
-            if unknown_source or contact_source or label not in ('docs', 'generic', 'partial', 'tests'):
-                if entry.get('url'):
-                    urls.append(entry['url'])
-                urls.extend(re.findall(r"https?://[^\s\"'<>]+", entry.get('command', ''), re.I))
+            if contact_source or label in ('solution', 'unclear', 'audit_error'):
+                sources = ([entry['url']] if entry.get('url') else [])
+                sources.extend(re.findall(r"https?://[^\s\"'<>]+", entry.get('command', ''), re.I))
+                unknown_source |= not sources
+                urls.extend(sources)
         if forced:
             for evidence in row.get('answer_key_evidence', []):
                 if evidence.get('flag'):
-                    urls.extend(re.findall(r"https?://[^\s\"'<>]+", evidence.get('source', ''), re.I))
-        states.append({'row': row, 'labels': labels, 'urls': list(dict.fromkeys(urls)),
-                       'cheat': forced or any(label not in ('docs', 'generic', 'partial', 'tests')
+                    urls.extend(re.findall(r"https?://[^\s\"'<>]+", evidence.get('source') or '', re.I))
+        states.append({'row': row, 'labels': labels,
+                       'urls': [] if unknown_source else list(dict.fromkeys(urls)),
+                       'unknown_source': bool(unknown_source),
+                       'rerun_eligible': str(row.get('scaffold', '')).startswith('opencode-v2-web'),
+                       'cheat': forced or any(label in ('solution', 'unclear', 'audit_error')
                                               for label in labels)})
     return states
 
@@ -184,7 +234,7 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
 def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
     """Score one leg: latest non-cheat per item; exhausted cheating is a strict FAIL.
 
-    Pending cheats remain unscored until re-run. Counts describe all attempts; scored_rows
+    Missing audits and operator-review items are provisional. Counts describe all attempts; scored_rows
     are copies and never rewrite the append-only evidence. Never pool independent legs.
     """
     states = audit_states(rows, audit_sidecar=audit_sidecar, prompt_sha256=prompt_sha256)
@@ -193,19 +243,39 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
         row = state['row']
         groups.setdefault(item_key(row), []).append(state)
         counts = per_model.setdefault(row.get('model'), dict(cheat_attempts=0, reruns=0,
-                                                           unresolved=0, partial_lookups=0))
+                                                           unresolved=0, partial_lookups=0,
+                                                           pending_reruns=0, missing_audits=0,
+                                                           cheat_review=0, provisional=False))
         counts['cheat_attempts'] += int(state['cheat'])
         counts['reruns'] += int(bool(row.get('rerun_index', 0)))
         counts['partial_lookups'] += state['labels'].count('partial')
+        counts['missing_audits'] += state['labels'].count('missing')
+        counts['provisional'] |= 'missing' in state['labels']
     scored = []
     for attempts in groups.values():
-        clean = [s['row'] for s in attempts if not s['cheat']]
-        latest = attempts[-1]['row']
+        latest_state = attempts[-1]
+        latest = latest_state['row']
+        counts = per_model[latest.get('model')]
+        missing = latest_state['labels'].count('missing')
+        if missing:
+            counts['provisional'] = True
+            continue
+        if latest_state['cheat']:
+            if not latest_state['rerun_eligible']:
+                continue
+            if rerun_plan(latest_state)['needs_operator']:
+                counts['cheat_review'] += 1
+                counts['provisional'] = True
+                continue
+            if latest.get('rerun_index', 0) < 2:
+                counts['pending_reruns'] += 1
+                counts['provisional'] = True
+        clean = [s['row'] for s in attempts if not s['cheat'] and 'missing' not in s['labels']]
         if clean:
             chosen = dict(clean[-1])
         elif latest.get('rerun_index', 0) == 2:
             chosen = dict(latest, passed=False, acc=0, cheat_unresolved=True, skipped=False)
-            per_model[latest.get('model')]['unresolved'] += 1
+            counts['unresolved'] += 1
         else:
             continue
         if not chosen.get('skipped'):
@@ -219,6 +289,9 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
     return {'acc_strict': sum(scores) / len(scores) if scores else None,
             'strict_n': len(scored), 'strict_items': items, 'scored_rows': scored,
             'per_model': per_model,
+            'provisional': any(c['provisional'] for c in per_model.values()),
+            **{key: sum(c[key] for c in per_model.values())
+               for key in ('missing_audits', 'pending_reruns', 'cheat_review')},
             'flagged: web contact': sum(s['cheat'] for s in states),
             'web contact: tests': sum('tests' in s['labels'] for s in states),
             'web contact: partial': sum(s['labels'].count('partial') for s in states),
