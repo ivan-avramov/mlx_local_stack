@@ -2,6 +2,37 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-09 — M61 C139(b) re-record: the two B picks under `opencode-v2-web` (48K first-write allowance, audited web), k=2 — the first pick leads on Go, ties on Python; order holds
+
+Same seeds and items as M59 (22 Python + 22 Go per session, s1 seed base 1001, s2 2002, one fresh loaded instance per (model, session)); draft OFF; deployed sampling; scaffold `opencode-v2-web` (webfetch allowed, answer-key sources denied, every row audited, P202 cheat procedure). Rows `benchmark/results/<model>/opencode_v2_<lang>.m61.<s>.jsonl`; report `benchmark/results/m61_rr/` (`rr_report.py`, `RR_REPORT.md`). 176/176 rows, every leg rc=0, **0 web fetches, 0 cheat attempts, 0 re-runs, nothing provisional**; decode-rate checks within 5 % except one −5.1 % pilot (Qwen3.8-27B-mlx-uniform-4bit s1, quiet box; later legs −2.4 to −4.3 %); 140 W / 100 % battery throughout.
+
+| Model | Python s1 | Python s2 | Go s1 | Go s2 | total | mean wall/item | session wall |
+|---|---|---|---|---|---|---|---|
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | **22/22** | 21/22 | 21/22 † | **22/22** | **86/88** | 253–318 s | 3.5 h, 3.5 h |
+| Qwen3.8-27B-mlx-uniform-4bit | **22/22** | **22/22** | 21/22 | 19/22 | 84/88 | 303–598 s | 4.9 h, 5.5 h |
+
+acc_strict@budget (pass AND converged). Per-leg 95 % cluster-bootstrap CIs: 21/22 → [0.86, 1.00], 19/22 → [0.73, 1.00]. † `go/counter` is an invalid item (C145): it scored a failure because the model did the task.
+
+Head-to-head (first minus second pick, two-stage paired bootstrap, Holm within session, TOST ±5 pp; MDE 0.27): s1 Python +0.000 (equivalent), s1 Go +0.000 [−0.14, +0.14]; s2 Python −0.045 [−0.14, +0.00], **s2 Go +0.136 [+0.00, +0.27]** (Holm p 0.10) — all inconclusive. With `go/counter` excluded (C145 sensitivity): Go s1 21/21 vs 20/21 (+0.048 [+0.00, +0.14]); s2 21/21 vs 18/21 (+0.143 [+0.00, +0.29], p ≈ 0.05). Trend: the first pick is never behind on Go and loses one Python item once; the second pick's misses concentrate on Go.
+
+Misses (all six):
+
+| Model | Session | Item | Kind | Mechanism |
+|---|---|---|---|---|
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | s1 | go/counter | fail (tamper) | inverted exercise — wrote the requested test suite in `counter_test.go`; the tamper check scores that a failure (C145) |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | s2 | python/book-store | stalled | one thinking stream of ≥ 43.5K tokens after 3 reads, no write; client closed it at the 1984 s window |
+| Qwen3.8-27B-mlx-uniform-4bit | s1, s2 | go/alphametics | stalled | same shape both sessions: one thinking stream of ≈ 40.5K / 41K tokens, no write (a real repeat miss: M59 s1 stalled it in the chain and in the 48K re-run; M59 s2 passed it) |
+| Qwen3.8-27B-mlx-uniform-4bit | s2 | go/book-store | stalled | 13 turns, 37.5K output tokens, 5 failing tool calls, no passing solution in the window (M59: stalled in both chains and the s1 48K re-run) |
+| Qwen3.8-27B-mlx-uniform-4bit | s2 | go/kindergarten-garden | stalled | degenerate tool loop: 367 requests, 358 identical repeated calls (max run 359); passed in s1 |
+
+Runaway tax (descriptive): stalls 0 / 1 per session for the first pick, 1 / 3 for the second; no budget-hit, turn-cap or exec-timeout. Wall clock: the second pick needs 1.4–1.6× the first pick's session time.
+
+**Gate calibration (C146):** the 48K-token allowance is converted to seconds at the table decode rate, but decode slows inside one long stream (rolling 25 → 18.7 tok/s by 40K tokens), so the three thinking stalls were closed at 40.5K–43.5K generated tokens, not 48K. The shortfall hits the second pick harder (≈ 41K vs 43.5K). Rows stay the record (pre-registered window, same rule for both).
+
+**vs M59 (16K window, no web, same seeds) — descriptive, different scaffold, never pooled:** every cell is higher or equal (+0.045 to +0.136 per cell; no interval excludes 0 after Holm). M59 → M61: first pick 81 → 86, second 76 → 84 — the 48K allowance recovered most M59 stalls, as C139 predicted; the second pick gained more.
+
+**Implication:** the evidence supports the current B order (first pick 86/88 vs 84/88, ahead on Go in s2, ≈ 1.5× faster, fewer stalls); no change is proposed. The second pick's Python is now perfect in both sessions (44/44) — "favorable Python" stands.
+
 ## 2026-10-09 — M61 P205: blind quality panel over the P198 pairs — plain v2 writes better code than v2 + the 1.18 brevity prompt (0.775 [0.525, 0.975])
 
 Pre-registered (`benchmark/results/judge_m61_p205/PREREG.md`); 20 pairs (2 picks × 2 sessions × 5 items), both sides pass the tests (rebuilt final files re-tested; stubs fail); judges claude-opus-5-5 and claude-sonnet-5-5 (blind subagents) + codex gpt-6-astra (medium), both presentation orders, verdict per (pair, judge) = order agreement else tie, panel = majority.

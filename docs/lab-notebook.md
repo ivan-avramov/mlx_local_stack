@@ -4733,3 +4733,10 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 - Re-record (`opencode-v2-web`, 48K, both picks, Python + Go, k=2): the driver fast-forwarded main to `7679bbc`, ran both suites (bench 3653 passed / 2 skipped / 1 xfailed; configgen 76 passed) and started at 01:24Z. Docs-only commits during the run change the recorded `stack_head` but not the fingerprint (serving-path trees).
 - P205 (operator go): blind quality panel over the 20 A/B pairs. Final solutions are not kept by the probe; rebuilt by replaying `write`/`edit` calls onto the corpus stub (all 40 re-pass; stubs fail). Codex judge ran one call at a time and paused while the re-record's web audit ran, so it could not exhaust the shared Codex quota. Code: plain v2 preferred 0.775 [0.525, 0.975]; final message 0.975 but Codex split 10–8 (Claude judges prefer longer messages). C143. Lesson: a token reduction that keeps tests passing can still cost code quality — screen with a blind panel before shipping a token-saving prompt.
 
+
+## 2026-10-09 (evening) — M61 C139(b) re-record complete; two instrument findings (Claude Opus 5.5 (allow-shorthand))
+
+- Re-record 01:24Z → 18:55Z, driver rc=0, stack stopped. 176/176 rows; 0 web fetches, 0 cheat attempts, 0 re-runs. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 86/88, `Qwen3.8-27B-mlx-uniform-4bit` 84/88 (campaign-results 2026-10-09). No order change proposed.
+- Read the server log before calling a short-output stall a slow test run: the three "solution untouched, ≈ 300 output tokens" stalls were each ONE open thinking stream (40.5K–43.5K tokens in `mlx_vlm.log` Stream Telemetry); the row's `output_tokens` counts only completed requests.
+- The seconds window is not a token budget: rolling decode falls 25 → 18.7 tok/s inside a 40K-token stream, so "48K" closed at ≈ 41–43.5K, unevenly per model (C146).
+- `go/counter` is a deprecated inverted exercise; every recorded pass is `[no tests to run]`, and doing the task trips the tamper check (C145). Scan corpora for deprecated/inverted items before trusting a per-item miss.
