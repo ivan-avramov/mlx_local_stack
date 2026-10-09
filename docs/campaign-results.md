@@ -2,6 +2,17 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-09 — M61 P205: blind quality panel over the P198 pairs — plain v2 writes better code than v2 + the 1.18 brevity prompt (0.775 [0.525, 0.975])
+
+Pre-registered (`benchmark/results/judge_m61_p205/PREREG.md`); 20 pairs (2 picks × 2 sessions × 5 items), both sides pass the tests (rebuilt final files re-tested; stubs fail); judges claude-opus-5-5 and claude-sonnet-5-5 (blind subagents) + codex gpt-6-astra (medium), both presentation orders, verdict per (pair, judge) = order agreement else tie, panel = majority.
+
+| Task | share preferring plain v2 (95 % two-stage cluster bootstrap) | panel A / B / tie | per judge (A–B–tie) | order flips | reading |
+|---|---|---|---|---|---|
+| final solution code (primary) | **0.775 [0.525, 0.975]** | 14 / 3 / 3 | claude-opus-5-5 12–2–6, claude-sonnet-5-5 14–4–2, codex 15–3–2 | 6, 2, 2 of 20 | extra tokens buy quality |
+| final message (secondary) | 0.975 [0.900, 1.000] | 19 / 0 / 1 | claude-opus-5-5 19–0–1, claude-sonnet-5-5 20–0–0, codex 10–8–2 | 1, 0, 2 of 20 | family-split; not settled |
+
+Per pick (code): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 0.80 (8–2–0), `Qwen3.8-27B-mlx-uniform-4bit` 0.75 (6–1–3), descriptive. Mechanism: the brevity arm writes shorter code (median 53.5 vs 69 lines) with no comments, and the judges cite correctness beyond the tests (input mutation, invalid-roll acceptance, state corrupted before raising). Easy items only; n=20, MDE ≈ ±25 pp. Follow-up C143.
+
 ## 2026-10-09 — M61 P198: the 1.18 system prompt on opencode 2.0.20 — visible text falls to a third; the output-token effect (≈ −30 %) is not resolved (null by the pre-registered rule)
 
 Arms: A = `opencode-v2` (M59 carrier), B = A + `agents.build.system` = opencode 1.18.15 `default.txt`. Webfetch denied in both, 48K first-write allowance, draft OFF, lean router, five pre-registered high-token items (`go/forth`, `python/{connect,pov,bowling,hangman}`), two fresh loads per model (seed bases 6101/6202, arm order A→B then B→A). 40/40 episodes passed; decode within 4 % of the rate table throughout.
