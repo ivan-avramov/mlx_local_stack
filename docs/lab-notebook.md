@@ -4723,3 +4723,12 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
   (descriptive totals 83/88 and 81/88, not 84 and 83). The report also labelled the 1.18 misses converged; all nine were stalls.
   Ten s2 transcript files were overwritten by the 48K re-runs (same session tag) — keep re-run outputs under their own tag next time.
 - Operator: superpowers uninstalled from the daily client; webfetch to be allowed in the bench with an audit (C141).
+
+## 2026-10-09 (early) — M61: build verified, smoke, P198 prompt A/B (null by rule), C139(b) re-record started (Claude Opus 5.5 (allow-shorthand); Codex gpt-6-astra implementer)
+
+- Build: eight Codex rounds; cold reviews found subagent fetches unaudited, missing audits read as "unclear", deny patterns anchored at the URL end, glued shell operators and non-canonical hosts — all fixed with tests (round 8, `7679bbc`). Residual alias gaps (gist raw, `stackoverflow.com/q/ID`, legacy GitLab routes, URLs ending in `)`) are left to the post-leg LLM audit + same-seed re-run (P202). C142: a repository-root URL with a query string is not denied (a `?*` pattern would over-deny sibling repos).
+- Smoke (`opencode-v2-web`, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, 5 seeded-random Python items, twice): 5/5 both, no fetches, audits clean; 4/5 token-identical (bowling differs — C137 cache-path effect).
+- P198 A/B: 40/40 passed; null by rule for both picks (campaign-results 2026-10-09). The visible-text cut is large and certain; the output-token cut is ≈ 30 % at the point estimate and unresolved. Lesson: a k=1-per-cell token screen on 5 items cannot resolve effects below ≈ 2× — size the next one from these per-cell variances.
+- Operator activity (browser, audio app, camera) earlier slowed decode ≈ 20 %; the A/B and re-record ran on a quiet box.
+- Re-record (`opencode-v2-web`, 48K, both picks, Python + Go, k=2): the driver fast-forwarded main to `7679bbc`, ran both suites (bench 3653 passed / 2 skipped / 1 xfailed; configgen 76 passed) and started at 01:24Z. Docs-only commits during the run change the recorded `stack_head` but not the fingerprint (serving-path trees).
+

@@ -2,6 +2,17 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-09 — M61 P198: the 1.18 system prompt on opencode 2.0.20 — visible text falls to a third; the output-token effect (≈ −30 %) is not resolved (null by the pre-registered rule)
+
+Arms: A = `opencode-v2` (M59 carrier), B = A + `agents.build.system` = opencode 1.18.15 `default.txt`. Webfetch denied in both, 48K first-write allowance, draft OFF, lean router, five pre-registered high-token items (`go/forth`, `python/{connect,pov,bowling,hangman}`), two fresh loads per model (seed bases 6101/6202, arm order A→B then B→A). 40/40 episodes passed; decode within 4 % of the rate table throughout.
+
+| Model | output tokens B/A | first-write tokens B/A | visible-text chars B/A | B-only misses | reading |
+|---|---|---|---|---|---|
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | 0.70 [0.37, 1.39] | 0.65 [0.25, 1.34] | 0.34 [0.24, 0.51] | none | null |
+| `Qwen3.8-27B-mlx-uniform-4bit` | 0.73 [0.41, 1.10] | 0.63 [0.36, 0.98] | 0.32 [0.24, 0.44] | none | null |
+
+Geometric means of per-(session, item) ratios, two-stage cluster bootstrap 95 % CI (items as clusters). Mechanism screen only; no accuracy claim and no pick/order change. The brevity prompt verifiably shortens visible replies; its effect on total output tokens (mostly reasoning) points the same way on both models but per-cell ratios range 0.15–3.96 at k=1, so the screen is underpowered for it. Rows `benchmark/results/*/opencode_v2_*.m61ab.{s1,s2}.{A,B}.jsonl`; follow-up C140(5).
+
 ## 2026-10-08 — M59: opencode 2.x re-baseline of the two B picks (Python + Go, k=2) — scores hold within intervals; the 16K-token stall window under-scored both, the second pick more
 
 **Setup.** opencode 2.0.20 hermetic probe (`run_opencode_probe_v2.py`), Python + Go C37 22-item draws, two independent loaded
