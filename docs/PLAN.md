@@ -211,6 +211,16 @@ M42 terminology clarification (2026-09-13): the approved `kv_bits: 0` arm means 
   binary pass@1 needs n≈100); pass@1 prunes only at n≥50 for a ~20pp deficit. The
   between-models `p_d≈0.20` applies — never import the within-model low-`p_d` argument.
 - **Stage 3 (hours):** full n=100 axes + agentic for survivors.
+- **Agentic stage (C144, operator 2026-10-09):** opencode v2 only (`opencode-v2-web`, 48K first-write allowance, the M61
+  re-record's seeds; the 1.18 probe is frozen and its rows never compare with v2). Gate: one session of the C37 22-item
+  Python leg (≈ 2 h); in range → the k=2 Python + Go chain (≈ 10 h), paired per session against the two picks' M61
+  re-record rows, never pooled.
+- **Lazy v2 coverage gaps (C144) — pay each only when a decision needs it:**
+  - `Ornith-1.0-35B-mlx-uniform-4bit` (B #3) has no v2 rows; its agentic evidence is opencode 1.18 only. Run its v2
+    chain (≈ 10 h) when it is up for promotion or a new candidate would displace it.
+  - Rust / Java / JavaScript (M55) are opencode 1.18 only for every model. When a candidate's case rests on those
+    languages, run a v2 polyglot leg for it AND both picks together (≈ 3 legs × 3 models).
+  - Every other past candidate: no v2 rows; never backfilled speculatively.
 - **Verdicts:** prune (CI upper < −5pp) / park (partial, resumable) / continue. Holm per
   candidate-per-stage. **Promotion is a holistic architect judgement** recorded in the
   ledger (ruling 2). Leader baselines are k=1 — a shared error term, standing caveat.
