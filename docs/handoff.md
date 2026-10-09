@@ -16,7 +16,7 @@ C140, C139, C138). Results: `docs/campaign-results.md` 2026-10-09; history: `doc
 - **Ruled this session:** C139(a) 48K default; C140 resolved (no accuracy regression on v2; token increase real); C141 →
   M61 audited web; C142 (repo-root URL with a query string not denied); C143 (no brevity instruction file — P205: plain v2
   code preferred 0.775 [0.525, 0.975]); C144 (new candidates agentic on v2 only; v2 gaps paid lazily — PLAN funnel).
-- Operator-only: delete `ts.md` and the fork `f1-sync` worktree + `sync/upstream-v0.6.15` branch; push go.
+- Operator-only: delete `ts.md`; push go (operator: after the re-record). Fork `f1-sync` worktree + local `sync/upstream-v0.6.15` removed 2026-10-09 (remote branch kept).
 
 ## Queue, in order
 
@@ -25,7 +25,7 @@ C140, C139, C138). Results: `docs/campaign-results.md` 2026-10-09; history: `doc
    acc_strict per model × language × session, head-to-head per session (two-stage cluster bootstrap), comparison to M59
    descriptive only (different scaffold — never pooled). Copy rows to `benchmark/results/<model>/opencode_v2_<lang>.m61.<s>.jsonl`
    (+ manifests, sidecars); README B evidence update; no pick/order change without operator approval.
-2. Remove the worktree `$STACK_WORKDIR/m61/wt-r5` and branch `m61-r5` (merged).
+2. (done) `m61-r5` worktree + branch removed after merge.
 3. **C138 proposal** (probe interruption safety; in-probe memory cap replacing the watchdog).
 4. Push when the operator says.
 
