@@ -213,7 +213,7 @@ M42 terminology clarification (2026-09-13): the approved `kv_bits: 0` arm means 
 - **Stage 3 (hours):** full n=100 axes + agentic for survivors.
 - **Agentic stage (C144, operator 2026-10-09):** opencode v2 only (`opencode-v2-web`, 48K first-write allowance, the M61
   re-record's seeds; the 1.18 probe is frozen and its rows never compare with v2). Gate: one session of the C37 22-item
-  Python leg (≈ 2 h); in range → the k=2 Python + Go chain (≈ 10 h), paired per session against the two picks' M61
+  Python leg (≈ 2 h; Go is scored on 21 items — `go/counter` excluded, C145); in range → the k=2 Python + Go chain (≈ 10 h), paired per session against the two picks' M61
   re-record rows, never pooled.
 - **Lazy v2 coverage gaps (C144) — pay each only when a decision needs it:**
   - `Ornith-1.0-35B-mlx-uniform-4bit` (B #3) has no v2 rows; its agentic evidence is opencode 1.18 only. Run its v2

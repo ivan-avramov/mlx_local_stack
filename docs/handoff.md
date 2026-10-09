@@ -1,4 +1,4 @@
-# Handoff — 2026-10-09 (evening): M61 re-record DONE (86/88 vs 84/88, order holds); C145/C146 OPEN; push pending operator go
+# Handoff — 2026-10-09 (evening): M61 re-record DONE (85/86 vs 82/86, order holds); C145 RULED; C146 OPEN; push pending operator go
 
 THE one handoff. Read this, then `docs/PLAN.md` (fail-fast funnel, C144 agentic stage) and `docs/open-questions.md` (C146,
 C145, C144, C143, C139, C138). Results: `docs/campaign-results.md` 2026-10-09; history: `docs/lab-notebook.md` 2026-10-09.
@@ -9,19 +9,18 @@ Report: `benchmark/results/m61_rr/` (`rr_report.py`, `RR_REPORT.md`). Artefacts:
 
 - **M61 DONE.** Re-record under `opencode-v2-web` (48K, audited web), k=2, 01:24Z → 18:55Z, rc=0, stack stopped (daily
   driver NOT started). Rows `benchmark/results/<model>/opencode_v2_<lang>.m61.<s>.jsonl` (+ manifests). 0 web fetches,
-  0 cheats. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 86/88, `Qwen3.8-27B-mlx-uniform-4bit` 84/88; README B evidence
-  updated; no pick/order change proposed (all head-to-head intervals include 0; Go s2 +13.6 pp trend for the first pick).
+  0 cheats. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 85/86, `Qwen3.8-27B-mlx-uniform-4bit` 82/86 (Go on 21 items,
+  `go/counter` excluded — C145); README B evidence updated; no pick/order change proposed (all head-to-head intervals include 0; Go s2 +14.3 pp trend for the first pick).
 - `main` ahead of `origin/main` (`c889661`), **not pushed** — operator said "we push after this run finishes"; needs an
   explicit in-turn go. Fork `58eb241b` pushed; fork sync worktree/branches removed.
 - Ruled this session: C139(a)/(b), C140, C141 (audited web), C142, C143 (no brevity file), C144 (new candidates v2 only;
-  gaps paid lazily).
+  gaps paid lazily), C145 (`go/counter` excluded).
 
 ## Queue, in order
 
 1. **Push** on the operator's word.
-2. **C145** (operator ruling): exclude invalid `go/counter` from opencode Go scores (regrade, recommended).
-3. **C146** (operator ruling): token-counted first-write gate for future runs (recommended; spec + failing test first).
-4. **C138 proposal** (probe interruption safety; in-probe memory cap replacing the watchdog).
+2. **C146** (operator ruling): token-counted first-write gate for future runs (recommended; spec + failing test first).
+3. **C138 proposal** (probe interruption safety; in-probe memory cap replacing the watchdog).
 
 ## Rules learned (this session)
 
