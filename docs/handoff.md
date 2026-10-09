@@ -1,46 +1,43 @@
-# Handoff — 2026-10-08: M59 COMPLETE; C139(a) 48K default landed; C140 RCA (1.18 vs 2.x) recorded; C141 web-access design owed; superpowers uninstalled; stack STOPPED
+# Handoff — 2026-10-09: M61 re-record RUNNING (≈ 20 h from 01:24Z); P198 A/B + P205 panel done; C140/C143/C144 ruled
 
-THE one handoff. Read this, then `docs/PLAN.md` (M59 row) and `docs/open-questions.md` (C139 OPEN; C138 OPEN; C137 RESOLVED; C136
-addendum). Results: `docs/campaign-results.md` 2026-10-08; history: `docs/lab-notebook.md` 2026-10-07/08. Artefacts:
-`$STACK_WORKDIR/m59/` (M59_REPORT.md + `m59_report.py`, RUNLOG.md, `run_m59.py`, `mem_watchdog.py`, `s1/`, `s2/`, `stallprobe/`,
-`archive/`, `c137/`).
+THE one handoff. Read this, then `docs/PLAN.md` (M61 row, fail-fast funnel) and `docs/open-questions.md` (C144, C143, C142,
+C140, C139, C138). Results: `docs/campaign-results.md` 2026-10-09; history: `docs/lab-notebook.md` 2026-10-09. Spec:
+`docs/specs/m61-web-audit-and-prompt-ab.md`. Artefacts: `$STACK_WORKDIR/m61/` (RUNLOG.md, `run_m61.py`, `run_m61_rr.py`,
+`drive_ab.sh`, `drive_rr.sh`, `ab/`, `rr/`, `analysis/ab_p198.py`, `p205/`, `verify7/probe.py`).
 
 ## State of the world
 
-- **Stack is STOPPED**, box idle, no watchdog or runner alive. Restart = `./runserver.sh` (operator).
-- Stack `main` = this commit; `origin/main` = `c889661` (**not pushed**; operator: "we push later"). Fork `58eb241b` pushed, CI green.
-- **M59 done:** Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed Python 21/22, 20/22, Go 20/22 ×2; Qwen3.8-27B-mlx-uniform-4bit Python
-  20/22 ×2, Go 18/22 ×2 (rows `benchmark/results/*/opencode_v2_*.m59.*`). Every head-to-head and scaffold-delta interval includes 0;
-  README evidence updated, no order change. P182: 14/18 stalls converted at 48K tokens; the 16K window under-scored the second pick
-  more (5 vs 2 window-attributable conversions, by first-write time; corrected from 7 vs 3) → C139.
-- Operator-only: delete `ts.md` and the fork `f1-sync` worktree + `sync/upstream-v0.6.15` branch (sandbox denied); push go.
+- **M61 C139(b) re-record RUNNING** under `opencode-v2-web` (48K first-write allowance, webfetch allowed + audited, P202 cheat
+  procedure): `drive_rr.sh` (PID 43280) → `run_m61_rr.py s1 s2`, `mem_watchdog.py` armed, stop-file `drive_rr.rc`
+  (6/7/8/9 = failure). Order per session: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` then
+  `Qwen3.8-27B-mlx-uniform-4bit`, Python then Go. Rows `$STACK_WORKDIR/m61/rr/<model>.rr.<s>.opencode_<lang>.jsonl`. Do not
+  touch serving config or load the box until it exits. Started after main fast-forwarded to `7679bbc` and both suites passed.
+- Stack `main` = this commit; `origin/main` = `c889661` (**not pushed**; operator: "we push later"). Fork `58eb241b` pushed.
+- **Ruled this session:** C139(a) 48K default; C140 resolved (no accuracy regression on v2; token increase real); C141 →
+  M61 audited web; C142 (repo-root URL with a query string not denied); C143 (no brevity instruction file — P205: plain v2
+  code preferred 0.775 [0.525, 0.975]); C144 (new candidates agentic on v2 only; v2 gaps paid lazily — PLAN funnel).
+- Operator-only: delete `ts.md` and the fork `f1-sync` worktree + `sync/upstream-v0.6.15` branch; push go.
 
 ## Queue, in order
 
-1. **C141 design (operator agreed direction, P187):** webfetch allowed + audited in the v2 bench (deny answer-key sources by
-   permission pattern on webfetch URL and shell command, record every fetch on the row, reference-solution overlap detector, flagged
-   rows never ranked). Present the spec, get go, build (Codex worker, cold-context verifier), new scaffold id, never pooled with M59.
-2. **C139(b) re-record** under the final scaffold (48K default already in `947c9cb`; C141 landed): one ≈ 20 h chain, arm
-   `mem_watchdog.py`, session-tagged outputs.
-3. **C140:** flag the 1.18-medium `Qwen3.8-27B-mlx-uniform-4bit` go/matrix row (answer-key webfetch) in reports. RCA artefacts:
-   `$STACK_WORKDIR/m59_debug/` (pair.py, firstwrite.py, capture/, ocdb copy, codex_rca.md).
-4. **C138 proposal** (probe interruption safety, in-probe memory cap replacing the watchdog).
-5. Push when the operator says. Blind-judge agent canary in a new session.
+1. **Watch the re-record** to `drive_rr.rc`: per-leg `AUDIT` lines (cheat re-runs, `CHEAT REVIEW` = operator), `FLAG >5%`
+   rate checks, FATAL. Then report: `bench.answer_key.report_rows` per leg (scored copies; provisional counts; cheat counts),
+   acc_strict per model × language × session, head-to-head per session (two-stage cluster bootstrap), comparison to M59
+   descriptive only (different scaffold — never pooled). Copy rows to `benchmark/results/<model>/opencode_v2_<lang>.m61.<s>.jsonl`
+   (+ manifests, sidecars); README B evidence update; no pick/order change without operator approval.
+2. Remove the worktree `$STACK_WORKDIR/m61/wt-r5` and branch `m61-r5` (merged).
+3. **C138 proposal** (probe interruption safety; in-probe memory cap replacing the watchdog).
+4. Push when the operator says.
 
 ## Rules learned (this session)
 
-- A model-written loop can exhaust host memory through opencode's shell tool (opencode leaves timed-out commands running); arm the
-  memory watchdog for every unattended run until C138 lands.
-- Re-running items with the same seed separates "the gate cut it" from "run variance" only by wall time vs the original window — report
-  both kinds; only window-attributable conversions measure the gate's cost.
-- Estimates for runs with long per-item windows must budget the window per re-stalling item, not the typical item time.
-- Anything opencode can print into its prompt must be stable per item, never per run: scratch dir name, TMPDIR, file mtimes; the date is
-  a one-day window (`prompt_date`). Diff per-request `prompt_tokens` in the worker log to locate a leak before blaming the server.
-- The lean worker logs to stdout unless `MLX_VLM_LOG_FILE` is set (runserver sets it); set it in every lean start that an instrument reads.
-- A draft-OFF overlay must also drop `mtp_verify_scan` (it requires `draft_kind: mtp`).
-- Kill runners by process group: a killed runner left its gate child alive, which overwrote the A4 receipt of the next attempt.
-- Suites must run with the stack down and without `STACK_WORKDIR` exported.
-- opencode 2.0.20 sometimes emits the final `step_finish` (the capture never saw it); a mock capture is necessary, not sufficient.
-- Codex workers stop and ask when a ruling is needed; answer in a follow-up prompt file, keep the `.rc` launcher.
+- A token-saving prompt that keeps tests passing can still cost code quality: screen with a blind panel over test-passing
+  pairs before shipping it (P205).
+- The probe does not keep final solution files; rebuild from transcript `write`/`edit` replay and re-test (stubs must fail).
+- Codex judge/worker calls share quota with the re-record's web auditor: run them one at a time, pause while `web_audit.py`
+  runs, abort on first error.
+- Codex implementers drift into docs/handoff edits and commits; forbid it in the prompt and revert on sight.
+- Operator desktop activity (browser, audio, camera) cut decode ≈ 20 %; long runs need a quiet box.
+- Docs-only commits during a run change the recorded `stack_head`, not the fingerprint (serving-path trees).
 
-Next decision id C142; discussion ids continue from P190.
+Next decision id C145; discussion ids continue from P209.
