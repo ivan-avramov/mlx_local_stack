@@ -16,7 +16,7 @@ C140, C139, C138). Results: `docs/campaign-results.md` 2026-10-09; history: `doc
 - **Ruled this session:** C139(a) 48K default; C140 resolved (no accuracy regression on v2; token increase real); C141 →
   M61 audited web; C142 (repo-root URL with a query string not denied); C143 (no brevity instruction file — P205: plain v2
   code preferred 0.775 [0.525, 0.975]); C144 (new candidates agentic on v2 only; v2 gaps paid lazily — PLAN funnel).
-- Operator-only: delete `ts.md`; push go (operator: after the re-record). Fork `f1-sync` worktree + local `sync/upstream-v0.6.15` removed 2026-10-09 (remote branch kept).
+- Operator-only: delete `ts.md`; push go (operator: after the re-record). Fork `f1-sync` worktree + local `sync/upstream-v0.6.15` removed 2026-10-09 (remote branch deleted by the operator; history: c1975b4c).
 
 ## Queue, in order
 
