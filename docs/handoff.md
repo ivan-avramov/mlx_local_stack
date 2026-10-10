@@ -11,13 +11,17 @@ build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and
   `mlx` 0.32.2 → 0.32.3 (forced by upstream mlx-vlm), which is in the serving-path hash: rows recorded after the
   bump do not pair with earlier rows. Known, not fixed: the mlx-serve fork's golden registry test fails against
   this stack's live `main_models.yaml` (fixture predates `mtp_verify_scan joint_v1`); refresh owed in the fork.
-- **C147 BUILT (this session), nothing live yet.** Spec rev 3 + §9. Two Codex `gpt-6.1-sol` design reviews
-  (both "redesign"; every id answered); post-build review launched (`$STACK_WORKDIR/c147/codex_impl_review1.md`,
-  read it first if present and act on blockers). Code: `--tg1-inject {stall,loop,alloc}` (probe), `--cancel-file`,
-  `--manifest-ack`, `--sampling-profile deployed`, `--print-identity`; `benchmark/m62/inject_verify.py`,
+- **C147 BUILT (this session), nothing live yet.** Spec rev 3 + §9 (B1–B8). Two Codex `gpt-6.1-sol` design
+  reviews (both "redesign"; every id answered), then post-build reviews: round 1 "not cleared" Q1–Q11 (fixed,
+  `84d6e5a8`), round 2 "not cleared" Q12–Q18 (fixed, `20e41354`; two lead decisions recorded in §9 B8: write-only
+  `/tmp` deletion with content match; `cancellation_consistent` accepted, worker-side receipt proposed as C149),
+  round 3 launched (`$STACK_WORKDIR/c147/codex_impl_review3.md` — read it first if present; act on blockers,
+  judge should-fixes). Code: `--tg1-inject {stall,loop,alloc}` (probe), `--cancel-file`, `--manifest-ack`,
+  `--sampling-profile deployed`, `--print-identity`; `benchmark/m62/inject_verify.py`,
   `benchmark/m62/tmp_escape_clean.py`; `benchmark/bench/chain_ops.py`; `benchmark/chains/c147/{run_tg1_chain.py,
   run_inject.py, drive_chain.sh, drive_inject.sh, fake_probe.py}`; `scripts/session_pinning_gate.py --scaffold
-  opencode-v2-web-tg1`. Suites: 738 passed (22-file C147 + tg1/m62/opencode-v2 set, one invocation).
+  opencode-v2-web-tg1`; `structured_grade.validate_reports`. Whole `benchmark/bench/tests/` from `benchmark/`:
+  4305 passed, 2 skipped, 1 xfailed (`env -u STACK_WORKDIR`, `OPENCODE_PROBE_BIN` set for the real-client tests).
 - **Build finding B1 — the M62 live stop path had never reconciled** (SIGKILL before the client persisted the
   in-flight message; 8/8 real-client failures). Fixed: SIGTERM-first `graceful_stop`, two named transport errors
   tolerated for our own stops only, aborted trailing message with usage charged (`interrupted_charged`). V3/V4
@@ -27,7 +31,7 @@ build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and
 
 ## Queue, in order
 
-1. **Read the post-build Codex review** (`codex_impl_review1.md`); fix blockers test-first; commit.
+1. **Read post-build Codex review 3** (`codex_impl_review3.md`); fix blockers test-first; commit. Rounds 1–2 are answered.
 2. **C147 V3 — live injected positives (operator, ≈30 min, box quiet, 140 W/28 V, battery > 20 %):**
    `nohup benchmark/chains/c147/drive_inject.sh &` → `$STACK_WORKDIR/m62/inject/{inject.out,inject.rc,RUNLOG.md}`;
    the driver re-runs a non-PASS kind on seeds 2002/3003 and ends with the suite verdict of
