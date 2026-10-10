@@ -2,6 +2,20 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-10 — M62 live validation of `opencode-v2-web-tg1` (token/turn gate): V3 smoke 7/7, V4 re-run of the three M61 thinking stalls 3/3 — descriptive, not ranking evidence
+
+Scaffold `opencode-v2-web-tg1` (spec `docs/specs/m62-token-turn-gate.md`); draft OFF; deployed sampling; k=1, single pass; never pooled with M59/M61. Rows `benchmark/results/<model>/opencode_v2_tg1_<lang>.m62v3.s1.jsonl` and `….m62v4.<item>.s<seed>.jsonl` (+ manifests). Every request reconciled across row, events, export and server log (69 requests); 0 budget hits, 0 tool-bound rejections, 0 memory kills, 0 surviving processes/containers (V5b cold review).
+
+| Phase | Model | Item (seed base) | Result | Requests | Output tokens | Max single request | First write | Wall |
+|---|---|---|---|---|---|---|---|---|
+| V3 | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | python grade-school, dot-dsl, react, beer-song, food-chain (1001) | 5/5 | 4–6 | 844–3,018 | ≤ 2,471 | — | 44–129 s |
+| V3 | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | go forth, dnd-character (1001) | 2/2 | 12, 8 | 8,395; 1,652 | 2,746 | — | 524 s, 85 s |
+| V4 | Qwen3.8-27B-mlx-uniform-4bit | go/alphametics (1001) | pass | 6 | 6,000 | 5,079 | request 4, 213 s | 249 s |
+| V4 | Qwen3.8-27B-mlx-uniform-4bit | go/alphametics (2002) | pass | 12 | 14,037 | 10,666 | request 6, 513 s | 592 s |
+| V4 | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | python/book-store (2002) | pass | 7 | 11,608 | 10,794 | request 3, 456 s | 502 s |
+
+**Reading.** All three M61 thinking-stall items passed on fresh trajectories whose longest request stayed ≤ 10.8K tokens; no request approached 41K. The prompts differ from M61 (date; harness files moved out of the exercise tree), so these are new samples, not replays: V4 shows the items are solvable well within budget, and says nothing about whether the censored ≈ 41K M61 thinks would have converged. **M61 remains the record; no score, pick or order changes.** Gate behaviour on live data: progress credited only on new minima (go/forth 48 → 17 → 9 → 11 → ungradeable → 0; the regression earned nothing). Before any tg1 chain: C147.
+
 ## 2026-10-09 — M61 C139(b) re-record: the two B picks under `opencode-v2-web` (48K first-write allowance, audited web), k=2 — the first pick leads on Go, ties on Python; order holds (`go/counter` excluded, C145)
 
 Same seeds and items as M59 (22 Python + 22 Go per session, s1 seed base 1001, s2 2002, one fresh loaded instance per (model, session)); draft OFF; deployed sampling; scaffold `opencode-v2-web` (webfetch allowed, answer-key sources denied, every row audited, P202 cheat procedure). Rows `benchmark/results/<model>/opencode_v2_<lang>.m61.<s>.jsonl`; report `benchmark/results/m61_rr/` (`rr_report.py`, `RR_REPORT.md`). 176/176 rows, every leg rc=0, **0 web fetches, 0 cheat attempts, 0 re-runs, nothing provisional**; decode-rate checks within 5 % except one −5.1 % pilot (Qwen3.8-27B-mlx-uniform-4bit s1, quiet box; later legs −2.4 to −4.3 %); 140 W / 100 % battery throughout.

@@ -295,3 +295,6 @@ Chain cost is estimated from V3/V4 means plus a heavy-tail allowance before any 
   replay stopped it as `(looping, request 22)`; an independent count confirms an identical-`edit` loop whose 8th call
   is in request 22, and K precedes N. The fixture is now `looping@request22` — a second K known positive. The 54
   misattributed rows are sha-verified and never ingested.
+- **Live (2026-10-10):** V5a findings fixed (`1c1626d`, `90cf34f`); V3 7/7 and V4 3/3 (campaign-results 2026-10-10); V3 ran
+  without live injected positives (no lowered-threshold mode exists) — V5b "cleared after fixes", owed items in C147.
+
