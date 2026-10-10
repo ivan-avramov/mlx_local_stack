@@ -296,3 +296,45 @@ def test_real_rapid_fork_detach_chdir_is_attributed_or_diagnostic(tmp_path):
             psutil.Process(
                 pid
             ).kill()  # This fixture knows its own child independently of H1.
+
+
+class Exiting(Process):
+    """macOS: reads of an own-uid process mid-exit raise AccessDenied (sysctl KERN_PROCARGS2 -> EINVAL), not
+    NoSuchProcess (C148, observed in test_resume_accepts_gather_runtime_observations ~1 in 5 runs)."""
+
+    def __init__(self, *args, fail=("cmdline",), **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fail = set(fail)
+
+    def _maybe(self, name, value):
+        if name in self.fail:
+            import psutil
+            raise psutil.AccessDenied(self.pid)
+        return value
+
+    def cmdline(self):
+        return self._maybe("cmdline", self.argv)
+
+    def memory_info(self):
+        return self._maybe("memory_info", SimpleNamespace(rss=self.rss))
+
+    def ppid(self):
+        return self._maybe("ppid", self.parent)
+
+    def create_time(self):
+        return self._maybe("create_time", self.created)
+
+
+@pytest.mark.parametrize("fail", [("cmdline",), ("memory_info",), ("ppid",), ("create_time",),
+                                  ("cmdline", "memory_info", "ppid", "create_time")])
+def test_access_denied_on_exiting_process_is_transient_not_monitor_death(tmp_path, fail):
+    client = Process(10, argv=["opencode", "run"])
+    child = Exiting(11, 10, rss=1, argv=["bash", "-c", "x"], fail=fail)
+    hog = Process(12, 10, rss=9)
+    g = guard(tmp_path, [client, child, hog], per_process=8, aggregate=64, client_limit=64)
+    g.register(client, "client")
+    g.tick()                      # must not raise: one unreadable exiting process is skipped this tick
+    assert hog.dead and not child.dead
+    child.fail = set()
+    g.tick()                      # readable again: classified and tracked normally
+    assert g.tracked.get((11, 10)) == "model"

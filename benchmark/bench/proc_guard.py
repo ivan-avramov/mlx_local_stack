@@ -191,6 +191,9 @@ class ProcessGuard:
         import psutil
 
         self.psutil = psutil
+        # A process mid-exit can raise AccessDenied on macOS (sysctl KERN_PROCARGS2 -> EINVAL) instead of
+        # NoSuchProcess; either way the monitor skips it for that tick (C148).
+        self._transient = (psutil.NoSuchProcess, psutil.AccessDenied)
         self.excluded_pids = {os.getpid(), os.getppid()}
         self.excluded_pids.update(p.pid for p in psutil.Process().parents())
         self.excluded_pids.update(protected_pids)
@@ -272,7 +275,7 @@ class ProcessGuard:
                         # create_time) raises here and must never become an ancestry authority (V5a P13).
                         ppids[p.pid] = p.ppid()
                         alive[p.pid] = (p, p.create_time())
-                except self.psutil.NoSuchProcess:
+                except self._transient:
                     ppids.pop(p.pid, None)
                     alive.pop(p.pid, None)
             # Follow ancestry until its transitive closure; detachments retain recorded ownership.
@@ -302,7 +305,7 @@ class ProcessGuard:
                             parent_key = (parent[0].pid, parent[1]) if parent else None
                             if is_shell or parent_key in self.shell_descendants:
                                 self.shell_descendants.add(key)
-                        except self.psutil.NoSuchProcess:
+                        except self._transient:
                             pass
             memory = []
             for key, role in list(self.tracked.items()):
@@ -317,13 +320,16 @@ class ProcessGuard:
                         self._mem_kill(p, key, role)
                     elif role != "client":
                         memory.append((rss, p, key, role))
-                except self.psutil.NoSuchProcess:
+                except self._transient:
                     continue
             total = sum(x[0] for x in memory)
             for rss, p, key, role in sorted(memory, key=lambda x: x[0], reverse=True):
                 if total <= self.aggregate:
                     break
-                self._mem_kill(p, key, role)
+                try:
+                    self._mem_kill(p, key, role)
+                except self._transient:
+                    pass        # exiting: its memory is being released either way
                 total -= rss
 
     def _mem_kill(self, p, key, role):
