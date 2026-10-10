@@ -233,6 +233,12 @@ class ProcessGuard:
     def _protected(self, process):
         return process.pid in self.excluded_pids or process.create_time() < self.started
 
+    def _same_identity(self, pid, created):
+        try:
+            return self.get(pid).create_time() == created
+        except (self.psutil.NoSuchProcess, self.psutil.AccessDenied):
+            return False
+
     def _live(self, process):
         return process.status() not in ("zombie", "dead")
 
@@ -258,22 +264,28 @@ class ProcessGuard:
         with self.lock:
             processes = self._processes()
             alive = {}
+            ppids = {}
             for p in processes:
                 try:
                     if not self._protected(p):
+                        # ppid() re-validates identity; a stale cached entry (pid reused, psutil keeps the old
+                        # create_time) raises here and must never become an ancestry authority (V5a P13).
+                        ppids[p.pid] = p.ppid()
                         alive[p.pid] = (p, p.create_time())
                 except self.psutil.NoSuchProcess:
-                    pass
+                    ppids.pop(p.pid, None)
+                    alive.pop(p.pid, None)
             # Follow ancestry until its transitive closure; detachments retain recorded ownership.
             changed = True
             while changed:
                 changed = False
                 for pid, (p, created) in alive.items():
                     key = (pid, created)
-                    try:
-                        parent = alive.get(p.ppid())
-                    except self.psutil.NoSuchProcess:
-                        continue
+                    parent = alive.get(ppids[pid])
+                    if parent and parent[1] > created:
+                        parent = None   # a parent cannot be younger than its child: pid reuse
+                    if parent and not self._same_identity(parent[0].pid, parent[1]):
+                        parent = None
                     if key not in self.tracked and parent:
                         role = self.tracked.get((parent[0].pid, parent[1]))
                         if role:

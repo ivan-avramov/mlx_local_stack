@@ -352,11 +352,17 @@ def run_item(
                                    inflight_s_at_stop=gate.inflight_s_at_stop)
         killed = True
         heartbeat.set_phase("cancellation")
-        guard.kill_role("client")
-        guard.kill_role("model")
+        errors = []
+        for role in ("client", "model"):
+            try:
+                guard.kill_role(role)
+            except Exception as exc:  # noqa: BLE001 — cancellation must still run (V5a P14)
+                errors.append(exc)
         cancellation_attempted = True
         pg.wait_cancel(lambda: worker_json("metrics"),
                        prompt_tokens=gate.request_usage[-1][2] if gate.request_usage else 0)
+        if errors:
+            raise errors[0]
 
     heartbeat.start()
     try:
