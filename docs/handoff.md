@@ -15,14 +15,15 @@ build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and
   reviews (both "redesign"; every id answered), then post-build reviews: round 1 "not cleared" Q1–Q11 (fixed,
   `84d6e5a8`), round 2 "not cleared" Q12–Q18 (fixed, `20e41354`; two lead decisions recorded in §9 B8: write-only
   `/tmp` deletion with content match; `cancellation_consistent` accepted, worker-side receipt proposed as C149),
-  round 3 "not cleared" Q19–Q25 (fixed in the next commit; §9 B9), round 4 launched
-  (`$STACK_WORKDIR/c147/codex_impl_review4.md` — read it first if present; the rounds converge on narrower boundary
-  cases; act on blockers, judge should-fixes, and consider the live V3 run the real clearance). Code: `--tg1-inject {stall,loop,alloc}` (probe), `--cancel-file`, `--manifest-ack`,
+  round 3 "not cleared" Q19–Q25 (fixed, `6bb4cefe`; §9 B9), round 4 "not cleared" Q26–Q28 (three boundary
+  cases the reviewer judged not to invalidate a live positive run; fixed in the final commit; §9 B10). Lead
+  decision: the review loop stops here — the operator's live V3 run and the chain pilot are the clearance. All
+  four rounds are under `$STACK_WORKDIR/c147/codex_impl_review{1..4}.md`. Code: `--tg1-inject {stall,loop,alloc}` (probe), `--cancel-file`, `--manifest-ack`,
   `--sampling-profile deployed`, `--print-identity`; `benchmark/m62/inject_verify.py`,
   `benchmark/m62/tmp_escape_clean.py`; `benchmark/bench/chain_ops.py`; `benchmark/chains/c147/{run_tg1_chain.py,
   run_inject.py, drive_chain.sh, drive_inject.sh, fake_probe.py}`; `scripts/session_pinning_gate.py --scaffold
   opencode-v2-web-tg1`; `structured_grade.validate_reports`. Whole `benchmark/bench/tests/` from `benchmark/`:
-  4356 passed, 2 skipped, 1 xfailed (`env -u STACK_WORKDIR`, `OPENCODE_PROBE_BIN` set for the real-client tests).
+  4367 passed, 2 skipped, 1 xfailed (`env -u STACK_WORKDIR`, `OPENCODE_PROBE_BIN` set for the real-client tests).
 - **Build finding B1 — the M62 live stop path had never reconciled** (SIGKILL before the client persisted the
   in-flight message; 8/8 real-client failures). Fixed: SIGTERM-first `graceful_stop`, two named transport errors
   tolerated for our own stops only, aborted trailing message with usage charged (`interrupted_charged`). V3/V4
@@ -32,19 +33,18 @@ build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and
 
 ## Queue, in order
 
-1. **Read post-build Codex review 4** (`codex_impl_review4.md`, if present); fix blockers test-first; commit. Rounds 1–3 are answered.
-2. **C147 V3 — live injected positives (operator, ≈30 min, box quiet, 140 W/28 V, battery > 20 %):**
+1. **C147 V3 — live injected positives (operator, ≈30 min, box quiet, 140 W/28 V, battery > 20 %):**
    `nohup benchmark/chains/c147/drive_inject.sh &` → `$STACK_WORKDIR/m62/inject/{inject.out,inject.rc,RUNLOG.md}`;
    the driver re-runs a non-PASS kind on seeds 2002/3003 and ends with the suite verdict of
    `benchmark/m62/inject_verify.py --run $STACK_WORKDIR/m62/inject`. Required PASS for all three kinds, the retained
    `loop` row showing `in_flight_at_kill ≥ 1`. Record the outcome in open-questions C147 and campaign-results.
-3. **Chain pilot:** `benchmark/run_opencode_probe_v2.py --print-identity` → `probe_code_sha256`; then
+2. **Chain pilot:** `benchmark/run_opencode_probe_v2.py --print-identity` → `probe_code_sha256`; then
    `nohup benchmark/chains/c147/drive_chain.sh pilot &` (5 items, pick 1, `$STACK_WORKDIR/c147/pilot/`). The pilot
    is the composed real test of the runner (M50 forbids a subprocess probe in tests).
-4. **P223 chains:** `nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha <sha> &`
+3. **P223 chains:** `nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha <sha> &`
    (≈20 h + pilots + 10-min arm idles). Stop cleanly with `touch $STACK_WORKDIR/c147/STOP` (exit 3). Watch
    `RUNLOG.md` every 5 min (`WATCH`, `ALARM`, `CORRECTION?`). Never pool tg1 with the M61 `opencode-v2-web` rows.
-5. Then C144 candidates under tg1; README/ranking updates need the operator.
+4. Then C144 candidates under tg1; README/ranking updates need the operator.
 
 ## Rules learned (2026-10-10, this session)
 

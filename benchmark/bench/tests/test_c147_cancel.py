@@ -522,3 +522,47 @@ def test_error_written_during_the_pre_signal_scan_is_before_the_cutoff_and_abort
     assert s.signal_offset is None
     with pytest.raises(tg.TransportAbort, match="error event"):
         tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")
+
+
+@pytest.mark.parametrize("failure", ["AccessDenied", "NoSuchProcess"])
+def test_cutoff_is_committed_only_after_a_terminate_succeeded(tmp_path, failure):
+    import psutil
+
+    class Failing(Process):
+        def terminate(self):
+            raise getattr(psutil, failure)(self.pid)
+
+    committed = []
+    owned = Failing(70, argv=["opencode", "run"])
+    g = guard(tmp_path, [owned])
+    g.register(owned, "client")
+    signalled = g.graceful_stop("client", 0.0, before_signal=lambda: 4242, after_signal=committed.append)
+    assert signalled == [] and committed == []              # every terminate raised: nothing committed
+    ok = Process(71, argv=["opencode", "run"])
+    h = guard(tmp_path, [ok])
+    h.register(ok, "client")
+    h.graceful_stop("client", 0.0, before_signal=lambda: 4242, after_signal=committed.append)
+    assert committed == [4242]                               # exactly once, with the captured value
+
+
+@pytest.mark.parametrize("failure", ["AccessDenied", "NoSuchProcess"])
+def test_failed_signal_leaves_tolerance_disabled_so_a_transport_error_aborts(tmp_path, failure):
+    import psutil
+    from bench.tests.test_token_turn_gate import _fresh, _err, ABORT_FETCH, assistant, TAIL
+    from bench import token_turn_gate as tg
+
+    class Failing(Process):
+        def terminate(self):
+            raise getattr(psutil, failure)(self.pid)
+
+    g, s = _fresh()
+    s.offset = 1000
+    owned = Failing(72)
+    guard_ = guard(tmp_path, [owned])
+    guard_.register(owned, "client")
+    guard_.graceful_stop("client", 0.0, before_signal=lambda: 1000,
+                         after_signal=lambda size: setattr(s, "signal_offset", size))
+    s.feed(_err(ABORT_FETCH))
+    assert s.signal_offset is None
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")

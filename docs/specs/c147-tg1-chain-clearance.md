@@ -438,3 +438,11 @@ Spec → cold review → implementation by a worker model from this spec, failin
   scored failure for the grader but an invalid final receipt → typed `collection_error` outcome. Q24 non-parsed
   receipts accepted any artifact → launch-output artifacts required for every grade that ran. Q25 attempts without
   a `run_id` skipped the live checks and could PASS → `run_id` required, live checks run for every retained attempt.
+- **B10 — post-build cold review 4 (`codex_impl_review4.md`): "not cleared", Q26–Q28 (three boundary cases the
+  reviewer itself judged not to invalidate an ordinary positive live run); fixed in the follow-up commit.** Q26
+  `/v1/models/load` had no router-ownership check and `unload` rescanned after a "no worker" result → one
+  `_require_own_router` guard before every destructive HTTP call; single guarded worker scan. Q27 an emptied parent
+  directory was `rmdir`'d without re-validating its identity → parent (dev, ino) recorded during the walk and
+  re-checked by name before removal. Q28 the transport-tolerance cutoff was armed even when SIGTERM failed →
+  published only after a successful `terminate()`. Lead decision: the review loop stops after this round; the
+  operator's live V3 run and the chain pilot are the clearance.

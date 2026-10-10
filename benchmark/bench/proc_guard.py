@@ -458,11 +458,13 @@ class ProcessGuard:
             self.killed.extend(killed)
         return killed
 
-    def graceful_stop(self, role, wait, before_signal=None):
+    def graceful_stop(self, role, wait, before_signal=None, after_signal=None):
         """SIGTERM every tracked live process of `role` and wait up to `wait` seconds for them to exit.
 
         `before_signal()` is called once, after the scan and identity checks and immediately before the first
-        SIGTERM; it is never called when nothing is signalled (C147 Q22).
+        SIGTERM, and returns a token (the cutoff, captured but NOT yet committed); `after_signal(token)` is called
+        once, only after a `terminate()` has actually succeeded. When nothing is signalled, or every terminate
+        raises, neither commits anything (C147 Q22/Q28).
 
         Returns [{pid, create_time, role, argv}] of the processes signalled; survivors are the caller's to
         SIGKILL (`kill_role`). Ancestry is sampled first, as in `kill_role` (C147)."""
@@ -479,11 +481,12 @@ class ProcessGuard:
                         targets.append((p, pid, created, actual, self._argv(p)))
                 except self._transient:
                     pass
-            if targets and before_signal is not None:
-                before_signal()
+            token = before_signal() if targets and before_signal is not None else None
             for p, pid, created, actual, argv in targets:
                 try:
                     p.terminate()
+                    if not signalled and after_signal is not None:
+                        after_signal(token)
                     signalled.append(dict(pid=pid, create_time=created, role=actual, argv=argv))
                 except self._transient:
                     pass
@@ -689,6 +692,7 @@ class ProcessGuard:
 
 TMP_ROOT = "/tmp"           # injectable for tests (`root=` arguments default to this)
 _PRE_UNLINK_HOOK = None     # test seam: runs between the final identity check and the unlink
+_PRE_RMDIR_HOOK = None      # test seam: runs after the unlink, before an emptied parent is re-verified and rmdir'd
 _MENTION = re.compile(r"(?<![\w.\-/~$])((?:/private)?/tmp/[^\s\"'<>|;&)`,]*)")
 
 
@@ -832,7 +836,7 @@ def _unlink_checked(name, fd, identity):
 
 def _clean_one(path, before, after, window, root, uid, expected_sha=None):
     """Remove one recorded file (and now-empty new parents), or an empty directory.
-    Returns (removed_parent_dirs, non_empty_parent_dirs)."""
+    Returns (removed_parent_dirs, [[parent, reason], ...]) for parents that stayed."""
     parts = path[len("/tmp/"):].split("/")
     if not path.startswith("/tmp/") or any(c in ("", ".", "..") for c in parts):
         raise _Refuse("traversal")
@@ -843,6 +847,7 @@ def _clean_one(path, before, after, window, root, uid, expected_sha=None):
         raise _Refuse("missing")
     cursor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     opened = [cursor]
+    identities = []                # (st_dev, st_ino) of parts[i] as seen through its opened dir_fd (Q27)
     try:
         for index, name in enumerate(parts):
             last = index == len(parts) - 1
@@ -860,6 +865,7 @@ def _clean_one(path, before, after, window, root, uid, expected_sha=None):
                 opened.append(cursor)
                 if (os.fstat(cursor).st_ino, os.fstat(cursor).st_dev) != (st.st_ino, st.st_dev):
                     raise _Refuse("replaced")
+                identities.append((st.st_dev, st.st_ino))
                 continue
             if stat.S_ISDIR(st.st_mode):
                 # The recorded WRITE must itself still be a regular file with matching content (Q20): a name that
@@ -886,15 +892,24 @@ def _clean_one(path, before, after, window, root, uid, expected_sha=None):
                 _unlink_checked(name, cursor, (st.st_ino, st.st_dev))
                 # Parents that became empty go too (every component was qualified on the way down); a parent that
                 # still holds anything else is reported, never emptied.
-                removed, mixed = [], []
+                removed, kept = [], []
+                if _PRE_RMDIR_HOOK:
+                    _PRE_RMDIR_HOOK()
                 for idx in range(len(parts) - 2, -1, -1):
+                    where = "/tmp/" + "/".join(parts[:idx + 1])
                     try:
+                        # The parent must still be the very directory walked into (a rename + new directory at
+                        # the old name must not be rmdir'd), re-read by name from ITS parent fd.
+                        now = os.stat(parts[idx], dir_fd=opened[idx], follow_symlinks=False)
+                        if (now.st_dev, now.st_ino) != identities[idx] or not stat.S_ISDIR(now.st_mode):
+                            kept.append([where, "replaced"])
+                            break
                         os.rmdir(parts[idx], dir_fd=opened[idx])
-                        removed.append("/tmp/" + "/".join(parts[:idx + 1]))
+                        removed.append(where)
                     except OSError:
-                        mixed.append("/tmp/" + "/".join(parts[:idx + 1]))
+                        kept.append([where, "dir_mixed"])
                         break
-                return removed, mixed
+                return removed, kept
             else:
                 raise _Refuse("not_regular")
     finally:
@@ -930,10 +945,10 @@ def tmp_clean(candidates, before, after, window, *, root=None, uid=None):
             if candidate.get("source") != "write" or candidate.get("status") != "completed" \
                     or not isinstance(candidate.get("content_sha256"), str):
                 raise _Refuse("ambiguous")
-            dirs, mixed = _clean_one(path, before, after, window, root, uid, candidate["content_sha256"])
+            dirs, parent_kept = _clean_one(path, before, after, window, root, uid, candidate["content_sha256"])
             cleaned.append(path)
             cleaned.extend(dirs)
-            kept.extend([d, "dir_mixed"] for d in mixed)
+            kept.extend(parent_kept)
         except _Refuse as refusal:
             kept.append([path, refusal.reason])
         except OSError:

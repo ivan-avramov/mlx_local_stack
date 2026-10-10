@@ -353,6 +353,10 @@ class ChainOps:
             raise ChainAbort("TRIPWIRE: worker environment: " + "; ".join(probs))
 
     def load(self, model):
+        why = self._require_own_router()
+        if why:
+            self.log(f"load {model} REFUSED (no HTTP sent): {why}")
+            raise ChainAbort(f"load refused: {why}")
         self.log(f"RUN load {model}")
         self._http("/v1/models/load", {"model": model, "keep_alive": "240m"})
         w = []
@@ -374,32 +378,39 @@ class ChainOps:
         self.worker_started = {"pid": pid, "create_time": ident["create_time"], "model": model}
         return ident
 
-    def _unload_guard(self, model):
-        """None when an unload is allowed, else the refusal reason. Allowed only if :8000 has exactly one listener
-        and it IS the recorded router, and the current worker for `model` is the instance this process loaded."""
+    def _require_own_router(self):
+        """None when the sole :8000 listener IS the recorded router (pid + create_time); else the refusal reason."""
         if self.router is None or not self.router.get("pid"):
             return "no router recorded as started by this process"
         if self.listeners() != [self.router["pid"]] or not self._alive(self.router):
             return "the :8000 owner is not the recorded router identity"
-        w = self.worker_cmdlines(model)
-        if not w:
-            return None                      # nothing to unload (verified gone below)
-        ws = self.worker_started
-        if not ws or ws.get("model") != model or not self._alive(ws) or len(w) != 1 or int(w[0].split()[0]) != ws["pid"]:
-            return "the current worker is not the instance this process loaded"
         return None
 
     def unload(self, model):
-        reason = self._unload_guard(model)
-        if reason:
-            self.log(f"unload {model} REFUSED (no HTTP sent): {reason}")
+        def refuse(why):
+            self.log(f"unload {model} REFUSED (no HTTP sent): {why}")
             return False
-        if self.worker_cmdlines(model):
-            try:
-                self._http("/v1/models/unload", {"model": model}, timeout=120)
-                self.log(f"unload {model} ok")
-            except Exception as e:  # noqa: BLE001
-                self.log(f"unload {model}: {e}")
+        why = self._require_own_router()
+        if why:
+            return refuse(why)
+        w = self.worker_cmdlines(model)                 # the single guarded scan
+        if not w:
+            self.loaded = None
+            return True
+        ws = self.worker_started
+        if (not ws or ws.get("model") != model or not self._alive(ws) or len(w) != 1
+                or int(w[0].split()[0]) != ws["pid"]):
+            return refuse("the current worker is not the instance this process loaded")
+        why = self._require_own_router()                # re-verify immediately before the send
+        if why:
+            return refuse(why)
+        if self.worker_cmdlines(model) != w:
+            return refuse("the worker set changed between the scan and the send")
+        try:
+            self._http("/v1/models/unload", {"model": model}, timeout=120)
+            self.log(f"unload {model} ok")
+        except Exception as e:  # noqa: BLE001
+            self.log(f"unload {model}: {e}")
         for _ in range(120):
             if not self.worker_cmdlines(model):
                 self.loaded = None

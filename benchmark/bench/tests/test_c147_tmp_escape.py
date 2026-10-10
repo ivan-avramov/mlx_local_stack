@@ -383,3 +383,23 @@ def test_write_path_replaced_by_an_empty_directory_is_kept_and_never_rmdird(root
     assert clean(root, [cand("/tmp/replacement", content="what we wrote")], b, a, w) == (
         [], [["/tmp/replacement", "replaced"]])
     assert (root / "replacement").is_dir() and rmdirs == []
+
+
+def test_emptied_parent_replaced_by_an_unrelated_directory_is_kept_and_not_rmdird(root, monkeypatch):
+    """Q27: unlink the recorded file, rename the original parent away, create an unrelated empty directory at the
+    old name: the identity re-check keeps it, no rmdir runs, the original parent is untouched."""
+    def act():
+        (root / "d").mkdir()
+        (root / "d/f").write_text("x")
+    b, a, w = item(root, act)
+
+    def swap():
+        os.rename(root / "d", root / "d_original")
+        (root / "d").mkdir()
+    monkeypatch.setattr(pg, "_PRE_RMDIR_HOOK", swap)
+    rmdirs = []
+    real = os.rmdir
+    monkeypatch.setattr(os, "rmdir", lambda *x, **k: (rmdirs.append(x), real(*x, **k))[1])
+    cleaned, kept = clean(root, [cand("/tmp/d/f")], b, a, w)
+    assert cleaned == ["/tmp/d/f"] and kept == [["/tmp/d", "replaced"]]
+    assert rmdirs == [] and (root / "d").is_dir() and (root / "d_original").is_dir()

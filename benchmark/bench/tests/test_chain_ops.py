@@ -201,7 +201,13 @@ def _worker_ps(model, extra=""):
     return f"501 /py -m mlx_vlm.server --model caslca/{model} --port 8091 {extra}\n77 uv run mlx_vlm.server {model}\n"
 
 
-def test_load_verifies_single_worker_env_and_records_cmdline(ops):
+def _router(ops, tmp_path):
+    _own_router_ops(ops, tmp_path)
+    ops.start_router()
+
+
+def test_load_verifies_single_worker_env_and_records_cmdline(ops, tmp_path):
+    _router(ops, tmp_path)
     ops._sh.ps = _worker_ps(PICK1)
     ident = ops.load(PICK1)
     assert ident["pid"] == 501 and ident["create_time"] == 1234.5 and "mlx_vlm.server" in ident["cmdline"]
@@ -216,7 +222,8 @@ def test_load_verifies_single_worker_env_and_records_cmdline(ops):
     (_worker_ps(PICK1), "MLX_SERVE_CONFIG=%s MLX_VLM_CACHE_SESSION_MAX=1 APC_ENABLED=1" % OVERLAY, "APC_ENABLED"),
     (_worker_ps(PICK1), "MLX_SERVE_CONFIG=%s" % OVERLAY, "SESSION_MAX"),
 ])
-def test_load_tripwires(ops, ps, env, frag):
+def test_load_tripwires(ops, tmp_path, ps, env, frag):
+    _router(ops, tmp_path)
     ops._sh.ps = ps
     if env:
         ops._sh.env = env
@@ -224,7 +231,8 @@ def test_load_tripwires(ops, ps, env, frag):
         ops.load(PICK1)
 
 
-def test_load_accepts_draft_off(ops):
+def test_load_accepts_draft_off(ops, tmp_path):
+    _router(ops, tmp_path)
     ops._sh.ps = _worker_ps(PICK1, "--draft-kind off")
     assert ops.load(PICK1)["pid"] == 501
 
@@ -849,3 +857,50 @@ def test_stop_stack_cleanup_goes_through_guarded_unload(ops, tmp_path):
     ops.listeners = lambda port=8000: [777]
     ops.stop_stack()
     assert not _unloads(ops)
+
+
+# --------------------------------------------------------------------------- Q26 every destructive HTTP call is guarded
+def test_load_refused_when_endpoint_replaced_before_load(ops, tmp_path):
+    _own_router_ops(ops, tmp_path)
+    ops.start_router()
+    ops.listeners = lambda port=8000: [777]                   # the :8000 endpoint now belongs to someone else
+    ops._sh.ps = _worker_ps(PICK1)
+    with pytest.raises(co.ChainAbort, match="load refused"):
+        ops.load(PICK1)
+    assert ops._http_calls == []
+
+
+def test_load_refused_without_recorded_router(ops):
+    ops._sh.ps = _worker_ps(PICK1)
+    with pytest.raises(co.ChainAbort, match="load refused"):
+        ops.load(PICK1)
+    assert ops._http_calls == []
+
+
+def test_unload_no_worker_returns_true_without_http_or_rescan(ops, tmp_path):
+    _loaded(ops, tmp_path)
+    calls = []
+    ops.worker_cmdlines = lambda model: (calls.append(1), [])[1]
+    assert ops.unload(PICK1) is True and calls == [1] and not _unloads(ops) and ops.loaded is None
+
+
+def test_worker_appearing_between_scan_and_send_blocks_the_http(ops, tmp_path):
+    _loaded(ops, tmp_path)
+    ours = ops.worker_cmdlines(PICK1)
+    seq = [ours, ours + ["888 /py -m mlx_vlm.server --model caslca/" + PICK1]]
+    ops.worker_cmdlines = lambda model: seq.pop(0) if len(seq) > 1 else seq[0]
+    assert ops.unload(PICK1) is False and not _unloads(ops)
+    assert any("changed between the scan and the send" in line for line in ops._lines)
+
+
+def test_unload_refused_when_worker_started_is_none(ops, tmp_path):
+    _loaded(ops, tmp_path)
+    ops.worker_started = None
+    assert ops.unload(PICK1) is False and not _unloads(ops)
+
+
+def test_router_replaced_between_scan_and_send_blocks_the_http(ops, tmp_path):
+    _loaded(ops, tmp_path)
+    seq = iter([[99], [777]])
+    ops.listeners = lambda port=8000: next(seq)
+    assert ops.unload(PICK1) is False and not _unloads(ops)

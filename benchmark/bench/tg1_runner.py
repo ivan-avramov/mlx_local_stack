@@ -529,13 +529,16 @@ def _run_item(
         errors = []
         killed_entries = []
 
-        def mark_signal():
-            # Raw events-file position immediately before the actual SIGTERM: only error bytes at or after it can
-            # be our own abort's, however late the ingester reads them. Never set when nothing is signalled.
+        def capture_cutoff():
+            # Raw events-file position immediately before the actual SIGTERM; committed only once a signal was
+            # really delivered (`commit_cutoff`), so a failed signal leaves the tolerance disabled.
             try:
-                stream.signal_offset = paths["events"].stat().st_size
+                return paths["events"].stat().st_size
             except OSError:
-                stream.signal_offset = None
+                return None
+
+        def commit_cutoff(size):
+            stream.signal_offset = size
 
         # C147: the client gets SIGTERM first so opencode's own abort path can persist the in-flight assistant
         # message; survivors after GRACEFUL_CLIENT_S are SIGKILLed. Model-role processes are always SIGKILLed.
@@ -543,7 +546,8 @@ def _run_item(
         if graceful is not None:
             began = time.monotonic()
             try:
-                killed_entries.extend(graceful("client", GRACEFUL_CLIENT_S, before_signal=mark_signal) or [])
+                killed_entries.extend(graceful("client", GRACEFUL_CLIENT_S, before_signal=capture_cutoff,
+                                              after_signal=commit_cutoff) or [])
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
             termination["graceful_wait_s"] = time.monotonic() - began
