@@ -1,0 +1,63 @@
+- 2026-10-10T07:16:56Z START m62 live phases=['v3', 'v4'] v3={'python': ['grade-school', 'dot-dsl', 'react', 'beer-song', 'food-chain'], 'go': ['forth', 'dnd-character']} v4=[('Qwen3.8-27B-mlx-uniform-4bit', 'go', 'alphametics', 1001), ('Qwen3.8-27B-mlx-uniform-4bit', 'go', 'alphametics', 2002), ('Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed', 'python', 'book-store', 2002)]
+- 2026-10-10T07:16:56Z WATCHDOG armed root=$STACK_WORKDIR/scratch/octmp.noindex limit=12.0GB poll=2.0s
+- 2026-10-10T07:16:56Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-10T07:16:56Z RUN router: MLX_VLM_CACHE_SESSION_MAX=1 MLX_SERVE_CONFIG=$STACK_WORKDIR/m59/overlay_m59_draft_off.yaml uv run --frozen --no-sync mlx-serve start (cwd=$STACK_REPO)
+- 2026-10-10T07:16:58Z router pid=66556 owns :8000; problems=none
+- 2026-10-10T07:16:58Z RUN load Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+- 2026-10-10T07:17:02Z worker cmdline: 66567 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --cache-session-shrink on --attention-policy fused_v1 --lazy-prompt-embeddings --kv-quant-scheme turboquant --prefill-step-size 512 --generation-default
+- 2026-10-10T07:17:02Z GATE adapter=140W batt=80% orphans=0 -> ok
+- 2026-10-10T07:17:02Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.python.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items grade-school,dot-dsl,react,beer-song,food-chain --lang python --seed-base 1001 --out $STACK_WORKDIR/m62/v3/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.python.jsonl --chain-total 0 --limit 5 --scaffold opencode-v2-web-tg1 --expect-items python/grade-school,python/dot-dsl,python/react,python/beer-song,python/food-chain
+- 2026-10-10T07:22:02Z WATCH-GATE Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.python.jsonl: elapsed=2min requests=4 out_tokens=1762 np_tokens=202 np_requests=1 best/base=0/12 stop=None log_age=0min
+- 2026-10-10T07:22:02Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.python.jsonl: 3/5 rows passed=3 mean=88s pred=244s eta=3min elapsed=5min kinds={'ok': 3} adapter=140W batt=80%
+- 2026-10-10T07:23:45Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.python.jsonl rc=0 rows=5 passed=5 mean_wall=78s requests=[5, 4, 5, 4, 6]
+- 2026-10-10T07:23:45Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 25.7 tok/s (n=3) vs table 24.2 -> +6.2% FLAG >5%: the C136 window is miscalibrated for this leg
+- 2026-10-10T07:23:45Z ROW python/grade-school passed=True nonconv=None flags=[] requests=5 out_tokens=883 max_req_out=387 best/base=0/20 wall=44.25196349999169
+- 2026-10-10T07:23:45Z ROW python/dot-dsl passed=True nonconv=None flags=[] requests=4 out_tokens=3018 max_req_out=2471 best/base=0/12 wall=128.82935954199638
+- 2026-10-10T07:23:45Z ROW python/react passed=True nonconv=None flags=[] requests=5 out_tokens=1967 max_req_out=1368 best/base=0/12 wall=90.9359168750234
+- 2026-10-10T07:23:45Z ROW python/beer-song passed=True nonconv=None flags=[] requests=4 out_tokens=844 max_req_out=349 best/base=0/8 wall=57.77334008400794
+- 2026-10-10T07:23:45Z ROW python/food-chain passed=True nonconv=None flags=[] requests=6 out_tokens=1362 max_req_out=566 best/base=0/10 wall=67.63525366701651
+- 2026-10-10T07:23:45Z GATE adapter=140W batt=80% orphans=0 -> ok
+- 2026-10-10T07:23:45Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.go.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items forth,dnd-character --lang go --seed-base 1001 --out $STACK_WORKDIR/m62/v3/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.go.jsonl --chain-total 0 --limit 2 --scaffold opencode-v2-web-tg1 --expect-items go/forth,go/dnd-character
+- 2026-10-10T07:26:56Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-10T07:28:45Z WATCH-GATE Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.go.jsonl: elapsed=5min requests=6 out_tokens=4573 np_tokens=712 np_requests=1 best/base=9/48 stop=None log_age=0min
+- 2026-10-10T07:28:45Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.go.jsonl: 0/2 rows passed=0 mean=300s pred=300s eta=10min elapsed=5min kinds={} adapter=140W batt=80%
+- 2026-10-10T07:33:45Z WATCH-GATE Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.go.jsonl: elapsed=1min requests=5 out_tokens=889 np_tokens=889 np_requests=5 best/base=18/18 stop=None log_age=0min
+- 2026-10-10T07:33:45Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.go.jsonl: 1/2 rows passed=1 mean=524s pred=300s eta=9min elapsed=10min kinds={'ok': 1} adapter=140W batt=80%
+- 2026-10-10T07:34:02Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v3.go.jsonl rc=0 rows=2 passed=2 mean_wall=304s requests=[12, 8]
+- 2026-10-10T07:34:02Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 24.9 tok/s (n=4) vs table 24.2 -> +3.1% ok
+- 2026-10-10T07:34:02Z ROW go/forth passed=True nonconv=None flags=[] requests=12 out_tokens=8395 max_req_out=2746 best/base=0/48 wall=523.5183001669939
+- 2026-10-10T07:34:02Z ROW go/dnd-character passed=True nonconv=None flags=[] requests=8 out_tokens=1652 max_req_out=456 best/base=0/18 wall=84.88595941604581
+- 2026-10-10T07:34:02Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-10-10T07:34:02Z RUN load Qwen3.8-27B-mlx-uniform-4bit
+- 2026-10-10T07:34:06Z worker cmdline: 68527 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-mlx-uniform-4bit --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --kv-bits 4 --kv-quant-scheme turboquant --prefill-step-size 512 --generation-defaults {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty"
+- 2026-10-10T07:34:06Z GATE adapter=140W batt=80% orphans=0 -> ok
+- 2026-10-10T07:34:06Z START Qwen3.8-27B-mlx-uniform-4bit.v4.go.alphametics.s1001.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items alphametics --lang go --seed-base 1001 --out $STACK_WORKDIR/m62/v4/Qwen3.8-27B-mlx-uniform-4bit.v4.go.alphametics.s1001.jsonl --chain-total 0 --limit 1 --scaffold opencode-v2-web-tg1 --expect-items go/alphametics
+- 2026-10-10T07:36:57Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-10T07:38:22Z END Qwen3.8-27B-mlx-uniform-4bit.v4.go.alphametics.s1001.jsonl rc=0 rows=1 passed=1 mean_wall=249s requests=[6]
+- 2026-10-10T07:38:22Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 26.7 tok/s (n=1) vs table 25.4 -> +5.1% FLAG >5%: the C136 window is miscalibrated for this leg
+- 2026-10-10T07:38:22Z ROW go/alphametics passed=True nonconv=None flags=[] requests=6 out_tokens=6000 max_req_out=5079 best/base=0/10 wall=249.2671618750319
+- 2026-10-10T07:38:22Z unload Qwen3.8-27B-mlx-uniform-4bit ok
+- 2026-10-10T07:38:22Z RUN load Qwen3.8-27B-mlx-uniform-4bit
+- 2026-10-10T07:38:26Z worker cmdline: 69158 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-mlx-uniform-4bit --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --kv-bits 4 --kv-quant-scheme turboquant --prefill-step-size 512 --generation-defaults {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty"
+- 2026-10-10T07:38:26Z GATE adapter=140W batt=80% orphans=0 -> ok
+- 2026-10-10T07:38:26Z START Qwen3.8-27B-mlx-uniform-4bit.v4.go.alphametics.s2002.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items alphametics --lang go --seed-base 2002 --out $STACK_WORKDIR/m62/v4/Qwen3.8-27B-mlx-uniform-4bit.v4.go.alphametics.s2002.jsonl --chain-total 0 --limit 1 --scaffold opencode-v2-web-tg1 --expect-items go/alphametics
+- 2026-10-10T07:43:26Z WATCH-GATE Qwen3.8-27B-mlx-uniform-4bit.v4.go.alphametics.s2002.jsonl: elapsed=5min requests=3 out_tokens=387 np_tokens=387 np_requests=3 best/base=10/10 stop=None log_age=0min
+- 2026-10-10T07:43:26Z WATCH Qwen3.8-27B-mlx-uniform-4bit.v4.go.alphametics.s2002.jsonl: 0/1 rows passed=0 mean=360s pred=360s eta=6min elapsed=5min kinds={} adapter=140W batt=80%
+- 2026-10-10T07:46:58Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-10T07:48:24Z END Qwen3.8-27B-mlx-uniform-4bit.v4.go.alphametics.s2002.jsonl rc=0 rows=1 passed=1 mean_wall=592s requests=[12]
+- 2026-10-10T07:48:24Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 25.2 tok/s (n=2) vs table 25.4 -> -0.8% ok
+- 2026-10-10T07:48:24Z ROW go/alphametics passed=True nonconv=None flags=[] requests=12 out_tokens=14037 max_req_out=10666 best/base=0/10 wall=591.9433972919942
+- 2026-10-10T07:48:25Z unload Qwen3.8-27B-mlx-uniform-4bit ok
+- 2026-10-10T07:48:25Z RUN load Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+- 2026-10-10T07:48:29Z worker cmdline: 69906 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --cache-session-shrink on --attention-policy fused_v1 --lazy-prompt-embeddings --kv-quant-scheme turboquant --prefill-step-size 512 --generation-default
+- 2026-10-10T07:48:29Z GATE adapter=140W batt=80% orphans=0 -> ok
+- 2026-10-10T07:48:29Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v4.python.book-store.s2002.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items book-store --lang python --seed-base 2002 --out $STACK_WORKDIR/m62/v4/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v4.python.book-store.s2002.jsonl --chain-total 0 --limit 1 --scaffold opencode-v2-web-tg1 --expect-items python/book-store
+- 2026-10-10T07:53:29Z WATCH-GATE Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v4.python.book-store.s2002.jsonl: elapsed=5min requests=2 out_tokens=186 np_tokens=186 np_requests=2 best/base=20/20 stop=None log_age=0min
+- 2026-10-10T07:53:29Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v4.python.book-store.s2002.jsonl: 0/1 rows passed=0 mean=244s pred=244s eta=4min elapsed=5min kinds={} adapter=140W batt=80%
+- 2026-10-10T07:56:58Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.v4.python.book-store.s2002.jsonl rc=0 rows=1 passed=1 mean_wall=502s requests=[7]
+- 2026-10-10T07:56:58Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 24.6 tok/s (n=1) vs table 24.2 -> +1.7% ok
+- 2026-10-10T07:56:58Z ROW python/book-store passed=True nonconv=None flags=[] requests=7 out_tokens=11608 max_req_out=10794 best/base=0/20 wall=502.49840833299095
+- 2026-10-10T07:56:58Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-10-10T07:56:59Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-10T07:57:11Z stack_stop rc=0 listeners=[]
+- 2026-10-10T07:57:11Z M62 LIVE DONE

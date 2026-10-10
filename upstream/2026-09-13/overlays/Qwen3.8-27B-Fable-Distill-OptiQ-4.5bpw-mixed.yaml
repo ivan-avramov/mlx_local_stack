@@ -1,0 +1,50 @@
+mlx_port: 8091
+manager_port: 8000
+inactivity_timeout_seconds: 86400
+startup_timeout_seconds: 300
+agent_defaults:
+  opencode: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+  aider: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+task_model:
+  name: mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  hf_path: mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  generation_defaults:
+    max_tokens: 512
+  presentation:
+    role: task
+    display_name: Task 1.5B (titles/summaries)
+    context: 30000
+    output: 2048
+models:
+- name: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+  type: vision
+  on_demand: true
+  hf_path: $STACK_WORKDIR/optiq_out/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/optiq_mixed
+  max_kv_cache_size: 262144
+  kv_prealloc_tokens: 262144
+  kv_quant_scheme: turboquant
+  kv_bits: 4
+  quantized_kv_start: 0
+  prefill_step_size: 512
+  generation_defaults:
+    temperature: 0.5
+    top_p: 0.95
+    top_k: 20
+    min_p: 0.0
+    presence_penalty: 0.0
+    max_tokens: 102400
+    thinking_budget: 81920
+    enable_thinking: true
+    reasoning_effort: medium
+  draft_kind: mtp
+  draft_model: $STACK_WORKDIR/queue/mtp_recovery/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-normfix
+  presentation:
+    role: main
+    family: qwen
+    display_name: Qwen3.8-27B Fable-Distill OptiQ-mixed (reasoning)
+    context: 262144
+    output: 102400
+    capabilities:
+    - tools
+    - vision
+    - thinking

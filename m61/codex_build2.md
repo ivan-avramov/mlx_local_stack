@@ -1,0 +1,6 @@
+- **Q1:** Build complete. M59 carrier bytes and policy-hash recipe are pinned. No commit or push.
+- **Q2:** [Full report and file list]($STACK_WORKDIR/m61/tmp/build-report.md).
+- **Q3:** Real captures confirmed `permission.rejected` for denied fetch/shell attempts; neither reached the target. Exact JSON excerpts are in the report.
+- **Q4:** Detector: positive **31/32**, flagged; negatives **4/32, 2/32, 0/32**, all clear.
+- **Q5:** Benchmark **3,408 passed, 2 skipped**; configgen **76 passed**; `configgen check` passed. Naming/PII checks clean.
+- **Q6:** No unresolved implementation questions. Cold verification, real-model smoke, and A/B remain operator-owned.

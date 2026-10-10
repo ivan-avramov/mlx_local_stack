@@ -1,0 +1,75 @@
+- 2026-10-03T08:04:58Z START M55 sessions=['s1', 's2'] models=['Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed', 'Qwen3.8-27B-mlx-uniform-4bit', 'Ornith-1.0-35B-mlx-uniform-4bit'] langs=['rust', 'java', 'javascript'] opencode pinned; overlay=$STACK_WORKDIR/m54/overlay_m54_draft_off.yaml
+- 2026-10-03T08:04:59Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-03T08:04:59Z START s1 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed rust (22 items, 0 present)
+- PILOT (2026-10-03 06:58–08:04 UTC, first pick, loaded instance, 5 seeded items): pass A 5/5; pass B 4/5 (javascript/wordy flipped); wall a/b: affine-cipher 525/270, bottle-song 230/250, react 380/566, wordy 280/301, scale-generator 351/636. Gate amended to pass-identity (recorded); sizing lower bound 379 s mean / 636 s max.
+- 2026-10-03T10:35:22Z END s1 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed rust rc=0 rows=22 passed=19 mean_wall=408s
+- 2026-10-03T10:35:22Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-03T10:35:22Z START s1 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed java (22 items, 0 present)
+- 2026-10-03T12:48:29Z END s1 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed java rc=0 rows=22 passed=17 mean_wall=358s
+- 2026-10-03T12:48:29Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-03T12:48:29Z START s1 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed javascript (22 items, 0 present)
+- 2026-10-03T14:00:00Z LOAD NOTE (s1 first pick javascript, rows ~13–16): Spotlight indexing storm — 5+ `mdworker` processes at 35–57 % CPU (new, etime <30 s), load 12.2, triggered by the per-item node_modules trees the javascript grading writes under the workdir. Decode GPU-bound, pass outcomes unaffected; wall_s for rows in this window carries a latency flag. Fix requires the operator: add `$STACK_WORKDIR` to Spotlight Privacy (System Settings → Siri & Spotlight) or `sudo mdutil` — not done from the session.
+- 2026-10-03T14:46:23Z END s1 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed javascript rc=0 rows=22 passed=15 mean_wall=318s
+- 2026-10-03T14:46:23Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-10-03T14:48:24Z FATAL worker still alive after unload
+- 2026-10-03T14:52:00Z RUNNER FATAL was a runner bug: unload() waited 2 min for `mlx_vlm.server` to exit; the native16 first-pick worker took longer (it had exited by 14:51). No rows lost (s1 first pick complete: rust 19/22, java 17/22, javascript 15/22). Wait raised to 10 min; relaunched with the same args (completed legs skip).
+- 2026-10-03T14:49:10Z START M55 sessions=['s1', 's2'] models=['Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed', 'Qwen3.8-27B-mlx-uniform-4bit', 'Ornith-1.0-35B-mlx-uniform-4bit'] langs=['rust', 'java', 'javascript'] opencode pinned; overlay=$STACK_WORKDIR/m54/overlay_m54_draft_off.yaml
+- 2026-10-03T14:49:10Z SKIP s1 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed rust (complete)
+- 2026-10-03T14:49:10Z SKIP s1 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed java (complete)
+- 2026-10-03T14:49:10Z SKIP s1 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed javascript (complete)
+- 2026-10-03T14:49:10Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-10-03T14:49:10Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-03T14:49:10Z START s1 Qwen3.8-27B-mlx-uniform-4bit rust (22 items, 0 present)
+- 2026-10-03T17:16:08Z END s1 Qwen3.8-27B-mlx-uniform-4bit rust rc=0 rows=22 passed=15 mean_wall=399s
+- 2026-10-03T17:16:08Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-03T17:16:08Z START s1 Qwen3.8-27B-mlx-uniform-4bit java (22 items, 0 present)
+- 2026-10-03T19:47:27Z END s1 Qwen3.8-27B-mlx-uniform-4bit java rc=0 rows=22 passed=15 mean_wall=409s
+- 2026-10-03T19:47:27Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-03T19:47:27Z START s1 Qwen3.8-27B-mlx-uniform-4bit javascript (22 items, 0 present)
+- 2026-10-03T21:36:06Z END s1 Qwen3.8-27B-mlx-uniform-4bit javascript rc=0 rows=22 passed=18 mean_wall=293s
+- 2026-10-03T21:36:06Z unload Qwen3.8-27B-mlx-uniform-4bit ok
+- 2026-10-03T21:42:54Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-03T21:42:54Z START s1 Ornith-1.0-35B-mlx-uniform-4bit rust (22 items, 0 present)
+- 2026-10-03T21:44:00Z CORRECTION: both unload stalls (14:46 FATAL; 21:36–21:42 wait) were SELF-MATCHES, not slow teardown — the runner's `pgrep -f mlx_vlm.server` matched the Claude-side monitor shell whose command line contains that literal string. Stopping the monitor released the runner within seconds. Monitors now use `mlx_vlm[.]server`; the runner's pattern is left unchanged for this chain (patching a live runner is not possible; the self-safe monitor removes the false match). RULE: any `pgrep -f` liveness check must use a pattern that cannot match the checker's own command line.
+- 2026-10-03T22:06:00Z NOTE "The user rejected permission to use this specific tool call" in log tails (s1 so far: first pick 10 rows, second pick 8, Ornith-1.0-35B-mlx-uniform-4bit 2; C37 rows had 0–6 per leg): opencode's project-boundary sandbox auto-rejecting an absolute path outside the per-item root (model behaviour; the symlinked-/var root cause is already fixed by realpath in `_scratch_dir`). Rows mostly still pass after a relative-path retry. Standing protocol, matched across models — not a defect; reported with the stall/loop counts.
+- 2026-10-03T22:50:20Z END s1 Ornith-1.0-35B-mlx-uniform-4bit rust rc=0 rows=22 passed=15 mean_wall=182s
+- 2026-10-03T22:50:20Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-03T22:50:20Z START s1 Ornith-1.0-35B-mlx-uniform-4bit java (22 items, 0 present)
+- 2026-10-04T00:07:27Z END s1 Ornith-1.0-35B-mlx-uniform-4bit java rc=0 rows=22 passed=11 mean_wall=206s
+- 2026-10-04T00:07:27Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-04T00:07:27Z START s1 Ornith-1.0-35B-mlx-uniform-4bit javascript (22 items, 0 present)
+- 2026-10-04T01:10:21Z END s1 Ornith-1.0-35B-mlx-uniform-4bit javascript rc=0 rows=22 passed=15 mean_wall=168s
+- 2026-10-04T01:10:21Z unload Ornith-1.0-35B-mlx-uniform-4bit ok
+- 2026-10-04T01:10:21Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-04T01:10:21Z START s2 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed rust (22 items, 0 present)
+- 2026-10-04T01:15:11Z scratch/octmp -> octmp.noindex (+symlink octmp) applied live during s2 first-pick rust item 2 (sub-second swap window made the unload-gap waiter impossible)
+- 2026-10-04T03:21:05Z END s2 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed rust rc=0 rows=22 passed=19 mean_wall=354s
+- 2026-10-04T03:21:05Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-04T03:21:05Z START s2 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed java (22 items, 0 present)
+- 2026-10-04T05:30:16Z END s2 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed java rc=0 rows=22 passed=17 mean_wall=347s
+- 2026-10-04T05:30:16Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-04T05:30:16Z START s2 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed javascript (22 items, 0 present)
+- 2026-10-04T07:29:43Z END s2 Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed javascript rc=0 rows=22 passed=19 mean_wall=322s
+- 2026-10-04T07:29:43Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-10-04T07:29:43Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-04T07:29:43Z START s2 Qwen3.8-27B-mlx-uniform-4bit rust (22 items, 0 present)
+- 2026-10-04T08:45:00Z NOTE s2 `Qwen3.8-27B-mlx-uniform-4bit` rust: 6 stall kills in the first 8 items (s1 leg: 6 in 22). Pattern per row: 4–5 read turns, 370–540 output tokens, then no further tool calls until the 2-tick gate (rc -9, file unchanged). Harness verified healthy (gigasecond passed in 140 s / 9 turns in the same leg; post-rename first-pick legs scored 19/17/19 with normal rejection rates). Model-side non-interactive stall; counted in the stall-kill column, not a defect.
+- 2026-10-04T10:13:39Z END s2 Qwen3.8-27B-mlx-uniform-4bit rust rc=0 rows=22 passed=14 mean_wall=445s
+- 2026-10-04T10:13:39Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-04T10:13:39Z START s2 Qwen3.8-27B-mlx-uniform-4bit java (22 items, 0 present)
+- 2026-10-04T12:40:50Z END s2 Qwen3.8-27B-mlx-uniform-4bit java rc=0 rows=22 passed=12 mean_wall=397s
+- 2026-10-04T12:40:50Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-04T12:40:50Z START s2 Qwen3.8-27B-mlx-uniform-4bit javascript (22 items, 0 present)
+- 2026-10-04T14:49:22Z END s2 Qwen3.8-27B-mlx-uniform-4bit javascript rc=0 rows=22 passed=20 mean_wall=347s
+- 2026-10-04T14:49:23Z unload Qwen3.8-27B-mlx-uniform-4bit ok
+- 2026-10-04T14:49:23Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-04T14:49:23Z START s2 Ornith-1.0-35B-mlx-uniform-4bit rust (22 items, 0 present)
+- 2026-10-04T17:03:00Z END s2 Ornith-1.0-35B-mlx-uniform-4bit rust rc=0 rows=22 passed=17 mean_wall=362s
+- 2026-10-04T17:03:00Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-04T17:03:00Z START s2 Ornith-1.0-35B-mlx-uniform-4bit java (22 items, 0 present)
+- 2026-10-04T18:12:46Z END s2 Ornith-1.0-35B-mlx-uniform-4bit java rc=0 rows=22 passed=14 mean_wall=185s
+- 2026-10-04T18:12:46Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-04T18:12:46Z START s2 Ornith-1.0-35B-mlx-uniform-4bit javascript (22 items, 0 present)
+- 2026-10-04T19:05:14Z END s2 Ornith-1.0-35B-mlx-uniform-4bit javascript rc=0 rows=22 passed=17 mean_wall=140s
+- 2026-10-04T19:05:15Z unload Ornith-1.0-35B-mlx-uniform-4bit ok
+- 2026-10-04T19:05:15Z ALL LEGS DONE

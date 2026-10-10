@@ -1,0 +1,1 @@
+The after phase sealed for5b43e5d9 was never launched. Preserved as frozen-after-unused-5b43e5d9.json. Final after candidate will also include upstream9ef622c4 and434afb1a; comparison treatment is the C85 cache repair plus these newly available upstream changes, not the repair alone. All frozen before evidence and request/runtime/registry pins remain unchanged.

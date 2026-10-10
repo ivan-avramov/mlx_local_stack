@@ -1,0 +1,604 @@
+- 2026-10-08T19:57:45Z DRIVE waiting for 140W adapter (now 100W)
+- 2026-10-08T19:58:45Z DRIVE adapter 140W; arming watchdog
+- 2026-10-08T19:58:45Z WATCHDOG armed root=$STACK_WORKDIR/scratch/octmp.noindex limit=8.0GB poll=2.0s
+- 2026-10-08T19:58:45Z START m61 smoke opencode-v2-web items=['forth', 'beer-song', 'list-ops', 'dot-dsl', 'bowling']
+- 2026-10-08T19:58:45Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T19:58:45Z RUN router: MLX_VLM_CACHE_SESSION_MAX=1 MLX_SERVE_CONFIG=$STACK_WORKDIR/m59/overlay_m59_draft_off.yaml uv run --frozen --no-sync mlx-serve start (cwd=$STACK_REPO)
+- 2026-10-08T19:58:47Z router pid=89538 owns :8000; problems=none
+- 2026-10-08T19:58:47Z RUN load Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+- 2026-10-08T19:58:53Z worker cmdline: 89548 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --cache-session-shrink on --attention-policy fused_v1 --lazy-prompt-embeddings --kv-quant-scheme turboquant --prefill-step-size 512 --generation-default
+- 2026-10-08T19:58:53Z RUN A4 v2 gate (Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed, --scaffold opencode-v2-web) -> a4_m61_smoke.log
+- 2026-10-08T19:59:22Z A4 v2 rc=0 pass=True carrier_sha256=6c8ab2e3080d run_id=a4-v2-wy58gseu
+- 2026-10-08T19:59:22Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T19:59:22Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p1.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items forth,beer-song,list-ops,dot-dsl,bowling --lang python --seed-base 7001 --out $STACK_WORKDIR/m61/smoke/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p1.jsonl --chain-total 0 --limit 5 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T20:04:22Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p1.jsonl: 1/5 rows passed=1 mean=270s pred=244s eta=18min elapsed=5min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-08T20:08:46Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T20:09:22Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p1.jsonl: 4/5 rows passed=4 mean=148s pred=244s eta=2min elapsed=10min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-08T20:14:23Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p1.jsonl: 4/5 rows passed=4 mean=148s pred=244s eta=2min elapsed=15min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-08T20:18:48Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T20:19:23Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p1.jsonl: 4/5 rows passed=4 mean=148s pred=244s eta=2min elapsed=20min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-08T20:21:39Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p1.jsonl rc=0 rows=5 passed=5 mean_wall=265s requests=[10, 7, 5, 4, 13]
+- 2026-10-08T20:21:39Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 19.9 tok/s (n=8) vs table 24.2 -> -17.6% FLAG >5%: the C136 window is miscalibrated for this leg
+- 2026-10-08T20:21:39Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T20:21:39Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p2.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items forth,beer-song,list-ops,dot-dsl,bowling --lang python --seed-base 7001 --out $STACK_WORKDIR/m61/smoke/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p2.jsonl --chain-total 0 --limit 5 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T20:26:39Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p2.jsonl: 0/5 rows passed=0 mean=244s pred=244s eta=20min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T20:28:50Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T20:31:39Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p2.jsonl: 2/5 rows passed=2 mean=233s pred=244s eta=12min elapsed=10min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T20:36:39Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p2.jsonl: 4/5 rows passed=4 mean=183s pred=244s eta=3min elapsed=15min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-08T20:38:50Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T20:41:10Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p2.jsonl rc=0 rows=5 passed=5 mean_wall=232s requests=[10, 7, 5, 4, 10]
+- 2026-10-08T20:41:10Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 18.9 tok/s (n=6) vs table 24.2 -> -22.1% FLAG >5%: the C136 window is miscalibrated for this leg
+- 2026-10-08T20:41:11Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-10-08T20:41:24Z stack_stop rc=0 listeners=[]
+- 2026-10-08T20:41:24Z M61 SMOKE DONE
+- 2026-10-08T20:41:24Z DRIVE web_audit Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p1.jsonl rc=0
+- 2026-10-08T20:41:24Z DRIVE web_audit Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.web.python.p2.jsonl rc=0
+- 2026-10-08T20:41:24Z START m61 ab sessions=['s1', 's2'] items={'go': ['forth'], 'python': ['connect', 'pov', 'bowling', 'hangman']}
+- 2026-10-08T20:41:24Z RUN router: MLX_VLM_CACHE_SESSION_MAX=1 MLX_SERVE_CONFIG=$STACK_WORKDIR/m59/overlay_m59_draft_off.yaml uv run --frozen --no-sync mlx-serve start (cwd=$STACK_REPO)
+- 2026-10-08T20:41:27Z router pid=40016 owns :8000; problems=none
+- 2026-10-08T20:41:27Z RUN load Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+- 2026-10-08T20:41:33Z worker cmdline: 40106 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --cache-session-shrink on --attention-policy fused_v1 --lazy-prompt-embeddings --kv-quant-scheme turboquant --prefill-step-size 512 --generation-default
+- 2026-10-08T20:41:33Z RUN A4 v2 gate (Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed, --scaffold opencode-v2) -> a4_m61_s1_Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed_A.log
+- 2026-10-08T20:42:05Z A4 v2 rc=0 pass=True carrier_sha256=d1a21f1562d0 run_id=a4-v2-kexytb08
+- 2026-10-08T20:42:05Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T20:42:05Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_python.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items connect,pov,bowling,hangman --lang python --seed-base 6101 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_python.jsonl --chain-total 40 --scaffold opencode-v2 --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T20:47:05Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_python.jsonl: 0/4 rows passed=0 mean=244s pred=244s eta=16min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T20:48:45Z DRIVE-RR armed: waiting for drive_ab.rc=0 and rr_ready
+- 2026-10-08T20:48:51Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T20:49:03Z DRIVE-RR armed: waiting for drive_ab.rc=0 and rr_ready
+- 2026-10-08T20:52:05Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_python.jsonl: 1/4 rows passed=1 mean=405s pred=244s eta=20min elapsed=10min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-08T20:57:05Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_python.jsonl: 1/4 rows passed=1 mean=405s pred=244s eta=20min elapsed=15min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-08T20:58:53Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T21:02:05Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_python.jsonl: 2/4 rows passed=2 mean=463s pred=244s eta=15min elapsed=20min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T21:07:05Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_python.jsonl: 2/4 rows passed=2 mean=463s pred=244s eta=15min elapsed=25min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T21:08:53Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T21:12:05Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_python.jsonl: 2/4 rows passed=2 mean=463s pred=244s eta=15min elapsed=30min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T21:17:05Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_python.jsonl: 3/4 rows passed=3 mean=672s pred=244s eta=11min elapsed=35min kinds={'ok': 3} adapter=140W batt=100%
+- 2026-10-08T21:18:55Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T21:20:07Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_python.jsonl rc=0 rows=4 passed=4 mean_wall=568s requests=[4, 10, 10, 15]
+- 2026-10-08T21:20:07Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 24.0 tok/s (n=9) vs table 24.2 -> -0.8% ok
+- 2026-10-08T21:20:07Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T21:20:07Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_go.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items forth --lang go --seed-base 6101 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_go.jsonl --chain-total 40 --scaffold opencode-v2 --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T21:25:07Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_go.jsonl: 0/1 rows passed=0 mean=300s pred=300s eta=5min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T21:28:57Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T21:29:31Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.A.opencode_go.jsonl rc=0 rows=1 passed=1 mean_wall=556s requests=[9]
+- 2026-10-08T21:29:31Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 23.7 tok/s (n=2) vs table 24.2 -> -2.1% ok
+- 2026-10-08T21:29:31Z RUN A4 v2 gate (Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed, --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt) -> a4_m61_s1_Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed_B.log
+- 2026-10-08T21:29:55Z A4 v2 rc=0 pass=True carrier_sha256=62713bd06c0d run_id=a4-v2-u1c4s7jv
+- 2026-10-08T21:29:55Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T21:29:55Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_python.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items connect,pov,bowling,hangman --lang python --seed-base 6101 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_python.jsonl --chain-total 40 --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T21:34:56Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_python.jsonl: 1/4 rows passed=1 mean=280s pred=244s eta=14min elapsed=5min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-08T21:38:59Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T21:39:56Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_python.jsonl: 1/4 rows passed=1 mean=280s pred=244s eta=14min elapsed=10min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-08T21:44:56Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_python.jsonl: 2/4 rows passed=2 mean=435s pred=244s eta=15min elapsed=15min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T21:49:01Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T21:49:56Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_python.jsonl: 2/4 rows passed=2 mean=435s pred=244s eta=15min elapsed=20min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T21:53:51Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_python.jsonl rc=0 rows=4 passed=4 mean_wall=357s requests=[7, 18, 6, 8]
+- 2026-10-08T21:53:51Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 24.1 tok/s (n=9) vs table 24.2 -> -0.4% ok
+- 2026-10-08T21:53:51Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T21:53:51Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_go.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items forth --lang go --seed-base 6101 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_go.jsonl --chain-total 40 --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T21:58:51Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_go.jsonl: 0/1 rows passed=0 mean=300s pred=300s eta=5min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T21:59:02Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T22:00:39Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s1.B.opencode_go.jsonl rc=0 rows=1 passed=1 mean_wall=400s requests=[8]
+- 2026-10-08T22:00:39Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 23.7 tok/s (n=2) vs table 24.2 -> -2.1% ok
+- 2026-10-08T22:00:40Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-10-08T22:00:40Z RUN load Qwen3.8-27B-mlx-uniform-4bit
+- 2026-10-08T22:00:44Z worker cmdline: 53269 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-mlx-uniform-4bit --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --kv-bits 4 --kv-quant-scheme turboquant --prefill-step-size 512 --generation-defaults {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty"
+- 2026-10-08T22:00:44Z RUN A4 v2 gate (Qwen3.8-27B-mlx-uniform-4bit, --scaffold opencode-v2) -> a4_m61_s1_Qwen3.8-27B-mlx-uniform-4bit_A.log
+- 2026-10-08T22:01:11Z A4 v2 rc=0 pass=True carrier_sha256=d1a21f1562d0 run_id=a4-v2-gmc3psrc
+- 2026-10-08T22:01:11Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T22:01:11Z START Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_python.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items connect,pov,bowling,hangman --lang python --seed-base 6101 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_python.jsonl --chain-total 40 --scaffold opencode-v2 --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T22:06:11Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_python.jsonl: 0/4 rows passed=0 mean=267s pred=267s eta=18min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T22:09:04Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T22:11:11Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_python.jsonl: 0/4 rows passed=0 mean=267s pred=267s eta=18min elapsed=10min kinds={} adapter=140W batt=100%
+- 2026-10-08T22:16:11Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_python.jsonl: 2/4 rows passed=2 mean=428s pred=267s eta=14min elapsed=15min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T22:19:06Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T22:21:11Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_python.jsonl: 2/4 rows passed=2 mean=428s pred=267s eta=14min elapsed=20min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T22:26:11Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_python.jsonl: 3/4 rows passed=3 mean=414s pred=267s eta=7min elapsed=25min kinds={'ok': 3} adapter=140W batt=100%
+- 2026-10-08T22:27:40Z END Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_python.jsonl rc=0 rows=4 passed=4 mean_wall=395s requests=[4, 4, 10, 9]
+- 2026-10-08T22:27:40Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 25.1 tok/s (n=6) vs table 25.4 -> -1.0% ok
+- 2026-10-08T22:27:40Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T22:27:40Z START Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_go.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items forth --lang go --seed-base 6101 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_go.jsonl --chain-total 40 --scaffold opencode-v2 --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T22:29:08Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T22:32:40Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_go.jsonl: 0/1 rows passed=0 mean=360s pred=360s eta=6min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T22:34:58Z END Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.A.opencode_go.jsonl rc=0 rows=1 passed=1 mean_wall=430s requests=[8]
+- 2026-10-08T22:34:58Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.6 tok/s (n=2) vs table 25.4 -> -3.0% ok
+- 2026-10-08T22:34:58Z RUN A4 v2 gate (Qwen3.8-27B-mlx-uniform-4bit, --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt) -> a4_m61_s1_Qwen3.8-27B-mlx-uniform-4bit_B.log
+- 2026-10-08T22:35:25Z A4 v2 rc=0 pass=True carrier_sha256=62713bd06c0d run_id=a4-v2-pboqgqgr
+- 2026-10-08T22:35:25Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T22:35:25Z START Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_python.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items connect,pov,bowling,hangman --lang python --seed-base 6101 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_python.jsonl --chain-total 40 --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T22:39:10Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T22:40:25Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_python.jsonl: 0/4 rows passed=0 mean=267s pred=267s eta=18min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T22:45:25Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_python.jsonl: 0/4 rows passed=0 mean=267s pred=267s eta=18min elapsed=10min kinds={} adapter=140W batt=100%
+- 2026-10-08T22:49:12Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T22:50:25Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_python.jsonl: 1/4 rows passed=1 mean=731s pred=267s eta=37min elapsed=15min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-08T22:55:25Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_python.jsonl: 2/4 rows passed=2 mean=546s pred=267s eta=18min elapsed=20min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T22:59:13Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T23:00:25Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_python.jsonl: 2/4 rows passed=2 mean=546s pred=267s eta=18min elapsed=25min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T23:03:20Z END Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_python.jsonl rc=0 rows=4 passed=4 mean_wall=417s requests=[4, 10, 10, 6]
+- 2026-10-08T23:03:20Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.4 tok/s (n=7) vs table 25.4 -> -3.9% ok
+- 2026-10-08T23:03:20Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T23:03:20Z START Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_go.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items forth --lang go --seed-base 6101 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_go.jsonl --chain-total 40 --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T23:08:20Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_go.jsonl: 0/1 rows passed=0 mean=360s pred=360s eta=6min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T23:09:15Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T23:10:27Z END Qwen3.8-27B-mlx-uniform-4bit.m61ab.s1.B.opencode_go.jsonl rc=0 rows=1 passed=1 mean_wall=420s requests=[14]
+- 2026-10-08T23:10:27Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.5 tok/s (n=2) vs table 25.4 -> -3.7% ok
+- 2026-10-08T23:10:27Z unload Qwen3.8-27B-mlx-uniform-4bit ok
+- 2026-10-08T23:10:27Z RUN load Qwen3.8-27B-mlx-uniform-4bit
+- 2026-10-08T23:10:31Z worker cmdline: 56440 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-mlx-uniform-4bit --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --kv-bits 4 --kv-quant-scheme turboquant --prefill-step-size 512 --generation-defaults {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty"
+- 2026-10-08T23:10:31Z RUN A4 v2 gate (Qwen3.8-27B-mlx-uniform-4bit, --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt) -> a4_m61_s2_Qwen3.8-27B-mlx-uniform-4bit_B.log
+- 2026-10-08T23:10:58Z A4 v2 rc=0 pass=True carrier_sha256=62713bd06c0d run_id=a4-v2-_r33mlw9
+- 2026-10-08T23:10:58Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T23:10:58Z START Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_python.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items connect,pov,bowling,hangman --lang python --seed-base 6202 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_python.jsonl --chain-total 40 --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T23:15:58Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_python.jsonl: 0/4 rows passed=0 mean=267s pred=267s eta=18min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T23:19:17Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T23:20:58Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_python.jsonl: 1/4 rows passed=1 mean=440s pred=267s eta=22min elapsed=10min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-08T23:25:58Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_python.jsonl: 2/4 rows passed=2 mean=403s pred=267s eta=13min elapsed=15min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-08T23:29:19Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T23:30:58Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_python.jsonl: 3/4 rows passed=3 mean=394s pred=267s eta=7min elapsed=20min kinds={'ok': 3} adapter=140W batt=100%
+- 2026-10-08T23:33:33Z END Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_python.jsonl rc=0 rows=4 passed=4 mean_wall=337s requests=[12, 4, 6, 6]
+- 2026-10-08T23:33:33Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 25.3 tok/s (n=10) vs table 25.4 -> -0.4% ok
+- 2026-10-08T23:33:34Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T23:33:34Z START Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_go.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items forth --lang go --seed-base 6202 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_go.jsonl --chain-total 40 --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T23:38:34Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_go.jsonl: 0/1 rows passed=0 mean=360s pred=360s eta=6min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T23:39:21Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T23:40:16Z END Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.B.opencode_go.jsonl rc=0 rows=1 passed=1 mean_wall=395s requests=[6]
+- 2026-10-08T23:40:16Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.7 tok/s (n=1) vs table 25.4 -> -2.8% ok
+- 2026-10-08T23:40:16Z RUN A4 v2 gate (Qwen3.8-27B-mlx-uniform-4bit, --scaffold opencode-v2) -> a4_m61_s2_Qwen3.8-27B-mlx-uniform-4bit_A.log
+- 2026-10-08T23:40:42Z A4 v2 rc=0 pass=True carrier_sha256=d1a21f1562d0 run_id=a4-v2-28vgkh6a
+- 2026-10-08T23:40:42Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-08T23:40:42Z START Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_python.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items connect,pov,bowling,hangman --lang python --seed-base 6202 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_python.jsonl --chain-total 40 --scaffold opencode-v2 --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-08T23:45:42Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_python.jsonl: 0/4 rows passed=0 mean=267s pred=267s eta=18min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-08T23:49:23Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-08T23:50:42Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_python.jsonl: 1/4 rows passed=1 mean=540s pred=267s eta=27min elapsed=10min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-08T23:55:42Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_python.jsonl: 1/4 rows passed=1 mean=540s pred=267s eta=27min elapsed=15min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-08T23:59:25Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T00:00:42Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_python.jsonl: 2/4 rows passed=2 mean=520s pred=267s eta=17min elapsed=20min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T00:05:42Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_python.jsonl: 2/4 rows passed=2 mean=520s pred=267s eta=17min elapsed=25min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T00:09:26Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T00:10:42Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_python.jsonl: 3/4 rows passed=3 mean=532s pred=267s eta=9min elapsed=30min kinds={'ok': 3} adapter=140W batt=100%
+- 2026-10-09T00:13:38Z END Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_python.jsonl rc=0 rows=4 passed=4 mean_wall=492s requests=[6, 6, 9, 6]
+- 2026-10-09T00:13:38Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.7 tok/s (n=7) vs table 25.4 -> -2.8% ok
+- 2026-10-09T00:13:38Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T00:13:38Z START Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_go.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items forth --lang go --seed-base 6202 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_go.jsonl --chain-total 40 --scaffold opencode-v2 --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T00:18:38Z WATCH Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_go.jsonl: 0/1 rows passed=0 mean=360s pred=360s eta=6min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-09T00:19:28Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T00:22:31Z END Qwen3.8-27B-mlx-uniform-4bit.m61ab.s2.A.opencode_go.jsonl rc=0 rows=1 passed=1 mean_wall=526s requests=[7]
+- 2026-10-09T00:22:31Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.4 tok/s (n=1) vs table 25.4 -> -3.9% ok
+- 2026-10-09T00:22:32Z unload Qwen3.8-27B-mlx-uniform-4bit ok
+- 2026-10-09T00:22:32Z RUN load Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+- 2026-10-09T00:22:36Z worker cmdline: 59390 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --cache-session-shrink on --attention-policy fused_v1 --lazy-prompt-embeddings --kv-quant-scheme turboquant --prefill-step-size 512 --generation-default
+- 2026-10-09T00:22:36Z RUN A4 v2 gate (Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed, --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt) -> a4_m61_s2_Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed_B.log
+- 2026-10-09T00:23:01Z A4 v2 rc=0 pass=True carrier_sha256=62713bd06c0d run_id=a4-v2-k42bdfpw
+- 2026-10-09T00:23:01Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T00:23:01Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_python.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items connect,pov,bowling,hangman --lang python --seed-base 6202 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_python.jsonl --chain-total 40 --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T00:28:01Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_python.jsonl: 1/4 rows passed=1 mean=105s pred=244s eta=5min elapsed=5min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-09T00:29:30Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T00:33:01Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_python.jsonl: 1/4 rows passed=1 mean=105s pred=244s eta=5min elapsed=10min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-09T00:38:01Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_python.jsonl: 2/4 rows passed=2 mean=328s pred=244s eta=11min elapsed=15min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T00:39:32Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T00:43:01Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_python.jsonl: 3/4 rows passed=3 mean=362s pred=244s eta=6min elapsed=20min kinds={'ok': 3} adapter=140W batt=100%
+- 2026-10-09T00:43:08Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_python.jsonl rc=0 rows=4 passed=4 mean_wall=299s requests=[6, 10, 12, 6]
+- 2026-10-09T00:43:08Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 24.0 tok/s (n=10) vs table 24.2 -> -0.8% ok
+- 2026-10-09T00:43:08Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T00:43:08Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_go.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items forth --lang go --seed-base 6202 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_go.jsonl --chain-total 40 --scaffold opencode-v2 --agent-system-file benchmark/opencode_prompts/opencode-1.18.15-default.txt --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T00:48:08Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_go.jsonl: 0/1 rows passed=0 mean=300s pred=300s eta=5min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-09T00:49:34Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T00:50:21Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.B.opencode_go.jsonl rc=0 rows=1 passed=1 mean_wall=425s requests=[11]
+- 2026-10-09T00:50:21Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 23.4 tok/s (n=3) vs table 24.2 -> -3.3% ok
+- 2026-10-09T00:50:21Z RUN A4 v2 gate (Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed, --scaffold opencode-v2) -> a4_m61_s2_Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed_A.log
+- 2026-10-09T00:50:47Z A4 v2 rc=0 pass=True carrier_sha256=d1a21f1562d0 run_id=a4-v2-xnad7b97
+- 2026-10-09T00:50:47Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T00:50:47Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.A.opencode_python.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items connect,pov,bowling,hangman --lang python --seed-base 6202 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.A.opencode_python.jsonl --chain-total 40 --scaffold opencode-v2 --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T00:55:47Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.A.opencode_python.jsonl: 0/4 rows passed=0 mean=244s pred=244s eta=16min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-09T00:59:35Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T01:00:47Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.A.opencode_python.jsonl: 2/4 rows passed=2 mean=258s pred=244s eta=9min elapsed=10min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T01:05:47Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.A.opencode_python.jsonl: 3/4 rows passed=3 mean=269s pred=244s eta=4min elapsed=15min kinds={'ok': 3} adapter=140W batt=100%
+- 2026-10-09T01:09:36Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T01:10:02Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.A.opencode_python.jsonl rc=0 rows=4 passed=4 mean_wall=287s requests=[5, 8, 6, 10]
+- 2026-10-09T01:10:02Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 23.9 tok/s (n=7) vs table 24.2 -> -1.2% ok
+- 2026-10-09T01:10:02Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T01:10:02Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.A.opencode_go.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items forth --lang go --seed-base 6202 --out $STACK_WORKDIR/m61/ab/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.A.opencode_go.jsonl --chain-total 40 --scaffold opencode-v2 --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T01:15:02Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.A.opencode_go.jsonl: 0/1 rows passed=0 mean=300s pred=300s eta=5min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-09T01:17:25Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.m61ab.s2.A.opencode_go.jsonl rc=0 rows=1 passed=1 mean_wall=436s requests=[10]
+- 2026-10-09T01:17:25Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 23.4 tok/s (n=4) vs table 24.2 -> -3.5% ok
+- 2026-10-09T01:17:25Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-10-09T01:17:38Z stack_stop rc=0 listeners=[]
+- 2026-10-09T01:17:38Z M61 AB DONE
+- 2026-10-09T01:17:38Z DRIVE ab rc=0
+- 2026-10-09T01:17:40Z WATCHDOG stop file present -> exiting
+- 2026-10-09T01:24:16Z DRIVE-RR pre-run suites bench rc=0 (sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute) configgen rc=0
+- 2026-10-09T01:24:16Z DRIVE-RR starting re-record (main=7679bbc)
+- 2026-10-09T01:24:16Z WATCHDOG armed root=$STACK_WORKDIR/scratch/octmp.noindex limit=8.0GB poll=2.0s
+- 2026-10-09T01:24:16Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T01:24:16Z START m61 re-record sessions=['s1', 's2'] scaffold=opencode-v2-web
+- 2026-10-09T01:24:16Z RUN router: MLX_VLM_CACHE_SESSION_MAX=1 MLX_SERVE_CONFIG=$STACK_WORKDIR/m59/overlay_m59_draft_off.yaml uv run --frozen --no-sync mlx-serve start (cwd=$STACK_REPO)
+- 2026-10-09T01:24:18Z router pid=89443 owns :8000; problems=none
+- 2026-10-09T01:24:18Z RUN load Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+- 2026-10-09T01:24:22Z worker cmdline: 89454 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --cache-session-shrink on --attention-policy fused_v1 --lazy-prompt-embeddings --kv-quant-scheme turboquant --prefill-step-size 512 --generation-default
+- 2026-10-09T01:24:22Z RUN A4 v2 gate (Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed, --scaffold opencode-v2-web) -> a4_rr_s1_Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.log
+- 2026-10-09T01:24:48Z A4 v2 rc=0 pass=True carrier_sha256=6c8ab2e3080d run_id=a4-v2-ws31x172
+- 2026-10-09T01:24:48Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T01:24:48Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items beer-song,dominoes,book-store,pig-latin,grep --lang python --seed-base 1001 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl --chain-total 88 --limit 5 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T01:29:48Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 2/5 rows passed=2 mean=53s pred=244s eta=3min elapsed=5min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T01:34:17Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T01:34:48Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 2/5 rows passed=2 mean=53s pred=244s eta=3min elapsed=10min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T01:39:48Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 2/5 rows passed=2 mean=53s pred=244s eta=3min elapsed=15min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T01:44:18Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T01:44:48Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 2/5 rows passed=2 mean=53s pred=244s eta=3min elapsed=20min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T01:49:48Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 2/5 rows passed=2 mean=53s pred=244s eta=3min elapsed=25min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T01:54:19Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T01:54:48Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 4/5 rows passed=4 mean=424s pred=244s eta=7min elapsed=30min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T01:56:14Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl rc=0 rows=5 passed=5 mean_wall=375s requests=[4, 4, 6, 4, 8]
+- 2026-10-09T01:56:14Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 23.6 tok/s (n=4) vs table 24.2 -> -2.3% ok
+- 2026-10-09T01:56:14Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T01:56:14Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items beer-song,food-chain,grep,hangman,phone-number,affine-cipher,book-store,bottle-song,bowling,connect,dominoes,dot-dsl,forth,go-counting,grade-school,list-ops,paasio,pig-latin,poker,pov,proverb,react --lang python --seed-base 1001 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl --chain-total 88 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T02:01:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 7/22 rows passed=7 mean=306s pred=244s eta=77min elapsed=5min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T02:04:20Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T02:06:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 10/22 rows passed=10 mean=235s pred=244s eta=47min elapsed=10min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T02:11:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 10/22 rows passed=10 mean=235s pred=244s eta=47min elapsed=15min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T02:14:21Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T02:16:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 11/22 rows passed=11 mean=252s pred=244s eta=46min elapsed=20min kinds={'ok': 11} adapter=140W batt=100%
+- 2026-10-09T02:21:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 12/22 rows passed=12 mean=276s pred=244s eta=46min elapsed=25min kinds={'ok': 12} adapter=140W batt=100%
+- 2026-10-09T02:24:22Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T02:26:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 13/22 rows passed=13 mean=264s pred=244s eta=40min elapsed=30min kinds={'ok': 13} adapter=140W batt=100%
+- 2026-10-09T02:31:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 14/22 rows passed=14 mean=279s pred=244s eta=37min elapsed=35min kinds={'ok': 14} adapter=140W batt=100%
+- 2026-10-09T02:34:23Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T02:36:15Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 17/22 rows passed=17 mean=242s pred=244s eta=20min elapsed=40min kinds={'ok': 17} adapter=140W batt=100%
+- 2026-10-09T02:41:15Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 17/22 rows passed=17 mean=242s pred=244s eta=20min elapsed=45min kinds={'ok': 17} adapter=140W batt=100%
+- 2026-10-09T02:44:24Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T02:46:15Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 18/22 rows passed=18 mean=266s pred=244s eta=18min elapsed=50min kinds={'ok': 18} adapter=140W batt=100%
+- 2026-10-09T02:51:15Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 19/22 rows passed=19 mean=259s pred=244s eta=13min elapsed=55min kinds={'ok': 19} adapter=140W batt=100%
+- 2026-10-09T02:54:24Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T02:56:15Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl: 20/22 rows passed=20 mean=271s pred=244s eta=9min elapsed=60min kinds={'ok': 20} adapter=140W batt=100%
+- 2026-10-09T03:00:32Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl rc=0 rows=22 passed=22 mean_wall=259s requests=[4, 4, 6, 4, 8, 5, 6, 5, 4, 6, 13, 7, 4, 26, 5, 5, 5, 5, 5, 7, 5, 5]
+- 2026-10-09T03:00:32Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 23.5 tok/s (n=19) vs table 24.2 -> -2.9% ok
+- 2026-10-09T03:00:33Z AUDIT Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_python.jsonl round 0: 0 cheat re-run(s) []
+- 2026-10-09T03:00:33Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T03:00:33Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items bowling,dnd-character,food-chain,hexadecimal,markdown,counter,forth,alphametics,crypto-square,beer-song,book-store,bottle-song,connect,dominoes,error-handling,kindergarten-garden,ledger,matrix,octal,paasio,palindrome-products,pig-latin --lang go --seed-base 1001 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl --chain-total 88 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T03:04:25Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T03:05:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 0/22 rows passed=0 mean=300s pred=300s eta=110min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-09T03:10:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 1/22 rows passed=1 mean=525s pred=300s eta=184min elapsed=10min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-09T03:14:25Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T03:15:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 4/22 rows passed=4 mean=220s pred=300s eta=66min elapsed=15min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T03:20:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 4/22 rows passed=4 mean=220s pred=300s eta=66min elapsed=20min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T03:24:27Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T03:25:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 5/22 rows passed=5 mean=279s pred=300s eta=79min elapsed=25min kinds={'ok': 5} adapter=140W batt=100%
+- 2026-10-09T03:30:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 5/22 rows passed=5 mean=279s pred=300s eta=79min elapsed=30min kinds={'ok': 5} adapter=140W batt=100%
+- 2026-10-09T03:34:29Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T03:35:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 6/22 rows passed=5 mean=314s pred=300s eta=84min elapsed=35min kinds={'ok': 6} adapter=140W batt=100%
+- 2026-10-09T03:40:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 7/22 rows passed=6 mean=305s pred=300s eta=76min elapsed=40min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T03:44:30Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T03:45:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 8/22 rows passed=7 mean=325s pred=300s eta=76min elapsed=45min kinds={'ok': 8} adapter=140W batt=100%
+- 2026-10-09T03:50:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 10/22 rows passed=9 mean=284s pred=300s eta=57min elapsed=50min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T03:54:32Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T03:55:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 10/22 rows passed=9 mean=284s pred=300s eta=57min elapsed=55min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T04:00:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 10/22 rows passed=9 mean=284s pred=300s eta=57min elapsed=60min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T04:04:34Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T04:05:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 10/22 rows passed=9 mean=284s pred=300s eta=57min elapsed=65min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T04:10:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 10/22 rows passed=9 mean=284s pred=300s eta=57min elapsed=70min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T04:14:36Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T04:15:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 12/22 rows passed=11 mean=362s pred=300s eta=60min elapsed=75min kinds={'ok': 12} adapter=140W batt=100%
+- 2026-10-09T04:20:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 12/22 rows passed=11 mean=362s pred=300s eta=60min elapsed=80min kinds={'ok': 12} adapter=140W batt=100%
+- 2026-10-09T04:24:38Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T04:25:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 12/22 rows passed=11 mean=362s pred=300s eta=60min elapsed=85min kinds={'ok': 12} adapter=140W batt=100%
+- 2026-10-09T04:30:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 14/22 rows passed=13 mean=379s pred=300s eta=51min elapsed=90min kinds={'ok': 14} adapter=140W batt=100%
+- 2026-10-09T04:34:38Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T04:35:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 16/22 rows passed=15 mean=348s pred=300s eta=35min elapsed=95min kinds={'ok': 16} adapter=140W batt=100%
+- 2026-10-09T04:40:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 17/22 rows passed=16 mean=349s pred=300s eta=29min elapsed=100min kinds={'ok': 17} adapter=140W batt=100%
+- 2026-10-09T04:44:38Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T04:45:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 19/22 rows passed=18 mean=324s pred=300s eta=16min elapsed=105min kinds={'ok': 19} adapter=140W batt=100%
+- 2026-10-09T04:50:33Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl: 21/22 rows passed=20 mean=308s pred=300s eta=5min elapsed=110min kinds={'ok': 21} adapter=140W batt=100%
+- 2026-10-09T04:53:49Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl rc=0 rows=22 passed=21 mean_wall=306s requests=[11, 7, 11, 5, 6, 9, 8, 9, 5, 6, 8, 6, 10, 7, 5, 10, 11, 5, 6, 7, 9, 11]
+- 2026-10-09T04:53:49Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 23.5 tok/s (n=37) vs table 24.2 -> -2.9% ok
+- 2026-10-09T04:53:49Z AUDIT Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s1.opencode_go.jsonl round 0: 0 cheat re-run(s) []
+- 2026-10-09T04:53:50Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-10-09T04:53:50Z RUN load Qwen3.8-27B-mlx-uniform-4bit
+- 2026-10-09T04:53:54Z worker cmdline:  8125 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-mlx-uniform-4bit --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --kv-bits 4 --kv-quant-scheme turboquant --prefill-step-size 512 --generation-defaults {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty"
+- 2026-10-09T04:53:54Z RUN A4 v2 gate (Qwen3.8-27B-mlx-uniform-4bit, --scaffold opencode-v2-web) -> a4_rr_s1_Qwen3.8-27B-mlx-uniform-4bit.log
+- 2026-10-09T04:54:22Z A4 v2 rc=0 pass=True carrier_sha256=6c8ab2e3080d run_id=a4-v2-qv94omzr
+- 2026-10-09T04:54:22Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T04:54:22Z START Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items beer-song,dominoes,book-store,pig-latin,grep --lang python --seed-base 1001 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl --chain-total 88 --limit 5 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T04:54:39Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T04:59:22Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 1/5 rows passed=1 mean=80s pred=267s eta=5min elapsed=5min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-09T05:04:22Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 2/5 rows passed=2 mean=285s pred=267s eta=14min elapsed=10min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T05:04:40Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T05:09:22Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 2/5 rows passed=2 mean=285s pred=267s eta=14min elapsed=15min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T05:14:22Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 2/5 rows passed=2 mean=285s pred=267s eta=14min elapsed=20min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T05:14:41Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T05:19:22Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 2/5 rows passed=2 mean=285s pred=267s eta=14min elapsed=25min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T05:24:22Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 3/5 rows passed=3 mean=531s pred=267s eta=18min elapsed=30min kinds={'ok': 3} adapter=140W batt=100%
+- 2026-10-09T05:24:42Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T05:29:22Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 4/5 rows passed=4 mean=448s pred=267s eta=7min elapsed=35min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T05:31:17Z END Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl rc=0 rows=5 passed=5 mean_wall=441s requests=[4, 5, 5, 5, 5]
+- 2026-10-09T05:31:17Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.1 tok/s (n=5) vs table 25.4 -> -5.1% FLAG >5%: the C136 window is miscalibrated for this leg
+- 2026-10-09T05:31:17Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T05:31:17Z START Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items beer-song,food-chain,grep,hangman,phone-number,affine-cipher,book-store,bottle-song,bowling,connect,dominoes,dot-dsl,forth,go-counting,grade-school,list-ops,paasio,pig-latin,poker,pov,proverb,react --lang python --seed-base 1001 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl --chain-total 88 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T05:34:43Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T05:36:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 6/22 rows passed=6 mean=376s pred=267s eta=100min elapsed=5min kinds={'ok': 6} adapter=140W batt=100%
+- 2026-10-09T05:41:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 9/22 rows passed=9 mean=306s pred=267s eta=66min elapsed=10min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T05:44:44Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T05:46:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 10/22 rows passed=10 mean=284s pred=267s eta=57min elapsed=15min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T05:51:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 11/22 rows passed=11 mean=296s pred=267s eta=54min elapsed=20min kinds={'ok': 11} adapter=140W batt=100%
+- 2026-10-09T05:54:45Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T05:56:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 11/22 rows passed=11 mean=296s pred=267s eta=54min elapsed=25min kinds={'ok': 11} adapter=140W batt=100%
+- 2026-10-09T06:01:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 11/22 rows passed=11 mean=296s pred=267s eta=54min elapsed=30min kinds={'ok': 11} adapter=140W batt=100%
+- 2026-10-09T06:04:46Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T06:06:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 11/22 rows passed=11 mean=296s pred=267s eta=54min elapsed=35min kinds={'ok': 11} adapter=140W batt=100%
+- 2026-10-09T06:11:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 12/22 rows passed=12 mean=377s pred=267s eta=63min elapsed=40min kinds={'ok': 12} adapter=140W batt=100%
+- 2026-10-09T06:14:47Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T06:16:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 13/22 rows passed=13 mean=357s pred=267s eta=54min elapsed=45min kinds={'ok': 13} adapter=140W batt=100%
+- 2026-10-09T06:21:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 14/22 rows passed=14 mean=351s pred=267s eta=47min elapsed=50min kinds={'ok': 14} adapter=140W batt=100%
+- 2026-10-09T06:24:48Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T06:26:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 16/22 rows passed=16 mean=332s pred=267s eta=33min elapsed=55min kinds={'ok': 16} adapter=140W batt=100%
+- 2026-10-09T06:31:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 17/22 rows passed=17 mean=333s pred=267s eta=28min elapsed=60min kinds={'ok': 17} adapter=140W batt=100%
+- 2026-10-09T06:34:49Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T06:36:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 17/22 rows passed=17 mean=333s pred=267s eta=28min elapsed=65min kinds={'ok': 17} adapter=140W batt=100%
+- 2026-10-09T06:41:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 17/22 rows passed=17 mean=333s pred=267s eta=28min elapsed=70min kinds={'ok': 17} adapter=140W batt=100%
+- 2026-10-09T06:44:50Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T06:46:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 18/22 rows passed=18 mean=366s pred=267s eta=24min elapsed=75min kinds={'ok': 18} adapter=140W batt=100%
+- 2026-10-09T06:51:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 19/22 rows passed=19 mean=362s pred=267s eta=18min elapsed=80min kinds={'ok': 19} adapter=140W batt=100%
+- 2026-10-09T06:54:51Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T06:56:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 19/22 rows passed=19 mean=362s pred=267s eta=18min elapsed=85min kinds={'ok': 19} adapter=140W batt=100%
+- 2026-10-09T07:01:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 21/22 rows passed=21 mean=352s pred=267s eta=6min elapsed=90min kinds={'ok': 21} adapter=140W batt=100%
+- 2026-10-09T07:04:52Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T07:06:18Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl: 21/22 rows passed=21 mean=352s pred=267s eta=6min elapsed=95min kinds={'ok': 21} adapter=140W batt=100%
+- 2026-10-09T07:09:04Z END Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl rc=0 rows=22 passed=22 mean_wall=366s requests=[4, 5, 5, 5, 5, 4, 10, 8, 6, 7, 4, 6, 4, 6, 7, 4, 5, 11, 14, 11, 5, 6]
+- 2026-10-09T07:09:04Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.4 tok/s (n=28) vs table 25.4 -> -3.9% ok
+- 2026-10-09T07:09:04Z AUDIT Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_python.jsonl round 0: 0 cheat re-run(s) []
+- 2026-10-09T07:09:04Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T07:09:04Z START Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items bowling,dnd-character,food-chain,hexadecimal,markdown,counter,forth,alphametics,crypto-square,beer-song,book-store,bottle-song,connect,dominoes,error-handling,kindergarten-garden,ledger,matrix,octal,paasio,palindrome-products,pig-latin --lang go --seed-base 1001 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl --chain-total 88 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T07:14:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 0/22 rows passed=0 mean=360s pred=360s eta=132min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-09T07:14:52Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T07:19:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 0/22 rows passed=0 mean=360s pred=360s eta=132min elapsed=10min kinds={} adapter=140W batt=100%
+- 2026-10-09T07:24:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 2/22 rows passed=2 mean=413s pred=360s eta=138min elapsed=15min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T07:24:53Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T07:29:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 4/22 rows passed=4 mean=274s pred=360s eta=82min elapsed=20min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T07:34:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 4/22 rows passed=4 mean=274s pred=360s eta=82min elapsed=25min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T07:34:55Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T07:39:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 4/22 rows passed=4 mean=274s pred=360s eta=82min elapsed=30min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T07:44:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 4/22 rows passed=4 mean=274s pred=360s eta=82min elapsed=35min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T07:44:56Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T07:49:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 5/22 rows passed=5 mean=429s pred=360s eta=121min elapsed=40min kinds={'ok': 5} adapter=140W batt=100%
+- 2026-10-09T07:54:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 6/22 rows passed=6 mean=420s pred=360s eta=112min elapsed=45min kinds={'ok': 6} adapter=140W batt=100%
+- 2026-10-09T07:54:57Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T07:59:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 7/22 rows passed=7 mean=414s pred=360s eta=103min elapsed=50min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T08:04:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 7/22 rows passed=7 mean=414s pred=360s eta=103min elapsed=55min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T08:04:58Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T08:09:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 7/22 rows passed=7 mean=414s pred=360s eta=103min elapsed=60min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T08:14:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 7/22 rows passed=7 mean=414s pred=360s eta=103min elapsed=65min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T08:14:58Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T08:19:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 7/22 rows passed=7 mean=414s pred=360s eta=103min elapsed=70min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T08:24:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 7/22 rows passed=7 mean=414s pred=360s eta=103min elapsed=75min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T08:24:59Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T08:29:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 7/22 rows passed=7 mean=414s pred=360s eta=103min elapsed=80min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T08:34:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 10/22 rows passed=9 mean=497s pred=360s eta=99min elapsed=85min kinds={'ok': 9, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T08:35:00Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T08:39:04Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 10/22 rows passed=9 mean=497s pred=360s eta=99min elapsed=90min kinds={'ok': 9, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T08:44:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 10/22 rows passed=9 mean=497s pred=360s eta=99min elapsed=95min kinds={'ok': 9, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T08:45:01Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T08:49:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 11/22 rows passed=10 mean=534s pred=360s eta=98min elapsed=100min kinds={'ok': 10, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T08:54:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 12/22 rows passed=11 mean=500s pred=360s eta=83min elapsed=105min kinds={'ok': 11, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T08:55:02Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T08:59:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 12/22 rows passed=11 mean=500s pred=360s eta=83min elapsed=110min kinds={'ok': 11, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:04:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 13/22 rows passed=12 mean=525s pred=360s eta=79min elapsed=115min kinds={'ok': 12, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:05:04Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T09:09:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 13/22 rows passed=12 mean=525s pred=360s eta=79min elapsed=120min kinds={'ok': 12, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:14:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 15/22 rows passed=14 mean=491s pred=360s eta=57min elapsed=125min kinds={'ok': 14, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:15:05Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T09:19:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 16/22 rows passed=15 mean=472s pred=360s eta=47min elapsed=130min kinds={'ok': 15, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:24:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 16/22 rows passed=15 mean=472s pred=360s eta=47min elapsed=135min kinds={'ok': 15, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:25:06Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T09:29:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 16/22 rows passed=15 mean=472s pred=360s eta=47min elapsed=140min kinds={'ok': 15, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:34:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 17/22 rows passed=16 mean=508s pred=360s eta=42min elapsed=145min kinds={'ok': 16, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:35:07Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T09:39:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 18/22 rows passed=17 mean=493s pred=360s eta=33min elapsed=150min kinds={'ok': 17, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:44:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 20/22 rows passed=19 mean=458s pred=360s eta=15min elapsed=155min kinds={'ok': 19, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:45:08Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T09:49:05Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl: 21/22 rows passed=20 mean=445s pred=360s eta=7min elapsed=160min kinds={'ok': 20, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T09:50:14Z END Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl rc=0 rows=22 passed=21 mean_wall=436s requests=[8, 6, 10, 6, 16, 12, 8, 4, 5, 7, 8, 8, 5, 8, 8, 6, 9, 7, 5, 9, 7, 10]
+- 2026-10-09T09:50:14Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.8 tok/s (n=43) vs table 25.4 -> -2.4% ok
+- 2026-10-09T09:50:14Z AUDIT Qwen3.8-27B-mlx-uniform-4bit.rr.s1.opencode_go.jsonl round 0: 0 cheat re-run(s) []
+- 2026-10-09T09:50:14Z unload Qwen3.8-27B-mlx-uniform-4bit ok
+- 2026-10-09T09:50:14Z session boundary -> fresh load for s2
+- 2026-10-09T09:50:14Z RUN load Qwen3.8-27B-mlx-uniform-4bit
+- 2026-10-09T09:50:19Z worker cmdline: 18587 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-mlx-uniform-4bit --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --kv-bits 4 --kv-quant-scheme turboquant --prefill-step-size 512 --generation-defaults {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty"
+- 2026-10-09T09:50:19Z RUN A4 v2 gate (Qwen3.8-27B-mlx-uniform-4bit, --scaffold opencode-v2-web) -> a4_rr_s2_Qwen3.8-27B-mlx-uniform-4bit.log
+- 2026-10-09T09:50:44Z A4 v2 rc=0 pass=True carrier_sha256=6c8ab2e3080d run_id=a4-v2-_w9b0van
+- 2026-10-09T09:50:44Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T09:50:44Z START Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items affine-cipher,phone-number,go-counting,proverb,poker --lang python --seed-base 2002 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl --chain-total 88 --limit 5 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T09:55:09Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T09:55:44Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 3/5 rows passed=3 mean=88s pred=267s eta=3min elapsed=5min kinds={'ok': 3} adapter=140W batt=100%
+- 2026-10-09T10:00:07Z END Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl rc=0 rows=5 passed=5 mean_wall=110s requests=[4, 4, 6, 5, 7]
+- 2026-10-09T10:00:07Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 25.4 tok/s (n=4) vs table 25.4 -> +0.2% ok
+- 2026-10-09T10:00:07Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T10:00:07Z START Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items beer-song,food-chain,grep,hangman,phone-number,affine-cipher,book-store,bottle-song,bowling,connect,dominoes,dot-dsl,forth,go-counting,grade-school,list-ops,paasio,pig-latin,poker,pov,proverb,react --lang python --seed-base 2002 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl --chain-total 88 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T10:05:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 7/22 rows passed=7 mean=108s pred=267s eta=27min elapsed=5min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T10:05:10Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T10:10:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 7/22 rows passed=7 mean=108s pred=267s eta=27min elapsed=10min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T10:15:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 9/22 rows passed=9 mean=145s pred=267s eta=31min elapsed=15min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T10:15:12Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T10:20:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 9/22 rows passed=9 mean=145s pred=267s eta=31min elapsed=20min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T10:25:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 9/22 rows passed=9 mean=145s pred=267s eta=31min elapsed=25min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T10:25:12Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T10:30:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 10/22 rows passed=10 mean=230s pred=267s eta=46min elapsed=30min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T10:35:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 11/22 rows passed=11 mean=214s pred=267s eta=39min elapsed=35min kinds={'ok': 11} adapter=140W batt=100%
+- 2026-10-09T10:35:14Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T10:40:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 12/22 rows passed=12 mean=222s pred=267s eta=37min elapsed=40min kinds={'ok': 12} adapter=140W batt=100%
+- 2026-10-09T10:45:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 12/22 rows passed=12 mean=222s pred=267s eta=37min elapsed=45min kinds={'ok': 12} adapter=140W batt=100%
+- 2026-10-09T10:45:14Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T10:50:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 12/22 rows passed=12 mean=222s pred=267s eta=37min elapsed=50min kinds={'ok': 12} adapter=140W batt=100%
+- 2026-10-09T10:55:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 14/22 rows passed=14 mean=270s pred=267s eta=36min elapsed=55min kinds={'ok': 14} adapter=140W batt=100%
+- 2026-10-09T10:55:16Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T11:00:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 15/22 rows passed=15 mean=260s pred=267s eta=30min elapsed=60min kinds={'ok': 15} adapter=140W batt=100%
+- 2026-10-09T11:05:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 16/22 rows passed=16 mean=275s pred=267s eta=28min elapsed=65min kinds={'ok': 16} adapter=140W batt=100%
+- 2026-10-09T11:05:17Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T11:10:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 18/22 rows passed=18 mean=256s pred=267s eta=17min elapsed=70min kinds={'ok': 18} adapter=140W batt=100%
+- 2026-10-09T11:15:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 18/22 rows passed=18 mean=256s pred=267s eta=17min elapsed=75min kinds={'ok': 18} adapter=140W batt=100%
+- 2026-10-09T11:15:18Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T11:20:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 18/22 rows passed=18 mean=256s pred=267s eta=17min elapsed=80min kinds={'ok': 18} adapter=140W batt=100%
+- 2026-10-09T11:25:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 18/22 rows passed=18 mean=256s pred=267s eta=17min elapsed=85min kinds={'ok': 18} adapter=140W batt=100%
+- 2026-10-09T11:25:19Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T11:30:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 20/22 rows passed=20 mean=289s pred=267s eta=10min elapsed=90min kinds={'ok': 20} adapter=140W batt=100%
+- 2026-10-09T11:35:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 20/22 rows passed=20 mean=289s pred=267s eta=10min elapsed=95min kinds={'ok': 20} adapter=140W batt=100%
+- 2026-10-09T11:35:20Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T11:40:07Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl: 21/22 rows passed=21 mean=303s pred=267s eta=5min elapsed=100min kinds={'ok': 21} adapter=140W batt=100%
+- 2026-10-09T11:42:45Z END Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl rc=0 rows=22 passed=22 mean_wall=303s requests=[4, 4, 6, 5, 7, 7, 5, 7, 6, 4, 5, 7, 8, 4, 4, 15, 5, 5, 9, 4, 9, 8]
+- 2026-10-09T11:42:45Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.3 tok/s (n=29) vs table 25.4 -> -4.3% ok
+- 2026-10-09T11:42:45Z AUDIT Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_python.jsonl round 0: 0 cheat re-run(s) []
+- 2026-10-09T11:42:45Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T11:42:45Z START Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: --model Qwen3.8-27B-mlx-uniform-4bit --items bowling,dnd-character,food-chain,hexadecimal,markdown,counter,forth,alphametics,crypto-square,beer-song,book-store,bottle-song,connect,dominoes,error-handling,kindergarten-garden,ledger,matrix,octal,paasio,palindrome-products,pig-latin --lang go --seed-base 2002 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl --chain-total 88 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T11:45:21Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T11:47:45Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 0/22 rows passed=0 mean=360s pred=360s eta=132min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-09T11:52:45Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 0/22 rows passed=0 mean=360s pred=360s eta=132min elapsed=10min kinds={} adapter=140W batt=100%
+- 2026-10-09T11:55:22Z WATCHDOG alive (max scratch-process RSS this sweep 46MB)
+- 2026-10-09T11:57:45Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 2/22 rows passed=2 mean=413s pred=360s eta=138min elapsed=15min kinds={'ok': 2} adapter=140W batt=100%
+- 2026-10-09T12:02:45Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 4/22 rows passed=4 mean=284s pred=360s eta=85min elapsed=20min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T12:05:23Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T12:07:45Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 4/22 rows passed=4 mean=284s pred=360s eta=85min elapsed=25min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T12:12:45Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 5/22 rows passed=5 mean=302s pred=360s eta=86min elapsed=30min kinds={'ok': 5} adapter=140W batt=100%
+- 2026-10-09T12:15:24Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T12:17:45Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 5/22 rows passed=5 mean=302s pred=360s eta=86min elapsed=35min kinds={'ok': 5} adapter=140W batt=100%
+- 2026-10-09T12:22:45Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 5/22 rows passed=5 mean=302s pred=360s eta=86min elapsed=40min kinds={'ok': 5} adapter=140W batt=100%
+- 2026-10-09T12:25:25Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T12:27:45Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 5/22 rows passed=5 mean=302s pred=360s eta=86min elapsed=45min kinds={'ok': 5} adapter=140W batt=100%
+- 2026-10-09T12:32:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 6/22 rows passed=6 mean=481s pred=360s eta=128min elapsed=50min kinds={'ok': 6} adapter=140W batt=100%
+- 2026-10-09T12:35:26Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T12:37:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 7/22 rows passed=7 mean=467s pred=360s eta=117min elapsed=55min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T12:42:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 7/22 rows passed=7 mean=467s pred=360s eta=117min elapsed=60min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T12:45:27Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T12:47:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 7/22 rows passed=7 mean=467s pred=360s eta=117min elapsed=65min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T12:52:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 7/22 rows passed=7 mean=467s pred=360s eta=117min elapsed=70min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T12:55:28Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T12:57:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 7/22 rows passed=7 mean=467s pred=360s eta=117min elapsed=75min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T13:02:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 7/22 rows passed=7 mean=467s pred=360s eta=117min elapsed=80min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T13:05:29Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T13:07:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 7/22 rows passed=7 mean=467s pred=360s eta=117min elapsed=85min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T13:12:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 8/22 rows passed=7 mean=645s pred=360s eta=151min elapsed=90min kinds={'ok': 7, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T13:15:30Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T13:17:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 10/22 rows passed=9 mean=552s pred=360s eta=110min elapsed=95min kinds={'ok': 9, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T13:22:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 10/22 rows passed=9 mean=552s pred=360s eta=110min elapsed=100min kinds={'ok': 9, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T13:25:32Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T13:27:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 10/22 rows passed=9 mean=552s pred=360s eta=110min elapsed=105min kinds={'ok': 9, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T13:32:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 10/22 rows passed=9 mean=552s pred=360s eta=110min elapsed=110min kinds={'ok': 9, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T13:35:32Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T13:37:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 10/22 rows passed=9 mean=552s pred=360s eta=110min elapsed=115min kinds={'ok': 9, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T13:42:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 10/22 rows passed=9 mean=552s pred=360s eta=110min elapsed=120min kinds={'ok': 9, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T13:45:34Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T13:47:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 11/22 rows passed=9 mean=674s pred=360s eta=124min elapsed=125min kinds={'ok': 9, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T13:52:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 12/22 rows passed=10 mean=631s pred=360s eta=105min elapsed=130min kinds={'ok': 10, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T13:55:35Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T13:57:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 12/22 rows passed=10 mean=631s pred=360s eta=105min elapsed=135min kinds={'ok': 10, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T14:02:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 13/22 rows passed=11 mean=633s pred=360s eta=95min elapsed=140min kinds={'ok': 11, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T14:05:36Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T14:07:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 14/22 rows passed=12 mean=602s pred=360s eta=80min elapsed=145min kinds={'ok': 12, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T14:12:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 14/22 rows passed=12 mean=602s pred=360s eta=80min elapsed=150min kinds={'ok': 12, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T14:15:37Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T14:17:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 15/22 rows passed=13 mean=606s pred=360s eta=71min elapsed=155min kinds={'ok': 13, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T14:22:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 15/22 rows passed=13 mean=606s pred=360s eta=71min elapsed=160min kinds={'ok': 13, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T14:25:38Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T14:27:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 15/22 rows passed=13 mean=606s pred=360s eta=71min elapsed=165min kinds={'ok': 13, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T14:32:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 15/22 rows passed=13 mean=606s pred=360s eta=71min elapsed=170min kinds={'ok': 13, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T14:35:39Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T14:37:46Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 15/22 rows passed=13 mean=606s pred=360s eta=71min elapsed=175min kinds={'ok': 13, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T14:42:47Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 15/22 rows passed=13 mean=606s pred=360s eta=71min elapsed=180min kinds={'ok': 13, 'stalled': 2} adapter=140W batt=100%
+- 2026-10-09T14:45:40Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T14:47:47Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 16/22 rows passed=13 mean=686s pred=360s eta=69min elapsed=185min kinds={'ok': 13, 'stalled': 3} adapter=140W batt=100%
+- 2026-10-09T14:52:47Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 16/22 rows passed=13 mean=686s pred=360s eta=69min elapsed=190min kinds={'ok': 13, 'stalled': 3} adapter=140W batt=100%
+- 2026-10-09T14:55:41Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T14:57:47Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 16/22 rows passed=13 mean=686s pred=360s eta=69min elapsed=195min kinds={'ok': 13, 'stalled': 3} adapter=140W batt=100%
+- 2026-10-09T15:02:47Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 17/22 rows passed=14 mean=691s pred=360s eta=58min elapsed=200min kinds={'ok': 14, 'stalled': 3} adapter=140W batt=100%
+- 2026-10-09T15:05:42Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T15:07:47Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 19/22 rows passed=16 mean=639s pred=360s eta=32min elapsed=205min kinds={'ok': 16, 'stalled': 3} adapter=140W batt=100%
+- 2026-10-09T15:12:47Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 20/22 rows passed=17 mean=623s pred=360s eta=21min elapsed=210min kinds={'ok': 17, 'stalled': 3} adapter=140W batt=100%
+- 2026-10-09T15:15:43Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T15:17:47Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 20/22 rows passed=17 mean=623s pred=360s eta=21min elapsed=215min kinds={'ok': 17, 'stalled': 3} adapter=140W batt=100%
+- 2026-10-09T15:22:47Z WATCH Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl: 21/22 rows passed=18 mean=618s pred=360s eta=10min elapsed=220min kinds={'ok': 18, 'stalled': 3} adapter=140W batt=100%
+- 2026-10-09T15:23:12Z END Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl rc=0 rows=22 passed=19 mean_wall=598s requests=[8, 6, 5, 6, 6, 9, 8, 4, 6, 5, 13, 11, 6, 10, 9, 367, 7, 8, 6, 8, 7, 8]
+- 2026-10-09T15:23:12Z RATE CHECK Qwen3.8-27B-mlx-uniform-4bit: measured median 24.6 tok/s (n=43) vs table 25.4 -> -3.1% ok
+- 2026-10-09T15:23:12Z AUDIT Qwen3.8-27B-mlx-uniform-4bit.rr.s2.opencode_go.jsonl round 0: 0 cheat re-run(s) []
+- 2026-10-09T15:23:12Z unload Qwen3.8-27B-mlx-uniform-4bit ok
+- 2026-10-09T15:23:12Z RUN load Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+- 2026-10-09T15:23:16Z worker cmdline: 34736 $STACK_REPO/.venv/bin/python $STACK_REPO/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --cache-session-shrink on --attention-policy fused_v1 --lazy-prompt-embeddings --kv-quant-scheme turboquant --prefill-step-size 512 --generation-default
+- 2026-10-09T15:23:16Z RUN A4 v2 gate (Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed, --scaffold opencode-v2-web) -> a4_rr_s2_Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.log
+- 2026-10-09T15:23:44Z A4 v2 rc=0 pass=True carrier_sha256=6c8ab2e3080d run_id=a4-v2-zwb0oneu
+- 2026-10-09T15:23:44Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T15:23:44Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items affine-cipher,phone-number,go-counting,proverb,poker --lang python --seed-base 2002 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl --chain-total 88 --limit 5 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T15:25:44Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T15:28:44Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 4/5 rows passed=4 mean=68s pred=244s eta=1min elapsed=5min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T15:33:11Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl rc=0 rows=5 passed=5 mean_wall=111s requests=[4, 8, 5, 4, 16]
+- 2026-10-09T15:33:11Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 23.8 tok/s (n=7) vs table 24.2 -> -1.7% ok
+- 2026-10-09T15:33:11Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T15:33:11Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items beer-song,food-chain,grep,hangman,phone-number,affine-cipher,book-store,bottle-song,bowling,connect,dominoes,dot-dsl,forth,go-counting,grade-school,list-ops,paasio,pig-latin,poker,pov,proverb,react --lang python --seed-base 2002 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl --chain-total 88 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T15:35:46Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T15:38:11Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 7/22 rows passed=7 mean=102s pred=244s eta=26min elapsed=5min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T15:43:11Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 9/22 rows passed=9 mean=116s pred=244s eta=25min elapsed=10min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T15:45:47Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T15:48:11Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 9/22 rows passed=9 mean=116s pred=244s eta=25min elapsed=15min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T15:53:11Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 9/22 rows passed=9 mean=116s pred=244s eta=25min elapsed=20min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T15:55:48Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T15:58:11Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 9/22 rows passed=9 mean=116s pred=244s eta=25min elapsed=25min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T16:03:11Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 9/22 rows passed=9 mean=116s pred=244s eta=25min elapsed=30min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T16:05:49Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T16:08:11Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 9/22 rows passed=9 mean=116s pred=244s eta=25min elapsed=35min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T16:13:12Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 9/22 rows passed=9 mean=116s pred=244s eta=25min elapsed=40min kinds={'ok': 9} adapter=140W batt=100%
+- 2026-10-09T16:15:50Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T16:18:12Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 11/22 rows passed=10 mean=284s pred=244s eta=52min elapsed=45min kinds={'ok': 10, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T16:23:12Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 14/22 rows passed=13 mean=247s pred=244s eta=33min elapsed=50min kinds={'ok': 13, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T16:25:51Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T16:28:12Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 15/22 rows passed=14 mean=242s pred=244s eta=28min elapsed=55min kinds={'ok': 14, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T16:33:12Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 18/22 rows passed=17 mean=227s pred=244s eta=15min elapsed=60min kinds={'ok': 17, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T16:35:52Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T16:38:12Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 18/22 rows passed=17 mean=227s pred=244s eta=15min elapsed=65min kinds={'ok': 17, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T16:43:12Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 19/22 rows passed=18 mean=249s pred=244s eta=12min elapsed=70min kinds={'ok': 18, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T16:45:54Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T16:48:12Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 20/22 rows passed=19 mean=244s pred=244s eta=8min elapsed=75min kinds={'ok': 19, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T16:53:12Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl: 21/22 rows passed=20 mean=248s pred=244s eta=4min elapsed=80min kinds={'ok': 20, 'stalled': 1} adapter=140W batt=100%
+- 2026-10-09T16:55:55Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T16:57:13Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl rc=0 rows=22 passed=21 mean_wall=253s requests=[4, 8, 5, 4, 16, 5, 8, 10, 9, 3, 9, 4, 4, 5, 4, 10, 4, 5, 6, 5, 9, 13]
+- 2026-10-09T16:57:13Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 24.1 tok/s (n=21) vs table 24.2 -> -0.4% ok
+- 2026-10-09T16:57:13Z AUDIT Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_python.jsonl round 0: 0 cheat re-run(s) []
+- 2026-10-09T16:57:13Z GATE adapter=140W batt=100% orphans=0 -> ok
+- 2026-10-09T16:57:13Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items bowling,dnd-character,food-chain,hexadecimal,markdown,counter,forth,alphametics,crypto-square,beer-song,book-store,bottle-song,connect,dominoes,error-handling,kindergarten-garden,ledger,matrix,octal,paasio,palindrome-products,pig-latin --lang go --seed-base 2002 --out $STACK_WORKDIR/m61/rr/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl --chain-total 88 --scaffold opencode-v2-web --a4-v2-receipt $STACK_WORKDIR/session_gate/a4_v2_latest.json
+- 2026-10-09T17:02:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 0/22 rows passed=0 mean=300s pred=300s eta=110min elapsed=5min kinds={} adapter=140W batt=100%
+- 2026-10-09T17:05:56Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T17:07:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 0/22 rows passed=0 mean=300s pred=300s eta=110min elapsed=10min kinds={} adapter=140W batt=100%
+- 2026-10-09T17:12:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 1/22 rows passed=1 mean=836s pred=300s eta=293min elapsed=15min kinds={'ok': 1} adapter=140W batt=100%
+- 2026-10-09T17:15:57Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T17:17:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 3/22 rows passed=3 mean=364s pred=300s eta=115min elapsed=20min kinds={'ok': 3} adapter=140W batt=100%
+- 2026-10-09T17:22:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 4/22 rows passed=4 mean=304s pred=300s eta=91min elapsed=25min kinds={'ok': 4} adapter=140W batt=100%
+- 2026-10-09T17:25:58Z WATCHDOG alive (max scratch-process RSS this sweep 45MB)
+- 2026-10-09T17:27:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 5/22 rows passed=5 mean=342s pred=300s eta=97min elapsed=30min kinds={'ok': 5} adapter=140W batt=100%
+- 2026-10-09T17:32:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 6/22 rows passed=6 mean=346s pred=300s eta=92min elapsed=35min kinds={'ok': 6} adapter=140W batt=100%
+- 2026-10-09T17:35:59Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T17:37:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 7/22 rows passed=7 mean=333s pred=300s eta=83min elapsed=40min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T17:42:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 7/22 rows passed=7 mean=333s pred=300s eta=83min elapsed=45min kinds={'ok': 7} adapter=140W batt=100%
+- 2026-10-09T17:46:00Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T17:47:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 8/22 rows passed=8 mean=365s pred=300s eta=85min elapsed=50min kinds={'ok': 8} adapter=140W batt=100%
+- 2026-10-09T17:52:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 10/22 rows passed=10 mean=315s pred=300s eta=63min elapsed=55min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T17:56:01Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T17:57:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 10/22 rows passed=10 mean=315s pred=300s eta=63min elapsed=60min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T18:02:13Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 10/22 rows passed=10 mean=315s pred=300s eta=63min elapsed=65min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T18:06:02Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T18:07:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 10/22 rows passed=10 mean=315s pred=300s eta=63min elapsed=70min kinds={'ok': 10} adapter=140W batt=100%
+- 2026-10-09T18:12:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 12/22 rows passed=12 mean=362s pred=300s eta=60min elapsed=75min kinds={'ok': 12} adapter=140W batt=100%
+- 2026-10-09T18:16:04Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T18:17:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 12/22 rows passed=12 mean=362s pred=300s eta=60min elapsed=80min kinds={'ok': 12} adapter=140W batt=100%
+- 2026-10-09T18:22:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 13/22 rows passed=13 mean=378s pred=300s eta=57min elapsed=85min kinds={'ok': 13} adapter=140W batt=100%
+- 2026-10-09T18:26:05Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T18:27:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 13/22 rows passed=13 mean=378s pred=300s eta=57min elapsed=90min kinds={'ok': 13} adapter=140W batt=100%
+- 2026-10-09T18:32:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 15/22 rows passed=15 mean=374s pred=300s eta=44min elapsed=95min kinds={'ok': 15} adapter=140W batt=100%
+- 2026-10-09T18:36:06Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T18:37:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 16/22 rows passed=16 mean=361s pred=300s eta=36min elapsed=100min kinds={'ok': 16} adapter=140W batt=100%
+- 2026-10-09T18:42:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 17/22 rows passed=17 mean=365s pred=300s eta=30min elapsed=105min kinds={'ok': 17} adapter=140W batt=100%
+- 2026-10-09T18:46:07Z WATCHDOG alive (max scratch-process RSS this sweep 0MB)
+- 2026-10-09T18:47:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 19/22 rows passed=19 mean=338s pred=300s eta=17min elapsed=110min kinds={'ok': 19} adapter=140W batt=100%
+- 2026-10-09T18:52:14Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl: 20/22 rows passed=20 mean=334s pred=300s eta=11min elapsed=115min kinds={'ok': 20} adapter=140W batt=100%
+- 2026-10-09T18:55:11Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl rc=0 rows=22 passed=22 mean_wall=318s requests=[9, 6, 12, 6, 11, 14, 8, 9, 5, 6, 8, 12, 10, 7, 8, 6, 12, 6, 5, 8, 8, 8]
+- 2026-10-09T18:55:11Z RATE CHECK Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: measured median 24.0 tok/s (n=38) vs table 24.2 -> -0.8% ok
+- 2026-10-09T18:55:11Z AUDIT Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.rr.s2.opencode_go.jsonl round 0: 0 cheat re-run(s) []
+- 2026-10-09T18:55:11Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-10-09T18:55:25Z stack_stop rc=0 listeners=[]
+- 2026-10-09T18:55:25Z M61 RE-RECORD DONE
+- 2026-10-09T18:55:25Z DRIVE-RR re-record rc=0
+- 2026-10-09T18:55:26Z WATCHDOG stop file present -> exiting

@@ -1,0 +1,23 @@
+**C1 — BLOCKING — Reasoning resume loses provenance.** [run_reasoning.py:125]($STACK_REPO/.claude/worktrees/agent-a0c55413033380924/benchmark/bench/run_reasoning.py:125)  
+`--resume` accepts journal rows using a sampling/design key that excludes router identity, registry hash, draft state and KV configuration. It never reads the earlier manifest or preserves `router_history`. Restarting with another overlay but identical sampling can mix old rungs with new ones and publish everything under today’s router. **Fix:** persist provenance with journal segments; validate compatibility before reuse, reject drifted/unattributed segments, and retain router history.
+
+**C2 — BLOCKING — Capacity leaves usable, unmarked journal rows after drift.** [run_capacity.py:136]($STACK_REPO/.claude/worktrees/agent-a0c55413033380924/benchmark/bench/run_capacity.py:136)  
+Only the scorecard receives `served_config_drift`; `capacity_ladder.jsonl` remains canonical with completed rows. Rebuilding a scorecard from that journal through `capacity_retrieval_scorecard()` treats those rows as valid because it checks execution status, not provenance. The existing scorecard can also retain `grid_completed: true`. **Fix:** quarantine both artifacts on refusal, or require an explicit validated provenance record in every consuming path.
+
+**C3 — BLOCKING — Making C35 fatal exposes incorrect worker identification.** [provenance.py:131]($STACK_REPO/.claude/worktrees/agent-a0c55413033380924/benchmark/bench/provenance.py:131)  
+`registry_draft()` still uses the first globally matching process and `hf in cmd`, rather than the router’s worker and an exact `--model` argument. A previous model whose path extends the requested model’s path can now abort `generate` before preload. An unrelated matching process can also hide the actual worker disagreement. **Fix:** reuse `_worker_for()` and `_flag_value()`.
+
+The matching draft-stripped-overlay case passes. A previous model with a nonmatching path is ignored. Traced caller handlers—including the probes outside `bench/`—propagate the new exception or exit nonzero; I found no additional swallowing handler around these calls.
+
+**C4 — BLOCKING — Gap 1 moves pre-check writes rather than eliminating them.** [run_opencode_probe.py:579]($STACK_REPO/.claude/worktrees/agent-a0c55413033380924/benchmark/run_opencode_probe.py:579)  
+Before M50, execution still requests `docker info` for non-Python languages, invokes `opencode --version`, potentially reads `config.sh`, creates a system-temp directory, and runs `debug config`, which writes its data home. This fails the stated strict ordering.
+
+The temporary cwd can resolve a different baseURL from the actual workdir ancestry. The per-item check prevents model traffic to that different router, but can reject an otherwise healthy project configuration. Before `3948528`, both discovery and item directories used system-temp ancestry; now only discovery does. **Fix:** establish consistent configuration discovery and move unrelated preflight operations after verification; explicitly define any permitted discovery I/O exception. `TemporaryDirectory` cleans up on ordinary exceptions and router refusal, but cannot guarantee cleanup after forced termination.
+
+**C5 — BLOCKING — Exceptional exits bypass C106 stamping.** [run_reasoning.py:203]($STACK_REPO/.claude/worktrees/agent-a0c55413033380924/benchmark/bench/run_reasoning.py:203), [run_retrieval.py:128]($STACK_REPO/.claude/worktrees/agent-a0c55413033380924/benchmark/bench/run_retrieval.py:128)  
+Changing registry draft/control fields can make `gather()` raise before the exit check: quarantine occurs without `served_config_drift`. Earlier exceptions likewise bypass verification; reasoning can leave resumable journal rows. Quarantine/write failures can also replace the original refusal as the primary exception. **Fix:** centralize exit verification and forensic cleanup across success and failure paths, preserving the original exception.
+
+**C6 — RESIDUAL — Tests miss the important ordering failures.** [test_m50_entrypoints.py:577]($STACK_REPO/.claude/worktrees/agent-a0c55413033380924/benchmark/bench/tests/test_m50_entrypoints.py:577)  
+Tests invoke real entry functions and guard selected precheck/request ordering, but do not intercept every read/write. Gap 1’s test inspects only `tmp_path`; the new system-temp writes escape that assertion. Mock ladders never invoke persistence callbacks, leaving capacity journal and reasoning resume behavior untested. Add callback-driven persistence, resume, cleanup, and exception-path cases.
+
+**Verdicts:** Gap 1 **FIX-THEN-SHIP**; Gap 2 **FIX-THEN-SHIP**; Gap 3 **FIX-THEN-SHIP**. Findings are from static review.

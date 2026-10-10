@@ -1,0 +1,13 @@
+You are a cold, adversarial DESIGN reviewer with no prior context. Read-only; do not modify anything.
+
+Review the proposal $STACK_REPO/docs/specs/c103-prefix-drift.md against the code it cites:
+- worker fork: $HOME/ws/mlx-vlm/mlx_vlm/snapshot.py, $HOME/ws/mlx-vlm/mlx_vlm/generate/common.py (PromptCacheState.update, _compute_anchor_before_latest_user_offset), $HOME/ws/mlx-vlm/mlx_vlm/generate/dispatch.py (the "Hybrid-Cache Rewind Guard" block, snapshot_at_offset capture), $HOME/ws/mlx-vlm/mlx_vlm/models/qwen3_5/gated_delta.py (state shape/dtype), $HOME/ws/mlx-vlm/mlx_vlm/server/session_manager.py (shrink-on-retire, eviction)
+- stack: $STACK_REPO/configgen/emitters/opencode.py and $STACK_REPO/opencode_config/opencode.json; evidence rows under $STACK_REPO/benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/ (session_pinning_gate.c102a.json, session_cache.c102a_legb.json, session_cache.m45c2.json); lab notebook entries dated 2026-09-23 and 2026-09-27 in $STACK_REPO/docs/lab-notebook.md. Captured request bodies: $STACK_WORKDIR/c102a/capture/req_*.json (req_001 = process 1 first request, req_004 = process 2 first request).
+
+Questions to answer with evidence (file:line): 
+1. Is the diagnosis right? Verify from the captured bodies that ONLY the skills-location lines differ, and from dispatch.py/common.py that a divergence before the earliest snapshot forces full re-prefill. Is there any cheaper cause (e.g., could the anchor-before-latest-user snapshot have covered this if the ring were larger)?
+2. Proposal A1: does disabling the `skill` tool actually remove the <available_skills> block from opencode's system prompt (check what you can; say UNVERIFIED if not determinable offline)? Any harness/benchmark provenance implications? Better client-side alternatives (opencode config keys, env, skills.paths)?
+3. Proposal B: check the sizing (151 MB per snapshot) against gated_delta.py state shapes and the model config (48 linear layers?). Is the logarithmic-thinning ring sound (invariants, interaction with drop_after on divergence, with the existing 3-entry ring and the mid-prefill anchor capture)? Where exactly would captures hook into the prefill loop (prefill_step_size chunks)? Memory risk on a 64 GB box with two sessions at ~41-42 GB measured peak. Is a prompt-end snapshot (B1) redundant with the periodic ring, or needed?
+4. Rank the options; state what you would ship and what you would refuse. List missing acceptance criteria.
+
+Output: markdown with sections Verdict, Diagnosis check, A1 assessment, B assessment (sizing, design, hooks, risks), Ranked recommendation, Missing criteria. Terse, concrete, no praise.

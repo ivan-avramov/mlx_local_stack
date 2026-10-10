@@ -1,0 +1,521 @@
+# M21 TEMP OVERLAY (2026-09-01): m6b draft-OFF overlay + the two M21 arms cloned from the
+# Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit entry (certified t0.6 tune, budget 81920, cap 262144, prealloc=cap).
+# NEVER commit; never point the daily-driver router at it.
+# BENCH OVERLAY (draft-OFF) — REGENERATED 2026-08-31 late night from the working registry (post-M27
+# flip: all three B-menu entries carry draft_kind: mtp in the registry). Measurement is predictor-OFF:
+# every draft_* field below is commented out. Regenerate after any registry edit.
+mlx_port: 8091                    # Internal port used by the active mlx subprocess
+manager_port: 8000                # Port the FastAPI manager listens on
+inactivity_timeout_seconds: 10800   # Unload model after x seconds of no requests
+startup_timeout_seconds: 300      # Max wait for model to become READY
+
+# Notes:
+# - kv_quant_scheme=uniform + integer kv_bits => standard QuantizedKVCache (TurboQuant
+#   is NOT engaged; it only activates for scheme=turboquant or fractional kv_bits).
+# - cache_limit_gb / memory_limit_frac are NOT set here on purpose: the MLX Metal
+#   buffer-pool cap is auto-derived per model at startup from heads x prefill_step x
+#   max_kv_cache_size (see mlx-vlm server cli), and the total-memory backstop adapts to
+#   each machine's RAM. Set cache_limit_gb explicitly only to override the derivation.
+# - reasoning_parser / tool_call_parser intentionally omitted: process_manager does not
+#   forward them for type=vision models, and mlx-vlm auto-infers the tool parser.
+
+agent_defaults:
+  opencode: Ornith-1.0-35B-mlx-uniform-4bit
+  aider: Ornith-1.0-35B-mlx-uniform-4bit
+
+# The task model (mlx_vlm, :8092 — titles/summaries) is NOT a `models:` entry: that
+# would make the :8000 router serve it / OWUI auto-list it as a router model. It is a
+# top-level source-of-truth block that configgen's loader parses with the same
+# per-entry logic as `models:`, purely for the config-generator emitters to read.
+task_model:
+  name: mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  hf_path: mlx-community/Qwen2.5-1.5B-Instruct-4bit
+  # Bounds every OWUI task call. Two paths read this, and both come from the
+  # OWUI model params configgen emits from here (openwebui-init/models_config.json):
+  #   - title / tags / follow-up read it explicitly (routers/tasks.py:157,
+  #     `info.params.max_tokens`, defaulting to 1000 if absent)
+  #   - autocomplete builds a payload with NO max_tokens at all and goes through
+  #     the normal chat path, so only the model params bound it (before this, it
+  #     fell through to the mlx_vlm server default -- observed max_tokens=2048 in
+  #     logs/task_model.log; with it, the same request logs max_tokens=512)
+  # 512 is generous headroom against measured output (title 12, tags 15,
+  # follow-up 92, autocomplete 25 tokens, all finish_reason=stop) while capping
+  # the worst case at ~3s on this model.
+  # NOTE: mlx-serve ignores this block entirely (the task model runs as a
+  # standalone mlx_vlm process from runserver.sh, not as a router model), so
+  # generation_defaults here reaches the CLIENT configs only, never a server flag.
+  generation_defaults:
+    max_tokens: 512
+  presentation:
+    role: task
+    display_name: "Task 1.5B (titles/summaries)"
+    context: 30000
+    output: 2048
+
+models:
+  # QAT / optimized-quant experiments (quality-vs-size; QAT/OptiQ earn their keep at 4-6 bit).
+  - name: gemma-4-31B-it-qat-6bit
+    type: vision
+    on_demand: true
+    hf_path: mlx-community/gemma-4-31B-it-qat-6bit
+    max_kv_cache_size: 196608      # 192K: weights ~31GB make 256K (~58GB) trip the RAM backstop
+    kv_prealloc_tokens: 196608
+    kv_quant_scheme: uniform
+    kv_bits: 4
+    prefill_step_size: 512
+    quantized_kv_start: 0
+    generation_defaults:
+      temperature: 0.7
+      top_p: 0.95
+      top_k: 64
+      min_p: 0.0
+      repetition_penalty: 1.08
+      max_tokens: 32768
+      thinking_budget: 16384
+      enable_thinking: true
+    presentation:
+      role: main
+      family: gemma
+      display_name: "gemma-4-31B-it-qat-6bit (dense)"
+      context: 196608
+      output: 32768
+      capabilities: [tools, vision, thinking, web_search, code_interpreter]
+    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
+
+  - name: gemma-4-26B-A4B-it-OptiQ-4bit
+    type: vision
+    on_demand: true
+    hf_path: mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144
+    kv_quant_scheme: uniform
+    kv_bits: 4
+    prefill_step_size: 512
+    quantized_kv_start: 0
+    generation_defaults:
+      temperature: 0.7
+      top_p: 0.95
+      top_k: 64
+      min_p: 0.0
+      repetition_penalty: 1.08
+      max_tokens: 49152
+      thinking_budget: 32768
+      enable_thinking: true
+    presentation:
+      role: main
+      family: gemma
+      display_name: "gemma-4-26B-A4B-it-OptiQ-4bit (MoE)"
+      context: 262144
+      output: 49152
+      capabilities: [tools, vision, thinking, web_search, code_interpreter]
+    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
+    # draft_block_size: 16
+    # suffix_min_match: 2
+    # draft_cooldown: 2
+
+  # ── Campaign picks for 256K agentic coding (MLX quants, hosted on HF: caslca) ──
+  # B MENU (operator C38 ruling 2026-08-29): 1st Qwen3.6-27B-Opus-Distill-OptiQ-4bit
+  # (certified MTP triple, M6b), 2nd Ornith-1.0-35B-mlx-uniform-4bit (certified MTP triple,
+  # M27 2026-08-31), 3rd Qwen3.8-27B-mlx-uniform-4bit (added on the M26 evidence — leads every
+  # pooled cell, nothing Holm-surviving; certified MTP triple, M6d 2026-08-30). All three
+  # B-menu triples are predictor-equipped; MEASUREMENT STAYS DRAFT-OFF for every one of them.
+  # Ornith-1.0-35B-mlx-uniform-4bit = B 2ND CHOICE: sparse-MoE (8/256 active) + hybrid
+  # linear-attn; clears true 256K (mx-peak 32.4GB @ fp16 KV), fast decode (37 tok/s @256K).
+  # Coding op-temp 0.4.
+  - name: Ornith-1.0-35B-mlx-uniform-4bit
+    type: vision
+    on_demand: true
+    hf_path: caslca/Ornith-1.0-35B-mlx-uniform-4bit
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144     # pre-alloc full cap → never reallocs
+    kv_bits: 0                     # fp16 KV — 256K peak 32.4GB (≤46GB gate, 13.6GB headroom)
+    prefill_step_size: 512
+    # CERTIFIED M27 2026-08-31 — TRANSPLANTED native-MTP predictor (the B 2nd choice's shipped
+    # triple): the fine-tune dropped its base's MTP head, so the Qwen/Qwen3.5-35B-A3B head
+    # (1 layer, 256 experts + shared, shards 13–14) was split via --model-type qwen3_next,
+    # int4/g64. Paired ON/OFF humanevalplus n=164 (seed-39 draw), acc 92.07 vs 92.68, delta
+    # -0.61pp CI [-4.3,+3.0pp], TOST ±5pp verdict EQUIVALENT (p_d=0.055, 4:5); strict
+    # inconclusive 12:13 (runaway placement, rate unchanged 7.9 vs 7.3 %); engagement 164/164,
+    # mean acceptance 0.778 (k=2), decode 1.56× paired mean (160.5 vs 102.8 tok/s), corpus
+    # wall 3.28h vs 4.65h; probe GO 1.72×. Serving-only: MEASUREMENT STAYS DRAFT-OFF
+    # (fingerprint v3 + compare refusal police the boundary). Fork ab5708a5. M28 dormant.
+    # draft_kind: mtp  # STRIPPED by overlay (draft-OFF)
+    # draft_model: $STACK_WORKDIR/scratch/m6a/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter  # STRIPPED by overlay (draft-OFF)
+    # Registry-side generation defaults — the tuned sampling reaches ALL clients (incl.
+    # vscode/zed, which carry no sampling). Applied only when a request omits the field.
+    # Coding op-temp 0.4. presence_penalty 0.0 lets suffix engage. See docs FU-2.
+    generation_defaults:
+      temperature: 0.4
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+    presentation:
+      role: main
+      family: qwen
+      display_name: "Ornith-1.0-35B (256K agentic, MoE)"
+      context: 262144
+      output: 102400
+      capabilities: [tools, vision, thinking, web_search, code_interpreter]
+    # Suffix (drafter-free n-gram) decoding — Phase-2 #4, 2026-07-09. QUALITY-NEUTRAL on Ornith-1.0-35B-mlx-uniform-4bit
+    # (vs OFF: he+ 93/95, mbpp+ 86/87, LCB 93.3/80 — all within N=100/15 single-sample noise; conv
+    # intact; loops item-intrinsic, not suffix). Speed-POSITIVE despite MoE verify (2.41x verbatim /
+    # 1.09x novel). NO draft_cooldown — phase-1 showed cooldown HURTS reuse (2.01x vs 2.41x).
+    # draft_kind: suffix  # suffix WITHDRAWN 2026-08-16
+    # draft_block_size: 16  # suffix WITHDRAWN 2026-08-16
+    # suffix_min_match: 2  # suffix WITHDRAWN 2026-08-16
+
+  # Distill = strongest single-shot ALTERNATIVE (Opus-reasoning distill, dense qwen3_5 +
+  # linear-attn); clears 256K (mx-peak 37.6GB @ 4-bit KV; the older 43.3 was refuted 2026-08-17). Coding op-temp 0.3.
+  # B 1ST CHOICE — the campaign's B pick (stands through M26 2026-08-29; C38 menu ruling; certified triple M6b).
+  # PROVISIONAL C-PICK (operator 2026-08-23, revised same day to the session recommendation — O38; alongside
+  # NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit). C instrumentation incomplete (BFCL unrun, judge panel
+  # unratified) — provisional until M18 + panel land. Basis: math500 acc_strict 81.5 vs 60.0 over
+  # Ornith-1.0-35B-mlx-uniform-4bit at matched budget (suggestive, MDE +/-23pp); IFEval a tie.
+  - name: Qwen3.6-27B-Opus-Distill-OptiQ-4bit
+    type: vision
+    on_demand: true
+    hf_path: caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit  # vision tower RESTORED 2026-08-23 (8-bit g64 graft, rev eee677f5; trunk md5+logit bit-identical to evaluated artifact)
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144     # pre-alloc full cap → never reallocs
+    kv_quant_scheme: turboquant
+    kv_bits: 4                     # turboquant 4-bit KV — 256K peak 37.6GB (43.3 refuted 2026-08-17)
+    prefill_step_size: 512
+    quantized_kv_start: 0
+    # Registry-side generation defaults — the tuned sampling reaches ALL clients (incl.
+    # vscode/zed, which carry no sampling). Applied only when a request omits the field.
+    # Coding op-temp 0.3. presence_penalty 0.0 lets suffix engage. See docs FU-2.
+    generation_defaults:
+      temperature: 0.3
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+    presentation:
+      role: main
+      family: qwen
+      display_name: "Qwen3.6-27B Opus-Distill (reasoning)"
+      context: 262144
+      output: 102400
+      capabilities: [tools, vision, thinking, web_search, code_interpreter]
+    # Suffix (drafter-free n-gram) decoding — Phase-2 #4, 2026-07-08. Quality-NEUTRAL
+    # (he+ 94.0%/mbpp+ 77.1% ≈ OFF, 100% conv; byte-identical @t0.3) + 1.2-2.7x edit-heavy
+    # decode (dense qwen3_5 → cheap verify). NO cooldown (validated faster; matches Ornith-1.0-35B-mlx-uniform-4bit).
+    # draft_kind: suffix  # suffix WITHDRAWN 2026-08-16
+    # draft_block_size: 16  # suffix WITHDRAWN 2026-08-16
+    # suffix_min_match: 2  # suffix WITHDRAWN 2026-08-16
+    # CERTIFIED M6b 2026-08-25 — native-MTP predictor (the pick's shipped triple):
+    # paired ON/OFF humanevalplus n=63 seeded, acc 0.9524 vs 0.9365 (delta +1.6pp CI
+    # [0.0,+4.8pp], TOST ±5pp verdict EQUIVALENT, p_d=0.016, powered n_for=50), 100%
+    # engagement (per-row tripwire), mean acceptance 0.923, ~2x decode / 1.67x wall,
+    # 0 degeneracy both arms. Serving-only: MEASUREMENT STAYS DRAFT-OFF (fingerprint v3
+    # + compare refusal police the boundary). Fork sha 61845457.
+    # draft_kind: mtp  # STRIPPED by overlay (draft-OFF)
+    # draft_model: $STACK_WORKDIR/scratch/m6a/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter  # STRIPPED by overlay (draft-OFF)
+
+  # ── CANDIDATE, added 2026-08-14. Operator-approved in the 2026-08-13 candidate scan
+  # (docs/campaign-queue.md) and then LOST from the executable queue — this entry lands it.
+  # Already acquired and validated: 17.8 GB (4 shards), loads in 5 s cached, peak 16.56 GB.
+  # `nemotron_h` was ALREADY in our fork; `sanitize` strips `mtp.*`, so the model's native MTP
+  # layers are OFF BY CONSTRUCTION (AGENTS.md records MTP as a net slowdown for us).
+  #
+  # `type: vision` is the BACKEND SELECTOR, not a claim about the model — Nemotron is TEXT-ONLY,
+  # and the vision backend is the path whose calling convention was verified working
+  # (`get_input_embeddings` → `inputs_embeds`-only prefill + decode).
+  #
+  # SAMPLING IS VENDOR-VERBATIM, per the campaign rule against invented defaults:
+  # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16 card states "Recommended Sampling:
+  # Temperature 1.0, Top_P 0.95" and nothing else, so nothing else is set here (an omitted key
+  # falls through to the checkpoint under FU-2 precedence). `presence_penalty: 0.0` is the one
+  # exception and is a SERVING requirement, not a sampling choice: a nonzero value trips the
+  # suffix-decoding fallback.
+  # ⚠️ temperature 1.0 is where the gemma MoE degenerate-looped in this campaign, and is far
+  # above both winners' tuned op-temps (0.4 / 0.3). EXPECT TO RUN THE TEMPERATURE LADDER; this
+  # is the vendor baseline to start from, not a tuned operating point.
+  #
+  # KV CAP RAISED 131072 -> 262144 ON MEASUREMENT (capacity ladder, 2026-08-14). The first entry
+  # was deliberately conservative because the KV shape of a Mamba-2 + MoE + select-attention
+  # hybrid was unmeasured; AGENTS.md's prealloc rule presumes the usable context has been
+  # IDENTIFIED first, and now it has been:
+  #   ctx    8192 -> MLX peak 22.2 GB, KV 3.2 GB, decode 143.2 tok/s, retrieval 1.00
+  #   ctx  32768 -> 23.2 GB, 4.2 GB, 129.3 tok/s, 1.00
+  #   ctx  65536 -> 24.3 GB, 5.2 GB, 115.3 tok/s, 1.00
+  #   ctx 131072 -> 25.5 GB, 6.4 GB,  97.5 tok/s, 1.00
+  # KV grows only ~1.1 GB per 65K tokens (the hybrid behaving as advertised), so 262144 projects
+  # to ~28 GB against the 46 GB gate. The ladder at 262144 is the confirming measurement.
+  # (The 8192 rung first scored retrieval 0.00; a re-run of the identical rung scored 1.00 with
+  # all 5 needles, so that was a single-sample miss at temperature 1.0, not a capability limit.
+  # The ladder is n=1 per rung at temp 1.0 — do not read one rung as a verdict.)
+  #
+  # PREALLOC == CAP, deliberately, per the standing rule: growing a cache from 128K to 256K
+  # requires holding 384K of KV during the double-buffer and has MEASURABLY OOMed. Pre-allocating
+  # at the full cap is what makes 256K work in practice, so it is set here rather than discovered.
+  # At 262144 the declared 81920 thinking budget is in force with no clamp for prompts <= 159,744
+  # (0.8 * (262144 - prompt) >= 81920) — a far wider no-clamp window than 131072 gave.
+  # max_tokens/thinking_budget MATCH both winners so `compare` will not refuse the pairing.
+  # PROVISIONAL C-PICK (operator 2026-08-23, alongside Qwen3.6-27B-Opus-Distill-OptiQ-4bit — O38); tune never
+  # laddered (temperature is the checkpoint default, not a certified value). Insurance mirror: caslca/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit.
+  - name: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit
+    type: vision
+    on_demand: true
+    hf_path: mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144
+    kv_bits: 0
+    prefill_step_size: 512
+    generation_defaults:
+      temperature: 1.0
+      top_p: 0.95
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+    presentation:
+      # role: candidate => servable for benchmarking, NOT emitted to any client config.
+      # `family` is deliberately omitted: configgen only accepts {qwen, gemma} and only REQUIRES a
+      # family for role=main. Inventing `family: nemotron` is what broke `configgen check`.
+      role: candidate
+      display_name: "NVIDIA Nemotron 3.5 Lightning 30B-A3B (candidate)"
+      context: 262144
+      output: 102400
+      capabilities: [tools, thinking]
+      # Explicit because the family-less default is `whole`, and the aider agentic rows this model
+      # must pair against were ALL generated at `diff` (110/110 rows, run m1f). The runner also
+      # passes --edit-format on the CLI; declaring it here keeps the carrier and the CLI agreeing
+      # instead of depending on which one wins.
+      edit_format: diff
+
+  # ── Qwen3.8-27B CANDIDATE RECIPES (family section), added 2026-08-17 (M2). allow-shorthand Self-converted 2026-08-15;
+  # names ratified by operator ruling 6. LOCAL PATHS ARE THE STAGE-0/1 INTERIM ONLY
+  # (ruling 5): swap to the hub paths (caslca/<name>) before any Stage-2 row is generated —
+  # fingerprint v4 includes hf_path, so the swap deliberately stales the screening rows.
+  # Sampling = the checkpoint's own generation_config (temp 1.0 / top_p 0.95 / top_k 20) —
+  # the funnel screens at DEFAULT tune; the temperature ladder runs only on non-convergence.
+  # kv_bits 0 (no KV quant) for the baseline: hybrid attention (16/64 full-attn layers,
+  # ~64 KiB/token) puts 262144 at ~17.2 GB KV, so the cap needs no KV quant to clear the
+  # 46 GB gate. prealloc = cap per the standing rule. MTP sidecar lives OUTSIDE the main
+  # shards (checkpoint file optiq/mtp.safetensors — a path, not a model name; allow-shorthand, 29 tensors, not in the index) — expected inert at load;
+  # VERIFY at smoke.
+  - name: Qwen3.8-27B-mlx-uniform-4bit
+    type: vision
+    on_demand: true
+    hf_path: caslca/Qwen3.8-27B-mlx-uniform-4bit  # IDENTICAL to the official mlx-community/Qwen3.8-27B-4bit
+    # (proven 2026-08-26, M23 closure: full-tensor md5 sweep, 2179/2180 tensors bit-identical — MLX uniform
+    # 4-bit gs64 quantization is deterministic, both quants derive from the same bf16 base). This copy is
+    # canonical because it ADDS the RESTORED bf16 vision tower (graft rev 393413e9, the one differing tensor)
+    # and satisfies the caslca insurance-clone rule. Text results under either name are the same model.
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144   # restored to cap (standing rule) — at TQ4 width the floor is ~4GB/session, bounded by MLX_VLM_CACHE_SESSION_MAX=2
+    # KV = deployed convention (operator ruling 2026-08-17: measure at expected deployment
+    # only, no bf16-KV arms — bf16 floor was 16GB/session, measured 51GB footprint).
+    # TQ4 matches both winners' shipped config.
+    kv_quant_scheme: turboquant
+    kv_bits: 4
+    quantized_kv_start: 0
+    prefill_step_size: 512
+    # CERTIFIED M6d 2026-08-30 — native-MTP predictor (the B 3rd choice's shipped triple):
+    # paired ON/OFF humanevalplus n=164 (seed-39 draw), acc 94.5 both arms, delta 0.0pp
+    # CI [-3.0,+3.0pp], TOST ±5pp verdict EQUIVALENT, p_d=0.037, powered (n_for=115);
+    # engagement 164/164, mean acceptance 0.674 (k=2, emitted 2.35 tok/round), decode
+    # 1.60× paired mean (38.7 vs 24.0 tok/s), corpus wall 5.16h vs 10.52h. Extended from
+    # an inconclusive n=63 per O25 precedent. Serving-only: MEASUREMENT STAYS DRAFT-OFF
+    # (fingerprint v3 + compare refusal police the boundary). Fork ab5708a5.
+    # draft_kind: mtp  # STRIPPED by overlay (draft-OFF)
+    # draft_model: $STACK_WORKDIR/scratch/m6a/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter  # STRIPPED by overlay (draft-OFF)
+    generation_defaults:
+      temperature: 0.6  # CERTIFIED 2026-08-17 capped-scan + n=15 rung (conv 100%, pass@1 1.0)
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+    presentation:
+      # PROMOTED candidate -> main 2026-08-29 (operator C38 ruling): B 3RD CHOICE on the
+      # M26 evidence (75/88 pooled vs 63/66, most session-stable arm q=0.114, nothing
+      # Holm-surviving). Ships draft-OFF: the native-MTP drafter
+      # (caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter) is PROBE-ONLY until M6c/M6d
+      # certifies it. Was role: candidate 2026-08-28 (M9 bench-carrier fix).
+      role: main
+      family: qwen
+      display_name: "Qwen3.8-27B (base, uniform 4-bit)"  # UI label, allow-shorthand
+      context: 262144
+      output: 102400
+      capabilities: [tools, vision, thinking]
+
+  - name: Qwen3.8-27B-static-mixed-4bit
+    type: vision
+    on_demand: true
+    hf_path: caslca/Qwen3.8-27B-static-mixed-4bit  # vision tower RESTORED 2026-08-23 (bf16 graft rev be1aa462; trunk md5+logit bit-identical)
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144   # restored to cap (standing rule) — at TQ4 width the floor is ~4GB/session, bounded by MLX_VLM_CACHE_SESSION_MAX=2
+    # KV = deployed convention (operator ruling 2026-08-17: measure at expected deployment
+    # only, no bf16-KV arms — bf16 floor was 16GB/session, measured 51GB footprint).
+    # TQ4 matches both winners' shipped config.
+    kv_quant_scheme: turboquant
+    kv_bits: 4
+    quantized_kv_start: 0
+    prefill_step_size: 512
+    generation_defaults:
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+
+  # RETIRED 2026-08-26 (C33, operator): the M23 reference entry `Qwen3.8-27B-4bit`
+  # (hf_path mlx-community/Qwen3.8-27B-4bit) was REMOVED — a full-tensor md5 sweep proved it
+  # IDENTICAL to `Qwen3.8-27B-mlx-uniform-4bit` (2179/2180 tensors; sole delta = the bf16-grafted
+  # vision tower, which only the caslca copy restores). One model, one name. Its m23/m23b/m23c
+  # result rows remain on disk as same-model session replicates (C30).
+
+  - name: Qwen3.8-27B-OptiQ-4.5bpw-mixed
+    type: vision
+    on_demand: true
+    hf_path: caslca/Qwen3.8-27B-OptiQ-4.5bpw-mixed
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144   # restored to cap (standing rule) — at TQ4 width the floor is ~4GB/session, bounded by MLX_VLM_CACHE_SESSION_MAX=2
+    # KV = deployed convention (operator ruling 2026-08-17: measure at expected deployment
+    # only, no bf16-KV arms — bf16 floor was 16GB/session, measured 51GB footprint).
+    # TQ4 matches both winners' shipped config.
+    kv_quant_scheme: turboquant
+    kv_bits: 4
+    quantized_kv_start: 0
+    prefill_step_size: 512
+    generation_defaults:
+      # 1.0 -> 0.6 (2026-08-28, M25 prep): 0.6 is this recipe's M2 Stage-1 SCREENED tune
+      # (conv 14/14 + the HumanEval/146 capped probe, pass@1 1.00 at t0.6) and the family's
+      # certified operating point on the sibling; t1.0 is the family's MEASURED-runaway temp
+      # (M2: checkpoint 1.0 AND 0.7 both ran away >3600 s). The 1.0 here was the checkpoint
+      # default the funnel screens FROM, never an operating point — updated before the
+      # first deployed-profile arm ever reads it.
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+    presentation:
+      # role: candidate => bench carriers only, never client configs. Added 2026-08-28
+      # (M25, operator-requested paces run): enables the paired opencode arms vs
+      # Qwen3.8-27B-mlx-uniform-4bit and the winners.
+      role: candidate
+      family: qwen
+      display_name: "Qwen3.8-27B (OptiQ 4.5bpw mixed)"  # UI label, allow-shorthand
+      context: 262144
+      output: 102400
+      capabilities: [tools, vision, thinking]
+
+  - name: Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit
+    type: vision
+    on_demand: true
+    hf_path: $STACK_WORKDIR/models/Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144   # standing rule: prealloc = cap
+    kv_quant_scheme: turboquant
+    kv_bits: 4
+    quantized_kv_start: 0
+    prefill_step_size: 512
+    generation_defaults:
+      temperature: 0.6  # CERTIFIED M19 2026-08-22 (deployed ladder; t0.5 knee was a profile artifact)
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+    presentation:
+      # role: candidate — durable form of the carrier entry hand-written in bcc6d37 for the
+      # M3 opencode arm (2026-08-22): the registry never carried a presentation block for this
+      # model, so `configgen generate` silently DROPPED it from benchmark/opencode_bench.json
+      # on the next re-emit (caught 2026-08-28 while landing the Qwen3.8-27B-mlx-uniform-4bit
+      # block — C36). Emission verified byte-reproducing the committed carrier entry.
+      role: candidate
+      family: qwen
+      display_name: "Qwen3.8-27B Fable-Distill (reasoning)"  # UI label, allow-shorthand
+      context: 262144
+      output: 102400
+      capabilities: [tools, vision, thinking]
+
+  - name: Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit
+    type: vision
+    on_demand: true
+    hf_path: $STACK_WORKDIR/models/Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144   # standing rule: prealloc = cap
+    kv_quant_scheme: turboquant
+    kv_bits: 4
+    quantized_kv_start: 0
+    prefill_step_size: 512
+    generation_defaults:
+      temperature: 0.55  # CERTIFIED M20/O37 2026-08-23 (deployed ladder; strict 82/70 vs 76/68, DNFs 14->6)
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+
+  - name: Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit
+    type: vision
+    on_demand: true
+    hf_path: $STACK_WORKDIR/models/Qwen3.6-35B-A3B-Fable-5-Distill-mlx-uniform-4bit
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144   # standing rule: prealloc = cap
+    kv_quant_scheme: turboquant
+    kv_bits: 4
+    quantized_kv_start: 0
+    prefill_step_size: 512
+    generation_defaults:
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+
+  - name: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+    type: vision
+    on_demand: true
+    hf_path: $STACK_WORKDIR/optiq_out/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/optiq_mixed  # M21 TEMP OVERLAY — local artifact, OptiQ-mixed treatment (PATH TO VERIFY after the chain)
+    max_kv_cache_size: 262144
+    kv_prealloc_tokens: 262144   # standing rule: prealloc = cap
+    kv_quant_scheme: turboquant
+    kv_bits: 4
+    quantized_kv_start: 0
+    prefill_step_size: 512
+    generation_defaults:
+      temperature: 0.6  # CERTIFIED M19 2026-08-22 (deployed ladder; t0.5 knee was a profile artifact)
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      max_tokens: 102400
+      thinking_budget: 81920
+      enable_thinking: true
+    presentation:
+      role: candidate
+      family: qwen
+      display_name: "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"  # UI label, allow-shorthand
+      context: 262144
+      output: 102400
+      capabilities: [tools, vision, thinking]

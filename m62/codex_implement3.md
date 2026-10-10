@@ -1,0 +1,21 @@
+Implemented V5a P1–P11. **No blocked items, commits, protected-file edits, or §3 constant changes.**
+
+**Validation:** **3978 passed, 1 xfailed, 2 warnings; zero failures or skips.** The unchanged legacy dsh test required `STACK_WORKDIR` confined to its pytest directory, with its installed binary retained. [Full-suite log]($STACK_WORKDIR/m62/tmp/v5a-final-full-suite.txt)
+
+**Replay:** exit 0, **8/8 checks PASS**; 454 rows verified, all 374 valid historical passes unstopped.
+
+The regression tests below failed before their fixes and now pass. P11’s already-correct snapshot/container behavior was additionally checked with deliberately broken mutations.
+
+| Finding | Regression tests | Fix |
+|---|---|---|
+| **P1** | `test_operator_other_terminal_is_not_item_owned`; `test_new_path_only_process_aborts_without_kill`; `test_protected_service_pids_never_killed` | Protect pre-existing/service processes; path-only attribution records identities and aborts without killing. [proc_guard.py:452]($STACK_REPO/benchmark/bench/proc_guard.py:452) |
+| **P2** | `test_signal_during_spawn_registration_does_not_leak`; `test_acquisition_signal_delivered_after_registration` | Defer signals through registration, then deliver; clean the fallback process handle on failure. [proc_guard.py:349]($STACK_REPO/benchmark/bench/proc_guard.py:349) |
+| **P3** | `test_resource_kill_cancels_before_export`; `test_kill_samples_owned_descendants_before_parent_exit`; `test_failed_cancellation_is_not_retried_or_exported` | Unified diagnostics → owned-process cleanup → cancellation → drain/export path. Capture ancestry before killing parents. [tg1_runner.py:339]($STACK_REPO/benchmark/bench/tg1_runner.py:339), [proc_guard.py:387]($STACK_REPO/benchmark/bench/proc_guard.py:387) |
+| **P4** | `test_normal_final_export_requires_finished_session`; `test_kill_does_not_erase_started_request` | Require terminal session finish and reconcile an active killed request to the trailing assistant. [token_turn_gate.py:420]($STACK_REPO/benchmark/bench/token_turn_gate.py:420) |
+| **P5** | `test_commented_testmain_is_forbidden`; `test_testmain_comments_literals_methods_allowed` | Go lexer ignores comments/literals and detects top-level declarations, including commented separators. [structured_grade.py:98]($STACK_REPO/benchmark/bench/structured_grade.py:98) |
+| **P6** | `test_running_tool_event_is_malformed_not_a_completed_call`; `test_tool_state_projection_rejected_before_k` | Validate pinned terminal tool-state projection before updating K. [token_turn_gate.py:222]($STACK_REPO/benchmark/bench/token_turn_gate.py:222) |
+| **P7** | `test_scoring_dependency_mutation_changes_identity`; `test_clamp_mutation_refuses_append` | Hash convergence and audited transitive scoring/accounting dependencies; clamp mutation refuses append. [tg1_runner.py:236]($STACK_REPO/benchmark/bench/tg1_runner.py:236) |
+| **P8** | `test_heartbeat_continues_through_terminal_phases`; `test_rows_expose_converged_for_watchers` | Independent 30-second phase heartbeat; rows expose `converged`. [tg1_runner.py:33]($STACK_REPO/benchmark/bench/tg1_runner.py:33), [row field:527]($STACK_REPO/benchmark/bench/tg1_runner.py:527) |
+| **P9** | `test_tg1_refuses_abbreviated_legacy_flags` | Disable abbreviation only for tg1 parsing. [run_opencode_probe_v2.py:868]($STACK_REPO/benchmark/run_opencode_probe_v2.py:868) |
+| **P10** | `test_replay_manifest_refuses_overwrite`; `test_replay_manifest_refreeze_atomic` | Require `--refreeze` for existing destinations and replace atomically. [build_replay_manifest.py:24]($STACK_REPO/benchmark/m62/build_replay_manifest.py:24) |
+| **P11** | `test_snapshot_rejects_copied_manifest_when_source_a_equals_b`; strengthened acquisition/cancellation lifecycle tests; `test_go_container_limits_registration_and_oom` | Copy-comparison removal and incorrect memory/swap values are rejected by mutation checks. [snapshot test:204]($STACK_REPO/benchmark/bench/tests/test_m62_v5a.py:204), [exact limits:230]($STACK_REPO/benchmark/bench/tests/test_structured_grade.py:230) |

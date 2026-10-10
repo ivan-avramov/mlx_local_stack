@@ -1,0 +1,504 @@
+{
+ "info": {
+  "id": "ses_ee22ad579ffenCAFIU1EhtLUTN",
+  "projectID": "global",
+  "model": {
+   "id": "Qwen3.8-27B-mlx-uniform-4bit",
+   "providerID": "mlx-local",
+   "variant": "default"
+  },
+  "cost": 0,
+  "tokens": {
+   "input": 19125,
+   "output": 8320,
+   "reasoning": 0,
+   "cache": {
+    "read": 60085,
+    "write": 0
+   }
+  },
+  "outcome": "succeeded",
+  "time": {
+   "created": 1791501871845,
+   "updated": 1791501871875,
+   "idle": 1791502243623
+  },
+  "title": "probe",
+  "location": {
+   "directory": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling"
+  }
+ },
+ "messages": [
+  {
+   "id": "msg_11dd52ae90018c2LuDQ4i8kGy5",
+   "time": {
+    "created": 1791501871880
+   },
+   "text": "\"Implement the solution in bowling.py so that the tests in bowling_test.py pass. The specification is in .docs/instructions.md \u2014 read it first. Do NOT modify bowling_test.py. Do not create new files unless required by the spec.\"",
+   "files": [],
+   "type": "user"
+  },
+  {
+   "id": "msg_11dd52b0b0012SXmVD6q0F88HL",
+   "time": {
+    "created": 1791501871938,
+    "streamed": 1791501883392,
+    "completed": 1791501883443
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "Qwen3.8-27B-mlx-uniform-4bit",
+    "providerID": "mlx-local",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "reasoning",
+     "text": "First, let me start by reading the spec and the test file.\n",
+     "state": {
+      "reasoningField": "reasoning_content"
+     },
+     "time": {
+      "created": 1791501879147,
+      "completed": 1791501883389
+     }
+    },
+    {
+     "type": "tool",
+     "id": "697443a3-da00-4a04-abc8-e5d09916135a",
+     "name": "read",
+     "executed": false,
+     "state": {
+      "status": "completed",
+      "input": {
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/.docs/instructions.md"
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "Read file $STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/.docs/instructions.md, lines 1-56\n1: # Instructions\n2: \n3: Score a bowling game.\n4: \n5: Bowling is a game where players roll a heavy ball to knock down pins arranged in a triangle.\n6: Write code to keep track of the score of a game of bowling.\n7: \n8: ## Scoring Bowling\n9: \n10: The game consists of 10 frames.\n11: A frame is composed of one or two ball throws with 10 pins standing at frame initialization.\n12: There are three cases for the tabulation of a frame.\n13: \n14: - An open frame is where a score of less than 10 is recorded for the frame.\n15:   In this case the score for the frame is the number of pins knocked down.\n16: \n17: - A spare is where all ten pins are knocked down by the second throw.\n18:   The total value of a spare is 10 plus the number of pins knocked down in their next throw.\n19: \n20: - A strike is where all ten pins are knocked down by the first throw.\n21:   The total value of a strike is 10 plus the number of pins knocked down in the next two throws.\n22:   If a strike is immediately followed by a second strike, then the value of the first strike cannot be determined until the ball is thrown one more time.\n23: \n24: Here is a three frame example:\n25: \n26: |  Frame 1   |  Frame 2   |     Frame 3      |\n27: | :--------: | :--------: | :--------------: |\n28: | X (strike) | 5/ (spare) | 9 0 (open frame) |\n29: \n30: Frame 1 is (10 + 5 + 5) = 20\n31: \n32: Frame 2 is (5 + 5 + 9) = 19\n33: \n34: Frame 3 is (9 + 0) = 9\n35: \n36: This means the current running total is 48.\n37: \n38: The tenth frame in the game is a special case.\n39: If someone throws a spare or a strike then they get one or two fill balls respectively.\n40: Fill balls exist to calculate the total of the 10th frame.\n41: Scoring a strike or spare on the fill ball does not give the player more fill balls.\n42: The total value of the 10th frame is the total number of pins knocked down.\n43: \n44: For a tenth frame of X1/ (strike and a spare), the total value is 20.\n45: \n46: For a tenth frame of XXX (three strikes), the total value is 30.\n47: \n48: ## Requirements\n49: \n50: Write code to keep track of the score of a game of bowling.\n51: It should support two operations:\n52: \n53: - `roll(pins : int)` is called each time the player rolls a ball.\n54:   The argument is the number of pins knocked down.\n55: - `score() : int` is called only at the very end of the game.\n56:   It returns the total score for that game."
+       }
+      ],
+      "metadata": {
+       "truncated": false
+      }
+     },
+     "time": {
+      "created": 1791501883387,
+      "ran": 1791501883390,
+      "completed": 1791501883396
+     }
+    },
+    {
+     "type": "tool",
+     "id": "098c9a7a-f12f-4b8e-ab1a-d780460678ac",
+     "name": "read",
+     "executed": false,
+     "state": {
+      "status": "completed",
+      "input": {
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling_test.py"
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "Read file $STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling_test.py, lines 1-213\n1: # These tests are auto-generated with test data from:\n2: # https://github.com/exercism/problem-specifications/tree/main/exercises/bowling/canonical-data.json\n3: # File last updated on 2023-07-21\n4: \n5: import unittest\n6: \n7: from bowling import (\n8:     BowlingGame,\n9: )\n10: \n11: \n12: class BowlingTest(unittest.TestCase):\n13:     def roll_new_game(self, rolls):\n14:         game = BowlingGame()\n15:         for roll in rolls:\n16:             game.roll(roll)\n17:         return game\n18: \n19:     def test_should_be_able_to_score_a_game_with_all_zeros(self):\n20:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n21:         game = self.roll_new_game(rolls)\n22:         self.assertEqual(game.score(), 0)\n23: \n24:     def test_should_be_able_to_score_a_game_with_no_strikes_or_spares(self):\n25:         rolls = [3, 6, 3, 6, 3, 6, 3, 6, 3, 6, 3, 6, 3, 6, 3, 6, 3, 6, 3, 6]\n26:         game = self.roll_new_game(rolls)\n27:         self.assertEqual(game.score(), 90)\n28: \n29:     def test_a_spare_followed_by_zeros_is_worth_ten_points(self):\n30:         rolls = [6, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n31:         game = self.roll_new_game(rolls)\n32:         self.assertEqual(game.score(), 10)\n33: \n34:     def test_points_scored_in_the_roll_after_a_spare_are_counted_twice(self):\n35:         rolls = [6, 4, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n36:         game = self.roll_new_game(rolls)\n37:         self.assertEqual(game.score(), 16)\n38: \n39:     def test_consecutive_spares_each_get_a_one_roll_bonus(self):\n40:         rolls = [5, 5, 3, 7, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n41:         game = self.roll_new_game(rolls)\n42:         self.assertEqual(game.score(), 31)\n43: \n44:     def test_a_spare_in_the_last_frame_gets_a_one_roll_bonus_that_is_counted_once(self):\n45:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 3, 7]\n46:         game = self.roll_new_game(rolls)\n47:         self.assertEqual(game.score(), 17)\n48: \n49:     def test_a_strike_earns_ten_points_in_a_frame_with_a_single_roll(self):\n50:         rolls = [10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n51:         game = self.roll_new_game(rolls)\n52:         self.assertEqual(game.score(), 10)\n53: \n54:     def test_points_scored_in_the_two_rolls_after_a_strike_are_counted_twice_as_a_bonus(\n55:         self,\n56:     ):\n57:         rolls = [10, 5, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n58:         game = self.roll_new_game(rolls)\n59:         self.assertEqual(game.score(), 26)\n60: \n61:     def test_consecutive_strikes_each_get_the_two_roll_bonus(self):\n62:         rolls = [10, 10, 10, 5, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n63:         game = self.roll_new_game(rolls)\n64:         self.assertEqual(game.score(), 81)\n65: \n66:     def test_a_strike_in_the_last_frame_gets_a_two_roll_bonus_that_is_counted_once(\n67:         self,\n68:     ):\n69:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 7, 1]\n70:         game = self.roll_new_game(rolls)\n71:         self.assertEqual(game.score(), 18)\n72: \n73:     def test_rolling_a_spare_with_the_two_roll_bonus_does_not_get_a_bonus_roll(self):\n74:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 7, 3]\n75:         game = self.roll_new_game(rolls)\n76:         self.assertEqual(game.score(), 20)\n77: \n78:     def test_strikes_with_the_two_roll_bonus_do_not_get_bonus_rolls(self):\n79:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 10, 10]\n80:         game = self.roll_new_game(rolls)\n81:         self.assertEqual(game.score(), 30)\n82: \n83:     def test_last_two_strikes_followed_by_only_last_bonus_with_non_strike_points(self):\n84:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 10, 0, 1]\n85:         game = self.roll_new_game(rolls)\n86:         self.assertEqual(game.score(), 31)\n87: \n88:     def test_a_strike_with_the_one_roll_bonus_after_a_spare_in_the_last_frame_does_not_get_a_bonus(\n89:         self,\n90:     ):\n91:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 3, 10]\n92:         game = self.roll_new_game(rolls)\n93:         self.assertEqual(game.score(), 20)\n94: \n95:     def test_all_strikes_is_a_perfect_game(self):\n96:         rolls = [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]\n97:         game = self.roll_new_game(rolls)\n98:         self.assertEqual(game.score(), 300)\n99: \n100:     def test_rolls_cannot_score_negative_points(self):\n101:         rolls = []\n102:         game = self.roll_new_game(rolls)\n103:         with self.assertRaisesWithMessage(Exception):\n104:             game.roll(-1)\n105: \n106:     def test_a_roll_cannot_score_more_than_10_points(self):\n107:         rolls = []\n108:         game = self.roll_new_game(rolls)\n109:         with self.assertRaisesWithMessage(Exception):\n110:             game.roll(11)\n111: \n112:     def test_two_rolls_in_a_frame_cannot_score_more_than_10_points(self):\n113:         rolls = [5]\n114:         game = self.roll_new_game(rolls)\n115:         with self.assertRaisesWithMessage(Exception):\n116:             game.roll(6)\n117: \n118:     def test_bonus_roll_after_a_strike_in_the_last_frame_cannot_score_more_than_10_points(\n119:         self,\n120:     ):\n121:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10]\n122:         game = self.roll_new_game(rolls)\n123:         with self.assertRaisesWithMessage(Exception):\n124:             game.roll(11)\n125: \n126:     def test_two_bonus_rolls_after_a_strike_in_the_last_frame_cannot_score_more_than_10_points(\n127:         self,\n128:     ):\n129:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 5]\n130:         game = self.roll_new_game(rolls)\n131:         with self.assertRaisesWithMessage(Exception):\n132:             game.roll(6)\n133: \n134:     def test_two_bonus_rolls_after_a_strike_in_the_last_frame_can_score_more_than_10_points_if_one_is_a_strike(\n135:         self,\n136:     ):\n137:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 10, 6]\n138:         game = self.roll_new_game(rolls)\n139:         self.assertEqual(game.score(), 26)\n140: \n141:     def test_the_second_bonus_rolls_after_a_strike_in_the_last_frame_cannot_be_a_strike_if_the_first_one_is_not_a_strike(\n142:         self,\n143:     ):\n144:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 6]\n145:         game = self.roll_new_game(rolls)\n146:         with self.assertRaisesWithMessage(Exception):\n147:             game.roll(10)\n148: \n149:     def test_second_bonus_roll_after_a_strike_in_the_last_frame_cannot_score_more_than_10_points(\n150:         self,\n151:     ):\n152:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 10]\n153:         game = self.roll_new_game(rolls)\n154:         with self.assertRaisesWithMessage(Exception):\n155:             game.roll(11)\n156: \n157:     def test_an_unstarted_game_cannot_be_scored(self):\n158:         rolls = []\n159:         game = self.roll_new_game(rolls)\n160:         with self.assertRaisesWithMessage(Exception):\n161:             game.score()\n162: \n163:     def test_an_incomplete_game_cannot_be_scored(self):\n164:         rolls = [0, 0]\n165:         game = self.roll_new_game(rolls)\n166:         with self.assertRaisesWithMessage(Exception):\n167:             game.score()\n168: \n169:     def test_cannot_roll_if_game_already_has_ten_frames(self):\n170:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]\n171:         game = self.roll_new_game(rolls)\n172:         with self.assertRaisesWithMessage(Exception):\n173:             game.roll(0)\n174: \n175:     def test_bonus_rolls_for_a_strike_in_the_last_frame_must_be_rolled_before_score_can_be_calculated(\n176:         self,\n177:     ):\n178:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10]\n179:         game = self.roll_new_game(rolls)\n180:         with self.assertRaisesWithMessage(Exception):\n181:             game.score()\n182: \n183:     def test_both_bonus_rolls_for_a_strike_in_the_last_frame_must_be_rolled_before_score_can_be_calculated(\n184:         self,\n185:     ):\n186:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 10]\n187:         game = self.roll_new_game(rolls)\n188:         with self.assertRaisesWithMessage(Exception):\n189:             game.score()\n190: \n191:     def test_bonus_roll_for_a_spare_in_the_last_frame_must_be_rolled_before_score_can_be_calculated(\n192:         self,\n193:     ):\n194:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 3]\n195:         game = self.roll_new_game(rolls)\n196:         with self.assertRaisesWithMessage(Exception):\n197:             game.score()\n198: \n199:     def test_cannot_roll_after_bonus_roll_for_spare(self):\n200:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 3, 2]\n201:         game = self.roll_new_game(rolls)\n202:         with self.assertRaisesWithMessage(Exception):\n203:             game.roll(2)\n204: \n205:     def test_cannot_roll_after_bonus_rolls_for_strike(self):\n206:         rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 3, 2]\n207:         game = self.roll_new_game(rolls)\n208:         with self.assertRaisesWithMessage(Exception):\n209:             game.roll(2)\n210: \n211:     # Utility functions\n212:     def assertRaisesWithMessage(self, exception):\n213:         return self.assertRaisesRegex(exception, r\".+\")"
+       }
+      ],
+      "metadata": {
+       "truncated": false
+      }
+     },
+     "time": {
+      "created": 1791501883388,
+      "ran": 1791501883391,
+      "completed": 1791501883395
+     }
+    }
+   ],
+   "snapshot": {
+    "start": "1d75fff90dc24b404a0cbb7fb187cec3d05520f4",
+    "end": "316ae434c2edb79ed836e4bfea83705b47b0b09c",
+    "files": [
+     ".opencode_probe_events.jsonl"
+    ]
+   },
+   "finish": "tool-calls",
+   "rawFinish": "tool_calls",
+   "cost": 0,
+   "tokens": {
+    "input": 4828,
+    "output": 121,
+    "reasoning": 0,
+    "cache": {
+     "read": 0,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_11dd55837001nisssfU4SFBSNh",
+   "time": {
+    "created": 1791501883483,
+    "streamed": 1791501894391,
+    "completed": 1791501894440
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "Qwen3.8-27B-mlx-uniform-4bit",
+    "providerID": "mlx-local",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "reasoning",
+     "text": "Let's check the current state of bowling.py.\n",
+     "state": {
+      "reasoningField": "reasoning_content"
+     },
+     "time": {
+      "created": 1791501892135,
+      "completed": 1791501894389
+     }
+    },
+    {
+     "type": "tool",
+     "id": "fcc346bd-8655-4060-8a28-f2027533bb88",
+     "name": "read",
+     "executed": false,
+     "state": {
+      "status": "completed",
+      "input": {
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling.py"
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "Read file $STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling.py, lines 1-9\n1: class BowlingGame:\n2:     def __init__(self):\n3:         pass\n4: \n5:     def roll(self, pins):\n6:         pass\n7: \n8:     def score(self):\n9:         pass"
+       }
+      ],
+      "metadata": {
+       "truncated": false
+      }
+     },
+     "time": {
+      "created": 1791501894388,
+      "ran": 1791501894390,
+      "completed": 1791501894393
+     }
+    }
+   ],
+   "snapshot": {
+    "start": "7765cf585b5fb96eede8db0001bcd277af2aee6a",
+    "end": "7682a4b0de40fd816b9747908974a2ec2a4a4476",
+    "files": [
+     ".opencode_probe_events.jsonl"
+    ]
+   },
+   "finish": "tool-calls",
+   "rawFinish": "tool_calls",
+   "cost": 0,
+   "tokens": {
+    "input": 5081,
+    "output": 64,
+    "reasoning": 0,
+    "cache": {
+     "read": 4827,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_11dd5832c001fMqwJNBbvOqbKW",
+   "time": {
+    "created": 1791501894477,
+    "streamed": 1791502172566,
+    "completed": 1791502172631
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "Qwen3.8-27B-mlx-uniform-4bit",
+    "providerID": "mlx-local",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "reasoning",
+     "text": "Alright, let me write the implementation. Standard bowling scoring.\n\nMain requirements from the tests:\n1. `roll(pins)` \u2014 validate:\n   - pins < 0 \u2192 exception\n   - pins > 10 \u2192 exception\n   - if the sum of the 2 rolls in a frame exceeds 10 \u2192 exception (except for the 10th frame bonus: after a strike, the 2nd and 3rd rolls; if the 1st bonus roll is not a strike, the 2nd bonus can't be a strike / can't exceed 10)\n   - can't roll after 10 frames complete \u2192 exception\n   - can't roll after the spare bonus roll in the 10th frame\n   - can't roll after the strike bonus rolls in the 10th frame\n2. `score()` \u2014 exception if the game is incomplete:\n   - not started\n   - incomplete (less than 10 frames)\n   - if the 10th frame is a strike, bonus rolls are required\n   - if the 10th frame is a spare, a bonus roll is required\n\nApproach: track rolls in a list, plus frame state. Let me design a clean implementation.\n\nTrack `self.rolls` as a list. Track the current frame index, and the pins of the 1st roll in the current frame.\n\nLet me think about the state machine:\n- `self.rolls = []`\n- `self.frame = 0` (0..9)\n- `self.current_frame_pins = 0` (sum of rolls in the current frame)\n- `self.rolls_in_frame = 0`\n\nActually, let me use a simpler approach that handles the 10th frame specially.\n\nState:\n- rolls: list of all rolls\n- frame: current frame number (0-9)\n- first_roll_of_frame: pins of the 1st roll of the current frame (or None)\n- In the 10th frame, track the number of bonus rolls.\n\nValidation logic in roll(pins):\n1. If pins < 0 or pins > 10: raise.\n2. If the game is complete (frame > 9, or 10th frame complete): raise \"Cannot roll after game is over\".\n3. If frame < 9:\n   - If rolls_in_frame == 0:\n     - If pins == 10: strike, frame complete.\n   - Else (2nd roll):\n     - If first + pins > 10: raise \"Frame cannot score more than 10 points\".\n     - If first + pins == 10: spare, frame complete.\n4. If frame == 9 (10th frame):\n   - rolls_in_frame == 0:\n     - If pins == 10: strike, get 2 bonus rolls.\n     - Otherwise: 1st roll of 10th frame.\n   - rolls_in_frame == 1:\n     - If the 1st roll was a strike:\n       - If pins == 10: 2nd bonus is a strike, still 1 more roll.\n       - Otherwise: 2nd bonus must be \u2264 10 (always true), but the 3rd roll must satisfy first_bonus + pins \u2264 10.\n     - Otherwise (1st roll is not a strike):\n       - If first + pins > 10: raise.\n       - If first + pins == 10: spare, 1 bonus roll.\n   - rolls_in_frame == 2:\n     - If 1st was a strike and 2nd was not a strike: 3rd roll must satisfy 2nd + 3rd \u2264 10.\n     - If 1st was a strike and 2nd was a strike: 3rd roll can be anything \u2264 10.\n     - Otherwise (spare case): this is the bonus roll, any value \u2264 10 is fine.\n\nWait, for the test \"the second bonus roll after a strike in the last frame cannot be a strike if the first is not a strike\": rolls [0\u00d718, 10, 6], then roll(10) \u2192 exception. So in the 10th frame, after 10, 6, the 3rd roll: 6 + 10 = 16 > 10 \u2192 raise. Good.\n\nAnd \"two bonus rolls after a strike in the last frame can score more than 10 points if one is a strike\": [0\u00d718, 10, 10, 6] \u2192 valid, score 26. 10+10+6=26. Yes.\n\n\"second bonus roll after a strike in the last frame cannot score more than 10 points\": [0\u00d718, 10, 10], roll(11) \u2192 exception from pins > 10. Good.\n\nGame complete condition: frame == 9 and 10th frame complete:\n- 10th frame complete when:\n  - 1st roll is a strike: after 3 rolls.\n  - 1st is not a strike, 1st+2nd == 10 (spare): after 3 rolls.\n  - Otherwise: after 2 rolls.\n\nScore calculation:\n- If the game is not complete: raise.\n- Standard algorithm: iterate over frames.\n\nLet me implement the score with the rolls list:\n\n```python\ndef score(self):\n    if not self.is_complete():\n        raise Exception(\"Game not complete\")\n    total = 0\n    rolls = self.rolls\n    i = 0\n    for frame in range(10):\n        if rolls[i] == 10:  # strike\n            total += 10 + rolls[i+1] + rolls[i+2]\n            i += 1\n        else:\n            if rolls[i] + rolls[i+1] == 10:  # spare\n                total += 10 + rolls[i+2]\n            else:\n                total += rolls[i] + rolls[i+1]\n            i += 2\n    return total\n```\n\nWait, but in the 10th frame: if the 10th frame is a strike followed by a spare (X 1 /), the rolls are [10, 1, 9]. Frame 10: rolls[i]==10 \u2192 total += 10 + rolls[i+1] + rolls[i+2] = 10+1+9 = 20. Correct (the spec says X1/ = 20).\n\nFor XXX: 10+10+10 = 30. Correct.\n\nFor a 10th frame spare: 7 3 7: rolls[i]+rolls[i+1] == 10 \u2192 10 + rolls[i+2] = 10+7 = 17. Correct.\n\nFor an open 10th frame: 9 0: 9. Correct.\n\nThis works because the bonus rolls are appended to the rolls list.\n\nis_complete():\n- Number of frames: need to determine the number of completed frames from the rolls.\n\nLet me track frames explicitly. Actually, let me write a helper to determine the number of completed frames from the rolls:\n\n```python\ndef _frames_complete(self):\n    rolls = self.rolls\n    frames = 0\n    i = 0\n    while i < len(rolls) and frames < 10:\n        if frames < 9:\n            if rolls[i] == 10:\n                i += 1\n            else:\n                if i + 1 >= len(rolls):\n                    break\n                if rolls[i] + rolls[i+1] == 10:\n                    i += 2\n                else:\n                    i += 2  # open frame, still complete\n            frames += 1\n        else:  # 10th frame\n            if i >= len(rolls):\n                break\n            first = rolls[i]\n            if first == 10:\n                if i + 2 < len(rolls):\n                    frames += 1\n                    break\n                break  # incomplete\n            else:\n                if i + 1 >= len(rolls):\n                    break\n                if first + rolls[i+1] == 10:\n                    if i + 2 < len(rolls):\n                        frames += 1\n                        break\n                    break\n                else:\n                    frames += 1\n                    break\n    return frames\n```\n\nHmm, wait, for frames < 9: if rolls[i] != 10 and i+1 >= len(rolls), the frame is incomplete \u2192 break. If i+1 exists, the frame is complete (whether open or spare) \u2192 i += 2, frames += 1.\n\n10th frame:\n- 1st is a strike: complete when 3 rolls exist in the 10th frame (i+2 < len).\n- 1st is not a strike, spare: complete when 3 rolls exist.\n- Open: complete when 2 rolls exist.\n\nLet me simplify by tracking the 10th frame's rolls: 10th frame rolls = rolls[i:].\n\nActually, let me track the state incrementally in roll() rather than recomputing. That's cleaner and lets me enforce validation.\n\nDesign:\n\n```python\nclass BowlingGame:\n    def __init__(self):\n        self.rolls = []\n        self.frame = 0          # current frame index 0..9\n        self.rolls_in_frame = 0 # number of rolls in the current frame\n        self.first_roll = None  # pins of the 1st roll of the current frame\n        self.game_over = False\n\n    def roll(self, pins):\n        if pins < 0:\n            raise Exception(\"Negative roll is invalid\")\n        if pins > 10:\n            raise Exception(\"Pin count exceeds 10\")\n        if self.game_over:\n            raise Exception(\"Cannot roll after game is over\")\n        if self.frame < 9:\n            self._roll_normal_frame(pins)\n        else:\n            self._roll_tenth_frame(pins)\n        self.rolls.append(pins)\n        ...\n```\n\nWait, the order: validate before appending. Let me write it:\n\n```python\ndef roll(self, pins):\n    if pins < 0:\n        raise Exception(\"Roll cannot score negative points\")\n    if pins > 10:\n        raise Exception(\"Roll cannot score more than 10 points\")\n    if self.game_over:\n        raise Exception(\"Cannot roll after game is over\")\n    if self.frame < 9:\n        if self.rolls_in_frame == 0:\n            self.first_roll = pins\n        else:\n            if self.first_roll + pins > 10:\n                raise Exception(\"Frame cannot score more than 10 points\")\n        self.rolls.append(pins)\n        self.rolls_in_frame += 1\n        if self.rolls_in_frame == 2 or pins == 10 and self.rolls_in_frame == 1:\n            # frame complete\n            self._advance_frame()\n    else:\n        self._roll_tenth_frame(pins)\n```\n\nHmm, let me handle it more carefully. For frames 0-8:\n- rolls_in_frame == 0: accept any roll \u2264 10. If pins == 10 \u2192 frame complete (1 roll). Otherwise \u2192 rolls_in_frame = 1.\n- rolls_in_frame == 1: if first + pins > 10 \u2192 raise. Otherwise frame complete.\n\n```python\ndef _roll_frame(self, pins):\n    if self.rolls_in_frame == 0:\n        self.first_roll = pins\n        self.rolls.append(pins)\n        self.rolls_in_frame = 1\n        if pins == 10:\n            self._advance()\n    else:\n        if self.first_roll + pins > 10:\n            raise Exception(\"Two rolls in a frame cannot score more than 10 points\")\n        self.rolls.append(pins)\n        self._advance()\n```\n\n_advance(): frame += 1; rolls_in_frame = 0; first_roll = None; if frame == 10 \u2192 game_over = True.\n\nWait: after completing frame 9 (the 10th, index 9), frame becomes 10 \u2192 game over. For frames 0-8, frame advances to 1..9.\n\n10th frame (frame == 9):\n- rolls_in_frame == 0:\n  - Append, rolls_in_frame = 1, first_roll = pins.\n  - If pins == 10: still need 2 more rolls (game not over).\n  - Otherwise: 1st roll of a non-strike.\n- rolls_in_frame == 1:\n  - If first_roll == 10 (1st bonus after a strike):\n    - Append, rolls_in_frame = 2.\n    - If pins == 10: still need 1 more.\n    - Otherwise: 2nd bonus is not a strike; 3rd roll must satisfy pins2 + pins3 \u2264 10.\n  - Otherwise (1st is not a strike):\n    - If first + pins > 10 \u2192 raise.\n    - Append, rolls_in_frame = 2.\n    - If first + pins == 10 (spare): 1 bonus roll.\n    - Otherwise (open): game over.\n- rolls_in_frame == 2:\n  - If first_roll == 10 and 2nd roll != 10: pins must satisfy 2nd + pins \u2264 10, otherwise raise.\n  - If first_roll == 10 and 2nd == 10: any pins \u2264 10.\n  - Otherwise (spare bonus): any pins \u2264 10.\n  - Append, game_over = True.\n\nI need to track the 2nd roll of the 10th frame. Let me add `self.second_roll`.\n\nLet me restructure with explicit state:\n\n```python\nclass BowlingGame:\n    def __init__(self):\n        self.rolls = []\n        self.frame = 0\n        self.rolls_in_frame = 0\n        self.first_roll = None\n        self.second_roll = None\n        self.game_over = False\n\n    def roll(self, pins):\n        if pins < 0:\n            raise Exception(\"Roll cannot score negative points\")\n        if pins > 10:\n            raise Exception(\"Roll cannot score more than 10 points\")\n        if self.game_over:\n            raise Exception(\"Cannot roll after game is over\")\n        if self.frame < 9:\n            self._roll_frame(pins)\n        else:\n            self._roll_tenth_frame(pins)\n\n    def _roll_frame(self, pins):\n        if self.rolls_in_frame == 0:\n            self.first_roll = pins\n            self.rolls.append(pins)\n            self.rolls_in_frame = 1\n            if pins == 10:\n                self._advance_frame()\n        else:\n            if self.first_roll + pins > 10:\n                raise Exception(\"Two rolls in a frame cannot score more than 10 points\")\n            self.rolls.append(pins)\n            self._advance_frame()\n\n    def _advance_frame(self):\n        self.frame += 1\n        self.rolls_in_frame = 0\n        self.first_roll = None\n        self.second_roll = None\n        if self.frame == 10:\n            self.game_over = True\n\n    def _roll_tenth_frame(self, pins):\n        if self.rolls_in_frame == 0:\n            self.first_roll = pins\n            self.rolls.append(pins)\n            self.rolls_in_frame = 1\n        elif self.rolls_in_frame == 1:\n            if self.first_roll == 10:\n                self.second_roll = pins\n            else:\n                if self.first_roll + pins > 10:\n                    raise Exception(\"Two rolls in a frame cannot score more than 10 points\")\n            self.rolls.append(pins)\n            self.rolls_in_frame = 2\n            if self.first_roll != 10 and self.first_roll + self.second_roll < 10:\n                self.game_over = True\n        else:\n            if self.first_roll == 10 and self.second_roll != 10:\n                if self.second_roll + pins > 10:\n                    raise Exception(\"Bonus rolls in the last frame cannot score more than 10 points\")\n            self.rolls.append(pins)\n            self.game_over = True\n```\n\nWait, there's a bug: in the rolls_in_frame == 1 branch, in the non-strike case, I set the game_over condition using `self.second_roll` \u2014 but I only set second_roll in the strike case. Let me fix: also set second_roll = pins in the non-strike case.\n\nActually, let me simplify: always set self.second_roll = pins in branch 2.\n\n```python\n        elif self.rolls_in_frame == 1:\n            if self.first_roll != 10 and self.first_roll + pins > 10:\n                raise Exception(\"Two rolls in a frame cannot score more than 10 points\")\n            self.second_roll = pins\n            self.rolls.append(pins)\n            self.rolls_in_frame = 2\n            if self.first_roll != 10 and self.first_roll + self.second_roll < 10:\n                self.game_over = True\n```\n\nCheck: 10th frame, 1st is not a strike, open (sum < 10) \u2192 game over after 2 rolls. Spare (sum == 10) \u2192 need bonus. 1st is a strike \u2192 need 2 more.\n\nBranch 3 (rolls_in_frame == 2):\n- first == 10, second == 10: any pins OK (already validated \u2264 10).\n- first == 10, second != 10: second + pins \u2264 10, otherwise raise.\n- first != 10 (spare, since open would be game over): any pins OK.\n\n```python\n        else:\n            if self.first_roll == 10 and self.second_roll != 10 and self.second_roll + pins > 10:\n                raise Exception(\"Bonus rolls in the last frame cannot score more than 10 points\")\n            self.rolls.append(pins)\n            self.game_over = True\n```\n\nNow let me verify the tests:\n\n1. \"test_two_bonus_rolls_after_a_strike_in_the_last_frame_cannot_score_more_than_10_points\": rolls [0\u00d718, 10, 5], roll(6). 10th frame: first=10, second=5. Branch 3: first==10, second!=10, 5+6=11 > 10 \u2192 raise. \u2713\n\n2. \"test_the_second_bonus_rolls_after_a_strike_in_the_last_frame_cannot_be_a_strike_if_the_first_one_is_not_a_strike\": [0\u00d718, 10, 6], roll(10): 6+10=16 > 10 \u2192 raise. \u2713\n\n3. \"test_two_bonus_rolls_after_a_strike_in_the_last_frame_can_score_more_than_10_points_if_one_is_a_strike\": [0\u00d718, 10, 10, 6]: 1st=10, 2nd=10 \u2192 branch 3, first==10 and second==10 \u2192 no raise. game_over. Score: let me compute. Rolls: 18 zeros, then 10,10,6.\n\nScore algorithm: i=0; frames 0-8: each 0+0=0, i advances by 2 each \u2192 after 9 frames, i=18. Frame 9 (10th): rolls[18]=10 \u2192 strike \u2192 total += 10 + rolls[19] + rolls[20] = 10+10+6 = 26. \u2713\n\n4. \"test_cannot_roll_if_game_already_has_ten_frames\": 20 zeros. After the 10th frame (open), game_over = True. roll(0) \u2192 raise. \u2713\n\n5. \"test_cannot_roll_after_bonus_roll_for_spare\": [0\u00d718, 7, 3, 2]: 10th frame: 7 (1st, not a strike), 3 (2nd, spare \u2192 not game over), 2 (3rd, spare bonus \u2192 game over). Then roll(2) \u2192 game_over \u2192 raise. \u2713\n\n6. \"test_cannot_roll_after_bonus_rolls_for_strike\": [0\u00d718, 10, 3, 2]: 1st=10, 2nd=3, 3rd: 3+2=5 \u2264 10 OK \u2192 game over. roll(2) \u2192 raise. \u2713\n\n7. \"test_bonus_rolls_for_a_strike_in_the_last_frame_must_be_rolled_before_score_can_be_calculated\": [0\u00d718, 10], score() \u2192 game not complete \u2192 raise. \u2713\n\n8. \"test_both_bonus_rolls...\": [0\u00d718, 10, 10], score() \u2192 raise. \u2713\n\n9. \"test_bonus_roll_for_a_spare_in_the_last_frame_must_be_rolled_before...\": [0\u00d718, 7, 3], score() \u2192 raise. \u2713\n\n10. \"test_an_unstarted_game_cannot_be_scored\": no rolls, score() \u2192 raise. \u2713\n\n11. \"test_an_incomplete_game_cannot_be_scored\": [0,0], score() \u2192 raise. \u2713\n\nNow the score() method:\n\n```python\ndef score(self):\n    if self.frame < 9 or not self.game_over:\n        raise Exception(\"Cannot score an incomplete game\")\n    ...\n```\n\nWait: if the game is complete, frame == 10 and game_over. If not complete, frame < 10 or 10th frame incomplete. Let me just check: `if not self.game_over or self.frame < 10: raise`. Actually, if the game is complete, frame == 10. If the 10th frame is incomplete, game_over is False. So `if self.frame < 10 or not self.game_over` \u2014 frame < 10 covers incomplete games; game_over covers the 10th frame bonus case. Actually, if frame == 10, game_over is always True (set in _advance_frame). And if the 10th frame is incomplete, frame == 9 and game_over is False. So the condition `if self.frame < 10 or not self.game_over` works. Or simpler: `if not self.game_over and self.frame < 10`... no wait. Let me think: is it possible for game_over to be True and frame < 10? No, game_over is only set when the 10th frame completes, which makes frame 10. Is it possible for frame == 10 and game_over to be False? No. So `if self.frame < 10 or not self.game_over: raise`. Hmm, but these are equivalent: game complete \u27fa frame == 10. Let me just use a helper `self._is_complete()`.\n\nActually, the simplest: complete \u27fa game_over (since game_over is only set at the end of the 10th frame). Let me double-check: game_over is set in _advance_frame when frame becomes 10, and in the 10th frame logic. Can game_over become True without the 10th frame being fully scored? _advance_frame sets it when frame becomes 10, which only happens after completing frame 9 (index 9, the 10th frame). So game_over \u27fa complete.\n\nSo:\n\n```python\ndef score(self):\n    if not self.game_over:\n        raise Exception(\"Cannot score an incomplete game\")\n    total = 0\n    rolls = self.rolls\n    i = 0\n    for _ in range(10):\n        if rolls[i] == 10:\n            total += 10 + rolls[i+1] + rolls[i+2]\n            i += 1\n        elif rolls[i] + rolls[i+1] == 10:\n            total += 10 + rolls[i+2]\n            i += 2\n        else:\n            total += rolls[i] + rolls[i+1]\n            i += 2\n    return total\n```\n\nLet me verify all the scoring tests:\n\n1. All zeros: 20 zeros. Each frame 0+0=0 \u2192 total 0. \u2713\n2. [3,6]\u00d710: each frame 9 \u2192 90. \u2713\n3. [6,4] + 18 zeros: frame 1 spare: 10 + rolls[2]=0 \u2192 10. Others 0. Total 10. \u2713\n4. [6,4,3,0]+zeros: frame 1: 10+3=13; frame 2: 0; ... total 13+3? Wait: rolls = [6,4,3,0,0,...]. Frame 1 (i=0): 6+4=10 spare \u2192 10 + rolls[2] = 10+3 = 13. i=2. Frame 2: rolls[2]=3, rolls[3]=0 \u2192 3. i=4. Rest are 0. Total = 13+3 = 16. \u2713\n5. [5,5,3,7,4,0,...]: frame 1: 5+5=10 \u2192 10 + rolls[2]=3 \u2192 13. i=2. Frame 2: 3+7=10 \u2192 10 + rolls[4]=4 \u2192 14. i=4. Frame 3: 4+0=4. Total 13+14+4 = 31. \u2713\n6. [0\u00d718, 7, 3, 7]: frames 1-9: 0. 10th frame (i=18): 7+3=10 spare \u2192 10 + rolls[20]=7 \u2192 17. \u2713\n7. [10, 0\u00d718]: frame 1: strike \u2192 10 + 0 + 0 = 10. Rest 0. \u2713\n8. [10, 5, 3, 0\u00d716]: frame 1: 10 + 5 + 3 = 18. Frame 2: 5+3=8. Total 26. \u2713\n9. [10,10,10,5,3,0\u00d712]: frame 1: 10+10+10=30. Frame 2: 10+10+5=25. Frame 3: 10+5+3=18. Frame 4: 5+3=8. Total 30+25+18+8 = 81. \u2713\n10. [0\u00d718, 10, 7, 1]: 10th frame: strike \u2192 10+7+1 = 18. \u2713\n11. [0\u00d718, 10, 7, 3]: 10th frame: 10+7+3 = 20. \u2713\n12. [0\u00d718, 10, 10, 10]: 10+10+10 = 30. \u2713\n13. [0\u00d716, 10, 10, 0, 1]: frame 9 (i=16): strike \u2192 10 + 10 + 0 = 20. Frame 10 (i=17): strike \u2192 10 + 0 + 1 = 11. Total 31. \u2713\n14. [0\u00d718, 7, 3, 10]: 10th frame: 7+3=10 spare \u2192 10 + 10 = 20. \u2713\n15. 12 strikes: each 30 \u2192 300. \u2713\n\nValidation tests:\n- roll(-1): raise \u2713\n- roll(11): raise \u2713\n- [5] then roll(6): 5+6=11 > 10 \u2192 raise \u2713\n- [0\u00d718, 10] then roll(11): pins > 10 \u2192 raise \u2713\n- [0\u00d718, 10, 5] then roll(6): 5+6=11 \u2192 raise \u2713 (branch 3 of the 10th frame)\n\nWait, test 126: rolls [0\u00d718, 10, 5], then roll(6) \u2192 2nd=5, 5+6=11 > 10 \u2192 raise \u2713.\n\nAll good. One more check: in _roll_tenth_frame branch 2, if first != 10 and first + pins == 10 (spare) \u2192 rolls_in_frame = 2, game not over \u2192 need bonus. If first + pins < 10 \u2192 game_over = True. \u2713\n\nEdge case: what if the 1st roll of the 10th frame is 10 and the 2nd is also 10, then the 3rd: branch 3, first==10, second==10 \u2192 no constraint. \u2713\n\nNow, the tests use assertRaisesWithMessage, which requires the exception's message to match r\".+\" \u2014 i.e., any non-empty message. My exceptions have messages. \u2713\n\nLet me also double-check \"test_a_roll_cannot_score_more_than_10_points\": roll(11) on a new game \u2192 pins > 10 \u2192 raise \u2713.\n\nOne subtle point: in branch 2 of the 10th frame, when first != 10, if first + pins > 10 \u2192 raise. Example: 10th frame 7, 4 \u2192 11 > 10 \u2192 raise. Good, that's the \"two rolls in a frame cannot score more than 10\" case.\n\nNow let me write the file. I'll also run the tests.\n\nLet me check what test runner is available. Probably just `python -m unittest` or pytest. Let me check the directory.\n",
+     "state": {
+      "reasoningField": "reasoning_content"
+     },
+     "time": {
+      "created": 1791501895199,
+      "completed": 1791502172564
+     }
+    },
+    {
+     "type": "tool",
+     "id": "1c36279b-511d-4038-b1fb-0c3f2658171c",
+     "name": "shell",
+     "executed": false,
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "ls -la $STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling"
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "total 96\ndrwxr-xr-x@ 8 $USER  staff    256 Oct  8 16:24 .\ndrwxr-xr-x@ 3 $USER  staff     96 Oct  8 16:24 ..\ndrwxr-xr-x@ 4 $USER  staff    128 Oct  5  2025 .docs\ndrwxr-xr-x@ 9 $USER  staff    288 Oct  5  2025 .git\n-rw-r--r--@ 1 $USER  staff  29525 Oct  8 16:24 .opencode_probe_events.jsonl\n-rw-r--r--@ 1 $USER  staff      0 Oct  8 16:24 .opencode_probe_stderr.txt\n-rw-r--r--@ 1 $USER  staff    131 Oct  5  2025 bowling.py\n-rw-r--r--@ 1 $USER  staff   8558 Oct  5  2025 bowling_test.py\n"
+       }
+      ],
+      "metadata": {
+       "status": "completed",
+       "truncated": false,
+       "exit": 0
+      }
+     },
+     "time": {
+      "created": 1791502172562,
+      "ran": 1791502172566,
+      "completed": 1791502172583
+     }
+    }
+   ],
+   "snapshot": {
+    "start": "21c8db7853e3ff4989d2ca8eb38fe3a88beaaf60",
+    "end": "133f3e1fdc47258795ce60b9858fd67417ca53dd",
+    "files": [
+     ".opencode_probe_events.jsonl"
+    ]
+   },
+   "finish": "tool-calls",
+   "rawFinish": "tool_calls",
+   "cost": 0,
+   "tokens": {
+    "input": 173,
+    "output": 6862,
+    "reasoning": 0,
+    "cache": {
+     "read": 9907,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_11dd9c1dc001KLBFP7ASr7lysz",
+   "time": {
+    "created": 1791502172669,
+    "streamed": 1791502219844,
+    "completed": 1791502219894
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "Qwen3.8-27B-mlx-uniform-4bit",
+    "providerID": "mlx-local",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "reasoning",
+     "text": "Alright, let me write the implementation.\n",
+     "state": {
+      "reasoningField": "reasoning_content"
+     },
+     "time": {
+      "created": 1791502185866,
+      "completed": 1791502219843
+     }
+    },
+    {
+     "type": "tool",
+     "id": "fd01431d-8818-4110-baa9-a94a7a739722",
+     "name": "write",
+     "executed": false,
+     "state": {
+      "status": "completed",
+      "input": {
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling.py",
+       "content": "class BowlingGame:\n    def __init__(self):\n        self.rolls = []\n        self.frame = 0\n        self.rolls_in_frame = 0\n        self.first_roll = None\n        self.second_roll = None\n        self.game_over = False\n\n    def roll(self, pins):\n        if pins < 0:\n            raise Exception(\"Roll cannot score negative points\")\n        if pins > 10:\n            raise Exception(\"Roll cannot score more than 10 points\")\n        if self.game_over:\n            raise Exception(\"Cannot roll after game is over\")\n        if self.frame < 9:\n            self._roll_frame(pins)\n        else:\n            self._roll_tenth_frame(pins)\n\n    def _roll_frame(self, pins):\n        if self.rolls_in_frame == 0:\n            self.first_roll = pins\n            self.rolls.append(pins)\n            self.rolls_in_frame = 1\n            if pins == 10:\n                self._advance_frame()\n        else:\n            if self.first_roll + pins > 10:\n                raise Exception(\n                    \"Two rolls in a frame cannot score more than 10 points\"\n                )\n            self.rolls.append(pins)\n            self._advance_frame()\n\n    def _advance_frame(self):\n        self.frame += 1\n        self.rolls_in_frame = 0\n        self.first_roll = None\n        self.second_roll = None\n        if self.frame == 10:\n            self.game_over = True\n\n    def _roll_tenth_frame(self, pins):\n        if self.rolls_in_frame == 0:\n            self.first_roll = pins\n            self.rolls.append(pins)\n            self.rolls_in_frame = 1\n        elif self.rolls_in_frame == 1:\n            if self.first_roll != 10 and self.first_roll + pins > 10:\n                raise Exception(\n                    \"Two rolls in a frame cannot score more than 10 points\"\n                )\n            self.second_roll = pins\n            self.rolls.append(pins)\n            self.rolls_in_frame = 2\n            if self.first_roll != 10 and self.first_roll + self.second_roll < 10:\n                self.game_over = True\n        else:\n            if (\n                self.first_roll == 10\n                and self.second_roll != 10\n                and self.second_roll + pins > 10\n            ):\n                raise Exception(\n                    \"Bonus rolls in the last frame cannot score more than 10 points\"\n                )\n            self.rolls.append(pins)\n            self.game_over = True\n\n    def score(self):\n        if not self.game_over:\n            raise Exception(\"Cannot score an incomplete game\")\n        total = 0\n        rolls = self.rolls\n        i = 0\n        for _ in range(10):\n            if rolls[i] == 10:\n                total += 10 + rolls[i + 1] + rolls[i + 2]\n                i += 1\n            elif rolls[i] + rolls[i + 1] == 10:\n                total += 10 + rolls[i + 2]\n                i += 2\n            else:\n                total += rolls[i] + rolls[i + 1]\n                i += 2\n        return total\n"
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "Wrote file successfully: bowling.py"
+       }
+      ],
+      "metadata": {
+       "truncated": false
+      }
+     },
+     "time": {
+      "created": 1791502219842,
+      "ran": 1791502219844,
+      "completed": 1791502219846
+     }
+    }
+   ],
+   "snapshot": {
+    "start": "8d522d23b082e91c1d621d4d4ec42c960e64bee4",
+    "end": "999714e5cb73bcecac3ed8bce7ec6577ea6e4c87",
+    "files": [
+     ".opencode_probe_events.jsonl",
+     "bowling.py"
+    ]
+   },
+   "finish": "tool-calls",
+   "rawFinish": "tool_calls",
+   "cost": 0,
+   "tokens": {
+    "input": 7138,
+    "output": 818,
+    "reasoning": 0,
+    "cache": {
+     "read": 10079,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_11dda7a7a001yfBLlrlLXS40BU",
+   "time": {
+    "created": 1791502219931,
+    "streamed": 1791502236755,
+    "completed": 1791502236842
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "Qwen3.8-27B-mlx-uniform-4bit",
+    "providerID": "mlx-local",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "reasoning",
+     "text": "Wait \u2014 there's one issue: when the 10th frame is a strike, `_advance_frame` is never called. The 10th frame is handled by `_roll_tenth_frame`, and it directly sets game_over. But the `frame` stays at 9. `score()` only checks `game_over`, so no problem.\n\nBut wait \u2014 `_advance_frame` sets game_over when frame becomes 10. When does frame become 10? After completing frame 9 (index 9)? No \u2014 `_roll_frame` is only called when frame < 9, i.e., frames 0\u20138. After completing frame 8 (the 9th frame), frame becomes 9. So `_advance_frame` never sets game_over, because frame never reaches 10 via _advance_frame. game_over is only set in _roll_tenth_frame. No problem \u2014 it's just dead code, but harmless. Actually, let me confirm: frames 0\u20138 are the 1st\u20139th frames. After the 9th frame (index 8), frame = 9 \u2192 10th frame. So the `if self.frame == 10` in _advance_frame never fires. Harmless, but a bit confusing. Oh well.\n\nNow, let's run the tests.\n",
+     "state": {
+      "reasoningField": "reasoning_content"
+     },
+     "time": {
+      "created": 1791502222059,
+      "completed": 1791502236753
+     }
+    },
+    {
+     "type": "text",
+     "text": "Now run the tests:"
+    },
+    {
+     "type": "tool",
+     "id": "bac7579f-3348-4dc3-b851-af8ac66aa1ae",
+     "name": "shell",
+     "executed": false,
+     "state": {
+      "status": "completed",
+      "input": {
+       "command": "cd $STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling && python3 -m unittest bowling_test -v 2>&1 | tail -20"
+      },
+      "content": [
+       {
+        "type": "text",
+        "text": "test_consecutive_spares_each_get_a_one_roll_bonus (bowling_test.BowlingTest.test_consecutive_spares_each_get_a_one_roll_bonus) ... ok\ntest_consecutive_strikes_each_get_the_two_roll_bonus (bowling_test.BowlingTest.test_consecutive_strikes_each_get_the_two_roll_bonus) ... ok\ntest_last_two_strikes_followed_by_only_last_bonus_with_non_strike_points (bowling_test.BowlingTest.test_last_two_strikes_followed_by_only_last_bonus_with_non_strike_points) ... ok\ntest_points_scored_in_the_roll_after_a_spare_are_counted_twice (bowling_test.BowlingTest.test_points_scored_in_the_roll_after_a_spare_are_counted_twice) ... ok\ntest_points_scored_in_the_two_rolls_after_a_strike_are_counted_twice_as_a_bonus (bowling_test.BowlingTest.test_points_scored_in_the_two_rolls_after_a_strike_are_counted_twice_as_a_bonus) ... ok\ntest_rolling_a_spare_with_the_two_roll_bonus_does_not_get_a_bonus_roll (bowling_test.BowlingTest.test_rolling_a_spare_with_the_two_roll_bonus_does_not_get_a_bonus_roll) ... ok\ntest_rolls_cannot_score_negative_points (bowling_test.BowlingTest.test_rolls_cannot_score_negative_points) ... ok\ntest_second_bonus_roll_after_a_strike_in_the_last_frame_cannot_score_more_than_10_points (bowling_test.BowlingTest.test_second_bonus_roll_after_a_strike_in_the_last_frame_cannot_score_more_than_10_points) ... ok\ntest_should_be_able_to_score_a_game_with_all_zeros (bowling_test.BowlingTest.test_should_be_able_to_score_a_game_with_all_zeros) ... ok\ntest_should_be_able_to_score_a_game_with_no_strikes_or_spares (bowling_test.BowlingTest.test_should_be_able_to_score_a_game_with_no_strikes_or_spares) ... ok\ntest_strikes_with_the_two_roll_bonus_do_not_get_bonus_rolls (bowling_test.BowlingTest.test_strikes_with_the_two_roll_bonus_do_not_get_bonus_rolls) ... ok\ntest_the_second_bonus_rolls_after_a_strike_in_the_last_frame_cannot_be_a_strike_if_the_first_one_is_not_a_strike (bowling_test.BowlingTest.test_the_second_bonus_rolls_after_a_strike_in_the_last_frame_cannot_be_a_strike_if_the_first_one_is_not_a_strike) ... ok\ntest_two_bonus_rolls_after_a_strike_in_the_last_frame_can_score_more_than_10_points_if_one_is_a_strike (bowling_test.BowlingTest.test_two_bonus_rolls_after_a_strike_in_the_last_frame_can_score_more_than_10_points_if_one_is_a_strike) ... ok\ntest_two_bonus_rolls_after_a_strike_in_the_last_frame_cannot_score_more_than_10_points (bowling_test.BowlingTest.test_two_bonus_rolls_after_a_strike_in_the_last_frame_cannot_score_more_than_10_points) ... ok\ntest_two_rolls_in_a_frame_cannot_score_more_than_10_points (bowling_test.BowlingTest.test_two_rolls_in_a_frame_cannot_score_more_than_10_points) ... ok\n\n----------------------------------------------------------------------\nRan 31 tests in 0.000s\n\nOK\n"
+       }
+      ],
+      "metadata": {
+       "status": "completed",
+       "truncated": false,
+       "exit": 0
+      }
+     },
+     "time": {
+      "created": 1791502236751,
+      "ran": 1791502236754,
+      "completed": 1791502236793
+     }
+    }
+   ],
+   "snapshot": {
+    "start": "1031e66dacf4778542e146b04c67949240ac74e8",
+    "end": "6f0e494b59063c6c981e3758831da30587b81820",
+    "files": [
+     ".opencode_probe_events.jsonl",
+     "__pycache__/bowling.cpython-314.pyc",
+     "__pycache__/bowling_test.cpython-314.pyc"
+    ]
+   },
+   "finish": "tool-calls",
+   "rawFinish": "tool_calls",
+   "cost": 0,
+   "tokens": {
+    "input": 841,
+    "output": 354,
+    "reasoning": 0,
+    "cache": {
+     "read": 17216,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_11ddabcad001RMAvB1WZmzNh63",
+   "time": {
+    "created": 1791502236879,
+    "streamed": 1791502243568,
+    "completed": 1791502243621
+   },
+   "type": "assistant",
+   "agent": "build",
+   "model": {
+    "id": "Qwen3.8-27B-mlx-uniform-4bit",
+    "providerID": "mlx-local",
+    "variant": "default"
+   },
+   "content": [
+    {
+     "type": "reasoning",
+     "text": "All 31 tests passed. Done. Concise reply.\n",
+     "state": {
+      "reasoningField": "reasoning_content"
+     },
+     "time": {
+      "created": 1791502239477,
+      "completed": 1791502243567
+     }
+    },
+    {
+     "type": "text",
+     "text": "All 31 tests pass. Implemented `BowlingGame` in bowling.py:1 with frame state tracking (frame index, rolls-in-frame, first/second roll) \u2014 `roll()` validates pin counts, per-frame 10-pin limits, tenth-frame bonus rules, and game-over; `score()` applies the standard strike/spare/open-frame algorithm over the roll list and raises if the game is incomplete."
+    }
+   ],
+   "snapshot": {
+    "start": "94c6d807a210eab48b1cdd4080525a6533530fe2",
+    "end": "c8b48728f87ae2f1aed311cd6a0c63bc0cb7959f",
+    "files": [
+     ".opencode_probe_events.jsonl"
+    ]
+   },
+   "finish": "stop",
+   "rawFinish": "stop",
+   "cost": 0,
+   "tokens": {
+    "input": 1064,
+    "output": 101,
+    "reasoning": 0,
+    "cache": {
+     "read": 18056,
+     "write": 0
+    }
+   }
+  },
+  {
+   "id": "msg_11ddad727001LTnUF4myca2Tzy",
+   "time": {
+    "created": 1791502243623
+   },
+   "type": "idle",
+   "outcome": "succeeded"
+  }
+ ]
+}
