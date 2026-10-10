@@ -399,6 +399,9 @@ class Chain:
     def pin_from(self, leg):
         man = self._manifest(leg) or {}
         rt = man.get("runtime") or {}
+        bad = co.malformed_identity(man)
+        if bad:
+            raise co.ChainAbort(f"first complete leg has absent/null/malformed identity fields: {bad}")
         missing = []
         for k in co.RUNTIME_PINNED:
             if k in self.pinned:
@@ -479,6 +482,7 @@ class Chain:
                 why.append("worker registry_sha256 differs from the overlay")
         if man.get("transport_abort"):
             why.append("manifest already records transport_abort")
+        why += [f"{f}_invalid" for f in co.malformed_identity(man)]
         return why
 
     def _barrier(self, att, leg, block, st, t_spawn):

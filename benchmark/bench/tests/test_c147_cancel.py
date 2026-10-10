@@ -483,3 +483,42 @@ def test_verify_gone_is_false_when_final_liveness_cannot_be_determined(tmp_path)
     assert g.verify_gone([entry]) is True
     p.status = lambda: (_ for _ in ()).throw(psutil.AccessDenied(60))
     assert g.verify_gone([entry]) is False
+
+
+def test_graceful_stop_calls_before_signal_once_right_before_the_first_sigterm_and_never_without_a_target(tmp_path):
+    events = []
+
+    class P(Process):
+        def terminate(self):
+            events.append("terminate")
+            self.dead = True
+
+        def memory_info(self):
+            events.append("scan")
+            return super().memory_info()
+    a, b = P(10, argv=["opencode", "run"]), P(11, 10, argv=["opencode", "serve"])
+    g = guard(tmp_path, [a, b])
+    g.register(a, "client")
+    g.graceful_stop("client", 0.0, before_signal=lambda: events.append("before_signal"))
+    assert events.count("before_signal") == 1
+    assert events.index("before_signal") > max(i for i, e in enumerate(events) if e == "scan")
+    assert events.index("before_signal") < events.index("terminate")
+    quiet = guard(tmp_path, [])
+    quiet.graceful_stop("client", 0.0, before_signal=lambda: pytest.fail("nothing to signal"))
+
+
+def test_error_written_during_the_pre_signal_scan_is_before_the_cutoff_and_aborts():
+    from bench.tests.test_token_turn_gate import _fresh, _err, ABORT_FETCH, assistant, TAIL
+    from bench import token_turn_gate as tg
+    g, s = _fresh()
+    s.offset = 1000
+    s.feed(_err(ABORT_FETCH))                                   # written while graceful_stop was still scanning
+    s.signal_offset = 1000 + len(_err(ABORT_FETCH))             # captured by before_signal, AFTER the scan
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")
+    g, s = _fresh()                                             # no process signalled -> cutoff never set
+    s.offset = 1000
+    s.feed(_err(ABORT_FETCH))
+    assert s.signal_offset is None
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")

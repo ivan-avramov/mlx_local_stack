@@ -29,6 +29,7 @@ import sys
 REPO = Path(__file__).resolve().parents[2]
 KINDS = ("stall", "loop", "alloc")
 T_TOKENS = 81920
+RUN_ID = re.compile(r"^\d{8}T\d{6}-[0-9a-f]{12}$")          # the probe's `<YYYYMMDDTHHMMSS>-<12 hex>`
 ATTEMPT = re.compile(r"^(stall|loop|alloc)\.attempt(\d+)\.jsonl$")
 EVIDENCE_PATHS = {"events": "events_path", "export": "transcript_path", "stderr": "stderr_path"}
 
@@ -181,6 +182,8 @@ def verify_row(kind, row, manifest, workdir):
         return "FAIL:label", notes
     if manifest.get("transport_abort"):
         return "FAIL:transport_abort", notes
+    if not isinstance(manifest.get("run_id"), str) or not RUN_ID.match(manifest["run_id"]):
+        return "FAIL:run_id", notes
     if row.get("worker_before") != row.get("worker_after") or not row.get("worker_before"):
         return "FAIL:worker_drift", notes
     bad = check_files(row, manifest, workdir)
@@ -263,8 +266,10 @@ def list_processes():
 def live_checks(run_id, workdir, docker_ps, process_lister):
     """FAIL strings for containers named with this run's exact registered prefix / processes under its roots."""
     problems = []
-    prefix = f"mlxbench-{run_id}-"
-    mine = [n for n in docker_ps() if n.startswith(prefix)]          # unrelated containers: neither fail nor target
+    # Grader containers are named `mlxbench-<guard run_id>-<item>-<n>`, and the guard's run_id is the run directory
+    # name (`run-<id>`); the bare form is accepted too. Unrelated containers: neither fail nor target.
+    prefixes = (f"mlxbench-run-{run_id}-", f"mlxbench-{run_id}-")
+    mine = [n for n in docker_ps() if n.startswith(prefixes)]
     if mine:
         problems.append("FAIL:containers:" + ",".join(mine))
     roots = [str(Path(workdir) / "opencode-probe-v2" / f"run-{run_id}"),
@@ -343,7 +348,7 @@ def main(argv=None, *, docker_ps=None, process_lister=None, out=print):
         docker_ps = docker_ps or docker_names
         process_lister = process_lister or list_processes
         for kind, r in retained.items():
-            if r.verdict == "PASS" and getattr(r, "run_id", None):
+            if r.verdict == "PASS":
                 try:
                     suite += [f"{kind}:{p}" for p in live_checks(r.run_id, workdir, docker_ps, process_lister)]
                 except (RuntimeError, OSError, subprocess.SubprocessError) as exc:

@@ -291,7 +291,7 @@ def test_unrecorded_child_is_never_deleted_only_the_recorded_file_goes(root):
     assert cleaned == ["/tmp/d/mine"] and kept == [["/tmp/d", "dir_mixed"]]
     assert (root / "d/other").exists() and not (root / "d/mine").exists()
     # naming the directory itself (a write path) never empties it either
-    assert clean(root, [cand("/tmp/d", content="")], b, a, w) == ([], [["/tmp/d", "dir_mixed"]])
+    assert clean(root, [cand("/tmp/d", content="")], b, a, w) == ([], [["/tmp/d", "replaced"]])
     assert (root / "d/other").exists()
 
 
@@ -314,10 +314,10 @@ def test_directory_mixed_entries_are_not_removed(root, tmp_path):
     after = pg.tmp_listing(root)
     window = (t0, t_old_end)
     cleaned, kept = clean(root, [cand("/tmp/mixed")], before, after, window)
-    assert cleaned == [] and kept == [["/tmp/mixed", "dir_mixed"]]
+    assert cleaned == [] and kept == [["/tmp/mixed", "replaced"]]
     assert (root / "mixed/old").exists() and (root / "mixed/late").exists()
     b, a, w = item(root, lambda: ((root / "m2").mkdir(), (root / "m2/l").symlink_to("/")))
-    assert clean(root, [cand("/tmp/m2")], b, a, w)[1] == [["/tmp/m2", "dir_mixed"]]
+    assert clean(root, [cand("/tmp/m2")], b, a, w)[1] == [["/tmp/m2", "replaced"]]
 
 
 def test_shell_mentions_are_never_removed_automatically(root):
@@ -372,3 +372,14 @@ def test_write_candidates_record_the_content_hash_of_what_the_client_was_asked_t
                   ("edit", "completed", {"path": "/tmp/e.txt", "oldString": "a", "newString": "b"}))
     got = pg.tmp_escapes(e, ENV)
     assert got[0]["content_sha256"] == sha_of("héllo\n") and "content_sha256" not in got[1]
+
+
+def test_write_path_replaced_by_an_empty_directory_is_kept_and_never_rmdird(root, monkeypatch):
+    """Q20: the recorded write must itself still be a regular file with matching content."""
+    b, a, w = item(root, lambda: (root / "replacement").mkdir())
+    rmdirs = []
+    real = os.rmdir
+    monkeypatch.setattr(os, "rmdir", lambda *x, **k: (rmdirs.append(x), real(*x, **k))[1])
+    assert clean(root, [cand("/tmp/replacement", content="what we wrote")], b, a, w) == (
+        [], [["/tmp/replacement", "replaced"]])
+    assert (root / "replacement").is_dir() and rmdirs == []

@@ -229,14 +229,6 @@ def test_load_accepts_draft_off(ops):
     assert ops.load(PICK1)["pid"] == 501
 
 
-def test_unload_verified_termination(ops):
-    ops._sh.ps = ""
-    assert ops.unload(PICK1) is True
-    ops._sh.ps = _worker_ps(PICK1)
-    assert ops.unload(PICK1) is False
-    assert any("FATAL" in line for line in ops._lines)
-
-
 def test_worker_ident_and_metrics_unreadable(ops):
     ops._sh.ps = _worker_ps(PICK1)
     assert ops.worker_ident(PICK1) == {"pid": 501, "create_time": 1234.5}
@@ -387,8 +379,8 @@ def leg_env(tmp_path, monkeypatch):
     out = tmp_path / "c147/s1" / f"{PICK1}.s1.opencode_python.jsonl"
     worker = {"pid": 4242, "create_time": 1700000000.5, "model_path": "caslca/" + PICK1,
               "registry_sha256": "a" * 64}
-    pinned = {"scaffold_policy_sha256": co.CAMPAIGN_POLICY_SHA, "probe_code_sha256": "p" * 64,
-              "serving_path": "sp1", "registry_sha256": "a" * 64}
+    pinned = {"scaffold_policy_sha256": co.CAMPAIGN_POLICY_SHA, "probe_code_sha256": "9" * 64,
+              "serving_path": fp.SERVING, "registry_sha256": "a" * 64}
     fp.write_leg(out, PICK1, "python", 1001, ids, worker, tmp_path)
     leg = dict(session="s1", model=PICK1, lang="python", seed_base=1001, expected_ids=ids, out=str(out), rc=0)
     return leg, pinned, out, fp, tmp_path
@@ -461,7 +453,7 @@ def test_validate_manifest_missing_and_abort_and_drift(leg_env):
     (("runtime", "carrier_source_sha256"), "z", "runtime_carrier_source_sha256"),
     (("runtime", "agent_system_sha256"), "z", "runtime_agent_system_sha256"),
     (("runtime", "opencode_bench_config_sha256"), "z", "runtime_opencode_bench_config_sha256"),
-    (("git", "serving_path"), "sp2", "serving_path"),
+    (("git", "serving_path"), {"x": "7" * 64}, "serving_path"),
     (("registry", "sha256"), "b" * 64, "registry_sha256"),
 ])
 def test_validate_manifest_fields(leg_env, path, value, code):
@@ -668,7 +660,6 @@ def test_stop_stack_unloads_the_worker_we_loaded(ops, tmp_path):
     ops.start_router()
     ops._sh.ps = _worker_ps(PICK1)
     ops.load(PICK1)
-    ops._sh.ps = ""
     ops.stop_stack()
     assert ("/v1/models/unload", {"model": PICK1}) in ops._http_calls
 
@@ -789,3 +780,72 @@ def test_refused_start_sigkills_group_if_term_ignored(ops, tmp_path):
     with pytest.raises(co.ChainAbort, match="one :8000 listener"):
         ops.start_router()
     assert [s for _, s in group] == [signal.SIGTERM, signal.SIGKILL] and {p for p, _ in group} == {55}
+
+
+# --------------------------------------------------------------------------- Q19 guarded unload
+def _loaded(ops, tmp_path):
+    sent, killed = _own_router_ops(ops, tmp_path)
+    ops.start_router()
+    ops._sh.ps = _worker_ps(PICK1)
+    ops.load(PICK1)
+    ops._http_calls.clear()
+    return sent, killed
+
+
+def _unloads(ops):
+    return [c for c in ops._http_calls if c[0] == "/v1/models/unload"]
+
+
+def test_unload_normal_path_sends_http_and_verifies_termination(ops, tmp_path):
+    _loaded(ops, tmp_path)
+    state = {"n": 0}
+    base = ops.worker_cmdlines
+
+    def gone_after_http(model):
+        return base(model) if not _unloads(ops) else []
+    ops.worker_cmdlines = gone_after_http
+    assert ops.unload(PICK1) is True and len(_unloads(ops)) == 1 and ops.loaded is None
+
+
+def test_unload_not_verified_when_worker_survives(ops, tmp_path):
+    _loaded(ops, tmp_path)
+    assert ops.unload(PICK1) is False
+    assert any("FATAL" in line for line in ops._lines)
+
+
+def test_unload_refused_without_recorded_router(ops):
+    ops._sh.ps = _worker_ps(PICK1)
+    assert ops.unload(PICK1) is False and not _unloads(ops)
+
+
+def test_unload_refused_when_foreign_pid_owns_8000(ops, tmp_path):
+    _loaded(ops, tmp_path)
+    ops.listeners = lambda port=8000: [777]
+    assert ops.unload(PICK1) is False and not _unloads(ops)
+    ops.listeners = lambda port=8000: [99, 777]
+    assert ops.unload(PICK1) is False and not _unloads(ops)
+    assert any("REFUSED" in line and "recorded router" in line for line in ops._lines)
+
+
+def test_unload_refused_when_router_pid_reused(ops, tmp_path):
+    _loaded(ops, tmp_path)
+    base = ops.create_time
+    ops.create_time = lambda pid: 4.0 if pid == 99 else base(pid)
+    assert ops.unload(PICK1) is False and not _unloads(ops)
+
+
+def test_unload_refused_when_worker_replaced(ops, tmp_path):
+    _loaded(ops, tmp_path)
+    base = ops.create_time
+    ops.create_time = lambda pid: 31337.0 if pid == 501 else base(pid)
+    assert ops.unload(PICK1) is False and not _unloads(ops)
+    ops._sh.ps = _worker_ps(PICK1).replace("501 ", "502 ", 1)               # a different pid serves the model
+    ops.create_time = base
+    assert ops.unload(PICK1) is False and not _unloads(ops)
+
+
+def test_stop_stack_cleanup_goes_through_guarded_unload(ops, tmp_path):
+    _loaded(ops, tmp_path)
+    ops.listeners = lambda port=8000: [777]
+    ops.stop_stack()
+    assert not _unloads(ops)

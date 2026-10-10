@@ -122,14 +122,17 @@ def test_go_oom_and_grader_memory_kill_retain_artifacts(dirs, flag, outcome):
     assert g.removed == ["mlxbench-fixture-item-1"]
 
 
-def test_python_collection_error_is_missing_report_not_abort(dirs):
+def test_python_collection_error_is_a_typed_collection_error_not_abort(dirs):
     work, private, keep = dirs
     out = sg.grade("python", work, "a_test.py", private, keep=keep, seq=1, boundary=1,
                    run=junit_run(None, rc=2, err="ERROR collecting a_test.py\nImportError\n"))
-    assert out.outcome == "missing_report" and not out.passing
+    assert out.outcome == "collection_error" and not out.passing
     idx = index_of(keep, 1)
-    assert idx["outcome"] == "missing_report" and "report.xml" not in idx["artifacts"]
-    assert "stderr.txt" in idx["artifacts"]
+    assert idx["outcome"] == "collection_error" and "report.xml" not in idx["artifacts"]
+    assert {"stdout.txt", "stderr.txt"} <= set(idx["artifacts"])
+    # its final row validates; scored failure, not an incomplete leg
+    assert sg.validate_reports(runner.grade_reports(keep) and [dict(runner.grade_reports(keep)[0], final=True)],
+                               "python", False) == []
 
 
 def test_infrastructure_failures_write_the_index_before_raising(dirs):
@@ -257,3 +260,33 @@ def test_tampered_row_carries_a_final_tampered_receipt(monkeypatch, tmp_path):
     last = row["grade_reports"][-1]
     assert last["final"] is True and last["outcome"] == "tampered" and last["artifacts"] == {}
     assert last["seq"] == max(r["seq"] for r in row["grade_reports"])
+
+
+def _final(outcome, names, lang="python"):
+    return [dict(boundary=1, seq=1, final=True, outcome=outcome,
+                 artifacts={n: dict(path=n, sha256="a" * 64) for n in names})]
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "oom", "mem_kill", "collection_error"])
+def test_every_grade_that_ran_needs_its_launch_outputs_not_an_unrelated_artifact(outcome):
+    assert sg.validate_reports(_final(outcome, ["unrelated.bin"]), "python", False)
+    assert sg.validate_reports(_final(outcome, ["unrelated.bin"]), "go", False)
+    assert sg.validate_reports(_final(outcome, ["report.xml"]), "python", False)       # XML alone is not enough
+    assert sg.validate_reports(_final(outcome, ["stdout.txt", "stderr.txt"]), "python", False) == []
+    assert sg.validate_reports(_final(outcome, ["go.jsonl", "go.stderr"]), "go", False) == []
+    assert sg.validate_reports(_final(outcome, ["go.jsonl"]), "go", False)
+
+
+def test_parsed_python_also_needs_the_xml_and_tampered_stays_artifact_free():
+    assert sg.validate_reports(_final("parsed", ["stdout.txt", "stderr.txt"]), "python", False)
+    assert sg.validate_reports(_final("parsed", ["report.xml", "stdout.txt", "stderr.txt"]), "python", False) == []
+    assert sg.validate_reports(_final("tampered", []), "python", True) == []
+
+
+def test_collection_error_final_passes_inject_verify(tmp_path):
+    from bench.tests.test_c147_inject_verify import verdict
+    def collection_error(r, m):
+        report = r["grade_reports"][0]
+        report["outcome"] = "collection_error"
+        report["artifacts"].pop("report.xml")
+    assert verdict(tmp_path, "stall", collection_error)[0] == "PASS"

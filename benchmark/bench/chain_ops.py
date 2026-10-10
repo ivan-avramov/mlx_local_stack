@@ -374,12 +374,32 @@ class ChainOps:
         self.worker_started = {"pid": pid, "create_time": ident["create_time"], "model": model}
         return ident
 
+    def _unload_guard(self, model):
+        """None when an unload is allowed, else the refusal reason. Allowed only if :8000 has exactly one listener
+        and it IS the recorded router, and the current worker for `model` is the instance this process loaded."""
+        if self.router is None or not self.router.get("pid"):
+            return "no router recorded as started by this process"
+        if self.listeners() != [self.router["pid"]] or not self._alive(self.router):
+            return "the :8000 owner is not the recorded router identity"
+        w = self.worker_cmdlines(model)
+        if not w:
+            return None                      # nothing to unload (verified gone below)
+        ws = self.worker_started
+        if not ws or ws.get("model") != model or not self._alive(ws) or len(w) != 1 or int(w[0].split()[0]) != ws["pid"]:
+            return "the current worker is not the instance this process loaded"
+        return None
+
     def unload(self, model):
-        try:
-            self._http("/v1/models/unload", {"model": model}, timeout=120)
-            self.log(f"unload {model} ok")
-        except Exception as e:  # noqa: BLE001
-            self.log(f"unload {model}: {e}")
+        reason = self._unload_guard(model)
+        if reason:
+            self.log(f"unload {model} REFUSED (no HTTP sent): {reason}")
+            return False
+        if self.worker_cmdlines(model):
+            try:
+                self._http("/v1/models/unload", {"model": model}, timeout=120)
+                self.log(f"unload {model} ok")
+            except Exception as e:  # noqa: BLE001
+                self.log(f"unload {model}: {e}")
         for _ in range(120):
             if not self.worker_cmdlines(model):
                 self.loaded = None
@@ -447,11 +467,7 @@ class ChainOps:
         if not router_ok:
             self.log("stop_stack: recorded router identity changed or gone; no unload, no signal for it")
         if self.loaded and router_ok:
-            if self.worker_started and self.worker_started.get("model") == self.loaded \
-                    and self._alive(self.worker_started):
-                self.unload(self.loaded)
-            else:
-                self.log("stop_stack: worker is not the instance this process loaded; no unload")
+            self.unload(self.loaded)          # guarded: router and worker identities verified inside
         targets = []
         for rec in (self.router, self.router.get("spawned")):
             if rec and rec.get("pid") and rec["pid"] not in [t["pid"] for t in targets]:
@@ -553,6 +569,37 @@ RUNTIME_PINNED = ("scaffold_policy_sha256", "probe_code_sha256", "opencode_versi
                   "universe_sha256")
 
 
+SHA_FIELDS = ("scaffold_policy_sha256", "probe_code_sha256", "opencode_exe_sha256", "opencode_bench_config_sha256",
+              "carrier_source_sha256", "universe_sha256")
+
+
+def _hex(v, *lengths):
+    return isinstance(v, str) and len(v) in lengths and re.fullmatch(r"[0-9a-f]+", v) is not None
+
+
+def malformed_identity(man):
+    """Mandatory identity fields of a manifest that are absent, null or malformed. Only `agent_system_sha256` may
+    be null (no overlay), but when present as a string it must be 64-hex."""
+    rt = man.get("runtime") or {}
+    bad = []
+    for k in SHA_FIELDS:
+        if not _hex(rt.get(k), 64):
+            bad.append(f"runtime_{k}")
+    if not _hex(rt.get("polyglot_sha"), 40, 64):
+        bad.append("runtime_polyglot_sha")
+    v = rt.get("opencode_version")
+    if not (isinstance(v, str) and v.strip()):
+        bad.append("runtime_opencode_version")
+    if "agent_system_sha256" not in rt or (rt["agent_system_sha256"] is not None and not _hex(rt["agent_system_sha256"], 64)):
+        bad.append("runtime_agent_system_sha256")
+    sp = (man.get("git") or {}).get("serving_path")
+    if not (isinstance(sp, dict) and sp and all(_hex(x, 64) for x in sp.values())):
+        bad.append("serving_path")
+    if not _hex((man.get("registry") or {}).get("sha256"), 64):
+        bad.append("registry_sha256")
+    return bad
+
+
 def seed_overlay_sha(model, seed):
     overlay = {"providers": {"mlx-local": {"models": {model: {"body": {"seed": int(seed)}}}}}}
     return hashlib.sha256(json.dumps(overlay, sort_keys=True).encode()).hexdigest()
@@ -620,8 +667,8 @@ def validate_leg(leg, pinned, workdir=None):
     for k in RUNTIME_PINNED:
         if k in pinned and (k not in rt or rt[k] != pinned[k]):      # a pinned null is a value; an absent key is not
             why.append(f"runtime_{k}: {rt.get(k, '<absent>')} != pinned {pinned[k]}")
-    if not rt.get("opencode_version"):
-        why.append("runtime_opencode_version: empty")
+    for f in malformed_identity(man):
+        why.append(f"{f}_invalid: absent, null or malformed" if f != "serving_path" else "serving_path_invalid: absent, null or malformed")
     sp = (man.get("git") or {}).get("serving_path")
     if pinned.get("serving_path") is not None and sp != pinned["serving_path"]:
         why.append(f"serving_path: {sp} != pinned {pinned['serving_path']}")

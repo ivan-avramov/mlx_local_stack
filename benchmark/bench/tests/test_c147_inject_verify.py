@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from m62 import inject_verify as iv                           # noqa: E402
 
 PER_PROCESS = 512 * 1024 ** 2
+RUN_IDS = {"stall": "20261010T120000-aaaaaaaaaaaa", "loop": "20261010T120000-bbbbbbbbbbbb",
+           "alloc": "20261010T120000-cccccccccccc"}
 
 
 def put(path, text):
@@ -90,7 +92,7 @@ def make_row(kind, tmp, name):
                id="python/one", test_modified=False,
                grade_reports=[dict(boundary=1, seq=1, final=True, outcome="parsed", artifacts=arts)],
                orphans_unattributed=[])
-    manifest = dict(run_id="RUN" + kind, runtime=dict(
+    manifest = dict(run_id=RUN_IDS[kind], runtime=dict(
         scaffold=row["scaffold"],
         inject=dict(kind=kind, policy=dict(gate={}, hygiene=dict(per_process=PER_PROCESS)))))
     return row, manifest
@@ -326,12 +328,12 @@ def test_retained_loop_row_must_show_cancellation(tmp_path):
 
 def test_live_checks_exact_prefix_unrelated_containers_ignored_and_processes_listed(tmp_path):
     full_run(tmp_path)
-    unrelated = lambda: ["mlxbench-other-item-1", "mlxbench-RUNstallx-item-1", "postgres"]    # noqa: E731
+    unrelated = lambda: ["mlxbench-other-item-1", "mlxbench-run-20261010T120000-ffffffffffff-item-1", "postgres"]    # noqa: E731
     assert run_suite(tmp_path, docker_ps=unrelated)[0] == 0
-    mine = lambda: ["mlxbench-RUNloop-python-one-1", "postgres"]                                # noqa: E731
+    mine = lambda: ["mlxbench-run-20261010T120000-bbbbbbbbbbbb-python-one-1", "postgres"]                                # noqa: E731
     code, lines = run_suite(tmp_path, docker_ps=mine)
-    assert code == 1 and any("FAIL:containers:mlxbench-RUNloop-python-one-1" in x for x in lines)
-    run_dir = str(tmp_path / "opencode-probe-v2/run-RUNalloc")
+    assert code == 1 and any("FAIL:containers:mlxbench-run-20261010T120000-bbbbbbbbbbbb-python-one-1" in x for x in lines)
+    run_dir = str(tmp_path / "opencode-probe-v2/run-20261010T120000-cccccccccccc")
     procs = lambda: [(77, run_dir + "/state", ["sleep", "600"]), (78, "/elsewhere", ["sleep"])]   # noqa: E731
     code, lines = run_suite(tmp_path, process_lister=procs)
     assert code == 1 and any("FAIL:processes" in x and "77" in x and "78" not in x for x in lines)
@@ -418,3 +420,33 @@ def test_suite_prints_the_consistency_limitation_and_still_clears(tmp_path):
 
 def test_docstring_states_the_limitation():
     assert "not proof" in iv.cancellation_consistent.__doc__ and "C149" in iv.cancellation_consistent.__doc__
+
+
+@pytest.mark.parametrize("run_id", [None, "", "RUNstall", "20261010T120000-xyz", "20261010T120000-AAAAAAAAAAAA", 7])
+def test_missing_or_malformed_run_id_fails(tmp_path, run_id):
+    def mutate(r, m):
+        if run_id is None:
+            m.pop("run_id")
+        else:
+            m["run_id"] = run_id
+    assert verdict(tmp_path, "stall", mutate)[0] == "FAIL:run_id"
+
+
+def test_run_id_removed_from_every_manifest_cannot_reach_suite_pass(tmp_path):
+    full_run(tmp_path, **{k: (lambda r, m: m.pop("run_id")) for k in iv.KINDS})
+    code, lines = run_suite(tmp_path)
+    assert code == 1 and "RESULT PASS" not in lines
+
+
+def test_live_checks_run_for_every_retained_attempt_and_leftovers_fail(tmp_path):
+    full_run(tmp_path)
+    seen = []
+
+    def docker():
+        seen.append("docker")
+        return []
+    assert run_suite(tmp_path, docker_ps=docker)[0] == 0
+    assert seen == ["docker"] * 3                                  # one live check per retained attempt
+    leftover = lambda: ["mlxbench-20261010T120000-aaaaaaaaaaaa-item-1"]                          # noqa: E731
+    code, lines = run_suite(tmp_path, docker_ps=leftover)
+    assert code == 1 and any(x.startswith("suite: stall:FAIL:containers") for x in lines)

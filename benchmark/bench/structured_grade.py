@@ -404,7 +404,12 @@ def _grade(lang, work, test, run, guard, timeout, name, tmp, directory, index, b
                 stderr=(p.stdout or "") + out_text + (p.stderr or "") + err_text,
                 timed_out=timed_out,
             )
-        result.outcome = provisional
+        outcome = provisional
+        if lang == "python" and provisional == "missing_report":
+            # parse_python accepted a missing XML only for a collection/import error: a scored failure, typed.
+            outcome = "collection_error"
+            artifacts = index(outcome)
+        result.outcome = outcome
         result.artifacts = artifacts
         return result
     finally:
@@ -412,12 +417,14 @@ def _grade(lang, work, test, run, guard, timeout, name, tmp, directory, index, b
             guard.remove_container(name)
 
 
-REPORT_OUTCOMES = ("parsed", "timeout", "oom", "mem_kill", "missing_report", "tampered")
-FINAL_OUTCOMES = ("parsed", "timeout", "oom", "mem_kill", "tampered")
+REPORT_OUTCOMES = ("parsed", "timeout", "oom", "mem_kill", "missing_report", "collection_error", "tampered")
+FINAL_OUTCOMES = ("parsed", "timeout", "oom", "mem_kill", "collection_error", "tampered")
+# Every grade that RAN carries its launch outputs; a parsed Python grade also carries the junit XML.
 REQUIRED_ARTIFACTS = {
-    "python": ("report.xml", "stdout.txt", "stderr.txt"),
+    "python": ("stdout.txt", "stderr.txt"),
     "go": ("go.jsonl", "go.stderr"),
 }
+PARSED_EXTRA_ARTIFACTS = {"python": ("report.xml",), "go": ()}
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -430,8 +437,8 @@ def validate_reports(reports, lang, test_modified):
 
     Returns reasons; [] means valid. Every row needs a typed final receipt: exactly one `final`, with a permitted
     outcome (never infrastructure/missing_report); `parsed` receipts carry the language's required artifacts;
-    `tampered` (no grader ran) carries none and needs `test_modified`; every other receipt carries hashed
-    artifacts (path + 64-hex sha256)."""
+    `tampered` (no grader ran) carries none and needs `test_modified`; every other receipt carries the language's
+    launch-output artifacts (plus report.xml when a Python grade parsed), each with a path + 64-hex sha256."""
     reasons = []
     if not isinstance(reports, list) or not reports:
         return ["grade_reports absent or empty"]
@@ -473,10 +480,11 @@ def validate_reports(reports, lang, test_modified):
         else:
             if not artifacts:
                 reasons.append(tag + " has no artifacts")
-            if outcome == "parsed":
-                missing = [a for a in REQUIRED_ARTIFACTS.get(lang, ()) if a not in artifacts]
-                if missing:
-                    reasons.append(tag + f" parsed receipt lacks {missing}")
+            need = REQUIRED_ARTIFACTS.get(lang, ()) + (PARSED_EXTRA_ARTIFACTS.get(lang, ())
+                                                        if outcome == "parsed" else ())
+            missing = [a for a in need if a not in artifacts]
+            if missing:
+                reasons.append(tag + f" {outcome} receipt lacks {missing}")
     if len(finals) != 1:
         reasons.append(f"exactly one final receipt required, found {len(finals)}")
     elif finals[0].get("outcome") not in FINAL_OUTCOMES:

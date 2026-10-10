@@ -212,7 +212,7 @@ def chain_json(env):
     return json.loads((env["out"] / "chain.json").read_text())
 
 
-CHAIN = ["chain", "s1", "--probe-code-sha", "p" * 64]
+CHAIN = ["chain", "s1", "--probe-code-sha", "9" * 64]
 PILOT = ["pilot"]
 
 
@@ -326,7 +326,7 @@ def test_pilot_then_full_same_rows_file_and_blocks(env):
 
 
 def test_all_sessions_reload_control(env):
-    rc = run(env, ["chain", "--probe-code-sha", "p" * 64], timeout=120)
+    rc = run(env, ["chain", "--probe-code-sha", "9" * 64], timeout=120)
     assert rc == 0
     assert [c[1] for c in env["ops"].names("load")] == [PICK1, PICK2, PICK2, PICK1, PICK1]
     assert len({c[2] for c in env["ops"].names("load")}) == 5
@@ -444,7 +444,7 @@ def test_idle_cancel_archive_restart_validates_block(env):
 
 
 def test_second_incomplete_in_a_block_exits_2(env):
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["abort_after_n"],
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["abort_after_n"],
              extra_env={"FAKE_N": "1"})
     assert rc == 2
     cj = chain_json(env)
@@ -455,7 +455,7 @@ def test_second_incomplete_in_a_block_exits_2(env):
 
 def test_probe_rc_nonzero_after_all_rows_is_incomplete(env):
     # abort_after_n with N=5 on the 5-item reload block: rows complete, but rc != 0 and manifest aborted
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["abort_after_n", "normal"],
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["abort_after_n", "normal"],
              extra_env={"FAKE_N": "5"})
     assert rc == 0
     assert log_has(env, "rc_nonzero") and log_has(env, "manifest_abort")
@@ -464,7 +464,7 @@ def test_probe_rc_nonzero_after_all_rows_is_incomplete(env):
 
 # --------------------------------------------------------------------------- escalation
 def test_escalation_sigterm_then_restart(env):
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["ignore_cancel", "normal"],
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["ignore_cancel", "normal"],
              extra_env={"FAKE_PROBE_ACK_WAIT": "30"})
     assert rc == 0
     assert log_has(env, "CANCEL file written (idle)") and log_has(env, "ESCALATE SIGTERM")
@@ -474,7 +474,7 @@ def test_escalation_sigterm_then_restart(env):
 
 
 def test_escalation_sigkill_leaves_no_cleanup_status_restart_refused(env):
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["ignore_cancel"],
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["ignore_cancel"],
              extra_env={"FAKE_IGNORE_TERM": "1"})
     assert rc == 2
     assert log_has(env, "ESCALATE SIGTERM") and log_has(env, "ESCALATE SIGKILL")
@@ -492,7 +492,7 @@ def test_escalation_held_while_activity_resumed(env):
         state["busy"] = True
         time.sleep(0.9)
         state["busy"] = False
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["ignore_cancel", "normal"],
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["ignore_cancel", "normal"],
              helper=helper, extra_env={"FAKE_PROBE_ACK_WAIT": "30"})
     held = [ln for ln in env["lines"] if "ESCALATION HELD" in ln]
     assert len(held) >= 2
@@ -509,7 +509,7 @@ def test_escalation_unreadable_metrics_sends_no_signal_exit_2(env):
     def helper():
         wait_for(lambda: log_has(env, "CANCEL file written (idle)"))
         state["bad"] = True
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["ignore_cancel", "normal"], helper=helper,
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["ignore_cancel", "normal"], helper=helper,
              extra_env={"FAKE_PROBE_ACK_WAIT": "30"})
     assert rc == 2
     assert not log_has(env, "ESCALATE SIGTERM") and log_has(env, "no signal sent")
@@ -525,7 +525,7 @@ def test_escalation_worker_identity_drift_sends_no_signal_exit_2(env):
             return {"pid": r["pid"] + 500, "create_time": r["create_time"]}
         return r
     env["ops"].worker_ident = drifting
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["ignore_cancel", "normal"],
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["ignore_cancel", "normal"],
              extra_env={"FAKE_PROBE_ACK_WAIT": "30"})
     assert rc == 2
     assert not log_has(env, "ESCALATE SIGTERM") and log_has(env, "no signal sent")
@@ -539,7 +539,7 @@ def test_escalation_held_when_heartbeat_activity_resumed(env):
             with logf.open("a") as f:
                 f.write(json.dumps({"m62_watch": {"requests_completed": 10 + k, "last_prompt_tokens": 1}, "elapsed_s": k}) + "\n")
             time.sleep(0.08)
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["ignore_cancel", "normal"], helper=helper,
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["ignore_cancel", "normal"], helper=helper,
              extra_env={"FAKE_PROBE_ACK_WAIT": "30"})
     assert log_has(env, "ESCALATION HELD") and any("heartbeat" in ln for ln in env["lines"] if "HELD" in ln)
     assert rc == 0
@@ -556,7 +556,7 @@ def test_restart_refused_lists_and_kills_nothing(env, extra, metrics, frag):
         env["ops"].metrics = None
     elif metrics is not None:
         env["ops"].metrics = metrics
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["abort_after_n"], extra_env=extra)
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["abort_after_n"], extra_env=extra)
     assert rc == 2
     assert log_has(env, "restart refused") and any(frag in ln for ln in env["lines"] if "restart refused" in ln)
     assert log_has(env, "LEFTOVER (listed, not killed)")
@@ -572,7 +572,7 @@ def test_restart_refused_when_worker_identity_changed(env):
         r = orig(model)
         return {"pid": r["pid"] + 500, "create_time": r["create_time"]} if r and invocations(env) else r
     env["ops"].worker_ident = drifting
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["abort_after_n"])
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["abort_after_n"])
     assert rc == 2 and log_has(env, "identity changed")
 
 
@@ -604,7 +604,7 @@ def test_stop_during_restart_preparation(env):
         if len(env["ops"].names("unload")) == 1:
             (env["out"] / "STOP").write_text("")
     env["ops"].on_unload = hook
-    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["abort_after_n", "normal"])
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=["abort_after_n", "normal"])
     assert rc == 3
     assert len(env["ops"].names("load")) == 1 and len(invocations(env)) == 1
     assert chain_json(env)["stop"]["where"] == "restart preparation"
@@ -944,7 +944,7 @@ def test_pin_from_null_is_a_value_absent_key_raises(env, tmp_path):
     ch = _chain_for(env)
     ch.pin_from({"out": str(out)})                                               # null pins as a value
     assert "agent_system_sha256" in ch.pinned and ch.pinned["agent_system_sha256"] is None
-    assert ch.pinned["serving_path"] == "sp1" and ch.pinned["opencode_exe_sha256"] == "e" * 64
+    assert ch.pinned["serving_path"] == FP.SERVING and ch.pinned["opencode_exe_sha256"] == "e" * 64
     mp = out.with_suffix(".manifest.json")
     man["runtime"].pop("agent_system_sha256")
     mp.write_text(json.dumps(man))
@@ -955,3 +955,79 @@ def test_pin_from_null_is_a_value_absent_key_raises(env, tmp_path):
 def test_real_shape_null_identity_pilot_to_full_pins_and_validates(env):
     assert run(env, CHAIN) == 0
     assert "agent_system_sha256" in chain_json(env)["pinned"] and chain_json(env)["pinned"]["agent_system_sha256"] is None
+
+
+# --------------------------------------------------------------------------- Q21 mandatory identities, three points
+MANDATORY = ["scaffold_policy_sha256", "probe_code_sha256", "opencode_exe_sha256", "opencode_bench_config_sha256",
+             "carrier_source_sha256", "universe_sha256", "polyglot_sha", "opencode_version"]
+
+
+def _bad_values(field):
+    return [None, "ABSENT", "xyz" if field != "opencode_version" else "  "]
+
+
+@pytest.mark.parametrize("field", MANDATORY)
+@pytest.mark.parametrize("which", [0, 1, 2])
+def test_mandatory_identity_enforced_at_pin_validate_and_barrier(env, tmp_path, field, which):
+    from bench import chain_ops as _co
+    val = _bad_values(field)[which]
+    worker = {"pid": 1, "create_time": 1.0, "model_path": "m", "registry_sha256": "a" * 64}
+    out = tmp_path / "q.jsonl"
+    FP.write_leg(out, PICK1, "python", 1001, ["python/a"], worker, tmp_path)
+    mp = out.with_suffix(".manifest.json")
+    man = json.loads(mp.read_text())
+    if val == "ABSENT":
+        man["runtime"].pop(field)
+    else:
+        man["runtime"][field] = val
+    mp.write_text(json.dumps(man))
+    assert f"runtime_{field}" in _co.malformed_identity(man)
+    # 1. pin_from
+    with pytest.raises(_co.ChainAbort, match=field):
+        _chain_for(env).pin_from({"out": str(out)})
+    # 2. validate_leg
+    pinned = {"scaffold_policy_sha256": _co.CAMPAIGN_POLICY_SHA, "probe_code_sha256": "9" * 64}
+    leg = dict(session="s", model=PICK1, lang="python", seed_base=1001, expected_ids=["python/a"], out=str(out), rc=0)
+    assert any(w.startswith(f"runtime_{field}_invalid") for w in _co.validate_leg(leg, pinned, tmp_path))
+    # 3. first-manifest barrier
+    ch = _chain_for(env)
+    block = {"worker": {"pid": 1, "create_time": 1.0}, "manifest_worker": None}
+    why = ch.verify_manifest(man, dict(model=PICK1, lang="python", seed_base=1001), block)
+    assert f"runtime_{field}_invalid" in why
+
+
+@pytest.mark.parametrize("mut,name", [("serving_none", "serving_path"), ("serving_str", "serving_path"),
+                                       ("registry_bad", "registry_sha256")])
+def test_serving_path_and_registry_mandatory_at_three_points(env, tmp_path, mut, name):
+    from bench import chain_ops as _co
+    worker = {"pid": 1, "create_time": 1.0, "model_path": "m", "registry_sha256": "a" * 64}
+    out = tmp_path / "q.jsonl"
+    FP.write_leg(out, PICK1, "python", 1001, ["python/a"], worker, tmp_path)
+    mp = out.with_suffix(".manifest.json")
+    man = json.loads(mp.read_text())
+    if mut == "serving_none":
+        man["git"]["serving_path"] = None
+    elif mut == "serving_str":
+        man["git"]["serving_path"] = "sp1"
+    else:
+        man["registry"]["sha256"] = "nothex"
+    mp.write_text(json.dumps(man))
+    with pytest.raises(_co.ChainAbort):
+        _chain_for(env).pin_from({"out": str(out)})
+    pinned = {"scaffold_policy_sha256": _co.CAMPAIGN_POLICY_SHA, "probe_code_sha256": "9" * 64}
+    leg = dict(session="s", model=PICK1, lang="python", seed_base=1001, expected_ids=["python/a"], out=str(out), rc=0)
+    assert any(w.startswith(f"{name}_invalid") for w in _co.validate_leg(leg, pinned, tmp_path))
+    why = _chain_for(env).verify_manifest(man, dict(model=PICK1, lang="python", seed_base=1001),
+                                          {"worker": {"pid": 1, "create_time": 1.0}, "manifest_worker": None})
+    assert f"{name}_invalid" in why
+
+
+def test_null_agent_system_sha_still_valid_everywhere(env, tmp_path):
+    from bench import chain_ops as _co
+    worker = {"pid": 1, "create_time": 1.0, "model_path": "m", "registry_sha256": "a" * 64}
+    out = tmp_path / "q.jsonl"
+    FP.write_leg(out, PICK1, "python", 1001, ["python/a"], worker, tmp_path)
+    man = json.loads(out.with_suffix(".manifest.json").read_text())
+    assert man["runtime"]["agent_system_sha256"] is None and _co.malformed_identity(man) == []
+    man["runtime"]["agent_system_sha256"] = "nothex"
+    assert _co.malformed_identity(man) == ["runtime_agent_system_sha256"]

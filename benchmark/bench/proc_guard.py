@@ -458,23 +458,33 @@ class ProcessGuard:
             self.killed.extend(killed)
         return killed
 
-    def graceful_stop(self, role, wait):
+    def graceful_stop(self, role, wait, before_signal=None):
         """SIGTERM every tracked live process of `role` and wait up to `wait` seconds for them to exit.
+
+        `before_signal()` is called once, after the scan and identity checks and immediately before the first
+        SIGTERM; it is never called when nothing is signalled (C147 Q22).
 
         Returns [{pid, create_time, role, argv}] of the processes signalled; survivors are the caller's to
         SIGKILL (`kill_role`). Ancestry is sampled first, as in `kill_role` (C147)."""
         signalled = []
         with self.lock:
             self.tick()
+            targets = []
             for (pid, created), actual in list(self.tracked.items()):
                 if actual != role:
                     continue
                 try:
                     p = self.get(pid)
                     if not self._protected(p) and p.create_time() == created and self._live(p):
-                        argv = self._argv(p)
-                        p.terminate()
-                        signalled.append(dict(pid=pid, create_time=created, role=actual, argv=argv))
+                        targets.append((p, pid, created, actual, self._argv(p)))
+                except self._transient:
+                    pass
+            if targets and before_signal is not None:
+                before_signal()
+            for p, pid, created, actual, argv in targets:
+                try:
+                    p.terminate()
+                    signalled.append(dict(pid=pid, create_time=created, role=actual, argv=argv))
                 except self._transient:
                     pass
         self.verify_gone(signalled, wait=wait)
@@ -852,12 +862,10 @@ def _clean_one(path, before, after, window, root, uid, expected_sha=None):
                     raise _Refuse("replaced")
                 continue
             if stat.S_ISDIR(st.st_mode):
-                # A directory is never emptied for the caller: it goes only when it holds nothing at all.
-                try:
-                    os.rmdir(name, dir_fd=cursor)
-                except OSError:
-                    raise _Refuse("dir_mixed") from None
-                return [], []
+                # The recorded WRITE must itself still be a regular file with matching content (Q20): a name that
+                # now resolves to a directory was replaced and is kept. Directories are only ever rmdir'd as
+                # parents emptied by the removal of their recorded files.
+                raise _Refuse("replaced")
             elif stat.S_ISREG(st.st_mode):
                 fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=cursor)
                 try:

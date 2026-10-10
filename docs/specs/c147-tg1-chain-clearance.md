@@ -427,3 +427,14 @@ Spec → cold review → implementation by a worker model from this spec, failin
   DECISION: the verdict is `cancellation_consistent` (in_flight ≥ 1 at kill, → 0 within the bound, `requests_completed`
   unchanged), accepted for clearance and labelled as not correlated; a worker-side cancellation counter is proposed
   as C149.
+- **B9 — post-build cold review 3 (`codex_impl_review3.md`): "not cleared", Q19–Q25; all fixed in the
+  follow-up commit.** Q19 the HTTP unload had no endpoint ownership check → `ChainOps.unload` requires the sole
+  :8000 listener to be the recorded router and the worker to be the one this process loaded; the inject driver
+  routes through it. Q20 a write path replaced by a directory was `rmdir`'d without the content match → a write
+  candidate must still be a regular file with matching content. Q21 the null-pinning fix also accepted null
+  mandatory fingerprints → only `agent_system_sha256` may be null; the rest must be well-formed at the barrier, at
+  pinning and at validation. Q22 the transport cutoff was captured before the guard's pre-signal scan → captured by
+  a callback immediately before SIGTERM; no signal, no tolerance. Q23 a Python collection error (no XML) was a
+  scored failure for the grader but an invalid final receipt → typed `collection_error` outcome. Q24 non-parsed
+  receipts accepted any artifact → launch-output artifacts required for every grade that ran. Q25 attempts without
+  a `run_id` skipped the live checks and could PASS → `run_id` required, live checks run for every retained attempt.
