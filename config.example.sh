@@ -11,6 +11,12 @@
 # Absolute path to THIS stack repo on this machine.
 export STACK_REPO="${STACK_REPO:-$HOME/path/to/mlx_local_stack}"
 
+# Out-of-repo artifacts (runs, transcripts, caches). Rebuild recipe: benchmark/README.md
+# "Fresh machine"; raw evidence restores from the `evidence` branch.
+export STACK_WORKDIR="${STACK_WORKDIR:-$HOME/path/to/mlx_local_stack_workdir}"
+export POLYGLOT_DIR="${POLYGLOT_DIR:-$STACK_WORKDIR/polyglot-benchmark}"
+export NLTK_DATA="${NLTK_DATA:-$STACK_WORKDIR/nltk_data}"
+
 # The second benchmark box, reached over ssh (one model resident per machine).
 export REMOTE_HOST="${REMOTE_HOST:-my-remote-host}"   # ssh alias (e.g. in ~/.ssh/config)
 export REMOTE_USER="${REMOTE_USER:-remoteuser}"

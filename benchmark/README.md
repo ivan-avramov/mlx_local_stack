@@ -788,6 +788,26 @@ the same items and tiers escalate cleanly. Parameters are fixed per model at pro
 some run-to-run variance — use these numbers for relative model comparison, not absolute
 leaderboard parity.
 
+## Fresh machine: rebuilding `$STACK_WORKDIR`
+
+The workdir holds nothing that is not reproducible or published (P229, 2026-10-10). On a new box,
+after `config.example.sh` → `~/.config/mlx_local_stack/config.sh`:
+
+```sh
+git worktree add "$STACK_WORKDIR" evidence    # raw transcripts/outputs behind main's rows (or skip if unneeded)
+git clone https://github.com/Aider-AI/polyglot-benchmark "$STACK_WORKDIR/polyglot-benchmark" \
+  && git -C "$STACK_WORKDIR/polyglot-benchmark" checkout 7e0611e          # corpus; rows record polyglot_sha
+NLTK_DATA="$STACK_WORKDIR/nltk_data" python -m nltk.downloader punkt punkt_tab averaged_perceptron_tagger averaged_perceptron_tagger_eng
+brew install opencode && brew pin opencode    # v2 probe pin 2.0.20 (not on npm); if Homebrew moved on:
+#   brew tap-new local/pins && brew extract --version=2.0.20 opencode local/pins && brew install local/pins/opencode@2.0.20
+#   (source: github.com/anomalyco/opencode tag v2.0.20); OPENCODE_PROBE_BIN points the probe at a non-default path
+npm install --prefix "$STACK_WORKDIR/opencode-1.18.30" opencode-ai@1.18.30   # frozen 1.18 probe only
+scripts/build_agentbench_images.sh            # AgentBench OS (clones the pinned commit, builds images)
+```
+
+`dsh` (M35, frozen) installs per the M35 spec recipe (`docs/specs/m35-dsh-harness-adapter.md`). Model weights and drafters come from
+Hugging Face (`caslca/*`). Chain drivers for the M54–M62 rows are in `benchmark/chains/`.
+
 ## Output layout
 
 ```

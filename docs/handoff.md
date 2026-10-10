@@ -19,9 +19,17 @@ C145, C144, C138). Spec: `docs/specs/m62-token-turn-gate.md` (rev 5 + §9 build 
 - Rulings 2026-10-10 (operator): P221 strict new-minimum progress approved; P222 C147 deferred until a tg1 chain is queued;
   P223 new C144 candidates run under tg1, both picks re-recorded under tg1 first.
 
+- **P229 workdir cleanup (2026-10-10):** 151 GB of model weights deleted (each sha-matched to its public `caslca/*`
+  Hugging Face copy). Chain drivers committed to `benchmark/chains/` (`8246c91`). Orphan branch `evidence` (`1ec50d6`,
+  ~107 MB, 5,511 files) holds the irreproducible raw artifacts (transcripts, C82/C84 outputs, overlays, reports),
+  PII-scrubbed with `SCRUB_MANIFEST.json`, credential scan clean, replay of all 454 manifest entries identical.
+  Fresh-machine runbook: `benchmark/README.md`. Pending: push `main` + `evidence` (operator word), then delete the
+  rest of `$STACK_WORKDIR` (~40 GB). opencode 2.0.20 exists only via Homebrew/source (not npm) — `brew pin opencode`.
+
 ## Queue, in order
 
-1. Nothing queued. When a tg1 chain or the first C144 candidate is queued: **C147** first — live injected positives
+0. Push `main` + `evidence`, verify fresh-clone restore, then delete the workdir remainder (P229).
+1. Nothing else queued. **C148** (flaky process monitor) with C147. When a tg1 chain or the first C144 candidate is queued: **C147** first — live injected positives
    (test-only lowered thresholds, ≈ 30 min; needs an approved small build), a tg1 chain runner (no fixed 6 h kill;
    exact-item validation; incomplete-leg archive/restart), `/tmp` escape diagnostic.
 2. Then re-record both picks under tg1 (P223, ≈ 20 h k=2 chains), then candidates under tg1.
@@ -37,4 +45,4 @@ C145, C144, C138). Spec: `docs/specs/m62-token-turn-gate.md` (rev 5 + §9 build 
 - A model can write outside its TMPDIR (`/tmp`); contain or record, never blanket-sweep.
 - Cold reviews in series keep finding real defects; stop when findings turn to details, then validate live.
 
-Next decision id C148; discussion ids continue from P224.
+Next decision id C149; discussion ids continue from P230.
