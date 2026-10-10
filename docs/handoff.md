@@ -30,9 +30,11 @@ C145, C144, C138). Spec: `docs/specs/m62-token-turn-gate.md` (rev 5 + §9 build 
 
 ## Queue, in order
 
-0. Push `main` + `evidence` (operator word), verify fresh-clone restore, then delete the workdir remainder (P229)
-   EXCEPT `opencode-2.0.20/` (cheap, rebuildable by script); `git -C ../mlx-serve worktree remove` the
-   `upstream/2026-09-13/mlx-serve` worktree rather than deleting it. Pending operator choice: upload form for the NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit MTP drafter.
+0. DONE 2026-10-10: `main` + `evidence` pushed; fresh GitHub clone + `git archive` restore replays the M62
+   manifest (all criteria pass). Workdir cleaned (40 GB): only `opencode-2.0.20/` and `private-118/` remain.
+   `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit-mtp-drafter` published (public, probe-only). **P232 open:** the
+   opencode 1.18.30 transcripts (193 files, 2.1 MB, contain paraphrases of the operator's private global
+   instructions) exist only in `$STACK_WORKDIR/private-118/` — private off-laptop copy or let go; never public.
 1. Nothing else queued. **C148** (flaky process monitor) with C147. When a tg1 chain or the first C144 candidate is queued: **C147** first — live injected positives
    (test-only lowered thresholds, ≈ 30 min; needs an approved small build), a tg1 chain runner (no fixed 6 h kill;
    exact-item validation; incomplete-leg archive/restart), `/tmp` escape diagnostic.
@@ -49,4 +51,4 @@ C145, C144, C138). Spec: `docs/specs/m62-token-turn-gate.md` (rev 5 + §9 build 
 - A model can write outside its TMPDIR (`/tmp`); contain or record, never blanket-sweep.
 - Cold reviews in series keep finding real defects; stop when findings turn to details, then validate live.
 
-Next decision id C149; discussion ids continue from P231.
+Next decision id C149; discussion ids continue from P233.
