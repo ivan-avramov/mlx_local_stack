@@ -67,6 +67,7 @@ GENERATED_PATHS = (
     "benchmark/opencode_bench.json",
     "benchmark/opencode_bench_v2.json",
     "benchmark/opencode_bench_v2_web.json",
+    "benchmark/opencode_bench_v2_web_tg1.json",
 )
 
 # Version/size-only fragments. `1.0` is a segment of a model name, but a bare `1.0` in a diff is

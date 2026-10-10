@@ -3,6 +3,7 @@ from .emitters.aider import emit_aider, emit_aider_bench
 from .emitters.vscode import emit_vscode
 from .emitters.zed import emit_zed
 from .emitters.owui import emit_owui, emit_owui_settings
+from .emitters.opencode import emit_opencode_bench_v2_web_tg1
 
 # Each entry: (target_name, emitter_fn, output_path)
 # output_path is a str (single-file emitters) or a dict[str, str] mapping the
@@ -30,6 +31,7 @@ DEPLOYMENT_TARGETS = [
 # mechanically enforceable invariant (test_candidate_role_is_accepted_and_never_emitted_to_clients
 # loops TARGETS). The bench carrier exists precisely to include candidates.
 BENCH_TARGETS: list[tuple[str, callable, str | dict]] = [
+    ("opencode-bench-v2-web-tg1", emit_opencode_bench_v2_web_tg1, "benchmark/opencode_bench_v2_web_tg1.json"),
     ("aider-bench", emit_aider_bench, "benchmark/aider_bench.model.settings.yml"),
     ("opencode-bench", emit_opencode_bench, "benchmark/opencode_bench.json"),
     ("opencode-bench-v2-web", emit_opencode_bench_v2_web, "benchmark/opencode_bench_v2_web.json"),

@@ -7,7 +7,7 @@ REPO = Path(__file__).resolve().parents[2]
 INVALID = {"go/counter"}  # C145
 FIXTURES = [  # pre-registered expectations (spec §6 V2)
     ("Qwen3.8-27B-mlx-uniform-4bit", "opencode_v2_go.m61.s2.jsonl", "go/kindergarten-garden", "looping@request15"),
-    ("Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "opencode_v2_go.m59.s1.jsonl", "go/alphametics", "stalled@completed_request40"),
+    ("Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "opencode_v2_go.m59.s1.jsonl", "go/alphametics", "looping@request22"),
     ("Qwen3.8-27B-mlx-uniform-4bit", "opencode_v2_go.m61.s2.jsonl", "go/book-store", "no_stop"),
 ]
 

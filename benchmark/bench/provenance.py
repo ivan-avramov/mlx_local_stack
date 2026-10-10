@@ -1886,7 +1886,8 @@ def write(model: str, bench: str, registry_path: str | None = None,
     return man
 
 
-def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overlay):
+def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overlay, *,
+                          scaffold=None, toolbounds_sha=None):
     """P151: permit only the hashed carrier/plugin and the exact per-item seed overlay."""
     from pathlib import Path
 
@@ -1901,11 +1902,18 @@ def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overla
         refuse("OPENCODE_CONFIG_DIR is not the run config directory")
     try:
         entries = {str(p.relative_to(config)) for p in config.rglob("*")}
-        if entries != {"opencode.json", "plugins", "plugins/noretry.js"}:
+        expected_entries = {"opencode.json", "plugins", "plugins/noretry.js"}
+        hashes = [("opencode.json", carrier_sha), ("plugins/noretry.js", plugin_sha)]
+        if scaffold == "opencode-v2-web-tg1":
+            expected_entries.add("plugins/toolbounds.js")
+            hashes.append(("plugins/toolbounds.js", toolbounds_sha))
+        elif toolbounds_sha is not None:
+            refuse("toolbounds is allowed only under tg1")
+        if entries != expected_entries:
             refuse("config directory contains missing or unexpected entries")
         if any(p.is_symlink() for p in config.rglob("*")) or config.is_symlink():
             refuse("config directory contains symlinks")
-        for name, expected in [("opencode.json", carrier_sha), ("plugins/noretry.js", plugin_sha)]:
+        for name, expected in hashes:
             if not expected or _file_sha256(str(config / name)) != expected:
                 refuse(name + " sha256 differs from the pinned source")
         overlay = json.loads(env.get("OPENCODE_CONFIG_CONTENT", ""))
@@ -1931,7 +1939,8 @@ def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overla
 
 
 def opencode_v2_destination(
-    scratch, env, model, run_dir, opencode_bin, expected_overlay, *, require_plugin=False
+    scratch, env, model, run_dir, opencode_bin, expected_overlay, *, require_plugin=False,
+    scaffold=None, runner=None
 ):
     """Prove the destination from v2 raw config documents; directory entries are metadata."""
     from pathlib import Path
@@ -1944,8 +1953,14 @@ def opencode_v2_destination(
         refuse("PWD differs from scratch cwd")
     try:
         carrier = json.loads(config.read_text())
+        if scaffold == "opencode-v2-web-tg1":
+            if (carrier.get("compaction", {}).get("auto") is not False or
+                    carrier.get("agents", {}).get("title", {}).get("disabled") is not True or
+                    any(dict(action=a, resource="*", effect="deny") not in carrier.get("permissions", [])
+                        for a in ("execute", "subagent"))):
+                refuse("tg1 title/compaction/execute/subagent policy differs")
         base = carrier["providers"]["mlx-local"]["settings"]["baseURL"]
-        r = subprocess.run(
+        r = (runner or subprocess.run)(
             [str(opencode_bin), "api", "GET", "/api/config", "--standalone"],
             cwd=str(scratch),
             env=env,
@@ -1956,6 +1971,32 @@ def opencode_v2_destination(
         )
         if r.returncode:
             refuse(f"config discovery exit {r.returncode}: {scrub_tail(r.stderr, 300)}")
+        if scaffold == "opencode-v2-web-tg1":
+            import shlex
+            # Pinned 2.0.20 integration.list awaits Plugin.awaitActivation; config.get does not.
+            activation = (runner or subprocess.run)(
+                [str(opencode_bin), "api", "GET", "/api/integration", "--standalone"],
+                cwd=str(scratch), env={**env, "OPENCODE_PRINT_LOGS": "1"},
+                capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
+            )
+            if activation.returncode:
+                refuse(f"tg1 plugin activation discovery exit {activation.returncode}")
+            for name in ("noretry.js", "toolbounds.js"):
+                plugin = config.parent / "plugins" / name
+                source = Path(__file__).resolve().parents[1] / "opencode_plugins" / name
+                if not plugin.is_file() or _file_sha256(str(plugin)) != _file_sha256(str(source)):
+                    refuse("tg1 plugin missing or sha differs: " + name)
+                loaded = False
+                for line in activation.stderr.splitlines():
+                    try:
+                        fields = dict(t.split("=", 1) for t in shlex.split(line) if "=" in t)
+                    except ValueError:
+                        continue
+                    if (fields.get("msg") == "loading plugin" and fields.get("role") == "server"
+                            and fields.get("id") == str(plugin.resolve())):
+                        loaded = True
+                if not loaded:
+                    refuse("tg1 plugin load proof missing: " + name)
         if require_plugin or env.get("OPENCODE_PRINT_LOGS") == "1":
             import shlex
 
@@ -1964,7 +2005,8 @@ def opencode_v2_destination(
             if not plugin.is_file() or _file_sha256(str(plugin)) != _file_sha256(str(source)):
                 refuse("pre-check plugin missing or sha256 differs from the repository plugin")
             loaded = False
-            for line in r.stderr.splitlines():
+            proof_stderr = activation.stderr if scaffold == "opencode-v2-web-tg1" else r.stderr
+            for line in proof_stderr.splitlines():
                 try:
                     fields = dict(
                         token.split("=", 1) for token in shlex.split(line) if "=" in token

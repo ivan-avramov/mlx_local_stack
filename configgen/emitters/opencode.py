@@ -109,6 +109,13 @@ def emit_opencode_bench_v2_web(source: Source) -> str:
     return json.dumps(doc, indent=2) + "\n"
 
 
+def emit_opencode_bench_v2_web_tg1(source: Source) -> str:
+    """M62 passive gate carrier; plugins are installed by the isolated probe."""
+    doc = json.loads(emit_opencode_bench_v2_web(source))
+    doc['permissions'].append(dict(action='subagent', resource='*', effect='deny'))
+    return json.dumps(doc, indent=2) + '\n'
+
+
 def _emit(source: Source) -> str:
     """Native v2 daily-driver carrier; the pinned 1.18 benchmark stays on _emit_v1."""
     def model(m, *, tools: bool) -> dict:

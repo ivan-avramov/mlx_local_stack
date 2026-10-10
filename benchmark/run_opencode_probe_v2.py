@@ -832,7 +832,9 @@ def _main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--items", required=True)
     ap.add_argument("--seed-base", type=int, required=True)
-    ap.add_argument("--scaffold", choices=["opencode-v2-web", "opencode-v2"], default="opencode-v2-web")
+    ap.add_argument("--scaffold", choices=["opencode-v2-web", "opencode-v2", "opencode-v2-web-tg1"], default="opencode-v2-web")
+    ap.add_argument("--universe", type=Path)
+    ap.add_argument("--expect-items")
     ap.add_argument("--agent-system-file")
     ap.add_argument("--extra-deny-file", type=Path)
     ap.add_argument("--rerun-of")
@@ -862,6 +864,9 @@ def _main():
         ap.add_argument("--" + key, type=int, default=default)
     ap.add_argument("--poll-s", type=float, default=5.0)
     a = ap.parse_args()
+    if a.scaffold == "opencode-v2-web-tg1":
+        from bench import tg1_runner
+        return tg1_runner.main(sys.modules[__name__], a)
     if bool(a.rerun_of) != (a.rerun_index is not None):
         sys.exit("REFUSED: --rerun-of and --rerun-index must be supplied together")
     if a.rerun_of and (a.scaffold != "opencode-v2-web" or a.extra_deny_file is None
