@@ -798,9 +798,8 @@ git worktree add "$STACK_WORKDIR" evidence    # raw transcripts/outputs behind m
 git clone https://github.com/Aider-AI/polyglot-benchmark "$STACK_WORKDIR/polyglot-benchmark" \
   && git -C "$STACK_WORKDIR/polyglot-benchmark" checkout 7e0611e          # corpus; rows record polyglot_sha
 NLTK_DATA="$STACK_WORKDIR/nltk_data" python -m nltk.downloader punkt punkt_tab averaged_perceptron_tagger averaged_perceptron_tagger_eng
-brew install opencode && brew pin opencode    # v2 probe pin 2.0.20 (not on npm); if Homebrew moved on:
-#   brew tap-new local/pins && brew extract --version=2.0.20 opencode local/pins && brew install local/pins/opencode@2.0.20
-#   (source: github.com/anomalyco/opencode tag v2.0.20); OPENCODE_PROBE_BIN points the probe at a non-default path
+scripts/install_bench_opencode.sh                 # v2 probe pin 2.0.20 -> $STACK_WORKDIR/opencode-2.0.20 (sha-pinned
+#   Homebrew bottle from ghcr.io; never touches brew or the daily opencode; OPENCODE_PROBE_BIN overrides)
 npm install --prefix "$STACK_WORKDIR/opencode-1.18.30" opencode-ai@1.18.30   # frozen 1.18 probe only
 scripts/build_agentbench_images.sh            # AgentBench OS (clones the pinned commit, builds images)
 ```

@@ -251,10 +251,10 @@ def main(argv=None) -> int:
     if a.opencode == "1.18":
         raise SystemExit("REFUSED: the opencode 1.18 gate leg is frozen (M59, 2026-10-07); use --opencode v2")
     try:
-        from bench import provenance
+        from bench import provenance, paths
         base = os.environ.get("MLX_SERVE_BASE", "http://localhost:8000/v1")
         provenance.assert_served_config(base)
-        oc_bin, oc_version = os.environ.get("OPENCODE_PROBE_BIN", "/opt/homebrew/bin/opencode"), "2.0.20"
+        oc_bin, oc_version = os.environ.get("OPENCODE_PROBE_BIN") or str(paths.stack_workdir() / "opencode-2.0.20/bin/opencode"), "2.0.20"
     except (SystemExit, OSError) as e:
         print(f"[gate] REFUSED: {getattr(e, 'code', None) or e}", file=sys.stderr, flush=True)
         return 2

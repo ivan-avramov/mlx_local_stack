@@ -22,6 +22,13 @@ from bench import provenance, progress_gate
 MODEL = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 
 
+from bench import paths as _paths
+
+# The REAL bench-owned install (P230), resolved before any fixture redirects STACK_WORKDIR to tmp_path.
+INSTALLED_BIN = Path(os.environ.get("OPENCODE_PROBE_BIN") or
+                     str(_paths.resolve_stack_workdir(required=False) or "/nonexistent") + "/opencode-2.0.20/bin/opencode")
+
+
 @pytest.fixture
 def probe(monkeypatch, tmp_path):
     """Probe."""
@@ -469,9 +476,9 @@ def test_legacy_moves_are_byte_identical(probe):
 @pytest.fixture
 def real_binary(probe, tmp_path):
     """Real binary."""
-    binary = Path("/opt/homebrew/bin/opencode")
+    binary = INSTALLED_BIN
     if not binary.is_file():
-        pytest.skip("brew opencode unavailable: /opt/homebrew/bin/opencode is missing")
+        pytest.skip("bench opencode 2.0.20 not installed (scripts/install_bench_opencode.sh)")
     root = tmp_path / "version-env"
     for d in ("home", "cfg/opencode", "data", "state", "cache", "tmp"):
         (root / d).mkdir(parents=True, exist_ok=True)
@@ -1165,3 +1172,23 @@ def test_a4_receipt_binds_run_and_manifest(probe, monkeypatch, tmp_path):
     assert f["run"]("one", limit=None, extra=["--a4-v2-receipt", str(path)]) == 0
     runtime = json.loads(f["mp"].read_text())["runtime"]
     assert runtime["a4_v2_pass"] is True and runtime["a4_gate_run_id"] == "gate-run"
+
+
+def test_default_binary_is_bench_owned_not_brew(probe, monkeypatch, tmp_path):
+    """P230: the pinned 2.0.20 lives under $STACK_WORKDIR (scripts/install_bench_opencode.sh, from the sha-pinned
+    Homebrew bottle), never the laptop-wide /opt/homebrew/bin/opencode; OPENCODE_PROBE_BIN still overrides."""
+    monkeypatch.delenv("OPENCODE_PROBE_BIN", raising=False)
+    with pytest.raises(SystemExit, match="install_bench_opencode"):
+        probe._require_opencode_bin()
+    binary = tmp_path / "opencode-2.0.20/bin/opencode"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    assert probe._require_opencode_bin() == str(binary.resolve())
+    assert probe.OPENCODE_V2_EXE_SHA256 == "da6c61cd188189a0bd44450ae3e19cb654a958f0b1615c83ebe47a48d0b519ae"
+    other = tmp_path / "elsewhere/opencode"
+    other.parent.mkdir()
+    other.write_text("#!/bin/sh\n")
+    other.chmod(0o755)
+    monkeypatch.setenv("OPENCODE_PROBE_BIN", str(other))
+    assert probe._require_opencode_bin() == str(other.resolve())

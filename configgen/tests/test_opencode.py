@@ -205,9 +205,13 @@ def test_isolated_capture_detects_surviving_process(tmp_path, monkeypatch):
 
 def test_v2_real_config_load_and_unknown_key_control(tmp_path):
     """CPU-only schema proof: the standalone API must return the complete generated document."""
-    binary = Path("/opt/homebrew/bin/opencode")
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "benchmark"))
+    from bench import paths
+    workdir = paths.resolve_stack_workdir(required=False) or Path("/nonexistent")
+    binary = Path(os.environ.get("OPENCODE_PROBE_BIN") or workdir / "opencode-2.0.20/bin/opencode")
     if not binary.is_file():
-        pytest.skip("brew opencode binary is unavailable; schema capture requires 2.0.20")
+        pytest.skip("bench opencode 2.0.20 not installed (scripts/install_bench_opencode.sh); schema capture requires it")
     root = Path(__file__).resolve().parents[2]
     config = tmp_path / "cfg/opencode"
     scratch = tmp_path / "scratch"

@@ -167,10 +167,11 @@ def test_driver_registry_export_does_not_leak_to_caller(probe, monkeypatch, tmp_
 
 @pytest.fixture
 def pinned_binary(probe, tmp_path):
-    path = Path(os.environ.get("OPENCODE_PROBE_BIN", "/opt/homebrew/bin/opencode"))
+    from bench.tests.test_opencode_v2_probe import INSTALLED_BIN
+    path = INSTALLED_BIN
     if not path.is_file():
-        if str(path) == "/opt/homebrew/bin/opencode":
-            pytest.skip("missing brew binary")
+        if not os.environ.get("OPENCODE_PROBE_BIN"):
+            pytest.skip("bench opencode 2.0.20 not installed (scripts/install_bench_opencode.sh)")
         pytest.fail("OPENCODE_PROBE_BIN missing")
     env = probe._opencode_env(tmp_path, tmp_path, probe._seed_overlay(MODEL, 1))
     try:

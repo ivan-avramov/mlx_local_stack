@@ -76,13 +76,24 @@ class TransportAbort(RuntimeError):
     """An item cannot produce a gradeable row."""
 
 
+# P230: the pinned binary is bench-owned (never the laptop-wide brew install, which upgrades). 2.0.20 is not on npm;
+# scripts/install_bench_opencode.sh extracts it from the sha-pinned Homebrew bottle, byte-identical to the M59-M62 rows.
+OPENCODE_V2_BIN_RELPATH = "opencode-2.0.20/bin/opencode"
+OPENCODE_V2_EXE_SHA256 = "da6c61cd188189a0bd44450ae3e19cb654a958f0b1615c83ebe47a48d0b519ae"
+
+
+def _default_opencode_bin():
+    return _stack_workdir() / OPENCODE_V2_BIN_RELPATH
+
+
 def _require_opencode_bin():
-    path = Path(os.environ.get("OPENCODE_PROBE_BIN", "/opt/homebrew/bin/opencode"))
+    path = Path(os.environ.get("OPENCODE_PROBE_BIN") or _default_opencode_bin())
     if not path.is_absolute():
         sys.exit("REFUSED: OPENCODE_PROBE_BIN must be absolute")
     path = path.resolve()
     if not path.is_file() or not os.access(path, os.X_OK):
-        sys.exit(f"REFUSED: pinned opencode binary {_portable(path)} is missing or not executable")
+        sys.exit(f"REFUSED: pinned opencode binary {_portable(path)} is missing or not executable "
+                 "(run scripts/install_bench_opencode.sh)")
     return str(path)
 
 
