@@ -31,11 +31,11 @@ C145, C144, C138). Spec: `docs/specs/m62-token-turn-gate.md` (rev 5 + §9 build 
 ## Queue, in order
 
 0. DONE 2026-10-10: `main` + `evidence` pushed; fresh GitHub clone + `git archive` restore replays the M62
-   manifest (all criteria pass). Workdir cleaned (40 GB): only `opencode-2.0.20/` and `private-118/` remain.
-   `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit-mtp-drafter` published (public, probe-only). **P232 open:** the
-   opencode 1.18.30 transcripts (193 files, 2.1 MB, contain paraphrases of the operator's private global
-   instructions) exist only in `$STACK_WORKDIR/private-118/` — private off-laptop copy or let go; never public.
-1. Nothing else queued. **C148** (flaky process monitor) with C147. When a tg1 chain or the first C144 candidate is queued: **C147** first — live injected positives
+   manifest (all criteria pass). Workdir cleaned (40 GB): only `opencode-2.0.20/` remains.
+   `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit-mtp-drafter` published (public, probe-only). P232 DONE: the opencode
+   1.18.30 transcripts (193 files; paraphrase the operator's private global instructions) live ONLY in the
+   PRIVATE GitHub repo `mlx_local_stack-private` — never public.
+1. Nothing else queued. When a tg1 chain or the first C144 candidate is queued: **C147** first — live injected positives
    (test-only lowered thresholds, ≈ 30 min; needs an approved small build), a tg1 chain runner (no fixed 6 h kill;
    exact-item validation; incomplete-leg archive/restart), `/tmp` escape diagnostic.
 2. Then re-record both picks under tg1 (P223, ≈ 20 h k=2 chains), then candidates under tg1.
