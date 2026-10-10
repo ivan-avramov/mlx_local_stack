@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import json
+import math
 import re
 import time
 from .convergence import resolved_thinking_budget
@@ -218,6 +219,27 @@ class TokenTurnGate:
         )
 
 
+def tool_completion_input(state):
+    """Validate opencode 2.0.20 CLI MiniToolPart's terminal state projection."""
+    try:
+        if not isinstance(state, dict) or state["status"] not in ("completed", "error"):
+            raise ValueError()
+        if not isinstance(state["input"], dict) or not isinstance(state["metadata"], dict):
+            raise ValueError()
+        clock = state["time"]
+        if not isinstance(clock, dict) or any(
+            type(clock[k]) not in (int, float) or not math.isfinite(clock[k])
+            for k in ("start", "end")
+        ):
+            raise ValueError()
+        fields = ("output", "title") if state["status"] == "completed" else ("error",)
+        if any(not isinstance(state[k], str) for k in fields):
+            raise ValueError()
+        return state["input"]
+    except (KeyError, TypeError, ValueError):
+        raise TransportAbort("malformed tool completion state") from None
+
+
 class EventStream:
     """Incremental bytes parser. Consumers must serialize accept/grade on their gate."""
 
@@ -308,7 +330,7 @@ class EventStream:
             try:
                 if not isinstance(part["tool"], str) or not part["tool"]:
                     raise TransportAbort("malformed tool name")
-                self.gate.tool(part["tool"], part["state"]["input"])
+                self.gate.tool(part["tool"], tool_completion_input(part["state"]))
             except (KeyError, TypeError, ValueError):
                 raise TransportAbort("malformed tool completion") from None
         if kind == "step_finish":
@@ -375,6 +397,8 @@ def reconcile(stream, export, rc, outcome=None):
                 raise TransportAbort("export usage/error mismatch")
             continue
         if error:
+            if not isinstance(error, dict):
+                raise TransportAbort("malformed assistant error")
             allowed = i == len(messages) - 1 and (
                 (killed and error.get("type") == "aborted")
                 or (outcome == "context_overflow" and context_overflow(error))
@@ -393,12 +417,14 @@ def reconcile(stream, export, rc, outcome=None):
         raise TransportAbort("live message missing in export")
     if not messages:
         raise TransportAbort("empty assistant export")
-    if exit_hang and messages[-1].get("finish") not in ("stop", "length", "content-filter"):
+    if not killed and not outcome and messages[-1].get("finish") not in ("stop", "length", "content-filter"):
         raise TransportAbort("client silent, worker idle: session not finished")
     if not killed and not outcome and len(extras) > 1:
         raise TransportAbort("multiple unmatched assistants")
     if not killed and not outcome and stream.active and stream.active not in seen:
         raise TransportAbort("unfinished live message absent from export")
+    if killed and stream.active and messages[-1]["id"] != stream.active:
+        raise TransportAbort("active live message does not reconcile to trailing assistant")
     for m in extras:
         gate.complete(m["id"], m.get("tokens"))
     gate.check()

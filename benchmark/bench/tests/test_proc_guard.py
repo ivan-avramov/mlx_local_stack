@@ -48,12 +48,14 @@ class Process:
 
 
 def guard(tmp_path, processes, **kwargs):
-    return pg.ProcessGuard(
+    result = pg.ProcessGuard(
         [tmp_path],
         scan=lambda: processes,
         get=lambda pid: next(p for p in processes if p.pid == pid),
         **kwargs,
     )
+    result.started = 0  # Fixture creation times use a synthetic epoch.
+    return result
 
 
 def test_detached_shell_pid_reuse_and_rapid_orphan(tmp_path):
@@ -80,6 +82,7 @@ def test_detached_shell_pid_reuse_and_rapid_orphan(tmp_path):
 def test_sweep_attribution_and_uncertain_cleanup(tmp_path):
     p = Process(20, cwd=str(tmp_path / "work"))
     g = guard(tmp_path, [p])
+    g.register(p, "model")
     p.kill = lambda: None
     with pytest.raises(TransportAbort, match="surviv"):
         g.cleanup()

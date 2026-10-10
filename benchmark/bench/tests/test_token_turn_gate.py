@@ -17,6 +17,12 @@ def event(kind, mid="m1", **kw):
     )
 
 
+def tool_state(inputs=None, status="completed"):
+    return dict(status=status, input={} if inputs is None else inputs,
+                metadata={}, time=dict(start=1, end=2),
+                **(dict(output="", title="shell") if status == "completed" else dict(error="failed")))
+
+
 def request(stream, mid="m1", output=1, calls=()):
     stream.accept(event("step_start", mid))
     for i, call in enumerate(calls):
@@ -26,7 +32,7 @@ def request(stream, mid="m1", output=1, calls=()):
                 mid,
                 partID=f"{mid}-{i}",
                 tool="shell",
-                state=dict(input=call, status="completed"),
+                state=tool_state(call),
             )
         )
     stream.accept(event("step_finish", mid, tokens=usage(output)))
@@ -202,7 +208,7 @@ def test_final_request_k_crossing():
     s = tg.EventStream(g)
     request(s, calls=[{}] * 7)
     s.accept(event("step_start", "m2"))
-    s.accept(event("tool_use", "m2", partID="last", tool="shell", state=dict(input={})))
+    s.accept(event("tool_use", "m2", partID="last", tool="shell", state=tool_state()))
     tg.reconcile(s, dict(messages=[assistant(), assistant("m2")]), 0)
     assert g.primary == "looping"
 
@@ -273,7 +279,7 @@ def test_terminal_other_states_abort(case):
 def test_duplicate_tool_call_id_different_projection_rejected():
     s = tg.EventStream(tg.TokenTurnGate(1))
     s.accept(event("step_start"))
-    first = event("tool_use", partID="projection-a", tool="read", state={"input": {}})
+    first = event("tool_use", partID="projection-a", tool="read", state=tool_state())
     s.accept(first)
     second = {**first, "part": {**first["part"], "partID": "projection-b"}}
     with pytest.raises(tg.TransportAbort, match="duplicate"):

@@ -227,6 +227,8 @@ def test_go_container_limits_registration_and_oom(tmp_path):
 
     def run(cmd, **kw):
         assert guard.name in cmd and "--memory" in cmd and "--memory-swap" in cmd
+        assert cmd[cmd.index("--memory") + 1] == "4g"
+        assert cmd[cmd.index("--memory-swap") + 1] == "4g"
         assert str(tmp_path.resolve()) + ":/work" in cmd
         return subprocess.CompletedProcess(cmd, 137, "", "")
 

@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 import pytest
 from bench import token_turn_gate as tg, tg1_runner as runner, proc_guard as pg, structured_grade as sg
-from bench.tests.test_token_turn_gate import event, usage, request, assistant
+from bench.tests.test_token_turn_gate import event, usage, request, assistant, tool_state
 from bench.tests.test_proc_guard import Process, guard
 from m62 import replay
 
@@ -93,7 +93,7 @@ def test_f8_loop_mid_request_canonical_inputs_errors_count():
     s.accept(event('step_start'))
     for n in range(8):
         inputs = {'a': 1, 'b': 2} if n % 2 else {'b': 2, 'a': 1}
-        s.accept(event('tool_use', partID=str(n), tool='shell', state=dict(input=inputs, status='error')))
+        s.accept(event('tool_use', partID=str(n), tool='shell', state=tool_state(inputs, 'error')))
     assert g.stop_reason == 'looping' and not g.request_usage
     assert g.first_crossing_request == 1
 
@@ -155,10 +155,12 @@ def test_f9_cancellation_prefill_bound():
 def test_f13_sweep_excludes_probe_ancestors_and_session(tmp_path, monkeypatch):
     import os
     ancestor = Process(os.getppid(), cwd=str(tmp_path))
-    peer = Process(201, cwd=str(tmp_path))
+    peer = Process(201, cwd=str(tmp_path), created=1)
     child = Process(202, cwd=str(tmp_path))
     monkeypatch.setattr(pg.os, 'getsid', lambda pid: 1 if pid in (0, os.getpid(), 201) else 2)
     g = guard(tmp_path, [ancestor, peer, child])
+    g.started = 5
+    g.register(child, 'model')
     g.cleanup()
     assert not ancestor.dead and not peer.dead and child.dead
 
@@ -245,7 +247,7 @@ def test_f8_mid_request_post_threshold_known_output():
     s = tg.EventStream(g)
     request(s, output=4, calls=[{}]*7)
     s.accept(event('step_start','m2'))
-    s.accept(event('tool_use','m2',partID='last',tool='shell',state={'input':{}}))
+    s.accept(event('tool_use','m2',partID='last',tool='shell',state=tool_state()))
     tg.reconcile(s, dict(messages=[assistant(output=4),assistant('m2',17)]),0)
     assert g.report()['post_threshold_tokens_known'] == 17
 

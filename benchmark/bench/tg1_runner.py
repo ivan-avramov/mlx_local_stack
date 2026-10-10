@@ -27,6 +27,40 @@ PLUGIN = REPO / "benchmark/opencode_plugins/toolbounds.js"
 
 
 GRADE_JOIN_OVERHEAD_S = 60
+HEARTBEAT_INTERVAL_S = 30
+
+
+class PhaseHeartbeat:
+    """Keep reporting while the main thread waits for cancellation or grading."""
+
+    def __init__(self, gate, lock, started, *, interval=None):
+        self.gate, self.lock, self.started = gate, lock, started
+        self.interval = HEARTBEAT_INTERVAL_S if interval is None else interval
+        self.phase = "client"
+        self.report = {}
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self._run, name="m62-heartbeat", daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def set_phase(self, phase):
+        self.phase = phase
+
+    def _run(self):
+        while not self.done.wait(self.interval):
+            # A slow main-thread operation must not block the heartbeat.
+            if self.lock.acquire(blocking=False):
+                try:
+                    self.report = self.gate.report()
+                finally:
+                    self.lock.release()
+            print(json.dumps(dict(m62_watch=self.report, phase=self.phase,
+                                  elapsed_s=time.monotonic() - self.started)), flush=True)
+
+    def close(self):
+        self.done.set()
+        self.thread.join(5)
 
 
 def grade_join_timeout_s():
@@ -209,10 +243,18 @@ def identity(p, selection, universe_sha, version, binary):
         Path(p.__file__),
         Path(provenance.__file__),
         Path(p.opencode_common.__file__),
+        # Transitive scoring/accounting: budget clamp, seeds, audit/cheat labels,
+        # registry resolution and deployed sampling/provenance. Legacy progress_gate
+        # and generate execution are not called by tg1.
+        *(REPO / "benchmark" / name for name in (
+            "bench/convergence.py", "bench/rowschema.py", "bench/answer_key.py",
+            "web_audit.py", "web_audit_prompt.md", "bench/paths.py",
+            "bench/model_params.py", "bench/quant_info.py",
+        )),
     ]
     digest = hashlib.sha256()
     for path in modules:
-        digest.update(path.name.encode())
+        digest.update(path.relative_to(REPO).as_posix().encode() + b"\0")
         digest.update(path.read_bytes())
     return dict(
         scaffold=SCAFFOLD,
@@ -240,6 +282,7 @@ def run_item(
     private,
     router,
     base,
+    protected_pids=(),
 ):
     gate = tg.TokenTurnGate(
         entry["baseline_failing"],
@@ -248,6 +291,7 @@ def run_item(
     )
     lock = threading.RLock()
     observations = []
+    termination = {}
     silence_observer = pg.SilenceObserver()
     exit_hang = False
     resources = dict(grader_mem_kill=False, grader_oom=False)
@@ -268,6 +312,7 @@ def run_item(
         [work, env["TMPDIR"], private],
         run_id=Path(private).parent.name,
         item=entry.get("id", work.name),
+        protected_pids=(*protected_pids, router.get("pid")),
     )
 
     def grade(snap):
@@ -284,13 +329,41 @@ def run_item(
     worker = GradeWorker(gate, lock, work, private, grade)
     stream = tg.EventStream(gate, worker.notify)
     proc = None
+    client_launch_attempted = False
     ingester = None
     killed = False
     final_result = None
+    cancellation_attempted = False
+    heartbeat = PhaseHeartbeat(gate, lock, started)
+
+    def terminate_client(reason=None):
+        nonlocal killed, cancellation_attempted
+        if cancellation_attempted:
+            return
+        with lock:
+            if reason and reason != "client_exit_hang":
+                gate.stop(reason)
+            if not killed:
+                gate.requests_at_kill = len(gate.request_usage)
+                gate.inflight_s_at_stop = (
+                    time.monotonic() - stream.started_at if stream.started_at else None
+                )
+                termination.update(reason=reason, requests_at_kill=gate.requests_at_kill,
+                                   inflight_s_at_stop=gate.inflight_s_at_stop)
+        killed = True
+        heartbeat.set_phase("cancellation")
+        guard.kill_role("client")
+        guard.kill_role("model")
+        cancellation_attempted = True
+        pg.wait_cancel(lambda: worker_json("metrics"),
+                       prompt_tokens=gate.request_usage[-1][2] if gate.request_usage else 0)
+
+    heartbeat.start()
     try:
         guard.start()
         worker.start()
         with paths["events"].open("wb") as stdout, paths["stderr"].open("wb") as stderr:
+            client_launch_attempted = True
             proc = guard.spawn(
                 [
                     binary,
@@ -332,7 +405,6 @@ def run_item(
                 target=ingest, name="m62-ingestion", daemon=True
             )
             ingester.start()
-            last_alert = started
             last_silence = 0
             while proc.poll() is None:
                 guard.check()
@@ -367,44 +439,28 @@ def run_item(
                         elif observed_reason:
                             gate.stop(observed_reason)
                     reason = gate.stop_reason or ("client_exit_hang" if exit_hang else None)
-                    if reason:
-                        gate.requests_at_kill = len(gate.request_usage)
-                        gate.inflight_s_at_stop = (
-                            now - stream.started_at if stream.started_at else None
-                        )
                 if reason:
                     provenance.assert_served_config_unchanged(router, base)
-                    guard.kill_role("client")
-                    guard.kill_role("model")
-                    killed = True
-                    pg.wait_cancel(lambda: worker_json("metrics"), prompt_tokens=gate.request_usage[-1][2] if gate.request_usage else 0)
+                    terminate_client(reason)
                     break
-                if now - last_alert >= 300:
-                    with lock:
-                        report = gate.report()
-                    print(
-                        json.dumps(
-                            dict(
-                                m62_watch=report,
-                                elapsed_s=now - started,
-                                observations=observations[-1:],
-                            )
-                        ),
-                        flush=True,
-                    )
-                    last_alert = now
                 stop.wait(0.1)
+            # The watchdog may kill the client before the loop ever observes it alive.
+            if guard.client_resource or proc.returncode is not None and proc.returncode < 0:
+                terminate_client("client_resource" if guard.client_resource else None)
             proc.wait(timeout=10)
+        heartbeat.set_phase("terminal_drain")
         stop.set()
         ingester.join(5)
         if ingester.is_alive():
             raise tg.TransportAbort("ingestion thread did not drain")
         if ingest_failure:
             raise ingest_failure[0]
+        heartbeat.set_phase("terminal_grading")
         worker.finish()
         if guard.client_resource:
             gate.stop("client_resource")
         # Export acquisition is tracked, and the raw native IDs remain intact.
+        heartbeat.set_phase("export")
         exported = guard.run_grader(
             [binary, "session", "export", stream.session_id or "", "--standalone"],
             cwd=work,
@@ -446,6 +502,7 @@ def run_item(
         if final_boundary != final_boundary_actual:
             gate.pending.discard(final_boundary)
             gate.pending.add(final_boundary_actual)
+        heartbeat.set_phase("terminal_grading")
         with sg.snapshot(work, private, boundary=final_boundary_actual) as snap:
             modified = (
                 True
@@ -467,6 +524,7 @@ def run_item(
             gate=gate.report(),
             request_usage=gate.request_usage,
             nonconv_kind=gate.primary,
+            converged=gate.primary is None,
             nonconv_flags=[f for f in tg.PRECEDENCE if f in gate.flags],
             test_modified=modified,
             passed=bool(
@@ -480,6 +538,7 @@ def run_item(
             requests_observed=len(stream.starts),
             tool_bounds_rejections=tool_bounds_rejections(export),
             silence_observations=observations,
+            termination=termination,
             client_exit_hang=exit_hang,
             torn_tail=stream.torn_tail,
             event_types_seen=stream.event_types_seen,
@@ -489,24 +548,28 @@ def run_item(
             **resources,
         )
     finally:
-        with pg.defer_signals():
-            stop.set()
-            if ingester:
-                ingester.join(5)
-            # On failure, unblock any grader before joining its worker.
-            if sys.exc_info()[0] is not None:
-                guard.kill_role()
-            try:
-                if worker.thread.is_alive():
-                    worker.finish()
-            finally:
-                guard.cleanup()
-                if proc and proc.poll() is None:
-                    proc.wait(timeout=10)
-                if proc and (
-                    killed or proc.returncode is not None and proc.returncode < 0
-                ):
-                    pg.wait_cancel(lambda: worker_json("metrics"), prompt_tokens=gate.request_usage[-1][2] if gate.request_usage else 0)
+        try:
+            with pg.defer_signals():
+                try:
+                    if client_launch_attempted and (sys.exc_info()[0] is not None or proc and proc.poll() is None):
+                        terminate_client()
+                finally:
+                    stop.set()
+                    if ingester:
+                        ingester.join(5)
+                    if sys.exc_info()[0] is not None:
+                        guard.kill_role("grader")
+                    try:
+                        heartbeat.set_phase("terminal_grading")
+                        if worker.thread.is_alive():
+                            worker.finish()
+                    finally:
+                        heartbeat.set_phase("cleanup")
+                        guard.cleanup()
+                        if proc and proc.poll() is None:
+                            proc.wait(timeout=10)
+        finally:
+            heartbeat.close()
 
 
 def main(p, a):
@@ -614,7 +677,8 @@ def _main(p, a, names):
         env = p._opencode_env(run_dir, scratch, overlay)
         p._fresh_tmpdir(env)
         check_env(env, overlay)
-        with pg.ProcessGuard([scratch, env["TMPDIR"]]) as discovery_guard:
+        with pg.ProcessGuard([scratch, env["TMPDIR"]],
+                             protected_pids=(router.get("pid"), before["pid"])) as discovery_guard:
             version_result = discovery_guard.run_grader(
                 [binary, "--version"],
                 cwd=scratch,
@@ -701,7 +765,8 @@ def _main(p, a, names):
                 env = p._opencode_env(run_dir, work, overlay)
                 p._fresh_tmpdir(env)
                 check_env(env, overlay)
-                with pg.ProcessGuard([work, env["TMPDIR"]]) as discovery_guard:
+                with pg.ProcessGuard([work, env["TMPDIR"]],
+                                     protected_pids=(router.get("pid"), before["pid"])) as discovery_guard:
                     destination = provenance.opencode_v2_destination(
                         work,
                         {**env, "OPENCODE_PRINT_LOGS": "1"},
@@ -739,6 +804,7 @@ def _main(p, a, names):
                     private=private,
                     router=router,
                     base=base,
+                    protected_pids=(before["pid"],),
                 )
                 after = worker_identity(p, a.model, router)
                 pg.require_identity(before, after)

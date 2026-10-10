@@ -865,6 +865,8 @@ def _main():
     ap.add_argument("--poll-s", type=float, default=5.0)
     a = ap.parse_args()
     if a.scaffold == "opencode-v2-web-tg1":
+        ap.allow_abbrev = False
+        a = ap.parse_args()
         from bench import tg1_runner
         return tg1_runner.main(sys.modules[__name__], a)
     if bool(a.rerun_of) != (a.rerun_index is not None):

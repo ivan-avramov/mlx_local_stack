@@ -95,6 +95,26 @@ def protected_manifest(prepared, solutions):
     }
 
 
+def has_go_testmain(source):
+    """Lex Go declarations, excluding comments, literals and method receivers."""
+    tokens = []
+    pattern = r'//[^\n]*|/\*[\s\S]*?\*/|`[^`]*`|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[\w]+|[^\s]'
+    for match in re.finditer(pattern, source):
+        token = match.group()
+        if token.startswith(("//", "/*")):
+            continue
+        tokens.append("<literal>" if token[0] in "\"'`" else token)
+    depth = 0
+    for i, token in enumerate(tokens):
+        if depth == 0 and tokens[i:i + 3] == ["func", "TestMain", "("]:
+            return True
+        if token == "{":
+            depth += 1
+        elif token == "}":
+            depth = max(0, depth - 1)
+    return False
+
+
 def tampered(work, protected, prepared, lang):
     try:
         current = manifest(work)
@@ -112,10 +132,7 @@ def tampered(work, protected, prepared, lang):
                 Path(rel).parent == Path(".")
                 and rel.endswith(".go")
                 and current[rel] != prepared.get(rel)
-                and re.search(
-                    r"\bfunc\s+TestMain\s*\(",
-                    (Path(work) / rel).read_text(errors="replace"),
-                )
+                and has_go_testmain((Path(work) / rel).read_text(errors="replace"))
             ):
                 return True
     for rel in current.keys() - prepared.keys():
@@ -124,15 +141,6 @@ def tampered(work, protected, prepared, lang):
             return True
         if lang == "go" and (
             rel in ("go.mod", "go.work") or p.parts[0] == "vendor"
-        ):
-            return True
-        if (
-            lang == "go"
-            and p.parent == Path(".")
-            and p.suffix == ".go"
-            and re.search(
-                r"\bfunc\s+TestMain\s*\(", (Path(work) / p).read_text(errors="replace")
-            )
         ):
             return True
     return False

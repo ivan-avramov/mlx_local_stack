@@ -151,18 +151,26 @@ def wait_cancel(metrics, *, prompt_tokens=0, timeout=None, sleep=time.sleep, now
 
 
 @contextmanager
-def defer_signals():
+def defer_signals(*, deliver=False):
     if threading.current_thread() is not threading.main_thread():
         yield
         return
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    pending = []
     try:
         for sig in previous:
-            signal.signal(sig, lambda *_: None)
+            signal.signal(sig, lambda sig, frame: pending.append((sig, frame)))
         yield
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+        if deliver and pending:
+            sig, frame = pending[0]
+            handler = previous[sig]
+            if callable(handler):
+                handler(sig, frame)
+            elif handler == signal.SIG_DFL:
+                signal.raise_signal(sig)
 
 
 class ProcessGuard:
@@ -178,12 +186,14 @@ class ProcessGuard:
         interval=0.5,
         run_id=None,
         item="grade",
+        protected_pids=(),
     ):
         import psutil
 
         self.psutil = psutil
         self.excluded_pids = {os.getpid(), os.getppid()}
         self.excluded_pids.update(p.pid for p in psutil.Process().parents())
+        self.excluded_pids.update(protected_pids)
         self.probe_session = os.getsid(0)
         self.scan = scan or psutil.process_iter
         self.get = get or psutil.Process
@@ -194,6 +204,7 @@ class ProcessGuard:
         self.interval = interval
         self.started = time.time()
         self.tracked = {}
+        self.acquiring = set()
         self.containers = set()
         self.orphans_unattributed = []
         self.shell_descendants = set()
@@ -215,7 +226,12 @@ class ProcessGuard:
 
     def register(self, process, role):
         with self.lock:
+            if self._protected(process):
+                raise TransportAbort("refused ownership of protected process")
             self.tracked[(process.pid, process.create_time())] = role
+
+    def _protected(self, process):
+        return process.pid in self.excluded_pids or process.create_time() < self.started
 
     def _live(self, process):
         return process.status() not in ("zombie", "dead")
@@ -244,7 +260,8 @@ class ProcessGuard:
             alive = {}
             for p in processes:
                 try:
-                    alive[p.pid] = (p, p.create_time())
+                    if not self._protected(p):
+                        alive[p.pid] = (p, p.create_time())
                 except self.psutil.NoSuchProcess:
                     pass
             # Follow ancestry until its transitive closure; detachments retain recorded ownership.
@@ -298,7 +315,7 @@ class ProcessGuard:
                 total -= rss
 
     def _mem_kill(self, p, key, role):
-        if p.create_time() != key[1]:
+        if self._protected(p) or p.create_time() != key[1]:
             return
         p.kill()
         if role == "client":
@@ -334,13 +351,22 @@ class ProcessGuard:
         if not self.thread:
             self.start()
         # Serialize spawn/registration against samples; the tracker is already running.
-        with self.lock:
+        with defer_signals(deliver=True), self.lock:
             proc = subprocess.Popen(cmd, **kwargs)
+            self.acquiring.add(proc)
             try:
-                self.register(self.get(proc.pid), role)
-            except self.psutil.NoSuchProcess:
-                if proc.poll() is None:
-                    raise
+                try:
+                    self.register(self.get(proc.pid), role)
+                except self.psutil.NoSuchProcess:
+                    if proc.poll() is None:
+                        raise
+            except BaseException:
+                # The Popen handle is ownership evidence even if psutil registration failed.
+                proc.kill()
+                proc.wait(timeout=10)
+                self.acquiring.discard(proc)
+                raise
+            self.acquiring.discard(proc)
         return proc
 
     def run_grader(
@@ -360,15 +386,19 @@ class ProcessGuard:
 
     def kill_role(self, role=None):
         with self.lock:
-            for (pid, created), actual in list(self.tracked.items()):
-                if role is not None and actual != role:
-                    continue
-                try:
-                    p = self.get(pid)
-                    if p.create_time() == created and self._live(p):
-                        p.kill()
-                except self.psutil.NoSuchProcess:
-                    pass
+            try:
+                # Capture ancestry before killing the parent reparents its children.
+                self.tick()
+            finally:
+                for (pid, created), actual in list(self.tracked.items()):
+                    if role is not None and actual != role:
+                        continue
+                    try:
+                        p = self.get(pid)
+                        if not self._protected(p) and p.create_time() == created and self._live(p):
+                            p.kill()
+                    except self.psutil.NoSuchProcess:
+                        pass
 
     def descendants_alive(self):
         for p in self._processes():
@@ -424,23 +454,32 @@ class ProcessGuard:
             self.done.set()
             if self.thread:
                 self.thread.join(5)
+            for proc in list(self.acquiring):
+                proc.kill()
+                proc.wait(timeout=10)
+                self.acquiring.discard(proc)
             self.kill_role()
             for name in list(self.containers):
                 self.remove_container(name)
             survivors = []
             orphans = {}
+            uncertain = False
             for attempt in range(3):
                 survivors = []
                 for p in self._processes():
-                    if self._sweep_excluded(p) and (p.pid, p.create_time()) not in self.tracked:
-                        continue
                     try:
+                        if self._protected(p):
+                            continue
                         key = (p.pid, p.create_time())
-                        attributed = key in self.tracked or self._attributed_path(p)
-                        if attributed:
-                            self.tracked.setdefault(key, "swept")
+                        if key in self.tracked:
                             p.kill()
                             survivors.append(p.pid)
+                        elif self._attributed_path(p):
+                            uncertain = True
+                            orphans[key] = dict(pid=p.pid, create_time=key[1],
+                                                argv=p.cmdline(), reason="path-only attribution")
+                        elif self._sweep_excluded(p):
+                            continue
                         elif p.ppid() == 1 and p.create_time() >= self.started:
                             orphans[key] = dict(
                                 pid=p.pid, create_time=p.create_time(), argv=p.cmdline()
@@ -451,6 +490,11 @@ class ProcessGuard:
                     break
                 time.sleep(0.05)
             self.orphans_unattributed[:] = list(orphans.values())
+            if uncertain:
+                raise TransportAbort("cleanup uncertain: path-only processes remain " + json.dumps(
+                    [dict(pid=p["pid"], create_time=p["create_time"])
+                     for p in orphans.values() if p.get("reason") == "path-only attribution"]
+                ))
             if survivors:
                 raise TransportAbort("attributed processes survived cleanup")
             if self.failure:

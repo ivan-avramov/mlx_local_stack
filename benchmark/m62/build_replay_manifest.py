@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """M62 V2: freeze the offline-replay manifest of identity-matched v2 rows (spec §6)."""
-import hashlib, json, os, sys
+import argparse, hashlib, json, os, sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "benchmark"))
+from bench import proc_guard as pg
 INVALID = {"go/counter"}  # C145
 FIXTURES = [  # pre-registered expectations (spec §6 V2)
     ("Qwen3.8-27B-mlx-uniform-4bit", "opencode_v2_go.m61.s2.jsonl", "go/kindergarten-garden", "looping@request15"),
@@ -20,6 +22,12 @@ def _sha(placeholder, wd):
 
 
 def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--refreeze", action="store_true")
+    args = ap.parse_args()
+    out = REPO / "benchmark/m62/replay_manifest.json"
+    if out.exists() and not args.refreeze:
+        ap.error("destination exists; pass --refreeze to replace frozen evidence")
     wd = Path(os.environ["STACK_WORKDIR"])
     entries = []
     for f in sorted((REPO / "benchmark/results").glob("*/opencode_v2_*.jsonl")):
@@ -56,8 +64,7 @@ def main():
         "passing_matched_valid": sum(e["passed"] is True and e["valid_item"] for e in use),
     }
     doc = {"spec": "docs/specs/m62-token-turn-gate.md §6 V2", "summary": summary, "entries": entries}
-    out = REPO / "benchmark/m62/replay_manifest.json"
-    out.write_text(json.dumps(doc, indent=1) + "\n")
+    pg.atomic_write(out, (json.dumps(doc, indent=1) + "\n").encode())
     print(json.dumps(summary), hashlib.sha256(out.read_bytes()).hexdigest())
 
 
