@@ -1,14 +1,17 @@
 # C147 — tg1 chain clearance: injected positives, chain runner, `/tmp` escape diagnostic, grader-report retention
 
-Status: REVISION 2, 2026-10-10. Design P236–P241 approved by the operator 2026-10-10 ("sounds good"), with cold
-review on Codex `gpt-6.1-sol` before and after the build. Revision 1 drew "redesign" (findings P1–P14,
-`$STACK_WORKDIR/c147/codex_design_review1.md`); revision 2 answers each, tagged `[Pn]` where the answer lives. Long-haul box runs (the ≈30 min injected run and the
+Status: REVISION 3, 2026-10-10. Design P236–P241 approved by the operator 2026-10-10 ("sounds good"), with cold
+review on Codex `gpt-6.1-sol` before and after the build. Revision 1 drew "redesign" (P1–P14,
+`$STACK_WORKDIR/c147/codex_design_review1.md`); revision 2 answered each and drew "redesign" again (P1–P4, P9, P10,
+P12, P13 partially answered; new P15–P22; `codex_design_review2.md`). Revision 3 answers the open ids, tagged
+`[Pn]`. Lead decision: build from revision 3; the post-build cold review (V5) re-checks every id against code. Long-haul box runs (the ≈30 min injected run and the
 ≈20 h P223 chains) are the operator's; this build ships code, tests and the handoff only. Parent spec:
 `docs/specs/m62-token-turn-gate.md` (rev 5 + §9); owed list: `docs/open-questions.md` C147.
 
 ## 1. Scope
 
-Four deliverables, all under `benchmark/`, none changing the campaign tg1 policy or any pick:
+Four deliverables, all under `benchmark/` except the named exception `scripts/session_pinning_gate.py` (tg1 mode,
+§3) [P22], none changing the campaign tg1 policy or any pick:
 
 1. `--tg1-inject {stall,loop,alloc}`: a labelled, never-pooled probe mode that lowers exactly one threshold so the
    live stop → owned-descendant kill → worker cancellation → export reconciliation path can be proven on the box.
@@ -40,47 +43,47 @@ cancellation constants are unchanged in every kind.
 
 **Prompt addendum (hashed).** Each kind appends one fixed sentence to the item prompt so the positive is driven
 rather than hoped for (the rows are instrument proofs, never model evidence). Compliance is NOT deterministic
-[P9]: the verifier classifies every row (below) and a non-firing kind is re-run on the next seed base of the fixed
+[P9]: the verifier classifies every row (below) and a non-PASS kind is re-run on the next seed base of the fixed
 schedule 1001 → 2002 → 3003 (three attempts per kind; a third miss is a build finding, not a shrug).
 
 - `stall`: "Before anything else, run the shell command `ls` four separate times, one tool call per message, and
   only then start the task."
-- `loop`: "Before anything else, run the shell command `ls` three times in a row as three separate tool calls with
-  exactly the same command text and working directory, and only then start the task." (On opencode 2.0.20 the
-  shell input is exactly `{command, workdir}` — verified from a recorded export — so an identical command in the
-  same directory is an identical gate signature.)
+- `loop`: "Before anything else, run the shell command `sleep 600 >/dev/null 2>&1 & sleep 1` three times in a row
+  as three separate tool calls with exactly the same arguments (same command text, same working directory, no
+  other fields), and only then start the task." The detached `sleep 600` is a tracked model descendant (its parent
+  shell lives one second, two tracker ticks, so ancestry is recorded before the detach) and is still alive when the
+  third identical call stops the item [P10].
 - `alloc`: "Before anything else, run exactly this shell command once:
   `python3 -c "import time; b = bytearray(400 * 1024 * 1024); time.sleep(90)"` and only then start the task."
 
-The addendum text is part of the inject policy and its sha256 is recorded.
+The addendum text is part of the inject policy and its sha256 is recorded. The shell tool's input schema on 2.0.20
+is `{command, workdir, timeout?, background?}` and the gate hashes the whole input object [P9]; the loop addendum
+therefore asks for identical arguments, and the verifier derives the signatures from the raw events, not from the
+label.
 
-**Registered trigger predicates (from the row and raw events, not from the label) [P9].**
+**Registered trigger predicates (from the row and raw events) [P9] [P16].**
 
 | kind | PASS predicate | other outcomes |
 |---|---|---|
-| `stall` | `gate.stop_reason == "stalled"` and (`no_progress_requests ≥ 4` or `no_progress_tokens ≥ 81,920`); the verifier records which clause held | a different stop → `competing_trigger:<reason>`; no stop → `not_observed` |
-| `loop` | `gate.stop_reason == "looping"` and `max_identical_run_live ≥ 3`; the three identical signatures are re-derived from the events file | as above |
-| `alloc` | one `mem_kills` entry with `role == "model"`, whose recorded `argv` contains `bytearray(`, whose `request_index` is the request carrying the `bytearray(` shell part, that part's state is `error`, and `gate.requests_completed > request_index` (the session continued) | kill absent → `not_observed`; kill of an unrelated process → `FAIL` |
+| `stall` | `gate.stop_reason == "stalled"`, `gate.no_progress_requests ≥ 4` AND `gate.no_progress_tokens < 81,920` at the stop (the lowered threshold was the crossing); re-derived from the events: ≥ 4 `step_finish` after the last progress boundary | a T crossing (`no_progress_tokens ≥ 81,920`) → `competing_trigger:T`; another stop → `competing_trigger:<reason>`; no stop → `not_observed` |
+| `loop` | `gate.stop_reason == "looping"`, `max_identical_run_live ≥ 3`; three consecutive `tool_use` events with byte-identical canonical `(tool, input)` in the events file | as above |
+| `alloc` | one `mem_kills` entry with `role == "model"`, `rss > per_process` (256 MiB), `argv` containing `bytearray(`, `tool_call_id` equal to the `part.id` of the shell part whose `command` contains `bytearray(`, `carrying_request` = that part's 1-based request index and `completed_boundary_at_kill = carrying_request − 1`; that part's recorded state matches the frozen killed-command fixture (`status == "error"`, or `status == "completed"` with metadata `exit != 0` or a signal — the fixture is produced by the V2 real-client allocation test and frozen by sha); and a completed request with index > `carrying_request` exists (continuation) | kill absent → `not_observed`; kill of an unrelated argv → `FAIL` |
 
-**Causal evidence of the live path [P10].** Rows gain `termination.killed` = `[{pid, create_time, role}]` from
-`kill_role` (every tracked process it signalled), `termination.cancel_wait_s` (elapsed until worker
-`summary.in_flight == 0`, `wait_cancel` returns it), `termination.in_flight_at_kill` (the `/metrics` value sampled
-immediately before the kill) and `gate.inflight_s_at_stop` (already recorded). `mem_kills` entries gain `role`,
-`rss`, `argv` (PII-scrubbed) and `request_index` (completed requests at the kill). For `stall` and `loop` the
-verifier requires `termination.killed` to include the client pid, `termination.reason` to equal the stop,
-`reconciliation.trailing ∈ {interrupted, unpublished}` and `cancel_wait_s` to be a number within the cancel bound.
-Across the stall and loop rows together at least one must show `in_flight_at_kill ≥ 1` (a request was in flight
-when the kill landed, so `cancel_wait_s` measured a real cancellation); otherwise the verifier reports
-`not_observed:cancellation` and the operator re-runs the stall kind on the next seed. The `alloc` kind proves the
-tracked-descendant kill: the allocating process is alive and tracked when the per-process threshold fires.
-
-**Verifier** `benchmark/m62/inject_verify.py <rows.jsonl>...` prints one line per row (`PASS`, `FAIL`,
-`not_observed[:what]`, `competing_trigger:<reason>`) and exits nonzero unless every row is `PASS`. Per row it
-checks the label and `runtime.inject.kind`, the predicate table, the causal evidence above, `worker_before ==
-worker_after`, every `evidence_sha256` and every `grade_reports` artifact sha against the file on disk [P12], and
-prints `orphans_unattributed` (never fails on it). Live checks: `docker ps -a --filter name=mlxbench-<run_id>-` is
-empty for the row's run_id (exact registered prefix, never all `mlxbench-*` [P3]) and no same-uid process has
-cwd/argv under that run's scratch root (listed, never killed by the verifier).
+**Causal evidence of the live path [P10].** Rows gain `termination.killed` = `[{pid, create_time, role, argv}]`
+(every tracked process `kill_role` signalled, argv scrubbed), `termination.killed_verified` (every killed pid gone
+at the post-kill check, by pid+create_time), `termination.cancel_wait_s` (elapsed until worker `summary.in_flight
+== 0`; `wait_cancel` returns it), `termination.in_flight_at_kill` and `termination.worker_summary_before/after`
+(the full `/metrics` `summary` immediately before the kill and when `in_flight` reached 0, so the cancelled request
+is the one the worker was serving for this session). `mem_kills` entries gain `role`, `rss`, `argv`,
+`tool_call_id`, `carrying_request`, `completed_boundary_at_kill`. Requirements: `stall` and `loop` rows must have
+`termination.killed` including the client pid and `killed_verified == true`, `termination.reason` equal to the
+stop, `reconciliation.trailing ∈ {interrupted, unpublished}` and a numeric `cancel_wait_s` within the bound. The
+`loop` row must additionally show ≥ 1 killed `model`-role process whose argv is `sleep 600` (the tracked
+descendant alive at the stop) — this is the combined stop → owned-descendant kill → cancellation → reconciliation
+proof C147 owes. Cancellation itself is proven only when `in_flight_at_kill ≥ 1` and `worker_summary_after`
+differs from `_before` in the served counters; a row where the worker had finished naturally
+(`in_flight_at_kill == 0`) is `not_observed:cancellation` (registered negative case) and that kind is re-run.
+Suite requirement: the retained `loop` row shows the cancellation; `stall` may show it.
 
 **Labelling.** Row `scaffold` and manifest `runtime.scaffold` = `opencode-v2-web-tg1-inject:<kind>`;
 `runtime.inject` = `{kind, policy (full effective gate + hygiene dicts), prompt_addendum_sha256}`;
@@ -95,22 +98,25 @@ mixing (existing `runtime` equality check); the campaign path never reads `INJEC
 - `termination.cancel_wait_s`: seconds until worker `summary.in_flight` reached 0 after the kill (from `wait_cancel`,
   which returns the elapsed time; `None` when no kill happened).
 
-**Verifier** `benchmark/m62/inject_verify.py <rows.jsonl>...` prints one line per row and exits nonzero on any
-`FAIL`; `not_observed` exits nonzero too, with its own label. Per row it checks: `scaffold` label and
-`runtime.inject.kind` match the file; the kind's expected observation (table above) from `nonconv_kind`,
-`gate.stop_reason`, `gate.no_progress_requests` / `gate.max_identical_run_live` / `mem_kills`; for `stall` and
-`loop`: `termination.reason` equals the stop, `termination.cancel_wait_s` is a number within the cancel bound,
-`reconciliation.trailing ∈ {interrupted, unpublished}`; for `alloc`: the export (from `transcript_path`) has a
-`shell` part whose `command` contains `bytearray(` with status `error`; for every row: `worker_before ==
-worker_after`, every `evidence_sha256` matches the file on disk, `orphans_unattributed` is printed (never fails),
-and the live checks `docker ps -a --filter name=mlxbench-` is empty and no same-uid process has cwd/argv under the
-run's scratch root.
+**Verifier contract (single, authoritative) [P15].** `benchmark/m62/inject_verify.py --run <inject dir>`
+reads every attempt file `<kind>.attempt<n>.jsonl` (+ manifest) and prints one line per row:
+`PASS | FAIL:<why> | not_observed[:what] | competing_trigger:<reason>`. Per-row checks: label and
+`runtime.inject.kind`; the predicate table; the causal evidence; `worker_before == worker_after`; every
+`evidence_sha256` and every `grade_reports` artifact sha against the file; `orphans_unattributed` printed, never
+failing. Suite-level: the LAST attempt of each kind must be `PASS`; the retained `loop` row shows the cancellation
+(`in_flight_at_kill ≥ 1`); earlier attempts are listed as retries and are not clearance evidence. Live checks per
+retained row: `docker ps -a --filter name=mlxbench-<run_id>-` (exact registered prefix) is empty — unrelated
+containers are neither failures nor targets (test) — and no same-uid process has cwd/argv under that run's scratch
+root (listed, never killed). Exit 0 only when every suite-level check holds; `not_observed`/`competing_trigger`
+exit 4 (retryable), `FAIL` exit 1.
 
 **Driver** `benchmark/chains/c147/run_inject.py` (operator-run, ≈30 min): lean router via `chain_ops`, load
 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, A4 gate, three single-item legs (kinds in the order stall, loop,
 alloc; items = three seeded-random Python items from the universe, each kind a different item; seed base from the
-retry schedule, attempt n uses 1001/2002/3003 and the same item), `inject_verify.py` after each leg (a non-PASS
-re-runs that kind on the next seed, up to three attempts), unload, `stack_stop.sh`. Output `$STACK_WORKDIR/m62/inject/`; RUNLOG, rc
+retry schedule, attempt n uses 1001/2002/3003 and the same item), `inject_verify.py` after each leg (exit 4
+re-runs that kind on the next seed, up to three attempts; exit 1 stops the driver), then once over the run
+directory for the suite verdict, unload, `stack_stop.sh`. Before each leg the driver checks `vm_stat` free memory
+and the cancel bound; between kinds no idle wait (instrument run, not a latency capture). Output `$STACK_WORKDIR/m62/inject/`; RUNLOG, rc
 file, detached launch via `benchmark/chains/c147/drive_inject.sh`.
 
 ## 3. tg1 chain runner
@@ -126,10 +132,13 @@ no decode table). The frozen `benchmark/chains/m59/` files are not modified and 
 (`proc_guard.py` cleanup aborts on path-only processes instead of killing them). The probe's own H2 (per-process,
 aggregate and client limits) is the memory containment; the runner only logs `vm_stat` free memory per tick.
 
-**A4 gate for tg1 [P8].** `scripts/session_pinning_gate.py` gains `--scaffold opencode-v2-web-tg1`: carrier source
-`benchmark/opencode_bench_v2_web_tg1.json` through the same `_carrier_selection`, both `noretry.js` and
+**A4 gate for tg1 [P8] [P17].** `scripts/session_pinning_gate.py` gains `--scaffold opencode-v2-web-tg1`: carrier
+source `benchmark/opencode_bench_v2_web_tg1.json` through the same `_carrier_selection`, both `noretry.js` and
 `toolbounds.js` copied by sha into the gate's bench-owned `OPENCODE_CONFIG_DIR/plugins/`, receipt
-`carrier_sha256` = the tg1 selection's `opencode_bench_config_sha256`. The existing scaffold paths are byte-for-byte
+`carrier_sha256` = the tg1 selection's `opencode_bench_config_sha256`. The gate's timeout kill targets only the
+process group it created with `start_new_session` for its own one-turn opencode child (ownership by session, not by
+path; stated and tested: a same-uid process outside that group is never signalled). A gate timeout is a chain
+abort (exit 2), never a restart. The existing scaffold paths are byte-for-byte
 unchanged (test). A test proves the receipt is accepted by `run_opencode_probe_v2._a4_receipt` for a tg1 selection
 with `limit > 5` and refused for a receipt from the web scaffold. `chain_ops.a4_gate` runs it once per loaded
 instance and passes `--a4-v2-receipt` to every leg of that instance.
@@ -151,12 +160,26 @@ detached, rc in `chain.rc`, log `chain.out`, RUNLOG and `chain.json` (provenance
 - **Execution.** `Popen` (no `subprocess.run` timeout), `start_new_session=True`, stdout/stderr to `<leg>.log`,
   `--expect-items` = the leg's exact id set, `--a4-v2-receipt` from this block's gate, `--scaffold
   opencode-v2-web-tg1`, `--out` under `$STACK_WORKDIR/c147/<session>/<model>.<session>.opencode_<lang>.jsonl`,
-  `--cancel-file <leg>.CANCEL` (below).
-- **First-manifest check before item two [P14].** The probe writes the manifest before item one; the runner waits
-  for it (≤ 120 s, else cooperative cancel) and verifies `runtime.scaffold == "opencode-v2-web-tg1"`,
-  `runtime.scaffold_policy_sha256 == ba86ba16…` (the pinned campaign hash), `runtime.draft_kind == "off"`,
-  `registry.sha256` equal to the overlay the router was started with, and `worker` identity equal to the block's
-  recorded identity. Any mismatch → cooperative cancel, chain exit 2.
+  `--sampling-profile deployed` (new probe flag, accepts only `deployed`, recorded in the manifest [P20]),
+  `--cancel-file <leg>.attempt<n>.CANCEL` and `--manifest-ack <leg>.attempt<n>.ACK` (unique per attempt [P21];
+  a stale cancel or ack file for the attempt path refuses the spawn). Every attempt records
+  `attempt.json` = {attempt, probe pid+create_time, run_id, worker identity, argv, cancel/ack paths, rc,
+  cleanup status} and is archived with its rows/manifest/log [P3]. **Pilot versus full invocation [P18]:** the
+  pilot passes `--limit 5 --expect-items <exactly its five ids>`; the full invocation passes the full language set;
+  both write the same rows file (the probe skips existing ids); the argument vectors are tested.
+- **Arm state [P20].** At every block boundary the runner idles `--arm-idle-s` (default 600 s) after the unload
+  and logs the start state before the load: power (W, V, %), `vm_stat` free memory, busy processes, orphan
+  shells. After the load it verifies the WORKER environment (`ps -E` on the worker pid: `MLX_VLM_CACHE_SESSION_MAX=1`,
+  `MLX_SERVE_CONFIG` = the overlay, no `APC_ENABLED`) as well as the router's, and records the worker cmdline.
+- **First-manifest barrier before item one [P14] [P17].** The probe writes the manifest before item one and, under
+  `--manifest-ack`, blocks before any generation until the ack file exists (≤ 300 s, else
+  `TransportAbort("manifest not acknowledged")` with nothing generated). The runner reads the manifest and verifies
+  `runtime.scaffold == "opencode-v2-web-tg1"`, `runtime.scaffold_policy_sha256 == ba86ba16…` (the pinned campaign
+  hash), `runtime.probe_code_sha256 == --probe-code-sha`, `runtime.draft_kind == "off"`, `runtime.seed_base`,
+  `runtime.lang` and the model equal to the leg descriptor, `registry.sha256` equal to the overlay the router was
+  started with, and `worker` identity equal to the block's recorded identity; then it creates the ack. Any mismatch
+  → no ack, the probe aborts itself, chain exit 2. A manifest missing after 120 s is an ALARM while the probe is
+  alive (never a cancel; the idle predicate is the only automatic cancel).
 - **Watcher (every 300 s) [P14].** Rows: n/total, passed, mean item wall, ETA from the running mean, the
   prediction (`--pred-s` per (lang, model); default = the pilot mean once ≥ 5 rows exist, else the M59 table),
   `nonconv_kind` counts, converged share, output-token quantiles (p50/p90/max) and budget-hit count from the rows;
@@ -165,30 +188,43 @@ detached, rc in `chain.rc`, log `chain.out`, RUNLOG and `chain.json` (provenance
 - **Alarm, not kill.** `expected_s = n_remaining × mean`; `alarm_s = 2 × expected_s + 3 × max_item_wall` (max over
   pilot/running rows, floor 7,200 s). Past the alarm the watcher logs `ALARM` every tick. Time alone never ends a
   leg (M62 §4: silent/BUSY is never killed).
-- **Cooperative cancellation contract (probe side) [P4].** New probe flag `--cancel-file <path>` (tg1 only). The
-  `run_item` loop checks the file every tick; when it appears the probe sets `termination.reason =
-  "runner_cancel"`, runs the normal stop path (`terminate_client`: client/model kill, `wait_cancel`), then the full
-  terminal path — drain, grade join, export, reconcile with `outcome = "runner_cancel"` (a new row of the §3a
-  table: one trailing interrupted or unpublished message allowed, exactly as a gate stop), final grade and report
-  retention — and then raises `TransportAbort("cancelled by runner")`: the item gets NO row, the manifest records
-  `transport_abort`, and every evidence file (events, stderr, export, grade reports) is retained with its sha in the
-  manifest under `cancelled_item`. A test drives this with the real `run_item`, the pinned client and the mock
-  provider and asserts the export and reconciliation exist afterwards; the existing SIGTERM→`SystemExit(143)` path
-  (cleanup only, no export) is unchanged and remains the escalation step.
+- **Cooperative cancellation contract (probe side) [P4] [P13].** New probe flag `--cancel-file <path>` (tg1
+  only). Checked (a) before the discovery spawn, (b) at every item boundary in `_main`, (c) every tick of the
+  `run_item` client loop; NOT during the bounded terminal phases (drain, grading, export, cleanup), which finish
+  first. In (a)/(b) the probe exits with `TransportAbort("cancelled by runner")` before spawning anything. In (c)
+  it sets `termination.reason = "runner_cancel"`, runs the normal stop path (`terminate_client`: client/model kill,
+  `wait_cancel`), then the full terminal path — drain, grade join, export, reconcile with `outcome =
+  "runner_cancel"` (a new §3a row: one trailing interrupted or unpublished message allowed, exactly as a gate
+  stop), final grade and report retention — and then raises `TransportAbort("cancelled by runner")`: the item gets
+  NO row; `_main`'s abort path records in the manifest `transport_abort` AND `cancelled_item = {id, evidence
+  sha256s, grade_reports, reconciliation, termination, cleanup_status}`. Every abort (cancel or otherwise) now
+  records `cleanup_status = {survivors, containers_remaining, uncertain, orphans_unattributed}` from the guard
+  [P3]. Tests drive `p.main()` (the real CLI dispatch, via `tg_fixture`) with the pinned client and the mock
+  provider for cancellation during discovery, between items, during generation, and a cancel file appearing
+  during grading/export (honoured only after the terminal phases), asserting manifest fields, exit code and the
+  absence of a row; the SIGTERM→`SystemExit(143)` path stays cleanup-only and is the escalation step.
 - **Cancellation decision (runner side) [P5].** The runner may write the cancel file only when ALL of the following
   hold on three consecutive samples ≥ 60 s apart and again immediately before writing: heartbeat line age > 900 s;
   events file byte size unchanged; rows file unchanged; worker `/metrics` readable with `summary.in_flight == 0`
   (unreadable → not idle, logged); worker identity (pid, create_time) unchanged. Any change resets the count. A
   dead heartbeat thread with growing events therefore never cancels (test). Or: `STOP` exists (below).
-- **Escalation [P4].** After the cancel file: wait `T_coop = 5 (drain) + 660 (grade join) + cancel bound
-  (max(300, prompt/300)) + 120 (export) + 300 (final grade) + 60 = 1,445 s` (+ the Go grader's 180 s when the leg is
-  Go) for the probe to exit; then SIGTERM (cleanup-only path), wait 120 s; then SIGKILL the probe pid. After any
-  SIGKILL the runner lists same-uid processes whose cwd/argv lies under the leg's scratch root or `TMPDIR` and
-  `mlxbench-<run_id>-*` containers, kills NOTHING [P3], and if any exist marks the chain `cleanup uncertain` and
-  exits 2 for the operator (the probe's own guard would have aborted on the same evidence).
-- **Completion = validation, not row count [P11].** `chain_ops.validate_leg(out, expected_ids, pinned)` requires:
-  probe rc 0; rows load (torn file refuses); ids == expected exactly; manifest present with no `transport_abort`
-  and no `served_config_drift`; `runtime` identity equal to `pinned` on every field except `seed_base`/`lang`
+- **Escalation [P4] [P17].** The heartbeat line gains `last_prompt_tokens` (the last completed request's
+  `prompt_j`). After the cancel file: `T_coop = 5 (drain) + 660 (grade join) + max(300, last_prompt_tokens / 300)
+  (cancel bound) + 120 (export) + grader timeout of the leg's language (300 Python / 180 Go, final grade) + 60
+  (report retention and cleanup) + 20 (process wait)`, computed and logged at cancel time. Before each escalation
+  step the runner re-evaluates the idle predicate; if activity resumed (events grew, rows grew, in_flight > 0) it
+  logs `ESCALATION HELD` and waits another `T_coop` instead. Then SIGTERM (cleanup-only path), wait 120 s; then
+  SIGKILL the probe pid. Restart eligibility [P3]: the probe has exited (waitpid), `attempt.json` carries the
+  manifest's `cleanup_status` with no survivors, no remaining containers and `uncertain == false`, the worker
+  `/metrics` is readable with `in_flight == 0` and identity unchanged. Any of these false → the chain exits 2
+  (`cleanup uncertain` / `worker health`), the runner kills NOTHING and lists same-uid processes under the scratch
+  root or `TMPDIR` and `mlxbench-<run_id>-*` containers for the operator.
+- **Completion = validation, not row count [P11] [P19].** `chain_ops.validate_leg(leg, pinned)` takes the leg
+  descriptor `{session, model, lang, seed_base, expected_ids, out}` and requires: probe rc 0; rows load (torn file
+  refuses); ids == expected exactly; `runtime.seed_base`, `runtime.lang` and the manifest model equal the
+  descriptor; every row's `sample == 0`, `sample_seed == rowschema.sample_seed(id, 0, seed_base)` and
+  seed-overlay hash equal to the descriptor's recomputed value; manifest present with no `transport_abort` and no
+  `served_config_drift`; `runtime` identity equal to `pinned` on every field except `seed_base`/`lang`
   (`scaffold`, `scaffold_policy_sha256` == the campaign hash, `probe_code_sha256`, `opencode_version`,
   `opencode_exe_sha256`, `opencode_bench_config_sha256`, `carrier_source_sha256`, `agent_system_sha256`,
   `polyglot_sha`, `universe_sha256`) and `git.serving_path` equal to the chain's first leg; `manifest.worker ==
@@ -197,8 +233,11 @@ detached, rc in `chain.rc`, log `chain.out`, RUNLOG and `chain.json` (provenance
   failure → incomplete with the reason logged. `pinned` for the chain = the campaign hash plus the identity read
   from the first complete leg; the operator's expected `probe_code_sha256` is passed as `--probe-code-sha` (printed
   by `run_opencode_probe_v2.py --print-identity`, a new read-only flag) so an unintended build cannot start a chain.
-- **Incomplete block [P6].** Archive every leg of the block (`rows`, `manifest`, `log`) to
-  `<session>/incomplete/<model>.<ts>/` (transcripts stay where they are: immutable per run_id); unload the model
+  Resume eligibility [P19]: the probe's tg1 resume path refuses a rows file whose manifest records
+  `transport_abort` (probe-side change, tested); the runner never resumes an attempt that is not validated
+  complete — an aborted attempt is archived, never repaired by manifest replacement.
+- **Incomplete block [P6] [P21].** Archive every attempt of every leg of the block (`rows`, `manifest`, `log`,
+  `attempt.json`, cancel/ack files) to `<session>/incomplete/<model>.<ts>/` (transcripts stay where they are: immutable per run_id); unload the model
   (verified), reload (fresh instance), A4 gate, rerun the block from its first leg (pilot step included) with the
   same items and seeds (the paired schedule is unchanged). One restart per block; a second incomplete → chain
   exits 2. Worker identity must be one value across the block and distinct from every other block (test).
@@ -210,43 +249,55 @@ detached, rc in `chain.rc`, log `chain.out`, RUNLOG and `chain.json` (provenance
 
 ## 4. `/tmp` escape diagnostic
 
-**Candidates (diagnostic, complete for the recorded interface) [P2].** `pg.tmp_escapes(export, env)` reads the
-export's `content[].type == "tool"` parts: `name in (write, edit)` → `state.input.path`; `name == "shell"` →
-`shlex.split(state.input.command)` best-effort (on `ValueError` the raw text is scanned and every match is marked
-`ambiguous`), each token that starts with `/tmp/` or `/private/tmp/` after normalising the prefix to `/tmp/`;
-`read` parts are ignored. Tokens containing a `..` component or any `.`/empty component are rejected as
-`traversal`. Everything under the item's own `TMPDIR` or scratch is dropped. Row field `tmp_escapes`:
-`[{path, source: write|edit|shell, ambiguous: bool}]`. Fixtures are taken from a recorded 2.0.20 export shape
-(`path`, `{command, workdir}`); `filePath` is not an alias on this client and is not parsed.
+**Candidates (diagnostic) [P2].** `pg.tmp_escapes(export, env)` reads the export's `content[].type == "tool"`
+parts. Exact candidates: `name in (write, edit)` → `state.input.path`, resolved against `state.input.workdir` or
+the scratch when relative. Best-effort mentions: `name == "shell"` → from `state.input.command`, (i) `shlex.split`
+tokens (on `ValueError` the raw text) that contain `/tmp/` or `/private/tmp/` anywhere — a redirection token
+`>/tmp/new`, a token with a trailing `;`/`&`/`|`, a path inside a `python3 -c` string are all reported as
+`uncertain` mentions with the containing token; (ii) relative paths are not guessed. Normalise `/private/tmp` →
+`/tmp`; a `..`, `.` or empty component → `traversal`; anything under the item's `TMPDIR` or scratch is dropped;
+`read` parts are ignored. Row field `tmp_escapes`: `[{path, source: write|edit|shell, exact: bool, token}]`.
+Fixtures: a frozen real 2.0.20 export excerpt (`benchmark/bench/tests/fixtures/opencode_2.0.20_tool_parts.json`,
+taken from a recorded M61 export's tool parts, sha recorded in the test) plus the registered shell cases above;
+`filePath` is not an alias on this client and is not parsed.
 
-**Deletion authority (separate from diagnostics) [P1].** Before the client is spawned the probe lists the top-level
-entries of `/tmp` (name, inode, device; a read-only `os.scandir`, nothing opened, nothing removed) and after the
-item ends lists them again. A candidate is removed only if ALL hold: it is a `write`/`edit` path or an unambiguous
-shell token; its first path component under `/tmp` is absent from the before-listing and present in the
-after-listing (created during the item); walking from `/tmp` component by component with `os.open(O_NOFOLLOW |
-O_DIRECTORY, dir_fd=…)` reaches it without any symlink component (a symlink anywhere → `symlink`, not removed);
-`fstat` on the opened object shows our uid, `st_birthtime` inside the item window and the inode/device recorded in
-the after-listing (changed → `replaced`, not removed); a regular file is unlinked via `dir_fd`; a directory is
-removed only when every entry under it, walked the same way, satisfies the same checks. Row fields `tmp_cleaned`
-and `tmp_not_removed: [[path, reason]]` with reasons `missing`, `pre_existing`, `symlink`, `not_owned`,
-`outside_window`, `replaced`, `traversal`, `ambiguous`, `dir_mixed`, `not_regular`. Nothing else under `/tmp` is
-read or removed. Residual, stated: a file another process creates under `/tmp` during the item with exactly a name
-the model also wrote would be removed; the before/after listing plus our-uid plus birth-window makes that a
-same-user same-name same-window collision. Tests run on a real filesystem under `tmp_path` with the `/tmp` root
-injectable (`TMP_ROOT`), covering every reason above, a symlinked parent, a replaced inode and a pre-existing name.
-The probe prints one `tmp_escapes=` line per item for the RUNLOG. V4 reference: `go/alphametics` s2 wrote
-`/tmp/bench199_test.go`.
+**Deletion authority [P1].** Only an EXACT candidate whose creating tool call is ours can be removed: a `write`
+part with `state.status == "completed"` (the opencode client the probe owns created the file) or an `edit` part
+on a path that was absent from the pre-item listing (below). Shell mentions are never removed automatically; they
+are listed for the operator tool `benchmark/m62/tmp_escape_clean.py --rows <file> [--yes]`, which prints each
+shell candidate with its token and removes only on explicit `--yes` per path, under the same identity checks.
+Identity checks for an automatic removal: before the client is spawned the probe lists the top-level entries of
+`/tmp` (name, inode, device; a read-only `os.scandir`); after the item it lists them again; the candidate's first
+component under `/tmp` must be absent before and present after (`pre_existing` otherwise); walking from `/tmp`
+component by component with `os.open(O_NOFOLLOW | O_DIRECTORY, dir_fd=…)` reaches it without any symlink component
+(`symlink` otherwise); `fstat` on the opened object shows our uid (`not_owned`), `st_birthtime` inside the item
+window (`outside_window`) and, for the first component, the inode/device of the after-listing (`replaced`); a
+regular file is unlinked with `os.unlink(name, dir_fd=parent_fd)` immediately after an `fstatat(parent_fd, name,
+AT_SYMLINK_NOFOLLOW)` that still matches the opened inode (`replaced` otherwise; the residual window is the
+microseconds between that check and the unlink, stated); a directory is removed only when every entry under it,
+walked the same way, satisfies the same checks (`dir_mixed`). Row fields `tmp_cleaned` and `tmp_not_removed:
+[[path, reason]]`. Nothing else under `/tmp` is read or removed. Tests run on a real filesystem with the `/tmp`
+root injectable (`TMP_ROOT`): every reason above, an unrelated-creator file named in a shell mention (listed, not
+removed), a `write` path replaced by another inode between listing and unlink (not removed), a symlinked parent,
+a pre-existing name. The probe prints one `tmp_escapes=` line per item for the RUNLOG. V4 reference:
+`go/alphametics` s2 wrote `/tmp/bench199_test.go`.
 
 ## 5. Grader-report retention [P12]
 
-`structured_grade.grade(..., keep=<dir>, seq=<n>)`: BEFORE parsing, and on every early return (timeout, container
-OOM, grader memory kill, missing interpreter), every raw artifact that exists is copied to
-`<keep>/<boundary>.<seq>.<name>`: Python `report.xml`, `stdout.txt`, `stderr.txt`; Go `go.jsonl`, `go.stderr`.
-`Grade` gains `artifacts: {name: {path, sha256}}` and `outcome ∈ {parsed, timeout, oom, mem_kill, missing_report,
-infrastructure}`. `tg1_runner` passes `keep = <evidence>.grades/` (immutable per run_id; an existing directory
+`structured_grade.grade(..., keep=<dir>, seq=<n>)`: the grader's stdout and stderr are redirected to files in the
+keep directory FROM LAUNCH (no `capture_output`; a timeout kill therefore loses nothing [P12]); before parsing,
+and on every early return (timeout, container OOM, grader memory kill, missing interpreter) and before any
+`TransportAbort` is raised, an `index.json` `{boundary, seq, final, outcome, artifacts: {name: {path, sha256}}}`
+is written atomically beside the artifacts: Python `report.xml` (if produced), `stdout.txt`, `stderr.txt`; Go
+`go.jsonl`, `go.stderr`. `Grade` gains `artifacts` and `outcome ∈ {parsed, timeout, oom, mem_kill,
+missing_report, infrastructure}`; infrastructure failures still raise `TransportAbort` (never an all-failing
+grade), and `tg1_runner` builds `grade_reports` from the index files, so the abort manifest (`cancelled_item` or
+`transport_abort`) carries the hashed report index even when grading raised. `tg1_runner` passes `keep = <evidence>.grades/` (immutable per run_id; an existing directory
 refuses) and a monotonically increasing `seq` shared by snapshot grades and the final grade. New row field
 `grade_reports: [{boundary, seq, final: bool, outcome, artifacts}]`; `failing_trajectory` keeps its shape and the
-gate outcome is computed exactly as before (replay and the V2 manifest are untouched; `m62/replay.py` stays 8/8).
+gate outcome is computed exactly as before (replay and the V2 manifest are untouched: a test pins `benchmark/m62/replay_manifest.json`'s sha256 and the
+per-fixture replay outcomes — kindergarten-garden `looping@15`, M59 alphametics `looping@22`, book-store no stop —
+not merely the 8/8 aggregate).
 Both verifiers (`inject_verify.py`, `validate_leg`) check every artifact sha. Tests assert byte-for-byte
 preservation of a fixture report, unchanged snapshot manifests, and retention on each early-return path. Always on
 under tg1; roughly ≤ 10 MB per item.
@@ -282,9 +333,13 @@ under `benchmark/results`.
   fixtures from the 2.0.20 shape and every removal reason on a real filesystem. Reports: Python and Go fixture
   grades retain artifacts with shas on parsed and each early-return path; `grade_reports` on the row; final grade
   included; `failing_trajectory` unchanged; existing suites green; `m62/replay.py` V2 still 8/8.
-- **V2 composed [P13].** (a) Real `run_item` + pinned client (`OPENCODE_PROBE_BIN`) + mock provider: the
-  cancel file produces export, reconciliation (`runner_cancel`), retained artifacts and no row; the terminal
-  evidence shas are in the manifest. (b) `tg_fixture` with `--tg1-inject stall` over fixture events → a labelled
+- **V2 composed [P13] [P16].** (a) Real `p.main()` via `tg_fixture` + pinned client (`OPENCODE_PROBE_BIN`) +
+  mock provider: the cancel file (during discovery, between items, during generation, during grading/export)
+  produces export, reconciliation (`runner_cancel`), retained artifacts, `cancelled_item` in the manifest, no row
+  and the registered exit code; a real-client `loop` case (mock script: three identical shell calls) stops
+  `looping` with the detached descendant killed and verified; a real-client `alloc` case (mock script: the
+  bytearray command under the lowered threshold) produces the `mem_kills` record with tool-call linkage and
+  freezes the killed-command tool-part fixture by sha. (b) `tg_fixture` with `--tg1-inject stall` over fixture events → a labelled
   row under a temporary `m62/inject/` with `runtime.inject`; the campaign fixture run gains `reconciliation`,
   `termination.killed`, `tmp_escapes`, `grade_reports`. (c) The runner end-to-end against the fake probe:
   pilot → full → cooperative cancel → escalation → archive → restart → completion validation, and STOP. The real
