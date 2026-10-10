@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import pytest
@@ -229,3 +230,30 @@ def test_replay_fixture_outcomes_are_pinned_not_just_the_aggregate(fixture, tmp_
     assert (report["stop_reason"], report["first_crossing_request"]) == REPLAY_FIXTURES[fixture]
     # The structured grader change must not touch ingestion: the report keeps its exact shape.
     assert {"stop_reason", "first_crossing_request", "failing_trajectory", "terminal_usage_complete"} <= set(report)
+
+
+def test_write_receipt_is_index_only_and_immutable(dirs):
+    work, private, keep = dirs
+    artifacts = sg.write_receipt(keep, 3, 7, True, "tampered")
+    assert artifacts == {} and index_of(keep, 3) == dict(boundary=7, seq=3, final=True, outcome="tampered",
+                                                         artifacts={})
+    with pytest.raises(TransportAbort, match="immutable"):
+        sg.write_receipt(keep, 3, 7, True, "tampered")
+    assert runner.grade_reports(keep)[0]["outcome"] == "tampered"
+
+
+def test_tampered_row_carries_a_final_tampered_receipt(monkeypatch, tmp_path):
+    from bench.tests.test_opencode_v2_probe import probe as _p      # noqa: F401
+    import importlib
+    probe = importlib.import_module("run_opencode_probe_v2")
+    from bench.tests.test_tg1_integration import tg_fixture
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    f = tg_fixture(probe, monkeypatch, tmp_path)
+    binary = Path(os.environ["OPENCODE_PROBE_BIN"])
+    binary.write_text(binary.read_text().replace("run)\n", "run)\necho hacked > solution_test.py\n"))
+    assert f["run"]() == 0
+    row = json.loads(f["out"].read_text())
+    assert row["test_modified"] and not row["passed"]
+    last = row["grade_reports"][-1]
+    assert last["final"] is True and last["outcome"] == "tampered" and last["artifacts"] == {}
+    assert last["seq"] == max(r["seq"] for r in row["grade_reports"])

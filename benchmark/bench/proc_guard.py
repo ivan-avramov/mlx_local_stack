@@ -452,7 +452,7 @@ class ProcessGuard:
                             argv = self._argv(p)
                             p.kill()
                             killed.append(dict(pid=pid, create_time=created, role=actual, argv=argv))
-                    except self.psutil.NoSuchProcess:
+                    except self._transient:   # AccessDenied: the sweep below marks it uncertain
                         pass
             self.killed.extend(killed)
         return killed
@@ -594,6 +594,14 @@ class ProcessGuard:
                             )
                     except self.psutil.NoSuchProcess:
                         continue
+                    except self.psutil.AccessDenied:
+                        # macOS denies cwd()/cmdline() for a process mid-exit or one we may not inspect. Untracked:
+                        # nothing to clear, skip. Tracked: ownership cannot be shown cleared -> uncertain.
+                        if any(k[0] == p.pid for k in self.tracked):
+                            uncertain = True
+                            orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
+                                                          reason="access denied")
+                        continue
                 if not survivors:
                     break
                 time.sleep(0.05)
@@ -608,7 +616,7 @@ class ProcessGuard:
             if uncertain:
                 raise TransportAbort("cleanup uncertain: path-only processes remain " + json.dumps(
                     [dict(pid=p["pid"], create_time=p["create_time"])
-                     for p in orphans.values() if p.get("reason") == "path-only attribution"]
+                     for p in orphans.values() if p.get("reason") in ("path-only attribution", "access denied")]
                 ))
             if survivors:
                 raise TransportAbort("attributed processes survived cleanup")
@@ -752,26 +760,6 @@ def _open_dir_nofollow(name, dir_fd):
         raise _Refuse("symlink" if stat.S_ISLNK(st.st_mode) else "not_regular") from None
 
 
-def _tree_qualifies(fd, window, uid):
-    """Every entry under the directory fd is a regular file or directory we own, born inside the window."""
-    for name in os.listdir(fd):
-        st = os.stat(name, dir_fd=fd, follow_symlinks=False)
-        try:
-            _qualify(st, window, uid)
-        except _Refuse:
-            return False
-        if stat.S_ISDIR(st.st_mode):
-            child = _open_dir_nofollow(name, fd)
-            try:
-                if not _tree_qualifies(child, window, uid):
-                    return False
-            finally:
-                os.close(child)
-        elif not stat.S_ISREG(st.st_mode):
-            return False
-    return True
-
-
 def _unlink_checked(name, fd, identity):
     st = os.stat(name, dir_fd=fd, follow_symlinks=False)
     if (st.st_ino, st.st_dev) != identity or not stat.S_ISREG(st.st_mode):
@@ -784,23 +772,9 @@ def _unlink_checked(name, fd, identity):
     os.unlink(name, dir_fd=fd)
 
 
-def _remove_tree(fd, window, uid):
-    for name in os.listdir(fd):
-        st = os.stat(name, dir_fd=fd, follow_symlinks=False)
-        if stat.S_ISDIR(st.st_mode):
-            child = _open_dir_nofollow(name, fd)
-            try:
-                if (os.fstat(child).st_ino, os.fstat(child).st_dev) != (st.st_ino, st.st_dev):
-                    raise _Refuse("replaced")
-                _remove_tree(child, window, uid)
-            finally:
-                os.close(child)
-            os.rmdir(name, dir_fd=fd)
-        else:
-            _unlink_checked(name, fd, (st.st_ino, st.st_dev))
-
-
 def _clean_one(path, before, after, window, root, uid):
+    """Remove one recorded file (and now-empty new parents), or an empty directory.
+    Returns (removed_parent_dirs, non_empty_parent_dirs)."""
     parts = path[len("/tmp/"):].split("/")
     if not path.startswith("/tmp/") or any(c in ("", ".", "..") for c in parts):
         raise _Refuse("traversal")
@@ -830,14 +804,12 @@ def _clean_one(path, before, after, window, root, uid):
                     raise _Refuse("replaced")
                 continue
             if stat.S_ISDIR(st.st_mode):
-                child = _open_dir_nofollow(name, cursor)
-                opened.append(child)
-                if (os.fstat(child).st_ino, os.fstat(child).st_dev) != (st.st_ino, st.st_dev):
-                    raise _Refuse("replaced")
-                if not _tree_qualifies(child, window, uid):
-                    raise _Refuse("dir_mixed")
-                _remove_tree(child, window, uid)
-                os.rmdir(name, dir_fd=cursor)
+                # A directory is never emptied for the caller: it goes only when it holds nothing at all.
+                try:
+                    os.rmdir(name, dir_fd=cursor)
+                except OSError:
+                    raise _Refuse("dir_mixed") from None
+                return [], []
             elif stat.S_ISREG(st.st_mode):
                 fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=cursor)
                 try:
@@ -846,6 +818,17 @@ def _clean_one(path, before, after, window, root, uid):
                 finally:
                     os.close(fd)
                 _unlink_checked(name, cursor, (st.st_ino, st.st_dev))
+                # Parents that became empty go too (every component was qualified on the way down); a parent that
+                # still holds anything else is reported, never emptied.
+                removed, mixed = [], []
+                for idx in range(len(parts) - 2, -1, -1):
+                    try:
+                        os.rmdir(parts[idx], dir_fd=opened[idx])
+                        removed.append("/tmp/" + "/".join(parts[:idx + 1]))
+                    except OSError:
+                        mixed.append("/tmp/" + "/".join(parts[:idx + 1]))
+                        break
+                return removed, mixed
             else:
                 raise _Refuse("not_regular")
     finally:
@@ -856,8 +839,10 @@ def _clean_one(path, before, after, window, root, uid):
 def tmp_clean(candidates, before, after, window, *, root=None, uid=None, allow_shell=False):
     """Remove only what the deletion authority of spec §4 allows; return (cleaned, [[path, reason], ...]).
 
-    Automatic mode removes an EXACT `write` part with status completed, or an `edit` part on a name absent from the
-    pre-item listing. Shell mentions are skipped unless `allow_shell` (the operator tool, explicit --yes), which
+    Automatic mode removes an EXACT `write` or `edit` part with status completed whose first /tmp component was
+    absent from the pre-item listing; an errored or pending call is diagnostic only. Only those recorded files are
+    deleted: a parent directory goes only if it is empty afterwards (`dir_mixed` otherwise), and unrecorded children
+    are never touched. Shell mentions are skipped unless `allow_shell` (the operator tool, explicit --yes), which
     still applies every identity check. `before`/`after` of None (operator tool: no listings) skip the listing
     checks; the birthtime window and ownership checks always apply. Residual: the microseconds between the final
     fstatat and the unlink."""
@@ -874,17 +859,22 @@ def tmp_clean(candidates, before, after, window, *, root=None, uid=None, allow_s
         try:
             if candidate.get("exact"):
                 source, status = candidate.get("source"), candidate.get("status")
-                if source == "write" and status != "completed":
+                # Only a COMPLETED write/edit proves our client created the file; an errored/pending call that
+                # merely names a path is diagnostic (another process may have made it).
+                if source in ("write", "edit") and status != "completed":
                     parts = path[len("/tmp/"):].split("/") if path.startswith("/tmp/") else []
                     if any(c in ("", ".", "..") for c in parts):
                         raise _Refuse("traversal")
                     raise _Refuse("ambiguous")
                 if source not in ("write", "edit"):
                     raise _Refuse("ambiguous")
-            _clean_one(path, before, after, window, root, uid)
+            dirs, mixed = _clean_one(path, before, after, window, root, uid)
             cleaned.append(path)
+            cleaned.extend(dirs)
+            kept.extend([d, "dir_mixed"] for d in mixed)
         except _Refuse as refusal:
             kept.append([path, refusal.reason])
         except OSError:
             kept.append([path, "missing"])
+    kept = [k for k in kept if not (k[1] == "dir_mixed" and k[0] in cleaned)]
     return cleaned, kept

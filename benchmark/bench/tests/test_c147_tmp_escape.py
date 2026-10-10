@@ -138,13 +138,13 @@ def test_write_completed_new_file_is_removed(root):
     assert cleaned == ["/tmp/new.txt"] and kept == [] and not (root / "new.txt").exists()
 
 
-def test_edit_on_new_path_removed_and_nested_file_leaves_new_directory(root):
+def test_edit_on_new_path_removed_and_its_emptied_new_parent_directory_goes_too(root):
     def act():
         (root / "d").mkdir()
         (root / "d/f.py").write_text("x")
     b, a, w = item(root, act)
     cleaned, kept = clean(root, [cand("/tmp/d/f.py", "edit")], b, a, w)
-    assert cleaned == ["/tmp/d/f.py"] and (root / "d").is_dir()
+    assert cleaned == ["/tmp/d/f.py", "/tmp/d"] and not (root / "d").exists()      # new parent emptied -> removed
 
 
 def test_preexisting_name_never_removed_even_for_write(root):
@@ -225,15 +225,38 @@ def test_not_regular_fifo(root):
     assert clean(root, [cand("/tmp/ff")], b, a, w) == ([], [["/tmp/ff", "not_regular"]])
 
 
-def test_directory_removed_only_when_every_entry_qualifies(root):
+def test_recorded_files_and_the_directories_they_empty_are_removed(root):
     def act():
         (root / "good").mkdir()
         (root / "good/a").write_text("1")
         (root / "good/sub").mkdir()
         (root / "good/sub/b").write_text("2")
     b, a, w = item(root, act)
-    cleaned, kept = clean(root, [cand("/tmp/good", "write")], b, a, w)
-    assert cleaned == ["/tmp/good"] and not (root / "good").exists()
+    cleaned, kept = clean(root, [cand("/tmp/good/a"), cand("/tmp/good/sub/b", "edit")], b, a, w)
+    assert sorted(cleaned) == ["/tmp/good", "/tmp/good/a", "/tmp/good/sub", "/tmp/good/sub/b"] and kept == []
+    assert not (root / "good").exists()
+
+
+def test_unrecorded_child_is_never_deleted_only_the_recorded_file_goes(root):
+    def act():
+        (root / "d").mkdir()
+        (root / "d/mine").write_text("1")
+        (root / "d/other").write_text("created by someone else, same uid, inside the window")
+    b, a, w = item(root, act)
+    cleaned, kept = clean(root, [cand("/tmp/d/mine")], b, a, w)
+    assert cleaned == ["/tmp/d/mine"] and kept == [["/tmp/d", "dir_mixed"]]
+    assert (root / "d/other").exists() and not (root / "d/mine").exists()
+    # naming the directory itself (a write path) never empties it either
+    assert clean(root, [cand("/tmp/d")], b, a, w) == ([], [["/tmp/d", "dir_mixed"]])
+    assert (root / "d/other").exists()
+
+
+@pytest.mark.parametrize("status", ["error", "running", "pending"])
+def test_errored_or_pending_edit_naming_an_unrelated_creators_file_is_kept(root, status):
+    b, a, w = item(root, lambda: (root / "theirs.txt").write_text("another process made this"))
+    assert clean(root, [cand("/tmp/theirs.txt", "edit", status=status)], b, a, w) == (
+        [], [["/tmp/theirs.txt", "ambiguous"]])
+    assert (root / "theirs.txt").exists()
 
 
 def test_directory_mixed_entries_are_not_removed(root, tmp_path):

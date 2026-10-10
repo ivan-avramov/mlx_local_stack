@@ -155,7 +155,7 @@ class ChainOps:
     .stdout/.returncode; `http(path, body=None, timeout=)` returns bytes; `popen` spawns the router."""
 
     def __init__(self, repo, workdir, overlay, log, *, sh=None, http=None, popen=None, sleep=time.sleep,
-                 create_time=None, base="http://localhost:8000", registry=None, env_source=None):
+                 create_time=None, base="http://localhost:8000", registry=None, env_source=None, kill=None):
         self.repo, self.wd, self.overlay = Path(repo), Path(workdir), str(overlay)
         self.log = log
         self.sh = sh or default_sh
@@ -169,6 +169,9 @@ class ChainOps:
         self.py = self.repo / ".venv-bench/bin/python"
         self.receipt = self.wd / "session_gate/a4_v2_latest.json"
         self.loaded = None
+        self.kill = kill or os.kill
+        self.router = None          # identities of what THIS process started: {pid, create_time, spawned: {pid, create_time}}
+        self.worker_started = None
 
     # -- environment
     def env_base(self):
@@ -260,8 +263,15 @@ class ChainOps:
                  f"(cwd={self.repo})")
         (self.repo / "logs").mkdir(exist_ok=True)
         with open(self.repo / "logs/main_model.log", "a") as lf:
-            self.popen(cmd, cwd=str(self.repo), env=env, stdout=lf, stderr=subprocess.STDOUT,
-                       stdin=subprocess.DEVNULL, start_new_session=True)
+            proc = self.popen(cmd, cwd=str(self.repo), env=env, stdout=lf, stderr=subprocess.STDOUT,
+                              stdin=subprocess.DEVNULL, start_new_session=True)
+        spawned = None
+        if getattr(proc, "pid", None):
+            try:
+                spawned = {"pid": proc.pid, "create_time": self.create_time(proc.pid)}
+            except Exception:  # noqa: BLE001
+                spawned = {"pid": proc.pid, "create_time": None}
+        self.router = {"pid": None, "create_time": None, "spawned": spawned}    # ours from here on
         for _ in range(120):
             if self.listeners():
                 break
@@ -270,6 +280,10 @@ class ChainOps:
         if len(ls) != 1:
             raise ChainAbort(f"TRIPWIRE: expected one :8000 listener, found {ls}")
         pid = ls[0]
+        try:
+            self.router.update(pid=pid, create_time=self.create_time(pid))
+        except Exception:  # noqa: BLE001
+            pass
         e = self.proc_env(pid)
         probs = (["not mlx-serve"] if "mlx-serve" not in e else []) + env_tripwires(e, self.overlay)
         cwd = self.sh(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"]).stdout
@@ -320,6 +334,7 @@ class ChainOps:
         ident = {"pid": pid, "create_time": self.create_time(pid), "cmdline": w[0][:400]}
         self.log(f"worker pid={pid} cmdline: {w[0][:400]}")
         self.loaded = model
+        self.worker_started = {"pid": pid, "create_time": ident["create_time"], "model": model}
         return ident
 
     def unload(self, model):
@@ -375,10 +390,46 @@ class ChainOps:
             raise ChainAbort(f"A4 v2 gate FAILED (rc={r.returncode}, pass={rec.get('pass')}, fresh={fresh})")
         return str(self.receipt)
 
+    def _alive(self, rec):
+        """True while the recorded identity (pid + create_time) is still that process."""
+        if not rec or not rec.get("pid"):
+            return False
+        try:
+            return self.create_time(rec["pid"]) == rec["create_time"]
+        except Exception:  # noqa: BLE001
+            return False
+
     def stop_stack(self):
-        rc = self.sh([str(self.repo / "scripts/stack_stop.sh")], timeout=300).returncode
-        self.log(f"stack_stop rc={rc} listeners={self.listeners()}")
-        return rc
+        """Tear down ONLY what this process started (never scripts/stack_stop.sh, which sweeps by name):
+        unload the worker we loaded, SIGTERM the recorded router (create_time verified), wait, SIGKILL only that
+        pid if still alive, verify :8000 is free. Nothing started by us -> nothing is touched."""
+        if self.router is None:
+            self.log("stop_stack: router was not started by this process; tearing down NOTHING")
+            return None
+        if self.loaded:
+            self.unload(self.loaded)
+        targets = []
+        for rec in (self.router, self.router.get("spawned")):
+            if rec and rec.get("pid") and rec["pid"] not in [t["pid"] for t in targets]:
+                targets.append(rec)
+        for sig, wait in ((signal.SIGTERM, 30), (signal.SIGKILL, 10)):
+            live = [t for t in targets if self._alive(t)]
+            if not live:
+                break
+            for t in live:
+                self.log(f"stop_stack: signal {sig.name} -> own router pid {t['pid']}")
+                try:
+                    self.kill(t["pid"], sig)
+                except ProcessLookupError:
+                    pass
+            for _ in range(wait):
+                if not any(self._alive(t) for t in targets):
+                    break
+                self.sleep(1)
+        free = not self.listeners()
+        self.log(f"stop_stack: own router stopped; :8000 free={free}")
+        self.router = None
+        return 0 if free else 1
 
     def rows(self, path):
         from bench import proc_guard as pg
@@ -543,9 +594,12 @@ def validate_leg(leg, pinned, workdir=None):
         if r.get("sample_seed") != exp:
             why.append(f"row_sample_seed: {rid} {r.get('sample_seed')} != {exp}")
         want = seed_overlay_sha(leg["model"], exp)
-        for key in ("seed_overlay_sha256", "overlay_sha256"):
-            if key in r and r[key] != want:
-                why.append(f"row_overlay_sha: {rid} {key}")
+        if r.get("scaffold") != SCAFFOLD:
+            why.append(f"row_scaffold: {rid} {r.get('scaffold')}")
+        if r.get("model") != leg["model"]:
+            why.append(f"row_model: {rid} {r.get('model')} != {leg['model']}")
+        if r.get("overlay_sha256") != want:
+            why.append(f"row_overlay_sha: {rid} overlay_sha256 missing or wrong")
         for key in ("worker_before", "worker_after"):
             if not typed_worker(r.get(key)):
                 why.append(f"worker_untyped: {rid} {key}")
@@ -564,6 +618,9 @@ def validate_leg(leg, pinned, workdir=None):
             why.append(f"grade_reports_missing: {rid}")
             continue
         for g in reports:
+            if g.get("final") and not g.get("artifacts"):
+                if not (g.get("outcome") == "tampered" and r.get("test_modified") is True):
+                    why.append(f"report_artifacts_empty: {rid} final receipt without artifacts")
             for aname, art in (g.get("artifacts") or {}).items():
                 sha = (art or {}).get("sha256")
                 if not isinstance(sha, str) or not HEX64.match(sha):

@@ -502,18 +502,47 @@ def test_escalation_held_while_activity_resumed(env):
     assert rc == 0
 
 
-def test_escalation_held_when_metrics_unreadable(env):
+def test_escalation_unreadable_metrics_sends_no_signal_exit_2(env):
     state = {"bad": False}
     env["ops"].metrics = lambda: None if state["bad"] else {"summary": {"in_flight": 0}}
 
     def helper():
         wait_for(lambda: log_has(env, "CANCEL file written (idle)"))
         state["bad"] = True
-        time.sleep(0.6)
-        state["bad"] = False
-    run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["ignore_cancel", "normal"], helper=helper,
-        extra_env={"FAKE_PROBE_ACK_WAIT": "30"})
-    assert log_has(env, "ESCALATION HELD")
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["ignore_cancel", "normal"], helper=helper,
+             extra_env={"FAKE_PROBE_ACK_WAIT": "30"})
+    assert rc == 2
+    assert not log_has(env, "ESCALATE SIGTERM") and log_has(env, "no signal sent")
+    assert env["ops"].leftover_calls
+
+
+def test_escalation_worker_identity_drift_sends_no_signal_exit_2(env):
+    orig = env["ops"].worker_ident
+
+    def drifting(model):
+        r = orig(model)
+        if r and log_has(env, "CANCEL file written (idle)"):
+            return {"pid": r["pid"] + 500, "create_time": r["create_time"]}
+        return r
+    env["ops"].worker_ident = drifting
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["ignore_cancel", "normal"],
+             extra_env={"FAKE_PROBE_ACK_WAIT": "30"})
+    assert rc == 2
+    assert not log_has(env, "ESCALATE SIGTERM") and log_has(env, "no signal sent")
+
+
+def test_escalation_held_when_heartbeat_activity_resumed(env):
+    def helper():
+        wait_for(lambda: log_has(env, "CANCEL file written (idle)"))
+        logf = next((env["out"] / "reload").glob("*.attempt1.log"))
+        for k in range(12):
+            with logf.open("a") as f:
+                f.write(json.dumps({"m62_watch": {"requests_completed": 10 + k, "last_prompt_tokens": 1}, "elapsed_s": k}) + "\n")
+            time.sleep(0.08)
+    rc = run(env, ["chain", "reload", "--probe-code-sha", "p" * 64], plan=["ignore_cancel", "normal"], helper=helper,
+             extra_env={"FAKE_PROBE_ACK_WAIT": "30"})
+    assert log_has(env, "ESCALATION HELD") and any("heartbeat" in ln for ln in env["lines"] if "HELD" in ln)
+    assert rc == 0
 
 
 # --------------------------------------------------------------------------- restart eligibility
@@ -829,3 +858,95 @@ def test_no_masked_failures_no_home_paths(name):
     if name.endswith(".sh"):
         import subprocess
         assert subprocess.run(["bash", "-n", str(C147 / name)]).returncode == 0
+
+
+# --------------------------------------------------------------------------- Q1 foreign listener, real ChainOps
+def _real_ops_with_foreign_listener(tmp_path):
+    sent, calls = [], []
+
+    def sh(cmd, **kw):
+        calls.append(cmd)
+        s = " ".join(cmd) if isinstance(cmd, list) else cmd
+        if "pmset -g ac" in s:
+            return co.Result(" Wattage = 140W\n Voltage = 28000mV\n")
+        if "pmset -g batt" in s:
+            return co.Result("\t85%; charging\n")
+        if "sweep_orphan" in s:
+            return co.Result("no orphaned\n")
+        if s.startswith("lsof"):
+            return co.Result("p4242\n")
+        return co.Result("")
+    ov = tmp_path / "ov.yaml"
+    ov.write_text("mlx_port: 8091\nmodels: []\n")
+    lines = []
+    ops = co.ChainOps(REPO, tmp_path, ov, co.RunLog(tmp_path / "RL.md", out=lines.append), sh=sh,
+                      http=lambda *a, **k: b"{}", popen=lambda *a, **k: pytest.fail("router must not be spawned"),
+                      sleep=lambda s: None, create_time=lambda p: 1.0, kill=lambda p, s: sent.append((p, s)))
+    return ops, sent, calls, lines
+
+
+def test_chain_runner_foreign_listener_refused_nothing_torn_down(env, tmp_path):
+    ops, sent, calls, lines = _real_ops_with_foreign_listener(tmp_path)
+    rc = R.main(PILOT + ["--probe", str(C147 / "fake_probe.py"), "--python", sys.executable, "--out-root",
+                         str(env["out"]), "--universe", str(env["uni"])], ops=ops, timers=R.Timers(**TIMERS),
+                log_out=lines.append)
+    assert rc == 2 and sent == []
+    assert not any("stack_stop" in " ".join(c) for c in calls if isinstance(c, list))
+    assert any("NOTHING" in ln for ln in lines)
+
+
+def test_inject_driver_foreign_listener_refused_nothing_torn_down(env, tmp_path):
+    ops, sent, calls, lines = _real_ops_with_foreign_listener(tmp_path)
+    rc = RI.main(["--universe", str(env["uni"]), "--out-dir", str(tmp_path / "inj")], ops=ops, log_out=lines.append)
+    assert rc == 2 and sent == []
+    assert not any("stack_stop" in " ".join(c) for c in calls if isinstance(c, list))
+
+
+# --------------------------------------------------------------------------- Q3 receipt / Q4 pinning
+def test_receipt_shape_from_fake_probe_abort_is_top_level(env, tmp_path):
+    out = tmp_path / "x.jsonl"
+    FP.write_leg(out, PICK1, "python", 1001, ["python/a"], {"pid": 1, "create_time": 1.0, "model_path": "m",
+                                                          "registry_sha256": "a" * 64}, tmp_path)
+    man = json.loads(out.with_suffix(".manifest.json").read_text())
+    cs = R.receipt_from_manifest(man)
+    assert set(cs) == {"survivors", "containers_remaining", "uncertain", "orphans_unattributed"}
+    assert R.receipt_from_manifest({"transport_abort": {"cleanup_status": cs}}) is None     # one location only
+
+
+def _chain_for(env):
+    a = R.parse_args(PILOT)
+    return R.Chain(a, env["ops"], R.Timers(**TIMERS), lambda m: env["lines"].append(m), R.load_universe(str(env["uni"])),
+                   env["out"])
+
+
+def test_check_restart_eligible_against_real_probe_manifest(env):
+    fx = REPO / "benchmark/bench/tests/fixtures/c147_cancel_manifest.json"
+    if not fx.exists():
+        pytest.skip("real probe-produced fixture c147_cancel_manifest.json is not present yet (probe worker saves it)")
+    man = json.loads(fx.read_text())
+    ch = _chain_for(env)
+    ops = env["ops"]
+    ops.load(PICK1)
+    block = {"worker": {"pid": ops.ident["pid"], "create_time": ops.ident["create_time"]}}
+    att = {"cleanup_status": R.receipt_from_manifest(man)}
+    assert att["cleanup_status"] is not None
+    ch.check_restart_eligible(att, {"model": PICK1}, block)           # clean receipt authorises the restart
+
+
+def test_pin_from_raises_when_identity_field_missing(env, tmp_path):
+    ch = _chain_for(env)
+    out = tmp_path / "y.jsonl"
+    FP.write_leg(out, PICK1, "python", 1001, ["python/a"], {"pid": 1, "create_time": 1.0, "model_path": "m",
+                                                          "registry_sha256": "a" * 64}, tmp_path)
+    mp = out.with_suffix(".manifest.json")
+    man = json.loads(mp.read_text())
+    man["runtime"].pop("opencode_exe_sha256")
+    mp.write_text(json.dumps(man))
+    from bench import chain_ops as _co
+    with pytest.raises(_co.ChainAbort, match="opencode_exe_sha256"):
+        ch.pin_from({"out": str(out)})
+    FP.write_leg(out, PICK1, "python", 1001, ["python/a"], {"pid": 1, "create_time": 1.0, "model_path": "m",
+                                                          "registry_sha256": "a" * 64}, tmp_path)
+    ch2 = _chain_for(env)
+    ch2.pin_from({"out": str(out)})
+    assert ch2.pinned["opencode_exe_sha256"] == "e" * 64 and ch2.pinned["serving_path"] == "sp1"

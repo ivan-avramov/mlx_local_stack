@@ -155,6 +155,12 @@ def dir_bytes(root):
     return total
 
 
+def receipt_from_manifest(man):
+    """The probe's cleanup receipt: TOP-LEVEL manifest `cleanup_status` on every abort (one location, both sides)."""
+    cs = man.get("cleanup_status")
+    return cs if isinstance(cs, dict) else None
+
+
 def quantile(xs, q):
     xs = sorted(xs)
     return xs[min(len(xs) - 1, int(q * len(xs)))] if xs else None
@@ -360,7 +366,7 @@ class Chain:
         att["rc"] = proc.returncode
         man = self._manifest(leg)
         if man and att["run_id"] and man.get("run_id") == att["run_id"]:
-            att["cleanup_status"] = man.get("cleanup_status")
+            att["cleanup_status"] = receipt_from_manifest(man)
             att["cancelled_item"] = man.get("cancelled_item")
             att["transport_abort"] = man.get("transport_abort")
         att["outcome"] = sup["state"]
@@ -396,6 +402,9 @@ class Chain:
                 self.pinned[k] = rt.get(k)
         if self.pinned.get("serving_path") is None:
             self.pinned["serving_path"] = (man.get("git") or {}).get("serving_path")
+        missing = [k for k in (*co.RUNTIME_PINNED, "serving_path") if not self.pinned.get(k)]
+        if missing:
+            raise co.ChainAbort(f"first complete leg lacks pinned identity fields: {missing}")
 
     def _manifest(self, leg):
         try:
@@ -525,18 +534,23 @@ class Chain:
 
     def _escalate(self, att, proc, st, hb, leg, block):
         now = self.clock()
+        hb.poll()
         if st["base"] is None:
-            st["base"] = self._signals(att, leg, block)
+            st["base"], st["base_hb"] = self._signals(att, leg, block), hb.line
         if now < st["deadline"]:
             return
         cur = self._signals(att, leg, block)
         fl = co.in_flight(cur["metrics"]) if cur["metrics"] is not None else None
+        if cur["ident"] is None or fl is None:
+            self.listing(att, leg)
+            raise co.ChainAbort("restart refused: worker identity drift or unreadable metrics at escalation; "
+                                "no signal sent")
         resumed = (cur["events_bytes"] != st["base"]["events_bytes"] or cur["rows_sig"] != st["base"]["rows_sig"]
-                   or fl != 0)
+                   or fl != 0 or hb.line != st["base_hb"])
         if resumed:
-            self.log(f"ESCALATION HELD (stage {st['stage']}): activity resumed (events/rows changed or "
+            self.log(f"ESCALATION HELD (stage {st['stage']}): activity resumed (events/rows/heartbeat changed or "
                      f"in_flight={fl}); waiting another {st['tcoop']:.0f}s")
-            st["base"], st["deadline"] = cur, now + st["tcoop"]
+            st["base"], st["base_hb"], st["deadline"] = cur, hb.line, now + st["tcoop"]
             return
         if st["stage"] == 0:
             self.log(f"ESCALATE SIGTERM probe pid {proc.pid} (cleanup-only path)")
@@ -548,7 +562,7 @@ class Chain:
             st["stage"], st["deadline"] = 2, now + self.tm.kill_wait_s
         else:
             raise co.ChainAbort(f"probe pid {proc.pid} survived SIGKILL")
-        st["base"] = cur
+        st["base"], st["base_hb"] = cur, hb.line
 
     def supervise(self, att, proc, leg, step, block):
         clock, tm = self.clock, self.tm

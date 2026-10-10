@@ -174,7 +174,7 @@ def test_cancel_between_items_stops_at_the_boundary_without_a_spawn(probe, monke
     assert [r["id"] for r in rows] == ["python/one"]
     abort = manifest(f)["transport_abort"]
     assert "cancelled by runner" in abort["error"] and "cancelled_item" not in manifest(f)
-    assert abort["cleanup_status"]["uncertain"] is False and abort["cleanup_status"]["survivors"] == []
+    assert manifest(f)["cleanup_status"]["uncertain"] is False and manifest(f)["cleanup_status"]["survivors"] == []
     assert len(f["calls"].read_text().splitlines()) == 1        # the client was spawned for item one only
 
 
@@ -199,7 +199,7 @@ def test_cancel_during_generation_runs_the_full_terminal_path_and_leaves_no_row(
     assert item["termination"]["killed"][0]["role"] == "client" and item["termination"]["killed_verified"] is True
     assert isinstance(item["termination"]["cancel_wait_s"], float)
     assert item["grade_reports"] and item["grade_reports"][-1]["final"] is True      # final grade ran
-    assert item["cleanup_status"] == man["transport_abort"]["cleanup_status"]
+    assert item["cleanup_status"] == man["transport_abort"]["cleanup_status"] == man["cleanup_status"]
     assert item["cleanup_status"]["uncertain"] is False and item["cleanup_status"]["survivors"] == []
     assert man["transport_abort"]["grade_reports"] == item["grade_reports"]
     transcripts = list((tmp_path / "opencode_transcripts").rglob("*.events.jsonl"))
@@ -207,7 +207,8 @@ def test_cancel_during_generation_runs_the_full_terminal_path_and_leaves_no_row(
         item["evidence_sha256"]["events"]
 
 
-def test_cancel_during_grading_and_export_is_honoured_only_after_the_terminal_phases(probe, monkeypatch, tmp_path):
+def test_cancel_during_grading_is_honoured_after_the_terminal_phases_and_before_the_row_is_committed(
+        probe, monkeypatch, tmp_path):
     f = tg_fixture(probe, monkeypatch, tmp_path)
     cancel = tmp_path / "leg.CANCEL"
     real = sg.grade
@@ -221,11 +222,15 @@ def test_cancel_during_grading_and_export_is_honoured_only_after_the_terminal_ph
     monkeypatch.setattr(sg, "grade", grade)
     with pytest.raises(SystemExit, match="cancelled by runner"):
         f["run"]("one,two", extra=["--cancel-file", str(cancel)])
-    assert seen == ["final-grade"]
-    rows = [json.loads(x) for x in f["out"].read_text().splitlines()]
-    assert [r["id"] for r in rows] == ["python/one"] and rows[0]["passed"]       # item 1 finished normally
-    assert rows[0]["termination"]["reason"] is None
-    assert "cancelled_item" not in manifest(f)
+    assert seen == ["final-grade"]                           # the terminal phases ran to completion first
+    assert not f["out"].exists()                             # ... but the row was never committed
+    man = manifest(f)
+    item = man["cancelled_item"]
+    assert item["id"] == "python/one"
+    assert item["grade_reports"][-1]["final"] is True and item["grade_reports"][-1]["outcome"] == "parsed"
+    assert item["reconciliation"]["trailing"] in ("none", "final")
+    assert item["termination"]["reason"] is None and set(item["evidence_sha256"]) == {"events", "stderr", "export"}
+    assert man["cleanup_status"]["uncertain"] is False
 
 
 def test_manifest_ack_barrier_blocks_item_one_until_the_file_exists(probe, monkeypatch, tmp_path):
@@ -263,6 +268,7 @@ def test_manifest_ack_timeout_aborts_before_anything_is_generated(probe, monkeyp
         f["run"]("one", extra=["--manifest-ack", str(tmp_path / "never.ACK")])
     assert not f["out"].exists() and not f["calls"].exists()
     assert "manifest not acknowledged" in manifest(f)["transport_abort"]["error"]
+    assert manifest(f)["cleanup_status"]["completed"] is True
 
 
 def test_every_abort_records_cleanup_status_from_the_guard(probe, monkeypatch, tmp_path):
@@ -275,12 +281,38 @@ def test_every_abort_records_cleanup_status_from_the_guard(probe, monkeypatch, t
     with pytest.raises(SystemExit):
         f["run"]("one")
     abort = manifest(f)["transport_abort"]
-    assert set(abort["cleanup_status"]) >= {"survivors", "containers_remaining", "uncertain", "orphans_unattributed"}
-    assert abort["cleanup_status"]["uncertain"] is False
+    top = manifest(f)["cleanup_status"]                 # the receipt location is TOP LEVEL
+    assert set(top) >= {"survivors", "containers_remaining", "uncertain", "orphans_unattributed"}
+    assert top["uncertain"] is False and top == abort["cleanup_status"]
 
 
 from bench.tests.test_tg1_integration import pinned_binary      # noqa: E402,F401
 from bench.tests.opencode_v2_mock import MockServer              # noqa: E402
+
+
+CANCEL_MANIFEST = Path(__file__).parent / "fixtures/c147_cancel_manifest.json"
+
+
+def freeze_cancel_manifest(doc, workdir):
+    """A REAL probe-produced abort manifest (pinned client, cancel during generation), PII-scrubbed. The chain
+    worker tests restart eligibility against it. Refreeze with C147_FREEZE_FIXTURE=1."""
+    if not os.environ.get("C147_FREEZE_FIXTURE"):
+        return
+    text = json.dumps(doc, indent=1, sort_keys=True)
+    for real in {str(workdir), str(Path(workdir).resolve())}:
+        text = text.replace(real, "$STACK_WORKDIR")
+    CANCEL_MANIFEST.write_text(text + "\n")
+
+
+def test_frozen_real_cancel_manifest_carries_the_top_level_receipt_and_no_pii():
+    raw = CANCEL_MANIFEST.read_text()
+    assert "/Users/" not in raw and "/private/var" not in raw
+    doc = json.loads(raw)
+    status = doc["cleanup_status"]      # unattributed orphans (e.g. a Spotlight worker) are diagnostics only
+    assert (status["survivors"], status["containers_remaining"], status["uncertain"], status["completed"]) == (
+        [], [], False, True) and isinstance(status["orphans_unattributed"], list)
+    assert "cancelled by runner" in doc["transport_abort"]["error"] and doc["cancelled_item"]["id"] == "python/one"
+    assert doc["cancelled_item"]["termination"]["client_stop"] == "sigterm"
 
 
 def test_real_client_cancel_during_generation(probe, pinned_binary, monkeypatch, tmp_path):
@@ -309,6 +341,9 @@ def test_real_client_cancel_during_generation(probe, pinned_binary, monkeypatch,
     assert item["reconciliation"] == dict(unmatched_export_messages=1, trailing="interrupted")
     assert item["cleanup_status"]["uncertain"] is False and item["cleanup_status"]["survivors"] == []
     assert item["grade_reports"] and item["grade_reports"][-1]["final"] is True
+    cancel_manifest = json.loads(f["mp"].read_text())
+    assert cancel_manifest["cleanup_status"]["uncertain"] is False
+    freeze_cancel_manifest(cancel_manifest, tmp_path)
 
 
 def test_sigterm_abort_still_records_cleanup_status_in_the_manifest(probe, monkeypatch, tmp_path):
@@ -323,8 +358,9 @@ def test_sigterm_abort_still_records_cleanup_status_in_the_manifest(probe, monke
     finally:
         signal.signal(signal.SIGTERM, prior)
     assert exc.value.code == 143
-    abort = json.loads(f["mp"].read_text())["transport_abort"]
-    status = abort["cleanup_status"]
+    man = json.loads(f["mp"].read_text())
+    status = man["cleanup_status"]                       # top level, written after cleanup
+    assert status == man["transport_abort"]["cleanup_status"]
     assert status["completed"] is True and status["uncertain"] is False and status["survivors"] == []
     assert not f["out"].exists()
 
@@ -369,3 +405,32 @@ def test_real_client_cancel_inside_a_long_tool_call_charges_the_aborted_message(
     item = json.loads(f["mp"].read_text())["cancelled_item"]
     assert item["reconciliation"] == dict(unmatched_export_messages=1, trailing="interrupted_charged")
     assert item["termination"]["client_stop"] == "sigterm"
+
+
+def test_cleanup_skips_untracked_access_denied_and_marks_tracked_uncertain(tmp_path):
+    import psutil
+
+    class Denied(Process):
+        def cwd(self):
+            raise psutil.AccessDenied(self.pid)
+
+        def cmdline(self):
+            raise psutil.AccessDenied(self.pid)
+
+    class Opaque(Denied):
+        def create_time(self):
+            raise psutil.AccessDenied(self.pid)
+
+    stranger = Denied(40, argv=["x"])
+    g = guard(tmp_path, [stranger])
+    g.cleanup()                                  # untracked: skipped, nothing raised
+    assert g.status()["uncertain"] is False and g.status()["orphans_unattributed"] == []
+
+    owned = Opaque(41)
+    owned.kill = lambda: None                    # never dies and cannot be inspected
+    h = guard(tmp_path, [owned])
+    h.tracked[(41, 10)] = "model"
+    with pytest.raises(TransportAbort, match="uncertain.*41"):
+        h.cleanup()
+    s = h.status()
+    assert s["uncertain"] is True and [o["pid"] for o in s["orphans_unattributed"]] == [41]

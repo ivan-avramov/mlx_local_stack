@@ -395,3 +395,20 @@ Spec → cold review → implementation by a worker model from this spec, failin
   the runner's first observation of the current line; `pilot` mode uses its own `<out-root>/pilot/` directory with
   a fresh load (the probe's resume check refuses a rows file from another worker); a STOP-cancelled leg that
   validates complete is kept; the inject driver passes neither `--cancel-file` nor `--manifest-ack`.
+- **B7 — post-build cold review 1 (Codex `gpt-6.1-sol`, `codex_impl_review1.md`): "not cleared", Q1–Q11; all
+  fixed in the follow-up commit.** Q1 the runners' `finally` called `scripts/stack_stop.sh`, whose name-based sweep
+  would kill a router the runner did not start (e.g. after a refusal on an existing listener) → teardown only the
+  router/worker identities the runner itself started, nothing after a refusal. Q2 an errored `edit` could authorise
+  deletion and directories were deleted recursively → `edit` requires `completed` + absent-before; no recursive
+  deletion, only recorded files and then-empty directories. Q3 the probe wrote `cleanup_status` inside
+  `transport_abort` while the runner read it top-level, masked by the fake probe → top-level is the contract, a real
+  probe-produced abort manifest is a fixture for the runner test. Q4 `validate_leg` accepted inject-labelled rows,
+  a wrong model, a missing `overlay_sha256`, empty final artifacts and unpinned identity fields → all required.
+  Q5 an unreadable latest inject attempt let an earlier PASS stand → latest attempt always retained; empty `--kind`
+  fails. Q6 any changed summary counter counted as cancellation proof → counter rule tied to the worker's
+  `/metrics` fields, natural completion is `not_observed:cancellation`. Q7 a cancel during the last item's terminal
+  phases was ignored → re-checked before the row commit. Q8 the SIGTERM transport-error tolerance accepted any
+  count/order → post-signal event index, one of each shape. Q9 `psutil.AccessDenied` in cleanup inspection was
+  uncaught → transient for untracked, `uncertain` for tracked. Q10 a tampered (legitimately failed) row had no
+  final report and made the leg incomplete → typed `tampered` final receipt. Q11 escalation re-checked only part of
+  the idle predicate → full predicate; identity drift aborts without signalling.

@@ -276,8 +276,7 @@ def test_a4_gate_rejects_stale_receipt(ops):
         ops.a4_gate(PICK1, "t")
 
 
-def test_stop_stack_and_leftovers_listed_not_killed(ops):
-    assert ops.stop_stack() == 0
+def test_leftovers_listed_not_killed(ops):
     ops._sh.ps = f"12 {__import__('os').getuid()} /bin/sleep /scratch/root/x\n13 0 /bin/sleep /scratch/root/y\n"
     out = ops.leftovers(["/scratch/root"], ["run1"])
     assert len(out) == 1 and "12" in out[0]
@@ -492,14 +491,46 @@ def test_validate_row_sample_and_seed_and_overlay(leg_env):
     _mut_rows(out, lambda r: r.update(sample_seed=rowschema.sample_seed(r["id"], 0, 2002)))
     assert "row_sample_seed" in _codes(co.validate_leg(leg, pinned, wd))
     fp.write_leg(out, PICK1, "python", 1001, leg["expected_ids"], json.loads(out.with_suffix(".manifest.json").read_text())["worker"], wd)
-    _mut_rows(out, lambda r: r.update(seed_overlay_sha256="0" * 64))
+    _mut_rows(out, lambda r: r.update(overlay_sha256="0" * 64))
     assert "row_overlay_sha" in _codes(co.validate_leg(leg, pinned, wd))
 
 
-def test_validate_overlay_sha_compared_only_when_present(leg_env):
+def test_validate_overlay_sha_missing_fails(leg_env):
     leg, pinned, out, fp, wd = leg_env
-    _mut_rows(out, lambda r: r.pop("seed_overlay_sha256", None))
+    _mut_rows(out, lambda r: r.pop("overlay_sha256", None))
+    assert "row_overlay_sha" in _codes(co.validate_leg(leg, pinned, wd))
+
+
+def test_validate_row_scaffold_and_model(leg_env):
+    leg, pinned, out, fp, wd = leg_env
+    _mut_rows(out, lambda r: r.update(scaffold="opencode-v2-web-tg1-inject:stall"))
+    assert "row_scaffold" in _codes(co.validate_leg(leg, pinned, wd))
+    worker = json.loads(out.with_suffix(".manifest.json").read_text())["worker"]
+    fp.write_leg(out, PICK1, "python", 1001, leg["expected_ids"], worker, wd)
+    _mut_rows(out, lambda r: r.update(model=PICK2))
+    assert "row_model" in _codes(co.validate_leg(leg, pinned, wd))
+    fp.write_leg(out, PICK1, "python", 1001, leg["expected_ids"], worker, wd)
+    _mut_rows(out, lambda r: r.pop("scaffold"))
+    assert "row_scaffold" in _codes(co.validate_leg(leg, pinned, wd))
+
+
+def test_validate_final_receipt_without_artifacts_fails(leg_env):
+    leg, pinned, out, fp, wd = leg_env
+    _mut_rows(out, lambda r: r["grade_reports"][-1].update(artifacts={}))
+    assert "report_artifacts_empty" in _codes(co.validate_leg(leg, pinned, wd))
+
+
+def test_validate_tampered_receipt_only_when_test_modified(leg_env):
+    leg, pinned, out, fp, wd = leg_env
+    tamper = {"boundary": 9, "seq": 9, "final": True, "outcome": "tampered", "artifacts": {}}
+    _mut_rows(out, lambda r: (r.update(test_modified=True), r["grade_reports"].append(tamper)))
     assert co.validate_leg(leg, pinned, wd) == []
+    _mut_rows(out, lambda r: r.update(test_modified=False))
+    assert "report_artifacts_empty" in _codes(co.validate_leg(leg, pinned, wd))
+    _mut_rows(out, lambda r: r.pop("test_modified"))
+    assert "report_artifacts_empty" in _codes(co.validate_leg(leg, pinned, wd))
+    _mut_rows(out, lambda r: (r.update(test_modified=True), r["grade_reports"][-1].update(outcome="parsed")))
+    assert "report_artifacts_empty" in _codes(co.validate_leg(leg, pinned, wd))
 
 
 @pytest.mark.parametrize("bad", [
@@ -561,3 +592,85 @@ def test_seed_overlay_sha_matches_probe_recipe():
 
 def test_campaign_hash_pinned():
     assert co.CAMPAIGN_POLICY_SHA == "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"
+
+
+# --------------------------------------------------------------------------- teardown ownership (Q1)
+class _Proc:
+    pid = 55
+
+
+def _own_router_ops(ops, tmp_path):
+    ops.repo = tmp_path
+    (tmp_path / "logs").mkdir(exist_ok=True)
+    ops._sh.cwd = f"p99\nn{tmp_path}\n"
+    ops.popen = lambda *a, **k: _Proc()
+    killed, sent = set(), []
+    state = {"n": 0}
+
+    def listeners(port=8000):
+        state["n"] += 1
+        if state["n"] == 1:
+            return []
+        return [] if 99 in killed else [99]
+    ops.listeners = listeners
+
+    def create_time(pid):
+        if pid in killed:
+            raise ProcessLookupError(pid)
+        return 1234.5
+    ops.create_time = create_time
+
+    def kill(pid, sig):
+        sent.append((pid, sig))
+        killed.add(pid)
+    ops.kill = kill
+    return sent, killed
+
+
+def test_stop_stack_tears_down_only_own_router_and_never_runs_stack_stop(ops, tmp_path):
+    import signal
+    sent, _ = _own_router_ops(ops, tmp_path)
+    assert ops.start_router() == 99
+    assert ops.stop_stack() == 0
+    assert (99, signal.SIGTERM) in sent and all(s == signal.SIGTERM for _, s in sent)
+    assert {p for p, _ in sent} <= {99, 55}
+    assert not any("stack_stop" in " ".join(c) for c in ops._sh.calls if isinstance(c, list))
+
+
+def test_stop_stack_unloads_the_worker_we_loaded(ops, tmp_path):
+    _own_router_ops(ops, tmp_path)
+    ops.start_router()
+    ops._sh.ps = _worker_ps(PICK1)
+    ops.load(PICK1)
+    ops._sh.ps = ""
+    ops.stop_stack()
+    assert ("/v1/models/unload", {"model": PICK1}) in ops._http_calls
+
+
+def test_stop_stack_sigkills_only_recorded_pid_if_term_ignored(ops, tmp_path):
+    import signal
+    sent, killed = _own_router_ops(ops, tmp_path)
+    ops.start_router()
+    ops.kill = lambda pid, sig: (sent.append((pid, sig)), killed.add(pid) if sig == signal.SIGKILL else None)
+    ops.stop_stack()
+    assert (99, signal.SIGTERM) in sent and (99, signal.SIGKILL) in sent and {p for p, _ in sent} <= {99, 55}
+
+
+def test_stop_stack_skips_pid_whose_create_time_changed(ops, tmp_path):
+    sent, _ = _own_router_ops(ops, tmp_path)
+    ops.start_router()
+    ops.create_time = lambda pid: 999.0                    # pid reused by someone else
+    ops.stop_stack()
+    assert sent == []
+
+
+def test_foreign_listener_refusal_then_stop_stack_does_nothing(ops):
+    ops._sh.listen = "p9\n"
+    sent = []
+    ops.kill = lambda pid, sig: sent.append((pid, sig))
+    with pytest.raises(co.ChainAbort, match="already bound"):
+        ops.start_router()
+    assert ops.stop_stack() is None
+    assert sent == [] and not any("stack_stop" in " ".join(c) for c in ops._sh.calls if isinstance(c, list))
+    assert not ops._http_calls
+    assert any("NOTHING" in line for line in ops._lines)

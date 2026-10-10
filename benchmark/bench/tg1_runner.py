@@ -381,7 +381,9 @@ def run_item(p, *, ctx=None, **kwargs):
     path (drain, grade join, export, reconcile, final grade, report retention) with the item's evidence."""
     ctx = {} if ctx is None else ctx
     result = _run_item(p, ctx=ctx, **kwargs)
-    if ctx.get("cancelled"):
+    cancel = kwargs.get("cancel")
+    # C147 §3: a cancel that landed during the terminal phases is honoured here, BEFORE the row is committed.
+    if ctx.get("cancelled") or (cancel is not None and cancel()):
         evidence = result["evidence"]
         raise RunnerCancelled(item=dict(
             id=ctx.get("id"),
@@ -507,6 +509,7 @@ def _run_item(
             if reason and reason not in ("client_exit_hang", "runner_cancel"):
                 gate.stop(reason)
             if not killed:
+                stream.signal_index = stream.event_count     # errors after this point may be our own abort's
                 gate.requests_at_kill = len(gate.request_usage)
                 gate.inflight_s_at_stop = (
                     time.monotonic() - stream.started_at if stream.started_at else None
@@ -758,6 +761,9 @@ def _run_item(
                 resources["grader_mem_kill"] |= final_result.grader_mem_kill
                 resources["grader_oom"] |= final_result.grader_oom
                 failing = final_result.failing({tuple(x) for x in entry["leaves"]})
+            if final_result is None:
+                # No final grade ran (protected input tampered / unsnapshottable): still leave a typed final receipt.
+                sg.write_receipt(keep, next_seq(), final_boundary_actual, True, "tampered")
             gate.terminal(None, (final_boundary_actual, failing, failing is not None, modified))
         if cancelled:
             ctx["cancelled"] = True
@@ -1213,6 +1219,7 @@ def _main(p, a, names):
             pg.expect_items(rows, [s.strip() for s in a.expect_items.split(",")])
     except BaseException as exc:
         status = ctx.get("cleanup_status")
+        man["cleanup_status"] = status          # the receipt location (top level) on EVERY abort path
         man["transport_abort"] = dict(
             error=p._scrub_error(exc),
             cleanup_status=status,

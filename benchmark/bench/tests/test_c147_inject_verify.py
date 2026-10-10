@@ -55,8 +55,8 @@ def make_row(kind, tmp, name):
     art = tmp / f"{name}.report.xml"
     art_sha = put(art, "<testsuites/>")
     worker = dict(pid=1, create_time=2.0, model_path="m", registry_sha256="a" * 64)
-    summary_before, summary_after = dict(in_flight=1, requests_started=4, requests_failed=0), \
-        dict(in_flight=0, requests_started=4, requests_failed=1)
+    summary_before = dict(in_flight=1, requests_started=4, requests_completed=3, requests_failed=0)
+    summary_after = dict(in_flight=0, requests_started=4, requests_completed=3, requests_failed=1)
     term = dict(reason=None, killed=[], killed_verified=None, cancel_wait_s=None, in_flight_at_kill=None,
                 worker_summary_before=None, worker_summary_after=None)
     gate = dict(stop_reason=None, no_progress_tokens=50, no_progress_requests=0, max_identical_run_live=1,
@@ -219,8 +219,14 @@ def test_loop_events_rederivation_must_show_three_identical_consecutive_calls(tm
     (lambda r, m: r["termination"].update(killed=[], reason=None), "not_observed:kill"),
     (lambda r, m: r["reconciliation"].update(trailing="none"), "not_observed:trailing"),
     (lambda r, m: r["termination"].update(in_flight_at_kill=0), "not_observed:cancellation"),
+    # registered negative case: the request COMPLETED between the samples (success counter rose) -> not a cancel
     (lambda r, m: r["termination"].update(worker_summary_after=dict(in_flight=0, requests_started=4,
-                                                                    requests_failed=0)),
+                                                                    requests_completed=4, requests_failed=0)),
+     "not_observed:cancellation"),
+    (lambda r, m: r["termination"].update(worker_summary_after=dict(in_flight=1, requests_started=4,
+                                                                    requests_completed=3, requests_failed=1)),
+     "not_observed:cancellation"),
+    (lambda r, m: r["termination"].update(worker_summary_before=dict(in_flight=1, requests_started=4)),
      "not_observed:cancellation"),
 ])
 def test_loop_causal_chain(tmp_path, mutation, expected):
@@ -331,3 +337,34 @@ def test_live_checks_exact_prefix_unrelated_containers_ignored_and_processes_lis
 def test_interrupted_charged_trailing_is_accepted(tmp_path):
     assert verdict(tmp_path, "loop", lambda r, m: r["reconciliation"].update(trailing="interrupted_charged"))[0] \
         == "PASS"
+
+
+def test_a_cancelled_counter_when_the_worker_has_one_must_rise_by_exactly_one():
+    base = dict(in_flight_at_kill=1)
+    before = dict(in_flight=1, requests_completed=3, requests_cancelled=2)
+    assert iv.cancellation_proven(dict(base, worker_summary_before=before, worker_summary_after=dict(
+        in_flight=0, requests_completed=4, requests_cancelled=3)))
+    for bad in (2, 4):
+        assert not iv.cancellation_proven(dict(base, worker_summary_before=before, worker_summary_after=dict(
+            in_flight=0, requests_completed=3, requests_cancelled=bad)))
+
+
+def test_numerically_latest_unreadable_attempt_is_the_retained_one_and_fails(tmp_path):
+    full_run(tmp_path)
+    (tmp_path / "loop.attempt2.jsonl").write_text("{not json\n")
+    (tmp_path / "loop.attempt2.manifest.json").write_text("{}")
+    code, lines = run_suite(tmp_path)
+    assert code == 1 and any(x.startswith("loop.attempt2: FAIL:unreadable") for x in lines)
+    assert "RESULT PASS" not in lines
+    lines = []
+    assert iv.main(["--run", str(tmp_path), "--kind", "loop", "--workdir", str(tmp_path)], out=lines.append) == 1
+
+
+def test_kind_without_any_attempt_file_exits_1_missing(tmp_path):
+    write_attempt(tmp_path, "stall", 1)
+    lines = []
+    assert iv.main(["--run", str(tmp_path), "--kind", "alloc", "--workdir", str(tmp_path)], out=lines.append) == 1
+    assert lines[0].startswith("alloc: FAIL:missing")
+    empty = tmp_path / "e"
+    empty.mkdir()
+    assert iv.main(["--run", str(empty), "--kind", "stall", "--workdir", str(tmp_path)], out=lambda x: None) == 1

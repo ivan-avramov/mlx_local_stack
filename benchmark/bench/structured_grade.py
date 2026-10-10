@@ -252,6 +252,17 @@ def _write_index(keep, directory, seq, boundary, final, outcome, names):
     return artifacts
 
 
+def write_receipt(keep, seq, boundary, final, outcome):
+    """An index-only report for a boundary where no grader ran (e.g. outcome 'tampered'), so every row has a final
+    receipt. Same layout and immutability as a grade."""
+    directory = Path(keep) / ("seq-%04d" % seq)
+    try:
+        directory.mkdir(parents=True)
+    except FileExistsError:
+        raise TransportAbort("immutable grade report path exists: " + directory.name) from None
+    return _write_index(Path(keep), directory, seq, boundary, final, outcome, ())
+
+
 def grade(lang, work, test, private, *, run=None, guard=None, timeout=None,
           keep=None, seq=None, boundary=None, final=False):
     """Grade one snapshot. With `keep`, the grader's raw output is redirected to files under

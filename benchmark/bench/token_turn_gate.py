@@ -255,6 +255,9 @@ class EventStream:
         self.started_at = None
         self.starts = []
         self.errors = []
+        self.error_indices = []        # ingested-event index of each entry in `errors`
+        self.event_count = 0           # events accepted so far (index of the NEXT event)
+        self.signal_index = None       # event_count when the probe signalled the client; None = never signalled
         # (request index, part id, tool name, shell command text) in live completion order (C147 linkage).
         self.tool_events = []
         self.last_event = time.monotonic()
@@ -282,6 +285,8 @@ class EventStream:
             self.buffer = b""
 
     def accept(self, e):
+        index = self.event_count
+        self.event_count += 1
         if not isinstance(e, dict):
             raise TransportAbort("event is not an object")
         kind = e.get("type")
@@ -306,6 +311,7 @@ class EventStream:
             # Native error events have no part. Their projection is validated above.
             if part is None:
                 self.errors.append(e["error"])
+                self.error_indices.append(index)
                 return
         if not isinstance(part, dict) or not isinstance(part.get("id"), str) or not part["id"]:
             raise TransportAbort("missing event part id")
@@ -315,6 +321,7 @@ class EventStream:
         self.seen.add(key)
         if kind == "error":
             self.errors.append(e["error"])
+            self.error_indices.append(index)
             return
         mid = part.get("messageID")
         if not isinstance(mid, str) or not mid:
@@ -366,21 +373,38 @@ def context_overflow(error):
     )
 
 
-# Both observed on the pinned client when we SIGTERM it mid-request: the aborted fetch, or a retry against its
-# already-exiting local server.
-OWN_ABORT_TRANSPORT = (
-    "Transport: The socket connection was closed unexpectedly",
-    "Transport: Unable to connect. Is the computer able to access the url?",
-)
+# Frozen shapes of what the pinned 2.0.20 client reports when the PROBE signals it (SIGTERM) mid-request.
+# A: the aborted fetch. The real message is exactly ABORT_FETCH (a fixed suffix follows the phrase); B: a retry
+# against the already-exiting local server, matched by its registered prefix.
+ABORT_FETCH = ("Transport: The socket connection was closed unexpectedly. "
+               "For more information, pass `verbose: true` in the second argument to fetch()")
+ABORT_UNABLE = "Transport: Unable to connect."
 
 
-def own_abort_transport(error):
-    return (
-        isinstance(error, dict)
-        and error.get("type") == "unknown"
-        and isinstance(error.get("message"), str)
-        and error["message"].startswith(OWN_ABORT_TRANSPORT)
-    )
+def own_abort_shape(error):
+    """"fetch" | "unable" for the two registered post-signal transport errors, else None."""
+    if not (isinstance(error, dict) and error.get("type") == "unknown" and isinstance(error.get("message"), str)):
+        return None
+    message = error["message"]
+    if message == ABORT_FETCH:
+        return "fetch"
+    if message.startswith(ABORT_UNABLE):
+        return "unable"
+    return None
+
+
+def tolerated_abort_errors(stream):
+    """Indices into stream.errors that are our own signal's aftermath: at most one of each registered shape, and
+    only for events AFTER the probe signalled the client. Everything else (pre-signal, repeats) is a real error."""
+    if stream.signal_index is None:
+        return set()
+    seen, tolerated = set(), set()
+    for position, (error, index) in enumerate(zip(stream.errors, stream.error_indices)):
+        shape = own_abort_shape(error)
+        if shape and shape not in seen and index >= stream.signal_index:
+            seen.add(shape)
+            tolerated.add(position)
+    return tolerated
 
 
 def reconcile(stream, export, rc, outcome=None):
@@ -391,10 +415,11 @@ def reconcile(stream, export, rc, outcome=None):
     if exit_hang:
         outcome = None
         rc = 0
-    if stream.errors and outcome in KILL_OUTCOMES and all(own_abort_transport(e) for e in stream.errors):
-        # C147: SIGTERM makes the client abort its in-flight fetch and report exactly this transport error while
-        # it persists the aborted assistant message. Only for our own stops; any other error still aborts.
-        stream.errors = []
+    if stream.errors and outcome in KILL_OUTCOMES:
+        # C147: SIGTERM makes the client abort its in-flight fetch and report a transport error while it persists
+        # the aborted assistant message. Only for our own stops, only after the signal, one per registered shape.
+        tolerated = tolerated_abort_errors(stream)
+        stream.errors = [e for n, e in enumerate(stream.errors) if n not in tolerated]
     if stream.errors:
         if rc == 1 and len(stream.errors) == 1 and context_overflow(stream.errors[0]):
             outcome = "context_overflow"

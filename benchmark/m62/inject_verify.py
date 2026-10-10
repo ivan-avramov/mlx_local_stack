@@ -7,6 +7,10 @@ Reads every `<kind>.attempt<n>.jsonl` (+ `.manifest.json`) and prints one line p
 stem:  `<stem>: PASS | FAIL:<why> | not_observed[:what] | competing_trigger:<reason>`.
 `--kind` limits the run to one kind and skips the suite-level rules (the driver's per-leg call).
 
+Cancellation proof: see `cancellation_proven` (no cancelled counter exists on the worker; completed must not rise).
+`--kind X` with no attempt file for X exits 1 (`FAIL:missing`); the numerically latest attempt of a kind is the
+retained one even when unreadable (`FAIL:unreadable`, exit 1).
+
 Exit codes: 0 only when every suite-level check holds; 1 when any FAIL exists in a retained (last) attempt or a
 suite check; 4 (retryable) otherwise, including partial run directories. Earlier attempts are listed as retries and
 never count as clearance evidence. Live checks (docker, processes) only list; nothing is ever killed or removed.
@@ -112,6 +116,28 @@ def killed_state_ok(state):
     return False
 
 
+def cancellation_proven(term):
+    """Cancellation rule (Q6). The worker's /metrics `summary` (mlx_vlm/server/generation.py, `snapshot`) has
+    requests_started / requests_completed / requests_failed / in_flight and NO cancelled or aborted counter, so the
+    strongest available rule applies: the request was in flight at the kill (`in_flight_at_kill >= 1`), `in_flight`
+    reached 0, and `requests_completed` did NOT increase between the samples. An increase is natural completion,
+    not cancellation. (`requests_failed` may rise: a disconnect is recorded there when the worker notices.)
+    If the worker ever exposes a `requests_cancelled`/`requests_aborted` counter, it must rise by exactly 1."""
+    before, after = term.get("worker_summary_before"), term.get("worker_summary_after")
+    if not (isinstance(term.get("in_flight_at_kill"), int) and term["in_flight_at_kill"] >= 1
+            and isinstance(before, dict) and isinstance(after, dict)
+            and isinstance(before.get("in_flight"), int) and before["in_flight"] >= 1
+            and after.get("in_flight") == 0):
+        return False
+    for name in ("requests_cancelled", "requests_aborted"):
+        if name in before or name in after:
+            return after.get(name, 0) - before.get(name, 0) == 1
+    done_before, done_after = before.get("requests_completed"), after.get("requests_completed")
+    if not isinstance(done_before, int) or not isinstance(done_after, int):
+        return False
+    return done_after == done_before
+
+
 def causal(kind, row, notes):
     """None when the live stop -> kill -> cancel -> reconcile chain is evidenced; else a verdict string."""
     term, gate = row.get("termination") or {}, row["gate"]
@@ -130,12 +156,7 @@ def causal(kind, row, notes):
     if kind == "loop" and not any(k.get("role") == "model" and k.get("argv", [])[-2:] == ["sleep", "600"]
                                   for k in killed):
         return "not_observed:descendant"
-    before, after = term.get("worker_summary_before"), term.get("worker_summary_after")
-    proven = (isinstance(term.get("in_flight_at_kill"), int) and term["in_flight_at_kill"] >= 1
-              and isinstance(before, dict) and isinstance(after, dict)
-              and after.get("in_flight") == 0
-              and any(before.get(k) != after.get(k) for k in set(before) | set(after) if k != "in_flight"))
-    if proven:
+    if cancellation_proven(term):
         notes.append("cancellation_proven")
     elif kind == "loop":
         return "not_observed:cancellation"
@@ -274,7 +295,10 @@ def main(argv=None, *, docker_ps=None, process_lister=None, out=print):
                 rows = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
                 manifest = json.loads(path.with_suffix(".manifest.json").read_text())
             except (OSError, ValueError):
-                results.append(Result(stem, kind, n, "FAIL:unreadable"))
+                # An unreadable attempt is still an attempt: if it is the latest it IS the retained one.
+                r = Result(stem, kind, n, "FAIL:unreadable")
+                results.append(r)
+                retained[kind] = r
                 continue
             if len(rows) != 1:
                 verdict, notes = ("FAIL:transport_abort" if manifest.get("transport_abort") else "FAIL:no_row"), []
@@ -290,6 +314,10 @@ def main(argv=None, *, docker_ps=None, process_lister=None, out=print):
             results.append(r)
             retained[kind] = r
     last = {k: max(v) for k, v in attempts.items()}
+    if a.kind and a.kind not in attempts:
+        out(f"{a.kind}: FAIL:missing (no {a.kind}.attempt<n>.jsonl in {a.run})")
+        out("RESULT FAIL")
+        return 1
     suite = []
     for r in results:
         tag = "" if r.attempt == last.get(r.kind) else "  [retry: not clearance evidence]"

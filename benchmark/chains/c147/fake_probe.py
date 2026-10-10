@@ -93,7 +93,7 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
     return {
         "id": item, "model": model, "sample": 0, "sample_seed": seed, "passed": True, "converged": True,
         "nonconv_kind": None, "nonconv_flags": [], "wall_s": wall_s, "worker_before": worker,
-        "worker_after": worker, "seed_overlay_sha256": seed_overlay_sha(model, seed),
+        "worker_after": worker, "overlay_sha256": seed_overlay_sha(model, seed), "scaffold": SCAFFOLD,
         "evidence_sha256": {k: _sha(v) for k, v in files.items()},
         "events_path": _portable(wd, files["events"]), "transcript_path": _portable(wd, files["export"]),
         "stderr_path": _portable(wd, files["stderr"]),

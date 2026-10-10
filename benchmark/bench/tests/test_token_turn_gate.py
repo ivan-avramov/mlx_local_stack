@@ -350,35 +350,72 @@ def test_c147_runner_cancel_still_aborts_where_a_gate_stop_does():
 
 # --- C147: graceful (SIGTERM) client stops report their own aborted fetch as a transport error ---
 
-ABORT_FETCH = dict(type="unknown", message="Transport: The socket connection was closed unexpectedly. "
-                                           "For more information, pass `verbose: true`")
+ABORT_FETCH = dict(type="unknown", message=tg.ABORT_FETCH)
+ABORT_UNABLE = dict(type="unknown", message="Transport: Unable to connect. Is the computer able to access the url?")
 
 
-def _stopped_stream():
+def _stream_with_errors(*errors, signal_before=True):
+    """One completed request, then the probe signals (event index 2), then `errors` arrive."""
     g, s = _fresh()
-    s.accept(dict(type="error", sessionID="s1", error=dict(ABORT_FETCH)))
+    if signal_before:
+        s.signal_index = s.event_count
+    for error in errors:
+        s.accept(dict(type="error", sessionID="s1", error=dict(error)))
     return g, s
 
 
+TAIL = dict(type="assistant", id="m2", error=dict(type="aborted"))
+
+
 @pytest.mark.parametrize("outcome", ["stalled", "looping", "runner_cancel", "exec_timeout"])
-def test_c147_own_abort_transport_error_is_tolerated_for_our_stops(outcome):
-    g, s = _stopped_stream()
-    tail = dict(type="assistant", id="m2", error=dict(type="aborted"))
-    out = tg.reconcile(s, dict(messages=[assistant(), tail]), -15, outcome)
+@pytest.mark.parametrize("errors", [[ABORT_FETCH], [ABORT_UNABLE], [ABORT_FETCH, ABORT_UNABLE]])
+def test_c147_post_signal_registered_transport_errors_are_tolerated_for_our_stops(outcome, errors):
+    g, s = _stream_with_errors(*errors)
+    out = tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, outcome)
     assert out["trailing"] == "interrupted"
 
 
+def test_c147_real_message_is_pinned_exactly():
+    assert tg.ABORT_FETCH == ("Transport: The socket connection was closed unexpectedly. For more information, "
+                              "pass `verbose: true` in the second argument to fetch()")
+
+
+def test_c147_pre_signal_transport_error_still_aborts():
+    g, s = _fresh()
+    s.accept(dict(type="error", sessionID="s1", error=dict(ABORT_FETCH)))     # BEFORE the probe signalled
+    s.signal_index = s.event_count
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")
+    g, s = _fresh()
+    s.accept(dict(type="error", sessionID="s1", error=dict(ABORT_FETCH)))     # never signalled at all
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")
+
+
+@pytest.mark.parametrize("errors", [[ABORT_FETCH, ABORT_FETCH], [ABORT_UNABLE, ABORT_UNABLE],
+                                    [ABORT_FETCH, ABORT_UNABLE, ABORT_UNABLE]])
+def test_c147_duplicate_or_repeated_shapes_still_abort(errors):
+    g, s = _stream_with_errors(*errors)
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")
+
+
+@pytest.mark.parametrize("message", ["Transport: The socket connection was closed unexpectedly",
+                                     tg.ABORT_FETCH + " (retrying)", "Transport: Timeout"])
+def test_c147_near_miss_messages_abort(message):
+    g, s = _stream_with_errors(dict(type="unknown", message=message))
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")
+
+
 def test_c147_transport_error_still_aborts_for_a_normal_exit_or_other_errors():
-    g, s = _stopped_stream()
+    g, s = _stream_with_errors(ABORT_FETCH)
     with pytest.raises(tg.TransportAbort, match="error event"):
         tg.reconcile(s, dict(messages=[assistant()]), 0)
-    g, s = _fresh()
-    s.accept(dict(type="error", sessionID="s1", error=dict(type="Step.Failed")))
+    g, s = _stream_with_errors(dict(type="Step.Failed"))
     with pytest.raises(tg.TransportAbort, match="error event"):
         tg.reconcile(s, dict(messages=[assistant()]), -15, "stalled")
-    g, s = _fresh()
-    s.accept(dict(type="error", sessionID="s1", error=dict(ABORT_FETCH)))
-    s.accept(dict(type="error", sessionID="s1", error=dict(type="Step.Failed")))
+    g, s = _stream_with_errors(ABORT_FETCH, dict(type="Step.Failed"))
     with pytest.raises(tg.TransportAbort, match="error event"):
         tg.reconcile(s, dict(messages=[assistant()]), -15, "runner_cancel")
 
@@ -423,11 +460,3 @@ def test_c147_aborted_with_usage_still_aborts_outside_our_stops_or_when_not_last
     rejected = dict(type="assistant", id="m2", error=overflow, tokens=usage(1, 1))
     with pytest.raises(tg.TransportAbort, match="carries usage"):
         tg.reconcile(s, dict(messages=[assistant(), rejected]), 1)
-
-
-def test_c147_second_observed_own_abort_transport_message_is_tolerated_too():
-    g, s = _fresh()
-    s.accept(dict(type="error", sessionID="s1", error=dict(
-        type="unknown", message="Transport: Unable to connect. Is the computer able to access the url?")))
-    tail = dict(type="assistant", id="m2", error=dict(type="aborted"))
-    assert tg.reconcile(s, dict(messages=[assistant(), tail]), -15, "looping")["trailing"] == "interrupted"
