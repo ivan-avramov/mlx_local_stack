@@ -36,7 +36,7 @@ own threshold, every other constant stays at the campaign value, so the other st
 |---|---|---|
 | `stall` | gate `no_progress_requests` 40 → **4** | `stalled` at the 4th completed request after the last progress boundary |
 | `loop` | gate `identical_calls` 8 → **3** | `looping` on the 3rd identical consecutive tool call |
-| `alloc` | hygiene `per_process` 8 GiB → **256 MiB** | one `mem_kills` entry with role `model`; the shell call errors; the session continues |
+| `alloc` | hygiene `per_process` 8 GiB → **512 MiB** (build finding B2: 256 MiB killed opencode's own ≈380 MiB server child) | one `mem_kills` entry with role `model`; the shell call is reported killed; the session continues |
 
 `T` (81,920), the ceilings, `thinking_budget`/`max_tokens` carrier checks, `aggregate`, `client_limit`, silence and
 cancellation constants are unchanged in every kind.
@@ -54,7 +54,7 @@ schedule 1001 → 2002 → 3003 (three attempts per kind; a third miss is a buil
   shell lives one second, two tracker ticks, so ancestry is recorded before the detach) and is still alive when the
   third identical call stops the item [P10].
 - `alloc`: "Before anything else, run exactly this shell command once:
-  `python3 -c "import time; b = bytearray(400 * 1024 * 1024); time.sleep(90)"` and only then start the task."
+  `python3 -c "import time; b = bytearray(1024 * 1024 * 1024); time.sleep(90)"` and only then start the task."
 
 The addendum text is part of the inject policy and its sha256 is recorded. The shell tool's input schema on 2.0.20
 is `{command, workdir, timeout?, background?}` and the gate hashes the whole input object [P9]; the loop addendum
@@ -67,7 +67,7 @@ label.
 |---|---|---|
 | `stall` | `gate.stop_reason == "stalled"`, `gate.no_progress_requests ≥ 4` AND `gate.no_progress_tokens < 81,920` at the stop (the lowered threshold was the crossing); re-derived from the events: ≥ 4 `step_finish` after the last progress boundary | a T crossing (`no_progress_tokens ≥ 81,920`) → `competing_trigger:T`; another stop → `competing_trigger:<reason>`; no stop → `not_observed` |
 | `loop` | `gate.stop_reason == "looping"`, `max_identical_run_live ≥ 3`; three consecutive `tool_use` events with byte-identical canonical `(tool, input)` in the events file | as above |
-| `alloc` | one `mem_kills` entry with `role == "model"`, `rss > per_process` (256 MiB), `argv` containing `bytearray(`, `tool_call_id` equal to the `part.id` of the shell part whose `command` contains `bytearray(`, `carrying_request` = that part's 1-based request index and `completed_boundary_at_kill = carrying_request − 1`; that part's recorded state matches the frozen killed-command fixture (`status == "error"`, or `status == "completed"` with metadata `exit != 0` or a signal — the fixture is produced by the V2 real-client allocation test and frozen by sha); and a completed request with index > `carrying_request` exists (continuation) | kill absent → `not_observed`; kill of an unrelated argv → `FAIL` |
+| `alloc` | one `mem_kills` entry with `role == "model"`, `rss > per_process` (512 MiB), `argv` containing `bytearray(`, `tool_call_id` equal to the `part.id` of the shell part whose `command` contains `bytearray(`, `carrying_request` = that part's 1-based request index and `completed_boundary_at_kill = carrying_request − 1`; that part's recorded state matches the frozen killed-command fixture (`status == "error"`, or `status == "completed"` with metadata `exit != 0` or a signal — the fixture is produced by the V2 real-client allocation test and frozen by sha); and a completed request with index > `carrying_request` exists (continuation) | kill absent → `not_observed`; kill of an unrelated argv → `FAIL` |
 
 **Causal evidence of the live path [P10].** Rows gain `termination.killed` = `[{pid, create_time, role, argv}]`
 (every tracked process `kill_role` signalled, argv scrubbed), `termination.killed_verified` (every killed pid gone
@@ -357,3 +357,41 @@ under `benchmark/results`.
 
 Spec → cold review → implementation by a worker model from this spec, failing tests first, no docs/handoff edits
 → lead verification (V1, V2) → second cold review → handoff. The operator runs V3 and the P223 chains.
+
+## 9. Build findings (2026-10-10, implementation from revision 3)
+
+- **B1 — the live stop path never reconciled before this build.** `terminate_client` SIGKILLed the client; the
+  pinned opencode 2.0.20 persists an in-flight assistant message only when its step finishes, so a kill landing
+  after `step_start` left the export without that message and `reconcile` aborted ("empty assistant export" /
+  "active live message does not reconcile") on 8 of 8 real-client runs. V3/V4 never exercised a stop, which is
+  exactly the C147 (1) gap. Fix: `ProcessGuard.graceful_stop("client", 15)` sends SIGTERM first; opencode then
+  persists the trailing message with `error.type == "aborted"` and no usage (the §3a `interrupted` row), and
+  SIGKILL follows only for survivors after 15 s; model-role processes stay SIGKILL. Recorded per row as
+  `termination.client_stop ∈ {sigterm, sigkill}` and `termination.graceful_wait_s`. On SIGTERM the client also
+  emits one `error` event `{type: "unknown", message: "Transport: The socket connection was closed
+  unexpectedly…"}`; `reconcile` ignores exactly that event, only for our own stop outcomes (`KILL_OUTCOMES`
+  including `runner_cancel`), and still aborts on a normal exit, on any other error, or when an unrelated error
+  accompanies it.
+- **B1b — interrupted message with usage.** When SIGTERM lands inside a long tool call after the stream finished
+  (the live `exec_timeout` shape), the aborted trailing message carries real usage. Rule added to §3a for our own
+  stop outcomes only: accepted and CHARGED like the completed-but-unpublished case, `trailing =
+  "interrupted_charged"`; a normal exit, a non-trailing position or malformed usage still abort. The verifier
+  accepts `trailing ∈ {interrupted, unpublished, interrupted_charged}` for stall/loop.
+- **B2 — alloc threshold.** 256 MiB killed opencode's own `opencode serve` child (≈ 380 MiB, tracked as a client
+  descendant). No guard special case: the `alloc` kind lowers `per_process` to 512 MiB and allocates 1 GiB; campaign
+  `ProcessGuard` semantics are unchanged apart from the new return values, `status()`, `graceful_stop`,
+  `verify_gone` and a cleanup sweep that continues past a container-removal failure and raises at the end.
+- **B3 — killed-command shape.** The pinned client reports a SIGKILLed shell call as `status: "completed"` with
+  `metadata.signal == "SIGKILL"`, not as an error; fixture `opencode_2.0.20_killed_tool_part.json` frozen by sha;
+  the verifier accepts "error, or completed with a signal or a nonzero exit".
+- **B4 — cancel exit code.** A runner cancel exits rc 1 through the existing `REFUSED:` handler; the runner
+  distinguishes it by the manifest's `transport_abort` text plus `cancelled_item`. `tool_call_id` for a memory
+  kill is resolved when the item finishes (the `tool_use` event arrives after the kill), matched by argv when a
+  request carries several shell calls.
+- **B5 — fail-first.** Both workers wrote code before tests and proved the tests bite by reverting the sources
+  (95 failures on HEAD sources, probe side) and by three named mutations (chain side). Recorded as a deviation.
+- **B6 — chain runner contract.** `validate_leg` reads the probe rc from the leg descriptor; the in-item events
+  size for the idle predicate is the byte total of the run's transcript directory; heartbeat age is measured from
+  the runner's first observation of the current line; `pilot` mode uses its own `<out-root>/pilot/` directory with
+  a fresh load (the probe's resume check refuses a rows file from another worker); a STOP-cancelled leg that
+  validates complete is kept; the inject driver passes neither `--cancel-file` nor `--manifest-ack`.

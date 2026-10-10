@@ -70,6 +70,7 @@ class MockServer:
                 self.record(body)
                 with owner.lock:
                     owner.chat_count += 1
+                    number = owner.chat_count
                     kind = owner.script.get(owner.chat_count, "ok")
                 if kind == "http500":
                     return self.reply(
@@ -102,32 +103,28 @@ class MockServer:
                     owner.stream_started.set()
                     owner.release_stream.wait(30)
                     return
-                finished = any(m.get("role") == "tool" for m in messages)
+                # A dict script entry always answers with its tool call, so multi-call scripts
+                # (e.g. three identical shell calls) are possible; other requests finish after a tool result.
+                finished = any(m.get("role") == "tool" for m in messages) and not isinstance(kind, dict)
                 if finished:
                     chunks = [chunk({"role": "assistant", "content": "Done."}), chunk({}, "stop")]
                 else:
-                    tool = kind if isinstance(kind, dict) else {
-                        "name": "write", "input": {"path": "solution.py", "content": "answer = 42\n"}
-                    }
-                    args = json.dumps(tool["input"])
-                    chunks = [
-                        chunk(
-                            {
-                                "role": "assistant",
-                                "content": None,
-                                "tool_calls": [
-                                    {
-                                        "index": 0,
-                                        "id": "call_write",
-                                        "type": "function",
-                                        "function": {"name": tool["name"], "arguments": ""},
-                                    }
-                                ],
-                            }
-                        ),
-                        chunk({"tool_calls": [{"index": 0, "function": {"arguments": args}}]}),
-                        chunk({}, "tool_calls"),
-                    ]
+                    default = {"name": "write", "input": {"path": "solution.py", "content": "answer = 42\n"}}
+                    # {"calls": [tool, ...]} emits several parallel tool calls in one response.
+                    tools = kind["calls"] if isinstance(kind, dict) and "calls" in kind else [
+                        kind if isinstance(kind, dict) else default]
+                    chunks = []
+                    for index, tool in enumerate(tools):
+                        # ids unique per request/index so multi-call scripts never repeat a part id
+                        call_id = "call_write" if number == 1 and index == 0 else f"call_write_{number}_{index}"
+                        chunks += [
+                            chunk({"role": "assistant", "content": None, "tool_calls": [
+                                {"index": index, "id": call_id, "type": "function",
+                                 "function": {"name": tool["name"], "arguments": ""}}]}),
+                            chunk({"tool_calls": [{"index": index, "function": {
+                                "arguments": json.dumps(tool["input"])}}]}),
+                        ]
+                    chunks.append(chunk({}, "tool_calls"))
                 if kind == "drop":
                     self.wfile.write(chunks[0])
                     self.wfile.flush()

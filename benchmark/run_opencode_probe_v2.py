@@ -838,7 +838,21 @@ def main():
         sys.exit("REFUSED: " + _scrub_error(e))
 
 
+def _print_identity_requested():
+    return "--print-identity" in sys.argv[1:]
+
+
 def _main():
+    if _print_identity_requested():
+        # C147 §3: read-only provenance identity; no router, worker or model is touched.
+        pre = argparse.ArgumentParser(allow_abbrev=False)
+        pre.add_argument("--print-identity", action="store_true")
+        pre.add_argument("--universe", type=Path)
+        pre.add_argument("--agent-system-file")
+        pre.add_argument("--tg1-inject", choices=("stall", "loop", "alloc"))
+        known, _ = pre.parse_known_args()
+        from bench import tg1_runner
+        return tg1_runner.print_identity(sys.modules[__name__], known)
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", required=True)
     ap.add_argument("--items", required=True)
@@ -874,7 +888,18 @@ def _main():
     ]:
         ap.add_argument("--" + key, type=int, default=default)
     ap.add_argument("--poll-s", type=float, default=5.0)
+    # C147 (tg1 only): injected positives, cooperative cancellation, manifest barrier, sampling profile.
+    ap.add_argument("--tg1-inject", choices=("stall", "loop", "alloc"))
+    ap.add_argument("--cancel-file")
+    ap.add_argument("--manifest-ack")
+    ap.add_argument("--sampling-profile", choices=("deployed",))
+    ap.add_argument("--print-identity", action="store_true", help="print the probe identity JSON and exit")
     a = ap.parse_args()
+    if a.scaffold != "opencode-v2-web-tg1" and (
+        a.tg1_inject or a.cancel_file or a.manifest_ack or a.sampling_profile
+    ):
+        sys.exit("REFUSED: --tg1-inject/--cancel-file/--manifest-ack/--sampling-profile require "
+                 "--scaffold opencode-v2-web-tg1")
     if a.scaffold == "opencode-v2-web-tg1":
         ap.allow_abbrev = False
         a = ap.parse_args()

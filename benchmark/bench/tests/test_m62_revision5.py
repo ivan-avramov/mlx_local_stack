@@ -258,7 +258,10 @@ def test_f3_interrupted_trailing_must_not_carry_usage():
     bad = assistant('m2')
     bad['error'] = {'type':'aborted'}
     with pytest.raises(tg.TransportAbort):
-        tg.reconcile(s, dict(messages=[assistant(),bad]), -9, 'stalled')
+        tg.reconcile(s, dict(messages=[assistant(),bad]), 0)      # not one of our stops
+    # C147: for our own stops an aborted trailing message WITH usage is real and is charged (trailing
+    # 'interrupted_charged'); see test_token_turn_gate.py.
+    assert tg.reconcile(s, dict(messages=[assistant(),bad]), -9, 'stalled')['trailing'] == 'interrupted_charged'
 
 
 def test_f12_regress_recover_only_new_minimum_progress():

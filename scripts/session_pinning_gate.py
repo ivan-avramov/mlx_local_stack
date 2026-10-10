@@ -97,6 +97,7 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="op
                 "TMPDIR", "OPENCODE_CONFIG_DIR", "PWD"):
         Path(env[key]).mkdir(parents=True, exist_ok=True)
     carrier = REPO / ("benchmark/opencode_bench_v2.json" if scaffold == "opencode-v2"
+                      else "benchmark/opencode_bench_v2_web_tg1.json" if scaffold == "opencode-v2-web-tg1"
                       else "benchmark/opencode_bench_v2_web.json")
     if not carrier.is_file() and scaffold == "opencode-v2" and agent_system_file is None:
         carrier = REPO / "opencode_config/opencode.json"
@@ -114,6 +115,16 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="op
         target.write_bytes(plugin.read_bytes())
     else:
         print("[A4 v2] WARNING: noretry.js absent; A4 verifies session headers only", flush=True)
+    if scaffold == "opencode-v2-web-tg1":
+        # C147 §3: the tg1 carrier loads BOTH bench plugins; copied by content, never from a shared config dir.
+        toolbounds = REPO / "benchmark/opencode_plugins/toolbounds.js"
+        if not toolbounds.is_file():
+            raise SystemExit("REFUSED: tg1 A4 requires benchmark/opencode_plugins/toolbounds.js")
+        target = Path(env["OPENCODE_CONFIG_DIR"]) / "plugins/toolbounds.js"
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(toolbounds.read_bytes())
+        if hashlib.sha256(target.read_bytes()).hexdigest() != hashlib.sha256(toolbounds.read_bytes()).hexdigest():
+            raise SystemExit("M50 tripwire: toolbounds.js copy differs")
     # Seed the per-run cache; do not let opencode download a tool to a shared cache.
     rg = shutil.which("rg", path=env["PATH"])
     if rg:
@@ -236,7 +247,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--opencode", choices=("1.18", "v2"), default="v2",
                     help="A4 client (default v2; the 1.18 leg is frozen)")
-    ap.add_argument("--scaffold", choices=("opencode-v2", "opencode-v2-web"), default="opencode-v2")
+    ap.add_argument("--scaffold", choices=("opencode-v2", "opencode-v2-web", "opencode-v2-web-tg1"),
+                    default="opencode-v2")
     ap.add_argument("--agent-system-file")
     ap.add_argument("--extra-deny-file", type=Path)
     ap.add_argument("--model", required=True)

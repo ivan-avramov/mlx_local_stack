@@ -46,6 +46,9 @@ class Process:
     def kill(self):
         self.dead = True
 
+    def terminate(self):
+        self.dead = True
+
 
 def guard(tmp_path, processes, **kwargs):
     result = pg.ProcessGuard(

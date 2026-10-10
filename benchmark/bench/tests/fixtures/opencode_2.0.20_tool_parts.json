@@ -1,0 +1,128 @@
+{
+ "messages": [
+  {
+   "content": [
+    {
+     "id": "41da7e86-9e51-43e9-944e-1769044c03ec",
+     "name": "read",
+     "state": {
+      "input": {
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/.docs/instructions.md"
+      },
+      "status": "completed"
+     },
+     "type": "tool"
+    },
+    {
+     "id": "e481efb1-c1bb-4c2f-b6dc-be3b0b808a4e",
+     "name": "read",
+     "state": {
+      "input": {
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling_test.py"
+      },
+      "status": "completed"
+     },
+     "type": "tool"
+    },
+    {
+     "id": "403aa403-6b28-4384-b007-1b7342cdade6",
+     "name": "read",
+     "state": {
+      "input": {
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling.py"
+      },
+      "status": "completed"
+     },
+     "type": "tool"
+    },
+    {
+     "id": "8de34d2a-187a-481d-a0bb-ee3addc5040c",
+     "name": "write",
+     "state": {
+      "input": {
+       "content": "class BowlingGame:\n    def __init__(self):\n        self._rolls = []\n        self._frame = 1\n        self._frame_pins = 0\n        self._tenth_rolls = []\n        self._game_over = False\n\n    def roll(self, pins):\n        if not 0 <= pins <= 10:\n            raise ValueError(\"pins must be between 0 and 10\")\n\n        if self._game_over:\n            raise ValueError(\"cannot roll after the game is complete\")\n\n        if self._frame < 10:\n            if self._frame_pins + pins > 10:\n                raise ValueError(\n                    \"two rolls in a frame cannot score more than 10 points\"\n                )\n            self._frame_pins += pins\n            self._rolls.append(pins)\n            if self._frame_pins == 10:\n                self._frame += 1\n                self._frame_pins = 0\n        else:\n            tenth = self._tenth_rolls\n            if len(tenth) == 1 and tenth[0] < 10 and tenth[0] + pins > 10:\n                raise ValueError(\n                    \"two rolls in a frame cannot score more than 10 points\"\n                )\n            if len(tenth) == 2 and tenth[0] == 10 and tenth[1] != 10:\n                if tenth[1] + pins > 10:\n                    raise ValueError(\n                        \"two rolls in a frame cannot score more than 10 points\"\n                    )\n            tenth.append(pins)\n            self._rolls.append(pins)\n            if len(tenth) == 3 or (\n                len(tenth) == 2 and tenth[0] < 10 and tenth[0] + tenth[1] < 10\n            ):\n                self._game_over = True\n\n    def score(self):\n        if self._frame < 10:\n            raise ValueError(\"score cannot be taken until the end of the game\")\n        if not self._game_over:\n            raise ValueError(\n                \"bonus rolls must be rolled before score can be calculated\"\n            )\n\n        rolls = self._rolls\n        total = 0\n        i = 0\n        for _ in range(9):\n            if rolls[i] == 10:\n                total += 10 + rolls[i + 1] + rolls[i + 2]\n                i += 1\n            elif rolls[i] + rolls[i + 1] == 10:\n                total += 10 + rolls[i + 2]\n                i += 2\n            else:\n                total += rolls[i] + rolls[i + 1]\n                i += 2\n        total += sum(rolls[i:])\n        return total\n",
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling.py"
+      },
+      "status": "completed"
+     },
+     "type": "tool"
+    },
+    {
+     "id": "b2da9f07-8dd0-49c4-8cdd-c677cacc75d6",
+     "name": "shell",
+     "state": {
+      "input": {
+       "command": "python3 -m unittest bowling_test -v 2>&1 | tail -5",
+       "workdir": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling"
+      },
+      "status": "completed"
+     },
+     "type": "tool"
+    },
+    {
+     "id": "1486c791-4a0c-4c56-bf28-684250d4bebb",
+     "name": "shell",
+     "state": {
+      "input": {
+       "command": "python3 -m unittest bowling_test 2>&1 | head -60",
+       "workdir": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling"
+      },
+      "status": "completed"
+     },
+     "type": "tool"
+    },
+    {
+     "id": "9fe08c10-4703-49f4-9838-edd34b792875",
+     "name": "edit",
+     "state": {
+      "input": {
+       "newString": "        self._rolls = []\n        self._frame = 1\n        self._frame_pins = 0\n        self._frame_rolls = 0\n        self._tenth_rolls = []\n        self._game_over = False",
+       "oldString": "        self._rolls = []\n        self._frame = 1\n        self._frame_pins = 0\n        self._tenth_rolls = []\n        self._game_over = False",
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling.py"
+      },
+      "status": "completed"
+     },
+     "type": "tool"
+    },
+    {
+     "id": "a2dd2f65-f480-4767-bd31-d1336ae79024",
+     "name": "edit",
+     "state": {
+      "input": {
+       "newString": "            self._frame_pins += pins\n            self._rolls.append(pins)\n            self._frame_rolls += 1\n            if self._frame_pins == 10 or self._frame_rolls == 2:\n                self._frame += 1\n                self._frame_pins = 0\n                self._frame_rolls = 0",
+       "oldString": "            self._frame_pins += pins\n            self._rolls.append(pins)\n            if self._frame_pins == 10:\n                self._frame += 1\n                self._frame_pins = 0",
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling.py"
+      },
+      "status": "completed"
+     },
+     "type": "tool"
+    },
+    {
+     "id": "7e12d268-b49c-4226-89a6-199b7916bebe",
+     "name": "shell",
+     "state": {
+      "input": {
+       "command": "python3 -m unittest bowling_test 2>&1 | tail -3",
+       "workdir": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling"
+      },
+      "status": "completed"
+     },
+     "type": "tool"
+    },
+    {
+     "id": "6ae86581-f89b-462c-9be6-6c455b27c04d",
+     "name": "read",
+     "state": {
+      "input": {
+       "path": "$STACK_WORKDIR/scratch/octmp.noindex/oc-bowling/bowling/bowling.py"
+      },
+      "status": "completed"
+     },
+     "type": "tool"
+    }
+   ],
+   "type": "assistant"
+  }
+ ],
+ "source": "recorded opencode 2.0.20 export (M61 s1 A, python/bowling), tool parts only; absolute paths already $STACK_WORKDIR placeholders"
+}

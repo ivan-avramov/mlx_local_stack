@@ -69,7 +69,7 @@ def test_resource_kill_cancels_before_export(tmp_path,monkeypatch,capsys,slow_ph
         def cleanup(self): calls.append("cleanup")
     monkeypatch.setattr(pg,"ProcessGuard",Guard)
     monkeypatch.setattr(runner, "HEARTBEAT_INTERVAL_S", 0.005)
-    metrics = iter([1, 1, 0])
+    metrics = iter([1, 1, 1, 0])   # C147: one worker-summary sample immediately before the kill, then the cancel wait
     def metric(endpoint):
         busy = next(metrics)
         calls.append("busy" if busy else "idle")
@@ -98,14 +98,17 @@ def test_resource_kill_cancels_before_export(tmp_path,monkeypatch,capsys,slow_ph
         return sg.Grade(passing={("test.py", "test", "ok")})
     monkeypatch.setattr(sg, "grade", grade)
     result=runner.run_item(None,model="fixture",work=work,prompt="fixture",env={"TMPDIR":str(tmp_path/"itemtmp")},binary="fixture",evidence=tmp_path/"evidence/one",entry=entry,limit=262144,private=private,router={},base="fixture")
+    assert calls[0] == "busy" and calls.index("kill-client") == 1, calls   # C147 pre-kill summary sample
+    after_cancel = lambda name: calls.index(name, calls.index("cancel"))
     order = ["kill-client", "kill-model", "cancel", "busy", "idle", "drain", "finish-grades", "export"]
-    assert [calls.index(c) for c in order] == sorted(calls.index(c) for c in order), calls
+    positions = [after_cancel(c) if c in ("busy", "idle") else calls.index(c) for c in order]
+    assert positions == sorted(positions), calls
     assert calls.count("cancel") == 1
     assert result["gate"]["requests_completed_at_kill"] is not None
     assert result["nonconv_kind"] == "client_resource" and result["converged"] is False
     assert result["termination"]["reason"] == "client_resource"
     if slow_phases:
-        lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+        lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
         for phase in ("cancellation", "terminal_grading"):
             assert sum(line["phase"] == phase for line in lines) >= 2
 
@@ -222,7 +225,7 @@ def test_heartbeat_continues_through_terminal_phases(capsys):
             time.sleep(0.035)
     finally:
         watch.close()
-    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
     for phase in ('cancellation', 'terminal_grading', 'cleanup'):
         assert sum(row['phase'] == phase for row in lines) >= 2
     assert all('m62_watch' in row for row in lines)

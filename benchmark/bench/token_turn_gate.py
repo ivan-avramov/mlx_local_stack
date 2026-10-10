@@ -16,6 +16,8 @@ POLICY = dict(
     thinking_budget=81920,
     max_tokens=102400,
 )
+# C147 §3: a cooperative runner cancel is reconciled exactly like a gate stop but is never a nonconv kind.
+KILL_OUTCOMES = ("looping", "hard_ceiling", "stalled", "exec_timeout", "client_resource", "runner_cancel")
 PRECEDENCE = (
     "looping",
     "hard_ceiling",
@@ -253,6 +255,8 @@ class EventStream:
         self.started_at = None
         self.starts = []
         self.errors = []
+        # (request index, part id, tool name, shell command text) in live completion order (C147 linkage).
+        self.tool_events = []
         self.last_event = time.monotonic()
         self.event_types_seen = {}
         self.torn_tail = False
@@ -330,7 +334,11 @@ class EventStream:
             try:
                 if not isinstance(part["tool"], str) or not part["tool"]:
                     raise TransportAbort("malformed tool name")
-                self.gate.tool(part["tool"], tool_completion_input(part["state"]))
+                inputs = tool_completion_input(part["state"])
+                command = inputs.get("command")
+                self.tool_events.append((len(self.gate.request_usage) + 1, part["id"], part["tool"],
+                                         command if isinstance(command, str) else ""))
+                self.gate.tool(part["tool"], inputs)
             except (KeyError, TypeError, ValueError):
                 raise TransportAbort("malformed tool completion") from None
         if kind == "step_finish":
@@ -358,20 +366,41 @@ def context_overflow(error):
     )
 
 
+# Both observed on the pinned client when we SIGTERM it mid-request: the aborted fetch, or a retry against its
+# already-exiting local server.
+OWN_ABORT_TRANSPORT = (
+    "Transport: The socket connection was closed unexpectedly",
+    "Transport: Unable to connect. Is the computer able to access the url?",
+)
+
+
+def own_abort_transport(error):
+    return (
+        isinstance(error, dict)
+        and error.get("type") == "unknown"
+        and isinstance(error.get("message"), str)
+        and error["message"].startswith(OWN_ABORT_TRANSPORT)
+    )
+
+
 def reconcile(stream, export, rc, outcome=None):
     """Match native IDs before normalization, then charge permitted missing completions."""
-    stream.finish(killed=outcome in PRECEDENCE[:5] or outcome == "client_exit_hang")
+    stream.finish(killed=outcome in KILL_OUTCOMES or outcome == "client_exit_hang")
     gate = stream.gate
     exit_hang = outcome == "client_exit_hang"
     if exit_hang:
         outcome = None
         rc = 0
+    if stream.errors and outcome in KILL_OUTCOMES and all(own_abort_transport(e) for e in stream.errors):
+        # C147: SIGTERM makes the client abort its in-flight fetch and report exactly this transport error while
+        # it persists the aborted assistant message. Only for our own stops; any other error still aborts.
+        stream.errors = []
     if stream.errors:
         if rc == 1 and len(stream.errors) == 1 and context_overflow(stream.errors[0]):
             outcome = "context_overflow"
         else:
             raise TransportAbort("error event / Step.Failed")
-    killed = outcome in PRECEDENCE[:5]
+    killed = outcome in KILL_OUTCOMES
     if outcome is not None and not killed and outcome != "context_overflow":
         raise TransportAbort("unknown terminal outcome")
     if not killed and not outcome and rc != 0:
@@ -384,6 +413,8 @@ def reconcile(stream, export, rc, outcome=None):
         raise TransportAbort("bad export") from None
     seen = set()
     extras = []
+    unmatched = []
+    charged = set()
     for i, m in enumerate(messages):
         mid = m.get("id")
         if not isinstance(mid, str) or not mid or mid in seen:
@@ -406,11 +437,19 @@ def reconcile(stream, export, rc, outcome=None):
             if not allowed:
                 raise TransportAbort("unexpected assistant error")
             if m.get("tokens") is not None:
-                raise TransportAbort("interrupted/rejected assistant carries usage")
+                if not (killed and error.get("type") == "aborted"):
+                    raise TransportAbort("interrupted/rejected assistant carries usage")
+                # C147: our own stop landed inside a tool call after the step's stream finished: the usage is
+                # real. Charged exactly like a completed-but-unpublished message (usage_tuple validates it).
+                usage_tuple(m.get("tokens"))
+                extras.append(m)
+                charged.add(mid)
+            unmatched.append(m)
             continue
         if not m.get("finish"):
             raise TransportAbort("unpublished assistant has no finish")
         extras.append(m)
+        unmatched.append(m)
         if not killed and (outcome or i != len(messages) - 1 or mid != stream.active):
             raise TransportAbort("unmatched export assistant")
     if not set(gate.usage) <= seen:
@@ -425,7 +464,14 @@ def reconcile(stream, export, rc, outcome=None):
         raise TransportAbort("unfinished live message absent from export")
     if killed and stream.active and messages[-1]["id"] != stream.active:
         raise TransportAbort("active live message does not reconcile to trailing assistant")
+    trailing = "none"
+    if unmatched and unmatched[-1] is messages[-1]:
+        trailing = (
+            "interrupted_charged" if messages[-1]["id"] in charged
+            else "interrupted" if messages[-1].get("error")
+            else "unpublished" if killed else "final"
+        )
     for m in extras:
         gate.complete(m["id"], m.get("tokens"))
     gate.check()
-    return gate.primary
+    return dict(primary=gate.primary, unmatched_export_messages=len(unmatched), trailing=trailing)

@@ -155,6 +155,8 @@ class Grade:
     grader_mem_kill: bool = False
     grader_oom: bool = False
     tail: str = ""
+    artifacts: dict = field(default_factory=dict)
+    outcome: str = "parsed"
 
     def failing(self, universe):
         return len(set(universe) - self.passing)
@@ -229,7 +231,32 @@ def parse_go(text, rc, *, stderr="", timed_out=False):
     return result
 
 
-def grade(lang, work, test, private, *, run=None, guard=None, timeout=None):
+def _sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _write_index(keep, directory, seq, boundary, final, outcome, names):
+    """Atomic `index.json` beside the artifacts; returns {name: {path (relative to keep), sha256}}."""
+    artifacts = {
+        name: {"path": (directory / name).relative_to(keep).as_posix(), "sha256": _sha256(directory / name)}
+        for name in names
+        if (directory / name).is_file()
+    }
+    doc = dict(boundary=boundary, seq=seq, final=bool(final), outcome=outcome, artifacts=artifacts)
+    tmp = directory / ".index.json.tmp"
+    with tmp.open("w") as fp:
+        fp.write(json.dumps(doc, indent=1, sort_keys=True))
+        fp.flush()
+        os.fsync(fp.fileno())
+    os.replace(tmp, directory / "index.json")
+    return artifacts
+
+
+def grade(lang, work, test, private, *, run=None, guard=None, timeout=None,
+          keep=None, seq=None, boundary=None, final=False):
+    """Grade one snapshot. With `keep`, the grader's raw output is redirected to files under
+    `<keep>/seq-NNNN/` from launch and an `index.json` is written before parsing and on every early return or
+    abort (C147 §5)."""
     work = Path(work).resolve()
     private = Path(private).resolve()
     if lang not in ("python", "go"):
@@ -242,108 +269,133 @@ def grade(lang, work, test, private, *, run=None, guard=None, timeout=None):
         if guard and hasattr(guard, "container_name")
         else "mlxbench-fixture-grade-" + uuid.uuid4().hex
     )
-    with tempfile.TemporaryDirectory(prefix="grade-", dir=private) as tmp:
-        report = Path(tmp) / "report.xml"
-        if lang == "python":
-            cmd = [
-                str(REPO / ".venv-bench/bin/python"),
-                "-m",
-                "pytest",
-                str(test),
-                "-q",
-                "--rootdir=" + str(work),
-                "-p",
-                "no:cacheprovider",
-                "--junitxml=" + str(report),
-            ]
-        else:
-            if guard is None:
-                raise TransportAbort("Go grader requires a process/container guard")
-            guard.register_container(name)
-            cmd = [
-                "docker",
-                "run",
-                "--name",
-                name,
-                "--memory",
-                "4g",
-                "--memory-swap",
-                "4g",
-                "-v",
-                str(work) + ":/work",
-                "-w",
-                "/work",
-                "aider-benchmark",
-                "go",
-                "test",
-                "-json",
-                "./...",
-            ]
-        timed_out = False
-        oom = False
-        full = Path(tmp) / "go.jsonl"
-        errors = Path(tmp) / "go.stderr"
-        # A fresh grade-specific memory marker; the guard also retains aggregate diagnostics.
-        if guard:
-            guard.grader_mem_kill = False
+    directory = None
+    if keep is not None:
+        keep = Path(keep)
+        directory = keep / ("seq-%04d" % seq)
         try:
-            try:
-                kwargs = dict(
-                    cwd=work,
-                    text=True,
-                    timeout=timeout,
-                    stdin=subprocess.DEVNULL,
-                    env={
-                        **os.environ,
-                        "TMPDIR": tmp,
-                        "PYTHONDONTWRITEBYTECODE": "1",
-                        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
-                    },
-                )
-                if lang == "go":
-                    with full.open("w") as stdout, errors.open("w") as stderr:
-                        p = run(cmd, stdout=stdout, stderr=stderr, **kwargs)
-                else:
-                    p = run(cmd, capture_output=True, **kwargs)
-            except subprocess.TimeoutExpired as exc:
-                timed_out = True
+            directory.mkdir(parents=True)
+        except FileExistsError:
+            raise TransportAbort("immutable grade report path exists: " + directory.name) from None
+    names = ("report.xml", "stdout.txt", "stderr.txt") if lang == "python" else ("go.jsonl", "go.stderr")
+    state = dict(outcome="infrastructure")
 
-                def decode(s):
-                    return (
-                        s.decode(errors="replace") if isinstance(s, bytes) else s or ""
-                    )
+    def index(outcome):
+        state["outcome"] = outcome
+        if directory is None:
+            return {}
+        return _write_index(keep, directory, seq, boundary, final, outcome, names)
 
-                p = subprocess.CompletedProcess(
-                    cmd, None, decode(exc.stdout), decode(exc.stderr)
-                )
-            except OSError as exc:
-                raise TransportAbort(
-                    "missing grader interpreter/runtime: " + str(exc)
-                ) from exc
-            if lang == "go":
-                oom = guard.container_oom(name)
-            mem = bool(guard and guard.grader_mem_kill)
-            if oom or mem:
-                return Grade(
-                    returncode=p.returncode, grader_mem_kill=mem, grader_oom=oom
-                )
-            # Keep full Go JSON through parsing; no tail-based test accounting.
-            if lang == "go":
-                result = parse_go(
-                    full.read_text(),
-                    p.returncode,
-                    stderr=errors.read_text(),
-                    timed_out=timed_out,
-                )
-            else:
-                result = parse_python(
-                    report.read_text() if report.exists() else "",
-                    p.returncode,
-                    str(test),
-                    stderr=(p.stdout or "") + (p.stderr or ""),
-                    timed_out=timed_out,
-                )
+    try:
+        with tempfile.TemporaryDirectory(prefix="grade-", dir=private) as tmp:
+            result = _grade(lang, work, test, run, guard, timeout, name, Path(tmp), directory, index, boundary)
             return result
-        finally:
-            if lang == "go":
-                guard.remove_container(name)
+    except BaseException:
+        # Every escaping exception is an infrastructure outcome; the report index must exist before it propagates.
+        if directory is not None:
+            index("infrastructure")
+        raise
+
+
+def _grade(lang, work, test, run, guard, timeout, name, tmp, directory, index, boundary):
+    outputs = directory if directory is not None else tmp
+    report = outputs / "report.xml"
+    stdout_path = outputs / ("stdout.txt" if lang == "python" else "go.jsonl")
+    stderr_path = outputs / ("stderr.txt" if lang == "python" else "go.stderr")
+    if lang == "python":
+        cmd = [
+            str(REPO / ".venv-bench/bin/python"),
+            "-m",
+            "pytest",
+            str(test),
+            "-q",
+            "--rootdir=" + str(work),
+            "-p",
+            "no:cacheprovider",
+            "--junitxml=" + str(report),
+        ]
+    else:
+        if guard is None:
+            raise TransportAbort("Go grader requires a process/container guard")
+        guard.register_container(name)
+        cmd = [
+            "docker",
+            "run",
+            "--name",
+            name,
+            "--memory",
+            "4g",
+            "--memory-swap",
+            "4g",
+            "-v",
+            str(work) + ":/work",
+            "-w",
+            "/work",
+            "aider-benchmark",
+            "go",
+            "test",
+            "-json",
+            "./...",
+        ]
+    timed_out = False
+    oom = False
+    # A fresh grade-specific memory marker; the guard also retains aggregate diagnostics.
+    if guard:
+        guard.grader_mem_kill = False
+    try:
+        try:
+            kwargs = dict(
+                cwd=work,
+                text=True,
+                timeout=timeout,
+                stdin=subprocess.DEVNULL,
+                env={
+                    **os.environ,
+                    "TMPDIR": str(tmp),
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+                },
+            )
+            # Output goes to files from launch (no capture_output): a timeout kill loses nothing.
+            with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
+                p = run(cmd, stdout=stdout, stderr=stderr, **kwargs)
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+
+            def decode(s):
+                return s.decode(errors="replace") if isinstance(s, bytes) else s or ""
+
+            p = subprocess.CompletedProcess(cmd, None, decode(exc.stdout), decode(exc.stderr))
+        except OSError as exc:
+            raise TransportAbort("missing grader interpreter/runtime: " + str(exc)) from exc
+        if lang == "go":
+            oom = guard.container_oom(name)
+        mem = bool(guard and guard.grader_mem_kill)
+        if oom or mem:
+            artifacts = index("oom" if oom else "mem_kill")
+            return Grade(returncode=p.returncode, grader_mem_kill=mem, grader_oom=oom,
+                         outcome="oom" if oom else "mem_kill", artifacts=artifacts)
+        # Keep full output through parsing; no tail-based test accounting.
+        out_text = stdout_path.read_text(errors="replace")
+        err_text = stderr_path.read_text(errors="replace")
+        if lang == "python":
+            provisional = "timeout" if timed_out else "parsed" if report.exists() else "missing_report"
+        else:
+            provisional = "timeout" if timed_out else "parsed"
+        artifacts = index(provisional)
+        if lang == "go":
+            result = parse_go(out_text, p.returncode, stderr=err_text, timed_out=timed_out)
+        else:
+            result = parse_python(
+                report.read_text() if report.exists() else "",
+                p.returncode,
+                str(test),
+                stderr=(p.stdout or "") + out_text + (p.stderr or "") + err_text,
+                timed_out=timed_out,
+            )
+        result.outcome = provisional
+        result.artifacts = artifacts
+        return result
+    finally:
+        if lang == "go":
+            guard.remove_container(name)

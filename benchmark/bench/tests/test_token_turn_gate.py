@@ -284,3 +284,150 @@ def test_duplicate_tool_call_id_different_projection_rejected():
     second = {**first, "part": {**first["part"], "partID": "projection-b"}}
     with pytest.raises(tg.TransportAbort, match="duplicate"):
         s.accept(second)
+
+
+# --- C147 §2: reconcile returns causal evidence; runner_cancel behaves exactly like a gate stop ---
+
+def _fresh():
+    g = tg.TokenTurnGate(1)
+    s = tg.EventStream(g)
+    request(s, "m1")
+    return g, s
+
+
+def test_c147_reconcile_summary_normal_exit_all_matched():
+    g, s = _fresh()
+    out = tg.reconcile(s, dict(messages=[assistant()]), 0)
+    assert out == dict(primary=None, unmatched_export_messages=0, trailing="none")
+
+
+def test_c147_reconcile_summary_normal_exit_final_message():
+    g, s = _fresh()
+    s.accept(event("step_start", "m2"))
+    out = tg.reconcile(s, dict(messages=[assistant(), assistant("m2")]), 0)
+    assert out["unmatched_export_messages"] == 1 and out["trailing"] == "final"
+
+
+@pytest.mark.parametrize("outcome", ["stalled", "looping", "runner_cancel"])
+def test_c147_reconcile_summary_interrupted_trailing(outcome):
+    g, s = _fresh()
+    tail = dict(type="assistant", id="m2", error=dict(type="aborted"))
+    out = tg.reconcile(s, dict(messages=[assistant(), tail]), -9, outcome)
+    assert out["unmatched_export_messages"] == 1 and out["trailing"] == "interrupted"
+    assert out["primary"] == (None if outcome == "runner_cancel" else g.primary)
+    assert len(g.request_usage) == 1
+
+
+@pytest.mark.parametrize("outcome", ["stalled", "runner_cancel"])
+def test_c147_reconcile_summary_unpublished_trailing(outcome):
+    g, s = _fresh()
+    out = tg.reconcile(s, dict(messages=[assistant(), assistant("m2")]), -9, outcome)
+    assert out["unmatched_export_messages"] == 1 and out["trailing"] == "unpublished"
+    assert len(g.request_usage) == 2
+
+
+def test_c147_reconcile_gate_stop_nothing_unmatched():
+    g, s = _fresh()
+    out = tg.reconcile(s, dict(messages=[assistant()]), -9, "stalled")
+    assert out["unmatched_export_messages"] == 0 and out["trailing"] == "none"
+
+
+def test_c147_runner_cancel_does_not_enter_nonconv_precedence():
+    g, s = _fresh()
+    tg.reconcile(s, dict(messages=[assistant()]), -9, "runner_cancel")
+    assert g.primary is None and "runner_cancel" not in tg.PRECEDENCE
+
+
+def test_c147_runner_cancel_still_aborts_where_a_gate_stop_does():
+    g, s = _fresh()
+    bad = dict(type="assistant", id="m2", error=dict(type="provider.other"))
+    with pytest.raises(tg.TransportAbort):
+        tg.reconcile(s, dict(messages=[assistant(), bad]), -9, "runner_cancel")
+    g, s = _fresh()
+    with pytest.raises(tg.TransportAbort):
+        tg.reconcile(s, dict(messages=[assistant()]), 1, None)
+
+
+# --- C147: graceful (SIGTERM) client stops report their own aborted fetch as a transport error ---
+
+ABORT_FETCH = dict(type="unknown", message="Transport: The socket connection was closed unexpectedly. "
+                                           "For more information, pass `verbose: true`")
+
+
+def _stopped_stream():
+    g, s = _fresh()
+    s.accept(dict(type="error", sessionID="s1", error=dict(ABORT_FETCH)))
+    return g, s
+
+
+@pytest.mark.parametrize("outcome", ["stalled", "looping", "runner_cancel", "exec_timeout"])
+def test_c147_own_abort_transport_error_is_tolerated_for_our_stops(outcome):
+    g, s = _stopped_stream()
+    tail = dict(type="assistant", id="m2", error=dict(type="aborted"))
+    out = tg.reconcile(s, dict(messages=[assistant(), tail]), -15, outcome)
+    assert out["trailing"] == "interrupted"
+
+
+def test_c147_transport_error_still_aborts_for_a_normal_exit_or_other_errors():
+    g, s = _stopped_stream()
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant()]), 0)
+    g, s = _fresh()
+    s.accept(dict(type="error", sessionID="s1", error=dict(type="Step.Failed")))
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant()]), -15, "stalled")
+    g, s = _fresh()
+    s.accept(dict(type="error", sessionID="s1", error=dict(ABORT_FETCH)))
+    s.accept(dict(type="error", sessionID="s1", error=dict(type="Step.Failed")))
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant()]), -15, "runner_cancel")
+
+
+# --- C147: our own stop inside a tool call -> aborted trailing message WITH usage is charged ---
+
+def _aborted_with_usage(mid="m2", output=7):
+    return dict(id=mid, type="assistant", tokens=usage(output, 100), finish="error",
+                error=dict(type="aborted"), content=[])
+
+
+@pytest.mark.parametrize("outcome", ["exec_timeout", "runner_cancel", "stalled"])
+def test_c147_aborted_trailing_with_usage_is_charged_like_unpublished(outcome):
+    g, s = _fresh()
+    out = tg.reconcile(s, dict(messages=[assistant(), _aborted_with_usage()]), -15, outcome)
+    assert out["trailing"] == "interrupted_charged" and out["unmatched_export_messages"] == 1
+    assert len(g.request_usage) == 2 and g.request_usage[-1][1] == 7
+
+
+def test_c147_charged_aborted_message_counts_in_the_terminal_checks():
+    g, s = _fresh()
+    tg.reconcile(s, dict(messages=[assistant(), _aborted_with_usage(output=327680)]), -15, "exec_timeout")
+    assert "hard_ceiling" in g.flags
+
+
+def test_c147_aborted_with_usage_still_aborts_outside_our_stops_or_when_not_last_or_bad_usage():
+    g, s = _fresh()
+    with pytest.raises(tg.TransportAbort, match="unexpected assistant error"):
+        tg.reconcile(s, dict(messages=[assistant(), _aborted_with_usage()]), 0)
+    g, s = _fresh()
+    with pytest.raises(tg.TransportAbort):
+        tg.reconcile(s, dict(messages=[assistant(), _aborted_with_usage(), assistant("m3")]), -15, "stalled")
+    g, s = _fresh()
+    bad = _aborted_with_usage()
+    bad["tokens"]["output"] = True
+    with pytest.raises(tg.TransportAbort):
+        tg.reconcile(s, dict(messages=[assistant(), bad]), -15, "runner_cancel")
+    g, s = _fresh()
+    overflow = dict(type="provider.invalid-request", status=400,
+                    message="maximum context length is 100 tokens; messages resulted in 200 tokens")
+    s.accept(dict(type="error", sessionID="s1", error=overflow))
+    rejected = dict(type="assistant", id="m2", error=overflow, tokens=usage(1, 1))
+    with pytest.raises(tg.TransportAbort, match="carries usage"):
+        tg.reconcile(s, dict(messages=[assistant(), rejected]), 1)
+
+
+def test_c147_second_observed_own_abort_transport_message_is_tolerated_too():
+    g, s = _fresh()
+    s.accept(dict(type="error", sessionID="s1", error=dict(
+        type="unknown", message="Transport: Unable to connect. Is the computer able to access the url?")))
+    tail = dict(type="assistant", id="m2", error=dict(type="aborted"))
+    assert tg.reconcile(s, dict(messages=[assistant(), tail]), -15, "looping")["trailing"] == "interrupted"

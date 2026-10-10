@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,78 @@ PLUGIN = REPO / "benchmark/opencode_plugins/toolbounds.js"
 
 GRADE_JOIN_OVERHEAD_S = 60
 HEARTBEAT_INTERVAL_S = 30
+GRACEFUL_CLIENT_S = 15
+ACK_TIMEOUT_S = 300
+ACK_POLL_S = 0.5
+CAMPAIGN_POLICY_SHA256 = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"
+
+# C147 §2: frozen injected-positive policy. Each kind lowers exactly ONE constant; every other constant stays at the
+# campaign value (derived at call time by `effective_policy`). No CLI override exists.
+INJECT_POLICY = {
+    "stall": {"gate": {"no_progress_requests": 4}, "hygiene": {}},
+    "loop": {"gate": {"identical_calls": 3}, "hygiene": {}},
+    "alloc": {"gate": {}, "hygiene": {"per_process": 512 * 1024**2}},
+}
+INJECT_ADDENDA = {
+    "stall": "Before anything else, run the shell command `ls` four separate times, one tool call per message, "
+             "and only then start the task.",
+    "loop": "Before anything else, run the shell command `sleep 600 >/dev/null 2>&1 & sleep 1` three times in a row "
+            "as three separate tool calls with exactly the same arguments (same command text, same working "
+            "directory, no other fields), and only then start the task.",
+    "alloc": "Before anything else, run exactly this shell command once: "
+             "`python3 -c \"import time; b = bytearray(1024 * 1024 * 1024); time.sleep(90)\"` "
+             "and only then start the task.",
+}
+
+
+def inject_label(kind):
+    return SCAFFOLD + "-inject:" + kind
+
+
+def inject_addendum_sha256(kind):
+    return hashlib.sha256(INJECT_ADDENDA[kind].encode()).hexdigest()
+
+
+def effective_policy(kind=None):
+    """(gate, hygiene) dicts in force: the campaign constants, with the inject kind's single override applied."""
+    gate, hygiene = dict(tg.POLICY), dict(pg.POLICY)
+    if kind is not None:
+        gate.update(INJECT_POLICY[kind]["gate"])
+        hygiene.update(INJECT_POLICY[kind]["hygiene"])
+    return gate, hygiene
+
+
+class RunnerCancelled(tg.TransportAbort):
+    """The runner's cooperative cancel was honoured; carries the evidence for the manifest's `cancelled_item`."""
+
+    def __init__(self, message="cancelled by runner", item=None):
+        super().__init__(message)
+        self.item = item or {}
+
+
+def grade_reports(keep, portable=None):
+    """Hashed report index of every grade taken for an item, from the `seq-*/index.json` files (C147 §5)."""
+    keep = Path(keep)
+    portable = portable or str
+    reports = []
+    if not keep.is_dir():
+        return reports
+    for directory in sorted(d for d in keep.iterdir() if d.is_dir() and d.name.startswith("seq-")):
+        try:
+            seq = int(directory.name.split("-", 1)[1])
+        except ValueError:
+            continue
+        try:
+            doc = json.loads((directory / "index.json").read_text())
+            artifacts = {
+                name: dict(path=portable(str(keep / meta["path"])), sha256=meta["sha256"])
+                for name, meta in doc["artifacts"].items()
+            }
+            reports.append(dict(boundary=doc["boundary"], seq=doc["seq"], final=doc["final"],
+                                outcome=doc["outcome"], artifacts=artifacts))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            reports.append(dict(boundary=None, seq=seq, final=None, outcome="unreadable_index", artifacts={}))
+    return sorted(reports, key=lambda r: r["seq"])
 
 
 class PhaseHeartbeat:
@@ -55,7 +128,10 @@ class PhaseHeartbeat:
                     self.report = self.gate.report()
                 finally:
                     self.lock.release()
-            print(json.dumps(dict(m62_watch=self.report, phase=self.phase,
+            usage = self.gate.request_usage
+            last_prompt = usage[-1][2] if usage else 0
+            report = {**self.report, "last_prompt_tokens": last_prompt}
+            print(json.dumps(dict(m62_watch=report, last_prompt_tokens=last_prompt, phase=self.phase,
                                   elapsed_s=time.monotonic() - self.started)), flush=True)
 
     def close(self):
@@ -218,10 +294,14 @@ def tool_bounds_rejections(export):
     )
 
 
-def identity(p, selection, universe_sha, version, binary):
+def identity(p, selection, universe_sha, version, binary, *, inject=None):
+    """Probe identity. `inject=None` is the campaign mode and MUST keep the policy dict (hence
+    `scaffold_policy_sha256`) byte-identical to the V3/V4 manifests; inject-only keys live in inject mode only."""
+    gate, hygiene = effective_policy(inject)
+    label = inject_label(inject) if inject else SCAFFOLD
     policy = dict(
-        gate=tg.POLICY,
-        hygiene=pg.POLICY,
+        gate=gate,
+        hygiene=hygiene,
         toolbounds_sha256=p._sha_of(PLUGIN),
         noretry_sha256=p._sha_of(p.NORETRY_PLUGIN),
         carrier_sha256=selection["fields"]["opencode_bench_config_sha256"],
@@ -231,8 +311,10 @@ def identity(p, selection, universe_sha, version, binary):
         grade_join_timeout_s=grade_join_timeout_s(),
         plugin_proof="GET /api/integration awaits Plugin.awaitActivation",
         env=p.SCAFFOLD_ENV_POLICY_V2,
-        scaffold=SCAFFOLD,
+        scaffold=label,
     )
+    if inject:
+        policy["inject"] = dict(kind=inject, prompt_addendum_sha256=inject_addendum_sha256(inject))
     modules = [
         Path(__file__),
         Path(tg.__file__),
@@ -256,8 +338,8 @@ def identity(p, selection, universe_sha, version, binary):
     for path in modules:
         digest.update(path.relative_to(REPO).as_posix().encode() + b"\0")
         digest.update(path.read_bytes())
-    return dict(
-        scaffold=SCAFFOLD,
+    result = dict(
+        scaffold=label,
         policy=policy,
         scaffold_policy_sha256=hashlib.sha256(
             json.dumps(policy, sort_keys=True).encode()
@@ -266,9 +348,53 @@ def identity(p, selection, universe_sha, version, binary):
         opencode_version=version,
         opencode_exe_sha256=p._sha_of(binary),
     )
+    if inject:
+        result["inject"] = dict(kind=inject, policy=dict(gate=gate, hygiene=hygiene),
+                                prompt_addendum_sha256=inject_addendum_sha256(inject))
+    return result
 
 
-def run_item(
+def print_identity(p, a):
+    """`--print-identity`: the probe's provenance identity as JSON; never touches the router or a worker."""
+    selection = p._carrier_selection(SCAFFOLD, a.agent_system_file, source=CARRIER)
+    universe_path = a.universe or REPO / "benchmark/m62/universe.json"
+    _, universe_sha = universe_preflight.load(universe_path)
+    exe = Path(os.environ.get("OPENCODE_PROBE_BIN") or p._default_opencode_bin())
+    binary = exe if exe.is_file() else Path(p.__file__)
+    ident = identity(p, selection, universe_sha, p.PINNED_OPENCODE_VERSION_V2, binary,
+                     inject=getattr(a, "tg1_inject", None))
+    out = dict(
+        scaffold=ident["scaffold"],
+        scaffold_policy_sha256=ident["scaffold_policy_sha256"],
+        probe_code_sha256=ident["probe_code_sha256"],
+        opencode_version=ident["opencode_version"],
+    )
+    if exe.is_file():
+        out["opencode_exe_sha256"] = ident["opencode_exe_sha256"]
+    print(json.dumps(out, sort_keys=True), flush=True)
+    return 0
+
+
+def run_item(p, *, ctx=None, **kwargs):
+    """Run one item. `ctx` (a dict) receives `cleanup_status` from the guard on EVERY exit path and, when the
+    runner's cancel file was honoured during generation, the call raises `RunnerCancelled` after the full terminal
+    path (drain, grade join, export, reconcile, final grade, report retention) with the item's evidence."""
+    ctx = {} if ctx is None else ctx
+    result = _run_item(p, ctx=ctx, **kwargs)
+    if ctx.get("cancelled"):
+        evidence = result["evidence"]
+        raise RunnerCancelled(item=dict(
+            id=ctx.get("id"),
+            evidence_sha256={k: p._sha_of(v) for k, v in evidence.items()} if p else {},
+            grade_reports=result["grade_reports"],
+            reconciliation=result["reconciliation"],
+            termination=result["termination"],
+            cleanup_status=ctx.get("cleanup_status"),
+        ))
+    return result
+
+
+def _run_item(
     p,
     *,
     model,
@@ -283,17 +409,29 @@ def run_item(
     router,
     base,
     protected_pids=(),
+    policy=None,
+    cancel=None,
+    ctx=None,
 ):
+    gate_policy, hygiene = policy if policy is not None else effective_policy()
+    scrub = p._scrub_pii if p is not None else (lambda text: text)
+    portable = p._portable if p is not None else str
     gate = tg.TokenTurnGate(
         entry["baseline_failing"],
         context_limit=limit,
         universe_size=len(entry["leaves"]),
+        policy=gate_policy,
     )
     lock = threading.RLock()
     observations = []
-    termination = {}
+    termination = dict(reason=None, killed=[], killed_verified=None, cancel_wait_s=None,
+                       in_flight_at_kill=None, worker_summary_before=None, worker_summary_after=None,
+                       client_stop=None, graceful_wait_s=None)
+    if ctx is not None:
+        ctx.update(termination=termination)      # abort manifests carry whatever the kill path recorded
     silence_observer = pg.SilenceObserver()
     exit_hang = False
+    cancelled = False
     resources = dict(grader_mem_kill=False, grader_oom=False)
     paths = {
         key: evidence.with_suffix(suffix)
@@ -305,6 +443,18 @@ def run_item(
     }
     for path in paths.values():
         pg.reserve_evidence(path)
+    keep = Path(str(evidence) + ".grades")
+    try:
+        keep.mkdir(parents=True)
+    except FileExistsError:
+        raise tg.TransportAbort("immutable grade report directory exists: " + keep.name) from None
+    sequence = itertools.count(1)
+    sequence_lock = threading.Lock()
+
+    def next_seq():
+        with sequence_lock:
+            return next(sequence)
+
     started = time.monotonic()
     stop = threading.Event()
     ingest_failure = []
@@ -313,6 +463,11 @@ def run_item(
         run_id=Path(private).parent.name,
         item=entry.get("id", work.name),
         protected_pids=(*protected_pids, router.get("pid")),
+        per_process=hygiene["per_process"],
+        aggregate=hygiene["aggregate"],
+        client_limit=hygiene["client_limit"],
+        scrub=scrub,
+        context=lambda: dict(completed_requests=len(gate.request_usage)),
     )
 
     def grade(snap):
@@ -321,7 +476,8 @@ def run_item(
         )
         if modified:
             return None, True
-        result = sg.grade(entry["lang"], snap.path, entry["test"], private, guard=guard)
+        result = sg.grade(entry["lang"], snap.path, entry["test"], private, guard=guard,
+                          keep=keep, seq=next_seq(), boundary=snap.boundary, final=False)
         resources["grader_mem_kill"] |= result.grader_mem_kill
         resources["grader_oom"] |= result.grader_oom
         return result.failing({tuple(x) for x in entry["leaves"]}), False
@@ -335,13 +491,20 @@ def run_item(
     final_result = None
     cancellation_attempted = False
     heartbeat = PhaseHeartbeat(gate, lock, started)
+    reconciliation = None
+    tmp_before = None
+    tmp_window_start = time.time()
+    try:
+        tmp_before = pg.tmp_listing()
+    except OSError:
+        tmp_before = None
 
     def terminate_client(reason=None):
         nonlocal killed, cancellation_attempted
         if cancellation_attempted:
             return
         with lock:
-            if reason and reason != "client_exit_hang":
+            if reason and reason not in ("client_exit_hang", "runner_cancel"):
                 gate.stop(reason)
             if not killed:
                 gate.requests_at_kill = len(gate.request_usage)
@@ -352,15 +515,60 @@ def run_item(
                                    inflight_s_at_stop=gate.inflight_s_at_stop)
         killed = True
         heartbeat.set_phase("cancellation")
+        if reason:
+            # The summary immediately before the kill: proves the worker was serving this session's request.
+            try:
+                before = worker_json("metrics")
+                termination.update(in_flight_at_kill=pg.in_flight(before),
+                                   worker_summary_before=before.get("summary"))
+            except Exception:  # noqa: BLE001 — evidence only; the kill must still run
+                pass
         errors = []
+        killed_entries = []
+        # C147: the client gets SIGTERM first so opencode's own abort path can persist the in-flight assistant
+        # message; survivors after GRACEFUL_CLIENT_S are SIGKILLed. Model-role processes are always SIGKILLed.
+        graceful = getattr(guard, "graceful_stop", None)
+        if graceful is not None:
+            began = time.monotonic()
+            try:
+                killed_entries.extend(graceful("client", GRACEFUL_CLIENT_S) or [])
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+            termination["graceful_wait_s"] = time.monotonic() - began
+        forced = []
         for role in ("client", "model"):
             try:
-                guard.kill_role(role)
+                got = guard.kill_role(role) or []
+                forced.extend(got if role == "client" else [])
+                killed_entries.extend(got)
             except Exception as exc:  # noqa: BLE001 — cancellation must still run (V5a P14)
                 errors.append(exc)
+        if graceful is not None:
+            termination["client_stop"] = "sigkill" if forced else "sigterm"
+        seen_keys = set()
+        unique = []
+        for entry in killed_entries:
+            key = (entry["pid"], entry["create_time"])
+            if key not in seen_keys:
+                seen_keys.add(key)
+                unique.append(entry)
+        killed_entries = unique
+        termination["killed"] = killed_entries
+        verify = getattr(guard, "verify_gone", None)
+        if verify is not None and killed_entries:
+            termination["killed_verified"] = bool(verify(killed_entries, wait=2.0))
         cancellation_attempted = True
-        pg.wait_cancel(lambda: worker_json("metrics"),
-                       prompt_tokens=gate.request_usage[-1][2] if gate.request_usage else 0)
+        last_metrics = {}
+
+        def metrics():
+            last_metrics["value"] = worker_json("metrics")
+            return last_metrics["value"]
+
+        elapsed = pg.wait_cancel(metrics,
+                                 prompt_tokens=gate.request_usage[-1][2] if gate.request_usage else 0)
+        termination["cancel_wait_s"] = elapsed
+        if "value" in last_metrics:
+            termination["worker_summary_after"] = last_metrics["value"].get("summary")
         if errors:
             raise errors[0]
 
@@ -445,6 +653,10 @@ def run_item(
                         elif observed_reason:
                             gate.stop(observed_reason)
                     reason = gate.stop_reason or ("client_exit_hang" if exit_hang else None)
+                    if not reason and cancel is not None and cancel():
+                        # Cooperative cancel (C147 §3c): a gate stop decided at the same tick takes precedence.
+                        reason = "runner_cancel"
+                        cancelled = True
                 if reason:
                     provenance.assert_served_config_unchanged(router, base)
                     terminate_client(reason)
@@ -493,13 +705,16 @@ def run_item(
         )
         gate.pending.add(final_boundary)
         try:
-            tg.reconcile(
+            summary = tg.reconcile(
                 stream,
                 export,
                 proc.returncode,
                 "client_exit_hang" if exit_hang and not gate.stop_reason else
-                gate.stop_reason if killed or guard.client_resource else None,
+                (gate.stop_reason or ("runner_cancel" if cancelled else None))
+                if killed or guard.client_resource else None,
             )
+            reconciliation = dict(unmatched_export_messages=summary["unmatched_export_messages"],
+                                  trailing=summary["trailing"])
         except tg.TransportAbort as exc:
             if exit_hang:
                 raise tg.TransportAbort("client silent, worker idle: " + str(exc)) from exc
@@ -508,6 +723,23 @@ def run_item(
         if final_boundary != final_boundary_actual:
             gate.pending.discard(final_boundary)
             gate.pending.add(final_boundary_actual)
+        # C147 §4: /tmp escape diagnostic and exact-path cleanup, after the client is gone.
+        tmp_found, tmp_cleaned, tmp_kept, tmp_window = [], [], [], None
+        tmp_found = pg.tmp_escapes(export, env)
+        try:
+            tmp_after = pg.tmp_listing()
+        except OSError:
+            tmp_after = None
+        tmp_window = (tmp_window_start, time.time())
+        if tmp_before is None or tmp_after is None:
+            tmp_kept = [[c["path"], "ambiguous"] for c in tmp_found if c["exact"]]
+        else:
+            tmp_cleaned, tmp_kept = pg.tmp_clean(tmp_found, tmp_before, tmp_after, tmp_window)
+        print(
+            "%s: tmp_escapes=%d exact=%d shell=%d cleaned=%d not_removed=%s" % (
+                entry.get("id", work.name), len(tmp_found), sum(c["exact"] for c in tmp_found),
+                sum(not c["exact"] for c in tmp_found), len(tmp_cleaned), json.dumps(tmp_kept)),
+            flush=True)
         heartbeat.set_phase("terminal_grading")
         with sg.snapshot(work, private, boundary=final_boundary_actual) as snap:
             modified = (
@@ -520,12 +752,16 @@ def run_item(
             failing = None
             if snap is not None and not modified:
                 final_result = sg.grade(
-                    entry["lang"], snap.path, entry["test"], private, guard=guard
+                    entry["lang"], snap.path, entry["test"], private, guard=guard,
+                    keep=keep, seq=next_seq(), boundary=final_boundary_actual, final=True
                 )
                 resources["grader_mem_kill"] |= final_result.grader_mem_kill
                 resources["grader_oom"] |= final_result.grader_oom
                 failing = final_result.failing({tuple(x) for x in entry["leaves"]})
             gate.terminal(None, (final_boundary_actual, failing, failing is not None, modified))
+        if cancelled:
+            ctx["cancelled"] = True
+        termination_out = dict(termination)
         return dict(
             gate=gate.report(),
             request_usage=gate.request_usage,
@@ -544,13 +780,19 @@ def run_item(
             requests_observed=len(stream.starts),
             tool_bounds_rejections=tool_bounds_rejections(export),
             silence_observations=observations,
-            termination=termination,
+            termination=termination_out,
+            reconciliation=reconciliation,
             client_exit_hang=exit_hang,
             torn_tail=stream.torn_tail,
             event_types_seen=stream.event_types_seen,
             evidence=paths,
-            mem_kills=guard.mem_kills,
+            mem_kills=_link_mem_kills(guard.mem_kills, stream),
             orphans_unattributed=guard.orphans_unattributed,
+            tmp_escapes=tmp_found,
+            tmp_cleaned=tmp_cleaned,
+            tmp_not_removed=tmp_kept,
+            tmp_window=list(tmp_window),
+            grade_reports=grade_reports(keep, portable),
             **resources,
         )
     finally:
@@ -571,11 +813,44 @@ def run_item(
                             worker.finish()
                     finally:
                         heartbeat.set_phase("cleanup")
-                        guard.cleanup()
+                        try:
+                            guard.cleanup()
+                        finally:
+                            status = getattr(guard, "status", None)
+                            if ctx is not None and status is not None:
+                                ctx["cleanup_status"] = status()
+                            if ctx is not None:
+                                ctx["grade_reports"] = grade_reports(keep, portable)
                         if proc and proc.poll() is None:
                             proc.wait(timeout=10)
         finally:
             heartbeat.close()
+
+
+def _link_mem_kills(mem_kills, stream):
+    """Resolve each model-process memory kill to the shell `tool_use` of its carrying request.
+
+    The killed call's own `tool_use` event is published after the kill (the tool then errors), so linkage is
+    resolved from the stream once it is drained: among shell calls of request `carrying_request`, the one whose
+    command contains an argv token of the killed process; a single shell call of that request is taken as is."""
+    linked = []
+    for kill in mem_kills:
+        entry = dict(kill)
+        request = entry.get("carrying_request")
+        candidates = [(pid, command) for (j, pid, tool, command) in getattr(stream, "tool_events", [])
+                      if tool == "shell" and j == request]
+        chosen = None
+        if len(candidates) == 1:
+            chosen = candidates[0][0]
+        elif candidates:
+            tokens = [t for t in entry.get("argv", []) if len(t) >= 6]
+            for pid, command in candidates:
+                if any(t in command for t in tokens):
+                    chosen = pid
+                    break
+        entry["tool_call_id"] = chosen
+        linked.append(entry)
+    return linked
 
 
 def main(p, a):
@@ -607,6 +882,23 @@ def main(p, a):
         if a.limit <= 0:
             sys.exit("REFUSED: limit must be positive")
         names = names[: a.limit]
+    if a.sampling_profile not in (None, "deployed"):
+        sys.exit("REFUSED: --sampling-profile accepts only 'deployed'")
+    kind = a.tg1_inject
+    if kind:
+        if kind not in INJECT_POLICY:
+            sys.exit("REFUSED: unknown --tg1-inject kind")
+        if len(a.items.split(",")) != 1 or len(names) != 1 or a.limit not in (None, 1):
+            sys.exit("REFUSED: --tg1-inject runs exactly one item")
+        if not a.expect_items:
+            sys.exit("REFUSED: --tg1-inject requires --expect-items")
+        workdir = p._stack_workdir().resolve()
+        if not a.out or not Path(a.out).resolve().is_relative_to((workdir / "m62/inject").resolve()):
+            sys.exit("REFUSED: --tg1-inject requires --out under $STACK_WORKDIR/m62/inject/")
+    for flag in ("cancel_file", "manifest_ack"):
+        path = getattr(a, flag)
+        if path and Path(path).exists():
+            sys.exit("REFUSED: stale --" + flag.replace("_", "-") + " file already exists")
     original_registry = os.environ.get("MLX_SERVE_CONFIG")
     try:
         return _main(p, a, names)
@@ -619,8 +911,46 @@ def main(p, a):
             os.environ["MLX_SERVE_CONFIG"] = original_registry
 
 
+CLEAN_STATUS = dict(survivors=[], containers_remaining=[], uncertain=False, orphans_unattributed=[], completed=True)
+
+
+class _DiscoveryGuard:
+    """A short-lived guard for a discovery spawn; its cleanup outcome lands in `ctx["cleanup_status"]`."""
+
+    def __init__(self, p, roots, protected, ctx):
+        self.ctx = ctx
+        self.guard = pg.ProcessGuard(roots, protected_pids=protected,
+                                     scrub=p._scrub_pii if p is not None else None)
+
+    def __enter__(self):
+        return self.guard.__enter__()
+
+    def __exit__(self, *exc):
+        try:
+            return self.guard.__exit__(*exc)
+        finally:
+            status = getattr(self.guard, "status", None)
+            if status is not None:
+                self.ctx["cleanup_status"] = status()
+
+
+def _wait_for_ack(path, cancel):
+    deadline = time.monotonic() + ACK_TIMEOUT_S
+    while not Path(path).exists():
+        if cancel is not None and cancel():
+            raise RunnerCancelled()
+        if time.monotonic() >= deadline:
+            raise tg.TransportAbort("manifest not acknowledged")
+        time.sleep(ACK_POLL_S)
+
+
 def _main(p, a, names):
+    kind = a.tg1_inject
+    ctx = dict(cleanup_status=dict(CLEAN_STATUS))
+    cancel = (lambda: Path(a.cancel_file).exists()) if a.cancel_file else None
     selection = p._carrier_selection(SCAFFOLD, a.agent_system_file, source=CARRIER)
+    if kind:
+        selection["fields"] = {**selection["fields"], "scaffold": inject_label(kind)}
     carrier = json.loads(selection["bytes"])
     model = carrier["providers"]["mlx-local"]["models"].get(a.model)
     if model is None:
@@ -675,6 +1005,8 @@ def _main(p, a, names):
         ):
             raise tg.TransportAbort("tg1 input provenance drift")
 
+    if cancel is not None and cancel():
+        raise RunnerCancelled()      # C147 §3a: before the first spawn of any kind
     with p._scratch_dir("tg1-discovery") as scratch:
         p._git_init_scratch(scratch)
         overlay = p._seed_overlay(
@@ -683,8 +1015,8 @@ def _main(p, a, names):
         env = p._opencode_env(run_dir, scratch, overlay)
         p._fresh_tmpdir(env)
         check_env(env, overlay)
-        with pg.ProcessGuard([scratch, env["TMPDIR"]],
-                             protected_pids=(router.get("pid"), before["pid"])) as discovery_guard:
+        with _DiscoveryGuard(p, [scratch, env["TMPDIR"]],
+                             (router.get("pid"), before["pid"]), ctx) as discovery_guard:
             version_result = discovery_guard.run_grader(
                 [binary, "--version"],
                 cwd=scratch,
@@ -709,7 +1041,7 @@ def _main(p, a, names):
             )
         provenance.assert_served_config_unchanged(router, destination)
     shutil.rmtree(env["TMPDIR"])
-    ident = identity(p, selection, universe_sha, version, binary)
+    ident = identity(p, selection, universe_sha, version, binary, inject=kind)
     ident.update(
         seed_base=a.seed_base,
         lang=a.lang,
@@ -717,6 +1049,8 @@ def _main(p, a, names):
         a4_v2_pass=bool(receipt),
         **selection["fields"],
     )
+    if a.sampling_profile:
+        ident["sampling_profile"] = a.sampling_profile
     out = (
         Path(a.out)
         if a.out
@@ -729,6 +1063,8 @@ def _main(p, a, names):
             old = json.loads(mp.read_text())
         except (ValueError, OSError) as exc:
             raise tg.TransportAbort("rows have no intact manifest") from exc
+        if old.get("transport_abort"):
+            raise tg.TransportAbort("tg1 resume refused: the manifest records a transport abort")
         if any(
             old.get("runtime", {}).get(key) != value for key, value in ident.items()
         ):
@@ -750,10 +1086,15 @@ def _main(p, a, names):
 
     save_manifest()
     try:
+        if a.manifest_ack:
+            _wait_for_ack(a.manifest_ack, cancel)
         for name in names:
             item = a.lang + "/" + name
             if any(r["id"] == item for r in rows):
                 continue
+            if cancel is not None and cancel():
+                raise RunnerCancelled()
+            ctx.update(id=item)
             current = worker_identity(p, a.model, router)
             pg.require_identity(before, current)
             source = p._polyglot_root() / a.lang / "exercises/practice" / name
@@ -771,8 +1112,8 @@ def _main(p, a, names):
                 env = p._opencode_env(run_dir, work, overlay)
                 p._fresh_tmpdir(env)
                 check_env(env, overlay)
-                with pg.ProcessGuard([work, env["TMPDIR"]],
-                                     protected_pids=(router.get("pid"), before["pid"])) as discovery_guard:
+                with _DiscoveryGuard(p, [work, env["TMPDIR"]],
+                                     (router.get("pid"), before["pid"]), ctx) as discovery_guard:
                     destination = provenance.opencode_v2_destination(
                         work,
                         {**env, "OPENCODE_PRINT_LOGS": "1"},
@@ -789,6 +1130,8 @@ def _main(p, a, names):
                     "The specification is in .docs/instructions.md — read it first. "
                     f'Do NOT modify {entry["test"]}. Do not create new files unless required by the spec.'
                 )
+                if kind:
+                    prompt += " " + INJECT_ADDENDA[kind]
                 evidence = (
                     workdir
                     / "opencode_transcripts"
@@ -811,6 +1154,9 @@ def _main(p, a, names):
                     router=router,
                     base=base,
                     protected_pids=(before["pid"],),
+                    policy=effective_policy(kind),
+                    cancel=cancel,
+                    ctx=ctx,
                 )
                 after = worker_identity(p, a.model, router)
                 pg.require_identity(before, after)
@@ -866,7 +1212,15 @@ def _main(p, a, names):
         if a.expect_items:
             pg.expect_items(rows, [s.strip() for s in a.expect_items.split(",")])
     except BaseException as exc:
-        man["transport_abort"] = dict(error=p._scrub_error(exc))
+        status = ctx.get("cleanup_status")
+        man["transport_abort"] = dict(
+            error=p._scrub_error(exc),
+            cleanup_status=status,
+            grade_reports=ctx.get("grade_reports", []),
+            termination=ctx.get("termination"),
+        )
+        if isinstance(exc, RunnerCancelled) and exc.item:
+            man["cancelled_item"] = {**exc.item, "cleanup_status": exc.item.get("cleanup_status") or status}
         save_manifest()
         raise
     finally:

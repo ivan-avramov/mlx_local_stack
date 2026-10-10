@@ -1,50 +1,55 @@
-# Handoff — 2026-10-10: next work is C147 (clear the tg1 scaffold for k=2 chains), then the P223 re-record
+# Handoff — 2026-10-10 (night): C147 built, live V3 pending; forks synced; next is the operator's injected run, then the chain pilot, then P223
 
-THE one handoff. Read this, then `docs/open-questions.md` C147 (full owed list), `docs/specs/m62-token-turn-gate.md`
-(rev 5 + §9 build findings), `docs/PLAN.md` (M62 row; agentic-stage note) and `benchmark/chains/README.md`.
+THE one handoff. Read this, then `docs/open-questions.md` C147, `docs/specs/c147-tg1-chain-clearance.md` (rev 3 + §9
+build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and `benchmark/chains/README.md`.
 
 ## State of the world
 
-- **M62 DONE.** Scaffold `opencode-v2-web-tg1`: passive token/turn gate (T 81,920 no-progress tokens, N 40 requests,
-  K 8 identical calls, ceilings 327,680 tokens / 150 requests); progress = failing-test count reaches a new minimum
-  (strict, P221) against `benchmark/m62/universe.json` (43 items); per-request budget-hit flag; bench-only
-  `toolbounds.js`; owned-process guard + memory watchdog. Live V3 7/7, V4 3/3; V2 replay passes. Code
-  `benchmark/bench/{token_turn_gate,structured_grade,proc_guard,tg1_runner}.py`, `benchmark/m62/`.
-- **C148 DONE** (`d94947b`): monitor treats macOS `AccessDenied` on an exiting process as transient; 20/20 clean.
-- **P230:** v2 probe opencode 2.0.20 is bench-owned: `scripts/install_bench_opencode.sh` → `$STACK_WORKDIR/opencode-2.0.20`
-  (byte-identical to the recorded executable `da6c61cd…`). Never use or change the brew/daily opencode.
-- **Workdir was emptied 2026-10-10 (P229).** Only `opencode-2.0.20/` remains. Before any run, rebuild inputs per
-  `benchmark/README.md` "Fresh machine" (corpus at `7e0611e`, NLTK data). Raw evidence (M59/M61/M62 transcripts,
-  M62 reviews/RUNLOG, overlays) is on branch `evidence`: `git archive origin/evidence | tar -x -C "$STACK_WORKDIR"`.
-  opencode 1.18.30 transcripts are in the PRIVATE repo `mlx_local_stack-private` only — never publish.
-- Chain drivers for M54–M62 are frozen in `benchmark/chains/` (M59 runner reused by M61/M62; `m62/run_codex.sh` runs
-  Codex; it writes under `$STACK_WORKDIR/m62` — create the dir first).
-- No pick/order/README change. Stack stopped; daily driver NOT started. `main` and `evidence` pushed.
+- **Forks synced 2026-10-10 (pushed).** mlx-serve `3cb9351` = upstream v0.2.0 merged (`extra_body` adapted beside
+  `generation_defaults`; permanent `upstream` remote). mlx-vlm `24551869` = upstream `952d4f6b` (28 commits past
+  v0.7.6; AGENTS.md there scrubbed and re-baselined). Stack `8f2d1085` bumped both submodules; `uv lock` moved
+  `mlx` 0.32.2 → 0.32.3 (forced by upstream mlx-vlm), which is in the serving-path hash: rows recorded after the
+  bump do not pair with earlier rows. Known, not fixed: the mlx-serve fork's golden registry test fails against
+  this stack's live `main_models.yaml` (fixture predates `mtp_verify_scan joint_v1`); refresh owed in the fork.
+- **C147 BUILT (this session), nothing live yet.** Spec rev 3 + §9. Two Codex `gpt-6.1-sol` design reviews
+  (both "redesign"; every id answered); post-build review launched (`$STACK_WORKDIR/c147/codex_impl_review1.md`,
+  read it first if present and act on blockers). Code: `--tg1-inject {stall,loop,alloc}` (probe), `--cancel-file`,
+  `--manifest-ack`, `--sampling-profile deployed`, `--print-identity`; `benchmark/m62/inject_verify.py`,
+  `benchmark/m62/tmp_escape_clean.py`; `benchmark/bench/chain_ops.py`; `benchmark/chains/c147/{run_tg1_chain.py,
+  run_inject.py, drive_chain.sh, drive_inject.sh, fake_probe.py}`; `scripts/session_pinning_gate.py --scaffold
+  opencode-v2-web-tg1`. Suites: 738 passed (22-file C147 + tg1/m62/opencode-v2 set, one invocation).
+- **Build finding B1 — the M62 live stop path had never reconciled** (SIGKILL before the client persisted the
+  in-flight message; 8/8 real-client failures). Fixed: SIGTERM-first `graceful_stop`, two named transport errors
+  tolerated for our own stops only, aborted trailing message with usage charged (`interrupted_charged`). V3/V4
+  rows are unaffected (no stop ever fired in them). The campaign `scaffold_policy_sha256` is pinned unchanged.
+- **Workdir inputs rebuilt:** `$STACK_WORKDIR/{polyglot-benchmark (7e0611e), nltk_data, opencode-2.0.20, c147/}`.
+  Evidence branch not restored (optional). Daily driver NOT started; stack stopped.
 
-## Queue, in order (C147 is deferred until a tg1 chain is queued — P222; start it when the operator says so)
+## Queue, in order
 
-1. **C147 (1) live injected positives.** Test-only lowered-threshold policy mode, labelled, rows never pooled. On the
-   box: one memory-allocation kill, one no-progress stop, one K (identical-call) stop. Proves the live path
-   stop → owned-descendant kill → worker cancellation → export reconciliation. ≈ 30 min box time. New code → spec,
-   operator approval, cold review, implement, verify.
-2. **C147 (2) tg1 chain runner** replacing the reused M59 runner (fixed 6 h `subprocess.run` kill bypasses cleanup;
-   "complete" = row count). Needs: deliberate timeout/cancellation through `tg1_runner`, exact-item + manifest
-   validation, incomplete-leg archival and fresh-instance restart, leg timeouts from pilot means + heavy-tail
-   allowance, 5-minute watcher (AGENTS.md), k=2 instances with distinct paired schedules + same-seed reload control.
-   Start from `benchmark/chains/m59/run_m59.py` and `benchmark/chains/m62/run_m62_live.py`; put it in the repo.
-3. **C147 (3) `/tmp` escape diagnostic.** Record `/tmp` paths written by the model (from transcripts/events) per item;
-   clean exactly those files; never sweep `/tmp`.
-4. **C147 (4) optional:** retain hashed structured-grader reports so intermediate failing counts are auditable.
-5. **P223:** re-record both picks (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`)
-   under tg1, k=2 chains (≈ 20 h), then C144 candidates under tg1. Never pool tg1 with the M61 `opencode-v2-web` rows.
+1. **Read the post-build Codex review** (`codex_impl_review1.md`); fix blockers test-first; commit.
+2. **C147 V3 — live injected positives (operator, ≈30 min, box quiet, 140 W/28 V, battery > 20 %):**
+   `nohup benchmark/chains/c147/drive_inject.sh &` → `$STACK_WORKDIR/m62/inject/{inject.out,inject.rc,RUNLOG.md}`;
+   the driver re-runs a non-PASS kind on seeds 2002/3003 and ends with the suite verdict of
+   `benchmark/m62/inject_verify.py --run $STACK_WORKDIR/m62/inject`. Required PASS for all three kinds, the retained
+   `loop` row showing `in_flight_at_kill ≥ 1`. Record the outcome in open-questions C147 and campaign-results.
+3. **Chain pilot:** `benchmark/run_opencode_probe_v2.py --print-identity` → `probe_code_sha256`; then
+   `nohup benchmark/chains/c147/drive_chain.sh pilot &` (5 items, pick 1, `$STACK_WORKDIR/c147/pilot/`). The pilot
+   is the composed real test of the runner (M50 forbids a subprocess probe in tests).
+4. **P223 chains:** `nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha <sha> &`
+   (≈20 h + pilots + 10-min arm idles). Stop cleanly with `touch $STACK_WORKDIR/c147/STOP` (exit 3). Watch
+   `RUNLOG.md` every 5 min (`WATCH`, `ALARM`, `CORRECTION?`). Never pool tg1 with the M61 `opencode-v2-web` rows.
+5. Then C144 candidates under tg1; README/ranking updates need the operator.
 
-## Rules learned (2026-10-10)
+## Rules learned (2026-10-10, this session)
 
-- `pgrep -f <pattern>` matches its own wait loop; wait on a PID or an output file.
-- macOS psutil raises `AccessDenied`, not `NoSuchProcess`, for an own-uid process mid-exit.
-- Export a pytest shell WITHOUT `STACK_WORKDIR` (`env -u STACK_WORKDIR`); the test guard expects it unset.
-- Before publishing raw transcripts: scrub home paths/username/hostname, search for literal credential values, and
-  shingle-match the operator's private instruction files (`~/.claude/CLAUDE.md`, memory, `~/.codex/AGENTS.md`).
-- Publish only what cannot be reproduced; verify every deletion by sha against its published copy first.
+- SIGKILL on opencode 2.0.20 loses the in-flight assistant message; SIGTERM makes it persist an `aborted` one.
+  Stop the client with SIGTERM first, always.
+- On 2.0.20 the write/edit tool input is `path` (not `filePath`); shell is `{command, workdir[, timeout, background]}`;
+  a SIGKILLed shell call exports as `completed` + `metadata.signal`.
+- Lowering a per-process memory limit below ≈ 400 MiB kills opencode's own server child (a client descendant).
+- Codex: `-m gpt-6.1-sol` is the account default now; `benchmark/chains/c147/run_codex.sh <name> ro|write [model]`.
+- Fork syncs: mlx-vlm's AGENTS.md audit procedure works; bump `UPSTREAM_SYNC_REF` in the merge commit; re-pin
+  fork-owned test blobs in `.fork-marker-allowlist`; `uv lock` from upstream's lock after resolving.
 
-Next decision id C149; discussion ids continue from P233.
+Next decision id C149; discussion ids continue from P242.
