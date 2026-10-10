@@ -1,7 +1,8 @@
 # M62 — token/turn progress gate for the v2 probe (C146) + probe hygiene (C138)
 
 Status: REVISION 5, 2026-10-09 — revision 4 (`f73cd6a`) cold review by claude-fable-5-1 (F1–F14, verdict "approve with
-changes") folded in (tagged F-ids); F12 (strict new-minimum progress) awaits operator sign-off. Revision 4 history: — passive design per operator rulings (C146, P219/P220). Revision 3 (`e98aef6`) cold
+changes") folded in (tagged F-ids); F12 (strict new-minimum progress) awaits operator sign-off. Implemented in `c67769e`;
+build findings recorded in §9. Revision 4 history: — passive design per operator rulings (C146, P219/P220). Revision 3 (`e98aef6`) cold
 review (`$STACK_WORKDIR/m62/codex_design_review3.md`, findings P28–P39) kept the architecture and constants and asked
 for observation-based silence states, cache-aware budgets, one live tool-call order, no overshoot promise, a terminal
 transition contract, harness artifacts out of the exercise tree, a trusted grading boundary, best-effort containment
@@ -236,12 +237,12 @@ inflight_s_at_stop}; `request_usage` [(message_id, output, prompt, b_j)]; `nonco
   `client_exit_hang` grades normally (F1); cancellation bound (F9). Existing suites green.
 - **V1b universe preflight** (no model; Docker for Go): all 43 eligible Python/Go items produce a reference universe
   and stub baseline; `benchmark/m62/universe.json` frozen and hashed before any live run.
-- **V2 offline replay** against the frozen `benchmark/m62/replay_manifest.json` (re-frozen in revision 5, sha256 `90e9c8eb…`, with event-log
+- **V2 offline replay** against the frozen `benchmark/m62/replay_manifest.json` (re-frozen in revision 5 and after the §9 correction, sha256 `c5312f4e…`, with event-log
   AND export sha256 per entry; 454 rows, 400 identity-matched, 381 historical passes, 374 valid after C145; the seven
   `go/counter` passes are parser fixtures only): the implemented ingestion and gate, charging every request as
   no-progress and the final request from the export, stop 0 of the 374. Fixtures (exact, F10): go/kindergarten-garden
   (M61 s2) → `(looping, request 15)` at its 8th identical call; the M59 go/alphametics row (483 step_starts, 482
-  completed requests) → `(stalled, completed request 40)` by N; the M61 go/book-store 37.5K-token failing stretch → no
+  completed requests) → `(looping, request 22)` (pre-registered as `(stalled, completed request 40)`; corrected in §9); the M61 go/book-store 37.5K-token failing stretch → no
   stop. Retrospective screen only; it cannot validate uncensored long attempts.
 - **V3 live smoke** (box, lean router, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`): five seeded-random Python
   items and two Go items complete with tg1 provenance; usage reconciles; zero surviving attributed processes and
@@ -272,3 +273,25 @@ Chain cost is estimated from V3/V4 means plus a heavy-tail allowance before any 
 - 54 of 454 v2 rows reference another session's event log (re-runs overwrote transcript paths): recorded in C140.
 - Workflow: this spec → Codex implementer (failing tests first; no docs/handoff edits, no commits) → lead
   verification → V1, V1b, V2 → V5a → operator: V3, V4 on the box → V5b.
+
+## 9. Build findings (2026-10-10, implementation `c67769e`)
+
+- **Plugin load proof.** `GET /api/config` returns before plugins finish activating, so only `noretry.js` was proven.
+  tg1 proves both plugins from `GET /api/integration --standalone`, whose handler awaits `Plugin.awaitActivation`
+  (pinned source `server/src/handlers/integration.ts:33`); item runs are unchanged.
+- **Grade wait bound.** Grader timeouts are per grade (Python 300 s, Go 180 s); a terminal drain may hold the active
+  grade plus one queued capture, so the join bound is 2 × 300 + 60 = 660 s (hashed in the policy).
+- **Go build failures.** go1.21 in the grading image prints `FAIL\t<pkg> [build failed]` as plain text on stdout under
+  `-json`; the parser accepts exactly that line (and `[setup failed]`) as a build error.
+- **Official test.** `files.test[0]` is the official test (python/paasio also lists the helper `test_utils.py`, which
+  stays protected like every prepared file).
+- **Untouched solution still fails.** go/ledger and go/markdown are refactoring exercises whose stubs pass every test
+  (baseline 0): under tg1 `passed` also requires the solution file to have changed (the M59/M61 rule; F6 removed only
+  the second grader). For these two items progress can never register, so only T/N/K/ceilings bound them (historical
+  passes stay far below T and N). Coarse universes: go/octal 1 leaf, go/hexadecimal 2.
+- **V1b PASS:** `benchmark/m62/universe.json` sha256 `4e3d88b6…`, 43 items, `m62-structured-v2`.
+- **V2 PASS** on manifest sha256 `c5312f4e…` (all 8 criteria). Pre-registration correction, stated openly: revision 5
+  expected the M59 go/alphametics fixture to stop `(stalled, completed request 40)`, derived from N alone (F10). The
+  replay stopped it as `(looping, request 22)`; an independent count confirms an identical-`edit` loop whose 8th call
+  is in request 22, and K precedes N. The fixture is now `looping@request22` — a second K known positive. The 54
+  misattributed rows are sha-verified and never ingested.
