@@ -412,3 +412,18 @@ Spec → cold review → implementation by a worker model from this spec, failin
   uncaught → transient for untracked, `uncertain` for tracked. Q10 a tampered (legitimately failed) row had no
   final report and made the leg incomplete → typed `tampered` final receipt. Q11 escalation re-checked only part of
   the idle predicate → full predicate; identity drift aborts without signalling.
+- **B8 — post-build cold review 2 (`codex_impl_review2.md`): "not cleared", Q12–Q18.** Q12 `start_router` adopted
+  whichever pid held :8000 after the spawn → ownership requires the listener to be the spawned pid or its
+  descendant; teardown re-verifies router/worker identities before unload/signals. Q13 a completed `edit` of an
+  externally created file could be deleted → DECISION: automatic deletion is `write` parts only, and only when the
+  on-disk bytes still equal the written `content` (residual: an external same-name file our write tool overwrote).
+  Q14 `pin_from` required every identity field truthy, but the real carrier sets `agent_system_sha256` to `null`
+  without an overlay (the fake probe masked it) → null pinned as a value, absent keys refuse. Q15 report receipts
+  unvalidated → `structured_grade.validate_reports` schema (typed fields, unique seq, exactly one final with a
+  permitted outcome, language artifacts, tampered exception) used by both verifiers. Q16 transport tolerance →
+  complete messages pinned, cutoff at the events-file byte offset captured immediately before SIGTERM. Q17
+  `AccessDenied` on a tracked pid could certify it gone → tracked identities audited directly; denial = unknown,
+  `uncertain`, abort; `verify_gone` false on unknown. Q18 no correlated cancellation receipt exists in the worker →
+  DECISION: the verdict is `cancellation_consistent` (in_flight ≥ 1 at kill, → 0 within the bound, `requests_completed`
+  unchanged), accepted for clearance and labelled as not correlated; a worker-side cancellation counter is proposed
+  as C149.

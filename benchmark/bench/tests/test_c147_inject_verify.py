@@ -52,8 +52,11 @@ def build_events(kind):
 def make_row(kind, tmp, name):
     ev_path, ex_path, err_path = (tmp / f"{name}.events.jsonl", tmp / f"{name}.json", tmp / f"{name}.stderr.txt")
     sha = dict(events=put(ev_path, build_events(kind)), export=put(ex_path, "{}"), stderr=put(err_path, ""))
+    arts = {}
+    for artifact in ("report.xml", "stdout.txt", "stderr.txt"):
+        path = tmp / f"{name}.grade.{artifact}"
+        arts[artifact] = dict(path=str(path), sha256=put(path, "x" + artifact))
     art = tmp / f"{name}.report.xml"
-    art_sha = put(art, "<testsuites/>")
     worker = dict(pid=1, create_time=2.0, model_path="m", registry_sha256="a" * 64)
     summary_before = dict(in_flight=1, requests_started=4, requests_completed=3, requests_failed=0)
     summary_after = dict(in_flight=0, requests_started=4, requests_completed=3, requests_failed=1)
@@ -84,8 +87,8 @@ def make_row(kind, tmp, name):
                mem_kills=mem, worker_before=worker, worker_after=worker,
                events_path=str(ev_path), transcript_path=str(ex_path), stderr_path=str(err_path),
                evidence_sha256=sha, request_usage=[["1", 10, 100, 81920]],
-               grade_reports=[dict(boundary=1, seq=1, final=True, outcome="parsed",
-                                   artifacts={"report.xml": dict(path=str(art), sha256=art_sha)})],
+               id="python/one", test_modified=False,
+               grade_reports=[dict(boundary=1, seq=1, final=True, outcome="parsed", artifacts=arts)],
                orphans_unattributed=[])
     manifest = dict(run_id="RUN" + kind, runtime=dict(
         scaffold=row["scaffold"],
@@ -342,10 +345,10 @@ def test_interrupted_charged_trailing_is_accepted(tmp_path):
 def test_a_cancelled_counter_when_the_worker_has_one_must_rise_by_exactly_one():
     base = dict(in_flight_at_kill=1)
     before = dict(in_flight=1, requests_completed=3, requests_cancelled=2)
-    assert iv.cancellation_proven(dict(base, worker_summary_before=before, worker_summary_after=dict(
+    assert iv.cancellation_consistent(dict(base, worker_summary_before=before, worker_summary_after=dict(
         in_flight=0, requests_completed=4, requests_cancelled=3)))
     for bad in (2, 4):
-        assert not iv.cancellation_proven(dict(base, worker_summary_before=before, worker_summary_after=dict(
+        assert not iv.cancellation_consistent(dict(base, worker_summary_before=before, worker_summary_after=dict(
             in_flight=0, requests_completed=3, requests_cancelled=bad)))
 
 
@@ -368,3 +371,50 @@ def test_kind_without_any_attempt_file_exits_1_missing(tmp_path):
     empty = tmp_path / "e"
     empty.mkdir()
     assert iv.main(["--run", str(empty), "--kind", "stall", "--workdir", str(tmp_path)], out=lambda x: None) == 1
+
+
+def _other(r):
+    return copy.deepcopy(r["grade_reports"][0])
+
+
+@pytest.mark.parametrize("name,mutation,reason", [
+    ("absent", lambda r, m: r.pop("grade_reports"), "absent or empty"),
+    ("empty", lambda r, m: r.update(grade_reports=[]), "absent or empty"),
+    ("malformed", lambda r, m: r["grade_reports"][0].update(boundary="1"), "boundary"),
+    ("negative_boundary", lambda r, m: r["grade_reports"][0].update(boundary=-1), "boundary"),
+    ("negative_seq", lambda r, m: r["grade_reports"][0].update(seq=-1), "seq must be an int >= 0"),
+    ("bool_seq", lambda r, m: r["grade_reports"][0].update(seq=True), "seq must be an int"),
+    ("infrastructure_final", lambda r, m: r["grade_reports"][0].update(outcome="infrastructure"), "not permitted"),
+    ("missing_report_final", lambda r, m: r["grade_reports"][0].update(outcome="missing_report"),
+     "final receipt outcome"),
+    ("no_final", lambda r, m: r["grade_reports"][0].update(final=False), "exactly one final"),
+    ("seq_collision", lambda r, m: r["grade_reports"].insert(0, dict(_other(r), final=False)), "duplicate seq"),
+    ("parsed_without_stdout", lambda r, m: r["grade_reports"][0]["artifacts"].pop("stdout.txt"), "lacks"),
+    ("bad_sha", lambda r, m: r["grade_reports"][0]["artifacts"]["report.xml"].update(sha256="zz"), "64-hex"),
+    ("tampered_with_artifacts", lambda r, m: (r["grade_reports"][0].update(outcome="tampered"),
+                                              r.update(test_modified=True)), "no artifacts"),
+])
+def test_grade_report_schema_mutations_fail(tmp_path, name, mutation, reason):
+    v, code, _ = verdict(tmp_path, "stall", mutation)
+    assert v.startswith("FAIL:grade_reports:") and reason in v and code == 1
+
+
+def test_tampered_final_receipt_is_valid_only_with_test_modified(tmp_path):
+    def tampered(r, m):
+        r["grade_reports"][0].update(outcome="tampered", artifacts={})
+        r["test_modified"] = True
+    assert verdict(tmp_path, "stall", tampered)[0] == "PASS"
+    d = tmp_path / "t"
+    d.mkdir()
+    assert "requires test_modified" in verdict(d, "stall", lambda r, m: r["grade_reports"][0].update(
+        outcome="tampered", artifacts={}))[0]
+
+
+def test_suite_prints_the_consistency_limitation_and_still_clears(tmp_path):
+    full_run(tmp_path)
+    code, lines = run_suite(tmp_path)
+    assert code == 0 and "suite: loop cancellation consistent, not correlated \u2014 see C149" in lines
+
+
+def test_docstring_states_the_limitation():
+    assert "not proof" in iv.cancellation_consistent.__doc__ and "C149" in iv.cancellation_consistent.__doc__

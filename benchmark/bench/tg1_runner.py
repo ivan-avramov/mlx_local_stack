@@ -486,6 +486,7 @@ def _run_item(
 
     worker = GradeWorker(gate, lock, work, private, grade)
     stream = tg.EventStream(gate, worker.notify)
+    stream.base_url = base
     proc = None
     client_launch_attempted = False
     ingester = None
@@ -509,7 +510,6 @@ def _run_item(
             if reason and reason not in ("client_exit_hang", "runner_cancel"):
                 gate.stop(reason)
             if not killed:
-                stream.signal_index = stream.event_count     # errors after this point may be our own abort's
                 gate.requests_at_kill = len(gate.request_usage)
                 gate.inflight_s_at_stop = (
                     time.monotonic() - stream.started_at if stream.started_at else None
@@ -528,6 +528,12 @@ def _run_item(
                 pass
         errors = []
         killed_entries = []
+        # Raw events-file position at the moment of signalling (after the pre-kill metrics call): only error bytes
+        # at or after it can be our own abort's, however late the ingester reads them.
+        try:
+            stream.signal_offset = paths["events"].stat().st_size
+        except OSError:
+            stream.signal_offset = None
         # C147: the client gets SIGTERM first so opencode's own abort path can persist the in-flight assistant
         # message; survivors after GRACEFUL_CLIENT_S are SIGKILLed. Model-role processes are always SIGKILLed.
         graceful = getattr(guard, "graceful_stop", None)
@@ -917,7 +923,7 @@ def main(p, a):
             os.environ["MLX_SERVE_CONFIG"] = original_registry
 
 
-CLEAN_STATUS = dict(survivors=[], containers_remaining=[], uncertain=False, orphans_unattributed=[], completed=True)
+CLEAN_STATUS = dict(survivors=[], containers_remaining=[], uncertain=False, orphans_unattributed=[], unknown=[], completed=True)
 
 
 class _DiscoveryGuard:

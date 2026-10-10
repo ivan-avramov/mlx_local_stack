@@ -118,6 +118,13 @@ def default_create_time(pid):
     return psutil.Process(int(pid)).create_time()
 
 
+def default_parents(pid):
+    """[{pid, create_time}] of the process itself and every ancestor (psutil)."""
+    import psutil
+    p = psutil.Process(int(pid))
+    return [{"pid": q.pid, "create_time": q.create_time()} for q in [p, *p.parents()]]
+
+
 def env_tripwires(env_text, overlay):
     """Router/worker environment tripwires over `ps -E` output (spec 3, M59)."""
     probs = []
@@ -155,7 +162,7 @@ class ChainOps:
     .stdout/.returncode; `http(path, body=None, timeout=)` returns bytes; `popen` spawns the router."""
 
     def __init__(self, repo, workdir, overlay, log, *, sh=None, http=None, popen=None, sleep=time.sleep,
-                 create_time=None, base="http://localhost:8000", registry=None, env_source=None, kill=None):
+                 create_time=None, base="http://localhost:8000", registry=None, env_source=None, kill=None, parents=None, killpg=None):
         self.repo, self.wd, self.overlay = Path(repo), Path(workdir), str(overlay)
         self.log = log
         self.sh = sh or default_sh
@@ -170,6 +177,8 @@ class ChainOps:
         self.receipt = self.wd / "session_gate/a4_v2_latest.json"
         self.loaded = None
         self.kill = kill or os.kill
+        self.parents = parents or default_parents
+        self.killpg = killpg or os.killpg
         self.router = None          # identities of what THIS process started: {pid, create_time, spawned: {pid, create_time}}
         self.worker_started = None
 
@@ -271,28 +280,56 @@ class ChainOps:
                 spawned = {"pid": proc.pid, "create_time": self.create_time(proc.pid)}
             except Exception:  # noqa: BLE001
                 spawned = {"pid": proc.pid, "create_time": None}
-        self.router = {"pid": None, "create_time": None, "spawned": spawned}    # ours from here on
-        for _ in range(120):
-            if self.listeners():
-                break
-            self.sleep(2)
-        ls = self.listeners()
-        if len(ls) != 1:
-            raise ChainAbort(f"TRIPWIRE: expected one :8000 listener, found {ls}")
-        pid = ls[0]
         try:
-            self.router.update(pid=pid, create_time=self.create_time(pid))
-        except Exception:  # noqa: BLE001
-            pass
-        e = self.proc_env(pid)
-        probs = (["not mlx-serve"] if "mlx-serve" not in e else []) + env_tripwires(e, self.overlay)
-        cwd = self.sh(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"]).stdout
-        if str(self.repo) not in cwd:
-            probs.append("cwd not the stack repo")
-        self.log(f"router pid={pid} owns :8000; problems={probs or 'none'}")
-        if probs:
-            raise ChainAbort("TRIPWIRE: router ownership/environment: " + "; ".join(probs))
-        return pid
+            for _ in range(120):
+                if self.listeners():
+                    break
+                self.sleep(2)
+            ls = self.listeners()
+            if len(ls) != 1:
+                raise ChainAbort(f"TRIPWIRE: expected one :8000 listener, found {ls}")
+            pid = ls[0]
+            try:
+                chain = self.parents(pid)
+            except Exception:  # noqa: BLE001
+                chain = []
+            if not (spawned and spawned.get("create_time") is not None
+                    and any(c["pid"] == spawned["pid"] and c["create_time"] == spawned["create_time"] for c in chain)):
+                self.log(f"REFUSED: :8000 listener pid {pid} is neither the spawned router {spawned} nor its "
+                         f"descendant; foreign (diagnostic only), nothing recorded as own")
+                raise ChainAbort(f"TRIPWIRE: :8000 listener {pid} not owned by the router this process spawned")
+            self.router = {"pid": pid, "create_time": self.create_time(pid), "spawned": spawned}    # ours from here on
+            e = self.proc_env(pid)
+            probs = (["not mlx-serve"] if "mlx-serve" not in e else []) + env_tripwires(e, self.overlay)
+            cwd = self.sh(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"]).stdout
+            if str(self.repo) not in cwd:
+                probs.append("cwd not the stack repo")
+            self.log(f"router pid={pid} owns :8000; problems={probs or 'none'}")
+            if probs:
+                raise ChainAbort("TRIPWIRE: router ownership/environment: " + "; ".join(probs))
+            return pid
+        except ChainAbort:
+            self.router = None
+            self._reap_spawned(spawned)
+            raise
+
+    def _reap_spawned(self, spawned):
+        """Refusal path: stop the process WE spawned (own session, start_new_session=True), never a foreign pid."""
+        if not spawned or not spawned.get("pid"):
+            return
+        for sig, wait in ((signal.SIGTERM, 30), (signal.SIGKILL, 10)):
+            if not self._alive(spawned):
+                break
+            self.log(f"refusal: signal {sig.name} -> process group of the spawned router pid {spawned['pid']}")
+            try:
+                self.killpg(spawned["pid"], sig)
+            except ProcessLookupError:
+                pass
+            for _ in range(wait):
+                if not self._alive(spawned):
+                    break
+                self.sleep(1)
+        self.log(f"refusal: spawned pid {spawned['pid']} gone={not self._alive(spawned)}")
 
     # -- worker
     def worker_cmdlines(self, model):
@@ -406,8 +443,15 @@ class ChainOps:
         if self.router is None:
             self.log("stop_stack: router was not started by this process; tearing down NOTHING")
             return None
-        if self.loaded:
-            self.unload(self.loaded)
+        router_ok = self._alive(self.router)
+        if not router_ok:
+            self.log("stop_stack: recorded router identity changed or gone; no unload, no signal for it")
+        if self.loaded and router_ok:
+            if self.worker_started and self.worker_started.get("model") == self.loaded \
+                    and self._alive(self.worker_started):
+                self.unload(self.loaded)
+            else:
+                self.log("stop_stack: worker is not the instance this process loaded; no unload")
         targets = []
         for rec in (self.router, self.router.get("spawned")):
             if rec and rec.get("pid") and rec["pid"] not in [t["pid"] for t in targets]:
@@ -574,8 +618,8 @@ def validate_leg(leg, pinned, workdir=None):
     if pinned.get("probe_code_sha256") is None:
         why.append("pinned_incomplete: probe_code_sha256 not pinned")
     for k in RUNTIME_PINNED:
-        if pinned.get(k) is not None and rt.get(k) != pinned[k]:
-            why.append(f"runtime_{k}: {rt.get(k)} != pinned {pinned[k]}")
+        if k in pinned and (k not in rt or rt[k] != pinned[k]):      # a pinned null is a value; an absent key is not
+            why.append(f"runtime_{k}: {rt.get(k, '<absent>')} != pinned {pinned[k]}")
     if not rt.get("opencode_version"):
         why.append("runtime_opencode_version: empty")
     sp = (man.get("git") or {}).get("serving_path")
@@ -614,14 +658,11 @@ def validate_leg(leg, pinned, workdir=None):
             if not r.get(pkey) or file_sha(resolve_portable(r[pkey], wd)) != sha:
                 why.append(f"evidence_sha_mismatch: {rid} {name}")
         reports = r.get("grade_reports")
-        if not isinstance(reports, list) or not reports or not any(g.get("final") for g in reports):
-            why.append(f"grade_reports_missing: {rid}")
-            continue
-        for g in reports:
-            if g.get("final") and not g.get("artifacts"):
-                if not (g.get("outcome") == "tampered" and r.get("test_modified") is True):
-                    why.append(f"report_artifacts_empty: {rid} final receipt without artifacts")
-            for aname, art in (g.get("artifacts") or {}).items():
+        from bench import structured_grade as sg
+        for reason in sg.validate_reports(reports, leg["lang"], r.get("test_modified") is True):
+            why.append(f"grade_reports: {rid} {reason}")
+        for g in reports if isinstance(reports, list) else []:
+            for aname, art in ((g.get("artifacts") or {}) if isinstance(g, dict) else {}).items():
                 sha = (art or {}).get("sha256")
                 if not isinstance(sha, str) or not HEX64.match(sha):
                     why.append(f"report_sha_missing: {rid} {aname}")

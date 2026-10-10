@@ -104,11 +104,26 @@ def root(tmp_path):
     r = tmp_path / "tmproot"
     r.mkdir()
     (r / "preexisting.txt").write_text("old")
+    ROOT_FOR_CAND[0] = r
     return r
 
 
-def cand(path, source="write", status="completed", exact=True, token=None):
-    return dict(path=path, source=source, exact=exact, token=token or path, status=status)
+def sha_of(data):
+    return hashlib.sha256(data if isinstance(data, bytes) else data.encode()).hexdigest()
+
+
+def cand(path, source="write", status="completed", exact=True, token=None, content=None, root=None):
+    """A candidate. For writes the recorded content hash defaults to the file's CURRENT bytes (the tool wrote them)."""
+    entry = dict(path=path, source=source, exact=exact, token=token or path, status=status)
+    if source == "write":
+        if content is None:
+            disk = Path(root or ROOT_FOR_CAND[0]) / path[len("/tmp/"):]
+            content = disk.read_bytes() if disk.is_file() else b"x"
+        entry["content_sha256"] = sha_of(content)
+    return entry
+
+
+ROOT_FOR_CAND = [None]
 
 
 def item(root, act):
@@ -138,13 +153,42 @@ def test_write_completed_new_file_is_removed(root):
     assert cleaned == ["/tmp/new.txt"] and kept == [] and not (root / "new.txt").exists()
 
 
-def test_edit_on_new_path_removed_and_its_emptied_new_parent_directory_goes_too(root):
+def test_written_file_in_a_new_directory_removes_the_emptied_parent_too(root):
     def act():
         (root / "d").mkdir()
         (root / "d/f.py").write_text("x")
     b, a, w = item(root, act)
-    cleaned, kept = clean(root, [cand("/tmp/d/f.py", "edit")], b, a, w)
-    assert cleaned == ["/tmp/d/f.py", "/tmp/d"] and not (root / "d").exists()      # new parent emptied -> removed
+    cleaned, kept = clean(root, [cand("/tmp/d/f.py")], b, a, w)
+    assert cleaned == ["/tmp/d/f.py", "/tmp/d"] and not (root / "d").exists()
+
+
+def test_a_successful_edit_never_authorizes_deletion_even_of_an_unrelated_creators_file(root):
+    """Q13: an edit needs a pre-existing file, so it cannot prove creation. Another process made it after the
+    pre-item listing and the model then edited it successfully: diagnostic only."""
+    b, a, w = item(root, lambda: (root / "theirs").write_text("created by another process"))
+    assert clean(root, [cand("/tmp/theirs", "edit", status="completed")], b, a, w) == (
+        [], [["/tmp/theirs", "ambiguous"]])
+    assert (root / "theirs").read_text() == "created by another process"
+
+
+def test_write_whose_content_was_replaced_after_completion_is_kept_as_modified(root):
+    b, a, w = item(root, lambda: (root / "n").write_text("what our tool wrote"))
+    c = cand("/tmp/n", content="what our tool wrote")
+    (root / "n").write_text("replaced by someone else, same inode")        # same inode, different bytes
+    assert clean(root, [c], b, a, w) == ([], [["/tmp/n", "modified"]])
+    assert (root / "n").read_text() == "replaced by someone else, same inode"
+
+
+def test_write_with_matching_content_is_removed(root):
+    b, a, w = item(root, lambda: (root / "n").write_bytes("h\u00e9llo\n".encode()))
+    assert clean(root, [cand("/tmp/n", content="h\u00e9llo\n")], b, a, w) == (["/tmp/n"], [])
+
+
+def test_write_candidate_without_a_recorded_content_hash_is_ambiguous(root):
+    b, a, w = item(root, lambda: (root / "n").write_text("x"))
+    c = cand("/tmp/n")
+    c.pop("content_sha256")
+    assert clean(root, [c], b, a, w) == ([], [["/tmp/n", "ambiguous"]])
 
 
 def test_preexisting_name_never_removed_even_for_write(root):
@@ -232,7 +276,7 @@ def test_recorded_files_and_the_directories_they_empty_are_removed(root):
         (root / "good/sub").mkdir()
         (root / "good/sub/b").write_text("2")
     b, a, w = item(root, act)
-    cleaned, kept = clean(root, [cand("/tmp/good/a"), cand("/tmp/good/sub/b", "edit")], b, a, w)
+    cleaned, kept = clean(root, [cand("/tmp/good/a"), cand("/tmp/good/sub/b")], b, a, w)
     assert sorted(cleaned) == ["/tmp/good", "/tmp/good/a", "/tmp/good/sub", "/tmp/good/sub/b"] and kept == []
     assert not (root / "good").exists()
 
@@ -247,7 +291,7 @@ def test_unrecorded_child_is_never_deleted_only_the_recorded_file_goes(root):
     assert cleaned == ["/tmp/d/mine"] and kept == [["/tmp/d", "dir_mixed"]]
     assert (root / "d/other").exists() and not (root / "d/mine").exists()
     # naming the directory itself (a write path) never empties it either
-    assert clean(root, [cand("/tmp/d")], b, a, w) == ([], [["/tmp/d", "dir_mixed"]])
+    assert clean(root, [cand("/tmp/d", content="")], b, a, w) == ([], [["/tmp/d", "dir_mixed"]])
     assert (root / "d/other").exists()
 
 
@@ -283,43 +327,48 @@ def test_shell_mentions_are_never_removed_automatically(root):
     assert (root / "theirs").exists()
 
 
-def test_operator_mode_removes_shell_mentions_only_when_allowed_and_checks_still_apply(root):
-    b, a, w = item(root, lambda: ((root / "m").write_text("x"), (root / "l").symlink_to("/")))
-    cs = [cand("/tmp/m", "shell", exact=False), cand("/tmp/l", "shell", exact=False)]
-    assert clean(root, cs, None, None, w, allow_shell=False) == ([], [])
-    cleaned, kept = clean(root, cs, None, None, w, allow_shell=True)
-    assert cleaned == ["/tmp/m"] and kept == [["/tmp/l", "symlink"]]
-
-
 def test_duplicate_candidates_are_processed_once(root):
     b, a, w = item(root, lambda: (root / "n").write_text("x"))
-    cleaned, kept = clean(root, [cand("/tmp/n"), cand("/tmp/n", "edit")], b, a, w)
+    cleaned, kept = clean(root, [cand("/tmp/n"), cand("/tmp/n")], b, a, w)
     assert cleaned == ["/tmp/n"] and kept == []
 
 
 # ---- operator tool ----
 
-def test_operator_tool_dry_run_lists_and_yes_removes_only_checked_shell_mentions(tmp_path):
+def test_operator_tool_lists_everything_removes_only_checked_writes_never_shell_or_edit(tmp_path):
     import sys as _sys
     _sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from m62 import tmp_escape_clean as tool
     root = tmp_path / "tmproot"
     root.mkdir()
     t0 = time.time()
-    (root / "mine.txt").write_text("x")
-    (root / "link").symlink_to("/")
+    (root / "mine.txt").write_text("ours")
+    (root / "changed.txt").write_text("ours")
+    (root / "shellfile").write_text("x")
+    (root / "edited").write_text("x")
     t1 = time.time() + 1
+    (root / "changed.txt").write_text("not ours any more")
     row = dict(id="python/one", tmp_window=[t0, t1], tmp_escapes=[
-        dict(path="/tmp/mine.txt", source="shell", exact=False, token="cat /tmp/mine.txt", status="completed"),
-        dict(path="/tmp/link", source="shell", exact=False, token="ls /tmp/link", status="completed"),
-        dict(path="/tmp/exact.txt", source="write", exact=True, token="/tmp/exact.txt", status="completed")])
+        dict(path="/tmp/mine.txt", source="write", exact=True, token="/tmp/mine.txt", status="completed",
+             content_sha256=sha_of("ours")),
+        dict(path="/tmp/changed.txt", source="write", exact=True, token="/tmp/changed.txt", status="completed",
+             content_sha256=sha_of("ours")),
+        dict(path="/tmp/shellfile", source="shell", exact=False, token="cat /tmp/shellfile", status="completed"),
+        dict(path="/tmp/edited", source="edit", exact=True, token="/tmp/edited", status="completed")])
     rows = tmp_path / "rows.jsonl"
     rows.write_text(json.dumps(row) + "\n")
     lines = []
     assert tool.main(["--rows", str(rows), "--root", str(root)], out=lines.append) == 0
-    assert (root / "mine.txt").exists() and "dry run" in lines[-1] and "listed=2" in lines[-1]
-    assert not any("exact.txt" in x for x in lines)
+    assert (root / "mine.txt").exists() and "dry run" in lines[-1] and "listed=4" in lines[-1]
     lines = []
     tool.main(["--rows", str(rows), "--root", str(root), "--yes"], out=lines.append)
-    assert not (root / "mine.txt").exists() and (root / "link").is_symlink()
-    assert any("kept /tmp/link (symlink)" in x for x in lines) and "removed=1 kept=1" in lines[-1]
+    assert not (root / "mine.txt").exists() and (root / "changed.txt").exists()
+    assert (root / "shellfile").exists() and (root / "edited").exists()
+    assert any("kept /tmp/changed.txt (modified)" in x for x in lines) and "removed=1 kept=1" in lines[-1]
+
+
+def test_write_candidates_record_the_content_hash_of_what_the_client_was_asked_to_write():
+    e = export_of(("write", "completed", {"path": "/tmp/new.txt", "content": "héllo\n"}),
+                  ("edit", "completed", {"path": "/tmp/e.txt", "oldString": "a", "newString": "b"}))
+    got = pg.tmp_escapes(e, ENV)
+    assert got[0]["content_sha256"] == sha_of("héllo\n") and "content_sha256" not in got[1]

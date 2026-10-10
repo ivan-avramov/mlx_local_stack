@@ -881,7 +881,8 @@ def _real_ops_with_foreign_listener(tmp_path):
     lines = []
     ops = co.ChainOps(REPO, tmp_path, ov, co.RunLog(tmp_path / "RL.md", out=lines.append), sh=sh,
                       http=lambda *a, **k: b"{}", popen=lambda *a, **k: pytest.fail("router must not be spawned"),
-                      sleep=lambda s: None, create_time=lambda p: 1.0, kill=lambda p, s: sent.append((p, s)))
+                      sleep=lambda s: None, create_time=lambda p: 1.0, kill=lambda p, s: sent.append((p, s)),
+                      killpg=lambda p, s: sent.append((p, s)))
     return ops, sent, calls, lines
 
 
@@ -933,20 +934,24 @@ def test_check_restart_eligible_against_real_probe_manifest(env):
     ch.check_restart_eligible(att, {"model": PICK1}, block)           # clean receipt authorises the restart
 
 
-def test_pin_from_raises_when_identity_field_missing(env, tmp_path):
-    ch = _chain_for(env)
-    out = tmp_path / "y.jsonl"
-    FP.write_leg(out, PICK1, "python", 1001, ["python/a"], {"pid": 1, "create_time": 1.0, "model_path": "m",
-                                                          "registry_sha256": "a" * 64}, tmp_path)
-    mp = out.with_suffix(".manifest.json")
-    man = json.loads(mp.read_text())
-    man["runtime"].pop("opencode_exe_sha256")
-    mp.write_text(json.dumps(man))
+def test_pin_from_null_is_a_value_absent_key_raises(env, tmp_path):
     from bench import chain_ops as _co
-    with pytest.raises(_co.ChainAbort, match="opencode_exe_sha256"):
-        ch.pin_from({"out": str(out)})
-    FP.write_leg(out, PICK1, "python", 1001, ["python/a"], {"pid": 1, "create_time": 1.0, "model_path": "m",
-                                                          "registry_sha256": "a" * 64}, tmp_path)
-    ch2 = _chain_for(env)
-    ch2.pin_from({"out": str(out)})
-    assert ch2.pinned["opencode_exe_sha256"] == "e" * 64 and ch2.pinned["serving_path"] == "sp1"
+    out = tmp_path / "y.jsonl"
+    worker = {"pid": 1, "create_time": 1.0, "model_path": "m", "registry_sha256": "a" * 64}
+    FP.write_leg(out, PICK1, "python", 1001, ["python/a"], worker, tmp_path)
+    man = json.loads(out.with_suffix(".manifest.json").read_text())
+    assert man["runtime"]["agent_system_sha256"] is None                         # real default carrier shape
+    ch = _chain_for(env)
+    ch.pin_from({"out": str(out)})                                               # null pins as a value
+    assert "agent_system_sha256" in ch.pinned and ch.pinned["agent_system_sha256"] is None
+    assert ch.pinned["serving_path"] == "sp1" and ch.pinned["opencode_exe_sha256"] == "e" * 64
+    mp = out.with_suffix(".manifest.json")
+    man["runtime"].pop("agent_system_sha256")
+    mp.write_text(json.dumps(man))
+    with pytest.raises(_co.ChainAbort, match="agent_system_sha256"):
+        _chain_for(env).pin_from({"out": str(out)})
+
+
+def test_real_shape_null_identity_pilot_to_full_pins_and_validates(env):
+    assert run(env, CHAIN) == 0
+    assert "agent_system_sha256" in chain_json(env)["pinned"] and chain_json(env)["pinned"]["agent_system_sha256"] is None

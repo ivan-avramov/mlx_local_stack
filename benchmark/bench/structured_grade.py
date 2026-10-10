@@ -410,3 +410,75 @@ def _grade(lang, work, test, run, guard, timeout, name, tmp, directory, index, b
     finally:
         if lang == "go":
             guard.remove_container(name)
+
+
+REPORT_OUTCOMES = ("parsed", "timeout", "oom", "mem_kill", "missing_report", "tampered")
+FINAL_OUTCOMES = ("parsed", "timeout", "oom", "mem_kill", "tampered")
+REQUIRED_ARTIFACTS = {
+    "python": ("report.xml", "stdout.txt", "stderr.txt"),
+    "go": ("go.jsonl", "go.stderr"),
+}
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def validate_reports(reports, lang, test_modified):
+    """Schema of a row's `grade_reports` (C147 Q15, shared by inject_verify and chain validate_leg).
+
+    Returns reasons; [] means valid. Every row needs a typed final receipt: exactly one `final`, with a permitted
+    outcome (never infrastructure/missing_report); `parsed` receipts carry the language's required artifacts;
+    `tampered` (no grader ran) carries none and needs `test_modified`; every other receipt carries hashed
+    artifacts (path + 64-hex sha256)."""
+    reasons = []
+    if not isinstance(reports, list) or not reports:
+        return ["grade_reports absent or empty"]
+    seen = set()
+    finals = []
+    for n, r in enumerate(reports):
+        tag = f"report[{n}]"
+        if not isinstance(r, dict):
+            reasons.append(tag + " is not an object")
+            continue
+        if not _is_int(r.get("boundary")) or r["boundary"] < 0:
+            reasons.append(tag + " boundary must be an int >= 0")
+        if not _is_int(r.get("seq")) or r["seq"] < 0:
+            reasons.append(tag + " seq must be an int >= 0")
+        elif r["seq"] in seen:
+            reasons.append(tag + f" duplicate seq {r['seq']}")
+        else:
+            seen.add(r["seq"])
+        if not isinstance(r.get("final"), bool):
+            reasons.append(tag + " final must be a bool")
+        elif r["final"]:
+            finals.append(r)
+        outcome = r.get("outcome")
+        if outcome not in REPORT_OUTCOMES:
+            reasons.append(tag + f" outcome {outcome!r} not permitted")
+        artifacts = r.get("artifacts")
+        if not isinstance(artifacts, dict):
+            reasons.append(tag + " artifacts must be an object")
+            continue
+        for name, meta in artifacts.items():
+            if (not isinstance(meta, dict) or not isinstance(meta.get("path"), str) or not meta["path"]
+                    or not isinstance(meta.get("sha256"), str) or not _HEX64.match(meta["sha256"])):
+                reasons.append(tag + f" artifact {name!r} needs a path and a 64-hex sha256")
+        if outcome == "tampered":
+            if artifacts:
+                reasons.append(tag + " tampered receipt must have no artifacts")
+            if test_modified is not True:
+                reasons.append(tag + " tampered receipt requires test_modified")
+        else:
+            if not artifacts:
+                reasons.append(tag + " has no artifacts")
+            if outcome == "parsed":
+                missing = [a for a in REQUIRED_ARTIFACTS.get(lang, ()) if a not in artifacts]
+                if missing:
+                    reasons.append(tag + f" parsed receipt lacks {missing}")
+    if len(finals) != 1:
+        reasons.append(f"exactly one final receipt required, found {len(finals)}")
+    elif finals[0].get("outcome") not in FINAL_OUTCOMES:
+        reasons.append(f"final receipt outcome {finals[0].get('outcome')!r} not permitted")
+    return reasons

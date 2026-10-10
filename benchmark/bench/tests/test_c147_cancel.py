@@ -72,7 +72,7 @@ def test_cleanup_status_clean_and_uncertain(tmp_path):
     g.register(p, "client")
     g.cleanup()
     assert g.status() == dict(survivors=[], containers_remaining=[], uncertain=False,
-                              orphans_unattributed=[], completed=True)
+                              orphans_unattributed=[], unknown=[], completed=True)
     q = Process(21, cwd=str(tmp_path / "work"), argv=["x"])
     h = guard(tmp_path, [q])
     with pytest.raises(TransportAbort, match="uncertain"):
@@ -434,3 +434,52 @@ def test_cleanup_skips_untracked_access_denied_and_marks_tracked_uncertain(tmp_p
         h.cleanup()
     s = h.status()
     assert s["uncertain"] is True and [o["pid"] for o in s["orphans_unattributed"]] == [41]
+
+
+@pytest.mark.parametrize("denied", ["uids", "status", "create_time"])
+def test_denied_inspection_of_a_tracked_pid_is_unknown_not_gone(tmp_path, denied):
+    """Q17: the filtered scan drops a process whose uids()/status() is denied; the audit of tracked identities must
+    not: the pid is listed as unknown, cleanup is uncertain and raises, and verify_gone is False."""
+    import psutil
+
+    class Denying(Process):
+        armed = False
+
+        def uids(self):
+            if self.armed and denied == "uids":
+                raise psutil.AccessDenied(self.pid)
+            return super().uids()
+
+        def status(self):
+            if self.armed and denied == "status":
+                raise psutil.AccessDenied(self.pid)
+            return super().status()
+
+        def create_time(self):
+            if self.armed and denied == "create_time":
+                raise psutil.AccessDenied(self.pid)
+            return super().create_time()
+
+    owned = Denying(50)
+    g = guard(tmp_path, [owned])
+    g.register(owned, "model")
+    owned.kill = lambda: None            # alive and uninspectable from now on
+    owned.armed = True
+    entry = dict(pid=50, create_time=10, role="model", argv=[])
+    assert g.verify_gone([entry]) is False
+    with pytest.raises(TransportAbort, match="uncertain"):
+        g.cleanup()
+    status = g.status()
+    assert status["uncertain"] is True and status["unknown"] == [dict(pid=50, create_time=10)]
+
+
+def test_verify_gone_is_false_when_final_liveness_cannot_be_determined(tmp_path):
+    import psutil
+    p = Process(60)
+    g = guard(tmp_path, [p])
+    g.register(p, "model")
+    entry = dict(pid=60, create_time=10, role="model", argv=[])
+    p.dead = True
+    assert g.verify_gone([entry]) is True
+    p.status = lambda: (_ for _ in ()).throw(psutil.AccessDenied(60))
+    assert g.verify_gone([entry]) is False

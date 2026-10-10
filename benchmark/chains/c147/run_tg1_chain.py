@@ -175,8 +175,10 @@ class Chain:
         self.clock = time.monotonic
         self.py = Path(args.python)
         self.probe = Path(args.probe)
-        self.pinned = {"scaffold_policy_sha256": co.CAMPAIGN_POLICY_SHA, "probe_code_sha256": args.probe_code_sha,
-                       "serving_path": None, "registry_sha256": None}
+        # a key is present once pinned; a pinned None (e.g. agent_system_sha256 without an overlay) is a value
+        self.pinned = {"scaffold_policy_sha256": co.CAMPAIGN_POLICY_SHA}
+        if args.probe_code_sha:
+            self.pinned["probe_code_sha256"] = args.probe_code_sha
         self.attempts, self.restarts, self.stop_info = [], [], None
         self.attempt_no, self.seen_run_ids, self.block_workers = {}, set(), []
         self.loaded = None
@@ -397,12 +399,20 @@ class Chain:
     def pin_from(self, leg):
         man = self._manifest(leg) or {}
         rt = man.get("runtime") or {}
+        missing = []
         for k in co.RUNTIME_PINNED:
-            if self.pinned.get(k) is None:
-                self.pinned[k] = rt.get(k)
-        if self.pinned.get("serving_path") is None:
-            self.pinned["serving_path"] = (man.get("git") or {}).get("serving_path")
-        missing = [k for k in (*co.RUNTIME_PINNED, "serving_path") if not self.pinned.get(k)]
+            if k in self.pinned:
+                continue
+            if k in rt:
+                self.pinned[k] = rt[k]
+            else:
+                missing.append(k)
+        if "serving_path" not in self.pinned:
+            sp = (man.get("git") or {}).get("serving_path")
+            if sp:
+                self.pinned["serving_path"] = sp
+            else:
+                missing.append("serving_path")
         if missing:
             raise co.ChainAbort(f"first complete leg lacks pinned identity fields: {missing}")
 
@@ -449,8 +459,8 @@ class Chain:
                ("sampling_profile", rt.get("sampling_profile", man.get("sampling_profile")), "deployed"),
                ("registry.sha256", (man.get("registry") or {}).get("sha256"), self.ops.overlay_sha())]
         for k in co.RUNTIME_PINNED:
-            if self.pinned.get(k) is not None:
-                chk.append((k, rt.get(k), self.pinned[k]))
+            if k in self.pinned:
+                chk.append((k, rt.get(k, "<absent>"), self.pinned[k]))
         if self.pinned.get("serving_path") is not None:
             chk.append(("git.serving_path", (man.get("git") or {}).get("serving_path"), self.pinned["serving_path"]))
         for k, got, want in chk:

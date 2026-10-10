@@ -255,9 +255,11 @@ class EventStream:
         self.started_at = None
         self.starts = []
         self.errors = []
-        self.error_indices = []        # ingested-event index of each entry in `errors`
-        self.event_count = 0           # events accepted so far (index of the NEXT event)
-        self.signal_index = None       # event_count when the probe signalled the client; None = never signalled
+        self.error_offsets = []        # byte offset in the events file of each entry in `errors` (None: not fed)
+        self.offset = 0                # file offset of the first byte of `buffer`
+        self.current_offset = None     # file offset of the line being accepted
+        self.signal_offset = None      # events-file size when the probe signalled the client; None = never
+        self.base_url = None           # this run's provider base URL (the one registered message suffix)
         # (request index, part id, tool name, shell command text) in live completion order (C147 linkage).
         self.tool_events = []
         self.last_event = time.monotonic()
@@ -268,6 +270,8 @@ class EventStream:
         self.buffer += data
         while b"\n" in self.buffer:
             line, self.buffer = self.buffer.split(b"\n", 1)
+            self.current_offset = self.offset
+            self.offset += len(line) + 1
             try:
                 value = json.loads(
                     line.decode("utf-8"),
@@ -285,8 +289,7 @@ class EventStream:
             self.buffer = b""
 
     def accept(self, e):
-        index = self.event_count
-        self.event_count += 1
+        index = self.current_offset
         if not isinstance(e, dict):
             raise TransportAbort("event is not an object")
         kind = e.get("type")
@@ -311,7 +314,7 @@ class EventStream:
             # Native error events have no part. Their projection is validated above.
             if part is None:
                 self.errors.append(e["error"])
-                self.error_indices.append(index)
+                self.error_offsets.append(index)
                 return
         if not isinstance(part, dict) or not isinstance(part.get("id"), str) or not part["id"]:
             raise TransportAbort("missing event part id")
@@ -321,7 +324,7 @@ class EventStream:
         self.seen.add(key)
         if kind == "error":
             self.errors.append(e["error"])
-            self.error_indices.append(index)
+            self.error_offsets.append(index)
             return
         mid = part.get("messageID")
         if not isinstance(mid, str) or not mid:
@@ -374,34 +377,36 @@ def context_overflow(error):
 
 
 # Frozen shapes of what the pinned 2.0.20 client reports when the PROBE signals it (SIGTERM) mid-request.
-# A: the aborted fetch. The real message is exactly ABORT_FETCH (a fixed suffix follows the phrase); B: a retry
-# against the already-exiting local server, matched by its registered prefix.
+# A: the aborted fetch, exactly ABORT_FETCH; B: a retry against the already-exiting local server, exactly
+# ABORT_UNABLE, optionally followed by ` (<this run's base URL>)` (the form the client uses when it names the URL;
+# not seen on the pinned 2.0.20 runs so far, pinned defensively).
 ABORT_FETCH = ("Transport: The socket connection was closed unexpectedly. "
                "For more information, pass `verbose: true` in the second argument to fetch()")
-ABORT_UNABLE = "Transport: Unable to connect."
+ABORT_UNABLE = "Transport: Unable to connect. Is the computer able to access the url?"
 
 
-def own_abort_shape(error):
-    """"fetch" | "unable" for the two registered post-signal transport errors, else None."""
+def own_abort_shape(error, base_url=None):
+    """"fetch" | "unable" for the two registered post-signal transport errors (complete messages), else None."""
     if not (isinstance(error, dict) and error.get("type") == "unknown" and isinstance(error.get("message"), str)):
         return None
     message = error["message"]
     if message == ABORT_FETCH:
         return "fetch"
-    if message.startswith(ABORT_UNABLE):
+    if message == ABORT_UNABLE or (base_url and message == f"{ABORT_UNABLE} ({base_url})"):
         return "unable"
     return None
 
 
 def tolerated_abort_errors(stream):
     """Indices into stream.errors that are our own signal's aftermath: at most one of each registered shape, and
-    only for events AFTER the probe signalled the client. Everything else (pre-signal, repeats) is a real error."""
-    if stream.signal_index is None:
+    only for bytes written at or after the events-file size the probe recorded when it signalled the client
+    (raw file position, so bytes written earlier but ingested later are still pre-signal)."""
+    if stream.signal_offset is None:
         return set()
     seen, tolerated = set(), set()
-    for position, (error, index) in enumerate(zip(stream.errors, stream.error_indices)):
-        shape = own_abort_shape(error)
-        if shape and shape not in seen and index >= stream.signal_index:
+    for position, (error, offset) in enumerate(zip(stream.errors, stream.error_offsets)):
+        shape = own_abort_shape(error, stream.base_url)
+        if shape and shape not in seen and offset is not None and offset >= stream.signal_offset:
             seen.add(shape)
             tolerated.add(position)
     return tolerated

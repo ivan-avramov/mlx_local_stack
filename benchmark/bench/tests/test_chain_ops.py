@@ -85,7 +85,7 @@ def ops(tmp_path):
         return b"{}"
 
     o = co.ChainOps("/repo", tmp_path, OVERLAY, log, sh=sh, http=http, popen=lambda *a, **k: None,
-                    sleep=lambda s: None, create_time=lambda pid: 1234.5, env_source={"HOME": "/h", "APC_ENABLED": "1"})
+                    sleep=lambda s: None, create_time=lambda pid: 1234.5, killpg=lambda *a: None, env_source={"HOME": "/h", "APC_ENABLED": "1"})
     o._sh, o._lines, o._http_calls = sh, lines, http_calls
     return o
 
@@ -149,7 +149,8 @@ def _router_ops(ops, env=None, cwd=None):
         return [] if state["n"] == 1 else [99]
     ops.listeners = listeners
     ops.repo = Path("/repo")
-    ops.popen = lambda *a, **k: None
+    ops.popen = lambda *a, **k: _Proc()
+    ops.parents = lambda pid: [{"pid": pid, "create_time": 1234.5}, {"pid": 55, "create_time": 1234.5}]
     if env is not None:
         ops._sh.env = env
     if cwd is not None:
@@ -514,23 +515,47 @@ def test_validate_row_scaffold_and_model(leg_env):
     assert "row_scaffold" in _codes(co.validate_leg(leg, pinned, wd))
 
 
+def _reset_leg(leg, out, fp, wd):
+    worker = json.loads(out.with_suffix(".manifest.json").read_text())["worker"]
+    fp.write_leg(out, PICK1, "python", 1001, leg["expected_ids"], worker, wd)
+
+
+def _gr(why):
+    return any(w.startswith("grade_reports:") for w in why)
+
+
 def test_validate_final_receipt_without_artifacts_fails(leg_env):
     leg, pinned, out, fp, wd = leg_env
     _mut_rows(out, lambda r: r["grade_reports"][-1].update(artifacts={}))
-    assert "report_artifacts_empty" in _codes(co.validate_leg(leg, pinned, wd))
+    assert _gr(co.validate_leg(leg, pinned, wd))
 
 
 def test_validate_tampered_receipt_only_when_test_modified(leg_env):
     leg, pinned, out, fp, wd = leg_env
     tamper = {"boundary": 9, "seq": 9, "final": True, "outcome": "tampered", "artifacts": {}}
-    _mut_rows(out, lambda r: (r.update(test_modified=True), r["grade_reports"].append(tamper)))
+    _mut_rows(out, lambda r: r.update(test_modified=True, grade_reports=[dict(tamper)]))
     assert co.validate_leg(leg, pinned, wd) == []
     _mut_rows(out, lambda r: r.update(test_modified=False))
-    assert "report_artifacts_empty" in _codes(co.validate_leg(leg, pinned, wd))
+    assert _gr(co.validate_leg(leg, pinned, wd))
     _mut_rows(out, lambda r: r.pop("test_modified"))
-    assert "report_artifacts_empty" in _codes(co.validate_leg(leg, pinned, wd))
-    _mut_rows(out, lambda r: (r.update(test_modified=True), r["grade_reports"][-1].update(outcome="parsed")))
-    assert "report_artifacts_empty" in _codes(co.validate_leg(leg, pinned, wd))
+    assert _gr(co.validate_leg(leg, pinned, wd))
+
+
+@pytest.mark.parametrize("mut", [
+    lambda r: r["grade_reports"][-1].update(outcome="infrastructure"),
+    lambda r: r["grade_reports"][-1].update(seq="1"),                       # non-int seq
+    lambda r: r["grade_reports"][-1].update(boundary=-1),
+    lambda r: r["grade_reports"][-1].pop("boundary"),
+    lambda r: r["grade_reports"][-1].update(artifacts={"unrelated.bin": next(iter(r["grade_reports"][-1]["artifacts"].values()))}),
+    lambda r: r["grade_reports"].append(dict(r["grade_reports"][-1], final=False)),          # seq collision
+    lambda r: r["grade_reports"].append(dict(r["grade_reports"][-1], seq=7)),                # two finals
+    lambda r: r.update(grade_reports=[]),
+])
+def test_validate_grade_report_schema_mutations(leg_env, mut):
+    leg, pinned, out, fp, wd = leg_env
+    assert co.validate_leg(leg, pinned, wd) == []
+    _mut_rows(out, mut)
+    assert _gr(co.validate_leg(leg, pinned, wd))
 
 
 @pytest.mark.parametrize("bad", [
@@ -582,7 +607,7 @@ def test_validate_grade_report_missing_and_sha(leg_env):
     _mut_rows(out, lambda r: r["grade_reports"][0]["artifacts"][next(iter(r["grade_reports"][0]["artifacts"]))].update(sha256=""))
     assert "report_sha_missing" in _codes(co.validate_leg(leg, pinned, wd))
     _mut_rows(out, lambda r: r.update(grade_reports=[]))
-    assert "grade_reports_missing" in _codes(co.validate_leg(leg, pinned, wd))
+    assert _gr(co.validate_leg(leg, pinned, wd))
 
 
 def test_seed_overlay_sha_matches_probe_recipe():
@@ -604,6 +629,7 @@ def _own_router_ops(ops, tmp_path):
     (tmp_path / "logs").mkdir(exist_ok=True)
     ops._sh.cwd = f"p99\nn{tmp_path}\n"
     ops.popen = lambda *a, **k: _Proc()
+    ops.parents = lambda pid: [{"pid": pid, "create_time": 1234.5}, {"pid": 55, "create_time": 1234.5}]
     killed, sent = set(), []
     state = {"n": 0}
 
@@ -674,3 +700,92 @@ def test_foreign_listener_refusal_then_stop_stack_does_nothing(ops):
     assert sent == [] and not any("stack_stop" in " ".join(c) for c in ops._sh.calls if isinstance(c, list))
     assert not ops._http_calls
     assert any("NOTHING" in line for line in ops._lines)
+
+
+def test_foreign_listener_appearing_after_spawn_is_refused_and_never_signalled(ops, tmp_path):
+    ops.repo = tmp_path
+    (tmp_path / "logs").mkdir()
+    ops.popen = lambda *a, **k: _Proc()
+    sent = []
+    ops.kill = lambda pid, sig: sent.append((pid, sig))
+    state = {"n": 0}
+    ops.listeners = lambda port=8000: [] if (state.__setitem__("n", state["n"] + 1) or state["n"] == 1) else [777]
+    ops.parents = lambda pid: [{"pid": 777, "create_time": 5.0}, {"pid": 1, "create_time": 1.0}]
+    with pytest.raises(co.ChainAbort, match="not owned"):
+        ops.start_router()
+    assert ops.router is None
+    assert ops.stop_stack() is None and sent == [] and not ops._http_calls
+    assert any("777" in line and "foreign" in line for line in ops._lines)
+
+
+def test_descendant_of_spawned_router_is_owned(ops, tmp_path):
+    sent, _ = _own_router_ops(ops, tmp_path)
+    ops.start_router()
+    assert ops.router["pid"] == 99 and ops.router["spawned"]["pid"] == 55
+
+
+def test_spawned_parent_with_wrong_create_time_is_not_ownership(ops, tmp_path):
+    _own_router_ops(ops, tmp_path)
+    ops.parents = lambda pid: [{"pid": pid, "create_time": 1.0}, {"pid": 55, "create_time": 999.0}]
+    with pytest.raises(co.ChainAbort, match="not owned"):
+        ops.start_router()
+    assert ops.router is None
+
+
+def test_router_replaced_before_teardown_no_signal_no_unload(ops, tmp_path):
+    sent, _ = _own_router_ops(ops, tmp_path)
+    ops.start_router()
+    ops._sh.ps = _worker_ps(PICK1)
+    ops.load(PICK1)
+    ops._sh.ps = ""
+    real = ops.create_time
+    ops.create_time = lambda pid: 777.0 if pid in (99, 55) else real(pid)     # router pid reused
+    ops.stop_stack()
+    assert sent == [] and not any(c[0] == "/v1/models/unload" for c in ops._http_calls)
+    assert any("identity changed" in line for line in ops._lines)
+
+
+def test_worker_replaced_before_teardown_no_unload_but_own_router_stopped(ops, tmp_path):
+    import signal
+    sent, killed = _own_router_ops(ops, tmp_path)
+    ops.start_router()
+    ops._sh.ps = _worker_ps(PICK1)
+    ops.load(PICK1)
+    base = ops.create_time
+    ops.create_time = lambda pid: 31337.0 if pid == 501 else base(pid)         # worker pid reused
+    ops.stop_stack()
+    assert not any(c[0] == "/v1/models/unload" for c in ops._http_calls)
+    assert (99, signal.SIGTERM) in sent
+
+
+def test_refused_start_reaps_the_spawned_group_never_the_foreign_listener(ops, tmp_path):
+    import signal
+    ops.repo = tmp_path
+    (tmp_path / "logs").mkdir()
+    ops.popen = lambda *a, **k: _Proc()
+    gone, group, single = set(), [], []
+    ops.killpg = lambda pid, sig: (group.append((pid, sig)), gone.add(pid))
+    ops.kill = lambda pid, sig: single.append((pid, sig))
+    ops.create_time = lambda pid: (_ for _ in ()).throw(ProcessLookupError(pid)) if pid in gone else 1234.5
+    state = {"n": 0}
+    ops.listeners = lambda port=8000: [] if (state.__setitem__("n", state["n"] + 1) or state["n"] == 1) else [777]
+    ops.parents = lambda pid: [{"pid": 777, "create_time": 5.0}]
+    with pytest.raises(co.ChainAbort, match="not owned"):
+        ops.start_router()
+    assert group == [(55, signal.SIGTERM)] and single == []
+    assert ops.router is None and any("gone=True" in line for line in ops._lines)
+    assert ops.stop_stack() is None and single == []
+
+
+def test_refused_start_sigkills_group_if_term_ignored(ops, tmp_path):
+    import signal
+    ops.repo = tmp_path
+    (tmp_path / "logs").mkdir()
+    ops.popen = lambda *a, **k: _Proc()
+    gone, group = set(), []
+    ops.killpg = lambda pid, sig: (group.append((pid, sig)), gone.add(pid) if sig == signal.SIGKILL else None)
+    ops.create_time = lambda pid: (_ for _ in ()).throw(ProcessLookupError(pid)) if pid in gone else 1234.5
+    ops.listeners = lambda port=8000: [] if not group and not hasattr(ops, "_x") and not setattr(ops, "_x", 1) else [777, 778]
+    with pytest.raises(co.ChainAbort, match="one :8000 listener"):
+        ops.start_router()
+    assert [s for _, s in group] == [signal.SIGTERM, signal.SIGKILL] and {p for p, _ in group} == {55}

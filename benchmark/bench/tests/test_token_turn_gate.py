@@ -351,16 +351,21 @@ def test_c147_runner_cancel_still_aborts_where_a_gate_stop_does():
 # --- C147: graceful (SIGTERM) client stops report their own aborted fetch as a transport error ---
 
 ABORT_FETCH = dict(type="unknown", message=tg.ABORT_FETCH)
-ABORT_UNABLE = dict(type="unknown", message="Transport: Unable to connect. Is the computer able to access the url?")
+ABORT_UNABLE = dict(type="unknown", message=tg.ABORT_UNABLE)
 
 
-def _stream_with_errors(*errors, signal_before=True):
-    """One completed request, then the probe signals (event index 2), then `errors` arrive."""
+def _err(error):
+    return (json.dumps(dict(type="error", sessionID="s1", error=dict(error))) + "\n").encode()
+
+
+def _stream_with_errors(*errors, signal_offset=1000):
+    """One completed request; the events file is then at byte 1000 when the probe signals; each error is FED as
+    raw bytes (so it carries a file offset): the first lands at 1000 (post-signal) unless signal_offset says else."""
     g, s = _fresh()
-    if signal_before:
-        s.signal_index = s.event_count
+    s.offset = 1000
+    s.signal_offset = signal_offset
     for error in errors:
-        s.accept(dict(type="error", sessionID="s1", error=dict(error)))
+        s.feed(_err(error))
     return g, s
 
 
@@ -375,19 +380,31 @@ def test_c147_post_signal_registered_transport_errors_are_tolerated_for_our_stop
     assert out["trailing"] == "interrupted"
 
 
-def test_c147_real_message_is_pinned_exactly():
+def test_c147_real_messages_are_pinned_exactly_and_the_base_url_form_only_for_this_run():
     assert tg.ABORT_FETCH == ("Transport: The socket connection was closed unexpectedly. For more information, "
                               "pass `verbose: true` in the second argument to fetch()")
-
-
-def test_c147_pre_signal_transport_error_still_aborts():
+    assert tg.ABORT_UNABLE == "Transport: Unable to connect. Is the computer able to access the url?"
     g, s = _fresh()
-    s.accept(dict(type="error", sessionID="s1", error=dict(ABORT_FETCH)))     # BEFORE the probe signalled
-    s.signal_index = s.event_count
+    s.base_url = "http://127.0.0.1:8000/v1"
+    s.offset, s.signal_offset = 1000, 1000
+    s.feed(_err(dict(type="unknown", message=tg.ABORT_UNABLE + " (http://127.0.0.1:8000/v1)")))
+    assert tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")["trailing"] == "interrupted"
+    g, s = _fresh()
+    s.base_url = "http://127.0.0.1:8000/v1"
+    s.offset, s.signal_offset = 1000, 1000
+    s.feed(_err(dict(type="unknown", message=tg.ABORT_UNABLE + " (http://elsewhere/v1)")))
+    with pytest.raises(tg.TransportAbort, match="error event"):
+        tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")
+
+
+def test_c147_error_written_before_the_signal_offset_aborts_even_if_ingested_later():
+    """An error emitted during the pre-kill metrics call sits before the recorded signal offset."""
+    g, s = _stream_with_errors(ABORT_FETCH, signal_offset=1000 + len(_err(ABORT_FETCH)))
     with pytest.raises(tg.TransportAbort, match="error event"):
         tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")
     g, s = _fresh()
-    s.accept(dict(type="error", sessionID="s1", error=dict(ABORT_FETCH)))     # never signalled at all
+    s.offset = 1000
+    s.feed(_err(ABORT_FETCH))                       # never signalled at all
     with pytest.raises(tg.TransportAbort, match="error event"):
         tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")
 
@@ -401,8 +418,11 @@ def test_c147_duplicate_or_repeated_shapes_still_abort(errors):
 
 
 @pytest.mark.parametrize("message", ["Transport: The socket connection was closed unexpectedly",
-                                     tg.ABORT_FETCH + " (retrying)", "Transport: Timeout"])
-def test_c147_near_miss_messages_abort(message):
+                                     tg.ABORT_FETCH + " (retrying)", "Transport: Timeout",
+                                     "Transport: Unable to connect.",
+                                     tg.ABORT_UNABLE + " upstream model failed; retrying",
+                                     tg.ABORT_UNABLE + " (http://127.0.0.1:1/v1)"])
+def test_c147_near_miss_and_unknown_suffix_messages_abort(message):
     g, s = _stream_with_errors(dict(type="unknown", message=message))
     with pytest.raises(tg.TransportAbort, match="error event"):
         tg.reconcile(s, dict(messages=[assistant(), TAIL]), -15, "stalled")

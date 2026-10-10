@@ -6,6 +6,7 @@ New same-uid orphans are diagnostic only and are never killed without attributio
 
 from __future__ import annotations
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -479,18 +480,27 @@ class ProcessGuard:
         self.verify_gone(signalled, wait=wait)
         return signalled
 
+    def _identity_state(self, pid, created):
+        """"alive" | "gone" | "unknown" for one (pid, create_time) identity. A denied inspection (uids,
+        create_time or liveness) is UNKNOWN, never "gone"."""
+        try:
+            process = self.get(pid)
+            process.uids()
+            if process.create_time() != created:
+                return "gone"            # the pid was reused: our process is not there
+            return "alive" if self._live(process) else "gone"
+        except (self.psutil.NoSuchProcess, StopIteration):
+            return "gone"
+        except self.psutil.AccessDenied:
+            return "unknown"
+
     def verify_gone(self, killed, wait=0.0):
-        """True when no killed (pid, create_time) is still a live process (polled up to `wait` seconds)."""
+        """True only when every killed (pid, create_time) is verifiably gone (polled up to `wait` seconds);
+        a process whose liveness cannot be determined makes this False."""
         deadline = time.monotonic() + wait
         while True:
-            alive = False
-            for entry in killed:
-                if self._same_identity(entry["pid"], entry["create_time"]):
-                    try:
-                        alive = alive or self._live(self.get(entry["pid"]))
-                    except self._transient:
-                        continue
-            if not alive:
+            states = [self._identity_state(e["pid"], e["create_time"]) for e in killed]
+            if all(state == "gone" for state in states):
                 return True
             if time.monotonic() >= deadline:
                 return False
@@ -501,7 +511,7 @@ class ProcessGuard:
         if self._status is None:
             return dict(survivors=[], containers_remaining=sorted(self.containers),
                         uncertain=True, orphans_unattributed=list(self.orphans_unattributed),
-                        completed=False)
+                        unknown=[], completed=False)
         return dict(self._status)
 
     def descendants_alive(self):
@@ -605,18 +615,51 @@ class ProcessGuard:
                 if not survivors:
                     break
                 time.sleep(0.05)
+            # Audit every tracked identity directly, independent of the filtered scan above (which silently drops
+            # a process whose uids()/status() is denied). Denied inspection = unknown = uncertain.
+            unknown = []
+            for attempt in range(3):
+                alive, unknown = [], []
+                for (pid, created) in list(self.tracked):
+                    state = self._identity_state(pid, created)
+                    if state == "alive":
+                        try:
+                            if self._protected(self.get(pid)):
+                                continue         # a protected (router/worker/ancestor) pid is never ours to clear
+                        except self._transient:
+                            state = "unknown"
+                    if state == "alive":
+                        alive.append((pid, created))
+                    if state == "unknown":
+                        unknown.append(dict(pid=pid, create_time=created))
+                if not alive:
+                    break
+                for pid, created in alive:
+                    try:
+                        process = self.get(pid)
+                        if process.create_time() == created and not self._protected(process):
+                            process.kill()
+                    except self._transient:
+                        pass
+                time.sleep(0.05)
+            else:
+                pass
+            survivors = sorted(set(survivors) | {pid for pid, _ in alive})
+            if unknown:
+                uncertain = True
             self.orphans_unattributed[:] = list(orphans.values())
             self._status = dict(
                 survivors=list(survivors), containers_remaining=sorted(self.containers),
                 uncertain=bool(uncertain),
-                orphans_unattributed=list(self.orphans_unattributed), completed=True,
+                orphans_unattributed=list(self.orphans_unattributed), unknown=unknown, completed=True,
             )
             if container_failure is not None:
                 raise container_failure
             if uncertain:
-                raise TransportAbort("cleanup uncertain: path-only processes remain " + json.dumps(
+                raise TransportAbort("cleanup uncertain: path-only or uninspectable processes remain " + json.dumps(
                     [dict(pid=p["pid"], create_time=p["create_time"])
                      for p in orphans.values() if p.get("reason") in ("path-only attribution", "access denied")]
+                    + unknown
                 ))
             if survivors:
                 raise TransportAbort("attributed processes survived cleanup")
@@ -677,14 +720,17 @@ def tmp_escapes(export, env, *, scratch=None):
     found = []
     seen = set()
 
-    def add(path, source, exact, token, status):
+    def add(path, source, exact, token, status, content_sha256=None):
         if any(_under(_tmp_norm(posixpath.normpath(path)), _tmp_norm(posixpath.normpath(d))) for d in own):
             return
         key = (path, source, token)
         if key in seen:
             return
         seen.add(key)
-        found.append(dict(path=path, source=source, exact=exact, token=token, status=status))
+        entry = dict(path=path, source=source, exact=exact, token=token, status=status)
+        if source == "write":
+            entry["content_sha256"] = content_sha256      # what OUR client wrote: the only proof of ownership
+        found.append(entry)
 
     for message in export.get("messages", []) if isinstance(export, dict) else []:
         for part in message.get("content", []) if isinstance(message, dict) else []:
@@ -700,7 +746,9 @@ def tmp_escapes(export, env, *, scratch=None):
                 raw = inputs.get("path")
                 path = _tmp_escape_path(raw, base)
                 if path:
-                    add(path, name, True, raw, status)
+                    content = inputs.get("content") if name == "write" else None
+                    add(path, name, True, raw, status,
+                        hashlib.sha256(content.encode("utf-8")).hexdigest() if isinstance(content, str) else None)
             elif name == "shell":
                 command = inputs.get("command")
                 if not isinstance(command, str):
@@ -772,7 +820,7 @@ def _unlink_checked(name, fd, identity):
     os.unlink(name, dir_fd=fd)
 
 
-def _clean_one(path, before, after, window, root, uid):
+def _clean_one(path, before, after, window, root, uid, expected_sha=None):
     """Remove one recorded file (and now-empty new parents), or an empty directory.
     Returns (removed_parent_dirs, non_empty_parent_dirs)."""
     parts = path[len("/tmp/"):].split("/")
@@ -815,6 +863,16 @@ def _clean_one(path, before, after, window, root, uid):
                 try:
                     if (os.fstat(fd).st_ino, os.fstat(fd).st_dev) != (st.st_ino, st.st_dev):
                         raise _Refuse("replaced")
+                    if expected_sha is not None:
+                        # The bytes on disk must be exactly what our write tool was asked to write.
+                        digest = hashlib.sha256()
+                        while True:
+                            block = os.read(fd, 1 << 20)
+                            if not block:
+                                break
+                            digest.update(block)
+                        if digest.hexdigest() != expected_sha:
+                            raise _Refuse("modified")
                 finally:
                     os.close(fd)
                 _unlink_checked(name, cursor, (st.st_ino, st.st_dev))
@@ -836,39 +894,35 @@ def _clean_one(path, before, after, window, root, uid):
             os.close(fd)
 
 
-def tmp_clean(candidates, before, after, window, *, root=None, uid=None, allow_shell=False):
-    """Remove only what the deletion authority of spec §4 allows; return (cleaned, [[path, reason], ...]).
+def tmp_clean(candidates, before, after, window, *, root=None, uid=None):
+    """Remove only what the deletion authority of spec §4 / C147 Q13 allows; return (cleaned, [[path, reason]]).
 
-    Automatic mode removes an EXACT `write` or `edit` part with status completed whose first /tmp component was
-    absent from the pre-item listing; an errored or pending call is diagnostic only. Only those recorded files are
-    deleted: a parent directory goes only if it is empty afterwards (`dir_mixed` otherwise), and unrecorded children
-    are never touched. Shell mentions are skipped unless `allow_shell` (the operator tool, explicit --yes), which
-    still applies every identity check. `before`/`after` of None (operator tool: no listings) skip the listing
-    checks; the birthtime window and ownership checks always apply. Residual: the microseconds between the final
-    fstatat and the unlink."""
+    Automatic removal is for `write` parts ONLY: a completed write whose first /tmp component was absent from the
+    pre-item listing, with every identity check (no symlink, our uid, birthtime inside the item window, inode
+    unchanged) AND whose on-disk bytes immediately before the unlink equal the part's `state.input.content`
+    (`content_sha256`); any difference is `modified`. `edit` needs a pre-existing file so it can never prove
+    creation, and shell mentions are best-effort text: both are diagnostic only (`tmp_escapes` lists them). Parents
+    that become empty are removed, anything else in them is never touched (`dir_mixed`). `before`/`after` of None
+    (operator tool: no listings) skip the listing checks; ownership and the birthtime window always apply.
+    Residual: (a) the microseconds between the final fstatat and the unlink; (b) an external process that created
+    the same name first and was then fully overwritten by our write tool is indistinguishable from our own file.
+    """
     root = TMP_ROOT if root is None else str(root)
     uid = os.getuid() if uid is None else uid
     cleaned, kept, done = [], [], set()
     for candidate in candidates:
         path = candidate["path"]
-        if path in done:
-            continue
-        if not candidate.get("exact") and not allow_shell:
+        if path in done or candidate.get("source") == "shell" or not candidate.get("exact"):
             continue
         done.add(path)
         try:
-            if candidate.get("exact"):
-                source, status = candidate.get("source"), candidate.get("status")
-                # Only a COMPLETED write/edit proves our client created the file; an errored/pending call that
-                # merely names a path is diagnostic (another process may have made it).
-                if source in ("write", "edit") and status != "completed":
-                    parts = path[len("/tmp/"):].split("/") if path.startswith("/tmp/") else []
-                    if any(c in ("", ".", "..") for c in parts):
-                        raise _Refuse("traversal")
-                    raise _Refuse("ambiguous")
-                if source not in ("write", "edit"):
-                    raise _Refuse("ambiguous")
-            dirs, mixed = _clean_one(path, before, after, window, root, uid)
+            parts = path[len("/tmp/"):].split("/") if path.startswith("/tmp/") else []
+            if any(c in ("", ".", "..") for c in parts):
+                raise _Refuse("traversal")
+            if candidate.get("source") != "write" or candidate.get("status") != "completed" \
+                    or not isinstance(candidate.get("content_sha256"), str):
+                raise _Refuse("ambiguous")
+            dirs, mixed = _clean_one(path, before, after, window, root, uid, candidate["content_sha256"])
             cleaned.append(path)
             cleaned.extend(dirs)
             kept.extend([d, "dir_mixed"] for d in mixed)

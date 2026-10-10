@@ -52,7 +52,7 @@ def build_manifest(model, lang, seed_base, worker, run_id, override=None):
             "scaffold": SCAFFOLD, "scaffold_policy_sha256": CAMPAIGN,
             "probe_code_sha256": os.environ.get("FAKE_PROBE_CODE_SHA", h("p")), "opencode_version": "2.0.20",
             "opencode_exe_sha256": h("e"), "opencode_bench_config_sha256": h("c"), "carrier_source_sha256": h("d"),
-            "agent_system_sha256": h("f"), "polyglot_sha": h("1"), "universe_sha256": h("2"),
+            "agent_system_sha256": None, "polyglot_sha": h("1"), "universe_sha256": h("2"),
             "seed_base": seed_base, "lang": lang, "draft_kind": "off", "sampling_profile": "deployed",
         },
     }
@@ -86,9 +86,13 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
         files["events"].write_bytes(b'{"type":"step_finish"}\n' + events_extra)
     files["stderr"].write_bytes(b"")
     files["export"].write_text(json.dumps({"id": item}))
-    rep = ev / "grades" / "report.txt"
-    rep.parent.mkdir(exist_ok=True)
-    rep.write_text("ok")
+    names = ("report.xml", "stdout.txt", "stderr.txt") if item.startswith("python/") else ("go.jsonl", "go.stderr")
+    arts = {}
+    for n in names:
+        f = ev / "grades" / n
+        f.parent.mkdir(exist_ok=True)
+        f.write_text("ok " + n)
+        arts[n] = {"path": _portable(wd, f), "sha256": _sha(f)}
     seed = rowschema.sample_seed(item, 0, seed_base)
     return {
         "id": item, "model": model, "sample": 0, "sample_seed": seed, "passed": True, "converged": True,
@@ -98,7 +102,7 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
         "events_path": _portable(wd, files["events"]), "transcript_path": _portable(wd, files["export"]),
         "stderr_path": _portable(wd, files["stderr"]),
         "grade_reports": [{"boundary": 1, "seq": 1, "final": True, "outcome": "parsed",
-                           "artifacts": {"report": {"path": _portable(wd, rep), "sha256": _sha(rep)}}}],
+                           "artifacts": arts}],
         "gate": {"output_tokens_completed": 1000, "requests_completed": 5},
     }
 

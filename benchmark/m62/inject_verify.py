@@ -7,7 +7,7 @@ Reads every `<kind>.attempt<n>.jsonl` (+ `.manifest.json`) and prints one line p
 stem:  `<stem>: PASS | FAIL:<why> | not_observed[:what] | competing_trigger:<reason>`.
 `--kind` limits the run to one kind and skips the suite-level rules (the driver's per-leg call).
 
-Cancellation proof: see `cancellation_proven` (no cancelled counter exists on the worker; completed must not rise).
+Cancellation proof: see `cancellation_consistent` (no cancelled counter exists on the worker; completed must not rise).
 `--kind X` with no attempt file for X exits 1 (`FAIL:missing`); the numerically latest attempt of a kind is the
 retained one even when unreadable (`FAIL:unreadable`, exit 1).
 
@@ -94,6 +94,12 @@ def check_files(row, manifest, workdir):
         path = resolve(row.get(field, ""), workdir)
         if not sha[name] or not path.is_file() or sha_file(path) != sha[name]:
             return f"FAIL:evidence_sha:{name}"
+    sys.path.insert(0, str(REPO / "benchmark"))
+    from bench import structured_grade as sg
+    lang = str(row.get("id", "")).split("/", 1)[0]
+    reasons = sg.validate_reports(row.get("grade_reports"), lang, row.get("test_modified"))
+    if reasons:
+        return "FAIL:grade_reports:" + reasons[0]
     for report in row.get("grade_reports") or []:
         if not report.get("artifacts"):
             continue
@@ -116,8 +122,9 @@ def killed_state_ok(state):
     return False
 
 
-def cancellation_proven(term):
-    """Cancellation rule (Q6). The worker's /metrics `summary` (mlx_vlm/server/generation.py, `snapshot`) has
+def cancellation_consistent(term):
+    """Cancellation CONSISTENCY (Q6/Q18), not proof: the worker exposes no request- or session-correlated cancel
+    receipt (tracked as C149), so an independently failed request would look the same. The worker's /metrics `summary` (mlx_vlm/server/generation.py, `snapshot`) has
     requests_started / requests_completed / requests_failed / in_flight and NO cancelled or aborted counter, so the
     strongest available rule applies: the request was in flight at the kill (`in_flight_at_kill >= 1`), `in_flight`
     reached 0, and `requests_completed` did NOT increase between the samples. An increase is natural completion,
@@ -156,8 +163,8 @@ def causal(kind, row, notes):
     if kind == "loop" and not any(k.get("role") == "model" and k.get("argv", [])[-2:] == ["sleep", "600"]
                                   for k in killed):
         return "not_observed:descendant"
-    if cancellation_proven(term):
-        notes.append("cancellation_proven")
+    if cancellation_consistent(term):
+        notes.append("cancellation_consistent")
     elif kind == "loop":
         return "not_observed:cancellation"
     else:
@@ -329,7 +336,9 @@ def main(argv=None, *, docker_ps=None, process_lister=None, out=print):
             if kind not in retained:
                 suite.append(f"not_observed:{kind}:absent")
         loop = retained.get("loop")
-        if loop and loop.verdict == "PASS" and "cancellation_proven" not in loop.notes:
+        if loop and loop.verdict == "PASS" and "cancellation_consistent" in loop.notes:
+            out("suite: loop cancellation consistent, not correlated \u2014 see C149")
+        if loop and loop.verdict == "PASS" and "cancellation_consistent" not in loop.notes:
             suite.append("not_observed:loop:cancellation")
         docker_ps = docker_ps or docker_names
         process_lister = process_lister or list_processes
