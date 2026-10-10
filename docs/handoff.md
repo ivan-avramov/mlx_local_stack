@@ -20,15 +20,19 @@ C145, C144, C138). Spec: `docs/specs/m62-token-turn-gate.md` (rev 5 + §9 build 
   P223 new C144 candidates run under tg1, both picks re-recorded under tg1 first.
 
 - **P229 workdir cleanup (2026-10-10):** 151 GB of model weights deleted (each sha-matched to its public `caslca/*`
-  Hugging Face copy). Chain drivers committed to `benchmark/chains/` (`8246c91`). Orphan branch `evidence` (`1ec50d6`,
-  ~107 MB, 5,511 files) holds the irreproducible raw artifacts (transcripts, C82/C84 outputs, overlays, reports),
-  PII-scrubbed with `SCRUB_MANIFEST.json`, credential scan clean, replay of all 454 manifest entries identical.
-  Fresh-machine runbook: `benchmark/README.md`. Pending: push `main` + `evidence` (operator word), then delete the
-  rest of `$STACK_WORKDIR` (~40 GB). opencode 2.0.20 exists only via Homebrew/source (not npm) — `brew pin opencode`.
+  Hugging Face copy). Chain drivers in `benchmark/chains/`. Orphan branch `evidence` (`1f62c13`, ~5,300 files) holds
+  the irreproducible raw artifacts, PII-scrubbed (`SCRUB_MANIFEST.json`), credential scan clean, no text from the
+  operator's private instruction files; opencode 1.18.30 transcripts EXCLUDED (that scaffold loaded the operator's
+  global instructions). Replay of the M62 manifest on the branch passes. Runbook: `benchmark/README.md` "Fresh machine".
+- **P230:** the v2 probe's opencode 2.0.20 is bench-owned (`scripts/install_bench_opencode.sh` →
+  `$STACK_WORKDIR/opencode-2.0.20`, byte-identical to the recorded executable); brew/daily opencode untouched.
+- **C148 DONE** (`d94947b`): monitor survives macOS AccessDenied on exiting processes; 20/20 clean.
 
 ## Queue, in order
 
-0. Push `main` + `evidence`, verify fresh-clone restore, then delete the workdir remainder (P229).
+0. Push `main` + `evidence` (operator word), verify fresh-clone restore, then delete the workdir remainder (P229)
+   EXCEPT `opencode-2.0.20/` (cheap, rebuildable by script); `git -C ../mlx-serve worktree remove` the
+   `upstream/2026-09-13/mlx-serve` worktree rather than deleting it. Pending operator choice: upload form for the NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit MTP drafter.
 1. Nothing else queued. **C148** (flaky process monitor) with C147. When a tg1 chain or the first C144 candidate is queued: **C147** first — live injected positives
    (test-only lowered thresholds, ≈ 30 min; needs an approved small build), a tg1 chain runner (no fixed 6 h kill;
    exact-item validation; incomplete-leg archive/restart), `/tmp` escape diagnostic.
@@ -45,4 +49,4 @@ C145, C144, C138). Spec: `docs/specs/m62-token-turn-gate.md` (rev 5 + §9 build 
 - A model can write outside its TMPDIR (`/tmp`); contain or record, never blanket-sweep.
 - Cold reviews in series keep finding real defects; stop when findings turn to details, then validate live.
 
-Next decision id C149; discussion ids continue from P230.
+Next decision id C149; discussion ids continue from P231.
