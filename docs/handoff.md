@@ -1,4 +1,4 @@
-# Handoff — 2026-10-10: M62 DONE (token/turn gate `opencode-v2-web-tg1` built, V3 7/7 + V4 3/3 live); C147 OPEN; push pending operator go
+# Handoff — 2026-10-10: M62 DONE (token/turn gate `opencode-v2-web-tg1` built, V3 7/7 + V4 3/3 live); C147 OPEN (deferred); P221/P222/P223 ruled; pushed
 
 THE one handoff. Read this, then `docs/PLAN.md` (M62 row; agentic stage note) and `docs/open-questions.md` (C147, C146,
 C145, C144, C138). Spec: `docs/specs/m62-token-turn-gate.md` (rev 5 + §9 build findings). Results: `docs/campaign-results.md`
@@ -15,16 +15,16 @@ C145, C144, C138). Spec: `docs/specs/m62-token-turn-gate.md` (rev 5 + §9 build 
   V4 3/3 (the M61 stalls passed on short fresh paths — no information about the >41K tail; M61 stays the record).
   V5b: "cleared after fixes" → **C147** before any tg1 chain. Stack stopped; daily driver NOT started.
 - The legacy `opencode-v2-web` path is unchanged (M61 reproducible). No pick/order/README change.
-- `main` is ahead of `origin/main` (`c889661`), **not pushed** — needs the operator's explicit in-turn go.
-- P221 (operator sign-off on strict new-minimum progress, claude-fable-5-1 review F12) still unanswered; built as specified (strict).
+- `main` pushed 2026-10-10 on the operator's word; forks `../mlx-vlm` / `../mlx-serve` already at origin, submodules pinned to their HEADs.
+- Rulings 2026-10-10 (operator): P221 strict new-minimum progress approved; P222 C147 deferred until a tg1 chain is queued;
+  P223 new C144 candidates run under tg1, both picks re-recorded under tg1 first.
 
 ## Queue, in order
 
-1. **Push** on the operator's word.
-2. **P221** sign-off (strict new-minimum progress vs the looser Phase H rule).
-3. **C147** before the first tg1 chain: live injected positives (test-only lowered thresholds, ≈ 30 min), a tg1 chain
-   runner (no fixed 6 h kill; exact-item validation; incomplete-leg archive/restart), `/tmp` escape diagnostic.
-4. **P223** at the first C144 candidate: tg1 (re-record both picks under tg1) vs the frozen `opencode-v2-web` path.
+1. Nothing queued. When a tg1 chain or the first C144 candidate is queued: **C147** first — live injected positives
+   (test-only lowered thresholds, ≈ 30 min; needs an approved small build), a tg1 chain runner (no fixed 6 h kill;
+   exact-item validation; incomplete-leg archive/restart), `/tmp` escape diagnostic.
+2. Then re-record both picks under tg1 (P223, ≈ 20 h k=2 chains), then candidates under tg1.
 
 ## Rules learned (this session)
 

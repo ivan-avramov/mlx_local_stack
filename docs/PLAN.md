@@ -212,7 +212,7 @@ M42 terminology clarification (2026-09-13): the approved `kv_bits: 0` arm means 
   binary pass@1 needs n≈100); pass@1 prunes only at n≥50 for a ~20pp deficit. The
   between-models `p_d≈0.20` applies — never import the within-model low-`p_d` argument.
 - **Stage 3 (hours):** full n=100 axes + agentic for survivors.
-- **Agentic stage (C144, operator 2026-10-09; scaffold for new candidates pending P223 — tg1 recommended, needs C147 and a tg1 re-record of both picks):** opencode v2 only (`opencode-v2-web`, 48K first-write allowance, the M61
+- **Agentic stage (C144, operator 2026-10-09; scaffold for new candidates RULED P223 2026-10-10: tg1, after C147 and a tg1 re-record of both picks):** opencode v2 only (`opencode-v2-web`, 48K first-write allowance, the M61
   re-record's seeds; the 1.18 probe is frozen and its rows never compare with v2). Gate: one session of the C37 22-item
   Python leg (≈ 2 h; Go is scored on 21 items — `go/counter` excluded, C145); in range → the k=2 Python + Go chain (≈ 10 h), paired per session against the two picks' M61
   re-record rows, never pooled.
