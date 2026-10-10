@@ -794,7 +794,7 @@ The workdir holds nothing that is not reproducible or published (P229, 2026-10-1
 after `config.example.sh` → `~/.config/mlx_local_stack/config.sh`:
 
 ```sh
-git worktree add "$STACK_WORKDIR" evidence    # raw transcripts/outputs behind main's rows (or skip if unneeded)
+git fetch origin evidence && git archive origin/evidence | tar -x -C "$STACK_WORKDIR"   # raw evidence (optional)
 git clone https://github.com/Aider-AI/polyglot-benchmark "$STACK_WORKDIR/polyglot-benchmark" \
   && git -C "$STACK_WORKDIR/polyglot-benchmark" checkout 7e0611e          # corpus; rows record polyglot_sha
 NLTK_DATA="$STACK_WORKDIR/nltk_data" python -m nltk.downloader punkt punkt_tab averaged_perceptron_tagger averaged_perceptron_tagger_eng
