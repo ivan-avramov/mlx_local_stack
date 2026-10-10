@@ -6,10 +6,17 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 INVALID = {"go/counter"}  # C145
 FIXTURES = [  # pre-registered expectations (spec §6 V2)
-    ("Qwen3.8-27B-mlx-uniform-4bit", "opencode_v2_go.m61.s2.jsonl", "go/kindergarten-garden", "looping@15"),
-    ("Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "opencode_v2_go.m59.s1.jsonl", "go/alphametics", "stop<=150"),
+    ("Qwen3.8-27B-mlx-uniform-4bit", "opencode_v2_go.m61.s2.jsonl", "go/kindergarten-garden", "looping@request15"),
+    ("Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "opencode_v2_go.m59.s1.jsonl", "go/alphametics", "stalled@completed_request40"),
     ("Qwen3.8-27B-mlx-uniform-4bit", "opencode_v2_go.m61.s2.jsonl", "go/book-store", "no_stop"),
 ]
+
+
+def _sha(placeholder, wd):
+    if not placeholder:
+        return None
+    p = Path(placeholder.replace("$STACK_WORKDIR", str(wd)))
+    return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None
 
 
 def main():
@@ -35,6 +42,8 @@ def main():
                 "rows": f.relative_to(REPO).as_posix(), "line": n, "model": r["model"], "id": r["id"],
                 "passed": r.get("passed"), "stop_reason": r.get("stop_reason"),
                 "events_path": r["events_path"], "events_sha256": hashlib.sha256(data).hexdigest(),
+                "transcript_path": r.get("transcript_path"),
+                "export_sha256": _sha(r.get("transcript_path"), wd),
                 "identity_matched": matched, "valid_item": r["id"] not in INVALID,
                 "fixture": next((x for m, rf, i, x in FIXTURES
                                  if m == r["model"] and f.name == rf and i == r["id"]), None),
