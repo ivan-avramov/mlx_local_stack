@@ -1,4 +1,4 @@
-# Handoff — 2026-10-10 (night, final): C147 built and pushed; next is the operator's live V3 injected run, then the chain pilot, then P223
+# Handoff — 2026-10-10 (night, final): C147 built and pushed; repo is self-sufficient for a new box; next is the operator's live V3 injected run, then the chain pilot, then P223
 
 THE one handoff. Read this, then `docs/open-questions.md` C147, `docs/specs/c147-tg1-chain-clearance.md` (rev 3 + §9
 build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and `benchmark/chains/README.md`.
@@ -18,7 +18,7 @@ build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and
   round 3 "not cleared" Q19–Q25 (fixed, `6bb4cefe`; §9 B9), round 4 "not cleared" Q26–Q28 (three boundary
   cases the reviewer judged not to invalidate a live positive run; fixed in the final commit; §9 B10). Lead
   decision: the review loop stops here — the operator's live V3 run and the chain pilot are the clearance. All
-  four rounds are under `$STACK_WORKDIR/c147/codex_impl_review{1..4}.md`. Code: `--tg1-inject {stall,loop,alloc}` (probe), `--cancel-file`, `--manifest-ack`,
+  six verdicts and prompts are in the repo at `benchmark/chains/c147/reviews/`. Code: `--tg1-inject {stall,loop,alloc}` (probe), `--cancel-file`, `--manifest-ack`,
   `--sampling-profile deployed`, `--print-identity`; `benchmark/m62/inject_verify.py`,
   `benchmark/m62/tmp_escape_clean.py`; `benchmark/bench/chain_ops.py`; `benchmark/chains/c147/{run_tg1_chain.py,
   run_inject.py, drive_chain.sh, drive_inject.sh, fake_probe.py}`; `scripts/session_pinning_gate.py --scaffold
@@ -30,6 +30,18 @@ build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and
   rows are unaffected (no stop ever fired in them). The campaign `scaffold_policy_sha256` is pinned unchanged.
 - **Workdir inputs rebuilt:** `$STACK_WORKDIR/{polyglot-benchmark (7e0611e), nltk_data, opencode-2.0.20, c147/}`.
   Evidence branch not restored (optional). Daily driver NOT started; stack stopped.
+
+## Moving to another machine (P259–P265, 2026-10-10)
+
+Everything a session needs is in the repo. On the new box: `git clone --recurse-submodules`, then
+`scripts/bootstrap_machine.sh --box <label>` (generates config.sh with `MLX_BOX`, corpus @ `7e0611e`, nltk data,
+opencode 2.0.20, `.venv-bench` from `benchmark/requirements-bench.lock`), then `uv sync` for the serving venv.
+Model weights download from the hub on first load (`caslca/*`, ≈ 35 GB for the two P223 picks). The C147
+Codex reviews are in `benchmark/chains/c147/reviews/`; older reviews and raw artifacts are on the `evidence`
+branch (`--with-evidence`). **Open (P265):** the second box is an M5 Max 128 GB. Quality rows pair across the
+boxes (same quantizations, sampling, scaffold); latency, thermal and capacity numbers do not — give it its own
+`MLX_BOX` label and never cite 128 GB capacity against the 64 GB charter until the operator rules whether the
+project target changes. Sessions on the 64 GB box keep the queue below; nothing else is machine-bound.
 
 ## Queue, in order
 
