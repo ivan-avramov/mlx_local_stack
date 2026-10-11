@@ -22,7 +22,7 @@ import uuid
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import answer_key, opencode_common, progress_gate, provenance
+from bench import answer_key, opencode_common, opencode_export, progress_gate, provenance
 
 opencode_common.reexport(globals())
 PINNED_OPENCODE_VERSION_V2 = "2.0.20"
@@ -449,12 +449,13 @@ def _export_session(session_id, env, cwd, opencode_bin):
     if not session_id:
         raise TransportAbort("missing sessionID")
     try:
-        result = _capture(
-            [opencode_bin, "session", "export", session_id, "--standalone"], cwd, env, 120
-        )
+        cmd = [opencode_bin, "session", "export", session_id, "--standalone"]
+        result, _ = opencode_export.run_export(lambda e, timeout: _capture(cmd, cwd, e, timeout), env,
+                                               timeout=120)   # P273
         path.write_text(result.stdout)
         if result.returncode:
-            raise TransportAbort(f"export exit {result.returncode}: {result.stderr}")
+            raise TransportAbort(f"export exit {result.returncode}: "
+                                 f"{opencode_export.export_failure_tail(result.stderr)}")
         export = json.loads(result.stdout)
         if not isinstance(export, dict) or not isinstance(export.get("messages"), list):
             raise TransportAbort("export has no messages list")
@@ -603,6 +604,7 @@ def _identity(a, version, binary, run_dir, poly_sha):
     for p in (
         Path(__file__),
         Path(opencode_common.__file__),
+        Path(opencode_export.__file__),
         Path(progress_gate.__file__),
         Path(provenance.__file__),
         Path(answer_key.__file__),

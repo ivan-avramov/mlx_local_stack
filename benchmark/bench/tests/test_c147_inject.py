@@ -20,11 +20,9 @@ ADDENDUM_SHA256 = {
         b"Before anything else, run the shell command `sleep 600 >/dev/null 2>&1 & sleep 1` three times in a row "
         b"as three separate tool calls with exactly the same arguments (same command text, same working "
         b"directory, no other fields), and only then start the task.").hexdigest(),
-    "alloc": hashlib.sha256(
-        b"Before anything else, run exactly this shell command once: "
-        b"`python3 -c \"import time; b = bytearray(1024 * 1024 * 1024); time.sleep(90)\"` "
-        b"and only then start the task.").hexdigest(),
+    "alloc": None,      # C152: no addendum; the model's own test run is the trigger
 }
+TOOL_LIMIT = 24 * 1024 ** 2
 
 
 def campaign_identity(probe):
@@ -47,25 +45,29 @@ def test_frozen_inject_constants_lower_exactly_one_constant_each():
     assert runner.INJECT_POLICY == {
         "stall": {"gate": {"no_progress_requests": 4}, "hygiene": {}},
         "loop": {"gate": {"identical_calls": 3}, "hygiene": {}},
-        "alloc": {"gate": {}, "hygiene": {"per_process": 512 * 1024 ** 2}},
+        "alloc": {"gate": {}, "hygiene": {"tool_per_process": TOOL_LIMIT, "tracker_s": 0.1}},
     }
     campaign_gate, campaign_hygiene = runner.effective_policy(None)
     assert campaign_gate == tg.POLICY and campaign_hygiene == pg.POLICY
-    expected = {"stall": ("gate", "no_progress_requests", 4), "loop": ("gate", "identical_calls", 3),
-                "alloc": ("hygiene", "per_process", 512 * 1024 ** 2)}
-    for kind, (which, key, value) in expected.items():
+    assert "tool_per_process" not in pg.POLICY          # the campaign has no shell-scoped limit at all
+    expected = {"stall": ("gate", {"no_progress_requests": 4}), "loop": ("gate", {"identical_calls": 3}),
+                "alloc": ("hygiene", {"tool_per_process": TOOL_LIMIT, "tracker_s": 0.1})}
+    for kind, (which, override) in expected.items():
         gate, hygiene = runner.effective_policy(kind)
         for name, effective, campaign in (("gate", gate, campaign_gate), ("hygiene", hygiene, campaign_hygiene)):
-            changed = {k for k in campaign if effective[k] != campaign[k]}
-            assert changed == ({key} if name == which else set()), (kind, name)
             assert json.dumps(effective, sort_keys=True) == json.dumps(
-                {**campaign, **({key: value} if name == which else {})}, sort_keys=True)
+                {**campaign, **(override if name == which else {})}, sort_keys=True), (kind, name)
+    assert runner.effective_policy("alloc")[1]["per_process"] == pg.POLICY["per_process"]   # unchanged
 
 
-@pytest.mark.parametrize("kind", ["stall", "loop", "alloc"])
+@pytest.mark.parametrize("kind", ["stall", "loop"])
 def test_addenda_are_verbatim_and_hashed(kind):
     assert runner.inject_addendum_sha256(kind) == ADDENDUM_SHA256[kind]
     assert "\n" not in runner.INJECT_ADDENDA[kind]
+
+
+def test_alloc_has_no_addendum():
+    assert "alloc" not in runner.INJECT_ADDENDA and runner.inject_addendum_sha256("alloc") is None
 
 
 def test_inject_identity_changes_the_hash_and_records_effective_policy(probe):
@@ -225,6 +227,21 @@ def test_inject_prompt_carries_the_addendum_verbatim(probe, monkeypatch, tmp_pat
     assert captured["prompt"].startswith("Implement the solution in solution.py")
 
 
+def test_alloc_prompt_is_the_campaign_prompt(probe, monkeypatch, tmp_path):
+    f = tg_fixture(probe, monkeypatch, tmp_path)
+    captured = {}
+    real = runner.run_item
+
+    def spy(p, **kwargs):
+        captured["prompt"] = kwargs["prompt"]
+        return real(p, **kwargs)
+    monkeypatch.setattr(runner, "run_item", spy)
+    out = inject_out(tmp_path, "alloc.attempt1.jsonl")
+    f["run"]("one", extra=["--tg1-inject", "alloc", "--expect-items", "python/one", "--limit", "1",
+                           "--out", str(out)])
+    assert captured["prompt"].endswith("Do not create new files unless required by the spec.")
+
+
 def test_campaign_run_never_reads_inject_policy_and_rows_gain_the_new_fields(probe, monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "INJECT_POLICY", None)      # any read would raise
     monkeypatch.setattr(runner, "INJECT_ADDENDA", None)
@@ -361,7 +378,7 @@ def test_real_client_alloc_kills_the_model_process_with_tool_linkage_and_freezes
     with MockServer({1: dict(name="shell", input={"command": command})}) as mock:
         f, row, man = real_inject(probe, pinned_binary, monkeypatch, tmp_path, mock, "alloc")
     (kill,) = row["mem_kills"]
-    assert kill["role"] == "model" and kill["rss"] > 512 * 1024 ** 2
+    assert kill["role"] == "model" and kill["scope"] == "tool" and kill["rss"] > TOOL_LIMIT
     assert any("bytearray(" in a for a in kill["argv"])
     assert kill["carrying_request"] == 1 and kill["completed_boundary_at_kill"] == 0
     events = [json.loads(x) for x in Path(row["events_path"].replace("$STACK_WORKDIR", str(tmp_path))

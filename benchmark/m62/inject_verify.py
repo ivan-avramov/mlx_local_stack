@@ -217,29 +217,32 @@ def verify_row(kind, row, manifest, workdir):
             return "FAIL:events_rederivation", notes
         failure = causal(kind, row, notes)
         return (failure or "PASS"), notes
-    # alloc
+    # alloc (C152): the model's own tool process trips the tool-scoped limit; no addendum, any argv
     kills = row.get("mem_kills") or []
     if not kills:
         return "not_observed:kill", notes
-    if len(kills) != 1:
-        return "FAIL:multiple_kills", notes
-    kill = kills[0]
-    if kill.get("role") != "model" or not any("bytearray(" in a for a in kill.get("argv") or []):
+    if any(k.get("role") != "model" or k.get("scope") != "tool" for k in kills):
         return "FAIL:unrelated_kill", notes
-    per_process = ((runtime["inject"].get("policy") or {}).get("hygiene") or {}).get("per_process")
-    if not isinstance(kill.get("rss"), int) or not isinstance(per_process, int) or kill["rss"] <= per_process:
-        return "FAIL:rss", notes
-    shell = [c for c in calls if c[2] == "shell" and "bytearray(" in c[3]]
-    if len(shell) != 1:
+    limit = ((runtime["inject"].get("policy") or {}).get("hygiene") or {}).get("tool_per_process")
+    if not any(c[2] == "shell" for c in calls):
         return "FAIL:no_shell_part", notes
-    request, part_id, _, _, state = shell[0]
-    if kill.get("tool_call_id") != part_id:
-        return "FAIL:tool_call_id", notes
-    if kill.get("carrying_request") != request or kill.get("completed_boundary_at_kill") != request - 1:
-        return "FAIL:request_linkage", notes
-    if not killed_state_ok(state):
-        return "FAIL:killed_part_shape", notes
-    if gate["requests_completed"] <= request:
+    # C152 review T1/T2: EVERY kill is checked; an unlinked one (collateral: opencode's own git, an LSP) fails
+    first_request = None
+    for kill in kills:
+        if not isinstance(kill.get("rss"), int) or not isinstance(limit, int) or kill["rss"] <= limit:
+            return "FAIL:rss", notes
+        if kill.get("tool_call_id") is None:
+            return "FAIL:unlinked_kill", notes
+        shell = [c for c in calls if c[2] == "shell" and c[1] == kill.get("tool_call_id")]
+        if len(shell) != 1:
+            return "FAIL:tool_call_id", notes
+        request, part_id, _, _, state = shell[0]
+        if kill.get("carrying_request") != request or kill.get("completed_boundary_at_kill") != request - 1:
+            return "FAIL:request_linkage", notes
+        if not killed_state_ok(state):
+            return "FAIL:killed_part_shape", notes
+        first_request = request if first_request is None else min(first_request, request)
+    if gate["requests_completed"] <= first_request:
         return "not_observed:continuation", notes
     return "PASS", notes
 

@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from m62 import inject_verify as iv                           # noqa: E402
 
-PER_PROCESS = 512 * 1024 ** 2
+TOOL_LIMIT = 24 * 1024 ** 2      # C152: alloc kills a shell-tool descendant above this
 RUN_IDS = {"stall": "20261010T120000-aaaaaaaaaaaa", "loop": "20261010T120000-bbbbbbbbbbbb",
            "alloc": "20261010T120000-cccccccccccc"}
 
@@ -45,7 +45,7 @@ def build_events(kind):
                 lines.append(ev("step_finish", f"m{k}", id=f"f{k}"))
     else:
         lines += [ev("step_start", "m1", id="s1"),
-                  tool_event("m1", "call_alloc", 'python3 -c "bytearray(400)"',
+                  tool_event("m1", "call_alloc", "python3 -m pytest -q bowling_test.py",
                              dict(metadata=dict(metadata=dict(status="completed", signal="SIGKILL")))),
                   ev("step_finish", "m1", id="f1"), ev("step_start", "m2", id="s2"), ev("step_finish", "m2", id="f2")]
     return "\n".join(lines) + "\n"
@@ -81,8 +81,8 @@ def make_row(kind, tmp, name):
         term.update(reason=stop, killed=killed, killed_verified=True, cancel_wait_s=2.5, in_flight_at_kill=1,
                     worker_summary_before=summary_before, worker_summary_after=summary_after)
     else:
-        mem = [dict(pid=20, create_time=3.0, role="model", rss=PER_PROCESS + 1,
-                    argv=["python3", "-c", 'import time; bytearray(400)'], tool_call_id="call_alloc",
+        mem = [dict(pid=20, create_time=3.0, role="model", rss=TOOL_LIMIT + 1, scope="tool",
+                    argv=["python3", "-m", "pytest", "-q", "bowling_test.py"], tool_call_id="call_alloc",
                     carrying_request=1, completed_boundary_at_kill=0)]
         gate.update(requests_completed=2)
     row = dict(scaffold="opencode-v2-web-tg1-inject:" + kind, gate=gate, termination=term, reconciliation=rec,
@@ -94,7 +94,8 @@ def make_row(kind, tmp, name):
                orphans_unattributed=[])
     manifest = dict(run_id=RUN_IDS[kind], runtime=dict(
         scaffold=row["scaffold"],
-        inject=dict(kind=kind, policy=dict(gate={}, hygiene=dict(per_process=PER_PROCESS)))))
+        inject=dict(kind=kind, policy=dict(gate={}, hygiene=dict(per_process=8 * 1024 ** 3,
+                                                                 tool_per_process=TOOL_LIMIT, tracker_s=0.1)))))
     return row, manifest
 
 
@@ -167,8 +168,8 @@ def test_competing_triggers(tmp_path):
 
 
 def test_alloc_unrelated_kill_fails_and_absent_kill_is_not_observed(tmp_path):
-    def unrelated(r, m):
-        r["mem_kills"][0]["argv"] = ["chrome", "--type=renderer"]
+    def unrelated(r, m):           # a kill under the ordinary per-process limit, not the shell-scoped one
+        r["mem_kills"][0]["scope"] = "process"
     v, code, _ = verdict(tmp_path, "alloc", unrelated)
     assert v == "FAIL:unrelated_kill" and code == 1
     d = tmp_path / "n"
@@ -180,8 +181,9 @@ def test_alloc_unrelated_kill_fails_and_absent_kill_is_not_observed(tmp_path):
     ("tool_call_id", "other", "FAIL:tool_call_id"),
     ("carrying_request", 2, "FAIL:request_linkage"),
     ("completed_boundary_at_kill", 1, "FAIL:request_linkage"),
-    ("rss", PER_PROCESS, "FAIL:rss"),
+    ("rss", TOOL_LIMIT, "FAIL:rss"),
     ("role", "grader", "FAIL:unrelated_kill"),
+    ("scope", None, "FAIL:unrelated_kill"),
 ])
 def test_alloc_linkage_checks(tmp_path, field, value, expected):
     assert verdict(tmp_path, "alloc", lambda r, m: r["mem_kills"][0].update({field: value}))[0] == expected
@@ -299,7 +301,7 @@ def test_partial_run_directory_is_retryable_exit_4_unless_a_fail_exists(tmp_path
     assert code == 4 and any("absent" in x for x in lines)
     write_attempt(tmp_path, "loop", 1, lambda r, m: r["gate"].update(stop_reason=None))
     assert run_suite(tmp_path)[0] == 4
-    write_attempt(tmp_path, "alloc", 1, lambda r, m: r["mem_kills"][0].update(argv=["x"]))
+    write_attempt(tmp_path, "alloc", 1, lambda r, m: r["mem_kills"][0].update(scope="process"))
     assert run_suite(tmp_path)[0] == 1
     empty = tmp_path / "empty"
     empty.mkdir()
@@ -450,3 +452,41 @@ def test_live_checks_run_for_every_retained_attempt_and_leftovers_fail(tmp_path)
     leftover = lambda: ["mlxbench-20261010T120000-aaaaaaaaaaaa-item-1"]                          # noqa: E731
     code, lines = run_suite(tmp_path, docker_ps=leftover)
     assert code == 1 and any(x.startswith("suite: stall:FAIL:containers") for x in lines)
+
+
+def _two_shell_calls(r):
+    # a second test run in request 2, killed too (the model reran its tests after the first kill)
+    text = build_events("alloc").replace(
+        ev("step_start", "m2", id="s2"),
+        ev("step_start", "m2", id="s2") + "\n" + tool_event(
+            "m2", "call_rerun", "python3 -m pytest -q bowling_test.py",
+            dict(metadata=dict(metadata=dict(status="completed", signal="SIGKILL")))))
+    Path(r["events_path"]).write_text(text)
+    r["evidence_sha256"]["events"] = hashlib.sha256(text.encode()).hexdigest()
+    r["gate"].update(requests_completed=3)
+
+
+def test_alloc_accepts_repeated_kills_when_every_kill_is_linked_and_tool_scoped(tmp_path):
+    def twice(r, m):
+        _two_shell_calls(r)
+        r["mem_kills"].append(dict(r["mem_kills"][0], pid=21, create_time=4.0, carrying_request=2,
+                                   completed_boundary_at_kill=1, tool_call_id="call_rerun"))
+    assert verdict(tmp_path, "alloc", twice)[0] == "PASS"
+    d = tmp_path / "m"
+    d.mkdir()
+
+    def mixed(r, m):
+        r["mem_kills"].append(dict(r["mem_kills"][0], pid=22, create_time=5.0, scope="process"))
+    assert verdict(d, "alloc", mixed)[0] == "FAIL:unrelated_kill"
+
+
+@pytest.mark.parametrize("which", [0, 1])
+def test_alloc_any_unlinked_kill_fails_even_beside_a_complete_one(tmp_path, which):
+    # C152 review T1/T2: a collateral kill (opencode's own git, an LSP) never links to a shell call
+    def collateral(r, m):
+        _two_shell_calls(r)
+        r["mem_kills"].append(dict(r["mem_kills"][0], pid=23, create_time=6.0, carrying_request=2,
+                                   completed_boundary_at_kill=1, tool_call_id="call_rerun",
+                                   argv=["git", "rev-parse"]))
+        r["mem_kills"][which]["tool_call_id"] = None
+    assert verdict(tmp_path, "alloc", collateral)[0] == "FAIL:unlinked_kill"

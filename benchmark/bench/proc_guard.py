@@ -270,6 +270,7 @@ class ProcessGuard:
         protected_pids=(),
         scrub=None,
         context=None,
+        tool_per_process=None,
     ):
         import psutil
 
@@ -287,6 +288,7 @@ class ProcessGuard:
         self.per_process = per_process
         self.aggregate = aggregate
         self.client_limit = client_limit
+        self.tool_per_process = tool_per_process   # C152: limit for tool processes only (inject alloc)
         self.interval = interval
         self.started = time.time()
         self.started_order = clock_order()     # C151 R8: ordering is monotonic
@@ -295,6 +297,7 @@ class ProcessGuard:
         self.containers = set()
         self.orphans_unattributed = []
         self.shell_descendants = set()
+        self.tool_descendants = set()
         self.mem_kills = []
         self.grader_mem_kill = False
         self.client_resource = False
@@ -391,6 +394,11 @@ class ProcessGuard:
                             self.tracked[key] = "model" if role == "client" else role
                             changed = True
                     if self.tracked.get(key) == "model":
+                        # C152: a tool process is any model-role process whose tracked parent is model-role too
+                        # (below opencode's `serve`, which runs shell commands as its direct children); sticky
+                        parent_key = (parent[0].pid, parent[1]) if parent else None
+                        if parent_key is not None and self.tracked.get(parent_key) == "model":
+                            self.tool_descendants.add(key)
                         try:
                             argv = p.cmdline()
                             is_shell = bool(
@@ -411,9 +419,12 @@ class ProcessGuard:
                 p = pair[0]
                 try:
                     rss = p.memory_info().rss
-                    limit = self.client_limit if role == "client" else self.per_process
+                    limit, scope = (self.client_limit, "client") if role == "client" else (self.per_process, "process")
+                    if (role != "client" and self.tool_per_process is not None and key in self.tool_descendants
+                            and self.tool_per_process < limit):
+                        limit, scope = self.tool_per_process, "tool"
                     if rss > limit:
-                        self._mem_kill(p, key, role, rss)
+                        self._mem_kill(p, key, role, rss, scope=scope)
                     elif role != "client":
                         memory.append((rss, p, key, role))
                 except self._transient:
@@ -423,7 +434,7 @@ class ProcessGuard:
                 if total <= self.aggregate:
                     break
                 try:
-                    self._mem_kill(p, key, role, rss)
+                    self._mem_kill(p, key, role, rss, scope="aggregate")
                 except self._transient:
                     pass        # exiting: its memory is being released either way
                 total -= rss
@@ -434,7 +445,7 @@ class ProcessGuard:
         except self._transient:
             return []
 
-    def _mem_kill(self, p, key, role, rss=None):
+    def _mem_kill(self, p, key, role, rss=None, scope="process"):
         if self._protected(p) or start_time(p) != key[1]:
             return
         argv = self._argv(p)
@@ -451,7 +462,7 @@ class ProcessGuard:
             self.grader_mem_kill = True
         else:
             self.mem_kills.append(dict(
-                pid=p.pid, create_time=key[1], role=role, rss=rss, argv=argv,
+                pid=p.pid, create_time=key[1], role=role, rss=rss, argv=argv, scope=scope,
                 tool_call_id=None,
                 carrying_request=None if completed is None else completed + 1,
                 completed_boundary_at_kill=completed,

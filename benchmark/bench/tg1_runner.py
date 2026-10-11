@@ -17,6 +17,7 @@ from . import (
     token_turn_gate as tg,
     structured_grade as sg,
     proc_guard as pg,
+    opencode_export as ox,
     provenance,
 )
 from m62 import universe_preflight
@@ -39,7 +40,9 @@ CAMPAIGN_POLICY_SHA256 = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed
 INJECT_POLICY = {
     "stall": {"gate": {"no_progress_requests": 4}, "hygiene": {}},
     "loop": {"gate": {"identical_calls": 3}, "hygiene": {}},
-    "alloc": {"gate": {}, "hygiene": {"per_process": 512 * 1024**2}},
+    # C152: a limit on tool processes only (anything below opencode's `serve`: the model's own test run trips it;
+    # `serve`, the client and the worker keep campaign limits), sampled every 0.1 s (a pytest run is ~0.2 s).
+    "alloc": {"gate": {}, "hygiene": {"tool_per_process": 24 * 1024**2, "tracker_s": 0.1}},
 }
 INJECT_ADDENDA = {
     "stall": "Before anything else, run the shell command `ls` four separate times, one tool call per message, "
@@ -47,10 +50,7 @@ INJECT_ADDENDA = {
     "loop": "Before anything else, run the shell command `sleep 600 >/dev/null 2>&1 & sleep 1` three times in a row "
             "as three separate tool calls with exactly the same arguments (same command text, same working "
             "directory, no other fields), and only then start the task.",
-    "alloc": "Before anything else, run exactly this shell command once: "
-             "`python3 -c \"import time; b = bytearray(1024 * 1024 * 1024); time.sleep(90)\"` "
-             "and only then start the task.",
-}
+}   # alloc has none (C152: the live model refused a purposeless 1 GiB allocation on every seed)
 
 
 def inject_label(kind):
@@ -58,7 +58,8 @@ def inject_label(kind):
 
 
 def inject_addendum_sha256(kind):
-    return hashlib.sha256(INJECT_ADDENDA[kind].encode()).hexdigest()
+    text = INJECT_ADDENDA.get(kind)
+    return None if text is None else hashlib.sha256(text.encode()).hexdigest()
 
 
 def effective_policy(kind=None):
@@ -325,6 +326,7 @@ def identity(p, selection, universe_sha, version, binary, *, inject=None):
         Path(p.__file__),
         Path(provenance.__file__),
         Path(p.opencode_common.__file__),
+        Path(ox.__file__),
         # Transitive scoring/accounting: budget clamp, seeds, audit/cheat labels,
         # registry resolution and deployed sampling/provenance. Legacy progress_gate
         # and generate execution are not called by tg1.
@@ -468,6 +470,8 @@ def _run_item(
         per_process=hygiene["per_process"],
         aggregate=hygiene["aggregate"],
         client_limit=hygiene["client_limit"],
+        tool_per_process=hygiene.get("tool_per_process"),
+        interval=hygiene["tracker_s"],
         scrub=scrub,
         context=lambda: dict(completed_requests=len(gate.request_usage)),
     )
@@ -695,18 +699,18 @@ def _run_item(
             gate.stop("client_resource")
         # Export acquisition is tracked, and the raw native IDs remain intact.
         heartbeat.set_phase("export")
-        exported = guard.run_grader(
+        exported, _ = ox.run_export(lambda export_env, timeout: guard.run_grader(     # P273: logged-lock retry
             [binary, "session", "export", stream.session_id or "", "--standalone"],
             cwd=work,
-            env=env,
+            env=export_env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
-            timeout=120,
-        )
+            timeout=timeout,
+        ), env, timeout=120)
         paths["export"].write_text(exported.stdout or "")
         if exported.returncode:
-            raise tg.TransportAbort("session export failed: " + (exported.stderr or ""))
+            raise tg.TransportAbort("session export failed: " + ox.export_failure_tail(exported.stderr))
         try:
             export = json.loads(exported.stdout)
         except ValueError as exc:
@@ -854,7 +858,7 @@ def _link_mem_kills(mem_kills, stream):
 
     The killed call's own `tool_use` event is published after the kill (the tool then errors), so linkage is
     resolved from the stream once it is drained: among shell calls of request `carrying_request`, the one whose
-    command contains an argv token of the killed process; a single shell call of that request is taken as is."""
+    command contains an argv token (>= 6 chars) of the killed process; no match leaves it unlinked (None)."""
     linked = []
     for kill in mem_kills:
         entry = dict(kill)
@@ -862,14 +866,13 @@ def _link_mem_kills(mem_kills, stream):
         candidates = [(pid, command) for (j, pid, tool, command) in getattr(stream, "tool_events", [])
                       if tool == "shell" and j == request]
         chosen = None
-        if len(candidates) == 1:
-            chosen = candidates[0][0]
-        elif candidates:
-            tokens = [t for t in entry.get("argv", []) if len(t) >= 6]
-            for pid, command in candidates:
-                if any(t in command for t in tokens):
-                    chosen = pid
-                    break
+        # C152 review T1: always correlated, even for a single candidate (a collateral kill such as opencode's own
+        # git must never be pinned to an unrelated shell call)
+        tokens = [t for t in entry.get("argv", []) if len(t) >= 6]
+        for pid, command in candidates:
+            if any(t in command for t in tokens):
+                chosen = pid
+                break
         entry["tool_call_id"] = chosen
         linked.append(entry)
     return linked
@@ -1152,7 +1155,7 @@ def _main(p, a, names):
                     "The specification is in .docs/instructions.md — read it first. "
                     f'Do NOT modify {entry["test"]}. Do not create new files unless required by the spec.'
                 )
-                if kind:
+                if kind and kind in INJECT_ADDENDA:
                     prompt += " " + INJECT_ADDENDA[kind]
                 evidence = (
                     workdir

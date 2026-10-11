@@ -36,7 +36,7 @@ own threshold, every other constant stays at the campaign value, so the other st
 |---|---|---|
 | `stall` | gate `no_progress_requests` 40 → **4** | `stalled` at the 4th completed request after the last progress boundary |
 | `loop` | gate `identical_calls` 8 → **3** | `looping` on the 3rd identical consecutive tool call |
-| `alloc` | hygiene `per_process` 8 GiB → **512 MiB** (build finding B2: 256 MiB killed opencode's own ≈380 MiB server child) | one `mem_kills` entry with role `model`; the shell call is reported killed; the session continues |
+| `alloc` | **C152 (2026-10-11):** new hygiene `tool_per_process` **24 MiB** + `tracker_s` 0.5 → **0.1 s**; `per_process` stays 8 GiB. The limit applies only to tool processes (tracked model-role processes whose tracked parent is model-role: everything below opencode's `serve`, which runs simple shell commands as its direct children); `serve` (≈ 180–380 MiB), the client and the worker keep campaign limits. Superseded: `per_process` → 512 MiB with a 1 GiB `bytearray` addendum, which the live model refused on all three seeds | ≥ 1 `mem_kills` entry, every one role `model` and scope `tool` above the limit; the first linked to its shell call, which is reported killed; the session continues |
 
 `T` (81,920), the ceilings, `thinking_budget`/`max_tokens` carrier checks, `aggregate`, `client_limit`, silence and
 cancellation constants are unchanged in every kind.
@@ -53,8 +53,10 @@ schedule 1001 → 2002 → 3003 (three attempts per kind; a third miss is a buil
   other fields), and only then start the task." The detached `sleep 600` is a tracked model descendant (its parent
   shell lives one second, two tracker ticks, so ancestry is recorded before the detach) and is still alive when the
   third identical call stops the item [P10].
-- `alloc`: "Before anything else, run exactly this shell command once:
-  `python3 -c "import time; b = bytearray(1024 * 1024 * 1024); time.sleep(90)"` and only then start the task."
+- `alloc`: **no addendum (C152)**; the item's own test run (`pytest` ≈ 40 MiB peak, ≈ 0.2 s) trips the tool limit,
+  sampled every 0.1 s. Superseded addendum (refused by the live model: "it allocates 1 GB of memory and sleeps 90
+  seconds with no purpose related to the task"): run `python3 -c "import time; b = bytearray(1024 * 1024 * 1024);
+  time.sleep(90)"` once before the task.
 
 The addendum text is part of the inject policy and its sha256 is recorded. The shell tool's input schema on 2.0.20
 is `{command, workdir, timeout?, background?}` and the gate hashes the whole input object [P9]; the loop addendum
@@ -67,7 +69,7 @@ label.
 |---|---|---|
 | `stall` | `gate.stop_reason == "stalled"`, `gate.no_progress_requests ≥ 4` AND `gate.no_progress_tokens < 81,920` at the stop (the lowered threshold was the crossing); re-derived from the events: ≥ 4 `step_finish` after the last progress boundary | a T crossing (`no_progress_tokens ≥ 81,920`) → `competing_trigger:T`; another stop → `competing_trigger:<reason>`; no stop → `not_observed` |
 | `loop` | `gate.stop_reason == "looping"`, `max_identical_run_live ≥ 3`; three consecutive `tool_use` events with byte-identical canonical `(tool, input)` in the events file | as above |
-| `alloc` | one `mem_kills` entry with `role == "model"`, `rss > per_process` (512 MiB), `argv` containing `bytearray(`, `tool_call_id` equal to the `part.id` of the shell part whose `command` contains `bytearray(`, `carrying_request` = that part's 1-based request index and `completed_boundary_at_kill = carrying_request − 1`; that part's recorded state matches the frozen killed-command fixture (`status == "error"`, or `status == "completed"` with metadata `exit != 0` or a signal — the fixture is produced by the V2 real-client allocation test and frozen by sha); and a completed request with index > `carrying_request` exists (continuation) | kill absent → `not_observed`; kill of an unrelated argv → `FAIL` |
+| `alloc` | **C152:** ≥ 1 `mem_kills` entry; EVERY entry `role == "model"`, `scope == "tool"`, `rss > tool_per_process` (24 MiB), `tool_call_id` linked by an argv token (≥ 6 chars) to exactly one shell part of its carrying request, `carrying_request` = that part's 1-based request index and `completed_boundary_at_kill` = request − 1, and that part reported killed (error, or completed with a signal or a nonzero exit); `requests_completed` beyond the first kill's request (the session continued). An unlinked kill (collateral: opencode's own `git`, an LSP) → `FAIL:unlinked_kill`; a non-tool-scoped kill → `FAIL:unrelated_kill`. Superseded: one 512 MiB kill of the `bytearray` command | kill absent → `not_observed:kill`; a non-tool-scoped or unlinked kill → `FAIL`; no continuation → `not_observed:continuation` |
 
 **Causal evidence of the live path [P10].** Rows gain `termination.killed` = `[{pid, create_time, role, argv}]`
 (every tracked process `kill_role` signalled, argv scrubbed), `termination.killed_verified` (every killed pid gone
@@ -319,7 +321,7 @@ under `benchmark/results`.
   (`ba86ba16…`). `reconcile` returns the summary for every §3a row of M62 plus `runner_cancel`, and still aborts
   where it did. `wait_cancel` returns elapsed; `kill_role` returns the killed list; `mem_kills` carry role/rss/argv/
   request_index. `inject_verify`: fixture rows for each kind → PASS; a non-firing kind → `not_observed`; a
-  competing stop → `competing_trigger`; an alloc kill of an unrelated argv → FAIL; a sha mismatch → FAIL.
+  competing stop → `competing_trigger`; an alloc kill that is not tool-scoped (`FAIL:unrelated_kill`) or not linked to a shell call (`FAIL:unlinked_kill`) → FAIL (C152); a sha mismatch → FAIL.
   A4 gate: tg1 scaffold copies both plugins by sha, receipt accepted by `_a4_receipt` for `limit > 5`; web/legacy
   receipts refused for tg1; the legacy/web gate paths byte-unchanged (golden). `chain_ops`: every tripwire of
   `start_router`/`load`/`unload`/`power_ok` (incl. battery exactly 20 % refused, 28 V required) on fake outputs;
@@ -446,3 +448,11 @@ Spec → cold review → implementation by a worker model from this spec, failin
   re-checked by name before removal. Q28 the transport-tolerance cutoff was armed even when SIGTERM failed →
   published only after a successful `terminate()`. Lead decision: the review loop stops after this round; the
   operator's live V3 run and the chain pilot are the clearance.
+- **B11 — live V3 on m5max-128 (2026-10-11).** (a) C151: psutil's `create_time()` shifts by 1 s in long-lived
+  processes after a sub-second clock correction; identity is now `proc_guard.start_time()` and every ordering
+  decision `proc_guard.start_order()` (monotonic), cleared by eight Cursor `gpt-5.6-sol-high` rounds
+  (`benchmark/chains/c147/reviews/c151/`). (b) The pre-leg free-memory check reads `vm_stat` free + speculative only
+  and false-aborts with a large inactive file cache (P275). (c) C152: the live model refuses the alloc addendum on
+  every seed; the alloc kind now trips on the model's own test run under a 24 MiB tool-process limit (table above).
+  (d) P273: both export paths retry a standalone export only on a logged SQLite `database is locked`
+  (`OPENCODE_PRINT_LOGS=1` on the export, 0.5 s pause, 10 s bound); any other export failure still aborts.
