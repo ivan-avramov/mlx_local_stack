@@ -119,7 +119,14 @@ fi
 # --- 6. bench venv from the exact pins ----------------------------------------------------------
 if [ "$SKIP_VENV" = 0 ]; then
   VENV="$REPO/.venv-bench"
-  [ -x "$VENV/bin/python" ] || uv venv --python 3.12 "$VENV" >/dev/null
+  [ -x "$VENV/bin/python" ] || uv venv --python 3.12 --python-preference only-managed "$VENV" >/dev/null
+  # P267: a macOS framework Python re-execs into Python.app on spawn, so a child's ps identity changes
+  # within milliseconds and every spawn-time process-identity check fails. Refuse; never repair in place.
+  for v in "$VENV" "$REPO/.venv"; do
+    [ -x "$v/bin/python" ] || continue
+    "$v/bin/python" -c 'import sys, sysconfig; sys.exit(1 if sysconfig.get_config_var("PYTHONFRAMEWORK") else 0)' \
+      || die "$v runs on a macOS framework Python; remove it (/bin/rm -rf $v) and re-run (serving venv: uv sync)"
+  done
   (cd "$REPO" && uv pip sync --python "$VENV/bin/python" benchmark/requirements-bench.lock >/dev/null)
   "$VENV/bin/python" -c "import mlx.core, mlx_vlm, mlx_serve, pytest" || die ".venv-bench does not import mlx/mlx_vlm/mlx_serve/pytest"
   say ".venv-bench synced from benchmark/requirements-bench.lock (mlx $("$VENV/bin/python" -c 'import mlx.core as m; print(m.__version__)'))"
@@ -144,4 +151,4 @@ fi
 say "done. config=$CONFIG"
 say "  STACK_WORKDIR=$STACK_WORKDIR  MLX_BOX=$(sed -n 's/^export MLX_BOX="\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' "$CONFIG" | head -1)"
 say "  tests: cd benchmark && env -u STACK_WORKDIR ../.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/"
-say "  serving venv is separate: uv sync (uv.lock); model weights download from the hub on first load"
+say "  serving venv is separate: uv sync (uv.lock; pyproject pins uv-managed Python); model weights download from the hub on first load"

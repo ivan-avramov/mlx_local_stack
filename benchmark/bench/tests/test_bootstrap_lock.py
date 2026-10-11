@@ -79,3 +79,26 @@ def test_bootstrap_refuses_without_a_box_label(tmp_path):
     assert r.returncode == 1
     assert "box" in (r.stderr + r.stdout).lower()
     assert not (tmp_path / "xdg").exists() and not (tmp_path / "wd").exists()
+
+
+# P267 (C150, 2026-10-10): a macOS framework Python re-execs into Python.app right after spawn, so a
+# just-spawned child's `ps -o lstart=,command=` changes within milliseconds and every spawn-time
+# process-identity check (campaign_review, c147 cleanup, chain_ops ownership) mismatches later.
+# uv falls back to a system interpreter when no managed one is installed; pin managed everywhere.
+def test_project_pins_uv_managed_python():
+    import tomllib
+    cfg = tomllib.loads((REPO / "pyproject.toml").read_text())
+    assert cfg["tool"]["uv"].get("python-preference") == "only-managed"
+
+
+def test_bootstrap_builds_the_bench_venv_on_managed_python_and_refuses_framework_builds():
+    txt = BOOTSTRAP.read_text()
+    assert re.search(r"uv venv [^\n]*--python-preference only-managed", txt)
+    assert "PYTHONFRAMEWORK" in txt
+
+
+def test_bench_interpreter_is_not_a_macos_framework_build():
+    import sysconfig
+    assert not sysconfig.get_config_var("PYTHONFRAMEWORK"), (
+        "this venv runs on a macOS framework Python (re-execs on spawn; process-identity tests fail): "
+        "rebuild it with scripts/bootstrap_machine.sh")
