@@ -790,19 +790,27 @@ leaderboard parity.
 
 ## Fresh machine: rebuilding `$STACK_WORKDIR`
 
-The workdir holds nothing that is not reproducible or published (P229, 2026-10-10). On a new box,
-after `config.example.sh` → `~/.config/mlx_local_stack/config.sh`:
+The workdir holds nothing that is not reproducible or published (P229, 2026-10-10). On a new box, one
+command (P259–P262, 2026-10-10):
 
 ```sh
-git fetch origin evidence && git archive origin/evidence | tar -x -C "$STACK_WORKDIR"   # raw evidence (optional)
-git clone https://github.com/Aider-AI/polyglot-benchmark "$STACK_WORKDIR/polyglot-benchmark" \
-  && git -C "$STACK_WORKDIR/polyglot-benchmark" checkout 7e0611e          # corpus; rows record polyglot_sha
-NLTK_DATA="$STACK_WORKDIR/nltk_data" python -m nltk.downloader punkt punkt_tab averaged_perceptron_tagger averaged_perceptron_tagger_eng
-scripts/install_bench_opencode.sh                 # v2 probe pin 2.0.20 -> $STACK_WORKDIR/opencode-2.0.20 (sha-pinned
-#   Homebrew bottle from ghcr.io; never touches brew or the daily opencode; OPENCODE_PROBE_BIN overrides)
-npm install --prefix "$STACK_WORKDIR/opencode-1.18.30" opencode-ai@1.18.30   # frozen 1.18 probe only
-scripts/build_agentbench_images.sh            # AgentBench OS (clones the pinned commit, builds images)
+git clone --recurse-submodules <stack-url> && cd mlx_local_stack
+scripts/bootstrap_machine.sh --box <label>        # e.g. --box m5max-128; add --with-evidence for raw artifacts
 ```
+
+It generates `${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh` (STACK_WORKDIR defaults to a
+sibling `<checkout>_workdir`; `MLX_BOX` is the provenance label — rows from different boxes never pair),
+checks out the corpus at `7e0611e`, downloads the nltk data, installs the sha-pinned opencode 2.0.20 and
+builds `.venv-bench` from `benchmark/requirements-bench.lock` (exact pins of the venv behind the green
+suite; `mlx`/`mlx-metal` equal `uv.lock`). Idempotent; each step verifies its pin. Then:
+
+```sh
+uv sync                                            # serving venv (.venv) from uv.lock
+cd benchmark && env -u STACK_WORKDIR ../.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/
+```
+
+Still manual: `npm install --prefix "$STACK_WORKDIR/opencode-1.18.30" opencode-ai@1.18.30` (frozen 1.18 probe
+only) and `scripts/build_agentbench_images.sh` (or `--with-agentbench`).
 
 `dsh` (M35, frozen) installs per the M35 spec recipe (`docs/specs/m35-dsh-harness-adapter.md`). Model weights and drafters come from
 Hugging Face (`caslca/*`). Chain drivers for the M54–M62 rows are in `benchmark/chains/`.

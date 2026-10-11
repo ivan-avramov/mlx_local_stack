@@ -1,7 +1,8 @@
 # config.example.sh — machine-local settings kept OUT of the published repo.
 #
-# Copy to ${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh and fill in your
-# own paths/hosts. The orchestration + benchmark scripts source it so no absolute paths,
+# Preferred: `scripts/bootstrap_machine.sh --box <label>` generates this file with real paths and
+# rebuilds the workdir + bench venv. Manual alternative: copy to
+# ${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh and fill in your own paths/hosts. The orchestration + benchmark scripts source it so no absolute paths,
 # usernames, or host aliases live in the repo. Each machine has its own copy.
 #
 #   mkdir -p ~/.config/mlx_local_stack
@@ -16,6 +17,10 @@ export STACK_REPO="${STACK_REPO:-$HOME/path/to/mlx_local_stack}"
 export STACK_WORKDIR="${STACK_WORKDIR:-$HOME/path/to/mlx_local_stack_workdir}"
 export POLYGLOT_DIR="${POLYGLOT_DIR:-$STACK_WORKDIR/polyglot-benchmark}"
 export NLTK_DATA="${NLTK_DATA:-$STACK_WORKDIR/nltk_data}"
+
+# Provenance label stamped into every manifest (bench/provenance.py). Rows from different boxes
+# never pair; pick one label per machine and never reuse it.
+export MLX_BOX="${MLX_BOX:-my-box-label}"
 
 # The second benchmark box, reached over ssh (one model resident per machine).
 export REMOTE_HOST="${REMOTE_HOST:-my-remote-host}"   # ssh alias (e.g. in ~/.ssh/config)
