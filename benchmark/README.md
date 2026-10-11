@@ -799,7 +799,7 @@ scripts/bootstrap_machine.sh --box <label>        # e.g. --box m5max-128; add --
 ```
 
 It generates `${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh` (STACK_WORKDIR defaults to a
-sibling `<checkout>_workdir`; `MLX_BOX` is the provenance label — rows from different boxes never pair),
+sibling `<checkout>_workdir`; `MLX_BOX` is the provenance label — quality rows pair across boxes with the same chip and GPU (C153: M5 Max 40-core GPU at 64 GB and 128 GB), latency/thermal/capacity rows never pair across boxes),
 checks out the corpus at `7e0611e`, downloads the nltk data, installs the sha-pinned opencode 2.0.20 and
 builds `.venv-bench` from `benchmark/requirements-bench.lock` (exact pins of the venv behind the green
 suite; `mlx`/`mlx-metal` equal `uv.lock`). Idempotent; each step verifies its pin. Then:

@@ -7,7 +7,7 @@
 #                                [--with-agentbench] [--skip-venv]
 #
 #   --box          MLX_BOX provenance label for this machine (e.g. m5max-128). Required unless the
-#                  config file already declares one. Rows from different boxes never pair.
+#                  config file already declares one. Latency/capacity rows never pair across boxes (C153).
 #   --workdir      STACK_WORKDIR. Default: a sibling of the checkout named <checkout>_workdir.
 #   --config-dir   Where config.sh lives. Default: ${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack.
 #   --with-evidence  Also restore the raw-evidence branch into $STACK_WORKDIR (optional, large).
@@ -63,7 +63,7 @@ export STACK_REPO="$REPO"
 export STACK_WORKDIR="$WORKDIR"
 export POLYGLOT_DIR="\$STACK_WORKDIR/polyglot-benchmark"
 export NLTK_DATA="\$STACK_WORKDIR/nltk_data"
-export MLX_BOX="$BOX"          # provenance label; rows from different boxes never pair
+export MLX_BOX="$BOX"          # provenance label; latency/capacity never pair across boxes (C153)
 export DISTILL_MODEL_PATH=""   # local snapshot dirs not resolvable from the hub; empty = hub only
 export REMOTE_HOST=""; export REMOTE_USER=""; export REMOTE_REPO=""; export REMOTE_HOME=""
 EOF
