@@ -13,6 +13,17 @@ procedures are archived in `docs/two-box-archive.md`.
 - **`uv sync` in `../mlx-vlm` DROPS pytest** (not declared in its pyproject; 2026-09-28): reinstall with `uv pip install pytest pytest-subtests` before running the fork suite.
 - **Venvs:** `.venv-bench` = mlx+pytest+json_repair, NO `mlx_audio` (epicache/unit tests run here; `test_server.py` won't collect). `.venv` / `../mlx-vlm/.venv` = full deps. bfcl-eval (2026.3.23) is in `.venv-bench` on this box. **`mlx_optiq` is 0.4.21 and its import name is `optiq`. These uv venvs have no `pip`, so `pip show` prints nothing — that is not evidence of absence.** <!-- allow-shorthand -->
 
+## Shell and agent-tooling traps (apply on every M5 box)
+
+- **`rm` and `cp` are interactive aliases in the operator's shell.** In a non-tty tool call `rm` reads EOF at the prompt and silently deletes nothing; `cp` over an existing file hangs until the timeout. Use `rm -f`, `/bin/cp -f`, and verify (`test ! -f`, `diff`).
+- **`grep` is ugrep on the host** (`--include` globs and some regex forms error out); use `/usr/bin/grep`. `/bin/bash` is 3.2 (no `declare -A`); `wc -l` pads; `grep -E` has no lookahead; no `timeout`/`gtimeout`.
+- **`pgrep -f <pattern>` matches the checker's own command line** when the harness passes the script as `zsh -c '<script>'`; use self-safe regexes (`mlx_vlm[.]server`) and wait on PIDs (`kill -0`) or output files, never on a `pgrep` loop.
+- **Streaming monitors go silent with `cut`/`head`, and with a bare `grep`/`tail` when an agent hook proxies them.** Use `/usr/bin/tail -F`, `/usr/bin/grep --line-buffered`, `sed -u`, `awk '{...; fflush()}'`; emit a known-positive self-test line first and trust the monitor only after it arrives.
+- **Killed pytest runs orphan `bash --login` shells spinning on a closed pty** (71 of them halved decode, 2026-10-02). Check `uptime` and run `scripts/sweep_orphan_shells.sh` before citing any latency.
+- **An exported `TMPDIR` that does not exist breaks MLX's Metal JIT** and fails dozens of unrelated tests; `mkdir -p` it. Codex's read-only sandbox needs `TMPDIR=$STACK_WORKDIR/<run>/tmp` for pytest.
+- **Codex CLI cold reviews:** `codex exec -m gpt-6.1-sol -s read-only --skip-git-repo-check -o <out> - < prompt.md` (prompt on stdin: `scripts/stack_stop.sh` sweeps by argv text); `benchmark/chains/c147/run_codex.sh` wraps it. Bare `sol`/`astra` model names are rejected.
+- **Bench venv drift:** `.venv-bench` is rebuilt only from `benchmark/requirements-bench.lock`; never `uv pip install` into it without updating the lock (it had drifted to mlx 0.32.0 while `uv.lock` said 0.32.3, found 2026-10-10 while pinning).
+
 ## macOS / box administration
 
 - **Do NOT put this repo, or the aider/polyglot clones, under `~/Documents`, `~/Desktop` or `~/Downloads`.** TCC denies protected folders to publickey ssh sessions; it cost 21 java cases mid-run. Root cause: `/etc/pam.d/sshd`'s `pam_opendirectory.so` runs only for password auth and OpenSSH skips the PAM auth stack for publickey, so no OpenDirectory session exists and TCC denies. Fixes: keep the repo out of protected folders (survives OS updates), or grant Full Disk Access to `/usr/libexec/sshd-keygen-wrapper`.
