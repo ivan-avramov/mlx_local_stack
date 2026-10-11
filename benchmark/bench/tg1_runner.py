@@ -17,6 +17,7 @@ from . import (
     token_turn_gate as tg,
     structured_grade as sg,
     proc_guard as pg,
+    opencode_export as ox,
     provenance,
 )
 from m62 import universe_preflight
@@ -325,6 +326,7 @@ def identity(p, selection, universe_sha, version, binary, *, inject=None):
         Path(p.__file__),
         Path(provenance.__file__),
         Path(p.opencode_common.__file__),
+        Path(ox.__file__),
         # Transitive scoring/accounting: budget clamp, seeds, audit/cheat labels,
         # registry resolution and deployed sampling/provenance. Legacy progress_gate
         # and generate execution are not called by tg1.
@@ -695,18 +697,18 @@ def _run_item(
             gate.stop("client_resource")
         # Export acquisition is tracked, and the raw native IDs remain intact.
         heartbeat.set_phase("export")
-        exported = guard.run_grader(
+        exported, _ = ox.run_export(lambda export_env, timeout: guard.run_grader(     # P273: logged-lock retry
             [binary, "session", "export", stream.session_id or "", "--standalone"],
             cwd=work,
-            env=env,
+            env=export_env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
-            timeout=120,
-        )
+            timeout=timeout,
+        ), env, timeout=120)
         paths["export"].write_text(exported.stdout or "")
         if exported.returncode:
-            raise tg.TransportAbort("session export failed: " + (exported.stderr or ""))
+            raise tg.TransportAbort("session export failed: " + ox.export_failure_tail(exported.stderr))
         try:
             export = json.loads(exported.stdout)
         except ValueError as exc:

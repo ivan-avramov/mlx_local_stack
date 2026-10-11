@@ -929,18 +929,7 @@ def test_real_gate_kill_interrupted_export_is_row(probe, real_binary, monkeypatc
             """Settled export."""
             deadline = time.monotonic() + 10
             while True:
-                try:
-                    export = export_session(*args, **kwargs)
-                except probe.TransportAbort as exc:
-                    # The SIGKILLed client's orphaned `opencode serve` is still writing the interrupted message;
-                    # a concurrent standalone export's server then dies on SQLite "database is locked" (seen under
-                    # full-suite load; without OPENCODE_PRINT_LOGS only the readiness symptom reaches stderr).
-                    if (not any(s in str(exc) for s in ("database is locked",
-                                                         "Standalone server exited before reporting readiness"))
-                            or time.monotonic() >= deadline):
-                        raise
-                    time.sleep(0.2)
-                    continue
+                export = export_session(*args, **kwargs)     # P273: the probe itself retries a logged SQLite lock
                 if any(m.get("error") for m in export["messages"]):
                     return export
                 assert time.monotonic() < deadline, "interrupted export did not settle"
@@ -1203,3 +1192,71 @@ def test_default_binary_is_bench_owned_not_brew(probe, monkeypatch, tmp_path):
     other.chmod(0o755)
     monkeypatch.setenv("OPENCODE_PROBE_BIN", str(other))
     assert probe._require_opencode_bin() == str(other.resolve())
+
+
+from bench import opencode_export as ox  # noqa: E402
+
+
+# P273 (2026-10-11): a standalone export whose private server dies on SQLite "database is locked" (the stopped
+# client's server still writing) is retried within a short deadline; only that LOGGED cause is retried.
+def _done(rc, out="", err=""):
+    import subprocess as _sp
+    return _sp.CompletedProcess(["opencode"], rc, out, err)
+
+
+LOCK = 'level=ERROR message="cli process failed" cause="Cause([Die(SQLiteError: database is locked)])"\n' \
+       "Standalone server exited before reporting readiness\n"
+
+
+def test_run_export_retries_only_a_logged_lock(probe):
+    seq = [_done(1, err=LOCK), _done(1, err=LOCK), _done(0, out="{}")]
+    envs, sleeps = [], []
+    base = {"A": "1"}
+    result, attempts = ox.run_export(lambda env, timeout: (envs.append(env), seq.pop(0))[1], base,
+                                     sleep=sleeps.append, clock=lambda: 0.0)
+    assert result.returncode == 0 and attempts == 3 and len(sleeps) == 2
+    assert all(e["OPENCODE_PRINT_LOGS"] == "1" and e["A"] == "1" for e in envs)
+    assert "OPENCODE_PRINT_LOGS" not in base
+
+
+def test_run_export_does_not_retry_other_failures_or_past_the_deadline(probe):
+    other = _done(1, err="Standalone server exited before reporting readiness\n")   # no logged lock cause
+    result, attempts = ox.run_export(lambda env, timeout: other, {}, sleep=lambda s: None, clock=lambda: 0.0)
+    assert result is other and attempts == 1
+    ticks = iter([0.0, 5.0, 5.0, 11.0])     # deadline 10: attempt 1 fails at t=5 (retry, budget read at 5), attempt 2 at 11 stops
+    result, attempts = ox.run_export(lambda env, timeout: _done(1, err=LOCK), {}, sleep=lambda s: None,
+                                     clock=lambda: next(ticks))
+    assert result.returncode == 1 and attempts == 2
+
+
+def test_run_export_never_sleeps_past_the_deadline_and_caps_retry_timeouts(probe):
+    # C152 review T3: the 10 s bound is strict
+    ticks = iter([0.0, 9.8])            # failure at t=9.8: a 0.5 s pause would cross the deadline -> stop
+    result, attempts = ox.run_export(lambda env, timeout: _done(1, err=LOCK), {}, sleep=lambda s: pytest.fail("slept"),
+                                     clock=lambda: next(ticks))
+    assert attempts == 1 and result.returncode == 1
+    timeouts = []
+    seq = [_done(1, err=LOCK), _done(0, out="{}")]
+    ticks = iter([0.0, 1.0, 1.5, 1.5])
+    ox.run_export(lambda env, timeout: (timeouts.append(timeout), seq.pop(0))[1], {}, timeout=120,
+                  sleep=lambda s: None, clock=lambda: next(ticks))
+    assert timeouts[0] == 120 and timeouts[1] == pytest.approx(8.5)   # retry capped to the time left
+
+
+def test_export_session_uses_the_lock_retry_and_reports_the_stderr_tail(probe, monkeypatch, tmp_path):
+    seq = [_done(1, err=LOCK), _done(0, out='{"messages": []}')]
+    monkeypatch.setattr(probe, "_capture", lambda cmd, cwd, env, timeout: seq.pop(0))   # timeout from run_export
+    monkeypatch.setattr(ox.time, "sleep", lambda s: None)
+    assert probe._export_session("ses_1", {}, tmp_path, "opencode") == {"messages": []}
+    noise = "".join(f"level=INFO message=line{i}\n" for i in range(200))
+    monkeypatch.setattr(probe, "_capture", lambda cmd, cwd, env, timeout: _done(1, err=noise + "fatal: boom\n"))
+    with pytest.raises(probe.TransportAbort, match="fatal: boom"):
+        probe._export_session("ses_1", {}, tmp_path, "opencode")
+
+
+def test_run_export_starts_no_retry_with_less_than_the_minimum_attempt_left(probe):
+    # C152 review T9: with 0.4 s left after the pause a retry would overrun the strict 10 s bound
+    ticks = iter([0.0, 9.0, 9.6])
+    result, attempts = ox.run_export(lambda env, timeout: _done(1, err=LOCK), {}, sleep=lambda s: None,
+                                     clock=lambda: next(ticks))
+    assert attempts == 1 and result.returncode == 1

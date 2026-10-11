@@ -299,3 +299,18 @@ def test_untouched_solution_fails_even_when_stub_passes(probe, monkeypatch, tmp_
     assert f['run']() == 0
     row = json.loads(f['out'].read_text())
     assert not row['file_changed'] and not row['passed'] and row['acc'] == 0 and not row['test_modified']
+
+
+def test_tg1_export_goes_through_the_lock_retry(probe, monkeypatch, tmp_path):
+    # P273: the tg1 terminal-path export uses the same bounded, logged-lock-only retry as the M61 path
+    f = tg_fixture(probe, monkeypatch, tmp_path)
+    calls = []
+    from bench import opencode_export as ox
+    real = ox.run_export
+
+    def spy(attempt, env, **kw):
+        calls.append(env)
+        return real(attempt, env, **kw)
+    monkeypatch.setattr(ox, "run_export", spy)
+    assert f["run"]("one") == 0
+    assert len(calls) == 1 and "OPENCODE_PRINT_LOGS" not in calls[0]     # the helper adds it to a copy
