@@ -41,7 +41,7 @@ Codex reviews are in `benchmark/chains/c147/reviews/`; older reviews and raw art
 branch (`--with-evidence`). **Open (P265):** the second box is an M5 Max 128 GB. Quality rows pair across the
 boxes (same quantizations, sampling, scaffold); latency, thermal and capacity numbers do not — give it its own
 `MLX_BOX` label and never cite 128 GB capacity against the 64 GB charter until the operator rules whether the
-project target changes. Sessions on the 64 GB box keep the queue below; nothing else is machine-bound.
+project target changes. The operator is moving the work to the 128 GB box now (label `m5max-128`); the 64 GB box is idle, stack stopped. Everything in the queue below runs on whichever box is bootstrapped; the first live step on the new box is the `--limit 5` smoke inside `drive_inject.sh` itself (it is the smoke).
 
 ## Queue, in order
 
@@ -81,4 +81,4 @@ not a model finding; hand the run dir to the next session.
 - Fork syncs: mlx-vlm's AGENTS.md audit procedure works; bump `UPSTREAM_SYNC_REF` in the merge commit; re-pin
   fork-owned test blobs in `.fork-marker-allowlist`; `uv lock` from upstream's lock after resolving.
 
-Next decision id C150 (C149 open, awaiting operator); discussion ids continue from P249.
+Next decision id C150 (C149 open, awaiting operator); discussion ids continue from P266 (P265 = 128 GB target, open).
