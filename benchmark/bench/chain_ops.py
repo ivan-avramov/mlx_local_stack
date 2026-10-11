@@ -120,11 +120,35 @@ def default_create_time(pid):
 
 
 def default_parents(pid):
-    """[{pid, create_time}] of the process itself and every ancestor (psutil)."""
+    """[{pid, create_time}] of the process itself and every ancestor. psutil's parents() compares its clock-adjusted
+    create_time() (C151); this is the same walk with identity = start_time() and parent reuse (a parent younger than
+    its child) decided on the monotonic start_order(), wall clock only where an order is unreadable (root-owned
+    launchd/kernel_task)."""
     import psutil
+    from bench import proc_guard as pg
+
+    def order(proc):
+        try:
+            return pg.start_order(proc)
+        except psutil.AccessDenied:
+            return None
+    lowest = psutil.pids()[0]
     p = psutil.Process(int(pid))
-    from bench.proc_guard import start_time
-    return [{"pid": q.pid, "create_time": start_time(q)} for q in [p, *p.parents()]]
+    chain, p_order = [{"pid": p.pid, "create_time": pg.start_time(p)}], order(p)
+    while p.pid != lowest:
+        ppid = p.ppid()
+        if ppid is None:
+            break
+        try:
+            q = psutil.Process(ppid)
+            qt, q_order = pg.start_time(q), order(q)
+        except psutil.NoSuchProcess:
+            break
+        if (q_order > p_order) if None not in (q_order, p_order) else (qt > chain[-1]["create_time"]):
+            break
+        chain.append({"pid": q.pid, "create_time": qt})
+        p, p_order = q, q_order
+    return chain
 
 
 def env_tripwires(env_text, overlay):

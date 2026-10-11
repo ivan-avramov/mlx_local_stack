@@ -370,8 +370,11 @@ def test_real_client_alloc_kills_the_model_process_with_tool_linkage_and_freezes
                  if e["type"] == "tool_use" and "bytearray(" in json.dumps(e["part"]["state"]["input"])]
     assert shell_ids == [kill["tool_call_id"]] and kill["tool_call_id"]
     assert row["gate"]["requests_completed"] >= 2               # the session continued past the kill
-    assert row["mem_kills"][0]["pid"] not in [p.pid for p in psutil.process_iter()
-                                                if p.create_time() == kill["create_time"]]
+    try:   # the killed identity is gone; a direct lookup, not a process_iter race (and the C151 start time)
+        survived = pg.start_time(psutil.Process(row["mem_kills"][0]["pid"])) == kill["create_time"]
+    except psutil.NoSuchProcess:    # gone; AccessDenied is unknown and fails the test, as production treats it
+        survived = False
+    assert not survived
     export = json.loads(Path(row["transcript_path"].replace("$STACK_WORKDIR", str(tmp_path))).read_text())
     part = normalized_killed_part(export)
     state = part["state"]

@@ -43,10 +43,70 @@ def start_time(proc):
     """Process identity start time. On macOS psutil's create_time() shifts by INIT_BOOT_TIME - boot_time() once a
     wall-clock correction moves whole-second boot time (C151), so read the unadjusted kernel value; objects without
     a psutil implementation (test fakes) keep their own create_time()."""
-    impl = getattr(proc, "_proc", None)
-    if impl is not None and sys.platform == "darwin":
-        return impl.create_time(monotonic=True)
+    if sys.platform == "darwin":
+        import psutil
+
+        if isinstance(proc, psutil.Process):
+            impl = getattr(proc, "_proc", None)
+            if impl is None or not hasattr(impl, "create_time"):
+                raise TransportAbort("psutil lost the unadjusted start-time path (C151); refusing identity")
+            return impl.create_time(monotonic=True)
     return proc.create_time()
+
+
+_DARWIN = {}
+
+
+def _darwin_lib():
+    """ctypes handles for proc_pid_rusage / mach_absolute_time (lazy, macOS only)."""
+    if not _DARWIN:
+        import ctypes
+        import ctypes.util
+
+        class RusageInfoV0(ctypes.Structure):
+            _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [(n, ctypes.c_uint64) for n in (
+                "user_time", "system_time", "pkg_idle_wkups", "interrupt_wkups", "pageins", "wired_size",
+                "resident_size", "phys_footprint", "proc_start_abstime", "proc_exit_abstime")]
+        libproc = ctypes.CDLL(ctypes.util.find_library("proc"), use_errno=True)
+        libproc.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(RusageInfoV0)]
+        libc = ctypes.CDLL(None)
+        libc.mach_absolute_time.restype = ctypes.c_uint64
+        _DARWIN.update(ctypes=ctypes, libproc=libproc, libc=libc, info=RusageInfoV0)
+    return _DARWIN
+
+
+def clock_order():
+    """Monotonic 'now' in start_order() units: mach_absolute_time on macOS, None elsewhere (wall-clock fallback)."""
+    if sys.platform != "darwin":
+        return None
+    return int(_darwin_lib()["libc"].mach_absolute_time())
+
+
+def start_order(proc):
+    """Monotonic process start for ORDERING decisions (older than the guard, parent younger than child), which a
+    wall-clock step must not reorder (C151 R8). Identity stays start_time(). macOS: proc_pid_rusage
+    ri_proc_start_abstime (ESRCH -> NoSuchProcess, EPERM/EACCES -> AccessDenied, anything else -> TransportAbort).
+    Objects with their own
+    start_order() (test fakes) use it; anything else returns None and callers fall back to wall-clock start."""
+    own = getattr(proc, "start_order", None)
+    if callable(own):
+        return own()
+    if sys.platform != "darwin":
+        return None
+    import psutil
+
+    if not isinstance(proc, psutil.Process):
+        return None
+    d = _darwin_lib()
+    info = d["info"]()
+    if d["libproc"].proc_pid_rusage(int(proc.pid), 0, d["ctypes"].byref(info)) != 0:
+        err = d["ctypes"].get_errno()
+        if err == 3:  # ESRCH
+            raise psutil.NoSuchProcess(proc.pid)
+        if err in (1, 13):  # EPERM, EACCES
+            raise psutil.AccessDenied(proc.pid)
+        raise TransportAbort(f"proc_pid_rusage({proc.pid}) failed: errno {err}")
+    return int(info.proc_start_abstime)
 
 
 def atomic_write(path, data):
@@ -104,7 +164,9 @@ def require_identity(before, after):
         or not isinstance(after, dict)
         or any(not before.get(k) or before[k] != after.get(k) for k in keys)
     ):
-        raise TransportAbort("worker identity missing or drifted")
+        drift = ([f"{k}: {before.get(k)!r} -> {after.get(k)!r}" for k in keys if before.get(k) != after.get(k)]
+                 if isinstance(before, dict) and isinstance(after, dict) else ["not a dict"])
+        raise TransportAbort("worker identity missing or drifted (" + "; ".join(drift or ["empty field"]) + ")")
 
 
 def expect_items(rows, expected):
@@ -227,6 +289,7 @@ class ProcessGuard:
         self.client_limit = client_limit
         self.interval = interval
         self.started = time.time()
+        self.started_order = clock_order()     # C151 R8: ordering is monotonic
         self.tracked = {}
         self.acquiring = set()
         self.containers = set()
@@ -260,8 +323,14 @@ class ProcessGuard:
                 raise TransportAbort("refused ownership of protected process")
             self.tracked[(process.pid, start_time(process))] = role
 
+    def _older_than_guard(self, process):
+        order = start_order(process)
+        if order is None or self.started_order is None:
+            return start_time(process) < self.started
+        return order < self.started_order
+
     def _protected(self, process):
-        return process.pid in self.excluded_pids or start_time(process) < self.started
+        return process.pid in self.excluded_pids or self._older_than_guard(process)
 
     def _same_identity(self, pid, created):
         try:
@@ -301,7 +370,7 @@ class ProcessGuard:
                         # ppid() re-validates identity; a stale cached entry (pid reused, psutil keeps the old
                         # create_time) raises here and must never become an ancestry authority (V5a P13).
                         ppids[p.pid] = p.ppid()
-                        alive[p.pid] = (p, start_time(p))
+                        alive[p.pid] = (p, start_time(p), start_order(p))
                 except self._transient:
                     ppids.pop(p.pid, None)
                     alive.pop(p.pid, None)
@@ -309,11 +378,11 @@ class ProcessGuard:
             changed = True
             while changed:
                 changed = False
-                for pid, (p, created) in alive.items():
+                for pid, (p, created, order) in alive.items():
                     key = (pid, created)
                     parent = alive.get(ppids[pid])
-                    if parent and parent[1] > created:
-                        parent = None   # a parent cannot be younger than its child: pid reuse
+                    if parent and (parent[2] > order if None not in (parent[2], order) else parent[1] > created):
+                        parent = None   # a parent cannot be younger than its child: pid reuse (monotonic, C151 R8)
                     if parent and not self._same_identity(parent[0].pid, parent[1]):
                         parent = None
                     if key not in self.tracked and parent:
@@ -450,6 +519,7 @@ class ProcessGuard:
     def kill_role(self, role=None):
         """SIGKILL every tracked live process of `role`; return [{pid, create_time, role, argv}] (C147)."""
         killed = []
+        failure = None
         with self.lock:
             try:
                 # Capture ancestry before killing the parent reparents its children.
@@ -466,7 +536,11 @@ class ProcessGuard:
                             killed.append(dict(pid=pid, create_time=created, role=actual, argv=argv))
                     except self._transient:   # AccessDenied: the sweep below marks it uncertain
                         pass
-            self.killed.extend(killed)
+                    except TransportAbort as exc:   # unreadable identity/order: kill the rest, then raise (C151 R15)
+                        failure = failure or exc
+                self.killed.extend(killed)
+            if failure is not None:
+                raise failure
         return killed
 
     def graceful_stop(self, role, wait, before_signal=None, after_signal=None):
@@ -515,7 +589,7 @@ class ProcessGuard:
             return "alive" if self._live(process) else "gone"
         except (self.psutil.NoSuchProcess, StopIteration):
             return "gone"
-        except self.psutil.AccessDenied:
+        except (self.psutil.AccessDenied, TransportAbort):   # unreadable identity is never "gone" (C151 R16)
             return "unknown"
 
     def verify_gone(self, killed, wait=0.0):
@@ -596,7 +670,11 @@ class ProcessGuard:
                 proc.kill()
                 proc.wait(timeout=10)
                 self.acquiring.discard(proc)
-            self.kill_role()
+            order_failure = None
+            try:
+                self.kill_role()
+            except TransportAbort as exc:     # e.g. a persistent unexpected start-order errno (C151 R12): finish first
+                order_failure = exc
             container_failure = None
             for name in list(self.containers):
                 try:
@@ -605,12 +683,21 @@ class ProcessGuard:
                     container_failure = container_failure or exc
             survivors = []
             orphans = {}
-            uncertain = container_failure is not None
+            uncertain = container_failure is not None or order_failure is not None
             for attempt in range(3):
                 survivors = []
                 for p in self._processes():
                     try:
-                        if self._protected(p):
+                        try:
+                            protected = self._protected(p)
+                        except (self.psutil.AccessDenied, TransportAbort):
+                            # an eligible same-uid process whose start/order cannot be read could be ours: never a
+                            # clean clearance (C151 R10)
+                            uncertain = True
+                            orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
+                                                          reason="start order unreadable")
+                            continue
+                        if protected:
                             continue
                         key = (p.pid, start_time(p))
                         if key in self.tracked:
@@ -622,11 +709,16 @@ class ProcessGuard:
                                                 argv=p.cmdline(), reason="path-only attribution")
                         elif self._sweep_excluded(p):
                             continue
-                        elif p.ppid() == 1 and start_time(p) >= self.started:
+                        elif p.ppid() == 1 and not self._older_than_guard(p):
                             orphans[key] = dict(
                                 pid=p.pid, create_time=start_time(p), argv=p.cmdline()
                             )
                     except self.psutil.NoSuchProcess:
+                        continue
+                    except TransportAbort:      # identity unreadable (C151 R16): could be ours -> uncertain
+                        uncertain = True
+                        orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
+                                                      reason="identity unreadable")
                         continue
                     except self.psutil.AccessDenied:
                         # macOS denies cwd()/cmdline() for a process mid-exit or one we may not inspect. Untracked:
@@ -650,7 +742,7 @@ class ProcessGuard:
                         try:
                             if self._protected(self.get(pid)):
                                 continue         # a protected (router/worker/ancestor) pid is never ours to clear
-                        except self._transient:
+                        except (*self._transient, TransportAbort):
                             state = "unknown"
                     if state == "alive":
                         alive.append((pid, created))
@@ -663,7 +755,7 @@ class ProcessGuard:
                         process = self.get(pid)
                         if start_time(process) == created and not self._protected(process):
                             process.kill()
-                    except self._transient:
+                    except (*self._transient, TransportAbort):
                         pass
                 time.sleep(0.05)
             else:
@@ -681,10 +773,12 @@ class ProcessGuard:
                 raise container_failure
             if uncertain:
                 raise TransportAbort("cleanup uncertain: path-only or uninspectable processes remain " + json.dumps(
-                    [dict(pid=p["pid"], create_time=p["create_time"])
-                     for p in orphans.values() if p.get("reason") in ("path-only attribution", "access denied")]
-                    + unknown
-                ))
+                    [dict(pid=p["pid"], create_time=p["create_time"], reason=p.get("reason"))
+                     for p in orphans.values()
+                     if p.get("reason") in ("path-only attribution", "access denied", "start order unreadable",
+                                           "identity unreadable")]
+                    + [dict(u, reason="tracked identity unknown") for u in unknown]
+                ) + (f"; order failure: {order_failure}" if order_failure else ""))
             if survivors:
                 raise TransportAbort("attributed processes survived cleanup")
             if self.failure:

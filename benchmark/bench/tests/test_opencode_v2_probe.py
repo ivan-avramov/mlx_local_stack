@@ -929,7 +929,18 @@ def test_real_gate_kill_interrupted_export_is_row(probe, real_binary, monkeypatc
             """Settled export."""
             deadline = time.monotonic() + 10
             while True:
-                export = export_session(*args, **kwargs)
+                try:
+                    export = export_session(*args, **kwargs)
+                except probe.TransportAbort as exc:
+                    # The SIGKILLed client's orphaned `opencode serve` is still writing the interrupted message;
+                    # a concurrent standalone export's server then dies on SQLite "database is locked" (seen under
+                    # full-suite load; without OPENCODE_PRINT_LOGS only the readiness symptom reaches stderr).
+                    if (not any(s in str(exc) for s in ("database is locked",
+                                                         "Standalone server exited before reporting readiness"))
+                            or time.monotonic() >= deadline):
+                        raise
+                    time.sleep(0.2)
+                    continue
                 if any(m.get("error") for m in export["messages"]):
                     return export
                 assert time.monotonic() < deadline, "interrupted export did not settle"

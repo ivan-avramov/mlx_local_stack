@@ -825,7 +825,10 @@ def _run_item(
                     if ingester:
                         ingester.join(5)
                     if sys.exc_info()[0] is not None:
-                        guard.kill_role("grader")
+                        try:
+                            guard.kill_role("grader")
+                        except Exception:  # noqa: BLE001 — cleanup() below re-audits every tracked identity and
+                            pass           # fails closed (survivors/uncertain); it must still run (C151 R18)
                     try:
                         heartbeat.set_phase("terminal_grading")
                         if worker.thread.is_alive():
