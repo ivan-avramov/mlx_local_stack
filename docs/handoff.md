@@ -45,7 +45,7 @@ project target changes. The operator is moving the work to the 128 GB box now (l
 
 ## Queue, in order
 
-0. **BLOCKER C151 (2026-10-11):** V3 attempt 1 on m5max-128 aborted rc 2 (stall PASS, loop PASS, alloc then psutil `create_time()` identity shift); fix P272 awaiting operator approval; archive `$STACK_WORKDIR/m62/inject/` before the re-run. Go grading needs `aider-benchmark:latest` (copied from the 64 GB box, P271: same 15 layer diff-ids, OS/arch, Cmd, Env; local ID `6ed3b12a` vs `5adaefa5` there only because this box uses the containerd image store, the 64 GB box overlay2) and `~/.orbstack/bin` on PATH.
+0. **C151 DONE (2026-10-11):** V3 attempt 1 on m5max-128 aborted rc 2 on the psutil identity shift; fixed and cleared (eight Cursor `gpt-5.6-sol-high` rounds). Re-run V3 from a fresh dir (attempt-1 dir archived as `$STACK_WORKDIR/m62/inject.attempt1-c151`). Go grading needs `aider-benchmark:latest` (copied from the 64 GB box, P271: same 15 layer diff-ids, OS/arch, Cmd, Env; local ID `6ed3b12a` vs `5adaefa5` there only because this box uses the containerd image store) and `~/.orbstack/bin` on PATH (config.sh). Open: P273 production export lock retry, P274 load-sensitive real-client tests on this box.
 1. **C147 V3 — live injected positives (operator, ≈30 min, box quiet, 140 W/28 V, battery > 20 %):**
    `nohup benchmark/chains/c147/drive_inject.sh &` → `$STACK_WORKDIR/m62/inject/{inject.out,inject.rc,RUNLOG.md}`;
    the driver re-runs a non-PASS kind on seeds 2002/3003 and ends with the suite verdict of
@@ -82,4 +82,4 @@ not a model finding; hand the run dir to the next session.
 - Fork syncs: mlx-vlm's AGENTS.md audit procedure works; bump `UPSTREAM_SYNC_REF` in the merge commit; re-pin
   fork-owned test blobs in `.fork-marker-allowlist`; `uv lock` from upstream's lock after resolving.
 
-Next decision id C152 (C149, C151 open, awaiting operator); discussion ids continue from P273 (P265 = 128 GB target, open; P266–P272 this session; P270 = three non-pick repos whose 64 GB-box rows may predate hub main).
+Next decision id C152 (C149 open, awaiting operator); discussion ids continue from P275 (P265 = 128 GB target, open; P266–P274 this session; P270 = three non-pick repos whose 64 GB-box rows may predate hub main; P273 export lock retry and P274 flaky real-client tests open).
