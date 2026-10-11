@@ -53,7 +53,8 @@ def build_manifest(model, lang, seed_base, worker, run_id, override=None):
             "scaffold": SCAFFOLD, "scaffold_policy_sha256": CAMPAIGN,
             "probe_code_sha256": os.environ.get("FAKE_PROBE_CODE_SHA", h("9")), "opencode_version": "2.0.20",
             "opencode_exe_sha256": h("e"), "opencode_bench_config_sha256": h("c"), "carrier_source_sha256": h("d"),
-            "agent_system_sha256": None, "polyglot_sha": "1" * 40, "universe_sha256": h("2"),
+            "agent_system_sha256": None, "polyglot_sha": "1" * 40,
+            "policy": {"universe_sha256": h("2")},     # P276: where the real probe records it
             "seed_base": seed_base, "lang": lang, "draft_kind": "off", "sampling_profile": "deployed",
         },
     }

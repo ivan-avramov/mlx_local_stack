@@ -457,7 +457,7 @@ def test_validate_manifest_missing_and_abort_and_drift(leg_env):
     (("runtime", "opencode_version"), "2.0.21", "runtime_opencode_version"),
     (("runtime", "opencode_exe_sha256"), "z", "runtime_opencode_exe_sha256"),
     (("runtime", "polyglot_sha"), "z", "runtime_polyglot_sha"),
-    (("runtime", "universe_sha256"), "z", "runtime_universe_sha256"),
+    (("runtime", "policy", "universe_sha256"), "z", "runtime_universe_sha256"),   # P276: the real layout
     (("runtime", "carrier_source_sha256"), "z", "runtime_carrier_source_sha256"),
     (("runtime", "agent_system_sha256"), "z", "runtime_agent_system_sha256"),
     (("runtime", "opencode_bench_config_sha256"), "z", "runtime_opencode_bench_config_sha256"),
@@ -466,8 +466,8 @@ def test_validate_manifest_missing_and_abort_and_drift(leg_env):
 ])
 def test_validate_manifest_fields(leg_env, path, value, code):
     leg, pinned, out, fp, wd = leg_env
-    full_pinned = {**pinned, **{k: co.validate_leg and json.loads(out.with_suffix(".manifest.json").read_text())["runtime"][k]
-                                for k in co.RUNTIME_PINNED if k not in pinned}}
+    ident = co.runtime_identity(json.loads(out.with_suffix(".manifest.json").read_text()))
+    full_pinned = {**pinned, **{k: ident[k] for k in co.RUNTIME_PINNED if k not in pinned}}
 
     def mut(m):
         d = m

@@ -608,6 +608,20 @@ RUNTIME_PINNED = ("scaffold_policy_sha256", "probe_code_sha256", "opencode_versi
 
 SHA_FIELDS = ("scaffold_policy_sha256", "probe_code_sha256", "opencode_exe_sha256", "opencode_bench_config_sha256",
               "carrier_source_sha256", "universe_sha256")
+# P276: the real tg1 probe records these pinned fields under `runtime.policy`, the rest at `runtime.*`.
+POLICY_HELD = ("universe_sha256",)
+
+
+def runtime_identity(man):
+    """The RUNTIME_PINNED fields where the real probe writes them; an absent key stays absent."""
+    rt = man.get("runtime") or {}
+    pol = rt.get("policy") or {}
+    ident = {}
+    for k in RUNTIME_PINNED:
+        src = pol if k in POLICY_HELD else rt
+        if k in src:
+            ident[k] = src[k]
+    return ident
 
 
 def _hex(v, *lengths):
@@ -617,7 +631,7 @@ def _hex(v, *lengths):
 def malformed_identity(man):
     """Mandatory identity fields of a manifest that are absent, null or malformed. Only `agent_system_sha256` may
     be null (no overlay), but when present as a string it must be 64-hex."""
-    rt = man.get("runtime") or {}
+    rt = runtime_identity(man)
     bad = []
     for k in SHA_FIELDS:
         if not _hex(rt.get(k), 64):
@@ -701,9 +715,10 @@ def validate_leg(leg, pinned, workdir=None):
         why.append("runtime_sampling_profile: not deployed")
     if pinned.get("probe_code_sha256") is None:
         why.append("pinned_incomplete: probe_code_sha256 not pinned")
+    ident = runtime_identity(man)
     for k in RUNTIME_PINNED:
-        if k in pinned and (k not in rt or rt[k] != pinned[k]):      # a pinned null is a value; an absent key is not
-            why.append(f"runtime_{k}: {rt.get(k, '<absent>')} != pinned {pinned[k]}")
+        if k in pinned and (k not in ident or ident[k] != pinned[k]):   # a pinned null is a value; an absent key is not
+            why.append(f"runtime_{k}: {ident.get(k, '<absent>')} != pinned {pinned[k]}")
     for f in malformed_identity(man):
         why.append(f"{f}_invalid: absent, null or malformed" if f != "serving_path" else "serving_path_invalid: absent, null or malformed")
     sp = (man.get("git") or {}).get("serving_path")

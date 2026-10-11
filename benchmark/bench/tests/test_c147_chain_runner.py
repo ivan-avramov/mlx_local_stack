@@ -976,10 +976,11 @@ def test_mandatory_identity_enforced_at_pin_validate_and_barrier(env, tmp_path, 
     FP.write_leg(out, PICK1, "python", 1001, ["python/a"], worker, tmp_path)
     mp = out.with_suffix(".manifest.json")
     man = json.loads(mp.read_text())
+    slot = man["runtime"]["policy"] if field in _co.POLICY_HELD else man["runtime"]     # P276: real layout
     if val == "ABSENT":
-        man["runtime"].pop(field)
+        slot.pop(field)
     else:
-        man["runtime"][field] = val
+        slot[field] = val
     mp.write_text(json.dumps(man))
     assert f"runtime_{field}" in _co.malformed_identity(man)
     # 1. pin_from

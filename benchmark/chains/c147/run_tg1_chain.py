@@ -403,11 +403,12 @@ class Chain:
         if bad:
             raise co.ChainAbort(f"first complete leg has absent/null/malformed identity fields: {bad}")
         missing = []
+        ident = co.runtime_identity(man)                 # P276: where the real probe writes each pinned field
         for k in co.RUNTIME_PINNED:
             if k in self.pinned:
                 continue
-            if k in rt:
-                self.pinned[k] = rt[k]
+            if k in ident:
+                self.pinned[k] = ident[k]
             else:
                 missing.append(k)
         if "serving_path" not in self.pinned:
@@ -461,9 +462,10 @@ class Chain:
                ("lang", rt.get("lang"), leg["lang"]), ("model", man.get("model"), leg["model"]),
                ("sampling_profile", rt.get("sampling_profile", man.get("sampling_profile")), "deployed"),
                ("registry.sha256", (man.get("registry") or {}).get("sha256"), self.ops.overlay_sha())]
+        ident = co.runtime_identity(man)
         for k in co.RUNTIME_PINNED:
             if k in self.pinned:
-                chk.append((k, rt.get(k, "<absent>"), self.pinned[k]))
+                chk.append((k, ident.get(k, "<absent>"), self.pinned[k]))
         if self.pinned.get("serving_path") is not None:
             chk.append(("git.serving_path", (man.get("git") or {}).get("serving_path"), self.pinned["serving_path"]))
         for k, got, want in chk:
