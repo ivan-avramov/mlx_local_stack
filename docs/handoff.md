@@ -1,4 +1,4 @@
-# Handoff — 2026-10-10 (night): C147 built, live V3 pending; forks synced; next is the operator's injected run, then the chain pilot, then P223
+# Handoff — 2026-10-10 (night, final): C147 built and pushed; next is the operator's live V3 injected run, then the chain pilot, then P223
 
 THE one handoff. Read this, then `docs/open-questions.md` C147, `docs/specs/c147-tg1-chain-clearance.md` (rev 3 + §9
 build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and `benchmark/chains/README.md`.
@@ -11,7 +11,7 @@ build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and
   `mlx` 0.32.2 → 0.32.3 (forced by upstream mlx-vlm), which is in the serving-path hash: rows recorded after the
   bump do not pair with earlier rows. Known, not fixed: the mlx-serve fork's golden registry test fails against
   this stack's live `main_models.yaml` (fixture predates `mtp_verify_scan joint_v1`); refresh owed in the fork.
-- **C147 BUILT (this session), nothing live yet.** Spec rev 3 + §9 (B1–B8). Two Codex `gpt-6.1-sol` design
+- **C147 BUILT and pushed (`df601223` + this handoff), nothing live yet.** Spec rev 3 + §9 (B1–B8). Two Codex `gpt-6.1-sol` design
   reviews (both "redesign"; every id answered), then post-build reviews: round 1 "not cleared" Q1–Q11 (fixed,
   `84d6e5a8`), round 2 "not cleared" Q12–Q18 (fixed, `20e41354`; two lead decisions recorded in §9 B8: write-only
   `/tmp` deletion with content match; `cancellation_consistent` accepted, worker-side receipt proposed as C149),
@@ -46,6 +46,18 @@ build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and
    `RUNLOG.md` every 5 min (`WATCH`, `ALARM`, `CORRECTION?`). Never pool tg1 with the M61 `opencode-v2-web` rows.
 4. Then C144 candidates under tg1; README/ranking updates need the operator.
 
+Ordering is deliberate (P245–P248): do not skip the pilot to save time — it is the only step that runs
+`chain_ops` against a real router (everything else was mocked or `fake_probe.py`); a teardown bug 10 h into
+a 20 h chain costs far more than the pilot. If any inject leg exits 1 or 4, stop and treat it as a gate bug,
+not a model finding; hand the run dir to the next session.
+
+## Work a session can do while the box is busy (no serving impact)
+
+- mlx-serve fork golden fixture refresh (fork-only; fixture predates `mtp_verify_scan joint_v1`).
+- C149 spec (worker-side `requests_cancelled` receipt) once the operator decides yes/no; the current
+  `cancellation_consistent` acceptance is a stopgap.
+- Never start the daily driver; never touch :8000 while a chain runs.
+
 ## Rules learned (2026-10-10, this session)
 
 - SIGKILL on opencode 2.0.20 loses the in-flight assistant message; SIGTERM makes it persist an `aborted` one.
@@ -57,4 +69,4 @@ build findings), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and
 - Fork syncs: mlx-vlm's AGENTS.md audit procedure works; bump `UPSTREAM_SYNC_REF` in the merge commit; re-pin
   fork-owned test blobs in `.fork-marker-allowlist`; `uv lock` from upstream's lock after resolving.
 
-Next decision id C149; discussion ids continue from P242.
+Next decision id C150 (C149 open, awaiting operator); discussion ids continue from P249.
