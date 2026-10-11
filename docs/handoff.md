@@ -45,6 +45,7 @@ project target changes. The operator is moving the work to the 128 GB box now (l
 
 ## Queue, in order
 
+0. **BLOCKER C151 (2026-10-11):** V3 attempt 1 on m5max-128 aborted rc 2 (stall PASS, loop PASS, alloc then psutil `create_time()` identity shift); fix P272 awaiting operator approval; archive `$STACK_WORKDIR/m62/inject/` before the re-run. Go grading needs `aider-benchmark:latest` (`5adaefa5`, copied from the 64 GB box, P271) and `~/.orbstack/bin` on PATH.
 1. **C147 V3 — live injected positives (operator, ≈30 min, box quiet, 140 W/28 V, battery > 20 %):**
    `nohup benchmark/chains/c147/drive_inject.sh &` → `$STACK_WORKDIR/m62/inject/{inject.out,inject.rc,RUNLOG.md}`;
    the driver re-runs a non-PASS kind on seeds 2002/3003 and ends with the suite verdict of
@@ -81,4 +82,4 @@ not a model finding; hand the run dir to the next session.
 - Fork syncs: mlx-vlm's AGENTS.md audit procedure works; bump `UPSTREAM_SYNC_REF` in the merge commit; re-pin
   fork-owned test blobs in `.fork-marker-allowlist`; `uv lock` from upstream's lock after resolving.
 
-Next decision id C151 (C149, C150 open, awaiting operator); discussion ids continue from P270 (P265 = 128 GB target, open; P266–P269 this session).
+Next decision id C152 (C149, C151 open, awaiting operator); discussion ids continue from P273 (P265 = 128 GB target, open; P266–P272 this session; P270 = three non-pick repos whose 64 GB-box rows may predate hub main).
