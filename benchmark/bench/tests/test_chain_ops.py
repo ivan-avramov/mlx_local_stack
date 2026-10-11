@@ -489,7 +489,7 @@ def test_validate_row_sample_and_seed_and_overlay(leg_env):
     _mut_rows(out, lambda r: r.update(sample=1))
     assert "row_sample" in _codes(co.validate_leg(leg, pinned, wd))
     fp.write_leg(out, PICK1, "python", 1001, leg["expected_ids"], json.loads(out.with_suffix(".manifest.json").read_text())["worker"], wd)
-    _mut_rows(out, lambda r: r.update(sample_seed=rowschema.sample_seed(r["id"], 0, 2002)))
+    _mut_rows(out, lambda r: r.update(sampler_seed=rowschema.sample_seed(r["id"], 0, 2002)))
     assert "row_sample_seed" in _codes(co.validate_leg(leg, pinned, wd))
     fp.write_leg(out, PICK1, "python", 1001, leg["expected_ids"], json.loads(out.with_suffix(".manifest.json").read_text())["worker"], wd)
     _mut_rows(out, lambda r: r.update(overlay_sha256="0" * 64))

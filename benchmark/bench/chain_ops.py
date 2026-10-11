@@ -608,6 +608,8 @@ RUNTIME_PINNED = ("scaffold_policy_sha256", "probe_code_sha256", "opencode_versi
 
 SHA_FIELDS = ("scaffold_policy_sha256", "probe_code_sha256", "opencode_exe_sha256", "opencode_bench_config_sha256",
               "carrier_source_sha256", "universe_sha256")
+# P276: the per-item paired seed field of a real probe row (rowschema.sample_seed value; not `sample_seed`).
+ROW_SEED_FIELD = "sampler_seed"
 # P276: the real tg1 probe records these pinned fields under `runtime.policy`, the rest at `runtime.*`.
 POLICY_HELD = ("universe_sha256",)
 
@@ -734,8 +736,8 @@ def validate_leg(leg, pinned, workdir=None):
         if r.get("sample") != 0:
             why.append(f"row_sample: {rid} sample {r.get('sample')}")
         exp = rowschema.sample_seed(rid, 0, leg["seed_base"])
-        if r.get("sample_seed") != exp:
-            why.append(f"row_sample_seed: {rid} {r.get('sample_seed')} != {exp}")
+        if r.get(ROW_SEED_FIELD) != exp:
+            why.append(f"row_sample_seed: {rid} {r.get(ROW_SEED_FIELD)} != {exp}")
         want = seed_overlay_sha(leg["model"], exp)
         if r.get("scaffold") != SCAFFOLD:
             why.append(f"row_scaffold: {rid} {r.get('scaffold')}")

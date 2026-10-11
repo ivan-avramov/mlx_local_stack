@@ -32,6 +32,8 @@ LEGS = {"s1": [(PICK1, "python"), (PICK1, "go"), (PICK2, "python"), (PICK2, "go"
         "reload": [(PICK1, "python")]}
 PRED_S = {("python", PICK1): 244, ("go", PICK1): 300, ("python", PICK2): 267, ("go", PICK2): 360}   # M59 table
 PILOT_N = 5
+# P279 --smoke: a short live rehearsal of the real schedule (rows are rehearsal evidence only, never graded or pooled)
+SMOKE_PILOT_N, SMOKE_FULL_N, SMOKE_ARM_IDLE_S = 1, 2, 60.0
 
 
 class Stopped(Exception):
@@ -62,16 +64,23 @@ def load_universe(path=None):
     return {k: sorted(v) for k, v in names.items()}
 
 
-def make_leg(session, model, lang, seed_base, names, out_dir, reload_ctl=False):
-    pilot = random.Random(seed_base).sample(sorted(names[lang]), PILOT_N)
-    full = sorted(pilot) if reload_ctl else sorted(names[lang])
+def make_leg(session, model, lang, seed_base, names, out_dir, reload_ctl=False, smoke=False):
+    pool = sorted(names[lang])
+    pilot = random.Random(seed_base).sample(pool, SMOKE_PILOT_N if smoke else PILOT_N)
+    if reload_ctl:
+        full = sorted(pilot)
+    elif smoke:
+        rest = [x for x in pool if x not in pilot]
+        full = sorted(pilot + random.Random(seed_base).sample(rest, SMOKE_FULL_N - len(pilot)))
+    else:
+        full = pool
     stem = f"{model}.{session}.opencode_{lang}"
     return dict(session=session, model=model, lang=lang, seed_base=seed_base, stem=stem,
                 out=str(Path(out_dir) / session / (stem + ".jsonl")),
                 pilot_names=sorted(pilot), full_names=full)
 
 
-def schedule(mode, sessions, names, out_root):
+def schedule(mode, sessions, names, out_root, smoke=False):
     """List of blocks: {session, model, seed_base, legs}. A block = one model within one session (both languages)."""
     if mode == "pilot":
         leg = make_leg("pilot", PICK1, "python", SEEDS["s1"], names, out_root)
@@ -85,14 +94,15 @@ def schedule(mode, sessions, names, out_root):
             else:
                 grouped.append((model, [lang]))
         for model, langs in grouped:
-            legs = [make_leg(s, model, lang, SEEDS[s], names, out_root, reload_ctl=(s == "reload")) for lang in langs]
+            legs = [make_leg(s, model, lang, SEEDS[s], names, out_root, reload_ctl=(s == "reload"), smoke=smoke)
+                    for lang in langs]
             blocks.append(dict(session=s, model=model, seed_base=SEEDS[s], legs=legs, pilot_only=False))
     return blocks
 
 
 def steps_for(block, idx):
     leg = block["legs"][idx]
-    pilot = dict(kind="pilot", names=leg["pilot_names"], limit=PILOT_N)
+    pilot = dict(kind="pilot", names=leg["pilot_names"], limit=len(leg["pilot_names"]))
     full = dict(kind="full", names=leg["full_names"], limit=None)
     if block.get("pilot_only"):
         return [pilot]
@@ -197,7 +207,7 @@ class Chain:
                                gate=co.file_sha(gate), overlay=self.ops.overlay_sha()),
                    probe=str(self.probe), probe_code_sha=self.a.probe_code_sha, pinned=self.pinned,
                    attempts=self.attempts, restarts=self.restarts, stop=self.stop_info, rc=self.rc,
-                   block_workers=self.block_workers)
+                   block_workers=self.block_workers, smoke=getattr(self.a, "smoke", False))
         co.atomic_json(self.out_root / "chain.json", doc)
 
     # -- STOP
@@ -228,7 +238,8 @@ class Chain:
             if not self.ops.power_ok():
                 raise co.ChainAbort("power gate FAIL")
             self.ops.start_router()
-            blocks = schedule(self.a.mode, self.a.sessions, self.names, self.out_root)
+            blocks = schedule(self.a.mode, self.a.sessions, self.names, self.out_root,
+                              smoke=getattr(self.a, "smoke", False))
             self.log(f"START {self.a.mode} blocks={[(b['session'], b['model']) for b in blocks]}")
             try:
                 for block in blocks:
@@ -433,8 +444,12 @@ class Chain:
     def check_restart_eligible(self, att, leg, block):
         why = []
         cs = att.get("cleanup_status")
+        # P276b: the real probe writes `cleanup_status` only on an abort; a clean exit (rc 0, `exited`, no transport
+        # abort) is reachable only after a completed, certain cleanup, so it is its own receipt
+        clean_exit = (att.get("rc") == 0 and att.get("outcome") == "exited" and not att.get("transport_abort"))
         if not isinstance(cs, dict):
-            why.append("cleanup uncertain: no cleanup_status recorded")
+            if not clean_exit:
+                why.append("cleanup uncertain: no cleanup_status recorded")
         else:
             if cs.get("survivors"):
                 why.append("cleanup uncertain: survivors recorded")
@@ -689,13 +704,19 @@ def parse_args(argv):
     ap.add_argument("mode", choices=["pilot", "chain"])
     ap.add_argument("sessions", nargs="*")
     ap.add_argument("--pred-s", action="append", default=[], metavar="LANG:MODEL=SECONDS")
-    ap.add_argument("--arm-idle-s", type=float, default=600.0)
+    ap.add_argument("--arm-idle-s", type=float, default=None)
+    ap.add_argument("--smoke", action="store_true",
+                    help="P279 rehearsal: 1-item pilot + 2-item legs, 60 s arm idle, own out-root (chain mode only)")
     ap.add_argument("--probe-code-sha")
     ap.add_argument("--out-root")
     ap.add_argument("--probe", default=str(REPO / "benchmark/run_opencode_probe_v2.py"))
     ap.add_argument("--python", default=str(REPO / ".venv-bench/bin/python"))
     ap.add_argument("--universe")
     a = ap.parse_args(argv)
+    if a.smoke and a.mode != "chain":
+        ap.error("--smoke is for chain mode")
+    if a.arm_idle_s is None:
+        a.arm_idle_s = SMOKE_ARM_IDLE_S if a.smoke else 600.0
     if a.mode == "chain":
         if not a.probe_code_sha:
             ap.error("--probe-code-sha is required for chain")
@@ -706,10 +727,19 @@ def parse_args(argv):
     return a
 
 
+def resolve_out_root(a, wd):
+    """`$STACK_WORKDIR/c147` for the real chain, `$STACK_WORKDIR/c147-smoke` for a smoke rehearsal; a smoke run is
+    refused inside the real chain directory."""
+    root = Path(a.out_root) if a.out_root else Path(wd) / ("c147-smoke" if a.smoke else "c147")
+    if a.smoke and root.resolve() == (Path(wd) / "c147").resolve():
+        raise SystemExit("REFUSED: --smoke must not write into the real chain directory")
+    return root
+
+
 def main(argv=None, ops=None, timers=None, log_out=None):
     a = parse_args(sys.argv[1:] if argv is None else argv)
     wd = Path(ops.wd) if ops is not None else Path(os.environ["STACK_WORKDIR"])
-    out_root = Path(a.out_root or wd / "c147")
+    out_root = resolve_out_root(a, wd)
     out_root.mkdir(parents=True, exist_ok=True)
     log = co.RunLog(out_root / "RUNLOG.md", out=log_out)
     if ops is None:

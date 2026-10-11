@@ -36,3 +36,22 @@ def test_fake_probe_mirrors_the_real_identity_layout():
         in_fake_top = k in fake["runtime"]
         assert in_real_top == in_fake_top, k
     assert "universe_sha256" in fake["runtime"]["policy"]
+
+
+ROW = FIXTURE.parent / "c147_real_tg1_pilot_row.json"
+
+
+def test_runner_checks_the_seed_field_the_real_probe_writes():
+    # pilot attempt 2 aborted INCOMPLETE on `row_sample_seed: None != <seed>`: the real field is `sampler_seed`
+    from bench import rowschema
+    row = json.loads(ROW.read_text())
+    assert co.ROW_SEED_FIELD == "sampler_seed" and "sample_seed" not in row
+    assert row[co.ROW_SEED_FIELD] == rowschema.sample_seed(row["id"], 0, row["seed_base"])
+
+
+def test_fake_probe_rows_use_the_real_seed_field(tmp_path):
+    out = tmp_path / "x.jsonl"
+    FP.write_leg(out, "m", "python", 1001, ["python/a"], {"pid": 1, "create_time": 1.0, "model_path": "m",
+                                                        "registry_sha256": "a" * 64}, tmp_path)
+    row = json.loads(out.read_text().splitlines()[0])
+    assert co.ROW_SEED_FIELD in row and "sample_seed" not in row

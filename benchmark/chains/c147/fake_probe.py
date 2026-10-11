@@ -97,7 +97,7 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
         arts[n] = {"path": _portable(wd, f), "sha256": _sha(f)}
     seed = rowschema.sample_seed(item, 0, seed_base)
     return {
-        "id": item, "model": model, "sample": 0, "sample_seed": seed, "passed": True, "converged": True,
+        "id": item, "model": model, "sample": 0, "sampler_seed": seed, "passed": True, "converged": True,
         "nonconv_kind": None, "nonconv_flags": [], "wall_s": wall_s, "worker_before": worker,
         "worker_after": worker, "overlay_sha256": seed_overlay_sha(model, seed), "scaffold": SCAFFOLD,
         "evidence_sha256": {k: _sha(v) for k, v in files.items()},

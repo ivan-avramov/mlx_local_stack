@@ -1032,3 +1032,18 @@ def test_null_agent_system_sha_still_valid_everywhere(env, tmp_path):
     assert man["runtime"]["agent_system_sha256"] is None and _co.malformed_identity(man) == []
     man["runtime"]["agent_system_sha256"] = "nothex"
     assert _co.malformed_identity(man) == ["runtime_agent_system_sha256"]
+
+
+def test_clean_exit_without_a_receipt_is_restart_eligible_and_nothing_else_is(env):
+    # P276b: the real probe writes `cleanup_status` only on an abort; rc 0 is reachable only after a completed,
+    # certain cleanup (an uncertain one raises -> nonzero exit with a top-level receipt)
+    from bench import chain_ops as _co
+    ch = _chain_for(env)
+    ops = env["ops"]
+    ops.load(PICK1)
+    block = {"worker": {"pid": ops.ident["pid"], "create_time": ops.ident["create_time"]}}
+    clean = {"cleanup_status": None, "rc": 0, "outcome": "exited", "transport_abort": None}
+    ch.check_restart_eligible(clean, {"model": PICK1}, block)
+    for bad in (dict(clean, rc=1), dict(clean, outcome="cancelled"), dict(clean, transport_abort={"error": "x"})):
+        with pytest.raises(_co.ChainAbort, match="no cleanup_status"):
+            ch.check_restart_eligible(bad, {"model": PICK1}, block)
