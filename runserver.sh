@@ -225,7 +225,7 @@ spinner='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 i=0
 until curl -sf http://localhost:8000/health >/dev/null 2>&1; do
   printf "\r\033[2K  ${spinner:$((i % ${#spinner})):1}  Waiting for main model..."
-  ((i++))
+  i=$((i + 1))
   sleep 0.1
 done
 log_ok "Main model ready.\n"
@@ -235,7 +235,7 @@ spinner='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 i=0
 until curl -sf $TASK_MODEL_URL/health >/dev/null 2>&1; do
   printf "\r\033[2K  ${spinner:$((i % ${#spinner})):1}  Waiting for task model..."
-  ((i++))
+  i=$((i + 1))
   sleep 0.1
 done
 log_ok "Task model ready.\n"
@@ -268,7 +268,7 @@ echo -n "Waiting for OpenWebUI to be ready..."
 i=0
 until curl -sf "${OWUI_URL}/health" >/dev/null 2>&1; do
   printf "\r\033[2K  ${spinner:$((i % ${#spinner})):1}  Waiting for OpenWebUI..."
-  ((i++))
+  i=$((i + 1))
   sleep 0.1
 done
 log_ok "OpenWebUI ready.\n"
