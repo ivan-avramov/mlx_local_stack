@@ -102,3 +102,14 @@ def test_bench_interpreter_is_not_a_macos_framework_build():
     assert not sysconfig.get_config_var("PYTHONFRAMEWORK"), (
         "this venv runs on a macOS framework Python (re-execs on spawn; process-identity tests fail): "
         "rebuild it with scripts/bootstrap_machine.sh")
+
+
+# P269 (C150): `env -u STACK_WORKDIR` drops the workdir, and the IFEval nltk test refuses to look outside
+# $NLTK_DATA, so the advertised full-suite command must carry NLTK_DATA or one test silently skips.
+@pytest.mark.parametrize("doc", ["scripts/bootstrap_machine.sh", "benchmark/README.md"])
+def test_advertised_full_suite_command_carries_nltk_data(doc):
+    text = (REPO / doc).read_text().replace("\\\n", " ")      # join shell line continuations
+    cmds = [l for l in text.splitlines()
+            if "env -u STACK_WORKDIR" in l and "bench/tests/" in l]
+    assert cmds, f"no full-suite command in {doc}"
+    assert all("NLTK_DATA=" in l for l in cmds), cmds

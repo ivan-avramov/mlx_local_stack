@@ -150,5 +150,5 @@ fi
 # --- 8. summary -----------------------------------------------------------------------------------
 say "done. config=$CONFIG"
 say "  STACK_WORKDIR=$STACK_WORKDIR  MLX_BOX=$(sed -n 's/^export MLX_BOX="\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' "$CONFIG" | head -1)"
-say "  tests: cd benchmark && env -u STACK_WORKDIR ../.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/"
+say "  tests: cd benchmark && env -u STACK_WORKDIR NLTK_DATA=$NLTK_DATA ../.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/"
 say "  serving venv is separate: uv sync (uv.lock; pyproject pins uv-managed Python); model weights download from the hub on first load"
