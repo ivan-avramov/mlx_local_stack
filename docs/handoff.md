@@ -45,7 +45,7 @@ project target changes. The operator is moving the work to the 128 GB box now (l
 
 ## Queue, in order
 
-0. **BLOCKER C151 (2026-10-11):** V3 attempt 1 on m5max-128 aborted rc 2 (stall PASS, loop PASS, alloc then psutil `create_time()` identity shift); fix P272 awaiting operator approval; archive `$STACK_WORKDIR/m62/inject/` before the re-run. Go grading needs `aider-benchmark:latest` (`5adaefa5`, copied from the 64 GB box, P271) and `~/.orbstack/bin` on PATH.
+0. **BLOCKER C151 (2026-10-11):** V3 attempt 1 on m5max-128 aborted rc 2 (stall PASS, loop PASS, alloc then psutil `create_time()` identity shift); fix P272 awaiting operator approval; archive `$STACK_WORKDIR/m62/inject/` before the re-run. Go grading needs `aider-benchmark:latest` (copied from the 64 GB box, P271: same 15 layer diff-ids, OS/arch, Cmd, Env; local ID `6ed3b12a` vs `5adaefa5` there only because this box uses the containerd image store, the 64 GB box overlay2) and `~/.orbstack/bin` on PATH.
 1. **C147 V3 — live injected positives (operator, ≈30 min, box quiet, 140 W/28 V, battery > 20 %):**
    `nohup benchmark/chains/c147/drive_inject.sh &` → `$STACK_WORKDIR/m62/inject/{inject.out,inject.rc,RUNLOG.md}`;
    the driver re-runs a non-PASS kind on seeds 2002/3003 and ends with the suite verdict of
