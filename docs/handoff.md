@@ -41,7 +41,7 @@ Codex reviews are in `benchmark/chains/c147/reviews/`; older reviews and raw art
 branch (`--with-evidence`). **Open (P265):** the second box is an M5 Max 128 GB. Quality rows pair across the
 boxes (same quantizations, sampling, scaffold); latency, thermal and capacity numbers do not — give it its own
 `MLX_BOX` label and never cite 128 GB capacity against the 64 GB charter until the operator rules whether the
-project target changes. The operator is moving the work to the 128 GB box now (label `m5max-128`); the 64 GB box is idle, stack stopped. **m5max-128 bootstrapped 2026-10-10** (C150): fresh config, both venvs on uv-managed CPython 3.12.15 (never Homebrew's framework Python — it breaks process-identity checks), mlx 0.32.3, suite 4373 passed / 1 failed (`runserver.sh` `((i++))` under bash 5, P268) / 3 skipped; no weights cached yet. Everything in the queue below runs on whichever box is bootstrapped; the first live step on the new box is the `--limit 5` smoke inside `drive_inject.sh` itself (it is the smoke).
+project target changes. The operator is moving the work to the 128 GB box now (label `m5max-128`); the 64 GB box is idle, stack stopped. **m5max-128 bootstrapped 2026-10-10** (C150): fresh config, both venvs on uv-managed CPython 3.12.15 (never Homebrew's framework Python — it breaks process-identity checks), mlx 0.32.3, P267–P269 fixed; suite (README command, with `NLTK_DATA`) 4381 passed / 2 skipped / 1 xfailed; registry weights + MTP drafters pre-download in progress (P266; verify before step 1). Everything in the queue below runs on whichever box is bootstrapped; the first live step on the new box is the `--limit 5` smoke inside `drive_inject.sh` itself (it is the smoke).
 
 ## Queue, in order
 
