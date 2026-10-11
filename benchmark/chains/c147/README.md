@@ -8,6 +8,8 @@ Everything detached: `nohup <script> ... &`; rc files hold the exit code. Stack 
 | `drive_inject.sh` -> `run_inject.py` | Injected positives (~30 min). Output `$STACK_WORKDIR/m62/inject/` (`inject.out`, `inject.rc`, `RUNLOG.md`). rc 0 cleared, 1 verifier FAIL, 2 abort, 4 not cleared after three seeds. |
 | `drive_chain.sh` -> `run_tg1_chain.py` | `pilot` (5 items, pick 1 python) then `chain [s1 s2 reload] --probe-code-sha <sha>`. Output `$STACK_WORKDIR/c147/` (`chain.out`, `chain.rc`, `RUNLOG.md`, `chain.json`, `<session>/`). rc 0 done, 2 abort, 3 STOP. |
 | `fake_probe.py` | Contract implementation for tests only (`FAKE_PROBE_BEHAVIOUR`). |
+| `reviews/` | Codex `gpt-6.1-sol` cold reviews: two design rounds, four post-build rounds, with the prompts (scrubbed copies of the workdir originals). |
+| `run_codex.sh` | `run_codex.sh <name> ro\|write [model]`; prompt on stdin, output under `$STACK_WORKDIR/c147/`. |
 
 Order: `drive_inject.sh` -> `drive_chain.sh pilot` -> `drive_chain.sh chain ...`.
 

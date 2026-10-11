@@ -2,7 +2,7 @@
 
 Status: REVISION 3, 2026-10-10. Design P236–P241 approved by the operator 2026-10-10 ("sounds good"), with cold
 review on Codex `gpt-6.1-sol` before and after the build. Revision 1 drew "redesign" (P1–P14,
-`$STACK_WORKDIR/c147/codex_design_review1.md`); revision 2 answered each and drew "redesign" again (P1–P4, P9, P10,
+`benchmark/chains/c147/reviews/codex_design_review1.md`); revision 2 answered each and drew "redesign" again (P1–P4, P9, P10,
 P12, P13 partially answered; new P15–P22; `codex_design_review2.md`). Revision 3 answers the open ids, tagged
 `[Pn]`. Lead decision: build from revision 3; the post-build cold review (V5) re-checks every id against code. Long-haul box runs (the ≈30 min injected run and the
 ≈20 h P223 chains) are the operator's; this build ships code, tests and the handoff only. Parent spec:
