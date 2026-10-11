@@ -16,6 +16,7 @@ import shlex
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -36,6 +37,16 @@ POLICY = dict(
     container_memory="4g",
     container_swap="4g",
 )
+
+
+def start_time(proc):
+    """Process identity start time. On macOS psutil's create_time() shifts by INIT_BOOT_TIME - boot_time() once a
+    wall-clock correction moves whole-second boot time (C151), so read the unadjusted kernel value; objects without
+    a psutil implementation (test fakes) keep their own create_time()."""
+    impl = getattr(proc, "_proc", None)
+    if impl is not None and sys.platform == "darwin":
+        return impl.create_time(monotonic=True)
+    return proc.create_time()
 
 
 def atomic_write(path, data):
@@ -247,14 +258,14 @@ class ProcessGuard:
         with self.lock:
             if self._protected(process):
                 raise TransportAbort("refused ownership of protected process")
-            self.tracked[(process.pid, process.create_time())] = role
+            self.tracked[(process.pid, start_time(process))] = role
 
     def _protected(self, process):
-        return process.pid in self.excluded_pids or process.create_time() < self.started
+        return process.pid in self.excluded_pids or start_time(process) < self.started
 
     def _same_identity(self, pid, created):
         try:
-            return self.get(pid).create_time() == created
+            return start_time(self.get(pid)) == created
         except (self.psutil.NoSuchProcess, self.psutil.AccessDenied):
             return False
 
@@ -290,7 +301,7 @@ class ProcessGuard:
                         # ppid() re-validates identity; a stale cached entry (pid reused, psutil keeps the old
                         # create_time) raises here and must never become an ancestry authority (V5a P13).
                         ppids[p.pid] = p.ppid()
-                        alive[p.pid] = (p, p.create_time())
+                        alive[p.pid] = (p, start_time(p))
                 except self._transient:
                     ppids.pop(p.pid, None)
                     alive.pop(p.pid, None)
@@ -355,7 +366,7 @@ class ProcessGuard:
             return []
 
     def _mem_kill(self, p, key, role, rss=None):
-        if self._protected(p) or p.create_time() != key[1]:
+        if self._protected(p) or start_time(p) != key[1]:
             return
         argv = self._argv(p)
         completed = None
@@ -449,7 +460,7 @@ class ProcessGuard:
                         continue
                     try:
                         p = self.get(pid)
-                        if not self._protected(p) and p.create_time() == created and self._live(p):
+                        if not self._protected(p) and start_time(p) == created and self._live(p):
                             argv = self._argv(p)
                             p.kill()
                             killed.append(dict(pid=pid, create_time=created, role=actual, argv=argv))
@@ -477,7 +488,7 @@ class ProcessGuard:
                     continue
                 try:
                     p = self.get(pid)
-                    if not self._protected(p) and p.create_time() == created and self._live(p):
+                    if not self._protected(p) and start_time(p) == created and self._live(p):
                         targets.append((p, pid, created, actual, self._argv(p)))
                 except self._transient:
                     pass
@@ -499,7 +510,7 @@ class ProcessGuard:
         try:
             process = self.get(pid)
             process.uids()
-            if process.create_time() != created:
+            if start_time(process) != created:
                 return "gone"            # the pid was reused: our process is not there
             return "alive" if self._live(process) else "gone"
         except (self.psutil.NoSuchProcess, StopIteration):
@@ -529,7 +540,7 @@ class ProcessGuard:
 
     def descendants_alive(self):
         for p in self._processes():
-            if (p.pid, p.create_time()) in self.shell_descendants:
+            if (p.pid, start_time(p)) in self.shell_descendants:
                 return True
         return False
 
@@ -601,7 +612,7 @@ class ProcessGuard:
                     try:
                         if self._protected(p):
                             continue
-                        key = (p.pid, p.create_time())
+                        key = (p.pid, start_time(p))
                         if key in self.tracked:
                             p.kill()
                             survivors.append(p.pid)
@@ -611,9 +622,9 @@ class ProcessGuard:
                                                 argv=p.cmdline(), reason="path-only attribution")
                         elif self._sweep_excluded(p):
                             continue
-                        elif p.ppid() == 1 and p.create_time() >= self.started:
+                        elif p.ppid() == 1 and start_time(p) >= self.started:
                             orphans[key] = dict(
-                                pid=p.pid, create_time=p.create_time(), argv=p.cmdline()
+                                pid=p.pid, create_time=start_time(p), argv=p.cmdline()
                             )
                     except self.psutil.NoSuchProcess:
                         continue
@@ -650,7 +661,7 @@ class ProcessGuard:
                 for pid, created in alive:
                     try:
                         process = self.get(pid)
-                        if process.create_time() == created and not self._protected(process):
+                        if start_time(process) == created and not self._protected(process):
                             process.kill()
                     except self._transient:
                         pass

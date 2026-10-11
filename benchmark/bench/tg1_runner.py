@@ -270,7 +270,7 @@ def worker_identity(p, model, router):
         raise tg.TransportAbort("worker identity unavailable")
     try:
         observed.update(
-            create_time=psutil.Process(observed["pid"]).create_time(),
+            create_time=pg.start_time(psutil.Process(observed["pid"])),   # C151
             registry_sha256=hashlib.sha256(
                 provenance.paths.registry_path().read_bytes()
             ).hexdigest(),

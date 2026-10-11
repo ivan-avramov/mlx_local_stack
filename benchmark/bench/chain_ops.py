@@ -115,14 +115,16 @@ def default_http(base, path, body=None, timeout=900, headers=None):
 
 def default_create_time(pid):
     import psutil
-    return psutil.Process(int(pid)).create_time()
+    from bench.proc_guard import start_time
+    return start_time(psutil.Process(int(pid)))   # C151: never the clock-adjusted create_time()
 
 
 def default_parents(pid):
     """[{pid, create_time}] of the process itself and every ancestor (psutil)."""
     import psutil
     p = psutil.Process(int(pid))
-    return [{"pid": q.pid, "create_time": q.create_time()} for q in [p, *p.parents()]]
+    from bench.proc_guard import start_time
+    return [{"pid": q.pid, "create_time": start_time(q)} for q in [p, *p.parents()]]
 
 
 def env_tripwires(env_text, overlay):
