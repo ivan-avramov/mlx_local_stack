@@ -349,7 +349,8 @@ under `benchmark/results`.
   BOTH sides, and the live `pilot` mode is the composed real test. Clearance of the chain runner stays
   "pending live" until the operator's pilot leg validates.
 - **V3 (operator, box, ≈30 min).** `run_inject.py`: `inject_verify.py` PASS for all three kinds (with the seed
-  retry schedule); zero surviving attributed processes/containers; worker identity unchanged. Required before the
+  retry schedule; **2026-10-11 ruling C152 A: `alloc` waived — the live model refuses the addendum; covered by the V2
+  real-client alloc test**); zero surviving attributed processes/containers; worker identity unchanged. Required before the
   first chain. Then `run_tg1_chain.py pilot` (5 items) validates the runner live before `chain`.
 - **V5** cold reviews (Codex `gpt-6.1-sol`): this spec before the build; the implementation after it.
 
@@ -446,3 +447,11 @@ Spec → cold review → implementation by a worker model from this spec, failin
   re-checked by name before removal. Q28 the transport-tolerance cutoff was armed even when SIGTERM failed →
   published only after a successful `terminate()`. Lead decision: the review loop stops after this round; the
   operator's live V3 run and the chain pilot are the clearance.
+- **B11 — live V3 on m5max-128 (2026-10-11).** (a) C151: psutil's `create_time()` shifts by 1 s in long-lived
+  processes after a sub-second clock correction; identity is now `proc_guard.start_time()` and every ordering
+  decision `proc_guard.start_order()` (monotonic), cleared by eight Cursor `gpt-5.6-sol-high` rounds
+  (`benchmark/chains/c147/reviews/c151/`). (b) The pre-leg free-memory check reads `vm_stat` free + speculative only
+  and false-aborts with a large inactive file cache (P275, workaround `sudo purge`). (c) C152: the live model refuses
+  the alloc addendum on every seed; alloc waived (ruling A). (d) P273: both export paths retry a standalone export
+  only on a logged SQLite `database is locked` (`OPENCODE_PRINT_LOGS=1` on the export, 0.5 s pause, strict 10 s bound,
+  no retry with < 1 s left); any other export failure still aborts.
