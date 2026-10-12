@@ -47,6 +47,7 @@ class FakeOps:
         self.extra_env = {}
         self.on_unload = None
         self.power = True
+        self.docker = True                      # P290: bool, or a list consumed per call (last repeats)
         self.leftover_calls = []
 
     def _c(self, name, *a):
@@ -61,6 +62,12 @@ class FakeOps:
     def power_ok(self):
         self._c("power_ok")
         return self.power
+
+    def docker_ok(self):
+        self._c("docker_ok")
+        if isinstance(self.docker, list):
+            return self.docker.pop(0) if len(self.docker) > 1 else self.docker[0]
+        return self.docker
 
     def power_state(self):
         return {"watts": 140, "volts": 28, "batt": 80}

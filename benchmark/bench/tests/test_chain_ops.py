@@ -40,10 +40,15 @@ class Sh:
         self.cwd = "p1\nn/repo\n"
         self.gate_rc, self.gate_receipt, self.gate_timeout = 0, {"pass": True, "run_id": "r"}, False
         self.receipt = tmp_path / "session_gate/a4_v2_latest.json"
+        self.docker = ("29.4.0\n", 0)         # P290: (stdout, rc) | an exception instance to raise
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
         s = " ".join(cmd) if isinstance(cmd, list) else cmd
+        if s.startswith("docker info"):
+            if isinstance(self.docker, BaseException):
+                raise self.docker
+            return co.Result(self.docker[0], "", self.docker[1])
         if "pmset -g ac" in s:
             return co.Result(self.ac)
         if "pmset -g batt" in s:
@@ -904,3 +909,17 @@ def test_router_replaced_between_scan_and_send_blocks_the_http(ops, tmp_path):
     seq = iter([[99], [777]])
     ops.listeners = lambda port=8000: next(seq)
     assert ops.unload(PICK1) is False and not _unloads(ops)
+
+
+# --------------------------------------------------------------------------- P290 docker gate
+@pytest.mark.parametrize("docker,ok", [
+    (("29.4.0\n", 0), True),
+    (("", 1), False),
+    (("\n", 0), False),
+    (subprocess.TimeoutExpired(["docker"], 30), False),
+    (FileNotFoundError("docker"), False),
+])
+def test_docker_ok(ops, docker, ok):
+    ops._sh.docker = docker
+    assert ops.docker_ok() is ok
+    assert any(ln.endswith("-> " + ("ok" if ok else "FAIL")) and "GATE docker=" in ln for ln in ops._lines)

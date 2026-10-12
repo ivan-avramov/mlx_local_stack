@@ -255,6 +255,16 @@ class ChainOps:
                  f" -> {'ok' if ok else 'FAIL'}")
         return bool(ok)
 
+    def docker_ok(self):
+        """P290: Go grading runs in docker; the daemon must answer `docker info` (missing binary, error or timeout = down)."""
+        try:
+            r = self.sh(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=30)
+            version = (r.stdout or "").strip() if r.returncode == 0 else ""
+        except (OSError, subprocess.TimeoutExpired):
+            version = ""
+        self.log(f"GATE docker={version or 'DOWN'} -> {'ok' if version else 'FAIL'}")
+        return bool(version)
+
     def free_mem_mb(self):
         return parse_free_mb(self.sh(["vm_stat"]).stdout)
 

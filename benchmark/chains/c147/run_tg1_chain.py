@@ -237,9 +237,11 @@ class Chain:
             self.pinned["registry_sha256"] = self.ops.overlay_sha()
             if not self.ops.power_ok():
                 raise co.ChainAbort("power gate FAIL")
-            self.ops.start_router()
             blocks = schedule(self.a.mode, self.a.sessions, self.names, self.out_root,
                               smoke=getattr(self.a, "smoke", False))
+            if any(leg["lang"] == "go" for b in blocks for leg in b["legs"]) and not self.ops.docker_ok():
+                raise co.ChainAbort("docker gate FAIL: Go grading needs a reachable docker daemon")   # P290
+            self.ops.start_router()
             self.log(f"START {self.a.mode} blocks={[(b['session'], b['model']) for b in blocks]}")
             try:
                 for block in blocks:
@@ -358,6 +360,8 @@ class Chain:
             raise co.ChainAbort("worker identity changed before launch")
         if not self.ops.power_ok():
             raise co.ChainAbort("power gate FAIL before launch")
+        if leg["lang"] == "go" and not self.ops.docker_ok():
+            raise co.ChainAbort("docker gate FAIL before launch")                                    # P290
         ids = [f"{leg['lang']}/{x}" for x in step["names"]]
         cmd = build_cmd(self.py, self.probe, leg, step, block["receipt"], cancel, ack)
         att = dict(attempt=n, step=step["kind"], stem=leg["stem"], argv=cmd, cancel=str(cancel), ack=str(ack),
