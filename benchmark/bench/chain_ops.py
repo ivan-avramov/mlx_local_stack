@@ -74,6 +74,17 @@ def overlay_header(predictor, raw):
             f"kept). NEVER commit; never point the daily-driver router at it.\n")
 
 
+def argv_flag(tokens, flag):
+    """M63 (M5): every value of `--flag value` / `--flag=value` in argv order (a trailing bare flag gives None)."""
+    vals = []
+    for i, tok in enumerate(tokens):
+        if tok == flag:
+            vals.append(tokens[i + 1] if i + 1 < len(tokens) else None)
+        elif tok.startswith(flag + "="):
+            vals.append(tok[len(flag) + 1:])
+    return vals
+
+
 def require_mtp(registry, names):
     """M63: every named model declares the shipped mtp predictor (draft_kind mtp + a draft_model)."""
     by_name = {m.get("name"): m for m in registry.get("models") or []}
@@ -451,11 +462,14 @@ class ChainOps:
             self.sleep(5)
         if len(w) != 1:
             raise ChainAbort(f"TRIPWIRE: expected one worker for {model}, found {len(w)}")
-        m = re.search(r"--draft-kind\s+(\S+)", w[0])
+        toks = w[0].split()
+        kinds = argv_flag(toks, "--draft-kind")
+        if len(kinds) > 1:
+            raise ChainAbort(f"TRIPWIRE: worker has a duplicate --draft-kind {kinds}: {w[0][:300]}")
+        kind = kinds[0] if kinds else None
         if self.predictor == "mtp":
-            if not m or m.group(1) != "mtp":
-                raise ChainAbort(f"TRIPWIRE: worker lacks the mtp predictor: {w[0][:300]}")
-        elif m and m.group(1) not in ("none", "off"):
+            self.require_shipped_predictor(model, toks, kind, w[0])
+        elif kind is not None and kind not in ("none", "off"):
             raise ChainAbort(f"TRIPWIRE: worker carries a predictor: {w[0][:300]}")
         pid = int(w[0].split()[0])
         self.worker_env_check(pid)
@@ -464,6 +478,26 @@ class ChainOps:
         self.loaded = model
         self.worker_started = {"pid": pid, "create_time": ident["create_time"], "model": model}
         return ident
+
+    def require_shipped_predictor(self, model, toks, kind, cmdline):
+        """M63 (M4): an ON worker serves exactly the served overlay's predictor for `model`: --draft-kind mtp, its
+        --draft-model, and its --mtp-verify-scan when the entry sets one (mlx-serve omits per_query/unset)."""
+        import yaml
+        try:
+            served = yaml.safe_load(Path(self.overlay).read_text()) or {}
+        except (OSError, yaml.YAMLError) as e:
+            raise ChainAbort(f"TRIPWIRE: served overlay unreadable: {e}") from None
+        entry = next((m for m in served.get("models") or [] if m.get("name") == model), None)
+        if kind != "mtp" or not entry or entry.get("draft_kind") != "mtp":
+            raise ChainAbort(f"TRIPWIRE: worker lacks the mtp predictor: {cmdline[:300]}")
+        drafters = argv_flag(toks, "--draft-model")
+        if drafters != [entry.get("draft_model")]:
+            raise ChainAbort(f"TRIPWIRE: worker --draft-model {drafters} != registry {entry.get('draft_model')!r}")
+        scan = entry.get("mtp_verify_scan") or ""
+        want = [] if scan in ("", "per_query") else [scan]
+        scans = argv_flag(toks, "--mtp-verify-scan")
+        if scans != want:
+            raise ChainAbort(f"TRIPWIRE: worker --mtp-verify-scan {scans} != registry {want}")
 
     def _require_own_router(self):
         """None when the sole :8000 listener IS the recorded router (pid + create_time); else the refusal reason."""

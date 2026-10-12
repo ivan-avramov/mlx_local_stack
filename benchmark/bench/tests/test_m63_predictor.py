@@ -106,17 +106,22 @@ def test_mtp_ops_keep_tmp_and_a4_logs_under_the_out_root(tmp_path):
 
 
 # --------------------------------------------------------------------------- worker tripwire
-@pytest.mark.parametrize("extra,ok", [("--draft-kind mtp", True), ("", False), ("--draft-kind off", False),
-                                      ("--draft-kind suffix", False)])
-def test_mtp_load_requires_the_mtp_worker(ops, tmp_path, extra, ok):
-    ops.predictor = "mtp"
-    _router(ops, tmp_path)
+@pytest.mark.parametrize("extra,why", [("", "predictor"), ("--draft-kind off", "predictor"),
+                                      ("--draft-kind suffix", "predictor"),
+                                      ("--draft-kind mtp", "draft-model")])     # M4: the kind alone is not enough
+def test_mtp_load_requires_the_mtp_worker(ops, tmp_path, extra, why):
+    _mtp_ops(ops, tmp_path)
     ops._sh.ps = _worker_ps(PICK1, extra)
-    if ok:
-        assert ops.load(PICK1)["pid"] == 501
-    else:
-        with pytest.raises(co.ChainAbort, match="predictor"):
-            ops.load(PICK1)
+    with pytest.raises(co.ChainAbort, match=why):
+        ops.load(PICK1)
+
+
+def test_mtp_load_with_an_unreadable_overlay_is_a_chain_abort(ops, tmp_path):
+    _mtp_ops(ops, tmp_path)
+    ops._sh.ps = _worker_ps(PICK1, SHIPPED_FLAGS[PICK1])
+    Path(ops.overlay).unlink()
+    with pytest.raises(co.ChainAbort, match="overlay"):
+        ops.load(PICK1)
 
 
 # --------------------------------------------------------------------------- leg validation
@@ -268,3 +273,82 @@ def test_m3_production_wiring_off_is_the_c147_layout(tmp_path, monkeypatch):
     o = built["ops"]
     assert o.predictor == "off" and o.overlay == str(tmp_path / "c147/overlay_c147_draft_off.yaml")
     assert o.tmpdir == tmp_path / "c147/tmp" and o.env_base()["MLX_SERVE_CONFIG"] == o.overlay
+
+
+# --------------------------------------------------------------------------- review round 2 (M4-M6)
+def _mtp_ops(ops, tmp_path):
+    """The chain_ops `ops` fixture switched to the ON arm, serving an overlay that is the shipped registry."""
+    ov = tmp_path / "served.yaml"
+    ov.write_text(SHIPPED)
+    ops.predictor, ops.overlay = "mtp", str(ov)
+    ops._sh.env = f"/usr/bin/mlx-serve start MLX_SERVE_CONFIG={ov} MLX_VLM_CACHE_SESSION_MAX=1 HOME=/x"
+    _router(ops, tmp_path)
+    return ops
+
+
+SHIPPED_FLAGS = {PICK1: f"--mtp-verify-scan joint_v1 --draft-kind mtp --draft-model caslca/{PICK1}-mtp-drafter",
+                 PICK2: f"--draft-kind mtp --draft-model caslca/{PICK2}-mtp-drafter"}
+
+
+@pytest.mark.parametrize("model", [PICK1, PICK2])
+def test_m4_mtp_load_accepts_exactly_the_shipped_predictor_flags(ops, tmp_path, model):
+    _mtp_ops(ops, tmp_path)
+    ops._sh.ps = _worker_ps(model, SHIPPED_FLAGS[model])
+    assert ops.load(model)["pid"] == 501
+
+
+@pytest.mark.parametrize("model,flags,why", [
+    (PICK1, "--mtp-verify-scan joint_v1 --draft-kind mtp", "draft-model"),                           # sidecar missing
+    (PICK1, f"--mtp-verify-scan joint_v1 --draft-kind mtp --draft-model caslca/{PICK2}-mtp-drafter", "draft-model"),
+    (PICK1, f"--draft-kind mtp --draft-model caslca/{PICK1}-mtp-drafter", "mtp-verify-scan"),       # scan missing
+    (PICK1, f"--mtp-verify-scan per_query --draft-kind mtp --draft-model caslca/{PICK1}-mtp-drafter", "mtp-verify-scan"),
+    (PICK2, f"--mtp-verify-scan joint_v1 --draft-kind mtp --draft-model caslca/{PICK2}-mtp-drafter", "mtp-verify-scan"),
+])
+def test_m4_mtp_load_refuses_a_worker_that_is_not_the_shipped_predictor(ops, tmp_path, model, flags, why):
+    _mtp_ops(ops, tmp_path)
+    ops._sh.ps = _worker_ps(model, flags)
+    with pytest.raises(co.ChainAbort, match=why):
+        ops.load(model)
+
+
+@pytest.mark.parametrize("flags,ok", [
+    (f"--mtp-verify-scan=joint_v1 --draft-kind=mtp --draft-model=caslca/{PICK1}-mtp-drafter", True),   # = form
+    (f"--draft-kind off {SHIPPED_FLAGS[PICK1]}", False),                       # duplicated flag, either order
+    (f"{SHIPPED_FLAGS[PICK1]} --draft-kind off", False),
+    (f"{SHIPPED_FLAGS[PICK1]} --draft-kind=mtp", False),
+])
+def test_m5_flags_parse_both_forms_and_refuse_duplicates(ops, tmp_path, flags, ok):
+    _mtp_ops(ops, tmp_path)
+    ops._sh.ps = _worker_ps(PICK1, flags)
+    if ok:
+        assert ops.load(PICK1)["pid"] == 501
+    else:
+        with pytest.raises(co.ChainAbort, match="duplicate|predictor"):
+            ops.load(PICK1)
+
+
+@pytest.mark.parametrize("flags", ["--draft-kind=mtp", "--draft-kind off --draft-kind mtp", "--draft-kind none --draft-kind none"])
+def test_m5_off_tripwire_sees_equals_form_and_duplicates(ops, tmp_path, flags):
+    _router(ops, tmp_path)
+    ops._sh.ps = _worker_ps(PICK1, flags)
+    with pytest.raises(co.ChainAbort, match="predictor|duplicate"):
+        ops.load(PICK1)
+
+
+@pytest.mark.parametrize("predictor,rel", [("mtp", "c147/overlay_c147_draft_off.yaml"), ("off", "m63/overlay_m63_mtp.yaml")])
+def test_m6_overlay_refusal_happens_before_any_filesystem_write_and_exits_2(tmp_path, monkeypatch, predictor, rel):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("C147_OVERLAY", str(tmp_path / rel))
+    with pytest.raises(SystemExit) as ei:
+        R.main(CHAIN + ["--predictor", predictor])
+    assert ei.value.code == 2 and "REFUSED" in str(ei.value)
+    assert not (tmp_path / ("m63" if predictor == "mtp" else "c147")).exists()
+
+
+@pytest.mark.parametrize("argv", [CHAIN + ["--predictor", "mtp", "--out-root", "{wd}/c147/x"],
+                                  CHAIN + ["--smoke", "--out-root", "{wd}/c147"]])
+def test_m6_out_root_refusals_exit_2(tmp_path, monkeypatch, argv):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    with pytest.raises(SystemExit) as ei:
+        R.main([a.replace("{wd}", str(tmp_path)) for a in argv])
+    assert ei.value.code == 2

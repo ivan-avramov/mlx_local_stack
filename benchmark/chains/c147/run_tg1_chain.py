@@ -41,6 +41,14 @@ class Stopped(Exception):
     pass
 
 
+class Refused(SystemExit):
+    """M63 (M6): a refusal before anything is written; exits with the documented abort code 2, message kept."""
+
+    def __init__(self, msg):
+        super().__init__(msg)
+        self.code = 2
+
+
 @dataclass
 class Timers:
     poll_s: float = 1.0
@@ -746,9 +754,9 @@ def resolve_out_root(a, wd):
     base = "m63" if on else "c147"
     root = Path(a.out_root) if a.out_root else Path(wd) / (base + "-smoke" if a.smoke else base)
     if a.smoke and root.resolve() == (Path(wd) / base).resolve():
-        raise SystemExit("REFUSED: --smoke must not write into the real chain directory")
+        raise Refused("REFUSED: --smoke must not write into the real chain directory")
     if inside_other_arm(root, wd, on):
-        raise SystemExit(f"REFUSED: predictor {'mtp' if on else 'off'} must not write into {root}")
+        raise Refused(f"REFUSED: predictor {'mtp' if on else 'off'} must not write into {root}")
     return root
 
 
@@ -766,14 +774,15 @@ def main(argv=None, ops=None, timers=None, log_out=None):
     a = parse_args(sys.argv[1:] if argv is None else argv)
     wd = Path(ops.wd) if ops is not None else Path(os.environ["STACK_WORKDIR"])
     out_root = resolve_out_root(a, wd)
+    on = a.predictor == "mtp"
+    if ops is None:
+        overlay = os.environ.get("C147_OVERLAY") or str(
+            out_root / "overlay_m63_mtp.yaml" if on else wd / "c147/overlay_c147_draft_off.yaml")
+        if inside_other_arm(overlay, wd, on):       # refused before anything is created (M6)
+            raise Refused(f"REFUSED: predictor {a.predictor} overlay {overlay} lies in the other arm's directory")
     out_root.mkdir(parents=True, exist_ok=True)
     log = co.RunLog(out_root / "RUNLOG.md", out=log_out)
     if ops is None:
-        on = a.predictor == "mtp"
-        overlay = os.environ.get("C147_OVERLAY") or str(
-            out_root / "overlay_m63_mtp.yaml" if on else wd / "c147/overlay_c147_draft_off.yaml")
-        if inside_other_arm(overlay, wd, on):
-            raise SystemExit(f"REFUSED: predictor {a.predictor} overlay {overlay} lies in the other arm's directory")
         ops = (co.ChainOps(REPO, wd, overlay, log, predictor="mtp", out_root=out_root) if on
                else co.ChainOps(REPO, wd, overlay, log))
     chain = Chain(a, ops, timers or Timers(), log, load_universe(a.universe), out_root)
@@ -786,4 +795,8 @@ def main(argv=None, ops=None, timers=None, log_out=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Refused as e:
+        print(e.args[0], file=sys.stderr)
+        sys.exit(2)
