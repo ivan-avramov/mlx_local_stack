@@ -408,7 +408,11 @@ def uncharged_trailing(message):
     created, streamed = t.get("created"), t.get("streamed")
     if any(type(v) is not int for v in (created, streamed)) or streamed < created:
         raise TransportAbort("interrupted assistant evidence malformed")
-    return dict(reasoning_chars=chars["reasoning"], text_chars=chars["text"], streamed_s=(streamed - created) / 1000)
+    try:
+        streamed_s = (streamed - created) / 1000
+    except OverflowError:
+        raise TransportAbort("interrupted assistant evidence malformed") from None
+    return dict(reasoning_chars=chars["reasoning"], text_chars=chars["text"], streamed_s=streamed_s)
 
 
 def own_abort_shape(error, base_url=None):

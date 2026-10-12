@@ -522,7 +522,8 @@ def test_c154_other_outcomes_carry_no_uncharged_trailing():
 @pytest.mark.parametrize("case", ["reason", "extra_key", "rc0", "two_errors", "own_stop", "usage",
                                   "tail_message", "tail_type", "not_active", "not_last", "no_active",
                                   "no_trailing", "no_finish", "finish_stop", "content_not_list",
-                                  "text_not_str", "created_missing", "streamed_bool", "streamed_before_created"])
+                                  "text_not_str", "created_missing", "streamed_bool", "streamed_before_created",
+                                  "streamed_overflow"])
 def test_c154_anything_but_the_exact_inactivity_shape_still_aborts(case):
     error, tail, rc, outcome = INACTIVITY_ERROR, {}, 1, None
     if case == "reason":
@@ -553,6 +554,8 @@ def test_c154_anything_but_the_exact_inactivity_shape_still_aborts(case):
         tail = dict(time=dict(streamed=3_601_000, completed=3_601_050))
     elif case == "streamed_bool":
         tail = dict(time=dict(created=1_000, streamed=True, completed=3_601_050))
+    elif case == "streamed_overflow":
+        tail = dict(time=dict(created=1_000, streamed=10**400, completed=3_601_050))
     elif case == "streamed_before_created":
         tail = dict(time=dict(created=5_000, streamed=1_000, completed=3_601_050))
     g, s, export = _inactive(error, **tail)
