@@ -16,7 +16,7 @@ THE one handoff. Read this, then `docs/open-questions.md` C154/C155/C147, `docs/
   (`S, ` × 37,211) up to ≈ 79.5K tokens, i.e. a runaway the budget would have cut ≈ 2.4K tokens later.
 - **C154 RULED A (operator 2026-10-12):** record that exact shape as `nonconv_kind: client_inactivity`, scored
   row, leg continues. TTL topic stays OPEN: re-check on every opencode release.
-- **C155 OPEN:** MTP-ON tg1 arm for the agentic axis (M40 never paired it). Needs operator go.
+- **C155 GO (operator 2026-10-12), queued as PLAN M63:** MTP-ON tg1 arm for the agentic axis (M40 never paired it).
 
 ## Queue, in order
 
@@ -35,7 +35,7 @@ THE one handoff. Read this, then `docs/open-questions.md` C154/C155/C147, `docs/
    `sudo purge`; 140 W / 28 V; `nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha
    <sha> &`; `caffeinate -ims -w <chain pid>`; watch `RUNLOG.md` (`WATCH`, `ALARM`, `CORRECTION?`). Stop with
    `touch $STACK_WORKDIR/c147/STOP`. Never pool tg1 with M61 `opencode-v2-web` rows.
-4. C155 (if approved), then C144 candidates under tg1; README/ranking updates need the operator.
+4. M63 (C155): build the chain runner's MTP-ON overlay option test-first, then the ON chain. Then C144 candidates under tg1; README/ranking updates need the operator.
 
 ## Box facts (m5max-128)
 
