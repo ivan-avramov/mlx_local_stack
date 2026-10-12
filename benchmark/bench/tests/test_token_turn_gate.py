@@ -520,7 +520,9 @@ def test_c154_other_outcomes_carry_no_uncharged_trailing():
 
 
 @pytest.mark.parametrize("case", ["reason", "extra_key", "rc0", "two_errors", "own_stop", "usage",
-                                  "tail_message", "tail_type", "not_active", "not_last", "no_active"])
+                                  "tail_message", "tail_type", "not_active", "not_last", "no_active",
+                                  "no_trailing", "no_finish", "finish_stop", "content_not_list",
+                                  "text_not_str", "created_missing", "streamed_bool", "streamed_before_created"])
 def test_c154_anything_but_the_exact_inactivity_shape_still_aborts(case):
     error, tail, rc, outcome = INACTIVITY_ERROR, {}, 1, None
     if case == "reason":
@@ -539,6 +541,20 @@ def test_c154_anything_but_the_exact_inactivity_shape_still_aborts(case):
         tail = dict(error=dict(type="unknown", message="Step interrupted"))
     elif case == "not_active":
         tail = dict(id="m3")
+    elif case == "no_finish":
+        tail = dict(finish=None)
+    elif case == "finish_stop":
+        tail = dict(finish="stop")
+    elif case == "content_not_list":
+        tail = dict(content="abc")
+    elif case == "text_not_str":
+        tail = dict(content=[dict(type="reasoning", text=5)])
+    elif case == "created_missing":
+        tail = dict(time=dict(streamed=3_601_000, completed=3_601_050))
+    elif case == "streamed_bool":
+        tail = dict(time=dict(created=1_000, streamed=True, completed=3_601_050))
+    elif case == "streamed_before_created":
+        tail = dict(time=dict(created=5_000, streamed=1_000, completed=3_601_050))
     g, s, export = _inactive(error, **tail)
     if case == "two_errors":
         s.accept(dict(type="error", sessionID="s1", error=dict(INACTIVITY_ERROR)))
@@ -546,6 +562,8 @@ def test_c154_anything_but_the_exact_inactivity_shape_still_aborts(case):
         export["messages"].append(assistant("m4"))
     if case == "no_active":
         s.active = None
+    if case == "no_trailing":
+        export["messages"].pop()
     with pytest.raises(tg.TransportAbort):
         tg.reconcile(s, export, rc, outcome)
 
@@ -562,3 +580,15 @@ def test_c154_real_2_0_20_inactivity_interrupt_reconciles(tmp_path):
     assert len(g.request_usage) == 3 and g.output_tokens == 321
     u = out["uncharged_trailing"]
     assert u["text_chars"] == 0 and u["reasoning_chars"] > 0 and 3600 < u["streamed_s"] < 3700
+
+
+def test_c154_inactivity_after_a_budget_hit_keeps_both_flags():
+    g = tg.TokenTurnGate(1, context_limit=20000)           # resolved budget int(19990 * 0.8) = 15992
+    s = tg.EventStream(g)
+    request(s, "m1", output=16000)                         # an earlier request hit the thinking budget, not K
+    s.accept(event("step_start", "m2"))
+    s.accept(dict(type="error", sessionID="s1", error=dict(INACTIVITY_ERROR)))
+    tail = dict(type="assistant", id="m2", finish="error", error=dict(STEP_INTERRUPTED), tokens=None,
+                time=dict(created=1, streamed=2), content=[])
+    tg.reconcile(s, dict(messages=[assistant(output=16000), tail]), 1)
+    assert g.primary == "client_inactivity" and {"budget_hit", "client_inactivity"} <= g.flags

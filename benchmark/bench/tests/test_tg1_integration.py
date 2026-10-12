@@ -329,11 +329,12 @@ def test_c154_inactivity_interrupt_writes_a_scored_row(probe, monkeypatch, tmp_p
     (tmp_path / "rc").write_text("1")
     exported = json.loads(f["export"].read_text())
     exported["messages"][-1].update(finish="error", tokens=None,
-                                    error=dict(type="aborted", message="Step interrupted"))
+                                    error=dict(type="aborted", message="Step interrupted"),
+                                    time=dict(created=1_000, streamed=3_634_000, completed=3_634_070))
     f["export"].write_text(json.dumps(exported))
     assert f["run"]() == 0
     row = json.loads(f["out"].read_text())
     assert row["nonconv_kind"] == "client_inactivity" and not row["converged"]
     assert row["opencode_rc"] == 1 and row["gate"]["requests_completed"] == 1
     assert row["reconciliation"]["trailing"] == "interrupted"
-    assert row["reconciliation"]["uncharged_trailing"]["reasoning_chars"] == 0
+    assert row["reconciliation"]["uncharged_trailing"] == dict(reasoning_chars=0, text_chars=0, streamed_s=3633.0)

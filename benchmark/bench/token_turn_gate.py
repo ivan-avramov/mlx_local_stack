@@ -29,7 +29,9 @@ PRECEDENCE = (
     "budget_hit",
 )
 # C154 (P280): pinned 2.0.20 `run` interrupts an execution after 60 min without a durable session event (hard-coded
-# TTL); it then emits exactly this part-less error and exits 1, and exports the in-flight message as below, no usage.
+# TTL); it then emits this part-less error and exits 1. Only the observed mid-stream shape is scored: the in-flight
+# message exported as below with no usage. Other variants (interrupt inside a tool after the provider finished, with
+# usage; error suppressed after an earlier error) are not this shape and still abort.
 INACTIVITY_ERROR = {"type": "aborted", "message": "Session interrupted: inactivity"}
 INACTIVITY_TRAILING_ERROR = {"type": "aborted", "message": "Step interrupted"}
 
@@ -391,15 +393,22 @@ ABORT_UNABLE = "Transport: Unable to connect. Is the computer able to access the
 
 
 def uncharged_trailing(message):
-    """C154 evidence for an interrupted message whose usage never reached the client: persisted size and seconds."""
-    content = message.get("content") or []
-    chars = lambda kind: sum(len(c.get("text") or "") for c in content if isinstance(c, dict) and c.get("type") == kind)
-    t = message.get("time") or {}
-    streamed = t.get("streamed")
-    created = t.get("created")
-    return dict(reasoning_chars=chars("reasoning"), text_chars=chars("text"),
-                streamed_s=(streamed - created) / 1000 if isinstance(streamed, int) and isinstance(created, int)
-                else None)
+    """C154 evidence for an interrupted message whose usage never reached the client: persisted size and seconds.
+    Fails closed: the evidence must be auditable."""
+    content = message.get("content")
+    t = message.get("time")
+    if not isinstance(content, list) or not isinstance(t, dict):
+        raise TransportAbort("interrupted assistant evidence malformed")
+    chars = dict(reasoning=0, text=0)
+    for c in content:
+        if isinstance(c, dict) and c.get("type") in chars:
+            if not isinstance(c.get("text"), str):
+                raise TransportAbort("interrupted assistant evidence malformed")
+            chars[c["type"]] += len(c["text"])
+    created, streamed = t.get("created"), t.get("streamed")
+    if any(type(v) is not int for v in (created, streamed)) or streamed < created:
+        raise TransportAbort("interrupted assistant evidence malformed")
+    return dict(reasoning_chars=chars["reasoning"], text_chars=chars["text"], streamed_s=(streamed - created) / 1000)
 
 
 def own_abort_shape(error, base_url=None):
