@@ -21,6 +21,7 @@ CAMPAIGN_POLICY_SHA = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a
 SCAFFOLD = "opencode-v2-web-tg1"
 PICK1 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 PICK2 = "Qwen3.8-27B-mlx-uniform-4bit"
+GRADER_IMAGE = "aider-benchmark"     # P290: the Go grader image, as structured_grade/opencode_common run it
 BUSY = ("mlx_vlm.server", "mlx_vlm/server", "mlx-serve start", "session_cache_probe", "opencode run",
         "run.py generate", "run_opencode_probe", "run_agentbench_os", "runserver.sh")
 SELF_MARKERS = ("run_tg1_chain.py", "run_inject.py", "drive_chain.sh", "drive_inject.sh")
@@ -256,14 +257,22 @@ class ChainOps:
         return bool(ok)
 
     def docker_ok(self):
-        """P290: Go grading runs in docker; the daemon must answer `docker info` (missing binary, error or timeout = down)."""
-        try:
-            r = self.sh(["docker", "info", "--format", "{{.ServerVersion}}"], timeout=30)
-            version = (r.stdout or "").strip() if r.returncode == 0 else ""
-        except (OSError, subprocess.TimeoutExpired):
-            version = ""
-        self.log(f"GATE docker={version or 'DOWN'} -> {'ok' if version else 'FAIL'}")
-        return bool(version)
+        """P290: Go grading runs in docker; with the probes' own environment (D1), the daemon must answer `docker info`
+        and the grader image must exist (D2). A missing binary, an error or a timeout = down."""
+        env = self.env_base()
+
+        def answer(cmd):
+            try:
+                r = self.sh(cmd, timeout=30, env=env)
+                return (r.stdout or "").strip() if r.returncode == 0 else ""
+            except (OSError, subprocess.TimeoutExpired):
+                return ""
+        version = answer(["docker", "info", "--format", "{{.ServerVersion}}"])
+        image = answer(["docker", "image", "inspect", GRADER_IMAGE, "--format", "{{.Id}}"]) if version else ""
+        ok = bool(version and image)
+        self.log(f"GATE docker={version or 'DOWN'} {GRADER_IMAGE}={'present' if image else 'MISSING'}"
+                 f" -> {'ok' if ok else 'FAIL'}")
+        return ok
 
     def free_mem_mb(self):
         return parse_free_mb(self.sh(["vm_stat"]).stdout)

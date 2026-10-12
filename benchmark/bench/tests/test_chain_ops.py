@@ -41,14 +41,20 @@ class Sh:
         self.gate_rc, self.gate_receipt, self.gate_timeout = 0, {"pass": True, "run_id": "r"}, False
         self.receipt = tmp_path / "session_gate/a4_v2_latest.json"
         self.docker = ("29.4.0\n", 0)         # P290: (stdout, rc) | an exception instance to raise
+        self.image = ("sha256:abc\n", 0)      # P290 D2: `docker image inspect aider-benchmark:latest`
+        self.docker_env = []
 
     def __call__(self, cmd, **kw):
         self.calls.append(cmd)
         s = " ".join(cmd) if isinstance(cmd, list) else cmd
         if s.startswith("docker info"):
+            self.docker_env.append(kw.get("env"))
             if isinstance(self.docker, BaseException):
                 raise self.docker
             return co.Result(self.docker[0], "", self.docker[1])
+        if s.startswith("docker image inspect"):
+            self.docker_env.append(kw.get("env"))
+            return co.Result(self.image[0], "", self.image[1])
         if "pmset -g ac" in s:
             return co.Result(self.ac)
         if "pmset -g batt" in s:
@@ -923,3 +929,24 @@ def test_docker_ok(ops, docker, ok):
     ops._sh.docker = docker
     assert ops.docker_ok() is ok
     assert any(ln.endswith("-> " + ("ok" if ok else "FAIL")) and "GATE docker=" in ln for ln in ops._lines)
+
+
+def test_docker_ok_uses_the_probe_environment(ops, tmp_path):
+    # D1: the same env_base() every probe child inherits (.env merged), so CLI/socket/context cannot differ
+    assert ops.docker_ok()
+    assert ops._sh.docker_env and all(e == ops.env_base() for e in ops._sh.docker_env)
+
+
+@pytest.mark.parametrize("image", [("", 1), ("\n", 0)])
+def test_docker_ok_requires_the_grader_image(ops, image):
+    # D2: Go grading needs the aider-benchmark image; a reachable daemon without it is still FAIL
+    ops._sh.image = image
+    assert ops.docker_ok() is False
+    assert any("aider-benchmark=MISSING" in ln and ln.endswith("-> FAIL") for ln in ops._lines)
+
+
+def test_gate_image_is_the_image_the_graders_run():
+    from bench import opencode_common, structured_grade
+    from pathlib import Path as _P
+    assert co.GRADER_IMAGE == opencode_common._AIDER_IMAGE
+    assert f'"{co.GRADER_IMAGE}",' in _P(structured_grade.__file__).read_text()

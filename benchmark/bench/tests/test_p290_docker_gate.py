@@ -2,7 +2,7 @@
 
 The C154 smoke rehearsal's first Go leg aborted ("container cleanup uncertain") because OrbStack had not restarted
 after a reboot; nothing checked docker before the router, the model load and a Python pilot had already run."""
-from bench.tests.test_c147_chain_runner import CHAIN, PILOT, env, log_has, run   # noqa: F401  (fixture)
+from bench.tests.test_c147_chain_runner import CHAIN, PILOT, chain_json, env, log_has, run   # noqa: F401
 
 
 def test_docker_down_aborts_before_the_router_when_go_legs_are_scheduled(env):
@@ -38,3 +38,13 @@ def test_go_launches_are_visible_in_the_invocation_log_when_docker_is_up(env):
     # guards the negative assertion above against passing vacuously
     assert run(env, CHAIN) == 0
     assert "opencode_go" in (env["ops"].state / "invocations.jsonl").read_text()
+
+
+def test_docker_lost_before_a_restarted_go_leg_blocks_the_relaunch(env):
+    # D3: the Go leg aborts once (block restart), docker is down when the restarted Go attempt would launch
+    env["ops"].docker = [True, True, False]         # start gate, first Go launch, restarted Go launch
+    rc = run(env, CHAIN, plan=["normal", "normal", "abort_after_n", "normal"], extra_env={"FAKE_N": "1"})
+    assert rc == 2 and log_has(env, "docker gate FAIL before launch")
+    inv = (env["ops"].state / "invocations.jsonl").read_text().splitlines()
+    assert len(chain_json(env)["restarts"]) == 1
+    assert sum("opencode_go" in ln for ln in inv) == 1          # the restarted Go attempt never launched
