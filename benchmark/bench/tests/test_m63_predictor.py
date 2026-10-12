@@ -176,3 +176,95 @@ def test_drive_m63_passes_the_arm_and_its_own_out_root(tmp_path, smoke):
     argv = (d / "chain.out").read_text().splitlines()
     assert argv[0].endswith("run_tg1_chain.py") and argv[1:len(args) + 1] == args
     assert argv[-4:] == ["--predictor", "mtp", "--out-root", str(d)]
+
+
+# --------------------------------------------------------------------------- review round 1 (M1-M3)
+def test_m1_reused_overlay_with_a_tampered_body_is_refused(tmp_path):
+    o, reg = _ops(tmp_path, tmp_path / "m63/overlay_m63_mtp.yaml", "mtp")
+    o.ensure_overlay()
+    path = Path(o.overlay)
+    head, body = path.read_text().split("\n", 1)
+    path.write_text(head + "\n" + body.replace("draft_kind: mtp", "draft_kind: suffix", 1))
+    with pytest.raises(co.ChainAbort, match="stale"):
+        o.ensure_overlay()
+
+
+def test_m1_reused_overlay_of_a_registry_without_the_predictor_is_refused(tmp_path):
+    o, reg = _ops(tmp_path, tmp_path / "m63/overlay_m63_mtp.yaml", "mtp")
+    bad = SHIPPED.replace(f"  draft_model: caslca/{PICK2}-mtp-drafter\n", "")
+    reg.write_text(bad)
+    Path(o.overlay).parent.mkdir(parents=True)
+    Path(o.overlay).write_text(co.overlay_header("mtp", bad) + bad)     # a well-formed overlay of an invalid registry
+    with pytest.raises(co.ChainAbort, match="predictor"):
+        o.ensure_overlay()
+
+
+@pytest.mark.parametrize("predictor,rel", [("mtp", "c147/m63"), ("mtp", "c147-smoke/x"), ("off", "m63/c147"),
+                                           ("off", "m63-smoke/deep/x")])
+def test_m2_nested_roots_inside_the_other_arm_are_refused(tmp_path, predictor, rel):
+    a = R.parse_args(CHAIN + ["--predictor", predictor, "--out-root", str(tmp_path / rel)])
+    with pytest.raises(SystemExit, match="REFUSED"):
+        R.resolve_out_root(a, tmp_path)
+
+
+def test_m2_symlinked_root_into_the_other_arm_is_refused(tmp_path):
+    (tmp_path / "c147").mkdir()
+    (tmp_path / "elsewhere").symlink_to(tmp_path / "c147")
+    a = R.parse_args(CHAIN + ["--predictor", "mtp", "--out-root", str(tmp_path / "elsewhere/run")])
+    with pytest.raises(SystemExit, match="REFUSED"):
+        R.resolve_out_root(a, tmp_path)
+
+
+@pytest.mark.parametrize("predictor,rel", [("mtp", "c147/overlay_c147_draft_off.yaml"), ("off", "m63/overlay_m63_mtp.yaml")])
+def test_m2_overlay_override_inside_the_other_arm_is_refused(tmp_path, monkeypatch, predictor, rel):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("C147_OVERLAY", str(tmp_path / rel))
+    built = []
+    monkeypatch.setattr(R.co, "ChainOps", lambda *a, **k: built.append((a, k)) or pytest.fail("ChainOps built"))
+    with pytest.raises(SystemExit, match="REFUSED"):
+        R.main(CHAIN + ["--predictor", predictor])
+    assert not built
+
+
+def test_m3_production_wiring_selects_the_mtp_overlay_out_root_and_child_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    monkeypatch.delenv("C147_OVERLAY", raising=False)
+    built = {}
+    real = co.ChainOps
+
+    class Stop(Exception):
+        pass
+
+    def capture(*a, **k):
+        built["ops"] = real(*a, **k)
+        raise Stop
+
+    monkeypatch.setattr(R.co, "ChainOps", capture)
+    with pytest.raises(Stop):
+        R.main(CHAIN + ["--predictor", "mtp"])
+    o = built["ops"]
+    assert o.predictor == "mtp" and o.overlay == str(tmp_path / "m63/overlay_m63_mtp.yaml")
+    assert o.a4_log_dir == tmp_path / "m63" and o.tmpdir == tmp_path / "m63/tmp"
+    env = o.env_base()                                   # what every probe child and the router inherit (M50/C35)
+    assert env["MLX_SERVE_CONFIG"] == o.overlay and env["TMPDIR"] == str(tmp_path / "m63/tmp")
+
+
+def test_m3_production_wiring_off_is_the_c147_layout(tmp_path, monkeypatch):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    monkeypatch.delenv("C147_OVERLAY", raising=False)
+    built = {}
+    real = co.ChainOps
+
+    class Stop(Exception):
+        pass
+
+    def capture(*a, **k):
+        built["ops"] = real(*a, **k)
+        raise Stop
+
+    monkeypatch.setattr(R.co, "ChainOps", capture)
+    with pytest.raises(Stop):
+        R.main(CHAIN)
+    o = built["ops"]
+    assert o.predictor == "off" and o.overlay == str(tmp_path / "c147/overlay_c147_draft_off.yaml")
+    assert o.tmpdir == tmp_path / "c147/tmp" and o.env_base()["MLX_SERVE_CONFIG"] == o.overlay

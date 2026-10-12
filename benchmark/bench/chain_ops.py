@@ -74,6 +74,15 @@ def overlay_header(predictor, raw):
             f"kept). NEVER commit; never point the daily-driver router at it.\n")
 
 
+def require_mtp(registry, names):
+    """M63: every named model declares the shipped mtp predictor (draft_kind mtp + a draft_model)."""
+    by_name = {m.get("name"): m for m in registry.get("models") or []}
+    missing = [n for n in names
+               if (by_name.get(n) or {}).get("draft_kind") != "mtp" or not (by_name.get(n) or {}).get("draft_model")]
+    if missing:
+        raise ChainAbort(f"M63 overlay: registry lacks the mtp predictor for {missing}")
+
+
 def make_overlay(src, dst, predictor="off", require=()):
     """Draft-OFF bench overlay. Recipe copied from benchmark/chains/m59/make_overlay.py (M59): the registry with
     every draft_*/moe_expand/mtp_verify_scan field removed. NEVER commit; never point the daily driver at it.
@@ -83,11 +92,7 @@ def make_overlay(src, dst, predictor="off", require=()):
     raw = Path(src).read_text()
     d = yaml.safe_load(raw)
     if predictor == "mtp":
-        by_name = {m.get("name"): m for m in d["models"]}
-        missing = [n for n in require
-                   if (by_name.get(n) or {}).get("draft_kind") != "mtp" or not (by_name.get(n) or {}).get("draft_model")]
-        if missing:
-            raise ChainAbort(f"M63 overlay: registry lacks the mtp predictor for {missing}")
+        require_mtp(d, require)
         dst = Path(dst)
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(overlay_header("mtp", raw) + raw)
@@ -254,11 +259,13 @@ class ChainOps:
 
     def ensure_overlay(self):
         if self.predictor == "mtp":
+            import yaml
+            raw = self.registry.read_text()
+            require_mtp(yaml.safe_load(raw), (PICK1, PICK2))        # on every use, reused overlay or not
             path = Path(self.overlay)
             if path.is_file():
-                head = path.read_text().split("\n", 1)[0] + "\n"
-                if head != overlay_header("mtp", self.registry.read_text()):
-                    raise ChainAbort(f"M63 overlay stale: {path} was not generated from the current registry")
+                if path.read_text() != overlay_header("mtp", raw) + raw:      # the whole file, not just its header
+                    raise ChainAbort(f"M63 overlay stale: {path} is not the current registry verbatim")
             else:
                 make_overlay(self.registry, self.overlay, predictor="mtp", require=(PICK1, PICK2))
             return self.overlay

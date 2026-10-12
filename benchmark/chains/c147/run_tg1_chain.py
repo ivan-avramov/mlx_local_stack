@@ -747,10 +747,19 @@ def resolve_out_root(a, wd):
     root = Path(a.out_root) if a.out_root else Path(wd) / (base + "-smoke" if a.smoke else base)
     if a.smoke and root.resolve() == (Path(wd) / base).resolve():
         raise SystemExit("REFUSED: --smoke must not write into the real chain directory")
-    other = ("c147", "c147-smoke") if on else ("m63", "m63-smoke")
-    if any(root.resolve() == (Path(wd) / d).resolve() for d in other):
+    if inside_other_arm(root, wd, on):
         raise SystemExit(f"REFUSED: predictor {'mtp' if on else 'off'} must not write into {root}")
     return root
+
+
+def inside_other_arm(path, wd, on):
+    """M63: True when `path` (symlinks resolved) is, or lies under, a directory of the other predictor arm."""
+    p = Path(path).resolve()
+    for d in (("c147", "c147-smoke") if on else ("m63", "m63-smoke")):
+        other = (Path(wd) / d).resolve()
+        if p == other or other in p.parents:
+            return True
+    return False
 
 
 def main(argv=None, ops=None, timers=None, log_out=None):
@@ -760,12 +769,13 @@ def main(argv=None, ops=None, timers=None, log_out=None):
     out_root.mkdir(parents=True, exist_ok=True)
     log = co.RunLog(out_root / "RUNLOG.md", out=log_out)
     if ops is None:
-        if a.predictor == "mtp":
-            overlay = os.environ.get("C147_OVERLAY") or str(out_root / "overlay_m63_mtp.yaml")
-            ops = co.ChainOps(REPO, wd, overlay, log, predictor="mtp", out_root=out_root)
-        else:
-            overlay = os.environ.get("C147_OVERLAY") or str(wd / "c147/overlay_c147_draft_off.yaml")
-            ops = co.ChainOps(REPO, wd, overlay, log)
+        on = a.predictor == "mtp"
+        overlay = os.environ.get("C147_OVERLAY") or str(
+            out_root / "overlay_m63_mtp.yaml" if on else wd / "c147/overlay_c147_draft_off.yaml")
+        if inside_other_arm(overlay, wd, on):
+            raise SystemExit(f"REFUSED: predictor {a.predictor} overlay {overlay} lies in the other arm's directory")
+        ops = (co.ChainOps(REPO, wd, overlay, log, predictor="mtp", out_root=out_root) if on
+               else co.ChainOps(REPO, wd, overlay, log))
     chain = Chain(a, ops, timers or Timers(), log, load_universe(a.universe), out_root)
     try:
         return chain.run()

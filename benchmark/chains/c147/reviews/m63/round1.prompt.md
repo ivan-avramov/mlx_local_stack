@@ -4,7 +4,7 @@ Context. The tg1 chain runner (benchmark/chains/c147/run_tg1_chain.py, benchmark
 docs/specs/c147-tg1-chain-clearance.md) drives k=2 agentic chains predictor-OFF for model selection. M63 (spec
 docs/specs/m63-mtp-on-tg1-arm.md; docs/open-questions.md C155; AGENTS.md rules on predictor states and the C71 rule
 in docs/PLAN.md Phase 2) adds the predictor-ON arm: the same schedule with the shipped MTP registry, paired to the
-OFF chain. The change under review is the HEAD commit of this branch (`git show HEAD`).
+OFF chain. The change under review is commit 4d7a6e0b on this branch (`git show 4d7a6e0b`; its parent is the OFF-only runner).
 
 A live OFF chain is running on this box from another checkout. Run ONLY these mocked suites (fake probe, no router,
 no model, no real opencode client):
