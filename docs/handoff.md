@@ -19,7 +19,7 @@ THE one handoff. Read this, then `docs/open-questions.md` C154/C155/C147, `docs/
 
 ## Queue, in order
 
-1. **P223 tg1 chain (OFF) — RUNNING since 2026-10-12T18:16Z** (driver pid 26034, `caffeinate -ims -w`; suite 4527 passed on the merged `main` before launch; docker gate ok, A4 ok; progress: s1 pick-1 python pilot 5 + full 22/22 passed, 0 nonconv, validated 19:20Z; s1 pick-1 go 20/21 validated 22:04Z, 1 `client_inactivity` (`go/alphametics`, loop, ≈ 96 % of budget); s1 pick-2 block next) — `nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha
+1. **P223 tg1 chain (OFF) — RUNNING since 2026-10-12T18:16Z** (driver pid 26034, `caffeinate -ims -w`; suite 4527 passed on the merged `main` before launch; docker gate ok, A4 ok; progress: s1 pick-1 python pilot 5 + full 22/22 passed, 0 nonconv, validated 19:20Z; s1 pick-1 go 20/21 validated 22:04Z, 1 `client_inactivity` (`go/alphametics`, loop, ≈ 96 % of budget); s1 pick-2 python pilot 4/5 (`book-store` `client_inactivity`, genuine, 89 % of budget), full 22 running 23:29Z) — `nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha
    8d1b4c84… &` + `caffeinate -ims -w <pid>`; `$STACK_WORKDIR/c147/` (≈ 20–24 h). Preflight: 140 W / 28 V,
    `docker info`, :8000 free, no busy procs. Watch `RUNLOG.md`; count `client_inactivity` rows (C154 standing item:
    tokens via the model tokenizer from the export's trailing reasoning). Stop: `touch $STACK_WORKDIR/c147/STOP`.
