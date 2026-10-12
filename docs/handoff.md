@@ -1,58 +1,55 @@
-# Handoff — 2026-10-12: P223 chain STOPPED on P280 (opencode 60-min inactivity interrupt); C154 ruled A, probe fix in progress; box crashed idle afterwards
+# Handoff — 2026-10-12: C154 + P290 + M63 merged and pushed; fresh P223 tg1 chain launching on m5max-128; M63 ON chain pre-approved to follow
 
-THE one handoff. Read this, then `docs/open-questions.md` C154/C155/C147, `docs/specs/c147-tg1-chain-clearance.md`
-(rev 3 + §9), `benchmark/chains/c147/README.md`, `docs/PLAN.md` (M62 row) and `benchmark/chains/README.md`.
+THE one handoff. Read this, then `docs/open-questions.md` C154/C155/C147, `docs/specs/m63-mtp-on-tg1-arm.md`,
+`docs/specs/c147-tg1-chain-clearance.md` (rev 3 + §9, B12), `benchmark/chains/c147/README.md`, `docs/PLAN.md`
+(M62, M63 rows).
 
 ## State of the world
 
-- **Box `m5max-128`.** Crashed 2026-10-11 ≈ 23:14 local while idle (no panic report); nothing was running. :8000
-  free, no mlx-serve/opencode/chain processes. `main` is ahead of origin (unpushed).
-- **P223 chain STOPPED, exit 3** (`$STACK_WORKDIR/c147/`, `chain.rc` = 3, 2026-10-12T03:25Z). s1 pick 1
-  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`: Python leg 22/22 passed; Go leg aborted on `go/alphametics`
-  (`error event / Step.Failed`). Block archived under `c147/s1/incomplete/…20261012T032320`. The archive cannot be
-  reused: the probe sha changes with the C154 fix, so the chain restarts from scratch.
-- **Cause (P280, C154):** opencode 2.0.20 interrupts any request running 60 min without a durable session event
-  (hard-coded TTL; streamed deltas don't count). The request was ≈ 5K tokens of reasoning, then a verbatim loop
-  (`S, ` × 37,211) up to ≈ 79.5K tokens, i.e. a runaway the budget would have cut ≈ 2.4K tokens later.
-- **C154 RULED A (operator 2026-10-12):** record that exact shape as `nonconv_kind: client_inactivity`, scored
-  row, leg continues. TTL topic stays OPEN: re-check on every opencode release.
-- **C155 GO (operator 2026-10-12), queued as PLAN M63:** MTP-ON tg1 arm for the agentic axis (M40 never paired it).
+- **Box `m5max-128`.** Crashed 2026-10-11 ≈ 23:14 idle (no panic report); OrbStack did not restart (P291; the
+  operator turned start-at-login ON 2026-10-12). Docker 29.4.0, `aider-benchmark` image present.
+- **Code on `main` (pushed 2026-10-12):** C154 (`client_inactivity`, reviewed ×2), P290 (docker gate before Go legs,
+  reviewed), M63 (`--predictor mtp`, own out-root `m63/`, shipped-predictor worker tripwire, reviewed ×4 → cleared).
+  Probe sha `8d1b4c84c14f8dd20a8a9f1883b177813130c5057bb09886df61d39cdb116562` (P290/M63 do not touch the probe);
+  `scaffold_policy_sha256` `ba86ba16…` (campaign pin). Reviews: `benchmark/chains/c147/reviews/{c154,p290,m63}/`.
+- **C154 smoke chain PASS 2026-10-12** (`$STACK_WORKDIR/c147-smoke/`, `chain s1 reload --smoke`, rc 0, attempt 2;
+  attempt 1 aborted on docker down, archived `archive.c154-attempt1-docker-down/`). Live `client_inactivity`:
+  `Qwen3.8-27B-mlx-uniform-4bit` `python/book-store`, 75,787 tokens (93 % of budget), genuine reasoning, row scored.
+- **Archives:** first P223 attempt `c147/archive.p223-attempt1-p280/` (stopped on P280); not reusable (probe sha).
 
 ## Queue, in order
 
-1. **C154 probe fix (P282)**, test-first: fixture = the real `go__alphametics` events + export
-   (`$STACK_WORKDIR/opencode_transcripts/…s1.opencode_go.20261011T192210-3b124bfe2244/`). Predicate: exactly one
-   native error `{"type":"aborted","message":"Session interrupted: inactivity"}`, rc 1, not our own stop,
-   trailing export assistant = the live active message with `finish: "error"`, `error.type == "aborted"`,
-   `tokens: null`. Any other interrupt reason still aborts. Add `client_inactivity` to `PRECEDENCE`
-   (no `POLICY` change → `scaffold_policy_sha256` unchanged). Evidence: trailing reasoning/text chars and
-   streamed seconds, labelled uncharged. Update `fake_probe.py`, chain validation and the M62 spec/metrics docs if
-   they enumerate kinds. Full suite, then Cursor `gpt-5.6-sol-high` cold review (`cursor-agent -p --output-format
-   text --model gpt-5.6-sol-high --mode plan --sandbox enabled --force --trust --workspace <repo>`), records
-   under `benchmark/chains/c147/reviews/c154/`.
-2. **Smoke chain** (`drive_chain.sh chain s1 reload --smoke`, own out-root `c147-smoke/`) with the new probe sha.
-3. **Fresh P223 chain:** `--print-identity` → new `probe_code_sha256`; archive the stopped `c147/` contents;
-   `sudo purge`; 140 W / 28 V; `nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha
-   <sha> &`; `caffeinate -ims -w <chain pid>`; watch `RUNLOG.md` (`WATCH`, `ALARM`, `CORRECTION?`). Stop with
-   `touch $STACK_WORKDIR/c147/STOP`. Never pool tg1 with M61 `opencode-v2-web` rows.
-4. M63 (C155): build the chain runner's MTP-ON overlay option test-first, then the ON chain. Then C144 candidates under tg1; README/ranking updates need the operator.
+1. **P223 tg1 chain (OFF)** — `nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha
+   8d1b4c84… &` + `caffeinate -ims -w <pid>`; `$STACK_WORKDIR/c147/` (≈ 20–24 h). Preflight: 140 W / 28 V,
+   `docker info`, :8000 free, no busy procs. Watch `RUNLOG.md`; count `client_inactivity` rows (C154 standing item:
+   tokens via the model tokenizer from the export's trailing reasoning). Stop: `touch $STACK_WORKDIR/c147/STOP`.
+2. **M63 ON arm — operator pre-approved 2026-10-12 ("go for the run at first opportunity … without asking"):**
+   after P223 ends, `nohup benchmark/chains/c147/drive_m63.sh chain s1 reload --smoke --probe-code-sha <sha> &`
+   (`$STACK_WORKDIR/m63-smoke/`), then `drive_m63.sh chain s1 s2 reload --probe-code-sha <sha>` (`m63/`, ≈ 10–12 h).
+   Same preflight. Stop and report on any abort or pick-relevant result.
+3. Analysis per M63 spec (paired ON−OFF, TOST ±5pp, with/without `client_inactivity` items); README/ranking
+   changes need the operator. Then C144 candidates under tg1.
+
+## Rules for this session's work
+
+- Never edit the main checkout's runner/`chain_ops`/probe files while a chain runs (`chain.json` re-hashes them per
+  write; probe identity files abort the next leg). Build in a worktree under `$STACK_WORKDIR/worktrees/`, merge after.
+- Never run the full suite while a chain runs (real-client tests spawn opencode; the chain's checks see them).
+- Pushes need operator approval each time (the 2026-10-12 push covered that one push).
 
 ## Box facts (m5max-128)
 
-Go grading needs `aider-benchmark:latest` (P271) and `~/.orbstack/bin` on PATH (config.sh); `sudo purge` before
-inject runs (P275); hold `caffeinate` for long runs. Open: P274 load-sensitive real-client tests, P275
-free-memory metric, README:802 cross-box wording vs C153 (reconcile). mlx-serve fork golden fixture refresh
-owed (fork-only). C149 (worker-side `requests_cancelled` receipt) awaits the operator.
+Go grading: `aider-benchmark` + `~/.orbstack/bin` on PATH; `sudo purge` before inject runs (P275); `caffeinate` for long
+runs. Load-sensitive real-client tests flake under the full suite (P274/P288: `test_c147_cancel` long-tool-call,
+`test_m61_p202` cheat rerun); each passes alone. Open: P275 free-memory metric, README:802 cross-box wording vs C153,
+mlx-serve fork golden fixture refresh, C149 awaiting the operator. P290 note: OFF-side tripwires got stricter with
+M63 (exact `--model`, strict flag parsing); a refusal there is an early clean abort, never wrong rows.
 
 ## Rules learned
 
-- opencode 2.0.20: SIGTERM the client first (SIGKILL loses the in-flight message). Write/edit input is `path`;
-  shell is `{command, workdir[, timeout, background]}`.
-- opencode 2.0.20 `run`: a non-`user` execution interrupt sets exit 1 and emits
-  `{"type":"aborted","message":"Session interrupted: <reason>"}`; the interrupted message carries no usage, and
-  the worker counts no tokens for a closed stream. The persisted reasoning text is the only size evidence.
-- A long "think" can be a verbatim loop; inspect the trailing message text before calling it reasoning.
-- Lowering a per-process memory limit below ≈ 400 MiB kills opencode's own server child.
+- opencode 2.0.20: 60-min inactivity TTL per request (C154); SIGTERM the client first; write/edit input `path`.
+- A long think may be a verbatim loop OR genuine reasoning; tokenize the trailing reasoning before calling it either.
+- After a reboot, check `docker info` before any Go leg.
 
-Next decision id C156; discussion ids continue from P286 (P281–P284 this session: A approved, build, docs,
-restart precautions; P285 = C155 MTP-ON arm).
+Next decision id C156; discussion ids continue from P293 (P286 uncharged tokens, P287 TTL vs "progress", P288 flaky
+real-client tests, P289 M63 build, P290 docker gate, P291 OrbStack, P292 merge before P223).
