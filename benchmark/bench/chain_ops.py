@@ -428,9 +428,12 @@ class ChainOps:
 
     # -- worker
     def worker_cmdlines(self, model):
+        """mlx_vlm.server workers whose `--model` names `model` (path's last component; M7: never a substring hit,
+        e.g. on a drafter id that contains the model name)."""
         out = self.sh(["ps", "-axo", "pid=,command="]).stdout
         return [ln.strip() for ln in out.splitlines()
-                if "mlx_vlm.server" in ln and model in ln and "uv run" not in ln]
+                if "mlx_vlm.server" in ln and "uv run" not in ln
+                and any((v or "").rstrip("/").split("/")[-1] == model for v in argv_flag(ln.split(), "--model"))]
 
     def worker_ident(self, model):
         w = self.worker_cmdlines(model)
@@ -463,6 +466,8 @@ class ChainOps:
         if len(w) != 1:
             raise ChainAbort(f"TRIPWIRE: expected one worker for {model}, found {len(w)}")
         toks = w[0].split()
+        if len(argv_flag(toks, "--model")) != 1:
+            raise ChainAbort(f"TRIPWIRE: worker --model is not a single flag: {w[0][:300]}")
         kinds = argv_flag(toks, "--draft-kind")
         if len(kinds) > 1:
             raise ChainAbort(f"TRIPWIRE: worker has a duplicate --draft-kind {kinds}: {w[0][:300]}")
@@ -480,8 +485,9 @@ class ChainOps:
         return ident
 
     def require_shipped_predictor(self, model, toks, kind, cmdline):
-        """M63 (M4): an ON worker serves exactly the served overlay's predictor for `model`: --draft-kind mtp, its
-        --draft-model, and its --mtp-verify-scan when the entry sets one (mlx-serve omits per_query/unset)."""
+        """M63 (M4, M7, M8): an ON worker serves exactly the served overlay's entry for `model`: --model its hf_path,
+        --draft-kind mtp, its --draft-model, and every other predictor flag exactly as mlx-serve's _build_command
+        emits it (--mtp-verify-scan unless unset/per_query, --mtp-verify-ab with it, suffix knobs only when > 0)."""
         import yaml
         try:
             served = yaml.safe_load(Path(self.overlay).read_text()) or {}
@@ -490,6 +496,8 @@ class ChainOps:
         entry = next((m for m in served.get("models") or [] if m.get("name") == model), None)
         if kind != "mtp" or not entry or entry.get("draft_kind") != "mtp":
             raise ChainAbort(f"TRIPWIRE: worker lacks the mtp predictor: {cmdline[:300]}")
+        if argv_flag(toks, "--model") != [entry.get("hf_path")]:
+            raise ChainAbort(f"TRIPWIRE: worker --model {argv_flag(toks, '--model')} != registry {entry.get('hf_path')!r}")
         drafters = argv_flag(toks, "--draft-model")
         if drafters != [entry.get("draft_model")]:
             raise ChainAbort(f"TRIPWIRE: worker --draft-model {drafters} != registry {entry.get('draft_model')!r}")
@@ -498,6 +506,16 @@ class ChainOps:
         scans = argv_flag(toks, "--mtp-verify-scan")
         if scans != want:
             raise ChainAbort(f"TRIPWIRE: worker --mtp-verify-scan {scans} != registry {want}")
+        ab = sum(t == "--mtp-verify-ab" or t.startswith("--mtp-verify-ab=") for t in toks)
+        if ab != (1 if want and entry.get("mtp_verify_ab") is True else 0):
+            raise ChainAbort(f"TRIPWIRE: worker --mtp-verify-ab x{ab} != registry mtp_verify_ab={entry.get('mtp_verify_ab')!r}")
+        for key, flag in (("draft_block_size", "--draft-block-size"), ("suffix_min_match", "--suffix-min-match"),
+                          ("draft_cooldown", "--draft-cooldown")):
+            v = entry.get(key) or 0
+            expect = [str(v)] if isinstance(v, int) and v > 0 else []
+            got = argv_flag(toks, flag)
+            if got != expect:
+                raise ChainAbort(f"TRIPWIRE: worker {flag} {got} != registry {key}={v!r}")
 
     def _require_own_router(self):
         """None when the sole :8000 listener IS the recorded router (pid + create_time); else the refusal reason."""

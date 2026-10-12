@@ -14,9 +14,10 @@ from bench.tests.test_c147_chain_runner import CHAIN, R, chain_json, env, log_ha
 from bench.tests.test_chain_ops import _codes, _mut_man, _router, _worker_ps, leg_env, ops  # noqa: F401
 
 PICK1, PICK2 = co.PICK1, co.PICK2
-SHIPPED = (f"mlx_port: 8091\nmodels:\n- name: {PICK1}\n  mtp_verify_scan: joint_v1\n  draft_kind: mtp\n"
-           f"  draft_model: caslca/{PICK1}-mtp-drafter\n  keep: 1\n- name: {PICK2}\n  draft_kind: mtp\n"
-           f"  draft_model: caslca/{PICK2}-mtp-drafter\n")
+SHIPPED = (f"mlx_port: 8091\nmodels:\n- name: {PICK1}\n  hf_path: caslca/{PICK1}\n  type: vision\n"
+           f"  mtp_verify_scan: joint_v1\n  draft_kind: mtp\n"
+           f"  draft_model: caslca/{PICK1}-mtp-drafter\n  keep: 1\n- name: {PICK2}\n  hf_path: caslca/{PICK2}\n"
+           f"  type: vision\n  draft_kind: mtp\n  draft_model: caslca/{PICK2}-mtp-drafter\n")
 
 
 # --------------------------------------------------------------------------- arguments / out-root
@@ -77,7 +78,8 @@ def test_off_overlay_unchanged(tmp_path):
     src = tmp_path / "r.yaml"
     src.write_text(SHIPPED)
     d = yaml.safe_load(Path(co.make_overlay(src, tmp_path / "ov.yaml")).read_text())
-    assert d["models"][0] == {"name": PICK1, "keep": 1} and d["models"][1] == {"name": PICK2}
+    assert d["models"][0] == {"name": PICK1, "hf_path": f"caslca/{PICK1}", "type": "vision", "keep": 1}
+    assert d["models"][1] == {"name": PICK2, "hf_path": f"caslca/{PICK2}", "type": "vision"}
 
 
 def _ops(tmp_path, overlay, predictor):
@@ -352,3 +354,60 @@ def test_m6_out_root_refusals_exit_2(tmp_path, monkeypatch, argv):
     with pytest.raises(SystemExit) as ei:
         R.main([a.replace("{wd}", str(tmp_path)) for a in argv])
     assert ei.value.code == 2
+
+
+# --------------------------------------------------------------------------- review round 3 (M7-M8)
+def _wrong_main_ps(main_model, drafter_of, flags_of):
+    flags = SHIPPED_FLAGS[flags_of]
+    return (f"501 /py -m mlx_vlm.server --model caslca/{main_model} --port 8091 {flags}\n"
+            f"77 uv run mlx_vlm.server {drafter_of}\n")
+
+
+@pytest.mark.parametrize("want", [PICK1, PICK2])
+def test_m7_a_worker_with_other_weights_but_the_expected_drafter_is_refused(ops, tmp_path, want):
+    _mtp_ops(ops, tmp_path)
+    ops._sh.ps = _wrong_main_ps("Some-Other-27B", want, want)
+    with pytest.raises(co.ChainAbort, match="found 0|--model"):
+        ops.load(want)
+
+
+def test_m7_duplicate_model_flag_is_refused(ops, tmp_path):
+    _mtp_ops(ops, tmp_path)
+    ops._sh.ps = _worker_ps(PICK1, f"--model caslca/Some-Other-27B {SHIPPED_FLAGS[PICK1]}")
+    with pytest.raises(co.ChainAbort, match="--model"):
+        ops.load(PICK1)
+
+
+def test_m7_off_worker_selection_matches_the_model_flag_not_a_substring(ops, tmp_path):
+    _router(ops, tmp_path)
+    ops._sh.ps = f"501 /py -m mlx_vlm.server --model caslca/Some-Other-27B --port 8091 --note {PICK1}\n"
+    with pytest.raises(co.ChainAbort, match="found 0"):
+        ops.load(PICK1)
+    assert ops.worker_ident(PICK1) is None
+
+
+def test_m7_mtp_main_model_must_equal_the_registry_hf_path(ops, tmp_path):
+    _mtp_ops(ops, tmp_path)
+    ops._sh.ps = f"501 /py -m mlx_vlm.server --model elsewhere/{PICK1} --port 8091 {SHIPPED_FLAGS[PICK1]}\n"
+    with pytest.raises(co.ChainAbort, match="--model"):
+        ops.load(PICK1)
+
+
+@pytest.mark.parametrize("extra", ["--mtp-verify-ab", "--draft-block-size 4", "--suffix-min-match 2",
+                                   "--draft-cooldown 2"])
+def test_m8_unshipped_predictor_flags_are_refused(ops, tmp_path, extra):
+    _mtp_ops(ops, tmp_path)
+    ops._sh.ps = _worker_ps(PICK1, f"{SHIPPED_FLAGS[PICK1]} {extra}")
+    with pytest.raises(co.ChainAbort, match=extra.split()[0]):
+        ops.load(PICK1)
+
+
+def test_m8_flags_the_registry_sets_are_required(ops, tmp_path):
+    _mtp_ops(ops, tmp_path)
+    Path(ops.overlay).write_text(SHIPPED.replace("  mtp_verify_scan: joint_v1\n",
+                                                 "  mtp_verify_scan: joint_v1\n  mtp_verify_ab: true\n  draft_block_size: 3\n"))
+    ops._sh.ps = _worker_ps(PICK1, SHIPPED_FLAGS[PICK1])
+    with pytest.raises(co.ChainAbort, match="--mtp-verify-ab|--draft-block-size"):
+        ops.load(PICK1)
+    ops._sh.ps = _worker_ps(PICK1, f"{SHIPPED_FLAGS[PICK1]} --mtp-verify-ab --draft-block-size 3")
+    assert ops.load(PICK1)["pid"] == 501
