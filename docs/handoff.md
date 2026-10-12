@@ -1,4 +1,4 @@
-# Handoff — 2026-10-12: C154 + P290 + M63 merged and pushed; fresh P223 tg1 chain launching on m5max-128; M63 ON chain pre-approved to follow
+# Handoff — 2026-10-12: C154 + P290 + M63 merged and pushed; fresh P223 tg1 chain RUNNING on m5max-128 (since 18:16Z); M63 ON chain pre-approved to follow
 
 THE one handoff. Read this, then `docs/open-questions.md` C154/C155/C147, `docs/specs/m63-mtp-on-tg1-arm.md`,
 `docs/specs/c147-tg1-chain-clearance.md` (rev 3 + §9, B12), `benchmark/chains/c147/README.md`, `docs/PLAN.md`
@@ -19,7 +19,7 @@ THE one handoff. Read this, then `docs/open-questions.md` C154/C155/C147, `docs/
 
 ## Queue, in order
 
-1. **P223 tg1 chain (OFF)** — `nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha
+1. **P223 tg1 chain (OFF) — RUNNING since 2026-10-12T18:16Z** (driver pid 26034, `caffeinate -ims -w`; suite 4527 passed on the merged `main` before launch; docker gate ok, A4 ok, s1 pick-1 pilot started) — `nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha
    8d1b4c84… &` + `caffeinate -ims -w <pid>`; `$STACK_WORKDIR/c147/` (≈ 20–24 h). Preflight: 140 W / 28 V,
    `docker info`, :8000 free, no busy procs. Watch `RUNLOG.md`; count `client_inactivity` rows (C154 standing item:
    tokens via the model tokenizer from the export's trailing reasoning). Stop: `touch $STACK_WORKDIR/c147/STOP`.
