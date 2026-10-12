@@ -2,6 +2,7 @@
 
   run_tg1_chain.py pilot                      one block: pick 1 python, first 5 seeded-random items, s1 seed
   run_tg1_chain.py chain [s1 s2 reload] --probe-code-sha <sha>
+  run_tg1_chain.py chain ... --predictor mtp  M63 ON arm (spec docs/specs/m63-mtp-on-tg1-arm.md): out-root m63/
 
 Exit codes: 0 done, 2 chain abort (listing printed, nothing killed), 3 STOP latch honoured, 1 unexpected error.
 Cancellation is cooperative only: the idle predicate (chain_ops.IdlePredicate) or `<out-root>/STOP`.
@@ -64,7 +65,7 @@ def load_universe(path=None):
     return {k: sorted(v) for k, v in names.items()}
 
 
-def make_leg(session, model, lang, seed_base, names, out_dir, reload_ctl=False, smoke=False):
+def make_leg(session, model, lang, seed_base, names, out_dir, reload_ctl=False, smoke=False, predictor="off"):
     pool = sorted(names[lang])
     pilot = random.Random(seed_base).sample(pool, SMOKE_PILOT_N if smoke else PILOT_N)
     if reload_ctl:
@@ -77,13 +78,13 @@ def make_leg(session, model, lang, seed_base, names, out_dir, reload_ctl=False, 
     stem = f"{model}.{session}.opencode_{lang}"
     return dict(session=session, model=model, lang=lang, seed_base=seed_base, stem=stem,
                 out=str(Path(out_dir) / session / (stem + ".jsonl")),
-                pilot_names=sorted(pilot), full_names=full)
+                pilot_names=sorted(pilot), full_names=full, draft_kind=predictor)
 
 
-def schedule(mode, sessions, names, out_root, smoke=False):
+def schedule(mode, sessions, names, out_root, smoke=False, predictor="off"):
     """List of blocks: {session, model, seed_base, legs}. A block = one model within one session (both languages)."""
     if mode == "pilot":
-        leg = make_leg("pilot", PICK1, "python", SEEDS["s1"], names, out_root)
+        leg = make_leg("pilot", PICK1, "python", SEEDS["s1"], names, out_root, predictor=predictor)
         return [dict(session="pilot", model=PICK1, seed_base=SEEDS["s1"], legs=[leg], pilot_only=True)]
     blocks = []
     for s in sessions:
@@ -94,7 +95,8 @@ def schedule(mode, sessions, names, out_root, smoke=False):
             else:
                 grouped.append((model, [lang]))
         for model, langs in grouped:
-            legs = [make_leg(s, model, lang, SEEDS[s], names, out_root, reload_ctl=(s == "reload"), smoke=smoke)
+            legs = [make_leg(s, model, lang, SEEDS[s], names, out_root, reload_ctl=(s == "reload"), smoke=smoke,
+                             predictor=predictor)
                     for lang in langs]
             blocks.append(dict(session=s, model=model, seed_base=SEEDS[s], legs=legs, pilot_only=False))
     return blocks
@@ -207,7 +209,8 @@ class Chain:
                                gate=co.file_sha(gate), overlay=self.ops.overlay_sha()),
                    probe=str(self.probe), probe_code_sha=self.a.probe_code_sha, pinned=self.pinned,
                    attempts=self.attempts, restarts=self.restarts, stop=self.stop_info, rc=self.rc,
-                   block_workers=self.block_workers, smoke=getattr(self.a, "smoke", False))
+                   block_workers=self.block_workers, smoke=getattr(self.a, "smoke", False),
+                   predictor=getattr(self.a, "predictor", "off"))
         co.atomic_json(self.out_root / "chain.json", doc)
 
     # -- STOP
@@ -237,12 +240,13 @@ class Chain:
             self.pinned["registry_sha256"] = self.ops.overlay_sha()
             if not self.ops.power_ok():
                 raise co.ChainAbort("power gate FAIL")
+            predictor = getattr(self.a, "predictor", "off")
             blocks = schedule(self.a.mode, self.a.sessions, self.names, self.out_root,
-                              smoke=getattr(self.a, "smoke", False))
+                              smoke=getattr(self.a, "smoke", False), predictor=predictor)
             if any(leg["lang"] == "go" for b in blocks for leg in b["legs"]) and not self.ops.docker_ok():
                 raise co.ChainAbort("docker gate FAIL: Go grading needs a reachable docker daemon")   # P290
             self.ops.start_router()
-            self.log(f"START {self.a.mode} blocks={[(b['session'], b['model']) for b in blocks]}")
+            self.log(f"START {self.a.mode} predictor={predictor} blocks={[(b['session'], b['model']) for b in blocks]}")
             try:
                 for block in blocks:
                     self.run_block(block)
@@ -394,7 +398,7 @@ class Chain:
             self.listing(att, leg)
             raise co.ChainAbort("first-manifest mismatch: " + "; ".join(sup["reasons"]))
         vleg = dict(session=leg["session"], model=leg["model"], lang=leg["lang"], seed_base=leg["seed_base"],
-                    expected_ids=ids, out=leg["out"], rc=att["rc"])
+                    expected_ids=ids, out=leg["out"], rc=att["rc"], draft_kind=leg.get("draft_kind", "off"))
         why = co.validate_leg(vleg, self.pinned, self.ops.wd)
         if not why:
             self.pin_from(leg)
@@ -477,7 +481,8 @@ class Chain:
         rt, wk = man.get("runtime") or {}, man.get("worker")
         chk = [("scaffold", rt.get("scaffold"), SCAFFOLD),
                ("scaffold_policy_sha256", rt.get("scaffold_policy_sha256"), co.CAMPAIGN_POLICY_SHA),
-               ("draft_kind", rt.get("draft_kind"), "off"), ("seed_base", rt.get("seed_base"), leg["seed_base"]),
+               ("draft_kind", rt.get("draft_kind"), leg.get("draft_kind", "off")),
+               ("seed_base", rt.get("seed_base"), leg["seed_base"]),
                ("lang", rt.get("lang"), leg["lang"]), ("model", man.get("model"), leg["model"]),
                ("sampling_profile", rt.get("sampling_profile", man.get("sampling_profile")), "deployed"),
                ("registry.sha256", (man.get("registry") or {}).get("sha256"), self.ops.overlay_sha())]
@@ -712,6 +717,8 @@ def parse_args(argv):
     ap.add_argument("--smoke", action="store_true",
                     help="P279 rehearsal: 1-item pilot + 2-item legs, 60 s arm idle, own out-root (chain mode only)")
     ap.add_argument("--probe-code-sha")
+    ap.add_argument("--predictor", choices=["off", "mtp"], default="off",
+                    help="M63: mtp = the shipped MTP overlay, own out-root $STACK_WORKDIR/m63[-smoke]")
     ap.add_argument("--out-root")
     ap.add_argument("--probe", default=str(REPO / "benchmark/run_opencode_probe_v2.py"))
     ap.add_argument("--python", default=str(REPO / ".venv-bench/bin/python"))
@@ -733,10 +740,16 @@ def parse_args(argv):
 
 def resolve_out_root(a, wd):
     """`$STACK_WORKDIR/c147` for the real chain, `$STACK_WORKDIR/c147-smoke` for a smoke rehearsal; a smoke run is
-    refused inside the real chain directory."""
-    root = Path(a.out_root) if a.out_root else Path(wd) / ("c147-smoke" if a.smoke else "c147")
-    if a.smoke and root.resolve() == (Path(wd) / "c147").resolve():
+    refused inside the real chain directory. M63 `--predictor mtp`: `m63` / `m63-smoke`; ON and OFF never share
+    a directory."""
+    on = getattr(a, "predictor", "off") == "mtp"
+    base = "m63" if on else "c147"
+    root = Path(a.out_root) if a.out_root else Path(wd) / (base + "-smoke" if a.smoke else base)
+    if a.smoke and root.resolve() == (Path(wd) / base).resolve():
         raise SystemExit("REFUSED: --smoke must not write into the real chain directory")
+    other = ("c147", "c147-smoke") if on else ("m63", "m63-smoke")
+    if any(root.resolve() == (Path(wd) / d).resolve() for d in other):
+        raise SystemExit(f"REFUSED: predictor {'mtp' if on else 'off'} must not write into {root}")
     return root
 
 
@@ -747,8 +760,12 @@ def main(argv=None, ops=None, timers=None, log_out=None):
     out_root.mkdir(parents=True, exist_ok=True)
     log = co.RunLog(out_root / "RUNLOG.md", out=log_out)
     if ops is None:
-        overlay = os.environ.get("C147_OVERLAY") or str(wd / "c147/overlay_c147_draft_off.yaml")
-        ops = co.ChainOps(REPO, wd, overlay, log)
+        if a.predictor == "mtp":
+            overlay = os.environ.get("C147_OVERLAY") or str(out_root / "overlay_m63_mtp.yaml")
+            ops = co.ChainOps(REPO, wd, overlay, log, predictor="mtp", out_root=out_root)
+        else:
+            overlay = os.environ.get("C147_OVERLAY") or str(wd / "c147/overlay_c147_draft_off.yaml")
+            ops = co.ChainOps(REPO, wd, overlay, log)
     chain = Chain(a, ops, timers or Timers(), log, load_universe(a.universe), out_root)
     try:
         return chain.run()

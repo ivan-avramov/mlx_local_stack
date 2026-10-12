@@ -67,12 +67,31 @@ class RunLog:
 
 
 # --------------------------------------------------------------------------- overlay
-def make_overlay(src, dst):
+def overlay_header(predictor, raw):
+    """M63 ON overlay header; it names the registry it was generated from (checked for staleness on reuse)."""
+    return (f"# M63 BENCH OVERLAY (predictor {predictor}) -- generated from main_models.yaml sha256 "
+            f"{hashlib.sha256(raw.encode()).hexdigest()[:16]}; the registry verbatim (shipped draft_*/mtp_verify_scan "
+            f"kept). NEVER commit; never point the daily-driver router at it.\n")
+
+
+def make_overlay(src, dst, predictor="off", require=()):
     """Draft-OFF bench overlay. Recipe copied from benchmark/chains/m59/make_overlay.py (M59): the registry with
-    every draft_*/moe_expand/mtp_verify_scan field removed. NEVER commit; never point the daily driver at it."""
+    every draft_*/moe_expand/mtp_verify_scan field removed. NEVER commit; never point the daily driver at it.
+    M63 `predictor="mtp"`: the registry VERBATIM (the shipped state) behind a header; every model in `require`
+    must declare `draft_kind: mtp` and a `draft_model`."""
     import yaml
     raw = Path(src).read_text()
     d = yaml.safe_load(raw)
+    if predictor == "mtp":
+        by_name = {m.get("name"): m for m in d["models"]}
+        missing = [n for n in require
+                   if (by_name.get(n) or {}).get("draft_kind") != "mtp" or not (by_name.get(n) or {}).get("draft_model")]
+        if missing:
+            raise ChainAbort(f"M63 overlay: registry lacks the mtp predictor for {missing}")
+        dst = Path(dst)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(overlay_header("mtp", raw) + raw)
+        return str(dst)
     for m in d["models"]:
         for k in [k for k in m if k.startswith("draft") or k in ("moe_expand", "mtp_verify_scan")]:
             m.pop(k)
@@ -189,8 +208,12 @@ class ChainOps:
     .stdout/.returncode; `http(path, body=None, timeout=)` returns bytes; `popen` spawns the router."""
 
     def __init__(self, repo, workdir, overlay, log, *, sh=None, http=None, popen=None, sleep=time.sleep,
-                 create_time=None, base="http://localhost:8000", registry=None, env_source=None, kill=None, parents=None, killpg=None):
+                 create_time=None, base="http://localhost:8000", registry=None, env_source=None, kill=None, parents=None, killpg=None,
+                 predictor="off", out_root=None):
         self.repo, self.wd, self.overlay = Path(repo), Path(workdir), str(overlay)
+        self.predictor = predictor
+        # M63: an ON arm keeps its router TMPDIR and A4 logs under its own out-root; OFF keeps the C147 paths
+        self.a4_log_dir = Path(out_root) if out_root else self.wd / "c147"
         self.log = log
         self.sh = sh or default_sh
         self._http = http or (lambda path, body=None, timeout=900: default_http(base, path, body, timeout))
@@ -199,7 +222,7 @@ class ChainOps:
         self.create_time = create_time or default_create_time
         self.registry = Path(registry) if registry else self.repo / "main_models.yaml"
         self.env_source = env_source if env_source is not None else os.environ
-        self.tmpdir = self.wd / "c147" / "tmp"
+        self.tmpdir = self.a4_log_dir / "tmp"
         self.py = self.repo / ".venv-bench/bin/python"
         self.receipt = self.wd / "session_gate/a4_v2_latest.json"
         self.loaded = None
@@ -230,6 +253,15 @@ class ChainOps:
         return env
 
     def ensure_overlay(self):
+        if self.predictor == "mtp":
+            path = Path(self.overlay)
+            if path.is_file():
+                head = path.read_text().split("\n", 1)[0] + "\n"
+                if head != overlay_header("mtp", self.registry.read_text()):
+                    raise ChainAbort(f"M63 overlay stale: {path} was not generated from the current registry")
+            else:
+                make_overlay(self.registry, self.overlay, predictor="mtp", require=(PICK1, PICK2))
+            return self.overlay
         if not Path(self.overlay).is_file():
             make_overlay(self.registry, self.overlay)
         return self.overlay
@@ -413,7 +445,10 @@ class ChainOps:
         if len(w) != 1:
             raise ChainAbort(f"TRIPWIRE: expected one worker for {model}, found {len(w)}")
         m = re.search(r"--draft-kind\s+(\S+)", w[0])
-        if m and m.group(1) not in ("none", "off"):
+        if self.predictor == "mtp":
+            if not m or m.group(1) != "mtp":
+                raise ChainAbort(f"TRIPWIRE: worker lacks the mtp predictor: {w[0][:300]}")
+        elif m and m.group(1) not in ("none", "off"):
             raise ChainAbort(f"TRIPWIRE: worker carries a predictor: {w[0][:300]}")
         pid = int(w[0].split()[0])
         self.worker_env_check(pid)
@@ -482,7 +517,7 @@ class ChainOps:
     # -- A4
     def a4_gate(self, model, tag):
         env = self.env_base()
-        logf = self.wd / "c147" / f"a4_{tag}.log"
+        logf = self.a4_log_dir / f"a4_{tag}.log"
         logf.parent.mkdir(parents=True, exist_ok=True)
         cmd = [str(self.py), str(self.repo / "scripts/session_pinning_gate.py"), "--model", model, "--opencode",
                "v2", "--scaffold", SCAFFOLD, "--skip-owui", "--log", str(self.repo / "logs/mlx_vlm.log")]
@@ -730,7 +765,7 @@ def validate_leg(leg, pinned, workdir=None):
         why.append(f"runtime_scaffold: {rt.get('scaffold')}")
     if rt.get("scaffold_policy_sha256") != CAMPAIGN_POLICY_SHA:
         why.append(f"runtime_scaffold_policy_sha256: {rt.get('scaffold_policy_sha256')}")
-    if rt.get("draft_kind") != "off":
+    if rt.get("draft_kind") != leg.get("draft_kind", "off"):              # M63: the leg's predictor
         why.append(f"runtime_draft_kind: {rt.get('draft_kind')}")
     if rt.get("sampling_profile", man.get("sampling_profile")) != "deployed":
         why.append("runtime_sampling_profile: not deployed")

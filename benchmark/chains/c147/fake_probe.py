@@ -5,7 +5,8 @@ default 300; no ack -> nonzero exit having generated nothing); rows file rewritt
 heartbeat JSON lines with key "m62_watch"; cooperative cancel file; SIGTERM -> cleanup-only exit 143; refuses to
 start when the cancel or ack file already exists; rc 0 only when every expected item has a row and nothing aborted.
 
-Knobs (environment): FAKE_PROBE_BEHAVIOUR = normal | hang_after_manifest | hang_in_item | no_manifest | abort_after_n |
+Knobs (environment): FAKE_SERVED_REGISTRY = registry yaml whose draft_kind the manifest records (M63; default off);
+FAKE_PROBE_BEHAVIOUR = normal | hang_after_manifest | hang_in_item | no_manifest | abort_after_n |
 stale_heartbeat_growing_events | ignore_cancel; FAKE_PROBE_PLAN = JSON list of behaviours consumed per invocation
 (needs FAKE_PROBE_STATE, a directory; the last entry repeats); FAKE_N, FAKE_ITEM_S, FAKE_HB_S, FAKE_TICK_S,
 FAKE_IGNORE_TERM=1, FAKE_CLEANUP_UNCERTAIN=1, FAKE_MANIFEST_OVERRIDE (JSON merged into the manifest, dotted keys),
@@ -44,6 +45,17 @@ def seed_overlay_sha(model, seed):
     return hashlib.sha256(json.dumps(ov, sort_keys=True).encode()).hexdigest()
 
 
+def served_draft_kind(model):
+    """Mirrors the real probe's C35 record (the served registry's `draft_kind` for the model, else "off"). The
+    served registry comes from FAKE_SERVED_REGISTRY, never the ambient MLX_SERVE_CONFIG (host-independent tests)."""
+    path = os.environ.get("FAKE_SERVED_REGISTRY")
+    if not path:
+        return "off"
+    import yaml
+    models = yaml.safe_load(Path(path).read_text()).get("models") or []
+    return next((m.get("draft_kind") or "off" for m in models if m.get("name") == model), "off")
+
+
 def build_manifest(model, lang, seed_base, worker, run_id, override=None):
     h = lambda c: c * 64  # noqa: E731
     man = {
@@ -55,7 +67,8 @@ def build_manifest(model, lang, seed_base, worker, run_id, override=None):
             "opencode_exe_sha256": h("e"), "opencode_bench_config_sha256": h("c"), "carrier_source_sha256": h("d"),
             "agent_system_sha256": None, "polyglot_sha": "1" * 40,
             "policy": {"universe_sha256": h("2")},     # P276: where the real probe records it
-            "seed_base": seed_base, "lang": lang, "draft_kind": "off", "sampling_profile": "deployed",
+            "seed_base": seed_base, "lang": lang, "draft_kind": served_draft_kind(model),
+            "sampling_profile": "deployed",
         },
     }
     for dotted, value in (override or {}).items():
