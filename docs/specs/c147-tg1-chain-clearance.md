@@ -455,3 +455,9 @@ Spec → cold review → implementation by a worker model from this spec, failin
   the alloc addendum on every seed; alloc waived (ruling A). (d) P273: both export paths retry a standalone export
   only on a logged SQLite `database is locked` (`OPENCODE_PRINT_LOGS=1` on the export, 0.5 s pause, strict 10 s bound,
   no retry with < 1 s left); any other export failure still aborts.
+- **B12 — first P223 chain stopped by the client's inactivity TTL (2026-10-12, C154/P280).** s1 pick 1 Go leg,
+  `go/alphametics`: one request streamed for 60.6 min (≈ 5K tokens of reasoning, then a verbatim `S, ` loop to
+  ≈ 79.5K) and opencode 2.0.20 interrupted it (`Session interrupted: inactivity`, rc 1); the probe aborted the leg
+  as `error event / Step.Failed`. Fix (ruling A): that exact shape is the scored `client_inactivity` outcome
+  (M62 §3a), with uncharged size evidence; any other interrupt reason still aborts. Probe sha changes,
+  `scaffold_policy_sha256` does not; the chain restarts from scratch. The TTL is re-checked on every opencode release.

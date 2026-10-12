@@ -25,8 +25,13 @@ PRECEDENCE = (
     "exec_timeout",
     "client_resource",
     "context_overflow",
+    "client_inactivity",
     "budget_hit",
 )
+# C154 (P280): pinned 2.0.20 `run` interrupts an execution after 60 min without a durable session event (hard-coded
+# TTL); it then emits exactly this part-less error and exits 1, and exports the in-flight message as below, no usage.
+INACTIVITY_ERROR = {"type": "aborted", "message": "Session interrupted: inactivity"}
+INACTIVITY_TRAILING_ERROR = {"type": "aborted", "message": "Step interrupted"}
 
 
 class TransportAbort(RuntimeError):
@@ -385,6 +390,18 @@ ABORT_FETCH = ("Transport: The socket connection was closed unexpectedly. "
 ABORT_UNABLE = "Transport: Unable to connect. Is the computer able to access the url?"
 
 
+def uncharged_trailing(message):
+    """C154 evidence for an interrupted message whose usage never reached the client: persisted size and seconds."""
+    content = message.get("content") or []
+    chars = lambda kind: sum(len(c.get("text") or "") for c in content if isinstance(c, dict) and c.get("type") == kind)
+    t = message.get("time") or {}
+    streamed = t.get("streamed")
+    created = t.get("created")
+    return dict(reasoning_chars=chars("reasoning"), text_chars=chars("text"),
+                streamed_s=(streamed - created) / 1000 if isinstance(streamed, int) and isinstance(created, int)
+                else None)
+
+
 def own_abort_shape(error, base_url=None):
     """"fetch" | "unable" for the two registered post-signal transport errors (complete messages), else None."""
     if not (isinstance(error, dict) and error.get("type") == "unknown" and isinstance(error.get("message"), str)):
@@ -428,10 +445,12 @@ def reconcile(stream, export, rc, outcome=None):
     if stream.errors:
         if rc == 1 and len(stream.errors) == 1 and context_overflow(stream.errors[0]):
             outcome = "context_overflow"
+        elif rc == 1 and len(stream.errors) == 1 and outcome is None and stream.errors[0] == INACTIVITY_ERROR:
+            outcome = "client_inactivity"
         else:
             raise TransportAbort("error event / Step.Failed")
     killed = outcome in KILL_OUTCOMES
-    if outcome is not None and not killed and outcome != "context_overflow":
+    if outcome is not None and not killed and outcome not in ("context_overflow", "client_inactivity"):
         raise TransportAbort("unknown terminal outcome")
     if not killed and not outcome and rc != 0:
         raise TransportAbort("unexpected exit")
@@ -463,6 +482,8 @@ def reconcile(stream, export, rc, outcome=None):
             allowed = i == len(messages) - 1 and (
                 (killed and error.get("type") == "aborted")
                 or (outcome == "context_overflow" and context_overflow(error))
+                or (outcome == "client_inactivity" and error == INACTIVITY_TRAILING_ERROR
+                    and m.get("finish") == "error" and mid == stream.active)
             )
             if not allowed:
                 raise TransportAbort("unexpected assistant error")
@@ -494,6 +515,8 @@ def reconcile(stream, export, rc, outcome=None):
         raise TransportAbort("unfinished live message absent from export")
     if killed and stream.active and messages[-1]["id"] != stream.active:
         raise TransportAbort("active live message does not reconcile to trailing assistant")
+    if outcome == "client_inactivity" and not (unmatched and unmatched[-1] is messages[-1] and messages[-1].get("error")):
+        raise TransportAbort("inactivity interrupt without its interrupted trailing assistant")
     trailing = "none"
     if unmatched and unmatched[-1] is messages[-1]:
         trailing = (
@@ -504,4 +527,5 @@ def reconcile(stream, export, rc, outcome=None):
     for m in extras:
         gate.complete(m["id"], m.get("tokens"))
     gate.check()
-    return dict(primary=gate.primary, unmatched_export_messages=len(unmatched), trailing=trailing)
+    return dict(primary=gate.primary, unmatched_export_messages=len(unmatched), trailing=trailing,
+                uncharged_trailing=uncharged_trailing(messages[-1]) if outcome == "client_inactivity" else None)

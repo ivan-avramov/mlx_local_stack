@@ -733,6 +733,8 @@ def _run_item(
             )
             reconciliation = dict(unmatched_export_messages=summary["unmatched_export_messages"],
                                   trailing=summary["trailing"])
+            if summary["uncharged_trailing"] is not None:      # C154: client_inactivity rows only
+                reconciliation["uncharged_trailing"] = summary["uncharged_trailing"]
         except tg.TransportAbort as exc:
             if exit_hang:
                 raise tg.TransportAbort("client silent, worker idle: " + str(exc)) from exc

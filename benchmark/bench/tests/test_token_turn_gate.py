@@ -298,7 +298,7 @@ def _fresh():
 def test_c147_reconcile_summary_normal_exit_all_matched():
     g, s = _fresh()
     out = tg.reconcile(s, dict(messages=[assistant()]), 0)
-    assert out == dict(primary=None, unmatched_export_messages=0, trailing="none")
+    assert out == dict(primary=None, unmatched_export_messages=0, trailing="none", uncharged_trailing=None)
 
 
 def test_c147_reconcile_summary_normal_exit_final_message():
@@ -480,3 +480,85 @@ def test_c147_aborted_with_usage_still_aborts_outside_our_stops_or_when_not_last
     rejected = dict(type="assistant", id="m2", error=overflow, tokens=usage(1, 1))
     with pytest.raises(tg.TransportAbort, match="carries usage"):
         tg.reconcile(s, dict(messages=[assistant(), rejected]), 1)
+
+
+# --- C154 (P280): opencode 2.0.20's 60-min inactivity interrupt is a scored client outcome ---
+
+INACTIVITY_ERROR = dict(type="aborted", message="Session interrupted: inactivity")
+STEP_INTERRUPTED = dict(type="aborted", message="Step interrupted")
+
+
+def _inactive(event_error=INACTIVITY_ERROR, **tail):
+    g, s = _fresh()
+    s.accept(event("step_start", "m2"))
+    s.accept(dict(type="error", sessionID="s1", error=dict(event_error)))
+    trailing = dict(type="assistant", id="m2", finish="error", error=dict(STEP_INTERRUPTED), tokens=None,
+                    time=dict(created=1_000, streamed=3_601_000, completed=3_601_050),
+                    content=[dict(type="reasoning", text="abc"), dict(type="text", text="de")])
+    trailing.update(tail)
+    return g, s, dict(messages=[assistant(), trailing])
+
+
+def test_c154_inactivity_interrupt_is_a_scored_nonconv_row():
+    g, s, export = _inactive()
+    out = tg.reconcile(s, export, 1)
+    assert g.primary == "client_inactivity" and out["primary"] == "client_inactivity"
+    assert out["trailing"] == "interrupted" and out["unmatched_export_messages"] == 1
+    assert len(g.request_usage) == 1                       # the interrupted request reported no usage
+    assert out["uncharged_trailing"] == dict(reasoning_chars=3, text_chars=2, streamed_s=3600.0)
+
+
+def test_c154_inactivity_sits_after_context_overflow_and_before_budget_hit():
+    order = tg.PRECEDENCE
+    assert order.index("context_overflow") < order.index("client_inactivity") < order.index("budget_hit")
+    assert "client_inactivity" not in tg.KILL_OUTCOMES
+
+
+def test_c154_other_outcomes_carry_no_uncharged_trailing():
+    g, s = _fresh()
+    assert tg.reconcile(s, dict(messages=[assistant()]), 0)["uncharged_trailing"] is None
+
+
+@pytest.mark.parametrize("case", ["reason", "extra_key", "rc0", "two_errors", "own_stop", "usage",
+                                  "tail_message", "tail_type", "not_active", "not_last", "no_active"])
+def test_c154_anything_but_the_exact_inactivity_shape_still_aborts(case):
+    error, tail, rc, outcome = INACTIVITY_ERROR, {}, 1, None
+    if case == "reason":
+        error = dict(type="aborted", message="Session interrupted: shutdown")
+    elif case == "extra_key":
+        error = dict(INACTIVITY_ERROR, data={})
+    elif case == "rc0":
+        rc = 0
+    elif case == "own_stop":
+        rc, outcome = -9, "stalled"
+    elif case == "usage":
+        tail = dict(tokens=usage(5))
+    elif case == "tail_message":
+        tail = dict(error=dict(type="aborted", message="Session interrupted: inactivity"))
+    elif case == "tail_type":
+        tail = dict(error=dict(type="unknown", message="Step interrupted"))
+    elif case == "not_active":
+        tail = dict(id="m3")
+    g, s, export = _inactive(error, **tail)
+    if case == "two_errors":
+        s.accept(dict(type="error", sessionID="s1", error=dict(INACTIVITY_ERROR)))
+    if case == "not_last":
+        export["messages"].append(assistant("m4"))
+    if case == "no_active":
+        s.active = None
+    with pytest.raises(tg.TransportAbort):
+        tg.reconcile(s, export, rc, outcome)
+
+
+def test_c154_real_2_0_20_inactivity_interrupt_reconciles(tmp_path):
+    """The P223 chain's `go/alphametics` events + export (scrubbed, trimmed): it aborted the leg before C154."""
+    from pathlib import Path
+    doc = json.loads((Path(__file__).parent / "fixtures/opencode_2.0.20_inactivity_interrupt.json").read_text())
+    g = tg.TokenTurnGate(10)
+    s = tg.EventStream(g)
+    s.feed("".join(json.dumps(e) + "\n" for e in doc["events"]).encode())
+    out = tg.reconcile(s, doc["export"], doc["rc"])
+    assert g.primary == "client_inactivity" and out["trailing"] == "interrupted"
+    assert len(g.request_usage) == 3 and g.output_tokens == 321
+    u = out["uncharged_trailing"]
+    assert u["text_chars"] == 0 and u["reasoning_chars"] > 0 and 3600 < u["streamed_s"] < 3700

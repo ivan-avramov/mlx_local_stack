@@ -314,3 +314,26 @@ def test_tg1_export_goes_through_the_lock_retry(probe, monkeypatch, tmp_path):
     monkeypatch.setattr(ox, "run_export", spy)
     assert f["run"]("one") == 0
     assert len(calls) == 1 and "OPENCODE_PRINT_LOGS" not in calls[0]     # the helper adds it to a copy
+
+
+def test_c154_inactivity_interrupt_writes_a_scored_row(probe, monkeypatch, tmp_path):
+    # P280: opencode 2.0.20 interrupts a > 60 min request (exit 1, part-less aborted error); the leg continues
+    f = tg_fixture(probe, monkeypatch, tmp_path)
+    from bench.tests.test_token_turn_gate import event, usage
+    (tmp_path / "events.jsonl").write_text("".join(json.dumps(e) + "\n" for e in [
+        event("step_start"),
+        event("step_finish", tokens=usage(10, 100)),
+        event("step_start", "m2"),
+        dict(type="error", sessionID="s1", error=dict(type="aborted", message="Session interrupted: inactivity")),
+    ]))
+    (tmp_path / "rc").write_text("1")
+    exported = json.loads(f["export"].read_text())
+    exported["messages"][-1].update(finish="error", tokens=None,
+                                    error=dict(type="aborted", message="Step interrupted"))
+    f["export"].write_text(json.dumps(exported))
+    assert f["run"]() == 0
+    row = json.loads(f["out"].read_text())
+    assert row["nonconv_kind"] == "client_inactivity" and not row["converged"]
+    assert row["opencode_rc"] == 1 and row["gate"]["requests_completed"] == 1
+    assert row["reconciliation"]["trailing"] == "interrupted"
+    assert row["reconciliation"]["uncharged_trailing"]["reasoning_chars"] == 0

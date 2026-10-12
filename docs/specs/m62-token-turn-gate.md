@@ -139,11 +139,12 @@ usage; every export assistant message must be matched or be one of the explicit 
 | normal exit | rc 0, ordered events | the final assistant message (all 381 historical passes omit its `step_finish`); its usage is charged once from the export | graded; terminal checks |
 | gate stop | probe kill | messages completed during the backlog (charged); exactly one trailing message that is either interrupted (`error.type == "aborted"`, no usage) or completed but unpublished (usage + finish, no error — killed between provider finish and the CLI write; charged, included in terminal checks; F3) | `nonconv_kind` = stop reason |
 | context overflow | existing `_context_overflow` signature, rc 1 | the rejected request (no usage) | `context_overflow`, scored |
+| client inactivity (C154, 2026-10-12) | exactly one part-less error `{"type":"aborted","message":"Session interrupted: inactivity"}`, rc 1, no probe stop — pinned 2.0.20 interrupts an execution after 60 min without a durable session event (hard-coded TTL; streamed deltas don't count) | exactly one trailing assistant: the live active message, `finish: "error"`, `error == {"type":"aborted","message":"Step interrupted"}`, no usage (uncharged; `reconciliation.uncharged_trailing` = persisted reasoning/text chars + streamed seconds) | `client_inactivity`, scored; any other interrupt reason → `TransportAbort` |
 | resource / silence outcomes | §4 | as for gate stop | `client_resource` / `exec_timeout`, scored; `client_exit_hang` → graded normally (§4) |
 | anything else (Step.Failed, retry, malformed stream, unexpected exit, mismatch) | — | none | `TransportAbort` |
 
 `nonconv_flags` keeps every condition seen; `nonconv_kind` (primary) precedence: `looping` > `hard_ceiling` > `stalled`
-> `exec_timeout` > `client_resource` > `context_overflow` > `budget_hit`. Any non-null value fails `acc_strict@budget`.
+> `exec_timeout` > `client_resource` > `context_overflow` > `client_inactivity` > `budget_hit`. Any non-null value fails `acc_strict@budget`.
 
 ## 4. Tool bounds, silence and hygiene (C138)
 
