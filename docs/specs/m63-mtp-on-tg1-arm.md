@@ -36,5 +36,5 @@ predictor-OFF P223 chain; pairs with it session by session.
 ## Pre-registered read
 
 Per session, paired ON−OFF on `acc_strict@budget`; two-stage cluster bootstrap; TOST ±5pp. Report with all rows
-AND excluding items where either arm ended `client_inactivity` (C154). Runaway tax in tokens, never wall share.
+AND excluding items where either arm ended `client_inactivity` (C154). For every item that ended `client_inactivity` in the OFF chain, report its ON outcome (converged / budget hit / cut again) and tokens (operator 2026-10-13, P293). Runaway tax in tokens, never wall share.
 OFF better beyond ±5pp on the agentic axis → that pick ships OFF (C71); a pick change needs the operator.
