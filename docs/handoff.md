@@ -1,4 +1,4 @@
-# Handoff — 2026-10-13: P223 tg1 chain COMPLETE (rc 0); M63 MTP-ON smoke RUNNING on m5max-128, ON chain to follow (pre-approved)
+# Handoff — 2026-10-13: P223 tg1 chain COMPLETE (rc 0); M63 MTP-ON chain RUNNING on m5max-128 (since 13:42Z); P294 web-audit resolution pending the operator
 
 THE one handoff. Read this, then `docs/open-questions.md` C154/C155/C147, `docs/specs/m63-mtp-on-tg1-arm.md`,
 `docs/specs/c147-tg1-chain-clearance.md` (rev 3 + §9, B12), `benchmark/chains/c147/README.md`, `docs/PLAN.md`
@@ -23,11 +23,11 @@ THE one handoff. Read this, then `docs/open-questions.md` C154/C155/C147, `docs/
    8d1b4c84… &` + `caffeinate -ims -w <pid>`; `$STACK_WORKDIR/c147/` (≈ 20–24 h). Preflight: 140 W / 28 V,
    `docker info`, :8000 free, no busy procs. Watch `RUNLOG.md`; count `client_inactivity` rows (C154 standing item:
    tokens via the model tokenizer from the export's trailing reasoning). Stop: `touch $STACK_WORKDIR/c147/STOP`.
-2. **M63 ON arm — smoke RUNNING since 2026-10-13T12:41Z** (driver pid 33108, `$STACK_WORKDIR/m63-smoke/`; worker verified `--draft-kind mtp`, drafter, `--mtp-verify-scan joint_v1`; first manifest `draft_kind: mtp`, `registry+worker`, registry sha = ON overlay `dc26891b…`). Operator pre-approved 2026-10-12 ("go for the run at first opportunity … without asking"):**
+2. **M63 ON arm — CHAIN RUNNING since 2026-10-13T13:42Z** (driver pid 43584, `$STACK_WORKDIR/m63/`, ≈ 10–12 h; first attempt refused at start by the busy-process gate because the launch shell's own command line named watched processes — relaunch from a clean shell; archived `m63/archive.attempt1-busy-self/`). Smoke PASS 13:39Z (rc 0, ≈ 1 h; pick 2 `python/book-store` converged ON in 10 min / ≈ 21K tokens vs cut at 60 min OFF). Smoke was: RUNNING since 2026-10-13T12:41Z (driver pid 33108, `$STACK_WORKDIR/m63-smoke/`; worker verified `--draft-kind mtp`, drafter, `--mtp-verify-scan joint_v1`; first manifest `draft_kind: mtp`, `registry+worker`, registry sha = ON overlay `dc26891b…`). Operator pre-approved 2026-10-12 ("go for the run at first opportunity … without asking"):**
    after P223 ends, `nohup benchmark/chains/c147/drive_m63.sh chain s1 reload --smoke --probe-code-sha <sha> &`
    (`$STACK_WORKDIR/m63-smoke/`), then `drive_m63.sh chain s1 s2 reload --probe-code-sha <sha>` (`m63/`, ≈ 10–12 h).
    Same preflight. Stop and report on any abort or pick-relevant result.
-3. **P293 decision after M63** (operator 2026-10-13: C71 kept; decide on M63's evidence how OFF `client_inactivity` rows count — see C154). Analysis per M63 spec (paired ON−OFF, TOST ±5pp, with/without `client_inactivity` items); README/ranking
+3. **P294 (operator): 3 denied web fetches in P223 s1 Python (pick 1 `go-counting`; pick 2 `grep`, `go-counting`) have no P201 audit — `codex` CLI absent on m5max-128; options: operator_label `generic` ("denied, no content") or install Codex + `codex login` and run `benchmark/web_audit.py`. Report `benchmark/results/p223_tg1/` (tg1_report.py → P223_REPORT.md) is provisional until then; campaign-results/README write-up waits.** Bootstrap should install the Codex CLI (fix owed). P295 optional: treat `denied` fetches as no-contact in `answer_key`. 4. **P293 decision after M63** (operator 2026-10-13: C71 kept; decide on M63's evidence how OFF `client_inactivity` rows count — see C154). Analysis per M63 spec (paired ON−OFF, TOST ±5pp, with/without `client_inactivity` items); README/ranking
    changes need the operator. Then C144 candidates under tg1.
 
 ## Rules for this session's work
