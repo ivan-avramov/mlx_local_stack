@@ -27,7 +27,7 @@ THE one handoff. Read this, then `docs/open-questions.md` C154/C155/C147, `docs/
    after P223 ends, `nohup benchmark/chains/c147/drive_m63.sh chain s1 reload --smoke --probe-code-sha <sha> &`
    (`$STACK_WORKDIR/m63-smoke/`), then `drive_m63.sh chain s1 s2 reload --probe-code-sha <sha>` (`m63/`, ≈ 10–12 h).
    Same preflight. Stop and report on any abort or pick-relevant result.
-3. Analysis per M63 spec (paired ON−OFF, TOST ±5pp, with/without `client_inactivity` items); README/ranking
+3. **P293 decision after M63** (operator 2026-10-13: C71 kept; decide on M63's evidence how OFF `client_inactivity` rows count — see C154). Analysis per M63 spec (paired ON−OFF, TOST ±5pp, with/without `client_inactivity` items); README/ranking
    changes need the operator. Then C144 candidates under tg1.
 
 ## Rules for this session's work
