@@ -48,6 +48,7 @@ class FakeOps:
         self.on_unload = None
         self.power = True
         self.docker = True                      # P290: bool, or a list consumed per call (last repeats)
+        self.alive_pids = set()                 # P297: pids pid_exists() reports alive
         self.leftover_calls = []
 
     def _c(self, name, *a):
@@ -62,6 +63,10 @@ class FakeOps:
     def power_ok(self):
         self._c("power_ok")
         return self.power
+
+    def pid_exists(self, pid):
+        self._c("pid_exists", pid)
+        return pid in self.alive_pids
 
     def docker_ok(self):
         self._c("docker_ok")

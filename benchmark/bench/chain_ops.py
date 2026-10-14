@@ -306,6 +306,11 @@ class ChainOps:
                  f" -> {'ok' if ok else 'FAIL'}")
         return bool(ok)
 
+    def pid_exists(self, pid):
+        """P297: whether a pid is in the process table now (a zombie counts as present)."""
+        import psutil
+        return psutil.pid_exists(int(pid))
+
     def docker_ok(self):
         """P290: Go grading runs in docker; with the probes' own environment (D1), the daemon must answer `docker info`
         and the grader image must exist (D2). A missing binary, an error or a timeout = down."""

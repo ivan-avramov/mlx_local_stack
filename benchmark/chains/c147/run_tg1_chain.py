@@ -33,6 +33,8 @@ LEGS = {"s1": [(PICK1, "python"), (PICK1, "go"), (PICK2, "python"), (PICK2, "go"
         "reload": [(PICK1, "python")]}
 PRED_S = {("python", PICK1): 244, ("go", PICK1): 300, ("python", PICK2): 267, ("go", PICK2): 360}   # M59 table
 PILOT_N = 5
+# P297: the probe guard's reasons for an uncertain process (proc_guard.cleanup); only these pids can be re-checked
+UNCERTAIN_REASONS = ("path-only attribution", "access denied", "start order unreadable", "identity unreadable")
 # P279 --smoke: a short live rehearsal of the real schedule (rows are rehearsal evidence only, never graded or pooled)
 SMOKE_PILOT_N, SMOKE_FULL_N, SMOKE_ARM_IDLE_S = 1, 2, 60.0
 
@@ -457,6 +459,23 @@ class Chain:
         for line in self.ops.leftovers([str(self.ops.tmpdir)], [att.get("run_id")] if att.get("run_id") else []):
             self.log("LEFTOVER (listed, not killed): " + line)
 
+    def uncertain_only_vanished(self, att, cs):
+        """P297: True iff the probe's cleanup was uncertain ONLY because of processes that no longer exist — no
+        survivors, containers, tracked-identity unknowns or order failure, at least one reasoned uncertain pid, and
+        every one of them absent from the process table now (a present pid, alive or reused, could be ours)."""
+        err = str((att.get("transport_abort") or {}).get("error") or "")
+        pids = [o.get("pid") for o in cs.get("orphans_unattributed") or [] if o.get("reason") in UNCERTAIN_REASONS]
+        if (cs.get("uncertain") is not True or cs.get("survivors") or cs.get("containers_remaining")
+                or cs.get("unknown") or "order failure" in err or not pids
+                or not all(isinstance(x, int) and x > 0 for x in pids)):
+            return False
+        present = [x for x in pids if self.ops.pid_exists(x)]
+        if present:
+            self.log(f"P297 uncertain cleanup NOT resolved: pids {present} still exist")
+            return False
+        self.log(f"P297 uncertain cleanup resolved: uncertain pids {pids} no longer exist")
+        return True
+
     def check_restart_eligible(self, att, leg, block):
         why = []
         cs = att.get("cleanup_status")
@@ -471,7 +490,7 @@ class Chain:
                 why.append("cleanup uncertain: survivors recorded")
             if cs.get("containers_remaining"):
                 why.append("cleanup uncertain: containers remaining")
-            if cs.get("uncertain") is not False:
+            if cs.get("uncertain") is not False and not self.uncertain_only_vanished(att, cs):
                 why.append("cleanup uncertain: uncertain flag set")
         fl = co.in_flight(self.ops.worker_metrics() or {})
         if fl != 0:

@@ -9,7 +9,8 @@ Knobs (environment): FAKE_SERVED_REGISTRY = registry yaml whose draft_kind the m
 FAKE_PROBE_BEHAVIOUR = normal | hang_after_manifest | hang_in_item | no_manifest | abort_after_n |
 stale_heartbeat_growing_events | ignore_cancel; FAKE_PROBE_PLAN = JSON list of behaviours consumed per invocation
 (needs FAKE_PROBE_STATE, a directory; the last entry repeats); FAKE_N, FAKE_ITEM_S, FAKE_HB_S, FAKE_TICK_S,
-FAKE_IGNORE_TERM=1, FAKE_CLEANUP_UNCERTAIN=1, FAKE_MANIFEST_OVERRIDE (JSON merged into the manifest, dotted keys),
+FAKE_IGNORE_TERM=1, FAKE_CLEANUP_UNCERTAIN=1 (+ FAKE_CLEANUP_UNCERTAIN_PIDS=pid,... as unreadable-start orphans, P297),
+FAKE_MANIFEST_OVERRIDE (JSON merged into the manifest, dotted keys),
 FAKE_PROBE_CODE_SHA, FAKE_REGISTRY_SHA. The worker identity comes from $FAKE_PROBE_STATE/worker.json.
 """
 import argparse
@@ -177,11 +178,18 @@ def main(argv=None):
     man = build_manifest(a.model, a.lang, a.seed_base, worker, run_id, json.loads(env.get("FAKE_MANIFEST_OVERRIDE", "{}")))
     cleanup = {"survivors": [], "containers_remaining": [], "uncertain": env.get("FAKE_CLEANUP_UNCERTAIN") == "1",
                "orphans_unattributed": []}
+    # P297: uncertain pids as the real guard records them (start order unreadable), and its abort message
+    upids = [int(x) for x in env.get("FAKE_CLEANUP_UNCERTAIN_PIDS", "").split(",") if x.strip()]
+    cleanup["orphans_unattributed"] = [dict(pid=x, create_time=None, argv=[], reason="start order unreadable")
+                                       for x in upids]
 
     def save():
         _atomic(mp, json.dumps(man, indent=2).encode())
 
     def abort(msg, item=None):
+        if upids and cleanup["uncertain"]:
+            msg = "cleanup uncertain: path-only or uninspectable processes remain " + json.dumps(
+                [dict(pid=x, create_time=None, reason="start order unreadable") for x in upids])
         man["transport_abort"] = {"error": msg}
         if item is not None:
             man["cancelled_item"] = {"id": item}
