@@ -19,6 +19,11 @@ PATTERNS = ['api.github.com/search/code', 'github.com/search?q=code', 'grep.app/
 def fake_auditor_version(monkeypatch):
     import web_audit as audit
     monkeypatch.setattr(audit, 'auditor_version', lambda: 'codex-cli 0.161.0', raising=False)
+    import web_audit_cursor     # C158 (A3): every declared auditor's version probe is stubbed; Cursor absent offline
+
+    def absent():
+        raise FileNotFoundError('cursor-agent')
+    monkeypatch.setattr(web_audit_cursor, 'cursor_version', absent)
 
 
 def test_evidence_verbatim_hashes_and_portable_paths(probe, tmp_path, monkeypatch):

@@ -49,6 +49,8 @@ def main():
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--retry-errors", action="store_true")
     args = parser.parse_args()
+    if args.timeout <= 0:
+        parser.error("--timeout must be positive")
     web_audit.AUDITOR = AUDITOR                    # the label audit_rows writes into every record
     web_audit.auditor_version = cursor_version     # the version audit_rows records and keys on
     for rows in args.rows:

@@ -98,3 +98,22 @@ def test_real_p223_s1_python_cells_are_final_with_the_cursor_audit(cursor_only, 
     ok = sum(sum(v) for v in rep["strict_items"].values())
     assert (ok, len(rep["strict_items"])) == cell
     assert rep["per_model"][model]["provisional"] is False and rep["per_model"][model]["missing_audits"] == 0
+
+
+def test_a2_wrapper_rejects_a_non_positive_timeout(monkeypatch, tmp_path):
+    import sys
+    import web_audit_cursor
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    for bad in ("0", "-5"):
+        monkeypatch.setattr(sys, "argv", ["web_audit_cursor.py", str(tmp_path / "rows.jsonl"), "--timeout", bad])
+        with pytest.raises(SystemExit) as ei:
+            web_audit_cursor.main()
+        assert ei.value.code == 2
+
+
+def test_a3_rows_without_web_entries_run_no_subprocess(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("version probe ran for rows without web fetches"))
+    rows = [dict(id="python/x", model="m", sample=0, session_id="s", scaffold="opencode-v2-web-tg1", passed=True,
+                 nonconv_kind=None, web_fetches=[], net_shell=[])]
+    assert answer_key.report_rows(rows)["strict_n"] == 1
