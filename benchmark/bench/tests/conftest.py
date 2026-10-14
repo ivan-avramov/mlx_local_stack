@@ -321,3 +321,18 @@ def _guard_stack_workdir_confined_to_tmp_path(monkeypatch, tmp_path):
                     "path that calls it.", pytrace=False)
         return result
     monkeypatch.setattr(paths, "stack_workdir", _guarded)
+
+
+# C158 (review A5): every declared P201 auditor version probe is ABSENT by default, so no test shells out to a real
+# `codex --version` / `cursor-agent --version`. Tests that need a version set one; tests of the real probe restore it.
+import web_audit as _web_audit                 # noqa: E402
+import web_audit_cursor as _web_audit_cursor   # noqa: E402
+REAL_AUDITOR_PROBES = {"codex": _web_audit.auditor_version, "cursor": _web_audit_cursor.cursor_version}
+
+
+@pytest.fixture(autouse=True)
+def _declared_auditor_probes_absent(monkeypatch):
+    def absent():
+        raise FileNotFoundError("auditor CLI stubbed absent in tests (C158 A5)")
+    monkeypatch.setattr(_web_audit, "auditor_version", absent)
+    monkeypatch.setattr(_web_audit_cursor, "cursor_version", absent)

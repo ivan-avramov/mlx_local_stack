@@ -25,6 +25,7 @@ def decision(path, row, label, kind='web_fetches'):
     e = row[kind][0]
     record = dict(row_id=row['id'], sample=0, session_id=row['session_id'], kind=kind, index=0,
                   path=e.get('path'), sha256=e.get('sha256'), bytes=e.get('bytes'), label=label,
+                  reason='Fixture decision.',     # C158/P298: a real record always carries a one-line reason
                   auditor=web_audit.AUDITOR, auditor_version='fake',
                   prompt_sha256=hashlib.sha256(web_audit.PROMPT.read_bytes()).hexdigest())
     with Path(str(path) + '.webaudit.jsonl').open('a') as f:

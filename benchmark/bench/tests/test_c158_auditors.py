@@ -117,3 +117,62 @@ def test_a3_rows_without_web_entries_run_no_subprocess(monkeypatch):
     rows = [dict(id="python/x", model="m", sample=0, session_id="s", scaffold="opencode-v2-web-tg1", passed=True,
                  nonconv_kind=None, web_fetches=[], net_shell=[])]
     assert answer_key.report_rows(rows)["strict_n"] == 1
+
+
+# --------------------------------------------------------------------------- round 2 (A4 = P298 folded into C158)
+def _genuine(tmp_path, monkeypatch, answer):
+    path, corpus, rows = fixture_rows(tmp_path, monkeypatch)
+    sidecar = _cursor_audit(path, corpus, answer)
+    return rows, sidecar, [json.loads(line) for line in sidecar.read_text().splitlines()]
+
+
+@pytest.mark.parametrize("mutate", [
+    lambda r: r.pop("reason"),
+    lambda r: r.update(reason=""),
+    lambda r: r.update(reason="two\nlines"),
+    lambda r: r.update(reason=7),
+    lambda r: r.update(label="other"),
+    lambda r: r.update(auditor_version=""),
+    lambda r: r.update(prompt_sha256=None),
+])
+def test_a4_malformed_or_fabricated_records_count_as_missing(tmp_path, monkeypatch, cursor_only, mutate):
+    rows, sidecar, records = _genuine(tmp_path, monkeypatch, {"label": "docs", "reason": "language documentation"})
+    for r in records:
+        mutate(r)
+    sidecar.write_text("".join(json.dumps(r) + "\n" for r in records))
+    states = answer_key.audit_states(rows, audit_sidecar=sidecar)
+    assert all(label == "missing" for st in states for label in st["labels"])
+
+
+def test_a4_operator_resolution_without_a_preceding_audit_is_ignored(tmp_path, monkeypatch, cursor_only):
+    rows, sidecar, records = _genuine(tmp_path, monkeypatch, {"label": "unclear", "reason": "ambiguous"})
+    forged = [{**r, "label": "audit_error", "operator_label": "generic", "operator_reason": "ok"} for r in records]
+    sidecar.write_text("".join(json.dumps(r) + "\n" for r in forged))      # resolutions only, no genuine record
+    states = answer_key.audit_states(rows, audit_sidecar=sidecar)
+    assert all(label == "missing" for st in states for label in st["labels"])
+
+
+def test_a4_operator_resolution_after_a_genuine_unresolved_audit_is_accepted(tmp_path, monkeypatch, cursor_only):
+    rows, sidecar, records = _genuine(tmp_path, monkeypatch, {"label": "unclear", "reason": "ambiguous"})
+    with sidecar.open("a") as stream:
+        for r in records:
+            stream.write(json.dumps({**r, "operator_label": "generic", "operator_reason": "reviewed"}) + "\n")
+    states = answer_key.audit_states(rows, audit_sidecar=sidecar)
+    assert all(label == "generic" for st in states for label in st["labels"])
+
+
+def test_a4_resolution_of_a_different_label_than_the_genuine_record_is_ignored(tmp_path, monkeypatch, cursor_only):
+    rows, sidecar, records = _genuine(tmp_path, monkeypatch, {"label": "unclear", "reason": "ambiguous"})
+    with sidecar.open("a") as stream:
+        for r in records:
+            stream.write(json.dumps({**r, "label": "audit_error", "operator_label": "generic", "operator_reason": "x"}) + "\n")
+    states = answer_key.audit_states(rows, audit_sidecar=sidecar)
+    assert all(label == "unclear" for st in states for label in st["labels"])
+
+
+def test_a5_offline_default_has_every_declared_probe_absent():
+    import web_audit
+    import web_audit_cursor
+    for probe in (web_audit.auditor_version, web_audit_cursor.cursor_version):
+        with pytest.raises(FileNotFoundError):
+            probe()

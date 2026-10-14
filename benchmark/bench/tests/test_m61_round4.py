@@ -96,6 +96,9 @@ def test_scoreboard_refuses_web_audit_rows(tmp_path, monkeypatch, marker):
 
 
 def test_auditor_hermetic_flags(tmp_path, monkeypatch):
+    from bench.tests.conftest import REAL_AUDITOR_PROBES
+    import web_audit as _wa
+    monkeypatch.setattr(_wa, 'auditor_version', REAL_AUDITOR_PROBES['codex'])   # this test drives the real probe
     import web_audit as audit
     monkeypatch.setenv('STACK_WORKDIR', str(tmp_path))
     def run(argv, **kwargs):
@@ -107,6 +110,9 @@ def test_auditor_hermetic_flags(tmp_path, monkeypatch):
 
 
 def test_auditor_version_records_and_idempotence(tmp_path, monkeypatch):
+    from bench.tests.conftest import REAL_AUDITOR_PROBES
+    import web_audit as _wa
+    monkeypatch.setattr(_wa, 'auditor_version', REAL_AUDITOR_PROBES['codex'])   # this test drives the real probe
     import web_audit as audit
     path, corpus, rows = fixture_rows(tmp_path, monkeypatch)
     version = ['codex-cli 0.161.0']
@@ -198,6 +204,9 @@ def test_network_output_file_incomplete(probe, tmp_path, monkeypatch, output):
 
 
 def test_retry_errors_uses_latest_record(tmp_path, monkeypatch):
+    from bench.tests.conftest import REAL_AUDITOR_PROBES
+    import web_audit as _wa
+    monkeypatch.setattr(_wa, 'auditor_version', REAL_AUDITOR_PROBES['codex'])   # this test drives the real probe
     import web_audit as audit
     path, corpus, _ = fixture_rows(tmp_path, monkeypatch)
     monkeypatch.setattr(audit.subprocess, 'run', lambda *a, **k: SimpleNamespace(stdout='codex-cli 0.161.0\n'))

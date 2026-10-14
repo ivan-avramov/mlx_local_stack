@@ -89,6 +89,38 @@ def declared_auditors():
     return [('codex:gpt-6-astra', auditor_version), (CURSOR, cursor_version)]
 
 
+def _valid_audit(record, auditors):
+    """C158/P298: a well-formed record of a declared auditor (allowed label, nonempty single-line reason, nonempty
+    version and prompt sha). Anything else is not an audit."""
+    from web_audit import LABELS
+    if not isinstance(record, dict):
+        return False
+    reason = record.get('reason')
+    return (record.get('auditor') in auditors and record.get('label') in (*LABELS, 'audit_error')
+            and isinstance(reason, str) and bool(reason.strip()) and reason.splitlines() == [reason]
+            and isinstance(record.get('auditor_version'), str) and bool(record['auditor_version'])
+            and isinstance(record.get('prompt_sha256'), str) and bool(record['prompt_sha256']))
+
+
+def accepted_audits(records, auditors):
+    """{key: record}: the latest well-formed genuine record per key (a retry replaces it); an operator resolution
+    applies only on top of a preceding genuine unresolved (`unclear`/`audit_error`) record of the same key and label,
+    as the documented procedure appends a copy of that record (C158/P298)."""
+    out = {}
+    for record in records:
+        if not _valid_audit(record, auditors):
+            continue
+        key = audit_record_key(record)
+        if 'operator_label' in record or 'operator_reason' in record:
+            base = out.get(key)
+            if base is not None and base['label'] in ('unclear', 'audit_error') and record['label'] == base['label']:
+                out[key] = {**base, 'operator_label': record.get('operator_label'),
+                            'operator_reason': record.get('operator_reason')}
+            continue
+        out[key] = record
+    return out
+
+
 def audit_record_key(record):
     return tuple(record.get(key) for key in ('row_id', 'sample', 'session_id', 'kind', 'index',
                                               'path', 'sha256', 'bytes', 'prompt_sha256', 'auditor',
@@ -241,7 +273,7 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
                 versions.append((name, version_of()))
             except (OSError, subprocess.SubprocessError, ValueError):
                 pass  # Unknown current version cannot validate any historical audit by that auditor.
-    audits = {audit_record_key(record): record for record in load_audits(audit_sidecar)}
+    audits = accepted_audits(load_audits(audit_sidecar), {name for name, _ in declared_auditors()})
     states = []
     for row in rows:
         labels, urls = [], []
