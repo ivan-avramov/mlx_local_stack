@@ -170,9 +170,31 @@ def test_a4_resolution_of_a_different_label_than_the_genuine_record_is_ignored(t
     assert all(label == "unclear" for st in states for label in st["labels"])
 
 
-def test_a5_offline_default_has_every_declared_probe_absent():
-    import web_audit
-    import web_audit_cursor
-    for probe in (web_audit.auditor_version, web_audit_cursor.cursor_version):
+def test_a5_offline_default_has_every_declared_probe_absent(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("a declared probe spawned a real CLI"))   # A6
+    for name, probe in answer_key.declared_auditors():
         with pytest.raises(FileNotFoundError):
             probe()
+
+
+def test_a7_a_malformed_later_resolution_does_not_undo_a_valid_one(tmp_path, monkeypatch, cursor_only):
+    rows, sidecar, records = _genuine(tmp_path, monkeypatch, {"label": "unclear", "reason": "ambiguous"})
+    with sidecar.open("a") as stream:
+        for r in records:
+            stream.write(json.dumps({**r, "operator_label": "generic", "operator_reason": "reviewed"}) + "\n")
+        for r in records:
+            stream.write(json.dumps({**r, "operator_label": "generic", "operator_reason": ""}) + "\n")
+            stream.write(json.dumps({**r, "operator_label": "bogus", "operator_reason": "x"}) + "\n")
+    states = answer_key.audit_states(rows, audit_sidecar=sidecar)
+    assert all(label == "generic" for st in states for label in st["labels"])
+
+
+def test_a8_a_malformed_record_does_not_block_a_genuine_re_audit(tmp_path, monkeypatch, cursor_only):
+    rows, sidecar, records = _genuine(tmp_path, monkeypatch, {"label": "docs", "reason": "language documentation"})
+    sidecar.write_text("".join(json.dumps({**r, "reason": ""}) + "\n" for r in records))      # malformed tail only
+    path = Path(str(sidecar)[: -len(".webaudit.jsonl")])
+    corpus = tmp_path / "corpus"
+    _cursor_audit(path, corpus, {"label": "docs", "reason": "language documentation"})      # must re-audit
+    states = answer_key.audit_states(rows, audit_sidecar=sidecar)
+    assert all(label == "docs" for st in states for label in st["labels"])

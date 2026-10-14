@@ -163,7 +163,9 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
         version = None
         version_error = f'Auditor version failed: {type(exc).__name__}.'
     existing = answer_key.load_audits(sidecar)
-    latest = {answer_key.audit_record_key(record): record for record in existing}
+    # C158 review A8: "already audited" means an ACCEPTED record (the scorer's own view); a malformed record or a
+    # resolution without a genuine predecessor must not block a genuine re-audit
+    latest = answer_key.accepted_audits(existing, {AUDITOR})
     done = {key for key, record in latest.items()
             if not retry_errors or record.get('label') != 'audit_error'}
     call = auditor if auditor is not None else codex_auditor

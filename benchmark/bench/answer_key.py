@@ -113,7 +113,12 @@ def accepted_audits(records, auditors):
         key = audit_record_key(record)
         if 'operator_label' in record or 'operator_reason' in record:
             base = out.get(key)
-            if base is not None and base['label'] in ('unclear', 'audit_error') and record['label'] == base['label']:
+            op_reason = record.get('operator_reason')
+            valid_resolution = (record.get('operator_label') in ('docs', 'generic', 'partial', 'solution', 'tests')
+                                and isinstance(op_reason, str) and bool(op_reason.strip())
+                                and op_reason.splitlines() == [op_reason])        # C158 review A7
+            if (valid_resolution and base is not None and base['label'] in ('unclear', 'audit_error')
+                    and record['label'] == base['label']):
                 out[key] = {**base, 'operator_label': record.get('operator_label'),
                             'operator_reason': record.get('operator_reason')}
             continue
