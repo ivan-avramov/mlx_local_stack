@@ -332,7 +332,7 @@ def identity(p, selection, universe_sha, version, binary, *, inject=None):
         # and generate execution are not called by tg1.
         *(REPO / "benchmark" / name for name in (
             "bench/convergence.py", "bench/rowschema.py", "bench/answer_key.py",
-            "web_audit.py", "web_audit_prompt.md", "bench/paths.py",
+            "web_audit.py", "web_audit_prompt.md", "web_audit_cursor.py", "bench/paths.py",
             "bench/model_params.py", "bench/quant_info.py",
         )),
     ]

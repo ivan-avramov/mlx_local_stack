@@ -81,6 +81,14 @@ def web_entries(row):
             yield kind, index, entry if isinstance(entry, dict) else {'command': entry}
 
 
+def declared_auditors():
+    """C158: the accepted P201 auditors in preference order, each with its current-version probe. codex gpt-6-astra
+    is the pinned auditor; Cursor gpt-5.6-sol-high audits on boxes without codex (operator 2026-10-14)."""
+    from web_audit import auditor_version
+    from web_audit_cursor import AUDITOR as CURSOR, cursor_version
+    return [('codex:gpt-6-astra', auditor_version), (CURSOR, cursor_version)]
+
+
 def audit_record_key(record):
     return tuple(record.get(key) for key in ('row_id', 'sample', 'session_id', 'kind', 'index',
                                               'path', 'sha256', 'bytes', 'prompt_sha256', 'auditor',
@@ -226,13 +234,13 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
             (Path(__file__).resolve().parents[1] / 'web_audit_prompt.md').read_bytes()).hexdigest()
     from web_audit import LABELS
     rows = list(rows)
-    version = None
+    versions = []   # C158: (auditor, current version) for every declared auditor whose CLI answers now
     if any(any(web_entries(row)) for row in rows):
-        from web_audit import auditor_version
-        try:
-            version = auditor_version()
-        except (OSError, subprocess.SubprocessError, ValueError):
-            pass  # Unknown current version cannot validate any historical audit.
+        for name, version_of in declared_auditors():
+            try:
+                versions.append((name, version_of()))
+            except (OSError, subprocess.SubprocessError, ValueError):
+                pass  # Unknown current version cannot validate any historical audit by that auditor.
     audits = {audit_record_key(record): record for record in load_audits(audit_sidecar)}
     states = []
     for row in rows:
@@ -244,12 +252,16 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
         unknown_source = incomplete or bool(row.get('answer_key_contact') and (
             not contact_sources or any(not re.search(r'https?://', source, re.I) for source in contact_sources)))
         for kind, index, entry in web_entries(row):
-            key = audit_record_key({'row_id': row['id'], 'sample': row.get('sample', 0),
-                                    'session_id': row.get('session_id'), 'kind': kind, 'index': index,
-                                    'path': entry.get('path'), 'sha256': entry.get('sha256'),
-                                    'bytes': entry.get('bytes'), 'prompt_sha256': prompt_sha256,
-                                    'auditor': 'codex:gpt-6-astra', 'auditor_version': version})
-            audit = audits.get(key, {}) if version else {}
+            audit = {}
+            for name, version in versions:     # declared order: the first auditor with a current record wins
+                key = audit_record_key({'row_id': row['id'], 'sample': row.get('sample', 0),
+                                        'session_id': row.get('session_id'), 'kind': kind, 'index': index,
+                                        'path': entry.get('path'), 'sha256': entry.get('sha256'),
+                                        'bytes': entry.get('bytes'), 'prompt_sha256': prompt_sha256,
+                                        'auditor': name, 'auditor_version': version})
+                if version and key in audits:
+                    audit = audits[key]
+                    break
             label = audit.get('label', 'missing')
             if label not in (*LABELS, 'audit_error'):
                 label = 'missing'

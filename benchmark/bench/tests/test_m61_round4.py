@@ -111,6 +111,8 @@ def test_auditor_version_records_and_idempotence(tmp_path, monkeypatch):
     path, corpus, rows = fixture_rows(tmp_path, monkeypatch)
     version = ['codex-cli 0.161.0']
     def run(argv, **kwargs):
+        if argv == ['cursor-agent', '--version']:   # C158: scoring also probes the declared Cursor auditor
+            raise FileNotFoundError('cursor-agent')
         assert argv == ['codex', '--version']
         assert kwargs['check'] and kwargs['timeout'] > 0
         return SimpleNamespace(stdout=version[0] + '\n')
