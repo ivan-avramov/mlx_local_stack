@@ -6,7 +6,7 @@ runner (benchmark/chains/c147/run_tg1_chain.py, check_restart_eligible) then ref
 On 2026-10-13 the live M63 chain died this way: a Spotlight mdworker (pid 87652) vanished between listing and the
 start-order read (fixture benchmark/bench/tests/fixtures/p297_real_uncertain_vanished_manifest.json). The probe must
 stay byte-identical (its files are hashed into probe_code_sha256, which pairs rows across chains), so the fix is
-runner-side only. Change under review: HEAD (`git show HEAD`).
+runner-side only. Change under review: commit 510ad800 (`git show 510ad800`).
 
 No chain is running. You may run:
 `cd benchmark && env -u STACK_WORKDIR <main-checkout>/.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/test_p297_uncertain_gone.py bench/tests/test_c147_chain_runner.py bench/tests/test_chain_ops.py`
