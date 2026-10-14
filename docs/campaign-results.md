@@ -2,6 +2,32 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-14 — M63: MTP ON certified on the tg1 agentic axis for both picks — no OFF advantage beyond ±5 pp, 1.4–2.35× faster; all four OFF 60-min cuts converge ON
+
+Spec `docs/specs/m63-mtp-on-tg1-arm.md` (C155). Same probe (`8d1b4c84…`), items, seeds and budgets as P223; shipped MTP overlay (registry `dc26891b…`, worker `--draft-kind mtp` + drafter, pick 1 `--mtp-verify-scan joint_v1`, verified per load); m5max-128; s1 2026-10-13, s2 + reload resumed 2026-10-14 after a probe-guard race abort (C157). Rows `benchmark/results/<model>/opencode_v2_<lang>.m63.{s1,s2,reload}.jsonl`; report `benchmark/results/m63_mtp/` (`m63_report.py` → `M63_REPORT.md`).
+
+| model | session | ON strict | OFF strict | ON wall h | OFF wall h | speed-up |
+|---|---|---|---|---|---|---|
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | s1 | 43/43 | 42/43 | 1.60 | 3.75 | 2.35× |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | s2 | 42/43 | 42/43 | 1.47 | 3.24 | 2.21× |
+| Qwen3.8-27B-mlx-uniform-4bit | s1 | 42/43 | 41/43 | 4.16 | 5.76 | 1.39× |
+| Qwen3.8-27B-mlx-uniform-4bit | s2 | 42/43 | 42/43 | 2.71 | 4.62 | 1.71× |
+
+Paired ON−OFF per (pick, session, language), two-stage bootstrap, Holm within (pick, session), TOST ±5 pp, MDE ≈ 0.27: every cell equivalent or inconclusive; largest negative point −4.8 pp (CI includes 0). The C154 sensitivity cut (excluding `client_inactivity` items) does not change any verdict. **C71 decision: no OFF advantage beyond ±5 pp on the agentic axis → both picks keep shipping MTP ON** (underpowered PASS, labelled as for the M40 judge panel). Reload control 5/5 with 5/5 agreement in both arms.
+
+**P293 answered:** every OFF `client_inactivity` item converged and passed ON — pick 1 `go/alphametics` (181 s, 6.5K tokens; OFF was a verbatim loop) and `python/book-store` (149 s, 6K); pick 2 `python/book-store` (549 s, 21K) and `python/paasio` (553 s, 17.8K). Speculation is not token-identical, so these are different trajectories, not the same think run faster. Discordant items 5 ON-favoured / 3 OFF-favoured (ON-only misses: pick 2 `go/alphametics` stalled at 83.9K tokens, pick 2 `python/poker` and pick 1 `python/react` looping). Tokens (charged): ON ≈ OFF for pick 1; pick 2 s1 ON 487K vs OFF 315K charged + ≈ 145K uncharged in its two cuts.
+
+## 2026-10-13 — P223: both B picks re-recorded under the tg1 token/turn gate (k=2 + reload, predictor OFF) — order holds; the only misses are 60-min client cuts and one loop stop
+
+Scaffold `opencode-v2-web-tg1` (M62 gate, C147 runner), opencode 2.0.20, probe `8d1b4c84…`, m5max-128, chain 2026-10-12T18:16Z → 2026-10-13T12:40Z, rc 0, every leg validated, 0 incomplete legs. Rows `benchmark/results/<model>/opencode_v2_<lang>.p223.{s1,s2,reload}.jsonl`; report `benchmark/results/p223_tg1/` (`tg1_report.py` → `P223_REPORT.md`). Three denied web fetches (s1 Python) audited `generic` by the Cursor `gpt-5.6-sol-high` P201 auditor (C158; no codex on this box).
+
+| model | Python s1 / s2 | Go s1 / s2 | strict total | session wall h |
+|---|---|---|---|---|
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | 22/22, 21/22 | 20/21, 21/21 | **84/86** | 3.8, 3.2 |
+| Qwen3.8-27B-mlx-uniform-4bit | 20/22, 21/22 | 21/21, 21/21 | 83/86 | 5.8, 4.6 |
+
+Head-to-head (first minus second pick, two-stage paired bootstrap, Holm within session, TOST ±5 pp): s1 Python +0.091 [+0.00, +0.23], s1 Go −0.048, s2 Python 0.000, s2 Go 0.000 (equivalent) — all others inconclusive. Misses: four `client_inactivity` rows (C154: opencode 2.0.20 interrupts a request after 60 min without a durable event; pick 1 `go/alphametics` s1 verbatim loop ≈ 96 % of budget, `python/book-store` s2 genuine ≈ 96 %; pick 2 `python/book-store` s1 genuine 89 %, `python/paasio` s1 meander 86 %) and one pick 2 `looping` stop after a pass (`python/beer-song` s2). Reload control 5/5. Descriptive vs M61 (seconds window, never pooled): within every interval. **Implication:** the B order holds; no change proposed. The 60-min cut lands lower for the slower pick (P293); M63 shows those items converge with MTP ON.
+
 ## 2026-10-12 — C147 runner live clearance on m5max-128: pilot PASS (attempt 3) and P279 smoke chain PASS — chain cleared for the P223 re-record
 
 V3 cleared 2026-10-11 (stall PASS, loop PASS, alloc waived: C152 ruling A). Pilot attempts 1–2 found two real-probe contract gaps the fake probe had hidden (P276: universe sha under `runtime.policy`; P276b: row seed field `sampler_seed`, clean-exit restart receipt); fixed with the real manifest and row as fixtures. Attempt 3: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 5 python items, all converged, validated, `ALL LEGS DONE`. Smoke chain (`--smoke`, 1+2 items per leg, `$STACK_WORKDIR/c147-smoke/`, rehearsal rows only — never graded, ranked or pooled): both picks × Python + Go, the block switch, the reload load and STOP (exit 3, cleanup complete, partial leg archived) all ran clean. Timing note: `book-store` took 20–30 min per leg for both picks (long single thinks; M59 per-item means 244–360 s) — chain budget ≈ 20–24 h.

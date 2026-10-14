@@ -68,9 +68,11 @@ items, raw, provisional = {}, {}, []
 for m in (P1, P2):
     for lang in LANGS:
         for s in SESS:
-            rs = rows(RES / m / f"opencode_v2_{lang}.p223.{s}.jsonl")
+            f = RES / m / f"opencode_v2_{lang}.p223.{s}.jsonl"
+            rs = rows(f)
             raw[(m, lang, s)] = rs
-            rep = answer_key.report_rows(rs)
+            side = Path(str(f) + ".webaudit.jsonl")      # P201 sidecar (C158: codex or Cursor auditor)
+            rep = answer_key.report_rows(rs, audit_sidecar=side if side.exists() else None)
             pm = rep["per_model"].get(m, {})
             it = {k: v for k, v in rep["strict_items"].items() if k not in INVALID}
             items[(m, lang, s)] = it
