@@ -1,6 +1,6 @@
 # Handoff — 2026-10-14: P223 (OFF) + M63 (MTP-ON) complete and written up; C158 done; box idle; next: C157 guard fix → P288 flaky tests → C144 candidates
 
-THE one handoff. Read this, then `docs/open-questions.md` (top entries: C161, C160, C159, P299, C158, P288, C157),
+THE one handoff. Read this, then `docs/open-questions.md` (top entries: C162, C161, C160, C159, P299, C158, P288, C157),
 `docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62, M63 rows), `README.md` B ladder.
 
 ## State of the world
@@ -62,4 +62,4 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: C161, C1
 - Scoring accepts an audit only from a declared auditor with a current installed version (C158).
 - Pushes need explicit operator approval each time.
 
-Next decision id C162; discussion ids continue from P303.
+Next decision id C163; discussion ids continue from P303.
