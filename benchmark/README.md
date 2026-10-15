@@ -263,8 +263,12 @@ STDIN. Tests inject a fake auditor. The parser accepts only a JSON object with e
 single-line `reason`; malformed answers become `unclear`, failed calls or unreadable evidence become `audit_error`.
 
 The append-only `<rows.jsonl>.webaudit.jsonl` stores `row_id`, `sample`, `session_id`, tool-list `kind`/`index`, evidence
-`path`/`sha256`/`bytes`, `auditor: "codex:gpt-6-astra"`, `prompt_sha256`, `preflag`, `label`, and `reason`. Matching keys with the
-same prompt SHA are skipped, including errors; a changed prompt SHA creates a new audit version. Three whole public stub
+`path`/`sha256`/`bytes`, `auditor` (`codex:gpt-6-astra`, or `cursor:gpt-5.6-sol-high` on boxes without codex, via
+`benchmark/web_audit_cursor.py`), `auditor_version`, `prompt_sha256`, `preflag`, `label`, and `reason`. **An audit is valid by (declared
+auditor, prompt SHA, evidence identity); the recorded `auditor_version` is provenance, and the CLI version installed now never gates
+scoring or re-auditing (P299: auditor CLIs update daily).** Evidence with an accepted record from any version is skipped; a changed
+prompt SHA creates a new audit version; `--retry-errors` retries only unresolved `audit_error` records (a newer record replaces the
+older). A new audit needs a readable CLI version: an unreadable one raises `AuditorVersionError` before anything is appended. Three whole public stub
 identifiers in content recognizable as the item's language set `preflag: true` and move that fetch ahead in review order.
 Python identifiers are top-level public def/class names; Go identifiers are exported func/type names, including methods.
 The pre-flag is a priority hint, not a substitute for an audit label; it is not shown to the auditor.
@@ -278,7 +282,8 @@ separately as `web contact: tests` and does not exclude a row. Failed/DNF rows r
 `flagged: answer-key contact` count remains available; historical rows and report scripts are unchanged.
 
 To resolve `unclear` or `audit_error`, append a copy of that sidecar record with `operator_label` (`docs`, `generic`, `solution`,
-or `tests`) and a nonempty one-line `operator_reason`; the latest matching record wins. Resolutions do not override `solution`
+or `tests`) and a nonempty one-line `operator_reason`; the latest matching record wins. A resolution counts only on top of a genuine
+unresolved record with the same key, label and `auditor_version`. Resolutions do not override `solution`
 or reference-contact flags. Do not edit benchmark rows. An unchanged error is intentionally idempotent.
 
 **Compaction split.** Daily-driver `opencode_config/opencode.json` deliberately enables compaction to handle a human session's overflow. The v2 benchmark carrier disables it so overflow is measured as non-convergence, never hidden by summarization and never a DNF. `acc_strict@budget` remains the ranking key. Rows and manifest runtime record `max_tokens_semantics: "fixed-by-carrier"` and `max_tokens_evidence: "mock-capture:test_real_wire_seed_sampling_title_headers_and_export"`. That capture test verifies both facts at `limit.output=512`: `max_tokens=102400` is sent when the body cap is present, and `max_tokens=512` is sent without it.

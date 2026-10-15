@@ -37,7 +37,7 @@ def _cursor_audit(path, corpus, answer):
 
 
 def test_declared_auditors_order():
-    assert [name for name, _ in answer_key.declared_auditors()] == ["codex:gpt-6-astra", "cursor:gpt-5.6-sol-high"]
+    assert answer_key.declared_auditors() == ["codex:gpt-6-astra", "cursor:gpt-5.6-sol-high"]
 
 
 def test_cursor_audit_counts_when_codex_is_absent(tmp_path, monkeypatch, cursor_only):
@@ -49,22 +49,8 @@ def test_cursor_audit_counts_when_codex_is_absent(tmp_path, monkeypatch, cursor_
     assert all(label == "docs" for st in states for label in st["labels"])
 
 
-def test_cursor_audit_from_another_version_is_missing(tmp_path, monkeypatch, cursor_only):
-    import web_audit_cursor
-    path, corpus, rows = fixture_rows(tmp_path, monkeypatch)
-    sidecar = _cursor_audit(path, corpus, {"label": "docs", "reason": "language documentation"})
-    monkeypatch.setattr(web_audit_cursor, "cursor_version", lambda: "2026.11.01-other")
-    states = answer_key.audit_states(rows, audit_sidecar=sidecar)
-    assert all(label == "missing" for st in states for label in st["labels"])
 
 
-def test_no_auditor_available_means_missing(tmp_path, monkeypatch, cursor_only):
-    import web_audit_cursor
-    path, corpus, rows = fixture_rows(tmp_path, monkeypatch)
-    sidecar = _cursor_audit(path, corpus, {"label": "docs", "reason": "language documentation"})
-    monkeypatch.setattr(web_audit_cursor, "cursor_version", _no_codex)
-    states = answer_key.audit_states(rows, audit_sidecar=sidecar)
-    assert all(label == "missing" for st in states for label in st["labels"])
 
 
 def test_codex_record_is_preferred_when_both_exist(tmp_path, monkeypatch):
@@ -173,7 +159,9 @@ def test_a4_resolution_of_a_different_label_than_the_genuine_record_is_ignored(t
 def test_a5_offline_default_has_every_declared_probe_absent(monkeypatch):
     import subprocess
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("a declared probe spawned a real CLI"))   # A6
-    for name, probe in answer_key.declared_auditors():
+    import web_audit
+    import web_audit_cursor
+    for probe in (web_audit.auditor_version, web_audit_cursor.cursor_version):
         with pytest.raises(FileNotFoundError):
             probe()
 

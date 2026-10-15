@@ -21,7 +21,7 @@ def web_row(**kw):
                    web_fetches=[{'url': 'https://GitHub.com/Owner/Repo/blob/main/a.py'}], **kw)
 
 
-@pytest.mark.parametrize('stale', ['absent', 'prompt_sha256', 'auditor_version'])
+@pytest.mark.parametrize('stale', ['absent', 'prompt_sha256'])
 def test_missing_audit_refuses_driver_and_provisional_report(tmp_path, stale):
     path = tmp_path / 'rows.jsonl'
     row = web_row()
