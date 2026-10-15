@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """P294 (operator 2026-10-14): the P201 blind web audit with Cursor `gpt-5.6-sol-high` as the auditor.
 
-`web_audit.py` and `web_audit_prompt.md` stay byte-identical (both are in the tg1 probe code identity); this wrapper
-reuses their payload, prompt, parser and append-only sidecar and swaps only the auditor call, label and version.
+This wrapper reuses `web_audit.py`'s payload, `web_audit_prompt.md`, parser and append-only sidecar and swaps only the
+auditor call, label and version probe (the version is recorded as provenance; it never gates scoring, P299).
 Records carry `auditor: "cursor:gpt-5.6-sol-high"`. The auditor runs in an empty temporary workspace (blind: no repo),
 read-only (`--mode ask`, sandbox on). An empty answer is an auditor failure (`audit_error`, retry with
 `--retry-errors`), never a label. Usage: web_audit_cursor.py <rows.jsonl> [...] [--retry-errors] [--timeout S]"""
@@ -52,7 +52,7 @@ def main():
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     web_audit.AUDITOR = AUDITOR                    # the label audit_rows writes into every record
-    web_audit.auditor_version = cursor_version     # the version audit_rows records and keys on
+    web_audit.auditor_version = cursor_version     # the version audit_rows records as provenance (P299)
     for rows in args.rows:
         print(web_audit.audit_rows(rows, polyglot_root=args.polyglot_root,
                                    auditor=lambda prompt: cursor_auditor(prompt, timeout=args.timeout),

@@ -150,7 +150,7 @@ class AuditorVersionError(RuntimeError):
 
 def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMPT,
                retry_errors=False) -> Path:
-    """Audit once per evidence/prompt/auditor/version; optionally retry latest errors."""
+    """Audit once per evidence/prompt/auditor (the recorded version is provenance, P299); optionally retry latest unresolved errors."""
     rows_path = Path(rows_path)
     sidecar = Path(str(rows_path) + '.webaudit.jsonl')
     refusal = paths.confine_path(sidecar, what='audit sidecar')

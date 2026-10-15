@@ -281,7 +281,7 @@ current audit excludes the row from `acc_strict` and `strict_items`, reported as
 separately as `web contact: tests` and does not exclude a row. Failed/DNF rows remain in the eligible denominator. The old
 `flagged: answer-key contact` count remains available; historical rows and report scripts are unchanged.
 
-To resolve `unclear` or `audit_error`, append a copy of that sidecar record with `operator_label` (`docs`, `generic`, `solution`,
+To resolve `unclear` or `audit_error`, append a copy of that sidecar record with `operator_label` (`docs`, `generic`, `partial`, `solution`,
 or `tests`) and a nonempty one-line `operator_reason`; the latest matching record wins. A resolution counts only on top of a genuine
 unresolved record with the same key, label and `auditor_version`. Resolutions do not override `solution`
 or reference-contact flags. Do not edit benchmark rows. An unchanged error is intentionally idempotent.

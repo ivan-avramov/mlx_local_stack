@@ -1,5 +1,5 @@
 """C158 (operator 2026-10-14): scoring accepts a declared set of P201 auditors — codex gpt-6-astra (pinned, first) and
-Cursor gpt-5.6-sol-high (boxes without codex) — each keyed on its own currently installed CLI version."""
+Cursor gpt-5.6-sol-high (boxes without codex). P299: acceptance never depends on the installed CLI version."""
 import json
 from pathlib import Path
 

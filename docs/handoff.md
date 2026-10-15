@@ -56,7 +56,7 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: C158, P2
 - A cold-review prompt names the commit hash, never HEAD.
 - opencode 2.0.20 cuts a single request at 60 min without a durable event (C154); tokenize the trailing reasoning
   to tell a loop from genuine thinking.
-- Scoring accepts an audit only from a declared auditor with a current installed version (C158).
+- Scoring accepts an audit from a declared auditor by its RECORDED version, prompt sha and evidence; the installed CLI version is provenance only (C158, P299).
 - Pushes need explicit operator approval each time.
 
 Next decision id C159; discussion ids continue from P299.
