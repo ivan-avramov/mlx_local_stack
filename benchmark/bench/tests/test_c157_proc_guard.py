@@ -27,11 +27,14 @@ class Unreadable(Process):
     """Listed, then its start order is unreadable (macOS: a process mid-exit). `on_read(self)` scripts what happens
     at that instant (exit, pid reuse, reparenting)."""
 
-    def __init__(self, *args, on_read=None, **kwargs):
+    def __init__(self, *args, on_read=None, armed=True, **kwargs):
         super().__init__(*args, **kwargs)
         self.on_read = on_read
+        self.armed = armed
 
     def start_order(self):
+        if not self.armed:
+            return None                   # readable: callers fall back to the wall-clock start
         if self.on_read:
             self.on_read(self)
         raise _denied(self.pid)
@@ -177,3 +180,67 @@ def test_the_observed_m63_receipt_is_the_unreadable_orphan_shape(tmp_path):
     assert '{"pid": 87652, "create_time": null, "reason": "start order unreadable"}' in str(err.value)
     assert {"pid": 87652, "create_time": None, "argv": [], "reason": "start order unreadable"} in \
         g.status()["orphans_unattributed"]
+
+
+# ----------------------------------------------------------------------------- cold review round 1 (b5b4cd53)
+def test_p2_a_parent_noted_by_tick_survives_the_pre_cleanup_kill_role_tick(tmp_path):
+    """The REAL kill_role()/tick() path: the unreadable parent exits during cleanup's own tick."""
+    processes = []
+    child = Process(41, 40, created=11)
+    parent = Unreadable(40, armed=False)
+    processes += [child, parent]
+    g = _guard(tmp_path, processes)                 # real kill_role
+    g.tick()                                         # readable: the previous tick records the child's ppid
+    parent.armed = True
+    parent.on_read = _exits(processes, children=[child])     # exits (and reparents) in the very next read
+    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*child of vanished unreadable process"):
+        g.cleanup()
+    assert not child.dead
+
+
+def test_p3_a_pid_replacement_found_only_at_the_second_recheck_is_still_scanned(tmp_path):
+    processes = []
+    original = Unreadable(30, created=10)
+    replacement = Process(30, 1, created=99, cwd=str(tmp_path / "work"))
+    processes.append(original)
+    reads = []
+
+    def get(pid):
+        reads.append(pid)
+        if len(reads) >= 2 and original in processes:
+            processes[processes.index(original)] = replacement
+        return next(q for q in processes if q.pid == pid)
+    g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=get)
+    g.started = 0
+    g.kill_role = lambda role=None: []
+    with pytest.raises(TransportAbort, match="path-only attribution"):
+        g.cleanup()
+
+
+def test_p4_a_grandchild_of_a_vanished_unreadable_ancestor_is_not_cleared(tmp_path):
+    processes = []
+    b, c = Process(51, 50, created=11), Process(52, 51, created=12)
+
+    def a_and_b_exit(p):
+        processes.remove(p)
+        processes.remove(b)
+        c.parent = 1
+    processes += [b, c, Unreadable(50, on_read=a_and_b_exit)]
+    g = guard(tmp_path, processes)
+    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*52.*child of vanished unreadable process"):
+        g.cleanup()
+
+
+def test_p5_a_listed_process_with_an_unreadable_parent_is_a_candidate_child(tmp_path):
+    processes = []
+    import psutil
+    from bench.tests.test_proc_guard import Process as P
+
+    class NoParent(P):
+        def ppid(self):
+            raise psutil.AccessDenied(self.pid)
+    child = NoParent(41, 40, created=11)
+    processes += [child, Unreadable(40, on_read=_exits(processes))]
+    g = guard(tmp_path, processes)
+    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*41.*child of vanished unreadable process"):
+        g.cleanup()

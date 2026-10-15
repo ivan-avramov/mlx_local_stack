@@ -310,6 +310,8 @@ class ProcessGuard:
         self.scrub = scrub or (lambda text: text)
         self.context = context
         self.killed = []
+        self._ppid_history = {}         # C157: {pid: (start time, ppid)} of the previous tick's non-protected processes
+        self._unreadable_seen = {}      # C157: unreadable identities (+ listing descendants) noted by tick()/cleanup
         self._status = None
 
     def container_name(self):
@@ -364,9 +366,19 @@ class ProcessGuard:
             processes = self._processes()
             alive = {}
             ppids = {}
+            edges = None
             for p in processes:
                 try:
-                    if not self._protected(p):
+                    try:
+                        protected = self._protected(p)
+                    except self.psutil.AccessDenied:
+                        # C157 (review P2): keep the identity and the listing's descendants, so a cleanup that runs
+                        # after this process exits still knows who its children were
+                        if edges is None:
+                            edges = self._listing_edges(processes)
+                        self._note_unreadable(self._unreadable_seen, p, *edges)
+                        continue
+                    if not protected:
                         # ppid() re-validates identity; a stale cached entry (pid reused, psutil keeps the old
                         # create_time) raises here and must never become an ancestry authority (V5a P13).
                         ppids[p.pid] = p.ppid()
@@ -374,6 +386,7 @@ class ProcessGuard:
                 except self._transient:
                     ppids.pop(p.pid, None)
                     alive.pop(p.pid, None)
+            self._ppid_history = {pid: (alive[pid][1], ppid) for pid, ppid in ppids.items() if pid in alive}
             # Follow ancestry until its transitive closure; detachments retain recorded ownership.
             changed = True
             while changed:
@@ -667,38 +680,82 @@ class ProcessGuard:
         except (*self._transient, TransportAbort):
             return None
 
+    def _listing_edges(self, listing):
+        """parent_of {pid: (process, ppid)} for one listing, plus the processes whose parent could not be read
+        (one retry; they stay candidate descendants of any unreadable process, C157/P5)."""
+        parent_of, unknown = {}, []
+        for p in listing:
+            for attempt in range(2):
+                try:
+                    parent_of[p.pid] = (p, p.ppid())
+                    break
+                except self._transient:
+                    continue
+            else:
+                unknown.append(p)
+        return parent_of, unknown
+
+    def _note_unreadable(self, store, p, parent_of, unknown):
+        """Record an eligible process whose start order cannot be read, with the TRANSITIVE descendants of this
+        listing and every process of unreadable parentage: a vanished parent proves nothing about them (P297 U1)."""
+        entry = store.setdefault((p.pid, self._created_or_none(p)), dict(children={}))
+        # this listing's edges + the previous tick's: a parent that turns unreadable in the very tick it exits has
+        # already reparented its children in the current listing
+        edges = [(child.pid, None, ppid, child) for child, ppid in parent_of.values()]
+        edges += [(pid, created, ppid, None) for pid, (created, ppid) in list(self._ppid_history.items())]
+        seen, frontier = {p.pid}, [p.pid]
+        while frontier:
+            parent = frontier.pop()
+            for pid, created, ppid, child in edges:
+                if ppid == parent and pid not in seen:
+                    seen.add(pid)
+                    entry["children"][pid] = created if child is None else self._created_or_none(child)
+                    frontier.append(pid)
+        for q in unknown:
+            if q.pid not in seen:
+                entry["children"][q.pid] = self._created_or_none(q)
+
     def _existence(self, pid, created):
-        """C157: "gone" | "present" for a pid whose identity could not be read. Gone is proven only by
+        """C157: "gone" | "readable" | "present" for a pid whose identity could not be read. Gone is proven only by
         NoSuchProcess, or - when the original start time was captured - by a different start time (pid reuse: the
-        original is gone, the replacement must still pass the normal scan). Anything unreadable is present."""
+        original is gone, the replacement must still pass the normal scan). "readable": it exists with the same
+        identity and can now be classified, so the next full scan decides it. Anything unreadable is present."""
         try:
             process = self.get(pid)
         except (self.psutil.NoSuchProcess, StopIteration):
             return "gone"
         except (self.psutil.AccessDenied, TransportAbort):
             return "present"
-        if created is None:
-            return "present"
         try:
-            if start_time(process) != created:
-                return "gone"
-            return "present" if self._live(process) else "gone"
+            if created is not None:
+                if start_time(process) != created:
+                    return "gone"
+                if not self._live(process):
+                    return "gone"
+            self._protected(process)
+            return "readable"
         except self.psutil.NoSuchProcess:
             return "gone"
         except (self.psutil.AccessDenied, TransportAbort):
             return "present"
 
-    def _reconcile_unreadable(self, unreadable):
+    def _reconcile_unreadable(self, unreadable, cleared):
         """C157: resolve every unreadable-identity record against the process table NOW, never from a flag frozen
-        earlier. Returns ({key: orphan record} still unresolved, vanished_any). A still-present unreadable process
-        stays uncertain (C151 R10). A vanished one clears only itself: each child seen in its listing must be gone,
-        protected/pre-existing, or tracked (the tracked audit kills it); otherwise it is unresolved (P297 U1)."""
-        bad, vanished = {}, False
-        for (pid, created), info in unreadable.items():
-            if self._existence(pid, created) != "gone":
+        earlier. Returns ({key: orphan record} still unresolved, newly resolved keys). A still-present unreadable
+        process stays uncertain (C151 R10). A gone/readable one clears only itself and every identity newly
+        cleared forces another full scan; each descendant listed with a vanished parent must itself be gone,
+        protected/pre-existing, or tracked (the tracked audit kills it), otherwise it is unresolved (P297 U1)."""
+        bad, newly = {}, set()
+        for key, info in unreadable.items():
+            pid, created = key
+            state = self._existence(pid, created)
+            if state == "present":
                 bad[(pid, None)] = dict(pid=pid, create_time=None, argv=[], reason="start order unreadable")
                 continue
-            vanished = True
+            if key not in cleared:
+                newly.add(key)
+            if state == "readable":
+                continue                    # alive and classifiable: the normal scan owns it and its children
             for child_pid, child_created in info["children"].items():
                 reason = dict(pid=child_pid, create_time=child_created, argv=[],
                               reason="child of vanished unreadable process")
@@ -706,16 +763,16 @@ class ProcessGuard:
                     if self._existence(child_pid, None) != "gone":
                         bad[(child_pid, None)] = reason
                     continue
-                state = self._identity_state(child_pid, child_created)
-                if state == "gone" or (child_pid, child_created) in self.tracked:
+                child_state = self._identity_state(child_pid, child_created)
+                if child_state == "gone" or (child_pid, child_created) in self.tracked:
                     continue
                 try:
-                    if state == "alive" and self._protected(self.get(child_pid)):
+                    if child_state == "alive" and self._protected(self.get(child_pid)):
                         continue
                 except (*self._transient, TransportAbort, StopIteration):
                     pass
                 bad[(child_pid, child_created)] = reason
-        return bad, vanished
+        return bad, newly
 
     def cleanup(self):
         with defer_signals():
@@ -740,19 +797,14 @@ class ProcessGuard:
             survivors = []
             orphans = {}
             uncertain = container_failure is not None or order_failure is not None
-            unreadable = {}      # (pid, start time | None) -> {children}; reconciled after the scan (C157)
-            non_converged = False
-            for round_ in range(4):
-                before = set(unreadable)
+            with self.lock:
+                unreadable = {k: dict(children=dict(v["children"])) for k, v in self._unreadable_seen.items()}
+            cleared, bad, non_converged = set(), {}, False      # C157: reconciled after every full scan
+            for round_ in range(5):
                 for attempt in range(3):
                     survivors = []
                     listing = self._processes()
-                    parent_of = {}
-                    for p in listing:
-                        try:
-                            parent_of[p.pid] = (p, p.ppid())
-                        except self._transient:
-                            pass
+                    parent_of, unknown_parent = self._listing_edges(listing)
                     for p in listing:
                         try:
                             try:
@@ -761,10 +813,7 @@ class ProcessGuard:
                                 # an eligible same-uid process whose start/order cannot be read could be ours: it is
                                 # resolved against the final process table, not frozen uncertain (C157; C151 R10). The
                                 # children of THIS listing are kept: a vanished parent proves nothing about them.
-                                entry = unreadable.setdefault((p.pid, self._created_or_none(p)), dict(children={}))
-                                for child, parent in parent_of.values():
-                                    if parent == p.pid:
-                                        entry["children"][child.pid] = self._created_or_none(child)
+                                self._note_unreadable(unreadable, p, parent_of, unknown_parent)
                                 continue
                             if protected:
                                 continue
@@ -829,13 +878,18 @@ class ProcessGuard:
                     time.sleep(0.05)
                 else:
                     pass
-                # C157: a vanished unreadable process needs one clean pass after it (its children, a pid replacement)
-                _, vanished = self._reconcile_unreadable(unreadable)
-                if not vanished or (round_ and set(unreadable) == before):
-                    break              # nothing vanished, or the extra pass after the last vanish was clean
-                if round_ == 3:
+                # C157: every newly resolved identity (vanished, pid-reused, now readable) needs a full scan AFTER it;
+                # a still-present one gets a short settle before it is called uncertain
+                for settle in range(3):
+                    bad, newly = self._reconcile_unreadable(unreadable, cleared)
+                    if newly or not bad:
+                        break
+                    time.sleep(0.05)
+                cleared |= newly
+                if not newly:
+                    break
+                if round_ == 4:
                     non_converged = True
-            bad, _ = self._reconcile_unreadable(unreadable)      # authoritative: the final process table
             orphans.update(bad)
             uncertain = uncertain or bool(bad)
             if non_converged:
