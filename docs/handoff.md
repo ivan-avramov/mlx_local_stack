@@ -1,43 +1,56 @@
-# Handoff — 2026-10-14: P223 (OFF) and M63 (MTP-ON) tg1 chains COMPLETE and written up; C158 cold review in progress; box idle
+# Handoff — 2026-10-14: P223 (OFF) + M63 (MTP-ON) complete and written up; C158 done; box idle; next: C157 guard fix → P288 flaky tests → C144 candidates
 
-THE one handoff. Read this, then `docs/open-questions.md` (C154–C158 at the top), `docs/campaign-results.md`
-(2026-10-13 P223, 2026-10-14 M63), `docs/specs/m63-mtp-on-tg1-arm.md`, `docs/PLAN.md` (M62, M63 rows).
+THE one handoff. Read this, then `docs/open-questions.md` (top entries: C158, P298, P288, C157, C156, C155, C154),
+`docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62, M63 rows), `README.md` B ladder.
 
 ## State of the world
 
-- **Box `m5max-128`, idle.** No router, no chain. Docker (OrbStack, start-at-login ON) 29.4.0. No codex CLI (cannot
-  be installed); the P201 web auditor here is Cursor `gpt-5.6-sol-high` (C158, `benchmark/web_audit_cursor.py`).
-- **Serving identity changed 2026-10-14:** `src/mlx-serve` synced to the operator's pushed `86921f0` ("reap a worker
-  that exits after READY"; editable install, live). Rows recorded from now on do not pair with P223/M63 rows.
-- **Probe identity changed** (C158 added `web_audit_cursor.py` to it and changed `answer_key.py`): the next chain gets a
-  new `probe_code_sha256`. P223 and M63 rows all carry `8d1b4c84…` and pair with each other.
-- **P223 (OFF) record:** pick 1 `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` 84/86 strict, pick 2
-  `Qwen3.8-27B-mlx-uniform-4bit` 83/86; order holds. Report `benchmark/results/p223_tg1/P223_REPORT.md` (final).
-- **M63 (MTP ON) certified on the agentic axis:** pick 1 85/86, pick 2 84/86; every paired ON−OFF cell equivalent or
-  inconclusive, no OFF advantage beyond ±5 pp → both keep shipping ON (C71); 1.4–2.35× faster. All four OFF 60-min
-  `client_inactivity` cuts converged ON (P293 answered). Report `benchmark/results/m63_mtp/M63_REPORT.md`.
-- **README B ladder evidence updated** (ranks unchanged; changes to picks/order need the operator).
-- Branches parked: `p297-uncertain-gone` (not cleared; see C157), `c152-alloc-tool-scope-wip`.
+- **Box `m5max-128`, idle**: no router, no chain, :8000 free. Docker (OrbStack, start-at-login ON) 29.4.0.
+  No codex CLI (cannot be installed); the P201 web auditor here is Cursor `gpt-5.6-sol-high`
+  (`benchmark/web_audit_cursor.py`, C158). `cursor-agent` is also the cold reviewer
+  (`cursor-agent -p --output-format text --model gpt-5.6-sol-high --mode plan --sandbox enabled --force --trust
+  --workspace <repo>`; it sometimes returns empty output — re-run once).
+- **Identities moved (2026-10-14), so new rows never pair with P223/M63 rows:**
+  serving — `src/mlx-serve` at the operator's `86921f0` (editable install, live);
+  probe — C158 changed `answer_key.py`, `web_audit.py` and added `web_audit_cursor.py` to the tg1 code identity
+  (`run_opencode_probe_v2.py --print-identity` gives the new `probe_code_sha256`).
+- **Records (final, committed, pushed):**
+  - P223 tg1 OFF (`benchmark/results/p223_tg1/P223_REPORT.md`): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+    84/86 strict, `Qwen3.8-27B-mlx-uniform-4bit` 83/86; B order holds; 2 `client_inactivity` rows each, counted
+    as recorded (P293 ruled 2026-10-14).
+  - M63 MTP-ON (`benchmark/results/m63_mtp/M63_REPORT.md`): 85/86 and 84/86; no OFF advantage beyond ±5 pp →
+    both keep shipping MTP ON (C71); 1.4–2.35× faster; all four OFF 60-min cuts converge ON.
+  - README B-ladder evidence updated (ranks unchanged; pick/order changes need the operator).
+- **Parked branches:** `p297-uncertain-gone` (runner-side workaround, not cleared — superseded by C157),
+  `c152-alloc-tool-scope-wip`.
 
-## Queue, in order
+## Next work, in order (each: proposal to the operator if not yet approved → test-first → cold review → full suite)
 
-1. **C158 cold review** (Cursor `gpt-5.6-sol-high`, `benchmark/chains/c147/reviews/c158/`) of the declared-auditor
-   scoring change; fix findings, re-run the full suite, regenerate both reports if scoring changes.
-2. **P293 decision (operator, after M63 — now due):** how OFF `client_inactivity` rows count. Evidence: all four
-   converge ON; strict ranking unaffected either way. Options in C154/P293.
-3. **C157 probe guard fix** (vanished unreadable process ≠ uncertain; monitor-failure check before the uncertainty
-   raise) — next probe-identity change, i.e. now is fine; test-first + cold review.
-4. **C144 candidates under tg1** (new probe + serving identity; fresh OFF rows for any comparison).
-5. Bootstrap/README: document the per-box P201 auditor (C158).
+1. **C157 — probe guard: a vanished unreadable process is not "uncertain"** (cause of the M63 s2 abort and of
+   P288's worst flake). In `benchmark/bench/proc_guard.py` `cleanup()`: when a same-uid process's start order
+   cannot be read, re-check existence with the guard's own tracking state — a process that no longer exists and
+   left no tracked or attributable descendant is not uncertain; one that still exists stays uncertain (C151 R10).
+   Also move the process-monitor failure check before the uncertainty raise (P297 review U2: a monitor failure is
+   currently hidden behind it). Fixture: `benchmark/bench/tests/fixtures/p297_real_uncertain_vanished_manifest.json`.
+   Review record of why the runner-side version failed: `p297-uncertain-gone` branch,
+   `benchmark/chains/c147/reviews/p297/round1.cursor-gpt-5.6-sol-high.md` (U1 reparented descendants, U2).
+2. **P288 — make the four load-sensitive tests deterministic** (list in open-questions P288; needs operator go).
+3. **C144 — new candidates under tg1** (new probe + serving identity: fresh OFF rows for every comparison, including
+   re-recording the two picks if they are to be compared against). Run a `--smoke` chain first.
+4. **Docs:** per-box P201 auditor (codex vs Cursor) in `benchmark/README.md` and `scripts/bootstrap_machine.sh`
+   notes (C158 owed).
 
-## Rules learned (this session)
+## Rules learned (2026-10-11 → 14)
 
-- Build in a worktree under `$STACK_WORKDIR/worktrees/` while a chain runs; never edit runner/probe files under a
-  live chain; never run the full suite under a live chain.
-- Launch chains from a shell whose command line names no watched process (busy-process gate refuses its own launcher).
-- A review prompt must name the commit, not HEAD, once the prompt itself is committed.
-- opencode 2.0.20: 60-min single-request inactivity cut (C154); long thinks can be loops or genuine — tokenize.
-- `answer_key` needs a current auditor CLI version to accept any audit; boxes without codex use Cursor (C158).
+- Never edit runner/probe/scoring files in the main checkout while a chain runs (`chain.json` re-hashes runner files;
+  probe-identity files abort the next leg) — build in `$STACK_WORKDIR/worktrees/`, merge after. Never run the full
+  suite under a live chain (real-client tests spawn opencode).
+- Launch chains with a command line that names no watched process (the busy-process gate refused its own launcher).
+- After a reboot: `docker info` before any Go leg (P290 gate enforces it).
+- A cold-review prompt names the commit hash, never HEAD.
+- opencode 2.0.20 cuts a single request at 60 min without a durable event (C154); tokenize the trailing reasoning
+  to tell a loop from genuine thinking.
+- Scoring accepts an audit only from a declared auditor with a current installed version (C158).
 - Pushes need explicit operator approval each time.
 
-Next decision id C159; discussion ids continue from P298.
+Next decision id C159; discussion ids continue from P299.
