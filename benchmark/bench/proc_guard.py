@@ -377,17 +377,17 @@ class ProcessGuard:
                         # runs after this process exits still knows who its children were
                         self._note_unreadable(self._unreadable_seen, p, edges)
                         continue
-                    readable[p.pid] = p
                     if not protected:
                         # ppid() re-validates identity; a stale cached entry (pid reused, psutil keeps the old
                         # create_time) raises here and must never become an ancestry authority (V5a P13).
                         ppids[p.pid] = p.ppid()
                         alive[p.pid] = (p, start_time(p), start_order(p))
+                    readable[p.pid] = p      # only after EVERY required read succeeded (round 3 P2)
                 except self._transient:
                     ppids.pop(p.pid, None)
                     alive.pop(p.pid, None)
-            for key in [k for k in self._unreadable_seen
-                        if k[0] in readable and k[1] in (None, self._created_or_none(readable[k[0]]))]:
+            for key in [k for k in self._unreadable_seen          # exact identity only: never a pid wildcard
+                        if k[1] is not None and k[0] in readable and self._created_or_none(readable[k[0]]) == k[1]]:
                 del self._unreadable_seen[key]      # classified readable now: the ambiguity is resolved (round 2 P4)
             # Follow ancestry until its transitive closure; detachments retain recorded ownership.
             changed = True
@@ -700,48 +700,54 @@ class ProcessGuard:
     def _note_unreadable(self, store, p, edges):
         """Record an eligible process whose start order cannot be read, with the TRANSITIVE descendants of the
         listing (edges read BEFORE any per-process start-order read) and everything of unreadable parentage, closed
-        over those edges: a vanished parent proves nothing about them (P297 U1). Bounded: past the cap the guard
-        fails closed (`_unreadable_overflow` -> uncertain)."""
+        over those edges: a vanished parent proves nothing about them (P297 U1). Candidates are IDENTITIES
+        (pid, start time), so a reused pid adds a second candidate instead of masquerading as the first. Bounded
+        (32 roots, 2048 identities in all): past either cap the guard fails closed (`_unreadable_overflow`)."""
         children_of, unknown = edges
         key = (p.pid, self._created_or_none(p))
-        if key not in store and len(store) >= 128:
+        if key not in store and len(store) >= 32:
             self._unreadable_overflow = True
             return
-        entry = store.setdefault(key, dict(children={}))
-        seen, frontier = {p.pid}, [p.pid] + [q.pid for q in unknown if q.pid != p.pid]
+        entry = store.setdefault(key, dict(children=set()))
+        seen, frontier = {p.pid}, [p.pid]
         for q in unknown:
-            if q.pid not in entry["children"] and q.pid != p.pid:
-                entry["children"][q.pid] = self._created_or_none(q)
+            if q.pid != p.pid:
+                entry["children"].add((q.pid, self._created_or_none(q)))
+                frontier.append(q.pid)
         while frontier:
             for child in children_of.get(frontier.pop(), ()):
                 if child.pid not in seen:
                     seen.add(child.pid)
-                    entry["children"][child.pid] = self._created_or_none(child)
+                    entry["children"].add((child.pid, self._created_or_none(child)))
                     frontier.append(child.pid)
+        if sum(len(v["children"]) for v in store.values()) > 2048:
+            self._unreadable_overflow = True
 
     def _existence(self, pid, created):
-        """C157: "gone" | "readable" | "present" for a pid whose identity could not be read. Gone is proven only by
-        NoSuchProcess, or - when the original start time was captured - by a different start time (pid reuse: the
-        original is gone, the replacement must still pass the normal scan). "readable": it exists with the same
-        identity and can now be classified, so the next full scan decides it. Anything unreadable is present."""
+        """C157: (kind, occupant start time) for a pid whose identity could not be read; kind is "gone" | "readable"
+        | "present". Gone is proven only by NoSuchProcess, or - when the original start time was captured - by a
+        different start time or a dead state (pid reuse: the original is gone, the replacement must still pass the
+        normal scan, so the occupant's identity is part of the observation). "readable": it exists and can be
+        classified now, so the next full scan decides it. Anything unreadable is present."""
         try:
             process = self.get(pid)
         except (self.psutil.NoSuchProcess, StopIteration):
-            return "gone"
+            return "gone", None
         except (self.psutil.AccessDenied, TransportAbort):
-            return "present"
+            return "present", None
         try:
+            occupant = self._created_or_none(process)
             if created is not None:
-                if start_time(process) != created:
-                    return "gone"
+                if occupant != created:
+                    return "gone", occupant
                 if not self._live(process):
-                    return "gone"
+                    return "gone", occupant
             self._protected(process)
-            return "readable"
+            return "readable", occupant
         except self.psutil.NoSuchProcess:
-            return "gone"
+            return "gone", None
         except (self.psutil.AccessDenied, TransportAbort):
-            return "present"
+            return "present", None
 
     def _reconcile_unreadable(self, unreadable):
         """C157: resolve every unreadable-identity record against the process table NOW, never from a flag frozen
@@ -754,16 +760,18 @@ class ProcessGuard:
         for key, info in unreadable.items():
             pid, created = key
             state = states[key] = self._existence(pid, created)
-            if state == "present":
+            if state[0] == "present":
                 bad[(pid, None)] = dict(pid=pid, create_time=None, argv=[], reason="start order unreadable")
                 continue
-            if state == "readable":
-                continue                    # alive and classifiable: the normal scan owns it and its children
-            for child_pid, child_created in info["children"].items():
+            if state[0] == "readable" and created is not None:
+                continue                    # the SAME identity is alive and classifiable: the next scan owns its children
+            # gone, or an identity we never captured (a readable occupant may be a replacement): the recorded
+            # descendants must each be resolved
+            for child_pid, child_created in info["children"]:
                 reason = dict(pid=child_pid, create_time=child_created, argv=[],
                               reason="child of vanished unreadable process")
                 if child_created is None:
-                    if self._existence(child_pid, None) != "gone":
+                    if self._existence(child_pid, None)[0] != "gone":
                         bad[(child_pid, None)] = reason
                     continue
                 child_state = self._identity_state(child_pid, child_created)
@@ -801,7 +809,7 @@ class ProcessGuard:
             orphans = {}
             uncertain = container_failure is not None or order_failure is not None
             with self.lock:
-                unreadable = {k: dict(children=dict(v["children"])) for k, v in self._unreadable_seen.items()}
+                unreadable = {k: dict(children=set(v["children"])) for k, v in self._unreadable_seen.items()}
             previous, bad, non_converged = {}, {}, False      # C157: reconciled after every full scan
             for round_ in range(5):
                 for attempt in range(3):

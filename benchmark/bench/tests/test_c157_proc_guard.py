@@ -285,8 +285,10 @@ def test_r2p3_a_child_of_an_unknown_parent_process_is_a_candidate_descendant(tmp
         c.parent = 1
     processes += [b, c, Unreadable(50, on_read=a_and_b_exit)]
     g = guard(tmp_path, processes)
-    with pytest.raises(TransportAbort, match=r"cleanup uncertain"):
+    with pytest.raises(TransportAbort, match=r'cleanup uncertain.*"pid": 52.*child of vanished unreadable process'):
         g.cleanup()
+    assert {"pid": 52, "create_time": 12, "argv": [], "reason": "child of vanished unreadable process"} in \
+        g.status()["orphans_unattributed"]
 
 
 def test_r2p4_a_flickering_unreadable_process_is_retired_once_it_reads_fine(tmp_path):
@@ -313,3 +315,94 @@ def test_r2p5_unreadable_records_are_capped_and_fail_closed(tmp_path):
         p.armed = False                             # everything is readable again
     with pytest.raises(TransportAbort, match="overflowed"):
         g.cleanup()
+
+
+def test_r2p5_accumulating_descendants_are_capped_too(tmp_path):
+    root = Unreadable(10)
+    kids = [Process(1000 + i, 10, created=50 + i) for i in range(2100)]
+    g = _guard(tmp_path, [root] + kids)
+    g.tick()
+    assert sum(len(v["children"]) for v in g._unreadable_seen.values()) > 2048 and g._unreadable_overflow
+
+
+# ----------------------------------------------------------------------------- cold review round 3 (9067da52)
+def test_r3p1_gone_then_reused_still_forces_a_scan(tmp_path):
+    """The original is absent during the extra scan, then a path-attributed process takes its pid before the
+    reconcile: the state is ("gone", occupant) so the change is seen and the replacement scanned."""
+    processes = []
+    original = Unreadable(30, created=10)
+    replacement = Process(30, 1, created=99, cwd=str(tmp_path / "work"))
+    processes.append(original)
+    calls = []
+
+    def get(pid):
+        calls.append(pid)
+        if len(calls) == 1:
+            processes.remove(original)                   # gone at the first reconcile ...
+            raise StopIteration
+        if len(calls) == 2:
+            processes.append(replacement)                # ... a replacement occupies the pid by the next one
+        return next(q for q in processes if q.pid == pid)
+    g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=get)
+    g.started = 0
+    g.kill_role = lambda role=None: []
+    with pytest.raises(TransportAbort, match="path-only attribution"):
+        g.cleanup()
+
+
+def test_r3p2_a_partial_read_does_not_retire_the_record(tmp_path):
+    import psutil
+
+    processes = []
+    p = Unreadable(60)
+    processes.append(p)
+    g = _guard(tmp_path, processes)
+    g.tick()
+    assert g._unreadable_seen
+    p.armed = False
+
+    def boom(self=p):
+        raise psutil.AccessDenied(self.pid)
+    p.ppid = boom                                    # the later ppid read fails: the pass is incomplete
+    g.tick()
+    assert g._unreadable_seen
+
+
+def test_r3p2_an_unknown_identity_record_is_never_retired_by_a_pid_wildcard(tmp_path):
+    import psutil
+    processes = []
+
+    class NoCreate(Unreadable):
+        def create_time(self):
+            raise psutil.AccessDenied(self.pid)
+    ghost = NoCreate(60)
+    child = Process(61, 60, created=11)
+    processes += [ghost, child]
+    g = _guard(tmp_path, processes)
+    g.tick()
+    assert (60, None) in g._unreadable_seen
+    processes.remove(ghost)
+    child.parent = 1
+    processes.append(Process(60, 1, created=70))     # a different, readable process now holds the pid
+    g.tick()
+    assert (60, None) in g._unreadable_seen          # the vanished original's descendants are not forgotten
+    with pytest.raises(TransportAbort, match=r"61.*child of vanished unreadable process"):
+        g.cleanup()
+
+
+def test_r3p3_a_reused_unknown_parent_pid_keeps_both_identities(tmp_path):
+    import psutil
+
+    class NoParent(Process):
+        def ppid(self):
+            raise psutil.AccessDenied(self.pid)
+    first = NoParent(70, 1, created=20)
+    g = _guard(tmp_path, [first, Unreadable(71)])
+    g.tick()
+    ((_, entry),) = g._unreadable_seen.items()
+    assert (70, 20) in entry["children"]
+    second = NoParent(70, 1, created=21)             # the pid is reused by another unknown-parent process
+    g.scan = lambda: [second, Unreadable(71)]
+    g.get = lambda pid: second if pid == 70 else Unreadable(71)
+    g.tick()
+    assert {(70, 20), (70, 21)} <= next(iter(g._unreadable_seen.values()))["children"]
