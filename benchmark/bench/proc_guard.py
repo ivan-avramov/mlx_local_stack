@@ -661,6 +661,62 @@ class ProcessGuard:
         except ProcessLookupError:
             return False
 
+    def _created_or_none(self, p):
+        try:
+            return start_time(p)
+        except (*self._transient, TransportAbort):
+            return None
+
+    def _existence(self, pid, created):
+        """C157: "gone" | "present" for a pid whose identity could not be read. Gone is proven only by
+        NoSuchProcess, or - when the original start time was captured - by a different start time (pid reuse: the
+        original is gone, the replacement must still pass the normal scan). Anything unreadable is present."""
+        try:
+            process = self.get(pid)
+        except (self.psutil.NoSuchProcess, StopIteration):
+            return "gone"
+        except (self.psutil.AccessDenied, TransportAbort):
+            return "present"
+        if created is None:
+            return "present"
+        try:
+            if start_time(process) != created:
+                return "gone"
+            return "present" if self._live(process) else "gone"
+        except self.psutil.NoSuchProcess:
+            return "gone"
+        except (self.psutil.AccessDenied, TransportAbort):
+            return "present"
+
+    def _reconcile_unreadable(self, unreadable):
+        """C157: resolve every unreadable-identity record against the process table NOW, never from a flag frozen
+        earlier. Returns ({key: orphan record} still unresolved, vanished_any). A still-present unreadable process
+        stays uncertain (C151 R10). A vanished one clears only itself: each child seen in its listing must be gone,
+        protected/pre-existing, or tracked (the tracked audit kills it); otherwise it is unresolved (P297 U1)."""
+        bad, vanished = {}, False
+        for (pid, created), info in unreadable.items():
+            if self._existence(pid, created) != "gone":
+                bad[(pid, None)] = dict(pid=pid, create_time=None, argv=[], reason="start order unreadable")
+                continue
+            vanished = True
+            for child_pid, child_created in info["children"].items():
+                reason = dict(pid=child_pid, create_time=child_created, argv=[],
+                              reason="child of vanished unreadable process")
+                if child_created is None:
+                    if self._existence(child_pid, None) != "gone":
+                        bad[(child_pid, None)] = reason
+                    continue
+                state = self._identity_state(child_pid, child_created)
+                if state == "gone" or (child_pid, child_created) in self.tracked:
+                    continue
+                try:
+                    if state == "alive" and self._protected(self.get(child_pid)):
+                        continue
+                except (*self._transient, TransportAbort, StopIteration):
+                    pass
+                bad[(child_pid, child_created)] = reason
+        return bad, vanished
+
     def cleanup(self):
         with defer_signals():
             self.done.set()
@@ -684,82 +740,107 @@ class ProcessGuard:
             survivors = []
             orphans = {}
             uncertain = container_failure is not None or order_failure is not None
-            for attempt in range(3):
-                survivors = []
-                for p in self._processes():
-                    try:
+            unreadable = {}      # (pid, start time | None) -> {children}; reconciled after the scan (C157)
+            non_converged = False
+            for round_ in range(4):
+                before = set(unreadable)
+                for attempt in range(3):
+                    survivors = []
+                    listing = self._processes()
+                    parent_of = {}
+                    for p in listing:
                         try:
-                            protected = self._protected(p)
-                        except (self.psutil.AccessDenied, TransportAbort):
-                            # an eligible same-uid process whose start/order cannot be read could be ours: never a
-                            # clean clearance (C151 R10)
+                            parent_of[p.pid] = (p, p.ppid())
+                        except self._transient:
+                            pass
+                    for p in listing:
+                        try:
+                            try:
+                                protected = self._protected(p)
+                            except (self.psutil.AccessDenied, TransportAbort):
+                                # an eligible same-uid process whose start/order cannot be read could be ours: it is
+                                # resolved against the final process table, not frozen uncertain (C157; C151 R10). The
+                                # children of THIS listing are kept: a vanished parent proves nothing about them.
+                                entry = unreadable.setdefault((p.pid, self._created_or_none(p)), dict(children={}))
+                                for child, parent in parent_of.values():
+                                    if parent == p.pid:
+                                        entry["children"][child.pid] = self._created_or_none(child)
+                                continue
+                            if protected:
+                                continue
+                            key = (p.pid, start_time(p))
+                            if key in self.tracked:
+                                p.kill()
+                                survivors.append(p.pid)
+                            elif self._attributed_path(p):
+                                uncertain = True
+                                orphans[key] = dict(pid=p.pid, create_time=key[1],
+                                                    argv=p.cmdline(), reason="path-only attribution")
+                            elif self._sweep_excluded(p):
+                                continue
+                            elif p.ppid() == 1 and not self._older_than_guard(p):
+                                orphans[key] = dict(
+                                    pid=p.pid, create_time=start_time(p), argv=p.cmdline()
+                                )
+                        except self.psutil.NoSuchProcess:
+                            continue
+                        except TransportAbort:      # identity unreadable (C151 R16): could be ours -> uncertain
                             uncertain = True
                             orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
-                                                          reason="start order unreadable")
+                                                          reason="identity unreadable")
                             continue
-                        if protected:
+                        except self.psutil.AccessDenied:
+                            # macOS denies cwd()/cmdline() for a process mid-exit or one we may not inspect. Untracked:
+                            # nothing to clear, skip. Tracked: ownership cannot be shown cleared -> uncertain.
+                            if any(k[0] == p.pid for k in self.tracked):
+                                uncertain = True
+                                orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
+                                                              reason="access denied")
                             continue
-                        key = (p.pid, start_time(p))
-                        if key in self.tracked:
-                            p.kill()
-                            survivors.append(p.pid)
-                        elif self._attributed_path(p):
-                            uncertain = True
-                            orphans[key] = dict(pid=p.pid, create_time=key[1],
-                                                argv=p.cmdline(), reason="path-only attribution")
-                        elif self._sweep_excluded(p):
-                            continue
-                        elif p.ppid() == 1 and not self._older_than_guard(p):
-                            orphans[key] = dict(
-                                pid=p.pid, create_time=start_time(p), argv=p.cmdline()
-                            )
-                    except self.psutil.NoSuchProcess:
-                        continue
-                    except TransportAbort:      # identity unreadable (C151 R16): could be ours -> uncertain
-                        uncertain = True
-                        orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
-                                                      reason="identity unreadable")
-                        continue
-                    except self.psutil.AccessDenied:
-                        # macOS denies cwd()/cmdline() for a process mid-exit or one we may not inspect. Untracked:
-                        # nothing to clear, skip. Tracked: ownership cannot be shown cleared -> uncertain.
-                        if any(k[0] == p.pid for k in self.tracked):
-                            uncertain = True
-                            orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
-                                                          reason="access denied")
-                        continue
-                if not survivors:
-                    break
-                time.sleep(0.05)
-            # Audit every tracked identity directly, independent of the filtered scan above (which silently drops
-            # a process whose uids()/status() is denied). Denied inspection = unknown = uncertain.
-            unknown = []
-            for attempt in range(3):
-                alive, unknown = [], []
-                for (pid, created) in list(self.tracked):
-                    state = self._identity_state(pid, created)
-                    if state == "alive":
+                    if not survivors:
+                        break
+                    time.sleep(0.05)
+                # Audit every tracked identity directly, independent of the filtered scan above (which silently drops
+                # a process whose uids()/status() is denied). Denied inspection = unknown = uncertain.
+                unknown = []
+                for attempt in range(3):
+                    alive, unknown = [], []
+                    for (pid, created) in list(self.tracked):
+                        state = self._identity_state(pid, created)
+                        if state == "alive":
+                            try:
+                                if self._protected(self.get(pid)):
+                                    continue         # a protected (router/worker/ancestor) pid is never ours to clear
+                            except (*self._transient, TransportAbort):
+                                state = "unknown"
+                        if state == "alive":
+                            alive.append((pid, created))
+                        if state == "unknown":
+                            unknown.append(dict(pid=pid, create_time=created))
+                    if not alive:
+                        break
+                    for pid, created in alive:
                         try:
-                            if self._protected(self.get(pid)):
-                                continue         # a protected (router/worker/ancestor) pid is never ours to clear
+                            process = self.get(pid)
+                            if start_time(process) == created and not self._protected(process):
+                                process.kill()
                         except (*self._transient, TransportAbort):
-                            state = "unknown"
-                    if state == "alive":
-                        alive.append((pid, created))
-                    if state == "unknown":
-                        unknown.append(dict(pid=pid, create_time=created))
-                if not alive:
-                    break
-                for pid, created in alive:
-                    try:
-                        process = self.get(pid)
-                        if start_time(process) == created and not self._protected(process):
-                            process.kill()
-                    except (*self._transient, TransportAbort):
-                        pass
-                time.sleep(0.05)
-            else:
-                pass
+                            pass
+                    time.sleep(0.05)
+                else:
+                    pass
+                # C157: a vanished unreadable process needs one clean pass after it (its children, a pid replacement)
+                _, vanished = self._reconcile_unreadable(unreadable)
+                if not vanished or (round_ and set(unreadable) == before):
+                    break              # nothing vanished, or the extra pass after the last vanish was clean
+                if round_ == 3:
+                    non_converged = True
+            bad, _ = self._reconcile_unreadable(unreadable)      # authoritative: the final process table
+            orphans.update(bad)
+            uncertain = uncertain or bool(bad)
+            if non_converged:
+                uncertain = True
+                orphans[(0, "did not converge")] = dict(pid=0, create_time=None, argv=[], reason="scan did not converge")
             survivors = sorted(set(survivors) | {pid for pid, _ in alive})
             if unknown:
                 uncertain = True
@@ -771,12 +852,15 @@ class ProcessGuard:
             )
             if container_failure is not None:
                 raise container_failure
+            if self.failure:           # C157 (P297 U2): a monitor failure is never hidden behind the uncertainty
+                raise TransportAbort("process monitor died: " + str(self.failure))
             if uncertain:
                 raise TransportAbort("cleanup uncertain: path-only or uninspectable processes remain " + json.dumps(
                     [dict(pid=p["pid"], create_time=p["create_time"], reason=p.get("reason"))
                      for p in orphans.values()
                      if p.get("reason") in ("path-only attribution", "access denied", "start order unreadable",
-                                           "identity unreadable")]
+                                           "identity unreadable", "child of vanished unreadable process",
+                                           "scan did not converge")]
                     + [dict(u, reason="tracked identity unknown") for u in unknown]
                 ) + (f"; order failure: {order_failure}" if order_failure else ""))
             if survivors:
