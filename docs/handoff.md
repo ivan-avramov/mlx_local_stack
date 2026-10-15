@@ -1,6 +1,6 @@
 # Handoff — 2026-10-14: P223 (OFF) + M63 (MTP-ON) complete and written up; C158 done; box idle; next: C157 guard fix → P288 flaky tests → C144 candidates
 
-THE one handoff. Read this, then `docs/open-questions.md` (top entries: C158, P298, P288, C157, C156, C155, C154),
+THE one handoff. Read this, then `docs/open-questions.md` (top entries: C161, C160, C159, P299, C158, P288, C157),
 `docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62, M63 rows), `README.md` B ladder.
 
 ## State of the world
@@ -41,7 +41,10 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: C158, P2
    Review record of why the runner-side version failed: `p297-uncertain-gone` branch,
    `benchmark/chains/c147/reviews/p297/round1.cursor-gpt-5.6-sol-high.md` (U1 reparented descendants, U2).
 2. **P288 — make the four load-sensitive tests deterministic** (list in open-questions P288; needs operator go).
-3. **C144 — new candidates under tg1** (new probe + serving identity: fresh OFF rows for every comparison, including
+3. **C144 — new candidates under tg1** + **M64 Pi scaffold arm (C159, queued 2026-10-14)**: build `run_pi_probe.py` box-free
+   first (dsh/v2 adapter pattern, pre-registered TOST +/-5pp + tokens/task), `--smoke` with `lsof -i` sampling (C160), then
+   the arm rides the C144 chain. C161 (dsh: standalone eval or not) awaits the operator; lead says no, fold into M64 only if Pi
+   shows a scaffold effect. Original item: **C144 — new candidates under tg1** (new probe + serving identity: fresh OFF rows for every comparison, including
    re-recording the two picks if they are to be compared against). Run a `--smoke` chain first.
 4. **Docs:** per-box P201 auditor (codex vs Cursor) in `benchmark/README.md` and `scripts/bootstrap_machine.sh`
    notes (C158 owed).
@@ -59,4 +62,4 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: C158, P2
 - Scoring accepts an audit only from a declared auditor with a current installed version (C158).
 - Pushes need explicit operator approval each time.
 
-Next decision id C159; discussion ids continue from P299.
+Next decision id C162; discussion ids continue from P303.
