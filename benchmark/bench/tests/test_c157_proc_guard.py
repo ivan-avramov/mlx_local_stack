@@ -322,7 +322,12 @@ def test_r2p5_accumulating_descendants_are_capped_too(tmp_path):
     kids = [Process(1000 + i, 10, created=50 + i) for i in range(2100)]
     g = _guard(tmp_path, [root] + kids)
     g.tick()
-    assert sum(len(v["children"]) for v in g._unreadable_seen.values()) > 2048 and g._unreadable_overflow
+    total = lambda: sum(len(v["children"]) for v in g._unreadable_seen.values())      # noqa: E731
+    assert total() <= 2048 and g._unreadable_overflow          # round 4 P3: the cap really stops storage
+    more = [Process(5000 + i, 10, created=900 + i) for i in range(50)]
+    g.scan = lambda: [root] + kids + more
+    g.tick()
+    assert total() <= 2048                                      # ... and nothing grows afterwards
 
 
 # ----------------------------------------------------------------------------- cold review round 3 (9067da52)
@@ -406,3 +411,61 @@ def test_r3p3_a_reused_unknown_parent_pid_keeps_both_identities(tmp_path):
     g.get = lambda pid: second if pid == 70 else Unreadable(71)
     g.tick()
     assert {(70, 20), (70, 21)} <= next(iter(g._unreadable_seen.values()))["children"]
+
+
+# ----------------------------------------------------------------------------- cold review round 4 (b06a01a5)
+def test_r4p1_an_occupant_with_an_unreadable_identity_is_not_an_absent_pid(tmp_path):
+    import psutil
+    processes = []
+    original = Unreadable(30, created=10)
+    processes.append(original)
+
+    class NoCreate(Process):
+        def create_time(self):
+            raise psutil.AccessDenied(self.pid)
+    occupant = NoCreate(30, 1, created=99)
+    reconciles = []
+    g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=lambda pid: (
+        _ for _ in ()).throw(StopIteration) if not reconciles or len(reconciles) < 2 else occupant)
+    g.started = 0
+    g.kill_role = lambda role=None: []
+    real = g._reconcile_unreadable
+
+    def counting(unreadable):
+        reconciles.append(1)
+        if len(reconciles) == 1:
+            processes.remove(original)
+        return real(unreadable)
+    g._reconcile_unreadable = counting
+    with pytest.raises(TransportAbort, match="cleanup uncertain"):
+        g.cleanup()
+
+
+def test_r4p2_a_descendant_pid_reused_after_the_last_scan_forces_another_scan(tmp_path):
+    processes = []
+    child = Process(41, 40, created=11)
+    replacement = Process(41, 1, created=99, cwd=str(tmp_path / "work"))
+    reconciles = []
+
+    def a_and_child_exit(p):
+        processes.remove(p)
+        processes.remove(child)
+    processes += [child, Unreadable(40, on_read=a_and_child_exit)]
+
+    def get(pid):
+        if pid == 41 and len(reconciles) >= 2:
+            if replacement not in processes:
+                processes.append(replacement)        # the pid is taken only AFTER the scan that preceded reconcile 2
+            return replacement
+        return next(q for q in processes if q.pid == pid)
+    g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=get)
+    g.started = 0
+    g.kill_role = lambda role=None: []
+    real = g._reconcile_unreadable
+
+    def counting(unreadable):
+        reconciles.append(1)
+        return real(unreadable)
+    g._reconcile_unreadable = counting
+    with pytest.raises(TransportAbort, match="path-only attribution"):
+        g.cleanup()

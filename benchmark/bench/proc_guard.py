@@ -701,27 +701,43 @@ class ProcessGuard:
         """Record an eligible process whose start order cannot be read, with the TRANSITIVE descendants of the
         listing (edges read BEFORE any per-process start-order read) and everything of unreadable parentage, closed
         over those edges: a vanished parent proves nothing about them (P297 U1). Candidates are IDENTITIES
-        (pid, start time), so a reused pid adds a second candidate instead of masquerading as the first. Bounded
-        (32 roots, 2048 identities in all): past either cap the guard fails closed (`_unreadable_overflow`)."""
+        (pid, start time), so a reused pid adds a second candidate instead of masquerading as the first. Bounded:
+        at most 32 roots and 2048 identities are ever retained; past either limit nothing more is stored or
+        traversed and `_unreadable_overflow` stays set (permanent, fail-closed: cleanup is uncertain)."""
+        if self._unreadable_overflow:
+            return
         children_of, unknown = edges
         key = (p.pid, self._created_or_none(p))
         if key not in store and len(store) >= 32:
             self._unreadable_overflow = True
             return
+        room = 2048 - sum(len(v["children"]) for v in store.values())
         entry = store.setdefault(key, dict(children=set()))
+
+        def add(proc):
+            nonlocal room
+            identity = (proc.pid, self._created_or_none(proc))
+            if identity in entry["children"]:
+                return True
+            if room <= 0:
+                self._unreadable_overflow = True
+                return False
+            entry["children"].add(identity)
+            room -= 1
+            return True
         seen, frontier = {p.pid}, [p.pid]
         for q in unknown:
             if q.pid != p.pid:
-                entry["children"].add((q.pid, self._created_or_none(q)))
+                if not add(q):
+                    return
                 frontier.append(q.pid)
         while frontier:
             for child in children_of.get(frontier.pop(), ()):
                 if child.pid not in seen:
                     seen.add(child.pid)
-                    entry["children"].add((child.pid, self._created_or_none(child)))
+                    if not add(child):
+                        return
                     frontier.append(child.pid)
-        if sum(len(v["children"]) for v in store.values()) > 2048:
-            self._unreadable_overflow = True
 
     def _existence(self, pid, created):
         """C157: (kind, occupant start time) for a pid whose identity could not be read; kind is "gone" | "readable"
@@ -737,6 +753,8 @@ class ProcessGuard:
             return "present", None
         try:
             occupant = self._created_or_none(process)
+            if occupant is None:
+                return "present", None        # occupied, identity unreadable: never aliased to an absent pid
             if created is not None:
                 if occupant != created:
                     return "gone", occupant
@@ -768,6 +786,7 @@ class ProcessGuard:
             # gone, or an identity we never captured (a readable occupant may be a replacement): the recorded
             # descendants must each be resolved
             for child_pid, child_created in info["children"]:
+                states[(key, child_pid, child_created)] = self._existence(child_pid, child_created)
                 reason = dict(pid=child_pid, create_time=child_created, argv=[],
                               reason="child of vanished unreadable process")
                 if child_created is None:
