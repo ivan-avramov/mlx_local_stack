@@ -49,8 +49,9 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: C163, C1
    bench-owned HOME/config dir, extensions absent by wire capture, M50 entry/exit, M62 token-turn gate from Pi's JSON
    events, `lsof -i` socket sampling in the smoke per C160), cold review, then **GPU work (operator-run):** a
    `--smoke` chain, fresh OFF rows for both picks on the new probe identity, then the Pi arm on the same items, seeds
-   and budgets; pre-registered PASS = strict TOST ±5pp per pick AND lower tokens/task. C161 (dsh) folds in as a
-   third arm only if Pi shows a scaffold effect.
+   and budgets; pre-registered PASS = strict TOST ±5pp per pick AND lower tokens/task. C161 (updated 2026-10-15): no subjective-quality signal exists for dsh and none is
+   recoverable (artifacts gone); proposed M64 subjective axis = blind pairwise code-quality panel over both-pass items;
+   operator to say whether dsh is an M64 arm from the start. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` stays shipped (operator 2026-10-15).
 4. **C163 — audit identity digest** (small, box-free, needs a go).
 5. **Docs:** per-box P201 auditor (codex vs Cursor) in `benchmark/README.md` and `scripts/bootstrap_machine.sh`
    notes (C158 owed; the README audit paragraph now names both auditors).
