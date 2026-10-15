@@ -152,3 +152,12 @@ say "done. config=$CONFIG"
 say "  STACK_WORKDIR=$STACK_WORKDIR  MLX_BOX=$(sed -n 's/^export MLX_BOX="\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' "$CONFIG" | head -1)"
 say "  tests: cd benchmark && env -u STACK_WORKDIR NLTK_DATA=$NLTK_DATA ../.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/"
 say "  serving venv is separate: uv sync (uv.lock; pyproject pins uv-managed Python); model weights download from the hub on first load"
+# P201 web auditor is per box and never installed here (C158): codex gpt-6-astra where codex exists, else Cursor
+# gpt-5.6-sol-high. Scoring accepts either by its RECORDED version (P299); this only reports what the box can run.
+if command -v codex >/dev/null 2>&1; then
+  say "  P201 web auditor: codex ($(codex --version 2>/dev/null | head -1)) -> benchmark/web_audit.py <rows.jsonl>"
+elif command -v cursor-agent >/dev/null 2>&1; then
+  say "  P201 web auditor: cursor-agent ($(cursor-agent --version 2>/dev/null | head -1)) -> benchmark/web_audit_cursor.py <rows.jsonl>"
+else
+  say "  P201 web auditor: NONE on this box (neither codex nor cursor-agent); audit web-fetch rows on a box that has one"
+fi

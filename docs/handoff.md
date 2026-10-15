@@ -46,8 +46,7 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: P299 par
 2. **P288/P308 DONE** (see open-questions).
 3. **C144 — new candidates under tg1**: no candidate is named anywhere (PLAN queue "nothing armed"); the runner is
    hard-wired to the two picks (`LEGS`/`PICK1`/`PICK2`). Asked the operator 2026-10-15 which models.
-4. **Docs owed:** per-box P201 auditor (codex vs Cursor) note in `scripts/bootstrap_machine.sh` (the benchmark README
-   already states it; no codex install in bootstrap).
+4. **Docs owed: DONE** — `scripts/bootstrap_machine.sh` reports the box's P201 auditor (codex / cursor-agent / none; never installs).
 5. Delete the parked `p297-uncertain-gone` branch (operator OK).
 
 ## Rules learned (2026-10-11 → 15)
