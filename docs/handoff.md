@@ -1,4 +1,4 @@
-# Handoff — 2026-10-15: P299 (1), C157, P306 done; smoke chain LIVE (`$STACK_WORKDIR/c144-smoke`); next: P288 repro → picks re-record
+# Handoff — 2026-10-15: P299 (1), C157, P306, P288/P308 done; smoke PASSED; picks re-record chain LIVE (`$STACK_WORKDIR/c144-base`)
 
 THE one handoff. Read this, then `docs/open-questions.md` (top entries: P299 part 2, P288, C156, C155, C154),
 `docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62, M63 rows), `README.md` B ladder.
@@ -27,20 +27,23 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: P299 par
 - **Parked branches:** `p297-uncertain-gone` (superseded by C157; delete when convenient), `c152-alloc-tool-scope-wip`.
 - **Not pushed:** everything from `06a77fec` onward (push needs explicit operator approval).
 
-- **LIVE (2026-10-15 14:33Z): smoke chain** `chain s1 reload --smoke --probe-code-sha d4319705…`, out-root
-  `$STACK_WORKDIR/c144-smoke` (`driver.chain.out`/`.rc`, `RUNLOG.md`), launched via a scratch launcher that runs
-  `run_tg1_chain.py ... --out-root` with `$HOME/.orbstack/bin` on PATH (the agent shell has no docker on PATH;
-  `drive_chain.sh` would overwrite P223's `c147/chain.out`). Do not edit runner/probe/scoring files or run the suite
-  until it exits. Purpose: live check of C157/P306 on the new identity + C154 TTL re-check.
+- **Smoke chain PASSED (2026-10-15 14:33Z → 15:48Z, rc 0, ALL LEGS DONE)**, `$STACK_WORKDIR/c144-smoke`, probe
+  `d4319705…`: 9/9 rows passed + converged, 0 `client_inactivity`, no uncertain cleanup, stack stopped and verified.
+  Rehearsal evidence only (never graded/pooled).
+- **LIVE: picks re-record chain** `chain s1 s2 reload --probe-code-sha d4319705…`, out-root `$STACK_WORKDIR/c144-base`
+  (`driver.chain.out`/`.rc`, `RUNLOG.md`), ≈18 h; launched via a scratch launcher running `run_tg1_chain.py ...
+  --out-root` with `$HOME/.orbstack/bin` on PATH (the agent shell has no docker on PATH; `drive_chain.sh` would
+  overwrite P223's `c147/chain.out`). Purpose: the fresh OFF baseline of both picks for every C144 comparison (same
+  seeds as P223, so also a P223 repeat on a new identity — descriptive only, never pooled). Do not edit
+  runner/probe/scoring files or run the full suite until it exits; work in `$STACK_WORKDIR/worktrees/`.
 - **Operator 2026-10-15:** pre-authorized to keep working and keep the GPU busy; merge to main as work completes; do
   not delete branches yet.
 
 ## Next work, in order
 
-1. **P288 — make the four load-sensitive tests deterministic** (operator go 2026-10-15). Real-client members spawn
-   opencode: reproduce under load ONLY with no chain live (after the smoke), then fix test-first, review, full suite.
-2. **Re-record both picks under the new identity** (k=2 `chain s1 s2 reload`, ≈18 h, fresh out-root e.g.
-   `$STACK_WORKDIR/c144-base`): the OFF baseline every C144 comparison needs. Authorized by the GPU-busy instruction.
+1. **Watch the re-record chain**; on rc 0 copy the rows into `benchmark/results/<model>/…c144base…`, write the report
+   (tg1_report.py pattern), update README evidence. On abort: read RUNLOG, archive, decide (never `--clean-stale` blind).
+2. **P288/P308 DONE** (see open-questions).
 3. **C144 — new candidates under tg1**: no candidate is named anywhere (PLAN queue "nothing armed"); the runner is
    hard-wired to the two picks (`LEGS`/`PICK1`/`PICK2`). Asked the operator 2026-10-15 which models.
 4. **Docs owed:** per-box P201 auditor (codex vs Cursor) note in `scripts/bootstrap_machine.sh` (the benchmark README
