@@ -310,7 +310,7 @@ class ProcessGuard:
         self.scrub = scrub or (lambda text: text)
         self.context = context
         self.killed = []
-        self._ppid_history = {}         # C157: {pid: (start time, ppid)} of the previous tick's non-protected processes
+        self._unreadable_overflow = False
         self._unreadable_seen = {}      # C157: unreadable identities (+ listing descendants) noted by tick()/cleanup
         self._status = None
 
@@ -366,18 +366,18 @@ class ProcessGuard:
             processes = self._processes()
             alive = {}
             ppids = {}
-            edges = None
+            edges = self._listing_edges(processes)       # BEFORE any start-order read can see a process exit
+            readable = {}
             for p in processes:
                 try:
                     try:
                         protected = self._protected(p)
                     except self.psutil.AccessDenied:
-                        # C157 (review P2): keep the identity and the listing's descendants, so a cleanup that runs
-                        # after this process exits still knows who its children were
-                        if edges is None:
-                            edges = self._listing_edges(processes)
-                        self._note_unreadable(self._unreadable_seen, p, *edges)
+                        # C157 (review round 1 P2): keep the identity and the listing's descendants, so a cleanup that
+                        # runs after this process exits still knows who its children were
+                        self._note_unreadable(self._unreadable_seen, p, edges)
                         continue
+                    readable[p.pid] = p
                     if not protected:
                         # ppid() re-validates identity; a stale cached entry (pid reused, psutil keeps the old
                         # create_time) raises here and must never become an ancestry authority (V5a P13).
@@ -386,7 +386,9 @@ class ProcessGuard:
                 except self._transient:
                     ppids.pop(p.pid, None)
                     alive.pop(p.pid, None)
-            self._ppid_history = {pid: (alive[pid][1], ppid) for pid, ppid in ppids.items() if pid in alive}
+            for key in [k for k in self._unreadable_seen
+                        if k[0] in readable and k[1] in (None, self._created_or_none(readable[k[0]]))]:
+                del self._unreadable_seen[key]      # classified readable now: the ambiguity is resolved (round 2 P4)
             # Follow ancestry until its transitive closure; detachments retain recorded ownership.
             changed = True
             while changed:
@@ -681,39 +683,41 @@ class ProcessGuard:
             return None
 
     def _listing_edges(self, listing):
-        """parent_of {pid: (process, ppid)} for one listing, plus the processes whose parent could not be read
-        (one retry; they stay candidate descendants of any unreadable process, C157/P5)."""
-        parent_of, unknown = {}, []
+        """(children_of {ppid: [process]}, unknown [process]) for one listing, O(N): processes whose parent cannot
+        be read (one retry) stay candidate descendants of any unreadable process (C157, round 1 P5)."""
+        children_of, unknown = {}, []
         for p in listing:
             for attempt in range(2):
                 try:
-                    parent_of[p.pid] = (p, p.ppid())
+                    children_of.setdefault(p.ppid(), []).append(p)
                     break
                 except self._transient:
                     continue
             else:
                 unknown.append(p)
-        return parent_of, unknown
+        return children_of, unknown
 
-    def _note_unreadable(self, store, p, parent_of, unknown):
-        """Record an eligible process whose start order cannot be read, with the TRANSITIVE descendants of this
-        listing and every process of unreadable parentage: a vanished parent proves nothing about them (P297 U1)."""
-        entry = store.setdefault((p.pid, self._created_or_none(p)), dict(children={}))
-        # this listing's edges + the previous tick's: a parent that turns unreadable in the very tick it exits has
-        # already reparented its children in the current listing
-        edges = [(child.pid, None, ppid, child) for child, ppid in parent_of.values()]
-        edges += [(pid, created, ppid, None) for pid, (created, ppid) in list(self._ppid_history.items())]
-        seen, frontier = {p.pid}, [p.pid]
-        while frontier:
-            parent = frontier.pop()
-            for pid, created, ppid, child in edges:
-                if ppid == parent and pid not in seen:
-                    seen.add(pid)
-                    entry["children"][pid] = created if child is None else self._created_or_none(child)
-                    frontier.append(pid)
+    def _note_unreadable(self, store, p, edges):
+        """Record an eligible process whose start order cannot be read, with the TRANSITIVE descendants of the
+        listing (edges read BEFORE any per-process start-order read) and everything of unreadable parentage, closed
+        over those edges: a vanished parent proves nothing about them (P297 U1). Bounded: past the cap the guard
+        fails closed (`_unreadable_overflow` -> uncertain)."""
+        children_of, unknown = edges
+        key = (p.pid, self._created_or_none(p))
+        if key not in store and len(store) >= 128:
+            self._unreadable_overflow = True
+            return
+        entry = store.setdefault(key, dict(children={}))
+        seen, frontier = {p.pid}, [p.pid] + [q.pid for q in unknown if q.pid != p.pid]
         for q in unknown:
-            if q.pid not in seen:
+            if q.pid not in entry["children"] and q.pid != p.pid:
                 entry["children"][q.pid] = self._created_or_none(q)
+        while frontier:
+            for child in children_of.get(frontier.pop(), ()):
+                if child.pid not in seen:
+                    seen.add(child.pid)
+                    entry["children"][child.pid] = self._created_or_none(child)
+                    frontier.append(child.pid)
 
     def _existence(self, pid, created):
         """C157: "gone" | "readable" | "present" for a pid whose identity could not be read. Gone is proven only by
@@ -739,21 +743,20 @@ class ProcessGuard:
         except (self.psutil.AccessDenied, TransportAbort):
             return "present"
 
-    def _reconcile_unreadable(self, unreadable, cleared):
+    def _reconcile_unreadable(self, unreadable):
         """C157: resolve every unreadable-identity record against the process table NOW, never from a flag frozen
-        earlier. Returns ({key: orphan record} still unresolved, newly resolved keys). A still-present unreadable
-        process stays uncertain (C151 R10). A gone/readable one clears only itself and every identity newly
-        cleared forces another full scan; each descendant listed with a vanished parent must itself be gone,
-        protected/pre-existing, or tracked (the tracked audit kills it), otherwise it is unresolved (P297 U1)."""
-        bad, newly = {}, set()
+        earlier. Returns ({key: orphan record} still unresolved, {key: state}). A still-present unreadable
+        process stays uncertain (C151 R10). A gone/readable one clears only itself; every state CHANGE since the
+        previous reconcile forces another full scan (caller); each descendant listed with a vanished parent must
+        itself be gone, protected/pre-existing, or tracked (the tracked audit kills it), otherwise it is unresolved
+        (P297 U1)."""
+        bad, states = {}, {}
         for key, info in unreadable.items():
             pid, created = key
-            state = self._existence(pid, created)
+            state = states[key] = self._existence(pid, created)
             if state == "present":
                 bad[(pid, None)] = dict(pid=pid, create_time=None, argv=[], reason="start order unreadable")
                 continue
-            if key not in cleared:
-                newly.add(key)
             if state == "readable":
                 continue                    # alive and classifiable: the normal scan owns it and its children
             for child_pid, child_created in info["children"].items():
@@ -772,7 +775,7 @@ class ProcessGuard:
                 except (*self._transient, TransportAbort, StopIteration):
                     pass
                 bad[(child_pid, child_created)] = reason
-        return bad, newly
+        return bad, states
 
     def cleanup(self):
         with defer_signals():
@@ -799,12 +802,12 @@ class ProcessGuard:
             uncertain = container_failure is not None or order_failure is not None
             with self.lock:
                 unreadable = {k: dict(children=dict(v["children"])) for k, v in self._unreadable_seen.items()}
-            cleared, bad, non_converged = set(), {}, False      # C157: reconciled after every full scan
+            previous, bad, non_converged = {}, {}, False      # C157: reconciled after every full scan
             for round_ in range(5):
                 for attempt in range(3):
                     survivors = []
                     listing = self._processes()
-                    parent_of, unknown_parent = self._listing_edges(listing)
+                    edges = self._listing_edges(listing)
                     for p in listing:
                         try:
                             try:
@@ -813,7 +816,7 @@ class ProcessGuard:
                                 # an eligible same-uid process whose start/order cannot be read could be ours: it is
                                 # resolved against the final process table, not frozen uncertain (C157; C151 R10). The
                                 # children of THIS listing are kept: a vanished parent proves nothing about them.
-                                self._note_unreadable(unreadable, p, parent_of, unknown_parent)
+                                self._note_unreadable(unreadable, p, edges)
                                 continue
                             if protected:
                                 continue
@@ -878,20 +881,24 @@ class ProcessGuard:
                     time.sleep(0.05)
                 else:
                     pass
-                # C157: every newly resolved identity (vanished, pid-reused, now readable) needs a full scan AFTER it;
-                # a still-present one gets a short settle before it is called uncertain
+                # C157: every state change (vanished, pid-reused, now readable, readable then gone) needs a full scan
+                # AFTER it; a still-present one gets a short settle before it is called uncertain
                 for settle in range(3):
-                    bad, newly = self._reconcile_unreadable(unreadable, cleared)
-                    if newly or not bad:
+                    bad, states = self._reconcile_unreadable(unreadable)
+                    changed = any(state != previous.get(key, "present") for key, state in states.items())
+                    if changed or not bad:
                         break
                     time.sleep(0.05)
-                cleared |= newly
-                if not newly:
+                previous = states
+                if not changed:
                     break
                 if round_ == 4:
                     non_converged = True
             orphans.update(bad)
             uncertain = uncertain or bool(bad)
+            if self._unreadable_overflow:
+                uncertain = True
+                orphans[(0, "overflow")] = dict(pid=0, create_time=None, argv=[], reason="unreadable records overflowed")
             if non_converged:
                 uncertain = True
                 orphans[(0, "did not converge")] = dict(pid=0, create_time=None, argv=[], reason="scan did not converge")
@@ -914,7 +921,7 @@ class ProcessGuard:
                      for p in orphans.values()
                      if p.get("reason") in ("path-only attribution", "access denied", "start order unreadable",
                                            "identity unreadable", "child of vanished unreadable process",
-                                           "scan did not converge")]
+                                           "scan did not converge", "unreadable records overflowed")]
                     + [dict(u, reason="tracked identity unknown") for u in unknown]
                 ) + (f"; order failure: {order_failure}" if order_failure else ""))
             if survivors:

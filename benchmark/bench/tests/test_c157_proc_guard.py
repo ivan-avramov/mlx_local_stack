@@ -183,16 +183,15 @@ def test_the_observed_m63_receipt_is_the_unreadable_orphan_shape(tmp_path):
 
 
 # ----------------------------------------------------------------------------- cold review round 1 (b5b4cd53)
-def test_p2_a_parent_noted_by_tick_survives_the_pre_cleanup_kill_role_tick(tmp_path):
+def test_p2_a_parent_exiting_in_the_pre_cleanup_kill_role_tick_keeps_its_children(tmp_path):
     """The REAL kill_role()/tick() path: the unreadable parent exits during cleanup's own tick."""
     processes = []
     child = Process(41, 40, created=11)
     parent = Unreadable(40, armed=False)
     processes += [child, parent]
-    g = _guard(tmp_path, processes)                 # real kill_role
-    g.tick()                                         # readable: the previous tick records the child's ppid
+    g = _guard(tmp_path, processes)                 # real kill_role; NO earlier tick seeds anything
     parent.armed = True
-    parent.on_read = _exits(processes, children=[child])     # exits (and reparents) in the very next read
+    parent.on_read = _exits(processes, children=[child])     # exits (and reparents) at its first start-order read
     with pytest.raises(TransportAbort, match=r"cleanup uncertain.*child of vanished unreadable process"):
         g.cleanup()
     assert not child.dead
@@ -243,4 +242,74 @@ def test_p5_a_listed_process_with_an_unreadable_parent_is_a_candidate_child(tmp_
     processes += [child, Unreadable(40, on_read=_exits(processes))]
     g = guard(tmp_path, processes)
     with pytest.raises(TransportAbort, match=r"cleanup uncertain.*41.*child of vanished unreadable process"):
+        g.cleanup()
+
+
+# ----------------------------------------------------------------------------- cold review round 2 (bfede506)
+def test_r2p2_readable_then_replaced_forces_another_scan(tmp_path):
+    """unreadable -> readable (scan) -> pid reused by a path-attributed process: the replacement is still scanned."""
+    processes = []
+    original = Unreadable(30, created=10)
+    replacement = Process(30, 1, created=99, cwd=str(tmp_path / "work"))
+    processes.append(original)
+    calls = []
+
+    def get(pid):
+        calls.append(pid)
+        if len(calls) == 1:
+            original.armed = False                  # first reconcile: the process is readable now
+        elif len(calls) >= 2 and original in processes:
+            processes[processes.index(original)] = replacement      # then its pid is reused
+        return next(q for q in processes if q.pid == pid)
+    g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=get)
+    g.started = 0
+    g.kill_role = lambda role=None: []
+    with pytest.raises(TransportAbort, match="path-only attribution"):
+        g.cleanup()
+
+
+def test_r2p3_a_child_of_an_unknown_parent_process_is_a_candidate_descendant(tmp_path):
+    """A (unreadable) vanishes; B's ppid is unreadable and B vanishes; C is B's child and reparents to launchd."""
+    import psutil
+    processes = []
+
+    class NoParent(Process):
+        def ppid(self):
+            raise psutil.AccessDenied(self.pid)
+    b = NoParent(51, 50, created=11)
+    c = Process(52, 51, created=12)
+
+    def a_and_b_exit(p):
+        processes.remove(p)
+        processes.remove(b)
+        c.parent = 1
+    processes += [b, c, Unreadable(50, on_read=a_and_b_exit)]
+    g = guard(tmp_path, processes)
+    with pytest.raises(TransportAbort, match=r"cleanup uncertain"):
+        g.cleanup()
+
+
+def test_r2p4_a_flickering_unreadable_process_is_retired_once_it_reads_fine(tmp_path):
+    processes = []
+    flicker = Unreadable(60, armed=True)
+    processes.append(flicker)
+    g = _guard(tmp_path, processes)
+    g.tick()
+    assert g._unreadable_seen
+    flicker.armed = False                           # readable again: complete classification
+    g.tick()
+    assert not g._unreadable_seen
+    processes.remove(flicker)                       # it exits later: nothing to reconcile
+    g.cleanup()
+    assert g.status()["uncertain"] is False
+
+
+def test_r2p5_unreadable_records_are_capped_and_fail_closed(tmp_path):
+    processes = [Unreadable(1000 + i) for i in range(130)]
+    g = _guard(tmp_path, processes)
+    g.tick()
+    assert len(g._unreadable_seen) <= 128 and g._unreadable_overflow
+    for p in processes:
+        p.armed = False                             # everything is readable again
+    with pytest.raises(TransportAbort, match="overflowed"):
         g.cleanup()
