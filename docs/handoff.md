@@ -30,7 +30,8 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: C158, P2
    CURRENTLY installed version (`answer_key.declared_auditors`/`accepted_audits` + `audit_states`); a recorded audit
    stays valid by (auditor, recorded version, prompt sha, evidence). Otherwise any Cursor update silently returns the
    P223 s1 Python cells to provisional. Same principle for scaffold tools: keep the per-chain sha pin, treat each
-   release as a planned identity boundary with a cheap re-baseline. Ask the operator what "dsh" refers to.
+   release as a planned identity boundary with a cheap re-baseline — opencode (`$STACK_WORKDIR/opencode-2.0.20`) and dsh
+   (DeepSeek Harness, M35, `PINNED_DSH_VERSION = "0.1.2-rc.1"` in `benchmark/run_dsh_probe.py`, frozen) alike.
 1. **C157 — probe guard: a vanished unreadable process is not "uncertain"** (cause of the M63 s2 abort and of
    P288's worst flake). In `benchmark/bench/proc_guard.py` `cleanup()`: when a same-uid process's start order
    cannot be read, re-check existence with the guard's own tracking state — a process that no longer exists and
