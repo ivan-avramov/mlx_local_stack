@@ -1,0 +1,9 @@
+1. **P4 — informational; P2 closed — `benchmark/bench/tests/test_p299_audit_record_validity.py:51–56`.** Both declared probes now fail immediately if called, alongside the subprocess guard. Old scoring fails this test; silently accepting every audit would also fail the suite’s missing-version, changed-prompt, and malformed-record checks. No further fix needed.
+
+2. **P5 — informational; P3 closed — `benchmark/bench/tests/test_p299_audit_record_validity.py:191–248`.** The interleaved histories distinguish correct ordering from dictionary replacement without reinsertion. Individually, these two tests can pass old version-gated scoring because version A remains installed; combined with P2’s probe prohibition and the cross-version tests, that loophole is covered. The retry test verifies that the latest error overrides older docs, receives no automatic retry, and receives exactly one explicit retry. Static inspection supports the author’s mutation result. No further fix needed. <!-- allow-shorthand: review severity words, not model names -->
+
+3. **P6 — medium, inherited and nonblocking — `benchmark/bench/answer_key.py:142`.** Changing `url`, `command`, or `status` alone still preserves audit identity. I agree this is severable: P299 preserves the existing evidence fields and does not introduce this omission. C163 records the separate payload-digest fix. The absolute “different evidence” criterion remains qualified by this known exception.
+
+4. **P7 — informational; acceptance review.** CLI-independent scoring and version-independent reuse are supported by the implementation and strengthened tests. The real-cell assertions and author-reported **132 passed** support the execution criterion; I did not run tests. Prompt/evidence matching and rejection of invalid records remain intact, subject to C163 above. I found no new regression introduced by the round-1 fixes.
+
+cleared

@@ -1,5 +1,6 @@
 """C158 (operator 2026-10-14): scoring accepts a declared set of P201 auditors — codex gpt-6-astra (pinned, first) and
-Cursor gpt-5.6-sol-high (boxes without codex) — each keyed on its own currently installed CLI version."""
+Cursor gpt-5.6-sol-high (boxes without codex). P299 (2026-10-15): a recorded audit is valid whatever CLI version is
+installed now (see test_p299_audit_record_validity.py); the installed version is provenance for new audits only."""
 import json
 from pathlib import Path
 
@@ -49,22 +50,22 @@ def test_cursor_audit_counts_when_codex_is_absent(tmp_path, monkeypatch, cursor_
     assert all(label == "docs" for st in states for label in st["labels"])
 
 
-def test_cursor_audit_from_another_version_is_missing(tmp_path, monkeypatch, cursor_only):
+def test_cursor_audit_from_another_version_stays_accepted_P299(tmp_path, monkeypatch, cursor_only):
     import web_audit_cursor
     path, corpus, rows = fixture_rows(tmp_path, monkeypatch)
     sidecar = _cursor_audit(path, corpus, {"label": "docs", "reason": "language documentation"})
     monkeypatch.setattr(web_audit_cursor, "cursor_version", lambda: "2026.11.01-other")
     states = answer_key.audit_states(rows, audit_sidecar=sidecar)
-    assert all(label == "missing" for st in states for label in st["labels"])
+    assert all(label == "docs" for st in states for label in st["labels"])
 
 
-def test_no_auditor_available_means_missing(tmp_path, monkeypatch, cursor_only):
+def test_no_auditor_available_still_scores_recorded_audits_P299(tmp_path, monkeypatch, cursor_only):
     import web_audit_cursor
     path, corpus, rows = fixture_rows(tmp_path, monkeypatch)
     sidecar = _cursor_audit(path, corpus, {"label": "docs", "reason": "language documentation"})
     monkeypatch.setattr(web_audit_cursor, "cursor_version", _no_codex)
     states = answer_key.audit_states(rows, audit_sidecar=sidecar)
-    assert all(label == "missing" for st in states for label in st["labels"])
+    assert all(label == "docs" for st in states for label in st["labels"])
 
 
 def test_codex_record_is_preferred_when_both_exist(tmp_path, monkeypatch):

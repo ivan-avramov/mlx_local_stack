@@ -134,7 +134,7 @@ def test_auditor_version_records_and_idempotence(tmp_path, monkeypatch):
     assert len(calls) == 3
     version[0] = 'codex-cli 0.162.0'
     audit.audit_rows(path, polyglot_root=corpus, auditor=fake)
-    assert len(calls) == 6
+    assert len(calls) == 3      # P299: a CLI update never re-audits recorded evidence
     assert report_rows(rows, audit_sidecar=sidecar)['strict_n'] == 2
 
 

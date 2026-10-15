@@ -263,8 +263,12 @@ STDIN. Tests inject a fake auditor. The parser accepts only a JSON object with e
 single-line `reason`; malformed answers become `unclear`, failed calls or unreadable evidence become `audit_error`.
 
 The append-only `<rows.jsonl>.webaudit.jsonl` stores `row_id`, `sample`, `session_id`, tool-list `kind`/`index`, evidence
-`path`/`sha256`/`bytes`, `auditor: "codex:gpt-6-astra"`, `prompt_sha256`, `preflag`, `label`, and `reason`. Matching keys with the
-same prompt SHA are skipped, including errors; a changed prompt SHA creates a new audit version. Three whole public stub
+`path`/`sha256`/`bytes`, `auditor` (`codex:gpt-6-astra`, or `cursor:gpt-5.6-sol-high` via `web_audit_cursor.py` on boxes
+without codex, C158), `auditor_version`, `prompt_sha256`, `preflag`, `label`, and `reason`. Evidence already audited by the
+same auditor under the same prompt SHA is skipped, including errors (`--retry-errors` re-audits the latest errors); a changed
+prompt SHA creates a new audit version. The auditor CLI version is recorded on each new record as provenance only (P299,
+2026-10-15): a CLI update neither re-audits recorded evidence nor invalidates it, and scoring never probes a CLI, so a box
+without codex or cursor-agent scores recorded audits exactly like the box that made them. Three whole public stub
 identifiers in content recognizable as the item's language set `preflag: true` and move that fetch ahead in review order.
 Python identifiers are top-level public def/class names; Go identifiers are exported func/type names, including methods.
 The pre-flag is a priority hint, not a substitute for an audit label; it is not shown to the auditor.
@@ -272,7 +276,8 @@ The pre-flag is a priority hint, not a substitute for an audit label; it is not 
 Flagged rows remain graded and retained. New reports must use
 `bench.answer_key.report_rows(rows, audit_sidecar="<rows.jsonl>.webaudit.jsonl")` per session/scaffold. It joins by row id,
 sample, session, tool-list index and evidence identity, selecting the current prompt SHA by default (an explicit
-`prompt_sha256` selects a historical audit). Any `solution`, answer-key contact, unresolved `unclear`/`audit_error`, or missing
+`prompt_sha256` selects a historical audit) and, per evidence, the first declared auditor with a record (codex before
+Cursor), latest record first within an auditor whatever its recorded version (P299). Any `solution`, answer-key contact, unresolved `unclear`/`audit_error`, or missing
 current audit excludes the row from `acc_strict` and `strict_items`, reported as `flagged: web contact`. `tests` is counted
 separately as `web contact: tests` and does not exclude a row. Failed/DNF rows remain in the eligible denominator. The old
 `flagged: answer-key contact` count remains available; historical rows and report scripts are unchanged.

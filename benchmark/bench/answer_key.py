@@ -5,7 +5,6 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import subprocess
 from urllib.parse import unquote, urlsplit
 
 
@@ -82,8 +81,9 @@ def web_entries(row):
 
 
 def declared_auditors():
-    """C158: the accepted P201 auditors in preference order, each with its current-version probe. codex gpt-6-astra
-    is the pinned auditor; Cursor gpt-5.6-sol-high audits on boxes without codex (operator 2026-10-14)."""
+    """C158: the accepted P201 auditors in preference order, each with its version probe. codex gpt-6-astra is the
+    pinned auditor; Cursor gpt-5.6-sol-high audits on boxes without codex (operator 2026-10-14). P299: the probe is
+    provenance for NEW audits only (`web_audit.audit_rows` records it); scoring never calls it."""
     from web_audit import auditor_version
     from web_audit_cursor import AUDITOR as CURSOR, cursor_version
     return [('codex:gpt-6-astra', auditor_version), (CURSOR, cursor_version)]
@@ -105,7 +105,9 @@ def _valid_audit(record, auditors):
 def accepted_audits(records, auditors):
     """{key: record}: the latest well-formed genuine record per key (a retry replaces it); an operator resolution
     applies only on top of a preceding genuine unresolved (`unclear`/`audit_error`) record of the same key and label,
-    as the documented procedure appends a copy of that record (C158/P298)."""
+    as the documented procedure appends a copy of that record (C158/P298). Iteration order is sidecar order of the
+    LAST write per key, so a later record of the same evidence (e.g. a retry under a newer CLI) follows an older one
+    (P299)."""
     out = {}
     for record in records:
         if not _valid_audit(record, auditors):
@@ -119,17 +121,34 @@ def accepted_audits(records, auditors):
                                 and op_reason.splitlines() == [op_reason])        # C158 review A7
             if (valid_resolution and base is not None and base['label'] in ('unclear', 'audit_error')
                     and record['label'] == base['label']):
+                out.pop(key)
                 out[key] = {**base, 'operator_label': record.get('operator_label'),
                             'operator_reason': record.get('operator_reason')}
             continue
+        out.pop(key, None)
         out[key] = record
     return out
 
 
+def latest_by_evidence(audits):
+    """{(evidence_key, auditor): record}: per evidence and auditor, the latest accepted record whatever its recorded
+    `auditor_version` (P299: a recorded audit is valid for the record; the installed CLI version never gates it)."""
+    out = {}
+    for record in audits.values():
+        out[(evidence_key(record), record.get('auditor'))] = record
+    return out
+
+
+EVIDENCE_KEY_FIELDS = ('row_id', 'sample', 'session_id', 'kind', 'index', 'path', 'sha256', 'bytes', 'prompt_sha256')
+
+
+def evidence_key(record):
+    """Identity of one audited fetch under one prompt: the row, the tool-list slot and the evidence bytes."""
+    return tuple(record.get(key) for key in EVIDENCE_KEY_FIELDS)
+
+
 def audit_record_key(record):
-    return tuple(record.get(key) for key in ('row_id', 'sample', 'session_id', 'kind', 'index',
-                                              'path', 'sha256', 'bytes', 'prompt_sha256', 'auditor',
-                                              'auditor_version'))
+    return evidence_key(record) + tuple(record.get(key) for key in ('auditor', 'auditor_version'))
 
 
 def needs_web_audit(row):
@@ -271,14 +290,8 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
             (Path(__file__).resolve().parents[1] / 'web_audit_prompt.md').read_bytes()).hexdigest()
     from web_audit import LABELS
     rows = list(rows)
-    versions = []   # C158: (auditor, current version) for every declared auditor whose CLI answers now
-    if any(any(web_entries(row)) for row in rows):
-        for name, version_of in declared_auditors():
-            try:
-                versions.append((name, version_of()))
-            except (OSError, subprocess.SubprocessError, ValueError):
-                pass  # Unknown current version cannot validate any historical audit by that auditor.
-    audits = accepted_audits(load_audits(audit_sidecar), {name for name, _ in declared_auditors()})
+    auditors = [name for name, _ in declared_auditors()]     # preference order; P299: no version probe in scoring
+    audits = latest_by_evidence(accepted_audits(load_audits(audit_sidecar), set(auditors)))
     states = []
     for row in rows:
         labels, urls = [], []
@@ -290,14 +303,13 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
             not contact_sources or any(not re.search(r'https?://', source, re.I) for source in contact_sources)))
         for kind, index, entry in web_entries(row):
             audit = {}
-            for name, version in versions:     # declared order: the first auditor with a current record wins
-                key = audit_record_key({'row_id': row['id'], 'sample': row.get('sample', 0),
-                                        'session_id': row.get('session_id'), 'kind': kind, 'index': index,
-                                        'path': entry.get('path'), 'sha256': entry.get('sha256'),
-                                        'bytes': entry.get('bytes'), 'prompt_sha256': prompt_sha256,
-                                        'auditor': name, 'auditor_version': version})
-                if version and key in audits:
-                    audit = audits[key]
+            evidence = evidence_key({'row_id': row['id'], 'sample': row.get('sample', 0),
+                                     'session_id': row.get('session_id'), 'kind': kind, 'index': index,
+                                     'path': entry.get('path'), 'sha256': entry.get('sha256'),
+                                     'bytes': entry.get('bytes'), 'prompt_sha256': prompt_sha256})
+            for name in auditors:     # declared order: the first auditor with a recorded audit wins
+                if (evidence, name) in audits:
+                    audit = audits[(evidence, name)]
                     break
             label = audit.get('label', 'missing')
             if label not in (*LABELS, 'audit_error'):

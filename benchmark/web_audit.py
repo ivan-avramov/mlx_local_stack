@@ -146,7 +146,8 @@ def _read_evidence(entry: dict) -> str:
 
 def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMPT,
                retry_errors=False) -> Path:
-    """Audit once per evidence/prompt/auditor/version; optionally retry latest errors."""
+    """Audit once per evidence/prompt/auditor (P299: whatever CLI version recorded it); optionally retry latest
+    errors. The current `auditor_version` is recorded on every NEW record as provenance."""
     rows_path = Path(rows_path)
     sidecar = Path(str(rows_path) + '.webaudit.jsonl')
     refusal = paths.confine_path(sidecar, what='audit sidecar')
@@ -165,8 +166,8 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
     existing = answer_key.load_audits(sidecar)
     # C158 review A8: "already audited" means an ACCEPTED record (the scorer's own view); a malformed record or a
     # resolution without a genuine predecessor must not block a genuine re-audit
-    latest = answer_key.accepted_audits(existing, {AUDITOR})
-    done = {key for key, record in latest.items()
+    latest = answer_key.latest_by_evidence(answer_key.accepted_audits(existing, {AUDITOR}))
+    done = {evidence for (evidence, _auditor), record in latest.items()
             if not retry_errors or record.get('label') != 'audit_error'}
     call = auditor if auditor is not None else codex_auditor
     pending = []
@@ -179,7 +180,7 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
                       'bytes': entry.get('bytes'), 'auditor': AUDITOR, 'auditor_version': version,
                       'prompt_sha256': prompt_sha,
                       'preflag': False}
-            key = answer_key.audit_record_key(record)
+            key = answer_key.evidence_key(record)
             if key in done:
                 continue
             done.add(key)
