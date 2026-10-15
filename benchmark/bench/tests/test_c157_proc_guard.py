@@ -492,3 +492,35 @@ def test_r5p1_a_recovered_protected_child_does_not_keep_cleanup_uncertain(tmp_pa
     state["broken"] = False                          # the child is fully readable now, and protected
     g.cleanup()                                      # must not raise
     assert g.status()["uncertain"] is False
+
+
+# ----------------------------------------------------------------------------- lead review P306 (21066227)
+def test_p306_vanished_roots_without_descendants_are_pruned_and_never_overflow(tmp_path):
+    """One guard lives a whole item (up to ~60 min, ~7,200 ticks): exiting processes that flicker unreadable must not
+    accumulate to the 32-root cap and turn a clean cleanup uncertain."""
+    processes = []
+    g = _guard(tmp_path, processes)
+    for i in range(40):
+        p = Unreadable(1000 + i, created=50 + i)
+        processes.append(p)
+        g.tick()                                     # noted while unreadable
+        processes.remove(p)
+        g.tick()                                     # gone, nothing recorded below it: pruned
+    assert not g._unreadable_seen and not g._unreadable_overflow
+    g.cleanup()
+    assert g.status()["uncertain"] is False
+
+
+def test_p306_a_vanished_root_with_a_live_recorded_child_is_retained(tmp_path):
+    processes = []
+    child = Process(41, 40, created=11)
+    root = Unreadable(40, created=10)
+    processes += [child, root]
+    g = _guard(tmp_path, processes)
+    g.tick()
+    processes.remove(root)
+    child.parent = 1
+    g.tick()
+    assert any(k[0] == 40 for k in g._unreadable_seen)
+    with pytest.raises(TransportAbort, match=r"41.*child of vanished unreadable process"):
+        g.cleanup()

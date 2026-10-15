@@ -389,6 +389,8 @@ class ProcessGuard:
             for key in [k for k in self._unreadable_seen          # exact identity only: never a pid wildcard
                         if k[1] is not None and k[0] in readable and self._created_or_none(readable[k[0]]) == k[1]]:
                 del self._unreadable_seen[key]      # classified readable now: the ambiguity is resolved (round 2 P4)
+            for key in [k for k, info in self._unreadable_seen.items() if self._fully_gone(k, info)]:
+                del self._unreadable_seen[key]      # P306: gone with nothing recorded below it - nothing to reconcile
             # Follow ancestry until its transitive closure; detachments retain recorded ownership.
             changed = True
             while changed:
@@ -738,6 +740,20 @@ class ProcessGuard:
                     if not add(child):
                         return
                     frontier.append(child.pid)
+
+    def _fully_gone(self, key, info):
+        """P306: the unreadable root is definitively gone AND every recorded descendant identity is gone, so cleanup
+        has nothing left to reconcile for it (pruning it is equivalent to keeping it; without pruning, exiting
+        processes over a ~60-min item would fill the 32-root cap and fail cleanup closed)."""
+        if self._existence(*key)[0] != "gone":
+            return False
+        for pid, created in info["children"]:
+            if created is None:
+                if self._existence(pid, None)[0] != "gone":
+                    return False
+            elif self._identity_state(pid, created) != "gone":
+                return False
+        return True
 
     def _existence(self, pid, created):
         """C157: (kind, occupant start time) for a pid whose identity could not be read; kind is "gone" | "readable"
