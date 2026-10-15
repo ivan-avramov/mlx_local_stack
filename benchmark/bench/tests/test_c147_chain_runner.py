@@ -374,17 +374,40 @@ def test_barrier_acks_before_item_one(env):
     assert list(sdir.glob("*.ACK")) and not list(sdir.glob("*.CANCEL"))
 
 
+def _until(pred, timeout=30.0):
+    deadline = time.time() + timeout
+    while not pred() and time.time() < deadline:
+        time.sleep(0.02)
+    return pred()
+
+
 def test_missing_manifest_is_alarm_only_until_stop(env):
+    """P288: event-driven (was a 1.2 s sleep); the STOP lands only after the alarm, whatever the box load."""
     stop = env["out"] / "STOP"
     cancel_seen = []
 
     def helper():
-        time.sleep(1.2)
+        _until(lambda: log_has(env, "ALARM manifest missing"))
         cancel_seen.append(bool(list((env["out"] / "pilot").glob("*.CANCEL"))))
         stop.write_text("")
     rc = run(env, PILOT, behaviour="no_manifest", helper=helper)
     assert cancel_seen == [False]
     assert log_has(env, "ALARM manifest missing")
+    assert rc == 3
+
+
+@pytest.mark.parametrize("linger", ["0", "0.5"])
+def test_p308_stop_before_the_first_manifest_is_a_stop_not_a_barrier_abort(env, linger):
+    """P308 (found by the P288 repro, 10/48 under 12-way load): a probe cancelled before its first manifest writes an
+    abort manifest (transport_abort) and then exits; a supervise poll in between must not read it as a first-manifest
+    barrier mismatch (CHAIN ABORT rc 2) - the STOP is honoured (rc 3). linger=0.5 makes the window deterministic."""
+    stop = env["out"] / "STOP"
+
+    def helper():
+        _until(lambda: log_has(env, "ALARM manifest missing"))
+        stop.write_text("")
+    rc = run(env, PILOT, behaviour="no_manifest", helper=helper, extra_env={"FAKE_ABORT_LINGER_S": linger})
+    assert not log_has(env, "BARRIER MISMATCH")
     assert rc == 3
 
 

@@ -636,7 +636,9 @@ class Chain:
             while proc.poll() is None:
                 now = clock()
                 hb.poll()
-                if not st["barrier_done"] and st["reasons"] is None:
+                # P308: once a cancel is pending the probe may write its abort manifest (transport_abort) before it
+                # exits; that is the cancel's outcome, validated after exit, never a first-manifest mismatch
+                if not st["barrier_done"] and st["reasons"] is None and st["cancel_at"] is None:
                     self._barrier(att, leg, block, st, t0)
                     if st["reasons"] is not None:
                         self._cancel(att, st, "barrier mismatch", hb, leg, tcoop=tm.barrier_exit_wait_s)

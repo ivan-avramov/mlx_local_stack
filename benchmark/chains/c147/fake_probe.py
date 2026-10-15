@@ -9,7 +9,7 @@ Knobs (environment): FAKE_SERVED_REGISTRY = registry yaml whose draft_kind the m
 FAKE_PROBE_BEHAVIOUR = normal | hang_after_manifest | hang_in_item | no_manifest | abort_after_n |
 stale_heartbeat_growing_events | ignore_cancel; FAKE_PROBE_PLAN = JSON list of behaviours consumed per invocation
 (needs FAKE_PROBE_STATE, a directory; the last entry repeats); FAKE_N, FAKE_ITEM_S, FAKE_HB_S, FAKE_TICK_S,
-FAKE_IGNORE_TERM=1, FAKE_CLEANUP_UNCERTAIN=1, FAKE_MANIFEST_OVERRIDE (JSON merged into the manifest, dotted keys),
+FAKE_IGNORE_TERM=1, FAKE_CLEANUP_UNCERTAIN=1, FAKE_ABORT_LINGER_S (abort manifest written, exit delayed), FAKE_MANIFEST_OVERRIDE (JSON merged into the manifest, dotted keys),
 FAKE_PROBE_CODE_SHA, FAKE_REGISTRY_SHA. The worker identity comes from $FAKE_PROBE_STATE/worker.json.
 """
 import argparse
@@ -188,6 +188,7 @@ def main(argv=None):
         man["cleanup_status"] = cleanup
         save()
         print(f"TransportAbort: {msg}", flush=True)
+        time.sleep(float(env.get("FAKE_ABORT_LINGER_S", "0")))     # P308: abort manifest on disk, process still alive
         return 1
 
     def on_term(signum, frame):
