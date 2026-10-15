@@ -1,4 +1,4 @@
-# Handoff — 2026-10-15: P299 (1) and C157 done and cold-reviewed; box idle; next: P288 (ask) → C144 candidates (ask) → docs
+# Handoff — 2026-10-15: P299 (1), C157, P306 done; smoke chain LIVE (`$STACK_WORKDIR/c144-smoke`); next: P288 repro → picks re-record
 
 THE one handoff. Read this, then `docs/open-questions.md` (top entries: P299 part 2, P288, C156, C155, C154),
 `docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62, M63 rows), `README.md` B ladder.
@@ -12,7 +12,7 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: P299 par
   output — re-run (loop until the report contains "Verdict").
 - **Identities moved again (2026-10-15), so new rows never pair with P223/M63 rows:** probe — P299 changed
   `answer_key.py`/`web_audit.py`, C157 changed `proc_guard.py`; `run_opencode_probe_v2.py --print-identity` →
-  `probe_code_sha256` `d3be5737…` (serving unchanged since 2026-10-14: `src/mlx-serve` at `86921f0`).
+  `probe_code_sha256` `d4319705…` (after P306) (serving unchanged since 2026-10-14: `src/mlx-serve` at `86921f0`).
 - **Records (final, committed; the unpushed commits are listed below):**
   - P223 tg1 OFF (`benchmark/results/p223_tg1/P223_REPORT.md`) and M63 MTP-ON (`benchmark/results/m63_mtp/M63_REPORT.md`)
     unchanged; both regenerate byte-identical after P299 (reviewer reproduced it too).
@@ -27,15 +27,25 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: P299 par
 - **Parked branches:** `p297-uncertain-gone` (superseded by C157; delete when convenient), `c152-alloc-tool-scope-wip`.
 - **Not pushed:** everything from `06a77fec` onward (push needs explicit operator approval).
 
+- **LIVE (2026-10-15 14:33Z): smoke chain** `chain s1 reload --smoke --probe-code-sha d4319705…`, out-root
+  `$STACK_WORKDIR/c144-smoke` (`driver.chain.out`/`.rc`, `RUNLOG.md`), launched via a scratch launcher that runs
+  `run_tg1_chain.py ... --out-root` with `$HOME/.orbstack/bin` on PATH (the agent shell has no docker on PATH;
+  `drive_chain.sh` would overwrite P223's `c147/chain.out`). Do not edit runner/probe/scoring files or run the suite
+  until it exits. Purpose: live check of C157/P306 on the new identity + C154 TTL re-check.
+- **Operator 2026-10-15:** pre-authorized to keep working and keep the GPU busy; merge to main as work completes; do
+  not delete branches yet.
+
 ## Next work, in order
 
-1. **P288 — make the four load-sensitive tests deterministic** (open-questions P288; **ask the operator first**; the
-   cancel-race member looks fixed by C157 — six clean full suites).
-2. **C144 — new candidates under tg1** (new probe + serving identity: fresh OFF rows for every comparison, including
-   re-recording the two picks if they are to be compared against). Run a `--smoke` chain first. **Ask before starting any chain.**
-3. **Docs owed:** per-box P201 auditor (codex vs Cursor) note in `scripts/bootstrap_machine.sh` (the benchmark README
+1. **P288 — make the four load-sensitive tests deterministic** (operator go 2026-10-15). Real-client members spawn
+   opencode: reproduce under load ONLY with no chain live (after the smoke), then fix test-first, review, full suite.
+2. **Re-record both picks under the new identity** (k=2 `chain s1 s2 reload`, ≈18 h, fresh out-root e.g.
+   `$STACK_WORKDIR/c144-base`): the OFF baseline every C144 comparison needs. Authorized by the GPU-busy instruction.
+3. **C144 — new candidates under tg1**: no candidate is named anywhere (PLAN queue "nothing armed"); the runner is
+   hard-wired to the two picks (`LEGS`/`PICK1`/`PICK2`). Asked the operator 2026-10-15 which models.
+4. **Docs owed:** per-box P201 auditor (codex vs Cursor) note in `scripts/bootstrap_machine.sh` (the benchmark README
    already states it; no codex install in bootstrap).
-4. Delete the parked `p297-uncertain-gone` branch (operator OK).
+5. Delete the parked `p297-uncertain-gone` branch (operator OK).
 
 ## Rules learned (2026-10-11 → 15)
 
