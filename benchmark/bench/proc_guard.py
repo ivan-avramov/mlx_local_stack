@@ -702,7 +702,7 @@ class ProcessGuard:
         listing (edges read BEFORE any per-process start-order read) and everything of unreadable parentage, closed
         over those edges: a vanished parent proves nothing about them (P297 U1). Candidates are IDENTITIES
         (pid, start time), so a reused pid adds a second candidate instead of masquerading as the first. Bounded:
-        at most 32 roots and 2048 identities are ever retained; past either limit nothing more is stored or
+        at most 32 roots and 2048 identities (roots included) are ever retained; past either limit nothing more is stored or
         traversed and `_unreadable_overflow` stays set (permanent, fail-closed: cleanup is uncertain)."""
         if self._unreadable_overflow:
             return
@@ -711,8 +711,8 @@ class ProcessGuard:
         if key not in store and len(store) >= 32:
             self._unreadable_overflow = True
             return
-        room = 2048 - sum(len(v["children"]) for v in store.values())
-        entry = store.setdefault(key, dict(children=set()))
+        room = 2048 - sum(len(v["children"]) for v in store.values()) - len(store) - (key not in store)
+        entry = store.setdefault(key, dict(children=set()))     # roots count against the identity budget too
 
         def add(proc):
             nonlocal room
@@ -790,7 +790,15 @@ class ProcessGuard:
                 reason = dict(pid=child_pid, create_time=child_created, argv=[],
                               reason="child of vanished unreadable process")
                 if child_created is None:
-                    if self._existence(child_pid, None)[0] != "gone":
+                    kind = self._existence(child_pid, None)[0]
+                    if kind == "readable":      # recovered: pre-existing/protected or tracked occupants are resolved
+                        try:
+                            occupant = self.get(child_pid)
+                            if self._protected(occupant) or (child_pid, self._created_or_none(occupant)) in self.tracked:
+                                continue
+                        except (*self._transient, TransportAbort, StopIteration):
+                            pass
+                    if kind != "gone":
                         bad[(child_pid, None)] = reason
                     continue
                 child_state = self._identity_state(child_pid, child_created)

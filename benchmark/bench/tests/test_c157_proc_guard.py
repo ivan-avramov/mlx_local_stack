@@ -322,12 +322,12 @@ def test_r2p5_accumulating_descendants_are_capped_too(tmp_path):
     kids = [Process(1000 + i, 10, created=50 + i) for i in range(2100)]
     g = _guard(tmp_path, [root] + kids)
     g.tick()
-    total = lambda: sum(len(v["children"]) for v in g._unreadable_seen.values())      # noqa: E731
-    assert total() <= 2048 and g._unreadable_overflow          # round 4 P3: the cap really stops storage
+    total = lambda: len(g._unreadable_seen) + sum(len(v["children"]) for v in g._unreadable_seen.values())  # noqa: E731
+    assert total() == 2048 and g._unreadable_overflow           # exact boundary, roots included (round 5 P2)
     more = [Process(5000 + i, 10, created=900 + i) for i in range(50)]
     g.scan = lambda: [root] + kids + more
     g.tick()
-    assert total() <= 2048                                      # ... and nothing grows afterwards
+    assert total() == 2048                                      # unchanged after overflow
 
 
 # ----------------------------------------------------------------------------- cold review round 3 (9067da52)
@@ -469,3 +469,26 @@ def test_r4p2_a_descendant_pid_reused_after_the_last_scan_forces_another_scan(tm
     g._reconcile_unreadable = counting
     with pytest.raises(TransportAbort, match="path-only attribution"):
         g.cleanup()
+
+
+# ----------------------------------------------------------------------------- cold review round 5 (8f392494)
+def test_r5p1_a_recovered_protected_child_does_not_keep_cleanup_uncertain(tmp_path):
+    import psutil
+    state = {"broken": True}
+
+    class Flicker(Process):
+        def create_time(self):
+            if state["broken"]:
+                raise psutil.AccessDenied(self.pid)
+            return self.created
+    processes = []
+    child = Flicker(41, 40, created=5)
+    processes += [child, Unreadable(40, on_read=lambda p: None)]
+    g = _guard(tmp_path, processes)
+    g.started = 100                                  # created=5 is older than the guard: pre-existing, protected
+    g.tick()
+    assert (40, None) in g._unreadable_seen or any(k[0] == 40 for k in g._unreadable_seen)
+    processes.remove(next(q for q in processes if q.pid == 40))
+    state["broken"] = False                          # the child is fully readable now, and protected
+    g.cleanup()                                      # must not raise
+    assert g.status()["uncertain"] is False
