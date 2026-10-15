@@ -524,3 +524,61 @@ def test_p306_a_vanished_root_with_a_live_recorded_child_is_retained(tmp_path):
     assert any(k[0] == 40 for k in g._unreadable_seen)
     with pytest.raises(TransportAbort, match=r"41.*child of vanished unreadable process"):
         g.cleanup()
+
+
+def test_p306_root_and_recorded_child_both_gone_is_pruned(tmp_path):
+    processes = []
+    child, root = Process(41, 40, created=11), Unreadable(40, created=10)
+    processes += [child, root]
+    g = _guard(tmp_path, processes)
+    g.tick()
+    assert (41, 11) in g._unreadable_seen[(40, 10)]["children"]
+    processes.remove(root)
+    processes.remove(child)
+    g.tick()
+    assert not g._unreadable_seen
+
+
+def test_p306_a_reused_child_pid_prunes_the_record_and_the_replacement_is_still_scanned(tmp_path):
+    processes = []
+    child, root = Process(41, 40, created=11), Unreadable(40, created=10)
+    processes += [child, root]
+    g = _guard(tmp_path, processes)
+    g.tick()
+    processes.remove(root)
+    processes.remove(child)
+    replacement = Process(41, 1, created=99, cwd=str(tmp_path / "work"))     # path-attributed to this run
+    processes.append(replacement)
+    g.tick()
+    assert not g._unreadable_seen                    # the recorded identity (41, 11) is gone: nothing to reconcile
+    with pytest.raises(TransportAbort, match="path-only attribution"):
+        g.cleanup()                                  # ... and the normal scan still sees the replacement
+
+
+def test_p306_unknown_identities_are_pruned_only_when_their_pid_is_absent(tmp_path):
+    import psutil
+
+    class NoCreate(Process):
+        def create_time(self):
+            raise psutil.AccessDenied(self.pid)
+
+    class NoCreateUnreadable(Unreadable):
+        def create_time(self):
+            raise psutil.AccessDenied(self.pid)
+    processes = []
+    child = NoCreate(41, 40)
+    root = NoCreateUnreadable(40)
+    processes += [child, root]
+    g = _guard(tmp_path, processes)
+    g.tick()
+    assert (40, None) in g._unreadable_seen and (41, None) in g._unreadable_seen[(40, None)]["children"]
+    processes.remove(root)
+    g.tick()
+    assert (40, None) in g._unreadable_seen          # child pid occupied, identity unreadable: retained
+    processes.remove(child)
+    processes.append(Process(40, 1, created=70))     # the root's pid is occupied again (identity unknown to us)
+    g.tick()
+    assert (40, None) in g._unreadable_seen          # an occupied unknown-identity root is never pruned
+    processes.pop()
+    g.tick()
+    assert (40, None) not in g._unreadable_seen      # root and child pids both absent: pruned
