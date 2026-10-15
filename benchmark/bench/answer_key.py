@@ -89,9 +89,44 @@ def declared_auditors():
     return [('codex:gpt-6-astra', auditor_version), (CURSOR, cursor_version)]
 
 
+LEGACY_INVENTORY = Path(__file__).with_name('legacy_audit_records.json')
+
+
+def record_digest(record):
+    """Canonical sha256 of one sidecar record (sort_keys JSON)."""
+    return hashlib.sha256(json.dumps(record, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def legacy_record_digests(inventory=None):
+    """C163 review P1: the frozen set of pre-C163 sidecar records (no `context_sha256`) accepted as recorded.
+    Any other record without a valid digest is not an audit."""
+    path = Path(inventory) if inventory is not None else LEGACY_INVENTORY
+    if not path.exists():
+        return frozenset()
+    return frozenset(json.loads(path.read_text())['records'])
+
+
+def build_legacy_inventory(results_root):
+    """{'records': [digest...]} of every digest-less record in every committed sidecar under results_root."""
+    digests = []
+    for sidecar in sorted(Path(results_root).rglob('*.webaudit.jsonl')):
+        for record in load_audits(sidecar):
+            if isinstance(record, dict) and record.get('context_sha256') is None:
+                digests.append(record_digest(record))
+    return {'records': sorted(set(digests))}
+
+
+def _context_digest_ok(record):
+    digest = record.get('context_sha256')
+    if isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest):
+        return True
+    return digest is None and record_digest(record) in legacy_record_digests()
+
+
 def _valid_audit(record, auditors):
     """C158/P298: a well-formed record of a declared auditor (allowed label, nonempty single-line reason, nonempty
-    version and prompt sha). Anything else is not an audit."""
+    version and prompt sha). C163: a valid `context_sha256`, or a grandfathered legacy record (frozen inventory).
+    Anything else is not an audit."""
     from web_audit import LABELS
     if not isinstance(record, dict):
         return False
@@ -99,7 +134,8 @@ def _valid_audit(record, auditors):
     return (record.get('auditor') in auditors and record.get('label') in (*LABELS, 'audit_error')
             and isinstance(reason, str) and bool(reason.strip()) and reason.splitlines() == [reason]
             and isinstance(record.get('auditor_version'), str) and bool(record['auditor_version'])
-            and isinstance(record.get('prompt_sha256'), str) and bool(record['prompt_sha256']))
+            and isinstance(record.get('prompt_sha256'), str) and bool(record['prompt_sha256'])
+            and _context_digest_ok(record))
 
 
 def accepted_audits(records, auditors):
@@ -139,12 +175,28 @@ def latest_by_evidence(audits):
     return out
 
 
-EVIDENCE_KEY_FIELDS = ('row_id', 'sample', 'session_id', 'kind', 'index', 'path', 'sha256', 'bytes', 'prompt_sha256')
+EVIDENCE_KEY_FIELDS = ('row_id', 'sample', 'session_id', 'kind', 'index', 'path', 'sha256', 'bytes', 'prompt_sha256',
+                       'context_sha256')
+CONTEXT_FIELDS = ('url', 'command', 'status')
+
+
+def context_sha256(entry):
+    """C163: digest of the fetch context the auditor is shown besides the content (url, command, status; absent ==
+    null). Part of the audit identity, so an edited context never inherits a label."""
+    payload = {key: entry.get(key) for key in CONTEXT_FIELDS}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 def evidence_key(record):
-    """Identity of one audited fetch under one prompt: the row, the tool-list slot and the evidence bytes."""
+    """Identity of one audited fetch under one prompt: the row, the tool-list slot, the evidence bytes and the
+    fetch context (C163; `context_sha256` is None only on grandfathered legacy records, which apply to the row as
+    it is now and are counted as `legacy_audits`)."""
     return tuple(record.get(key) for key in EVIDENCE_KEY_FIELDS)
+
+
+def legacy_key(key):
+    """The evidence key with the context digest removed: how a legacy record (no digest) is matched."""
+    return key[:-1] + (None,)
 
 
 def audit_record_key(record):
@@ -295,6 +347,7 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
     states = []
     for row in rows:
         labels, urls = [], []
+        legacy = 0
         incomplete = bool(row.get('web_audit_incomplete') or row.get('web_audit_error') or row.get('audit_error'))
         contact_evidence = [e for e in row.get('answer_key_evidence', []) if e.get('flag')]
         contact_sources = {(e.get('source') or '') for e in contact_evidence}
@@ -306,10 +359,15 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
             evidence = evidence_key({'row_id': row['id'], 'sample': row.get('sample', 0),
                                      'session_id': row.get('session_id'), 'kind': kind, 'index': index,
                                      'path': entry.get('path'), 'sha256': entry.get('sha256'),
-                                     'bytes': entry.get('bytes'), 'prompt_sha256': prompt_sha256})
+                                     'bytes': entry.get('bytes'), 'prompt_sha256': prompt_sha256,
+                                     'context_sha256': context_sha256(entry)})
             for name in auditors:     # declared order: the first auditor with a recorded audit wins
                 if (evidence, name) in audits:
                     audit = audits[(evidence, name)]
+                    break
+                if (legacy_key(evidence), name) in audits:      # C163: a pre-digest record, counted below
+                    audit = audits[(legacy_key(evidence), name)]
+                    legacy += 1
                     break
             label = audit.get('label', 'missing')
             if label not in (*LABELS, 'audit_error'):
@@ -332,7 +390,7 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
             for evidence in row.get('answer_key_evidence', []):
                 if evidence.get('flag'):
                     urls.extend(_source_urls(evidence.get('source') or ''))
-        states.append({'row': row, 'labels': labels,
+        states.append({'row': row, 'labels': labels, 'legacy_audits': legacy,
                        'urls': [] if unknown_source else list(dict.fromkeys(_strip_url_tail(url) for url in urls)),
                        'unknown_source': bool(unknown_source),
                        'rerun_eligible': str(row.get('scaffold', '')).startswith('opencode-v2-web'),
@@ -356,7 +414,8 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
         counts = per_model.setdefault(row.get('model'), dict(cheat_attempts=0, reruns=0,
                                                            unresolved=0, partial_lookups=0,
                                                            pending_reruns=0, missing_audits=0,
-                                                           cheat_review=0, provisional=False))
+                                                           cheat_review=0, legacy_audits=0, provisional=False))
+        counts['legacy_audits'] += state['legacy_audits']
         counts['cheat_attempts'] += int(state['cheat'])
         counts['reruns'] += int(bool(row.get('rerun_index', 0)))
         counts['partial_lookups'] += state['labels'].count('partial')
@@ -401,7 +460,7 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
             'per_model': per_model,
             'provisional': any(c['provisional'] for c in per_model.values()),
             **{key: sum(c[key] for c in per_model.values())
-               for key in ('missing_audits', 'pending_reruns', 'cheat_review')},
+               for key in ('missing_audits', 'pending_reruns', 'cheat_review', 'legacy_audits')},
             'flagged: web contact': sum(s['cheat'] for s in states),
             'web contact: tests': sum('tests' in s['labels'] for s in states),
             'web contact: partial': sum(s['labels'].count('partial') for s in states),

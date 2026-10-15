@@ -1,4 +1,4 @@
-# Handoff — 2026-10-15: P299 done (audit acceptance no longer gated on the installed auditor CLI); box idle; next: C157 guard fix → P288 flaky tests → C144 candidates + M64 Pi scaffold arm
+# Handoff — 2026-10-15: P299 + C163 done (audit acceptance/identity); GPU work DEFERRED (operator); next box-free: C157 guard fix → P288 flaky tests → M64 build (Pi + dsh adapters, two-judge panel) → then operator-run chains
 
 THE one handoff. Read this, then `docs/open-questions.md` (top entries: C163, C162, C161, C160, C159, P299, C158, P288, C157),
 `docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62, M63, M64 rows), `README.md` B ladder.
@@ -26,9 +26,14 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: C163, C1
   (`benchmark/results/m63_mtp/M63_REPORT.md`): 85/86 and 84/86, both keep shipping MTP ON (C71). README B ladder
   current; pick/order changes need the operator.
 - **Rulings this week:** C159 Pi coding agent queued as PLAN M64 (scaffold arm of the C144 chain); C160 opencode
-  silent-model-switch and telemetry checks closed by construction + observation; C161 (standalone dsh eval?) OPEN,
-  lead says no; C162 `NVIDIA-Nemotron-3.5-Bolt-74B-A9B` DROPPED by the operator; C163 (audit identity omits
-  url/command/status, inherited) OPEN, needs a go.
+  silent-model-switch and telemetry checks closed by construction + observation; C161 RULED: dsh is a third M64 arm and
+  every benchmark/scaffold comparison reports a two-judge subjective mean (AGENTS.md); C162
+  `NVIDIA-Nemotron-3.5-Bolt-74B-A9B` DROPPED; `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` stays shipped; C163 DONE.
+- **C163 done 2026-10-15 (this session):** audit identity now carries `context_sha256` (url/command/status); legacy
+  records accepted as recorded and counted as `legacy_audits` (P223 s1 Python: 1 and 2). Codex `gpt-6-astra` cold review two rounds (round 2 cleared); full suite 4587 passed, 0 failed.
+  Probe identity moved again (`answer_key.py`, `web_audit.py`).
+- **GPU work is DEFERRED (operator 2026-10-15).** Nothing below needs the box until M64's build is reviewed; the
+  operator launches chains themselves.
 - **Parked branches:** `p297-uncertain-gone` (superseded by C157), `c152-alloc-tool-scope-wip`.
 
 ## Next work, in order (each: proposal to the operator if not yet approved → test-first → cold review → full suite)
@@ -44,15 +49,17 @@ THE one handoff. Read this, then `docs/open-questions.md` (top entries: C163, C1
 2. **P288 — make the four load-sensitive tests deterministic** (list in open-questions P288; needs operator go).
    Box-free. (This session: `test_m61_p201::test_real_code_search_denied[webfetch-api.github.com/search/code]`
    failed once inside the targeted audit-test run and passed alone — same class.)
-3. **C144 — new candidates under tg1 + M64 Pi scaffold arm (C159).** Box-free first: `run_pi_probe.py` on the
+3. **C144 — new candidates under tg1 + M64 scaffold arms (C159, C161: Pi AND dsh).** Box-free first: `run_pi_probe.py` on the
    dsh/v2 adapter pattern (print/JSON mode, provider pinned to :8000, npm version + exe sha in the row identity,
    bench-owned HOME/config dir, extensions absent by wire capture, M50 entry/exit, M62 token-turn gate from Pi's JSON
-   events, `lsof -i` socket sampling in the smoke per C160), cold review, then **GPU work (operator-run):** a
+   events, `lsof -i` socket sampling in the smoke per C160), cold review, then **GPU work (DEFERRED; operator-run when they choose):** a
    `--smoke` chain, fresh OFF rows for both picks on the new probe identity, then the Pi arm on the same items, seeds
    and budgets; pre-registered PASS = strict TOST ±5pp per pick AND lower tokens/task. C161 (updated 2026-10-15): no subjective-quality signal exists for dsh and none is
    recoverable (artifacts gone); proposed M64 subjective axis = blind pairwise code-quality panel over both-pass items;
    operator to say whether dsh is an M64 arm from the start. `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` stays shipped (operator 2026-10-15).
-4. **C163 — audit identity digest** (small, box-free, needs a go).
+4. **M64 build (box-free): two-judge subjective panel** — `bench/judge` config naming codex `gpt-6.1-sol` + Claude
+   Fable 5.1 (`claude-fable-5-1`), recording judge versions/prompt shas per P299, mean of the two, both orders, <!-- allow-shorthand: judge, not a registry model -->
+   length-adjusted; packets = both-pass items across the three scaffold arms (C161 ruling). Needs the M64 spec first. <!-- allow-shorthand: judge, not a registry model -->
 5. **Docs:** per-box P201 auditor (codex vs Cursor) in `benchmark/README.md` and `scripts/bootstrap_machine.sh`
    notes (C158 owed; the README audit paragraph now names both auditors).
 

@@ -146,8 +146,9 @@ def _read_evidence(entry: dict) -> str:
 
 def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMPT,
                retry_errors=False) -> Path:
-    """Audit once per evidence/prompt/auditor (P299: whatever CLI version recorded it); optionally retry latest
-    errors. The current `auditor_version` is recorded on every NEW record as provenance."""
+    """Audit once per evidence/context/prompt/auditor (P299: whatever CLI version recorded it; C163: the fetch
+    context url/command/status is part of the identity); optionally retry latest errors. The current
+    `auditor_version` is recorded on every NEW record as provenance."""
     rows_path = Path(rows_path)
     sidecar = Path(str(rows_path) + '.webaudit.jsonl')
     refusal = paths.confine_path(sidecar, what='audit sidecar')
@@ -167,8 +168,7 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
     # C158 review A8: "already audited" means an ACCEPTED record (the scorer's own view); a malformed record or a
     # resolution without a genuine predecessor must not block a genuine re-audit
     latest = answer_key.latest_by_evidence(answer_key.accepted_audits(existing, {AUDITOR}))
-    done = {evidence for (evidence, _auditor), record in latest.items()
-            if not retry_errors or record.get('label') != 'audit_error'}
+    done = set()      # evidence handled in this run (dedupe)
     call = auditor if auditor is not None else codex_auditor
     pending = []
     for line in rows_path.read_text().splitlines():
@@ -178,10 +178,14 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
                       'session_id': row.get('session_id'), 'kind': kind, 'index': index,
                       'path': entry.get('path'), 'sha256': entry.get('sha256'),
                       'bytes': entry.get('bytes'), 'auditor': AUDITOR, 'auditor_version': version,
-                      'prompt_sha256': prompt_sha,
+                      'prompt_sha256': prompt_sha, 'context_sha256': answer_key.context_sha256(entry),
                       'preflag': False}
             key = answer_key.evidence_key(record)
-            if key in done:
+            # C163 review P2: the record the SCORER would apply (exact digest first, grandfathered legacy second)
+            # decides; it is re-audited only when it is an error and --retry-errors was asked.
+            applicable = latest.get((key, AUDITOR)) or latest.get((answer_key.legacy_key(key), AUDITOR))
+            if key in done or (applicable is not None
+                               and not (retry_errors and applicable.get('label') == 'audit_error')):
                 continue
             done.add(key)
             try:

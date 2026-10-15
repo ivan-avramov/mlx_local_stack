@@ -268,7 +268,7 @@ without codex, C158), `auditor_version`, `prompt_sha256`, `preflag`, `label`, an
 same auditor under the same prompt SHA is skipped, including errors (`--retry-errors` re-audits the latest errors); a changed
 prompt SHA creates a new audit version. The auditor CLI version is recorded on each new record as provenance only (P299,
 2026-10-15): a CLI update neither re-audits recorded evidence nor invalidates it, and scoring never probes a CLI, so a box
-without codex or cursor-agent scores recorded audits exactly like the box that made them. Three whole public stub
+without codex or cursor-agent scores recorded audits exactly like the box that made them. Each record also carries `context_sha256` (C163, 2026-10-15): the digest of the fetch's `url`/`command`/`status` the auditor was shown; it is part of the audit identity, so an entry whose context changed is re-audited. Records written before C163 have no digest: they are accepted as recorded, never re-audited, and counted per model as `legacy_audits` in `report_rows` (a disclosure, not a tamper-proofing claim — the sidecar is append-only tool output, as in P298). Three whole public stub
 identifiers in content recognizable as the item's language set `preflag: true` and move that fetch ahead in review order.
 Python identifiers are top-level public def/class names; Go identifiers are exported func/type names, including methods.
 The pre-flag is a priority hint, not a substitute for an audit label; it is not shown to the auditor.
