@@ -228,7 +228,8 @@ class ChainOps:
                  predictor="off", out_root=None):
         self.repo, self.wd, self.overlay = Path(repo), Path(workdir), str(overlay)
         self.predictor = predictor
-        # M63: an ON arm keeps its router TMPDIR and A4 logs under its own out-root; OFF keeps the C147 paths
+        # M63: an ON arm keeps its router TMPDIR and A4 logs under its own out-root; P340: so does an OFF arm with a
+        # non-default out-root (run_tg1_chain.make_ops); only the default OFF chain (out_root=None) keeps the C147 paths
         self.a4_log_dir = Path(out_root) if out_root else self.wd / "c147"
         self.log = log
         self.sh = sh or default_sh

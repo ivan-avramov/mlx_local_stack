@@ -1098,3 +1098,33 @@ def test_p340_on_arm_unchanged(tmp_path):
     wd = tmp_path / "wd"
     ops = R.make_ops("mtp", wd, wd / "m63", "overlay.yaml", log=lambda m: None)
     assert ops.a4_log_dir == wd / "m63" and ops.predictor == "mtp"
+
+
+def test_p340_relative_out_root_is_made_absolute_before_ops(tmp_path, monkeypatch):
+    """P340 review P1: subprocesses run with cwd=REPO, so a relative out-root must be absolute before ChainOps."""
+    wd = tmp_path / "wd"
+    elsewhere = tmp_path / "launch"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    a = R.parse_args(["chain", "s1", "--probe-code-sha", "9" * 64, "--out-root", "rel-root"])
+    root = R.resolve_out_root(a, wd)
+    assert root.is_absolute() and root == elsewhere / "rel-root"
+    ops = R.make_ops("off", wd, root, "overlay.yaml", log=lambda m: None)
+    assert ops.a4_log_dir == root and ops.tmpdir.is_absolute()
+
+
+def test_p340_default_off_smoke_keeps_a4_logs_in_its_smoke_root(tmp_path):
+    wd = tmp_path / "wd"
+    a = R.parse_args(["chain", "s1", "--probe-code-sha", "9" * 64, "--smoke"])
+    root = R.resolve_out_root(a, wd)
+    assert root == wd / "c147-smoke"
+    assert R.make_ops("off", wd, root, "overlay.yaml", log=lambda m: None).a4_log_dir == root
+
+
+def test_p340_a_symlink_alias_of_c147_is_the_default_off_root(tmp_path):
+    wd = tmp_path / "wd"
+    (wd / "c147").mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(wd / "c147")
+    ops = R.make_ops("off", wd, alias, "overlay.yaml", log=lambda m: None)
+    assert ops.a4_log_dir == wd / "c147"

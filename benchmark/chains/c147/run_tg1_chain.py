@@ -755,6 +755,7 @@ def resolve_out_root(a, wd):
     on = getattr(a, "predictor", "off") == "mtp"
     base = "m63" if on else "c147"
     root = Path(a.out_root) if a.out_root else Path(wd) / (base + "-smoke" if a.smoke else base)
+    root = root.expanduser().absolute()       # P340 review: subprocesses run with cwd=REPO; never a relative root
     if a.smoke and root.resolve() == (Path(wd) / base).resolve():
         raise Refused("REFUSED: --smoke must not write into the real chain directory")
     if inside_other_arm(root, wd, on):
