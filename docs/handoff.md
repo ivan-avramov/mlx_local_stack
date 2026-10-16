@@ -1,4 +1,4 @@
-# Handoff — 2026-10-16 (late): M64 BUILD in progress (C166); G1 review NOT cleared; P311 proposal agreed-with-changes; next: M65 pilot (GPU) + G1/P311/P348 (CPU)
+# Handoff — 2026-10-16 (late): M64 BUILD in progress (C166); G1 reverted off main (P350) and continues on `g1-fix`; next: M65 pilot (GPU, from main) + G1/P311/P348 (CPU)
 
 THE one handoff. Read this, then `docs/open-questions.md` top entries (C167, P348, P347, P346, C166, C165, G1, G2,
 P340, C164, P309), `docs/specs/m64-scaffold-arms.md` (APPROVED FOR BUILD, estimation screen), `docs/PLAN.md` M64 +
@@ -18,9 +18,12 @@ M65 rows, `docs/specs/p311-identity-split.md`, `README.md` B ladder.
   review fixes, G1, P311 proposal and these docs — **push needs the operator**. `m64-plan-review` (pushed) is merged
   into main; the sync worktree `$STACK_WORKDIR/worktrees/sync-1015` can be removed (`git worktree remove`) — no branch
   deletions without the operator (parked: `p297-uncertain-gone`, `c152-alloc-tool-scope-wip`, `sync-upstream-1015`,
-  `m64-plan-review`).
-- **Identity on main:** `probe_code_sha256` changed with G1 (proc_guard) — recompute with
-  `run_opencode_probe_v2.py --print-identity` before any chain.
+  `m64-plan-review`; active: `g1-fix`).
+- **G1 reverted off main (P350, `2dd80916`):** its Cursor review was not cleared, so `main` carries the pre-G1 guard
+  (C157 + P306 — byte-identical to `3cfb8c5d`, the guard that ran c144-base). The G1 attempt is on local branch
+  **`g1-fix`** (= `5f9fdbc4`); fix it there and merge only after Cursor clears it.
+- **Identity on main:** `probe_code_sha256` `ebcfe6fb890e723c06c6ccaed39869aa3f4c31e86007c9c089ef489e715df2ea`
+  (re-verify with `run_opencode_probe_v2.py --print-identity` before any chain).
 - **Records:** P223, M63, c144-base (`benchmark/results/c144_base/C144BASE_REPORT.md`: pick 2 86/86, pick 1 84/86,
   descriptive). Reports print "no discordance — equivalence NOT established" for collapsed intervals (P346).
 - **Full suite** after the G1 commit: 4676 passed, 3 skipped, 1 xfailed.
@@ -37,18 +40,20 @@ M65 harder corpus).
 
 ## Next work, in order
 
-1. **M65 step 1 — headroom pilot (GPU; start it first so the GPU works while the CPU items run):** both picks, k = 1,
+1. **M65 step 1 — headroom pilot (GPU; start it first so the GPU works while the CPU items run; runs from `main` on the
+   pre-G1 guard — G1 is NOT on main):** both picks, k = 1,
    predictor OFF, on the 30 polyglot Python + Go items outside `benchmark/m62/universe.json` (12 Python, 18 Go): new
    universe file (same format; run `universe_preflight` on it), own out-root (e.g. `$STACK_WORKDIR/m65-pilot`),
    `--smoke` first, the runner's `--universe`. Check whether the runner's schedule (s1/s2/reload) needs a k=1 mode — a
    runner change is a runner-file change: test-first, never with a live chain. Report strict per pick vs tg1, nonconv
    kinds, tokens; this sizes tg2.
-2. **G1 fix round** (`benchmark/chains/c147/reviews/g1/round1.cursor-gpt-5.6-sol-high.md`, NOT cleared): P1 record a
+2. **G1 fix round on branch `g1-fix`, in a worktree** (`benchmark/chains/c147/reviews/g1/round1.cursor-gpt-5.6-sol-high.md`,
+   NOT cleared): P1 record a
    later tick start-order failure; P2 keep root and descendant obligations separately (never drop a protected root's
    recorded children; refresh descendants from every cleanup listing for every exact recorded root); P3 resolve against
    (pid, start time), tri-state, an occupied (pid, None) stays unresolved; plus the rest. Test-first → Cursor round 2 →
-   full suite. Watch the false-abort risk for young benign processes that flicker and stay alive. (Do this before any
-   chain that should use the new guard; the M65 pilot may run on the current main if G1 is not done yet — record which.)
+   full suite. Watch the false-abort risk for young benign processes that flicker and stay alive. Merge into main only
+   after Cursor clears it, and never while a chain launched from main is live.
 3. **P311 build** (`docs/specs/p311-identity-split.md`; Cursor round 1 AGREE WITH CHANGES P1–P9 in
    `benchmark/chains/c147/reviews/p311/round1.cursor-gpt-5.6-sol-high.md`): apply P1–P9 to the proposal, then
    test-first build (three hashes; `bench/deny_rules.py` carve-out; chain pins `generation_code_sha256`), Cursor review,
