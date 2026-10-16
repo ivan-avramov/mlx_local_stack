@@ -336,3 +336,11 @@ def _declared_auditor_probes_absent(monkeypatch):
         raise FileNotFoundError("auditor CLI stubbed absent in tests (C158 A5)")
     monkeypatch.setattr(_web_audit, "auditor_version", absent)
     monkeypatch.setattr(_web_audit_cursor, "cursor_version", absent)
+
+
+# G1: production waits up to 10 s for unreadable records to resolve; offline tests use a short deadline (a test that
+# exercises the deadline sets `guard.reconcile_deadline_s` itself)
+@pytest.fixture(autouse=True)
+def _short_reconcile_deadline(monkeypatch):
+    from bench import proc_guard as _pg
+    monkeypatch.setattr(_pg.ProcessGuard, "RECONCILE_DEADLINE_S", 0.2)

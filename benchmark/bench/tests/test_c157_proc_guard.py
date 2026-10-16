@@ -4,6 +4,8 @@ children (P297 U1), uncertainty must reconcile against the final process table (
 failure is never hidden behind the uncertainty raise (P297 U2). The observed receipt is event-scripted below: the real
 M63 abort was `cleanup uncertain ... [{"pid": 87652, "create_time": null, "reason": "start order unreadable"}]` for a
 Spotlight mdworker that exited mid-cleanup."""
+import time
+
 import pytest
 
 from bench import proc_guard as pg
@@ -291,7 +293,9 @@ def test_r2p3_a_child_of_an_unknown_parent_process_is_a_candidate_descendant(tmp
         g.status()["orphans_unattributed"]
 
 
-def test_r2p4_a_flickering_unreadable_process_is_retired_once_it_reads_fine(tmp_path):
+def test_r2p4_a_flickering_young_process_is_kept_until_it_exits_g1(tmp_path):
+    """G1 (revises round 2 P4): readability alone no longer retires a young (not pre-existing) record; once the
+    process exits the record resolves as gone and cleanup is clean."""
     processes = []
     flicker = Unreadable(60, armed=True)
     processes.append(flicker)
@@ -300,8 +304,8 @@ def test_r2p4_a_flickering_unreadable_process_is_retired_once_it_reads_fine(tmp_
     assert g._unreadable_seen
     flicker.armed = False                           # readable again: complete classification
     g.tick()
-    assert not g._unreadable_seen
-    processes.remove(flicker)                       # it exits later: nothing to reconcile
+    assert g._unreadable_seen                       # kept: young + unattributed is not "resolved"
+    processes.remove(flicker)                       # it exits later
     g.cleanup()
     assert g.status()["uncertain"] is False
 
@@ -582,3 +586,87 @@ def test_p306_unknown_identities_are_pruned_only_when_their_pid_is_absent(tmp_pa
     processes.pop()
     g.tick()
     assert (40, None) not in g._unreadable_seen      # root and child pids both absent: pruned
+
+
+# ----------------------------------------------------------------------------- G1 (C165 approved; C166 build)
+def test_g1_recovered_readability_alone_does_not_discharge_a_young_unattributed_root(tmp_path):
+    processes = []
+    root = Unreadable(60, created=10, armed=True)   # young: started after the guard (started = 0)
+    processes.append(root)
+    g = _guard(tmp_path, processes)
+    g.reconcile_deadline_s = 0.3
+    g.tick()
+    root.armed = False                              # reads fine now, untracked, ppid 1, cwd outside the roots
+    g.tick()
+    with pytest.raises(TransportAbort, match=r"60.*unreadable record unresolved"):
+        g.cleanup()
+
+
+def test_g1_a_recovered_pre_existing_root_is_retired(tmp_path):
+    processes = []
+    root = Unreadable(60, created=5, armed=True)
+    processes.append(root)
+    g = _guard(tmp_path, processes)
+    g.started = 100                                 # created=5 < started: pre-existing → protected
+    g.tick()
+    root.armed = False
+    g.tick()
+    assert not g._unreadable_seen
+    g.cleanup()
+    assert g.status()["uncertain"] is False
+
+
+def test_g1_a_readable_root_keeps_its_descendant_obligations(tmp_path):
+    processes = []
+    child = Process(41, 40, created=11)
+    root = Unreadable(40, created=10, armed=True)
+    processes += [child, root]
+    g = _guard(tmp_path, processes)
+    g.reconcile_deadline_s = 0.3
+    g.tick()
+    root.armed = False
+    child.parent = 1
+    with pytest.raises(TransportAbort, match=r"41.*child of vanished unreadable process|41.*unresolved"):
+        g.cleanup()
+
+
+def test_g1_a_tracked_readable_root_is_resolved_by_the_tracked_audit(tmp_path):
+    processes = []
+    root = Unreadable(60, created=10, armed=True)
+    processes.append(root)
+    g = _guard(tmp_path, processes)
+    g.tick()
+    root.armed = False
+    g.register(root, "client")
+    g.cleanup()
+    assert root.dead and g.status()["uncertain"] is False
+
+
+def test_g1_the_global_deadline_lets_a_slow_exit_clear(tmp_path):
+    """Present-unreadable at the first reconcile, gone ~0.6 s later (the old 150 ms settle called it uncertain)."""
+    processes = []
+    p = Unreadable(30, created=10)
+    processes.append(p)
+    t0 = []
+
+    def get(pid):
+        now = time.monotonic()
+        t0.append(now) if not t0 else None
+        if now - t0[0] > 0.6 and p in processes:
+            processes.remove(p)
+        return next(q for q in processes if q.pid == pid)
+    g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=get)
+    g.started = 0
+    g.kill_role = lambda role=None: []
+    g.reconcile_deadline_s = 3.0
+    g.cleanup()
+    assert g.status()["uncertain"] is False
+
+
+def test_g1_deadline_expiry_leaves_cleanup_uncertain(tmp_path):
+    g = guard(tmp_path, [Unreadable(30)])
+    g.reconcile_deadline_s = 0.4
+    t = time.monotonic()
+    with pytest.raises(TransportAbort, match="start order unreadable"):
+        g.cleanup()
+    assert time.monotonic() - t < 5
