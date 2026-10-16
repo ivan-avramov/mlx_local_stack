@@ -39,6 +39,14 @@ def pv(d):
     return 2 * (1 - 0.5 * (1 + math.erf(z / math.sqrt(2))))
 
 
+def verdict_label(d):
+    """P346: a collapsed bootstrap interval is not evidence of equivalence."""
+    if d.get("degenerate") and d.get("discordance_upper95") is not None:
+        return (f"no discordance — equivalence NOT established (discordance ≤ {d['discordance_upper95']:.2f}, "
+                f"95% exact)")
+    return d["verdict"]
+
+
 def family(title, pairs):
     p(f"\n### {title}\n")
     p("| comparison | n | ON−OFF | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |")
@@ -49,7 +57,7 @@ def family(title, pairs):
         d = stats.paired_delta({k: a[k] for k in common}, {k: b[k] for k in common}, iters=20000, seed=63, margin=0.05)
         res.append((label, d, pv(d)))
     for (label, d, pval), h in zip(res, stats.holm([r[2] for r in res])):
-        p(f"| {label} | {d['n_items']} | {d['delta']:+.3f} | [{d['lo']:+.2f}, {d['hi']:+.2f}] | {d['verdict']} | "
+        p(f"| {label} | {d['n_items']} | {d['delta']:+.3f} | [{d['lo']:+.2f}, {d['hi']:+.2f}] | {verdict_label(d)} | "
           f"{d['mde']:.2f} | {pval:.3f} | {h:.3f} |")
 
 

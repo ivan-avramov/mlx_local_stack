@@ -464,9 +464,11 @@ def test_paired_delta_strata_none_is_byte_identical_to_pre_strata_behaviour():
     out = S.paired_delta(a, b, iters=800, seed=2)
     # captured via: git show 5af51dc^:benchmark/bench/stats.py -> paired_delta(a, b, iters=800,
     # seed=2), the function as it existed the commit before `strata` was added.
-    assert out == {"delta": 0.3333333333333333, "lo": 0.11111111111111116,
-                   "hi": 0.5555555555555555, "verdict": "a_better", "n_items": 12,
-                   "mde": 0.3616830682661502}
+    # P346 added two keys (`degenerate`, `discordance_upper95`); every pre-existing value stays byte-identical
+    assert {k: out[k] for k in ("delta", "lo", "hi", "verdict", "n_items", "mde")} == {
+        "delta": 0.3333333333333333, "lo": 0.11111111111111116, "hi": 0.5555555555555555, "verdict": "a_better",
+        "n_items": 12, "mde": 0.3616830682661502}
+    assert out["degenerate"] is False and out["discordance_upper95"] is None
 
 
 def test_paired_delta_pooled_n_and_delta_arithmetic():
@@ -746,3 +748,23 @@ def test_mcnemar_exact_rejects_negative_counts():
         S.mcnemar_exact(-1, 3)
     with pytest.raises(ValueError):
         S.mcnemar_exact(3, -1)
+
+
+def test_p346_zero_discordance_is_flagged_degenerate_with_an_exact_bound():
+    """P346: identical paired outcomes give a [0, 0] bootstrap interval; that is not evidence of equivalence. The result
+    flags it and carries the exact one-sided 95% upper bound on the discordance rate (zero discordant pairs of n)."""
+    from bench import stats
+    a = {f"i{k}": [1] for k in range(22)}
+    d = stats.paired_delta(a, dict(a), iters=500, seed=1)
+    assert d["degenerate"] is True
+    assert abs(d["discordance_upper95"] - (1 - 0.05 ** (1 / 22))) < 1e-12
+    assert d["discordance_upper95"] > 0.05            # so ±5 pp equivalence is NOT established
+
+
+def test_p346_ordinary_cells_are_not_degenerate():
+    from bench import stats
+    a = {f"i{k}": [1] for k in range(22)}
+    b = dict(a)
+    b["i0"] = [0]
+    d = stats.paired_delta(a, b, iters=500, seed=1)
+    assert d["degenerate"] is False and d["discordance_upper95"] is None

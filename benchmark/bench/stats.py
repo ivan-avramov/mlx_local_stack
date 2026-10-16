@@ -311,8 +311,14 @@ def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05, strat
         verdict = "equivalent"
     else:
         verdict = "inconclusive"
+    # P346: a collapsed interval (every replicate identical, e.g. zero paired discordance) is not evidence of
+    # equivalence; flag it and give the exact one-sided 95% upper bound on the discordance rate (0 of n discordant).
+    # `verdict` is unchanged (decision code relies on it); reports must print the flag instead of "equivalent".
+    degenerate = lo == hi
+    discordant = sum(sum(da) / len(da) != sum(db) / len(db) for da, db in zip(a_draws, b_draws))
+    upper = (1 - 0.05 ** (1 / n)) if degenerate and discordant == 0 else None
     return {"delta": delta, "lo": lo, "hi": hi, "verdict": verdict, "n_items": n,
-            "mde": mde(n)}
+            "mde": mde(n), "degenerate": degenerate, "discordance_upper95": upper}
 
 
 # ------------------------------------------------------------------------ multiple comparisons
