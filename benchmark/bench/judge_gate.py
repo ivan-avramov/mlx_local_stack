@@ -372,6 +372,8 @@ def _pair_verdict(point, lo, hi, margin):
         return "m1_better"
     if hi < 0.5:
         return "m2_better"
+    if lo == hi:
+        return "no_discordance_equivalence_not_established"   # P346: a collapsed interval is not evidence
     if (0.5 - margin) < lo and hi < (0.5 + margin):
         return "equivalent_95ci_within_5pp"
     return "inconclusive"

@@ -180,7 +180,7 @@ def main(argv=None):
             print(f"  {a1['model']}: {stats.pass_at_1(pb)*100:.1f}%")
             print(f"  delta {d['delta']*100:+.1f}pp  CI [{d['lo']*100:+.1f},{d['hi']*100:+.1f}]pp"
                   f"  MDE ±{stats.mde(len(shared))*100:.1f}pp")
-            print(f"  VERDICT: {d['verdict'].upper()}")
+            print(f"  VERDICT: {'NO DISCORDANCE — EQUIVALENCE NOT ESTABLISHED' if d.get('degenerate') else d['verdict'].upper()}")
             if d["verdict"] == "inconclusive":
                 print(f"  (interval spans 0 and exceeds the equivalence margin — too little data, "
                       f"NOT evidence of a tie; {stats.n_for(0.05)} matched cases would resolve 5pp)")

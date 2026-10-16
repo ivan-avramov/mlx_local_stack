@@ -342,7 +342,7 @@ def test_compute_ranking_equivalent_when_rate_near_half():
 
 
 # --------------------------------------------------------- F9: TOST-branch mutant coverage
-def test_compute_ranking_deterministic_tie_is_equivalent_not_inconclusive():
+def test_compute_ranking_deterministic_tie_is_flagged_not_equivalent():
     """All items tie -> every bootstrap replicate is also exactly 0.5 (zero variance), so the
     CI is a single point strictly inside +-5pp. This is DETERMINISTIC (unlike the mixed-winner
     case above, which can land on either side of the margin) — a test that would fail outright
@@ -357,7 +357,7 @@ def test_compute_ranking_deterministic_tie_is_equivalent_not_inconclusive():
     r = ranking["pairs"]["Alpha__Beta"]
     assert r["preference_rate_model_1"] == 0.5
     assert r["ci"] == [0.5, 0.5]
-    assert r["verdict"] == "equivalent_95ci_within_5pp"
+    assert r["verdict"] == "no_discordance_equivalence_not_established"   # P346
 
 
 # ------------------------------------------------------------- F9: stats.holm mutant coverage

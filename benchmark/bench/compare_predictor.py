@@ -364,7 +364,9 @@ def _verdict(chosen, margin):
     """
     lo, hi, delta = chosen["lo"], chosen["hi"], chosen["delta"]
     if -margin < lo and hi < margin:
-        return "PASS"
+        # P346: a collapsed interval inside the margin (no discordance) cannot certify ±margin equivalence; a collapsed
+        # interval OUTSIDE it (e.g. total discordance) still decides below
+        return "INCONCLUSIVE" if chosen.get("degenerate") else "PASS"
     if hi < 0 or delta < -margin:
         return "FAIL"
     return "INCONCLUSIVE"

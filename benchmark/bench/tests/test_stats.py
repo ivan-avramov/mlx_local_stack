@@ -768,3 +768,11 @@ def test_p346_ordinary_cells_are_not_degenerate():
     b["i0"] = [0]
     d = stats.paired_delta(a, b, iters=500, seed=1)
     assert d["degenerate"] is False and d["discordance_upper95"] is None
+
+
+def test_p346_equal_multi_draw_means_with_within_item_variation_are_not_degenerate():
+    from bench import stats
+    a = {f"i{k}": [1, 0] for k in range(10)}
+    b = {f"i{k}": [0, 1] for k in range(10)}       # same per-item mean, independent draws vary
+    d = stats.paired_delta(a, b, iters=500, seed=3)
+    assert d["degenerate"] is False and d["discordance_upper95"] is None

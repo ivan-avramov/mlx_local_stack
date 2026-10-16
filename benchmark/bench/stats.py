@@ -311,7 +311,7 @@ def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05, strat
         verdict = "equivalent"
     else:
         verdict = "inconclusive"
-    # P346: a collapsed interval (every replicate identical, e.g. zero paired discordance) is not evidence of
+    # P346: a collapsed percentile interval (lo == hi, e.g. zero paired discordance) is not evidence of
     # equivalence; flag it and give the exact one-sided 95% upper bound on the discordance rate (0 of n discordant).
     # `verdict` is unchanged (decision code relies on it); reports must print the flag instead of "equivalent".
     degenerate = lo == hi

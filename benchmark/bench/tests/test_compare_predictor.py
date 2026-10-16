@@ -333,9 +333,10 @@ def test_equivalent_result_reports_pass_verdict_and_full_payload(tmp_results):
                               "draft_n_accepted": 15})
     r = CP.compare_predictor("M", "math500", "m37med", "m40on")
     assert r["comparable"] is True
-    assert r["verdict"] == "PASS"
+    assert r["verdict"] == "INCONCLUSIVE"         # P346: identical arms (no discordance) cannot certify equivalence
     assert r["delta"]["acc_strict"]["delta"] == pytest.approx(0.0)
-    assert r["delta"]["acc_strict"]["verdict"] == "equivalent"
+    assert r["delta"]["acc_strict"]["verdict"] == "equivalent"      # the raw paired_delta verdict is unchanged
+    assert r["delta"]["acc_strict"]["degenerate"] is True
     assert r["delta"]["acc_strict"]["discordant"] == 0
     assert r["delta"]["acc_strict"]["a"] == pytest.approx(1.0)
     assert r["delta"]["acc_strict"]["b"] == pytest.approx(1.0)
@@ -448,9 +449,9 @@ def test_main_writes_json_next_to_b_rows_and_prints_verdict(tmp_results, capsys)
     assert out_path.name == "math500.m40on.vs.m37med.json"
     assert out_path.exists()
     doc = json.loads(out_path.read_text())
-    assert doc["verdict"] == "PASS"
+    assert doc["verdict"] == "INCONCLUSIVE"      # identical arms: no discordance cannot certify equivalence (P346)
     captured = capsys.readouterr()
-    assert "PASS" in captured.out
+    assert "INCONCLUSIVE" in captured.out
 
 
 def test_main_refusal_exits_nonzero_and_writes_nothing(tmp_results, capsys):
