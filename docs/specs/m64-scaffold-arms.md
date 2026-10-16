@@ -1,10 +1,11 @@
 # M64 — scaffold arms: opencode vs Pi vs dsh on the tg1 corpus (C159, C161, C165; PLAN M64)
 
-Status: DRAFT v8 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
+Status: FINAL DRAFT v9 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
 CHANGES (P17–P21, owner, watchdog, D1/D2); round 3 AGREE WITH CHANGES (P22–P26, watchdog test scope); round 4 AGREE
 WITH CHANGES (P27–P33, D2 details); round 5 AGREE WITH CHANGES (§5.5 precision); round 6 AGREE WITH CHANGES (port/mount proof,
 truncation semantics, per-attempt MCP schema evidence); round 7 AGREE WITH CHANGES (realized port proof, distinct tool
-hashes, per-request reconciliation); round 8 DISAGREE (v8 edits missing from its commit — fixed) — all addressed; `docs/reviews/m64-spec/`). D1 and D2 RULED (operator 2026-10-16), C165 (2c)/(2d). Approval authorizes the BUILD only; the chain needs its own go after power
+hashes, per-request reconciliation); round 8 DISAGREE (v8 edits missing from its commit — fixed); round 9 AGREE WITH CHANGES (independent request
+classification; 2 nits) — applied, loop closed by lead verification; `docs/reviews/m64-spec/`). D1 and D2 RULED (operator 2026-10-16), C165 (2c)/(2d). Approval authorizes the BUILD only; the chain needs its own go after power
 simulation and smokes. Design record: `docs/reviews/m64-plan-2026-10-16/plan_final.md` (E1/E2) and C165 (1) (2) (2a)
 (2b) (3) (4). Operator rulings D1/D2: C165 (2c)/(2d), §2.1.
 
@@ -140,10 +141,16 @@ before the guard's next tick escapes attribution (G2 residual) and is disclosed.
   `mcp_tools_list_sha256` — the MCP server's raw `tools/list` result, checked by an ephemeral checker that launches the
   pinned command (stdio) at chain entry, every leg start and exit; `request_tools_sha256` — the `tools` array of a
   provider request as the client sent it (its translation of native + MCP tools), recorded by the worker in EVERY
-  receipt (§7). The snapshot pre-registers, per arm, the allowed `request_tools_sha256` per request class (task
-  request; compaction/summary request; title/auxiliary request; a class that sends no tools registers "absent"),
-  derived in the contract tests; the adapter reconciles every receipt of the attempt, and a missing, unexpected or
-  unclassified hash aborts the attempt. **Adoption requirement:** the
+  receipt (§7) together with `request_tools_present` (false when the request carries no `tools`; the hash is then
+  null). The snapshot pre-registers, per arm, the allowed (`request_tools_present`, `request_tools_sha256`) per request
+  class (task request; compaction/summary request; title/auxiliary request), derived in the contract tests.
+  **Classification is independent of the tools hash:** each request's class comes from the client's own event stream
+  (e.g. a compaction event bracketing it, the client's auxiliary/title marker, otherwise a task request), and receipts
+  are joined ONE-TO-ONE to those client requests by attempt fence, admission order and timestamps — never by matching
+  a registered hash. The adapter then checks every joined receipt against its class's registered tools; an unmatched,
+  ambiguous or conflicting join (an unclassified request), or a tools mismatch for the class, aborts the attempt.
+  Contract positives: a legitimate tool-less compaction/auxiliary request passes; a later task request that drops or
+  changes its tools aborts. **Adoption requirement:** the
   chosen package must return (or let the adapter capture from its traffic) the raw SearXNG JSON response incl.
   per-engine `unresponsive_engines`; if no existing package does, the bench ships its own minimal SearXNG MCP server
   (one `search(query)` tool, fixed schema) as the pinned server — operator informed at the build.
@@ -208,7 +215,7 @@ hard-ceiling positives through each arm's events; P201 cheat → re-run through 
 proxies and cannot count tokens produced after a disconnect). This corrects E2.4's wording ("mlx-serve fork"); the
 fork change follows the fork rules (AGENTS.md: edit `../mlx-vlm`, test-first, bump the submodule). One receipt per generation request, including client-disconnected
 ones: worker identity, monotonic receive/finish times, request sequence number on the worker, effective sampling,
-seed, `thinking_budget`, `max_tokens`, roles present, `request_tools_sha256` (canonical JSON of the request's `tools`, or "absent"), prompt / cache / completion / reasoning tokens generated (incl.
+seed, `thinking_budget`, `max_tokens`, roles present, `request_tools_present` + `request_tools_sha256` (canonical JSON of the request's `tools`; null when absent), prompt / cache / completion / reasoning tokens generated (incl.
 tokens produced before a disconnect), terminal reason. **Correlation:** the runner runs exactly one item attempt at a
 time on one worker with D1 in force, so every receipt between an item attempt's start and end marks belongs to it;
 the runner writes start/end marks to the worker (a control endpoint) and the adapter ALSO sends an `X-Bench-Attempt`
