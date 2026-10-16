@@ -121,7 +121,7 @@ def steps_for(block, idx):
     return [pilot] if leg["pilot_names"] == leg["full_names"] else [pilot, full]
 
 
-def build_cmd(py, probe, leg, step, receipt, cancel, ack):
+def build_cmd(py, probe, leg, step, receipt, cancel, ack, universe=None):
     ids = [f"{leg['lang']}/{n}" for n in step["names"]]
     cmd = [str(py), str(probe), "--model", leg["model"], "--items", ",".join(step["names"]), "--lang", leg["lang"],
            "--seed-base", str(leg["seed_base"]), "--out", leg["out"], "--scaffold", SCAFFOLD,
@@ -129,6 +129,8 @@ def build_cmd(py, probe, leg, step, receipt, cancel, ack):
            "--cancel-file", str(cancel), "--manifest-ack", str(ack)]
     if step["limit"]:
         cmd += ["--limit", str(step["limit"])]
+    if universe:                                    # P351: the probe grades against the chain's universe
+        cmd += ["--universe", str(universe)]
     return cmd
 
 
@@ -196,7 +198,8 @@ class Chain:
         self.py = Path(args.python)
         self.probe = Path(args.probe)
         # a key is present once pinned; a pinned None (e.g. agent_system_sha256 without an overlay) is a value
-        self.pinned = {"scaffold_policy_sha256": co.CAMPAIGN_POLICY_SHA}
+        self.pinned = {"scaffold_policy_sha256": args.policy_sha}
+        self.universe = Path(args.universe).resolve() if args.universe else None
         if args.probe_code_sha:
             self.pinned["probe_code_sha256"] = args.probe_code_sha
         self.attempts, self.restarts, self.stop_info = [], [], None
@@ -375,7 +378,7 @@ class Chain:
         if leg["lang"] == "go" and not self.ops.docker_ok():
             raise co.ChainAbort("docker gate FAIL before launch")                                    # P290
         ids = [f"{leg['lang']}/{x}" for x in step["names"]]
-        cmd = build_cmd(self.py, self.probe, leg, step, block["receipt"], cancel, ack)
+        cmd = build_cmd(self.py, self.probe, leg, step, block["receipt"], cancel, ack, universe=self.universe)
         att = dict(attempt=n, step=step["kind"], stem=leg["stem"], argv=cmd, cancel=str(cancel), ack=str(ack),
                    log=str(logp), worker=dict(block["worker"]), started=co.utc_stamp(), rc=None,
                    cleanup_status=None, run_id=None, probe_pid=None, probe_create_time=None, outcome=None)
@@ -407,7 +410,7 @@ class Chain:
             raise co.ChainAbort("first-manifest mismatch: " + "; ".join(sup["reasons"]))
         vleg = dict(session=leg["session"], model=leg["model"], lang=leg["lang"], seed_base=leg["seed_base"],
                     expected_ids=ids, out=leg["out"], rc=att["rc"], draft_kind=leg.get("draft_kind", "off"))
-        why = co.validate_leg(vleg, self.pinned, self.ops.wd)
+        why = co.validate_leg(vleg, self.pinned, self.ops.wd, policy_sha=self.a.policy_sha)
         if not why:
             self.pin_from(leg)
             att["outcome"] = "validated"
@@ -488,7 +491,7 @@ class Chain:
         why = []
         rt, wk = man.get("runtime") or {}, man.get("worker")
         chk = [("scaffold", rt.get("scaffold"), SCAFFOLD),
-               ("scaffold_policy_sha256", rt.get("scaffold_policy_sha256"), co.CAMPAIGN_POLICY_SHA),
+               ("scaffold_policy_sha256", rt.get("scaffold_policy_sha256"), self.a.policy_sha),
                ("draft_kind", rt.get("draft_kind"), leg.get("draft_kind", "off")),
                ("seed_base", rt.get("seed_base"), leg["seed_base"]),
                ("lang", rt.get("lang"), leg["lang"]), ("model", man.get("model"), leg["model"]),
@@ -733,7 +736,14 @@ def parse_args(argv):
     ap.add_argument("--probe", default=str(REPO / "benchmark/run_opencode_probe_v2.py"))
     ap.add_argument("--python", default=str(REPO / ".venv-bench/bin/python"))
     ap.add_argument("--universe")
+    ap.add_argument("--policy-sha", default=co.CAMPAIGN_POLICY_SHA,
+                    help="P351: expected scaffold_policy_sha256 (it embeds the universe sha); "
+                         "a non-default value needs --universe")
     a = ap.parse_args(argv)
+    if not co.HEX64.match(a.policy_sha):
+        ap.error("--policy-sha must be 64 lowercase hex")
+    if a.policy_sha != co.CAMPAIGN_POLICY_SHA and not a.universe:
+        ap.error("--policy-sha differs from the campaign policy: name the --universe it was derived for")
     if a.smoke and a.mode != "chain":
         ap.error("--smoke is for chain mode")
     if a.arm_idle_s is None:

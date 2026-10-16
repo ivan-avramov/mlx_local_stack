@@ -1128,3 +1128,59 @@ def test_p340_a_symlink_alias_of_c147_is_the_default_off_root(tmp_path):
     alias.symlink_to(wd / "c147")
     ops = R.make_ops("off", wd, alias, "overlay.yaml", log=lambda m: None)
     assert ops.a4_log_dir == wd / "c147"
+
+
+# --------------------------------------------------------------------------- P351: a non-tg1 universe (M65 pilot)
+P351_POLICY = "7" * 64
+
+
+def test_p351_universe_forwarded_to_every_probe_step(env):
+    rc = run(env, CHAIN)
+    assert rc == 0
+    inv = [i["argv"] for i in invocations(env)]
+    assert len(inv) == 6
+    assert all(arg(a, "--universe") == str(env["uni"].resolve()) for a in inv)
+
+
+def test_p351_no_universe_given_none_forwarded():
+    leg = dict(model=PICK1, lang="python", seed_base=1001, out="/o/x.jsonl")
+    full = dict(kind="full", names=["a"], limit=None)
+    assert "--universe" not in R.build_cmd("/py", "/probe.py", leg, full, "/r.json", "/c", "/k")
+    assert arg(R.build_cmd("/py", "/probe.py", leg, full, "/r.json", "/c", "/k", universe="/u.json"),
+               "--universe") == "/u.json"
+
+
+def test_p351_policy_sha_expected_at_barrier_and_validation(env):
+    rc = run(env, CHAIN + ["--policy-sha", P351_POLICY], extra_env={"FAKE_POLICY_SHA": P351_POLICY})
+    assert rc == 0
+    assert chain_json(env)["pinned"]["scaffold_policy_sha256"] == P351_POLICY
+
+
+def test_p351_policy_sha_mismatch_aborts(env):
+    rc = run(env, CHAIN, extra_env={"FAKE_POLICY_SHA": P351_POLICY})
+    assert rc == 2
+    assert len(invocations(env)) == 1
+
+
+def test_p351_policy_sha_parse_rules():
+    assert R.parse_args(CHAIN).policy_sha == co.CAMPAIGN_POLICY_SHA
+    for bad in (CHAIN + ["--policy-sha", "xyz"],                                   # not 64-hex
+                CHAIN + ["--policy-sha", P351_POLICY]):                            # changed policy, tg1 universe
+        with pytest.raises(SystemExit) as e:
+            R.parse_args(bad)
+        assert e.value.code == 2
+    assert R.parse_args(CHAIN + ["--policy-sha", P351_POLICY, "--universe", "/u.json"]).policy_sha == P351_POLICY
+
+
+def test_p351_validate_leg_policy_sha_parameter(tmp_path, monkeypatch):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    ids = ["python/alpha"]
+    out = tmp_path / "x/s1" / f"{PICK1}.s1.opencode_python.jsonl"
+    worker = {"pid": 4242, "create_time": 1700000000.5, "model_path": "caslca/" + PICK1, "registry_sha256": "a" * 64}
+    FP.write_leg(out, PICK1, "python", 1001, ids, worker, tmp_path,
+                 override={"runtime.scaffold_policy_sha256": P351_POLICY})
+    leg = dict(session="s1", model=PICK1, lang="python", seed_base=1001, expected_ids=ids, out=str(out), rc=0)
+    pinned = {"scaffold_policy_sha256": P351_POLICY, "probe_code_sha256": "9" * 64, "serving_path": FP.SERVING,
+              "registry_sha256": "a" * 64}
+    assert co.validate_leg(leg, pinned, tmp_path, policy_sha=P351_POLICY) == []
+    assert any(w.startswith("runtime_scaffold_policy_sha256") for w in co.validate_leg(leg, pinned, tmp_path))

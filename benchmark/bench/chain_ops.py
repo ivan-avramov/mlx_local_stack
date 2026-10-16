@@ -786,7 +786,7 @@ def typed_worker(w):
             and isinstance(w.get("registry_sha256"), str) and bool(HEX64.match(w["registry_sha256"])))
 
 
-def validate_leg(leg, pinned, workdir=None):
+def validate_leg(leg, pinned, workdir=None, policy_sha=CAMPAIGN_POLICY_SHA):
     """Completion = validation (spec 3). Returns a list of `code: detail` failure reasons; [] means complete.
 
     leg: {session, model, lang, seed_base, expected_ids, out, rc}. pinned: runtime field -> value (None = not yet
@@ -823,7 +823,7 @@ def validate_leg(leg, pinned, workdir=None):
         why.append(f"runtime_lang: {rt.get('lang')} != {leg['lang']}")
     if rt.get("scaffold") != SCAFFOLD:
         why.append(f"runtime_scaffold: {rt.get('scaffold')}")
-    if rt.get("scaffold_policy_sha256") != CAMPAIGN_POLICY_SHA:
+    if rt.get("scaffold_policy_sha256") != policy_sha:
         why.append(f"runtime_scaffold_policy_sha256: {rt.get('scaffold_policy_sha256')}")
     if rt.get("draft_kind") != leg.get("draft_kind", "off"):              # M63: the leg's predictor
         why.append(f"runtime_draft_kind: {rt.get('draft_kind')}")

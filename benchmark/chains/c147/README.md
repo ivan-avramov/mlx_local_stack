@@ -22,7 +22,9 @@ touch "$STACK_WORKDIR/c147/STOP"      # latch: no new legs, current leg cancelle
 ```
 
 Runner options: `--pred-s LANG:MODEL=SECONDS` (repeatable), `--arm-idle-s` (default 600), `--out-root`,
-`--probe`, `--python`. Draft-OFF overlay: `$C147_OVERLAY` (default `$STACK_WORKDIR/c147/overlay_c147_draft_off.yaml`,
+`--probe`, `--python`, `--universe` (forwarded to every probe step, P351), `--policy-sha` (expected
+`scaffold_policy_sha256`; it embeds the universe sha, so a non-tg1 universe needs the value its
+`run_opencode_probe_v2.py --print-identity --universe <file>` prints). Draft-OFF overlay: `$C147_OVERLAY` (default `$STACK_WORKDIR/c147/overlay_c147_draft_off.yaml`,
 generated from `main_models.yaml` on first use).
 
 Cancellation is cooperative only (idle predicate or STOP). The runner never kills a probe without

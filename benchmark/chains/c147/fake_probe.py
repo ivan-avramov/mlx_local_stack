@@ -62,7 +62,7 @@ def build_manifest(model, lang, seed_base, worker, run_id, override=None):
         "model": model, "run_id": run_id, "worker": worker, "sampling_profile": "deployed",
         "git": {"serving_path": dict(SERVING)}, "registry": {"sha256": os.environ.get("FAKE_REGISTRY_SHA", h("a"))},
         "runtime": {
-            "scaffold": SCAFFOLD, "scaffold_policy_sha256": CAMPAIGN,
+            "scaffold": SCAFFOLD, "scaffold_policy_sha256": os.environ.get("FAKE_POLICY_SHA", CAMPAIGN),
             "probe_code_sha256": os.environ.get("FAKE_PROBE_CODE_SHA", h("9")), "opencode_version": "2.0.20",
             "opencode_exe_sha256": h("e"), "opencode_bench_config_sha256": h("c"), "carrier_source_sha256": h("d"),
             "agent_system_sha256": None, "polyglot_sha": "1" * 40,
@@ -136,7 +136,7 @@ def write_leg(out, model, lang, seed_base, ids, worker, wd, run_id="fixture-run"
 def main(argv=None):
     ap = argparse.ArgumentParser()
     for f in ("--model", "--items", "--lang", "--out", "--scaffold", "--expect-items", "--a4-v2-receipt",
-              "--sampling-profile", "--cancel-file", "--manifest-ack", "--tg1-inject", "--chain-total"):
+              "--sampling-profile", "--cancel-file", "--manifest-ack", "--tg1-inject", "--chain-total", "--universe"):
         ap.add_argument(f)
     ap.add_argument("--seed-base", type=int)
     ap.add_argument("--limit", type=int)
