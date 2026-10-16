@@ -254,6 +254,26 @@ def defer_signals(*, deliver=False):
                 signal.raise_signal(sig)
 
 
+# G1 (round 4): psutil read sites. Rule: BEFORE same-uid is established a denied read may skip the process; AFTER it, a
+# denied read is an unreadable obligation (exact identity when known, else (pid, None)); NoSuchProcess may vanish.
+#   site                                       AccessDenied                         NoSuchProcess
+#   _processes uids()                          skip (not known same-uid)           skip
+#   _processes status() [CHANGED P13]          keep + _live_denied -> obligation    skip
+#   tick/cleanup _protected (order/identity)   obligation                          vanish
+#   tick ppid() / start_time / start_order     obligation                          vanish
+#   cleanup start_time key, ppid, age read     obligation                          vanish
+#   cleanup cwd()/cmdline() [CHANGED P12]      obligation (tracked: uncertain)      vanish
+#   tick parent validation [CHANGED P11]       child obligation (tri-state)         child obligation; reuse: none
+#   _listing_edges ppid()                      candidate child of unreadable roots  same
+#   _resolve (all reads)                       unresolved                           gone
+#   _existence / _identity_state               present / unknown (never gone)       gone
+#   _created_or_none / excluded identity       None (unknown identity)              None / unprotected
+#   tick shell cmdline / memory_info (tracked) skipped this tick (already owned)    skipped
+#   _argv / _mem_kill context (evidence)       [] / ignored                         []
+#   kill_role / graceful_stop / audit kill     pass; the audit marks it unknown     pass
+#   deadline (P9/P10)                          confirmation must start AND finish before it
+
+
 class ProcessGuard:
     RECONCILE_DEADLINE_S = 10.0   # G1: one monotonic deadline for cleanup's whole scan/reconcile loop
     _monotonic = staticmethod(time.monotonic)      # injectable (tests): the deadline clock and its sleep
@@ -325,6 +345,7 @@ class ProcessGuard:
         self.killed = []
         self._unreadable_overflow = False
         self.reconcile_deadline_s = self.RECONCILE_DEADLINE_S
+        self._live_denied = set()       # G1 round 4 P13: same-uid pids of the last listing whose status was denied
         self._unreadable_seen = {}      # C157: unreadable identities (+ listing descendants) noted by tick()/cleanup
         self._status = None
 
@@ -359,10 +380,17 @@ class ProcessGuard:
         return order is not None and self.started_order is not None and order < self.started_order
 
     def _same_identity(self, pid, created):
+        return self._parent_state(pid, created) == "same"
+
+    def _parent_state(self, pid, created):
+        """G1 (round 4 P11), tri-state: "same" (this exact identity), "other" (the pid is reused: not that process) or
+        "unknown" (denied/raced away: it may still be the process, so a child of it stays an obligation)."""
         try:
-            return start_time(self.get(pid)) == created
-        except (self.psutil.NoSuchProcess, self.psutil.AccessDenied):
-            return False
+            return "same" if start_time(self.get(pid)) == created else "other"
+        except (self.psutil.NoSuchProcess, StopIteration):
+            return "unknown"
+        except (self.psutil.AccessDenied, TransportAbort):
+            return "unknown"
 
     def _live(self, process):
         return process.status() not in ("zombie", "dead")
@@ -372,13 +400,24 @@ class ProcessGuard:
         self._sleep(seconds if deadline is None else max(0.0, min(seconds, deadline - self._monotonic())))
 
     def _processes(self):
-        found = []
+        """Same-uid live processes. Before same-uid is established a denied read skips the process; AFTER it (G1 round 4
+        P13) a process whose liveness is denied is kept and listed in `_live_denied`, which tick()/cleanup record as an
+        unreadable obligation unless it is protected."""
+        found, self._live_denied = [], set()
         for p in self.scan():
             try:
-                if p.uids().real == os.getuid() and self._live(p):
-                    found.append(p)
+                if p.uids().real != os.getuid():
+                    continue
             except (self.psutil.NoSuchProcess, self.psutil.AccessDenied):
                 continue
+            try:
+                if self._live(p):
+                    found.append(p)
+            except self.psutil.NoSuchProcess:
+                continue
+            except self.psutil.AccessDenied:
+                found.append(p)
+                self._live_denied.add(p.pid)
         return found
 
     def _attributed_path(self, p):
@@ -406,6 +445,9 @@ class ProcessGuard:
                         self._note_unreadable(self._unreadable_seen, p, edges)
                         continue
                     if not protected:
+                        if p.pid in self._live_denied:
+                            self._note_unreadable(self._unreadable_seen, p, edges)
+                            continue
                         # ppid() re-validates identity; a stale cached entry (pid reused, psutil keeps the old
                         # create_time) raises here and must never become an ancestry authority (V5a P13).
                         try:
@@ -446,7 +488,15 @@ class ProcessGuard:
                     parent = alive.get(ppids[pid])
                     if parent and (parent[2] > order if None not in (parent[2], order) else parent[1] > created):
                         parent = None   # a parent cannot be younger than its child: pid reuse (monotonic, C151 R8)
-                    if parent and not self._same_identity(parent[0].pid, parent[1]):
+                    if parent and (parent[0].pid, parent[1]) in self.tracked and key not in self.tracked:
+                        validity = self._parent_state(parent[0].pid, parent[1])
+                        if validity == "unknown":
+                            # G1 (round 4 P11): a denied/raced parent check may hide a tracked parent: the captured
+                            # child stays a descendant obligation instead of an untracked bystander
+                            self._note_unreadable(self._unreadable_seen, p, edges)
+                        if validity != "same":
+                            parent = None
+                    elif parent and not self._same_identity(parent[0].pid, parent[1]):
                         parent = None
                     if key not in self.tracked and parent:
                         role = self.tracked.get((parent[0].pid, parent[1]))
@@ -974,6 +1024,9 @@ class ProcessGuard:
                                 continue
                             if protected:
                                 continue
+                            if p.pid in self._live_denied:      # G1 (round 4 P13)
+                                self._note_unreadable(unreadable, p, edges)
+                                continue
                             try:
                                 key = (p.pid, start_time(p))
                             except self.psutil.AccessDenied:        # G1 (round 2 P1): every later denied read is recorded
@@ -1012,6 +1065,10 @@ class ProcessGuard:
                                 uncertain = True
                                 orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
                                                               reason="access denied")
+                            else:
+                                # G1 (round 4 P12): identity and eligibility are established by here, so a denied
+                                # classification read (cwd/cmdline/...) is an unreadable obligation, never a skip
+                                self._note_unreadable(unreadable, p, edges)
                             continue
                     if not survivors:
                         break
@@ -1047,9 +1104,7 @@ class ProcessGuard:
                     pass
                 # C157: every state change (vanished, pid-reused, now readable, readable then gone) needs a full scan
                 # AFTER it; a still-present one gets a short settle before it is called uncertain
-                # G1 (round 3 P9): a confirming round (any after the first reconciliation) that ENDS past the deadline
-                # confirmed nothing in time
-                late = deadline is not None and self._monotonic() >= deadline
+                confirming = deadline is not None       # any round after the first reconciliation
                 if deadline is None:        # G1: one monotonic deadline from the first reconciliation
                     deadline = self._monotonic() + self.reconcile_deadline_s
                 while True:
@@ -1059,6 +1114,9 @@ class ProcessGuard:
                     if changed or not bad or remaining <= 0:
                         break
                     self._nap(0.1, deadline)                # never past the deadline
+                # G1 (round 3 P9, round 4 P10): a confirming round that ENDS past the deadline, scan AND reconcile,
+                # confirmed nothing in time; sampled immediately before the confirmation is accepted
+                late = confirming and self._monotonic() >= deadline
                 previous = states
                 if late or not changed:
                     non_converged = non_converged or late

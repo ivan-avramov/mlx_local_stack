@@ -411,3 +411,163 @@ def test_p9_every_retry_sleep_is_capped_by_the_remaining_time(tmp_path, fake_gua
     g._nap(0.05, deadline=0.5)                                # already expired: no sleep beyond it
     g._nap(0.05, deadline=None)
     assert fake_guard_clock.sleeps == pytest.approx([0.02, 0.0, 0.05])
+
+
+# ================================================================================ G1 round 4 (Cursor round 3, P10-P13)
+class Flaky(Process):
+    """psutil-shaped fake: ANY read the guard makes can raise AccessDenied (`deny`) or NoSuchProcess (`gone`) from its
+    n-th call on (`{"cwd": 1}` = every call; `{"create_time": 2}` = the first read succeeds, every later one is denied)."""
+
+    METHODS = ("status", "uids", "ppid", "cwd", "cmdline", "create_time", "start_order", "memory_info")
+
+    def __init__(self, *args, deny=None, gone=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.deny, self.gone, self.calls = dict(deny or {}), dict(gone or {}), {}
+
+    def _gate(self, name):
+        import psutil
+        self.calls[name] = self.calls.get(name, 0) + 1
+        if name in self.gone and self.calls[name] >= self.gone[name]:
+            raise psutil.NoSuchProcess(self.pid)
+        if name in self.deny and self.calls[name] >= self.deny[name]:
+            raise psutil.AccessDenied(self.pid)
+
+    def status(self):
+        self._gate("status")
+        return super().status()
+
+    def uids(self):
+        self._gate("uids")
+        return super().uids()
+
+    def ppid(self):
+        self._gate("ppid")
+        return super().ppid()
+
+    def cwd(self):
+        self._gate("cwd")
+        return super().cwd()
+
+    def cmdline(self):
+        self._gate("cmdline")
+        return super().cmdline()
+
+    def create_time(self):
+        self._gate("create_time")
+        return super().create_time()
+
+    def start_order(self):
+        self._gate("start_order")
+        return None
+
+    def memory_info(self):
+        self._gate("memory_info")
+        return super().memory_info()
+
+
+# ------------------------------------------------------------------------------------------------- P10
+def test_p10_a_reconcile_that_crosses_the_deadline_cannot_certify_a_clean_confirmation(tmp_path, fake_guard_clock):
+    p = Unreadable(30, created=10)
+    processes = [p]
+
+    def get(pid):
+        if fake_guard_clock.now >= 0.05 and p in processes:
+            processes.remove(p)
+        return next(q for q in processes if q.pid == pid)
+    g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=get)
+    g.started = 0
+    g.kill_role = lambda role=None: []
+    g.reconcile_deadline_s = 1.0
+    real, calls = g._resolve, []
+
+    def slow_resolve(pid, created):
+        calls.append(1)
+        result = real(pid, created)
+        if len(calls) >= 3:                               # the confirming reconcile itself runs past the deadline
+            fake_guard_clock.now += 5.0
+        return result
+    g._resolve = slow_resolve
+    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*did not converge"):
+        g.cleanup()
+
+
+# ------------------------------------------------------------------------------------------------- P11
+def _tracked_parent_case(tmp_path, error):
+    client = Process(10, argv=["opencode", "run"])
+    child = Process(11, 10, created=11)
+    processes = [client, child]
+    g = _guard(tmp_path, processes)
+    g.register(client, "client")
+    armed = [True]
+
+    def get(pid):
+        import psutil
+        if pid == 10 and armed[0]:
+            raise error(10)
+        for q in processes:
+            if q.pid == pid:
+                return q
+        raise psutil.NoSuchProcess(pid)
+    g.get = get
+    g.tick()
+    armed[0] = False
+    return g, client, child, processes
+
+
+def test_p11_an_unknown_parent_validation_keeps_the_child_as_an_obligation(tmp_path):
+    import psutil
+    g, client, child, processes = _tracked_parent_case(tmp_path, psutil.AccessDenied)
+    assert (11, 11) in g._unreadable_seen
+    processes.remove(client)
+    child.parent = 1                                      # the parent is gone, the child detached
+    with pytest.raises(TransportAbort, match=r"11.*unreadable record unresolved"):
+        g.cleanup()
+
+
+def test_p11_a_parent_that_raced_away_keeps_the_child_as_an_obligation(tmp_path):
+    import psutil
+    g, client, child, processes = _tracked_parent_case(tmp_path, psutil.NoSuchProcess)
+    assert (11, 11) in g._unreadable_seen
+
+
+def test_p11_a_reused_parent_pid_is_not_our_parent_and_records_nothing(tmp_path):
+    client = Process(10, argv=["opencode", "run"])
+    child = Process(11, 10, created=11)
+    processes = [client, child]
+    g = _guard(tmp_path, processes)
+    g.register(client, "client")
+    g.get = lambda pid: Process(10, 1, created=99) if pid == 10 else next(p for p in processes if p.pid == pid)
+    g.tick()
+    assert not g._unreadable_seen and (11, 11) not in g.tracked
+
+
+# ------------------------------------------------------------------------------------------------- P12 / P13
+@pytest.mark.parametrize("deny", [
+    {"cwd": 1}, {"cmdline": 1}, {"ppid": 1}, {"status": 1},
+    {"create_time": 2}, {"start_order": 2},
+], ids=lambda d: "-".join(f"{k}@{v}" for k, v in d.items()))
+def test_p12_every_post_eligibility_denied_read_keeps_cleanup_uncertain(tmp_path, deny):
+    """Same-uid, young, untracked, ppid 1, cwd outside the roots: only the denied read stands between it and a clear."""
+    g = guard(tmp_path, [Flaky(70, 1, created=10, deny=deny)])
+    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*70"):
+        g.cleanup()
+    assert g.status()["uncertain"] is True
+
+
+@pytest.mark.parametrize("name", ["cwd", "cmdline", "ppid", "status", "create_time", "start_order"])
+def test_p12_a_process_that_vanishes_at_any_read_may_vanish(tmp_path, name):
+    g = guard(tmp_path, [Flaky(70, 1, created=10, gone={name: 2 if name in ("create_time", "start_order") else 1})])
+    g.cleanup()
+    assert g.status()["uncertain"] is False
+
+
+def test_p13_a_same_uid_process_with_a_denied_status_is_an_obligation_in_tick(tmp_path):
+    g = _guard(tmp_path, [Flaky(70, 1, created=10, deny={"status": 1})])
+    g.tick()
+    assert (70, 10) in g._unreadable_seen
+
+
+def test_p13_a_denied_uid_is_not_same_uid_and_may_be_skipped(tmp_path):
+    g = guard(tmp_path, [Flaky(70, 1, created=10, deny={"uids": 1})])
+    g.cleanup()
+    assert g.status()["uncertain"] is False
