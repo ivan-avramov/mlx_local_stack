@@ -265,8 +265,10 @@ single-line `reason`; malformed answers become `unclear`, failed calls or unread
 The append-only `<rows.jsonl>.webaudit.jsonl` stores `row_id`, `sample`, `session_id`, tool-list `kind`/`index`, evidence
 `path`/`sha256`/`bytes`, `auditor` (`codex:gpt-6-astra`, or `cursor:gpt-5.6-sol-high` via `web_audit_cursor.py` on boxes
 without codex, C158), `auditor_version`, `prompt_sha256`, `preflag`, `label`, and `reason`. Evidence already audited by the
-same auditor under the same prompt SHA is skipped, including errors (`--retry-errors` re-audits the latest errors); a changed
-prompt SHA creates a new audit version. The auditor CLI version is recorded on each new record as provenance only (P299,
+same auditor under the same prompt SHA is skipped, including errors (`--retry-errors` re-audits the latest UNRESOLVED errors;
+an operator-resolved `audit_error` is final, P309); a changed prompt SHA creates a new audit version. The CLI version is read
+only when something is pending; if it cannot be read the command raises `AuditorVersionError` and exits nonzero before
+appending anything (P309). The auditor CLI version is recorded on each new record as provenance only (P299,
 2026-10-15): a CLI update neither re-audits recorded evidence nor invalidates it, and scoring never probes a CLI, so a box
 without codex or cursor-agent scores recorded audits exactly like the box that made them. Each record also carries `context_sha256` (C163, 2026-10-15): the digest of the fetch's `url`/`command`/`status` the auditor was shown; it is part of the audit identity, so an entry whose context changed is re-audited. Records written before C163 have no digest: they are accepted as recorded, never re-audited, and counted per model as `legacy_audits` in `report_rows` (a disclosure, not a tamper-proofing claim — the sidecar is append-only tool output, as in P298). Three whole public stub
 identifiers in content recognizable as the item's language set `preflag: true` and move that fetch ahead in review order.

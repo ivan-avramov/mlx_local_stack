@@ -260,7 +260,7 @@ def main():
     parser.add_argument('rows', type=Path)
     parser.add_argument('--polyglot-root', type=Path)
     parser.add_argument('--timeout', type=float, default=180)
-    parser.add_argument('--retry-errors', action='store_true', help='retry entries whose latest result is audit_error')
+    parser.add_argument('--retry-errors', action='store_true', help='retry entries whose latest result is an UNRESOLVED audit_error (an operator-resolved error is final)')
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error('--timeout must be positive')

@@ -19,7 +19,7 @@ nohup "$PY" "$STACK_WORKDIR/m59/mem_watchdog.py" --log "$D/RUNLOG.md" --stop-fil
 cd "$R" && set -a && . ./.env 2>/dev/null; set +a; unset APC_ENABLED
 "$PY" "$D/run_m61.py" smoke > "$D/smoke.out" 2>&1; rc=$?; echo $rc > "$D/smoke.rc"
 [ $rc = 0 ] || { log "smoke rc=$rc: stop"; echo $rc > "$D/drive_ab.rc"; exit $rc; }
-for f in "$D"/smoke/*.web.python.p*.jsonl; do "$PY" "$R/benchmark/web_audit.py" "$f" >> "$D/smoke_audit.out" 2>&1; log "web_audit $(basename "$f") rc=$?"; done
+for f in "$D"/smoke/*.web.python.p*.jsonl; do "$PY" "$R/benchmark/web_audit.py" "$f" >> "$D/smoke_audit.out" 2>&1; rc=$?; log "web_audit $(basename "$f") rc=$rc"; [ $rc = 0 ] || { log "web_audit failed (P309: e.g. unreadable auditor version): stop"; echo $rc > "$D/drive_ab.rc"; exit $rc; }; done
 "$PY" "$D/run_m61.py" ab > "$D/ab.out" 2>&1; rc=$?; echo $rc > "$D/ab.rc"
 log "ab rc=$rc"
 echo $rc > "$D/drive_ab.rc"

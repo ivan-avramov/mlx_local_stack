@@ -120,7 +120,12 @@ def _context_digest_ok(record):
     digest = record.get('context_sha256')
     if isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest):
         return True
-    return digest is None and record_digest(record) in legacy_record_digests()
+    if digest is not None:
+        return False
+    # P309 review P1: an operator resolution is a copy of its legacy base plus the operator fields, so it is checked
+    # against the inventory without them; accepted_audits still requires the exact genuine predecessor
+    base = {k: v for k, v in record.items() if k not in ('operator_label', 'operator_reason')}
+    return record_digest(base) in legacy_record_digests()
 
 
 def _valid_audit(record, auditors):
