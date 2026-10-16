@@ -1,10 +1,10 @@
 # M64 — scaffold arms: opencode vs Pi vs dsh on the tg1 corpus (C159, C161, C165; PLAN M64)
 
-Status: DRAFT v4 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
-CHANGES (P17–P21, owner, watchdog, D1/D2); round 3 AGREE WITH CHANGES (P22–P26, watchdog test scope) — all
-addressed; `docs/reviews/m64-spec/`). D1 and D2 RULED (operator 2026-10-16), C165 (2c)/(2d). Approval authorizes the BUILD only; the chain needs its own go after power
+Status: DRAFT v5 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
+CHANGES (P17–P21, owner, watchdog, D1/D2); round 3 AGREE WITH CHANGES (P22–P26, watchdog test scope); round 4 AGREE
+WITH CHANGES (P27–P33, D2 details) — all addressed; `docs/reviews/m64-spec/`). D1 and D2 RULED (operator 2026-10-16), C165 (2c)/(2d). Approval authorizes the BUILD only; the chain needs its own go after power
 simulation and smokes. Design record: `docs/reviews/m64-plan-2026-10-16/plan_final.md` (E1/E2) and C165 (1) (2) (2a)
-(2b) (3) (4). **Pending operator rulings: D1, D2 (§2.1).**
+(2b) (3) (4). Operator rulings D1/D2: C165 (2c)/(2d), §2.1.
 
 ## 1. Question and estimand
 
@@ -30,21 +30,23 @@ decision; it does not change the primary scaffold.
 dsh is an arm from the start (C161). If a dsh snapshot cannot meet a REQUIRED contract (§6: accounting, retries off,
 gate events), the snapshot is REJECTED and the build HOLDS for an operator decision — dsh is never silently dropped.
 
-### 2.1 Pending operator rulings — explicit C165 (2a) amendments
+### 2.1 Operator rulings amending C165 (2a): (2c) D1 and (2d) D2
 - **D1 — parallel LLM fan-out tools — RULED 2026-10-16 (operator: agreed) as C165 (2c):** "Tools that start concurrent model sessions —
   opencode `subagent` and code-mode `execute`; dsh `subagent`, `subagent_fork`, `ralph` (and any such tool found in the
   §5.3 inventory) — are removed in every arm, a disclosed measurement exception: one worker, one cache session, a
   single-stream gate and per-task accounting cannot attribute concurrent sub-sessions." Applies only to tools actually
   present in the adopted snapshot. Same exception, same reason (a headless benchmark run has no user to answer):
   ask-the-user tools (opencode `question`, any dsh equivalent) are removed in every arm and disclosed.
-- **D2 — search — RULED 2026-10-16 (operator: "D2 sounds good") as C165 (2d), option (d):** every arm gets ONE shared
+- **D2 — search — RULED 2026-10-16 (operator: "D2 sounds good") as C165 (2d), option (d):** every arm whose client supports native MCP gets the same shared
   local search tool — the repo's SearXNG service (compose `searxng`, loopback `127.0.0.1:8080`, image pinned BY DIGEST
   in the epoch snapshot, `settings.yml` hash recorded) behind a pinned SearXNG MCP server package (in the snapshot),
   configured through each client's native MCP config (opencode `mcp`; Pi `mcp.json`; dsh's MCP config if it has one).
   Hosted vendor search tools (opencode `websearch` → Exa `mcp.exa.ai`; dsh `web_search` → DeepSeek's API) are REMOVED
   and disclosed (third-party query egress; one search backend for all arms). Fetch tools and shell networking stay
-  enabled in every arm (C165 2). If the dsh inventory finds no MCP support, dsh has no search tool (disclosed) — its
-  hosted search is still removed. SearXNG runs only for the M64 smokes/chain: a recorded exception to the
+  enabled in every arm (C165 2). If the dsh inventory finds no MCP support, dsh has no search tool — a reported capability
+  asymmetry; its hosted search is still removed. "Local" means a locally run proxy: queries still leave the box to the
+  configured upstream engines (DuckDuckGo, Google, Startpage; keyed `braveapi`/`wolframalpha_api` stay inactive — no
+  keys), disclosed as third-party query egress, centralized and audited. §5.5 gives the service contract. SearXNG runs only for the M64 smokes/chain: a recorded exception to the
   "benchmark routers lean, no docker" rule (the router itself stays lean; no OWUI).
 
 Treatment = native system prompt + native tool schemas (default minus D1 and hosted search, plus the shared search tool) + loop logic + compaction behaviour, hashed into
@@ -116,6 +118,32 @@ attributed descendants; the row gets an `exec_timeout` flag and the client sees 
 calls a process is attributed to the earliest open window containing its start time. A descendant that detaches
 before the guard's next tick escapes attribution (G2 residual) and is disclosed.
 
+### 5.5 Shared search service (D2)
+- **Identity:** an M64-owned compose overlay `benchmark/m64/searxng.compose.yml` runs only `searxng`, image
+  `searxng/searxng@sha256:<digest>` pinned in the epoch snapshot (the repo compose file's `:latest` is not used).
+  Effective settings = the file rendered by `searxng/render_settings.py`; its hash is computed with `secret_key`
+  masked (it is random per render) and recorded; keyed-engine variables (`BRAVE_SEARCH_API_KEY`, the wolframalpha
+  key) must be ABSENT from the container env (verified). The SearXNG MCP server: npm tarball integrity + lock, exact
+  command, and the served tool schema hash, all in the snapshot. Chain entry, each block start and exit verify the
+  RUNNING container's image digest (`docker inspect`), settings hash and env, and the MCP tool schema.
+- **Lifecycle:** the runner owns the container (not the stack). It restarts SearXNG at every arm switch (with the
+  cache reset + warm-up, §8.1) and before any recovery attempt, so every arm starts from a fresh engine-suspension
+  state; each restart is logged with the engine status (`/stats`). The MCP server runs per item attempt inside the
+  client's process tree (started by the client from its MCP config).
+- **Availability:** a health probe (HTTP `/healthz` + one canary query with engine-error inspection) runs before each
+  item attempt. Infrastructure failures — container down, MCP server crash/hang, all engines erroring or suspended
+  (zero results WITH engine errors) — are transport-class incidents (§8.3: recovery + same-slot retry; twice →
+  `transport_dnf`). A zero-result response with healthy engines is normal tool behaviour (scored).
+- **Request parameters pinned** (MCP server config / SearXNG defaults): categories `general`, language `en`,
+  safesearch 0 (settings), result count, page 1, `request_timeout` 10 s / max 20 s (settings).
+- **Evidence:** each search call is recorded as a `web_searches` entry — query and parameters, raw response (path,
+  sha256, bytes), per-engine errors/provenance, HTTP status, timestamps — registered in `answer_key.web_entries` and
+  the P201 auditor payload (query as the command, results as the text) like `web_fetches`/`net_shell`.
+- **Determinism:** live results drift and are NOT required to be identical across arms; contemporaneous blocks and the
+  per-switch restart are the fairness controls. Offline contract tests use a deterministic SearXNG fixture to prove
+  identical tool schema, request semantics and evidence capture across arms; live smokes prove pinned config,
+  reachability and evidence capture.
+
 ### 5.1 opencode
 Existing tg1 path unchanged except the carrier. M64 carrier (label `opencode-v2-web-tg1c`) = the tg1 carrier
 (`benchmark/opencode_bench_v2_web_tg1.json`) with exactly these differences: `compaction.auto: true`; `websearch` (hosted Exa) denied and the shared SearXNG MCP server
@@ -146,7 +174,8 @@ REJECT + HOLD (§2).
 
 Mock provider + wire capture: sampling/seed/budgets/roles/tools on every request; retries off; accelerated timeout;
 compaction at a reduced window (event recorded, tokens counted); terminal shapes (stop, length, error, cancel, client
-cut); shell watchdog positives (foreground, background, a child that detaches AFTER the guard observed it); D1 tools and hosted search absent; the shared SearXNG search tool present, answering, and identical across arms (D2); injected stall, loop,
+cut); shell watchdog positives (foreground, background, a child that detaches AFTER the guard observed it); D1 tools and hosted search absent; the shared search tool present with an identical schema and request semantics across arms against a deterministic
+SearXNG fixture (D2, §5.5); infrastructure-failure classification (container down, MCP crash, all engines erroring); injected stall, loop,
 hard-ceiling positives through each arm's events; P201 cheat → re-run through each arm (§9).
 
 ## 7. Receipts and token accounting
