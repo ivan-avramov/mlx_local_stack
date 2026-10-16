@@ -39,3 +39,9 @@ pre-commit naming/PII hooks also check. The throwaway worktree created earlier o
 Converged 2026-10-16 after three rounds (round 1: AGREE WITH CHANGES / DISAGREE; round 2: AGREE WITH CHANGES /
 DISAGREE; round 3: AGREE WITH CHANGES / AGREE WITH CHANGES). `plan_final.md` applies every round-3 edit. Awaiting the
 operator: E1, E2 (spec to write), G1, R1 (+ C164 amendment and PLAN M64 amendment), and the web policy.
+
+## M64 spec review (docs/reviews/m64-spec/)
+
+Same routine: on m5max, pull `m64-plan-review`, then from the repo root
+`TMPDIR="$STACK_WORKDIR/review-tmp" codex exec --ephemeral --ignore-user-config -m gpt-6.1-sol -s read-only --skip-git-repo-check -o docs/reviews/m64-spec/round<N>.codex-gpt-6.1-sol.md - < docs/reviews/m64-spec/round<N>.prompt.md > /dev/null 2>&1`,
+then add, commit, push.
