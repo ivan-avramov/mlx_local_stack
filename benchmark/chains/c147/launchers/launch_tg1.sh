@@ -1,7 +1,7 @@
 #!/bin/bash
 # launch_tg1.sh <out-root-name> <runner args...>: detached tg1 chain into $STACK_WORKDIR/<out-root-name>
 . "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"
-R="$(cd "$(dirname "$0")/../../.." && pwd)"
+R="$(cd "$(dirname "$0")/../../../.." && pwd)"
 export PATH="$HOME/.orbstack/bin:$PATH"
 D="$STACK_WORKDIR/$1"; shift
 mkdir -p "$D"; /bin/rm -f "$D/driver.chain.rc"
