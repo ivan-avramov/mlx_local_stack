@@ -1,24 +1,32 @@
-# Handoff — 2026-10-16 (night): M65 pilot SMOKE live (GPU, from main); G1 round 2 + P311 v2 in Cursor review; P348 audit running
+# Handoff — 2026-10-16 (night): M65 PILOT live (GPU, from main); G1 round 3 in review; P348 cleared (merge after the pilot); P352 + tg2 v2 await review/operator
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (P351, C167, P348, P347, P346, C166, C165, G1, G2,
-P340, C164, P309), `docs/specs/m64-scaffold-arms.md`, `docs/PLAN.md` M64 + M65 rows, `docs/specs/p311-identity-split.md` (v2).
+THE one handoff. Read this, then `docs/open-questions.md` top entries (P352, P351, C167, P348, P347, P346, C166, C165, G1,
+G2, P340, C164, P309), `docs/specs/m64-scaffold-arms.md`, `docs/PLAN.md` M64 + M65 rows, `docs/specs/p311-identity-split.md`
+(v2), `docs/specs/m65-tg2-corpus.md` (DRAFT v2).
 
-## Live now (2026-10-16 23:16Z)
+## Live now (2026-10-16 23:46Z)
 
-- **M65 pilot smoke** `$STACK_WORKDIR/m65-pilot-smoke` (`chain s1 --smoke --universe benchmark/m65/pilot_universe.json
-  --policy-sha 028e0345… --probe-code-sha ebcfe6fb…`, launched with `launch_tg1.sh`); rehearsal rows only. On rc 0 →
-  the real pilot: same args without `--smoke`, out-root `m65-pilot`. Pilot = k = 1 (`chain s1`: both picks × Python +
-  Go), predictor OFF, **29 items** (12 Python + 17 Go; `go/counter` invalid, C145), universe sha256 `5cdc9900…`.
-  The runner's own 5-min WATCH lines (RUNLOG) are the watch daemon.
-- **P351 merged** (`eb82c49d`, Cursor CLEARED, operator approved): runner forwards `--universe`, takes `--policy-sha`.
-  `launch_tg1.sh` repo-root fix `07b86d36` (it resolved `benchmark/`, never worked as committed). Full suite on main
+- **M65 pilot** `$STACK_WORKDIR/m65-pilot`, launched 23:46Z: `launch_tg1.sh m65-pilot chain s1 --universe
+  benchmark/m65/pilot_universe.json --policy-sha 028e0345… --probe-code-sha ebcfe6fb…`. k = 1 (both picks × Python + Go),
+  predictor OFF, 29 items (12 Python + 17 Go; `go/counter` invalid, C145), universe sha256 `5cdc9900…`. Smoke
+  (`m65-pilot-smoke`) rc 0, 8/8 rehearsal rows. Watch = the runner's 5-min WATCH lines in RUNLOG. Expect ≥ 6 h (smoke
+  Go item 516 s vs 300 s predicted). After rc: `driver.chain.rc`, report strict per pick vs tg1, nonconv kinds, tokens.
+- **Do NOT merge into main while the pilot runs** (P348 edits `main_models.yaml`, the overlay source; G1 is guard code).
+- **P351 merged** (`eb82c49d`, Cursor CLEARED, operator approved). `launch_tg1.sh` root fix `07b86d36`. Full suite on main
   after P351: 4677 passed, 3 skipped, 1 xfailed.
-- **G1 round 2** on `g1-fix` = `a93d83c6` (P1–P5 fixed test-first; 370 targeted tests pass; worktree
-  `$STACK_WORKDIR/worktrees/g1-fix`, needs the untracked `.venv-bench` symlink for grader tests). Cursor round 2
-  running. Two operator calls raised (see G1 entry): (a) an occupant older than the guard resolves a `(pid, None)`;
-  (b) no parent-chain exemption for a protected root's young children.
-- **P311 v2** `2b161f64` (all of round 1 P1–P9 applied) — Cursor round 2 running → `reviews/p311/round2…`.
-- **P348 audit** running on branch `p348-audit` (worktree `$STACK_WORKDIR/worktrees/p348`); review its diff before merge.
+- **G1** on `g1-fix`: round 2 `a93d83c6` NOT CLEARED (P6–P9) → round 3 `2333ec5f` (P6–P9 fixed test-first; 563 targeted
+  tests pass) — Cursor round 3 running (output to scratch; copy into `reviews/g1/round3…` on the branch). Judgement calls
+  settled with the reviewer: (a) a `(pid, None)` resolves by an occupant only with a monotonic start-order proof that it is
+  older than the guard; (b) no parent-chain exemption. Worktree `$STACK_WORKDIR/worktrees/g1-fix` needs the untracked
+  `.venv-bench` symlink (grader tests); never stage it.
+- **P348** on `p348-audit` (`04ad9a74`): Cursor CLEARED AFTER FIXES A1 A2 (applied). 8 PASS → INCONCLUSIVE (M57 ×7, M40
+  Math500), no score/shipping change. Merge after the pilot.
+- **P311:** v2 `2b161f64`; Cursor round 2 AGREE WITH CHANGES P10–P20 → **P352 operator decision** (recommend P311-lite).
+  Build paused.
+- **tg2:** DRAFT v2 `ae4aeb9d` (round 1 T1–T13 applied); Cursor round 2 next; sizing needs the pilot + a four-language
+  smoke.
+- Cursor: run reviews one at a time (a concurrent run returned empty output once); waiters must poll a PID, not
+  `pgrep -f cursor-agent` (matches the waiter's own command line).
 
 ## State of the world
 
