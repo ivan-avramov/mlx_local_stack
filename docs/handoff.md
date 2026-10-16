@@ -17,7 +17,7 @@ P288, P306, C157), `docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63),
 - **Sync 2026-10-15 (m5max-128):** branch `sync-upstream-1015` (worktree `$STACK_WORKDIR/worktrees/sync-1015`) merges
   `origin/main` (m5max: P299, C159–C163, M64 queued) into this box's `main` (C157, P306, P288/P308, smoke, bootstrap
   note). Audit code resolved to m5max's reviewed P299 + C163 version; this box's parallel P299 build is superseded
-  (merge note in open-questions P299), its two extra review fixes ported as P309. The main checkout stays on the
+  (merge note in open-questions P299), its two extra review fixes ported as P309 (`f76eaa4b` + `041ec610`, Cursor "cleared after fixes P1–P4"). Merged-tree probe identity `ebcfe6fb…`; targeted audit/guard/runner tests green (full suite owed after the chain), P223/M63 reports regenerate unchanged. The main checkout stays on the
   pre-merge `main` until the live chain exits (probe-identity files differ). Forks: `../mlx-serve` fast-forwarded to
   `86921f0` (= the stack's pin); `../mlx-vlm` current; submodule pins unchanged.
 - **LIVE (m5max-128, since 2026-10-15 16:09Z): picks re-record chain** `chain s1 s2 reload --probe-code-sha
