@@ -1,7 +1,8 @@
 # M64 — scaffold arms: opencode vs Pi vs dsh on the tg1 corpus (C159, C161, C165; PLAN M64)
 
-Status: DRAFT v3 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16), round 2 AGREE WITH
-CHANGES (P17–P21 + owner/watchdog/D1–D2) — all addressed; `docs/reviews/m64-spec/`). Approval authorizes the BUILD only; the chain needs its own go after power
+Status: DRAFT v4 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
+CHANGES (P17–P21, owner, watchdog, D1/D2); round 3 AGREE WITH CHANGES (P22–P26, watchdog test scope) — all
+addressed; `docs/reviews/m64-spec/`). D1 RULED (operator 2026-10-16: agreed). D2 pending (P345). Approval authorizes the BUILD only; the chain needs its own go after power
 simulation and smokes. Design record: `docs/reviews/m64-plan-2026-10-16/plan_final.md` (E1/E2) and C165 (1) (2) (2a)
 (2b) (3) (4). **Pending operator rulings: D1, D2 (§2.1).**
 
@@ -30,11 +31,12 @@ dsh is an arm from the start (C161). If a dsh snapshot cannot meet a REQUIRED co
 gate events), the snapshot is REJECTED and the build HOLDS for an operator decision — dsh is never silently dropped.
 
 ### 2.1 Pending operator rulings — explicit C165 (2a) amendments
-- **D1 — parallel LLM fan-out tools. Proposed amendment C165 (2c):** "Tools that start concurrent model sessions —
+- **D1 — parallel LLM fan-out tools — RULED 2026-10-16 (operator: agreed) as C165 (2c):** "Tools that start concurrent model sessions —
   opencode `subagent` and code-mode `execute`; dsh `subagent`, `subagent_fork`, `ralph` (and any such tool found in the
   §5.3 inventory) — are removed in every arm, a disclosed measurement exception: one worker, one cache session, a
   single-stream gate and per-task accounting cannot attribute concurrent sub-sessions." Applies only to tools actually
-  present in the adopted snapshot. Rejecting D1 means redesigning the gate and accounting, not a config toggle.
+  present in the adopted snapshot. Same exception, same reason (a headless benchmark run has no user to answer):
+  ask-the-user tools (opencode `question`, any dsh equivalent) are removed in every arm and disclosed.
 - **D2 — hosted web-search tools** (opencode `websearch`, dsh `web_search`). Three distinct treatments: (a) remove the
   tool; (b) leave it visible as installed, with NO credentials supplied — it works if the vendor serves it
   anonymously, else the call fails, exactly as for a local user without that account; (c) supply credentials.
@@ -58,7 +60,7 @@ Every invariant is proven PER REQUEST where it is a request property (receipts, 
 | retries | client retries OFF | opencode noretry plugin; Pi `retry.enabled:false`; dsh: must be disablable, else snapshot REJECTED | contract test: injected 500 → abort, no second request |
 | transport failures | counted (C165 2b), §8.3 | runner | incident records in `chain.json` + RUNLOG |
 | client timeout | derived; arm-specific unconfigurable cuts = treatment | Pi `httpIdleTimeoutMs`; dsh equivalent if any | config hash; accelerated-timeout contract test |
-| shell deadline | 600 s, equal | **adapter watchdog** (§5.4) | contract positives incl. a detached child; detached escape = G2 residual, disclosed |
+| shell deadline | 600 s for every OBSERVED tool descendant, equal across arms | **adapter watchdog** (§5.4) | contract positives incl. a child that detaches after being observed; a detach before the first observation = G2 residual, disclosed, not a pass criterion |
 | ambient instructions | none | hermetic HOME/config; Pi `-nc -ne -ns -np --no-mcp`; dsh equivalents | config hash + extension inventory |
 | telemetry / updates | off | Pi `--offline`, `PI_TELEMETRY=0`; opencode disables; dsh `DSH_TELEMETRY_MODE=DISABLED` | socket observation in smokes (observation only) |
 | corpus / grader | tg1 universe; `structured_grade` | shared | universe sha, grader version, hashed reports |
@@ -111,8 +113,11 @@ calls a process is attributed to the earliest open window containing its start t
 before the guard's next tick escapes attribution (G2 residual) and is disclosed.
 
 ### 5.1 opencode
-Existing tg1 path unchanged except a compaction-on carrier (`compaction.auto: true`, label `opencode-v2-web-tg1c`).
-Old carrier reproduces the old path byte-for-byte; the new carrier differs only in `compaction.auto`.
+Existing tg1 path unchanged except the carrier. M64 carrier (label `opencode-v2-web-tg1c`) = the tg1 carrier
+(`benchmark/opencode_bench_v2_web_tg1.json`) with exactly these differences: `compaction.auto: true`; the search
+tool per the D2 ruling. Kept as in tg1: `subagent` and `execute` denied (D1), `question` denied (headless, C165 2c),
+webfetch allowed with its deny patterns. Parity: the old carrier reproduces the old path byte-for-byte; a diff test
+proves the new carrier differs from the old only by the enumerated changes.
 
 ### 5.2 Pi
 `pi --mode json -p <task> --provider mlx-local --model <served name> --session-dir <run> --session-id <item-attempt>
@@ -136,7 +141,7 @@ REJECT + HOLD (§2).
 
 Mock provider + wire capture: sampling/seed/budgets/roles/tools on every request; retries off; accelerated timeout;
 compaction at a reduced window (event recorded, tokens counted); terminal shapes (stop, length, error, cancel, client
-cut); shell watchdog positives (foreground, background, detached child); D1 tools absent and D2 tools present but uncredentialed (per the ruling); injected stall, loop,
+cut); shell watchdog positives (foreground, background, a child that detaches AFTER the guard observed it); D1 tools absent and D2 tools present but uncredentialed (per the ruling); injected stall, loop,
 hard-ceiling positives through each arm's events; P201 cheat → re-run through each arm (§9).
 
 ## 7. Receipts and token accounting
@@ -150,7 +155,11 @@ tokens produced before a disconnect), terminal reason. **Correlation:** the runn
 time on one worker with D1 in force, so every receipt between an item attempt's start and end marks belongs to it;
 the runner writes start/end marks to the worker (a control endpoint) and the adapter ALSO sends an `X-Bench-Attempt`
 header where the client supports custom headers (Pi `headers`, opencode provider headers); receipts are hashed into
-the item's evidence. Tests: client cut, auxiliary/title requests, compaction requests, a missing receipt, a duplicate
+the item's evidence. **Fence:** the worker assigns the receipt sequence number at request ADMISSION; the attempt's start
+mark records the current sequence; the end mark is written only after the client process has exited and is a fence —
+the worker endpoint returns when every request admitted before it (including generations whose client disconnected)
+has finalized its receipt, and reports the last sequence; the attempt owns receipts in (start, end]. A receipt
+finalizing after its fence is a protocol error (attempt aborted). Tests: client cut, auxiliary/title requests, compaction requests, a missing receipt, a duplicate
 receipt. Primary token quantity: completion tokens per assigned task over all task-attributable requests, failures and
 failed attempts included (§8.3). Without complete receipts token superiority is "not established" and joint PASS is
 impossible.
@@ -168,6 +177,13 @@ fresh worker load.
 ### 8.2 Worker
 One worker load per (pick, session) shared by its three arms; fresh session id per item attempt; no cross-arm resume.
 ### 8.3 Attempts and transport incidents (C165 2b)
+**Classification.** A NATIVE CLIENT CUT is a client-side termination registered per arm by its contract test (opencode
+2.0.20 `client_inactivity`, C154; any analogue in Pi/dsh): a scored strict failure, no retry. A TRANSPORT FAILURE is a
+serving fault observed by the runner or worker (worker crash, router error, connection refused/reset, HTTP 5xx,
+server-side timeout, a client error that the contract test maps to the transport class): an incident, retried as
+below. Unclassifiable terminal shapes abort the chain (as today). **Precedence:** transport handling first — an
+attempt with a transport failure never scores; its web evidence is still audited and recorded; P201 then applies to
+the replacement attempt.
 Slot identity = (epoch, arm, pick, session, language, item); attempt identity = slot + attempt n (+ cheat re-run
 index, §9). A transport failure (cause taxonomy: worker crash, router error, server timeout, client timeout, dropped
 stream) aborts the attempt and records an incident. Recovery protocol before attempt 2 of the same slot: unload +
@@ -195,6 +211,10 @@ audit applies to every arm. Tests: Pi and dsh cheat → audit → same-slot re-r
 - Accuracy `acc_strict@budget` per (arm, pick, session, language), paired by item and seed. **Cell test:** paired
   difference Δ = mean over the cell's items of (challenger strict − oc strict); TOST H0: Δ ≤ −0.05 or Δ ≥ +0.05;
   p_lower, p_upper from an item bootstrap (B = 10,000) by the shift method; cell p = max(p_lower, p_upper).
+  **Shift method (all bootstrap TOSTs):** with estimate θ̂, replicates θ*_b and margins L, U: p_lower = (1 + #{θ*_b −
+  θ̂ ≥ θ̂ − L}) / (B + 1); p_upper = (1 + #{θ̂ − θ*_b ≥ U − θ̂}) / (B + 1). **Degenerate bootstrap** (replicate sd = 0,
+  e.g. zero discordance): the claim is not decidable by bootstrap and gets p = 1 unless the pre-launch simulation
+  (§12 step 2) validates a specific alternative (e.g. an exact/Bayesian bound), which is then pre-registered.
 - **Accuracy claims (4):** pick × {pi−oc, dsh−oc}; TOST ±5pp in each of the 4 cells (2 sessions × 2 languages);
   claim p = max of the 4 cell p values (intersection-union).
 - **Token claims (4):** same contrasts; estimand = mean over tasks of challenger − oc completion tokens per task
@@ -225,12 +245,17 @@ session); blinded (names stripped); M64 code-quality rubric (correctness beyond 
 robustness); both orders. Per judge and pair: order-consistent choice, else tie; a missing order or judge → pair
 UNSCORED for that judge. Pair score y = mean of the two judges' scores (win 1, tie 0.5, loss 0) over pairs scored by
 both. **Confirmatory estimator:** regress (y − 0.5) on x = log(challenger code length / oc code length) by OLS;
-adjusted preference = 0.5 + intercept (preference at equal length); inference by the two-stage cluster bootstrap
-(§10). The raw mean and each judge's preference are reported alongside. **Coverage floor:** per contrast and pick ≥ 20
-pairs scored by both judges AND ≥ 50% of items; below → claim unavailable (p = 1). **M64 reliability gate** (before
-scoring; thresholds from `judge_gate.py`): code anchors — degraded solution must lose (≥ 0.85), identical code on both
-sides → tie (≥ 0.80), padded/verbose variant must not win (≤ 0.10), order flip ≤ 0.30; a judge failing the gate is
-excluded and the claim is unavailable. Tests: synthetic missing judge, order disagreement, length adjustment, anchors.
+adjusted preference = 0.5 + intercept (preference at equal length). Code length = UTF-8 bytes of the graded solution
+files (the scaffold-created or modified non-test files of the item's solution set, as in the final-code snapshot). If x
+has zero variance the raw mean is used (recorded). Inference: two-stage cluster bootstrap (sessions, then items),
+B = 10,000, the OLS REFIT in every replicate; TOST by the shift method (§10). The raw mean and each judge's preference are reported alongside. **Coverage floor:** per contrast and pick ≥ 20
+pairs scored by both judges AND ≥ 50% of the eligible pairs (item-sessions where both arms passed strict); below → claim unavailable (p = 1). **M64 reliability gate** (per judge,
+not panel-level; before scoring): on code anchor packets the judge must (i) prefer the reference over a degraded
+version in ≥ 85% of degrade anchors, (ii) return a tie on identical code in ≥ 80% of identity anchors, (iii) prefer a
+padded/verbose variant in ≤ 10% of padding anchors, (iv) flip with order in ≤ 30% of all anchors; missing verdicts
+count as failures of the gate, not ties. A judge failing any criterion is excluded; with either judge excluded the
+subjective claims are unavailable (p = 1), since the ruled estimator is the two-judge mean. κ/α are reported
+descriptively only (two judges). Tests: synthetic missing judge, order disagreement, length adjustment, anchors.
 
 ## 12. Work order, acceptance, cost (E2.8 order kept; power first)
 
