@@ -255,8 +255,6 @@ def defer_signals(*, deliver=False):
 
 
 class ProcessGuard:
-    RECONCILE_DEADLINE_S = 10.0   # G1: one monotonic deadline for cleanup's unreadable-record reconciliation
-
     def __init__(
         self,
         roots,
@@ -313,7 +311,6 @@ class ProcessGuard:
         self.context = context
         self.killed = []
         self._unreadable_overflow = False
-        self.reconcile_deadline_s = self.RECONCILE_DEADLINE_S
         self._unreadable_seen = {}      # C157: unreadable identities (+ listing descendants) noted by tick()/cleanup
         self._status = None
 
@@ -390,11 +387,8 @@ class ProcessGuard:
                     ppids.pop(p.pid, None)
                     alive.pop(p.pid, None)
             for key in [k for k in self._unreadable_seen          # exact identity only: never a pid wildcard
-                        if k[1] is not None and k[0] in readable and self._created_or_none(readable[k[0]]) == k[1]
-                        and self._is_protected(readable[k[0]])]:
-                # G1: readability alone discharges nothing; a record retires only once the SAME identity proves
-                # pre-existing/protected (then neither it nor its listed descendants are ours)
-                del self._unreadable_seen[key]
+                        if k[1] is not None and k[0] in readable and self._created_or_none(readable[k[0]]) == k[1]]:
+                del self._unreadable_seen[key]      # classified readable now: the ambiguity is resolved (round 2 P4)
             for key in [k for k, info in self._unreadable_seen.items() if self._fully_gone(k, info)]:
                 del self._unreadable_seen[key]      # P306: gone with nothing recorded below it - nothing to reconcile
             # Follow ancestry until its transitive closure; detachments retain recorded ownership.
@@ -789,25 +783,6 @@ class ProcessGuard:
         except (self.psutil.AccessDenied, TransportAbort):
             return "present", None
 
-    def _is_protected(self, p):
-        try:
-            return bool(self._protected(p))
-        except (*self._transient, TransportAbort, StopIteration):
-            return False
-
-    def _readable_root_resolved(self, pid):
-        """G1: a readable root is resolved only when it is protected/pre-existing, tracked, or path-attributed (the scan
-        then owns it); otherwise its record stays an unresolved obligation."""
-        try:
-            occupant = self.get(pid)
-            if self._is_protected(occupant):
-                return "protected"
-            if (pid, self._created_or_none(occupant)) in self.tracked or self._attributed_path(occupant):
-                return "attributed"
-        except (*self._transient, TransportAbort, StopIteration):
-            return None
-        return None
-
     def _reconcile_unreadable(self, unreadable):
         """C157: resolve every unreadable-identity record against the process table NOW, never from a flag frozen
         earlier. Returns ({key: orphan record} still unresolved, {key: state}). A still-present unreadable
@@ -822,13 +797,8 @@ class ProcessGuard:
             if state[0] == "present":
                 bad[(pid, None)] = dict(pid=pid, create_time=None, argv=[], reason="start order unreadable")
                 continue
-            if state[0] == "readable":
-                resolved = self._readable_root_resolved(pid)
-                if resolved is None:        # G1: readability alone discharges nothing
-                    bad[(pid, created)] = dict(pid=pid, create_time=created, argv=[],
-                                               reason="unreadable record unresolved")
-                if resolved == "protected" and created is not None:
-                    continue                # the same pre-existing identity: its listed descendants are not ours
+            if state[0] == "readable" and created is not None:
+                continue                    # the SAME identity is alive and classifiable: the next scan owns its children
             # gone, or an identity we never captured (a readable occupant may be a replacement): the recorded
             # descendants must each be resolved
             for child_pid, child_created in info["children"]:
@@ -884,7 +854,6 @@ class ProcessGuard:
             with self.lock:
                 unreadable = {k: dict(children=set(v["children"])) for k, v in self._unreadable_seen.items()}
             previous, bad, non_converged = {}, {}, False      # C157: reconciled after every full scan
-            deadline = None
             for round_ in range(5):
                 for attempt in range(3):
                     survivors = []
@@ -965,14 +934,12 @@ class ProcessGuard:
                     pass
                 # C157: every state change (vanished, pid-reused, now readable, readable then gone) needs a full scan
                 # AFTER it; a still-present one gets a short settle before it is called uncertain
-                if deadline is None:        # G1: one monotonic deadline from the first reconciliation
-                    deadline = time.monotonic() + self.reconcile_deadline_s
-                while True:
+                for settle in range(3):
                     bad, states = self._reconcile_unreadable(unreadable)
                     changed = any(state != previous.get(key, "present") for key, state in states.items())
-                    if changed or not bad or time.monotonic() >= deadline:
+                    if changed or not bad:
                         break
-                    time.sleep(0.1)
+                    time.sleep(0.05)
                 previous = states
                 if not changed:
                     break
@@ -1005,8 +972,7 @@ class ProcessGuard:
                      for p in orphans.values()
                      if p.get("reason") in ("path-only attribution", "access denied", "start order unreadable",
                                            "identity unreadable", "child of vanished unreadable process",
-                                           "scan did not converge", "unreadable records overflowed",
-                                           "unreadable record unresolved")]
+                                           "scan did not converge", "unreadable records overflowed")]
                     + [dict(u, reason="tracked identity unknown") for u in unknown]
                 ) + (f"; order failure: {order_failure}" if order_failure else ""))
             if survivors:
