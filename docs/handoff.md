@@ -1,68 +1,73 @@
-# Handoff — 2026-10-15: P299 (1), C157, P306, P288/P308 done; smoke PASSED; picks re-record chain LIVE (`$STACK_WORKDIR/c144-base`)
+# Handoff — 2026-10-15 (sync): both boxes' work merged; picks re-record chain LIVE on m5max-128 (pre-merge identity); next: operator call on the chain (P310), M64 spec
 
-THE one handoff. Read this, then `docs/open-questions.md` (top entries: P299 part 2, P288, C156, C155, C154),
-`docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62, M63 rows), `README.md` B ladder.
+THE one handoff. Read this, then `docs/open-questions.md` (top entries: C163, C162, C161, C160, C159, P299, P308,
+P288, P306, C157), `docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62–M64 rows),
+`README.md` B ladder.
 
 ## State of the world
 
-- **Box `m5max-128`, idle**: no router, no chain, :8000 free. Docker (OrbStack, start-at-login ON). No codex CLI
-  (cannot be installed); the P201 web auditor here is Cursor `gpt-5.6-sol-high` (`benchmark/web_audit_cursor.py`).
-  `cursor-agent` is also the cold reviewer (`cursor-agent -p --output-format text --model gpt-5.6-sol-high --mode plan
-  --sandbox enabled --force --trust --workspace <repo> "<prompt>"`); it sometimes returns an empty or one-newline
-  output — re-run (loop until the report contains "Verdict").
-- **Identities moved again (2026-10-15), so new rows never pair with P223/M63 rows:** probe — P299 changed
-  `answer_key.py`/`web_audit.py`, C157 changed `proc_guard.py`; `run_opencode_probe_v2.py --print-identity` →
-  `probe_code_sha256` `d4319705…` (after P306) (serving unchanged since 2026-10-14: `src/mlx-serve` at `86921f0`).
-- **Records (final, committed; the unpushed commits are listed below):**
-  - P223 tg1 OFF (`benchmark/results/p223_tg1/P223_REPORT.md`) and M63 MTP-ON (`benchmark/results/m63_mtp/M63_REPORT.md`)
-    unchanged; both regenerate byte-identical after P299 (reviewer reproduced it too).
-  - **P299 (1) DONE** (`06a77fec`, `da269033`): an audit is valid by (declared auditor, prompt sha, evidence identity);
-    the recorded `auditor_version` is provenance and the installed CLI version never gates scoring or re-auditing;
-    `--retry-errors` retries only unresolved `audit_error`; an unreadable version raises `AuditorVersionError` before
-    appending; resolutions must match the base record's version. Cold review: cleared after doc fixes.
-  - **C157 DONE** (`b5b4cd53`…`21066227`): see open-questions C157. Five review rounds; the guard is best-effort and
-    the residuals are documented there.
-  - P299 part 2 stays as policy: scaffold tools (opencode `$STACK_WORKDIR/opencode-2.0.20`, dsh `0.1.2-rc.1`) are
-    sha-pinned per chain; each release is a planned identity boundary with a cheap re-baseline (smoke chain, C154 re-check).
-- **Parked branches:** `p297-uncertain-gone` (superseded by C157; delete when convenient), `c152-alloc-tool-scope-wip`.
-- **Not pushed:** everything from `06a77fec` onward (push needs explicit operator approval).
-
-- **Smoke chain PASSED (2026-10-15 14:33Z → 15:48Z, rc 0, ALL LEGS DONE)**, `$STACK_WORKDIR/c144-smoke`, probe
-  `d4319705…`: 9/9 rows passed + converged, 0 `client_inactivity`, no uncertain cleanup, stack stopped and verified.
-  Rehearsal evidence only (never graded/pooled).
-- **LIVE: picks re-record chain** `chain s1 s2 reload --probe-code-sha d4319705…`, out-root `$STACK_WORKDIR/c144-base`
-  (`driver.chain.out`/`.rc`, `RUNLOG.md`), ≈18 h; launched via a scratch launcher running `run_tg1_chain.py ...
-  --out-root` with `$HOME/.orbstack/bin` on PATH (the agent shell has no docker on PATH; `drive_chain.sh` would
-  overwrite P223's `c147/chain.out`). Purpose: the fresh OFF baseline of both picks for every C144 comparison (same
-  seeds as P223, so also a P223 repeat on a new identity — descriptive only, never pooled). Do not edit
-  runner/probe/scoring files or run the full suite until it exits; work in `$STACK_WORKDIR/worktrees/`.
-- **Operator 2026-10-15:** pre-authorized to keep working and keep the GPU busy; merge to main as work completes; do
-  not delete branches yet.
+- **Two boxes.** `m5max` (64 GB: codex CLI, no cursor-agent) and `m5max-128` (128 GB, the chain box: cursor-agent, no
+  codex). Quality rows pair across them (C153); latency/thermal/capacity rows never do. The P201 web auditor is
+  whichever declared CLI the box has (`benchmark/web_audit.py` codex `gpt-6-astra`, `benchmark/web_audit_cursor.py`
+  Cursor `gpt-5.6-sol-high`; `scripts/bootstrap_machine.sh` reports which). Cold reviewer likewise — codex:
+  `codex exec --ephemeral --ignore-user-config -m gpt-6-astra -s read-only --skip-git-repo-check -o <out> - < <prompt>`
+  (writable `TMPDIR` under `$STACK_WORKDIR`; it cannot run pytest, give it the author's results); Cursor:
+  `cursor-agent -p --output-format text --model gpt-5.6-sol-high --mode plan --sandbox enabled --force --trust
+  --workspace <repo> "<prompt>"` (empty or one-newline output happens: re-run until the report contains "Verdict").
+- **Sync 2026-10-15 (m5max-128):** branch `sync-upstream-1015` (worktree `$STACK_WORKDIR/worktrees/sync-1015`) merges
+  `origin/main` (m5max: P299, C159–C163, M64 queued) into this box's `main` (C157, P306, P288/P308, smoke, bootstrap
+  note). Audit code resolved to m5max's reviewed P299 + C163 version; this box's parallel P299 build is superseded
+  (merge note in open-questions P299), its two extra review fixes ported as P309. The main checkout stays on the
+  pre-merge `main` until the live chain exits (probe-identity files differ). Forks: `../mlx-serve` fast-forwarded to
+  `86921f0` (= the stack's pin); `../mlx-vlm` current; submodule pins unchanged.
+- **LIVE (m5max-128, since 2026-10-15 16:09Z): picks re-record chain** `chain s1 s2 reload --probe-code-sha
+  d4319705…`, out-root `$STACK_WORKDIR/c144-base` (`driver.chain.out`/`.rc`, `RUNLOG.md`), ≈18 h. Launched via a
+  scratch launcher (`run_tg1_chain.py ... --out-root`, `$HOME/.orbstack/bin` on PATH — the agent shell has no docker
+  on PATH; `drive_chain.sh` would overwrite P223's `c147/chain.out`). Identity `d4319705…` = C157 + P306 + this box's
+  P299, WITHOUT C163/m5max-P299: rows on it never pair with rows on the merged identity (P310 open). Do not edit
+  runner/probe/scoring files in the main checkout or run the full suite until it exits.
+- **Smoke chain PASSED** (2026-10-15 14:33Z → 15:48Z, `$STACK_WORKDIR/c144-smoke`, probe `d4319705…`): 9/9 rows
+  passed + converged, 0 `client_inactivity`, no uncertain cleanup. Rehearsal evidence only.
+- **Done this week:** P299 (audit acceptance by recorded version), C163 (audit identity carries `context_sha256`;
+  legacy records counted as `legacy_audits`), C157 (guard: vanished unreadable processes; five Cursor rounds), P306
+  (tick prunes dead roots), P288 (repro harness; three real-client members do not reproduce) + P308 (runner: STOP
+  before the first manifest is a STOP, not a barrier abort), bootstrap auditor note. Rulings: C159 Pi = M64 arm, C160
+  closed, C161 dsh = third M64 arm + two-judge subjective mean on every comparison (AGENTS.md), C162 dropped.
+- **Records (final):** P223 tg1 OFF (`benchmark/results/p223_tg1/P223_REPORT.md`) 84/86 vs 83/86; M63 MTP-ON
+  (`benchmark/results/m63_mtp/M63_REPORT.md`) 85/86 and 84/86, both ship MTP ON. README B ladder current.
+- **Operator direction 2026-10-15 (m5max-128 session):** keep working and keep the GPU busy with the planned run
+  (fresh OFF rows of both picks); merge to main as work completes; do not delete branches yet. The m5max session
+  recorded "GPU deferred, operator launches chains" earlier the same day — superseded for this box by the above.
+- **Parked branches (keep):** `p297-uncertain-gone`, `c152-alloc-tool-scope-wip`.
+- **Not pushed:** this box's `main` (16 commits) and `sync-upstream-1015`. Push needs explicit operator approval.
 
 ## Next work, in order
 
-1. **Watch the re-record chain**; on rc 0 copy the rows into `benchmark/results/<model>/…c144base…`, write the report
-   (tg1_report.py pattern), update README evidence. On abort: read RUNLOG, archive, decide (never `--clean-stale` blind).
-2. **P288/P308 DONE** (see open-questions).
-3. **C144 — new candidates under tg1**: no candidate is named anywhere (PLAN queue "nothing armed"); the runner is
-   hard-wired to the two picks (`LEGS`/`PICK1`/`PICK2`). Asked the operator 2026-10-15 which models.
-4. **Docs owed: DONE** — `scripts/bootstrap_machine.sh` reports the box's P201 auditor (codex / cursor-agent / none; never installs).
-5. Delete the parked `p297-uncertain-gone` branch (operator OK).
+1. **P310 — the live chain's identity** (operator): keep it (rows on the pre-merge identity; pair only by a ruling)
+   or STOP + relaunch smoke and re-record on the merged identity. See the proposal in chat 2026-10-15.
+2. **After the chain exits / is stopped:** fast-forward `main` to `sync-upstream-1015`, full suite, P223/M63 reports
+   regenerate unchanged, then push on approval.
+3. **M64 — Pi + dsh scaffold arms + two-judge panel** (C159/C161): spec first (`docs/specs/m64-…`), cold review, then
+   build box-free: `run_pi_probe.py` on the dsh/opencode-v2 adapter pattern, `run_dsh_probe.py` unfrozen onto it,
+   `bench/judge` two-judge config (codex `gpt-6.1-sol` + Claude Fable 5.1, both orders, length-adjusted). <!-- allow-shorthand: judge, not a registry model -->
+4. **Chains for M64** (box): smoke per arm, then each arm on the same items/seeds/budgets as the fresh opencode rows.
 
 ## Rules learned (2026-10-11 → 15)
 
 - Never edit runner/probe/scoring files in the main checkout while a chain runs (`chain.json` re-hashes runner files;
   probe-identity files abort the next leg) — build in `$STACK_WORKDIR/worktrees/`, merge after. Never run the full
-  suite under a live chain (real-client tests spawn opencode).
-- Run the suite from `benchmark/` as `../.venv-bench/bin/python -m pytest bench/tests -q` (~11 min); never from the repo root.
+  suite under a live chain (real-client tests spawn opencode). Run it from `benchmark/` as
+  `../.venv-bench/bin/python -m pytest bench/tests -q` (~11 min).
+- Fetch and diff before syncing during a live chain; merge in a worktree.
 - Launch chains with a command line that names no watched process (the busy-process gate refused its own launcher).
 - After a reboot: `docker info` before any Go leg (P290 gate enforces it).
-- A cold-review prompt names the commit hash, never HEAD; give the reviewer the code and earlier rounds' text, not the conclusion.
-- Scoring accepts an audit from a declared auditor by its RECORDED version, prompt sha and evidence; the installed CLI
-  version is provenance only (C158, P299).
+- A cold-review prompt names the commit hash, never HEAD; give the reviewer the code and earlier rounds, not the conclusion.
+- Scoring accepts a recorded audit from a declared auditor whatever CLI version is installed now (P299); a changed
+  prompt sha still invalidates.
 - Test the guard's cleanup scan with `kill_role` stubbed: `kill_role()` runs `tick()` first and consumes a scripted vanish.
-- opencode 2.0.20 cuts a single request at 60 min without a durable event (C154); tokenize the trailing reasoning
-  to tell a loop from genuine thinking.
+- A review finding that is an inherited bug gets its own open question (C163), not a scope expansion.
+- opencode 2.0.20 cuts a single request at 60 min without a durable event (C154).
 - Pushes need explicit operator approval each time.
 
-Next decision id C159; discussion ids continue from P305 (P300–P305 were used this session in chat).
+Next decision id C164; discussion ids continue from P310 (P300–P305 were also chat labels on m5max-128; the docs
+entries P306/P308/P309 are unique).

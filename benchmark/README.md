@@ -263,12 +263,12 @@ STDIN. Tests inject a fake auditor. The parser accepts only a JSON object with e
 single-line `reason`; malformed answers become `unclear`, failed calls or unreadable evidence become `audit_error`.
 
 The append-only `<rows.jsonl>.webaudit.jsonl` stores `row_id`, `sample`, `session_id`, tool-list `kind`/`index`, evidence
-`path`/`sha256`/`bytes`, `auditor` (`codex:gpt-6-astra`, or `cursor:gpt-5.6-sol-high` on boxes without codex, via
-`benchmark/web_audit_cursor.py`), `auditor_version`, `prompt_sha256`, `preflag`, `label`, and `reason`. **An audit is valid by (declared
-auditor, prompt SHA, evidence identity); the recorded `auditor_version` is provenance, and the CLI version installed now never gates
-scoring or re-auditing (P299: auditor CLIs update daily).** Evidence with an accepted record from any version is skipped; a changed
-prompt SHA creates a new audit version; `--retry-errors` retries only unresolved `audit_error` records (a newer record replaces the
-older). A new audit needs a readable CLI version: an unreadable one raises `AuditorVersionError` before anything is appended. Three whole public stub
+`path`/`sha256`/`bytes`, `auditor` (`codex:gpt-6-astra`, or `cursor:gpt-5.6-sol-high` via `web_audit_cursor.py` on boxes
+without codex, C158), `auditor_version`, `prompt_sha256`, `preflag`, `label`, and `reason`. Evidence already audited by the
+same auditor under the same prompt SHA is skipped, including errors (`--retry-errors` re-audits the latest errors); a changed
+prompt SHA creates a new audit version. The auditor CLI version is recorded on each new record as provenance only (P299,
+2026-10-15): a CLI update neither re-audits recorded evidence nor invalidates it, and scoring never probes a CLI, so a box
+without codex or cursor-agent scores recorded audits exactly like the box that made them. Each record also carries `context_sha256` (C163, 2026-10-15): the digest of the fetch's `url`/`command`/`status` the auditor was shown; it is part of the audit identity, so an entry whose context changed is re-audited. Records written before C163 have no digest: they are accepted as recorded, never re-audited, and counted per model as `legacy_audits` in `report_rows` (a disclosure, not a tamper-proofing claim — the sidecar is append-only tool output, as in P298). Three whole public stub
 identifiers in content recognizable as the item's language set `preflag: true` and move that fetch ahead in review order.
 Python identifiers are top-level public def/class names; Go identifiers are exported func/type names, including methods.
 The pre-flag is a priority hint, not a substitute for an audit label; it is not shown to the auditor.
@@ -276,14 +276,14 @@ The pre-flag is a priority hint, not a substitute for an audit label; it is not 
 Flagged rows remain graded and retained. New reports must use
 `bench.answer_key.report_rows(rows, audit_sidecar="<rows.jsonl>.webaudit.jsonl")` per session/scaffold. It joins by row id,
 sample, session, tool-list index and evidence identity, selecting the current prompt SHA by default (an explicit
-`prompt_sha256` selects a historical audit). Any `solution`, answer-key contact, unresolved `unclear`/`audit_error`, or missing
+`prompt_sha256` selects a historical audit) and, per evidence, the first declared auditor with a record (codex before
+Cursor), latest record first within an auditor whatever its recorded version (P299). Any `solution`, answer-key contact, unresolved `unclear`/`audit_error`, or missing
 current audit excludes the row from `acc_strict` and `strict_items`, reported as `flagged: web contact`. `tests` is counted
 separately as `web contact: tests` and does not exclude a row. Failed/DNF rows remain in the eligible denominator. The old
 `flagged: answer-key contact` count remains available; historical rows and report scripts are unchanged.
 
-To resolve `unclear` or `audit_error`, append a copy of that sidecar record with `operator_label` (`docs`, `generic`, `partial`, `solution`,
-or `tests`) and a nonempty one-line `operator_reason`; the latest matching record wins. A resolution counts only on top of a genuine
-unresolved record with the same key, label and `auditor_version`. Resolutions do not override `solution`
+To resolve `unclear` or `audit_error`, append a copy of that sidecar record with `operator_label` (`docs`, `generic`, `solution`,
+or `tests`) and a nonempty one-line `operator_reason`; the latest matching record wins. Resolutions do not override `solution`
 or reference-contact flags. Do not edit benchmark rows. An unchanged error is intentionally idempotent.
 
 **Compaction split.** Daily-driver `opencode_config/opencode.json` deliberately enables compaction to handle a human session's overflow. The v2 benchmark carrier disables it so overflow is measured as non-convergence, never hidden by summarization and never a DNF. `acc_strict@budget` remains the ranking key. Rows and manifest runtime record `max_tokens_semantics: "fixed-by-carrier"` and `max_tokens_evidence: "mock-capture:test_real_wire_seed_sampling_title_headers_and_export"`. That capture test verifies both facts at `limit.output=512`: `max_tokens=102400` is sent when the body cap is present, and `max_tokens=512` is sent without it.

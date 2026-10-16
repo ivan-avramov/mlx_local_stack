@@ -27,7 +27,8 @@ def decision(path, row, label, kind='web_fetches'):
                   path=e.get('path'), sha256=e.get('sha256'), bytes=e.get('bytes'), label=label,
                   reason='Fixture decision.',     # C158/P298: a real record always carries a one-line reason
                   auditor=web_audit.AUDITOR, auditor_version='fake',
-                  prompt_sha256=hashlib.sha256(web_audit.PROMPT.read_bytes()).hexdigest())
+                  prompt_sha256=hashlib.sha256(web_audit.PROMPT.read_bytes()).hexdigest(),
+                  context_sha256=answer_key.context_sha256(e))   # C163: a real record always carries the digest
     with Path(str(path) + '.webaudit.jsonl').open('a') as f:
         f.write(json.dumps(record) + '\n')
 
@@ -119,7 +120,7 @@ def test_report_superseded_unresolved_partial_and_models(tmp_path):
     report = answer_key.report_rows(rows, audit_sidecar=str(path) + '.webaudit.jsonl')
     assert report['strict_n'] == 4
     assert report['acc_strict'] == .75
-    assert report['per_model'][MODEL] == dict(cheat_attempts=4, reruns=3, unresolved=1, partial_lookups=1,
+    assert report['per_model'][MODEL] == dict(cheat_attempts=4, reruns=3, unresolved=1, partial_lookups=1, legacy_audits=0,
                                                     pending_reruns=0, missing_audits=0, cheat_review=0, provisional=False)
     assert report['per_model']['Qwen3.8-27B-mlx-uniform-4bit']['cheat_attempts'] == 0
     scored = report['scored_rows']

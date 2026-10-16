@@ -1,0 +1,14 @@
+1. **P1 — med — `benchmark/bench/answer_key.py:142`: evidence identity omits auditor inputs.** <!-- allow-shorthand: review severity words, not model names -->
+   `web_audit.py:194–196` supplies `url`, `command`, and `status` to the auditor, but none is stored in the audit identity. Changing those fields while retaining the row/session/slot and content path/hash/length preserves the old label and suppresses re-auditing, despite changing the evidence presented to the auditor. This is an inherited gap, not newly introduced by P299, but it prevents clearing the absolute “different evidence” acceptance criterion. **Fix:** persist and match a digest of the complete audit input, including contextual metadata; handle legacy records explicitly. Add tests changing each input independently.
+
+2. **P2 — med — `benchmark/bench/tests/test_p299_audit_record_validity.py:44`: the no-probe test would pass against the old scoring implementation.** <!-- allow-shorthand: review severity words, not model names -->
+   The test replaces `subprocess.run`, but the declared version functions are already stubs: Cursor returns `CURSOR_V`, and codex raises `FileNotFoundError`. Old scoring can call both without touching `subprocess.run`, then accept the Cursor records and satisfy every assertion. The loop at lines 51–52 never patches `probe`. **Fix:** after creating the sidecar, replace both version functions with functions that raise `AssertionError` when called. Retain the subprocess guard as additional coverage.
+
+3. **P3 — med — `benchmark/bench/tests/test_p299_audit_record_validity.py:124`: ordering tests do not exercise the new pop-and-reinsert requirement.** <!-- allow-shorthand: review severity words, not model names -->
+   The test inserts version A and then version B, which works even without either `pop`. A broken implementation would still pass while mishandling `A:docs → B:docs → A:solution`: ordinary dictionary replacement leaves A before B, so B incorrectly wins. The resolution test likewise never interleaves versions. The retry test lacks the requested older-docs/newer-error history for the same evidence. **Fix:** add A→B→A cases for genuine records and valid resolutions, append malformed/orphan resolutions and verify they cannot shadow accepted records, and assert exactly one retry for `A:docs → B:audit_error`.
+
+Static inspection found the implemented ordering and filtering correct: accepted writes move to the end, rejected records do not; latest-record selection precedes retry filtering; `{AUDITOR}` filtering prevents another auditor’s records entering `done`. Scoring no longer calls version probes, supporting the CLI-independent report mechanism. <!-- allow-shorthand: review severity words, not model names -->
+
+The permitted pytest command failed **before collection** because the read-only sandbox provides no writable temporary directory. Acceptance criterion (2) remains unverified here.
+
+not cleared
