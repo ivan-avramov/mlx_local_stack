@@ -1,71 +1,61 @@
-# Handoff — 2026-10-15 (sync): both boxes' work merged; picks re-record chain LIVE on m5max-128 (pre-merge identity); C164 ruled; next: M64 spec, then post-chain verification + P311
+# Handoff — 2026-10-16: M64 plan agreed + ruled (C165); c144-base attempt 2 LIVE on m5max-128; next: M64 spec, G1, P311, P340
 
-THE one handoff. Read this, then `docs/open-questions.md` (top entries: C163, C162, C161, C160, C159, P299, P308,
-P288, P306, C157), `docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62–M64 rows),
-`README.md` B ladder.
+THE one handoff. Read this, then `docs/open-questions.md` (top entries: C165, G1, G2, P340, C164, P309, C163–C159,
+P299, P308, P288, P306, C157), `docs/reviews/m64-plan-2026-10-16/plan_final.md` (the agreed M64 plan),
+`docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62–M64 rows), `README.md` B ladder.
 
 ## State of the world
 
-- **Two boxes.** `m5max` (64 GB: codex CLI, no cursor-agent) and `m5max-128` (128 GB, the chain box: cursor-agent, no
-  codex). Quality rows pair across them (C153); latency/thermal/capacity rows never do. The P201 web auditor is
-  whichever declared CLI the box has (`benchmark/web_audit.py` codex `gpt-6-astra`, `benchmark/web_audit_cursor.py`
-  Cursor `gpt-5.6-sol-high`; `scripts/bootstrap_machine.sh` reports which). Cold reviewer likewise — codex:
-  `codex exec --ephemeral --ignore-user-config -m gpt-6-astra -s read-only --skip-git-repo-check -o <out> - < <prompt>`
-  (writable `TMPDIR` under `$STACK_WORKDIR`; it cannot run pytest, give it the author's results); Cursor:
-  `cursor-agent -p --output-format text --model gpt-5.6-sol-high --mode plan --sandbox enabled --force --trust
-  --workspace <repo> "<prompt>"` (empty or one-newline output happens: re-run until the report contains "Verdict").
-- **Sync 2026-10-15 (m5max-128):** branch `sync-upstream-1015` (worktree `$STACK_WORKDIR/worktrees/sync-1015`) merges
-  `origin/main` (m5max: P299, C159–C163, M64 queued) into this box's `main` (C157, P306, P288/P308, smoke, bootstrap
-  note). Audit code resolved to m5max's reviewed P299 + C163 version; this box's parallel P299 build is superseded
-  (merge note in open-questions P299), its two extra review fixes ported as P309 (`f76eaa4b` + `041ec610`, Cursor "cleared after fixes P1–P4"). Merged-tree probe identity `ebcfe6fb…`; targeted audit/guard/runner tests green (full suite owed after the chain), P223/M63 reports regenerate unchanged. The main checkout stays on the
-  pre-merge `main` until the live chain exits (probe-identity files differ). Forks: `../mlx-serve` fast-forwarded to
-  `86921f0` (= the stack's pin); `../mlx-vlm` current; submodule pins unchanged.
-- **LIVE (m5max-128, since 2026-10-15 16:09Z): picks re-record chain** `chain s1 s2 reload --probe-code-sha
-  d4319705…`, out-root `$STACK_WORKDIR/c144-base` (`driver.chain.out`/`.rc`, `RUNLOG.md`), ≈18 h. Launched via a
-  scratch launcher (`run_tg1_chain.py ... --out-root`, `$HOME/.orbstack/bin` on PATH — the agent shell has no docker
-  on PATH; `drive_chain.sh` would overwrite P223's `c147/chain.out`). Identity `d4319705…` = C157 + P306 + this box's
-  P299, WITHOUT C163/m5max-P299: rows on it never pair with rows on the merged identity (P310 open). Do not edit
-  runner/probe/scoring files in the main checkout or run the full suite until it exits.
-- **Smoke chain PASSED** (2026-10-15 14:33Z → 15:48Z, `$STACK_WORKDIR/c144-smoke`, probe `d4319705…`): 9/9 rows
-  passed + converged, 0 `client_inactivity`, no uncertain cleanup. Rehearsal evidence only.
-- **Done this week:** P299 (audit acceptance by recorded version), C163 (audit identity carries `context_sha256`;
-  legacy records counted as `legacy_audits`), C157 (guard: vanished unreadable processes; five Cursor rounds), P306
-  (tick prunes dead roots), P288 (repro harness; three real-client members do not reproduce) + P308 (runner: STOP
-  before the first manifest is a STOP, not a barrier abort), bootstrap auditor note. Rulings: C159 Pi = M64 arm, C160
-  closed, C161 dsh = third M64 arm + two-judge subjective mean on every comparison (AGENTS.md), C162 dropped.
-- **Records (final):** P223 tg1 OFF (`benchmark/results/p223_tg1/P223_REPORT.md`) 84/86 vs 83/86; M63 MTP-ON
-  (`benchmark/results/m63_mtp/M63_REPORT.md`) 85/86 and 84/86, both ship MTP ON. README B ladder current.
-- **Operator direction 2026-10-15 (m5max-128 session):** keep working and keep the GPU busy with the planned run
-  (fresh OFF rows of both picks); merge to main as work completes; do not delete branches yet. The m5max session
-  recorded "GPU deferred, operator launches chains" earlier the same day — superseded for this box by the above.
-- **Parked branches (keep):** `p297-uncertain-gone`, `c152-alloc-tool-scope-wip`.
-- **Not pushed:** this box's `main` (16 commits) and `sync-upstream-1015`. Push needs explicit operator approval.
+- **Two boxes.** `m5max` (64 GB: codex CLI) and `m5max-128` (128 GB, chain box: cursor-agent). Quality rows pair
+  across boxes (C153); latency/thermal/capacity never. Reviewers: codex `gpt-6.1-sol` on m5max (run from a pulled
+  branch, recipe in `docs/reviews/m64-plan-2026-10-16/README.md`; no ssh from m5max-128), Cursor `gpt-5.6-sol-high`
+  on m5max-128 (`cursor-agent -p --output-format text --model gpt-5.6-sol-high --mode plan --sandbox enabled --force
+  --trust --workspace <repo> "<prompt>"`; re-run until the report contains a verdict line).
+- **Branches.** `origin/main` = the 2026-10-15 sync merge (`170af9c0`). `m64-plan-review` (pushed) = main + C164 +
+  the plan review + C165 docs; fast-forward main to it when approved. The m5max-128 MAIN CHECKOUT is deliberately
+  still on its pre-merge `main` (probe `d4319705…`) because c144-base runs from it: do not change it until the chain
+  exits; build in `$STACK_WORKDIR/worktrees/` (sync worktree `$STACK_WORKDIR/worktrees/sync-1015` on
+  `m64-plan-review`).
+- **LIVE (m5max-128, 2026-10-16): c144-base attempt 2** = `chain s2 reload --probe-code-sha
+  d431970599f696d4b79c76e1923524a6a4f982e7f60f023d37fa5e16c36172ea --out-root $STACK_WORKDIR/c144-base` (scratch
+  launcher with `$HOME/.orbstack/bin` on PATH), ≈10 h. s1 (both picks, validated 2026-10-15) stays in the out-root.
+  Attempt 1 (aborted 05:15Z, guard residual pid 89820) is archived with a sha256 manifest (2,111 files, incl. a copy of
+  s1 and the 9 transcript roots) at `$STACK_WORKDIR/c144-base.archive/attempt1-guard-residual/`. Status per C165:
+  descriptive / power-input evidence, NOT the M64 baseline. Never edit runner/probe/scoring files in the main checkout
+  or run the full suite until it exits.
+- **Rulings 2026-10-16:** C164 (P310 superseded by C165; P311 identity split approved; P314 no filler chains);
+  C165 (E1 epochs, E2 spec requirements, G1 approved; web allowed per arm + P201 audit; PLAN M64 amended; R1 resumed).
+- **Done 2026-10-15/16:** P299 + C163 (m5max) merged with this box's C157, P306, P288/P308; P309 (retry never re-audits
+  a resolved error; unreadable auditor version fails before append); smoke PASSED on `d4319705…`.
+- **Known weakness on main:** the C157/P306 guard drops recorded unreadable obligations once a process reads fine
+  (narrow false-clear) — fixed by G1.
+- **Not pushed to main:** `m64-plan-review` (push approval needed for main). Parked branches (keep, no deletions yet):
+  `p297-uncertain-gone`, `c152-alloc-tool-scope-wip`, `sync-upstream-1015`.
 
-## Next work, in order (C164, operator 2026-10-16: all recommendations taken)
+## Next work, in order
 
-1. **Live chain runs to completion** (C164/P310: its rows are the M64 opencode baseline despite the pre-merge identity).
-2. **M64 spec** (C164/P313, now, docs only): `docs/specs/m64-scaffold-arms.md` → Cursor cold review → operator go → build.
-3. **After the chain exits** (C164/P312): fast-forward `main` to `origin/main`, full suite (owed for the pushed merge),
-   P223/M63 reports unchanged, c144-base report + README evidence (list web-fetch rows per C164), push on approval.
-4. **P311 identity split** (C164, approved): proposal + test-first + cold review in a worktree; merge after the chain.
-5. **M64 build** after its go; then its smoke = the next GPU job. No filler chains (C164/P314).
+1. **Watch c144-base attempt 2.** On rc 0: copy rows to `benchmark/results/<model>/…c144base…`, report (P223 repeat,
+   descriptive; discordance estimates for the M64 power simulation), README evidence labelled descriptive.
+2. **M64 spec** (`docs/specs/m64-scaffold-arms.md`) per `plan_final.md` E1/E2 with the C165 web ruling → Cursor + codex
+   cold review → operator go. Pi facts (source-read 2026-10-15, earendil-works/pi 4954d76) and the adapter-pattern map
+   are in the review packet's context; attach dated URLs/package metadata.
+3. **G1** (approved) and **P340** (A4 logs/TMPDIR under the OFF arm's out-root): test-first in a worktree, cold
+   review, merge after the chain.
+4. **P311** identity split (approved C164): proposal + test-first + cold review in a worktree.
+5. After the chain: fast-forward the main checkout to `m64-plan-review`/main, full suite, P223/M63 reports unchanged,
+   push on approval.
 
-## Rules learned (2026-10-11 → 15)
+## Rules learned (2026-10-11 → 16)
 
-- Never edit runner/probe/scoring files in the main checkout while a chain runs (`chain.json` re-hashes runner files;
-  probe-identity files abort the next leg) — build in `$STACK_WORKDIR/worktrees/`, merge after. Never run the full
-  suite under a live chain (real-client tests spawn opencode). Run it from `benchmark/` as
-  `../.venv-bench/bin/python -m pytest bench/tests -q` (~11 min).
+- Never edit runner/probe/scoring files in the main checkout while a chain runs; build in worktrees. Never run the
+  full suite under a live chain. Suite: from `benchmark/`, `../.venv-bench/bin/python -m pytest bench/tests -q` (~11 min).
 - Fetch and diff before syncing during a live chain; merge in a worktree.
-- Launch chains with a command line that names no watched process (the busy-process gate refused its own launcher).
-- After a reboot: `docker info` before any Go leg (P290 gate enforces it).
-- A cold-review prompt names the commit hash, never HEAD; give the reviewer the code and earlier rounds, not the conclusion.
-- Scoring accepts a recorded audit from a declared auditor whatever CLI version is installed now (P299); a changed
-  prompt sha still invalidates.
-- Test the guard's cleanup scan with `kill_role` stubbed: `kill_role()` runs `tick()` first and consumes a scripted vanish.
-- A review finding that is an inherited bug gets its own open question (C163), not a scope expansion.
-- opencode 2.0.20 cuts a single request at 60 min without a durable event (C154).
+- Harness versions are not pinned for long: decision epochs (C165/E1) — one immutable snapshot per decision family,
+  move to latest between families through the adoption gate; cross-epoch results are descriptive.
+- Web access is an expected capability in agentic benches (C141); cheating is caught post hoc by the P201 audit.
+- Archive a failed chain attempt with a sha256 manifest BEFORE moving anything (the runner rewrites `chain.json`).
+- Launch chains with a command line that names no watched process. After a reboot: `docker info` before Go legs.
+- A cold-review prompt names the commit hash; give reviewers the code and earlier rounds, not the conclusion.
 - Pushes need explicit operator approval each time.
 
-Next decision id C164; discussion ids continue from P310 (P300–P305 were also chat labels on m5max-128; the docs
-entries P306/P308/P309 are unique).
+Next decision id C166; discussion ids continue from P341; open G-items G1, G2.
