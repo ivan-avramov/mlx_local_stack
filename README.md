@@ -43,7 +43,7 @@ Updated **2026-10-14** (evidence; orders unchanged since 2026-09-14). B is agent
 | Status | Model | Best for and supporting evidence |
 |---|---|---|
 | 1, provisional pick | Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed | Everyday research/design; already the B default. Top-pair length-adjusted panel margin +0.25, 95% CI [−0.76,+0.91]; lower token/time cost informed the approved ordering. Shipped native16 vision smoke **20/20 PASS** (C88); retrieval **25/25** through128K and chain-4 tracking **39/39** through156K (C89). |
-| 2, provisional pick | Qwen3.8-27B-mlx-uniform-4bit | Longer, more elaborated answers; first on the raw panel, with a length confound. Historical vision gate 19/20. MTP stays ON; its M40 MBPPPlus result remains INCONCLUSIVE. |
+| 2, provisional pick | Qwen3.8-27B-mlx-uniform-4bit | Longer, more elaborated answers; first on the raw panel, with a length confound. Historical vision gate 19/20. MTP stays ON; its M40 MBPPPlus result remains INCONCLUSIVE, and its M40 Math500 axis (0 discordant) is no discordance, equivalence not established (P348). |
 | Shortlist only | Ornith-1.0-35B-mlx-uniform-4bit | Fast vision-capable alternative; historical vision gate 20/20, behind both approved picks on the panel. |
 | Shortlist only | NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit | Fast text-only tool, no vision tower; last on the panel. AgentBench OS 0.423, clearly last (−17 pp vs the picks, Holm p<0.01; M54 record); chain 4 re-sample 0.394, 12.2 s/task — not a shell-agent model. Deployed t0.5, native routing, predictor OFF. |
 
