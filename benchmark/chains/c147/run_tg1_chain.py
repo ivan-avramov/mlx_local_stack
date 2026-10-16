@@ -772,6 +772,17 @@ def inside_other_arm(path, wd, on):
     return False
 
 
+def make_ops(predictor, wd, out_root, overlay, log):
+    """M63: the ON arm keeps its router TMPDIR and A4 logs under its out-root. P340: so does an OFF arm whose out-root
+    is not the default `$STACK_WORKDIR/c147` (it used to write into P223's c147/ dir); the default OFF chain is unchanged."""
+    wd, out_root = Path(wd), Path(out_root)
+    if predictor == "mtp":
+        return co.ChainOps(REPO, wd, overlay, log, predictor="mtp", out_root=out_root)
+    if out_root.resolve() != (wd / "c147").resolve():
+        return co.ChainOps(REPO, wd, overlay, log, out_root=out_root)
+    return co.ChainOps(REPO, wd, overlay, log)
+
+
 def main(argv=None, ops=None, timers=None, log_out=None):
     a = parse_args(sys.argv[1:] if argv is None else argv)
     wd = Path(ops.wd) if ops is not None else Path(os.environ["STACK_WORKDIR"])
@@ -785,8 +796,7 @@ def main(argv=None, ops=None, timers=None, log_out=None):
     out_root.mkdir(parents=True, exist_ok=True)
     log = co.RunLog(out_root / "RUNLOG.md", out=log_out)
     if ops is None:
-        ops = (co.ChainOps(REPO, wd, overlay, log, predictor="mtp", out_root=out_root) if on
-               else co.ChainOps(REPO, wd, overlay, log))
+        ops = make_ops(a.predictor, wd, out_root, overlay, log)
     chain = Chain(a, ops, timers or Timers(), log, load_universe(a.universe), out_root)
     try:
         return chain.run()

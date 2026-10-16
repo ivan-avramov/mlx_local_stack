@@ -1077,3 +1077,24 @@ def test_clean_exit_without_a_receipt_is_restart_eligible_and_nothing_else_is(en
     for bad in (dict(clean, rc=1), dict(clean, outcome="cancelled"), dict(clean, transport_abort={"error": "x"})):
         with pytest.raises(_co.ChainAbort, match="no cleanup_status"):
             ch.check_restart_eligible(bad, {"model": PICK1}, block)
+
+
+# --------------------------------------------------------------------------- P340
+def test_p340_off_arm_with_an_explicit_out_root_keeps_a4_logs_and_tmp_there(tmp_path):
+    """P340: an OFF chain with its own --out-root must not write A4 logs / router TMPDIR into P223's c147/ dir."""
+    wd = tmp_path / "wd"
+    out = wd / "c144-base"
+    ops = R.make_ops("off", wd, out, "overlay.yaml", log=lambda m: None)
+    assert ops.a4_log_dir == out and ops.tmpdir == out / "tmp"
+
+
+def test_p340_off_arm_default_out_root_is_unchanged(tmp_path):
+    wd = tmp_path / "wd"
+    ops = R.make_ops("off", wd, wd / "c147", "overlay.yaml", log=lambda m: None)
+    assert ops.a4_log_dir == wd / "c147" and ops.tmpdir == wd / "c147" / "tmp"
+
+
+def test_p340_on_arm_unchanged(tmp_path):
+    wd = tmp_path / "wd"
+    ops = R.make_ops("mtp", wd, wd / "m63", "overlay.yaml", log=lambda m: None)
+    assert ops.a4_log_dir == wd / "m63" and ops.predictor == "mtp"
