@@ -1,8 +1,9 @@
 # M64 — scaffold arms: opencode vs Pi vs dsh on the tg1 corpus (C159, C161, C165; PLAN M64)
 
-Status: DRAFT v6 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
+Status: DRAFT v7 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
 CHANGES (P17–P21, owner, watchdog, D1/D2); round 3 AGREE WITH CHANGES (P22–P26, watchdog test scope); round 4 AGREE
-WITH CHANGES (P27–P33, D2 details); round 5 AGREE WITH CHANGES (§5.5 precision) — all addressed; `docs/reviews/m64-spec/`). D1 and D2 RULED (operator 2026-10-16), C165 (2c)/(2d). Approval authorizes the BUILD only; the chain needs its own go after power
+WITH CHANGES (P27–P33, D2 details); round 5 AGREE WITH CHANGES (§5.5 precision); round 6 AGREE WITH CHANGES (port/mount proof,
+truncation semantics, per-attempt MCP schema evidence) — all addressed; `docs/reviews/m64-spec/`). D1 and D2 RULED (operator 2026-10-16), C165 (2c)/(2d). Approval authorizes the BUILD only; the chain needs its own go after power
 simulation and smokes. Design record: `docs/reviews/m64-plan-2026-10-16/plan_final.md` (E1/E2) and C165 (1) (2) (2a)
 (2b) (3) (4). Operator rulings D1/D2: C165 (2c)/(2d), §2.1.
 
@@ -126,13 +127,17 @@ before the guard's next tick escapes attribution (G2 residual) and is disclosed.
 - **Identity checks** (chain entry, every leg start, exit): `docker inspect m64-searxng` → `.Config.Labels` has the
   owner label, `.Image` (image ID) resolves to an image whose `RepoDigests` contains the pinned digest, `.Config.Env`
   contains neither `BRAVE_SEARCH_API_KEY` nor `WOLFRAM_APP_ID` (keyed engines inactive) and nothing else beyond the
-  recorded allow-list. **Effective settings hash:** parse the file rendered by `searxng/render_settings.py` (the one
+  recorded allow-list; `.HostConfig.PortBindings` is exactly `8080/tcp → 127.0.0.1:8080` (no other binding, never
+  `0.0.0.0`), and the sole listener on `127.0.0.1:8080` (`lsof`) is that container's port proxy; `.Mounts` holds
+  exactly one bind of the hashed rendered file at `/etc/searxng/settings.yml`, read-only (`RW: false`). **Effective settings hash:** parse the file rendered by `searxng/render_settings.py` (the one
   mounted), replace `server.secret_key` with the literal `"<masked>"`, serialize as JSON with sorted keys and no
   whitespace, sha256 — must equal the snapshot's value.
 - **MCP server:** npm tarball integrity + lock, exact command line, and served tool schema in the snapshot. Schema
   verification is executable: at chain entry, every leg start and exit an ephemeral checker launches the pinned
   command (stdio), calls `tools/list`, hashes the schema and compares; every item attempt's own MCP instance is checked
-  by the tool list captured in the client's first request (wire capture / receipt). **Adoption requirement:** the
+  through the first-request receipt: the worker records `tools_sha256` (sha256 of the canonical JSON of the request's
+  `tools` array) in every receipt (§7), and the adapter reconciles the attempt's first receipt against the snapshot's
+  expected per-arm tools hash (native tools + the search tool); a mismatch aborts the attempt. **Adoption requirement:** the
   chosen package must return (or let the adapter capture from its traffic) the raw SearXNG JSON response incl.
   per-engine `unresponsive_engines`; if no existing package does, the bench ships its own minimal SearXNG MCP server
   (one `search(query)` tool, fixed schema) as the pinned server — operator informed at the build.
@@ -145,8 +150,10 @@ before the guard's next tick escapes attribution (G2 residual) and is disclosed.
   container down, MCP server crash, an MCP call unanswered within 30 s (SearXNG max request timeout 20 s + 10 s), all
   engines unresponsive (zero results WITH engine errors) — are transport-class incidents (§8.3: recovery + same-slot
   retry; twice → `transport_dnf`). A zero-result answer with responsive engines is normal tool behaviour (scored).
-- **Request parameters pinned:** categories `general`, language `en`, safesearch 0, page 1, result count 10 (the
-  qualification's truncation, `docs/websearch-searxng-qualification-2026-09-16.md`), `request_timeout` 10 s / max 20 s.
+- **Request parameters pinned:** categories `general`, language `en`, safesearch 0, page 1, `request_timeout` 10 s /
+  max 20 s. **Result count:** SearXNG returns its full page; the MCP server keeps the COMPLETE raw JSON as evidence and
+  returns exactly the first 10 results (in SearXNG's order) to every client — the qualification's truncation
+  (`docs/websearch-searxng-qualification-2026-09-16.md`).
 - **Evidence:** each search call is a `web_searches` entry — query and parameters, raw response (path, sha256, bytes),
   `unresponsive_engines` and per-engine provenance, HTTP status, timestamps — registered in `answer_key.web_entries`
   and the P201 auditor payload (query as the command, results as the text) like `web_fetches`/`net_shell`.
@@ -195,7 +202,7 @@ hard-ceiling positives through each arm's events; P201 cheat → re-run through 
 proxies and cannot count tokens produced after a disconnect). This corrects E2.4's wording ("mlx-serve fork"); the
 fork change follows the fork rules (AGENTS.md: edit `../mlx-vlm`, test-first, bump the submodule). One receipt per generation request, including client-disconnected
 ones: worker identity, monotonic receive/finish times, request sequence number on the worker, effective sampling,
-seed, `thinking_budget`, `max_tokens`, roles present, prompt / cache / completion / reasoning tokens generated (incl.
+seed, `thinking_budget`, `max_tokens`, roles present, `tools_sha256` (canonical JSON of the request's `tools`), prompt / cache / completion / reasoning tokens generated (incl.
 tokens produced before a disconnect), terminal reason. **Correlation:** the runner runs exactly one item attempt at a
 time on one worker with D1 in force, so every receipt between an item attempt's start and end marks belongs to it;
 the runner writes start/end marks to the worker (a control endpoint) and the adapter ALSO sends an `X-Bench-Attempt`
