@@ -14,8 +14,9 @@ Lead (m5max-128 session) ↔ two cold reviewers until all three agree; then the 
 | `round2.cursor-gpt-5.6-sol-high.md` | Cursor round 2: DISAGREE (G1 residual; E2 token accounting + inference gate) |
 | `plan_v3.md` | revised plan after round 2 (E1 epochs w/o ranking transport; E2 spec requirements; G1 + G2 split; R1 checklist) |
 | `round3.prompt.md` | round-3 prompt (reads v2, both round-2 reviews from the repo; v3 inline) |
-| `round3.codex-gpt-6.1-sol.md` | (to add, from m5max) |
-| `round3.cursor-gpt-5.6-sol-high.md` | (to add, from m5max-128) |
+| `round3.codex-gpt-6.1-sol.md` | codex round 3: AGREE WITH CHANGES |
+| `round3.cursor-gpt-5.6-sol-high.md` | Cursor round 3: AGREE WITH CHANGES |
+| `plan_final.md` | **agreed plan** — v3 + every round-3 edit (▲); loop closed by lead verification; awaiting operator rulings |
 
 ## To run on m5max (codex; no ssh from the other box) — replace <N> with the current round (now 3)
 
@@ -35,8 +36,6 @@ pre-commit naming/PII hooks also check. The throwaway worktree created earlier o
 
 ## Status
 
-- Round 1: both reviewers rejected P317 (an unreadable-order process can be ours yet untracked/path-negative) and
-  asked for decision epochs, an explicit M64 estimand, C154 censoring handling, balanced arm order, an `ArmAdapter`
-  contract and pre-registered power. Plan v2 adopts them.
-- Round 2: pending on both boxes. Live state on m5max-128: `$STACK_WORKDIR/c144-base` aborted 2026-10-16 05:15Z (rc 2,
-  guard residual pid 89820); not resumed pending the operator's ruling on R1.
+Converged 2026-10-16 after three rounds (round 1: AGREE WITH CHANGES / DISAGREE; round 2: AGREE WITH CHANGES /
+DISAGREE; round 3: AGREE WITH CHANGES / AGREE WITH CHANGES). `plan_final.md` applies every round-3 edit. Awaiting the
+operator: E1, E2 (spec to write), G1, R1 (+ C164 amendment and PLAN M64 amendment), and the web policy.
