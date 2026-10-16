@@ -1,8 +1,24 @@
-# Handoff — 2026-10-16 (late): M64 BUILD in progress (C166); G1 reverted off main (P350) and continues on `g1-fix`; next: M65 pilot (GPU, from main) + G1/P311/P348 (CPU)
+# Handoff — 2026-10-16 (night): M65 pilot SMOKE live (GPU, from main); G1 round 2 + P311 v2 in Cursor review; P348 audit running
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (C167, P348, P347, P346, C166, C165, G1, G2,
-P340, C164, P309), `docs/specs/m64-scaffold-arms.md` (APPROVED FOR BUILD, estimation screen), `docs/PLAN.md` M64 +
-M65 rows, `docs/specs/p311-identity-split.md`, `README.md` B ladder.
+THE one handoff. Read this, then `docs/open-questions.md` top entries (P351, C167, P348, P347, P346, C166, C165, G1, G2,
+P340, C164, P309), `docs/specs/m64-scaffold-arms.md`, `docs/PLAN.md` M64 + M65 rows, `docs/specs/p311-identity-split.md` (v2).
+
+## Live now (2026-10-16 23:16Z)
+
+- **M65 pilot smoke** `$STACK_WORKDIR/m65-pilot-smoke` (`chain s1 --smoke --universe benchmark/m65/pilot_universe.json
+  --policy-sha 028e0345… --probe-code-sha ebcfe6fb…`, launched with `launch_tg1.sh`); rehearsal rows only. On rc 0 →
+  the real pilot: same args without `--smoke`, out-root `m65-pilot`. Pilot = k = 1 (`chain s1`: both picks × Python +
+  Go), predictor OFF, **29 items** (12 Python + 17 Go; `go/counter` invalid, C145), universe sha256 `5cdc9900…`.
+  The runner's own 5-min WATCH lines (RUNLOG) are the watch daemon.
+- **P351 merged** (`eb82c49d`, Cursor CLEARED, operator approved): runner forwards `--universe`, takes `--policy-sha`.
+  `launch_tg1.sh` repo-root fix `07b86d36` (it resolved `benchmark/`, never worked as committed). Full suite on main
+  after P351: 4677 passed, 3 skipped, 1 xfailed.
+- **G1 round 2** on `g1-fix` = `a93d83c6` (P1–P5 fixed test-first; 370 targeted tests pass; worktree
+  `$STACK_WORKDIR/worktrees/g1-fix`, needs the untracked `.venv-bench` symlink for grader tests). Cursor round 2
+  running. Two operator calls raised (see G1 entry): (a) an occupant older than the guard resolves a `(pid, None)`;
+  (b) no parent-chain exemption for a protected root's young children.
+- **P311 v2** `2b161f64` (all of round 1 P1–P9 applied) — Cursor round 2 running → `reviews/p311/round2…`.
+- **P348 audit** running on branch `p348-audit` (worktree `$STACK_WORKDIR/worktrees/p348`); review its diff before merge.
 
 ## State of the world
 
