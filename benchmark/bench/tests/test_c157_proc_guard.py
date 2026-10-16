@@ -12,6 +12,8 @@ from bench import proc_guard as pg
 from bench.token_turn_gate import TransportAbort
 from bench.tests.test_proc_guard import Process, guard as _guard
 
+pytestmark = pytest.mark.usefixtures("fake_guard_clock")      # G1 round 2: the production 10 s deadline, fake clock
+
 
 def guard(tmp_path, processes, **kwargs):
     """The cleanup SCAN under test: tick()/kill_role() would consume a scripted vanish before it runs."""
@@ -135,11 +137,12 @@ def test_a_child_that_also_vanished_does_not_block_clearance(tmp_path):
     assert g.status()["uncertain"] is False
 
 
-def test_endless_vanishing_never_certifies_clean(tmp_path):
-    """A pass that keeps losing processes has no clean snapshot: bounded retries, then uncertain."""
+def test_endless_vanishing_never_certifies_clean(tmp_path, fake_guard_clock):
+    """A pass that keeps losing processes has no clean snapshot: retried until the deadline, then uncertain."""
     serial = []
 
     def scan():
+        fake_guard_clock.now += 1.0
         pid = 100 + len(serial)
         serial.append(pid)
         listing = []
@@ -153,7 +156,7 @@ def test_endless_vanishing_never_certifies_clean(tmp_path):
     g.kill_role = lambda role=None: []
     with pytest.raises(TransportAbort, match=r"cleanup uncertain.*did not converge"):
         g.cleanup()
-    assert len(serial) <= 12                         # bounded
+    assert len(serial) <= 15                         # bounded by the 10 s deadline
 
 
 def test_monitor_failure_is_raised_before_the_uncertainty_and_status_is_published(tmp_path):
@@ -594,7 +597,6 @@ def test_g1_recovered_readability_alone_does_not_discharge_a_young_unattributed_
     root = Unreadable(60, created=10, armed=True)   # young: started after the guard (started = 0)
     processes.append(root)
     g = _guard(tmp_path, processes)
-    g.reconcile_deadline_s = 0.3
     g.tick()
     root.armed = False                              # reads fine now, untracked, ppid 1, cwd outside the roots
     g.tick()
@@ -622,7 +624,6 @@ def test_g1_a_readable_root_keeps_its_descendant_obligations(tmp_path):
     root = Unreadable(40, created=10, armed=True)
     processes += [child, root]
     g = _guard(tmp_path, processes)
-    g.reconcile_deadline_s = 0.3
     g.tick()
     root.armed = False
     child.parent = 1
@@ -642,7 +643,7 @@ def test_g1_a_tracked_readable_root_is_resolved_by_the_tracked_audit(tmp_path):
     assert root.dead and g.status()["uncertain"] is False
 
 
-def test_g1_the_global_deadline_lets_a_slow_exit_clear(tmp_path):
+def test_g1_the_global_deadline_lets_a_slow_exit_clear(tmp_path, fake_guard_clock):
     """Present-unreadable at the first reconcile, gone ~0.6 s later (the old 150 ms settle called it uncertain)."""
     processes = []
     p = Unreadable(30, created=10)
@@ -650,7 +651,7 @@ def test_g1_the_global_deadline_lets_a_slow_exit_clear(tmp_path):
     t0 = []
 
     def get(pid):
-        now = time.monotonic()
+        now = fake_guard_clock.now
         t0.append(now) if not t0 else None
         if now - t0[0] > 0.6 and p in processes:
             processes.remove(p)
@@ -658,15 +659,12 @@ def test_g1_the_global_deadline_lets_a_slow_exit_clear(tmp_path):
     g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=get)
     g.started = 0
     g.kill_role = lambda role=None: []
-    g.reconcile_deadline_s = 3.0
     g.cleanup()
     assert g.status()["uncertain"] is False
 
 
-def test_g1_deadline_expiry_leaves_cleanup_uncertain(tmp_path):
+def test_g1_deadline_expiry_leaves_cleanup_uncertain(tmp_path, fake_guard_clock):
     g = guard(tmp_path, [Unreadable(30)])
-    g.reconcile_deadline_s = 0.4
-    t = time.monotonic()
     with pytest.raises(TransportAbort, match="start order unreadable"):
         g.cleanup()
-    assert time.monotonic() - t < 5
+    assert fake_guard_clock.now == pytest.approx(10)

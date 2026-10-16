@@ -338,9 +338,25 @@ def _declared_auditor_probes_absent(monkeypatch):
     monkeypatch.setattr(_web_audit_cursor, "cursor_version", absent)
 
 
-# G1: production waits up to 10 s for unreadable records to resolve; offline tests use a short deadline (a test that
-# exercises the deadline sets `guard.reconcile_deadline_s` itself)
-@pytest.fixture(autouse=True)
-def _short_reconcile_deadline(monkeypatch):
+# G1 round 2: the guard's reconcile deadline stays at its production value (10 s); tests that wait on it inject the
+# guard's clock and sleep instead (modules opt in with `pytestmark = pytest.mark.usefixtures("fake_guard_clock")`).
+class FakeGuardClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def fake_guard_clock(monkeypatch):
     from bench import proc_guard as _pg
-    monkeypatch.setattr(_pg.ProcessGuard, "RECONCILE_DEADLINE_S", 0.2)
+    clock = FakeGuardClock()
+    monkeypatch.setattr(_pg.ProcessGuard, "_monotonic", staticmethod(clock.monotonic), raising=False)
+    monkeypatch.setattr(_pg.ProcessGuard, "_sleep", staticmethod(clock.sleep), raising=False)
+    return clock
