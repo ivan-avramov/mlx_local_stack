@@ -27,7 +27,7 @@ The four `m57b-vs-m57a` humanevalplus/mbppplus q1/q2 cells and the four `m57e-vs
 
 ## 2. judge_gate (4 ranking files, 13 pair verdicts; 5 gate files)
 
-Re-run of `compute_ranking` (seed 0) and `compute_gate`: ranking verdicts and numbers identical. No stored verdict was `equivalent_95ci_within_5pp`: `judge_c_v1/ranking.json` holds 10 pairs (9 `m2_better`, 1 `m1_better`); the three `judge_m40` / `judge_m60` rankings are one `inconclusive` pair each. The `gate.json` files are reliability gates (kappa, alpha, order flips), not equivalence verdicts; all re-compute PASS with identical metrics (only the `judges` list order differs). `gate.anchors3.json` was not separately re-run (same code path, anchors subset of `judge_c_v1`).
+Re-run of `compute_ranking` (seed 0) and `compute_gate`: ranking verdicts and preference statistics identical. Scope (review A2): `rerun_jg.py` re-derives preference statistics only — it does not pass the original `usage` inputs, so the regenerated `judge_c_v1/ranking.json` lacks the original's `usage` block (tokens/task, latency, runaway; `benchmark/results/judge_c_v1/ranking.json` keeps it) and `/usage` is excluded from the comparison; usage does not enter any verdict. No stored verdict was `equivalent_95ci_within_5pp`: `judge_c_v1/ranking.json` holds 10 pairs (9 `m2_better`, 1 `m1_better`); the three `judge_m40` / `judge_m60` rankings are one `inconclusive` pair each. The `gate.json` files are reliability gates (kappa, alpha, order flips), not equivalence verdicts; all re-compute PASS with identical metrics (only the `judges` list order differs). `gate.anchors3.json` was not separately re-run (same code path, anchors subset of `judge_c_v1`).
 
 ## 3. agentbench_compare (3 files: chain1, chain3, chain4; 10 pairs each)
 
@@ -38,7 +38,8 @@ Rebuilt from `results/<model>/agentbench_os.v1.chain{1,3,4}.jsonl` (+ manifests 
 - Nothing in the three tools' stored outputs was missing inputs. The `.md` companions of the agentbench reports were not regenerated (JSON is the audit object).
 - Stored `stats.paired_delta` outputs from ad hoc analysis scripts (not the three tools; the scripts are not committed, only their JSON): three degenerate `equivalent` cells, identified from the stored CI [0, 0] with n=100 (discordance_upper95 = 3.0 pp): `paired_c63_math500.json` pairs[0] `acc_delta_fallback`; `paired_ornith_math500.json` pairs[2] `acc_delta_fallback` and pairs[3] `acc_compare`. These are not re-run (no tool); the docs wording was relabelled. All other stored `equivalent` cells in `paired_*.json` have non-degenerate intervals (checked).
 - P223 / M63 / c144-base report helpers: already relabelled by P346 (22 label lines); the campaign-results prose still carried "(equivalent)" in two head-to-head sentences, relabelled here.
-- The M24/M27/M21b/M32 equivalences quoted in the docs have non-degenerate CIs (positive width, discordant items on both sides); the IFEval n=148 `equivalent` (89.9% vs 89.9%) predates the stored-file layout and its interval was not checked; not re-run.
+- Pre-caveated historical helper fields (review A1): 26 degenerate `raw_helper_verdict: "equivalent"` fields in `m42_quality_pilot_2026-09-13.json`, `m42_c82_quality_2026-09-13.json` and `m43_c84_quality_20260914.json`; each file already marks them non-operative, so no decision rests on them; originals kept, not relabelled.
+- The M24/M27/M21b/M32 equivalences quoted in the docs have non-degenerate CIs (positive width, discordant items on both sides); the historical IFEval n=148 `equivalent` (89.9% vs 89.9%, `docs/campaign-results.md`) is non-degenerate (+0.0 pp [−5.4, +4.7], same doc; confirmed by the review).
 
 ## 5. Docs relabelled (wording only; no YAML value changed)
 
