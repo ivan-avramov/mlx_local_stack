@@ -1,8 +1,8 @@
 # M64 — scaffold arms: opencode vs Pi vs dsh on the tg1 corpus (C159, C161, C165; PLAN M64)
 
-Status: DRAFT v5 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
+Status: DRAFT v6 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
 CHANGES (P17–P21, owner, watchdog, D1/D2); round 3 AGREE WITH CHANGES (P22–P26, watchdog test scope); round 4 AGREE
-WITH CHANGES (P27–P33, D2 details) — all addressed; `docs/reviews/m64-spec/`). D1 and D2 RULED (operator 2026-10-16), C165 (2c)/(2d). Approval authorizes the BUILD only; the chain needs its own go after power
+WITH CHANGES (P27–P33, D2 details); round 5 AGREE WITH CHANGES (§5.5 precision) — all addressed; `docs/reviews/m64-spec/`). D1 and D2 RULED (operator 2026-10-16), C165 (2c)/(2d). Approval authorizes the BUILD only; the chain needs its own go after power
 simulation and smokes. Design record: `docs/reviews/m64-plan-2026-10-16/plan_final.md` (E1/E2) and C165 (1) (2) (2a)
 (2b) (3) (4). Operator rulings D1/D2: C165 (2c)/(2d), §2.1.
 
@@ -119,28 +119,39 @@ calls a process is attributed to the earliest open window containing its start t
 before the guard's next tick escapes attribution (G2 residual) and is disclosed.
 
 ### 5.5 Shared search service (D2)
-- **Identity:** an M64-owned compose overlay `benchmark/m64/searxng.compose.yml` runs only `searxng`, image
-  `searxng/searxng@sha256:<digest>` pinned in the epoch snapshot (the repo compose file's `:latest` is not used).
-  Effective settings = the file rendered by `searxng/render_settings.py`; its hash is computed with `secret_key`
-  masked (it is random per render) and recorded; keyed-engine variables (`BRAVE_SEARCH_API_KEY`, the wolframalpha
-  key) must be ABSENT from the container env (verified). The SearXNG MCP server: npm tarball integrity + lock, exact
-  command, and the served tool schema hash, all in the snapshot. Chain entry, each block start and exit verify the
-  RUNNING container's image digest (`docker inspect`), settings hash and env, and the MCP tool schema.
-- **Lifecycle:** the runner owns the container (not the stack). It restarts SearXNG at every arm switch (with the
-  cache reset + warm-up, §8.1) and before any recovery attempt, so every arm starts from a fresh engine-suspension
-  state; each restart is logged with the engine status (`/stats`). The MCP server runs per item attempt inside the
-  client's process tree (started by the client from its MCP config).
-- **Availability:** a health probe (HTTP `/healthz` + one canary query with engine-error inspection) runs before each
-  item attempt. Infrastructure failures — container down, MCP server crash/hang, all engines erroring or suspended
-  (zero results WITH engine errors) — are transport-class incidents (§8.3: recovery + same-slot retry; twice →
-  `transport_dnf`). A zero-result response with healthy engines is normal tool behaviour (scored).
-- **Request parameters pinned** (MCP server config / SearXNG defaults): categories `general`, language `en`,
-  safesearch 0 (settings), result count, page 1, `request_timeout` 10 s / max 20 s (settings).
-- **Evidence:** each search call is recorded as a `web_searches` entry — query and parameters, raw response (path,
-  sha256, bytes), per-engine errors/provenance, HTTP status, timestamps — registered in `answer_key.web_entries` and
-  the P201 auditor payload (query as the command, results as the text) like `web_fetches`/`net_shell`.
-- **Determinism:** live results drift and are NOT required to be identical across arms; contemporaneous blocks and the
-  per-switch restart are the fairness controls. Offline contract tests use a deterministic SearXNG fixture to prove
+- **Ownership:** an M64-owned compose overlay `benchmark/m64/searxng.compose.yml`, compose project `m64-searxng`,
+  container name `m64-searxng`, label `bench.owner=m64`, image `searxng/searxng@sha256:<digest>` pinned in the epoch
+  snapshot (the repo compose file's `:latest` is not used). The runner REFUSES to start if `127.0.0.1:8080` is owned by
+  anything other than its own container (e.g. the daily stack's `searxng`) — the operator stops it first.
+- **Identity checks** (chain entry, every leg start, exit): `docker inspect m64-searxng` → `.Config.Labels` has the
+  owner label, `.Image` (image ID) resolves to an image whose `RepoDigests` contains the pinned digest, `.Config.Env`
+  contains neither `BRAVE_SEARCH_API_KEY` nor `WOLFRAM_APP_ID` (keyed engines inactive) and nothing else beyond the
+  recorded allow-list. **Effective settings hash:** parse the file rendered by `searxng/render_settings.py` (the one
+  mounted), replace `server.secret_key` with the literal `"<masked>"`, serialize as JSON with sorted keys and no
+  whitespace, sha256 — must equal the snapshot's value.
+- **MCP server:** npm tarball integrity + lock, exact command line, and served tool schema in the snapshot. Schema
+  verification is executable: at chain entry, every leg start and exit an ephemeral checker launches the pinned
+  command (stdio), calls `tools/list`, hashes the schema and compares; every item attempt's own MCP instance is checked
+  by the tool list captured in the client's first request (wire capture / receipt). **Adoption requirement:** the
+  chosen package must return (or let the adapter capture from its traffic) the raw SearXNG JSON response incl.
+  per-engine `unresponsive_engines`; if no existing package does, the bench ships its own minimal SearXNG MCP server
+  (one `search(query)` tool, fixed schema) as the pinned server — operator informed at the build.
+- **Lifecycle:** the runner owns the container (not the stack) and restarts it before EVERY leg (block × arm), and at
+  every session, pick, reload and recovery boundary — each leg starts from a fresh engine-suspension state; each
+  restart logged with `/stats` engine status. The MCP server runs per item attempt inside the client's process tree.
+- **Availability:** before each item attempt a health probe — `GET /healthz` then the canary query `python list
+  comprehension` (`format=json`, categories `general`, language `en`, page 1). Success = HTTP 200, ≥ 1 result, and at
+  least one of the three engines absent from `unresponsive_engines`. Infrastructure failures — probe failure,
+  container down, MCP server crash, an MCP call unanswered within 30 s (SearXNG max request timeout 20 s + 10 s), all
+  engines unresponsive (zero results WITH engine errors) — are transport-class incidents (§8.3: recovery + same-slot
+  retry; twice → `transport_dnf`). A zero-result answer with responsive engines is normal tool behaviour (scored).
+- **Request parameters pinned:** categories `general`, language `en`, safesearch 0, page 1, result count 10 (the
+  qualification's truncation, `docs/websearch-searxng-qualification-2026-09-16.md`), `request_timeout` 10 s / max 20 s.
+- **Evidence:** each search call is a `web_searches` entry — query and parameters, raw response (path, sha256, bytes),
+  `unresponsive_engines` and per-engine provenance, HTTP status, timestamps — registered in `answer_key.web_entries`
+  and the P201 auditor payload (query as the command, results as the text) like `web_fetches`/`net_shell`.
+- **Determinism:** live results drift and are NOT required to be identical across arms; contemporaneous legs and the
+  per-leg restart are the fairness controls. Offline contract tests use a deterministic SearXNG fixture to prove
   identical tool schema, request semantics and evidence capture across arms; live smokes prove pinned config,
   reachability and evidence capture.
 
@@ -206,7 +217,7 @@ blocks of 3 items (Python 7 blocks + 1 residual item, Go 7 blocks); each block r
 of the six permutations; **permutations balanced within each pick × session × language cell** by a seeded allocation
 (7 blocks over 6 permutations: each once + one drawn; residual item: permutation drawn by the same seed); schedules
 hashed into `schedule.json` before launch, realized order checked after. Per arm switch: cache-session reset, then one
-warm-up request (not scored). Reload control: per arm, pick 1, Python, the same 5 seeded items and seeds as s1 on a
+warm-up request (not scored); SearXNG restarted before every leg (§5.5). Reload control: per arm, pick 1, Python, the same 5 seeded items and seeds as s1 on a
 fresh worker load.
 ### 8.2 Worker
 One worker load per (pick, session) shared by its three arms; fresh session id per item attempt; no cross-arm resume.
