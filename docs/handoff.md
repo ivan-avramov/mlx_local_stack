@@ -1,4 +1,4 @@
-# Handoff — 2026-10-15 (sync): both boxes' work merged; picks re-record chain LIVE on m5max-128 (pre-merge identity); next: operator call on the chain (P310), M64 spec
+# Handoff — 2026-10-15 (sync): both boxes' work merged; picks re-record chain LIVE on m5max-128 (pre-merge identity); C164 ruled; next: M64 spec, then post-chain verification + P311
 
 THE one handoff. Read this, then `docs/open-questions.md` (top entries: C163, C162, C161, C160, C159, P299, P308,
 P288, P306, C157), `docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63), `docs/PLAN.md` (M62–M64 rows),
@@ -41,16 +41,14 @@ P288, P306, C157), `docs/campaign-results.md` (2026-10-13 P223, 2026-10-14 M63),
 - **Parked branches (keep):** `p297-uncertain-gone`, `c152-alloc-tool-scope-wip`.
 - **Not pushed:** this box's `main` (16 commits) and `sync-upstream-1015`. Push needs explicit operator approval.
 
-## Next work, in order
+## Next work, in order (C164, operator 2026-10-16: all recommendations taken)
 
-1. **P310 — the live chain's identity** (operator): keep it (rows on the pre-merge identity; pair only by a ruling)
-   or STOP + relaunch smoke and re-record on the merged identity. See the proposal in chat 2026-10-15.
-2. **After the chain exits / is stopped:** fast-forward `main` to `sync-upstream-1015`, full suite, P223/M63 reports
-   regenerate unchanged, then push on approval.
-3. **M64 — Pi + dsh scaffold arms + two-judge panel** (C159/C161): spec first (`docs/specs/m64-…`), cold review, then
-   build box-free: `run_pi_probe.py` on the dsh/opencode-v2 adapter pattern, `run_dsh_probe.py` unfrozen onto it,
-   `bench/judge` two-judge config (codex `gpt-6.1-sol` + Claude Fable 5.1, both orders, length-adjusted). <!-- allow-shorthand: judge, not a registry model -->
-4. **Chains for M64** (box): smoke per arm, then each arm on the same items/seeds/budgets as the fresh opencode rows.
+1. **Live chain runs to completion** (C164/P310: its rows are the M64 opencode baseline despite the pre-merge identity).
+2. **M64 spec** (C164/P313, now, docs only): `docs/specs/m64-scaffold-arms.md` → Cursor cold review → operator go → build.
+3. **After the chain exits** (C164/P312): fast-forward `main` to `origin/main`, full suite (owed for the pushed merge),
+   P223/M63 reports unchanged, c144-base report + README evidence (list web-fetch rows per C164), push on approval.
+4. **P311 identity split** (C164, approved): proposal + test-first + cold review in a worktree; merge after the chain.
+5. **M64 build** after its go; then its smoke = the next GPU job. No filler chains (C164/P314).
 
 ## Rules learned (2026-10-11 → 15)
 
