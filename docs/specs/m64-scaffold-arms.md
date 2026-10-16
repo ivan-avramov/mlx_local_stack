@@ -1,6 +1,6 @@
 # M64 — scaffold arms: opencode vs Pi vs dsh on the tg1 corpus (C159, C161, C165; PLAN M64)
 
-Status: FINAL DRAFT v9 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
+Status: APPROVED FOR BUILD 2026-10-16 (C166) — v9 + the C166 judge rule (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
 CHANGES (P17–P21, owner, watchdog, D1/D2); round 3 AGREE WITH CHANGES (P22–P26, watchdog test scope); round 4 AGREE
 WITH CHANGES (P27–P33, D2 details); round 5 AGREE WITH CHANGES (§5.5 precision); round 6 AGREE WITH CHANGES (port/mount proof,
 truncation semantics, per-attempt MCP schema evidence); round 7 AGREE WITH CHANGES (realized port proof, distinct tool
@@ -301,8 +301,11 @@ audit applies to every arm. Tests: Pi and dsh cheat → audit → same-slot re-r
 
 ## 11. Subjective panel (C161)
 
-Judges codex `gpt-6.1-sol` (on m5max — a judge, not a reviewer) and Claude Fable 5.1 `claude-fable-5-1`; versions and
-prompt shas recorded per verdict (P299). **Artifacts:** at each strict-graded attempt the runner snapshots the final
+**Judges (AGENTS.md, C166):** two judges from two DIFFERENT providers, each the strongest model that provider offers
+on the box running the panel — configured per box in the bench judge config (`provider`, `client`, `model`), never
+hard-coded; model id, client version and prompt sha recorded per verdict (P299). On m5max-128 today: Claude Opus via
+Claude Code and `gpt-5.6-sol-high` via Cursor; on m5max e.g. Claude Fable and codex `gpt-6-astra`. A panel never
+mixes judge configurations within one claim; the configuration is part of the claim's identity. **Artifacts:** at each strict-graded attempt the runner snapshots the final
 solution files of the scratch dir (the exact bytes graded) into `final_code/<slot>/<attempt>/` with a sha256 manifest;
 packets are built only from these, with a packet manifest (pair → both code shas, blinding version, order). New M64
 path (not M38's `judge_pairwise` rubric/aggregation): pairs = items where both arms passed strict in that (pick,
