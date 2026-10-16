@@ -32,7 +32,7 @@ the doc amendments named in each.
    unequal effective opportunity disclosed per arm. Matched-budget capability out of scope unless every arm passes an
    accelerated timeout contract and release-specific long-request evidence.
 2. Controls (deployed sampling, paired seeds, thinking 81,920 / max 102,400 + resolved headroom, context, M62 ceilings,
-   client retries off, compaction off, no ambient instructions, equal harness-enforced shell deadline, one web policy,
+   client retries off with every transport failure counted (C165 2b), ▲▲ compaction ON + recorded (C165 2b; was "off"), no ambient instructions, equal harness-enforced shell deadline, one web policy,
    M50 entry/exit, registry/model/predictor/worker identity, corpus/grader integrity, session routing, cancellation
    reconciliation). ▲ A **proof matrix** assigns each invariant to its enforcement point and evidence boundary — wire
    capture per request (sampling, seeds, budgets, roles), lifecycle checks (M50, worker identity), configuration
