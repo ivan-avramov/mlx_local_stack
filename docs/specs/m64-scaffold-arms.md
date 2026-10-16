@@ -273,6 +273,14 @@ audit applies to every arm. Tests: Pi and dsh cheat → audit → same-slot re-r
 
 ## 10. Endpoints and inference (pre-registered)
 
+**P347 (operator 2026-10-16): M64 is an ESTIMATION SCREEN.** The pre-launch power simulation
+(`benchmark/m64/POWER_SIM.md`) gave the 4-cell accuracy claim power 0.000 and a pooled alternative 0.30–0.34 at the
+observed run-to-run discordance (0.041). So no PASS/FAIL is declared: every endpoint below is reported as a point
+estimate with its interval (and, where defined, its TOST p for the record), per pick, contrast, language and session;
+the Holm family and joint PASS rule below are kept only as the descriptive presentation of those p values. A scaffold
+recommendation from M64 is an operator judgement on the estimates (tokens/task, incidence of cuts / compaction /
+transport DNFs, subjective quality, failure modes), labelled provisional.
+
 - Accuracy `acc_strict@budget` per (arm, pick, session, language), paired by item and seed. **Cell test:** paired
   difference Δ = mean over the cell's items of (challenger strict − oc strict); TOST H0: Δ ≤ −0.05 or Δ ≥ +0.05;
   p_lower, p_upper from an item bootstrap (B = 10,000) by the shift method; cell p = max(p_lower, p_upper).
