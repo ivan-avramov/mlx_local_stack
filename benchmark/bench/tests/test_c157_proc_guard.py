@@ -411,13 +411,13 @@ def test_r3p3_a_reused_unknown_parent_pid_keeps_both_identities(tmp_path):
     first = NoParent(70, 1, created=20)
     g = _guard(tmp_path, [first, Unreadable(71)])
     g.tick()
-    ((_, entry),) = g._unreadable_seen.items()
+    entry = g._unreadable_seen[(71, 10)]             # (the denied-ppid processes are recorded roots too: G1 P7)
     assert (70, 20) in entry["children"]
     second = NoParent(70, 1, created=21)             # the pid is reused by another unknown-parent process
     g.scan = lambda: [second, Unreadable(71)]
     g.get = lambda pid: second if pid == 70 else Unreadable(71)
     g.tick()
-    assert {(70, 20), (70, 21)} <= next(iter(g._unreadable_seen.values()))["children"]
+    assert {(70, 20), (70, 21)} <= g._unreadable_seen[(71, 10)]["children"]
 
 
 # ----------------------------------------------------------------------------- cold review round 4 (b06a01a5)
@@ -490,8 +490,10 @@ def test_r5p1_a_recovered_protected_child_does_not_keep_cleanup_uncertain(tmp_pa
             return self.created
     processes = []
     child = Flicker(41, 40, created=5)
+    child.start_order = lambda: 1                    # monotonic start order: proven older than the guard
     processes += [child, Unreadable(40, on_read=lambda p: None)]
     g = _guard(tmp_path, processes)
+    g.started_order = 100
     g.started = 100                                  # created=5 is older than the guard: pre-existing, protected
     g.tick()
     assert (40, None) in g._unreadable_seen or any(k[0] == 40 for k in g._unreadable_seen)

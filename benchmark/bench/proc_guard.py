@@ -284,6 +284,15 @@ class ProcessGuard:
         self.excluded_pids = {os.getpid(), os.getppid()}
         self.excluded_pids.update(p.pid for p in psutil.Process().parents())
         self.excluded_pids.update(protected_pids)
+        # G1 (round 3 P8): protection is an IDENTITY (pid, start time), never a bare pid: a reused pid of an exited
+        # protected process is not protected. An excluded pid whose start time could not be read stays unprotected
+        # here (its age alone can still protect it).
+        self._excluded_identity = {}
+        for pid in self.excluded_pids:
+            try:
+                self._excluded_identity[pid] = start_time((get or psutil.Process)(pid))
+            except (psutil.NoSuchProcess, psutil.AccessDenied, TransportAbort, StopIteration):
+                pass
         self.probe_session = os.getsid(0)
         self.scan = scan or psutil.process_iter
         self.get = get or psutil.Process
@@ -337,7 +346,17 @@ class ProcessGuard:
         return order < self.started_order
 
     def _protected(self, process):
-        return process.pid in self.excluded_pids or self._older_than_guard(process)
+        return self._excluded(process) or self._older_than_guard(process)
+
+    def _excluded(self, process):
+        known = self._excluded_identity.get(process.pid)
+        return process.pid in self.excluded_pids and known is not None and start_time(process) == known
+
+    def _proven_older(self, process):
+        """G1 (round 3 P8): started before the guard, proven ONLY by the monotonic start-order read (no wall-clock
+        fallback, no excluded-pid shortcut)."""
+        order = start_order(process)
+        return order is not None and self.started_order is not None and order < self.started_order
 
     def _same_identity(self, pid, created):
         try:
@@ -347,6 +366,10 @@ class ProcessGuard:
 
     def _live(self, process):
         return process.status() not in ("zombie", "dead")
+
+    def _nap(self, seconds, deadline=None):
+        """G1 (round 3 P9): every cleanup retry sleep is capped by the time left to the global deadline."""
+        self._sleep(seconds if deadline is None else max(0.0, min(seconds, deadline - self._monotonic())))
 
     def _processes(self):
         found = []
@@ -385,7 +408,13 @@ class ProcessGuard:
                     if not protected:
                         # ppid() re-validates identity; a stale cached entry (pid reused, psutil keeps the old
                         # create_time) raises here and must never become an ancestry authority (V5a P13).
-                        ppids[p.pid] = p.ppid()
+                        try:
+                            ppids[p.pid] = p.ppid()
+                        except self.psutil.AccessDenied:
+                            # G1 (round 3 P7): an eligible process whose parent cannot be read could be ours (its
+                            # tracked parent may be killed next): recorded like any other denied read
+                            self._note_unreadable(self._unreadable_seen, p, edges)
+                            continue
                         try:
                             alive[p.pid] = (p, start_time(p), start_order(p))
                         except self.psutil.AccessDenied:
@@ -688,7 +717,7 @@ class ProcessGuard:
         self.containers.discard(name)
 
     def _sweep_excluded(self, p):
-        if p.pid in self.excluded_pids:
+        if self._excluded(p):
             return True
         try:
             return os.getsid(p.pid) == self.probe_session
@@ -716,7 +745,7 @@ class ProcessGuard:
                 unknown.append(p)
         return children_of, unknown
 
-    def _note_unreadable(self, store, p, edges):
+    def _note_unreadable(self, store, p, edges, key=None):
         """Record an eligible process whose start order cannot be read, with the TRANSITIVE descendants of the
         listing (edges read BEFORE any per-process start-order read) and everything of unreadable parentage, closed
         over those edges: a vanished parent proves nothing about them (P297 U1). Candidates are IDENTITIES
@@ -726,7 +755,7 @@ class ProcessGuard:
         if self._unreadable_overflow:
             return
         children_of, unknown = edges
-        key = (p.pid, self._created_or_none(p))
+        key = key or (p.pid, self._created_or_none(p))
         if key not in store and len(store) >= 32:
             self._unreadable_overflow = True
             return
@@ -758,13 +787,27 @@ class ProcessGuard:
                         return
                     frontier.append(child.pid)
 
+    def _detached(self, p, store, edges):
+        """True when `p` is parented to launchd; a denied ppid read is recorded (G1 round 3 P7), never skipped."""
+        try:
+            return p.ppid() == 1
+        except self.psutil.AccessDenied:
+            self._note_unreadable(store, p, edges)
+            return False
+
     def _refresh_descendants(self, store, listing, edges):
         """G1 (round 2 P2): every exact recorded root present in this listing, readable or not, re-collects its
         transitive descendants (a child spawned after the root last failed to read is still its obligation)."""
         by_pid = {p.pid: p for p in listing}
         for key in list(store):
             p = by_pid.get(key[0])
-            if key[1] is not None and p is not None and self._created_or_none(p) == key[1]:
+            if p is None:
+                continue
+            if key[1] is None:
+                # G1 (round 3 P6): an unknown-identity root's occupant may be the original (or a replacement): its
+                # descendants are collected conservatively under the recorded key, whatever the occupant proves
+                self._note_unreadable(store, p, edges, key=key)
+            elif self._created_or_none(p) == key[1]:
                 self._note_unreadable(store, p, edges)
 
     def _fully_gone(self, key, info):
@@ -839,15 +882,19 @@ class ProcessGuard:
                 return "unresolved", None       # occupied, identity unreadable: never aliased to an absent pid
             if created is not None and occupant != created:
                 return "gone", occupant
-            if self._protected(process):
-                # also for a never-captured identity: a pid held by a process older than the guard cannot have been
-                # reassigned since the record, so the occupant IS the recorded original
+            if (self._proven_older(process) if created is None else self._protected(process)):
+                # a never-captured identity resolves only through temporal continuity: an occupant PROVEN older than
+                # the guard by the monotonic start-order read cannot have been reassigned since the record, so it IS
+                # the recorded original (revalidated below). Never via the excluded-pid shortcut or the wall clock.
                 state = "resolved"
             elif created is None:
                 state = "unresolved"            # the young occupant may be a replacement of an original we cannot name
             else:
                 state = "resolved" if (pid, occupant) in self.tracked or self._attributed_path(process) else "unresolved"
-            again = self._created_or_none(self.get(pid))
+            again_process = self.get(pid)
+            again = self._created_or_none(again_process)
+            if again == occupant and state == "resolved" and created is None and not self._proven_older(again_process):
+                state = "unresolved"
             if again != occupant:
                 return ("gone" if created is not None else "unresolved"), again
             return state, occupant
@@ -941,7 +988,7 @@ class ProcessGuard:
                                                     argv=p.cmdline(), reason="path-only attribution")
                             elif self._sweep_excluded(p):
                                 continue
-                            elif p.ppid() == 1:
+                            elif self._detached(p, unreadable, edges):
                                 try:
                                     young = not self._older_than_guard(p)
                                 except self.psutil.AccessDenied:    # G1 (round 2 P1)
@@ -968,7 +1015,7 @@ class ProcessGuard:
                             continue
                     if not survivors:
                         break
-                    time.sleep(0.05)
+                    self._nap(0.05, deadline)
                 # Audit every tracked identity directly, independent of the filtered scan above (which silently drops
                 # a process whose uids()/status() is denied). Denied inspection = unknown = uncertain.
                 unknown = []
@@ -995,11 +1042,14 @@ class ProcessGuard:
                                 process.kill()
                         except (*self._transient, TransportAbort):
                             pass
-                    time.sleep(0.05)
+                    self._nap(0.05, deadline)
                 else:
                     pass
                 # C157: every state change (vanished, pid-reused, now readable, readable then gone) needs a full scan
                 # AFTER it; a still-present one gets a short settle before it is called uncertain
+                # G1 (round 3 P9): a confirming round (any after the first reconciliation) that ENDS past the deadline
+                # confirmed nothing in time
+                late = deadline is not None and self._monotonic() >= deadline
                 if deadline is None:        # G1: one monotonic deadline from the first reconciliation
                     deadline = self._monotonic() + self.reconcile_deadline_s
                 while True:
@@ -1008,9 +1058,10 @@ class ProcessGuard:
                     remaining = deadline - self._monotonic()
                     if changed or not bad or remaining <= 0:
                         break
-                    self._sleep(min(0.1, remaining))        # never past the deadline
+                    self._nap(0.1, deadline)                # never past the deadline
                 previous = states
-                if not changed:
+                if late or not changed:
+                    non_converged = non_converged or late
                     break
                 if self._monotonic() >= deadline:
                     non_converged = True    # a change seen at expiry needs a confirming scan there is no time for

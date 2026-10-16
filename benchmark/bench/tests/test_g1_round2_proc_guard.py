@@ -155,8 +155,9 @@ def test_p3_an_unknown_identity_pid_held_by_a_pre_existing_process_is_the_origin
     processes = [_no_create_root()]
     g = _guard(tmp_path, processes)
     g.started = 8
+    g.started_order = 100
     g.tick()
-    processes[0] = Process(40, 2, created=5)
+    processes[0] = Ordered(40, 2, created=5, order=1)     # monotonic proof: started before the guard
     g.cleanup()
     assert g.status()["uncertain"] is False
 
@@ -278,3 +279,135 @@ def test_p4_a_state_change_first_seen_at_expiry_is_unresolved(tmp_path, fake_gua
     g.reconcile_deadline_s = 0.25
     with pytest.raises(TransportAbort, match=r"cleanup uncertain.*did not converge"):
         g.cleanup()                                   # no time left for the confirming scan: never certified clean
+
+
+# ================================================================================ G1 round 3 (Cursor round 2, P6-P9)
+class Ordered(Process):
+    """A fake with a monotonic start order (what darwin's proc_pid_rusage provides)."""
+
+    def __init__(self, *args, order=1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.order = order
+
+    def start_order(self):
+        return self.order
+
+
+# ------------------------------------------------------------------------------------------------- P6
+def test_p6_an_unknown_identity_root_that_became_readable_still_collects_new_children(tmp_path):
+    processes = [_no_create_root()]
+    g = _guard(tmp_path, processes)
+    g.started = 8
+    g.started_order = 100
+    g.tick()
+    assert (40, None) in g._unreadable_seen
+    processes[0] = Ordered(40, 1, created=5, order=1)        # readable, proven older than the guard
+    child = Process(41, 40, created=11)
+    processes.append(child)                                   # spawned afterwards
+    g.tick()
+    assert (41, 11) in g._unreadable_seen[(40, None)]["children"]
+    processes.remove(processes[0])
+    child.parent = 1                                          # the root exits, the young child reparents
+    with pytest.raises(TransportAbort, match=r'"pid": 41.*child of vanished unreadable process'):
+        g.cleanup()
+
+
+# ------------------------------------------------------------------------------------------------- P7
+def test_p7_a_denied_ppid_after_eligibility_is_recorded_and_survives_its_parents_kill(tmp_path):
+    from bench.tests.test_proc_guard import Exiting
+    processes = []
+    client = Process(10, argv=["opencode", "run"])
+    child = Exiting(11, 10, fail=("ppid",), created=11)
+    processes += [client, child]
+    g = _guard(tmp_path, processes)
+    g.register(client, "client")
+    g.tick()                                                  # the child's parent cannot be read this tick
+    assert (11, 11) in g._unreadable_seen
+    child.fail = set()
+    child.parent = 1                                          # parent killed between ticks: detached, untracked
+    with pytest.raises(TransportAbort, match=r"11.*unreadable record unresolved"):
+        g.cleanup()
+    assert client.dead
+
+
+def test_p7_a_denied_ppid_in_cleanup_is_recorded(tmp_path):
+    from bench.tests.test_proc_guard import Exiting
+    child = Exiting(11, 1, fail=("ppid",), created=11)
+    g = guard(tmp_path, [child])
+    with pytest.raises(TransportAbort, match=r"11.*unreadable record unresolved"):
+        g.cleanup()
+
+
+def test_p7_a_ppid_that_vanishes_is_not_recorded(tmp_path):
+    import psutil
+
+    class Gone(Process):
+        def ppid(self):
+            raise psutil.NoSuchProcess(self.pid)
+    g = _guard(tmp_path, [Gone(11, 1, created=11)])
+    g.tick()
+    assert not g._unreadable_seen
+
+
+# ------------------------------------------------------------------------------------------------- P8
+def test_p8_a_reused_protected_pid_is_no_longer_protected(tmp_path):
+    router = Process(50, 1, created=5)
+    processes = [router]
+    g = _guard(tmp_path, processes, protected_pids={50})
+    g.started = 0
+    assert g._protected(router) is True
+    replacement = Process(50, 1, created=20)
+    assert g._protected(replacement) is False
+
+
+def test_p8_an_unknown_identity_is_never_resolved_by_an_excluded_pid_alone(tmp_path):
+    processes = [_no_create_root()]
+    g = _guard(tmp_path, processes, protected_pids={40})
+    g.started = 8
+    g.tick()
+    processes[0] = Process(40, 2, created=10)                 # young occupant of an excluded pid
+    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*40.*unreadable record unresolved"):
+        g.cleanup()
+
+
+def test_p8_an_unknown_identity_needs_the_monotonic_age_proof_not_the_wall_clock(tmp_path):
+    processes = [_no_create_root()]
+    g = _guard(tmp_path, processes)
+    g.started = 8
+    g.tick()
+    processes[0] = Process(40, 2, created=5)                  # wall-clock older only: no start order
+    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*40"):
+        g.cleanup()
+
+
+# ------------------------------------------------------------------------------------------------- P9
+def test_p9_a_confirming_scan_that_finishes_after_the_deadline_is_not_a_clean_clear(tmp_path, fake_guard_clock):
+    p = Unreadable(30, created=10)
+    processes = [p]
+    scans = []
+
+    def scan():
+        scans.append(1)
+        if len(scans) > 1:
+            fake_guard_clock.now += 5.0                       # the confirming scan starts in time, ends late
+        return list(processes)
+
+    def get(pid):
+        if fake_guard_clock.now >= 0.05 and p in processes:
+            processes.remove(p)
+        return next(q for q in processes if q.pid == pid)
+    g = pg.ProcessGuard([tmp_path], scan=scan, get=get)
+    g.started = 0
+    g.kill_role = lambda role=None: []
+    g.reconcile_deadline_s = 1.0
+    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*did not converge"):
+        g.cleanup()
+
+
+def test_p9_every_retry_sleep_is_capped_by_the_remaining_time(tmp_path, fake_guard_clock):
+    g = _guard(tmp_path, [])
+    fake_guard_clock.now = 0.98
+    g._nap(0.05, deadline=1.0)
+    g._nap(0.05, deadline=0.5)                                # already expired: no sleep beyond it
+    g._nap(0.05, deadline=None)
+    assert fake_guard_clock.sleeps == pytest.approx([0.02, 0.0, 0.05])
