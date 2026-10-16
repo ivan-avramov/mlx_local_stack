@@ -2,7 +2,7 @@
 
 Status: DRAFT v4 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16); round 2 AGREE WITH
 CHANGES (P17–P21, owner, watchdog, D1/D2); round 3 AGREE WITH CHANGES (P22–P26, watchdog test scope) — all
-addressed; `docs/reviews/m64-spec/`). D1 RULED (operator 2026-10-16: agreed). D2 pending (P345). Approval authorizes the BUILD only; the chain needs its own go after power
+addressed; `docs/reviews/m64-spec/`). D1 and D2 RULED (operator 2026-10-16), C165 (2c)/(2d). Approval authorizes the BUILD only; the chain needs its own go after power
 simulation and smokes. Design record: `docs/reviews/m64-plan-2026-10-16/plan_final.md` (E1/E2) and C165 (1) (2) (2a)
 (2b) (3) (4). **Pending operator rulings: D1, D2 (§2.1).**
 
@@ -23,9 +23,9 @@ decision; it does not change the primary scaffold.
 
 | arm | client | native capability = treatment | adapter |
 |---|---|---|---|
-| `oc` | opencode, Homebrew bottle in the M64 snapshot | built-in tools incl. webfetch + shell; compaction `auto: true`; native prompt | existing tg1 path wrapped unchanged; compaction-on carrier |
-| `pi` | Pi `@earendil-works/pi-coding-agent`, vanilla default install | read / bash / edit / write; web via shell only; compaction on; native prompt | new `run_pi_probe.py` |
-| `dsh` | DeepSeek Harness `@deepseek-ai/dsh`, release adopted for the epoch | its default tool set per §5.3 inventory; native prompt; compaction default | new `run_dsh_probe_tg1.py`; M35 `run_dsh_probe.py` stays frozen |
+| `oc` | opencode, Homebrew bottle in the M64 snapshot | built-in tools incl. webfetch + shell + the shared local search tool (D2); compaction `auto: true`; native prompt | existing tg1 path wrapped unchanged; compaction-on carrier |
+| `pi` | Pi `@earendil-works/pi-coding-agent`, vanilla default install | read / bash / edit / write + the shared local search tool (D2, via Pi's MCP support); web fetch via shell; compaction on; native prompt | new `run_pi_probe.py` |
+| `dsh` | DeepSeek Harness `@deepseek-ai/dsh`, release adopted for the epoch | its default tool set per §5.3 inventory (minus D1 and its hosted search) + the shared local search tool if dsh supports MCP (D2); native prompt; compaction default | new `run_dsh_probe_tg1.py`; M35 `run_dsh_probe.py` stays frozen |
 
 dsh is an arm from the start (C161). If a dsh snapshot cannot meet a REQUIRED contract (§6: accounting, retries off,
 gate events), the snapshot is REJECTED and the build HOLDS for an operator decision — dsh is never silently dropped.
@@ -37,14 +37,17 @@ gate events), the snapshot is REJECTED and the build HOLDS for an operator decis
   single-stream gate and per-task accounting cannot attribute concurrent sub-sessions." Applies only to tools actually
   present in the adopted snapshot. Same exception, same reason (a headless benchmark run has no user to answer):
   ask-the-user tools (opencode `question`, any dsh equivalent) are removed in every arm and disclosed.
-- **D2 — hosted web-search tools** (opencode `websearch`, dsh `web_search`). Three distinct treatments: (a) remove the
-  tool; (b) leave it visible as installed, with NO credentials supplied — it works if the vendor serves it
-  anonymously, else the call fails, exactly as for a local user without that account; (c) supply credentials.
-  **Recommendation (b)** (closest to C165 2a "as normally used"): effective tool surface = default minus D1; any
-  search call is audited by P201 like a fetch. `web_fetch` / webfetch and shell networking remain enabled in every arm
-  (C165 2). Proposed amendment C165 (2d) records the choice.
+- **D2 — search — RULED 2026-10-16 (operator: "D2 sounds good") as C165 (2d), option (d):** every arm gets ONE shared
+  local search tool — the repo's SearXNG service (compose `searxng`, loopback `127.0.0.1:8080`, image pinned BY DIGEST
+  in the epoch snapshot, `settings.yml` hash recorded) behind a pinned SearXNG MCP server package (in the snapshot),
+  configured through each client's native MCP config (opencode `mcp`; Pi `mcp.json`; dsh's MCP config if it has one).
+  Hosted vendor search tools (opencode `websearch` → Exa `mcp.exa.ai`; dsh `web_search` → DeepSeek's API) are REMOVED
+  and disclosed (third-party query egress; one search backend for all arms). Fetch tools and shell networking stay
+  enabled in every arm (C165 2). If the dsh inventory finds no MCP support, dsh has no search tool (disclosed) — its
+  hosted search is still removed. SearXNG runs only for the M64 smokes/chain: a recorded exception to the
+  "benchmark routers lean, no docker" rule (the router itself stays lean; no OWUI).
 
-Treatment = native system prompt + native tool schemas (default minus D1) + loop logic + compaction behaviour, hashed into
+Treatment = native system prompt + native tool schemas (default minus D1 and hosted search, plus the shared search tool) + loop logic + compaction behaviour, hashed into
 the snapshot. `developer`-role / thinking-history behaviour is treatment; the server must accept it (§6).
 
 ## 3. Controls and proof matrix
@@ -61,10 +64,11 @@ Every invariant is proven PER REQUEST where it is a request property (receipts, 
 | transport failures | counted (C165 2b), §8.3 | runner | incident records in `chain.json` + RUNLOG |
 | client timeout | derived; arm-specific unconfigurable cuts = treatment | Pi `httpIdleTimeoutMs`; dsh equivalent if any | config hash; accelerated-timeout contract test |
 | shell deadline | 600 s for every OBSERVED tool descendant, equal across arms | **adapter watchdog** (§5.4) | contract positives incl. a child that detaches after being observed; a detach before the first observation = G2 residual, disclosed, not a pass criterion |
-| ambient instructions | none | hermetic HOME/config; Pi `-nc -ne -ns -np --no-mcp`; dsh equivalents | config hash + extension inventory |
+| ambient instructions | none | hermetic HOME/config; Pi `-nc -ne -ns -np`, MCP limited to the one search server; dsh equivalents | config hash + extension/MCP inventory |
 | telemetry / updates | off | Pi `--offline`, `PI_TELEMETRY=0`; opencode disables; dsh `DSH_TELEMETRY_MODE=DISABLED` | socket observation in smokes (observation only) |
 | corpus / grader | tg1 universe; `structured_grade` | shared | universe sha, grader version, hashed reports |
-| web | per arm native capability (C165 2, D2) | P201 audit made arm-neutral (§9) | audit sidecars; cheat → re-run |
+| web | per arm native fetch + shell networking (C165 2) | P201 audit made arm-neutral (§9) | audit sidecars; cheat → re-run |
+| search | one shared local SearXNG tool via a pinned MCP server (D2) | snapshot pins image digest, settings hash, MCP package; preflight checks `127.0.0.1:8080` health and the MCP tool list per arm | wire/tool-list capture; search calls + results captured as web evidence |
 | cleanup | ProcessGuard with G1 | shared | `cleanup_status` |
 
 ## 4. Epoch, identity and adoption (E1, P311)
@@ -114,14 +118,15 @@ before the guard's next tick escapes attribution (G2 residual) and is disclosed.
 
 ### 5.1 opencode
 Existing tg1 path unchanged except the carrier. M64 carrier (label `opencode-v2-web-tg1c`) = the tg1 carrier
-(`benchmark/opencode_bench_v2_web_tg1.json`) with exactly these differences: `compaction.auto: true`; the search
-tool per the D2 ruling. Kept as in tg1: `subagent` and `execute` denied (D1), `question` denied (headless, C165 2c),
+(`benchmark/opencode_bench_v2_web_tg1.json`) with exactly these differences: `compaction.auto: true`; `websearch` (hosted Exa) denied and the shared SearXNG MCP server
+added (D2). Kept as in tg1: `subagent` and `execute` denied (D1), `question` denied (headless, C165 2c),
 webfetch allowed with its deny patterns. Parity: the old carrier reproduces the old path byte-for-byte; a diff test
 proves the new carrier differs from the old only by the enumerated changes.
 
 ### 5.2 Pi
 `pi --mode json -p <task> --provider mlx-local --model <served name> --session-dir <run> --session-id <item-attempt>
---offline -nc -ne -ns -np --no-mcp`, `PI_CODING_AGENT_DIR=<run>/agent`. `models.json`: `api: openai-completions`,
+--offline -nc -ne -ns -np`, `PI_CODING_AGENT_DIR=<run>/agent` holding `mcp.json` with ONLY the shared SearXNG server
+(D2). `models.json`: `api: openai-completions`,
 router `baseUrl`, dummy key, `contextWindow: 262144`, `maxTokens: 102400`, `samplingParams` = deployed sampling +
 seed + `thinking_budget`; `compat` (`supportsDeveloperRole`, `supportsStore`, thinking format) set to what the server
 accepts — decided by the contract test and recorded. `settings.json`: `retry.enabled:false`, compaction default (on),
@@ -133,15 +138,15 @@ on a provider error → `reconcile` decides. `max_completion_tokens` is clamped 
 ### 5.3 dsh
 Research step, before its adapter: for the adopted release, inventory every default tool (incl. `web_search`,
 `web_fetch`, `subagent`, `subagent_fork`, `ralph`), headless/JSON mode, session format, per-request usage, config
-isolation, compaction, retries (M35 saw five transport retries) and timeouts. Apply D1/D2; any other removal needs a
-C165 amendment. Retries must be disablable and per-request usage obtainable from client events or receipts, else
+isolation, compaction, retries (M35 saw five transport retries) and timeouts. Apply D1 and D2 (hosted `web_search` removed; the shared SearXNG MCP server added if dsh supports MCP, else disclosed
+"no search tool"); any other removal needs a C165 amendment. Retries must be disablable and per-request usage obtainable from client events or receipts, else
 REJECT + HOLD (§2).
 
 ## 6. Contract tests (offline, per arm, per snapshot; red first)
 
 Mock provider + wire capture: sampling/seed/budgets/roles/tools on every request; retries off; accelerated timeout;
 compaction at a reduced window (event recorded, tokens counted); terminal shapes (stop, length, error, cancel, client
-cut); shell watchdog positives (foreground, background, a child that detaches AFTER the guard observed it); D1 tools absent and D2 tools present but uncredentialed (per the ruling); injected stall, loop,
+cut); shell watchdog positives (foreground, background, a child that detaches AFTER the guard observed it); D1 tools and hosted search absent; the shared SearXNG search tool present, answering, and identical across arms (D2); injected stall, loop,
 hard-ceiling positives through each arm's events; P201 cheat → re-run through each arm (§9).
 
 ## 7. Receipts and token accounting
@@ -197,7 +202,7 @@ reported endpoint. Tests: first-failure recovery, second-failure row, token carr
 
 Evidence confinement generalized to `$STACK_WORKDIR/transcripts/<arm>/` (opencode's `opencode_transcripts` kept);
 re-run eligibility registered per scaffold identity, not the `opencode-v2-web` prefix. **Lifecycle (synchronous):**
-after each item attempt that produced web evidence (any web tool call or shell networking), the runner runs the P201
+after each item attempt that produced web evidence (any fetch or search tool call and its results, or shell networking), the runner runs the P201
 auditor (Cursor `gpt-5.6-sol-high` on this box, C158) before the next item; a cheat verdict re-runs the SAME slot
 immediately (same seed, re-run index 1, at most 2, P202) with cache-session reset + warm-up + receipt marks; an
 `unclear`/`audit_error` blocks the schedule for operator resolution (P201 procedure). Every cheat attempt's tokens
@@ -280,6 +285,10 @@ transport re-runs and heavy tail.
   `modes/print-mode.ts`, `core/provider-composer.ts`, `api/openai-completions.ts`.
 - dsh: npm `https://registry.npmjs.org/@deepseek-ai%2fdsh` (read 2026-10-16: 0.2.0-rc.2 / 0.2.1-alpha.4; 13 releases
   since 2026-09-15); M35 notes `benchmark/run_dsh_probe.py:80-92`.
-- opencode: Homebrew bottle, `scripts/install_bench_opencode.sh`; 2.0.20 exe sha `OPENCODE_V2_EXE_SHA256`.
+- opencode: Homebrew bottle, `scripts/install_bench_opencode.sh`; 2.0.20 exe sha `OPENCODE_V2_EXE_SHA256`; its
+  `websearch` calls `https://mcp.exa.ai/mcp` (string table of the 2.0.20 binary, read 2026-10-16).
+- SearXNG: compose service `searxng` (`docker-compose.yml`), qualified 2026-09-16
+  (`docs/websearch-searxng-qualification-2026-09-16.md`); the compose file uses `searxng/searxng:latest` — the M64
+  snapshot pins the digest. MCP server package chosen at build (pinned, in the snapshot).
 - Lockfile rule: snapshots record `npm ls --all --json` and the package-lock of the install dir; snapshot shas filled
   at adoption.
