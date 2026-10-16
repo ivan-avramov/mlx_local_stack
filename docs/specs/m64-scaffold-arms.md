@@ -1,7 +1,7 @@
 # M64 — scaffold arms: opencode vs Pi vs dsh on the tg1 corpus (C159, C161, C165; PLAN M64)
 
-Status: DRAFT v2 2026-10-16 (after Cursor `gpt-5.6-sol-high` spec round 1: DISAGREE, 16 findings — all addressed
-below; `docs/reviews/m64-spec/`). Approval authorizes the BUILD only; the chain needs its own go after power
+Status: DRAFT v3 2026-10-16 (Cursor `gpt-5.6-sol-high` spec reviews: round 1 DISAGREE (16), round 2 AGREE WITH
+CHANGES (P17–P21 + owner/watchdog/D1–D2) — all addressed; `docs/reviews/m64-spec/`). Approval authorizes the BUILD only; the chain needs its own go after power
 simulation and smokes. Design record: `docs/reviews/m64-plan-2026-10-16/plan_final.md` (E1/E2) and C165 (1) (2) (2a)
 (2b) (3) (4). **Pending operator rulings: D1, D2 (§2.1).**
 
@@ -29,16 +29,20 @@ decision; it does not change the primary scaffold.
 dsh is an arm from the start (C161). If a dsh snapshot cannot meet a REQUIRED contract (§6: accounting, retries off,
 gate events), the snapshot is REJECTED and the build HOLDS for an operator decision — dsh is never silently dropped.
 
-### 2.1 Pending operator rulings (recommendations; C165 2a says "nothing added, nothing removed")
-- **D1 — parallel LLM fan-out tools** (opencode `subagent` and code-mode `execute`, already denied by the tg1 carrier;
-  dsh `subagent`, `subagent_fork`, `ralph`, disabled in M35): **recommend DENY in every arm as a disclosed measurement
-  exception** — one loaded worker and one cache session (`MLX_VLM_CACHE_SESSION_MAX=1`), a single-stream token/turn
-  gate and per-task accounting; concurrent sub-sessions queue on the worker, thrash its cache and break attribution.
-- **D2 — hosted web-search tools** (opencode `websearch`, dsh `web_search` → a vendor search API needing an account/
-  key): **recommend UNAVAILABLE (off, disclosed)** as in normal local use without that account; fetch tools and shell
-  networking stay allowed and audited (C165 2).
+### 2.1 Pending operator rulings — explicit C165 (2a) amendments
+- **D1 — parallel LLM fan-out tools. Proposed amendment C165 (2c):** "Tools that start concurrent model sessions —
+  opencode `subagent` and code-mode `execute`; dsh `subagent`, `subagent_fork`, `ralph` (and any such tool found in the
+  §5.3 inventory) — are removed in every arm, a disclosed measurement exception: one worker, one cache session, a
+  single-stream gate and per-task accounting cannot attribute concurrent sub-sessions." Applies only to tools actually
+  present in the adopted snapshot. Rejecting D1 means redesigning the gate and accounting, not a config toggle.
+- **D2 — hosted web-search tools** (opencode `websearch`, dsh `web_search`). Three distinct treatments: (a) remove the
+  tool; (b) leave it visible as installed, with NO credentials supplied — it works if the vendor serves it
+  anonymously, else the call fails, exactly as for a local user without that account; (c) supply credentials.
+  **Recommendation (b)** (closest to C165 2a "as normally used"): effective tool surface = default minus D1; any
+  search call is audited by P201 like a fetch. `web_fetch` / webfetch and shell networking remain enabled in every arm
+  (C165 2). Proposed amendment C165 (2d) records the choice.
 
-Treatment = native system prompt + native tool schemas (after D1/D2) + loop logic + compaction behaviour, hashed into
+Treatment = native system prompt + native tool schemas (default minus D1) + loop logic + compaction behaviour, hashed into
 the snapshot. `developer`-role / thinking-history behaviour is treatment; the server must accept it (§6).
 
 ## 3. Controls and proof matrix
@@ -54,7 +58,7 @@ Every invariant is proven PER REQUEST where it is a request property (receipts, 
 | retries | client retries OFF | opencode noretry plugin; Pi `retry.enabled:false`; dsh: must be disablable, else snapshot REJECTED | contract test: injected 500 → abort, no second request |
 | transport failures | counted (C165 2b), §8.3 | runner | incident records in `chain.json` + RUNLOG |
 | client timeout | derived; arm-specific unconfigurable cuts = treatment | Pi `httpIdleTimeoutMs`; dsh equivalent if any | config hash; accelerated-timeout contract test |
-| shell deadline | 600 s, equal | **adapter watchdog**: each tool execution's process subtree (from the tool-start event; tracked by the guard) is killed at 600 s → tool error to the client, `exec_timeout` flag; opencode additionally keeps toolbounds | contract positives incl. a detached child; detached escape = G2 residual, disclosed |
+| shell deadline | 600 s, equal | **adapter watchdog** (§5.4) | contract positives incl. a detached child; detached escape = G2 residual, disclosed |
 | ambient instructions | none | hermetic HOME/config; Pi `-nc -ne -ns -np --no-mcp`; dsh equivalents | config hash + extension inventory |
 | telemetry / updates | off | Pi `--offline`, `PI_TELEMETRY=0`; opencode disables; dsh `DSH_TELEMETRY_MODE=DISABLED` | socket observation in smokes (observation only) |
 | corpus / grader | tg1 universe; `structured_grade` | shared | universe sha, grader version, hashed reports |
@@ -97,6 +101,15 @@ identities, ack wait, `m62_watch` heartbeat). The chain runner is arm-aware only
 `$STACK_WORKDIR/m64[-smoke]`; P340 first. **Parity:** an opencode replay through the adapter yields identical
 `TokenTurnGate` decisions and rows to the current tg1 path.
 
+### 5.4 Shell watchdog (attribution)
+The adapter keeps a tool-execution window per tool call (from its start/end events). Every descendant of the client
+process (ancestry tracked by the ProcessGuard tick, exact (pid, start_time) identities) whose start time falls inside
+an open tool window is attributed to that window; client helper processes spawned outside any window (LSP servers,
+indexers) are not. Any attributed process older than 600 s is terminated (SIGTERM, then SIGKILL after 5 s) with its
+attributed descendants; the row gets an `exec_timeout` flag and the client sees the tool fail. With parallel tool
+calls a process is attributed to the earliest open window containing its start time. A descendant that detaches
+before the guard's next tick escapes attribution (G2 residual) and is disclosed.
+
 ### 5.1 opencode
 Existing tg1 path unchanged except a compaction-on carrier (`compaction.auto: true`, label `opencode-v2-web-tg1c`).
 Old carrier reproduces the old path byte-for-byte; the new carrier differs only in `compaction.auto`.
@@ -123,13 +136,14 @@ REJECT + HOLD (§2).
 
 Mock provider + wire capture: sampling/seed/budgets/roles/tools on every request; retries off; accelerated timeout;
 compaction at a reduced window (event recorded, tokens counted); terminal shapes (stop, length, error, cancel, client
-cut); shell watchdog positives (foreground, background, detached child); D1/D2 tools absent; injected stall, loop,
+cut); shell watchdog positives (foreground, background, detached child); D1 tools absent and D2 tools present but uncredentialed (per the ruling); injected stall, loop,
 hard-ceiling positives through each arm's events; P201 cheat → re-run through each arm (§9).
 
 ## 7. Receipts and token accounting
 
-**Owner: `../mlx-vlm` fork (the worker generates and sees disconnects; the router only proxies) — E2.4 named
-mlx-serve; corrected here, operator to confirm.** One receipt per generation request, including client-disconnected
+**Owner: the `../mlx-vlm` fork worker** (it generates tokens and sees client disconnects; the `mlx-serve` router only
+proxies and cannot count tokens produced after a disconnect). This corrects E2.4's wording ("mlx-serve fork"); the
+fork change follows the fork rules (AGENTS.md: edit `../mlx-vlm`, test-first, bump the submodule). One receipt per generation request, including client-disconnected
 ones: worker identity, monotonic receive/finish times, request sequence number on the worker, effective sampling,
 seed, `thinking_budget`, `max_tokens`, roles present, prompt / cache / completion / reasoning tokens generated (incl.
 tokens produced before a disconnect), terminal reason. **Correlation:** the runner runs exactly one item attempt at a
@@ -154,32 +168,42 @@ fresh worker load.
 ### 8.2 Worker
 One worker load per (pick, session) shared by its three arms; fresh session id per item attempt; no cross-arm resume.
 ### 8.3 Attempts and transport incidents (C165 2b)
-Attempt identity = (epoch, arm, pick, session, item, attempt n). A transport failure (cause taxonomy: worker crash,
-router error, server timeout, client timeout, dropped stream) aborts the attempt, records an incident, unloads and
-reloads the worker (new worker identity recorded), and re-runs the SAME item attempt slot with the same seed as
-attempt 2 before the schedule continues. Tokens of the failed attempt count toward that task. A second transport
-failure for the same (arm, item) → synthetic strict-fail row `nonconv_kind: transport_dnf` with both incidents; the
-schedule continues. Per-arm transport-DNF incidence is a reported endpoint. Tests: first-failure recovery, second-
-failure row, token carry-over.
+Slot identity = (epoch, arm, pick, session, language, item); attempt identity = slot + attempt n (+ cheat re-run
+index, §9). A transport failure (cause taxonomy: worker crash, router error, server timeout, client timeout, dropped
+stream) aborts the attempt and records an incident. Recovery protocol before attempt 2 of the same slot: unload +
+reload the worker (new identity recorded), M50 + worker-identity checks, cache-session reset, warm-up request,
+receipt start mark; then the same slot is re-run with the same seed before the schedule continues. Tokens of the
+failed attempt count toward that task. A second transport failure in the same SLOT → synthetic strict-fail row
+`nonconv_kind: transport_dnf` with both incidents; the schedule continues. Per-arm transport-DNF incidence is a
+reported endpoint. Tests: first-failure recovery, second-failure row, token carry-over, slot keying.
 
 ## 9. P201 audit, arm-neutral
 
-`web_audit._read_evidence` confinement generalized to `$STACK_WORKDIR/transcripts/<arm>/` (opencode's
-`opencode_transcripts` kept); rerun eligibility registered per scaffold identity (not the `opencode-v2-web` prefix);
-a cheat re-run keeps item, seed and session-slot, at most two re-runs (P202). opencode deny patterns: an equivalent per
-arm where the client supports one (opencode carrier denies; Pi/dsh: shell-level patterns via the shell watchdog's
-command screen if feasible, else disclosed "no client-side deny"); the post-hoc audit applies to every arm regardless.
-Tests: Pi and dsh cheat → audit → re-run.
+Evidence confinement generalized to `$STACK_WORKDIR/transcripts/<arm>/` (opencode's `opencode_transcripts` kept);
+re-run eligibility registered per scaffold identity, not the `opencode-v2-web` prefix. **Lifecycle (synchronous):**
+after each item attempt that produced web evidence (any web tool call or shell networking), the runner runs the P201
+auditor (Cursor `gpt-5.6-sol-high` on this box, C158) before the next item; a cheat verdict re-runs the SAME slot
+immediately (same seed, re-run index 1, at most 2, P202) with cache-session reset + warm-up + receipt marks; an
+`unclear`/`audit_error` blocks the schedule for operator resolution (P201 procedure). Every cheat attempt's tokens
+count toward the task; the scored attempt is the latest non-cheat (exhausted cheating = strict FAIL, P201). opencode
+deny patterns: equivalent per arm where the client supports one (opencode carrier; Pi/dsh: the shell watchdog
+screens shell commands against the same patterns if feasible, else disclosed "no client-side deny"); the post-hoc
+audit applies to every arm. Tests: Pi and dsh cheat → audit → same-slot re-run; token accounting across re-runs.
 
 ## 10. Endpoints and inference (pre-registered)
 
-- Accuracy `acc_strict@budget` per (arm, pick, session, language), paired by item and seed.
+- Accuracy `acc_strict@budget` per (arm, pick, session, language), paired by item and seed. **Cell test:** paired
+  difference Δ = mean over the cell's items of (challenger strict − oc strict); TOST H0: Δ ≤ −0.05 or Δ ≥ +0.05;
+  p_lower, p_upper from an item bootstrap (B = 10,000) by the shift method; cell p = max(p_lower, p_upper).
 - **Accuracy claims (4):** pick × {pi−oc, dsh−oc}; TOST ±5pp in each of the 4 cells (2 sessions × 2 languages);
-  claim p = max over cells of max(p_lower, p_upper) (intersection-union).
+  claim p = max of the 4 cell p values (intersection-union).
 - **Token claims (4):** same contrasts; estimand = mean over tasks of challenger − oc completion tokens per task
   (paired); H1: difference < 0; one-sided p from the two-stage cluster bootstrap (sessions, items within sessions);
   only with complete receipts.
-- **Subjective claims (4):** same contrasts; TOST ±5pp of the two-judge mean preference around 0.5 (§11).
+- **Subjective claims (4):** same contrasts; confirmatory estimand = the LENGTH-ADJUSTED two-judge preference (§11);
+  TOST H0: adjusted − 0.5 ≤ −0.05 or ≥ +0.05; p from the two-stage (session, item) cluster bootstrap, shift method.
+- **Unavailable claims** (incomplete receipts; subjective coverage below the floor; arm REJECTED): p = 1 — the family
+  stays at 12.
 - **One Holm family over the 12 claims.** Joint PASS for an arm on a pick = its accuracy, token and subjective claims
   all pass after Holm.
 - Method validated by simulation BEFORE any build (§12 step 2): coverage and TOST error under sparse/zero
@@ -192,16 +216,21 @@ Tests: Pi and dsh cheat → audit → re-run.
 
 ## 11. Subjective panel (C161)
 
-Judges codex `gpt-6.1-sol` (run on m5max — the panel is the one remaining codex use, as judge, not reviewer) and
-Claude Fable 5.1 `claude-fable-5-1`; versions and prompt shas recorded per verdict (P299). New M64 path (not the M38
-`judge_pairwise` rubric/aggregation): packets = final code of both arms where both passed strict, blinded; M64
-code-quality rubric (correctness beyond tests, clarity, idiom, minimality, robustness); both orders; per judge: order-
-consistent choice, else tie; missing judge or order → pair UNSCORED for that judge; per-judge preference =
-(wins + 0.5 ties)/scored; confirmatory estimator = mean of the two judges' preferences over pairs scored by both;
-length adjustment by paired regression of preference on log length ratio, item-clustered; item-cluster bootstrap CI.
-**Coverage floor:** per contrast and pick, ≥ 20 pairs scored by both judges AND ≥ 50% of items; below the floor that
-subjective claim is estimation-only (counts as not passed). Reliability gate (`judge_gate.py` thresholds) on anchors
-first. Tests: synthetic missing judge, order disagreement, length adjustment.
+Judges codex `gpt-6.1-sol` (on m5max — a judge, not a reviewer) and Claude Fable 5.1 `claude-fable-5-1`; versions and
+prompt shas recorded per verdict (P299). **Artifacts:** at each strict-graded attempt the runner snapshots the final
+solution files of the scratch dir (the exact bytes graded) into `final_code/<slot>/<attempt>/` with a sha256 manifest;
+packets are built only from these, with a packet manifest (pair → both code shas, blinding version, order). New M64
+path (not M38's `judge_pairwise` rubric/aggregation): pairs = items where both arms passed strict in that (pick,
+session); blinded (names stripped); M64 code-quality rubric (correctness beyond tests, clarity, idiom, minimality,
+robustness); both orders. Per judge and pair: order-consistent choice, else tie; a missing order or judge → pair
+UNSCORED for that judge. Pair score y = mean of the two judges' scores (win 1, tie 0.5, loss 0) over pairs scored by
+both. **Confirmatory estimator:** regress (y − 0.5) on x = log(challenger code length / oc code length) by OLS;
+adjusted preference = 0.5 + intercept (preference at equal length); inference by the two-stage cluster bootstrap
+(§10). The raw mean and each judge's preference are reported alongside. **Coverage floor:** per contrast and pick ≥ 20
+pairs scored by both judges AND ≥ 50% of items; below → claim unavailable (p = 1). **M64 reliability gate** (before
+scoring; thresholds from `judge_gate.py`): code anchors — degraded solution must lose (≥ 0.85), identical code on both
+sides → tie (≥ 0.80), padded/verbose variant must not win (≤ 0.10), order flip ≤ 0.30; a judge failing the gate is
+excluded and the claim is unavailable. Tests: synthetic missing judge, order disagreement, length adjustment, anchors.
 
 ## 12. Work order, acceptance, cost (E2.8 order kept; power first)
 
