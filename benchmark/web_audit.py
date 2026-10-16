@@ -144,6 +144,10 @@ def _read_evidence(entry: dict) -> str:
     return data.decode('utf-8', errors='surrogatepass')
 
 
+class AuditorVersionError(RuntimeError):
+    """P309: the auditor CLI version cannot be read, so a NEW audit cannot record its provenance."""
+
+
 def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMPT,
                retry_errors=False) -> Path:
     """Audit once per evidence/context/prompt/auditor (P299: whatever CLI version recorded it; C163: the fetch
@@ -158,12 +162,6 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
         os.environ.get('POLYGLOT_DIR') or paths.stack_workdir() / 'polyglot-benchmark')
     template = Path(prompt_file).read_bytes()
     prompt_sha = hashlib.sha256(template).hexdigest()
-    version_error = None
-    try:
-        version = auditor_version()
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        version = None
-        version_error = f'Auditor version failed: {type(exc).__name__}.'
     existing = answer_key.load_audits(sidecar)
     # C158 review A8: "already audited" means an ACCEPTED record (the scorer's own view); a malformed record or a
     # resolution without a genuine predecessor must not block a genuine re-audit
@@ -177,15 +175,17 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
             record = {'row_id': row['id'], 'sample': row.get('sample', 0),
                       'session_id': row.get('session_id'), 'kind': kind, 'index': index,
                       'path': entry.get('path'), 'sha256': entry.get('sha256'),
-                      'bytes': entry.get('bytes'), 'auditor': AUDITOR, 'auditor_version': version,
+                      'bytes': entry.get('bytes'), 'auditor': AUDITOR, 'auditor_version': None,
                       'prompt_sha256': prompt_sha, 'context_sha256': answer_key.context_sha256(entry),
                       'preflag': False}
             key = answer_key.evidence_key(record)
             # C163 review P2: the record the SCORER would apply (exact digest first, grandfathered legacy second)
             # decides; it is re-audited only when it is an error and --retry-errors was asked.
             applicable = latest.get((key, AUDITOR)) or latest.get((answer_key.legacy_key(key), AUDITOR))
+            # P309: an operator-RESOLVED audit_error is final; --retry-errors retries only unresolved errors
             if key in done or (applicable is not None
-                               and not (retry_errors and applicable.get('label') == 'audit_error')):
+                               and not (retry_errors and applicable.get('label') == 'audit_error'
+                                        and 'operator_label' not in applicable)):
                 continue
             done.add(key)
             try:
@@ -203,9 +203,15 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
                 record.update(label='audit_error', reason=f'Evidence/stub failure: {type(exc).__name__}.')
                 prompt = None
             pending.append((record, prompt))
-            if version_error:
-                record.update(label='audit_error', reason=version_error)
-                pending[-1] = (record, None)
+    if pending:
+        # P309: the installed version is provenance for NEW records only (none pending: no CLI needed); an unreadable
+        # version fails the command before anything is appended - a null-version record is not an audit
+        try:
+            version = auditor_version()
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            raise AuditorVersionError(f'Auditor version failed: {type(exc).__name__}.') from exc
+        for record, _ in pending:
+            record['auditor_version'] = version
     # Review likely solutions first; priority never overrides the blind auditor's label.
     pending.sort(key=lambda pair: not pair[0]['preflag'])
     with sidecar.open('a', encoding='utf-8') as stream:
