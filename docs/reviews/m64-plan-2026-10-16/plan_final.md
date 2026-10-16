@@ -42,7 +42,9 @@ the doc amendments named in each.
 3. ▲▲ **Web policy RULED (C165): web allowed** — an expected capability (C141/M61); every arm keeps its native web
    capability and shell networking; the P201 post-hoc audit covers every arm's web tool calls and shell networking
    (cheat → re-run procedure); opencode's deny patterns get a per-arm equivalent where the client supports one,
-   otherwise disclosed. The sandbox text below is SUPERSEDED (kept for the record): lead had recommended no web,
+   otherwise disclosed. ▲▲ Capability principle (C165 2a): each arm runs its normal default tool set, nothing added
+   or removed (Pi: vanilla, web via shell only; opencode: webfetch + shell; dsh: native web + shell); differences are
+   treatment, disclosed per arm; loop-hygiene controls of E2.2 unchanged. The sandbox text below is SUPERSEDED (kept for the record): lead had recommended no web,
    enforced by a macOS sandbox profile on the client process tree. ▲ Mandatory conformance positives before the boundary is
    accepted: router port allowed; other loopback ports denied; external hosts denied; proxy/alternate-destination
    attempts denied; inheritance by model-controlled shell children (incl. detached ones) proven. Socket sampling is
