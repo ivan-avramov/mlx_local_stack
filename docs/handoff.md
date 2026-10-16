@@ -7,10 +7,10 @@ P299, P308, P288, P306, C157), `docs/reviews/m64-plan-2026-10-16/plan_final.md` 
 ## State of the world
 
 - **Two boxes.** `m5max` (64 GB: codex CLI) and `m5max-128` (128 GB, chain box: cursor-agent). Quality rows pair
-  across boxes (C153); latency/thermal/capacity never. Reviewers: codex `gpt-6.1-sol` on m5max (run from a pulled
-  branch, recipe in `docs/reviews/m64-plan-2026-10-16/README.md`; no ssh from m5max-128), Cursor `gpt-5.6-sol-high`
-  on m5max-128 (`cursor-agent -p --output-format text --model gpt-5.6-sol-high --mode plan --sandbox enabled --force
-  --trust --workspace <repo> "<prompt>"`; re-run until the report contains a verdict line).
+  across boxes (C153); latency/thermal/capacity never. **Cold reviewer: Cursor `gpt-5.6-sol-high` on m5max-128 only
+  (operator 2026-10-16: "no more codex checks")** — `cursor-agent -p --output-format text --model gpt-5.6-sol-high
+  --mode plan --sandbox enabled --force --trust --workspace <repo> "<prompt>"`; re-run until the report contains a
+  verdict line.
 - **Branches.** `origin/main` = the 2026-10-15 sync merge (`170af9c0`). `m64-plan-review` (pushed) = main + C164 +
   the plan review + C165 docs; fast-forward main to it when approved. The m5max-128 MAIN CHECKOUT is deliberately
   still on its pre-merge `main` (probe `d4319705…`) because c144-base runs from it: do not change it until the chain
@@ -36,8 +36,8 @@ P299, P308, P288, P306, C157), `docs/reviews/m64-plan-2026-10-16/plan_final.md` 
 
 1. **Watch c144-base attempt 2.** On rc 0: copy rows to `benchmark/results/<model>/…c144base…`, report (P223 repeat,
    descriptive; discordance estimates for the M64 power simulation), README evidence labelled descriptive.
-2. **M64 spec** (`docs/specs/m64-scaffold-arms.md`) per `plan_final.md` E1/E2 with the C165 web ruling → Cursor + codex
-   cold review → operator go. Pi facts (source-read 2026-10-15, earendil-works/pi 4954d76) and the adapter-pattern map
+2. **M64 spec** (`docs/specs/m64-scaffold-arms.md`, DRAFT 2026-10-16, C165 2a/2b applied) → Cursor cold review
+   rounds (`docs/reviews/m64-spec/`) → operator go for the BUILD. Pi facts (source-read 2026-10-15, earendil-works/pi 4954d76) and the adapter-pattern map
    are in the review packet's context; attach dated URLs/package metadata.
 3. **G1** (approved) and **P340** (A4 logs/TMPDIR under the OFF arm's out-root): test-first in a worktree, cold
    review, merge after the chain.
