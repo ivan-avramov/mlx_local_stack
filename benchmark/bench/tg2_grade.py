@@ -255,7 +255,7 @@ def _mount(kind, src, dst, *, readonly=False):
     return "type=%s,src=%s,dst=%s%s" % (kind, src, dst, ",readonly" if readonly else "")
 
 
-def _docker_run(name, image_id, slug, mounts, inner, *, extra=()):
+def _docker_run(name, image_id, slug, mounts, inner, *, extra=(), nonce=None):
     cmd = [
         "docker", "run", *extra, "--name", name, "--pull=never", "--network", "none",
         "--memory", "4g", "--memory-swap", "4g",
@@ -264,6 +264,8 @@ def _docker_run(name, image_id, slug, mounts, inner, *, extra=()):
     ]
     for spec in mounts:
         cmd += ["--mount", spec]
+    if nonce and "--label" not in extra:
+        cmd += ["--label", OWNER_LABEL, "--label", "%s=%s" % (NONCE_LABEL, nonce)]
     return cmd + ["-w", "/work/" + slug, image_id, *inner]
 
 
@@ -805,11 +807,26 @@ def _container_oom(run, name, outputs, step):
     return value == "true"
 
 
-def _step(result, step, cmd, run, ops, outputs, timeout, work, container=None):
+def _remove_container(run, name, nonce, outputs, tag):
+    """Remove a container only when its nonce label proves this grade created it; every rm return code is checked and
+    absence is verified. Returns a list of problems (a foreign / unverifiable object is listed, never deleted)."""
+    found = _nonce_of(run, "container", name, outputs, tag + "-n")
+    if found is None:
+        return []
+    if found != nonce:
+        return ["container %s not provably ours; left in place" % name]
+    rc, _ = _plain(run, ["docker", "rm", "-f", name], outputs, tag + "-rm")
+    problems = ["container %s: docker rm failed (rc=%s)" % (name, rc)] if rc != 0 else []
+    if _exists(run, "container", name, outputs, tag + "-v"):
+        problems.append("container %s still present after removal" % name)
+    return problems
+
+
+def _step(result, step, cmd, run, ops, outputs, timeout, work, container=None, nonce=None, outputs_tag=None):
     """One launched step: output to files from launch, timing, hashes, OOM / memory-kill markers. Returns a record."""
     stdout_path, stderr_path = outputs / (step + ".stdout"), outputs / (step + ".stderr")
-    if container:
-        ops.register_container(container)
+    if container and _exists(run, "container", container, outputs, step + "-pre"):
+        raise TransportAbort("tg2 container name %s already exists; refusing (not touched)" % container)
     if hasattr(ops, "grader_mem_kill"):
         ops.grader_mem_kill = False
     started = time.monotonic()
@@ -828,9 +845,18 @@ def _step(result, step, cmd, run, ops, outputs, timeout, work, container=None):
             raise TransportAbort("missing docker runtime: %s" % exc) from exc
         if container:
             oom = _container_oom(run, container, outputs, step)
+    except BaseException as exc:
+        flight = exc
+        raise
     finally:
         if container:
-            ops.remove_container(container)
+            problems = _remove_container(run, container, nonce, outputs, step)
+            if problems:
+                note = "tg2 step %s container cleanup uncertain: %s" % (step, "; ".join(problems))
+                if "flight" in locals():
+                    flight.add_note(note)
+                else:
+                    raise TransportAbort(note)
     rec = dict(step=step, rc=rc, seconds=round(time.monotonic() - started, 3), timed_out=timed_out, oom=oom,
                mem_kill=bool(getattr(ops, "grader_mem_kill", False)),
                stdout_sha256=_sha256(stdout_path), stderr_sha256=_sha256(stderr_path),
@@ -927,17 +953,16 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
     base = "mlxbench-tg2-" + uuid.uuid4().hex[:12]
     vol_work, vol_report = base + "-w", base + "-r"
     holder = ops.container_name()
+    entry = _registry_write(registry, base, [vol_work, vol_report], holder, nonce)      # exclusive; before anything else
     for kind, name in (("volume", vol_work), ("volume", vol_report), ("container", holder)):
         if _exists(run, kind, name, outputs, "plan-" + name):
+            if entry is not None:
+                entry.unlink(missing_ok=True)
             raise TransportAbort("tg2 planned %s name %s already exists; refusing (not touched)" % (kind, name))
     label = ["--label", OWNER_LABEL, "--label", "%s=%d" % (CREATED_LABEL, int(time.time())),
              "--label", "%s=%s" % (NONCE_LABEL, nonce)]
     failure = None
     owned_volumes, owns_holder, unverified = [], False, []
-    entry = _registry_write(registry, base, [vol_work, vol_report], holder, nonce)
-    if hasattr(ops, "register_volume"):
-        for name in (vol_work, vol_report):
-            ops.register_volume(name)
     try:
         for name, size in ((vol_work, WORK_VOLUME_SIZE), (vol_report, REPORT_VOLUME_SIZE)):
             rc, text = _plain(run, ["docker", "volume", "create", "--driver", "local", "--opt", "type=tmpfs", "--opt",
@@ -952,7 +977,7 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
         vols = [_mount("volume", vol_work, "/work/" + slug), _mount("volume", vol_report, "/report")]
         # A tmpfs volume only keeps its contents while some container has it mounted: a tiny holder keeps both alive;
         # it self-expires (bounded by the step timeouts) if the grader dies before cleaning up.
-        ops.register_container(holder)
+        # (not registered with the ProcessGuard: its cleanup removes registered names unconditionally)
         rc, text = _plain(run, _docker_run(holder, image_id, slug, vols, ["sleep", str(5 * timeout + 300)],
                                            extra=("-d", *label)), outputs, "holder")
         if rc != 0:
@@ -961,7 +986,7 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
             unverified.append(holder)
             raise TransportAbort("tg2 holder %s is not provably ours (nonce label mismatch); left in place" % holder)
         owns_holder = True
-        return _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs, index, vols)
+        return _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs, index, vols, nonce)
     except BaseException as exc:
         failure = exc
         raise
@@ -984,15 +1009,8 @@ def _cleanup(run, ops, outputs, holder, volumes, nonce):
     problems = []
     if holder is not None:
         try:
-            found = _nonce_of(run, "container", holder, outputs, "cl-holder")
-            if found is None:
-                pass
-            elif found != nonce:
-                problems.append("holder %s not provably ours; left in place" % holder)
-            else:
-                ops.remove_container(holder)
-                if _exists(run, "container", holder, outputs, "cl-holder-v"):
-                    problems.append("holder %s still present" % holder)
+            if nonce is not None:
+                problems += _remove_container(run, holder, nonce, outputs, "cl-holder")
         except Exception as exc:  # noqa: BLE001 -- cleanup must reach the volumes whatever happened to the holder
             problems.append("holder %s: %s" % (holder, exc))
     for name in volumes:
@@ -1018,7 +1036,13 @@ def _registry_write(registry, base, volumes, holder, nonce):
         return None
     registry.mkdir(parents=True, exist_ok=True)
     path = registry / (base + ".json")
-    path.write_text(json.dumps(dict(base=base, volumes=volumes, holder=holder, nonce=nonce, created=int(time.time()))))
+    body = json.dumps(dict(base=base, volumes=volumes, holder=holder, nonce=nonce, created=int(time.time())))
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        raise TransportAbort("tg2 registry file %s already exists; refusing (not touched)" % path.name) from None
+    with os.fdopen(fd, "w") as fh:
+        fh.write(body)
     return path
 
 
@@ -1070,10 +1094,10 @@ def remove_registered(run, registry_file, private):
         if _nonce_of(run, kind, name, outputs, "cl-nonce") != nonce:
             foreign.append(name)
             continue
-        if kind == "container":
-            _plain(run, ["docker", "rm", "-f", name], outputs, "cl-rm")
-        else:
-            _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "cl-vrm")
+        cmd = ["docker", "rm", "-f", name] if kind == "container" else ["docker", "volume", "rm", "-f", name]
+        rc, _ = _plain(run, cmd, outputs, "cl-rm")
+        if rc != 0:
+            problems.append("%s %s: removal command failed (rc=%s)" % (kind, name, rc))
         if _exists(run, kind, name, outputs, "cl-verify"):
             problems.append("%s %s still present after removal" % (kind, name))
         else:
@@ -1085,22 +1109,22 @@ def remove_registered(run, registry_file, private):
     return removed
 
 
-def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs, index, vols):
+def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs, index, vols, gnonce):
     stage_mounts = [_mount("bind", work, "/src", readonly=True), *vols]
     launch = _launch(result, "setup-launch", ["bash", "-c", STAGE_SCRIPT], run, ops, image_id, slug, stage_mounts,
-                     outputs, timeout)
+                     outputs, timeout, gnonce)
     if launch["rc"] != 0 or launch["timed_out"]:
         raise TransportAbort("tg2 stage failed (rc=%s timeout=%s): %s" % (launch["rc"], launch["timed_out"],
                                                                          _text(launch)[-300:]))
     pre = _launch(result, "preflight", ["bash", "-c", _preflight(lang)], run, ops, image_id, slug, vols, outputs,
-                  timeout)
+                  timeout, gnonce)
     if pre["rc"] != 0 or pre["timed_out"] or pre["oom"]:
         raise TransportAbort("tg2 preflight failed (rc=%s): %s" % (pre["rc"], _text(pre)[-300:]))
     nonce = secrets.token_hex(8)
     compile_script, execute_script = _commands(lang, slug, nonce)
     # The per-grade nonce marker proves the shell reached the compiler / runner invocation; it is checked BEFORE any
     # timeout / OOM / exit-status classification, and its absence is always infrastructure.
-    comp = _launch(result, "compile", ["bash", "-c", compile_script], run, ops, image_id, slug, vols, outputs, timeout)
+    comp = _launch(result, "compile", ["bash", "-c", compile_script], run, ops, image_id, slug, vols, outputs, timeout, gnonce)
     if not _marker_seen(comp, COMPILE_MARKER, nonce):
         raise TransportAbort("tg2 compile: start marker absent (rc=%s): %s" % (comp["rc"], _text(comp)[-300:]))
     kind = _resource(comp)
@@ -1108,7 +1132,7 @@ def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs,
         return _all_failed(result, kind, index)
     if comp["rc"] != 0:
         return _all_failed(result, "compile_failure", index)
-    exe = _launch(result, "execute", ["bash", "-c", execute_script], run, ops, image_id, slug, vols, outputs, timeout)
+    exe = _launch(result, "execute", ["bash", "-c", execute_script], run, ops, image_id, slug, vols, outputs, timeout, gnonce)
     if not _marker_seen(exe, MARKER, nonce):
         raise TransportAbort("tg2 execute: runner-start marker absent (rc=%s): %s" % (exe["rc"], _text(exe)[-300:]))
     kind = _resource(exe)
@@ -1119,7 +1143,7 @@ def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs,
             leaves = parse_rust(_text(exe))
         else:
             col = _launch(result, "collect", ["bash", "-c", _collect_script(lang, slug, nonce)], run, ops, image_id, slug,
-                          vols, outputs, timeout)
+                          vols, outputs, timeout, gnonce)
             if not _marker_seen(col, COLLECT_MARKER, nonce, stream="stderr"):
                 raise TransportAbort("tg2 collect: start marker absent (rc=%s): %s" % (col["rc"], _text(col)[-300:]))
             kind = _resource(col, cap=None)
@@ -1138,10 +1162,10 @@ def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs,
     return result
 
 
-def _launch(result, step, inner, run, ops, image_id, slug, mounts, outputs, timeout):
+def _launch(result, step, inner, run, ops, image_id, slug, mounts, outputs, timeout, nonce):
     name = ops.container_name()
-    return _step(result, step, _docker_run(name, image_id, slug, mounts, inner), run, ops, outputs, timeout,
-                 None, container=name)
+    return _step(result, step, _docker_run(name, image_id, slug, mounts, inner, nonce=nonce), run, ops, outputs,
+                 timeout, None, container=name, nonce=nonce)
 
 
 def _all_failed(result, outcome, index):
@@ -1181,7 +1205,8 @@ def generate_cargo_locks(work, slug, private, *, image_id=None, run=None, guard=
         tmp = Path(tmp)
         result = Tg2Grade(lang="rust", image_id=image_id)
         rec = _launch(result, "locks", ["bash", "-c", script], run, ops, image_id, slug,
-                      [_mount("bind", work, "/work/" + slug)], tmp, TIMEOUT_FLOOR if timeout is None else timeout)
+                      [_mount("bind", work, "/work/" + slug)], tmp, TIMEOUT_FLOOR if timeout is None else timeout,
+                      secrets.token_hex(16))
         if rec["rc"] != 0 or rec["timed_out"]:
             raise TransportAbort("cargo lock generation failed: %s" % _text(rec)[-300:])
     return sorted(p.relative_to(work).as_posix() for p in work.rglob("Cargo.lock") if "target" not in p.parts)

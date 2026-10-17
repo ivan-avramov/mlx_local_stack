@@ -195,6 +195,8 @@ def step_of(cmd):
     if cmd[:2] == ["docker", "inspect"]:
         return "inspect"
     script = cmd[-1] if cmd[-2:-1] == ["-c"] else " ".join(cmd[-3:])
+    if "generate-lockfile" in script:
+        return "locks"
     if "TG2_PREFLIGHT" in script:
         return "preflight"
     if "TG2_COMPILE_START" in script:
@@ -277,7 +279,7 @@ class FakeGuard:
                 rm = self.plan.get("volume_rm")
                 if rm.get("timeout"):
                     raise subprocess.TimeoutExpired(cmd, 1)
-                if not rm.get("rc"):
+                if not rm.get("rc") or rm.get("still_removes"):
                     shutil.rmtree(self.volumes.pop(cmd[-1], self.vroot / "none"), ignore_errors=True)
                 return subprocess.CompletedProcess(cmd, rm.get("rc", 0), None, None)
             elif cmd[2] == "inspect":
@@ -310,8 +312,10 @@ class FakeGuard:
                 kw["stdout"].write("".join(n + "\n" for n in self.holder_names if n == want))
             return subprocess.CompletedProcess(cmd, 0, None, None)
         if step == "rm":
-            self.holder_names.pop(cmd[-1], None)
-            return subprocess.CompletedProcess(cmd, 0, None, None)
+            spec = self.plan.get("container_rm")
+            if not spec.get("rc") or spec.get("still_removes"):
+                self.holder_names.pop(cmd[-1], None)
+            return subprocess.CompletedProcess(cmd, spec.get("rc", 0), None, None)
         if step == "holder":
             self.holders.append(cmd)
             self.holder_names[cmd[cmd.index("--name") + 1]] = dict(
@@ -331,7 +335,13 @@ class FakeGuard:
             kw["stdout"].write(spec.get("inspect_out", "true" if spec.get("oom") else "false") + "\n")
             return subprocess.CompletedProcess(cmd, 0, None, None)
         if "--name" in cmd:
-            self.step_by_name[cmd[cmd.index("--name") + 1]] = step
+            cname = cmd[cmd.index("--name") + 1]
+            self.step_by_name[cname] = step
+            if self.plan.get(step).get("collide"):                       # a foreign object appears under this name
+                self.holder_names[cname] = {}
+                self.calls.append((step, cmd))
+                return subprocess.CompletedProcess(cmd, 125, None, None)
+            self.holder_names[cname] = labels_of(cmd)
         self.calls.append((step, cmd))
         spec = self.plan.get(step)
         if step in ("compile", "execute", "collect") and spec.get("mem_kill"):
@@ -356,6 +366,10 @@ class FakeGuard:
         wdst = next((d for d in m if d.startswith("/work/")), None)
         if wdst and wdst != "/work/slug":
             m["/work/slug"] = m[wdst]
+        if step == "locks":
+            host = Path(m[wdst])
+            (host / "Cargo.lock").write_text("a")
+            (host / "nested/Cargo.lock").write_text("b")
         if step == "launch":
             shutil.copytree(self.vol(m["/src"]), self.vol(m["/work/slug"]), dirs_exist_ok=True)
         for rel, data in spec.get("report", {}).items():
@@ -456,7 +470,7 @@ def test_phase_commands_flags_and_mounts_per_language(tree, lang):
     for part in EXPECTED[lang][1]:
         assert part in execute_cmd
     # every launched container was registered with the guard and removed
-    assert sorted(guard.removed) == sorted(guard.registered)
+    assert guard.registered == [] and guard.removed == [] and guard.holder_names == {}     # nonce-checked own cleanup
     assert guard.calls[0][1][:3] == ["docker", "image", "inspect"]
 
 
@@ -479,7 +493,7 @@ def test_compile_failure_fails_every_leaf_and_skips_execute(tree, lang):
 def test_timeout_after_launch_is_a_model_outcome(tree, step):
     result, guard = do_grade("rust", tree, basic_plan("rust", **{step: dict(timeout=True)}))
     assert result.outcome == "timeout" and result.all_failed and result.passing == set()
-    assert guard.removed          # killed container removed
+    assert guard.holder_names == {}          # killed container removed (nonce-verified)
 
 
 @pytest.mark.parametrize("step", ["compile", "execute"])
@@ -892,24 +906,13 @@ def test_grade_strips_planted_artifacts_before_any_container_and_records_them(tr
 # ------------------------------------------------------------------------------------------- Rust lockfile helper
 def test_generate_cargo_locks_runs_offline_in_the_image_and_returns_created_locks(tmp_path):
     work = build_tree(tmp_path / "w", {"Cargo.toml": "x", "nested/Cargo.toml": "y"})
-    seen = []
-
-    def run(cmd, **kw):
-        if cmd[:2] == ["docker", "inspect"]:
-            kw["stdout"].write("false\n")
-            return subprocess.CompletedProcess(cmd, 0, None, None)
-        seen.append(cmd)
-        m = mounts(cmd)
-        host = Path(next(h for t, h in m.items() if t.startswith("/work/")))
-        (host / "Cargo.lock").write_text("a")
-        (host / "nested/Cargo.lock").write_text("b")
-        return subprocess.CompletedProcess(cmd, 0, None, None)
-
-    locks = tg.generate_cargo_locks(work, "slug", tmp_path / "p", image_id=IMG, run=run)
+    guard = FakeGuard(Plan())
+    locks = tg.generate_cargo_locks(work, "slug", tmp_path / "p", image_id=IMG, guard=guard, run=guard.run_grader)
     assert locks == ["Cargo.lock", "nested/Cargo.lock"]
-    text = " ".join(seen[0])
+    text = " ".join(guard.calls[0][1])
     assert "--network none" in text and "--pull=never" in text and "generate-lockfile --offline" in text
-    assert "--frozen" not in text
+    assert "--frozen" not in text and "mlxbench.tg2.nonce=" in text
+    assert guard.holder_names == {}
 
 
 # ============================================================================================ round-2 (G1-G17)
@@ -1203,14 +1206,14 @@ def test_g19_work_and_report_live_on_size_limited_volumes_held_open_and_removed(
     assert len(creates) == 2 and all("type=tmpfs" in " ".join(c) and "size=" in " ".join(c) for c in creates)
     assert guard.holders and "sleep" in guard.holders[0] and "7200" not in guard.holders[0]
     assert guard.volumes == {} and any(c[2] == "rm" for c in guard.volume_ops)       # removed again
-    assert guard.removed.count(guard.registered[0]) >= 1
+    assert guard.holder_names == {}
 
 
 def test_g19_volumes_and_holder_are_removed_on_infrastructure_abort_too(tree):
     guard = FakeGuard(basic_plan("rust", execute=dict(no_marker=True)))
     with pytest.raises(TransportAbort):
         tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
-    assert guard.volumes == {} and set(guard.removed) == set(guard.registered)
+    assert guard.volumes == {} and guard.holder_names == {}
 
 
 def test_g19_oversized_input_tree_is_a_model_outcome_without_any_container(tree, monkeypatch):
@@ -1270,11 +1273,10 @@ def test_g21_volumes_and_holder_carry_ownership_labels_and_the_holder_self_expir
 
 
 def test_g21_cleanup_continues_past_every_failure_and_surfaces_uncertainty_on_success(tree, tmp_path):
-    guard = FakeGuard(basic_plan("rust", holder_rm=dict(raise_=1), volume_rm=dict(rc=1)))
-    guard.plan.steps["holder_rm"] = {"raise": True}
-    with pytest.raises(TransportAbort, match="cleanup uncertain") as exc:
+    guard = FakeGuard(basic_plan("rust", container_rm=dict(rc=1), volume_rm=dict(rc=1)))
+    with pytest.raises(TransportAbort) as exc:
         tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
-    assert "volume" in str(exc.value) and "holder" in str(exc.value).lower() or "container" in str(exc.value)
+    assert "container" in str(exc.value) or "cleanup uncertain" in str(exc.value) or "holder" in str(exc.value)
     rms = [c for c in guard.volume_ops if c[2] == "rm"]
     assert len(rms) == 2                                                    # both volumes attempted despite failures
 
@@ -1540,6 +1542,78 @@ def test_g31_leftover_refusal_precedes_every_other_early_return(tree, monkeypatc
     _leftover(guard)
     with pytest.raises(TransportAbort, match="leftover"):
         tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+
+
+# ============================================================================================ round-7 (G33-G35)
+def test_g33_every_step_container_carries_the_grade_nonce_and_none_is_registered_with_the_guard(tree):
+    _, guard = do_grade("java", tree, basic_plan("java"))
+    nonces = {labels_of(cmd)["mlxbench.tg2.nonce"] for _, cmd in guard.calls[1:]} | {
+        labels_of(guard.holders[0])["mlxbench.tg2.nonce"]}
+    assert len(nonces) == 1
+    for _, cmd in guard.calls[1:]:
+        assert labels_of(cmd)["mlxbench.tg2"] == "1"
+    # ProcGuard.cleanup() would remove a registered name unconditionally: tg2 does its own nonce-checked cleanup
+    assert guard.registered == [] and guard.removed == []
+
+
+def test_g33_a_preexisting_container_with_a_planned_step_name_aborts_and_is_not_removed(tree):
+    guard = FakeGuard(basic_plan("rust"))
+    guard.holder_names["fake-2"] = {}                         # the staging container's planned name (holder is fake-1)
+    with pytest.raises(TransportAbort, match="fake-2"):
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert "fake-2" in guard.holder_names and not [c for c in guard.calls if c[0] != "image"]
+
+
+def test_g33_a_docker_run_name_collision_never_deletes_the_colliding_object(tree):
+    guard = FakeGuard(basic_plan("rust", preflight=dict(collide=True)))
+    with pytest.raises(TransportAbort, match="not provably ours") as exc:
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    colliding = [n for n, l in guard.holder_names.items() if not l]
+    assert len(colliding) == 1 and colliding[0] in str(exc.value)
+    assert guard.volumes == {}                                 # our own storage was still cleaned up
+
+
+# G34 ------------------------------------------------------------------------------------------------------------
+def test_g34_a_failed_container_removal_is_uncertainty_even_if_the_object_then_looks_absent(tree):
+    guard = FakeGuard(basic_plan("rust", container_rm=dict(rc=1, still_removes=True)))
+    with pytest.raises(TransportAbort, match="removal|rm"):
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert list((tree[1] / ".tg2-registry").glob("*.json"))             # registry kept
+
+
+def test_g34_a_failed_volume_removal_is_uncertainty_even_if_the_volume_then_looks_absent(tree):
+    guard = FakeGuard(basic_plan("rust", volume_rm=dict(rc=1, still_removes=True)))
+    with pytest.raises(TransportAbort, match="cleanup uncertain"):
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert list((tree[1] / ".tg2-registry").glob("*.json"))
+
+
+@pytest.mark.parametrize("plan", [dict(container_rm=dict(rc=1, still_removes=True)),
+                                  dict(volume_rm=dict(rc=1, still_removes=True))])
+def test_g34_remove_registered_checks_every_removal_return_code(tree, plan):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust", **plan))
+    vol, holder = _leftover(guard)
+    guard.volumes["mlxbench-tg2-aaaaaaaaaaaa-r"] = guard.vroot
+    guard.volume_labels["mlxbench-tg2-aaaaaaaaaaaa-r"] = {"mlxbench.tg2": "1", "mlxbench.tg2.nonce": NONCE}
+    reg = _registry(private, vol, holder)
+    with pytest.raises(TransportAbort, match="removal"):
+        tg.remove_registered(guard.run_grader, reg, private)
+    assert reg.exists()
+
+
+# G35 ------------------------------------------------------------------------------------------------------------
+def test_g35_registry_creation_is_exclusive(tree, monkeypatch):
+    monkeypatch.setattr(tg.uuid, "uuid4", lambda: _Hex)
+    work, private = tree
+    reg = private / ".tg2-registry"
+    reg.mkdir()
+    (reg / "mlxbench-tg2-cccccccccccc.json").write_text("EVIDENCE")
+    guard = FakeGuard(basic_plan("rust"))
+    with pytest.raises(TransportAbort, match="registry"):
+        tg.grade("rust", work, "slug", private, image_id=IMG, guard=guard, run=guard.run_grader)
+    assert (reg / "mlxbench-tg2-cccccccccccc.json").read_text() == "EVIDENCE"
+    assert guard.volumes == {} and not [c for c in guard.volume_ops if c[2] in ("create", "rm")]
 
 
 # G22 ------------------------------------------------------------------------------------------------------------
