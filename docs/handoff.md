@@ -35,6 +35,8 @@ P353, P352, P351), `docs/specs/m65-tg2-corpus.md` (v5), `docs/specs/p311-identit
   passed; tg2 docker tests need the machine config sourced (`STACK_WORKDIR`) or they skip. **Step 2 in progress** (branch `tg2-step2`):
   materializer, universe freeze, nested draw.
 - **Operator answers pending:** none. Local main is ahead of origin (P311-lite, P364, tg2 step 1, docs) — push needs a new go.
+- **Push rule (C176):** active WIP build branches (`tg2-step2`, `m64-build`, …) may be pushed after each commit batch (privacy scan each
+  time); `main` and everything else still need an explicit in-turn go.
 - **Rules:** never run two full suites concurrently (load flakes timing tests and once leaked a chain-test runner thread for 7 h — fixed
   defensively on `tg2-build`); always write suite output to a file and read the summary line.
 - **P361:** OrbStack bind mounts under `$TMPDIR` serve stale sizes after in-place overwrites; tg1 unaffected (fresh snapshots under
