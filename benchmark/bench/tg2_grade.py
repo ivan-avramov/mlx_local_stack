@@ -201,11 +201,8 @@ class LocalDocker:
         return subprocess.run(cmd, timeout=timeout, **kwargs)
 
     def remove_container(self, name):
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True, timeout=30)
-        out = subprocess.run(["docker", "ps", "-a", "--filter", "name=^/" + name + "$", "--format", "{{.Names}}"],
-                             capture_output=True, text=True, timeout=15)
-        if out.returncode or out.stdout.strip():
-            raise TransportAbort("container cleanup uncertain")
+        # P365: removal by name alone is never allowed; tg2 removes only nonce-verified objects (_remove_container)
+        raise TransportAbort("name-only container removal is not permitted (use the nonce-checked path)")
 
     def leftover(self):
         out = subprocess.run(["docker", "ps", "-a", "--filter", "name=^/" + self.prefix, "--format", "{{.Names}}"],
