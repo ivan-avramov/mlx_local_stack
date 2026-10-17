@@ -2,7 +2,8 @@
 
 Status: DRAFT → Cursor `gpt-5.6-sol-high` review → operator. PLAN M65; C167 (P349). v2 applies Cursor round 1
 T1–T13 (`benchmark/chains/c147/reviews/m65/tg2-round1.cursor-gpt-5.6-sol-high.md`); v3 applies round 2 T14–T26
-(`tg2-round2…`). v1 = `a44b4b18`, v2 = `ae4aeb9d`.
+(`tg2-round2…`) and round 3 T27–T28 (`tg2-round3…`, AGREE WITH CHANGES T27 T28). v1 = `a44b4b18`, v2 = `ae4aeb9d`,
+v3 = `5e98a509`.
 
 ## Why
 
@@ -25,7 +26,9 @@ levels are indicative only.
   (`rowschema.sample_seed`, seed bases as tg1) plus a same-seed reload control (5 items per language), deployed
   sampling via `params_for(model, profile="deployed")`, thinking ON with the tg1 budget, predictor OFF, the tg1 gate
   ceilings; the ranking key is `acc_strict@budget` per pick × language × session; sessions never pooled.
-- **Subjective quality (T22, AGENTS.md / C166):** final solution trees retained by sha256; the two-provider blind
+- **Subjective quality (T22, T28, AGENTS.md / C166):** content-addressed snapshots of the exact final graded
+  implementation tree (bytes, not only hashes) retained per row; no final tg2 comparison or recommendation is complete
+  until the panel has run — until then every tg2 report is labelled "pending subjective review"; the two-provider blind
   pairwise panel (both orders, length-adjusted) runs over execution-PASSING outputs once the M64 panel build exists;
   judge model ids, client versions and prompt sha recorded per verdict; cost reported with the sizing.
 - **Estimand (T9):** per language × session cells only (strict, conv, nonconv kinds, tokens/task); never blended
@@ -58,7 +61,9 @@ levels are indicative only.
   by id. Every rewrite is validated by the stable reference runs.
 - **Multi-file items (T4, T17):** a per-language path mapping from `.meta/config.json` builds a separate reference
   overlay (never copy-by-index): Rust — the single example maps to `src/lib.rs`, `Cargo.toml` stays protected; C++ —
-  example `.cpp`/`.h` map to the solution `.cpp`/`.h` by stem; Java — each example maps by class path under
+  map by file type to the unique solution destination (`.meta/example.cpp` → the solution `.cpp`, `.meta/example.h` →
+  the solution `.h`); header-only references (three items, e.g. `binary-search-tree`) keep the unmatched prepared stub;
+  an ambiguous or missing destination is a freeze error (T27); Java — each example maps by class path under
   `src/main/java` (e.g. `connect`: one solution, four reference files); every destination validated (inside the tree,
   declared or allowlisted). The universe freezes arrays of editable implementation paths and test paths; `file_changed`
   = any declared editable implementation path changed. V1b (Python/Go) unchanged.
