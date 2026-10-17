@@ -6,54 +6,63 @@ from pathlib import Path
 import re
 import shutil
 
+from bench import structured_grade as sg  # noqa: F401  (re-exported for the acceptance script)
+
 _LANG_DIR = {"rust": "rust", "java": "java", "javascript": "javascript", "cpp": "cpp"}
 _JS_SKIP = re.compile(r"\b(xtest|xit|xdescribe)\(")
 _JAVA_DISABLED = re.compile(r"@Disabled(?:\([^)]*\))?[ \t]*\n?")
 
 
-def _prepare(corpus, lang, slug, dest):
+def _config(corpus, lang, slug):
     src = Path(corpus) / _LANG_DIR[lang] / "exercises/practice" / slug
+    return src, json.loads((src / ".meta/config.json").read_text())["files"]
+
+
+def solutions(corpus, lang, slug):
+    """Editable implementation paths of the prepared tree (Rust Cargo.toml stays protected)."""
+    _, config = _config(corpus, lang, slug)
+    # Exercism `editor` files (e.g. Java connect's Winner.java) are student-editable and the reference overwrites them.
+    return [s for s in config["solution"] + config.get("editor", []) if s != "Cargo.toml"]
+
+
+def stub_tree(corpus, lang, slug, dest):
+    """The prepared (untouched stub) tree: `.docs`/`.meta` removed, skip forms rewritten."""
+    src, _ = _config(corpus, lang, slug)
     dest = Path(dest)
-    shutil.copytree(src, dest, ignore=shutil.ignore_patterns(".docs"))
-    config = json.loads((dest / ".meta/config.json").read_text())["files"]
+    shutil.copytree(src, dest, ignore=shutil.ignore_patterns(".docs", ".meta"))
     if lang == "javascript":
         for path in dest.glob("*.spec.js"):
             path.write_text(_JS_SKIP.sub(lambda m: m.group(1)[1:] + "(", path.read_text()))
     if lang == "java":
         for path in (dest / "src/test").rglob("*.java"):
             path.write_text(_JAVA_DISABLED.sub("", path.read_text()))
-    return dest, config
+    return dest
 
 
-def _overlay(dest, lang, config):
-    solutions, examples = config["solution"], config["example"]
+def apply_reference(corpus, lang, slug, tree):
+    """Overlay the reference solution onto a prepared tree (per-language path mapping)."""
+    src, config = _config(corpus, lang, slug)
+    solutions_, examples = config["solution"], config["example"]
+    tree = Path(tree)
     if lang == "rust":
-        shutil.copy(dest / examples[0], dest / "src/lib.rs")
+        shutil.copy(src / examples[0], tree / "src/lib.rs")
     elif lang == "javascript":
-        shutil.copy(dest / examples[0], dest / solutions[0])
+        shutil.copy(src / examples[0], tree / solutions_[0])
     elif lang == "java":
         base = ".meta/src/reference/java/"
         for example in examples:
             assert example.startswith(base), example
-            target = dest / "src/main/java" / example[len(base):]
+            target = tree / "src/main/java" / example[len(base):]
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(dest / example, target)
+            shutil.copy(src / example, target)
     else:
         for example in examples:
             suffix = Path(example).suffix
-            match = [s for s in solutions if Path(s).suffix == suffix]
-            assert len(match) == 1, (example, solutions)
-            shutil.copy(dest / example, dest / match[0])
+            match = [s for s in solutions_ if Path(s).suffix == suffix]
+            assert len(match) == 1, (example, solutions_)
+            shutil.copy(src / example, tree / match[0])
+    return tree
 
 
 def reference_tree(corpus, lang, slug, dest):
-    dest, config = _prepare(corpus, lang, slug, dest)
-    _overlay(dest, lang, config)
-    shutil.rmtree(dest / ".meta")
-    return dest
-
-
-def stub_tree(corpus, lang, slug, dest):
-    dest, _ = _prepare(corpus, lang, slug, dest)
-    shutil.rmtree(dest / ".meta")
-    return dest
+    return apply_reference(corpus, lang, slug, stub_tree(corpus, lang, slug, dest))

@@ -21,19 +21,22 @@ ENV GRADLE_RO_DEP_CACHE=/opt/tg2/gradle-ro-cache
 
 # ---- JavaScript: one dependency bundle for the corpus package.json devDependencies (stage_context.py verifies that
 # every corpus signature matches). /node_modules makes it visible to babel/jest resolution from any work dir.
-COPY ctx/js/package.json /opt/tg2/js/package.json
-RUN set -eux; cd /opt/tg2/js && npm install --no-audit --no-fund --no-progress && npm cache clean --force && \
+COPY ctx/js/package.json ctx/js/package-lock.json /opt/tg2/js/
+RUN set -eux; cd /opt/tg2/js && npm ci --no-audit --no-fund --no-progress && npm cache clean --force && \
     ln -s /opt/tg2/js/node_modules /node_modules
 
-# ---- Rust: vendored crate cache for every corpus Cargo.toml (cargo vendor --sync), source-replaced for offline use.
+# ---- Rust: vendored crate cache for every corpus Cargo.toml (cargo vendor --locked --sync, per-manifest committed
+# Cargo.lock files staged beside the manifests), source-replaced for offline use.
 COPY ctx/rust /tmp/tg2/rust
 RUN set -eux; \
     cd /tmp/tg2/rust; \
     manifests=$(find . -name Cargo.toml | sort); \
     first=$(echo "$manifests" | head -1); \
     sync=""; for m in $manifests; do [ "$m" != "$first" ] && sync="$sync --sync $m"; done; \
-    cargo vendor $sync --manifest-path "$first" /opt/tg2/cargo-vendor > /tmp/tg2/vendor-config.toml; \
+    cargo vendor --locked $sync --manifest-path "$first" /opt/tg2/cargo-vendor > /tmp/tg2/vendor-config.toml; \
     printf '[source.crates-io]\nreplace-with = "vendored-sources"\n\n[source.vendored-sources]\ndirectory = "/opt/tg2/cargo-vendor"\n' > /root/.cargo/config.toml; \
     rm -rf /tmp/tg2
 
-LABEL tg2.version="m65-v1"
+ARG POLYGLOT_SHA
+ARG CONTEXT_SHA256
+LABEL tg2.version="m65-v1" tg2.polyglot_sha="${POLYGLOT_SHA}" tg2.context_sha256="${CONTEXT_SHA256}"

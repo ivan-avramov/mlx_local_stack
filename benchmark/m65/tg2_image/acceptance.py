@@ -4,6 +4,7 @@ Covers every dependency family the image bakes: Rust crates (time, rand, anyhow 
 Java Gradle closures (common JUnit/AssertJ, hangman RxJava, rest-api org.json; each from an empty writable Gradle
 home, with the read-only dependency cache supplying artifacts), the JS bundle and C++ (Catch2 + Boost). Fails when any
 item needs network, does not collect all-pass, or the no-network control does not hold."""
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -43,13 +44,21 @@ def main(corpus):
             # cannot compile (a freeze exclusion); the untouched stub still proves the anyhow crate resolves offline.
             stub_only = slug.endswith(":stub")
             slug = slug.split(":")[0]
-            build = tg2_trees.stub_tree if stub_only else tg2_trees.reference_tree
-            work = build(corpus, lang, slug, tmp / lang / slug)
             private = tmp / "private"
+            work = tg2_trees.stub_tree(corpus, lang, slug, tmp / lang / slug)
             if lang == "rust":
                 tg.generate_cargo_locks(work, slug, private, guard=guard)
+            prepared = tg2_trees.sg.manifest(work)
+            if not stub_only:
+                # fresh directory: overwriting a file a container already mounted can show the container a stale
+                # (old-size) view on virtiofs, so the reference tree is never an in-place edit of the locked stub
+                ref = tmp / (lang + "-ref") / slug
+                shutil.copytree(work, ref)
+                work = tg2_trees.apply_reference(corpus, lang, slug, ref)
             keep = tmp / "keep" / lang / slug
-            result = tg.grade(lang, work, slug, private, guard=guard, timeout=900, keep=keep, seq=0, boundary=0)
+            result = tg.grade_item(lang, work, slug, private, prepared=prepared,
+                                   solutions=tg2_trees.solutions(corpus, lang, slug), guard=guard, timeout=900,
+                                   keep=keep, seq=0, boundary=0)
             raw = "".join(p.read_text(errors="replace") for p in (keep / "seq-0000").glob("*.std*"))
             for needle in NETWORK_TEXT:
                 if needle in raw:

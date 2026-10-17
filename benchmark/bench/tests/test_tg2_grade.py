@@ -159,10 +159,14 @@ class Plan:
 def step_of(cmd):
     if cmd[:3] == ["docker", "image", "inspect"]:
         return "image"
+    if cmd[:2] == ["docker", "inspect"]:
+        return "inspect"
     script = cmd[-1] if cmd[-2:-1] == ["-c"] else " ".join(cmd[-3:])
     if cmd[-1] == "true":
         return "launch"
-    if any(k in script for k in ("--no-run", "compileTestJava", "--listTests", "cmake -S")):
+    if "TG2_PREFLIGHT" in script:
+        return "preflight"
+    if "TG2_COMPILE_START" in script:
         return "compile"
     return "execute"
 
@@ -192,29 +196,35 @@ class FakeGuard:
     def register_container(self, name):
         self.registered.append(name)
 
-    def container_oom(self, name):
-        return bool(self.plan.get(self.step_by_name.get(name, "?")).get("oom"))
-
     def remove_container(self, name):
         self.removed.append(name)
 
     def run_grader(self, cmd, **kw):
         step = step_of(cmd)
+        if step == "inspect":
+            spec = self.plan.get(self.step_by_name.get(cmd[-1], "?"))
+            if spec.get("inspect_rc"):
+                return subprocess.CompletedProcess(cmd, spec["inspect_rc"], None, None)
+            kw["stdout"].write(spec.get("inspect_out", "true" if spec.get("oom") else "false") + "\n")
+            return subprocess.CompletedProcess(cmd, 0, None, None)
         if "--name" in cmd:
             self.step_by_name[cmd[cmd.index("--name") + 1]] = step
         self.calls.append((step, cmd))
         spec = self.plan.get(step)
         if step in ("compile", "execute") and spec.get("mem_kill"):
             self.grader_mem_kill = True
+        if step in ("compile", "execute"):
+            tag = "TG2_RUNNER_START" if step == "execute" else "TG2_COMPILE_START"
+            nonce = re.search(tag + r" (\w+)", cmd[-1]).group(1)
+            if spec.get("fake_marker"):
+                kw["stdout"].write(tag + " deadbeef\n")
+            if not spec.get("no_marker"):
+                kw["stdout"].write("%s %s\n" % (tag, nonce))
         if spec.get("timeout"):
             kw["stdout"].write(spec.get("stdout", ""))
             raise subprocess.TimeoutExpired(cmd, kw.get("timeout") or 1)
-        if step == "execute":
-            nonce = re.search(r"TG2_RUNNER_START (\w+)", cmd[-1]).group(1)
-            if spec.get("fake_marker"):
-                kw["stdout"].write("TG2_RUNNER_START deadbeef\n")
-            if not spec.get("no_marker"):
-                kw["stdout"].write("TG2_RUNNER_START %s\n" % nonce)
+        if spec.get("big_stdout"):
+            kw["stdout"].write("x" * spec["big_stdout"])
         kw["stdout"].write(spec.get("stdout", ""))
         kw["stderr"].write(spec.get("stderr", ""))
         m = mounts(cmd)
@@ -281,7 +291,7 @@ def test_phase_commands_flags_and_mounts_per_language(tree, lang):
     assert result.outcome == "parsed" and not result.all_failed
     assert result.passing == result.collected and len(result.collected) == 2
     steps = [s for s, _ in guard.calls]
-    assert steps == ["image", "launch", "compile", "execute"]
+    assert steps == ["image", "launch", "preflight", "compile", "execute"]
     for step, cmd in guard.calls[1:]:
         text = " ".join(cmd)
         for flag in ("--pull=never", "--network none", "--memory 4g", "--memory-swap 4g", "--name"):
@@ -292,19 +302,19 @@ def test_phase_commands_flags_and_mounts_per_language(tree, lang):
         assert set(m) == {"/work/slug", "/report"}                           # nothing else mounted
         assert m["/work/slug"] == str(tree[0].resolve()) and m["/report"] != m["/work/slug"]
         assert "/work/slug" in cmd                                           # -w
-    compile_cmd, execute_cmd = (guard.calls[2][1][-1], guard.calls[3][1][-1])
+    compile_cmd, execute_cmd = (guard.calls[3][1][-1], guard.calls[4][1][-1])
     for part in EXPECTED[lang][0]:
         assert part in compile_cmd
     for part in EXPECTED[lang][1]:
         assert part in execute_cmd
     # every launched container was registered with the guard and removed
-    assert len(guard.registered) == 3 and sorted(guard.removed) == sorted(guard.registered)
+    assert len(guard.registered) == 4 and sorted(guard.removed) == sorted(guard.registered)
     assert guard.calls[0][1][:3] == ["docker", "image", "inspect"]
 
 
 def test_rust_execute_merges_stderr_so_binary_headers_stay_with_their_tests(tree):
     _, guard = do_grade("rust", tree, basic_plan("rust"))
-    assert "2>&1" in guard.calls[3][1][-1]
+    assert "2>&1" in guard.calls[4][1][-1]
 
 
 # ----------------------------------------------------------------------------------------------- outcome classes
@@ -314,7 +324,7 @@ def test_compile_failure_fails_every_leaf_and_skips_execute(tree, lang):
     result, guard = do_grade(lang, tree, plan)
     assert result.outcome == "compile_failure" and result.all_failed
     assert result.passing == set() and result.failing({"a", "b"}) == 2
-    assert [s for s, _ in guard.calls] == ["image", "launch", "compile"]
+    assert [s for s, _ in guard.calls] == ["image", "launch", "preflight", "compile"]
 
 
 @pytest.mark.parametrize("step", ["compile", "execute"])
@@ -392,8 +402,8 @@ def test_forged_marker_without_the_nonce_does_not_change_classification(tree):
 def test_execute_script_prints_the_marker_right_before_the_runner_with_a_fresh_nonce(tree):
     _, g1 = do_grade("java", tree, basic_plan("java"))
     _, g2 = do_grade("java", tree, basic_plan("java"))
-    s1, s2 = g1.calls[3][1][-1], g2.calls[3][1][-1]
-    assert re.match(r'^echo "TG2_RUNNER_START [0-9a-f]{16}"; bash \./gradlew', s1)
+    s1, s2 = g1.calls[4][1][-1], g2.calls[4][1][-1]
+    assert re.search(r'echo "TG2_RUNNER_START [0-9a-f]{16}"; bash \./gradlew', s1)
     assert s1 != s2
 
 
@@ -402,8 +412,10 @@ def test_execute_script_prints_the_marker_right_before_the_runner_with_a_fresh_n
     ("image", dict(image_id="sha256:" + "cd" * 32)),
     ("launch", dict(rc=125, stderr="docker: Error response from daemon")),
     ("launch", dict(timeout=True)),
-    ("compile", dict(rc=125, stderr="docker: Error response from daemon: pull access denied")),
-    ("compile", dict(rc=127, stderr="bash: cargo: command not found")),
+    ("compile", dict(rc=125, stderr="docker: Error response from daemon: pull access denied", no_marker=True)),
+    ("compile", dict(rc=127, stderr="bash: cargo: command not found", no_marker=True)),
+    ("preflight", dict(rc=1, stderr="cargo: command not found")),
+    ("preflight", dict(timeout=True)),
     ("execute", dict(rc=126, stderr="permission denied", no_marker=True)),
 ])
 def test_setup_and_docker_level_failures_are_infrastructure(tree, step, over):
@@ -412,12 +424,27 @@ def test_setup_and_docker_level_failures_are_infrastructure(tree, step, over):
 
 
 @pytest.mark.parametrize("lang,text", [
-    ("rust", "error: failed to get `time` as a dependency of package `x`\nattempting to make an HTTP request, but --offline was specified"),
+    ("rust", "error: failed to get `time` as a dependency of package `x`\nattempting to make an HTTP request, but --offline"),
     ("java", "Could not resolve org.assertj:assertj-core:3.25.1.\nNo cached version available for offline mode"),
 ])
-def test_unresolvable_offline_dependency_is_infrastructure_not_model(tree, lang, text):
-    with pytest.raises(TransportAbort):
-        do_grade(lang, tree, basic_plan(lang, compile=dict(rc=101 if lang == "rust" else 1, stderr=text)))
+def test_dependency_looking_compile_text_is_a_model_outcome_after_preflight(tree, lang, text):
+    plan = basic_plan(lang, compile=dict(rc=101 if lang == "rust" else 1, stderr=text))
+    result, _ = do_grade(lang, tree, plan)
+    assert result.outcome == "compile_failure" and result.all_failed
+
+
+PREFLIGHT_NEEDLES = {"rust": ("cargo", "cargo-vendor"), "java": ("java", "GRADLE_RO_DEP_CACHE", "gradle-8.7"),
+                     "javascript": ("jest", "@babel/core"), "cpp": ("cmake", "boost")}
+
+
+@pytest.mark.parametrize("lang", sorted(PREFLIGHT_NEEDLES))
+def test_preflight_checks_runners_and_dependency_closure_before_the_compile_marker(tree, lang):
+    _, guard = do_grade(lang, tree, basic_plan(lang))
+    script = guard.calls[2][1][-1]
+    assert "TG2_PREFLIGHT" in script and "TG2_COMPILE_START" not in script
+    for needle in PREFLIGHT_NEEDLES[lang]:
+        assert needle in script, needle
+    assert "TG2_COMPILE_START" in guard.calls[3][1][-1]
 
 
 # ------------------------------------------------------------------------------------------------- skip-form refusal
@@ -463,10 +490,11 @@ def test_raw_outputs_retained_by_sha256_with_phase_records(tree, tmp_path):
     phases = json.loads((d / "phases.json").read_text())
     assert phases["version"] == tg.VERSION == "m65-tg2-v1" and phases["image_id"] == IMG
     names = [p["step"] for p in phases["phases"]]
-    assert names == ["setup-image", "setup-launch", "compile", "execute"]
-    compile_phase = phases["phases"][2]
+    assert names == ["setup-image", "setup-launch", "preflight", "compile", "execute"]
+    compile_phase = phases["phases"][3]
     assert compile_phase["rc"] == 0 and compile_phase["seconds"] >= 0
-    assert compile_phase["stdout_sha256"] == hashlib.sha256(b"listed\n").hexdigest()
+    assert compile_phase["stdout_sha256"] == hashlib.sha256((d / "compile.stdout").read_bytes()).hexdigest()
+    assert (d / "compile.stdout").read_text().endswith("listed\n")
     assert result.artifacts == index["artifacts"]
 
 
@@ -719,6 +747,9 @@ def test_generate_cargo_locks_runs_offline_in_the_image_and_returns_created_lock
     seen = []
 
     def run(cmd, **kw):
+        if cmd[:2] == ["docker", "inspect"]:
+            kw["stdout"].write("false\n")
+            return subprocess.CompletedProcess(cmd, 0, None, None)
         seen.append(cmd)
         m = mounts(cmd)
         host = Path(next(h for t, h in m.items() if t.startswith("/work/")))
@@ -731,6 +762,239 @@ def test_generate_cargo_locks_runs_offline_in_the_image_and_returns_created_lock
     text = " ".join(seen[0])
     assert "--network none" in text and "--pull=never" in text and "generate-lockfile --offline" in text
     assert "--frozen" not in text
+
+
+# ============================================================================================ round-2 (G1-G17)
+# G1 -------------------------------------------------------------------------------------------------------------
+def test_g1_failing_counts_failed_leaves_outside_the_universe_and_missing_expected():
+    g = tg.Tg2Grade(leaves={"a": True, "b": True, "teardown": False, "c": False})
+    assert g.failing({"a", "b"}) == 2                # teardown, c: collected failures outside the universe
+    assert g.failing({"a", "b", "m"}) == 3           # + missing expected leaf m
+    g.optional = frozenset({"c"})
+    assert g.failing({"a", "b"}) == 1                # frozen optional ids excluded only
+    assert tg.Tg2Grade(leaves={"a": True}, all_failed=True).failing({"a", "b"}) == 2
+
+
+# G2 / G3 --------------------------------------------------------------------------------------------------------
+def test_g2_suite_status_failure_with_passing_assertions_is_a_counted_failure():
+    doc = jest_doc([{"name": "/work/s/a.spec.js", "status": "failed", "message": "afterAll boom",
+                     "assertionResults": [{"fullName": "x", "status": "passed"}]}])
+    leaves = tg.parse_jest(doc, "/work/s")
+    assert leaves["a.spec.js::x"] is True and leaves["a.spec.js::<suite failed>"] is False
+
+
+def test_g2_top_level_success_false_without_any_failed_leaf_is_a_counted_failure():
+    doc = json.dumps({"success": False, "testResults": [{"name": "/work/s/a.spec.js", "status": "passed",
+                      "assertionResults": [{"fullName": "x", "status": "passed"}]}]})
+    leaves = tg.parse_jest(doc, "/work/s")
+    assert leaves["<run failed>"] is False
+
+
+@pytest.mark.parametrize("doc", [
+    {"success": True, "testResults": [{"name": "/w/a.js", "status": "passed", "assertionResults": ["x"]}]},
+    {"success": True, "testResults": [{"name": "/w/a.js", "status": "passed", "assertionResults": [{"status": "passed"}]}]},
+    {"success": True, "testResults": [{"name": "/w/a.js", "status": "passed", "assertionResults": [{"fullName": 1, "status": "passed"}]}]},
+    {"success": True, "testResults": [{"name": "/w/a.js", "assertionResults": []}]},
+    {"success": True, "testResults": [{"name": "/w/a.js", "status": 3, "assertionResults": []}]},
+    {"success": True, "testResults": [{"name": "/w/a.js", "status": "passed", "assertionResults": "x"}]},
+    {"success": True, "testResults": ["x"]},
+    {"testResults": [{"name": "/w/a.js", "status": "passed", "assertionResults": []}]},
+    {"success": "yes", "testResults": [{"name": "/w/a.js", "status": "passed", "assertionResults": []}]},
+])
+def test_g3_every_report_shape_error_is_a_report_error(doc):
+    with pytest.raises(tg.ReportError):
+        tg.parse_jest(json.dumps(doc), "/w")
+
+
+def test_g3_valid_json_wrong_shape_after_start_is_a_model_outcome_not_an_exception(tree):
+    plan = basic_plan("javascript", execute=dict(rc=1, report={"jest.json": json.dumps(
+        {"success": True, "testResults": [{"name": "/w/a.js", "status": "passed", "assertionResults": ["x"]}]})}))
+    result, _ = do_grade("javascript", tree, plan)
+    assert result.outcome == "crash" and result.reason == "runner_crash_after_start"
+
+
+# G4 -------------------------------------------------------------------------------------------------------------
+def test_g4_test_skip_is_not_refused_and_its_two_optional_leaves_are_frozen():
+    assert tg.OPTIONAL_LEAVES[("javascript", "palindrome-products")] == frozenset(
+        {"palindrome-products.spec.js::Palindromes largest palindrome from four digit factors"})
+    assert tg.OPTIONAL_LEAVES[("javascript", "robot-name")] == frozenset(
+        {"robot-name.spec.js::Robot all the names can be generated"})
+    assert len(tg.OPTIONAL_LEAVES) == 2
+
+
+def test_g4_tree_with_test_skip_is_graded_and_optional_leaf_is_excluded_from_scoring(tree):
+    work, private = tree
+    (work / "palindrome-products.spec.js").write_text("test.skip('x', () => {});")
+    assert tg.skip_form_violations(work, "javascript") == []
+    doc = jest_doc([{"name": "/work/palindrome-products/palindrome-products.spec.js", "status": "passed",
+                     "assertionResults": [
+                         {"fullName": "Palindromes ok", "status": "passed"},
+                         {"fullName": "Palindromes largest palindrome from four digit factors", "status": "pending"}]}])
+    guard = FakeGuard(basic_plan("javascript", execute=dict(report={"jest.json": doc})))
+    result = tg.grade("javascript", work, "palindrome-products", private, image_id=IMG, guard=guard, run=guard.run_grader)
+    assert result.outcome == "parsed"
+    assert result.failing({"palindrome-products.spec.js::Palindromes ok"}) == 0
+    assert result.leaves["palindrome-products.spec.js::Palindromes largest palindrome from four digit factors"] is False
+
+
+# G5 -------------------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("lang,rel", [
+    ("javascript", "Jest.config.js"), ("javascript", "BABEL.CONFIG.JS"), ("javascript", ".BabelRC"),
+    ("javascript", "Node_Modules/x.js"), ("javascript", "JEST/index.js"), ("javascript", "__Mocks__/fs.js"),
+    ("rust", "Build.rs"), ("rust", ".Cargo/config.toml"), ("rust", "Target/x.rs"),
+    ("java", "Settings.Gradle"), ("java", "GRADLE.PROPERTIES"), ("java", "BUILD/x.java"),
+    ("cpp", "cmakelists.txt"), ("cpp", "Tool.CMAKE"), ("cpp", "CATCH.HPP"), ("cpp", "Catch2/x.hpp"), ("cpp", "BOOST/x.hpp")])
+def test_g5_case_variants_of_denied_names_are_tampering(tmp_path, lang, rel):
+    assert reasons_for(tmp_path, lang, lambda w: write(w, rel))
+
+
+def test_g5_helper_allowlist_is_case_folded_too(tmp_path):
+    # `Jest.config.js` must never be accepted as a plain helper
+    assert reasons_for(tmp_path, "javascript", lambda w: write(w, "Jest.config.js"))
+    assert reasons_for(tmp_path / "b", "javascript", lambda w: write(w, "X.SPEC.JS"))
+
+
+def test_g5_case_collisions_are_detected():
+    assert tg.case_collisions(["a/Cargo.toml", "a/cargo.TOML", "b"]) == [("a/Cargo.toml", "a/cargo.TOML")]
+    assert tg.case_collisions(["a", "b"]) == []
+
+
+def test_g5_strip_matches_case_variant_directories(tmp_path):
+    work, prepared, _ = prep(tmp_path, RUST, ["src/lib.rs"])
+    write(work, "Target/debug/x")
+    write(work, "NODE_MODULES/a")
+    assert sorted(tg.strip_build_outputs(work, prepared)) == ["NODE_MODULES", "Target"]
+    assert not (work / "Target").exists()
+
+
+# G6 -------------------------------------------------------------------------------------------------------------
+def test_g6_grade_item_strips_then_tampers_then_grades(tmp_path):
+    work, prepared, protected = prep(tmp_path, JS, ["x.js"])
+    write(work, "node_modules/jest/index.js", "evil")
+    write(work, "x.js", "edited")
+    guard = FakeGuard(basic_plan("javascript"))
+    result = tg.grade_item("javascript", work, "slug", tmp_path / "private", prepared=prepared, solutions=["x.js"],
+                           image_id=IMG, guard=guard, run=guard.run_grader)
+    assert result.outcome == "parsed" and result.stripped == ["node_modules"]
+
+
+def test_g6_grade_item_returns_a_tampered_outcome_without_any_container(tmp_path):
+    work, prepared, protected = prep(tmp_path, JS, ["x.js"])
+    write(work, "x.spec.js", "changed")
+    write(work, "target/y")
+    guard = FakeGuard(basic_plan("javascript"))
+    keep = tmp_path / "keep"
+    result = tg.grade_item("javascript", work, "slug", tmp_path / "private", prepared=prepared, solutions=["x.js"],
+                           image_id=IMG, guard=guard, run=guard.run_grader, keep=keep, seq=0, boundary=2, final=True)
+    assert result.outcome == "tampered" and result.all_failed and result.stripped == ["target"]
+    assert any("x.spec.js" in r for r in result.tamper_reasons) and guard.calls == []
+    index = json.loads((keep / "seq-0000/index.json").read_text())
+    assert index["outcome"] == "tampered" and index["artifacts"] == {}
+
+
+def test_g6_grade_item_refuses_missing_prepared_manifest(tmp_path):
+    with pytest.raises(TypeError):
+        tg.grade_item("javascript", tmp_path, "slug", tmp_path / "p", solutions=["x.js"])
+
+
+# G13 ------------------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("step,over", [
+    ("compile", dict(timeout=True, no_marker=True)),
+    ("compile", dict(oom=True, rc=137, no_marker=True)),
+    ("compile", dict(rc=1, no_marker=True)),
+    ("compile", dict(rc=0, fake_marker=True, no_marker=True)),
+    ("execute", dict(timeout=True, no_marker=True)),
+    ("execute", dict(oom=True, rc=137, no_marker=True)),
+])
+def test_g13_resource_outcomes_require_the_nonce_marker_first(tree, step, over):
+    with pytest.raises(TransportAbort, match="marker"):
+        do_grade("rust", tree, basic_plan("rust", **{step: over}))
+
+
+def test_g13_compile_script_prints_its_own_marker_right_before_the_compiler(tree):
+    _, guard = do_grade("rust", tree, basic_plan("rust"))
+    compile_script = guard.calls[3][1][-1]
+    assert re.search(r'echo "TG2_COMPILE_START [0-9a-f]{16}"; cargo test --frozen --offline --no-run', compile_script)
+    assert "TG2_RUNNER_START" not in compile_script
+
+
+# G14 ------------------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("body", [
+    "/* package org.junit; */\npackage org.assertj.core.api;\npublic class Shadow {}",
+    "// x\npackage org . assertj . core;\npublic class Shadow {}",
+    "\\u0070ackage org.assertj.core.api;\npublic class Shadow {}",
+    "\\uuu0070ackage org.assertj;\npublic class Shadow {}",
+    "package org.assertj\\u002ecore;\npublic class Shadow {}",
+    "package\n  org.junit.jupiter;\nclass Shadow {}",
+    "package  /* hidden */ org.json ;\nclass Shadow {}",
+])
+def test_g14_hidden_or_escaped_package_declarations_are_still_denied(tmp_path, body):
+    assert reasons_for(tmp_path, "java", lambda w: write(w, "src/main/java/Shadow.java", body))
+
+
+def test_g14_package_must_agree_with_path(tmp_path):
+    files = dict(JAVA, **{"src/main/java/pkg/Foo.java": "package pkg;\npublic class Foo {}\n"})
+    sols = ["src/main/java/pkg/Foo.java"]
+    assert reasons_for(tmp_path, "java", lambda w: write(w, "src/main/java/pkg/H.java", "package other;\nclass H {}\n"),
+                       files=files, solutions=sols)
+    assert reasons_for(tmp_path / "b", "java", lambda w: write(w, "src/main/java/pkg/H.java", "class H {}\n"),
+                       files=files, solutions=sols)
+    assert reasons_for(tmp_path / "c", "java", lambda w: write(w, "src/main/java/pkg/H.java", "package pkg;\nclass H {}\n"),
+                       files=files, solutions=sols) == []
+
+
+def test_g14_comment_and_string_lookalikes_do_not_create_false_denials(tmp_path):
+    body = '// package org.junit;\nclass Helper { String s = "package org.assertj;"; /* package x; */ }\n'
+    assert reasons_for(tmp_path, "java", lambda w: write(w, "src/main/java/Helper.java", body)) == []
+
+
+def test_g14_secondary_top_level_type_duplicating_a_test_class_is_denied(tmp_path):
+    body = "class Helper {}\nclass FooTest {}\n"
+    assert reasons_for(tmp_path, "java", lambda w: write(w, "src/main/java/Helper.java", body))
+
+
+# G15 ------------------------------------------------------------------------------------------------------------
+def test_g15_containers_are_pid_file_and_output_bounded(tree):
+    _, guard = do_grade("rust", tree, basic_plan("rust"))
+    for step, cmd in guard.calls[1:]:
+        text = " ".join(cmd)
+        assert "--pids-limit" in text and "--ulimit nofile=" in text and "--ulimit fsize=" in text, step
+    for step, cmd in guard.calls[3:]:
+        assert "head -c" in cmd[-1] and "PIPESTATUS" in cmd[-1], step
+
+
+def test_g15_output_over_the_cap_after_start_is_a_model_outcome(tree, monkeypatch):
+    monkeypatch.setattr(tg, "OUTPUT_CAP", 1000)
+    result, _ = do_grade("rust", tree, basic_plan("rust", execute=dict(big_stdout=5000)))
+    assert result.outcome == "output_cap" and result.all_failed
+
+
+def test_g15_oversized_or_excessive_reports_are_report_errors(tree, monkeypatch):
+    monkeypatch.setattr(tg, "REPORT_CAP", 50)
+    result, _ = do_grade("javascript", tree, basic_plan("javascript"))
+    assert result.outcome == "crash" and result.reason == "runner_crash_after_start"
+    assert "cap" in result.reason_detail
+
+
+# G16 ------------------------------------------------------------------------------------------------------------
+def test_g16_private_and_keep_must_be_disjoint_from_the_mounted_tree(tree, tmp_path):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    for kw in (dict(private=work / "p"), dict(keep=work / "k"), dict(private=tmp_path), dict(keep=tmp_path)):
+        args = dict(private=private, keep=None, seq=0, boundary=0)
+        args.update(kw)
+        with pytest.raises(TransportAbort, match="disjoint"):
+            tg.grade("rust", work, "slug", args.pop("private"), image_id=IMG, guard=guard, run=guard.run_grader, **args)
+    assert guard.calls == []
+    with pytest.raises(TransportAbort, match="disjoint"):
+        tg.generate_cargo_locks(work, "slug", work / "p", image_id=IMG, run=guard.run_grader)
+
+
+# G17 ------------------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("over", [dict(inspect_rc=1), dict(inspect_out="garbage"), dict(inspect_out="")])
+def test_g17_unverifiable_container_state_aborts(tree, over):
+    with pytest.raises(TransportAbort, match="container state"):
+        do_grade("rust", tree, basic_plan("rust", execute=dict(over)))
 
 
 # ----------------------------------------------------------------------------------------- docker integration
@@ -760,42 +1024,94 @@ ITEMS = [("rust", "gigasecond"), ("rust", "macros"), ("java", "affine-cipher"), 
          ("cpp", "binary-search-tree")]
 
 
+def _docker_env():
+    docker_bin = shutil.which("docker") or str(Path.home() / ".orbstack/bin/docker")
+    os.environ["PATH"] = str(Path(docker_bin).parent) + os.pathsep + os.environ["PATH"]
+
+
+def _prepared(stub):
+    return sg.manifest(stub)
+
+
+def _item(tmp_path, lang, slug, guard):
+    """(prepared stub tree, its manifest, solutions) with Rust lockfiles generated offline at preparation."""
+    from bench.tests import tg2_trees
+    stub = tg2_trees.stub_tree(POLYGLOT, lang, slug, tmp_path / "stub")
+    if lang == "rust":
+        tg.generate_cargo_locks(stub, slug, tmp_path / "private", guard=guard)
+    return stub, _prepared(stub), tg2_trees.solutions(POLYGLOT, lang, slug)
+
+
+def _ref_of(tmp_path, stub, lang, slug):
+    from bench.tests import tg2_trees
+    ref = tmp_path / "ref"
+    shutil.copytree(stub, ref)
+    return tg2_trees.apply_reference(POLYGLOT, lang, slug, ref)
+
+
 @pytest.mark.docker
 @pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
 def test_javascript_solution_calling_process_exit_is_a_model_failure_not_infrastructure(tmp_path):
-    from bench.tests import tg2_trees
-    docker_bin = shutil.which("docker") or str(Path.home() / ".orbstack/bin/docker")
-    os.environ["PATH"] = str(Path(docker_bin).parent) + os.pathsep + os.environ["PATH"]
-    ref = tg2_trees.reference_tree(POLYGLOT, "javascript", "affine-cipher", tmp_path / "ref")
+    _docker_env()
+    guard = tg.LocalDocker()
+    stub, prepared, sols = _item(tmp_path, "javascript", "affine-cipher", guard)
+    ref = _ref_of(tmp_path, stub, "javascript", "affine-cipher")
     (ref / "affine-cipher.js").write_text("process.exit(1);\n")
     (ref / "node_modules").mkdir()                                   # planted artefact: stripped before grading
     (ref / "node_modules/jest").mkdir()
-    prepared = {k: v for k, v in sg.manifest(ref).items() if not k.startswith("node_modules/")}
-    result = tg.grade("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared, guard=tg.LocalDocker(),
-                      timeout=300)
+    result = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared,
+                           solutions=sols, guard=guard, timeout=300)
     assert result.stripped == ["node_modules"]
     assert result.outcome in ("crash", "parsed") and result.passing == set()
-    assert result.outcome != "parsed" or result.failing({"x"}) >= 1
+    assert result.failing({"x"}) >= 1
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+def test_suite_level_afterall_failure_is_a_counted_failure_in_the_real_runner(tmp_path):
+    _docker_env()
+    guard = tg.LocalDocker()
+    stub, prepared, sols = _item(tmp_path, "javascript", "affine-cipher", guard)
+    ref = _ref_of(tmp_path, stub, "javascript", "affine-cipher")
+    clean = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared, solutions=sols,
+                          guard=guard, timeout=300)
+    universe = set(clean.collected)
+    assert clean.failing(universe) == 0
+    body = (ref / "affine-cipher.js").read_text()
+    (ref / "affine-cipher.js").write_text("afterAll(() => { throw new Error('teardown boom'); });\n" + body)
+    bad = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared, solutions=sols,
+                        guard=guard, timeout=300)
+    assert bad.outcome == "parsed" and bad.failing(universe) >= 1, (bad.outcome, bad.leaves)
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+def test_tamper_is_caught_through_the_production_entry_point(tmp_path):
+    _docker_env()
+    guard = tg.LocalDocker()
+    stub, prepared, sols = _item(tmp_path, "javascript", "affine-cipher", guard)
+    ref = _ref_of(tmp_path, stub, "javascript", "affine-cipher")
+    (ref / "Jest.Config.js").write_text("module.exports = { testEnvironment: 'node' };\n")
+    result = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared, solutions=sols,
+                           guard=guard, timeout=300)
+    assert result.outcome == "tampered" and result.all_failed and not guard.leftover()
 
 
 @pytest.mark.docker
 @pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
 @pytest.mark.parametrize("lang,slug", ITEMS)
 def test_reference_all_pass_and_untouched_stub_fails_in_the_built_image(tmp_path, lang, slug):
-    from bench.tests import tg2_trees
-    docker_bin = shutil.which("docker") or str(Path.home() / ".orbstack/bin/docker")
-    os.environ["PATH"] = str(Path(docker_bin).parent) + os.pathsep + os.environ["PATH"]
-    ref = tg2_trees.reference_tree(POLYGLOT, lang, slug, tmp_path / "ref")
-    stub = tg2_trees.stub_tree(POLYGLOT, lang, slug, tmp_path / "stub")
+    _docker_env()
     guard = tg.LocalDocker()
-    (tmp_path / "private").mkdir()
-    if lang == "rust":
-        tg.generate_cargo_locks(ref, slug, tmp_path / "private", guard=guard)
-        tg.generate_cargo_locks(stub, slug, tmp_path / "private", guard=guard)
-    good = tg.grade(lang, ref, slug, tmp_path / "private", guard=guard, timeout=900,
-                    keep=tmp_path / "keep", seq=0, boundary=0, final=True)
+    stub, prepared, sols = _item(tmp_path, lang, slug, guard)
+    ref = _ref_of(tmp_path, stub, lang, slug)
+    stub_copy = tmp_path / "stub_copy"
+    shutil.copytree(stub, stub_copy)
+    good = tg.grade_item(lang, ref, slug, tmp_path / "private", prepared=prepared, solutions=sols, guard=guard,
+                         timeout=900, keep=tmp_path / "keep", seq=0, boundary=0, final=True)
     assert good.outcome == "parsed", good.phases
     assert good.collected and good.passing == good.collected, sorted(good.collected - good.passing)
-    base = tg.grade(lang, stub, slug, tmp_path / "private", guard=guard, timeout=900)
+    base = tg.grade_item(lang, stub_copy, slug, tmp_path / "private", prepared=prepared, solutions=sols, guard=guard,
+                         timeout=900)
     assert base.failing(good.collected) > 0, (base.outcome, base.passing)
     assert not guard.leftover()
