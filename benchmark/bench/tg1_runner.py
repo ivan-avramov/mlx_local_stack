@@ -21,6 +21,7 @@ from . import (
     provenance,
     identity_closure as ic,
     toolchain,
+    arm_identity,
 )
 from m62 import universe_preflight
 
@@ -44,6 +45,27 @@ GENERATION_DATA = (
     "benchmark/opencode_plugins/noretry.js",
     "benchmark/opencode_bench_v2_web_tg1.json",
 )
+# The fields of the pairing composite shared by every arm (spec 4); model-specific identity is separate (arm identity).
+GENERATION_FIELDS = (
+    "probe_code_sha256", "scaffold_policy_sha256", "opencode_version", "opencode_exe_sha256",
+    "opencode_bench_config_sha256", "carrier_source_sha256", "agent_system_sha256", "polyglot_sha",
+    "sampling_profile",
+)
+
+
+def generation_fields(ident):
+    """The composite's inputs from an identity dict; an absent key fails closed (a present None is a value)."""
+    missing = [k for k in GENERATION_FIELDS if k not in ident]
+    if missing:
+        raise ValueError("generation identity field absent: " + ", ".join(missing))
+    return {k: ident[k] for k in GENERATION_FIELDS}
+
+
+def generation_identity_sha256(ident):
+    """`generation_identity_sha256`: sha256 of the canonical JSON of the shared generation fields."""
+    return hashlib.sha256(json.dumps(generation_fields(ident), sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
 
 # C147 §2: frozen injected-positive policy. Each kind lowers exactly ONE constant; every other constant stays at the
 # campaign value (derived at call time by `effective_policy`). No CLI override exists.
@@ -292,6 +314,12 @@ def worker_identity(p, model, router):
     return observed
 
 
+def arm_identity_of(p, model, router):
+    """(fingerprint, sha256) of the observed worker (`bench.arm_identity.observe`); a seam for tests, like
+    `worker_identity`."""
+    return arm_identity.observe(model, router)
+
+
 def tool_bounds_rejections(export):
     return sum(
         part.get("type") == "tool"
@@ -364,6 +392,17 @@ def print_identity(p, a):
     )
     if exe.is_file():
         out["opencode_exe_sha256"] = ident["opencode_exe_sha256"]
+    try:
+        polyglot_sha = p._polyglot_sha(p._polyglot_root())
+    except SystemExit:
+        polyglot_sha = None
+    out["polyglot_sha"] = polyglot_sha
+    if exe.is_file() and polyglot_sha:
+        out["generation_identity_sha256"] = generation_identity_sha256(
+            {**ident, **selection["fields"], "polyglot_sha": polyglot_sha,
+             "sampling_profile": getattr(a, "sampling_profile", None) or "deployed"})
+    else:
+        out["generation_identity_sha256"] = None      # needs the pinned binary and the polyglot corpus
     print(json.dumps(out, sort_keys=True), flush=True)
     return 0
 
@@ -587,6 +626,9 @@ def _run_item(
         worker.start()
         with paths["events"].open("wb") as stdout, paths["stderr"].open("wb") as stderr:
             client_launch_attempted = True
+            # P17/C170: the date opencode prints into the system prompt, read immediately before the spawn (a
+            # midnight-crossing item must record the date the model was shown, not the date it finished).
+            prompt_date = p._prompt_date() if p is not None else time.strftime("%a %b %d %Y")
             proc = guard.spawn(
                 [
                     binary,
@@ -790,6 +832,7 @@ def _run_item(
             opencode_rc=proc.returncode,
             wall_s=time.monotonic() - started,
             export=export,
+            prompt_date=prompt_date,
             session_id=stream.session_id,
             requests_observed=len(stream.starts),
             tool_bounds_rejections=tool_bounds_rejections(export),
@@ -977,6 +1020,7 @@ def _main(p, a, names):
     router = provenance.assert_served_config(base, env={})
     os.environ["MLX_SERVE_CONFIG"] = str(provenance.paths.registry_path().resolve())
     before = worker_identity(p, a.model, router)
+    arm_fp, arm_sha = arm_identity_of(p, a.model, router)       # P16: the effective worker fingerprint; unknown refuses
     limit = validate_worker(model, worker_json("health"), worker_json("metrics"))
     universe_path = a.universe or REPO / "benchmark/m62/universe.json"
     universe, universe_sha = universe_preflight.load(universe_path)
@@ -1074,6 +1118,8 @@ def _main(p, a, names):
         **selection["fields"],
     )
     ident["sampling_profile"] = a.sampling_profile        # a present None is a value (the composite requires the key)
+    ident["generation_identity_sha256"] = generation_identity_sha256(ident)
+    ident.update(arm_identity_sha256=arm_sha, arm_identity=arm_fp)
     out = (
         Path(a.out)
         if a.out
@@ -1211,7 +1257,8 @@ def _main(p, a, names):
                     transcript_path=p._portable(artifacts["export"]),
                     evidence_sha256={k: p._sha_of(v) for k, v in artifacts.items()},
                     stderr_path=p._portable(artifacts["stderr"]),
-                    prompt_date=p._prompt_date(),
+                    generation_identity_sha256=ident["generation_identity_sha256"],
+                    arm_identity_sha256=ident["arm_identity_sha256"],
                     loop_metrics=p.loop_metrics(p._metric_export(export)),
                     traffic=p.traffic_metrics(p._metric_export(export)),
                     **p._seed_row_fields(
