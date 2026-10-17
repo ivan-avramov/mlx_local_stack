@@ -17,6 +17,13 @@ CONTEXT_ERROR = {
 }
 
 
+SUMMARY = (
+    "## Objective\n- Make the test pass.\n\n## Requirements\n- (none)\n\n## Decisions\n- (none)\n\n"
+    "## Work State\n### Completed\n- (none)\n\n### Active\n- write solution.py\n\n### Blocked\n- (none)\n\n"
+    "## Next Move\n1. (none)\n\n## Relevant Files\n- `solution.py`: the solution\n\n## Important Context\n- (none)\n"
+)
+
+
 class MockServer:
     """One-based chat request script; all HTTP traffic retained in requests."""
 
@@ -106,7 +113,13 @@ class MockServer:
                 # A dict script entry always answers with its tool call, so multi-call scripts
                 # (e.g. three identical shell calls) are possible; other requests finish after a tool result.
                 finished = any(m.get("role") == "tool" for m in messages) and not isinstance(kind, dict)
-                if finished:
+                last = messages[-1] if messages else {}
+                summarizing = (kind == "ok" or kind == "summary") and isinstance(last.get("content"), str) \
+                    and last["content"].startswith("You MUST summarize the conversation above")
+                if summarizing or kind == "summary":
+                    # a compaction request (opencode 2.0.20 summary template); answer with a conforming summary
+                    chunks = [chunk({"role": "assistant", "content": SUMMARY}), chunk({}, "stop")]
+                elif finished:
                     chunks = [chunk({"role": "assistant", "content": "Done."}), chunk({}, "stop")]
                 else:
                     default = {"name": "write", "input": {"path": "solution.py", "content": "answer = 42\n"}}
@@ -133,10 +146,13 @@ class MockServer:
                     )
                     self.connection.close()
                     return
+                self_usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}
+                if isinstance(kind, dict) and "usage" in kind:
+                    self_usage = kind["usage"]
                 chunks += [
                     chunk(
                         {},
-                        usage={"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110},
+                        usage=self_usage,
                     ),
                     b"data: [DONE]\n\n",
                 ]
