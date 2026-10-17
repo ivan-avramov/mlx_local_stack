@@ -420,13 +420,18 @@ class Flaky(Process):
 
     METHODS = ("status", "uids", "ppid", "cwd", "cmdline", "create_time", "start_order", "memory_info")
 
-    def __init__(self, *args, deny=None, gone=None, **kwargs):
+    def __init__(self, *args, deny=None, gone=None, deny_once=None, on_deny=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.deny, self.gone, self.calls = dict(deny or {}), dict(gone or {}), {}
+        self.deny_once, self.on_deny = dict(deny_once or {}), on_deny      # on_deny(self): what the denial coincides with
 
     def _gate(self, name):
         import psutil
         self.calls[name] = self.calls.get(name, 0) + 1
+        if self.deny_once.get(name) == self.calls[name]:
+            if self.on_deny:
+                self.on_deny(self)
+            raise psutil.AccessDenied(self.pid)
         if name in self.gone and self.calls[name] >= self.gone[name]:
             raise psutil.NoSuchProcess(self.pid)
         if name in self.deny and self.calls[name] >= self.deny[name]:
@@ -463,6 +468,10 @@ class Flaky(Process):
     def memory_info(self):
         self._gate("memory_info")
         return super().memory_info()
+
+    def kill(self):
+        self._gate("kill")
+        super().kill()
 
 
 # ------------------------------------------------------------------------------------------------- P10
@@ -571,3 +580,50 @@ def test_p13_a_denied_uid_is_not_same_uid_and_may_be_skipped(tmp_path):
     g = guard(tmp_path, [Flaky(70, 1, created=10, deny={"uids": 1})])
     g.cleanup()
     assert g.status()["uncertain"] is False
+
+
+# ================================================================================ G1 round 5 (Cursor round 4, P18/P19)
+def test_p18_an_untracked_denial_keeps_the_captured_key_and_a_replacement_is_not_misattributed(tmp_path):
+    def exits_and_pid_reused(p):
+        p.created = 99                                    # a reread of this (cached) object now sees the replacement
+    stranger = Flaky(70, 2, created=10, deny_once={"cwd": 1}, on_deny=exits_and_pid_reused)
+    g = guard(tmp_path, [stranger])
+    g.cleanup()                                           # (70, 10) is gone; the replacement is young but not an orphan
+    assert g.status()["uncertain"] is False
+
+
+def test_p18_a_tracked_denial_is_not_a_sticky_unknown_identity(tmp_path):
+    processes = []
+    owned = Flaky(70, 1, created=10, deny_once={"kill": 1})
+    replacement = Process(70, 2, created=99)
+
+    def exits_and_pid_reused(p):
+        processes[0] = replacement
+    owned.on_deny = exits_and_pid_reused
+    processes.append(owned)
+    g = guard(tmp_path, processes)
+    g.tracked[(70, 10)] = "model"
+    g.cleanup()                                           # the exact identity (70, 10) is gone: nothing sticky
+    assert g.status()["uncertain"] is False and not replacement.dead
+
+
+def test_p18_a_tracked_process_that_stays_denied_is_still_uncertain(tmp_path):
+    owned = Flaky(70, 1, created=10, deny={"kill": 1})
+    g = guard(tmp_path, [owned])
+    g.tracked[(70, 10)] = "model"
+    with pytest.raises(TransportAbort, match="cleanup uncertain|survived cleanup"):
+        g.cleanup()                                       # it cannot be shown cleared: aborts, via the audit
+
+
+def test_p19_descendants_alive_tolerates_a_vanished_listing_entry(tmp_path):
+    g = _guard(tmp_path, [Flaky(70, 1, created=10, gone={"create_time": 1})])
+    g.shell_descendants.add((70, 10))
+    assert g.descendants_alive() is False
+
+
+def test_p19_descendants_alive_is_conservative_for_a_denied_recorded_descendant_only(tmp_path):
+    g = _guard(tmp_path, [Flaky(70, 1, created=10, deny={"create_time": 1})])
+    g.shell_descendants.add((70, 10))
+    assert g.descendants_alive() is True                  # possibly alive
+    g.shell_descendants.clear()
+    assert g.descendants_alive() is False                 # a denied stranger is not a recorded descendant

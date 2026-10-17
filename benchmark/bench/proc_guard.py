@@ -271,7 +271,17 @@ def defer_signals(*, deliver=False):
 #   tick shell cmdline / memory_info (tracked) skipped this tick (already owned)    skipped
 #   _argv / _mem_kill context (evidence)       [] / ignored                         []
 #   kill_role / graceful_stop / audit kill     pass; the audit marks it unknown     pass
+#   descendants_alive start_time [P19]         recorded descendant: True (possibly   vanish
+#                                              alive); a stranger: skipped
 #   deadline (P9/P10)                          confirmation must start AND finish before it
+# KNOWN LIMITATIONS (G3, scope-closed by C170; each is a residual fail-open path, not fixed in G1):
+#   P14 a uids()-denied tracked/protected/recorded identity is skipped, so its children miss the ancestry graph
+#   P15 status-denied obligations ride the shared `_live_denied` set (protected roots bypass it, a concurrent
+#       descendants_alive() can overwrite it) instead of scan-local data
+#   P16 _listing_edges forgets a one-shot ppid AccessDenied when its retry succeeds; _refresh_descendants collapses
+#       AccessDenied/NoSuchProcess of an exact root to "skip", losing children captured just before it exits
+#   P17 process_iter() caches Process objects: after pid reuse uids()/status() can read the replacement while ppid()
+#       raises NoSuchProcess for the cached original, so cleanup sees a disappearance and runs no confirming scan
 
 
 class ProcessGuard:
@@ -727,8 +737,16 @@ class ProcessGuard:
 
     def descendants_alive(self):
         for p in self._processes():
-            if (p.pid, start_time(p)) in self.shell_descendants:
-                return True
+            try:
+                if (p.pid, start_time(p)) in self.shell_descendants:
+                    return True
+            except self.psutil.NoSuchProcess:
+                continue
+            except (self.psutil.AccessDenied, TransportAbort):
+                # G1 (round 5 P19/P354): a denied identity read of a pid we recorded as a shell descendant is
+                # "possibly alive"; a denied stranger is not a recorded descendant
+                if any(k[0] == p.pid for k in self.shell_descendants):
+                    return True
         return False
 
     def register_container(self, name):
@@ -837,12 +855,12 @@ class ProcessGuard:
                         return
                     frontier.append(child.pid)
 
-    def _detached(self, p, store, edges):
+    def _detached(self, p, store, edges, key=None):
         """True when `p` is parented to launchd; a denied ppid read is recorded (G1 round 3 P7), never skipped."""
         try:
             return p.ppid() == 1
         except self.psutil.AccessDenied:
-            self._note_unreadable(store, p, edges)
+            self._note_unreadable(store, p, edges, key=key)
             return False
 
     def _refresh_descendants(self, store, listing, edges):
@@ -1013,6 +1031,7 @@ class ProcessGuard:
                     edges = self._listing_edges(listing)
                     self._refresh_descendants(unreadable, listing, edges)     # G1 (round 2 P2): readable roots too
                     for p in listing:
+                        key = None          # G1 (round 5 P18): set once the exact identity is read, then never reread
                         try:
                             try:
                                 protected = self._protected(p)
@@ -1041,11 +1060,11 @@ class ProcessGuard:
                                                     argv=p.cmdline(), reason="path-only attribution")
                             elif self._sweep_excluded(p):
                                 continue
-                            elif self._detached(p, unreadable, edges):
+                            elif self._detached(p, unreadable, edges, key):
                                 try:
                                     young = not self._older_than_guard(p)
                                 except self.psutil.AccessDenied:    # G1 (round 2 P1)
-                                    self._note_unreadable(unreadable, p, edges)
+                                    self._note_unreadable(unreadable, p, edges, key=key)
                                     continue
                                 if young:
                                     orphans[key] = dict(
@@ -1061,14 +1080,15 @@ class ProcessGuard:
                         except self.psutil.AccessDenied:
                             # macOS denies cwd()/cmdline() for a process mid-exit or one we may not inspect. Untracked:
                             # nothing to clear, skip. Tracked: ownership cannot be shown cleared -> uncertain.
-                            if any(k[0] == p.pid for k in self.tracked):
+                            if key is None and any(k[0] == p.pid for k in self.tracked):
                                 uncertain = True
                                 orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
                                                               reason="access denied")
                             else:
-                                # G1 (round 4 P12): identity and eligibility are established by here, so a denied
-                                # classification read (cwd/cmdline/...) is an unreadable obligation, never a skip
-                                self._note_unreadable(unreadable, p, edges)
+                                # G1 (round 4 P12, round 5 P18): identity and eligibility are established by here, so
+                                # a denied read (cwd/cmdline/kill/...) is an unreadable obligation on the EXACT captured
+                                # key (tracked or not); uncertainty comes from the final reconciliation and audit
+                                self._note_unreadable(unreadable, p, edges, key=key)
                             continue
                     if not survivors:
                         break
