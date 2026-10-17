@@ -22,8 +22,8 @@ PICK1 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 PICK2 = "Qwen3.8-27B-mlx-uniform-4bit"
 GRADER_IMAGE = "aider-benchmark"     # P290: the Go grader image, as structured_grade/opencode_common run it
 BUSY = ("mlx_vlm.server", "mlx_vlm/server", "mlx-serve start", "session_cache_probe", "opencode run",
-        "run.py generate", "run_opencode_probe", "run_tg1_probe", "run_agentbench_os", "runserver.sh")
-SELF_MARKERS = ("run_tg1_chain.py", "run_inject.py", "drive_chain.sh", "drive_inject.sh")
+        "run.py generate", "run_opencode_probe", "run_tg1_probe", "run_oc_probe", "run_agentbench_os", "runserver.sh")
+SELF_MARKERS = ("run_tg1_chain.py", "run_m64_chain.py", "run_inject.py", "drive_chain.sh", "drive_inject.sh")
 GRADER_TIMEOUT_S = {"python": 300, "go": 180}
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -574,12 +574,12 @@ class ChainOps:
             return None
 
     # -- A4
-    def a4_gate(self, model, tag):
+    def a4_gate(self, model, tag, scaffold=SCAFFOLD):
         env = self.env_base()
         logf = self.a4_log_dir / f"a4_{tag}.log"
         logf.parent.mkdir(parents=True, exist_ok=True)
         cmd = [str(self.py), str(self.repo / "scripts/session_pinning_gate.py"), "--model", model, "--opencode",
-               "v2", "--scaffold", SCAFFOLD, "--skip-owui", "--log", str(self.repo / "logs/mlx_vlm.log")]
+               "v2", "--scaffold", scaffold, "--skip-owui", "--log", str(self.repo / "logs/mlx_vlm.log")]
         self.log(f"RUN A4 v2 gate ({model}) -> {logf.name}")
         t0 = time.time()
         try:
@@ -762,12 +762,13 @@ ROW_SEED_FIELD = "sampler_seed"
 POLICY_HELD = ("universe_sha256",)
 
 
-def runtime_identity(man):
-    """The RUNTIME_PINNED fields where the real probe writes them; an absent key stays absent."""
+def runtime_identity(man, pinned=None):
+    """The RUNTIME_PINNED fields where the real probe writes them; an absent key stays absent. `pinned` (an arm spec's
+    `runtime_pinned`, M64) replaces the tg1 tuple."""
     rt = man.get("runtime") or {}
     pol = rt.get("policy") or {}
     ident = {}
-    for k in RUNTIME_PINNED:
+    for k in (RUNTIME_PINNED if pinned is None else pinned):
         src = pol if k in POLICY_HELD else rt
         if k in src:
             ident[k] = src[k]
@@ -778,26 +779,29 @@ def _hex(v, *lengths):
     return isinstance(v, str) and len(v) in lengths and re.fullmatch(r"[0-9a-f]+", v) is not None
 
 
-def malformed_identity(man):
+def malformed_identity(man, spec=None):
     """Mandatory identity fields of a manifest that are absent, null or malformed. Only `agent_system_sha256` may
-    be null (no overlay), but when present as a string it must be 64-hex."""
-    rt = runtime_identity(man)
+    be null (no overlay), but when present as a string it must be 64-hex. `spec` (an `arm_specs.ArmSpec`, M64) supplies
+    the arm's pinned fields, sha fields, version field and composite; absent, the tg1 constants apply."""
+    rt = runtime_identity(man, None if spec is None else spec.runtime_pinned)
     bad = []
-    for k in SHA_FIELDS:
+    for k in (SHA_FIELDS if spec is None else spec.sha_fields):
         if not _hex(rt.get(k), 64):
             bad.append(f"runtime_{k}")
     if not _hex(rt.get("polyglot_sha"), 40, 64):
         bad.append("runtime_polyglot_sha")
-    v = rt.get("opencode_version")
+    version_field = "opencode_version" if spec is None else spec.version_field
+    v = rt.get(version_field)
     if not (isinstance(v, str) and v.strip()):
-        bad.append("runtime_opencode_version")
+        bad.append("runtime_" + version_field)
     if "agent_system_sha256" not in rt or (rt["agent_system_sha256"] is not None and not _hex(rt["agent_system_sha256"], 64)):
         bad.append("runtime_agent_system_sha256")
     full = man.get("runtime") or {}
     if _hex(rt.get("generation_identity_sha256"), 64):
         try:
-            consistent = composite_sha({**full, "sampling_profile": full.get(
-                "sampling_profile", man.get("sampling_profile"))}) == rt["generation_identity_sha256"]
+            fields = {**full, "sampling_profile": full.get("sampling_profile", man.get("sampling_profile"))}
+            consistent = (composite_sha(fields) if spec is None else spec.composite(fields)) == \
+                rt["generation_identity_sha256"]
         except ValueError:
             consistent = False
         if not consistent:
@@ -831,11 +835,15 @@ def typed_worker(w):
             and isinstance(w.get("registry_sha256"), str) and bool(HEX64.match(w["registry_sha256"])))
 
 
-def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=None):
+def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=None, spec=None):
     """Completion = validation (spec 3). Returns a list of `code: detail` failure reasons; [] means complete.
 
     leg: {session, model, lang, seed_base, expected_ids, out, rc}. pinned: runtime field -> value (None = not yet
-    pinned, skipped) plus `serving_path`, `registry_sha256`; scaffold policy hash and probe-code are mandatory."""
+    pinned, skipped) plus `serving_path`, `registry_sha256`; scaffold policy hash and probe-code are mandatory.
+    `spec` (M64, an `arm_specs.ArmSpec`): the arm's scaffold label, pinned fields and identity rules replace the tg1
+    constants; every other check is unchanged."""
+    scaffold = SCAFFOLD if spec is None else spec.label
+    runtime_pinned = RUNTIME_PINNED if spec is None else spec.runtime_pinned
     from bench import rowschema
     from bench import proc_guard as pg
     why = []
@@ -866,7 +874,7 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=
         why.append(f"runtime_seed_base: {rt.get('seed_base')} != {leg['seed_base']}")
     if rt.get("lang") != leg["lang"]:
         why.append(f"runtime_lang: {rt.get('lang')} != {leg['lang']}")
-    if rt.get("scaffold") != SCAFFOLD:
+    if rt.get("scaffold") != scaffold:
         why.append(f"runtime_scaffold: {rt.get('scaffold')}")
     policy_sha = policy_sha or pinned.get("scaffold_policy_sha256")    # P362: derived from the probe, never a constant
     if not policy_sha:
@@ -881,11 +889,11 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=
         why.append("runtime_sampling_profile: not deployed")
     if pinned.get("probe_code_sha256") is None:
         why.append("pinned_incomplete: probe_code_sha256 not pinned")
-    ident = runtime_identity(man)
-    for k in RUNTIME_PINNED:
+    ident = runtime_identity(man, runtime_pinned)
+    for k in runtime_pinned:
         if k in pinned and (k not in ident or ident[k] != pinned[k]):   # a pinned null is a value; an absent key is not
             why.append(f"runtime_{k}: {ident.get(k, '<absent>')} != pinned {pinned[k]}")
-    for f in malformed_identity(man):
+    for f in malformed_identity(man, spec):
         why.append(f"{f}_invalid: absent, null or malformed" if f != "serving_path" else "serving_path_invalid: absent, null or malformed")
     expected_arm = leg.get("arm_identity_sha256")                    # P311-lite: frozen at the arm's first manifest
     if expected_arm is not None and rt.get("arm_identity_sha256") != expected_arm:
@@ -918,7 +926,7 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=
             if not (isinstance(r.get("prompt_date_real"), str) and r["prompt_date_real"].strip()
                     and isinstance(r.get("prompt_date_update_removed"), bool)):
                 why.append(f"row_prompt_date_real: {rid} prompt_date_real / prompt_date_update_removed absent or malformed")
-        if r.get("scaffold") != SCAFFOLD:
+        if r.get("scaffold") != scaffold:
             why.append(f"row_scaffold: {rid} {r.get('scaffold')}")
         if r.get("model") != leg["model"]:
             why.append(f"row_model: {rid} {r.get('model')} != {leg['model']}")

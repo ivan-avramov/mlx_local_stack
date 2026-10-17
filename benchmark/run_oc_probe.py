@@ -20,7 +20,7 @@ import sys
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import arm_adapter, arm_opencode, arm_runner
+from bench import arm_adapter, arm_opencode, arm_runner, m64_search
 from bench import opencode_v2_core as _core
 
 _core.bind(globals())
@@ -77,7 +77,8 @@ def _parser():
 
 
 def _main(search):
-    adapter = arm_opencode.OpencodeArm(sys.modules[__name__], mode="m64", search=search)
+    adapter = arm_opencode.OpencodeArm(sys.modules[__name__], mode="m64",
+                                       search=search if search is not None else m64_search.service())
     if "--print-identity" in sys.argv[1:]:
         # read-only provenance identity; no router, worker or model is touched
         pre = argparse.ArgumentParser(allow_abbrev=False)

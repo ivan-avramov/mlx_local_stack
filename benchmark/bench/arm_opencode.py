@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 
 from . import arm_adapter as aa
+from . import m64_search
 from . import datefreeze, identity_closure as ic, opencode_export as ox, provenance
 from . import proc_guard as pg
 from . import structured_grade as sg
@@ -151,7 +152,7 @@ class OpencodeArm(aa.ArmAdapter):
         if mode not in ("tg1", "m64"):
             raise aa.ArmContractError(f"unknown opencode arm mode {mode!r}")
         self.p, self.mode = p, mode
-        self.search = search if search is not None else aa.UnavailableSearchService()
+        self.search = search if search is not None else m64_search.service()
         self.m64 = mode == "m64"
         self.label = M64_LABEL if self.m64 else TG1_LABEL
         self.receipt_kinds = ("primary", "compaction") if self.m64 else ("primary",)
