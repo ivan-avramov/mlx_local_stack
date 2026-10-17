@@ -45,6 +45,7 @@ COLLECT_MARKER = "TG2_COLLECT_START"
 OWNER_LABEL = "mlxbench.tg2=1"
 OWNER_FILTER = "label=" + OWNER_LABEL
 CREATED_LABEL = "mlxbench.tg2.created"
+NONCE_LABEL = "mlxbench.tg2.nonce"
 REGISTRY_DIR = ".tg2-registry"
 COMPILE_MARKER = "TG2_COMPILE_START"
 # Agent-created build outputs: top-level dirs absent from the prepared tree are stripped before tamper and grading.
@@ -879,7 +880,39 @@ def _plain(run, cmd, outputs, tag, timeout=60):
     return p.returncode, path.read_text(errors="replace").strip()
 
 
+def _exists(run, kind, name, outputs, tag):
+    """Whether an object exists; a failed listing is uncertainty, never absence."""
+    if kind == "volume":
+        cmd = ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name]
+    else:
+        cmd = ["docker", "ps", "-a", "--filter", "name=^/%s$" % name, "--format", "{{.Names}}"]
+    rc, text = _plain(run, cmd, outputs, tag)
+    if rc != 0:
+        raise TransportAbort("tg2 cannot verify whether %s %s exists (docker listing rc=%s)" % (kind, name, rc))
+    return name in text.split()
+
+
+def _nonce_of(run, kind, name, outputs, tag):
+    """The ownership nonce label of an existing object ('' when unlabelled), or None when it does not exist."""
+    if kind == "volume":
+        cmd = ["docker", "volume", "inspect", "--format", '{{index .Labels "%s"}}' % NONCE_LABEL, name]
+    else:
+        cmd = ["docker", "inspect", "--format", '{{index .Config.Labels "%s"}}' % NONCE_LABEL, name]
+    rc, text = _plain(run, cmd, outputs, tag)
+    if rc == 0:
+        return text
+    if _exists(run, kind, name, outputs, tag + "-x"):
+        raise TransportAbort("tg2 cannot inspect %s %s (rc=%s)" % (kind, name, rc))
+    return None
+
+
 def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, outputs, index, registry=None):
+    # Refuse first: any labelled leftover from an earlier grade blocks everything else (no automatic deletion).
+    leftovers = list_leftovers(run, registry.parent if registry is not None else outputs)
+    if leftovers["containers"] or leftovers["volumes"]:
+        raise TransportAbort("tg2 leftover storage from an earlier grade must be removed first (no automatic deletion): "
+                             "containers %s, volumes %s; remove with `python benchmark/m65/tg2_cleanup.py --remove "
+                             "<private>/.tg2-registry/<file>.json`" % (leftovers["containers"], leftovers["volumes"]))
     for violation in skip_form_violations(work, lang):
         raise TransportAbort("tree contains a rewritten skip form (refused): " + violation)
     if _tree_bytes(work) > TREE_CAP:
@@ -890,17 +923,18 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
     seen = _text(inspect).strip()
     if inspect["rc"] != 0 or seen != image_id:
         raise TransportAbort("tg2 image %s does not match the pinned id (found %r)" % (image_tag, seen[:80]))
-    leftovers = list_leftovers(run, registry.parent if registry is not None else outputs)
-    if leftovers["containers"] or leftovers["volumes"]:
-        raise TransportAbort("tg2 leftover storage from an earlier grade must be removed first (no automatic deletion): "
-                             "containers %s, volumes %s; remove with `python benchmark/m65/tg2_cleanup.py --remove "
-                             "<private>/.tg2-registry/<file>.json`" % (leftovers["containers"], leftovers["volumes"]))
+    nonce = secrets.token_hex(16)                       # 128-bit per-grade ownership proof
     base = "mlxbench-tg2-" + uuid.uuid4().hex[:12]
     vol_work, vol_report = base + "-w", base + "-r"
     holder = ops.container_name()
-    label = ["--label", OWNER_LABEL, "--label", "%s=%d" % (CREATED_LABEL, int(time.time()))]
+    for kind, name in (("volume", vol_work), ("volume", vol_report), ("container", holder)):
+        if _exists(run, kind, name, outputs, "plan-" + name):
+            raise TransportAbort("tg2 planned %s name %s already exists; refusing (not touched)" % (kind, name))
+    label = ["--label", OWNER_LABEL, "--label", "%s=%d" % (CREATED_LABEL, int(time.time())),
+             "--label", "%s=%s" % (NONCE_LABEL, nonce)]
     failure = None
-    entry = _registry_write(registry, base, [vol_work, vol_report], holder)
+    owned_volumes, owns_holder, unverified = [], False, []
+    entry = _registry_write(registry, base, [vol_work, vol_report], holder, nonce)
     if hasattr(ops, "register_volume"):
         for name in (vol_work, vol_report):
             ops.register_volume(name)
@@ -911,6 +945,10 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
                               "volume-" + name)
             if rc != 0:
                 raise TransportAbort("tg2 volume create failed: %s" % text[-200:])
+            if _nonce_of(run, "volume", name, outputs, "own-" + name) != nonce:
+                unverified.append(name)
+                raise TransportAbort("tg2 volume %s is not provably ours (nonce label mismatch); left in place" % name)
+            owned_volumes.append(name)
         vols = [_mount("volume", vol_work, "/work/" + slug), _mount("volume", vol_report, "/report")]
         # A tmpfs volume only keeps its contents while some container has it mounted: a tiny holder keeps both alive;
         # it self-expires (bounded by the step timeouts) if the grader dies before cleaning up.
@@ -919,12 +957,17 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
                                            extra=("-d", *label)), outputs, "holder")
         if rc != 0:
             raise TransportAbort("tg2 volume holder failed to start: %s" % text[-200:])
+        if _nonce_of(run, "container", holder, outputs, "own-holder") != nonce:
+            unverified.append(holder)
+            raise TransportAbort("tg2 holder %s is not provably ours (nonce label mismatch); left in place" % holder)
+        owns_holder = True
         return _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs, index, vols)
     except BaseException as exc:
         failure = exc
         raise
     finally:
-        problems = _cleanup(run, ops, outputs, holder, [vol_work, vol_report])
+        problems = _cleanup(run, ops, outputs, holder if owns_holder else None, owned_volumes, nonce)
+        problems += ["%s not provably ours; left in place" % n for n in unverified]
         result.cleanup_problems = problems
         if problems:
             note = "tg2 cleanup uncertain: " + "; ".join(problems)
@@ -935,36 +978,47 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
             entry.unlink(missing_ok=True)
 
 
-def _cleanup(run, ops, outputs, holder, volumes):
-    """Remove the holder and every volume, continuing past each failure; verify absence. Returns the problems."""
+def _cleanup(run, ops, outputs, holder, volumes, nonce):
+    """Remove the holder and every volume THIS grade provably created (nonce label re-verified immediately before each
+    removal), continuing past each failure and verifying absence. Returns the problems."""
     problems = []
-    try:
-        ops.remove_container(holder)
-    except Exception as exc:  # noqa: BLE001 -- cleanup must reach the volumes whatever happened to the holder
-        problems.append("holder %s: %s" % (holder, exc))
+    if holder is not None:
+        try:
+            found = _nonce_of(run, "container", holder, outputs, "cl-holder")
+            if found is None:
+                pass
+            elif found != nonce:
+                problems.append("holder %s not provably ours; left in place" % holder)
+            else:
+                ops.remove_container(holder)
+                if _exists(run, "container", holder, outputs, "cl-holder-v"):
+                    problems.append("holder %s still present" % holder)
+        except Exception as exc:  # noqa: BLE001 -- cleanup must reach the volumes whatever happened to the holder
+            problems.append("holder %s: %s" % (holder, exc))
     for name in volumes:
         try:
-            rc, text = _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "rm-" + name)
+            found = _nonce_of(run, "volume", name, outputs, "cl-" + name)
+            if found is None:
+                continue
+            if found != nonce:
+                problems.append("volume %s not provably ours; left in place" % name)
+                continue
+            rc, _ = _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "rm-" + name)
             if rc != 0:
                 problems.append("volume %s rm rc=%s" % (name, rc))
+            if _exists(run, "volume", name, outputs, "ls-" + name):
+                problems.append("volume %s still present" % name)
         except Exception as exc:  # noqa: BLE001
-            problems.append("volume %s rm: %s" % (name, exc))
-        try:
-            rc, listing = _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name], outputs,
-                                 "ls-" + name)
-            if rc != 0 or listing:
-                problems.append("volume %s still present or unverifiable" % name)
-        except Exception as exc:  # noqa: BLE001
-            problems.append("volume %s verify: %s" % (name, exc))
+            problems.append("volume %s: %s" % (name, exc))
     return problems
 
 
-def _registry_write(registry, base, volumes, holder):
+def _registry_write(registry, base, volumes, holder, nonce):
     if registry is None:
         return None
     registry.mkdir(parents=True, exist_ok=True)
     path = registry / (base + ".json")
-    path.write_text(json.dumps(dict(base=base, volumes=volumes, holder=holder, created=int(time.time()))))
+    path.write_text(json.dumps(dict(base=base, volumes=volumes, holder=holder, nonce=nonce, created=int(time.time()))))
     return path
 
 
@@ -982,49 +1036,51 @@ def list_leftovers(run, private):
                 volumes=sorted(l.split()[0] for l in vtext.splitlines() if l.strip()))
 
 
-_REGISTERED_VOLUME = re.compile(r"^mlxbench-tg2-[0-9a-f]{12}-[wr]$")
+_REGISTERED_BASE = re.compile(r"^mlxbench-tg2-[0-9a-f]{12}$")
 _REGISTERED_HOLDER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+_NONCE = re.compile(r"^[0-9a-f]{32}$")
 
 
 def remove_registered(run, registry_file, private):
-    """Explicit recovery: remove exactly the volumes and holder recorded in one grade registry file (the holder must
-    carry the ownership label), verify every removal, then retire the registry file. Nothing else is touched."""
+    """Explicit recovery: remove exactly the volumes and holder recorded in one grade registry file that lives in
+    `<private>/.tg2-registry`, and ONLY objects whose nonce label proves this grade created them. Everything else is
+    listed and left in place (TransportAbort); every removal is verified; the registry is retired only when every
+    recorded object is verifiably gone."""
+    private = Path(private)
     registry_file = Path(registry_file)
+    if registry_file.resolve().parent != (private / REGISTRY_DIR).resolve():
+        raise TransportAbort("tg2 registry file %s is outside %s; nothing removed" % (registry_file, private / REGISTRY_DIR))
     try:
         doc = json.loads(registry_file.read_text())
-        volumes, holder = doc["volumes"], doc["holder"]
-        ok = (isinstance(volumes, list) and volumes and all(isinstance(v, str) and _REGISTERED_VOLUME.match(v)
-                                                            for v in volumes)
-              and isinstance(holder, str) and _REGISTERED_HOLDER.match(holder))
+        base, volumes, holder, nonce = doc["base"], doc["volumes"], doc["holder"], doc["nonce"]
+        ok = (isinstance(base, str) and _REGISTERED_BASE.match(base) and volumes == [base + "-w", base + "-r"]
+              and isinstance(holder, str) and _REGISTERED_HOLDER.match(holder)
+              and isinstance(nonce, str) and _NONCE.match(nonce))
     except (OSError, ValueError, KeyError, TypeError):
         ok = False
     if not ok:
         raise TransportAbort("tg2 registry file %s is malformed or names foreign objects; nothing removed" % registry_file)
-    outputs = Path(private) / ".tg2-cleanup"
+    outputs = private / ".tg2-cleanup"
     outputs.mkdir(parents=True, exist_ok=True)
-    rc, present = _plain(run, ["docker", "ps", "-a", "--filter", "name=^/%s$" % holder, "--format", "{{.Names}}"],
-                         outputs, "cl-find")
-    removed = dict(containers=[], volumes=[])
-    if present:
-        rc, label = _plain(run, ["docker", "inspect", "--format", '{{index .Config.Labels "mlxbench.tg2"}}', holder],
-                           outputs, "cl-label")
-        if rc != 0 or label != "1":
-            raise TransportAbort("tg2 holder %s lacks the ownership label; nothing removed" % holder)
-    problems = []
-    if present:
-        _plain(run, ["docker", "rm", "-f", holder], outputs, "cl-rm")
-        rc, left = _plain(run, ["docker", "ps", "-a", "--filter", "name=^/%s$" % holder, "--format", "{{.Names}}"],
-                          outputs, "cl-verify")
-        (problems.append("container %s" % holder) if rc != 0 or left else removed["containers"].append(holder))
-    for name in volumes:
-        rc, listing = _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name], outputs, "cl-vfind")
-        if not listing:
+    removed, foreign, problems = dict(containers=[], volumes=[]), [], []
+    objects = [("container", holder)] + [("volume", v) for v in volumes]
+    for kind, name in objects:
+        if not _exists(run, kind, name, outputs, "cl-find"):
             continue
-        _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "cl-vrm")
-        rc, left = _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name], outputs, "cl-vverify")
-        (problems.append("volume %s" % name) if rc != 0 or left else removed["volumes"].append(name))
-    if problems:
-        raise TransportAbort("tg2 removal could not be verified for: " + "; ".join(problems))
+        if _nonce_of(run, kind, name, outputs, "cl-nonce") != nonce:
+            foreign.append(name)
+            continue
+        if kind == "container":
+            _plain(run, ["docker", "rm", "-f", name], outputs, "cl-rm")
+        else:
+            _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "cl-vrm")
+        if _exists(run, kind, name, outputs, "cl-verify"):
+            problems.append("%s %s still present after removal" % (kind, name))
+        else:
+            removed["containers" if kind == "container" else "volumes"].append(name)
+    if foreign or problems:
+        raise TransportAbort("tg2 removal incomplete: not provably ours (left in place, listed): %s; unverified "
+                             "removals: %s" % (foreign or "none", problems or "none"))
     registry_file.unlink(missing_ok=True)
     return removed
 

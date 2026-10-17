@@ -271,6 +271,8 @@ class FakeGuard:
                 self.volumes[cmd[-1]] = path
                 self.volume_names.add(cmd[-1])
                 self.volume_labels[cmd[-1]] = dict(x.split("=", 1) for i, x in enumerate(cmd) if cmd[i - 1] == "--label")
+                if self.plan.get("volume_create").get("nonce_override"):
+                    self.volume_labels[cmd[-1]]["mlxbench.tg2.nonce"] = self.plan.get("volume_create")["nonce_override"]
             elif cmd[2] == "rm":
                 rm = self.plan.get("volume_rm")
                 if rm.get("timeout"):
@@ -278,7 +280,14 @@ class FakeGuard:
                 if not rm.get("rc"):
                     shutil.rmtree(self.volumes.pop(cmd[-1], self.vroot / "none"), ignore_errors=True)
                 return subprocess.CompletedProcess(cmd, rm.get("rc", 0), None, None)
+            elif cmd[2] == "inspect":
+                if cmd[-1] not in self.volumes:
+                    return subprocess.CompletedProcess(cmd, 1, None, None)
+                key = cmd[cmd.index("--format") + 1].split('"')[1]
+                kw["stdout"].write(self.volume_labels.get(cmd[-1], {}).get(key, "") + "\n")
             elif cmd[2] == "ls":
+                if self.plan.get("ls_fail").get("rc"):
+                    return subprocess.CompletedProcess(cmd, self.plan.get("ls_fail")["rc"], None, None)
                 flt = cmd[cmd.index("--filter") + 1]
                 if flt.startswith("label="):
                     key, _, val = flt[len("label="):].partition("=")
@@ -289,6 +298,8 @@ class FakeGuard:
                     kw["stdout"].write("".join(n + "\n" for n in self.volumes if n == want))
             return subprocess.CompletedProcess(cmd, 0, None, None)
         if step == "ps":
+            if self.plan.get("ls_fail").get("rc"):
+                return subprocess.CompletedProcess(cmd, self.plan.get("ls_fail")["rc"], None, None)
             flt = cmd[cmd.index("--filter") + 1]
             if flt.startswith("label="):
                 key, _, val = flt[len("label="):].partition("=")
@@ -308,7 +319,10 @@ class FakeGuard:
             kw["stdout"].write("holder-id\n")
             return subprocess.CompletedProcess(cmd, self.plan.get("holder").get("rc", 0), None, None)
         if step == "inspect" and any("Config.Labels" in x for x in cmd):
-            kw["stdout"].write(self.holder_names.get(cmd[-1], {}).get("mlxbench.tg2", "") + "\n")
+            if cmd[-1] not in self.holder_names:
+                return subprocess.CompletedProcess(cmd, 1, None, None)
+            key = cmd[cmd.index("--format") + 1].split('"')[1]
+            kw["stdout"].write(self.holder_names[cmd[-1]].get(key, "") + "\n")
             return subprocess.CompletedProcess(cmd, 0, None, None)
         if step == "inspect":
             spec = self.plan.get(self.step_by_name.get(cmd[-1], "?"))
@@ -1296,11 +1310,14 @@ def test_g21_registry_entry_survives_uncertain_cleanup(tree):
     assert len(list((private / ".tg2-registry").glob("*.json"))) == 1
 
 
+NONCE = "a1" * 16
+
+
 def _leftover(guard, vol="mlxbench-tg2-aaaaaaaaaaaa-w", holder="old-holder", registry=None):
     (guard.vroot / vol).mkdir(exist_ok=True)
     guard.volumes[vol] = guard.vroot / vol
-    guard.volume_labels[vol] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1"}
-    guard.holder_names[holder] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1"}
+    guard.volume_labels[vol] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1", "mlxbench.tg2.nonce": NONCE}
+    guard.holder_names[holder] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1", "mlxbench.tg2.nonce": NONCE}
     return vol, holder
 
 
@@ -1322,7 +1339,7 @@ def test_p363_grade_refuses_to_start_while_a_labelled_leftover_exists(tree):
     with pytest.raises(TransportAbort, match="leftover") as exc:
         tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
     assert vol in str(exc.value) and holder in str(exc.value) and "tg2_cleanup.py" in str(exc.value)
-    assert guard.calls == [("image", guard.calls[0][1])] and not guard.holders      # nothing was started
+    assert guard.calls == [] and not guard.holders                                  # nothing was started
     assert vol in guard.volumes                                                     # and nothing was deleted
 
 
@@ -1336,8 +1353,9 @@ def _registry(private, vol, holder, extra=None):
     d = private / ".tg2-registry"
     d.mkdir(parents=True, exist_ok=True)
     path = d / "mlxbench-tg2-aaaaaaaaaaaa.json"
-    path.write_text(json.dumps(dict(base="mlxbench-tg2-aaaaaaaaaaaa", volumes=[vol, vol[:-1] + "r"], holder=holder,
-                                    created=1, **(extra or {}))))
+    doc = dict(base="mlxbench-tg2-aaaaaaaaaaaa", volumes=[vol, vol[:-1] + "r"], holder=holder, nonce=NONCE, created=1)
+    doc.update(extra or {})
+    path.write_text(json.dumps(doc))
     return path
 
 
@@ -1347,7 +1365,8 @@ def test_p363_remove_registered_removes_exactly_the_recorded_names_and_verifies(
     vol, holder = _leftover(guard)
     other_vol, other_holder = _leftover(guard, vol="mlxbench-tg2-bbbbbbbbbbbb-w", holder="other-holder")
     guard.volumes["mlxbench-tg2-aaaaaaaaaaaa-r"] = guard.vroot
-    guard.volume_labels["mlxbench-tg2-aaaaaaaaaaaa-r"] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1"}
+    guard.volume_labels["mlxbench-tg2-aaaaaaaaaaaa-r"] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1",
+                                                          "mlxbench.tg2.nonce": NONCE}
     reg = _registry(private, vol, holder)
     out = tg.remove_registered(guard.run_grader, reg, private)
     assert sorted(out["volumes"]) == sorted([vol, "mlxbench-tg2-aaaaaaaaaaaa-r"]) and out["containers"] == [holder]
@@ -1374,9 +1393,9 @@ def test_p363_remove_registered_refuses_a_holder_without_the_ownership_label(tre
     vol, _ = _leftover(guard)
     guard.holder_names["h-unlabelled"] = {}
     reg = _registry(private, vol, "h-unlabelled")
-    with pytest.raises(TransportAbort, match="label"):
+    with pytest.raises(TransportAbort, match="not provably"):
         tg.remove_registered(guard.run_grader, reg, private)
-    assert "h-unlabelled" in guard.holder_names and vol in guard.volumes
+    assert "h-unlabelled" in guard.holder_names
 
 
 def test_p363_remove_registered_fails_loudly_when_removal_cannot_be_verified(tree):
@@ -1387,6 +1406,140 @@ def test_p363_remove_registered_fails_loudly_when_removal_cannot_be_verified(tre
     with pytest.raises(TransportAbort, match="verif"):
         tg.remove_registered(guard.run_grader, reg, private)
     assert reg.exists()
+
+
+# ============================================================================================ round-6 (G29-G32)
+class _Hex:
+    hex = "c" * 32
+
+
+def test_g29_every_object_carries_the_per_grade_nonce_label_and_nonces_differ_between_grades(tree):
+    g1 = FakeGuard(basic_plan("java"))
+    tg.grade("java", tree[0], "slug", tree[1], image_id=IMG, guard=g1, run=g1.run_grader)
+    g2 = FakeGuard(basic_plan("java"))
+    tg.grade("java", tree[0], "slug", tree[1], image_id=IMG, guard=g2, run=g2.run_grader)
+    n1 = {labels_of(c)["mlxbench.tg2.nonce"] for c in g1.volume_ops if c[2] == "create"} | {
+        labels_of(g1.holders[0])["mlxbench.tg2.nonce"]}
+    n2 = {labels_of(c)["mlxbench.tg2.nonce"] for c in g2.volume_ops if c[2] == "create"}
+    assert len(n1) == 1 and re.fullmatch(r"[0-9a-f]{32}", next(iter(n1))) and n1 != n2
+
+
+def test_g29_a_preexisting_object_with_a_planned_name_aborts_and_is_never_touched(tree, monkeypatch):
+    monkeypatch.setattr(tg.uuid, "uuid4", lambda: _Hex)
+    guard = FakeGuard(basic_plan("rust"))
+    (guard.vroot / "foreign").mkdir()
+    guard.volumes["mlxbench-tg2-cccccccccccc-w"] = guard.vroot / "foreign"
+    guard.volume_labels["mlxbench-tg2-cccccccccccc-w"] = {}
+    with pytest.raises(TransportAbort, match="already exists"):
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert "mlxbench-tg2-cccccccccccc-w" in guard.volumes
+    assert not [c for c in guard.volume_ops if c[2] in ("create", "rm")]
+
+
+def test_g29_a_created_volume_whose_nonce_label_does_not_verify_is_not_deleted(tree):
+    guard = FakeGuard(basic_plan("rust", volume_create=dict(nonce_override="f" * 32)))
+    with pytest.raises(TransportAbort, match="not provably"):
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert len(guard.volumes) == 1                      # the first (unverified) volume is left alone, listed, not removed
+    assert not [c for c in guard.volume_ops if c[2] == "rm"]
+
+
+def test_g29_normal_cleanup_deletes_only_objects_whose_nonce_still_matches(tree):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    inner = guard.run_grader
+
+    def run(cmd, **kw):
+        if step_of(cmd) == "preflight":                  # someone replaces one volume's label mid-grade
+            for n in list(guard.volume_labels):
+                if n.endswith("-r"):
+                    guard.volume_labels[n]["mlxbench.tg2.nonce"] = "e" * 32
+        return inner(cmd, **kw)
+
+    with pytest.raises(TransportAbort, match="cleanup uncertain"):
+        tg.grade("rust", work, "slug", private, image_id=IMG, guard=guard, run=run)
+    assert any(n.endswith("-r") for n in guard.volumes) and not any(n.endswith("-w") for n in guard.volumes)
+
+
+def test_g29_registry_records_base_exact_names_and_nonce_under_the_private_dir(tree):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    seen = []
+    inner = guard.run_grader
+
+    def run(cmd, **kw):
+        if step_of(cmd) == "preflight":
+            seen.append(json.loads(next((private / ".tg2-registry").glob("*.json")).read_text()))
+        return inner(cmd, **kw)
+
+    tg.grade("rust", work, "slug", private, image_id=IMG, guard=guard, run=run)
+    doc = seen[0]
+    assert doc["volumes"] == [doc["base"] + "-w", doc["base"] + "-r"] and re.fullmatch(r"[0-9a-f]{32}", doc["nonce"])
+
+
+def test_g29_remove_registered_refuses_a_registry_outside_the_private_registry_dir(tree, tmp_path):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    vol, holder = _leftover(guard)
+    reg = _registry(private, vol, holder)
+    stray = tmp_path / "elsewhere.json"
+    stray.write_text(reg.read_text())
+    with pytest.raises(TransportAbort, match="registry"):
+        tg.remove_registered(guard.run_grader, stray, private)
+    assert vol in guard.volumes
+
+
+@pytest.mark.parametrize("extra", [
+    dict(volumes=["mlxbench-tg2-aaaaaaaaaaaa-w", "mlxbench-tg2-bbbbbbbbbbbb-r"]),     # not <base>-{w,r}
+    dict(volumes=["mlxbench-tg2-aaaaaaaaaaaa-r", "mlxbench-tg2-aaaaaaaaaaaa-w"]),     # wrong order
+    dict(base="mlxbench-tg2-bbbbbbbbbbbb"),
+    dict(nonce="short"),
+    dict(nonce=None),
+])
+def test_g29_remove_registered_requires_exact_base_naming_and_a_nonce(tree, extra):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    vol, holder = _leftover(guard)
+    reg = _registry(private, vol, holder, extra)
+    with pytest.raises(TransportAbort, match="registry"):
+        tg.remove_registered(guard.run_grader, reg, private)
+    assert vol in guard.volumes and holder in guard.holder_names
+
+
+def test_g29_remove_registered_deletes_only_nonce_matching_objects_and_lists_the_rest(tree):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    vol, holder = _leftover(guard)
+    guard.volumes["mlxbench-tg2-aaaaaaaaaaaa-r"] = guard.vroot
+    guard.volume_labels["mlxbench-tg2-aaaaaaaaaaaa-r"] = {"mlxbench.tg2": "1", "mlxbench.tg2.nonce": "9" * 32}
+    reg = _registry(private, vol, holder)
+    with pytest.raises(TransportAbort, match="not provably") as exc:
+        tg.remove_registered(guard.run_grader, reg, private)
+    assert "mlxbench-tg2-aaaaaaaaaaaa-r" in str(exc.value)
+    assert "mlxbench-tg2-aaaaaaaaaaaa-r" in guard.volumes                  # foreign nonce: listed, never deleted
+    assert vol not in guard.volumes and holder not in guard.holder_names   # ours: removed
+    assert reg.exists()                                                     # not every recorded object was removed
+
+
+# G30 ------------------------------------------------------------------------------------------------------------
+def test_g30_a_failed_listing_during_removal_is_uncertainty_not_absence(tree):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust", ls_fail=dict(rc=1)))
+    vol, holder = _leftover(guard)
+    reg = _registry(private, vol, holder)
+    with pytest.raises(TransportAbort):
+        tg.remove_registered(guard.run_grader, reg, private)
+    assert reg.exists() and vol in guard.volumes
+
+
+# G31 ------------------------------------------------------------------------------------------------------------
+def test_g31_leftover_refusal_precedes_every_other_early_return(tree, monkeypatch):
+    monkeypatch.setattr(tg, "TREE_CAP", 1)
+    (tree[0] / "big.bin").write_bytes(b"x" * 100)
+    guard = FakeGuard(basic_plan("rust"))
+    _leftover(guard)
+    with pytest.raises(TransportAbort, match="leftover"):
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
 
 
 # G22 ------------------------------------------------------------------------------------------------------------
@@ -1531,14 +1684,19 @@ def test_g23_hostile_report_replaced_by_the_solution_is_a_model_failure_in_the_r
     ref = _ref_of(tmp_path, stub, "javascript", "affine-cipher")
     # Deterministic: the detached child polls until /report/jest.json parses as complete JSON (jest has finished writing
     # it), then replaces it. It inherits stdout, so the bounded-output pipe (and the container) stays up until then.
-    wait = ("for i in $(seq 1 600); do python3 -c \"import json;json.load(open('/report/jest.json'))\" 2>/dev/null "
-            "&& break; sleep 0.2; done")
+    # Synchronisation is REQUIRED: if jest.json never becomes valid JSON the child prints TG2_SYNC_FAILED and does not
+    # replace anything; the test then fails (no fall-through to a benign report).
+    wait = ("ok=0; for i in $(seq 1 600); do python3 -c \"import json;json.load(open('/report/jest.json'))\" "
+            "2>/dev/null && { ok=1; break; }; sleep 0.2; done; "
+            "[ $ok = 1 ] || { echo TG2_SYNC_FAILED; exit 1; }; echo TG2_SYNC_OK")
     hook = ("require('child_process').spawn('sh', ['-c', %r], "
             "{detached: true, stdio: ['ignore', 'inherit', 'inherit']}).unref();\n"
             % ("%s; rm -f /report/jest.json; %s" % (wait, HOSTILE[kind])))
     (ref / "affine-cipher.js").write_text(hook + (ref / "affine-cipher.js").read_text())
     result = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared,
-                           solutions=sols, guard=guard, timeout=300)
+                           solutions=sols, guard=guard, timeout=300, keep=tmp_path / "keep", seq=0, boundary=0)
+    out = (tmp_path / "keep/seq-0000/execute.stdout").read_text()
+    assert "TG2_SYNC_OK" in out and "TG2_SYNC_FAILED" not in out, "report replacement was not synchronised"
     assert result.outcome == "crash" and result.reason == "runner_crash_after_start", (result.outcome, result.reason_detail)
     assert result.all_failed and not guard.leftover() and not guard.leftover_volumes()
 
