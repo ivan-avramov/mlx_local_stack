@@ -58,7 +58,7 @@ class MinimalAdapter(aa.ArmAdapter):
     def events(self, stream):
         return []
 
-    def transcript(self, guard, env, work, stream, binary):
+    def transcript(self, guard, env, work, stream, binary, raw_sink=None):
         return aa.Transcript(raw="", doc={})
 
     def final_boundary(self, transcript):
@@ -83,4 +83,19 @@ class MinimalAdapter(aa.ArmAdapter):
         return []
 
     def receipts_reconcile(self, paths, **kw):
+        return {}
+
+    def evidence_root(self, workdir):
+        return workdir
+
+    def row_identity_fields(self):
+        return {}
+
+    def metrics(self, p, transcript, export):
+        return {}
+
+    def identity_binary(self):
+        return "/x", False
+
+    def identity_summary(self, ident, binary_exists):
         return {}

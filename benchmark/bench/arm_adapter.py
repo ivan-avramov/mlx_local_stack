@@ -269,6 +269,10 @@ class ArmAdapter(abc.ABC):
     GENERATION_FIELDS: tuple
     native_client_cuts: tuple
     removed_tools: tuple
+    account_compaction = False          # the runner accounts compaction requests (compaction is on for this arm)
+    watchdog_enabled = False            # the runner runs the spec 5.4 shell watchdog
+    pinned_version = ""                 # the client version the identity is read against
+    observed = None                     # set by the runner after each item: {events, reconciliation, tool_windows}
 
     # -- identity and provenance
     @abc.abstractmethod
@@ -342,8 +346,9 @@ class ArmAdapter(abc.ABC):
         """`list[NormalizedEvent]` for everything the stream has consumed so far."""
 
     @abc.abstractmethod
-    def transcript(self, guard, env, work, stream, binary):
-        """Acquire the client's session record under the guard. Returns a `Transcript`."""
+    def transcript(self, guard, env, work, stream, binary, raw_sink=None):
+        """Acquire the client's session record under the guard. Returns a `Transcript`; `raw_sink(text)` receives the
+        raw output before any refusal so the evidence file exists even when acquisition fails."""
 
     @abc.abstractmethod
     def final_boundary(self, transcript):
@@ -370,6 +375,35 @@ class ArmAdapter(abc.ABC):
     @abc.abstractmethod
     def receipts_reconcile(self, paths, **kw):
         """Reconcile per-request receipts (date freeze today; worker receipts, spec 7, in the fork step)."""
+
+    # -- arm naming (defaults suit a client with none of these needs)
+    @abc.abstractmethod
+    def evidence_root(self, workdir):
+        """Directory under which per-model evidence lives (`$STACK_WORKDIR/transcripts/<arm>` for the M64 arms)."""
+
+    @abc.abstractmethod
+    def row_identity_fields(self):
+        """Constant row fields naming the harness (`bench`, `schema_version`)."""
+
+    @abc.abstractmethod
+    def metrics(self, p, transcript, export):
+        """Client-specific row metrics derived from the transcript (loop / traffic / tool-bound counts)."""
+
+    @abc.abstractmethod
+    def identity_binary(self):
+        """`(path, exists)` of the client binary for `--print-identity` (a stand-in path when absent)."""
+
+    @abc.abstractmethod
+    def identity_summary(self, ident, binary_exists):
+        """Client-named identity keys `--print-identity` adds (version, exe sha)."""
+
+    def merge_receipts(self, reconciliation, summary):
+        """Fold a receipts summary into the Reconciliation (default: keep it as `extra['receipts']`)."""
+        reconciliation.extra["receipts"] = summary
+
+    def transport_cause(self, exc):
+        """The transport-incident cause of an abort (spec 8.3), or None when it is not a classified transport failure."""
+        return None
 
     # -- cancellation: SIGTERM first (spec 5), shared
     def cancel(self, guard, wait, *, before_signal=None, after_signal=None):

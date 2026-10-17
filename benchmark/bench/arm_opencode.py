@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import shlex
 import shutil
@@ -112,6 +113,7 @@ class OcStream(tg.EventStream):
         self.normalized = []
         self.tool_windows = []
         self.compaction_events = []        # (after_request, info), filled at reconcile from the session export
+        self.late_finishes = {}            # request_seq -> Usage of a request the live events never closed (reconcile)
         self.terminal_shape = None
 
     def accept(self, e):
@@ -142,6 +144,8 @@ class OpencodeArm(aa.ArmAdapter):
     GENERATION_FIELDS = t1.GENERATION_FIELDS
     native_client_cuts = ("client_inactivity",)
     removed_tools = REMOVED_TOOLS
+
+    pinned_version = "2.0.20"
 
     def __init__(self, p=None, *, mode="m64", search=None):
         if mode not in ("tg1", "m64"):
@@ -184,7 +188,8 @@ class OpencodeArm(aa.ArmAdapter):
             sel = p._carrier_selection(self.label, system_file, source=source)
         sel["source"] = t1.CARRIER
         sel["fields"] = {**sel["fields"],
-                         "carrier_source": t1.CARRIER.relative_to(REPO).as_posix(),
+                         "carrier_source": (t1.CARRIER.relative_to(REPO).as_posix() if t1.CARRIER.is_relative_to(REPO)
+                                            else p._portable(t1.CARRIER)),
                          "carrier_source_sha256": hashlib.sha256(base_bytes).hexdigest(),
                          "carrier_transform": "opencode-v2-web-tg1c",
                          "carrier_changes": json.dumps([list(c) for c in M64_CARRIER_CHANGES])}
@@ -379,6 +384,9 @@ class OpencodeArm(aa.ArmAdapter):
 
     def events(self, stream):
         merged = list(stream.normalized)
+        for seq, usage in sorted(stream.late_finishes.items()):
+            last = max((i for i, e in enumerate(merged) if e.request_seq == seq), default=len(merged) - 1)
+            merged.insert(last + 1, aa.NormalizedEvent.request_finish(seq, usage))
         for after, info in sorted(stream.compaction_events, key=lambda x: x[0]):
             at = max((i + 1 for i, e in enumerate(merged) if e.kind == "request_finish" and e.request_seq <= after),
                      default=0)
@@ -387,10 +395,12 @@ class OpencodeArm(aa.ArmAdapter):
             merged.append(aa.NormalizedEvent.terminal(stream.terminal_shape))
         return merged
 
-    def transcript(self, guard, env, work, stream, binary):
+    def transcript(self, guard, env, work, stream, binary, raw_sink=None):
         exported, _ = ox.run_export(lambda export_env, timeout: guard.run_grader(     # P273: logged-lock retry
             [binary, "session", "export", stream.session_id or "", "--standalone"], cwd=work, env=export_env,
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout), env, timeout=120)
+        if raw_sink is not None:
+            raw_sink(exported.stdout or "")
         if exported.returncode:
             raise tg.TransportAbort("session export failed: " + ox.export_failure_tail(exported.stderr))
         try:
@@ -412,6 +422,13 @@ class OpencodeArm(aa.ArmAdapter):
             if stream.errors and all(causes):
                 raise TransportFailure(causes[0], str(exc)) from exc
             raise
+        for seq, message_id in enumerate(stream.starts, 1):        # the final request usually has no live step_finish
+            values = stream.gate.usage.get(message_id)
+            if values is not None and not any(e.kind == "request_finish" and e.request_seq == seq
+                                              for e in stream.normalized):
+                output, reasoning, inp, read, write = values
+                stream.late_finishes[seq] = Usage(input=inp, cache_read=read, cache_write=write, output=output,
+                                                  reasoning=reasoning)
         compaction, extra = [], {}
         if self.account_compaction:
             compaction = self._compaction_entries(doc, stream)
@@ -483,6 +500,38 @@ class OpencodeArm(aa.ArmAdapter):
 
     def tool_windows(self, stream):
         return list(stream.tool_windows)
+
+    def evidence_root(self, workdir):
+        """tg1 keeps `opencode_transcripts`; the M64 arms use `transcripts/<arm>` (spec 9)."""
+        return Path(workdir) / ("transcripts/" + self.arm_id if self.m64 else "opencode_transcripts")
+
+    def row_identity_fields(self):
+        return dict(bench="opencode", schema_version=3)
+
+    def metrics(self, p, transcript, export):
+        return dict(tool_bounds_rejections=t1.tool_bounds_rejections(export),
+                    loop_metrics=p.loop_metrics(p._metric_export(export)),
+                    traffic=p.traffic_metrics(p._metric_export(export)))
+
+    def identity_binary(self):
+        exe = Path(os.environ.get("OPENCODE_PROBE_BIN") or self.p._default_opencode_bin())
+        return (exe if exe.is_file() else Path(self.p.__file__)), exe.is_file()
+
+    def identity_summary(self, ident, binary_exists):
+        out = dict(opencode_version=ident["opencode_version"])
+        if binary_exists:
+            out["opencode_exe_sha256"] = ident["opencode_exe_sha256"]
+        return out
+
+    def merge_receipts(self, reconciliation, summary):
+        reconciliation.extra["date_summary"] = summary
+        if self.account_compaction:
+            reconciliation.extra["compaction_receipts"] = summary["compaction_receipts"]
+            reconciliation.extra["compaction_accounting_complete"] = (
+                summary["compaction_receipts"] == reconciliation.compaction_count)
+
+    def transport_cause(self, exc):
+        return exc.cause if isinstance(exc, TransportFailure) else None
 
     def tmp_escapes(self, transcript, env):
         return pg.tmp_escapes(transcript.doc, env)
