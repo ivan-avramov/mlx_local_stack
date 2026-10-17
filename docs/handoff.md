@@ -29,7 +29,12 @@ P353, P352, P351), `docs/specs/m65-tg2-corpus.md` (v5), `docs/specs/p311-identit
   `chain.json` without a frozen date refuses on resume. Residual: the model's shell can read the frozen date + receipt path (same-UID evidence
   limit). **tg1 epoch now `probe_code_sha256` `ae7fca94e77b1ea025f67bbac27a0b816aa0f8de8b771aa3683a8170a80fc2a1`**, scaffold policy `33d79b32…`.
   Full suite on main 5092 passed. Reference arms are reusable across days within an epoch (C168's ≈ 4 GPU h screen holds).
-- **Operator answers pending:** none. Local main is ahead of origin (P311-lite, P364, docs) — push needs a new go.
+- **tg2 step 1 MERGED** (`a22f0db7`; Cursor rounds 1–6 + round 7 closed by lead verification, P365): `bench/tg2_grade.py`
+  (Rust/Java/JS/C++; phase-typed, nonce-marked, tmpfs-volume grading; nonce-label ownership; list-and-refuse leftovers, explicit
+  `benchmark/m65/tg2_cleanup.py`), image `tg2-grader:m65-v1` `sha256:09f2b30e…` (`benchmark/m65/tg2_image/`). Main full suite 5404
+  passed; tg2 docker tests need the machine config sourced (`STACK_WORKDIR`) or they skip. **Step 2 in progress** (branch `tg2-step2`):
+  materializer, universe freeze, nested draw.
+- **Operator answers pending:** none. Local main is ahead of origin (P311-lite, P364, tg2 step 1, docs) — push needs a new go.
 - **Rules:** never run two full suites concurrently (load flakes timing tests and once leaked a chain-test runner thread for 7 h — fixed
   defensively on `tg2-build`); always write suite output to a file and read the summary line.
 - **P361:** OrbStack bind mounts under `$TMPDIR` serve stale sizes after in-place overwrites; tg1 unaffected (fresh snapshots under
