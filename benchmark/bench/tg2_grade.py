@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 import posixpath
 import re
+import secrets
+import shutil
 import subprocess
 import tempfile
 import time
@@ -36,19 +38,9 @@ TIMEOUT_FLOOR = 180
 JEST = "/opt/tg2/js/node_modules/.bin/jest"
 BABEL = "/opt/tg2/js/node_modules/@babel/core"
 SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
-# Exit codes after which a missing report is the instrument's fault, not the model's (spec: "clean execute").
-CLEAN_EXIT = {
-    "rust": lambda rc: rc in (0, 101),
-    "java": lambda rc: rc in (0, 1),
-    "javascript": lambda rc: rc in (0, 1),
-    "cpp": lambda rc: 0 <= rc < 128,         # Catch2: exit code = number of failed cases; 128+n = signal
-}
-CRASH = {
-    "rust": re.compile(r"didn't exit successfully|\(signal: \d+"),
-    "java": re.compile(r"Gradle Test Executor \d+'? finished with non-zero exit value|OutOfMemoryError|StackOverflowError"),
-    "javascript": re.compile(r"JavaScript heap out of memory|process\.exit called"),
-    "cpp": re.compile(r"Segmentation fault|core dumped|terminate called"),
-}
+MARKER = "TG2_RUNNER_START"
+# Agent-created build outputs: top-level dirs absent from the prepared tree are stripped before tamper and grading.
+STRIP_TOP_LEVEL = ("build", "target", "node_modules", ".gradle")
 # A dependency that cannot be resolved offline is an image defect (manifests are protected), never a model outcome.
 OFFLINE_DEP = re.compile(
     r"attempting to make an HTTP request, but --offline|failed to get `[^`]+` as a dependency|"
@@ -228,8 +220,14 @@ def _docker_run(name, image_id, slug, work, report, inner):
     ]
 
 
-def _commands(lang, slug):
-    """(compile script, execute script) per the spec's grader table."""
+def _commands(lang, slug, nonce="0"):
+    """(compile script, execute script) per the spec's grader table. The execute script prints the per-grade
+    runner-start marker immediately before invoking the test runner."""
+    compile_script, execute_script = _raw_commands(lang, slug)
+    return compile_script, 'echo "%s %s"; %s' % (MARKER, nonce, execute_script)
+
+
+def _raw_commands(lang, slug):
     if lang == "rust":
         return ("cargo test --frozen --offline --no-run 2>&1",
                 "cargo test --frozen --offline --no-fail-fast -- --include-ignored 2>&1")
@@ -249,6 +247,25 @@ def _commands(lang, slug):
 JS_SKIP = re.compile(r"\b(?:xtest|xit|xdescribe)\s*\(|\b(?:test|it|describe)\.skip\b")
 JAVA_SKIP = re.compile(r"@Disabled\b")
 _JS_TEST = re.compile(r"\.(?:spec|test)\.[cm]?js$")
+
+
+def strip_build_outputs(work, prepared):
+    """Remove top-level build/dependency directories the agent created (absent from the prepared tree); returns the
+    stripped names. Nested ones (e.g. src/build) are untouched and stay subject to the default-deny tamper check."""
+    work = Path(work)
+    stripped = []
+    for name in STRIP_TOP_LEVEL:
+        path = work / name
+        if any(p == name or p.startswith(name + "/") for p in prepared):
+            continue
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+        else:
+            continue
+        stripped.append(name)
+    return stripped
 
 
 def skip_form_violations(work, lang):
@@ -384,6 +401,9 @@ class Tg2Grade:
     artifacts: dict = field(default_factory=dict)
     image_id: str = ""
     version: str = VERSION
+    reason: str = ""
+    reason_detail: str = ""
+    stripped: list = field(default_factory=list)
 
     @property
     def collected(self):
@@ -397,7 +417,7 @@ class Tg2Grade:
         return len(set(universe) - self.passing)
 
 
-def grade(lang, work, slug, private, *, image_id=None, image_tag=IMAGE_TAG, run=None, guard=None, timeout=None,
+def grade(lang, work, slug, private, *, prepared=None, image_id=None, image_tag=IMAGE_TAG, run=None, guard=None, timeout=None,
           keep=None, seq=None, boundary=None, final=False):
     """Grade one prepared/snapshotted tree in the tg2 image. `slug` is the exercise directory name (C++ CMake derives
     its project and sources from it, so the tree is mounted at /work/<slug>). With `keep`, raw outputs are written to
@@ -423,6 +443,8 @@ def grade(lang, work, slug, private, *, image_id=None, image_tag=IMAGE_TAG, run=
             raise TransportAbort("immutable grade report path exists: " + directory.name) from None
     private.mkdir(parents=True, exist_ok=True)
     result = Tg2Grade(lang=lang, image_id=image_id)
+    # `prepared` = the prepared-tree manifest (callers always pass it); without it nothing is stripped.
+    result.stripped = strip_build_outputs(work, prepared) if prepared is not None else []
     state = dict(outcome="infrastructure")
 
     def index(outcome):
@@ -431,7 +453,8 @@ def grade(lang, work, slug, private, *, image_id=None, image_tag=IMAGE_TAG, run=
             return {}
         names = sorted(p.name for p in directory.iterdir() if p.is_file() and p.name != "index.json"
                        and not p.name.startswith(".index"))
-        doc = dict(version=VERSION, lang=lang, slug=slug, image_id=image_id, outcome=outcome, phases=result.phases)
+        doc = dict(version=VERSION, lang=lang, slug=slug, image_id=image_id, outcome=outcome, phases=result.phases,
+                   reason=result.reason, reason_detail=result.reason_detail, stripped=result.stripped)
         (directory / "phases.json").write_text(json.dumps(doc, indent=1, sort_keys=True))
         names = sorted(set(names) | {"phases.json"})
         return _write_index(keep, directory, seq, boundary, final, outcome, names)
@@ -509,7 +532,8 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, rep
     if launch["rc"] != 0 or launch["timed_out"]:
         raise TransportAbort("tg2 setup failed (rc=%s timeout=%s): %s" % (launch["rc"], launch["timed_out"],
                                                                           _text(launch)[-300:]))
-    compile_script, execute_script = _commands(lang, slug)
+    nonce = secrets.token_hex(8)
+    compile_script, execute_script = _commands(lang, slug, nonce)
     # --- compile
     comp = _launch(result, "compile", ["bash", "-c", compile_script], run, ops, image_id, slug, work, report, outputs,
                    timeout)
@@ -525,16 +549,16 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, rep
     kind = _resource(exe)
     if kind:
         return _all_failed(result, kind, index)
-    _infra_check(exe, lang, "execute", offline=False)
     # --- parse (host side)
-    rc = exe["rc"]
-    text = _text(exe)
-    clean = CLEAN_EXIT[lang](rc)
+    # The marker carries a per-grade nonce that only the wrapper knows: absent = the runner was never reached
+    # (infrastructure); present with a missing / malformed report = the model's code killed the runner.
+    if ("%s %s" % (MARKER, nonce)) not in exe["stdout"].read_text(errors="replace").splitlines():
+        raise TransportAbort("tg2 execute: runner-start marker absent (rc=%s): %s" % (exe["rc"], _text(exe)[-300:]))
     try:
         leaves = _parse(lang, slug, work, report, outputs, exe)
     except ReportError as exc:
-        if clean and not CRASH[lang].search(text):
-            raise TransportAbort("missing or malformed %s report after a clean execute (rc=%s): %s" % (lang, rc, exc)) from None
+        result.reason = "runner_crash_after_start"
+        result.reason_detail = str(exc)
         return _all_failed(result, "crash", index)
     result.leaves = leaves
     result.outcome = "parsed"

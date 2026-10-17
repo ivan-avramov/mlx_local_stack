@@ -26,6 +26,10 @@ import pytest
 import bench.generate as G
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "docker: needs docker and the built tg2-grader image (skipped when absent)")
+
+
 # --------------------------------------------------------------------------- orphan-shell sweep
 def pytest_sessionfinish(session, exitstatus):
     """20th cold review round 20 (HIGH, box stability): 71 orphaned `/bin/bash --login`

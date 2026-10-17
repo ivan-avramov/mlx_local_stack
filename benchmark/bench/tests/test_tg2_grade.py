@@ -6,6 +6,7 @@ the polyglot corpus is absent."""
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -208,6 +209,12 @@ class FakeGuard:
         if spec.get("timeout"):
             kw["stdout"].write(spec.get("stdout", ""))
             raise subprocess.TimeoutExpired(cmd, kw.get("timeout") or 1)
+        if step == "execute":
+            nonce = re.search(r"TG2_RUNNER_START (\w+)", cmd[-1]).group(1)
+            if spec.get("fake_marker"):
+                kw["stdout"].write("TG2_RUNNER_START deadbeef\n")
+            if not spec.get("no_marker"):
+                kw["stdout"].write("TG2_RUNNER_START %s\n" % nonce)
         kw["stdout"].write(spec.get("stdout", ""))
         kw["stderr"].write(spec.get("stderr", ""))
         m = mounts(cmd)
@@ -339,41 +346,55 @@ def test_failure_wins_and_missing_expected_leaf_fails(tree):
 
 
 @pytest.mark.parametrize("lang,rc", [("javascript", 0), ("javascript", 1), ("java", 0), ("java", 1), ("cpp", 0),
-                                      ("cpp", 3)])
-def test_missing_report_after_clean_execute_is_infrastructure(tree, lang, rc):
-    plan = basic_plan(lang, execute=dict(rc=rc))
-    with pytest.raises(TransportAbort):
+                                      ("cpp", 3), ("cpp", 139), ("javascript", 134), ("java", 137)])
+def test_missing_report_after_runner_start_is_a_model_outcome(tree, lang, rc):
+    result, _ = do_grade(lang, tree, basic_plan(lang, execute=dict(rc=rc)))
+    assert result.outcome == "crash" and result.all_failed and result.passing == set()
+    assert result.reason == "runner_crash_after_start"
+
+
+def test_malformed_report_after_runner_start_is_a_model_outcome(tree):
+    plan = basic_plan("javascript", execute=dict(rc=1, report={"jest.json": "{broken"}))
+    result, _ = do_grade("javascript", tree, plan)
+    assert result.outcome == "crash" and result.reason == "runner_crash_after_start"
+
+
+def test_rust_without_any_test_lines_after_start_is_a_model_outcome(tree):
+    result, _ = do_grade("rust", tree, basic_plan("rust", execute=dict(rc=0, stdout="nothing here\n")))
+    assert result.outcome == "crash" and result.all_failed
+
+
+def test_javascript_process_exit_style_crash_after_start_is_a_model_failure(tree):
+    plan = basic_plan("javascript", execute=dict(rc=1, stderr="process.exit called with \"1\"\n"))
+    result, _ = do_grade("javascript", tree, plan)
+    assert result.outcome == "crash" and result.all_failed and result.reason == "runner_crash_after_start"
+
+
+@pytest.mark.parametrize("lang", sorted(EXPECTED))
+def test_marker_absent_is_infrastructure_even_with_a_report_present(tree, lang):
+    plan = basic_plan(lang)
+    plan.steps["execute"]["no_marker"] = True
+    with pytest.raises(TransportAbort, match="marker"):
         do_grade(lang, tree, plan)
 
 
-def test_malformed_report_after_clean_execute_is_infrastructure(tree):
-    plan = basic_plan("javascript", execute=dict(rc=1, report={"jest.json": "{broken"}))
-    with pytest.raises(TransportAbort):
+def test_forged_marker_without_the_nonce_does_not_change_classification(tree):
+    plan = basic_plan("javascript")
+    plan.steps["execute"].update(no_marker=True, fake_marker=True)
+    with pytest.raises(TransportAbort, match="marker"):                       # still absent: forged nonce
         do_grade("javascript", tree, plan)
+    plan = basic_plan("javascript")
+    plan.steps["execute"]["fake_marker"] = True
+    result, _ = do_grade("javascript", tree, plan)                           # real marker present: unchanged
+    assert result.outcome == "parsed" and len(result.passing) == 2
 
 
-def test_rust_without_any_test_lines_after_clean_exit_is_infrastructure(tree):
-    with pytest.raises(TransportAbort):
-        do_grade("rust", tree, basic_plan("rust", execute=dict(rc=0, stdout="nothing here\n")))
-
-
-@pytest.mark.parametrize("lang,rc", [("cpp", 139), ("javascript", 134), ("java", 137)])
-def test_crash_without_report_is_a_model_outcome(tree, lang, rc):
-    result, _ = do_grade(lang, tree, basic_plan(lang, execute=dict(rc=rc)))
-    assert result.outcome == "crash" and result.all_failed
-
-
-def test_java_test_executor_crash_is_a_model_outcome(tree):
-    plan = basic_plan("java", execute=dict(rc=1, stdout="Process 'Gradle Test Executor 1' finished with non-zero exit value 1"))
-    result, _ = do_grade("java", tree, plan)
-    assert result.outcome == "crash" and result.all_failed
-
-
-def test_rust_binary_killed_mid_run_is_a_model_outcome(tree):
-    plan = basic_plan("rust", execute=dict(rc=101, stdout=(
-        "     Running tests/t.rs (x)\nerror: test failed\nprocess didn't exit successfully: `x` (signal: 11, SIGSEGV)\n")))
-    result, _ = do_grade("rust", tree, plan)
-    assert result.outcome == "crash" and result.all_failed
+def test_execute_script_prints_the_marker_right_before_the_runner_with_a_fresh_nonce(tree):
+    _, g1 = do_grade("java", tree, basic_plan("java"))
+    _, g2 = do_grade("java", tree, basic_plan("java"))
+    s1, s2 = g1.calls[3][1][-1], g2.calls[3][1][-1]
+    assert re.match(r'^echo "TG2_RUNNER_START [0-9a-f]{16}"; bash \./gradlew', s1)
+    assert s1 != s2
 
 
 @pytest.mark.parametrize("step,over", [
@@ -383,7 +404,7 @@ def test_rust_binary_killed_mid_run_is_a_model_outcome(tree):
     ("launch", dict(timeout=True)),
     ("compile", dict(rc=125, stderr="docker: Error response from daemon: pull access denied")),
     ("compile", dict(rc=127, stderr="bash: cargo: command not found")),
-    ("execute", dict(rc=126, stderr="permission denied")),
+    ("execute", dict(rc=126, stderr="permission denied", no_marker=True)),
 ])
 def test_setup_and_docker_level_failures_are_infrastructure(tree, step, over):
     with pytest.raises(TransportAbort):
@@ -452,7 +473,7 @@ def test_raw_outputs_retained_by_sha256_with_phase_records(tree, tmp_path):
 def test_retained_report_directory_exists_on_infrastructure_abort_too(tree, tmp_path):
     keep = tmp_path / "keep"
     with pytest.raises(TransportAbort):
-        do_grade("java", tree, basic_plan("java", execute=dict(rc=1)), keep=keep, seq=0, boundary=1)
+        do_grade("java", tree, basic_plan("java", execute=dict(rc=1, no_marker=True)), keep=keep, seq=0, boundary=1)
     index = json.loads((keep / "seq-0000/index.json").read_text())
     assert index["outcome"] == "infrastructure" and "execute.stdout" in index["artifacts"]
 
@@ -632,6 +653,66 @@ def test_tampered_bool_wrapper_matches_reasons(tmp_path):
     assert tg.tampered(work, protected, prepared, "rust", solutions=["src/lib.rs"]) is True
 
 
+# --------------------------------------------------------------------------------- agent-created build outputs
+def test_strip_removes_absent_top_level_build_outputs_and_tamper_then_passes(tmp_path):
+    work, prepared, protected = prep(tmp_path, RUST, ["src/lib.rs"])
+    write(work, "target/debug/x.rs")
+    write(work, "build/y")
+    write(work, "node_modules/jest/index.js")
+    write(work, ".gradle/z")
+    assert tg.tamper_reasons(work, protected, prepared, "rust", solutions=["src/lib.rs"])   # default-deny unstripped
+    assert tg.strip_build_outputs(work, prepared) == ["build", "target", "node_modules", ".gradle"]
+    assert tg.tamper_reasons(work, protected, prepared, "rust", solutions=["src/lib.rs"]) == []
+    assert not (work / "target").exists() and not (work / "node_modules").exists()
+
+
+def test_strip_removes_a_symlinked_build_dir_without_following_it(tmp_path):
+    work, prepared, _ = prep(tmp_path, RUST, ["src/lib.rs"])
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("1")
+    os.symlink(outside, work / "target")
+    assert tg.strip_build_outputs(work, prepared) == ["target"]
+    assert (outside / "keep").exists() and not (work / "target").is_symlink()
+
+
+def test_prepared_build_dir_is_protected_not_stripped(tmp_path):
+    files = dict(RUST, **{"build/fixture.txt": "data\n"})
+    work, prepared, protected = prep(tmp_path, files, ["src/lib.rs"])
+    assert tg.strip_build_outputs(work, prepared) == []
+    write(work, "build/fixture.txt", "changed\n")
+    assert tg.tamper_reasons(work, protected, prepared, "rust", solutions=["src/lib.rs"])
+
+
+def test_nested_build_dir_is_not_stripped_and_stays_default_denied(tmp_path):
+    work, prepared, protected = prep(tmp_path, RUST, ["src/lib.rs"])
+    write(work, "src/build/x.rs")
+    assert tg.strip_build_outputs(work, prepared) == []
+    assert (work / "src/build/x.rs").exists()
+    # a rust src/*.rs helper is allowlisted even in a dir called build; non-allowlisted nested files are denied
+    write(work, "tests/build/y.rs")
+    reasons = tg.tamper_reasons(work, protected, prepared, "rust", solutions=["src/lib.rs"])
+    assert any("tests/build/y.rs" in r for r in reasons)
+
+
+def test_grade_strips_planted_artifacts_before_any_container_and_records_them(tree):
+    work, private = tree
+    write(work, "node_modules/jest/index.js", "evil")
+    write(work, "target/debug/stale", "stale")
+    prepared = sg.manifest(work)
+    prepared = {k: v for k, v in prepared.items() if not k.startswith(("node_modules/", "target/"))}
+    seen = {}
+    guard = FakeGuard(basic_plan("javascript"))
+    inner = guard.run_grader
+
+    def run(cmd, **kw):
+        seen.setdefault("present", []).append((work / "node_modules").exists() or (work / "target").exists())
+        return inner(cmd, **kw)
+
+    result = tg.grade("javascript", work, "slug", private, prepared=prepared, image_id=IMG, guard=guard, run=run)
+    assert result.stripped == ["target", "node_modules"] and not any(seen["present"])
+
+
 # ------------------------------------------------------------------------------------------- Rust lockfile helper
 def test_generate_cargo_locks_runs_offline_in_the_image_and_returns_created_locks(tmp_path):
     work = build_tree(tmp_path / "w", {"Cargo.toml": "x", "nested/Cargo.toml": "y"})
@@ -677,6 +758,24 @@ DOCKER_SKIP = _docker_skip_reason()
 ITEMS = [("rust", "gigasecond"), ("rust", "macros"), ("java", "affine-cipher"), ("java", "connect"),
          ("javascript", "affine-cipher"), ("javascript", "alphametics"), ("cpp", "gigasecond"),
          ("cpp", "binary-search-tree")]
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+def test_javascript_solution_calling_process_exit_is_a_model_failure_not_infrastructure(tmp_path):
+    from bench.tests import tg2_trees
+    docker_bin = shutil.which("docker") or str(Path.home() / ".orbstack/bin/docker")
+    os.environ["PATH"] = str(Path(docker_bin).parent) + os.pathsep + os.environ["PATH"]
+    ref = tg2_trees.reference_tree(POLYGLOT, "javascript", "affine-cipher", tmp_path / "ref")
+    (ref / "affine-cipher.js").write_text("process.exit(1);\n")
+    (ref / "node_modules").mkdir()                                   # planted artefact: stripped before grading
+    (ref / "node_modules/jest").mkdir()
+    prepared = {k: v for k, v in sg.manifest(ref).items() if not k.startswith("node_modules/")}
+    result = tg.grade("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared, guard=tg.LocalDocker(),
+                      timeout=300)
+    assert result.stripped == ["node_modules"]
+    assert result.outcome in ("crash", "parsed") and result.passing == set()
+    assert result.outcome != "parsed" or result.failing({"x"}) >= 1
 
 
 @pytest.mark.docker
