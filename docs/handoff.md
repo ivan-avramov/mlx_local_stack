@@ -1,6 +1,6 @@
 # Handoff — 2026-10-16 (night): M65 PILOT live (GPU, from main); G1 round 3 in review; P348 cleared (merge after the pilot); P352 + tg2 v2 await review/operator
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (P352, P351, C167, P348, P347, P346, C166, C165, G1,
+THE one handoff. Read this, then `docs/open-questions.md` top entries (P355, P354, P353, P352, P351, C167, P348, P347, P346, C166, C165, G1,
 G2, P340, C164, P309), `docs/specs/m64-scaffold-arms.md`, `docs/PLAN.md` M64 + M65 rows, `docs/specs/p311-identity-split.md`
 (v2), `docs/specs/m65-tg2-corpus.md` (DRAFT v2).
 
@@ -23,8 +23,9 @@ G2, P340, C164, P309), `docs/specs/m64-scaffold-arms.md`, `docs/PLAN.md` M64 + M
   Math500), no score/shipping change. Merge after the pilot.
 - **P311:** v2 `2b161f64`; Cursor round 2 AGREE WITH CHANGES P10–P20 → **P352 operator decision** (recommend P311-lite).
   Build paused.
-- **tg2:** DRAFT v2 `ae4aeb9d` (round 1 T1–T13 applied); Cursor round 2 next; sizing needs the pilot + a four-language
-  smoke.
+- **tg2:** DRAFT v4 `e97d34ee`, Cursor rounds 1–3 applied (design agreed) → **P355** operator go to build.
+- **G1 paused → P353** (review loop not converging: 5/4/4/6 findings; recommend scope-close at the C165 principle +
+  containment). Round 4 review on the branch (`519f3a22`). **P354** pre-existing `descendants_alive` crash (needs a go).
 - Cursor: run reviews one at a time (a concurrent run returned empty output once); waiters must poll a PID, not
   `pgrep -f cursor-agent` (matches the waiter's own command line).
 
