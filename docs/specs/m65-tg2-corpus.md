@@ -1,9 +1,9 @@
-# M65 step 2 — "tg2" harder agentic corpus (DRAFT v3, 2026-10-16; sizing pending smoke data)
+# M65 step 2 — "tg2" harder agentic corpus (DRAFT v5, 2026-10-17; tiers per C168)
 
 Status: DRAFT → Cursor `gpt-5.6-sol-high` review → operator. PLAN M65; C167 (P349). v2 applies Cursor round 1
 T1–T13 (`benchmark/chains/c147/reviews/m65/tg2-round1.cursor-gpt-5.6-sol-high.md`); v3 applies round 2 T14–T26
 (`tg2-round2…`) and round 3 T27–T28 (`tg2-round3…`, AGREE WITH CHANGES T27 T28). v1 = `a44b4b18`, v2 = `ae4aeb9d`,
-v3 = `5e98a509`.
+v3 = `5e98a509`, v4 = `e97d34ee`. v5 folds in C168 (P356 as revised by its Cursor review): screen / decider tiers.
 
 ## Why
 
@@ -96,25 +96,35 @@ levels are indicative only.
 
 1. Freeze the valid universe first (`benchmark/m65/tg2_universe.json` + sha256 sidecar): corpus `polyglot_sha`, sorted
    valid ids per language, exclusions with reasons, `N_actual` per language.
-2. Precompute immutable candidate draws for `n_lang` ∈ {20, 25, all} with seed 6501
-   (`random.Random(6501).sample(sorted(valid), n_lang)`; all valid ids when `n_lang ≥ N_actual`), each a canonical JSON
-   (sorted keys, no whitespace variance) with its sha256, committed before any tg2 model run (smoke included).
-3. After the smoke and D1 / D2 the operator selects one candidate BY HASH; every leg verifies the selected draw's sha256
-   at start and refuses on mismatch.
-A language with `N_actual` < 20 needs explicit operator acknowledgement (keep at `N_actual`, or drop); the campaign
+2. One seeded permutation per language, `random.Random(6501).sample(sorted(valid), N_actual)`, frozen as a canonical
+   JSON (sorted keys) with its sha256 before any tg2 model run (smoke included). Tier draws are NESTED prefixes of it:
+   screen = first 10 per language, decider = first 20 per language (the screen items are the decider's first half);
+   a later resolution increase (C168) extends the same prefix (25, …, all) — never a redraw.
+3. Every leg names its tier and verifies the permutation's sha256 and the prefix length at start; refuses on mismatch.
+A language with `N_actual` < 20 (decider prefix not fillable) needs explicit operator acknowledgement (keep at `N_actual`, or drop); the campaign
 proceeds only if at least two languages remain unless the operator rules otherwise. M55 outcomes are never used;
 overlap with M55's draws is allowed.
 
-## Sizing (T10, T12)
+## Tiers and sizing (C168; T10, T12; P356 review `benchmark/chains/c147/reviews/m65/p356-round1.cursor-gpt-5.6-sol-high.md`)
 
-Inputs: the M65 step-1 pilot (current-harness headroom, latency and nonconvergence on new items); M55 same-model
-reload discordance per language (1/22–9/22) and the four-language tg2 smoke as disclosed sensitivity bounds — NOT the
-tg1 value (0.041). Output: an explicit MDE table by language × `n_lang` ∈ {20, 25, all} × assumed discordance
-p_d ∈ {0.10, 0.20, 9/22} (e.g. N = 25: ≈ ±25 pp at p_d 0.20, ≈ ±36 pp at 9/22) plus the strict-accuracy interval
-width per cell (T21). Cost: point estimate
-from M55 means (≈ 6–7 min/item → ≈ 45 h for 100 items × 2 picks × k = 2 + reload) is a LOWER bound; P223's current
-harness had p95 19.3 min and max 61 min per item; a heavy-tail range (+ model loads, A4, auditing, grading, recovery)
-is published after the smoke.
+| Tier | When | Items | Sessions | GPU per new arm | Claims allowed |
+|---|---|---|---|---|---|
+| SCREEN | every model / harness / config tuple | 40 (10 / language) | k = 1 (exception to the agentic k = 2 rule, screens only) | ≈ 4 h | diagnostic only: per-language estimates, nonconv kinds, tokens/task, failure modes, headroom; no PASS / ADOPT / REJECT; a clean screen is not safety evidence; a material finding triggers the decider |
+| DECIDER | only when a pick or ladder order would change | 80 (20 / language) | k = 2 + same-seed reload | ≈ 18–19 h | per-session inference (sessions never pooled); equal-language macro-average + every language reported, pre-registered large-harm HOLD; exact 80 %-power MDE ≈ 14 pp same-model/config, ≈ 18 pp between picks |
+
+- Planning discordance (P356 S3): p_d = .182 for same-model / config comparisons (M55 s1 vs s2, 24/132) and .303 between
+  picks (40/132); .409 stress. Never the saturated tg1 value (.041). Sized by exact paired-binary simulation (P357 fixed
+  sim), pooled and per-language power reported separately.
+- Early stopping: futility only, at the screen → decider boundary (40 of 80 items, nested); a futility stop yields
+  HOLD, never equivalence; no efficacy looks, no sequential TOST.
+- Reference arm: run once per decision epoch and reused only with identical epoch, model, items, seeds, fingerprint,
+  wall policy, frozen opencode `prompt_date`, box class and scoring, plus contemporaneous sentinel items each run; any
+  sentinel drift → HOLD / re-baseline. Cross-epoch rows descriptive.
+- Single-turn axes keep their own ≤ 5 pp estimands but never certify agentic behaviour (S9; M63): any lever that changes
+  trajectories, timeouts, scaffold, tools or serving needs at least the screen.
+- ±5 pp agentic equivalence is out of reach (≈ 514–1,300 items); resolution is revisited once results exist (C168).
+- Cost: the per-arm figures are lower bounds from M55 means (≈ 351–382 s / item); loads, A4, audits, recovery and the
+  subjective panel come on top; P223 tail p95 19.3 min / max 61 min. A heavy-tail range is published after the smoke.
 
 ## Build steps (each test-first, worktree, Cursor review)
 
@@ -128,4 +138,5 @@ is published after the smoke.
 
 ## Operator decisions (after the smoke + sizing report)
 
-D1 languages (C++ in or out); D2 `n_lang`; D3 whether M64 moves to tg2 (spec amendment) or stays on tg1.
+D1 languages (C++ in or out; it has 26 candidates before exclusions); D3 whether M64 moves to tg2 (spec amendment) or
+stays on tg1. (D2 settled by C168: screen 10 / language, decider 20 / language.)
