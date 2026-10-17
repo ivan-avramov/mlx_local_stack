@@ -930,7 +930,12 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=
             elif typed_worker(mw) and r[key] != mw:
                 why.append(f"worker_mismatch: {rid} {key} != manifest worker")
         ev = r.get("evidence_sha256") or {}
-        for name, pkey in (("events", "events_path"), ("stderr", "stderr_path"), ("export", "transcript_path")):
+        kinds = [("events", "events_path"), ("stderr", "stderr_path"), ("export", "transcript_path")]
+        if frozen_prompt_date is not None:                                # P364: the receipt file is load-bearing evidence
+            kinds.append(("datefreeze", "datefreeze_path"))
+            if set(ev) != {k for k, _ in kinds}:
+                why.append(f"evidence_keys: {rid} {sorted(ev)} != {sorted(k for k, _ in kinds)}")
+        for name, pkey in kinds:
             sha = ev.get(name)
             if not isinstance(sha, str) or not HEX64.match(sha):
                 why.append(f"evidence_sha_missing: {rid} {name}")

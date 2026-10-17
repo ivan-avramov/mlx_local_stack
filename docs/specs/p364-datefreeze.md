@@ -77,3 +77,10 @@ Operator 2026-10-17: "yes, let's fix that. potentially mask the OC timestamps?"
 - `scripts/session_pinning_gate.py` (A4, tg1 scaffold) does not copy `datefreeze.js`; A4 checks session pinning, not the prompt.
 - chain.json records `frozen_prompt_date` and `frozen_prompt_date_source` (explicit, or reference chain.json basename + sha256);
   an existing chain.json without it is refused on resume (it belongs to the previous epoch anyway).
+- Review round 1 (F1-F3): receipts share the same-UID evidence limitation that applies to every bench evidence file (events,
+  exports, rows); mitigated by the row-time sha256 plus `validate_leg` (the `datefreeze` evidence key and `datefreeze_path` are
+  now verified, and the evidence key set is exact). No broker is built. The plugin's frozen date and the per-item receipt path
+  still reach it by env: the receipt path is per item, and the config directory is hashed and inventoried exactly, so a
+  per-item file there is not possible; opencode gives plugins no other per-item channel. Residual: the model's shell can read
+  both values. `cleanMessages` removes only exact `Today's date is now: Www Mmm DD YYYY` lines in `role:"system"` messages and
+  deletes a message only when its own removals emptied it.

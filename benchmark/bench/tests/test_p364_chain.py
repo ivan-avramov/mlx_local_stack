@@ -175,3 +175,33 @@ def test_validate_leg_checks_the_manifest_and_every_row_against_the_frozen_date(
     rows[0]["prompt_date_update_removed"] = "no"
     out.write_text("".join(json.dumps(r) + "\n" for r in rows))
     assert any("prompt_date_real" in w for w in co.validate_leg(leg, pinned, frozen_prompt_date=EPOCH_DATE, **kw))
+
+
+def validate(tmp_path, out, rows, **kw):
+    man = json.loads(out.with_suffix(".manifest.json").read_text())
+    pinned = {**pinned_for(out), "serving_path": man["git"]["serving_path"], "registry_sha256": man["registry"]["sha256"]}
+    return co.validate_leg(leg_for(out, ["python/a"]), pinned, workdir=str(tmp_path),
+                           policy_sha=man["runtime"]["scaffold_policy_sha256"], frozen_prompt_date=EPOCH_DATE)
+
+
+def test_validate_leg_verifies_the_receipt_evidence_hash(tmp_path):
+    out, rows = good_leg(tmp_path)
+    assert set(rows[0]["evidence_sha256"]) == {"events", "stderr", "export", "datefreeze"}
+    assert validate(tmp_path, out, rows) == []
+    receipt = co.resolve_portable(rows[0]["datefreeze_path"], str(tmp_path))
+    receipt = __import__("pathlib").Path(receipt)
+    receipt.write_text(receipt.read_text() + "tampered\n")
+    assert any("evidence_sha_mismatch" in w and "datefreeze" in w for w in validate(tmp_path, out, rows))
+    receipt.unlink()
+    assert any("evidence_sha_mismatch" in w and "datefreeze" in w for w in validate(tmp_path, out, rows))
+
+
+def test_validate_leg_requires_the_exact_evidence_key_set(tmp_path):
+    out, rows = good_leg(tmp_path)
+    del rows[0]["evidence_sha256"]["datefreeze"]
+    out.write_text(json.dumps(rows[0]) + "\n")
+    assert any("evidence_sha_missing" in w and "datefreeze" in w for w in validate(tmp_path, out, rows))
+    rows[0]["evidence_sha256"]["datefreeze"] = "a" * 64
+    rows[0]["evidence_sha256"]["extra"] = "b" * 64
+    out.write_text(json.dumps(rows[0]) + "\n")
+    assert any("evidence_keys" in w for w in validate(tmp_path, out, rows))

@@ -126,6 +126,8 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
     if not files["events"].exists():
         files["events"].write_bytes(b'{"type":"step_finish"}\n' + events_extra)
     files["stderr"].write_bytes(b"")
+    files["datefreeze"] = ev / "datefreeze.jsonl"          # P364 parity: the receipt file is row evidence
+    files["datefreeze"].write_text("")
     files["export"].write_text(json.dumps({"id": item}))
     names = ("report.xml", "stdout.txt", "stderr.txt") if item.startswith("python/") else ("go.jsonl", "go.stderr")
     arts = {}
@@ -145,7 +147,7 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
         "prompt_date": (runtime or {}).get("frozen_prompt_date", REAL_DATE()),
         "prompt_date_real": REAL_DATE(), "prompt_date_update_removed": False,
         "events_path": _portable(wd, files["events"]), "transcript_path": _portable(wd, files["export"]),
-        "stderr_path": _portable(wd, files["stderr"]),
+        "stderr_path": _portable(wd, files["stderr"]), "datefreeze_path": _portable(wd, files["datefreeze"]),
         "grade_reports": [{"boundary": 1, "seq": 1, "final": True, "outcome": "parsed",
                            "artifacts": arts}],
         "gate": {"output_tokens_completed": 1000, "requests_completed": 5},

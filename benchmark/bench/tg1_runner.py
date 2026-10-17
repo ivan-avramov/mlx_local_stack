@@ -1290,6 +1290,7 @@ def _main(p, a, names):
                     opencode_version=version,
                     stop_reason=result["gate"]["stop_reason"] or "completed",
                     events_path=p._portable(artifacts["events"]),
+                    datefreeze_path=p._portable(artifacts["datefreeze"]),
                     transcript_path=p._portable(artifacts["export"]),
                     evidence_sha256={k: p._sha_of(v) for k, v in artifacts.items()},
                     stderr_path=p._portable(artifacts["stderr"]),

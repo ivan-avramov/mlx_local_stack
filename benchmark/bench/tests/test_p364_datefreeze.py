@@ -128,6 +128,28 @@ def test_update_as_plain_string_content_is_removed(node):
     assert got["payload"]["messages"] == payload()["messages"]
 
 
+def test_only_system_role_update_messages_of_the_exact_shape_are_removed(node):
+    """F2: user / synthetic text that merely resembles the update stays; so does a non-date-shaped system line."""
+    exact = "Today's date is now: Sun Oct 18 2026"
+    messages = payload()["messages"] + [
+        {"role": "user", "content": [{"type": "text", "text": exact}]},
+        {"role": "user", "content": exact},
+        {"role": "system", "content": [{"type": "text", "text": "Today's date is now: whenever"}]},
+    ]
+    got = node("context", payload(messages=messages))
+    assert got["ok"] is True and got["payload"]["messages"] == messages
+    assert got["receipts"][0]["n_update_removed"] == 0
+
+
+def test_an_unrelated_empty_message_is_never_deleted(node):
+    update = {"role": "system", "content": [{"type": "text", "text": "Today's date is now: Sun Oct 18 2026"}]}
+    empty_user = {"role": "user", "content": []}
+    empty_system = {"role": "system", "content": [{"type": "text", "text": ""}]}
+    got = node("context", payload(messages=[empty_user, update, empty_system]))
+    assert got["payload"]["messages"] == [empty_user, empty_system]
+    assert got["receipts"][0]["n_update_removed"] == 1
+
+
 def test_model_authored_text_is_never_edited(node):
     echoed = "Today's date is now: Sun Oct 18 2026"
     messages = payload()["messages"] + [
@@ -444,11 +466,13 @@ def test_wire_every_request_carries_the_frozen_date_and_is_receipted(real_bin, t
         got = receipts_of(receipts)
         assert [(r["kind"], r["seq"]) for r in got] == [("primary", 1), ("primary", 2), ("primary", 3)]
         assert len({r["sessionID"] for r in got}) == 1 and all(r["n_initial_replaced"] == 1 for r in got)
-        # every receipt hash is the sha of the system text the server really received
+        # every receipt hash is the sha of the (masked) system text the server really received
         for chat, r in zip(mock.chats, got):
             system = chat["body"]["messages"][0]["content"]
-            system = system if isinstance(system, str) else "\n".join(p["text"] for p in system)
-            assert r["system_sha256"] == hashlib.sha256(system.encode()).hexdigest() or FROZEN in system
+            parts = [system] if isinstance(system, str) else [p["text"] for p in system]
+            assert FROZEN in "".join(parts)
+            candidates = {hashlib.sha256(sep.join(parts).encode()).hexdigest() for sep in ("\n", "\n\n", "")}
+            assert r["system_sha256"] in candidates, "receipt hash does not match the wire system text"
 
 
 def test_wire_masking_changes_only_the_date_text_headers_and_cache_keys_unchanged(real_bin, tmp_path):

@@ -8,7 +8,6 @@ import crypto from "node:crypto"
 
 const DATE_SHAPE = /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (0[1-9]|[12][0-9]|3[01]) [0-9]{4}$/
 const INITIAL = /Today's date: ([^\n]*)/g
-const UPDATE_LINE = /^Today's date is now: /
 const KINDS = { context: "primary", compaction: "compaction", generate: "generate", title: "title" }
 const seq = new Map()
 
@@ -37,10 +36,14 @@ function freezeSystem(system, frozen) {
   return replaced
 }
 
+// The pinned binary's update is a `role:"system"` message whose text is the instruction line; only lines of exactly
+// this shape, in system-role messages, are removed (user / synthetic / model text is never edited).
+const UPDATE_EXACT = new RegExp("^Today's date is now: " + DATE_SHAPE.source.slice(1, -1) + "$")
+
 function stripUpdates(text) {
   let removed = 0
   const kept = text.split("\n").filter((line) => {
-    if (!UPDATE_LINE.test(line)) return true
+    if (!UPDATE_EXACT.test(line)) return true
     removed += 1
     return false
   })
@@ -48,17 +51,16 @@ function stripUpdates(text) {
 }
 
 function cleanMessages(messages) {
-  let removed = 0
-  if (!Array.isArray(messages)) return removed
+  let total = 0
+  if (!Array.isArray(messages)) return total
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]
-    if (!message || message.role === "assistant" || message.role === "tool") continue
-    let empty = false
+    if (!message || message.role !== "system") continue
+    let removed = 0
     if (typeof message.content === "string") {
       const r = stripUpdates(message.content)
       removed += r.removed
       message.content = r.text
-      empty = r.removed > 0 && r.text.trim() === ""
     } else if (Array.isArray(message.content)) {
       for (let j = message.content.length - 1; j >= 0; j--) {
         const part = message.content[j]
@@ -68,26 +70,28 @@ function cleanMessages(messages) {
         part.text = r.text
         if (r.removed > 0 && r.text.trim() === "") message.content.splice(j, 1)
       }
-      empty = removed > 0 && message.content.length === 0
     }
     if (typeof message.text === "string") {
       const r = stripUpdates(message.text)
       removed += r.removed
       message.text = r.text
-      empty = empty || (r.removed > 0 && r.text.trim() === "")
     }
+    total += removed
+    if (removed === 0) continue
+    const empty = (typeof message.content === "string" ? message.content.trim() === "" : !message.content || message.content.length === 0)
+      && (typeof message.text !== "string" || message.text.trim() === "")
     if (empty) messages.splice(i, 1)
   }
-  return removed
+  return total
 }
 
 function leftover(event) {
   const texts = (event.system || []).map((s) => (s && s.text) || "")
   for (const message of event.messages || []) {
-    if (!message || message.role === "assistant" || message.role === "tool") continue
+    if (!message || message.role !== "system") continue
     texts.push(JSON.stringify(message.content ?? "") + JSON.stringify(message.text ?? ""))
   }
-  return texts.some((t) => t.includes("Today's date is now:"))
+  return texts.some((t) => t.includes("Today's date is now: ") && t.match(/Today's date is now: [A-Z][a-z]{2} [A-Z][a-z]{2} [0-9]{2} [0-9]{4}/))
 }
 
 function receipt(path, record) {
