@@ -249,10 +249,11 @@ def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05, strat
       "wash"                 the CI includes 0: no shown difference. Always read it with `mde` and
                              the actual numbers; `directional` ("a"/"b"/"tie") is the point-estimate
                              pick — a directional pick, NOT a shown difference (exact tie: "tie").
-    `margin` is accepted for API compatibility and no longer affects the verdict.
+    `margin` is accepted for API compatibility only: it is decision-inert here (no equivalence test).
 
     FAILURE MODE: a wash is a sample-size statement, not a model statement — at 15 items nothing
-    under ~32pp is resolvable (`mde`). Lossy-lever decision code must apply the MDE guard itself.
+    under ~32pp is resolvable (`mde`). Lossy-lever decision code must apply the C173 observed-loss-bound
+    guard itself (CI lower bound >= -10pp, or the exact discordance bound for a degenerate cell), never MDE.
     MINIMUM USABLE n: n_for(delta).
     """
     import random

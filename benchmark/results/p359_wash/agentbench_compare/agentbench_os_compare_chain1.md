@@ -2,7 +2,7 @@
 
 `(regenerated P348)`
 
-Bootstrap: iters=10000 seed=0 TOST margin=0.05 (+-5pp); MDE alpha=0.05 power=0.8 p_d=0.2
+Bootstrap: iters=10000 seed=0 margin=0.05 (compatibility only, decision-inert; P359); MDE alpha=0.05 power=0.8 p_d=0.2
 
 ## The four numbers (per arm)
 

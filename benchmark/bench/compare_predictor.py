@@ -375,8 +375,8 @@ def _verdict(chosen, margin):
     if lo > 0:
         return "PASS"
     if hi < 0:
-        return "PASS" if lo > -margin else "FAIL"
-    if delta < -margin:
+        return "PASS" if lo >= -margin - 1e-9 else "FAIL"      # a bound of exactly -margin passes (<=5% rule)
+    if delta < -margin - 1e-9:
         return "FAIL"
     return "PASS" if _loss_bound(chosen) <= LEVER_LOSS_MAX + 1e-12 else "loss_not_ruled_out"
 

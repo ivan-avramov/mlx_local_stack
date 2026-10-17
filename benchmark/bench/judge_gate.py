@@ -418,7 +418,7 @@ def _family_preference_splits(candidates, verdicts_by_pair, judges):
 def compute_ranking(pairs, verdict_rows, judges, seed=0, margin=TOST_MARGIN):
     """Paired preference rate (tie=0.5) per unordered model pair, over the shared items, with
     a two-stage cluster-bootstrap CI (`stats.cluster_bootstrap`), a bootstrap-normal p-value
-    vs 0.5, Holm-adjusted across the 6 pairs, and a TOST +-`margin` equivalence flag. Also
+    vs 0.5, Holm-adjusted across the 6 pairs, and a m1_better/m2_better/wash verdict (`margin` is compatibility only, decision-inert). Also
     reports a per-JUDGE-FAMILY preference split per pair (point estimate only, no CI — a
     diagnostic for "did one family drive this result", not a ranking input)."""
     verdicts_by_pair = group_verdicts_by_pair(verdict_rows)

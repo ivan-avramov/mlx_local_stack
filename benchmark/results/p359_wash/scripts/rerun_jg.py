@@ -28,7 +28,8 @@ for d,pf in jobs:
     r=J.compute_ranking(pairs,vr,judges,seed=0)
     orr=json.load(open(f'{base}/ranking.json'))
     r=json.loads(json.dumps(r))
-    diffs=[];walk({k:v for k,v in orr.items() if k!='usage'},r,'',diffs)
+    if 'usage' in orr: r['usage']=orr['usage']   # P359 W2: usage is not a verdict input; preserve the stored block
+    diffs=[];walk(orr,r,'',diffs)
     print(d,'ranking',{k:v['verdict'] for k,v in r['pairs'].items()} if len(r['pairs'])<3 else {k[-30:]:v['verdict'] for k,v in r['pairs'].items()})
     for x in diffs[:10]: print('   DIFF',x)
     json.dump(r,open(f'{T}/{d}/ranking.json','w'),indent=2)

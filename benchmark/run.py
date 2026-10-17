@@ -508,7 +508,7 @@ def build_parser():
                          "For nested sets (one run a subset of another) this recovers a genuine "
                          "matched comparison; the output names how many items were dropped.")
     sp.add_argument("--margin", type=float, default=0.05,
-                    help="equivalence margin for the TOST verdict (default 5pp)")
+                    help="n_for sizing in the printed hint only; decision-inert (verdict = CI excludes 0 or wash, P359)")
     sp.add_argument("--tune", type=generate.validate_tune, default=None,
                     help="compare the tune-stamped rows for BOTH models (see `generate --tune`); "
                          "same as suffixing '@tune' onto each --models entry, left alone if a "

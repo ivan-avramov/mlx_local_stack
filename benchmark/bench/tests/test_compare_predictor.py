@@ -413,9 +413,12 @@ def test_verdict_pass_before_fail_precedence_at_matched_margin(tmp_results):
 
 
 def test_verdict_strict_inequality_at_the_margin_boundary():
-    # a SHOWN (CI excludes 0) loss: sub-margin passes (<=5% rule), at/over the margin fails
+    # a SHOWN (CI excludes 0) loss: a lower bound of exactly -5 pp passes (<=5% rule, W1; float-noise tolerant),
+    # beyond the margin fails
     at_boundary = {"lo": -0.05, "hi": -0.01, "delta": -0.03, "verdict": "tune_a_better", "mde": 0.05}
-    assert CP._verdict(at_boundary, margin=0.05) == "FAIL"
+    assert CP._verdict(at_boundary, margin=0.05) == "PASS"
+    assert CP._verdict({**at_boundary, "lo": -0.05 - 1e-12}, margin=0.05) == "PASS"
+    assert CP._verdict({**at_boundary, "lo": -0.0501}, margin=0.05) == "FAIL"
     inside = {"lo": -0.049, "hi": -0.01, "delta": -0.03, "verdict": "tune_a_better", "mde": 0.05}
     assert CP._verdict(inside, margin=0.05) == "PASS"
 
@@ -502,3 +505,30 @@ def test_main_refusal_exits_nonzero_and_writes_nothing(tmp_results, capsys):
     assert not out_path.exists()
     captured = capsys.readouterr()
     assert "REFUSED" in captured.err
+
+
+# ----------------------------------------------- P359 W7: production-path guard coverage via compare_predictor()
+def _zero_discordance(tmp_results, n):
+    ids = [f"i{k}" for k in range(n)]
+    _write_rows("M", "math500", "m37med", _rows(ids, ok=True))
+    _write_rows("M", "math500", "m40on", _rows(ids, ok=True))
+    _write_manifest("M", "math500", "m37med", draft="off")
+    _write_manifest("M", "math500", "m40on", draft="mtp")
+    return CP.compare_predictor("M", "math500", "m37med", "m40on")
+
+
+def test_p359_production_zero_discordance_blocks_at_n28_and_ships_at_n29(tmp_results):
+    r28 = _zero_discordance(tmp_results, 28)
+    assert r28["verdict"] == "loss_not_ruled_out" and "above 10 pp" in r28["verdict_note"]
+    r29 = _zero_discordance(tmp_results, 29)
+    assert r29["verdict"] == "PASS" and "observed loss bound 10 pp" in r29["verdict_note"]
+
+
+def test_p359_production_off_advantage_beyond_margin_fails(tmp_results):
+    ids = [f"i{k}" for k in range(40)]
+    _write_rows("M", "math500", "m37med", _rows(ids, ok=True))
+    _write_rows("M", "math500", "m40on", _rows(ids, ok=set(ids[:37])))      # ON loses 3 of 40 (-7.5 pp)
+    _write_manifest("M", "math500", "m37med", draft="off")
+    _write_manifest("M", "math500", "m40on", draft="mtp")
+    r = CP.compare_predictor("M", "math500", "m37med", "m40on")
+    assert r["verdict"] == "FAIL"
