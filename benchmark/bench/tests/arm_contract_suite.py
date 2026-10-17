@@ -232,25 +232,50 @@ def check_gate_positives(h):
 
 
 def check_watchdog_positives():
-    """Arm-neutral: the 600 s deadline machinery on REAL processes (shortened limit), the three spec 6 positives."""
+    """Arm-neutral: the 600 s deadline machinery on REAL processes (shortened limit), the three spec 6 positives:
+    a foreground and a background tool descendant, and a child that detaches AFTER the watchdog observed it."""
+    import tempfile
+    from pathlib import Path
     limit, grace = 1.0, 0.4
+    tmp = Path(tempfile.mkdtemp(prefix="wd-contract-"))
+    gate_file = tmp / "go"
     t0 = time.time()
     fg = subprocess.Popen(["sleep", "60"])
     bg = subprocess.Popen(["sh", "-c", "sleep 60 & wait"])
+    detaching = subprocess.Popen(["sh", "-c", f"sleep 60 & echo $! > {tmp}/pid; while [ ! -e {gate_file} ]; do sleep 0.05; done"])
+    child = None
     try:
         dog = wd.ShellWatchdog.for_client(os.getpid(), limit_s=limit, grace_s=grace)
         dog.open_window("a", "shell", t0 - 0.2)
+        end = time.time() + 5
+        while time.time() < end and not (tmp / "pid").exists():
+            time.sleep(0.02)
+        dog.tick()                                           # the detaching child is OBSERVED here, still a descendant
+        child = int((tmp / "pid").read_text())
+        gate_file.write_text("x")                            # its parent exits: the child is orphaned (detached)
+        detaching.wait(10)
         end = time.time() + 12
-        while time.time() < end and (fg.poll() is None or bg.poll() is None):
+        while time.time() < end and (fg.poll() is None or bg.poll() is None or _alive(child)):
             dog.tick()
             time.sleep(0.05)
         assert fg.poll() is not None, "a foreground tool descendant over the limit survived"
         assert bg.poll() is not None, "a background tool descendant over the limit survived"
+        assert not _alive(child), "a child that detached after it was observed survived"
         assert dog.exec_timeout
     finally:
-        for p in (fg, bg):
+        for p in (fg, bg, detaching):
             p.kill()
             p.wait(10)
+        if child is not None and _alive(child):
+            os.kill(child, 9)
+
+
+def _alive(pid):
+    import psutil
+    try:
+        return psutil.Process(pid).status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)
+    except psutil.NoSuchProcess:
+        return False
 
 
 def check_cancel_sigterm_first(h):
@@ -333,7 +358,7 @@ class ArmContractSuite:
     def test_tool_windows_from_the_arms_events(self, harness):
         check_tool_windows(harness)
 
-    def test_shell_watchdog_positives_foreground_background(self, harness):
+    def test_shell_watchdog_positives_foreground_background_detached(self, harness):
         check_watchdog_positives()
 
     def test_injected_stall_loop_hard_ceiling_through_the_arms_events(self, harness):
