@@ -890,6 +890,11 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
     seen = _text(inspect).strip()
     if inspect["rc"] != 0 or seen != image_id:
         raise TransportAbort("tg2 image %s does not match the pinned id (found %r)" % (image_tag, seen[:80]))
+    leftovers = list_leftovers(run, registry.parent if registry is not None else outputs)
+    if leftovers["containers"] or leftovers["volumes"]:
+        raise TransportAbort("tg2 leftover storage from an earlier grade must be removed first (no automatic deletion): "
+                             "containers %s, volumes %s; remove with `python benchmark/m65/tg2_cleanup.py --remove "
+                             "<private>/.tg2-registry/<file>.json`" % (leftovers["containers"], leftovers["volumes"]))
     base = "mlxbench-tg2-" + uuid.uuid4().hex[:12]
     vol_work, vol_report = base + "-w", base + "-r"
     holder = ops.container_name()
@@ -963,55 +968,64 @@ def _registry_write(registry, base, volumes, holder):
     return path
 
 
-def sweep_leftovers(run, private, *, min_age_s=3600, now=None):
-    """Recovery sweep for crashed grades: remove only containers and volumes carrying the `mlxbench.tg2=1` label
-    that are older than `min_age_s` (so a live grade is never touched), then verify absence. Unlabelled objects -
-    even with an `mlxbench-tg2` name - are never touched. Returns {'containers': [...], 'volumes': [...]}."""
-    outputs = Path(private) / ".tg2-sweep"
+def list_leftovers(run, private):
+    """List (never delete) tg2-labelled containers and volumes: {'containers': [...], 'volumes': [...]}."""
+    outputs = Path(private) / ".tg2-list"
     outputs.mkdir(parents=True, exist_ok=True)
-    now = time.time() if now is None else now
-    problems, removed = [], dict(containers=[], volumes=[])
-
-    def old(listing):
-        names = []
-        for line in listing.splitlines():
-            parts = line.split()
-            if not parts:
-                continue
-            created = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-            if now - created >= min_age_s:
-                names.append(parts[0])
-        return names
-
-    fmt = '{{.%s}} {{.Label "' + CREATED_LABEL + '"}}'
-    rc, text = _plain(run, ["docker", "ps", "-a", "--filter", OWNER_FILTER, "--format", fmt % "Names"], outputs, "sw-ps")
+    rc, text = _plain(run, ["docker", "ps", "-a", "--filter", OWNER_FILTER, "--format", "{{.Names}}"], outputs, "ls-ps")
     if rc != 0:
-        raise TransportAbort("tg2 sweep: cannot list containers")
-    for name in old(text):
-        _plain(run, ["docker", "rm", "-f", name], outputs, "sw-rm")
-        rc, left = _plain(run, ["docker", "ps", "-a", "--filter", "name=^/%s$" % name, "--format", "{{.Names}}"],
-                          outputs, "sw-pv")
-        (problems.append("container %s not removed" % name) if rc != 0 or left else removed["containers"].append(name))
-    rc, text = _plain(run, ["docker", "volume", "ls", "--filter", OWNER_FILTER, "--format", fmt % "Name"], outputs,
-                      "sw-vls")
-    if rc != 0:
-        raise TransportAbort("tg2 sweep: cannot list volumes")
-    for name in old(text):
-        _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "sw-vrm")
-        rc, left = _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name], outputs, "sw-vv")
-        (problems.append("volume %s not removed" % name) if rc != 0 or left else removed["volumes"].append(name))
-    if problems:
-        raise TransportAbort("tg2 sweep could not verify removal: " + "; ".join(problems))
-    registry = Path(private) / REGISTRY_DIR
-    for entry in registry.glob("*.json") if registry.is_dir() else ():
-        try:
-            names = json.loads(entry.read_text())["volumes"]
-        except (ValueError, KeyError):
+        raise TransportAbort("tg2 leftover check: cannot list containers")
+    rc2, vtext = _plain(run, ["docker", "volume", "ls", "-q", "--filter", OWNER_FILTER], outputs, "ls-vol")
+    if rc2 != 0:
+        raise TransportAbort("tg2 leftover check: cannot list volumes")
+    return dict(containers=sorted(l.split()[0] for l in text.splitlines() if l.strip()),
+                volumes=sorted(l.split()[0] for l in vtext.splitlines() if l.strip()))
+
+
+_REGISTERED_VOLUME = re.compile(r"^mlxbench-tg2-[0-9a-f]{12}-[wr]$")
+_REGISTERED_HOLDER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def remove_registered(run, registry_file, private):
+    """Explicit recovery: remove exactly the volumes and holder recorded in one grade registry file (the holder must
+    carry the ownership label), verify every removal, then retire the registry file. Nothing else is touched."""
+    registry_file = Path(registry_file)
+    try:
+        doc = json.loads(registry_file.read_text())
+        volumes, holder = doc["volumes"], doc["holder"]
+        ok = (isinstance(volumes, list) and volumes and all(isinstance(v, str) and _REGISTERED_VOLUME.match(v)
+                                                            for v in volumes)
+              and isinstance(holder, str) and _REGISTERED_HOLDER.match(holder))
+    except (OSError, ValueError, KeyError, TypeError):
+        ok = False
+    if not ok:
+        raise TransportAbort("tg2 registry file %s is malformed or names foreign objects; nothing removed" % registry_file)
+    outputs = Path(private) / ".tg2-cleanup"
+    outputs.mkdir(parents=True, exist_ok=True)
+    rc, present = _plain(run, ["docker", "ps", "-a", "--filter", "name=^/%s$" % holder, "--format", "{{.Names}}"],
+                         outputs, "cl-find")
+    removed = dict(containers=[], volumes=[])
+    if present:
+        rc, label = _plain(run, ["docker", "inspect", "--format", '{{index .Config.Labels "mlxbench.tg2"}}', holder],
+                           outputs, "cl-label")
+        if rc != 0 or label != "1":
+            raise TransportAbort("tg2 holder %s lacks the ownership label; nothing removed" % holder)
+    problems = []
+    if present:
+        _plain(run, ["docker", "rm", "-f", holder], outputs, "cl-rm")
+        rc, left = _plain(run, ["docker", "ps", "-a", "--filter", "name=^/%s$" % holder, "--format", "{{.Names}}"],
+                          outputs, "cl-verify")
+        (problems.append("container %s" % holder) if rc != 0 or left else removed["containers"].append(holder))
+    for name in volumes:
+        rc, listing = _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name], outputs, "cl-vfind")
+        if not listing:
             continue
-        present = [n for n in names if _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % n],
-                                              outputs, "sw-reg")[1]]
-        if not present:
-            entry.unlink(missing_ok=True)
+        _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "cl-vrm")
+        rc, left = _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name], outputs, "cl-vverify")
+        (problems.append("volume %s" % name) if rc != 0 or left else removed["volumes"].append(name))
+    if problems:
+        raise TransportAbort("tg2 removal could not be verified for: " + "; ".join(problems))
+    registry_file.unlink(missing_ok=True)
     return removed
 
 

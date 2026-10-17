@@ -307,6 +307,9 @@ class FakeGuard:
                 x.split("=", 1) for i, x in enumerate(cmd) if cmd[i - 1] == "--label")
             kw["stdout"].write("holder-id\n")
             return subprocess.CompletedProcess(cmd, self.plan.get("holder").get("rc", 0), None, None)
+        if step == "inspect" and any("Config.Labels" in x for x in cmd):
+            kw["stdout"].write(self.holder_names.get(cmd[-1], {}).get("mlxbench.tg2", "") + "\n")
+            return subprocess.CompletedProcess(cmd, 0, None, None)
         if step == "inspect":
             spec = self.plan.get(self.step_by_name.get(cmd[-1], "?"))
             if spec.get("inspect_rc"):
@@ -1293,33 +1296,97 @@ def test_g21_registry_entry_survives_uncertain_cleanup(tree):
     assert len(list((private / ".tg2-registry").glob("*.json"))) == 1
 
 
-def test_g21_sweep_removes_only_old_labelled_leftovers_and_verifies(tree):
+def _leftover(guard, vol="mlxbench-tg2-aaaaaaaaaaaa-w", holder="old-holder", registry=None):
+    (guard.vroot / vol).mkdir(exist_ok=True)
+    guard.volumes[vol] = guard.vroot / vol
+    guard.volume_labels[vol] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1"}
+    guard.holder_names[holder] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1"}
+    return vol, holder
+
+
+def test_p363_list_leftovers_lists_labelled_objects_only_and_deletes_nothing(tree):
+    guard = FakeGuard(basic_plan("rust"))
+    vol, holder = _leftover(guard)
+    guard.volumes["unlabelled-tg2-volume"] = guard.vroot
+    guard.volume_labels["unlabelled-tg2-volume"] = {}
+    guard.holder_names["foreign"] = {}
+    out = tg.list_leftovers(guard.run_grader, tree[1])
+    assert out == dict(containers=[holder], volumes=[vol])
+    assert vol in guard.volumes and holder in guard.holder_names             # nothing was removed
+    assert not hasattr(tg, "sweep_leftovers")
+
+
+def test_p363_grade_refuses_to_start_while_a_labelled_leftover_exists(tree):
+    guard = FakeGuard(basic_plan("rust"))
+    vol, holder = _leftover(guard)
+    with pytest.raises(TransportAbort, match="leftover") as exc:
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert vol in str(exc.value) and holder in str(exc.value) and "tg2_cleanup.py" in str(exc.value)
+    assert guard.calls == [("image", guard.calls[0][1])] and not guard.holders      # nothing was started
+    assert vol in guard.volumes                                                     # and nothing was deleted
+
+
+def test_p363_a_clean_box_starts_and_the_grades_own_objects_never_count_as_leftovers(tree):
+    guard = FakeGuard(basic_plan("rust"))
+    result = tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert result.outcome == "parsed" and tg.list_leftovers(guard.run_grader, tree[1]) == dict(containers=[], volumes=[])
+
+
+def _registry(private, vol, holder, extra=None):
+    d = private / ".tg2-registry"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / "mlxbench-tg2-aaaaaaaaaaaa.json"
+    path.write_text(json.dumps(dict(base="mlxbench-tg2-aaaaaaaaaaaa", volumes=[vol, vol[:-1] + "r"], holder=holder,
+                                    created=1, **(extra or {}))))
+    return path
+
+
+def test_p363_remove_registered_removes_exactly_the_recorded_names_and_verifies(tree):
     work, private = tree
     guard = FakeGuard(basic_plan("rust"))
-    old, new = "100", str(int(__import__("time").time()))
-    for name, created in (("mlxbench-tg2-old-w", old), ("mlxbench-tg2-new-w", new)):
-        (guard.vroot / name).mkdir()
-        guard.volumes[name] = guard.vroot / name
-        guard.volume_labels[name] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": created}
-    (guard.vroot / "foreign").mkdir()
-    guard.volumes["mlxbench-tg2-foreign"] = guard.vroot / "foreign"        # same prefix, NO label: never touched
-    guard.volume_labels["mlxbench-tg2-foreign"] = {}
-    guard.holder_names["h-old"] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": old}
-    guard.holder_names["h-other"] = {}
-    out = tg.sweep_leftovers(guard.run_grader, private, min_age_s=3600)
-    assert out["volumes"] == ["mlxbench-tg2-old-w"] and out["containers"] == ["h-old"]
-    assert set(guard.volumes) == {"mlxbench-tg2-new-w", "mlxbench-tg2-foreign"} and set(guard.holder_names) == {"h-other"}
-    assert tg.sweep_leftovers(guard.run_grader, private, min_age_s=0)["volumes"] == ["mlxbench-tg2-new-w"]
-    assert "mlxbench-tg2-foreign" in guard.volumes
+    vol, holder = _leftover(guard)
+    other_vol, other_holder = _leftover(guard, vol="mlxbench-tg2-bbbbbbbbbbbb-w", holder="other-holder")
+    guard.volumes["mlxbench-tg2-aaaaaaaaaaaa-r"] = guard.vroot
+    guard.volume_labels["mlxbench-tg2-aaaaaaaaaaaa-r"] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1"}
+    reg = _registry(private, vol, holder)
+    out = tg.remove_registered(guard.run_grader, reg, private)
+    assert sorted(out["volumes"]) == sorted([vol, "mlxbench-tg2-aaaaaaaaaaaa-r"]) and out["containers"] == [holder]
+    assert other_vol in guard.volumes and other_holder in guard.holder_names          # not recorded: untouched
+    assert not reg.exists()                                                           # registry retired after verification
 
 
-def test_g21_sweep_fails_loudly_when_removal_cannot_be_verified(tree):
+@pytest.mark.parametrize("doc", [
+    dict(volumes=["../../etc"], holder="h"), dict(volumes=["someone-elses-volume"], holder="h"),
+    dict(volumes="x", holder="h"), dict(volumes=[], holder=""), "not-an-object",
+])
+def test_p363_remove_registered_refuses_malformed_or_foreign_names(tree, doc):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    reg = private / "reg.json"
+    reg.write_text(json.dumps(doc))
+    with pytest.raises(TransportAbort, match="registry"):
+        tg.remove_registered(guard.run_grader, reg, private)
+
+
+def test_p363_remove_registered_refuses_a_holder_without_the_ownership_label(tree):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    vol, _ = _leftover(guard)
+    guard.holder_names["h-unlabelled"] = {}
+    reg = _registry(private, vol, "h-unlabelled")
+    with pytest.raises(TransportAbort, match="label"):
+        tg.remove_registered(guard.run_grader, reg, private)
+    assert "h-unlabelled" in guard.holder_names and vol in guard.volumes
+
+
+def test_p363_remove_registered_fails_loudly_when_removal_cannot_be_verified(tree):
+    work, private = tree
     guard = FakeGuard(basic_plan("rust", volume_rm=dict(rc=1)))
-    (guard.vroot / "v").mkdir()
-    guard.volumes["mlxbench-tg2-x-w"] = guard.vroot / "v"
-    guard.volume_labels["mlxbench-tg2-x-w"] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1"}
-    with pytest.raises(TransportAbort, match="sweep"):
-        tg.sweep_leftovers(guard.run_grader, tree[1], min_age_s=0)
+    vol, holder = _leftover(guard)
+    reg = _registry(private, vol, holder)
+    with pytest.raises(TransportAbort, match="verif"):
+        tg.remove_registered(guard.run_grader, reg, private)
+    assert reg.exists()
 
 
 # G22 ------------------------------------------------------------------------------------------------------------
@@ -1462,9 +1529,13 @@ def test_g23_hostile_report_replaced_by_the_solution_is_a_model_failure_in_the_r
     guard = tg.LocalDocker()
     stub, prepared, sols = _item(tmp_path, "javascript", "affine-cipher", guard)
     ref = _ref_of(tmp_path, stub, "javascript", "affine-cipher")
-    # the child inherits stdout, so the bounded-output pipe (and the container) stays up until it has replaced the report
-    hook = ("require('child_process').spawn('sh', ['-c', 'sleep 4; rm -f /report/jest.json; %s'], "
-            "{detached: true, stdio: ['ignore', 'inherit', 'inherit']}).unref();\n" % HOSTILE[kind])
+    # Deterministic: the detached child polls until /report/jest.json parses as complete JSON (jest has finished writing
+    # it), then replaces it. It inherits stdout, so the bounded-output pipe (and the container) stays up until then.
+    wait = ("for i in $(seq 1 600); do python3 -c \"import json;json.load(open('/report/jest.json'))\" 2>/dev/null "
+            "&& break; sleep 0.2; done")
+    hook = ("require('child_process').spawn('sh', ['-c', %r], "
+            "{detached: true, stdio: ['ignore', 'inherit', 'inherit']}).unref();\n"
+            % ("%s; rm -f /report/jest.json; %s" % (wait, HOSTILE[kind])))
     (ref / "affine-cipher.js").write_text(hook + (ref / "affine-cipher.js").read_text())
     result = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared,
                            solutions=sols, guard=guard, timeout=300)
@@ -1474,7 +1545,7 @@ def test_g23_hostile_report_replaced_by_the_solution_is_a_model_failure_in_the_r
 
 @pytest.mark.docker
 @pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
-def test_g23_a_grader_killed_between_steps_leaves_storage_that_the_sweep_recovers(tmp_path):
+def test_p363_a_killed_grader_leaves_listed_leftovers_that_block_grading_until_explicitly_removed(tmp_path):
     import signal
     import sys
     import textwrap
@@ -1489,18 +1560,22 @@ def test_g23_a_grader_killed_between_steps_leaves_storage_that_the_sweep_recover
         tg._grade_steps = lambda *a, **k: os.kill(os.getpid(), signal.SIGKILL)
         tg.grade("javascript", %r, "affine-cipher", %r)
     """) % (str(bench_root), str(stub), str(tmp_path / "private"))
-    env = dict(os.environ, PYTHONPATH=str(bench_root))
-    proc = subprocess.run([sys.executable, "-c", script], env=env, timeout=120)
+    proc = subprocess.run([sys.executable, "-c", script], env=dict(os.environ, PYTHONPATH=str(bench_root)), timeout=120)
     assert proc.returncode == -signal.SIGKILL
-    assert guard.leftover_volumes() and guard.leftover_holders()                    # real orphaned state
+    leftovers = tg.list_leftovers(guard.run_grader, tmp_path / "private")
+    assert leftovers["volumes"] and leftovers["containers"]                          # real orphaned state, listed
+    with pytest.raises(TransportAbort, match="leftover"):                             # and it blocks the next grade
+        tg.grade("javascript", stub, "affine-cipher", tmp_path / "private", guard=guard)
     foreign = "mlxbench-tg2-foreign-" + __import__("uuid").uuid4().hex[:6]
     subprocess.run(["docker", "volume", "create", foreign], check=True, capture_output=True)
     try:
-        out = tg.sweep_leftovers(guard.run_grader, tmp_path / "private", min_age_s=0)
-        assert out["volumes"] and out["containers"]
-        assert not guard.leftover_volumes() and not guard.leftover_holders()
+        registry = next((tmp_path / "private/.tg2-registry").glob("*.json"))
+        cli = subprocess.run([sys.executable, str(bench_root / "m65/tg2_cleanup.py"), "--remove", str(registry),
+                              "--private", str(tmp_path / "private")], capture_output=True, text=True, timeout=120)
+        assert cli.returncode == 0, cli.stderr
+        assert tg.list_leftovers(guard.run_grader, tmp_path / "private") == dict(containers=[], volumes=[])
         listed = subprocess.run(["docker", "volume", "ls", "-q"], capture_output=True, text=True).stdout.split()
-        assert foreign in listed                                                     # unlabelled: never touched
+        assert foreign in listed                                                     # never touched
     finally:
         subprocess.run(["docker", "volume", "rm", "-f", foreign], capture_output=True)
 
