@@ -33,7 +33,7 @@ never a ranking input).
 
 Pairwise, for every pair on the INTERSECTION of each arm's GRADED ids (ids present on only one
 side are named, never silently dropped): a paired acc_strict delta with its 95% cluster-bootstrap
-CI and TOST +-5pp equivalence verdict (`stats.paired_delta`, items are the clusters, k=1 -- one
+CI and wash/better verdict (95% CI excludes 0 = better, else wash; P359; `stats.paired_delta`, items are the clusters, k=1 -- one
 draw per item, as every AgentBench-OS row is), an exact McNemar p on the discordant pairs
 (`stats.mcnemar_exact`), the exclusive-solve sets (same passed-AND-converged definition as
 acc_strict, so the McNemar b/c counts are exactly the two sets' sizes), the nominal MDE for the
@@ -388,7 +388,7 @@ def render_markdown(report: dict, *, cli_line: str | None = None) -> str:
     if report.get("llm_timeout_note"):
         lines += [f"NOTE: {report['llm_timeout_note']}", ""]
     lines += [f"Bootstrap: iters={params['iters']} seed={params['seed']} "
-             f"TOST margin={params['margin']} (+-{params['margin'] * 100:.0f}pp); "
+             f"margin={params['margin']} (compatibility only, decision-inert; P359); "
              f"MDE alpha={params['alpha']} power={params['power']} p_d={params['p_d']}", ""]
 
     # ---- the four numbers the project reports, per arm.
@@ -456,7 +456,7 @@ def render_markdown(report: dict, *, cli_line: str | None = None) -> str:
             f"- acc_strict: {p['model_a']}={_fmt(p['acc_strict_a'])} "
             f"{p['model_b']}={_fmt(p['acc_strict_b'])}",
             f"- paired delta = {_fmt(d['delta'])} 95% CI [{_fmt(d['lo'])}, {_fmt(d['hi'])}] "
-            f"-- TOST verdict (+-{report['params']['margin'] * 100:.0f}pp): **{'no discordance — equivalence NOT established' if d.get('degenerate') else d['verdict']}**",
+            f"-- verdict (95% CI excludes 0 = better, else wash): **{stats.verdict_label(d, p['model_a'], p['model_b'])}**",
             f"- exact McNemar: b={p['mcnemar_b']} (exclusive to {p['model_a']}) "
             f"c={p['mcnemar_c']} (exclusive to {p['model_b']}) "
             f"p={_fmt(p['mcnemar_p'], 4)} (Holm-adjusted: {_fmt(p.get('mcnemar_p_holm'), 4)})",
@@ -490,7 +490,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "(<out stem>.json)")
     ap.add_argument("--iters", type=int, default=10000)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--margin", type=float, default=0.05, help="TOST equivalence margin")
+    ap.add_argument("--margin", type=float, default=0.05, help="compatibility only; decision-inert (verdict = CI excludes 0 or wash, P359)")
     ap.add_argument("--alpha", type=float, default=0.05)
     ap.add_argument("--power", type=float, default=0.80)
     ap.add_argument("--p-d", dest="p_d", type=float, default=0.20,

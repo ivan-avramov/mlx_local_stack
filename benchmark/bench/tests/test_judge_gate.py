@@ -329,7 +329,7 @@ def test_compute_ranking_known_preference_rate():
     assert "p_holm" in r
 
 
-def test_compute_ranking_equivalent_when_rate_near_half():
+def test_compute_ranking_wash_when_rate_near_half():
     winners = ["A"] * 10 + ["B"] * 10
     pairs = [_candidate_pair(i, w) for i, w in enumerate(winners)]
     rows = []
@@ -338,11 +338,13 @@ def test_compute_ranking_equivalent_when_rate_near_half():
     ranking = G.compute_ranking(pairs, rows, JUDGES, seed=0)
     r = ranking["pairs"]["Alpha__Beta"]
     assert abs(r["preference_rate_model_1"] - 0.5) < 1e-9
-    assert r["verdict"] in ("equivalent_95ci_within_5pp", "inconclusive")
+    assert r["verdict"] == "wash"                       # P359: CI spans 0.5 -> wash, never "equivalent"
+    assert r["directional"] == "tie"
+    assert r["wash_label"].startswith("wash (MDE ") and "equivalen" not in r["wash_label"]
 
 
 # --------------------------------------------------------- F9: TOST-branch mutant coverage
-def test_compute_ranking_deterministic_tie_is_flagged_not_equivalent():
+def test_compute_ranking_deterministic_tie_is_a_tie_wash():
     """All items tie -> every bootstrap replicate is also exactly 0.5 (zero variance), so the
     CI is a single point strictly inside +-5pp. This is DETERMINISTIC (unlike the mixed-winner
     case above, which can land on either side of the margin) — a test that would fail outright
@@ -357,7 +359,7 @@ def test_compute_ranking_deterministic_tie_is_flagged_not_equivalent():
     r = ranking["pairs"]["Alpha__Beta"]
     assert r["preference_rate_model_1"] == 0.5
     assert r["ci"] == [0.5, 0.5]
-    assert r["verdict"] == "no_discordance_equivalence_not_established"   # P346
+    assert r["verdict"] == "wash" and r["directional"] == "tie"   # P359 (was P346 no_discordance_...)
 
 
 # ------------------------------------------------------------- F9: stats.holm mutant coverage

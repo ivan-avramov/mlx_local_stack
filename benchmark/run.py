@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bench import benchmarks, client, generate, grade, model_params  # noqa: E402
+from bench import benchmarks, client, generate, grade, model_params, stats  # noqa: E402
 
 # Escalating tiers, NESTED: light's items are a prefix of mid's are a prefix of heavy's
 # (same seed), and light benches ⊆ mid ⊆ heavy. So run light across all models, grade, then
@@ -340,11 +340,10 @@ def _print_compare_verdict(label, model_a, model_b, r, margin):
     print(f"  matched items: {r['n_items']}   samples: {r['samples']}   axis MDE: ±{r['mde']*100:.0f}pp")
     print(f"  {r['metric']}: {r['a']*100:.1f}% vs {r['b']*100:.1f}%")
     print(f"  delta {d['delta']*100:+.1f}pp   95% CI [{d['lo']*100:+.1f}, {d['hi']*100:+.1f}]pp")
-    print(f"  VERDICT: {d['verdict'].upper()}")
-    if d["verdict"] == "inconclusive":
-        print(f"  (the interval spans 0 and is wider than the ±{margin*100:.0f}pp "
-              f"equivalence margin — this is NOT evidence of a tie; it is too little data. "
-              f"{r['n_for_margin']} matched items would be needed.)")
+    print(f"  VERDICT: {stats.verdict_label(d, model_a, model_b)}")
+    if d["verdict"] == "wash":
+        print(f"  (no shown difference — a sample-size statement, not a model statement. "
+              f"{r['n_for_margin']} matched items would resolve ±{margin*100:.0f}pp.)")
 
 
 def cmd_compare(args):
@@ -509,7 +508,7 @@ def build_parser():
                          "For nested sets (one run a subset of another) this recovers a genuine "
                          "matched comparison; the output names how many items were dropped.")
     sp.add_argument("--margin", type=float, default=0.05,
-                    help="equivalence margin for the TOST verdict (default 5pp)")
+                    help="n_for sizing in the printed hint only; decision-inert (verdict = CI excludes 0 or wash, P359)")
     sp.add_argument("--tune", type=generate.validate_tune, default=None,
                     help="compare the tune-stamped rows for BOTH models (see `generate --tune`); "
                          "same as suffixing '@tune' onto each --models entry, left alone if a "
