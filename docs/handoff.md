@@ -5,7 +5,9 @@ P353, P352, P351), `docs/specs/m65-tg2-corpus.md` (v5), `docs/specs/p311-identit
 
 ## Now (2026-10-17 ~06:30Z)
 
-- **Box idle** (no chain; :8000 free). Full suite on main after the merges: 4739 passed, 3 skipped, 1 xfailed.
+- **Box idle** (no chain; :8000 free). **P359 merged** (`eeee1784`, Cursor CLEARED AFTER FIXES W1–W6, verified): wash verdicts, no
+  equivalence claims, lever guard on the observed loss bound (C172/C173); all 12 stored lever cells still ship. Full suite 4748 passed,
+  3 skipped, 1 xfailed. **Pushed** `origin/main` 2ef70a67..eeee1784 (operator C173); later commits need a new push go.
 - **M65 pilot DONE** (rc 0): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` and `Qwen3.8-27B-mlx-uniform-4bit` both 12/12 Python + 17/17 Go strict;
   second pick ≈ 1.3–1.8× output tokens. One web row audited `generic` (Cursor auditor; codex is absent here — use
   `benchmark/web_audit_cursor.py`, C158).
@@ -15,9 +17,7 @@ P353, P352, P351), `docs/specs/m65-tg2-corpus.md` (v5), `docs/specs/p311-identit
   - `tg2` / `tg2-build`: step 1 grader + offline image (`tg2-grader:m65-v1`, now `sha256:09f2b30e…`); Cursor round 2 NOT CLEARED
     (G18–G20) → round 3 with the implementer (+ P361 mount-source guard). Then steps 2–4; GPU runs need an operator go (C169).
   - `p311` / `p311-lite`: P311-lite build from spec v4 (C172) — new tg1 identity again when merged; Cursor code review after.
-  - `p358` / `p359-wash`: P359 wash verdict built (C172) — **lever guard needs operator answer** (MDE-based guard flags all 12 cells;
-    lead's corrected rec: ship on a wash iff the observed interval rules out a loss > 10 pp); then Cursor review, merge.
-- **Operator answers pending:** P359 corrected guard; push of `main` (far ahead of origin).
+- **Operator answers pending:** none.
 - **P361:** OrbStack bind mounts under `$TMPDIR` serve stale sizes after in-place overwrites; tg1 unaffected (fresh snapshots under
   the run dir). See box-notes.
 
