@@ -10,6 +10,7 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import tomllib
 
 LANGS = ("rust", "java", "javascript", "cpp")
 JAVA_REFERENCE_ROOT = ".meta/src/reference/java/"
@@ -37,6 +38,51 @@ class Plan:
 class Prepared:
     tree: Path
     rewrites: dict                  # {test file: skip forms rewritten}
+    added_dependencies: dict = field(default_factory=dict)      # {section: [crate, ...]} merged from Cargo-example.toml
+
+
+_DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
+
+
+def _toml_value(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return json.dumps(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join("%s = %s" % (k, _toml_value(x)) for k, x in v.items()) + " }"
+    raise FreezeError("unsupported TOML value %r" % (v,))
+
+
+def merge_cargo_dependencies(stub_text, example_text):
+    """P366: the protected Cargo.toml is the union of the stub's and `.meta/Cargo-example.toml`'s dependencies, so the
+    crates the reference needs are declared (and vendored offline) and a model may use exactly those. A crate declared
+    differently in both is a conflict (FreezeError)."""
+    stub, example = tomllib.loads(stub_text), tomllib.loads(example_text)
+    text = stub_text
+    for section in _DEP_SECTIONS:
+        have, want = stub.get(section, {}), example.get(section, {})
+        for name, spec in want.items():
+            if name in have and have[name] != spec:
+                raise FreezeError("conflicting %s entry %s: stub %r vs example %r" % (section, name, have[name], spec))
+        missing = {k: v for k, v in want.items() if k not in have}
+        if not missing:
+            continue
+        lines = "".join("%s = %s\n" % (k, _toml_value(v)) for k, v in missing.items())
+        header = re.search(r"^\[%s\][ \t]*\n" % re.escape(section), text, re.M)
+        if header:
+            text = text[:header.end()] + lines + text[header.end():]
+        else:
+            text = text.rstrip("\n") + "\n\n[%s]\n%s" % (section, lines)
+    merged = tomllib.loads(text)
+    for section in _DEP_SECTIONS:
+        if merged.get(section, {}) != {**stub.get(section, {}), **example.get(section, {})}:
+            raise FreezeError("dependency union did not round-trip for [%s]" % section)
+    return text
 
 
 def exercise_dir(corpus, lang, slug):
@@ -129,7 +175,18 @@ def prepare_tree(corpus, lang, slug, dest):
             if n:
                 path.write_text(text)
                 rewrites[path.relative_to(dest).as_posix()] = n
-    return Prepared(dest, rewrites)
+    added = {}
+    example_toml = src / ".meta/Cargo-example.toml"
+    if lang == "rust" and example_toml.is_file():
+        manifest = dest / "Cargo.toml"
+        before = tomllib.loads(manifest.read_text())
+        merged = merge_cargo_dependencies(manifest.read_text(), example_toml.read_text())
+        if merged != manifest.read_text():
+            manifest.write_text(merged)
+            after = tomllib.loads(merged)
+            added = {sec: sorted(set(after.get(sec, {})) - set(before.get(sec, {}))) for sec in _DEP_SECTIONS
+                     if set(after.get(sec, {})) - set(before.get(sec, {}))}
+    return Prepared(dest, rewrites, added)
 
 
 def apply_reference(corpus, plan, tree):

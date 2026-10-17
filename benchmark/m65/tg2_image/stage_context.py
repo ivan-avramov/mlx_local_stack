@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bench import tg2_materialize as mat  # noqa: E402
+
 LOCKS = Path(__file__).resolve().parent / "locks"
 
 
@@ -63,7 +66,8 @@ def main(corpus, ctx):
     # Rust: every manifest, with the full exercise dir minus docs (path dependencies and [[bin]] targets must exist).
     rust = corpus / "rust/exercises/practice"
     for ex in sorted(p for p in rust.iterdir() if (p / "Cargo.toml").is_file()):
-        shutil.copytree(ex, ctx / "rust" / ex.name, ignore=shutil.ignore_patterns(".docs", ".meta"))
+        # the prepared manifest: the stub's dependencies united with `.meta/Cargo-example.toml`'s (P366)
+        mat.prepare_tree(corpus, "rust", ex.name, ctx / "rust" / ex.name)
     for manifest in sorted((ctx / "rust").rglob("Cargo.toml")):
         committed = LOCKS / "rust" / manifest.parent.relative_to(ctx / "rust") / "Cargo.lock"
         if not committed.is_file():

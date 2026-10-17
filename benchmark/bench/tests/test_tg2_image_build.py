@@ -104,3 +104,25 @@ def test_g20_js_lock_digest_is_the_sha256_of_the_lock_file_bytes():
     meta = dict(line.split("=", 1) for line in (IMAGE_DIR / "IMAGE_ID").read_text().splitlines()[1:])
     assert meta["js_lock_sha256"] == hashlib.sha256((IMAGE_DIR / "locks/js/package-lock.json").read_bytes()).hexdigest()
     assert "shasum -a 256 \"$here/locks/js/package-lock.json\" | shasum" not in (IMAGE_DIR / "build.sh").read_text()
+
+
+@pytest.mark.parametrize("slug,crates", [
+    ("alphametics", ["itertools", "permutohedron"]), ("decimal", ["num-bigint", "num-traits"]),
+    ("grep", ["thiserror", "anyhow"]), ("pig-latin", ["regex"]), ("poker", ["counter"]), ("robot-name", ["rand"])])
+def test_p366_committed_locks_cover_the_crates_each_reference_needs(slug, crates):
+    text = (IMAGE_DIR / "locks/rust" / slug / "Cargo.lock").read_text()
+    for crate in crates:
+        assert 'name = "%s"' % crate in text, (slug, crate)
+    assert 'name = "rand"\nversion = "0.3.' in (IMAGE_DIR / "locks/rust/robot-name/Cargo.lock").read_text()
+
+
+def test_p366_staged_rust_manifests_are_the_dependency_union(tmp_path):
+    import os
+    corpus = os.environ.get("POLYGLOT_DIR")
+    if not corpus:
+        pytest.skip("POLYGLOT_DIR not set")
+    sc = load("stage_context")
+    ctx = tmp_path / "ctx"
+    sc.main(corpus, str(ctx))
+    assert "counter" in (ctx / "rust/poker/Cargo.toml").read_text()
+    assert "thiserror" in (ctx / "rust/grep/Cargo.toml").read_text()

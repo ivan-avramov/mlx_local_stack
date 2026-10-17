@@ -51,7 +51,7 @@ COMPILE_MARKER = "TG2_COMPILE_START"
 # Agent-created build outputs: top-level dirs absent from the prepared tree are stripped before tamper and grading.
 STRIP_TOP_LEVEL = ("build", "target", "node_modules", ".gradle")
 # Resource bounds (G15): process count, open files, single-file size, captured output and report size.
-PIDS_LIMIT = 512
+PIDS_LIMIT = 2048
 NOFILE_LIMIT = 4096
 FSIZE_LIMIT = 1 << 30
 OUTPUT_CAP = 16_000_000

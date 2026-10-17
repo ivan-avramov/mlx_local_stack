@@ -1678,7 +1678,7 @@ def _docker_skip_reason():
 DOCKER_SKIP = _docker_skip_reason()
 ITEMS = [("rust", "gigasecond"), ("rust", "macros"), ("java", "affine-cipher"), ("java", "connect"),
          ("javascript", "affine-cipher"), ("javascript", "alphametics"), ("cpp", "gigasecond"),
-         ("cpp", "binary-search-tree")]
+         ("cpp", "binary-search-tree"), ("cpp", "bank-account"), ("rust", "poker"), ("rust", "robot-name")]
 
 
 def _docker_env():
@@ -1843,3 +1843,7 @@ def test_reference_all_pass_and_untouched_stub_fails_in_the_built_image(tmp_path
                          timeout=900)
     assert base.failing(good.collected) > 0, (base.outcome, base.passing)
     assert not guard.leftover()
+
+
+def test_p366_pids_limit_allows_a_thousand_test_threads():
+    assert tg.PIDS_LIMIT == 2048

@@ -16,9 +16,10 @@ sys.path.insert(0, str(BENCH))
 from bench import tg2_grade as tg  # noqa: E402
 from bench.tests import tg2_trees  # noqa: E402
 
-ITEMS = [("rust", "gigasecond"), ("rust", "simple-cipher"), ("rust", "grep:stub"), ("rust", "macros"),
+ITEMS = [("rust", "gigasecond"), ("rust", "simple-cipher"), ("rust", "grep"), ("rust", "macros"),
+         ("rust", "alphametics"), ("rust", "decimal"), ("rust", "pig-latin"), ("rust", "poker"), ("rust", "robot-name"),
          ("java", "affine-cipher"), ("java", "hangman"), ("java", "rest-api"),
-         ("javascript", "affine-cipher"), ("cpp", "gigasecond")]
+         ("javascript", "affine-cipher"), ("cpp", "gigasecond"), ("cpp", "bank-account")]
 NETWORK_TEXT = ("Could not resolve", "Could not GET", "UnknownHost", "Temporary failure in name resolution",
                 "attempting to make an HTTP request", "ENOTFOUND", "Failed to download")
 

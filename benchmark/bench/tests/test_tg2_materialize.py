@@ -179,3 +179,61 @@ def test_every_real_item_has_a_plan_and_a_reference_tree_that_passes_the_tamper_
 def test_the_only_deprecated_notice_in_the_four_languages_is_none():
     flagged = {f"{l}/{s}": mat.deprecated_scan(POLYGLOT, l, s) for l, ss in mat.list_items(POLYGLOT).items() for s in ss}
     assert {k: v for k, v in flagged.items() if v and v.startswith("deprecated")} == {}
+
+
+# ------------------------------------------------------------------------- P366: Cargo-example.toml dependency union
+STUB = '[package]\nedition = "2021"\nname = "x"\nversion = "1.0.0"\n'
+
+
+def test_union_adds_missing_dependencies_to_a_manifest_without_a_dependencies_table():
+    out = mat.merge_cargo_dependencies(STUB, '[dependencies]\nregex = "0.2"\nrand = { version = "0.3", features = ["a"] }\n')
+    import tomllib
+    doc = tomllib.loads(out)
+    assert doc["dependencies"] == {"regex": "0.2", "rand": {"version": "0.3", "features": ["a"]}}
+    assert doc["package"]["name"] == "x"
+
+
+def test_union_inserts_into_an_existing_dependencies_table_and_keeps_stub_entries():
+    stub = '[dependencies]\nanyhow = "1.0"\n\n[package]\nname = "g"\nversion = "1.3.0"\n'
+    out = mat.merge_cargo_dependencies(stub, '[dependencies]\nanyhow = "1.0"\nthiserror = "1.0"\n')
+    import tomllib
+    assert tomllib.loads(out)["dependencies"] == {"anyhow": "1.0", "thiserror": "1.0"}
+    assert tomllib.loads(out)["package"]["name"] == "g"
+
+
+def test_union_handles_dev_dependencies_and_is_a_noop_when_nothing_is_missing():
+    import tomllib
+    out = mat.merge_cargo_dependencies(STUB, '[dev-dependencies]\nfoo = "1"\n')
+    assert tomllib.loads(out)["dev-dependencies"] == {"foo": "1"}
+    assert mat.merge_cargo_dependencies(STUB, '[package]\nname = "x"\n') == STUB
+
+
+def test_union_refuses_a_conflicting_version_for_the_same_crate():
+    with pytest.raises(mat.FreezeError, match="conflict"):
+        mat.merge_cargo_dependencies('[dependencies]\nrand = "0.8"\n', '[dependencies]\nrand = "0.3"\n')
+
+
+def test_prepare_tree_applies_the_union_so_stub_and_reference_share_one_cargo_toml(tmp_path):
+    c = make_corpus(tmp_path / "c", "rust", "x", dict(solution=["src/lib.rs", "Cargo.toml"], test=["tests/x.rs"],
+                                                      example=[".meta/example.rs"]),
+                    {"src/lib.rs": "stub", "Cargo.toml": STUB, "tests/x.rs": "t", ".meta/example.rs": "ref",
+                     ".meta/Cargo-example.toml": '[dependencies]\nregex = "0.2"\n'})
+    prep = mat.prepare_tree(c, "rust", "x", tmp_path / "t")
+    assert 'regex = "0.2"' in (prep.tree / "Cargo.toml").read_text() and prep.added_dependencies == {"dependencies": ["regex"]}
+    assert not (prep.tree / ".meta").exists()
+    plan = mat.read_plan(c, "rust", "x")
+    ref = tmp_path / "r"
+    shutil.copytree(prep.tree, ref)
+    mat.apply_reference(c, plan, ref)
+    assert (ref / "Cargo.toml").read_text() == (prep.tree / "Cargo.toml").read_text()      # Cargo.toml stays protected
+
+
+@pytest.mark.skipif(not HAVE_CORPUS, reason="polyglot corpus not found")
+@pytest.mark.parametrize("slug,crates", [("alphametics", {"itertools", "permutohedron"}),
+                                          ("decimal", {"num-bigint", "num-traits"}), ("grep", {"thiserror", "anyhow"}),
+                                          ("pig-latin", {"regex"}), ("poker", {"counter"}), ("robot-name", {"rand"})])
+def test_real_rust_items_declare_the_crates_their_reference_needs(tmp_path, slug, crates):
+    import tomllib
+    prep = mat.prepare_tree(POLYGLOT, "rust", slug, tmp_path / "t")
+    deps = tomllib.loads((prep.tree / "Cargo.toml").read_text()).get("dependencies", {})
+    assert crates <= set(deps)
