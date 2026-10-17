@@ -168,7 +168,8 @@ def test_every_real_item_has_a_plan_and_a_reference_tree_that_passes_the_tamper_
             shutil.copytree(stub, ref)
             mat.apply_reference(POLYGLOT, plan, ref)
             reasons = tg.tamper_reasons(ref, sg.protected_manifest(prepared, plan.solutions), prepared, lang,
-                                        solutions=plan.solutions)
+                                        solutions=plan.solutions,
+                                        prepared_cargo_toml=(stub / "Cargo.toml").read_text() if lang == "rust" else None)
             assert reasons == [], (lang, slug, reasons)
             assert tg.skip_form_violations(ref, lang) == [], (lang, slug)
             shutil.rmtree(stub); shutil.rmtree(ref)
@@ -213,27 +214,38 @@ def test_union_refuses_a_conflicting_version_for_the_same_crate():
         mat.merge_cargo_dependencies('[dependencies]\nrand = "0.8"\n', '[dependencies]\nrand = "0.3"\n')
 
 
-def test_prepare_tree_applies_the_union_so_stub_and_reference_share_one_cargo_toml(tmp_path):
+def test_prepare_tree_keeps_the_stub_manifest_and_adds_the_identical_disclosure_file(tmp_path):
     c = make_corpus(tmp_path / "c", "rust", "x", dict(solution=["src/lib.rs", "Cargo.toml"], test=["tests/x.rs"],
                                                       example=[".meta/example.rs"]),
                     {"src/lib.rs": "stub", "Cargo.toml": STUB, "tests/x.rs": "t", ".meta/example.rs": "ref",
                      ".meta/Cargo-example.toml": '[dependencies]\nregex = "0.2"\n'})
     prep = mat.prepare_tree(c, "rust", "x", tmp_path / "t")
-    assert 'regex = "0.2"' in (prep.tree / "Cargo.toml").read_text() and prep.added_dependencies == {"dependencies": ["regex"]}
-    assert not (prep.tree / ".meta").exists()
-    plan = mat.read_plan(c, "rust", "x")
+    assert (prep.tree / "Cargo.toml").read_text() == STUB and not (prep.tree / ".meta").exists()    # no per-item hint
+    assert (prep.tree / "OFFLINE_CRATES.md").read_text() == tg.rust_disclosure_line() + "\n"
+
+
+def test_the_reference_tree_uses_the_examples_dependencies_but_only_the_reference(tmp_path):
+    c = make_corpus(tmp_path / "c", "rust", "x", dict(solution=["src/lib.rs", "Cargo.toml"], test=["tests/x.rs"],
+                                                      example=[".meta/example.rs"]),
+                    {"src/lib.rs": "stub", "Cargo.toml": STUB, "tests/x.rs": "t", ".meta/example.rs": "ref",
+                     ".meta/Cargo-example.toml": '[dependencies]\nregex = "0.2"\n'})
+    prep = mat.prepare_tree(c, "rust", "x", tmp_path / "t")
     ref = tmp_path / "r"
     shutil.copytree(prep.tree, ref)
-    mat.apply_reference(c, plan, ref)
-    assert (ref / "Cargo.toml").read_text() == (prep.tree / "Cargo.toml").read_text()      # Cargo.toml stays protected
+    mat.apply_reference(c, mat.read_plan(c, "rust", "x"), ref)
+    assert 'regex = "0.2"' in (ref / "Cargo.toml").read_text() and (ref / "src/lib.rs").read_text() == "ref"
+    assert 'regex' not in (prep.tree / "Cargo.toml").read_text()
+    prepared = sg.manifest(prep.tree)
+    assert tg.tamper_reasons(ref, sg.protected_manifest(prepared, ["src/lib.rs"]), prepared, "rust",
+                             solutions=["src/lib.rs"], prepared_cargo_toml=(prep.tree / "Cargo.toml").read_text()) == []
 
 
 @pytest.mark.skipif(not HAVE_CORPUS, reason="polyglot corpus not found")
-@pytest.mark.parametrize("slug,crates", [("alphametics", {"itertools", "permutohedron"}),
-                                          ("decimal", {"num-bigint", "num-traits"}), ("grep", {"thiserror", "anyhow"}),
-                                          ("pig-latin", {"regex"}), ("poker", {"counter"}), ("robot-name", {"rand"})])
-def test_real_rust_items_declare_the_crates_their_reference_needs(tmp_path, slug, crates):
-    import tomllib
-    prep = mat.prepare_tree(POLYGLOT, "rust", slug, tmp_path / "t")
-    deps = tomllib.loads((prep.tree / "Cargo.toml").read_text()).get("dependencies", {})
-    assert crates <= set(deps)
+def test_every_real_reference_manifest_passes_the_structural_allowlist_check(tmp_path):
+    for slug in mat.list_items(POLYGLOT)["rust"]:
+        plan = mat.read_plan(POLYGLOT, "rust", slug)
+        prep = mat.prepare_tree(POLYGLOT, "rust", slug, tmp_path / ("s-" + slug))
+        ref = tmp_path / ("r-" + slug)
+        shutil.copytree(prep.tree, ref)
+        mat.apply_reference(POLYGLOT, plan, ref)
+        assert tg.cargo_manifest_reasons((prep.tree / "Cargo.toml").read_text(), (ref / "Cargo.toml").read_text()) == [], slug

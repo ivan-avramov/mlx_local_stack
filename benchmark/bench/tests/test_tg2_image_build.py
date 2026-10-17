@@ -106,17 +106,32 @@ def test_g20_js_lock_digest_is_the_sha256_of_the_lock_file_bytes():
     assert "shasum -a 256 \"$here/locks/js/package-lock.json\" | shasum" not in (IMAGE_DIR / "build.sh").read_text()
 
 
-@pytest.mark.parametrize("slug,crates", [
-    ("alphametics", ["itertools", "permutohedron"]), ("decimal", ["num-bigint", "num-traits"]),
-    ("grep", ["thiserror", "anyhow"]), ("pig-latin", ["regex"]), ("poker", ["counter"]), ("robot-name", ["rand"])])
-def test_p366_committed_locks_cover_the_crates_each_reference_needs(slug, crates):
-    text = (IMAGE_DIR / "locks/rust" / slug / "Cargo.lock").read_text()
-    for crate in crates:
-        assert 'name = "%s"' % crate in text, (slug, crate)
-    assert 'name = "rand"\nversion = "0.3.' in (IMAGE_DIR / "locks/rust/robot-name/Cargo.lock").read_text()
+def test_p367_the_allowlist_lock_covers_every_allowlisted_crate_and_the_older_reference_versions():
+    import json
+    allow = json.loads((IMAGE_DIR / "rust_allowlist.json").read_text())
+    text = (IMAGE_DIR / "locks/rust/_allowlist/Cargo.lock").read_text()
+    for crate in allow["crates"]:
+        assert 'name = "%s"' % crate in text, crate
+    for crate, prefix in (("rand", "0.3."), ("regex", "0.2."), ("itertools", "0.5."), ("permutohedron", "0.2."),
+                          ("counter", "0.5."), ("num-bigint", "0.4."), ("thiserror", "1.0."), ("rand", "0.8.")):
+        assert 'name = "%s"\nversion = "%s' % (crate, prefix) in text, (crate, prefix)
+    assert {c for c, _ in allow["vendor"]} == set(allow["crates"])
 
 
-def test_p366_staged_rust_manifests_are_the_dependency_union(tmp_path):
+def test_p367_every_cargo_example_dependency_is_allowlisted():
+    import json, os, tomllib
+    corpus = os.environ.get("POLYGLOT_DIR")
+    if not corpus:
+        pytest.skip("POLYGLOT_DIR not set")
+    allow = set(json.loads((IMAGE_DIR / "rust_allowlist.json").read_text())["crates"])
+    for path in Path(corpus).glob("rust/exercises/practice/*/.meta/Cargo-example.toml"):
+        doc = tomllib.loads(path.read_text())
+        for section in ("dependencies", "dev-dependencies", "build-dependencies"):
+            assert set(doc.get(section, {})) <= allow, (path, section)
+        assert not doc.get("build-dependencies")
+
+
+def test_p367_staged_context_contains_the_synthetic_allowlist_crate_and_stub_manifests(tmp_path):
     import os
     corpus = os.environ.get("POLYGLOT_DIR")
     if not corpus:
@@ -124,5 +139,6 @@ def test_p366_staged_rust_manifests_are_the_dependency_union(tmp_path):
     sc = load("stage_context")
     ctx = tmp_path / "ctx"
     sc.main(corpus, str(ctx))
-    assert "counter" in (ctx / "rust/poker/Cargo.toml").read_text()
-    assert "thiserror" in (ctx / "rust/grep/Cargo.toml").read_text()
+    manifest = (ctx / "rust/_allowlist/Cargo.toml").read_text()
+    assert 'package = "regex"' in manifest and 'version = "0.2"' in manifest and (ctx / "rust/_allowlist/src/lib.rs").exists()
+    assert "counter" not in (ctx / "rust/poker/Cargo.toml").read_text()                  # stub manifests, no per-item hints

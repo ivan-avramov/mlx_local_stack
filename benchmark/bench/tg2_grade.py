@@ -23,6 +23,7 @@ import secrets
 import shutil
 import subprocess
 import tarfile
+import tomllib
 import tempfile
 import time
 import io
@@ -35,6 +36,7 @@ VERSION = "m65-tg2-v1"
 IMAGE_TAG = "tg2-grader:m65-v1"
 REPO = Path(__file__).resolve().parents[2]
 IMAGE_ID_FILE = REPO / "benchmark/m65/tg2_image/IMAGE_ID"
+ALLOWLIST_FILE = REPO / "benchmark/m65/tg2_image/rust_allowlist.json"
 LANGS = ("rust", "java", "javascript", "cpp")
 TIMEOUT_FLOOR = 180
 JEST = "/opt/tg2/js/node_modules/.bin/jest"
@@ -68,6 +70,61 @@ OPTIONAL_LEAVES = {
         {"palindrome-products.spec.js::Palindromes largest palindrome from four digit factors"}),
     ("javascript", "robot-name"): frozenset({"robot-name.spec.js::Robot all the names can be generated"}),
 }
+
+
+def _load_allowlist():
+    return tuple(json.loads(ALLOWLIST_FILE.read_text())["crates"])
+
+
+RUST_ALLOWLIST = _load_allowlist()          # P367: one global crate allowlist, identical for every Rust item
+
+
+def rust_disclosure_line():
+    """The ONE line every Rust item discloses (identical text for all items)."""
+    return "Offline crates available for [dependencies]: " + ", ".join(sorted(RUST_ALLOWLIST)) + "."
+
+
+_DEP_KEYS = {"version", "features", "default-features"}
+
+
+def cargo_manifest_reasons(prepared_text, current_text):
+    """P367: the root Cargo.toml may differ from the prepared one ONLY in `[dependencies]`: every entry names an
+    allowlisted crate with a string version requirement (optionally `features` / `default-features`); paths, git,
+    registries, renames, workspace entries, patches, build/dev dependencies, features, profiles, lints and every other
+    table must equal the prepared manifest. Structural (parsed TOML), never regex."""
+    try:
+        prepared = tomllib.loads(prepared_text)
+        current = tomllib.loads(current_text)
+    except tomllib.TOMLDecodeError as exc:
+        return ["Cargo.toml is not valid TOML: %s" % exc]
+    reasons = []
+    others = {k for k in set(prepared) | set(current) if k != "dependencies"}
+    for key in sorted(others):
+        if prepared.get(key) != current.get(key):
+            reasons.append("Cargo.toml [%s] changed (only [dependencies] is editable)" % key)
+    deps = current.get("dependencies", {})
+    if not isinstance(deps, dict):
+        return reasons + ["Cargo.toml [dependencies] is not a table"]
+    for name, spec in sorted(deps.items()):
+        if prepared.get("dependencies", {}).get(name) == spec:
+            continue
+        if name not in RUST_ALLOWLIST:
+            reasons.append("Cargo.toml dependency %s is not in the offline allowlist" % name)
+        elif isinstance(spec, str):
+            pass
+        elif isinstance(spec, dict):
+            extra = set(spec) - _DEP_KEYS
+            if extra or not isinstance(spec.get("version"), str):
+                reasons.append("Cargo.toml dependency %s uses forbidden keys %s or lacks a string version"
+                               % (name, sorted(extra)))
+            elif "features" in spec and not (isinstance(spec["features"], list)
+                                             and all(isinstance(f, str) for f in spec["features"])):
+                reasons.append("Cargo.toml dependency %s has malformed features" % name)
+            elif "default-features" in spec and not isinstance(spec["default-features"], bool):
+                reasons.append("Cargo.toml dependency %s has malformed default-features" % name)
+        else:
+            reasons.append("Cargo.toml dependency %s has a malformed specification" % name)
+    return reasons
 
 
 class ReportError(ValueError):
@@ -285,7 +342,9 @@ def _bounded(script):
 
 def _raw_commands(lang, slug):
     if lang == "rust":
-        return ("cargo test --frozen --offline --no-run 2>&1",
+        return ("{ find . -name Cargo.toml -not -path './target/*' -execdir sh -c "
+                "'rm -f Cargo.lock && cargo generate-lockfile --offline' \\; ; } 2>&1 && "
+                "cargo test --frozen --offline --no-run 2>&1",
                 "cargo test --frozen --offline --no-fail-fast -- --include-ignored 2>&1")
     if lang == "java":
         return ("bash ./gradlew --offline --no-daemon compileTestJava",
@@ -372,18 +431,13 @@ def parse_collect(lang, data):
 
 
 _PREFLIGHT_PY_RUST = """
-import os, re, sys
+import os, sys
 vendor = "/opt/tg2/cargo-vendor"
-locks = [os.path.join(d, f) for d, ds, fs in os.walk(".") if "target" not in d.split(os.sep) for f in fs if f == "Cargo.lock"]
-if not locks:
-    sys.exit("no Cargo.lock in the tree")
-for lock in locks:
-    for block in open(lock).read().split("[[package]]")[1:]:
-        name = re.search(r'^name = "([^"]+)"', block, re.M).group(1)
-        version = re.search(r'^version = "([^"]+)"', block, re.M).group(1)
-        if 'source = "registry' in block and not (os.path.isdir(os.path.join(vendor, name)) or os.path.isdir(os.path.join(vendor, name + "-" + version))):
-            sys.exit("crate %s %s missing from the image vendor dir" % (name, version))
+for name in %r:
+    if not os.path.isdir(os.path.join(vendor, name)) and not any(d.startswith(name + "-") for d in os.listdir(vendor)):
+        sys.exit("allowlisted crate %%s missing from the image vendor dir" %% name)
 """
+
 _PREFLIGHT_PY_JAVA = """
 import os, re, sys
 ro = os.environ["GRADLE_RO_DEP_CACHE"] + "/modules-2/files-2.1"
@@ -403,7 +457,7 @@ def _preflight(lang):
     head = "# TG2_PREFLIGHT\nset -e\n"
     if lang == "rust":
         return (head + "command -v cargo rustc >/dev/null\ngrep -q cargo-vendor /root/.cargo/config.toml\n"
-                "python3 - <<'PY'\n" + _PREFLIGHT_PY_RUST + "PY\n")
+                "python3 - <<'PY'\n" + _PREFLIGHT_PY_RUST % (sorted(RUST_ALLOWLIST),) + "PY\n")
     if lang == "java":
         return (head + "command -v java javac >/dev/null\nls /root/.gradle/wrapper/dists/gradle-8.7-bin/*/gradle-8.7/bin/gradle"
                 " >/dev/null\ntest -d \"$GRADLE_RO_DEP_CACHE/modules-2/files-2.1\"\n"
@@ -635,7 +689,7 @@ def _new_file_reason(work, rel, lang, solution_dirs, existing_fqns):
     return "cpp: only .h/.cpp helpers beside the solution (named in no CMake test glob) may be added"
 
 
-def tamper_reasons(work, protected, prepared, lang, *, solutions=()):
+def tamper_reasons(work, protected, prepared, lang, *, solutions=(), prepared_cargo_toml=None):
     """Reasons the tree must not be graded as the model's work; [] = clean."""
     work = Path(work)
     try:
@@ -644,12 +698,18 @@ def tamper_reasons(work, protected, prepared, lang, *, solutions=()):
         return ["unreadable or non-regular (symlink) tree entry: %s" % exc]
     reasons = ["case-colliding paths: %s vs %s" % pair for pair in case_collisions(current)]
     for rel, digest in sorted(protected.items()):
+        if lang == "rust" and (rel == "Cargo.toml" or posixpath.basename(rel).casefold() == "cargo.lock"):
+            continue                      # root manifest: structural check below; locks: regenerated by the grader
         if current.get(rel) != digest:
             reasons.append("protected file %s: %s" % ("missing" if rel not in current else "modified", rel))
     if lang == "rust":
-        for rel in sorted(set(current) | set(prepared)):
-            if posixpath.basename(rel).casefold() in RUST_ALWAYS_PROTECTED and current.get(rel) != prepared.get(rel):
-                reasons.append("rust: %s is protected (changed or added): %s" % (posixpath.basename(rel), rel))
+        if "Cargo.toml" not in current:
+            reasons.append("protected file missing: Cargo.toml")
+        elif "Cargo.toml" in prepared and current["Cargo.toml"] != prepared["Cargo.toml"]:
+            if prepared_cargo_toml is None:
+                reasons.append("rust: the prepared Cargo.toml text is required to check a changed manifest")
+            else:
+                reasons += cargo_manifest_reasons(prepared_cargo_toml, (work / "Cargo.toml").read_text(errors="replace"))
     solution_dirs = {posixpath.dirname(s) for s in solutions}
     existing = set()
     if lang == "java":
@@ -664,8 +724,9 @@ def tamper_reasons(work, protected, prepared, lang, *, solutions=()):
     return reasons
 
 
-def tampered(work, protected, prepared, lang, *, solutions=()):
-    return bool(tamper_reasons(work, protected, prepared, lang, solutions=solutions))
+def tampered(work, protected, prepared, lang, *, solutions=(), prepared_cargo_toml=None):
+    return bool(tamper_reasons(work, protected, prepared, lang, solutions=solutions,
+                               prepared_cargo_toml=prepared_cargo_toml))
 
 
 # --------------------------------------------------------------------------------------------------------- grade
@@ -713,13 +774,14 @@ def _disjoint(work, *others):
             raise TransportAbort("private/keep paths must be disjoint from the mounted work tree: %s" % other)
 
 
-def grade_item(lang, work, slug, private, *, prepared, solutions, **kw):
+def grade_item(lang, work, slug, private, *, prepared, solutions, prepared_cargo_toml=None, **kw):
     """The production entry point: strip agent build outputs, tamper-check, then grade. A tampered tree is never
     mounted; it returns outcome `tampered` (every leaf failed) and, with `keep`, writes the typed receipt."""
     work = Path(work).resolve()
     _disjoint(work, private, kw.get("keep"))
     stripped = strip_build_outputs(work, prepared)
-    reasons = tamper_reasons(work, protected_manifest(prepared, solutions), prepared, lang, solutions=solutions)
+    reasons = tamper_reasons(work, protected_manifest(prepared, solutions), prepared, lang, solutions=solutions,
+                             prepared_cargo_toml=prepared_cargo_toml)
     if reasons:
         result = Tg2Grade(lang=lang, outcome="tampered", all_failed=True, stripped=stripped, tamper_reasons=reasons,
                           reason="tampered", reason_detail="; ".join(reasons)[:2000])

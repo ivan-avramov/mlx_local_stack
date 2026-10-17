@@ -58,7 +58,7 @@ class Grader:
         self.stub = stub or (lambda n: dict(a=False, b=False))
         self.abort, self.calls = abort, []
 
-    def __call__(self, lang, tree, slug, private, *, prepared, solutions, timeout):
+    def __call__(self, lang, tree, slug, private, *, prepared, solutions, timeout, prepared_cargo_toml=None):
         if self.abort:
             raise TransportAbort("docker down")
         is_ref = (Path(tree) / "x.js").read_text() == "ref"

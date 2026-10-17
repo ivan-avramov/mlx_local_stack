@@ -38,7 +38,6 @@ class Plan:
 class Prepared:
     tree: Path
     rewrites: dict                  # {test file: skip forms rewritten}
-    added_dependencies: dict = field(default_factory=dict)      # {section: [crate, ...]} merged from Cargo-example.toml
 
 
 _DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
@@ -175,18 +174,11 @@ def prepare_tree(corpus, lang, slug, dest):
             if n:
                 path.write_text(text)
                 rewrites[path.relative_to(dest).as_posix()] = n
-    added = {}
-    example_toml = src / ".meta/Cargo-example.toml"
-    if lang == "rust" and example_toml.is_file():
-        manifest = dest / "Cargo.toml"
-        before = tomllib.loads(manifest.read_text())
-        merged = merge_cargo_dependencies(manifest.read_text(), example_toml.read_text())
-        if merged != manifest.read_text():
-            manifest.write_text(merged)
-            after = tomllib.loads(merged)
-            added = {sec: sorted(set(after.get(sec, {})) - set(before.get(sec, {}))) for sec in _DEP_SECTIONS
-                     if set(after.get(sec, {})) - set(before.get(sec, {}))}
-    return Prepared(dest, rewrites, added)
+    if lang == "rust":
+        # P367: the model-facing manifest is the stub's; every Rust item discloses the same single crates line.
+        from bench import tg2_grade
+        (dest / "OFFLINE_CRATES.md").write_text(tg2_grade.rust_disclosure_line() + "\n")
+    return Prepared(dest, rewrites)
 
 
 def apply_reference(corpus, plan, tree):
@@ -199,6 +191,11 @@ def apply_reference(corpus, plan, tree):
             raise FreezeError("destination %s escapes the tree" % dest)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src / source, target)
+    example_toml = src / ".meta/Cargo-example.toml"
+    if plan.lang == "rust" and example_toml.is_file():
+        # freeze-time only (never shown to a model): the reference gets the example's dependencies
+        manifest = tree / "Cargo.toml"
+        manifest.write_text(merge_cargo_dependencies(manifest.read_text(), example_toml.read_text()))
     return tree
 
 

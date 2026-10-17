@@ -27,9 +27,9 @@ GRADE_TIMEOUT = 900
 
 
 def default_grader(guard):
-    def grader(lang, tree, slug, private, *, prepared, solutions, timeout):
+    def grader(lang, tree, slug, private, *, prepared, solutions, timeout, prepared_cargo_toml=None):
         return tg.grade_item(lang, tree, slug, private, prepared=prepared, solutions=solutions, guard=guard,
-                             timeout=timeout)
+                             timeout=timeout, prepared_cargo_toml=prepared_cargo_toml)
     return grader
 
 
@@ -59,18 +59,18 @@ def freeze_item(corpus, lang, slug, root, grader, *, locks_fn=None, ref_runs=REF
     private = root / "private"
     private.mkdir(parents=True, exist_ok=True)
     prep = mat.prepare_tree(corpus, lang, slug, root / "prepared")
-    if locks_fn:
-        locks_fn(prep.tree, slug, private)
     prepared = sg.manifest(prep.tree)
+    cargo_toml = (prep.tree / "Cargo.toml").read_text() if lang == "rust" else None
     rec.update(solutions=plan.solutions, tests=plan.tests, mapping=[list(m) for m in plan.mapping], rewrites=prep.rewrites,
-               prepared=prepared)
+               prepared=prepared, prepared_cargo_toml=cargo_toml)
 
     def run(kind, n):
         tree = root / ("%s%d" % (kind, n))
         shutil.copytree(prep.tree, tree)
         if kind == "ref":
             mat.apply_reference(corpus, plan, tree)
-        result = grader(lang, tree, slug, private, prepared=prepared, solutions=plan.solutions, timeout=GRADE_TIMEOUT)
+        result = grader(lang, tree, slug, private, prepared=prepared, solutions=plan.solutions, timeout=GRADE_TIMEOUT,
+                        prepared_cargo_toml=cargo_toml)
         shutil.rmtree(tree, ignore_errors=True)
         return result
 
@@ -249,9 +249,7 @@ def main(argv=None):
     leftover = tg.list_leftovers(guard.run_grader, args.workdir)
     if leftover["containers"] or leftover["volumes"]:
         raise TransportAbort("tg2 leftovers present: %s" % leftover)
-    records = run_all(args.corpus, args.workdir, log, default_grader(guard), only=args.only,
-                      locks_fn=lambda tree, slug, private: tg.generate_cargo_locks(tree, slug, private, guard=guard)
-                      if (tree / "Cargo.toml").exists() else None)
+    records = run_all(args.corpus, args.workdir, log, default_grader(guard), only=args.only)
     if args.only:
         print("partial run (--only): not frozen")
         return 0

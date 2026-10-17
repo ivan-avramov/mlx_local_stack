@@ -195,12 +195,12 @@ def step_of(cmd):
     if cmd[:2] == ["docker", "inspect"]:
         return "inspect"
     script = cmd[-1] if cmd[-2:-1] == ["-c"] else " ".join(cmd[-3:])
-    if "generate-lockfile" in script:
-        return "locks"
     if "TG2_PREFLIGHT" in script:
         return "preflight"
     if "TG2_COMPILE_START" in script:
         return "compile"
+    if "generate-lockfile" in script:
+        return "locks"
     return "execute"
 
 
@@ -722,8 +722,9 @@ CASES = {"rust": (RUST, ["src/lib.rs"]), "java": (JAVA, ["src/main/java/Foo.java
 def reasons_for(tmp_path, lang, mutate, *, files=None, solutions=None):
     base, sols = CASES[lang]
     work, prepared, protected = prep(tmp_path, files or base, solutions or sols)
+    ptext = (work / "Cargo.toml").read_text() if lang == "rust" else None
     mutate(work)
-    return tg.tamper_reasons(work, protected, prepared, lang, solutions=solutions or sols)
+    return tg.tamper_reasons(work, protected, prepared, lang, solutions=solutions or sols, prepared_cargo_toml=ptext)
 
 
 def write(work, rel, text="x\n"):
@@ -739,7 +740,7 @@ def test_editing_only_declared_solution_files_is_not_tampering(tmp_path, lang):
 
 
 @pytest.mark.parametrize("lang,rel", [
-    ("rust", "tests/x.rs"), ("rust", "Cargo.lock"), ("java", "src/test/java/FooTest.java"),
+    ("rust", "tests/x.rs"), ("java", "src/test/java/FooTest.java"),
     ("java", "build.gradle"), ("java", "gradlew"), ("javascript", "x.spec.js"), ("javascript", "package.json"),
     ("cpp", "x_test.cpp"), ("cpp", "test/catch.hpp"), ("cpp", "CMakeLists.txt")])
 def test_modifying_a_protected_file_is_tampering(tmp_path, lang, rel):
@@ -752,12 +753,94 @@ def test_deleting_a_protected_file_is_tampering(tmp_path, lang, rel):
     assert reasons_for(tmp_path, lang, lambda w: (Path(w) / rel).unlink())
 
 
-def test_rust_cargo_toml_edit_is_tampering_even_when_metadata_lists_it_as_a_solution(tmp_path):
-    reasons = reasons_for(tmp_path, "rust", lambda w: write(w, "Cargo.toml", "[package]\nname='y'\n"),
-                          solutions=["src/lib.rs", "Cargo.toml"])
-    assert any("Cargo.toml" in r for r in reasons)
-    assert any("Cargo.lock" in r for r in reasons_for(tmp_path / "b", "rust",
-                                                      lambda w: write(w, "Cargo.lock", "# other\n")))
+def test_rust_cargo_lock_is_regenerated_by_the_grader_so_editing_it_is_not_tampering(tmp_path):
+    assert reasons_for(tmp_path, "rust", lambda w: write(w, "Cargo.lock", "# other\n")) == []
+
+
+# ----------------------------------------------------------------------------- P367: structural Cargo.toml manifest check
+ALLOW = tg.RUST_ALLOWLIST
+BASE = '[package]\nname = "x"\nedition = "2021"\nversion = "1.0.0"\n\n[dependencies]\nrand = "0.8"\n'
+
+
+def manifest_reasons(current, prepared=BASE):
+    return tg.cargo_manifest_reasons(prepared, current)
+
+
+def test_p367_allowlist_is_one_global_set_of_general_purpose_crates_plus_the_reference_crates():
+    assert {"rand", "regex", "itertools", "num-bigint", "num-traits", "num-integer", "thiserror", "anyhow",
+            "once_cell", "lazy_static", "unicode-segmentation"} <= set(ALLOW)
+    assert {"permutohedron", "counter"} <= set(ALLOW)                       # the references' older crates
+    assert tg.rust_disclosure_line() == "Offline crates available for [dependencies]: " + ", ".join(sorted(ALLOW)) + "."
+
+
+@pytest.mark.parametrize("dep", ['regex = "1"', 'regex = "0.2"', 'itertools = { version = "0.5", features = ["use_std"] }',
+                                 'itertools = { version = "0.5", default-features = false }', 'anyhow = "^1.0"'])
+def test_p367_adding_an_allowlisted_dependency_is_allowed(dep):
+    assert manifest_reasons(BASE + dep + "\n") == []
+
+
+def test_p367_removing_or_changing_a_stub_dependency_requirement_is_allowed_within_the_allowlist():
+    assert manifest_reasons(BASE.replace('rand = "0.8"', 'rand = "0.9"')) == []
+    assert manifest_reasons(BASE.replace('rand = "0.8"\n', "")) == []
+
+
+@pytest.mark.parametrize("dep", ['serde = "1"', 'tokio = { version = "1" }', 'rand_chacha = "0.3"'])
+def test_p367_unlisted_crates_are_tampering(dep):
+    assert manifest_reasons(BASE + dep + "\n")
+
+
+@pytest.mark.parametrize("dep", [
+    'regex = { path = "../x" }', 'regex = { git = "https://example.invalid/r" }', 'regex = { version = "1", registry = "evil" }',
+    'regex = { version = "1", package = "serde" }', 'regex = { version = "1", branch = "x" }', 'regex = { workspace = true }',
+    'regex = { version = 1 }', 'regex = { features = ["x"] }', 'regex = 3', 'regex = { version = "1", unknown = "x" }'])
+def test_p367_forbidden_dependency_forms_are_tampering(dep):
+    assert manifest_reasons(BASE + dep + "\n")
+
+
+@pytest.mark.parametrize("extra", [
+    '[patch.crates-io]\nrand = { path = "x" }', '[replace]\n"rand:0.8.0" = { path = "x" }',
+    '[build-dependencies]\nrand = "0.8"', '[dev-dependencies]\nrand = "0.8"', '[features]\nfoo = []',
+    '[workspace]\nmembers = []', '[profile.release]\nopt-level = 3', '[lib]\npath = "x.rs"', '[[bin]]\nname = "b"\npath = "b.rs"',
+    '[target.x.dependencies]\nrand = "0.8"', '[lints.clippy]\nx = "allow"'])
+def test_p367_every_table_other_than_dependencies_is_frozen(extra):
+    assert manifest_reasons(BASE + "\n" + extra + "\n")
+
+
+def test_p367_package_edits_and_unparseable_manifests_are_tampering():
+    assert manifest_reasons(BASE.replace('name = "x"', 'name = "y"'))
+    assert manifest_reasons(BASE.replace('edition = "2021"', 'edition = "2018"'))
+    assert manifest_reasons("this is [not toml")
+
+
+def test_p367_a_stub_with_extra_prepared_tables_must_keep_them_exactly():
+    prepared = BASE + '\n[lints.clippy]\nnew_without_default = "allow"\n'
+    assert manifest_reasons(prepared.replace("allow", "deny"), prepared)
+
+
+def test_p367_tamper_reasons_applies_the_structural_check_to_the_root_manifest_only(tmp_path):
+    files = dict(RUST, **{"Cargo.toml": BASE, "nested/Cargo.toml": BASE})
+    ok = lambda w: write(w, "Cargo.toml", BASE + 'regex = "1"\n')
+    assert reasons_for(tmp_path, "rust", ok, files=files) == []
+    assert reasons_for(tmp_path / "b", "rust", lambda w: write(w, "Cargo.toml", BASE + 'serde = "1"\n'), files=files)
+    assert reasons_for(tmp_path / "c", "rust", lambda w: write(w, "nested/Cargo.toml", BASE + 'regex = "1"\n'), files=files)
+
+
+def test_p367_compile_regenerates_the_lockfile_offline_before_the_frozen_build(tree):
+    _, guard = do_grade("rust", tree, basic_plan("rust"))
+    script = guard.calls[3][1][-1]
+    assert "cargo generate-lockfile --offline" in script and script.index("generate-lockfile") < script.index("--frozen")
+
+
+def test_p367_a_failing_lock_generation_is_a_compile_failure_not_infrastructure(tree):
+    plan = basic_plan("rust", compile=dict(rc=101, stderr="error: failed to select a version for the requirement `regex = \"99\"`"))
+    result, _ = do_grade("rust", tree, plan)
+    assert result.outcome == "compile_failure"
+
+
+def test_p367_rust_preflight_checks_every_allowlisted_crate_is_vendored(tree):
+    _, guard = do_grade("rust", tree, basic_plan("rust"))
+    script = guard.calls[2][1][-1]
+    assert "permutohedron" in script and "unicode-segmentation" in script and "Cargo.lock" not in script.split("python3")[0]
 
 
 @pytest.mark.parametrize("rel", ["build.rs", "src/build.rs", ".cargo/config.toml", "target/debug/x.rs", "tests/extra.rs",
@@ -1065,7 +1148,7 @@ def test_g13_resource_outcomes_require_the_nonce_marker_first(tree, step, over):
 def test_g13_compile_script_prints_its_own_marker_right_before_the_compiler(tree):
     _, guard = do_grade("rust", tree, basic_plan("rust"))
     compile_script = guard.calls[3][1][-1]
-    assert re.search(r'echo "TG2_COMPILE_START [0-9a-f]{16}"; cargo test --frozen --offline --no-run', compile_script)
+    assert re.search(r'echo "TG2_COMPILE_START [0-9a-f]{16}"; \{ find \. -name Cargo.toml', compile_script)
     assert "TG2_RUNNER_START" not in compile_script
 
 
@@ -1694,8 +1777,6 @@ def _item(tmp_path, lang, slug, guard):
     """(prepared stub tree, its manifest, solutions) with Rust lockfiles generated offline at preparation."""
     from bench.tests import tg2_trees
     stub = tg2_trees.stub_tree(POLYGLOT, lang, slug, tmp_path / "stub")
-    if lang == "rust":
-        tg.generate_cargo_locks(stub, slug, tmp_path / "private", guard=guard)
     return stub, _prepared(stub), tg2_trees.solutions(POLYGLOT, lang, slug)
 
 
@@ -1812,6 +1893,55 @@ def test_p363_a_killed_grader_leaves_listed_leftovers_that_block_grading_until_e
         subprocess.run(["docker", "volume", "rm", "-f", foreign], capture_output=True)
 
 
+def _robot_variant(tmp_path, dep_line, source=None):
+    guard = tg.LocalDocker()
+    stub, prepared, sols = _item(tmp_path, "rust", "robot-name", guard)
+    ref = tmp_path / "model"
+    shutil.copytree(stub, ref)
+    from bench.tests import tg2_trees
+    tg2_trees.apply_reference(POLYGLOT, "rust", "robot-name", ref)             # gets the example's rand 0.3 manifest...
+    (ref / "Cargo.toml").write_text((stub / "Cargo.toml").read_text() + "\n[dependencies]\n" + dep_line + "\n")
+    if source:
+        (ref / "src/lib.rs").write_text(source)
+    return guard, stub, ref, prepared, sols
+
+
+MODERN_ROBOT = (POLYGLOT / "rust/exercises/practice/robot-name/.meta/example.rs") if POLYGLOT else None
+
+
+def _modern_source():
+    text = MODERN_ROBOT.read_text()
+    text = text.replace("use rand::{thread_rng, Rng};", "use rand::{seq::SliceRandom, thread_rng};")
+    text = text.replace("*thread_rng().choose(LETTERS).unwrap()", "*LETTERS.choose(&mut thread_rng()).unwrap()")
+    return text.replace("*thread_rng().choose(NUMBERS).unwrap()", "*NUMBERS.choose(&mut thread_rng()).unwrap()")
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+def test_p367_a_model_style_solution_using_a_current_crate_version_builds_and_passes_offline(tmp_path):
+    _docker_env()
+    guard, stub, ref, prepared, sols = _robot_variant(tmp_path, 'rand = "0.8"', _modern_source())
+    result = tg.grade_item("rust", ref, "robot-name", tmp_path / "private", prepared=prepared, solutions=sols,
+                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600)
+    assert result.outcome == "parsed" and result.leaves and result.passing == result.collected, (result.outcome, result.reason_detail)
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+def test_p367_an_unlisted_crate_is_a_tamper_failure_and_an_unsatisfiable_version_a_compile_failure(tmp_path):
+    _docker_env()
+    guard, stub, ref, prepared, sols = _robot_variant(tmp_path, 'serde = "1"', _modern_source())
+    result = tg.grade_item("rust", ref, "robot-name", tmp_path / "private", prepared=prepared, solutions=sols,
+                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600)
+    assert result.outcome == "tampered" and any("serde" in r for r in result.tamper_reasons)
+    second = tmp_path / "second"
+    second.mkdir()
+    guard, stub, ref, prepared, sols = _robot_variant(second, 'regex = "99"', _modern_source())
+    result = tg.grade_item("rust", ref, "robot-name", second / "private", prepared=prepared, solutions=sols,
+                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600)
+    assert result.outcome == "compile_failure" and result.all_failed
+
+
 @pytest.mark.docker
 @pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
 def test_tamper_is_caught_through_the_production_entry_point(tmp_path):
@@ -1835,12 +1965,13 @@ def test_reference_all_pass_and_untouched_stub_fails_in_the_built_image(tmp_path
     ref = _ref_of(tmp_path, stub, lang, slug)
     stub_copy = tmp_path / "stub_copy"
     shutil.copytree(stub, stub_copy)
+    pct = (stub / "Cargo.toml").read_text() if lang == "rust" else None
     good = tg.grade_item(lang, ref, slug, tmp_path / "private", prepared=prepared, solutions=sols, guard=guard,
-                         timeout=900, keep=tmp_path / "keep", seq=0, boundary=0, final=True)
+                         prepared_cargo_toml=pct, timeout=900, keep=tmp_path / "keep", seq=0, boundary=0, final=True)
     assert good.outcome == "parsed", good.phases
     assert good.collected and good.passing == good.collected, sorted(good.collected - good.passing)
     base = tg.grade_item(lang, stub_copy, slug, tmp_path / "private", prepared=prepared, solutions=sols, guard=guard,
-                         timeout=900)
+                         prepared_cargo_toml=pct, timeout=900)
     assert base.failing(good.collected) > 0, (base.outcome, base.passing)
     assert not guard.leftover()
 

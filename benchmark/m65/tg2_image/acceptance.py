@@ -53,9 +53,8 @@ def main(corpus):
             slug = slug.split(":")[0]
             private = tmp / "private"
             work = tg2_trees.stub_tree(corpus, lang, slug, tmp / lang / slug)
-            if lang == "rust":
-                tg.generate_cargo_locks(work, slug, private, guard=guard)
             prepared = tg2_trees.sg.manifest(work)
+            pct = (work / "Cargo.toml").read_text() if lang == "rust" else None
             if not stub_only:
                 # fresh directory: overwriting a file a container already mounted can show the container a stale
                 # (old-size) view on virtiofs, so the reference tree is never an in-place edit of the locked stub
@@ -63,7 +62,7 @@ def main(corpus):
                 shutil.copytree(work, ref)
                 work = tg2_trees.apply_reference(corpus, lang, slug, ref)
             keep = tmp / "keep" / lang / slug
-            result = tg.grade_item(lang, work, slug, private, prepared=prepared,
+            result = tg.grade_item(lang, work, slug, private, prepared=prepared, prepared_cargo_toml=pct,
                                    solutions=tg2_trees.solutions(corpus, lang, slug), guard=guard, timeout=900,
                                    keep=keep, seq=0, boundary=0)
             raw = "".join(p.read_text(errors="replace") for p in (keep / "seq-0000").glob("*.std*"))
