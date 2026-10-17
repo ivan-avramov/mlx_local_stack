@@ -78,7 +78,7 @@ DEFAULT_POLL_INTERVAL = 30
 # on these benchmarks the tail IS the measurement. The gate is mechanical: a large generation
 # entry must carry a "pilot" field recording the pilot-derived sizing, or it is refused.
 PILOT_GATE_N = 40
-_GENERATIONISH = ("generate", "run_opencode_probe")
+_GENERATIONISH = ("generate", "run_opencode_probe", "run_tg1_probe")
 
 
 def _estimated_n(cmd: str):
@@ -89,7 +89,7 @@ def _estimated_n(cmd: str):
     """
     if not any(tok in cmd for tok in _GENERATIONISH):
         return None
-    if "generate" in cmd and "run.py" not in cmd and "run_opencode_probe" not in cmd:
+    if "generate" in cmd and "run.py" not in cmd and "run_opencode_probe" not in cmd and "run_tg1_probe" not in cmd:
         return None  # some other tool's "generate"
     for flag in ("--ids", "--items"):
         m = re.search(re.escape(flag) + r"\s+(\S+)", cmd)

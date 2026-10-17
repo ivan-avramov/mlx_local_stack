@@ -131,3 +131,31 @@ def test_generate_passes_its_result_path_to_provenance_write(monkeypatch, tmp_pa
     monkeypatch.setattr(provenance, "current_manifest_lite", lambda *a, **k: {"x": 1})
     generate.stamp_manifests([("M", "humanevalplus")], profile="deployed", overrides=None)
     assert Path(got["result_path"]) == generate.result_path("M", "humanevalplus")
+
+
+def test_standard_entry_still_imports_its_scoring_paths():
+    """P311-lite keeps the in-process scoring on the standard v2 entry (rerun policy, web scan)."""
+    local = imports_of(BENCH.parent / "run_opencode_probe_v2.py")
+    assert {"bench.answer_key", "bench.web_scan", "bench.opencode_v2_core", "bench.deny_rules"} <= local
+    for name in ("_rerun_resume", "_web_audit", "_check_resume_v2", "_identity"):
+        assert hasattr(importlib.import_module("run_opencode_probe_v2"), name)
+
+
+def test_carrier_bytes_are_unchanged_by_the_deny_rules_move(tmp_path, monkeypatch):
+    """Spec test 2: the deny patterns written into the carrier equal what the pre-move function produced."""
+    import hashlib
+    from bench.tests import p311_legacy as legacy
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    std = importlib.import_module("run_opencode_probe_v2")
+    extra = tmp_path / "extra.json"
+    patterns = ["*github.com/owner/repo", "*docs.example.test/page"]
+    extra.write_text(json.dumps(patterns))
+    got = std._carrier_selection("opencode-v2-web", None, extra_deny_file=extra)
+    doc = json.loads(std.BENCH_OPENCODE_WEB_CONFIG.read_bytes())
+    for pattern in patterns:
+        doc.setdefault("permissions", []).append({"action": "webfetch", "resource": pattern, "effect": "deny"})
+    doc["permissions"].extend({"action": "shell", "resource": p, "effect": "deny"}
+                              for p in legacy.legacy_shell_deny_patterns(patterns))
+    want = json.dumps(doc, sort_keys=True, indent=2).encode()
+    assert got["bytes"] == want
+    assert got["fields"]["opencode_bench_config_sha256"] == hashlib.sha256(want).hexdigest()

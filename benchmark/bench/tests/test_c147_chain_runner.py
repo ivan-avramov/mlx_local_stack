@@ -161,7 +161,8 @@ def env(tmp_path, monkeypatch):
                 pass
 
 
-def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeout=90, helper=None, universe=True):
+def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeout=90, helper=None, universe=True,
+        lifecycle=None):
     ops = env["ops"]
     if plan is not None:
         ops.extra_env["FAKE_PROBE_PLAN"] = json.dumps(plan)
@@ -177,7 +178,7 @@ def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeo
 
     def target():
         try:
-            res["rc"] = R.main(full, ops=ops, timers=tm, log_out=env["lines"].append)
+            res["rc"] = R.main(full, ops=ops, timers=tm, log_out=env["lines"].append, lifecycle_files=lifecycle)
         except BaseException as e:  # noqa: BLE001
             res["exc"] = e
 
@@ -1061,7 +1062,8 @@ def test_null_agent_system_sha_still_valid_everywhere(env, tmp_path):
     man = json.loads(out.with_suffix(".manifest.json").read_text())
     assert man["runtime"]["agent_system_sha256"] is None and _co.malformed_identity(man) == []
     man["runtime"]["agent_system_sha256"] = "nothex"
-    assert _co.malformed_identity(man) == ["runtime_agent_system_sha256"]
+    # the composite no longer matches the changed field either (P311-lite recomputes it from the manifest's own fields)
+    assert _co.malformed_identity(man) == ["runtime_agent_system_sha256", "runtime_generation_identity_sha256_inconsistent"]
 
 
 def test_clean_exit_without_a_receipt_is_restart_eligible_and_nothing_else_is(env):
