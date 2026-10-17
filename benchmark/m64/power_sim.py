@@ -56,39 +56,26 @@ def p_tost(est, reps):
     return max(lo, hi)
 
 
-def joint_table(r, pd, delta):
-    """Joint (reference, challenger) outcome probabilities with reference accuracy r, discordance pd and true
-    delta = challenger - reference: P(D=+1) = (pd+delta)/2, P(D=-1) = (pd-delta)/2. Infeasible → ValueError."""
-    up, down = (pd + delta) / 2, (pd - delta) / 2
-    if not (0 <= r <= 1 and 0 <= pd <= 1 and 0 <= r + delta <= 1):
-        raise ValueError(f"marginal accuracy outside [0,1]: r={r}, delta={delta}, pd={pd}")
-    if abs(delta) > pd + 1e-12:
-        raise ValueError(f"|delta|={abs(delta)} exceeds discordance pd={pd}")
-    if up > 1 - r + 1e-12 or down > r + 1e-12:
-        raise ValueError(f"no joint table: P(D=+1)={up:.4f} vs 1-r={1 - r:.4f}, P(D=-1)={down:.4f} vs r={r:.4f}")
-    up, down = min(up, 1 - r), min(down, r)
-    return {"11": r - down, "10": down, "01": up, "00": 1 - r - up}
+def sim_diffs(rng, n, delta, pd):
+    """n paired differences D = challenger - reference in {-1, 0, +1}, iid with P(D=-1) = (pd-delta)/2,
+    P(D=0) = 1-pd, P(D=+1) = (pd+delta)/2, so E[D] = delta. The reference accuracy does not enter the statistic
+    (P357 round 2). |delta| > pd is infeasible → ValueError."""
+    if not (0 <= pd <= 1) or abs(delta) > pd + 1e-12:
+        raise ValueError(f"infeasible: |delta|={abs(delta)} exceeds discordance pd={pd}")
+    return rng.choice([-1.0, 0.0, 1.0], size=n, p=[(pd - delta) / 2, 1 - pd, (pd + delta) / 2])
 
 
-def feasible_ref(r, pd, delta):
-    """Observed reference accuracy r clamped into the window where a joint table exists (a reference at 100 %
-    cannot have symmetric discordance). Least shrinkage; r is returned unchanged when already feasible."""
-    return min(max(r, (pd - delta) / 2), 1 - (pd + delta) / 2)
+def gen_cells(rng, refs, delta, pd):
+    """Per-cell difference arrays (exact cell sizes from the observed references)."""
+    return {key: sim_diffs(rng, len(ref), delta, pd) for key, ref in refs.items()}
 
 
-def sim_pairs(rng, n, r, delta, pd):
-    """n paired (reference, challenger) outcomes drawn iid from joint_table(r, pd, delta)."""
-    t = joint_table(r, pd, delta)
-    cell = rng.choice(4, size=n, p=[t["11"], t["10"], t["01"], t["00"]])
-    return (cell < 2).astype(float), ((cell == 0) | (cell == 2)).astype(float)
-
-
-def run(pd, delta, rng, refs):
-    """refs: {(lang, sess): observed reference array; only its length and mean are used}. Returns (spec claim passes, pooled claim passes)."""
-    diffs = {}
-    for key, ref in refs.items():
-        r, ch = sim_pairs(rng, len(ref), feasible_ref(ref.mean(), pd, delta), delta, pd)
-        diffs[key] = ch - r
+def run(pd, delta, rng, refs, capture=None):
+    """refs: {(lang, sess): observed reference array; only its length is used}. Returns (spec claim passes,
+    pooled claim passes). capture (dict) receives the generated per-cell differences (test seam)."""
+    diffs = gen_cells(rng, refs, delta, pd)
+    if capture is not None:
+        capture.update(diffs)
     cell_p = []
     for d in diffs.values():
         est = d.mean()
@@ -110,16 +97,16 @@ def run(pd, delta, rng, refs):
     return spec_pass, p_tost(est, reps) < ALPHA
 
 
-def main():
+def main(out_path=None):
     rate, disc, tot, cells = observed_discordance()
     rng = np.random.default_rng(64)
     out = ["# M64 power simulation (spec §12 step 2)\n",
            f"Observed run-to-run paired discordance (same model, same seeds; c144-base vs P223): {disc}/{tot} = "
            f"{rate:.3f}. Margin ±{MARGIN}, alpha {ALPHA}, bootstrap B = {B}, {SIMS} simulated chains per scenario. "
-           "Pair outcomes are drawn from a feasible joint table (P(D=+1) = (p_d+delta)/2, P(D=-1) = (p_d-delta)/2; E[delta] = true "
-           "delta); each cell's reference accuracy is its observed c144-base strict rate, clamped to the feasible window "
-           "(a 100 % reference becomes 1 - p_d/2 at delta = 0). Extra p_d rows: .182 (M55 same-model s1 vs s2, 24/132) and "
-           ".303 (between picks, 40/132) from the P356 review.\n",
+           "Per-cell paired differences are drawn directly: P(D=+1) = (p_d+delta)/2, P(D=-1) = (p_d-delta)/2, P(D=0) = "
+           "1-p_d (E[delta] = true delta; reference accuracy is irrelevant to the statistic); cell sizes are the observed "
+           "ones. Extra p_d rows: .182 (M55 same-model s1 vs s2, 24/132) and .303 (between picks, 40/132) from the P356 "
+           "review. Scenarios with |delta| > p_d are infeasible and not simulated.\n",
            "| pick | p_d | true delta | spec claim (4-cell intersection) passes | pooled 86-item claim passes |",
            "|---|---|---|---|---|"]
     for m in (P1, P2):
@@ -134,11 +121,20 @@ def main():
                 a = sum(r[0] for r in res) / SIMS
                 b = sum(r[1] for r in res) / SIMS
                 out.append(f"| {m} | {pd:.3f} | {delta:+.2f} | {a:.3f} | {b:.3f} |")
-    out += ["", "Rows at delta = 0 are POWER (want ≥ 0.80); rows at delta = −0.05 are the type-I error at the margin "
-            "(want ≤ alpha); delta = −0.10 should almost never pass.", "",
+    out += ["", "Rows at delta = 0 are POWER (want ≥ 0.80); rows at delta = −0.05 are the false-pass rate at the margin "
+            "(want ≤ alpha); delta = −0.10 should almost never pass. Monte Carlo uncertainty: each entry is a proportion "
+            f"of {SIMS} chains (SE ≤ {0.5 / SIMS ** 0.5:.3f}); an entry of 0.000 means 0/{SIMS}, one-sided 95 % upper "
+            f"bound {1 - 0.05 ** (1 / SIMS):.4f}.", "",
+            "**The pooled rule is INVALID** (P358): it fails calibration at the margin — at p_d = |delta| = .05 the "
+            "false-pass rate is ≈ 0.178 = P(K ∈ {1, 2}) for K ~ Binomial(86, .05) (exact; the shift bootstrap passes "
+            "when 1 or 2 of 86 pairs are discordant), far above alpha. Its power rows are therefore not evidence for "
+            "a usable claim. The 4-cell rule's 0.000 is bounded by discreteness (cells of 21–22 cannot bound ±5 pp).",
+            "",
+            "Owed (not built): a session-level random-effect / correlation sensitivity — cells here are generated "
+            "independently, so shared loaded-instance effects are not simulated.", "",
             "Per-cell inputs (pick, language, session, discordant, n, c144-base strict rate):"]
     out += [f"- {m} {lang} {s}: {d}/{n}, ref {acc:.3f}" for m, lang, s, d, n, acc in cells]
-    Path(__file__).with_name("POWER_SIM.md").write_text("\n".join(out) + "\n")
+    (Path(out_path) if out_path else Path(__file__).with_name("POWER_SIM.md")).write_text("\n".join(out) + "\n")
     print("\n".join(out))
 
 

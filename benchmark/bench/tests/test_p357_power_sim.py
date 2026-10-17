@@ -1,4 +1,4 @@
-"""P357: the power sim's paired outcomes must come from a FEASIBLE joint table with E[delta] = true delta.
+"""P357: the power sim's paired outcomes must have E[delta] = the requested true delta (through `run()`).
 
 The old `sim_cell` flipped a fixed high-accuracy reference symmetrically, so its "delta = 0" scenario had
 E[delta] = p_d(1 - 2r) (about -3.7 pp at r .955, p_d .041).
@@ -15,56 +15,84 @@ PS = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(PS)
 
 
-def _draw(seed, n, r, delta, pd, reps):
-    rng = np.random.default_rng(seed)
-    return [PS.sim_pairs(rng, n, r, delta, pd) for _ in range(reps)]
+def old_sim_cell(rng, ref, delta, pd):
+    """Verbatim copy of the pre-P357 generator (kept only to prove the tests detect it)."""
+    n = len(ref)
+    ch = ref.copy()
+    flip = rng.random(n) < pd
+    ch[flip] = 1 - ch[flip]
+    k = int(round(-delta * n))
+    if k > 0:
+        idx = np.flatnonzero(ch == 1)
+        if len(idx):
+            ch[rng.choice(idx, size=min(k, len(idx)), replace=False)] = 0
+    return ch
 
 
-def test_mean_delta_is_true_delta_at_zero():
-    pairs = _draw(1, 22, 0.955, 0.0, 0.041, 4000)
-    mean = np.mean([(ch - ref).mean() for ref, ch in pairs])
-    assert abs(mean) < 0.005
+def old_gen_cells(rng, refs, delta, pd):
+    return {k: old_sim_cell(rng, ref, delta, pd) - ref for k, ref in refs.items()}
 
 
-@pytest.mark.parametrize("delta", [-0.05, 0.02])
-def test_mean_delta_tracks_true_delta(delta):
-    pairs = _draw(2, 40, 0.80, delta, 0.15, 4000)
-    mean = np.mean([(ch - ref).mean() for ref, ch in pairs])
-    assert abs(mean - delta) < 0.005
+REFS = {("python", "s1"): np.array([1.0] * 21 + [0.0]),     # r = .955
+        ("python", "s2"): np.array([1.0] * 21 + [0.0]),
+        ("go", "s1"): np.ones(21), ("go", "s2"): np.ones(21)}  # r = 1
 
 
-def test_discordant_pair_probabilities():
-    pd, delta = 0.20, -0.06
-    pairs = _draw(3, 50, 0.7, delta, pd, 2000)
-    ref = np.concatenate([p[0] for p in pairs])
-    ch = np.concatenate([p[1] for p in pairs])
-    d = ch - ref
-    assert abs((d == 1).mean() - (pd + delta) / 2) < 0.006
-    assert abs((d == -1).mean() - (pd - delta) / 2) < 0.006
+def _collect(monkeypatch, pd, delta, reps, gen=None):
+    monkeypatch.setattr(PS, "B", 10)                       # bootstrap is irrelevant to generation; keep it fast
+    if gen is not None:
+        monkeypatch.setattr(PS, "gen_cells", gen)
+    rng = np.random.default_rng(7)
+    got = []
+    for _ in range(reps):
+        cap = {}
+        PS.run(pd, delta, rng, REFS, capture=cap)
+        got.append(cap)
+    return got
 
 
-def test_joint_table_sums_to_one_and_marginals():
-    t = PS.joint_table(0.9, 0.1, -0.04)
-    assert abs(sum(t.values()) - 1) < 1e-12
-    assert abs(t["11"] + t["10"] - 0.9) < 1e-12          # reference accuracy
-    assert abs(t["11"] + t["01"] - 0.86) < 1e-12         # challenger accuracy = r + delta
+def _assert_unbiased(got, pd, delta, tol=0.009):
+    for key in REFS:
+        d = np.concatenate([g[key] for g in got])
+        assert abs(d.mean() - delta) < tol, (key, d.mean())
+        assert abs((d == 1).mean() - (pd + delta) / 2) < tol
+        assert abs((d == -1).mean() - (pd - delta) / 2) < tol
+
+
+@pytest.mark.parametrize("pd,delta", [(0.041, 0.0), (0.182, -0.05), (0.10, 0.03)])
+def test_run_generates_requested_delta_and_split(monkeypatch, pd, delta):
+    got = _collect(monkeypatch, pd, delta, 600)
+    _assert_unbiased(got, pd, delta)
+    assert all(len(g[k]) == len(REFS[k]) for g in got for k in REFS)      # exact cell n
+    assert all(set(np.unique(g[k])) <= {-1.0, 0.0, 1.0} for g in got for k in REFS)
+
+
+def test_old_generator_is_detected_through_run(monkeypatch):
+    """Red against the pre-P357 behaviour: at delta = 0, r near 1, E[delta] was about -3.7 pp / -4.1 pp."""
+    got = _collect(monkeypatch, 0.041, 0.0, 600, gen=old_gen_cells)
+    d = np.concatenate([g[("go", "s1")] for g in got])
+    assert d.mean() < -0.03                                            # the old bias is real
+    with pytest.raises(AssertionError):
+        _assert_unbiased(got, 0.041, 0.0)                              # and the behavioural check catches it
 
 
 def test_infeasible_refused():
+    rng = np.random.default_rng(0)
     with pytest.raises(ValueError):
-        PS.joint_table(0.9, 0.03, 0.05)                  # |delta| > p_d
+        PS.sim_diffs(rng, 20, -0.05, 0.041)                # |delta| > p_d
     with pytest.raises(ValueError):
-        PS.joint_table(0.99, 0.10, 0.08)                 # challenger accuracy > 1 (needs P(01) .09 > 1 - r)
-    with pytest.raises(ValueError):
-        PS.joint_table(0.02, 0.10, -0.08)                # P(10) .09 > r
-    with pytest.raises(ValueError):
-        PS.joint_table(1.2, 0.1, 0.0)                    # marginal outside [0, 1]
+        PS.sim_diffs(rng, 20, 0.0, 1.2)
 
 
-def test_ceiling_reference_is_shrunk_to_feasible():
-    # reference observed at 100 %: a symmetric discordance of .041 is impossible there, so the cell
-    # reference accuracy is clamped to the nearest feasible value, never silently biased.
-    assert abs(PS.feasible_ref(1.0, 0.041, 0.0) - (1 - 0.041 / 2)) < 1e-12
-    assert PS.feasible_ref(0.955, 0.041, 0.0) == 0.955
-    pairs = _draw(4, 22, PS.feasible_ref(1.0, 0.041, 0.0), 0.0, 0.041, 4000)
-    assert abs(np.mean([(ch - ref).mean() for ref, ch in pairs])) < 0.005
+def test_report_wiring(monkeypatch, tmp_path):
+    monkeypatch.setattr(PS, "SIMS", 2)
+    monkeypatch.setattr(PS, "B", 10)
+    monkeypatch.setattr(PS, "observed_discordance",
+                        lambda: (0.041, 7, 172, [("m", "python", "s1", 1, 22, 0.955)]))
+    monkeypatch.setattr(PS, "load", lambda model, lang, tag, sess: {f"i{i}": 1 for i in range(21)})
+    out = tmp_path / "ps.md"
+    PS.main(out_path=out)
+    text = out.read_text()
+    assert "7/172 = 0.041" in text and "INVALID" in text and "Owed" in text
+    assert "| 0.182 | +0.00 |" in text and "| 0.303 | -0.10 |" in text
+    assert "infeasible (delta beyond p_d)" in text
