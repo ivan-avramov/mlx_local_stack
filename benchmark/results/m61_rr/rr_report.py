@@ -29,9 +29,9 @@ def pv(d):
     z = abs(d["delta"]) / se if se > 0 else 0.0
     return 2 * (1 - 0.5 * (1 + math.erf(z / math.sqrt(2))))
 
-def family(title, pairs):
+def family(title, pairs, names=("first", "second")):
     p(f"\n## {title}\n")
-    p("| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |")
+    p("| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |")
     p("|---|---|---|---|---|---|---|---|")
     res = []
     for label, a, b in pairs:
@@ -40,7 +40,7 @@ def family(title, pairs):
         res.append((label, d, pv(d)))
     adj = stats.holm([r[2] for r in res])
     for (label, d, pval), h in zip(res, adj):
-        p(f"| {label} | {d['n_items']} | {d['delta']:+.3f} | [{d['lo']:+.2f}, {d['hi']:+.2f}] | {d['verdict']} | {d['mde']:.2f} | {pval:.3f} | {h:.3f} |")
+        p(f"| {label} | {d['n_items']} | {d['delta']:+.3f} | [{d['lo']:+.2f}, {d['hi']:+.2f}] | {stats.verdict_label(d, *names)} | {d['mde']:.2f} | {pval:.3f} | {h:.3f} |")
 
 p("# M61 C139(b) re-record report — opencode-v2-web, 48K first-write allowance, audited web\n")
 p("## Per leg (answer_key.report_rows; acc_strict@budget = pass AND converged)\n")
@@ -77,7 +77,7 @@ for m in (P1, P2):
         p(f"- {m} {l}: discordant {sorted(i for i in a if a[i] != b.get(i))}; missed in both {sorted(i for i in a if a[i] == 0 and b.get(i) == 0)}")
 
 for s in SESS:
-    family(f"Head-to-head {s}: {P1} minus {P2}", [(l, items[(P1, l, s)], items[(P2, l, s)]) for l in LANGS])
+    family(f"Head-to-head {s}: {P1} minus {P2}", [(l, items[(P1, l, s)], items[(P2, l, s)]) for l in LANGS], names=(P1, P2))
 
 for s in SESS:
     pairs = []
@@ -85,7 +85,7 @@ for s in SESS:
         for l in LANGS:
             m59 = {r["id"]: [strict(r)] for r in rows(RES / m / f"opencode_v2_{l}.m59.{s}.jsonl") if r["id"] not in INVALID}
             pairs.append((f"{m} {l}", items[(m, l, s)], m59))
-    family(f"DESCRIPTIVE: M61 re-record {s} minus M59 {s} (same seeds; scaffold opencode-v2-web 48K vs opencode-v2 16K — never pooled)", pairs)
+    family(f"DESCRIPTIVE: M61 re-record {s} minus M59 {s} (same seeds; scaffold opencode-v2-web 48K vs opencode-v2 16K — never pooled)", pairs, names=("M61", "M59"))
 
 p("\n## Misses (all legs)\n")
 p("| model | lang | session | item | kind | wall s | turns | output tokens | tool calls | error calls | repeated identical | max identical run | web | test_modified |")

@@ -327,15 +327,18 @@ def test_every_fingerprint_key_is_classified_here_no_silent_gaps():
 
 
 # ------------------------------------------------------------------------ the happy path
-def test_equivalent_result_reports_pass_verdict_and_full_payload(tmp_results):
+def test_wash_result_reports_guarded_verdict_and_full_payload(tmp_results):
     _happy_pair(tmp_results, ok_b=True, decode_a=20.0, decode_b=25.0,
                draft_field_b={"draft_kind": "mtp", "draft_rounds": 4, "draft_n": 20,
                               "draft_n_accepted": 15})
     r = CP.compare_predictor("M", "math500", "m37med", "m40on")
     assert r["comparable"] is True
-    assert r["verdict"] == "INCONCLUSIVE"         # P346: identical arms (no discordance) cannot certify equivalence
+    # P359/C173: identical arms = wash (tie), zero discordance at n=5: exact bound 45 pp > 10 pp, so the guard blocks the ship
+    assert r["verdict"] == "loss_not_ruled_out"
+    assert "loss not ruled out above 45 pp" in r["verdict_note"] and "wash" in r["verdict_note"]
     assert r["delta"]["acc_strict"]["delta"] == pytest.approx(0.0)
-    assert r["delta"]["acc_strict"]["verdict"] == "equivalent"      # the raw paired_delta verdict is unchanged
+    assert r["delta"]["acc_strict"]["verdict"] == "wash"
+    assert r["delta"]["acc_strict"]["directional"] == "tie"
     assert r["delta"]["acc_strict"]["degenerate"] is True
     assert r["delta"]["acc_strict"]["discordant"] == 0
     assert r["delta"]["acc_strict"]["a"] == pytest.approx(1.0)
@@ -410,10 +413,46 @@ def test_verdict_pass_before_fail_precedence_at_matched_margin(tmp_results):
 
 
 def test_verdict_strict_inequality_at_the_margin_boundary():
-    chosen_at_boundary = {"lo": -0.05, "hi": 0.03, "delta": 0.0}
-    assert CP._verdict(chosen_at_boundary, margin=0.05) != "PASS"
-    chosen_inside = {"lo": -0.049, "hi": 0.03, "delta": 0.0}
-    assert CP._verdict(chosen_inside, margin=0.05) == "PASS"
+    # a SHOWN (CI excludes 0) loss: a lower bound of exactly -5 pp passes (<=5% rule, W1; float-noise tolerant),
+    # beyond the margin fails
+    at_boundary = {"lo": -0.05, "hi": -0.01, "delta": -0.03, "verdict": "tune_a_better", "mde": 0.05}
+    assert CP._verdict(at_boundary, margin=0.05) == "PASS"
+    assert CP._verdict({**at_boundary, "lo": -0.05 - 1e-12}, margin=0.05) == "PASS"
+    assert CP._verdict({**at_boundary, "lo": -0.0501}, margin=0.05) == "FAIL"
+    inside = {"lo": -0.049, "hi": -0.01, "delta": -0.03, "verdict": "tune_a_better", "mde": 0.05}
+    assert CP._verdict(inside, margin=0.05) == "PASS"
+
+
+def test_p359_lever_guard_ships_a_wash_only_when_the_observed_loss_bound_is_within_10pp():
+    wash = {"hi": 0.05, "delta": 0.0, "verdict": "wash", "directional": "tie", "mde": 0.3}   # MDE no longer matters (C173)
+    assert CP._verdict({**wash, "lo": -0.09}, margin=0.05) == "PASS"
+    assert CP._verdict({**wash, "lo": -0.10}, margin=0.05) == "PASS"               # boundary: lo >= -0.10 ships
+    assert CP._verdict({**wash, "lo": -0.11}, margin=0.05) == "loss_not_ruled_out"
+
+
+def test_p359_degenerate_cell_uses_the_exact_discordance_bound_not_the_collapsed_ci():
+    n50 = {"lo": 0.0, "hi": 0.0, "delta": 0.0, "verdict": "wash", "directional": "tie", "mde": 0.177,
+           "degenerate": True, "discordance_upper95": 1 - 0.05 ** (1 / 50)}      # 5.8 pp
+    assert CP._verdict(n50, margin=0.05) == "PASS"
+    n20 = {**n50, "discordance_upper95": 1 - 0.05 ** (1 / 20)}                   # 13.9 pp
+    assert CP._verdict(n20, margin=0.05) == "loss_not_ruled_out"
+    assert "loss not ruled out above 14 pp" in CP._verdict_note("loss_not_ruled_out", n20)
+    assert "observed loss bound 6 pp" in CP._verdict_note("PASS", n50)
+
+
+def test_p359_wash_with_point_estimate_beyond_margin_still_fails_and_gain_passes():
+    bad = {"lo": -0.12, "hi": 0.02, "delta": -0.06, "verdict": "wash", "mde": 0.08}
+    assert CP._verdict(bad, margin=0.05) == "FAIL"        # 'b_better'-style OFF advantage beyond +-5pp unchanged
+    gain = {"lo": 0.02, "hi": 0.09, "delta": 0.05, "verdict": "tune_b_better", "mde": 0.2}
+    assert CP._verdict(gain, margin=0.05) == "PASS"
+    shown_loss = {"lo": -0.2, "hi": -0.05, "delta": -0.12, "verdict": "tune_a_better", "mde": 0.05}
+    assert CP._verdict(shown_loss, margin=0.05) == "FAIL"
+
+
+def test_p359_wash_note_states_loss_bound_and_directional():
+    chosen = {"lo": -0.13, "hi": 0.05, "delta": 0.0, "verdict": "wash", "directional": "tie", "mde": 0.2}
+    note = CP._verdict_note("loss_not_ruled_out", chosen)
+    assert "wash (MDE 20 pp; directional: tie)" in note and "loss not ruled out above 13 pp" in note
 
 
 def test_draft_acceptance_reports_mean_and_pooled_ratio():
@@ -449,9 +488,9 @@ def test_main_writes_json_next_to_b_rows_and_prints_verdict(tmp_results, capsys)
     assert out_path.name == "math500.m40on.vs.m37med.json"
     assert out_path.exists()
     doc = json.loads(out_path.read_text())
-    assert doc["verdict"] == "INCONCLUSIVE"      # identical arms: no discordance cannot certify equivalence (P346)
+    assert doc["verdict"] == "loss_not_ruled_out"      # identical arms, tiny n: wash with MDE > 10 pp (P359)
     captured = capsys.readouterr()
-    assert "INCONCLUSIVE" in captured.out
+    assert "loss_not_ruled_out" in captured.out
 
 
 def test_main_refusal_exits_nonzero_and_writes_nothing(tmp_results, capsys):
@@ -466,3 +505,30 @@ def test_main_refusal_exits_nonzero_and_writes_nothing(tmp_results, capsys):
     assert not out_path.exists()
     captured = capsys.readouterr()
     assert "REFUSED" in captured.err
+
+
+# ----------------------------------------------- P359 W7: production-path guard coverage via compare_predictor()
+def _zero_discordance(tmp_results, n):
+    ids = [f"i{k}" for k in range(n)]
+    _write_rows("M", "math500", "m37med", _rows(ids, ok=True))
+    _write_rows("M", "math500", "m40on", _rows(ids, ok=True))
+    _write_manifest("M", "math500", "m37med", draft="off")
+    _write_manifest("M", "math500", "m40on", draft="mtp")
+    return CP.compare_predictor("M", "math500", "m37med", "m40on")
+
+
+def test_p359_production_zero_discordance_blocks_at_n28_and_ships_at_n29(tmp_results):
+    r28 = _zero_discordance(tmp_results, 28)
+    assert r28["verdict"] == "loss_not_ruled_out" and "above 10 pp" in r28["verdict_note"]
+    r29 = _zero_discordance(tmp_results, 29)
+    assert r29["verdict"] == "PASS" and "observed loss bound 10 pp" in r29["verdict_note"]
+
+
+def test_p359_production_off_advantage_beyond_margin_fails(tmp_results):
+    ids = [f"i{k}" for k in range(40)]
+    _write_rows("M", "math500", "m37med", _rows(ids, ok=True))
+    _write_rows("M", "math500", "m40on", _rows(ids, ok=set(ids[:37])))      # ON loses 3 of 40 (-7.5 pp)
+    _write_manifest("M", "math500", "m37med", draft="off")
+    _write_manifest("M", "math500", "m40on", draft="mtp")
+    r = CP.compare_predictor("M", "math500", "m37med", "m40on")
+    assert r["verdict"] == "FAIL"

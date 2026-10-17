@@ -43,17 +43,14 @@ def pv(d):
     return 2 * (1 - 0.5 * (1 + math.erf(z / math.sqrt(2))))
 
 
-def verdict_label(d):
-    """P346: a collapsed bootstrap interval is not evidence of equivalence."""
-    if d.get("degenerate") and d.get("discordance_upper95") is not None:
-        return (f"no discordance — equivalence NOT established (discordance ≤ {d['discordance_upper95']:.2f}, "
-                f"95% exact)")
-    return d["verdict"]
+def verdict_label(d, names=("first", "second")):
+    """P359 (C172): A better / B better (CI excludes 0) or wash with MDE and the directional pick."""
+    return stats.verdict_label(d, *names)
 
 
-def family(title, pairs):
+def family(title, pairs, names=("first", "second")):
     p(f"\n## {title}\n")
-    p("| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |")
+    p("| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |")
     p("|---|---|---|---|---|---|---|---|")
     res = []
     for label, a, b in pairs:
@@ -62,7 +59,7 @@ def family(title, pairs):
         res.append((label, d, pv(d)))
     adj = stats.holm([r[2] for r in res])
     for (label, d, pval), h in zip(res, adj):
-        p(f"| {label} | {d['n_items']} | {d['delta']:+.3f} | [{d['lo']:+.2f}, {d['hi']:+.2f}] | {verdict_label(d)} | "
+        p(f"| {label} | {d['n_items']} | {d['delta']:+.3f} | [{d['lo']:+.2f}, {d['hi']:+.2f}] | {verdict_label(d, names)} | "
           f"{d['mde']:.2f} | {pval:.3f} | {h:.3f} |")
 
 
@@ -113,7 +110,7 @@ for m in (P1, P2):
           f"missed in both {sorted(i for i in a if a[i] == 0 and b.get(i) == 0)}")
 
 for s in SESS:
-    family(f"Head-to-head {s}: {P1} minus {P2}", [(lang, items[(P1, lang, s)], items[(P2, lang, s)]) for lang in LANGS])
+    family(f"Head-to-head {s}: {P1} minus {P2}", [(lang, items[(P1, lang, s)], items[(P2, lang, s)]) for lang in LANGS], names=(P1, P2))
 
 
 def drop_inactivity(s, lang):
@@ -129,7 +126,7 @@ for s in SESS:
         dropped += sorted(hit)
         pairs.append((lang, a, b))
     family(f"C154 sensitivity {s}: head-to-head excluding items where either pick ended client_inactivity "
-           f"(dropped {dropped or 'none'})", pairs)
+           f"(dropped {dropped or 'none'})", pairs, names=(P1, P2))
 
 p("\n## Reload control (pick 1, fresh instance, s1 seed, the s1 pilot items)\n")
 rl = {r["id"]: strict(r) for r in rows(RES / P1 / "opencode_v2_python.c144base.reload.jsonl")}
@@ -148,7 +145,7 @@ for s in SESS:
             a = {k: v[0] for k, v in items[(m, lang, s)].items()}
             disc_rep.append(f"- {s} {m} {lang}: c144-base vs P223 discordant {sorted(i for i in a if i in ref and a[i] != ref[i][0])} of {len(a)}")
     family(f"DESCRIPTIVE replication: c144-base {s} minus P223 {s} (same scaffold and seeds; probe d4319705 vs 8d1b4c84 — never pooled)",
-           pairs)
+           pairs, names=("c144-base", "P223"))
 
 p("\n## Paired discordance (input to the M64 power simulation)\n")
 for m in (P1, P2):

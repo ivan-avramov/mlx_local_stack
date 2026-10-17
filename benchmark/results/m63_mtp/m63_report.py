@@ -41,17 +41,14 @@ def pv(d):
     return 2 * (1 - 0.5 * (1 + math.erf(z / math.sqrt(2))))
 
 
-def verdict_label(d):
-    """P346: a collapsed bootstrap interval is not evidence of equivalence."""
-    if d.get("degenerate") and d.get("discordance_upper95") is not None:
-        return (f"no discordance — equivalence NOT established (discordance ≤ {d['discordance_upper95']:.2f}, "
-                f"95% exact)")
-    return d["verdict"]
+def verdict_label(d, names=("first", "second")):
+    """P359 (C172): A better / B better (CI excludes 0) or wash with MDE and the directional pick."""
+    return stats.verdict_label(d, *names)
 
 
-def family(title, pairs):
+def family(title, pairs, names=("first", "second")):
     p(f"\n### {title}\n")
-    p("| comparison | n | ON−OFF | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |")
+    p("| comparison | n | ON−OFF | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |")
     p("|---|---|---|---|---|---|---|---|")
     res = []
     for label, a, b in pairs:
@@ -59,7 +56,7 @@ def family(title, pairs):
         d = stats.paired_delta({k: a[k] for k in common}, {k: b[k] for k in common}, iters=20000, seed=63, margin=0.05)
         res.append((label, d, pv(d)))
     for (label, d, pval), h in zip(res, stats.holm([r[2] for r in res])):
-        p(f"| {label} | {d['n_items']} | {d['delta']:+.3f} | [{d['lo']:+.2f}, {d['hi']:+.2f}] | {verdict_label(d)} | "
+        p(f"| {label} | {d['n_items']} | {d['delta']:+.3f} | [{d['lo']:+.2f}, {d['hi']:+.2f}] | {verdict_label(d, names)} | "
           f"{d['mde']:.2f} | {pval:.3f} | {h:.3f} |")
 
 
@@ -88,7 +85,8 @@ p("\n## Paired ON−OFF (pre-registered)\n")
 for m in (P1, P2):
     for s in SESS:
         family(f"{m}, {s}: all rows", [(lang, data[(m, lang, s, 'ON')][1]["strict_items"],
-                                         data[(m, lang, s, 'OFF')][1]["strict_items"]) for lang in LANGS])
+                                         data[(m, lang, s, 'OFF')][1]["strict_items"]) for lang in LANGS],
+               names=("ON", "OFF"))
 for m in (P1, P2):
     for s in SESS:
         pairs, dropped = [], []
@@ -98,7 +96,7 @@ for m in (P1, P2):
             a = {k: v for k, v in data[(m, lang, s, "ON")][1]["strict_items"].items() if k not in hit}
             b = {k: v for k, v in data[(m, lang, s, "OFF")][1]["strict_items"].items() if k not in hit}
             pairs.append((lang, a, b))
-        family(f"{m}, {s}: excluding client_inactivity items (dropped {dropped or 'none'})", pairs)
+        family(f"{m}, {s}: excluding client_inactivity items (dropped {dropped or 'none'})", pairs, names=("ON", "OFF"))
 
 p("\n## P293: ON outcome of every OFF client_inactivity item\n")
 p("| model | session | item | OFF | ON kind | ON passed | ON wall s | ON output tokens |")

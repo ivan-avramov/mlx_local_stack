@@ -407,7 +407,7 @@ def test_real_client_cancel_inside_a_long_tool_call_charges_the_aborted_message(
     assert item["termination"]["client_stop"] == "sigterm"
 
 
-def test_cleanup_skips_untracked_access_denied_and_marks_tracked_uncertain(tmp_path):
+def test_cleanup_records_untracked_access_denied_and_marks_tracked_uncertain(tmp_path):
     import psutil
 
     class Denied(Process):
@@ -423,8 +423,9 @@ def test_cleanup_skips_untracked_access_denied_and_marks_tracked_uncertain(tmp_p
 
     stranger = Denied(40, argv=["x"])
     g = guard(tmp_path, [stranger])
-    g.cleanup()                                  # untracked: skipped, nothing raised
-    assert g.status()["uncertain"] is False and g.status()["orphans_unattributed"] == []
+    with pytest.raises(TransportAbort, match="uncertain.*40"):     # G1 round 4 P12: an eligible same-uid process whose
+        g.cleanup()                                                # cwd/cmdline is denied is an unreadable obligation
+    assert g.status()["uncertain"] is True
 
     owned = Opaque(41)
     owned.kill = lambda: None                    # never dies and cannot be inspected
