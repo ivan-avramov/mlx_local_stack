@@ -14,8 +14,9 @@ Everything detached: `nohup <script> ... &`; rc files hold the exit code. Stack 
 Order: `drive_inject.sh` -> `drive_chain.sh pilot` -> `drive_chain.sh chain ...`.
 
 ```
-# probe identity for --probe-code-sha
-.venv-bench/bin/python benchmark/run_opencode_probe_v2.py --print-identity
+# probe identity for --probe-code-sha (P311-lite: the tg1 probe is run_tg1_probe.py; the value is the static import
+# closure of that file plus its plugins/carrier; it also prints generation_identity_sha256 and scoring_code_sha256)
+.venv-bench/bin/python benchmark/run_tg1_probe.py --print-identity
 nohup benchmark/chains/c147/drive_chain.sh pilot &
 nohup benchmark/chains/c147/drive_chain.sh chain s1 s2 reload --probe-code-sha <sha> &
 touch "$STACK_WORKDIR/c147/STOP"      # latch: no new legs, current leg cancelled cooperatively, exit 3
@@ -24,7 +25,12 @@ touch "$STACK_WORKDIR/c147/STOP"      # latch: no new legs, current leg cancelle
 Runner options: `--pred-s LANG:MODEL=SECONDS` (repeatable), `--arm-idle-s` (default 600), `--out-root`,
 `--probe`, `--python`, `--universe` (forwarded to every probe step, P351), `--policy-sha` (expected
 `scaffold_policy_sha256`; it embeds the universe sha, so a non-tg1 universe needs the value its
-`run_opencode_probe_v2.py --print-identity --universe <file>` prints). Draft-OFF overlay: `$C147_OVERLAY` (default `$STACK_WORKDIR/c147/overlay_c147_draft_off.yaml`,
+`run_tg1_probe.py --print-identity --universe <file>` prints; the policy also embeds the bench lock sha, the interpreter
+and the local grader image id, so each box passes its own value). `--generation-sha` optionally pins the shared composite
+up front (otherwise it is pinned from the first manifest); one arm identity per (model, predictor) is frozen at the
+arm's first manifest. The runner, `chain_ops.py`, the A4 gate and `drive_chain.sh` are hashed into `chain.json`
+(`lifecycle`) at chain creation and re-verified before every launch, barrier, validation, resume and at exit: drift
+aborts with rc 2 (a changed chain needs a new out-root). Draft-OFF overlay: `$C147_OVERLAY` (default `$STACK_WORKDIR/c147/overlay_c147_draft_off.yaml`,
 generated from `main_models.yaml` on first use).
 
 Cancellation is cooperative only (idle predicate or STOP). The runner never kills a probe without

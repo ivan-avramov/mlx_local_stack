@@ -17,14 +17,32 @@ def real():
     return json.loads(FIXTURE.read_text())
 
 
+NEW_EPOCH = ("generation_identity_sha256",)           # P311-lite: absent from the 2026-10-11 pilot fixture
+
+
 def test_the_real_probe_manifest_has_no_malformed_identity():
-    assert co.malformed_identity(real()) == []
+    """The fixture predates P311-lite, so its only gaps are the two fields the new epoch adds."""
+    assert co.malformed_identity(real()) == ["runtime_generation_identity_sha256", "runtime_arm_identity_sha256"]
+
+
+def test_the_manifest_the_current_probe_writes_has_the_new_identity_at_the_top_of_runtime(tmp_path, monkeypatch):
+    from bench.tests.test_opencode_v2_probe import tg1_probe
+    from bench.tests.test_tg1_integration import tg_fixture
+    import importlib
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    probe = importlib.import_module("run_tg1_probe")
+    f = tg_fixture(probe, monkeypatch, tmp_path)
+    assert f["run"]("one") == 0
+    man = json.loads(f["mp"].read_text())
+    ours = [b for b in co.malformed_identity(man) if "generation" in b or "arm_identity" in b]
+    assert ours == []                                      # real probe code path, current layout
+    assert {"generation_identity_sha256", "arm_identity_sha256"} <= set(man["runtime"])
 
 
 def test_runtime_identity_reads_every_pinned_field_from_the_real_layout():
     man = real()
     ident = co.runtime_identity(man)
-    assert set(ident) == set(co.RUNTIME_PINNED)
+    assert set(ident) == set(co.RUNTIME_PINNED) - set(NEW_EPOCH)
     assert ident["universe_sha256"] == man["runtime"]["policy"]["universe_sha256"]
     assert "universe_sha256" not in man["runtime"]          # the probe does not write it at top level
 
@@ -32,6 +50,9 @@ def test_runtime_identity_reads_every_pinned_field_from_the_real_layout():
 def test_fake_probe_mirrors_the_real_identity_layout():
     fake = FP.build_manifest("m", "python", 1001, {"pid": 1}, "r")
     for k in co.RUNTIME_PINNED:
+        if k in NEW_EPOCH:
+            assert k in fake["runtime"], k                   # the current probe writes it at the top of runtime
+            continue
         in_real_top = k in real()["runtime"]
         in_fake_top = k in fake["runtime"]
         assert in_real_top == in_fake_top, k

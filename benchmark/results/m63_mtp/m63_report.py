@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import answer_key, stats  # noqa: E402
+from bench import answer_key, row_scores, stats, tg1_pairing  # noqa: E402
 
 RES = REPO / "benchmark/results"
 P1, P2 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "Qwen3.8-27B-mlx-uniform-4bit"
@@ -27,9 +27,11 @@ def p(s=""):
 
 def load(m, lang, s, arm):
     f = RES / m / f"opencode_v2_{lang}.{ARMS[arm]}.{s}.jsonl"
-    rows = [json.loads(line) for line in open(f) if line.strip()]
+    rows = row_scores.effective_rows([json.loads(line) for line in open(f) if line.strip()],
+                                     row_scores.sidecar_path(f))   # P311-lite: one fail-closed join
     side = Path(str(f) + ".webaudit.jsonl")
-    rep = answer_key.report_rows(rows, audit_sidecar=side if side.exists() else None)
+    rep = answer_key.report_rows(rows, audit_sidecar=side if side.exists() else None,
+                                 score_sidecar=row_scores.sidecar_path(f))
     return rows, rep
 
 
@@ -60,7 +62,20 @@ def family(title, pairs, names=("first", "second")):
 
 data = {(m, lang, s, arm): load(m, lang, s, arm) for m in (P1, P2) for lang in LANGS for s in SESS for arm in ARMS}
 
+# L5: current-epoch ON/OFF rows pair only on equal generation composite and prompt date (legacy rows pass through)
+gate_notes = []
+for m in (P1, P2):
+    for s in SESS:
+        for lang in LANGS:
+            (ron, aon), (roff, aoff) = data[(m, lang, s, "ON")], data[(m, lang, s, "OFF")]
+            a, b, gate = tg1_pairing.gate_items(aon["strict_items"], aon["scored_rows"], aoff["strict_items"], aoff["scored_rows"])
+            if gate is not None:
+                aon["strict_items"], aoff["strict_items"] = a, b
+                gate_notes.append(tg1_pairing.gate_note(f"{m} {s} {lang}", gate))
+
 p("# M63 report — MTP-ON vs predictor-OFF on the tg1 agentic axis (both picks, k=2)\n")
+for note in gate_notes:
+    p(note)
 prov = [f"{m} {lang} {s} {arm}" for (m, lang, s, arm), (_, rep) in data.items()
         if rep["per_model"].get(m, {}).get("provisional")]
 if prov:

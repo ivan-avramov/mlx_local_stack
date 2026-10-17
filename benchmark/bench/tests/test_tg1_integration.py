@@ -7,7 +7,7 @@ import subprocess
 import sys
 import pytest
 from bench import tg1_runner as runner, structured_grade as sg
-from bench.tests.test_opencode_v2_probe import probe, fixture_probe, MODEL
+from bench.tests.test_opencode_v2_probe import tg1_probe as probe, fixture_probe, MODEL
 from bench.tests.opencode_v2_mock import MockServer
 from m62 import universe_preflight as up
 
@@ -29,6 +29,9 @@ def tg_fixture(probe, monkeypatch, tmp_path, *, binary=None, mock=None):
         pid=1234, create_time=100, model_path="fixture/model", registry_sha256="sha"
     )
     monkeypatch.setattr(runner, "worker_identity", lambda *a: dict(identity))
+    arm = ({"flags": {"--model": "fixture/model"}}, "e" * 64)           # P311-lite: the observed worker's arm identity
+    monkeypatch.setattr(runner, "arm_identity_of", lambda *a: arm)
+    f["arm"] = arm
     monkeypatch.setattr(
         runner,
         "worker_json",

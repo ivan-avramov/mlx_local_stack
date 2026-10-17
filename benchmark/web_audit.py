@@ -12,7 +12,7 @@ import re
 import subprocess
 import tempfile
 
-from bench import answer_key, paths
+from bench import answer_key, paths, row_scores
 from bench.opencode_common import _scrub_pii
 
 PROMPT = Path(__file__).with_name('web_audit_prompt.md')
@@ -169,8 +169,14 @@ def audit_rows(rows_path, *, polyglot_root=None, auditor=None, prompt_file=PROMP
     done = set()      # evidence handled in this run (dedupe)
     call = auditor if auditor is not None else codex_auditor
     pending = []
-    for line in rows_path.read_text().splitlines():
-        row = json.loads(line)
+    # P311-lite: tg1 rows carry no web entries themselves; they come from the score sidecar through the one fail-closed
+    # join. An unscored row cannot be audited (its fetches are unknown): score first.
+    rows = row_scores.effective_rows([json.loads(line) for line in rows_path.read_text().splitlines()],
+                                     row_scores.sidecar_path(rows_path))
+    unscored = [f"{row.get('id')}:{row['score_unscored']}" for row in rows if row.get('score_unscored')]
+    if unscored:
+        raise row_scores.Unscored('score first (tg1_score); unscored rows: ' + ', '.join(unscored))
+    for row in rows:
         for kind, index, entry in answer_key.web_entries(row):
             record = {'row_id': row['id'], 'sample': row.get('sample', 0),
                       'session_id': row.get('session_id'), 'kind': kind, 'index': index,
@@ -238,7 +244,8 @@ def cheats_to_rerun(rows_path):
     """
     rows_path = Path(rows_path)
     rows = [json.loads(line) for line in rows_path.read_text().splitlines() if line.strip()]
-    states = answer_key.audit_states(rows, audit_sidecar=str(rows_path) + '.webaudit.jsonl')
+    states = answer_key.audit_states(rows, audit_sidecar=str(rows_path) + '.webaudit.jsonl',
+                                     score_sidecar=row_scores.sidecar_path(rows_path))
     latest = {answer_key.item_key(s['row']): s for s in states}
     answer_key.require_audits(latest.values())
     jobs = []

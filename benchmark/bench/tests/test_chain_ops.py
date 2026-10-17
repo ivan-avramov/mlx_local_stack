@@ -398,7 +398,7 @@ def leg_env(tmp_path, monkeypatch):
     out = tmp_path / "c147/s1" / f"{PICK1}.s1.opencode_python.jsonl"
     worker = {"pid": 4242, "create_time": 1700000000.5, "model_path": "caslca/" + PICK1,
               "registry_sha256": "a" * 64}
-    pinned = {"scaffold_policy_sha256": co.CAMPAIGN_POLICY_SHA, "probe_code_sha256": "9" * 64,
+    pinned = {"scaffold_policy_sha256": fp.CAMPAIGN, "probe_code_sha256": "9" * 64,
               "serving_path": fp.SERVING, "registry_sha256": "a" * 64}
     fp.write_leg(out, PICK1, "python", 1001, ids, worker, tmp_path)
     leg = dict(session="s1", model=PICK1, lang="python", seed_base=1001, expected_ids=ids, out=str(out), rc=0)
@@ -626,8 +626,10 @@ def test_seed_overlay_sha_matches_probe_recipe():
     assert co.seed_overlay_sha(PICK1, 5) == hashlib.sha256(json.dumps(ov, sort_keys=True).encode()).hexdigest()
 
 
-def test_campaign_hash_pinned():
-    assert co.CAMPAIGN_POLICY_SHA == "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"
+def test_no_box_specific_campaign_policy_constant():
+    """P362: the policy sha embeds the box's grader image id, so no constant may stand in for it."""
+    from bench import tg1_runner
+    assert not hasattr(co, "CAMPAIGN_POLICY_SHA") and not hasattr(tg1_runner, "CAMPAIGN_POLICY_SHA256")
 
 
 # --------------------------------------------------------------------------- teardown ownership (Q1)

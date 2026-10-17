@@ -20,7 +20,7 @@ ap.add_argument("--once", action="store_true")
 a = ap.parse_args()
 ROOT = os.path.realpath(a.root)
 LIMIT = int(a.limit_gb * 1024 ** 3)
-PROTECTED = ("mlx_vlm.server", "mlx-serve", "/opencode", "run_m59.py", "mem_watchdog.py", "run_opencode_probe_v2.py")
+PROTECTED = ("mlx_vlm.server", "mlx-serve", "/opencode", "run_m59.py", "mem_watchdog.py", "run_opencode_probe_v2.py", "run_tg1_probe.py")
 
 
 def log(msg):

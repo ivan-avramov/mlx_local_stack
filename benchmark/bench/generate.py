@@ -283,7 +283,8 @@ def stamp_manifests(pairs, *, profile="production", overrides=None, tune=None,
             # a bound that never bound leaves rows identical, so blanket staleness would condemn
             # the corpus. `compare` decides per pair whether it COULD have bound.
             provenance.write(m, b, profile=profile, overrides=overrides, tune=tune,
-                             runtime={"probe_timeout_s": probe_timeout} if probe_timeout else None)
+                             runtime={"probe_timeout_s": probe_timeout} if probe_timeout else None,
+                             result_path=result_path(m, b, tune=tune))
             if isinstance(existing, dict):
                 _archive_transport_abort(existing)
                 if existing.get("transport_abort_history"):
