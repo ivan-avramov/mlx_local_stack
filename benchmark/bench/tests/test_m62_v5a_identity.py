@@ -4,12 +4,12 @@ import sys
 import pytest
 from bench import tg1_runner as runner, convergence
 from bench.tests.test_tg1_integration import tg_fixture
-from bench.tests.test_opencode_v2_probe import probe, MODEL
+from bench.tests.test_opencode_v2_probe import tg1_probe as probe, MODEL
 from m62 import build_replay_manifest as builder
 
 
-@pytest.mark.parametrize('module', ['convergence.py', 'rowschema.py', 'answer_key.py', 'paths.py', 'model_params.py'])
-def test_scoring_dependency_mutation_changes_identity(probe, monkeypatch, module):
+@pytest.mark.parametrize('module', ['convergence.py', 'rowschema.py', 'paths.py', 'model_params.py'])
+def test_generation_dependency_mutation_changes_identity(probe, monkeypatch, module):
     selection = {'fields': {'opencode_bench_config_sha256': 'fixture'}}
     before = runner.identity(probe, selection, 'universe', '2.0.20', probe.__file__)
     read = Path.read_bytes
@@ -21,6 +21,22 @@ def test_scoring_dependency_mutation_changes_identity(probe, monkeypatch, module
     monkeypatch.setattr(Path, 'read_bytes', mutated)
     after = runner.identity(probe, selection, 'universe', '2.0.20', probe.__file__)
     assert after['probe_code_sha256'] != before['probe_code_sha256']
+
+
+@pytest.mark.parametrize('module', ['answer_key.py', 'web_scan.py'])
+def test_scoring_module_mutation_leaves_the_generation_identity_unchanged(probe, monkeypatch, module):
+    """P311-lite: scoring code is outside the tg1 import closure, so a scoring fix cannot orphan rows."""
+    selection = {'fields': {'opencode_bench_config_sha256': 'fixture'}}
+    before = runner.identity(probe, selection, 'universe', '2.0.20', probe.__file__)
+    read = Path.read_bytes
+
+    def mutated(path):
+        data = read(path)
+        return data + b'\n# mutation\n' if path == runner.REPO / 'benchmark/bench' / module else data
+    monkeypatch.setattr(Path, 'read_bytes', mutated)
+    after = runner.identity(probe, selection, 'universe', '2.0.20', probe.__file__)
+    assert after['probe_code_sha256'] == before['probe_code_sha256']
+    assert after['scaffold_policy_sha256'] == before['scaffold_policy_sha256']
 
 
 def test_clamp_mutation_refuses_append(probe, monkeypatch, tmp_path):

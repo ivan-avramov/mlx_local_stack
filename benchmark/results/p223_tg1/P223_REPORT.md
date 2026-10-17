@@ -24,31 +24,31 @@ Scaffold `opencode-v2-web-tg1`, opencode 2.0.20, probe sha `8d1b4c84…`, box `m
 
 ## Head-to-head s1: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed minus Qwen3.8-27B-mlx-uniform-4bit
 
-| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |
+| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |
 |---|---|---|---|---|---|---|---|
-| python | 22 | +0.091 | [+0.00, +0.23] | inconclusive | 0.27 | 0.117 | 0.234 |
-| go | 21 | -0.048 | [-0.14, +0.00] | inconclusive | 0.27 | 0.191 | 0.234 |
+| python | 22 | +0.091 | [+0.00, +0.23] | wash (MDE 27 pp; directional: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed (not a shown difference)) | 0.27 | 0.117 | 0.234 |
+| go | 21 | -0.048 | [-0.14, +0.00] | wash (MDE 27 pp; directional: Qwen3.8-27B-mlx-uniform-4bit (not a shown difference)) | 0.27 | 0.191 | 0.234 |
 
 ## Head-to-head s2: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed minus Qwen3.8-27B-mlx-uniform-4bit
 
-| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |
+| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |
 |---|---|---|---|---|---|---|---|
-| python | 22 | +0.000 | [-0.14, +0.14] | inconclusive | 0.27 | 1.000 | 1.000 |
-| go | 21 | +0.000 | [+0.00, +0.00] | no discordance — equivalence NOT established (discordance ≤ 0.13, 95% exact) | 0.27 | 1.000 | 1.000 |
+| python | 22 | +0.000 | [-0.14, +0.14] | wash (MDE 27 pp; directional: tie) | 0.27 | 1.000 | 1.000 |
+| go | 21 | +0.000 | [+0.00, +0.00] | wash (MDE 27 pp; directional: tie) | 0.27 | 1.000 | 1.000 |
 
 ## C154 sensitivity s1: head-to-head excluding items where either pick ended client_inactivity (dropped ['python/book-store', 'python/paasio', 'go/alphametics'])
 
-| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |
+| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |
 |---|---|---|---|---|---|---|---|
-| python | 20 | +0.000 | [+0.00, +0.00] | no discordance — equivalence NOT established (discordance ≤ 0.14, 95% exact) | 0.28 | 1.000 | 1.000 |
-| go | 20 | +0.000 | [+0.00, +0.00] | no discordance — equivalence NOT established (discordance ≤ 0.14, 95% exact) | 0.28 | 1.000 | 1.000 |
+| python | 20 | +0.000 | [+0.00, +0.00] | wash (MDE 28 pp; directional: tie) | 0.28 | 1.000 | 1.000 |
+| go | 20 | +0.000 | [+0.00, +0.00] | wash (MDE 28 pp; directional: tie) | 0.28 | 1.000 | 1.000 |
 
 ## C154 sensitivity s2: head-to-head excluding items where either pick ended client_inactivity (dropped ['python/book-store'])
 
-| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |
+| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |
 |---|---|---|---|---|---|---|---|
-| python | 21 | +0.048 | [+0.00, +0.14] | inconclusive | 0.27 | 0.191 | 0.383 |
-| go | 21 | +0.000 | [+0.00, +0.00] | no discordance — equivalence NOT established (discordance ≤ 0.13, 95% exact) | 0.27 | 1.000 | 1.000 |
+| python | 21 | +0.048 | [+0.00, +0.14] | wash (MDE 27 pp; directional: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed (not a shown difference)) | 0.27 | 0.191 | 0.383 |
+| go | 21 | +0.000 | [+0.00, +0.00] | wash (MDE 27 pp; directional: tie) | 0.27 | 1.000 | 1.000 |
 
 ## Reload control (pick 1, fresh instance, s1 seed, the s1 pilot items)
 
@@ -56,21 +56,21 @@ Scaffold `opencode-v2-web-tg1`, opencode 2.0.20, probe sha `8d1b4c84…`, box `m
 
 ## DESCRIPTIVE: P223 tg1 s1 minus M61 s1 (same seeds; scaffold opencode-v2-web-tg1 vs opencode-v2-web — never pooled)
 
-| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |
+| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |
 |---|---|---|---|---|---|---|---|
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed python | 22 | +0.000 | [+0.00, +0.00] | no discordance — equivalence NOT established (discordance ≤ 0.13, 95% exact) | 0.27 | 1.000 | 1.000 |
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed go | 21 | -0.048 | [-0.14, +0.00] | inconclusive | 0.27 | 0.191 | 0.574 |
-| Qwen3.8-27B-mlx-uniform-4bit python | 22 | -0.091 | [-0.23, +0.00] | inconclusive | 0.27 | 0.117 | 0.468 |
-| Qwen3.8-27B-mlx-uniform-4bit go | 21 | +0.048 | [+0.00, +0.14] | inconclusive | 0.27 | 0.191 | 0.574 |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed python | 22 | +0.000 | [+0.00, +0.00] | wash (MDE 27 pp; directional: tie) | 0.27 | 1.000 | 1.000 |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed go | 21 | -0.048 | [-0.14, +0.00] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.191 | 0.574 |
+| Qwen3.8-27B-mlx-uniform-4bit python | 22 | -0.091 | [-0.23, +0.00] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.117 | 0.468 |
+| Qwen3.8-27B-mlx-uniform-4bit go | 21 | +0.048 | [+0.00, +0.14] | wash (MDE 27 pp; directional: P223 (not a shown difference)) | 0.27 | 0.191 | 0.574 |
 
 ## DESCRIPTIVE: P223 tg1 s2 minus M61 s2 (same seeds; scaffold opencode-v2-web-tg1 vs opencode-v2-web — never pooled)
 
-| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |
+| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |
 |---|---|---|---|---|---|---|---|
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed python | 22 | +0.000 | [+0.00, +0.00] | no discordance — equivalence NOT established (discordance ≤ 0.13, 95% exact) | 0.27 | 1.000 | 1.000 |
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed go | 21 | +0.000 | [+0.00, +0.00] | no discordance — equivalence NOT established (discordance ≤ 0.13, 95% exact) | 0.27 | 1.000 | 1.000 |
-| Qwen3.8-27B-mlx-uniform-4bit python | 22 | -0.045 | [-0.14, +0.00] | inconclusive | 0.27 | 0.191 | 0.574 |
-| Qwen3.8-27B-mlx-uniform-4bit go | 21 | +0.143 | [+0.00, +0.29] | inconclusive | 0.27 | 0.050 | 0.200 |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed python | 22 | +0.000 | [+0.00, +0.00] | wash (MDE 27 pp; directional: tie) | 0.27 | 1.000 | 1.000 |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed go | 21 | +0.000 | [+0.00, +0.00] | wash (MDE 27 pp; directional: tie) | 0.27 | 1.000 | 1.000 |
+| Qwen3.8-27B-mlx-uniform-4bit python | 22 | -0.045 | [-0.14, +0.00] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.191 | 0.574 |
+| Qwen3.8-27B-mlx-uniform-4bit go | 21 | +0.143 | [+0.00, +0.29] | wash (MDE 27 pp; directional: P223 (not a shown difference)) | 0.27 | 0.050 | 0.200 |
 
 ## Misses (all legs, all sessions, reload included)
 

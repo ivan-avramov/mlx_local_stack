@@ -330,10 +330,10 @@ def test_pairwise_stats_no_shared_items_is_not_comparable():
     assert out["intersection_n"] == 0
 
 
-def test_pairwise_stats_identical_arms_is_equivalent_verdict():
+def test_pairwise_stats_identical_arms_is_a_tie_wash_verdict():
     rows = [_row(f"i{i}", passed=(i % 2 == 0)) for i in range(20)]
     out = C.pairwise_stats(MODEL_A, rows, MODEL_B, list(rows), iters=500, seed=0, margin=0.05)
-    assert out["delta"]["verdict"] == "equivalent"     # raw verdict unchanged; the report prints the P346 label
+    assert out["delta"]["verdict"] == "wash" and out["delta"]["directional"] == "tie"   # P359
     assert out["delta"]["degenerate"] is True
     assert out["delta"]["delta"] == pytest.approx(0.0)
     assert out["mcnemar_b"] == 0 and out["mcnemar_c"] == 0

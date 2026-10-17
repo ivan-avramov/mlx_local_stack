@@ -7,11 +7,11 @@ from pathlib import Path
 import sys
 import pytest
 from bench import tg1_runner as runner, proc_guard as pg, token_turn_gate as tg
-from bench.tests.test_opencode_v2_probe import probe, MODEL
+from bench.tests.test_opencode_v2_probe import probe as std_probe, tg1_probe as probe, MODEL
 from bench.tests.test_tg1_integration import tg_fixture
 from bench.tests.test_token_turn_gate import event, usage
 
-CAMPAIGN_HASH = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"
+OLD_CAMPAIGN_HASH = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"      # the campaign policy before P311-lite added the toolchain block
 ADDENDUM_SHA256 = {
     "stall": hashlib.sha256(
         b"Before anything else, run the shell command `ls` four separate times, one tool call per message, "
@@ -36,10 +36,12 @@ def campaign_identity(probe):
 def test_campaign_scaffold_policy_hash_is_pinned(probe):
     selection, usha = campaign_identity(probe)
     ident = runner.identity(probe, selection, usha, "2.0.20", Path(probe.__file__))
-    assert ident["scaffold_policy_sha256"] == CAMPAIGN_HASH
+    base = {k: v for k, v in ident["policy"].items() if k != "toolchain"}
+    assert hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest() == OLD_CAMPAIGN_HASH   # unchanged
+    assert hashlib.sha256(json.dumps(ident["policy"], sort_keys=True).encode()).hexdigest() == ident["scaffold_policy_sha256"]
     assert set(ident["policy"]) == {
         "gate", "hygiene", "toolbounds_sha256", "noretry_sha256", "carrier_sha256", "universe_sha256",
-        "grader_version", "grader_timeout_s", "grade_join_timeout_s", "plugin_proof", "env", "scaffold"}
+        "grader_version", "grader_timeout_s", "grade_join_timeout_s", "plugin_proof", "env", "scaffold", "toolchain"}
     assert "inject" not in ident and ident["scaffold"] == "opencode-v2-web-tg1"
 
 
@@ -71,7 +73,7 @@ def test_addenda_are_verbatim_and_hashed(kind):
 def test_inject_identity_changes_the_hash_and_records_effective_policy(probe):
     selection, usha = campaign_identity(probe)
     binary = Path(probe.__file__)
-    seen = {CAMPAIGN_HASH}
+    seen = {runner.identity(probe, selection, usha, "2.0.20", binary)["scaffold_policy_sha256"]}
     for kind in ("stall", "loop", "alloc"):
         ident = runner.identity(probe, selection, usha, "2.0.20", binary, inject=kind)
         assert ident["scaffold"] == "opencode-v2-web-tg1-inject:" + kind
@@ -90,7 +92,9 @@ def test_print_identity_is_read_only_and_exits_zero(probe, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["probe", "--print-identity"])
     assert probe.main() == 0
     doc = json.loads(capsys.readouterr().out)
-    assert doc["scaffold_policy_sha256"] == CAMPAIGN_HASH
+    selection, usha = campaign_identity(probe)
+    want = runner.identity(probe, selection, usha, "2.0.20", Path(probe.__file__))["scaffold_policy_sha256"]
+    assert doc["scaffold_policy_sha256"] == want
     assert len(doc["probe_code_sha256"]) == 64 and doc["opencode_version"] == "2.0.20"
     if os.environ.get("OPENCODE_PROBE_BIN") and Path(os.environ["OPENCODE_PROBE_BIN"]).is_file():
         assert len(doc["opencode_exe_sha256"]) == 64
@@ -105,11 +109,12 @@ def argv(f, *extra, scaffold="opencode-v2-web-tg1", items="one", out=None):
 
 @pytest.mark.parametrize("flag", [("--tg1-inject", "stall"), ("--cancel-file", "x"), ("--manifest-ack", "x"),
                                   ("--sampling-profile", "deployed")])
-def test_new_flags_refused_off_tg1(probe, monkeypatch, tmp_path, flag):
-    f = tg_fixture(probe, monkeypatch, tmp_path)
-    monkeypatch.setattr(sys, "argv", argv(f, *flag, scaffold="opencode-v2-web"))
-    with pytest.raises(SystemExit, match="REFUSED"):
-        probe.main()
+def test_new_flags_refused_off_tg1(std_probe, monkeypatch, tmp_path, flag):
+    """P311-lite: the standard v2 entry no longer knows the tg1-only flags at all (argparse error, rc 2)."""
+    monkeypatch.setattr(sys, "argv", argv({"out": tmp_path / "o.jsonl"}, *flag, scaffold="opencode-v2-web"))
+    with pytest.raises(SystemExit) as exc:
+        std_probe.main()
+    assert exc.value.code == 2
 
 
 def test_sampling_profile_accepts_only_deployed(probe, monkeypatch, tmp_path):
@@ -195,7 +200,9 @@ def test_inject_stall_labelled_row_manifest_and_causal_fields(probe, monkeypatch
     assert man["runtime"]["inject"]["kind"] == "stall"
     assert man["runtime"]["inject"]["prompt_addendum_sha256"] == ADDENDUM_SHA256["stall"]
     assert man["runtime"]["inject"]["policy"]["gate"]["no_progress_requests"] == 4
-    assert man["runtime"]["scaffold_policy_sha256"] != CAMPAIGN_HASH
+    selection, usha = campaign_identity(probe)
+    assert man["runtime"]["scaffold_policy_sha256"] != runner.identity(
+        probe, selection, usha, "2.0.20", Path(probe.__file__))["scaffold_policy_sha256"]
     assert row["gate"]["stop_reason"] == "stalled" and row["gate"]["no_progress_requests"] >= 4
     assert row["gate"]["no_progress_tokens"] < 81920 and row["nonconv_kind"] == "stalled"
     assert row["termination"]["reason"] == "stalled"

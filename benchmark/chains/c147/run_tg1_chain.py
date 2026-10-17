@@ -4,6 +4,12 @@
   run_tg1_chain.py chain [s1 s2 reload] --probe-code-sha <sha>
   run_tg1_chain.py chain ... --predictor mtp  M63 ON arm (spec docs/specs/m63-mtp-on-tg1-arm.md): out-root m63/
 
+P311-lite: the probe is `benchmark/run_tg1_probe.py` (generation only; `--print-identity` prints its closure identity).
+The shared generation composite is pinned at the first manifest (or `--generation-sha`), one arm identity per
+(model, predictor) is frozen at that arm's first manifest, and the chain's own lifecycle code (this runner, chain_ops,
+the A4 gate, the launcher) is frozen in chain.json at creation and verified before every launch, barrier, validation,
+resume and at exit; drift aborts with rc 2 and never rewrites the frozen record.
+
 Exit codes: 0 done, 2 chain abort (listing printed, nothing killed), 3 STOP latch honoured, 1 unexpected error.
 Cancellation is cooperative only: the idle predicate (chain_ops.IdlePredicate) or `<out-root>/STOP`.
 Detached launch: drive_chain.sh. Tests inject `ops` (chain_ops.ChainOps-shaped) and `timers`.
@@ -35,6 +41,10 @@ PRED_S = {("python", PICK1): 244, ("go", PICK1): 300, ("python", PICK2): 267, ("
 PILOT_N = 5
 # P279 --smoke: a short live rehearsal of the real schedule (rows are rehearsal evidence only, never graded or pooled)
 SMOKE_PILOT_N, SMOKE_FULL_N, SMOKE_ARM_IDLE_S = 1, 2, 60.0
+
+
+class RecordInvalid(co.ChainAbort):
+    """An existing chain.json is not a complete valid record: refuse and leave it untouched (L4)."""
 
 
 class Stopped(Exception):
@@ -190,18 +200,24 @@ def quantile(xs, q):
 
 # --------------------------------------------------------------------------- the chain
 class Chain:
-    def __init__(self, args, ops, timers, log, names, out_root):
+    def __init__(self, args, ops, timers, log, names, out_root, lifecycle_files=None):
         self.a, self.ops, self.tm, self.log = args, ops, timers, log
+        self.lifecycle_files = dict(lifecycle_files) if lifecycle_files else co.lifecycle_files(REPO)
+        self.lifecycle = None                 # frozen at chain creation (init_lifecycle), never recomputed
+        self.arms = {}                        # "<model>|<predictor>" -> arm_identity_sha256, frozen at the first manifest
         self.out_root, self.stop_path = Path(out_root), Path(out_root) / "STOP"
         self.names = names
         self.clock = time.monotonic
         self.py = Path(args.python)
         self.probe = Path(args.probe)
         # a key is present once pinned; a pinned None (e.g. agent_system_sha256 without an overlay) is a value
-        self.pinned = {"scaffold_policy_sha256": args.policy_sha}
+        self.expected_policy = None           # P362: derived from the probe's --print-identity at chain start, frozen
+        self.pinned = {}
         self.universe = Path(args.universe).resolve() if args.universe else None
         if args.probe_code_sha:
             self.pinned["probe_code_sha256"] = args.probe_code_sha
+        if getattr(args, "generation_sha", None):
+            self.pinned["generation_identity_sha256"] = args.generation_sha
         self.attempts, self.restarts, self.stop_info = [], [], None
         self.attempt_no, self.seen_run_ids, self.block_workers = {}, set(), []
         self.loaded = None
@@ -212,12 +228,98 @@ class Chain:
             lang, model = key.split(":", 1)
             self.explicit_pred[(lang, model)] = float(val)
 
+    # -- lifecycle freeze (P24) and the chain.json record (L4)
+    @staticmethod
+    def record_problem(doc):
+        """Why an existing chain.json is not a complete valid record (None when it is)."""
+        hexed = lambda v: isinstance(v, str) and bool(co.HEX64.match(v))      # noqa: E731
+        if not isinstance(doc, dict):
+            return "not a JSON object"
+        lc = doc.get("lifecycle")
+        if not (isinstance(lc, dict) and set(lc) == set(co.LIFECYCLE_FILES) and all(hexed(v) for v in lc.values())):
+            return "lifecycle absent or incomplete"
+        arms = doc.get("arms")
+        if not (isinstance(arms, dict) and all(isinstance(k, str) and hexed(v) for k, v in arms.items())):
+            return "arms absent or malformed"
+        pinned = doc.get("pinned")
+        if not isinstance(pinned, dict):
+            return "pinned absent or malformed"
+        if "generation_identity_sha256" in pinned and not hexed(pinned["generation_identity_sha256"]):
+            return "pinned generation_identity_sha256 malformed"
+        if not hexed(doc.get("policy_sha256")):
+            return "policy_sha256 absent, null or malformed"
+        if pinned.get("scaffold_policy_sha256") != doc["policy_sha256"]:
+            return "pinned scaffold_policy_sha256 missing or differs from policy_sha256"
+        return None
+
+    def init_lifecycle(self):
+        """Freeze the sha256 of the chain's own code at chain creation, or verify it against the frozen record of an
+        existing chain.json (resume). An existing chain.json must be a COMPLETE valid record, else the run refuses
+        (never re-freezes or overwrites it: a new out-root is needed). Drift aborts and leaves the record untouched. A
+        resumed chain keeps its frozen arm identities, pinned composite and expected policy."""
+        path = self.out_root / "chain.json"
+        if path.exists():
+            try:
+                previous = json.loads(path.read_text())
+            except (OSError, ValueError) as exc:
+                raise RecordInvalid(f"existing chain.json unreadable ({type(exc).__name__}); use a new out-root")
+            problem = self.record_problem(previous)
+            if problem:
+                raise RecordInvalid(f"existing chain.json is not a complete valid record ({problem}); use a new out-root")
+            self.lifecycle = previous["lifecycle"]
+            self.arms = dict(previous["arms"])
+            composite = previous["pinned"].get("generation_identity_sha256")
+            if composite and "generation_identity_sha256" not in self.pinned:
+                self.pinned["generation_identity_sha256"] = composite
+            self.expected_policy = previous["policy_sha256"]
+            self.verify_lifecycle("resume")
+            return
+        fresh = co.lifecycle_shas(self.lifecycle_files)
+        if any(v is None for v in fresh.values()):
+            raise co.ChainAbort("lifecycle file unreadable at chain creation: "
+                                + ", ".join(k for k, v in fresh.items() if v is None))
+        self.lifecycle = fresh
+
+    def derive_policy(self):
+        """P362: the expected scaffold_policy_sha256 is what the configured probe reports for THIS box (its policy embeds
+        the grader image id and toolchain lock), asked with the chain's --universe. A supplied --policy-sha is an
+        assertion against it; a frozen value (resume) must still equal it."""
+        cmd = [str(self.py), str(self.probe), "--print-identity"] + (["--universe", str(self.universe)] if self.universe else [])
+        try:
+            got = subprocess.run(cmd, cwd=str(REPO), env=self.ops.env_base(), capture_output=True, text=True,
+                                 timeout=300, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise co.ChainAbort(f"probe --print-identity could not run ({type(exc).__name__})") from None
+        lines = [ln for ln in got.stdout.splitlines() if ln.strip()]
+        try:
+            value = json.loads(lines[-1]).get("scaffold_policy_sha256") if got.returncode == 0 and lines else None
+        except (ValueError, AttributeError):
+            value = None
+        if not (isinstance(value, str) and co.HEX64.match(value)):
+            raise co.ChainAbort(f"probe --print-identity gave no valid scaffold_policy_sha256 (rc {got.returncode})")
+        if self.a.policy_sha and self.a.policy_sha != value:
+            raise co.ChainAbort(f"supplied --policy-sha {self.a.policy_sha} != the probe's policy {value}")
+        if self.expected_policy and self.expected_policy != value:
+            raise co.ChainAbort(f"frozen policy {self.expected_policy} != the probe's policy now {value} (toolchain or "
+                                f"universe changed; a changed chain needs a new out-root)")
+        self.expected_policy = value
+        self.pinned["scaffold_policy_sha256"] = value
+        self.log(f"policy: scaffold_policy_sha256 {value} derived from the probe's --print-identity")
+
+    def verify_lifecycle(self, where):
+        drift = co.lifecycle_drift(self.lifecycle, self.lifecycle_files)
+        if drift:
+            raise co.ChainAbort(f"lifecycle drift at {where}: {', '.join(drift)} changed since chain creation "
+                                f"(a changed chain needs a new out-root)")
+
     # -- chain.json
     def write_json(self, status=None):
-        gate = REPO / "scripts/session_pinning_gate.py"
+        lc = self.lifecycle or {}
         doc = dict(status=status, mode=self.a.mode, argv=sys.argv[1:], updated=co.utc_stamp(),
-                   sha256=dict(runner=co.file_sha(__file__), chain_ops=co.file_sha(co.__file__),
-                               gate=co.file_sha(gate), overlay=self.ops.overlay_sha()),
+                   sha256=dict(runner=lc.get("runner"), chain_ops=lc.get("chain_ops"), gate=lc.get("gate"),
+                               launcher=lc.get("launcher"), launch_tg1=lc.get("launch_tg1"),
+                               overlay=self.ops.overlay_sha()),
+                   lifecycle=self.lifecycle, arms=self.arms, policy_sha256=self.expected_policy,
                    probe=str(self.probe), probe_code_sha=self.a.probe_code_sha, pinned=self.pinned,
                    attempts=self.attempts, restarts=self.restarts, stop=self.stop_info, rc=self.rc,
                    block_workers=self.block_workers, smoke=getattr(self.a, "smoke", False),
@@ -240,6 +342,23 @@ class Chain:
 
     # -- run
     def run(self):
+        try:
+            self.init_lifecycle()
+        except RecordInvalid as e:                       # never touch an invalid existing record
+            self.log(f"CHAIN ABORT: {e}")
+            self.rc = e.code
+            return self.rc
+        except co.ChainAbort as e:                       # drift on resume: nothing was started, the record stays frozen
+            self.log(f"CHAIN ABORT: {e}")
+            self.rc = e.code
+            self.write_json("aborted")
+            return self.rc
+        try:
+            self.derive_policy()
+        except co.ChainAbort as e:                       # nothing is written: no half-formed or re-derived record
+            self.log(f"CHAIN ABORT: {e}")
+            self.rc = e.code
+            return self.rc
         self.write_json("starting")
         if self.stop_requested():
             self.stop_info["where"] = "start"
@@ -264,6 +383,7 @@ class Chain:
                 if self.loaded and not self.ops.unload(self.loaded):
                     raise co.ChainAbort("final unload failed")
                 self.loaded = None
+                self.verify_lifecycle("exit")
                 self.rc = 0
                 self.log("ALL LEGS DONE")
             except Stopped as s:
@@ -361,6 +481,7 @@ class Chain:
 
     # -- step / attempt
     def run_step(self, block, leg, step):
+        self.verify_lifecycle("launch")
         sdir = self.session_dir(block)
         sdir.mkdir(parents=True, exist_ok=True)
         n = self.attempt_no.get(leg["stem"], 0) + 1
@@ -408,9 +529,11 @@ class Chain:
         if sup["state"] == "barrier_mismatch":
             self.listing(att, leg)
             raise co.ChainAbort("first-manifest mismatch: " + "; ".join(sup["reasons"]))
+        self.verify_lifecycle("validation")
         vleg = dict(session=leg["session"], model=leg["model"], lang=leg["lang"], seed_base=leg["seed_base"],
-                    expected_ids=ids, out=leg["out"], rc=att["rc"], draft_kind=leg.get("draft_kind", "off"))
-        why = co.validate_leg(vleg, self.pinned, self.ops.wd, policy_sha=self.a.policy_sha)
+                    expected_ids=ids, out=leg["out"], rc=att["rc"], draft_kind=leg.get("draft_kind", "off"),
+                    arm_identity_sha256=self.arms.get(self.arm_key(leg)))
+        why = co.validate_leg(vleg, self.pinned, self.ops.wd, policy_sha=self.expected_policy)
         if not why:
             self.pin_from(leg)
             att["outcome"] = "validated"
@@ -487,11 +610,22 @@ class Chain:
             raise co.ChainAbort("restart refused: " + "; ".join(why))
 
     # -- barrier
+    @staticmethod
+    def arm_key(leg):
+        return f"{leg['model']}|{leg.get('draft_kind', 'off')}"
+
     def verify_manifest(self, man, leg, block):
         why = []
+        drift = co.lifecycle_drift(self.lifecycle, self.lifecycle_files)
+        if drift:
+            why.append(f"lifecycle drift at barrier: {', '.join(drift)} changed since chain creation")
+        frozen_arm = self.arms.get(self.arm_key(leg))
+        if frozen_arm is not None and (man.get("runtime") or {}).get("arm_identity_sha256") != frozen_arm:
+            why.append(f"arm_identity_sha256: {(man.get('runtime') or {}).get('arm_identity_sha256')!r} != frozen "
+                       f"{frozen_arm!r} for {self.arm_key(leg)}")
         rt, wk = man.get("runtime") or {}, man.get("worker")
         chk = [("scaffold", rt.get("scaffold"), SCAFFOLD),
-               ("scaffold_policy_sha256", rt.get("scaffold_policy_sha256"), self.a.policy_sha),
+               ("scaffold_policy_sha256", rt.get("scaffold_policy_sha256"), self.expected_policy),
                ("draft_kind", rt.get("draft_kind"), leg.get("draft_kind", "off")),
                ("seed_base", rt.get("seed_base"), leg["seed_base"]),
                ("lang", rt.get("lang"), leg["lang"]), ("model", man.get("model"), leg["model"]),
@@ -541,6 +675,15 @@ class Chain:
         if self.a.probe_code_sha is None and self.pinned.get("probe_code_sha256") is None:
             self.pinned["probe_code_sha256"] = (man["runtime"] or {}).get("probe_code_sha256")
             self.log(f"pilot: probe_code_sha256 pinned from first manifest {self.pinned['probe_code_sha256']}")
+        runtime = man["runtime"] or {}
+        if "generation_identity_sha256" not in self.pinned:       # P311-lite: the shared composite, at the first manifest
+            self.pinned["generation_identity_sha256"] = runtime.get("generation_identity_sha256")
+            self.log(f"generation_identity_sha256 pinned from first manifest {self.pinned['generation_identity_sha256']}")
+        if self.arm_key(leg) not in self.arms:                    # one arm identity per (model, predictor)
+            self.arms[self.arm_key(leg)] = runtime.get("arm_identity_sha256")
+            self.log(f"arm {self.arm_key(leg)}: arm_identity_sha256 frozen from first manifest "
+                     f"{self.arms[self.arm_key(leg)]}")
+        self.write_json("barrier-ok")
         block["manifest_worker"] = block.get("manifest_worker") or man["worker"]
         Path(att["ack"]).write_text("ack\n")
         st["barrier_done"] = True
@@ -730,20 +873,22 @@ def parse_args(argv):
     ap.add_argument("--smoke", action="store_true",
                     help="P279 rehearsal: 1-item pilot + 2-item legs, 60 s arm idle, own out-root (chain mode only)")
     ap.add_argument("--probe-code-sha")
+    ap.add_argument("--generation-sha", help="optional: pin the generation composite (generation_identity_sha256, "
+                    "64 hex) up front; otherwise it is pinned from the first manifest")
     ap.add_argument("--predictor", choices=["off", "mtp"], default="off",
                     help="M63: mtp = the shipped MTP overlay, own out-root $STACK_WORKDIR/m63[-smoke]")
     ap.add_argument("--out-root")
-    ap.add_argument("--probe", default=str(REPO / "benchmark/run_opencode_probe_v2.py"))
+    ap.add_argument("--probe", default=str(REPO / "benchmark/run_tg1_probe.py"))
     ap.add_argument("--python", default=str(REPO / ".venv-bench/bin/python"))
     ap.add_argument("--universe")
-    ap.add_argument("--policy-sha", default=co.CAMPAIGN_POLICY_SHA,
-                    help="P351: expected scaffold_policy_sha256 (it embeds the universe sha); "
-                         "a non-default value needs --universe")
+    ap.add_argument("--policy-sha", default=None,
+                    help="P362: an ASSERTION of scaffold_policy_sha256 (64 hex); the expected value is derived from the "
+                         "probe's --print-identity at chain start and frozen in chain.json")
     a = ap.parse_args(argv)
-    if not co.HEX64.match(a.policy_sha):
+    if a.policy_sha is not None and not co.HEX64.match(a.policy_sha):
         ap.error("--policy-sha must be 64 lowercase hex")
-    if a.policy_sha != co.CAMPAIGN_POLICY_SHA and not a.universe:
-        ap.error("--policy-sha differs from the campaign policy: name the --universe it was derived for")
+    if a.generation_sha is not None and not co.HEX64.match(a.generation_sha):
+        ap.error("--generation-sha must be 64 lowercase hex")
     if a.smoke and a.mode != "chain":
         ap.error("--smoke is for chain mode")
     if a.arm_idle_s is None:
@@ -794,7 +939,7 @@ def make_ops(predictor, wd, out_root, overlay, log):
     return co.ChainOps(REPO, wd, overlay, log)
 
 
-def main(argv=None, ops=None, timers=None, log_out=None):
+def main(argv=None, ops=None, timers=None, log_out=None, lifecycle_files=None):
     a = parse_args(sys.argv[1:] if argv is None else argv)
     wd = Path(ops.wd) if ops is not None else Path(os.environ["STACK_WORKDIR"])
     out_root = resolve_out_root(a, wd)
@@ -808,7 +953,7 @@ def main(argv=None, ops=None, timers=None, log_out=None):
     log = co.RunLog(out_root / "RUNLOG.md", out=log_out)
     if ops is None:
         ops = make_ops(a.predictor, wd, out_root, overlay, log)
-    chain = Chain(a, ops, timers or Timers(), log, load_universe(a.universe), out_root)
+    chain = Chain(a, ops, timers or Timers(), log, load_universe(a.universe), out_root, lifecycle_files)
     try:
         return chain.run()
     except BaseException:

@@ -8,7 +8,7 @@ published deltas sat inside the noise floor. Everything here exists to stop that
   two-stage precisely so that correlation is priced in.
 * NO INTERVAL, NO CLAIM. A delta is reported with its CI and with the axis MDE, so "we cannot
   see an effect this small at N=15" is visible instead of inferred.
-* FAILING TO REJECT IS NOT EQUIVALENCE. `paired_delta` says "inconclusive" and means it.
+* FAILING TO REJECT IS NOT EQUIVALENCE. `paired_delta` says "wash" (P359): no shown difference, MDE alongside.
 
 Stdlib only, on purpose: this module is imported by tooling that runs in `.venv-bench` (no
 numpy/scipy) as well as in the full venvs. Every function is pure; every randomized function
@@ -244,19 +244,17 @@ def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05, strat
     two differently-filtered item sets (one model's errored items quietly dropped) is the exact
     defect this function replaces — it is never a warning.
 
-    `verdict` (TOST-style):
+    `verdict` (P359 / C172 — no equivalence claims):
       "a_better"/"b_better"  the CI excludes 0;
-      "equivalent"           the CI lies entirely inside (-margin, +margin) — a POSITIVE claim
-                             of practical equivalence, only makeable when the interval is
-                             tighter than the margin;
-      "inconclusive"         everything else. Deliberately NOT "indistinguishable": failing to
-                             reject is not evidence of equivalence, it is usually just a small
-                             n, and `mde` in the result says how small.
+      "wash"                 the CI includes 0: no shown difference. Always read it with `mde` and
+                             the actual numbers; `directional` ("a"/"b"/"tie") is the point-estimate
+                             pick — a directional pick, NOT a shown difference (exact tie: "tie").
+    `margin` is accepted for API compatibility only: it is decision-inert here (no equivalence test).
 
-    FAILURE MODE: `margin` is a judgment call about what difference matters — an "equivalent"
-    verdict is only as meaningful as the margin it was declared against, so report the margin.
-    MINIMUM USABLE n: n_for(delta) — at 15 items nothing under ~32pp is resolvable, so most
-    "inconclusive" verdicts are a sample-size statement, not a model statement.
+    FAILURE MODE: a wash is a sample-size statement, not a model statement — at 15 items nothing
+    under ~32pp is resolvable (`mde`). Lossy-lever decision code must apply the C173 observed-loss-bound
+    guard itself (CI lower bound >= -10pp, or the exact discordance bound for a degenerate cell), never MDE.
+    MINIMUM USABLE n: n_for(delta).
     """
     import random
     a_ids = {i for i, d in a_per_item.items() if len(d) > 0}
@@ -307,18 +305,31 @@ def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05, strat
         verdict = "a_better"
     elif hi < 0:
         verdict = "b_better"
-    elif -margin < lo and hi < margin:
-        verdict = "equivalent"
     else:
-        verdict = "inconclusive"
-    # P346: a collapsed percentile interval (lo == hi, e.g. zero paired discordance) is not evidence of
-    # equivalence; flag it and give the exact one-sided 95% upper bound on the discordance rate (0 of n discordant).
-    # `verdict` is unchanged (decision code relies on it); reports must print the flag instead of "equivalent".
+        verdict = "wash"
+    directional = "a" if delta > 1e-12 else ("b" if delta < -1e-12 else "tie")
+    # P346 diagnostics (kept): a collapsed percentile interval (lo == hi, e.g. zero paired discordance) is flagged and
+    # carries the exact one-sided 95% upper bound on the discordance rate (0 of n discordant).
     degenerate = lo == hi
     discordant = sum(sum(da) / len(da) != sum(db) / len(db) for da, db in zip(a_draws, b_draws))
     upper = (1 - 0.05 ** (1 / n)) if degenerate and discordant == 0 else None
     return {"delta": delta, "lo": lo, "hi": hi, "verdict": verdict, "n_items": n,
-            "mde": mde(n), "degenerate": degenerate, "discordance_upper95": upper}
+            "mde": mde(n), "degenerate": degenerate, "discordance_upper95": upper,
+            "directional": directional}
+
+
+def verdict_label(d, a="A", b="B"):
+    """P359 report label for a `paired_delta`-shaped dict: "<a> better" / "<b> better" (CI excludes 0) or
+    "wash (MDE x pp; directional: <pick> (not a shown difference))" (exact tie: "directional: tie")."""
+    v = d["verdict"]
+    if v == "a_better":
+        return f"{a} better"
+    if v == "b_better":
+        return f"{b} better"
+    pick = d.get("directional", "tie")
+    who = {"a": a, "b": b}.get(pick)
+    tail = "tie" if who is None else f"{who} (not a shown difference)"
+    return f"wash (MDE {d['mde'] * 100:.0f} pp; directional: {tail})"
 
 
 # ------------------------------------------------------------------------ multiple comparisons

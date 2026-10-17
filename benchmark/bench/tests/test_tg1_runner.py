@@ -10,7 +10,7 @@ from bench import tg1_runner as runner
 from bench import structured_grade as sg
 from bench.token_turn_gate import TokenTurnGate, TransportAbort
 from bench.tests.test_token_turn_gate import usage
-from bench.tests.test_opencode_v2_probe import probe, fixture_probe, MODEL
+from bench.tests.test_opencode_v2_probe import probe as std_probe, tg1_probe as probe, fixture_probe, MODEL
 
 
 def test_slow_grading_backlog_and_exit_during_grade(tmp_path):
@@ -53,8 +53,8 @@ def test_slow_grading_backlog_and_exit_during_grade(tmp_path):
 
 
 @pytest.mark.parametrize("scaffold", ["opencode-v2", "opencode-v2-web"])
-def test_legacy_never_constructs_tg1(probe, monkeypatch, tmp_path, scaffold):
-    f = fixture_probe(probe, monkeypatch, tmp_path)
+def test_legacy_never_constructs_tg1(std_probe, monkeypatch, tmp_path, scaffold):
+    f = fixture_probe(std_probe, monkeypatch, tmp_path)
     monkeypatch.setattr(
         runner, "main", lambda *a: pytest.fail("legacy constructed tg1")
     )
@@ -74,9 +74,7 @@ def test_legacy_never_constructs_tg1(probe, monkeypatch, tmp_path, scaffold):
     ],
 )
 def test_tg1_refuses_legacy_flags_before_decode_table(probe, monkeypatch, flag):
-    monkeypatch.setattr(
-        probe, "_gate_window", lambda *a, **k: pytest.fail("read decode rates")
-    )
+    assert not hasattr(probe, "_gate_window")      # P311-lite: the tg1 entry carries no legacy gate code at all
     monkeypatch.setattr(
         sys,
         "argv",

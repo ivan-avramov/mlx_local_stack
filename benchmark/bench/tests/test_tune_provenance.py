@@ -47,7 +47,7 @@ def test_write_stamps_the_manifest_at_the_tuned_path(tmp_path, monkeypatch):
     monkeypatch.setattr(G, "RESULTS", tmp_path)
     reg = tmp_path / "reg.yaml"
     reg.write_text("models:\n  - name: m\n    hf_path: org/m\n    kv_bits: 0\n")
-    P.write("m", "aime", str(reg), tune="kv4")
+    P.write("m", "aime", str(reg), tune="kv4", result_path=G.result_path("m", "aime", tune="kv4"))  # P311-lite: caller supplies the path
     p = tmp_path / "m" / "aime.kv4.manifest.json"
     assert p.exists()
     man = json.loads(p.read_text())
@@ -60,7 +60,7 @@ def test_write_without_tune_is_unchanged(tmp_path, monkeypatch):
     monkeypatch.setattr(G, "RESULTS", tmp_path)
     reg = tmp_path / "reg.yaml"
     reg.write_text("models:\n  - name: m\n    hf_path: org/m\n    kv_bits: 0\n")
-    P.write("m", "aime", str(reg))
+    P.write("m", "aime", str(reg), result_path=G.result_path("m", "aime"))
     man = json.loads((tmp_path / "m" / "aime.manifest.json").read_text())
     assert "tune" not in man
 

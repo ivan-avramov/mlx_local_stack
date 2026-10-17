@@ -54,7 +54,7 @@ def run_verify(py, verify, out_dir, env=None, timeout=600):
 
 def main(argv=None, ops=None, log_out=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--probe", default=str(REPO / "benchmark/run_opencode_probe_v2.py"))
+    ap.add_argument("--probe", default=str(REPO / "benchmark/run_tg1_probe.py"))
     ap.add_argument("--python", default=str(REPO / ".venv-bench/bin/python"))
     ap.add_argument("--verify", default=str(REPO / "benchmark/m62/inject_verify.py"))
     ap.add_argument("--out-dir")

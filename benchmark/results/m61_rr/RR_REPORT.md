@@ -24,35 +24,35 @@ go/counter excluded (C145); 'as recorded' includes it.
 
 ## Head-to-head s1: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed minus Qwen3.8-27B-mlx-uniform-4bit
 
-| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |
+| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |
 |---|---|---|---|---|---|---|---|
-| python | 22 | +0.000 | [+0.00, +0.00] | equivalent | 0.27 | 1.000 | 1.000 |
-| go | 21 | +0.048 | [+0.00, +0.14] | inconclusive | 0.27 | 0.191 | 0.383 |
+| python | 22 | +0.000 | [+0.00, +0.00] | wash (MDE 27 pp; directional: tie) | 0.27 | 1.000 | 1.000 |
+| go | 21 | +0.048 | [+0.00, +0.14] | wash (MDE 27 pp; directional: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed (not a shown difference)) | 0.27 | 0.191 | 0.383 |
 
 ## Head-to-head s2: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed minus Qwen3.8-27B-mlx-uniform-4bit
 
-| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |
+| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |
 |---|---|---|---|---|---|---|---|
-| python | 22 | -0.045 | [-0.14, +0.00] | inconclusive | 0.27 | 0.191 | 0.191 |
-| go | 21 | +0.143 | [+0.00, +0.29] | inconclusive | 0.27 | 0.050 | 0.100 |
+| python | 22 | -0.045 | [-0.14, +0.00] | wash (MDE 27 pp; directional: Qwen3.8-27B-mlx-uniform-4bit (not a shown difference)) | 0.27 | 0.191 | 0.191 |
+| go | 21 | +0.143 | [+0.00, +0.29] | wash (MDE 27 pp; directional: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed (not a shown difference)) | 0.27 | 0.050 | 0.100 |
 
 ## DESCRIPTIVE: M61 re-record s1 minus M59 s1 (same seeds; scaffold opencode-v2-web 48K vs opencode-v2 16K — never pooled)
 
-| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |
+| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |
 |---|---|---|---|---|---|---|---|
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed python | 22 | +0.045 | [+0.00, +0.14] | inconclusive | 0.27 | 0.191 | 0.383 |
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed go | 21 | +0.048 | [+0.00, +0.14] | inconclusive | 0.27 | 0.191 | 0.383 |
-| Qwen3.8-27B-mlx-uniform-4bit python | 22 | +0.091 | [+0.00, +0.23] | inconclusive | 0.27 | 0.117 | 0.351 |
-| Qwen3.8-27B-mlx-uniform-4bit go | 21 | +0.143 | [+0.00, +0.29] | inconclusive | 0.27 | 0.050 | 0.200 |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed python | 22 | +0.045 | [+0.00, +0.14] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.191 | 0.383 |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed go | 21 | +0.048 | [+0.00, +0.14] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.191 | 0.383 |
+| Qwen3.8-27B-mlx-uniform-4bit python | 22 | +0.091 | [+0.00, +0.23] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.117 | 0.351 |
+| Qwen3.8-27B-mlx-uniform-4bit go | 21 | +0.143 | [+0.00, +0.29] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.050 | 0.200 |
 
 ## DESCRIPTIVE: M61 re-record s2 minus M59 s2 (same seeds; scaffold opencode-v2-web 48K vs opencode-v2 16K — never pooled)
 
-| comparison | n | delta | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |
+| comparison | n | delta | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |
 |---|---|---|---|---|---|---|---|
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed python | 22 | +0.045 | [-0.09, +0.18] | inconclusive | 0.27 | 0.514 | 1.000 |
-| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed go | 21 | +0.095 | [+0.00, +0.24] | inconclusive | 0.27 | 0.117 | 0.468 |
-| Qwen3.8-27B-mlx-uniform-4bit python | 22 | +0.091 | [+0.00, +0.23] | inconclusive | 0.27 | 0.117 | 0.468 |
-| Qwen3.8-27B-mlx-uniform-4bit go | 21 | +0.048 | [-0.14, +0.24] | inconclusive | 0.27 | 0.624 | 1.000 |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed python | 22 | +0.045 | [-0.09, +0.18] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.514 | 1.000 |
+| Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed go | 21 | +0.095 | [+0.00, +0.24] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.117 | 0.468 |
+| Qwen3.8-27B-mlx-uniform-4bit python | 22 | +0.091 | [+0.00, +0.23] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.117 | 0.468 |
+| Qwen3.8-27B-mlx-uniform-4bit go | 21 | +0.048 | [-0.14, +0.24] | wash (MDE 27 pp; directional: M61 (not a shown difference)) | 0.27 | 0.624 | 1.000 |
 
 ## Misses (all legs)
 

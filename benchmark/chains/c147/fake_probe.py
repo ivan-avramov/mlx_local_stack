@@ -11,6 +11,10 @@ stale_heartbeat_growing_events | ignore_cancel; FAKE_PROBE_PLAN = JSON list of b
 (needs FAKE_PROBE_STATE, a directory; the last entry repeats); FAKE_N, FAKE_ITEM_S, FAKE_HB_S, FAKE_TICK_S,
 FAKE_IGNORE_TERM=1, FAKE_CLEANUP_UNCERTAIN=1, FAKE_ABORT_LINGER_S (abort manifest written, exit delayed), FAKE_MANIFEST_OVERRIDE (JSON merged into the manifest, dotted keys),
 FAKE_PROBE_CODE_SHA, FAKE_REGISTRY_SHA. The worker identity comes from $FAKE_PROBE_STATE/worker.json.
+P311-lite: manifests carry the pairing composite (recomputed from the manifest's own fields AFTER the overrides unless an
+override sets it) and a per-arm identity (a hash of model + served draft kind); rows carry both and the spawn-time
+`prompt_date`. FAKE_MANIFEST_PLAN = JSON list of dotted-override dicts consumed per invocation (the last repeats; needs
+FAKE_PROBE_STATE), merged over FAKE_MANIFEST_OVERRIDE; `runtime.scoring_code_sha256` is scoring and not identity.
 """
 import argparse
 import hashlib
@@ -24,9 +28,9 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from bench import rowschema  # noqa: E402
+from bench import chain_ops, rowschema  # noqa: E402
 
-CAMPAIGN = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"
+CAMPAIGN = "c" * 64          # the fake probe's own policy value (P362: no real constant exists)
 SCAFFOLD = "opencode-v2-web-tg1"
 SERVING = {"src/mlx-vlm": "5" * 64, "src/mlx-serve": "6" * 64}
 
@@ -56,6 +60,10 @@ def served_draft_kind(model):
     return next((m.get("draft_kind") or "off" for m in models if m.get("name") == model), "off")
 
 
+def arm_identity(model, draft_kind):
+    return hashlib.sha256(f"fake-arm|{model}|{draft_kind}".encode()).hexdigest()
+
+
 def build_manifest(model, lang, seed_base, worker, run_id, override=None):
     h = lambda c: c * 64  # noqa: E731
     man = {
@@ -71,12 +79,16 @@ def build_manifest(model, lang, seed_base, worker, run_id, override=None):
             "sampling_profile": "deployed",
         },
     }
+    man["runtime"]["arm_identity_sha256"] = arm_identity(model, man["runtime"]["draft_kind"])
+    man["runtime"]["arm_identity"] = {"fake": True, "model": model}
     for dotted, value in (override or {}).items():
         d = man
         parts = dotted.split(".")
         for k in parts[:-1]:
             d = d[k]
         d[parts[-1]] = value
+    if "runtime.generation_identity_sha256" not in (override or {}):
+        man["runtime"]["generation_identity_sha256"] = chain_ops.composite_sha(man["runtime"])
     return man
 
 
@@ -93,7 +105,7 @@ def _sha(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
 
-def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, events_extra=b""):
+def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, events_extra=b"", runtime=None):
     ev = _evidence_dir(wd, model, out, run_id, item)
     ev.mkdir(parents=True, exist_ok=True)
     files = {"events": ev / "events.jsonl", "stderr": ev / "stderr.txt", "export": ev / "export.json"}
@@ -114,6 +126,9 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
         "nonconv_kind": None, "nonconv_flags": [], "wall_s": wall_s, "worker_before": worker,
         "worker_after": worker, "overlay_sha256": seed_overlay_sha(model, seed), "scaffold": SCAFFOLD,
         "evidence_sha256": {k: _sha(v) for k, v in files.items()},
+        "generation_identity_sha256": (runtime or {}).get("generation_identity_sha256"),
+        "arm_identity_sha256": (runtime or {}).get("arm_identity_sha256"),
+        "prompt_date": time.strftime("%a %b %d %Y"),
         "events_path": _portable(wd, files["events"]), "transcript_path": _portable(wd, files["export"]),
         "stderr_path": _portable(wd, files["stderr"]),
         "grade_reports": [{"boundary": 1, "seq": 1, "final": True, "outcome": "parsed",
@@ -124,16 +139,41 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
 
 def write_leg(out, model, lang, seed_base, ids, worker, wd, run_id="fixture-run", override=None):
     """Complete, valid rows + manifest for tests (the same builders the probe uses)."""
-    rows = [build_row(model, i, seed_base, worker, wd, out, run_id) for i in ids]
-    _atomic(out, "".join(json.dumps(r) + "\n" for r in rows).encode())
     man = build_manifest(model, lang, seed_base, worker, run_id, override)
+    rows = [build_row(model, i, seed_base, worker, wd, out, run_id, runtime=man["runtime"]) for i in ids]
+    _atomic(out, "".join(json.dumps(r) + "\n" for r in rows).encode())
     man["cleanup_status"] = {"survivors": [], "containers_remaining": [], "uncertain": False,
                              "orphans_unattributed": []}
     _atomic(Path(out).with_suffix(".manifest.json"), json.dumps(man, indent=2).encode())
 
 
 # --------------------------------------------------------------------------- the probe
+def print_identity(argv):
+    """`--print-identity [--universe U]` as the real probe answers it: JSON with the expected scaffold_policy_sha256
+    (FAKE_PRINT_POLICY_SHA, default the fake campaign value). Logged to $FAKE_PROBE_STATE/identity_calls.jsonl; it is not
+    a generation invocation. FAKE_PRINT_MODE = fail | garbage | malformed exercises the runner's refusals."""
+    env = os.environ
+    if env.get("FAKE_PROBE_STATE"):
+        state = Path(env["FAKE_PROBE_STATE"])
+        state.mkdir(parents=True, exist_ok=True)
+        with (state / "identity_calls.jsonl").open("a") as f:
+            f.write(json.dumps({"argv": list(argv)}) + "\n")
+    mode = env.get("FAKE_PRINT_MODE")
+    if mode == "fail":
+        print("print-identity failed", file=sys.stderr)
+        return 1
+    if mode == "garbage":
+        print("not json at all")
+        return 0
+    value = "short" if mode == "malformed" else env.get("FAKE_PRINT_POLICY_SHA", CAMPAIGN)
+    print(json.dumps({"scaffold": SCAFFOLD, "scaffold_policy_sha256": value}))
+    return 0
+
+
 def main(argv=None):
+    raw = sys.argv[1:] if argv is None else list(argv)
+    if "--print-identity" in raw:
+        return print_identity(raw)
     ap = argparse.ArgumentParser()
     for f in ("--model", "--items", "--lang", "--out", "--scaffold", "--expect-items", "--a4-v2-receipt",
               "--sampling-profile", "--cancel-file", "--manifest-ack", "--tg1-inject", "--chain-total", "--universe"):
@@ -174,7 +214,11 @@ def main(argv=None):
             print("REFUSED: rows file has a manifest recording transport_abort", flush=True)
             return 2
     run_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:12]
-    man = build_manifest(a.model, a.lang, a.seed_base, worker, run_id, json.loads(env.get("FAKE_MANIFEST_OVERRIDE", "{}")))
+    overrides = json.loads(env.get("FAKE_MANIFEST_OVERRIDE", "{}"))
+    if state and env.get("FAKE_MANIFEST_PLAN"):
+        plan_m = json.loads(env["FAKE_MANIFEST_PLAN"])
+        overrides = {**overrides, **plan_m[min(n_inv, len(plan_m) - 1)]}
+    man = build_manifest(a.model, a.lang, a.seed_base, worker, run_id, overrides)
     cleanup = {"survivors": [], "containers_remaining": [], "uncertain": env.get("FAKE_CLEANUP_UNCERTAIN") == "1",
                "orphans_unattributed": []}
 
@@ -264,7 +308,8 @@ def main(argv=None):
                 heartbeat(item)
                 last_hb = time.time()
             time.sleep(tick)
-        rows.append(build_row(a.model, item, a.seed_base, worker, wd, out, run_id, wall_s=time.time() - start))
+        rows.append(build_row(a.model, item, a.seed_base, worker, wd, out, run_id, wall_s=time.time() - start,
+                              runtime=man["runtime"]))
         _atomic(out, "".join(json.dumps(r) + "\n" for r in rows).encode())
         print(f"{item}: passed=True nonconv=None", flush=True)
         done_here += 1

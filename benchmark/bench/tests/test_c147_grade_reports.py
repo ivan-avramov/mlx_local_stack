@@ -246,9 +246,8 @@ def test_write_receipt_is_index_only_and_immutable(dirs):
 
 
 def test_tampered_row_carries_a_final_tampered_receipt(monkeypatch, tmp_path):
-    from bench.tests.test_opencode_v2_probe import probe as _p      # noqa: F401
     import importlib
-    probe = importlib.import_module("run_opencode_probe_v2")
+    probe = importlib.import_module("run_tg1_probe")
     from bench.tests.test_tg1_integration import tg_fixture
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     f = tg_fixture(probe, monkeypatch, tmp_path)

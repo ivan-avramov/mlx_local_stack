@@ -17,13 +17,12 @@ import time
 import urllib.request
 from pathlib import Path
 
-CAMPAIGN_POLICY_SHA = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"
 SCAFFOLD = "opencode-v2-web-tg1"
 PICK1 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 PICK2 = "Qwen3.8-27B-mlx-uniform-4bit"
 GRADER_IMAGE = "aider-benchmark"     # P290: the Go grader image, as structured_grade/opencode_common run it
 BUSY = ("mlx_vlm.server", "mlx_vlm/server", "mlx-serve start", "session_cache_probe", "opencode run",
-        "run.py generate", "run_opencode_probe", "run_agentbench_os", "runserver.sh")
+        "run.py generate", "run_opencode_probe", "run_tg1_probe", "run_agentbench_os", "runserver.sh")
 SELF_MARKERS = ("run_tg1_chain.py", "run_inject.py", "drive_chain.sh", "drive_inject.sh")
 GRADER_TIMEOUT_S = {"python": 300, "go": 180}
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -717,11 +716,46 @@ class IdlePredicate:
 # --------------------------------------------------------------------------- completion = validation
 RUNTIME_PINNED = ("scaffold_policy_sha256", "probe_code_sha256", "opencode_version", "opencode_exe_sha256",
                   "opencode_bench_config_sha256", "carrier_source_sha256", "agent_system_sha256", "polyglot_sha",
-                  "universe_sha256")
+                  "universe_sha256", "generation_identity_sha256")
+
+# P311-lite (spec 4): the pairing composite shared by every arm. Kept equal to `tg1_runner.GENERATION_FIELDS` (tested);
+# chain_ops recomputes it so a manifest whose composite disagrees with its own fields fails closed.
+GENERATION_FIELDS = ("probe_code_sha256", "scaffold_policy_sha256", "opencode_version", "opencode_exe_sha256",
+                     "opencode_bench_config_sha256", "carrier_source_sha256", "agent_system_sha256", "polyglot_sha",
+                     "sampling_profile")
+
+
+def composite_sha(runtime):
+    missing = [k for k in GENERATION_FIELDS if k not in runtime]
+    if missing:
+        raise ValueError("generation identity field absent: " + ", ".join(missing))
+    return hashlib.sha256(json.dumps({k: runtime[k] for k in GENERATION_FIELDS}, sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+# P24 (spec 3): the chain's own lifecycle code is frozen at chain creation and re-verified before every launch,
+# barrier, validation, resume and at exit. Repo-relative; `lifecycle_files` resolves them (tests pass temp copies).
+LIFECYCLE_FILES = {"runner": "benchmark/chains/c147/run_tg1_chain.py", "chain_ops": "benchmark/bench/chain_ops.py",
+                   "gate": "scripts/session_pinning_gate.py", "launcher": "benchmark/chains/c147/drive_chain.sh",
+                   "launch_tg1": "benchmark/chains/c147/launchers/launch_tg1.sh"}
+
+
+def lifecycle_files(repo):
+    return {name: Path(repo) / rel for name, rel in LIFECYCLE_FILES.items()}
+
+
+def lifecycle_shas(files):
+    return {name: file_sha(path) for name, path in files.items()}
+
+
+def lifecycle_drift(frozen, files):
+    """Names of the lifecycle files whose current sha256 differs from the frozen one (a vanished file differs)."""
+    now = lifecycle_shas(files)
+    return [name for name in files if not frozen or now[name] is None or now[name] != frozen.get(name)]
 
 
 SHA_FIELDS = ("scaffold_policy_sha256", "probe_code_sha256", "opencode_exe_sha256", "opencode_bench_config_sha256",
-              "carrier_source_sha256", "universe_sha256")
+              "carrier_source_sha256", "universe_sha256", "generation_identity_sha256")
 # P276: the per-item paired seed field of a real probe row (rowschema.sample_seed value; not `sample_seed`).
 ROW_SEED_FIELD = "sampler_seed"
 # P276: the real tg1 probe records these pinned fields under `runtime.policy`, the rest at `runtime.*`.
@@ -759,6 +793,17 @@ def malformed_identity(man):
         bad.append("runtime_opencode_version")
     if "agent_system_sha256" not in rt or (rt["agent_system_sha256"] is not None and not _hex(rt["agent_system_sha256"], 64)):
         bad.append("runtime_agent_system_sha256")
+    full = man.get("runtime") or {}
+    if _hex(rt.get("generation_identity_sha256"), 64):
+        try:
+            consistent = composite_sha({**full, "sampling_profile": full.get(
+                "sampling_profile", man.get("sampling_profile"))}) == rt["generation_identity_sha256"]
+        except ValueError:
+            consistent = False
+        if not consistent:
+            bad.append("runtime_generation_identity_sha256_inconsistent")
+    if not _hex(full.get("arm_identity_sha256"), 64):
+        bad.append("runtime_arm_identity_sha256")
     sp = (man.get("git") or {}).get("serving_path")
     if not (isinstance(sp, dict) and sp and all(_hex(x, 64) for x in sp.values())):
         bad.append("serving_path")
@@ -786,7 +831,7 @@ def typed_worker(w):
             and isinstance(w.get("registry_sha256"), str) and bool(HEX64.match(w["registry_sha256"])))
 
 
-def validate_leg(leg, pinned, workdir=None, policy_sha=CAMPAIGN_POLICY_SHA):
+def validate_leg(leg, pinned, workdir=None, policy_sha=None):
     """Completion = validation (spec 3). Returns a list of `code: detail` failure reasons; [] means complete.
 
     leg: {session, model, lang, seed_base, expected_ids, out, rc}. pinned: runtime field -> value (None = not yet
@@ -823,6 +868,9 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=CAMPAIGN_POLICY_SHA):
         why.append(f"runtime_lang: {rt.get('lang')} != {leg['lang']}")
     if rt.get("scaffold") != SCAFFOLD:
         why.append(f"runtime_scaffold: {rt.get('scaffold')}")
+    policy_sha = policy_sha or pinned.get("scaffold_policy_sha256")    # P362: derived from the probe, never a constant
+    if not policy_sha:
+        why.append("pinned_incomplete: scaffold_policy_sha256 not pinned")
     if rt.get("scaffold_policy_sha256") != policy_sha:
         why.append(f"runtime_scaffold_policy_sha256: {rt.get('scaffold_policy_sha256')}")
     if rt.get("draft_kind") != leg.get("draft_kind", "off"):              # M63: the leg's predictor
@@ -837,6 +885,9 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=CAMPAIGN_POLICY_SHA):
             why.append(f"runtime_{k}: {ident.get(k, '<absent>')} != pinned {pinned[k]}")
     for f in malformed_identity(man):
         why.append(f"{f}_invalid: absent, null or malformed" if f != "serving_path" else "serving_path_invalid: absent, null or malformed")
+    expected_arm = leg.get("arm_identity_sha256")                    # P311-lite: frozen at the arm's first manifest
+    if expected_arm is not None and rt.get("arm_identity_sha256") != expected_arm:
+        why.append(f"runtime_arm_identity_sha256: {rt.get('arm_identity_sha256')} != frozen {expected_arm}")
     sp = (man.get("git") or {}).get("serving_path")
     if pinned.get("serving_path") is not None and sp != pinned["serving_path"]:
         why.append(f"serving_path: {sp} != pinned {pinned['serving_path']}")
@@ -853,6 +904,12 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=CAMPAIGN_POLICY_SHA):
         if r.get(ROW_SEED_FIELD) != exp:
             why.append(f"row_sample_seed: {rid} {r.get(ROW_SEED_FIELD)} != {exp}")
         want = seed_overlay_sha(leg["model"], exp)
+        if r.get("generation_identity_sha256") != rt.get("generation_identity_sha256"):
+            why.append(f"row_generation_identity: {rid} differs from the manifest")
+        if r.get("arm_identity_sha256") != rt.get("arm_identity_sha256") or not _hex(r.get("arm_identity_sha256"), 64):
+            why.append(f"row_arm_identity: {rid} differs from the manifest or is malformed")
+        if not (isinstance(r.get("prompt_date"), str) and r["prompt_date"].strip()):
+            why.append(f"row_prompt_date: {rid} absent or malformed")
         if r.get("scaffold") != SCAFFOLD:
             why.append(f"row_scaffold: {rid} {r.get('scaffold')}")
         if r.get("model") != leg["model"]:

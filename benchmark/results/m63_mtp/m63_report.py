@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import answer_key, stats  # noqa: E402
+from bench import answer_key, row_scores, stats, tg1_pairing  # noqa: E402
 
 RES = REPO / "benchmark/results"
 P1, P2 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "Qwen3.8-27B-mlx-uniform-4bit"
@@ -27,9 +27,11 @@ def p(s=""):
 
 def load(m, lang, s, arm):
     f = RES / m / f"opencode_v2_{lang}.{ARMS[arm]}.{s}.jsonl"
-    rows = [json.loads(line) for line in open(f) if line.strip()]
+    rows = row_scores.effective_rows([json.loads(line) for line in open(f) if line.strip()],
+                                     row_scores.sidecar_path(f))   # P311-lite: one fail-closed join
     side = Path(str(f) + ".webaudit.jsonl")
-    rep = answer_key.report_rows(rows, audit_sidecar=side if side.exists() else None)
+    rep = answer_key.report_rows(rows, audit_sidecar=side if side.exists() else None,
+                                 score_sidecar=row_scores.sidecar_path(f))
     return rows, rep
 
 
@@ -39,17 +41,14 @@ def pv(d):
     return 2 * (1 - 0.5 * (1 + math.erf(z / math.sqrt(2))))
 
 
-def verdict_label(d):
-    """P346: a collapsed bootstrap interval is not evidence of equivalence."""
-    if d.get("degenerate") and d.get("discordance_upper95") is not None:
-        return (f"no discordance — equivalence NOT established (discordance ≤ {d['discordance_upper95']:.2f}, "
-                f"95% exact)")
-    return d["verdict"]
+def verdict_label(d, names=("first", "second")):
+    """P359 (C172): A better / B better (CI excludes 0) or wash with MDE and the directional pick."""
+    return stats.verdict_label(d, *names)
 
 
-def family(title, pairs):
+def family(title, pairs, names=("first", "second")):
     p(f"\n### {title}\n")
-    p("| comparison | n | ON−OFF | 95% CI | verdict (TOST ±5 pp) | MDE | p (approx) | Holm |")
+    p("| comparison | n | ON−OFF | 95% CI | verdict (CI excludes 0, else wash) | MDE | p (approx) | Holm |")
     p("|---|---|---|---|---|---|---|---|")
     res = []
     for label, a, b in pairs:
@@ -57,13 +56,26 @@ def family(title, pairs):
         d = stats.paired_delta({k: a[k] for k in common}, {k: b[k] for k in common}, iters=20000, seed=63, margin=0.05)
         res.append((label, d, pv(d)))
     for (label, d, pval), h in zip(res, stats.holm([r[2] for r in res])):
-        p(f"| {label} | {d['n_items']} | {d['delta']:+.3f} | [{d['lo']:+.2f}, {d['hi']:+.2f}] | {verdict_label(d)} | "
+        p(f"| {label} | {d['n_items']} | {d['delta']:+.3f} | [{d['lo']:+.2f}, {d['hi']:+.2f}] | {verdict_label(d, names)} | "
           f"{d['mde']:.2f} | {pval:.3f} | {h:.3f} |")
 
 
 data = {(m, lang, s, arm): load(m, lang, s, arm) for m in (P1, P2) for lang in LANGS for s in SESS for arm in ARMS}
 
+# L5: current-epoch ON/OFF rows pair only on equal generation composite and prompt date (legacy rows pass through)
+gate_notes = []
+for m in (P1, P2):
+    for s in SESS:
+        for lang in LANGS:
+            (ron, aon), (roff, aoff) = data[(m, lang, s, "ON")], data[(m, lang, s, "OFF")]
+            a, b, gate = tg1_pairing.gate_items(aon["strict_items"], aon["scored_rows"], aoff["strict_items"], aoff["scored_rows"])
+            if gate is not None:
+                aon["strict_items"], aoff["strict_items"] = a, b
+                gate_notes.append(tg1_pairing.gate_note(f"{m} {s} {lang}", gate))
+
 p("# M63 report — MTP-ON vs predictor-OFF on the tg1 agentic axis (both picks, k=2)\n")
+for note in gate_notes:
+    p(note)
 prov = [f"{m} {lang} {s} {arm}" for (m, lang, s, arm), (_, rep) in data.items()
         if rep["per_model"].get(m, {}).get("provisional")]
 if prov:
@@ -86,7 +98,8 @@ p("\n## Paired ON−OFF (pre-registered)\n")
 for m in (P1, P2):
     for s in SESS:
         family(f"{m}, {s}: all rows", [(lang, data[(m, lang, s, 'ON')][1]["strict_items"],
-                                         data[(m, lang, s, 'OFF')][1]["strict_items"]) for lang in LANGS])
+                                         data[(m, lang, s, 'OFF')][1]["strict_items"]) for lang in LANGS],
+               names=("ON", "OFF"))
 for m in (P1, P2):
     for s in SESS:
         pairs, dropped = [], []
@@ -96,7 +109,7 @@ for m in (P1, P2):
             a = {k: v for k, v in data[(m, lang, s, "ON")][1]["strict_items"].items() if k not in hit}
             b = {k: v for k, v in data[(m, lang, s, "OFF")][1]["strict_items"].items() if k not in hit}
             pairs.append((lang, a, b))
-        family(f"{m}, {s}: excluding client_inactivity items (dropped {dropped or 'none'})", pairs)
+        family(f"{m}, {s}: excluding client_inactivity items (dropped {dropped or 'none'})", pairs, names=("ON", "OFF"))
 
 p("\n## P293: ON outcome of every OFF client_inactivity item\n")
 p("| model | session | item | OFF | ON kind | ON passed | ON wall s | ON output tokens |")

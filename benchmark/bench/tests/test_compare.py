@@ -243,7 +243,7 @@ def test_moe_expand_absent_on_a_pre_M34_row_compares_equal_to_explicit_none(writ
 
 
 # --------------------------------------------------------------------- verdicts
-def test_a_small_delta_at_n15_is_inconclusive_not_a_ranking(write_rows, tmp_results):
+def test_a_small_delta_at_n15_is_a_wash_not_a_shown_difference(write_rows, tmp_results):
     """The exact situation that produced 'dense 86.7% vs MoE 80%': 1 item of 15."""
     ids = [f"i{j}" for j in range(15)]
     write_rows("A", "math500", _rows(ids, ok=set(ids[:13])))     # 13/15
@@ -251,7 +251,7 @@ def test_a_small_delta_at_n15_is_inconclusive_not_a_ranking(write_rows, tmp_resu
     _manifest(tmp_results, "A", "math500"); _manifest(tmp_results, "B", "math500")
     r = CMP.compare("A", "B", "math500")
     assert r["comparable"] is True
-    assert r["delta"]["verdict"] == "inconclusive"
+    assert r["delta"]["verdict"] == "wash" and r["delta"]["directional"] == "a"
     assert r["mde"] > 0.30, "N=15 cannot resolve better than ~32pp"
     assert r["n_for_margin"] > 100, "and it must say how many items WOULD resolve the margin"
 
@@ -265,12 +265,12 @@ def test_a_large_consistent_delta_is_called(write_rows, tmp_results):
     assert r["delta"]["verdict"] == "a_better" and r["delta"]["delta"] > 0.9
 
 
-def test_identical_single_sample_runs_are_equivalent(write_rows, tmp_results):
+def test_identical_single_sample_runs_are_a_tie_wash(write_rows, tmp_results):
     ids = [f"i{j}" for j in range(10)]
     write_rows("A", "math500", _rows(ids, ok=set(ids[:8])))
     write_rows("B", "math500", _rows(ids, ok=set(ids[:8])))
     _manifest(tmp_results, "A", "math500"); _manifest(tmp_results, "B", "math500")
-    assert CMP.compare("A", "B", "math500")["delta"]["verdict"] == "equivalent"
+    assert CMP.compare("A", "B", "math500")["delta"]["verdict"] == "wash"
 
 
 def test_pass_at_1_converged_pairs_on_the_intersection(write_rows, tmp_results):
@@ -654,8 +654,8 @@ def test_pooled_ci_excludes_zero_when_each_bench_alone_is_inconclusive(write_row
 
     alone_math = CMP.compare("A", "B", "math500", metric="acc_strict")
     alone_aime = CMP.compare("A", "B", "aime", metric="acc_strict")
-    assert alone_math["delta"]["verdict"] == "inconclusive", alone_math
-    assert alone_aime["delta"]["verdict"] == "inconclusive", alone_aime
+    assert alone_math["delta"]["verdict"] == "wash", alone_math
+    assert alone_aime["delta"]["verdict"] == "wash", alone_aime
 
     pooled = CMP.pooled_compare("A", "B", ["math500", "aime"])
     assert pooled["comparable"] is True, pooled.get("reason")

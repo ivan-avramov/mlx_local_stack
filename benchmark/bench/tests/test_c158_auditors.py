@@ -116,7 +116,8 @@ def test_a3_rows_without_web_entries_run_no_subprocess(monkeypatch):
     import subprocess
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("version probe ran for rows without web fetches"))
     rows = [dict(id="python/x", model="m", sample=0, session_id="s", scaffold="opencode-v2-web-tg1", passed=True,
-                 nonconv_kind=None, web_fetches=[], net_shell=[])]
+                 nonconv_kind=None, web_fetches=[], net_shell=[], web_denied=0, subagent_calls=0,
+                 web_audit_incomplete=False, answer_key_contact=False, answer_key_evidence=[])]    # complete legacy schema (L7)
     assert answer_key.report_rows(rows)["strict_n"] == 1
 
 
