@@ -39,6 +39,13 @@ def probe(monkeypatch, tmp_path):
     return importlib.import_module("run_opencode_probe_v2")
 
 
+@pytest.fixture
+def tg1_probe(monkeypatch, tmp_path):
+    """The tg1 entry (`run_tg1_probe`, P311-lite). tg1 test modules import it as `probe`, the name they always used."""
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
+    return importlib.import_module("run_tg1_probe")
+
+
 def events(kind="ok"):
     """Events."""
     start = {"type": "step_start", "sessionID": "ses_test"}

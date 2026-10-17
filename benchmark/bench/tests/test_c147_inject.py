@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import pytest
 from bench import tg1_runner as runner, proc_guard as pg, token_turn_gate as tg
-from bench.tests.test_opencode_v2_probe import probe, MODEL
+from bench.tests.test_opencode_v2_probe import probe as std_probe, tg1_probe as probe, MODEL
 from bench.tests.test_tg1_integration import tg_fixture
 from bench.tests.test_token_turn_gate import event, usage
 
@@ -105,11 +105,12 @@ def argv(f, *extra, scaffold="opencode-v2-web-tg1", items="one", out=None):
 
 @pytest.mark.parametrize("flag", [("--tg1-inject", "stall"), ("--cancel-file", "x"), ("--manifest-ack", "x"),
                                   ("--sampling-profile", "deployed")])
-def test_new_flags_refused_off_tg1(probe, monkeypatch, tmp_path, flag):
-    f = tg_fixture(probe, monkeypatch, tmp_path)
-    monkeypatch.setattr(sys, "argv", argv(f, *flag, scaffold="opencode-v2-web"))
-    with pytest.raises(SystemExit, match="REFUSED"):
-        probe.main()
+def test_new_flags_refused_off_tg1(std_probe, monkeypatch, tmp_path, flag):
+    """P311-lite: the standard v2 entry no longer knows the tg1-only flags at all (argparse error, rc 2)."""
+    monkeypatch.setattr(sys, "argv", argv({"out": tmp_path / "o.jsonl"}, *flag, scaffold="opencode-v2-web"))
+    with pytest.raises(SystemExit) as exc:
+        std_probe.main()
+    assert exc.value.code == 2
 
 
 def test_sampling_profile_accepts_only_deployed(probe, monkeypatch, tmp_path):

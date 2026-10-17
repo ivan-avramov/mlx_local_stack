@@ -15,7 +15,7 @@ import time
 
 import yaml
 
-from . import generate, model_params, quant_info
+from . import model_params, quant_info
 from . import paths
 
 
@@ -1876,11 +1876,17 @@ def gather(model: str, registry_path: str | None = None,
 
 def write(model: str, bench: str, registry_path: str | None = None,
           profile: str = "production", overrides: dict = None, runtime: dict = None,
-          tune: str | None = None, router: dict | None = None) -> dict:
-    """Gather + write results/<model>/<bench>[.tune].manifest.json. Returns the manifest."""
+          tune: str | None = None, router: dict | None = None,
+          result_path=None) -> dict:
+    """Gather + write the manifest beside `result_path` (the caller's row file, `generate.result_path`).
+    P311-lite: the caller supplies the path so this module no longer imports `generate` (the tg1 identity
+    closure stays tight). Returns the manifest."""
+    if result_path is None:
+        raise ValueError("provenance.write needs the caller's result_path (generate.result_path(model, bench, tune=tune))")
     man = gather(model, registry_path, profile=profile, overrides=overrides,
                  runtime=runtime, tune=tune, router=router)
-    path = generate.result_path(model, bench, tune=tune).with_suffix(".manifest.json")
+    from pathlib import Path
+    path = Path(result_path).with_suffix(".manifest.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(man, indent=2))
     return man

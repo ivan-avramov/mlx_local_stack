@@ -102,7 +102,7 @@ from pathlib import Path
 import threading
 import time
 from bench import tg1_runner as runner, structured_grade as sg
-from bench.tests.test_opencode_v2_probe import probe, MODEL
+from bench.tests.test_opencode_v2_probe import tg1_probe as probe, MODEL
 from bench.tests.test_tg1_integration import tg_fixture
 from bench.tests.test_token_turn_gate import event, usage
 

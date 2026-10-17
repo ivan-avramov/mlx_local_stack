@@ -1224,9 +1224,8 @@ def _main(p, a, names):
                             env["OPENCODE_CONFIG_CONTENT"].encode()
                         ).hexdigest(),
                     ),
-                    **p._web_audit(
-                        export, source, artifacts["export"], scaffold=SCAFFOLD
-                    ),
+                    # P311-lite: no web-audit / answer-key-contact fields here. `bench.tg1_score` derives them post hoc
+                    # from the stored transcript, so a scoring fix never touches this (generation) process.
                 )
                 rows.append(json.loads(p._scrub_pii(json.dumps(row))))
                 pg.atomic_write(

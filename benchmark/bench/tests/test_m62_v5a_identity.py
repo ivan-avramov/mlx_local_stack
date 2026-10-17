@@ -4,7 +4,7 @@ import sys
 import pytest
 from bench import tg1_runner as runner, convergence
 from bench.tests.test_tg1_integration import tg_fixture
-from bench.tests.test_opencode_v2_probe import probe, MODEL
+from bench.tests.test_opencode_v2_probe import tg1_probe as probe, MODEL
 from m62 import build_replay_manifest as builder
 
 
