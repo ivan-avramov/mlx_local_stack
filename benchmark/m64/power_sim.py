@@ -3,7 +3,8 @@
 Inputs: paired run-to-run discordance of the same model on the same seeds (c144-base vs P223, both picks, both
 languages, both sessions) — the realistic noise floor of a challenger arm that is truly equal to the reference.
 Simulated: a challenger whose true strict-accuracy difference to opencode is delta (0, -0.05, -0.10), with paired
-discordance p_d; pairs come from a feasible joint table (P357) so E[delta] equals the true delta. Tests:
+discordance p_d; each pair difference is sampled directly in {-1, 0, +1} with probabilities ((p_d-delta)/2,
+1-p_d, (p_d+delta)/2) (P357), so E[delta] equals the true delta. Tests:
   (a) the spec's claim — cell TOST ±5 pp by an item bootstrap (shift method; a degenerate bootstrap → p = 1) in each
       of the 4 cells (2 sessions × 2 languages), claim p = max cell p (intersection-union);
   (b) a pooled alternative — one TOST over all 86 item-sessions of a pick (two-stage bootstrap: sessions, then items).

@@ -301,7 +301,7 @@ transport DNFs, subjective quality, failure modes), labelled provisional.
 - **One Holm family over the 12 claims.** Joint PASS for an arm on a pick = its accuracy, token and subjective claims
   all pass after Holm.
 - Method validated by simulation BEFORE any build (§12 step 2): coverage and TOST error under sparse/zero
-  discordance, plausible unseen discordance, shared loaded-instance effects; inputs P223 / M63 / c144-base. Simulated
+  discordance, plausible unseen discordance, shared loaded-instance effects; inputs P223 / M63 / c144-base. (Shared loaded-instance effect sensitivity deferred — P357; not needed for the estimation-only conclusion.) Simulated
   power < 80% at this N → M64 is an estimation screen (no PASS; estimates + intervals), unless the operator approves a
   larger N first.
 - Pre-registered sensitivity: primary scoring over all items; paired sensitivity excluding items where either arm had
