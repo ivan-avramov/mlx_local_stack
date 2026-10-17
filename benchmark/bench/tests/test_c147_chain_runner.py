@@ -161,8 +161,11 @@ def env(tmp_path, monkeypatch):
                 pass
 
 
+EPOCH_DATE = "Mon Jan 05 2026"       # P364: a past date, so a row that showed today's date can never pass for it
+
+
 def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeout=90, helper=None, universe=True,
-        lifecycle=None):
+        lifecycle=None, frozen=EPOCH_DATE):
     ops = env["ops"]
     if plan is not None:
         ops.extra_env["FAKE_PROBE_PLAN"] = json.dumps(plan)
@@ -173,6 +176,8 @@ def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeo
                          str(env["out"]), "--arm-idle-s", "0"]
     if universe:
         full += ["--universe", str(env["uni"])]
+    if frozen and not any(x in argv for x in ("--frozen-prompt-date", "--frozen-date-from")):
+        full += ["--frozen-prompt-date", frozen]
     tm = R.Timers(**{**TIMERS, **(timers or {})})
     res = {}
 
@@ -920,8 +925,8 @@ def _real_ops_with_foreign_listener(tmp_path):
 def test_chain_runner_foreign_listener_refused_nothing_torn_down(env, tmp_path):
     ops, sent, calls, lines = _real_ops_with_foreign_listener(tmp_path)
     rc = R.main(PILOT + ["--probe", str(C147 / "fake_probe.py"), "--python", sys.executable, "--out-root",
-                         str(env["out"]), "--universe", str(env["uni"])], ops=ops, timers=R.Timers(**TIMERS),
-                log_out=lines.append)
+                         str(env["out"]), "--universe", str(env["uni"]), "--frozen-prompt-date", EPOCH_DATE],
+               ops=ops, timers=R.Timers(**TIMERS), log_out=lines.append)
     assert rc == 2 and sent == []
     assert not any("stack_stop" in " ".join(c) for c in calls if isinstance(c, list))
     assert any("NOTHING" in ln for ln in lines)
