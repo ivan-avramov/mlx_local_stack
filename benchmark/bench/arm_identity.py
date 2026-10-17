@@ -19,10 +19,14 @@ OUTPUT_VALUE_FLAGS = (
     "--mtp-verify-scan", "--attention-policy", "--max-kv-size", "--kv-prealloc-tokens", "--kv-bits",
     "--kv-quant-scheme", "--quantized-kv-start", "--prefill-step-size", "--generation-defaults", "--moe-expand",
     "--cache-session-retain-prompt-end",
+    # every other flag mlx-serve's `_build_command` can emit (review L1)
+    "--max-tokens", "--max-kv-cache-size", "--kv-quant-mode", "--reasoning-parser", "--tool-call-parser",
 )
 OUTPUT_BOOL_FLAGS = ("--mtp-verify-ab", "--lazy-prompt-embeddings")
 # Serving plumbing that changes where or how much memory, never the output: parsed, recorded as seen, not hashed.
-INERT_VALUE_FLAGS = ("--host", "--port", "--memory-limit-frac", "--cache-limit-gb")
+# `--cache-session-shrink on|off` (C85) compacts idle KV padding and restores the full floor before an active write: it
+# changes resource use, never stored KV values (main_models.yaml C85; provenance.registry_kv comment; AGENTS.md).
+INERT_VALUE_FLAGS = ("--host", "--port", "--memory-limit-frac", "--cache-limit-gb", "--cache-session-shrink")
 # Registry keys that are client presentation, not serving.
 ENTRY_IGNORED = ("presentation",)
 
@@ -128,7 +132,15 @@ def artifact_identity(spec, hf_home=None):
     return {"kind": "hf", "repo": spec, "revision": revision, "files": files}
 
 
-def fingerprint(argv, entry, *, hf_home=None):
+def _apc(apc):
+    """{'router','worker'} APC_ENABLED values from the verified processes; anything unreadable refuses."""
+    if (not isinstance(apc, dict) or set(apc) != {"router", "worker"}
+            or any(not isinstance(v, str) or not v for v in apc.values())):
+        raise ArmIdentityError("APC state of the verified router/worker environment is unreadable")
+    return dict(apc)
+
+
+def fingerprint(argv, entry, *, hf_home=None, apc):
     """The effective worker fingerprint (JSON-able): output-determining flags, the served registry entry without
     its presentation block, and the target and (when a drafter is on) draft artifacts. The argv must agree with
     the entry on the model and the drafter."""
@@ -154,6 +166,7 @@ def fingerprint(argv, entry, *, hf_home=None):
         "entry": entry,
         "target": artifact_identity(flags["--model"], hf_home),
         "draft": artifact_identity(drafter, hf_home) if drafter else None,
+        "apc": _apc(apc),
     })
 
 
@@ -161,7 +174,12 @@ def arm_identity_sha256(fp):
     return hashlib.sha256(json.dumps(fp, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
 
 
-def observe(model, router, *, registry_path=None, hf_home=None):
+def _environ(pid):
+    import psutil
+    return psutil.Process(pid).environ()
+
+
+def observe(model, router, *, registry_path=None, hf_home=None, env_reader=None):
     """(fingerprint, sha256) of THE live worker serving `model`: the single mlx_port listener, an mlx_vlm server
     descending from `router`, whose argv equals the served entry (`provenance._worker_argvs` already refuses an
     unreadable, squatting or ambiguous listener). Anything unverifiable refuses."""
@@ -179,5 +197,11 @@ def observe(model, router, *, registry_path=None, hf_home=None):
         raise ArmIdentityError("worker listener is absent, ambiguous or changed during observation")
     if not provenance._descends_from(before[0], {router["pid"]}):
         raise ArmIdentityError("worker does not descend from the verified router")
-    fp = fingerprint(workers[0], entry, hf_home=hf_home)
+    reader = env_reader or _environ
+    try:       # APC_ENABLED absent means OFF (AGENTS.md); an unreadable environment refuses
+        apc = {name: str(reader(pid).get("APC_ENABLED", "0")) for name, pid in
+               (("router", router["pid"]), ("worker", before[0]))}
+    except Exception as exc:  # noqa: BLE001
+        raise ArmIdentityError(f"APC state unreadable from the router/worker environment: {type(exc).__name__}") from exc
+    fp = fingerprint(workers[0], entry, hf_home=hf_home, apc=apc)
     return fp, arm_identity_sha256(fp)

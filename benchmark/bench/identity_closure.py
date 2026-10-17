@@ -124,3 +124,93 @@ def closure_sha256(entry, repo, data=()):
         digest.update(rel.encode() + b"\0")
         digest.update((repo / rel).read_bytes())
     return digest.hexdigest()
+
+
+# ------------------------------------------------------------------ entry-rooted reachability (review L6)
+def _top_level_units(tree):
+    """(module-level statements, {qualname: node}) for the top-level functions, classes and methods of a module."""
+    body, units = [], {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            units[node.name] = node
+        elif isinstance(node, ast.ClassDef):
+            units[node.name] = node            # the class body (decorators, bases, attributes) runs with the class
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    units[f"{node.name}.{item.name}"] = item
+        else:
+            body.append(node)
+    return body, units
+
+
+def _refs(nodes):
+    """(ids, attrs, import nodes) syntactically inside `nodes` (nested functions included)."""
+    ids, attrs, imports = set(), set(), []
+    for root in nodes:
+        for node in ast.walk(root):
+            if isinstance(node, ast.Name):
+                ids.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                attrs.add(node.attr)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                imports.append(node)
+    return ids, attrs, imports
+
+
+def reachable_modules(entry, repo):
+    """The repo modules whose BODY can execute when `entry` runs, by a conservative call-graph walk: a module executes
+    when reached code imports it; a function-level import counts only when its function is reachable; a function is
+    reachable when its name (or, for a method, its method name) is referenced by reached code, as a bare name or as an
+    attribute of anything (calls through an injected object such as `p._sha_of` cannot be resolved, so any attribute
+    name counts). Over-approximates reachability, so a module reported unreachable is dead on every path."""
+    repo = Path(repo)
+    parsed = {}
+
+    def load(path):
+        key = path.resolve()
+        if key not in parsed:
+            tree = ast.parse(path.read_bytes(), filename=str(path))
+            body, units = _top_level_units(tree)
+            parsed[key] = (path, body, units)
+        return parsed[key]
+
+    ids, attrs, executed, done_units = set(), set(), {}, set()
+    pending = [Path(entry)]
+
+    def run_nodes(path, nodes):
+        i, a, imports = _refs(nodes)
+        ids.update(i)
+        attrs.update(a)
+        for node in imports:
+            for dest, _ in import_edges(node, path, repo):
+                pending.append(dest)
+
+    changed = True
+    while changed or pending:
+        changed = False
+        while pending:
+            path = pending.pop()
+            key = path.resolve()
+            if key in executed:
+                continue
+            _, body, _units = load(path)
+            executed[key] = path
+            run_nodes(path, body)
+            changed = True
+        for key, path in list(executed.items()):
+            _, _body, units = load(path)
+            for qual, node in units.items():
+                if (key, qual) in done_units:
+                    continue
+                short = qual.split(".")[-1]
+                is_method = "." in qual
+                hit = (short in attrs or short in ids or (is_method and short.startswith("__"))
+                       or (is_method and qual.split(".")[0] in ids))
+                if path.resolve() == Path(entry).resolve():
+                    hit = True                              # the entry's own functions are all roots
+                if hit:
+                    done_units.add((key, qual))
+                    run_nodes(path, [node])
+                    changed = True
+    repo_resolved = repo.resolve()
+    return sorted(p.resolve().relative_to(repo_resolved).as_posix() for p in executed.values())

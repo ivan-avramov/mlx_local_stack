@@ -5,8 +5,8 @@ them from the row's stored transcript into `<rows>.score.jsonl`; this module is 
 exactly one sidecar record matches its key (model, id, sample, session_id) under the CURRENT scoring code and the
 record's transcript sha256 equals the row's `evidence_sha256.export`. Anything else (no record, a record from older
 scoring code, a stale transcript, duplicates, an unreadable sidecar) leaves the row UNSCORED: the readers exclude it
-from strict scoring and count it, they never read it as "no contact". Legacy rows (the in-row fields of M61/M63/P223
-/C144) pass through as the same objects, labelled by their own fields."""
+from strict scoring and count it, they never read it as "no contact". Legacy rows (`is_legacy`: complete in-row scoring
+schema, no composite identity fields; M63/P223/C144) pass through as the same objects. A partial in-row schema is unscored."""
 from __future__ import annotations
 
 import json
@@ -36,15 +36,25 @@ def row_key(row):
     return (row.get("model"), row.get("id"), row.get("sample", 0), row.get("session_id"))
 
 
-def has_inrow_fields(row):
-    return any(k in row for k in SCORE_FIELDS + OPTIONAL_FIELDS)
+IDENTITY_FIELDS = ("generation_identity_sha256", "arm_identity_sha256")
+
+
+def is_tg1(row):
+    return str(row.get("scaffold", "")).startswith("opencode-v2-web-tg1")
+
+
+def is_legacy(row):
+    """The explicit legacy discriminator (review L7): a tg1 row from before P311-lite carries NO composite identity
+    field AND the complete in-row scoring schema (all seven fields the old probe always wrote). Anything else, a
+    partial row, a current-epoch row, a sidecar-merged copy, is not legacy and must come through the join."""
+    return (is_tg1(row) and not any(k in row for k in IDENTITY_FIELDS)
+            and all(k in row for k in SCORE_FIELDS))
 
 
 def needs_sidecar(row):
-    """A tg1 row (scaffold `opencode-v2-web-tg1`, incl. the inject labels) whose scoring fields are not in the row
-    itself: every post-P311-lite tg1 row. The standard v2 probe still scores in-process, so a standard row is read
-    from its own fields; older tg1 rows (P223, M63, c144-base) carry in-row fields and are legacy."""
-    return str(row.get("scaffold", "")).startswith("opencode-v2-web-tg1") and not has_inrow_fields(row)
+    """A tg1 row that is not a complete legacy row. The standard v2 probe still scores in-process, so a standard row is
+    read from its own fields."""
+    return is_tg1(row) and not is_legacy(row)
 
 
 def scoring_code_sha256(repo=None):

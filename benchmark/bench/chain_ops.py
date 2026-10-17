@@ -17,10 +17,6 @@ import time
 import urllib.request
 from pathlib import Path
 
-# P311-lite: the campaign scaffold policy now embeds the runtime toolchain (bench lock sha, interpreter, local grader image
-# id), so this value is the one printed by `run_tg1_probe.py --print-identity` on THIS box (m5max-128, 2026-10-17). A box
-# with another image id or interpreter passes its own value with `--policy-sha` (and `--universe`).
-CAMPAIGN_POLICY_SHA = "e109dcc4c54bf6b07ca5c4bf6e405187388d60b60c46664d43bd10ce415cd54b"
 SCAFFOLD = "opencode-v2-web-tg1"
 PICK1 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 PICK2 = "Qwen3.8-27B-mlx-uniform-4bit"
@@ -740,7 +736,8 @@ def composite_sha(runtime):
 # P24 (spec 3): the chain's own lifecycle code is frozen at chain creation and re-verified before every launch,
 # barrier, validation, resume and at exit. Repo-relative; `lifecycle_files` resolves them (tests pass temp copies).
 LIFECYCLE_FILES = {"runner": "benchmark/chains/c147/run_tg1_chain.py", "chain_ops": "benchmark/bench/chain_ops.py",
-                   "gate": "scripts/session_pinning_gate.py", "launcher": "benchmark/chains/c147/drive_chain.sh"}
+                   "gate": "scripts/session_pinning_gate.py", "launcher": "benchmark/chains/c147/drive_chain.sh",
+                   "launch_tg1": "benchmark/chains/c147/launchers/launch_tg1.sh"}
 
 
 def lifecycle_files(repo):
@@ -834,7 +831,7 @@ def typed_worker(w):
             and isinstance(w.get("registry_sha256"), str) and bool(HEX64.match(w["registry_sha256"])))
 
 
-def validate_leg(leg, pinned, workdir=None, policy_sha=CAMPAIGN_POLICY_SHA):
+def validate_leg(leg, pinned, workdir=None, policy_sha=None):
     """Completion = validation (spec 3). Returns a list of `code: detail` failure reasons; [] means complete.
 
     leg: {session, model, lang, seed_base, expected_ids, out, rc}. pinned: runtime field -> value (None = not yet
@@ -871,6 +868,9 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=CAMPAIGN_POLICY_SHA):
         why.append(f"runtime_lang: {rt.get('lang')} != {leg['lang']}")
     if rt.get("scaffold") != SCAFFOLD:
         why.append(f"runtime_scaffold: {rt.get('scaffold')}")
+    policy_sha = policy_sha or pinned.get("scaffold_policy_sha256")    # P362: derived from the probe, never a constant
+    if not policy_sha:
+        why.append("pinned_incomplete: scaffold_policy_sha256 not pinned")
     if rt.get("scaffold_policy_sha256") != policy_sha:
         why.append(f"runtime_scaffold_policy_sha256: {rt.get('scaffold_policy_sha256')}")
     if rt.get("draft_kind") != leg.get("draft_kind", "off"):              # M63: the leg's predictor

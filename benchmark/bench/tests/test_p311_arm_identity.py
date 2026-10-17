@@ -46,8 +46,11 @@ def hf(tmp_path):
     return tmp_path
 
 
-def sha(argv, entry, hf_home):
-    return ai.arm_identity_sha256(ai.fingerprint(argv, entry, hf_home=hf_home))
+APC_OFF = {"router": "0", "worker": "0"}
+
+
+def sha(argv, entry, hf_home, apc=APC_OFF):
+    return ai.arm_identity_sha256(ai.fingerprint(argv, entry, hf_home=hf_home, apc=apc))
 
 
 def with_flag(argv, flag, value):
@@ -162,8 +165,89 @@ def test_entry_presentation_does_not_matter_but_other_entry_keys_do(hf):
 
 
 def test_fingerprint_is_json_and_home_normalised(hf):
-    fp = ai.fingerprint(ARGV_ON, ENTRY_ON, hf_home=hf)
+    fp = ai.fingerprint(ARGV_ON, ENTRY_ON, hf_home=hf, apc=APC_OFF)
     text = json.dumps(fp)
     assert "/Users/" not in text and str(hf) not in text
     assert fp["target"]["repo"] == TARGET and fp["draft"]["repo"] == DRAFT
     assert fp["target"]["revision"] == "a" * 40
+
+
+# ---- review L1: every flag mlx-serve's _build_command emits is classified
+FIXTURE = Path(__file__).parent / "fixtures/p311_worker_argv.json"
+
+
+def test_the_recorded_argv_of_both_picks_off_and_mtp_parses():
+    """Generated from mlx-serve's own `_build_command` over main_models.yaml (both picks, predictor OFF and MTP);
+    `--cache-session-shrink` (deployed on the first pick) is classified inert: it compacts idle KV padding and restores
+    the full floor on active reuse (main_models.yaml C85; provenance.registry_kv: retirement changes resource use, not
+    stored KV values; AGENTS.md: honour shrink only while idle). Unknown flags still refuse."""
+    recorded = json.loads(FIXTURE.read_text())
+    assert len(recorded) == 4
+    for key, argv in recorded.items():
+        flags = ai.parse_argv(argv)
+        assert "--model" in flags, key
+        assert ("--draft-kind" in flags) == key.endswith("|mtp"), key
+    first = ai.parse_argv(recorded["Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed|off"])
+    assert first["--cache-session-shrink"] == "on"
+
+
+def test_cache_session_shrink_is_inert_and_every_emitted_flag_is_classified():
+    shrink = with_flag(ARGV, "--cache-session-shrink", "on")
+    assert "--cache-session-shrink" in ai.INERT_VALUE_FLAGS
+    assert ai.parse_argv(shrink)["--cache-session-shrink"] == "on"
+    for flag in ("--max-tokens", "--max-kv-cache-size", "--kv-quant-mode", "--reasoning-parser", "--tool-call-parser"):
+        assert flag in ai.OUTPUT_VALUE_FLAGS, flag
+    for bad in ("--surprise", "--cache-session-shrunk"):
+        with pytest.raises(ai.ArmIdentityError):
+            ai.parse_argv(ARGV + [bad, "1"])
+
+
+def test_shrink_does_not_change_the_arm_identity(hf):
+    assert sha(with_flag(ARGV, "--cache-session-shrink", "on"), ENTRY, hf) == sha(ARGV, ENTRY, hf)
+
+
+# ---- review L2: APC state from the verified router / worker environment
+def test_apc_state_is_part_of_the_arm_identity(hf):
+    base = sha(ARGV, ENTRY, hf)
+    assert sha(ARGV, ENTRY, hf, apc={"router": "1", "worker": "0"}) != base
+    assert sha(ARGV, ENTRY, hf, apc={"router": "0", "worker": "1"}) != base
+
+
+@pytest.mark.parametrize("apc", [None, {}, {"router": "0"}, {"router": None, "worker": "0"}, {"router": "0", "worker": ""}])
+def test_unreadable_apc_state_refuses(hf, apc):
+    with pytest.raises(ai.ArmIdentityError, match="APC"):
+        sha(ARGV, ENTRY, hf, apc=apc)
+
+
+def test_observe_reads_apc_from_the_router_and_worker_environments(monkeypatch, tmp_path, hf):
+    from bench import provenance
+    reg = tmp_path / "reg.yaml"
+    reg.write_text("mlx_port: 8091\nmanager_port: 8000\nmodels:\n  - name: m\n    hf_path: " + TARGET + "\n")
+    monkeypatch.setattr(provenance, "_port_listener_pids", lambda port: [777])
+    monkeypatch.setattr(provenance, "_worker_argvs", lambda doc: [ARGV])
+    monkeypatch.setattr(provenance, "_descends_from", lambda pid, anc: True)
+    envs = {111: {"PATH": "x"}, 777: {"APC_ENABLED": "1"}}
+    fp, sha_on = ai.observe("m", {"pid": 111}, registry_path=reg, hf_home=hf, env_reader=lambda pid: envs[pid])
+    assert fp["apc"] == {"router": "0", "worker": "1"}
+    envs[777] = {}
+    assert ai.observe("m", {"pid": 111}, registry_path=reg, hf_home=hf, env_reader=lambda pid: envs[pid])[1] != sha_on
+
+    def denied(pid):
+        raise PermissionError("environ")
+    with pytest.raises(ai.ArmIdentityError, match="APC"):
+        ai.observe("m", {"pid": 111}, registry_path=reg, hf_home=hf, env_reader=denied)
+
+
+def test_every_flag_literal_in_mlx_serve_build_command_is_classified():
+    """Drift guard when the fork source is available (MLX_SERVE_SRC=<mlx-serve>/src, or the src/mlx-serve submodule)."""
+    import re
+    root = Path(os.environ.get("MLX_SERVE_SRC") or Path(__file__).resolve().parents[3] / "src/mlx-serve/src")
+    source = root / "mlx_serve/process_manager.py"
+    if not source.is_file():
+        pytest.skip("mlx-serve source not available (set MLX_SERVE_SRC)")
+    text = source.read_text()
+    body = text[text.index("def _build_command"):]
+    body = body[:body.index("\ndef ", 10)] if "\ndef " in body[10:] else body
+    literals = set(re.findall(r'"(--[a-z][a-z0-9-]*)"', body))
+    known = set(ai.OUTPUT_VALUE_FLAGS) | set(ai.OUTPUT_BOOL_FLAGS) | set(ai.INERT_VALUE_FLAGS)
+    assert literals and literals <= known, sorted(literals - known)

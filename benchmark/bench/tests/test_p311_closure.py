@@ -177,3 +177,57 @@ def test_every_repo_local_module_loaded_by_a_fake_end_to_end_item_is_in_the_clos
     assert {"benchmark/run_tg1_probe.py", "benchmark/bench/tg1_runner.py", "benchmark/bench/proc_guard.py"} <= loaded
     outside = sorted(loaded - real_closure())
     assert not outside, outside
+
+
+# ---- review L6: entry-rooted reachability (spec 3c), allow-list, runtime-path coverage
+REACH = {
+    "benchmark/entry.py": "from bench import a\nimport sys\n\ndef main():\n    a.used()\n",
+    "benchmark/bench/__init__.py": "",
+    "benchmark/bench/a.py": ("from . import b\n\ndef used():\n    return b.f()\n\n"
+                              "def never_called():\n    import dead\n    return dead\n"),
+    "benchmark/bench/b.py": "def f():\n    import lazy\n    return lazy\n",
+    "benchmark/lazy.py": "X = 1\n",
+    "benchmark/dead.py": "Y = 1\n",
+}
+
+
+def test_reachability_follows_calls_and_ignores_imports_in_never_referenced_functions(tmp_path):
+    repo = tree(tmp_path, REACH)
+    static = {p.relative_to(repo).as_posix() for p in ic.python_closure(repo / "benchmark/entry.py", repo)}
+    assert "benchmark/dead.py" in static                               # the static walk sees every import
+    reached = ic.reachable_modules(repo / "benchmark/entry.py", repo)
+    assert "benchmark/lazy.py" in reached and "benchmark/dead.py" not in reached
+
+
+def test_reachability_resolves_calls_through_an_injected_object(tmp_path):
+    files = {**REACH, "benchmark/entry.py": "from bench import a\n\ndef main(p):\n    p.never_called()\n"}
+    reached = ic.reachable_modules(tree(tmp_path, files) / "benchmark/entry.py", tmp_path)
+    assert "benchmark/dead.py" in reached                              # `p.never_called` may be that function
+
+
+# modules the static closure holds but no tg1 path in the real fake end-to-end run executes
+RUNTIME_ALLOW = {
+    "benchmark/bench/client.py": "provenance.gather's `router is None` branch (`router_block(client.BASE)`); the tg1 "
+                                 "probe always passes the verified router, other callers of gather do not",
+}
+
+
+def test_every_real_closure_module_is_reachable_from_the_entry():
+    reached = set(ic.reachable_modules(REPO / ENTRY, REPO))
+    unreachable = sorted(real_closure() - reached)
+    assert not unreachable, unreachable
+
+
+def test_every_closure_module_is_loaded_by_the_fake_end_to_end_item_or_allow_listed(tmp_path):
+    out = tmp_path / "modules.json"
+    env = {**__import__("os").environ, "P311_REPO": str(REPO), "P311_MODULES_OUT": str(out)}
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "--noconftest", "-p", "bench.tests.p311_modules_plugin",
+         "-p", "no:cacheprovider", "-q",
+         "bench/tests/test_tg1_integration.py::test_mocked_tg1_rows_evidence_resume_and_worker_drift"],
+        cwd=REPO / "benchmark", env=env, capture_output=True, text=True, timeout=300)
+    assert run.returncode == 0, run.stdout[-1500:]
+    loaded = set(__import__("json").loads(out.read_text()))
+    never = sorted(real_closure() - loaded - set(RUNTIME_ALLOW))
+    assert not never, never
+    assert all(RUNTIME_ALLOW[k].strip() for k in RUNTIME_ALLOW) and set(RUNTIME_ALLOW) <= real_closure()

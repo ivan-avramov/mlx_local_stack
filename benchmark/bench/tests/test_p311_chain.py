@@ -57,7 +57,7 @@ def leg_env(tmp_path, monkeypatch):
     ids = ["python/alpha", "python/beta"]
     out = tmp_path / "c147/s1" / f"{PICK1}.s1.opencode_python.jsonl"
     FP.write_leg(out, PICK1, "python", 1001, ids, WORKER, tmp_path)
-    pinned = {"scaffold_policy_sha256": co.CAMPAIGN_POLICY_SHA, "probe_code_sha256": "9" * 64,
+    pinned = {"scaffold_policy_sha256": FP.CAMPAIGN, "probe_code_sha256": "9" * 64,
               "serving_path": FP.SERVING, "registry_sha256": "a" * 64}
     leg = dict(session="s1", model=PICK1, lang="python", seed_base=1001, expected_ids=ids, out=str(out), rc=0)
     return leg, pinned, out, tmp_path
@@ -191,12 +191,12 @@ def test_lifecycle_is_frozen_in_chain_json_and_an_unchanged_chain_completes(env)
     files = lifecycle_copy(env["wd"])
     assert run(env, CHAIN, lifecycle=files) == 0
     cj = chain_json(env)
-    assert set(cj["lifecycle"]) == {"runner", "chain_ops", "gate", "launcher"}
+    assert set(cj["lifecycle"]) == {"runner", "chain_ops", "gate", "launcher", "launch_tg1"}
     assert cj["lifecycle"] == co.lifecycle_shas(files)
-    assert all(len(cj["sha256"][k]) == 64 for k in ("runner", "chain_ops", "gate", "overlay", "launcher"))
+    assert all(len(cj["sha256"][k]) == 64 for k in ("runner", "chain_ops", "gate", "overlay", "launcher", "launch_tg1"))
 
 
-@pytest.mark.parametrize("name", ["runner", "chain_ops", "gate", "launcher"])
+@pytest.mark.parametrize("name", ["runner", "chain_ops", "gate", "launcher", "launch_tg1"])
 def test_lifecycle_drift_between_legs_aborts_before_the_next_launch(env, name):
     files = lifecycle_copy(env["wd"])
     ops = env["ops"]
@@ -237,3 +237,94 @@ def test_lifecycle_drift_names_exactly_the_changed_files(tmp_path):
     touch(files["gate"])
     files["launcher"].unlink()                                    # a vanished file is drift too
     assert co.lifecycle_drift(frozen, files) == ["gate", "launcher"]
+
+
+# ---------------------------------------------------------------- review L3: the active launcher is frozen
+def test_the_launcher_the_operator_actually_uses_is_in_the_lifecycle():
+    assert co.LIFECYCLE_FILES["launch_tg1"] == "benchmark/chains/c147/launchers/launch_tg1.sh"
+    assert (REPO / co.LIFECYCLE_FILES["launch_tg1"]).is_file() and (REPO / co.LIFECYCLE_FILES["launcher"]).is_file()
+
+
+# ---------------------------------------------------------------- review L4: an existing chain.json must be complete
+def valid_chain_json(env):
+    files = lifecycle_copy(env["wd"])
+    assert run(env, PILOT, lifecycle=files) == 0
+    return files, env["out"] / "chain.json"
+
+
+def _rewrite(path, fn):
+    doc = json.loads(path.read_text())
+    fn(doc)
+    path.write_text(json.dumps(doc))
+
+
+@pytest.mark.parametrize("name,damage", [
+    ("not json", lambda path: path.write_text("{ torn")),
+    ("binary", lambda path: path.write_bytes(b"\xff\xfe\x00")),
+    ("empty object", lambda path: path.write_text("{}")),
+    ("no lifecycle", lambda path: _rewrite(path, lambda d: d.pop("lifecycle"))),
+    ("lifecycle null", lambda path: _rewrite(path, lambda d: d.update(lifecycle=None))),
+    ("lifecycle missing a file", lambda path: _rewrite(path, lambda d: d["lifecycle"].pop("gate"))),
+    ("lifecycle extra file", lambda path: _rewrite(path, lambda d: d["lifecycle"].update(other="a" * 64))),
+    ("lifecycle not hex", lambda path: _rewrite(path, lambda d: d["lifecycle"].update(gate="nothex"))),
+    ("arms absent", lambda path: _rewrite(path, lambda d: d.pop("arms"))),
+    ("arm value not hex", lambda path: _rewrite(path, lambda d: d.update(arms={"m|off": "short"}))),
+    ("pinned not a dict", lambda path: _rewrite(path, lambda d: d.update(pinned=[]))),
+    ("pinned composite malformed", lambda path: _rewrite(path, lambda d: d["pinned"].update(generation_identity_sha256="x"))),
+    ("policy absent", lambda path: _rewrite(path, lambda d: d.pop("policy_sha256"))),
+    ("policy malformed", lambda path: _rewrite(path, lambda d: d.update(policy_sha256="x"))),
+])
+def test_an_existing_malformed_chain_json_refuses_and_is_never_overwritten(env, name, damage):
+    files, path = valid_chain_json(env)
+    damage(path)
+    before, launched = path.read_bytes(), len(invocations(env))
+    assert run(env, CHAIN, lifecycle=files) == 2
+    assert log_has(env, "chain.json") and path.read_bytes() == before and len(invocations(env)) == launched
+
+
+def test_a_valid_existing_chain_json_resumes(env):
+    files, path = valid_chain_json(env)
+    assert run(env, CHAIN, lifecycle=files) == 0
+
+
+# ---------------------------------------------------------------- review L9 (P362): the expected policy comes from the probe
+def identity_calls(env):
+    path = env["ops"].state / "identity_calls.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_the_expected_policy_sha_is_derived_from_the_probes_print_identity_and_frozen(env):
+    assert run(env, CHAIN) == 0
+    cj = chain_json(env)
+    assert cj["policy_sha256"] == FP.CAMPAIGN == cj["pinned"]["scaffold_policy_sha256"]
+    calls = identity_calls(env)
+    assert len(calls) == 1 and "--universe" in calls[0]["argv"]
+    assert calls[0]["argv"][calls[0]["argv"].index("--universe") + 1] == str(env["uni"].resolve())
+    assert len(invocations(env)) == 6                               # print-identity is not a generation attempt
+
+
+def test_a_supplied_policy_sha_is_only_an_assertion(env):
+    assert run(env, CHAIN + ["--policy-sha", "5" * 64]) == 2
+    assert log_has(env, "policy") and invocations(env) == []
+    assert run(env, CHAIN + ["--policy-sha", FP.CAMPAIGN]) == 0
+
+
+def test_resume_reverifies_the_frozen_policy_against_the_probe(env):
+    files = lifecycle_copy(env["wd"])
+    assert run(env, PILOT, lifecycle=files) == 0
+    launched = len(invocations(env))
+    assert run(env, CHAIN, lifecycle=files, extra_env={"FAKE_PRINT_POLICY_SHA": "4" * 64,
+                                                       "FAKE_POLICY_SHA": "4" * 64}) == 2
+    assert log_has(env, "policy") and len(invocations(env)) == launched
+    assert chain_json(env)["policy_sha256"] == FP.CAMPAIGN
+
+
+@pytest.mark.parametrize("mode", ["fail", "garbage", "malformed"])
+def test_a_probe_that_cannot_print_its_identity_refuses(env, mode):
+    assert run(env, CHAIN, extra_env={"FAKE_PRINT_MODE": mode}) == 2
+    assert log_has(env, "print-identity") and invocations(env) == []
+
+
+def test_no_policy_constant_survives():
+    from bench import tg1_runner
+    assert not hasattr(co, "CAMPAIGN_POLICY_SHA") and not hasattr(tg1_runner, "CAMPAIGN_POLICY_SHA256")

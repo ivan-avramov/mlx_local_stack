@@ -13,7 +13,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import answer_key, row_scores, stats  # noqa: E402
+from bench import answer_key, row_scores, stats, tg1_pairing  # noqa: E402
 
 RES = REPO / "benchmark/results"
 P1, P2 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "Qwen3.8-27B-mlx-uniform-4bit"
@@ -69,7 +69,7 @@ p("## Per leg (answer_key.report_rows, inline web audit)\n")
 p("| model | lang | session | acc_strict | 95% CI | lenient | nonconv kinds | web fetches | answer-key contact | "
   "audit incomplete | provisional | mean wall s | leg wall h |")
 p("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
-items, raw, provisional = {}, {}, []
+items, raw, provisional, scored_by = {}, {}, [], {}
 for m in (P1, P2):
     for lang in LANGS:
         for s in SESS:
@@ -82,6 +82,7 @@ for m in (P1, P2):
             pm = rep["per_model"].get(m, {})
             it = {k: v for k, v in rep["strict_items"].items() if k not in INVALID}
             items[(m, lang, s)] = it
+            scored_by[(m, lang, s)] = rep["scored_rows"]
             if pm.get("provisional"):
                 provisional.append(f"{m} {lang} {s} (missing audits {pm.get('missing_audits')})")
             cb = stats.cluster_bootstrap(it, iters=20000, seed=223)
@@ -94,9 +95,26 @@ for m in (P1, P2):
             web = sum(len(r.get("web_fetches") or []) for r in rs)
             contact = sum(bool(r.get("answer_key_contact")) for r in rs)
             inc = sum(bool(r.get("web_audit_incomplete")) for r in rs)
+            unk = sum(bool(r.get("score_unscored")) for r in rs)        # L8: unscored rows are unknown, not zero
+            if unk:
+                web, contact, inc = (f"unknown ({unk} unscored)",) * 3
             p(f"| {m} | {lang} | {s} | {ok}/{len(it)} = {ok / len(it):.3f} | [{cb['lo']:.2f}, {cb['hi']:.2f}] | "
               f"{lenient}/{len(rs)} | {kinds} | {web} | {contact} | {inc} | {pm.get('provisional')} | "
               f"{sum(r['wall_s'] for r in rs) / len(rs):.0f} | {sum(r['wall_s'] for r in rs) / 3600:.1f} |")
+
+# L5: current-epoch rows pair only on equal generation composite and prompt date (legacy rows pass through untouched)
+gate_notes = []
+for s in SESS:
+    for lang in LANGS:
+        a, b, gate = tg1_pairing.gate_items(items[(P1, lang, s)], scored_by[(P1, lang, s)],
+                                            items[(P2, lang, s)], scored_by[(P2, lang, s)])
+        if gate is not None:
+            items[(P1, lang, s)], items[(P2, lang, s)] = a, b
+            gate_notes.append(tg1_pairing.gate_note(f"{s} {lang}", gate))
+if gate_notes:
+    p("\n## Pairing gate (generation composite + arm identities + prompt date)\n")
+    for note in gate_notes:
+        p(note)
 
 p("\n## Per-item consistency across sessions\n")
 for m in (P1, P2):

@@ -47,3 +47,28 @@ def pair_rows(rows_a, rows_b):
         else:
             out["paired"].append((a, b))
     return out
+
+
+def gate_items(items_a, rows_a, items_b, rows_b):
+    """Report gate (review L5). `items_*` is {item id: [scores]} and `rows_*` the scored rows behind it. When neither
+    side holds a current-epoch row (the legacy P223 / M63 / c144-base data) the inputs come back unchanged with report
+    None, so legacy reports are byte-identical. Otherwise only items whose two rows share the generation composite and
+    the prompt date stay in the paired inputs; the rest are listed separately, never paired."""
+    rows_a, rows_b = list(rows_a), list(rows_b)
+    if not any(is_current(r) for r in rows_a + rows_b):
+        return items_a, items_b, None
+    got = pair_rows(rows_a, rows_b)
+    ok = {a["id"] for a, _ in got["paired"]}
+    report = {"paired": sorted(ok),
+              "date_mismatch": sorted(a["id"] for a, _ in got["date_mismatch"]),
+              "generation_mismatch": sorted(a["id"] for a, _ in got["generation_mismatch"]),
+              "legacy": sorted({r["id"] for r in got["legacy"]}),
+              "unpaired": sorted({r["id"] for r in got["unpaired_a"] + got["unpaired_b"]})}
+    return ({k: v for k, v in items_a.items() if k in ok}, {k: v for k, v in items_b.items() if k in ok}, report)
+
+
+def gate_note(label, report):
+    """One line per non-empty mismatch class (descriptive; these items are NOT in the paired deltas)."""
+    parts = [f"{key.replace('_', ' ')}: {report[key]}" for key in
+             ("date_mismatch", "generation_mismatch", "legacy", "unpaired") if report[key]]
+    return f"- pairing gate {label}: {len(report['paired'])} paired" + ("; excluded " + "; ".join(parts) if parts else "")

@@ -45,6 +45,10 @@ def part(name, inputs, content=None):
     return {"type": "tool", "name": name, "state": {"input": inputs, "status": "completed", "content": content}}
 
 
+FULL_LEGACY = {"web_fetches": [], "net_shell": [], "web_denied": 0, "subagent_calls": 0, "web_audit_incomplete": False,
+               "answer_key_contact": False, "answer_key_evidence": []}
+
+
 def make_row(w, item="python/one", *, texts=(), session="ses_1", **extra):
     """A new-style tg1 row (no web fields) plus its stored transcript; returns the row."""
     parts = [part("webfetch", {"url": f"https://example.test/{i}"}, t) for i, t in enumerate(texts)]
@@ -145,7 +149,7 @@ def test_tg1_score_refuses_a_transcript_that_does_not_match_the_row_hash(world):
 
 
 def test_tg1_score_never_scores_legacy_rows(world):
-    legacy_row = make_row(world, texts=["x"], web_fetches=[], answer_key_contact=False)
+    legacy_row = make_row(world, texts=["x"], **FULL_LEGACY)
     write_rows(world, [legacy_row])
     assert tg1_score.score_rows(world["rows"])["written"] == 0
 
@@ -165,7 +169,7 @@ def test_join_merges_the_sidecar_fields_into_a_copy(world):
 
 
 def test_join_legacy_rows_pass_through_as_the_same_objects(world):
-    legacy_tg1 = {"id": "python/one", "model": "m", "scaffold": SCAFFOLD, "web_fetches": [], "answer_key_contact": False}
+    legacy_tg1 = {"id": "python/one", "model": "m", "scaffold": SCAFFOLD, **FULL_LEGACY}
     standard = {"id": "python/one", "model": "m", "scaffold": "opencode-v2-web", "passed": True}   # scored in-process
     rows = [legacy_tg1, standard]
     out = row_scores.effective_rows(rows, None)
@@ -282,3 +286,40 @@ def test_print_identity_reports_the_scoring_code_sha_without_importing_scoring_i
     assert out["scoring_code_sha256"] == row_scores.scoring_code_sha256()
     assert (tg1_runner.SCORING_ENTRY, tg1_runner.SCORING_DATA) == (row_scores.SCORING_ENTRY, row_scores.SCORING_DATA)
     assert out["scoring_code_sha256"] != out["probe_code_sha256"]
+
+
+# ---- review L7: an explicit legacy discriminator
+@pytest.mark.parametrize("partial", [{"web_fetches": []}, {"answer_key_contact": False},
+                                     {k: v for k, v in FULL_LEGACY.items() if k != "answer_key_evidence"},
+                                     {"web_audit_error": "x"}])
+def test_a_partial_in_row_schema_is_unscored_not_legacy(world, partial):
+    row = make_row(world, texts=["x"], **partial)
+    assert row_scores.needs_sidecar(row)
+    out, = row_scores.effective_rows([row], sidecar(world))
+    assert out["score_unscored"] == "missing"
+
+
+def test_current_epoch_rows_are_never_legacy_even_with_full_in_row_fields(world):
+    row = make_row(world, texts=["x"], generation_identity_sha256="a" * 64, arm_identity_sha256="b" * 64, **FULL_LEGACY)
+    assert row_scores.needs_sidecar(row) and not row_scores.is_legacy(row)
+    assert row_scores.effective_rows([row], None)[0]["score_unscored"] == "missing"
+
+
+def test_a_sidecar_merged_row_is_not_an_authoritative_legacy_row(world):
+    row = make_row(world, texts=[REFERENCE], generation_identity_sha256="a" * 64, arm_identity_sha256="b" * 64)
+    out, = scored(world, [row])
+    assert out["answer_key_contact"] is True and not row_scores.is_legacy(out) and row_scores.needs_sidecar(out)
+    # handing the merged row back to a reader with no sidecar must not make it authoritative
+    assert row_scores.effective_rows([out], None)[0]["score_unscored"] == "missing"
+
+
+def test_complete_legacy_tg1_rows_still_pass_through(world):
+    row = make_row(world, texts=["x"], **FULL_LEGACY)
+    assert row_scores.is_legacy(row) and row_scores.effective_rows([row], None)[0] is row
+
+
+# ---- review L8: unscored rows are unknown in the displayed counters
+def test_unscored_rows_are_marked_for_the_reports(world):
+    row = make_row(world, texts=["x"])
+    out, = row_scores.effective_rows([row], None)
+    assert out["score_unscored"] and not out.get("web_fetches") and not out.get("answer_key_contact")

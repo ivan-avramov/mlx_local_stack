@@ -1018,7 +1018,7 @@ def test_mandatory_identity_enforced_at_pin_validate_and_barrier(env, tmp_path, 
     with pytest.raises(_co.ChainAbort, match=field):
         _chain_for(env).pin_from({"out": str(out)})
     # 2. validate_leg
-    pinned = {"scaffold_policy_sha256": _co.CAMPAIGN_POLICY_SHA, "probe_code_sha256": "9" * 64}
+    pinned = {"scaffold_policy_sha256": FP.CAMPAIGN, "probe_code_sha256": "9" * 64}
     leg = dict(session="s", model=PICK1, lang="python", seed_base=1001, expected_ids=["python/a"], out=str(out), rc=0)
     assert any(w.startswith(f"runtime_{field}_invalid") for w in _co.validate_leg(leg, pinned, tmp_path))
     # 3. first-manifest barrier
@@ -1046,7 +1046,7 @@ def test_serving_path_and_registry_mandatory_at_three_points(env, tmp_path, mut,
     mp.write_text(json.dumps(man))
     with pytest.raises(_co.ChainAbort):
         _chain_for(env).pin_from({"out": str(out)})
-    pinned = {"scaffold_policy_sha256": _co.CAMPAIGN_POLICY_SHA, "probe_code_sha256": "9" * 64}
+    pinned = {"scaffold_policy_sha256": FP.CAMPAIGN, "probe_code_sha256": "9" * 64}
     leg = dict(session="s", model=PICK1, lang="python", seed_base=1001, expected_ids=["python/a"], out=str(out), rc=0)
     assert any(w.startswith(f"{name}_invalid") for w in _co.validate_leg(leg, pinned, tmp_path))
     why = _chain_for(env).verify_manifest(man, dict(model=PICK1, lang="python", seed_base=1001),
@@ -1153,7 +1153,9 @@ def test_p351_no_universe_given_none_forwarded():
 
 
 def test_p351_policy_sha_expected_at_barrier_and_validation(env):
-    rc = run(env, CHAIN + ["--policy-sha", P351_POLICY], extra_env={"FAKE_POLICY_SHA": P351_POLICY})
+    # P362: a supplied --policy-sha is an ASSERTION against what the configured probe's --print-identity derives
+    rc = run(env, CHAIN + ["--policy-sha", P351_POLICY],
+             extra_env={"FAKE_POLICY_SHA": P351_POLICY, "FAKE_PRINT_POLICY_SHA": P351_POLICY})
     assert rc == 0
     assert chain_json(env)["pinned"]["scaffold_policy_sha256"] == P351_POLICY
 
@@ -1165,12 +1167,12 @@ def test_p351_policy_sha_mismatch_aborts(env):
 
 
 def test_p351_policy_sha_parse_rules():
-    assert R.parse_args(CHAIN).policy_sha == co.CAMPAIGN_POLICY_SHA
-    for bad in (CHAIN + ["--policy-sha", "xyz"],                                   # not 64-hex
-                CHAIN + ["--policy-sha", P351_POLICY]):                            # changed policy, tg1 universe
-        with pytest.raises(SystemExit) as e:
-            R.parse_args(bad)
-        assert e.value.code == 2
+    """P362: no default constant, no --universe coupling; the value is only checked for shape."""
+    assert R.parse_args(CHAIN).policy_sha is None
+    with pytest.raises(SystemExit) as e:
+        R.parse_args(CHAIN + ["--policy-sha", "xyz"])                                  # not 64-hex
+    assert e.value.code == 2
+    assert R.parse_args(CHAIN + ["--policy-sha", P351_POLICY]).policy_sha == P351_POLICY
     assert R.parse_args(CHAIN + ["--policy-sha", P351_POLICY, "--universe", "/u.json"]).policy_sha == P351_POLICY
 
 
@@ -1185,4 +1187,8 @@ def test_p351_validate_leg_policy_sha_parameter(tmp_path, monkeypatch):
     pinned = {"scaffold_policy_sha256": P351_POLICY, "probe_code_sha256": "9" * 64, "serving_path": FP.SERVING,
               "registry_sha256": "a" * 64}
     assert co.validate_leg(leg, pinned, tmp_path, policy_sha=P351_POLICY) == []
-    assert any(w.startswith("runtime_scaffold_policy_sha256") for w in co.validate_leg(leg, pinned, tmp_path))
+    assert any(w.startswith("runtime_scaffold_policy_sha256") for w in
+               co.validate_leg(leg, pinned, tmp_path, policy_sha="8" * 64))
+    assert co.validate_leg(leg, pinned, tmp_path) == []                       # defaults to the pinned (derived) value
+    unpinned = {k: v for k, v in pinned.items() if k != "scaffold_policy_sha256"}
+    assert any(w.startswith("pinned_incomplete") for w in co.validate_leg(leg, unpinned, tmp_path))

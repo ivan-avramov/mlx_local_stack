@@ -91,3 +91,29 @@ def test_pairing_never_pairs_a_legacy_row_with_a_current_one():
 def test_pair_identity_is_the_composite_each_arm_and_the_date():
     pair = tg1_pairing.pair_identity(row("python/x", arm="A"), row("python/x", arm="B"))
     assert pair == ("g", "A", "B", "Fri Oct 16 2026")
+
+
+# ---- review L5: the reports gate current-epoch rows through the pairing
+def test_gate_items_is_a_passthrough_on_legacy_rows():
+    ia, ib = {"python/x": [1]}, {"python/x": [0]}
+    legacy_rows = [{"id": "python/x", "sample": 0}]
+    a, b, report = tg1_pairing.gate_items(ia, legacy_rows, ib, legacy_rows)
+    assert a is ia and b is ib and report is None
+
+
+def test_gate_items_keeps_only_equal_generation_and_date_pairs_and_lists_the_rest():
+    ra = [row("python/x", arm="A"), row("python/y", arm="A"), row("python/z", arm="A")]
+    rb = [row("python/x", arm="B"), row("python/y", arm="B", date="Sat Oct 17 2026"), row("python/z", arm="B", gen="o")]
+    ia = {"python/x": [1], "python/y": [1], "python/z": [1]}
+    ib = {"python/x": [0], "python/y": [0], "python/z": [0]}
+    a, b, report = tg1_pairing.gate_items(ia, ra, ib, rb)
+    assert list(a) == list(b) == ["python/x"]
+    assert report["date_mismatch"] == ["python/y"] and report["generation_mismatch"] == ["python/z"]
+    assert "date mismatch: ['python/y']" in tg1_pairing.gate_note("s1 python", report)
+
+
+@pytest.mark.parametrize("script", ["p223_tg1/tg1_report.py", "m63_mtp/m63_report.py", "c144_base/c144base_report.py"])
+def test_every_report_script_gates_through_the_pairing(script):
+    from pathlib import Path
+    text = (Path(__file__).resolve().parents[2] / "results" / script).read_text()
+    assert "tg1_pairing.gate_items" in text and "tg1_pairing.gate_note" in text

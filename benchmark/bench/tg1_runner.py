@@ -36,7 +36,6 @@ HEARTBEAT_INTERVAL_S = 30
 GRACEFUL_CLIENT_S = 15
 ACK_TIMEOUT_S = 300
 ACK_POLL_S = 0.5
-CAMPAIGN_POLICY_SHA256 = "e109dcc4c54bf6b07ca5c4bf6e405187388d60b60c46664d43bd10ce415cd54b"
 
 # P311-lite: the non-Python inputs of the generation identity (plugins and the carrier the probe writes); the Python
 # part is the static import closure of the tg1 entry (`bench.identity_closure`), not a hand-kept module list.

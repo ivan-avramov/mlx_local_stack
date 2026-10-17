@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from bench import chain_ops, rowschema  # noqa: E402
 
-CAMPAIGN = "e109dcc4c54bf6b07ca5c4bf6e405187388d60b60c46664d43bd10ce415cd54b"
+CAMPAIGN = "c" * 64          # the fake probe's own policy value (P362: no real constant exists)
 SCAFFOLD = "opencode-v2-web-tg1"
 SERVING = {"src/mlx-vlm": "5" * 64, "src/mlx-serve": "6" * 64}
 
@@ -148,7 +148,32 @@ def write_leg(out, model, lang, seed_base, ids, worker, wd, run_id="fixture-run"
 
 
 # --------------------------------------------------------------------------- the probe
+def print_identity(argv):
+    """`--print-identity [--universe U]` as the real probe answers it: JSON with the expected scaffold_policy_sha256
+    (FAKE_PRINT_POLICY_SHA, default the fake campaign value). Logged to $FAKE_PROBE_STATE/identity_calls.jsonl; it is not
+    a generation invocation. FAKE_PRINT_MODE = fail | garbage | malformed exercises the runner's refusals."""
+    env = os.environ
+    if env.get("FAKE_PROBE_STATE"):
+        state = Path(env["FAKE_PROBE_STATE"])
+        state.mkdir(parents=True, exist_ok=True)
+        with (state / "identity_calls.jsonl").open("a") as f:
+            f.write(json.dumps({"argv": list(argv)}) + "\n")
+    mode = env.get("FAKE_PRINT_MODE")
+    if mode == "fail":
+        print("print-identity failed", file=sys.stderr)
+        return 1
+    if mode == "garbage":
+        print("not json at all")
+        return 0
+    value = "short" if mode == "malformed" else env.get("FAKE_PRINT_POLICY_SHA", CAMPAIGN)
+    print(json.dumps({"scaffold": SCAFFOLD, "scaffold_policy_sha256": value}))
+    return 0
+
+
 def main(argv=None):
+    raw = sys.argv[1:] if argv is None else list(argv)
+    if "--print-identity" in raw:
+        return print_identity(raw)
     ap = argparse.ArgumentParser()
     for f in ("--model", "--items", "--lang", "--out", "--scaffold", "--expect-items", "--a4-v2-receipt",
               "--sampling-profile", "--cancel-file", "--manifest-ack", "--tg1-inject", "--chain-total", "--universe"):
