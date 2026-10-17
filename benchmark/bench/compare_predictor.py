@@ -72,7 +72,9 @@ def _known(v):
 # Relabel stats.paired_delta's generic positional a_better/b_better (it is called (B, A) below,
 # so its "a" is our B) to name the actual tune instead of the function's argument order.
 _VERDICT_RELABEL = {"a_better": "tune_b_better", "b_better": "tune_a_better",
-                    "equivalent": "equivalent", "inconclusive": "inconclusive"}
+                    "wash": "wash"}
+_DIRECTIONAL_RELABEL = {"a": "tune_b", "b": "tune_a", "tie": "tie"}   # same swap: called as (B, A)
+LEVER_MDE_MAX = 0.10   # P359 / C172 lever guard: a wash ships a lossy lever only at axis MDE <= 10 pp
 
 
 def _refuse(reason):
@@ -308,6 +310,7 @@ def _paired_metric(pa, pb, *, iters, seed, margin):
     (see _VERDICT_RELABEL), plus each arm's own point estimate (`stats.pass_at_1`)."""
     d = stats.paired_delta(pb, pa, iters=iters, seed=seed, margin=margin)
     d["verdict"] = _VERDICT_RELABEL[d["verdict"]]
+    d["directional"] = _DIRECTIONAL_RELABEL[d["directional"]]
     d["discordant"] = _discordant(pa, pb)
     d["a"] = stats.pass_at_1(pa)
     d["b"] = stats.pass_at_1(pb)
@@ -354,29 +357,42 @@ def _paired_ratio(per_item_a, per_item_b, *, iters=4000, seed=0):
 
 
 def _verdict(chosen, margin):
-    """PASS/FAIL/INCONCLUSIVE from one metric's paired_delta result.
+    """PASS / FAIL / loss_not_ruled_out from one metric's paired_delta result (P359, C172: no equivalence).
 
-    PRECEDENCE: PASS is evaluated BEFORE FAIL — a significant but sub-margin regression (e.g. CI
-    [-0.03, -0.01] at margin 0.05) reads PASS: that is the <=5% lossy-lever rule (AGENTS.md), not a
-    statistical tie, and it is the likely shape of a small real predictor cost. Strict inequalities match
-    `stats.paired_delta`'s own "equivalent" verdict boundary exactly (`-margin < lo and hi <
-    margin`) — a CI edge sitting AT the margin does not count as "within" it.
-    """
+    PRECEDENCE: a SHOWN gain (CI above 0) PASSes; a SHOWN loss (CI below 0) PASSes while sub-margin
+    (`lo > -margin`, the <=5% lossy-lever rule, AGENTS.md) and FAILs otherwise. A WASH (CI includes 0) FAILs when
+    the point estimate is beyond -margin (an OFF advantage beyond +-5pp: unchanged shipping rule); else it is the
+    LEVER GUARD: PASS only when the axis MDE <= `LEVER_MDE_MAX` (10 pp; missing MDE never passes), otherwise
+    `loss_not_ruled_out` (the decision goes to the operator; see `_verdict_note`)."""
     lo, hi, delta = chosen["lo"], chosen["hi"], chosen["delta"]
-    if -margin < lo and hi < margin:
-        # P346: a collapsed interval inside the margin (no discordance) cannot certify ±margin equivalence; a collapsed
-        # interval OUTSIDE it (e.g. total discordance) still decides below
-        return "INCONCLUSIVE" if chosen.get("degenerate") else "PASS"
-    if hi < 0 or delta < -margin:
+    if lo > 0:
+        return "PASS"
+    if hi < 0:
+        return "PASS" if lo > -margin else "FAIL"
+    if delta < -margin:
         return "FAIL"
-    return "INCONCLUSIVE"
+    mde = chosen.get("mde")
+    return "PASS" if mde is not None and mde <= LEVER_MDE_MAX else "loss_not_ruled_out"
+
+
+def _verdict_note(verdict, chosen):
+    """Human-readable qualifier for a wash-derived verdict: actual numbers/MDE/directional pick and, when the lever
+    guard blocks, the loss bound (the larger of the CI's lower bound and the axis MDE: a loss that size
+    could not be seen)."""
+    if chosen.get("verdict") != "wash":
+        return None
+    label = (f"wash (MDE {chosen['mde'] * 100:.0f} pp; directional: {chosen.get('directional', 'tie')}"
+             f"{'' if chosen.get('directional', 'tie') == 'tie' else ' (not a shown difference)'})")
+    if verdict == "loss_not_ruled_out":
+        return f"{label}; loss not ruled out above {max(-chosen['lo'], chosen['mde']) * 100:.0f} pp"
+    return label
 
 
 def compare_predictor(model, bench, tune_a, tune_b, *, key="acc_strict", margin=0.05,
                       iters=4000, seed=0, must_differ="draft_kind"):
     """The full M40 paired ON-vs-OFF report for one (model, bench), or a refusal.
 
-    `key` picks which delta ("acc" or "acc_strict") the top-line PASS/FAIL/INCONCLUSIVE verdict
+    `key` picks which delta ("acc" or "acc_strict") the top-line PASS/FAIL/loss_not_ruled_out verdict
     is read off (see `_verdict`); both are always computed and reported. Never writes a file or
     prints anything — that is `main()`'s job, so this stays a plain, testable function.
     """
@@ -409,6 +425,7 @@ def compare_predictor(model, bench, tune_a, tune_b, *, key="acc_strict", margin=
         "acc_strict": _paired_metric(pa_strict, pb_strict, iters=iters, seed=seed, margin=margin),
     }
     verdict = _verdict(deltas[key], margin)
+    verdict_note = _verdict_note(verdict, deltas[key])
 
     tokens_ratio = _paired_ratio(_numeric_per_item(rows_a, "completion_tokens"),
                                  _numeric_per_item(rows_b, "completion_tokens"),
@@ -436,6 +453,7 @@ def compare_predictor(model, bench, tune_a, tune_b, *, key="acc_strict", margin=
         "tune_a": tune_a, "tune_b": tune_b, "draft_a": gate["draft_a"], "draft_b": gate["draft_b"],
         "must_differ": must_differ, "differ_a": gate["differ_a"], "differ_b": gate["differ_b"],
         "key": key, "margin": margin, "n_items": gate["n_items"], "verdict": verdict,
+        "verdict_note": verdict_note,
         "delta": deltas,
         "tokens_per_task_ratio_b_over_a": tokens_ratio,
         "wall_ratio_b_over_a": wall_ratio,
@@ -464,7 +482,8 @@ def _summary_line(result):
             f"{result['tune_b']}({lab_b}) vs "
             f"{result['tune_a']}({lab_a}) — {result['key']} "
             f"delta(B-A)={d['delta']:+.4f} CI[{d['lo']:+.4f},{d['hi']:+.4f}] "
-            f"n_items={result['n_items']} margin=±{result['margin']:.2f}")
+            f"n_items={result['n_items']} margin=±{result['margin']:.2f}"
+            + (f" [{result['verdict_note']}]" if result.get("verdict_note") else ""))
 
 
 def _parse_args(argv=None):

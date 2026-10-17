@@ -456,7 +456,7 @@ def render_markdown(report: dict, *, cli_line: str | None = None) -> str:
             f"- acc_strict: {p['model_a']}={_fmt(p['acc_strict_a'])} "
             f"{p['model_b']}={_fmt(p['acc_strict_b'])}",
             f"- paired delta = {_fmt(d['delta'])} 95% CI [{_fmt(d['lo'])}, {_fmt(d['hi'])}] "
-            f"-- TOST verdict (+-{report['params']['margin'] * 100:.0f}pp): **{'no discordance — equivalence NOT established' if d.get('degenerate') else d['verdict']}**",
+            f"-- verdict (95% CI excludes 0 = better, else wash): **{stats.verdict_label(d, p['model_a'], p['model_b'])}**",
             f"- exact McNemar: b={p['mcnemar_b']} (exclusive to {p['model_a']}) "
             f"c={p['mcnemar_c']} (exclusive to {p['model_b']}) "
             f"p={_fmt(p['mcnemar_p'], 4)} (Holm-adjusted: {_fmt(p.get('mcnemar_p_holm'), 4)})",

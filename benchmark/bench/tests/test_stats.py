@@ -379,14 +379,16 @@ def test_paired_delta_sign_names_the_winner():
     assert out["verdict"] == "b_better"
 
 
-def test_paired_delta_identical_runs_are_equivalent():
+def test_paired_delta_identical_runs_are_a_tie_wash():
     # k=1 so there is no within-item draw noise to resample: every per-item difference is
     # exactly 0, item resampling cannot manufacture a difference, and the CI is [0,0].
     a = {f"i{i}": [1 if i < 14 else 0] for i in range(20)}
     out = S.paired_delta(a, dict(a), iters=1000, seed=0, margin=0.05)
     assert out["delta"] == pytest.approx(0.0)
     assert out["lo"] == 0.0 and out["hi"] == 0.0
-    assert out["verdict"] == "equivalent"
+    assert out["verdict"] == "wash"                  # P359: no 'equivalent' verdict exists any more
+    assert out["directional"] == "tie"
+    assert out["mde"] > 0
 
 
 def test_paired_delta_draws_are_resampled_independently_per_model():
@@ -400,7 +402,7 @@ def test_paired_delta_draws_are_resampled_independently_per_model():
     assert out["hi"] > out["lo"]
 
 
-def test_paired_delta_small_n_is_inconclusive_not_equivalent():
+def test_paired_delta_small_n_is_a_wash_with_a_directional_pick():
     # 4/7 vs 3/7 with disagreements in BOTH directions. The CI covers 0 AND spills past the
     # margin: we have learned nothing. It must NOT come back "equivalent" — failing to reject
     # is not evidence of equivalence.
@@ -409,7 +411,9 @@ def test_paired_delta_small_n_is_inconclusive_not_equivalent():
     out = S.paired_delta(a, b, iters=2000, seed=0, margin=0.05)
     assert out["delta"] == pytest.approx(1 / 7)
     assert out["lo"] < 0 < out["hi"]
-    assert out["verdict"] == "inconclusive"
+    assert out["verdict"] == "wash"
+    assert out["directional"] == "a"                 # point estimate favours a; NOT a shown difference
+    assert out["mde"] > 0.3
 
 
 def test_paired_delta_carries_the_axis_mde():
@@ -503,8 +507,8 @@ def test_paired_delta_pooled_ci_excludes_zero_when_each_bench_alone_is_inconclus
     alone1 = S.paired_delta(a1, b1, iters=3000, seed=0)
     alone2 = S.paired_delta(a2, b2, iters=3000, seed=0)
     pooled = S.paired_delta(a, b, iters=3000, seed=0, strata=strata)
-    assert alone1["verdict"] == "inconclusive", alone1
-    assert alone2["verdict"] == "inconclusive", alone2
+    assert alone1["verdict"] == "wash", alone1
+    assert alone2["verdict"] == "wash", alone2
     assert pooled["n_items"] == 24
     assert pooled["lo"] > 0, pooled
     assert pooled["verdict"] == "a_better", pooled
@@ -776,3 +780,44 @@ def test_p346_equal_multi_draw_means_with_within_item_variation_are_not_degenera
     b = {f"i{k}": [0, 1] for k in range(10)}       # same per-item mean, independent draws vary
     d = stats.paired_delta(a, b, iters=500, seed=3)
     assert d["degenerate"] is False and d["discordance_upper95"] is None
+
+
+# ------------------------------------------------------------------- P359: wash vocabulary
+def test_p359_directional_follows_the_point_estimate_and_wash_has_no_equivalent_verdicts():
+    from bench import stats
+    a = {f"i{k}": [1] for k in range(30)}
+    b = dict(a)
+    b["i0"] = [0]
+    b["i1"] = [0]
+    d = stats.paired_delta(a, b, iters=500, seed=1)
+    assert d["verdict"] == "wash" and d["directional"] == "a" and d["delta"] > 0
+    r = stats.paired_delta(b, a, iters=500, seed=1)
+    assert r["verdict"] == "wash" and r["directional"] == "b"
+    for out in (d, r, stats.paired_delta(a, dict(a), iters=200, seed=1)):
+        assert out["verdict"] in ("a_better", "b_better", "wash")
+        assert "degenerate" in out and "discordance_upper95" in out      # diagnostics kept
+
+
+def test_p359_verdict_label_prints_numbers_mde_and_directional_pick():
+    from bench import stats
+    wash_a = {"verdict": "wash", "directional": "a", "mde": 0.1414, "delta": 0.02}
+    lab = stats.verdict_label(wash_a, a="OFF", b="ON")
+    assert lab == "wash (MDE 14 pp; directional: OFF (not a shown difference))"
+    assert stats.verdict_label({"verdict": "wash", "directional": "tie", "mde": 0.1, "delta": 0.0}) \
+        == "wash (MDE 10 pp; directional: tie)"
+    assert stats.verdict_label({"verdict": "a_better", "mde": 0.1}, a="OFF", b="ON") == "OFF better"
+    assert stats.verdict_label({"verdict": "b_better", "mde": 0.1}) == "B better"
+    for d in (wash_a, {"verdict": "a_better", "mde": 0.1}):
+        low = stats.verdict_label(d).lower()
+        assert "equivalen" not in low and "established" not in low
+
+
+def test_p359_no_decision_or_report_code_emits_the_retired_verdict_strings():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2]
+    banned = ("equivalent_95ci_within_5pp", "no_discordance_equivalence_not_established",
+              "equivalence NOT established", "EQUIVALENCE NOT ESTABLISHED", '"equivalent"')
+    files = [p for p in list(root.glob("bench/*.py")) + list(root.glob("results/*/*.py")) + [root / "run.py"]
+             if p.is_file()]
+    hits = [(str(p.relative_to(root)), b) for p in files for b in banned if b in p.read_text()]
+    assert hits == []

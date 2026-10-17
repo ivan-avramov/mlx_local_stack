@@ -362,21 +362,19 @@ def _bootstrap_pvalue_vs_half(ci):
     return max(floor, min(1.0, 2.0 * (1.0 - _phi(z))))
 
 
-def _pair_verdict(point, lo, hi, margin):
-    """TOST-style verdict. The equivalence branch is explicitly labeled
-    `equivalent_95ci_within_5pp`, not a bare "equivalent": `stats.cluster_bootstrap` has no
-    alpha/level argument (checked — only the hardcoded 2.5/97.5 percentiles), so this is a
-    95% CI wholly inside +-margin, not a true 90%-CI TOST at the conventional alpha. Naming it
-    plainly stops a reader from assuming the stricter 90% convention was used."""
+def _pair_verdict(point, lo, hi, margin=None):
+    """P359 / C172: m1_better / m2_better (95% CI excludes 0.5) or "wash" (CI includes 0.5); no equivalence verdicts.
+    `margin` is accepted for API compatibility and unused."""
     if lo > 0.5:
         return "m1_better"
     if hi < 0.5:
         return "m2_better"
-    if lo == hi:
-        return "no_discordance_equivalence_not_established"   # P346: a collapsed interval is not evidence
-    if (0.5 - margin) < lo and hi < (0.5 + margin):
-        return "equivalent_95ci_within_5pp"
-    return "inconclusive"
+    return "wash"
+
+
+def _pair_directional(point):
+    """Point-estimate pick for a wash: 'm1' / 'm2' / 'tie' (a directional pick, not a shown difference)."""
+    return "m1" if point > 0.5 + 1e-12 else ("m2" if point < 0.5 - 1e-12 else "tie")
 
 
 def _score_a(panel_v):
@@ -457,7 +455,10 @@ def compute_ranking(pairs, verdict_rows, judges, seed=0, margin=TOST_MARGIN):
             "preference_rate_model_1": ci["point"], "ci": [ci["lo"], ci["hi"]],
             "p_value": p_value, "p_value_method": P_VALUE_METHOD,
             "verdict": verdict, "n_items": n_items,
-            "mde": stats.mde(n_items),
+            "mde": stats.mde(n_items), "directional": _pair_directional(ci["point"]),
+            "wash_label": (stats.verdict_label(
+                {"verdict": "wash", "directional": {"m1": "a", "m2": "b", "tie": "tie"}[_pair_directional(ci["point"])],
+                 "mde": stats.mde(n_items)}, a=m1, b=m2) if verdict == "wash" else None),
             "family_splits": family_splits.get(key, {}),
         }
         keys_in_order.append(key)
@@ -471,8 +472,9 @@ def compute_ranking(pairs, verdict_rows, judges, seed=0, margin=TOST_MARGIN):
     return {"margin": margin, "pairs": results,
             "note": "preference rate for model_1 over model_2, tie counted as 0.5; "
                     "MDE is the paired-comparison floor at this n (see stats.mde), not a CI. "
-                    "equivalent_95ci_within_5pp uses the 95% cluster-bootstrap CI (no "
-                    "alpha/level knob in stats.cluster_bootstrap), not a strict 90% TOST."}
+                    "verdict is m1_better/m2_better when the 95% cluster-bootstrap CI excludes 0.5, "
+                    "else wash (no shown difference; `directional` is the point-estimate pick, "
+                    "not a shown difference). No equivalence claims (C172)."}
 
 
 # -------------------------------------------------------------------------------------- usage
