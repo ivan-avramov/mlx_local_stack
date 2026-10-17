@@ -22,7 +22,16 @@ P353, P352, P351), `docs/specs/m65-tg2-corpus.md` (v5), `docs/specs/p311-identit
   expected policy sha derived per box at chain start (P362). **tg1 epoch `probe_code_sha256` `e91a2450acff07669865a81f1b7dfc0544fe9bce86c10be3540fb78b9e601bb7`**
   (generation composite `29f40799…`). `--print-identity` needs docker on PATH (grader image id; fails closed). Full suite 4994 passed.
   Before the next MTP-ON run: check `arm_identity.py`'s flag table against a live ON worker argv.
-- **Operator answers pending:** none. Local main is ahead of origin again (P311-lite etc.) — push needs a new go.
+- **P364 MERGED** (`10fe6e7a`; design + build Cursor rounds, cleared after fixes; C174): `benchmark/opencode_plugins/datefreeze.js` freezes the date
+  opencode shows the model (structured `context`/`compaction`/`generate`/`title` hooks; midnight `Today's date is now:` update removed); per-item
+  receipts reconciled against requests and hash-checked in `validate_leg`; activation refuses any `failed to load plugin` line (covers all three
+  plugins). Chain runner: `--frozen-prompt-date` / `--frozen-date-from <reference chain.json>` — never defaults to today; an old-epoch
+  `chain.json` without a frozen date refuses on resume. Residual: the model's shell can read the frozen date + receipt path (same-UID evidence
+  limit). **tg1 epoch now `probe_code_sha256` `ae7fca94e77b1ea025f67bbac27a0b816aa0f8de8b771aa3683a8170a80fc2a1`**, scaffold policy `33d79b32…`.
+  Full suite on main 5092 passed. Reference arms are reusable across days within an epoch (C168's ≈ 4 GPU h screen holds).
+- **Operator answers pending:** none. Local main is ahead of origin (P311-lite, P364, docs) — push needs a new go.
+- **Rules:** never run two full suites concurrently (load flakes timing tests and once leaked a chain-test runner thread for 7 h — fixed
+  defensively on `tg2-build`); always write suite output to a file and read the summary line.
 - **P361:** OrbStack bind mounts under `$TMPDIR` serve stale sizes after in-place overwrites; tg1 unaffected (fresh snapshots under
   the run dir). See box-notes.
 
