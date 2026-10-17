@@ -63,6 +63,7 @@ def main(corpus):
                 work = tg2_trees.apply_reference(corpus, lang, slug, ref)
             keep = tmp / "keep" / lang / slug
             result = tg.grade_item(lang, work, slug, private, prepared=prepared, prepared_cargo_toml=pct,
+                                   extra_crates=() if stub_only else tg2_trees.extra_crates(corpus, lang, slug),
                                    solutions=tg2_trees.solutions(corpus, lang, slug), guard=guard, timeout=900,
                                    keep=keep, seq=0, boundary=0)
             raw = "".join(p.read_text(errors="replace") for p in (keep / "seq-0000").glob("*.std*"))

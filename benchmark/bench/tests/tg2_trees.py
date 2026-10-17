@@ -18,3 +18,7 @@ def apply_reference(corpus, lang, slug, tree):
 
 def reference_tree(corpus, lang, slug, dest):
     return apply_reference(corpus, lang, slug, stub_tree(corpus, lang, slug, dest))
+
+
+def extra_crates(corpus, lang, slug):
+    return mat.reference_extra_crates(corpus, lang, slug)

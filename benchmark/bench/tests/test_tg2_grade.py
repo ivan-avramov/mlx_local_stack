@@ -1980,6 +1980,7 @@ def test_tamper_is_caught_through_the_production_entry_point(tmp_path):
 @pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
 @pytest.mark.parametrize("lang,slug", ITEMS)
 def test_reference_all_pass_and_untouched_stub_fails_in_the_built_image(tmp_path, lang, slug):
+    from bench.tests import tg2_trees
     _docker_env()
     guard = tg.LocalDocker()
     stub, prepared, sols = _item(tmp_path, lang, slug, guard)
@@ -1988,7 +1989,8 @@ def test_reference_all_pass_and_untouched_stub_fails_in_the_built_image(tmp_path
     shutil.copytree(stub, stub_copy)
     pct = (stub / "Cargo.toml").read_text() if lang == "rust" else None
     good = tg.grade_item(lang, ref, slug, tmp_path / "private", prepared=prepared, solutions=sols, guard=guard,
-                         prepared_cargo_toml=pct, timeout=900, keep=tmp_path / "keep", seq=0, boundary=0, final=True)
+                         prepared_cargo_toml=pct, extra_crates=tg2_trees.extra_crates(POLYGLOT, lang, slug), timeout=900,
+                         keep=tmp_path / "keep", seq=0, boundary=0, final=True)
     assert good.outcome == "parsed", good.phases
     assert good.collected and good.passing == good.collected, sorted(good.collected - good.passing)
     base = tg.grade_item(lang, stub_copy, slug, tmp_path / "private", prepared=prepared, solutions=sols, guard=guard,
