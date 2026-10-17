@@ -49,9 +49,27 @@ class FakeOps:
         self.power = True
         self.docker = True                      # P290: bool, or a list consumed per call (last repeats)
         self.leftover_calls = []
+        self.cancelled = False
 
     def _c(self, name, *a):
+        self._check()
         self.calls.append((name,) + a)
+
+    def _check(self):
+        if self.cancelled:
+            raise RuntimeError("FakeOps cancelled: the test that owns this runner thread is over")
+
+    def cancel(self):
+        """End the runner thread (its next ops call raises) and SIGKILL every fake probe it spawned. A runner thread
+        that outlived a failed / timed-out test used to keep spawning fake probes into later tests."""
+        self.cancelled = True
+        inv = self.state / "invocations.jsonl"
+        if inv.exists():
+            for ln in inv.read_text().splitlines():
+                try:
+                    os.kill(json.loads(ln)["pid"], signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, ValueError, KeyError):
+                    pass
 
     def ensure_overlay(self):
         self._c("ensure_overlay")
@@ -70,6 +88,7 @@ class FakeOps:
         return self.docker
 
     def power_state(self):
+        self._check()
         return {"watts": 140, "volts": 28, "batt": 80}
 
     def free_mem_mb(self):
@@ -109,6 +128,7 @@ class FakeOps:
         return 0
 
     def worker_metrics(self):
+        self._check()
         m = self.metrics
         return m() if callable(m) else m
 
@@ -121,6 +141,7 @@ class FakeOps:
         return 1.0
 
     def env_base(self):
+        self._check()
         env = dict(os.environ)
         env.update(STACK_WORKDIR=str(self.wd), FAKE_PROBE_STATE=str(self.state), FAKE_ITEM_S="0.03",
                    FAKE_HB_S="0.02", FAKE_TICK_S="0.01")
@@ -151,14 +172,7 @@ def env(tmp_path, monkeypatch):
                                          **{f"go/g{i}": {} for i in range(1, 7)}}}))
     lines = []
     yield dict(wd=tmp_path, ops=ops, uni=uni, lines=lines, out=tmp_path / "c147")
-    # leftover fake probes from a failed test
-    inv = ops.state / "invocations.jsonl"
-    if inv.exists():
-        for ln in inv.read_text().splitlines():
-            try:
-                os.kill(json.loads(ln)["pid"], signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+    ops.cancel()                  # leftover runner thread / fake probes from a failed test
 
 
 EPOCH_DATE = "Mon Jan 05 2026"       # P364: a past date, so a row that showed today's date can never pass for it
@@ -193,6 +207,8 @@ def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeo
         threading.Thread(target=helper, daemon=True).start()
     th.join(timeout)
     if th.is_alive():
+        ops.cancel()
+        th.join(10)
         pytest.fail("runner did not finish: " + "\n".join(env["lines"][-15:]))
     if "exc" in res:
         raise res["exc"]
@@ -1197,3 +1213,14 @@ def test_p351_validate_leg_policy_sha_parameter(tmp_path, monkeypatch):
     assert co.validate_leg(leg, pinned, tmp_path) == []                       # defaults to the pinned (derived) value
     unpinned = {k: v for k, v in pinned.items() if k != "scaffold_policy_sha256"}
     assert any(w.startswith("pinned_incomplete") for w in co.validate_leg(leg, unpinned, tmp_path))
+
+
+def test_a_timed_out_run_cancels_its_runner_thread_and_kills_its_fake_probes(env):
+    before = {t for t in threading.enumerate()}
+    with pytest.raises(pytest.fail.Exception, match="did not finish"):
+        run(env, CHAIN, timeout=0.05)
+    assert env["ops"].cancelled
+    deadline = time.time() + 10
+    while time.time() < deadline and {t for t in threading.enumerate()} - before:
+        time.sleep(0.05)
+    assert not ({t for t in threading.enumerate()} - before)           # the runner thread ended (not leaked)
