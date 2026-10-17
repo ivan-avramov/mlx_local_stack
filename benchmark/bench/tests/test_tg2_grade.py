@@ -769,7 +769,8 @@ def manifest_reasons(current, prepared=BASE):
 def test_p367_allowlist_is_one_global_set_of_general_purpose_crates_plus_the_reference_crates():
     assert {"rand", "regex", "itertools", "num-bigint", "num-traits", "num-integer", "thiserror", "anyhow",
             "once_cell", "lazy_static", "unicode-segmentation"} <= set(ALLOW)
-    assert {"permutohedron", "counter"} <= set(ALLOW)                       # the references' older crates
+    assert not ({"permutohedron", "counter"} & set(ALLOW))                  # reference-only crates are never disclosed
+    assert "permutohedron" not in tg.rust_disclosure_line() and "counter" not in tg.rust_disclosure_line()
     assert tg.rust_disclosure_line() == "Offline crates available for [dependencies]: " + ", ".join(sorted(ALLOW)) + "."
 
 
@@ -779,12 +780,18 @@ def test_p367_adding_an_allowlisted_dependency_is_allowed(dep):
     assert manifest_reasons(BASE + dep + "\n") == []
 
 
+def test_p367_freeze_time_reference_trees_may_use_their_own_example_crates_only(tmp_path):
+    assert tg.cargo_manifest_reasons(BASE, BASE + 'counter = "0.5.2"\n', extra_crates=("counter",)) == []
+    assert tg.cargo_manifest_reasons(BASE, BASE + 'permutohedron = "0.2"\n', extra_crates=("counter",))
+
+
 def test_p367_removing_or_changing_a_stub_dependency_requirement_is_allowed_within_the_allowlist():
     assert manifest_reasons(BASE.replace('rand = "0.8"', 'rand = "0.9"')) == []
     assert manifest_reasons(BASE.replace('rand = "0.8"\n', "")) == []
 
 
-@pytest.mark.parametrize("dep", ['serde = "1"', 'tokio = { version = "1" }', 'rand_chacha = "0.3"'])
+@pytest.mark.parametrize("dep", ['serde = "1"', 'tokio = { version = "1" }', 'rand_chacha = "0.3"', 'counter = "0.5.2"',
+                                 'permutohedron = "0.2"'])
 def test_p367_unlisted_crates_are_tampering(dep):
     assert manifest_reasons(BASE + dep + "\n")
 
@@ -1398,11 +1405,11 @@ def test_g21_registry_entry_survives_uncertain_cleanup(tree):
 NONCE = "a1" * 16
 
 
-def _leftover(guard, vol="mlxbench-tg2-aaaaaaaaaaaa-w", holder="old-holder", registry=None):
+def _leftover(guard, vol="mlxbench-tg2-aaaaaaaaaaaa-w", holder="old-holder", registry=None, nonce=None):
     (guard.vroot / vol).mkdir(exist_ok=True)
     guard.volumes[vol] = guard.vroot / vol
-    guard.volume_labels[vol] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1", "mlxbench.tg2.nonce": NONCE}
-    guard.holder_names[holder] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1", "mlxbench.tg2.nonce": NONCE}
+    guard.volume_labels[vol] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1", "mlxbench.tg2.nonce": nonce or NONCE}
+    guard.holder_names[holder] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1", "mlxbench.tg2.nonce": nonce or NONCE}
     return vol, holder
 
 
@@ -1448,7 +1455,7 @@ def test_p363_remove_registered_removes_exactly_the_recorded_names_and_verifies(
     work, private = tree
     guard = FakeGuard(basic_plan("rust"))
     vol, holder = _leftover(guard)
-    other_vol, other_holder = _leftover(guard, vol="mlxbench-tg2-bbbbbbbbbbbb-w", holder="other-holder")
+    other_vol, other_holder = _leftover(guard, vol="mlxbench-tg2-bbbbbbbbbbbb-w", holder="other-holder", nonce="c3" * 16)
     guard.volumes["mlxbench-tg2-aaaaaaaaaaaa-r"] = guard.vroot
     guard.volume_labels["mlxbench-tg2-aaaaaaaaaaaa-r"] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1",
                                                           "mlxbench.tg2.nonce": NONCE}
@@ -1604,6 +1611,20 @@ def test_g29_remove_registered_deletes_only_nonce_matching_objects_and_lists_the
     assert "mlxbench-tg2-aaaaaaaaaaaa-r" in guard.volumes                  # foreign nonce: listed, never deleted
     assert vol not in guard.volumes and holder not in guard.holder_names   # ours: removed
     assert reg.exists()                                                     # not every recorded object was removed
+
+
+def test_p367_remove_registered_also_removes_step_containers_carrying_the_registered_nonce(tree):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    vol, holder = _leftover(guard)
+    guard.volumes["mlxbench-tg2-aaaaaaaaaaaa-r"] = guard.vroot
+    guard.volume_labels["mlxbench-tg2-aaaaaaaaaaaa-r"] = {"mlxbench.tg2": "1", "mlxbench.tg2.nonce": NONCE}
+    guard.holder_names["step-1"] = {"mlxbench.tg2": "1", "mlxbench.tg2.nonce": NONCE}          # killed mid-step
+    guard.holder_names["other-grade-step"] = {"mlxbench.tg2": "1", "mlxbench.tg2.nonce": "b2" * 16}
+    reg = _registry(private, vol, holder)
+    out = tg.remove_registered(guard.run_grader, reg, private)
+    assert sorted(out["containers"]) == sorted([holder, "step-1"])
+    assert "other-grade-step" in guard.holder_names and "step-1" not in guard.holder_names
 
 
 # G30 ------------------------------------------------------------------------------------------------------------

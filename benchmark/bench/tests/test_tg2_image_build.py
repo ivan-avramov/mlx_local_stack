@@ -110,12 +110,14 @@ def test_p367_the_allowlist_lock_covers_every_allowlisted_crate_and_the_older_re
     import json
     allow = json.loads((IMAGE_DIR / "rust_allowlist.json").read_text())
     text = (IMAGE_DIR / "locks/rust/_allowlist/Cargo.lock").read_text()
-    for crate in allow["crates"]:
+    for crate in {c for c, _ in allow["vendor"]}:
         assert 'name = "%s"' % crate in text, crate
     for crate, prefix in (("rand", "0.3."), ("regex", "0.2."), ("itertools", "0.5."), ("permutohedron", "0.2."),
                           ("counter", "0.5."), ("num-bigint", "0.4."), ("thiserror", "1.0."), ("rand", "0.8.")):
         assert 'name = "%s"\nversion = "%s' % (crate, prefix) in text, (crate, prefix)
-    assert {c for c, _ in allow["vendor"]} == set(allow["crates"])
+    assert set(allow["crates"]) <= {c for c, _ in allow["vendor"]}
+    assert not ({"permutohedron", "counter"} & set(allow["crates"])) and {"permutohedron", "counter"} <= {
+        c for c, _ in allow["vendor"]}
 
 
 def test_p367_every_cargo_example_dependency_is_allowlisted():
@@ -123,7 +125,7 @@ def test_p367_every_cargo_example_dependency_is_allowlisted():
     corpus = os.environ.get("POLYGLOT_DIR")
     if not corpus:
         pytest.skip("POLYGLOT_DIR not set")
-    allow = set(json.loads((IMAGE_DIR / "rust_allowlist.json").read_text())["crates"])
+    allow = {c for c, _ in json.loads((IMAGE_DIR / "rust_allowlist.json").read_text())["vendor"]}
     for path in Path(corpus).glob("rust/exercises/practice/*/.meta/Cargo-example.toml"):
         doc = tomllib.loads(path.read_text())
         for section in ("dependencies", "dev-dependencies", "build-dependencies"):

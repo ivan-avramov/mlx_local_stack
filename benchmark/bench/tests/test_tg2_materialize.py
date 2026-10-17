@@ -169,7 +169,8 @@ def test_every_real_item_has_a_plan_and_a_reference_tree_that_passes_the_tamper_
             mat.apply_reference(POLYGLOT, plan, ref)
             reasons = tg.tamper_reasons(ref, sg.protected_manifest(prepared, plan.solutions), prepared, lang,
                                         solutions=plan.solutions,
-                                        prepared_cargo_toml=(stub / "Cargo.toml").read_text() if lang == "rust" else None)
+                                        prepared_cargo_toml=(stub / "Cargo.toml").read_text() if lang == "rust" else None,
+                                        extra_crates=mat.reference_extra_crates(POLYGLOT, lang, slug))
             assert reasons == [], (lang, slug, reasons)
             assert tg.skip_form_violations(ref, lang) == [], (lang, slug)
             shutil.rmtree(stub); shutil.rmtree(ref)
@@ -237,7 +238,8 @@ def test_the_reference_tree_uses_the_examples_dependencies_but_only_the_referenc
     assert 'regex' not in (prep.tree / "Cargo.toml").read_text()
     prepared = sg.manifest(prep.tree)
     assert tg.tamper_reasons(ref, sg.protected_manifest(prepared, ["src/lib.rs"]), prepared, "rust",
-                             solutions=["src/lib.rs"], prepared_cargo_toml=(prep.tree / "Cargo.toml").read_text()) == []
+                             solutions=["src/lib.rs"], prepared_cargo_toml=(prep.tree / "Cargo.toml").read_text(),
+                             extra_crates=mat.reference_extra_crates(c, "rust", "x")) == []
 
 
 @pytest.mark.skipif(not HAVE_CORPUS, reason="polyglot corpus not found")
@@ -248,4 +250,5 @@ def test_every_real_reference_manifest_passes_the_structural_allowlist_check(tmp
         ref = tmp_path / ("r-" + slug)
         shutil.copytree(prep.tree, ref)
         mat.apply_reference(POLYGLOT, plan, ref)
-        assert tg.cargo_manifest_reasons((prep.tree / "Cargo.toml").read_text(), (ref / "Cargo.toml").read_text()) == [], slug
+        assert tg.cargo_manifest_reasons((prep.tree / "Cargo.toml").read_text(), (ref / "Cargo.toml").read_text(),
+                                         mat.reference_extra_crates(POLYGLOT, "rust", slug)) == [], slug

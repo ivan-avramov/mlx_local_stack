@@ -199,6 +199,15 @@ def apply_reference(corpus, plan, tree):
     return tree
 
 
+def reference_extra_crates(corpus, lang, slug):
+    """Crates the item's reference manifest names (freeze time only): checked as explicit extras on reference trees."""
+    example_toml = exercise_dir(corpus, lang, slug) / ".meta/Cargo-example.toml"
+    if lang != "rust" or not example_toml.is_file():
+        return ()
+    doc = tomllib.loads(example_toml.read_text())
+    return tuple(sorted({c for sec in ("dependencies", "dev-dependencies") for c in doc.get(sec, {})}))
+
+
 def deprecated_scan(corpus, lang, slug):
     """`deprecated: ...` for an exercise that declares itself deprecated / inverted (C145), `mention: ...` when the
     words only occur in prose, None otherwise."""

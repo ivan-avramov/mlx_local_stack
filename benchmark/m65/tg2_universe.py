@@ -27,9 +27,9 @@ GRADE_TIMEOUT = 900
 
 
 def default_grader(guard):
-    def grader(lang, tree, slug, private, *, prepared, solutions, timeout, prepared_cargo_toml=None):
+    def grader(lang, tree, slug, private, *, prepared, solutions, timeout, prepared_cargo_toml=None, extra_crates=()):
         return tg.grade_item(lang, tree, slug, private, prepared=prepared, solutions=solutions, guard=guard,
-                             timeout=timeout, prepared_cargo_toml=prepared_cargo_toml)
+                             timeout=timeout, prepared_cargo_toml=prepared_cargo_toml, extra_crates=extra_crates)
     return grader
 
 
@@ -64,13 +64,17 @@ def freeze_item(corpus, lang, slug, root, grader, *, locks_fn=None, ref_runs=REF
     rec.update(solutions=plan.solutions, tests=plan.tests, mapping=[list(m) for m in plan.mapping], rewrites=prep.rewrites,
                prepared=prepared, prepared_cargo_toml=cargo_toml)
 
+    extra = mat.reference_extra_crates(corpus, lang, slug)
+    rec["reference_extra_crates"] = list(extra)
+
     def run(kind, n):
         tree = root / ("%s%d" % (kind, n))
         shutil.copytree(prep.tree, tree)
         if kind == "ref":
             mat.apply_reference(corpus, plan, tree)
         result = grader(lang, tree, slug, private, prepared=prepared, solutions=plan.solutions, timeout=GRADE_TIMEOUT,
-                        prepared_cargo_toml=cargo_toml)
+                        prepared_cargo_toml=cargo_toml,
+                        extra_crates=extra if kind == "ref" else ())
         shutil.rmtree(tree, ignore_errors=True)
         return result
 

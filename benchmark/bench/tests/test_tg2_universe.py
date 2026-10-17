@@ -36,9 +36,20 @@ def tmp_path():
     shutil.rmtree(path, ignore_errors=True)
 
 
-def corpus(root, lang="javascript", slug="x", extra_docs=None):
+def corpus(root, lang="javascript", slug="x", extra_docs=None, rust=False):
     ex = Path(root) / lang / "exercises/practice" / slug
     (ex / ".meta").mkdir(parents=True)
+    if rust:
+        (ex / "src").mkdir()
+        (ex / ".meta/config.json").write_text(json.dumps({"files": dict(solution=["src/lib.rs", "Cargo.toml"],
+                                                                       test=["tests/x.rs"], example=[".meta/example.rs"])}))
+        (ex / "src/lib.rs").write_text("stub")
+        (ex / "Cargo.toml").write_text('[package]\nname = "x"\nversion = "0.1.0"\nedition = "2021"\n')
+        (ex / "tests").mkdir()
+        (ex / "tests/x.rs").write_text("t")
+        (ex / ".meta/example.rs").write_text("ref")
+        (ex / ".meta/Cargo-example.toml").write_text('[dependencies]\nregex = "0.2"\n')
+        return Path(root)
     (ex / ".meta/config.json").write_text(json.dumps({"files": dict(solution=["x.js"], test=["x.spec.js"],
                                                                    example=[".meta/proof.ci.js"])}))
     (ex / "x.js").write_text("stub")
@@ -58,7 +69,7 @@ class Grader:
         self.stub = stub or (lambda n: dict(a=False, b=False))
         self.abort, self.calls = abort, []
 
-    def __call__(self, lang, tree, slug, private, *, prepared, solutions, timeout, prepared_cargo_toml=None):
+    def __call__(self, lang, tree, slug, private, *, prepared, solutions, timeout, prepared_cargo_toml=None, extra_crates=()):
         if self.abort:
             raise TransportAbort("docker down")
         is_ref = (Path(tree) / "x.js").read_text() == "ref"
@@ -82,6 +93,24 @@ def test_a_clean_item_is_valid_with_three_reference_and_two_stub_runs(tmp_path):
     assert rec["status"] == "valid" and rec["leaves"] == ["a", "b"] and rec["baseline_failing"] == 2
     assert len(rec["reference_runs"]) == 3 and len(rec["stub_runs"]) == 2 and len(g.calls) == 5
     assert rec["timeout_s"] == 180 and rec["solutions"] == ["x.js"] and rec["mapping"] == [[".meta/proof.ci.js", "x.js"]]
+
+
+def test_reference_runs_get_the_examples_extra_crates_stub_runs_do_not(tmp_path):
+    c = corpus(tmp_path / "c", lang="rust", slug="x", rust=True)
+    seen = []
+
+    class Spy(Grader):
+        def __call__(self, lang, tree, slug, private, *, extra_crates=(), **k):
+            seen.append(tuple(extra_crates))
+            return Grader.__call__(self, lang, tree, slug, private, extra_crates=extra_crates, **k) if False else _ok(lang)
+
+    def _ok(lang):
+        g = tg.Tg2Grade(lang=lang, outcome="parsed", leaves=dict(a=True, b=True))
+        g.phases = [dict(step="execute", seconds=1.0)]
+        return g
+
+    U.freeze_item(c, "rust", "x", tmp_path / "s", Spy())
+    assert seen[:3] == [("regex",)] * 3 and seen[3:] == [(), ()]
 
 
 def test_each_run_uses_a_fresh_tree_and_the_trees_are_cleaned_up(tmp_path):

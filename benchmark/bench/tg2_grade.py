@@ -76,7 +76,8 @@ def _load_allowlist():
     return tuple(json.loads(ALLOWLIST_FILE.read_text())["crates"])
 
 
-RUST_ALLOWLIST = _load_allowlist()          # P367: one global crate allowlist, identical for every Rust item
+RUST_ALLOWLIST = _load_allowlist()
+RUST_VENDORED = tuple(sorted({c for c, _ in json.loads(ALLOWLIST_FILE.read_text())["vendor"]}))          # P367: one global crate allowlist, identical for every Rust item
 
 
 def rust_disclosure_line():
@@ -87,7 +88,7 @@ def rust_disclosure_line():
 _DEP_KEYS = {"version", "features", "default-features"}
 
 
-def cargo_manifest_reasons(prepared_text, current_text):
+def cargo_manifest_reasons(prepared_text, current_text, extra_crates=()):
     """P367: the root Cargo.toml may differ from the prepared one ONLY in `[dependencies]`: every entry names an
     allowlisted crate with a string version requirement (optionally `features` / `default-features`); paths, git,
     registries, renames, workspace entries, patches, build/dev dependencies, features, profiles, lints and every other
@@ -108,7 +109,7 @@ def cargo_manifest_reasons(prepared_text, current_text):
     for name, spec in sorted(deps.items()):
         if prepared.get("dependencies", {}).get(name) == spec:
             continue
-        if name not in RUST_ALLOWLIST:
+        if name not in RUST_ALLOWLIST and name not in extra_crates:
             reasons.append("Cargo.toml dependency %s is not in the offline allowlist" % name)
         elif isinstance(spec, str):
             pass
@@ -457,7 +458,7 @@ def _preflight(lang):
     head = "# TG2_PREFLIGHT\nset -e\n"
     if lang == "rust":
         return (head + "command -v cargo rustc >/dev/null\ngrep -q cargo-vendor /root/.cargo/config.toml\n"
-                "python3 - <<'PY'\n" + _PREFLIGHT_PY_RUST % (sorted(RUST_ALLOWLIST),) + "PY\n")
+                "python3 - <<'PY'\n" + _PREFLIGHT_PY_RUST % (list(RUST_VENDORED),) + "PY\n")
     if lang == "java":
         return (head + "command -v java javac >/dev/null\nls /root/.gradle/wrapper/dists/gradle-8.7-bin/*/gradle-8.7/bin/gradle"
                 " >/dev/null\ntest -d \"$GRADLE_RO_DEP_CACHE/modules-2/files-2.1\"\n"
@@ -689,7 +690,7 @@ def _new_file_reason(work, rel, lang, solution_dirs, existing_fqns):
     return "cpp: only .h/.cpp helpers beside the solution (named in no CMake test glob) may be added"
 
 
-def tamper_reasons(work, protected, prepared, lang, *, solutions=(), prepared_cargo_toml=None):
+def tamper_reasons(work, protected, prepared, lang, *, solutions=(), prepared_cargo_toml=None, extra_crates=()):
     """Reasons the tree must not be graded as the model's work; [] = clean."""
     work = Path(work)
     try:
@@ -709,7 +710,8 @@ def tamper_reasons(work, protected, prepared, lang, *, solutions=(), prepared_ca
             if prepared_cargo_toml is None:
                 reasons.append("rust: the prepared Cargo.toml text is required to check a changed manifest")
             else:
-                reasons += cargo_manifest_reasons(prepared_cargo_toml, (work / "Cargo.toml").read_text(errors="replace"))
+                reasons += cargo_manifest_reasons(prepared_cargo_toml, (work / "Cargo.toml").read_text(errors="replace"),
+                                                  extra_crates)
     solution_dirs = {posixpath.dirname(s) for s in solutions}
     existing = set()
     if lang == "java":
@@ -724,9 +726,9 @@ def tamper_reasons(work, protected, prepared, lang, *, solutions=(), prepared_ca
     return reasons
 
 
-def tampered(work, protected, prepared, lang, *, solutions=(), prepared_cargo_toml=None):
+def tampered(work, protected, prepared, lang, *, solutions=(), prepared_cargo_toml=None, extra_crates=()):
     return bool(tamper_reasons(work, protected, prepared, lang, solutions=solutions,
-                               prepared_cargo_toml=prepared_cargo_toml))
+                               prepared_cargo_toml=prepared_cargo_toml, extra_crates=extra_crates))
 
 
 # --------------------------------------------------------------------------------------------------------- grade
@@ -774,14 +776,14 @@ def _disjoint(work, *others):
             raise TransportAbort("private/keep paths must be disjoint from the mounted work tree: %s" % other)
 
 
-def grade_item(lang, work, slug, private, *, prepared, solutions, prepared_cargo_toml=None, **kw):
+def grade_item(lang, work, slug, private, *, prepared, solutions, prepared_cargo_toml=None, extra_crates=(), **kw):
     """The production entry point: strip agent build outputs, tamper-check, then grade. A tampered tree is never
     mounted; it returns outcome `tampered` (every leaf failed) and, with `keep`, writes the typed receipt."""
     work = Path(work).resolve()
     _disjoint(work, private, kw.get("keep"))
     stripped = strip_build_outputs(work, prepared)
     reasons = tamper_reasons(work, protected_manifest(prepared, solutions), prepared, lang, solutions=solutions,
-                             prepared_cargo_toml=prepared_cargo_toml)
+                             prepared_cargo_toml=prepared_cargo_toml, extra_crates=extra_crates)
     if reasons:
         result = Tg2Grade(lang=lang, outcome="tampered", all_failed=True, stripped=stripped, tamper_reasons=reasons,
                           reason="tampered", reason_detail="; ".join(reasons)[:2000])
@@ -1146,7 +1148,13 @@ def remove_registered(run, registry_file, private):
     outputs = private / ".tg2-cleanup"
     outputs.mkdir(parents=True, exist_ok=True)
     removed, foreign, problems = dict(containers=[], volumes=[]), [], []
-    objects = [("container", holder)] + [("volume", v) for v in volumes]
+    # step containers killed mid-grade carry the same nonce and hold the volumes: they are provably ours too
+    rc, listed = _plain(run, ["docker", "ps", "-a", "--filter", "label=%s=%s" % (NONCE_LABEL, nonce), "--format",
+                              "{{.Names}}"], outputs, "cl-steps")
+    if rc != 0:
+        raise TransportAbort("tg2 cannot list containers carrying the registry nonce (rc=%s)" % rc)
+    steps = sorted(n for n in listed.split() if n != holder and _REGISTERED_HOLDER.match(n))
+    objects = [("container", holder)] + [("container", n) for n in steps] + [("volume", v) for v in volumes]
     for kind, name in objects:
         if not _exists(run, kind, name, outputs, "cl-find"):
             continue
