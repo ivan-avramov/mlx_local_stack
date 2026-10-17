@@ -16,8 +16,13 @@ P353, P352, P351), `docs/specs/m65-tg2-corpus.md` (v5), `docs/specs/p311-identit
 - **In flight (worktrees under `$STACK_WORKDIR/worktrees/`, each with an untracked `.venv-bench` symlink):**
   - `tg2` / `tg2-build`: step 1 grader + offline image (`tg2-grader:m65-v1`, now `sha256:09f2b30e…`); Cursor round 2 NOT CLEARED
     (G18–G20) → round 3 with the implementer (+ P361 mount-source guard). Then steps 2–4; GPU runs need an operator go (C169).
-  - `p311` / `p311-lite`: P311-lite build from spec v4 (C172) — new tg1 identity again when merged; Cursor code review after.
-- **Operator answers pending:** none.
+- **P311-lite MERGED** (`7fcf0433` + test fixes `a9c6f62f`; Cursor build rounds 1–2, cleared after fixes, lead-verified): tg1 now runs
+  `benchmark/run_tg1_probe.py`; web contact scored post hoc (`bench/tg1_score.py` sidecar, single fail-closed join `bench/row_scores.py`);
+  identity = AST import closure + toolchain; pairing key = (generation identity, both arm identities, spawn-time prompt_date);
+  expected policy sha derived per box at chain start (P362). **tg1 epoch `probe_code_sha256` `e91a2450acff07669865a81f1b7dfc0544fe9bce86c10be3540fb78b9e601bb7`**
+  (generation composite `29f40799…`). `--print-identity` needs docker on PATH (grader image id; fails closed). Full suite 4994 passed.
+  Before the next MTP-ON run: check `arm_identity.py`'s flag table against a live ON worker argv.
+- **Operator answers pending:** none. Local main is ahead of origin again (P311-lite etc.) — push needs a new go.
 - **P361:** OrbStack bind mounts under `$TMPDIR` serve stale sizes after in-place overwrites; tg1 unaffected (fresh snapshots under
   the run dir). See box-notes.
 
@@ -97,6 +102,8 @@ M65 harder corpus).
 - (Done 2026-10-16: the box-topology memory note was refreshed.)
 
 ## Rules learned (2026-10-11 → 16)
+- Run the FULL suite once from a branch's worktree before merging it: worktrees symlink `.venv-bench` outside the repo, which hid
+  two P311-lite test failures that only showed on main (in-repo venv).
 
 - Never edit runner/probe/scoring files in the main checkout while a chain runs; build in worktrees. Never run the full
   suite under a live chain. Suite: from `benchmark/`, `../.venv-bench/bin/python -m pytest bench/tests -q` (~11 min).
