@@ -142,6 +142,10 @@ ALLOWED = {
       for m in ("start_router", "worker_ident", "load", "_alive")},
     ("benchmark/bench/chain_ops.py", "ChainOps.start_router", "self", "parents"),
     ("benchmark/chains/c147/run_tg1_chain.py", "Chain.run_step", "self.ops", "create_time"),
+    # M64 shell watchdog: the wall-clock start is compared with client tool windows (epoch times); identity stays
+    # proc_guard.start_time (the same call lists both)
+    ("benchmark/chains/m64/run_m64_chain.py", "ArmChain.run_step", "self.ops", "create_time"),   # as Chain.run_step
+    ("benchmark/bench/arm_watchdog.py", "ShellWatchdog.for_client.*", "p", "create_time"),
 }
 
 
