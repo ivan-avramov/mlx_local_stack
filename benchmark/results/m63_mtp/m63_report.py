@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import answer_key, stats  # noqa: E402
+from bench import answer_key, row_scores, stats  # noqa: E402
 
 RES = REPO / "benchmark/results"
 P1, P2 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "Qwen3.8-27B-mlx-uniform-4bit"
@@ -27,9 +27,11 @@ def p(s=""):
 
 def load(m, lang, s, arm):
     f = RES / m / f"opencode_v2_{lang}.{ARMS[arm]}.{s}.jsonl"
-    rows = [json.loads(line) for line in open(f) if line.strip()]
+    rows = row_scores.effective_rows([json.loads(line) for line in open(f) if line.strip()],
+                                     row_scores.sidecar_path(f))   # P311-lite: one fail-closed join
     side = Path(str(f) + ".webaudit.jsonl")
-    rep = answer_key.report_rows(rows, audit_sidecar=side if side.exists() else None)
+    rep = answer_key.report_rows(rows, audit_sidecar=side if side.exists() else None,
+                                 score_sidecar=row_scores.sidecar_path(f))
     return rows, rep
 
 

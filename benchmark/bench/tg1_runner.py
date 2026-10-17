@@ -45,6 +45,10 @@ GENERATION_DATA = (
     "benchmark/opencode_plugins/noretry.js",
     "benchmark/opencode_bench_v2_web_tg1.json",
 )
+# The scoring tool's closure (informational: `--print-identity` shows it; it is NOT part of the generation identity and
+# this module must not import the scoring modules). `bench.row_scores` holds the same two constants (tested equal).
+SCORING_ENTRY = "benchmark/bench/tg1_score.py"
+SCORING_DATA = ("benchmark/web_audit_prompt.md",)
 # The fields of the pairing composite shared by every arm (spec 4); model-specific identity is separate (arm identity).
 GENERATION_FIELDS = (
     "probe_code_sha256", "scaffold_policy_sha256", "opencode_version", "opencode_exe_sha256",
@@ -397,6 +401,7 @@ def print_identity(p, a):
     except SystemExit:
         polyglot_sha = None
     out["polyglot_sha"] = polyglot_sha
+    out["scoring_code_sha256"] = ic.closure_sha256(SCORING_ENTRY, REPO, data=SCORING_DATA)
     if exe.is_file() and polyglot_sha:
         out["generation_identity_sha256"] = generation_identity_sha256(
             {**ident, **selection["fields"], "polyglot_sha": polyglot_sha,

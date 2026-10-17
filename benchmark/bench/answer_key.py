@@ -52,16 +52,14 @@ def _overlap(reference: list[str], observed: list[str]) -> tuple[int, int]:
     return matched, longest
 
 
-def contact(item_dir, texts) -> dict:
-    """Check {source, text} records against recursive .meta/{example,exemplar,proof}* files."""
-    item = Path(item_dir)
-    references = sorted(p for p in (item / '.meta').rglob('*')
-                        if p.is_file() and p.name.startswith(('example', 'exemplar', 'proof')))
+def contact_refs(references, texts) -> dict:
+    """Check {source, text} records against reference files given as (relpath, text) pairs, in order. The detector
+    itself: `contact` reads the pairs from disk, `tg1_score` from the recorded corpus git tree."""
     observed = [(entry['source'], normalize(entry['text'])) for entry in texts]
     evidence = []
     flag = False
-    for path in references:
-        reference = normalize(path.read_text(encoding='utf-8', errors='replace'))
+    for relpath, text in references:
+        reference = normalize(text)
         if not reference:
             continue
         for source, lines in observed:
@@ -69,10 +67,19 @@ def contact(item_dir, texts) -> dict:
             hit = run >= 5 or matched / len(reference) >= 0.4
             flag |= hit
             if matched:
-                evidence.append({'reference': path.relative_to(item).as_posix(), 'source': source,
+                evidence.append({'reference': relpath, 'source': source,
                                  'matched_lines': matched, 'reference_lines': len(reference),
                                  'run_length': run, 'flag': hit})
     return {'flag': flag, 'evidence': evidence}
+
+
+def contact(item_dir, texts) -> dict:
+    """Check {source, text} records against recursive .meta/{example,exemplar,proof}* files."""
+    item = Path(item_dir)
+    references = sorted(p for p in (item / '.meta').rglob('*')
+                        if p.is_file() and p.name.startswith(('example', 'exemplar', 'proof')))
+    return contact_refs([(p.relative_to(item).as_posix(), p.read_text(encoding='utf-8', errors='replace'))
+                         for p in references], texts)
 
 
 def web_entries(row):
@@ -315,6 +322,8 @@ def rerun_plan(state):
 
 def require_audits(states):
     for state in states:
+        if state.get('unscored'):
+            raise AuditMissing(f"score first ({state['unscored']}): run tg1_score for " + state['row']['id'])
         if 'missing' in state['labels']:
             raise AuditMissing('audit first: missing/stale audit for ' + state['row']['id'])
 
@@ -324,17 +333,25 @@ def item_key(row):
     return row.get('model'), row['id'], row.get('sample', 0)
 
 
-def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
-    """Resolve current audit labels once for scoring, resume and runner decisions."""
+def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None, score_sidecar=None):
+    """Resolve current audit labels once for scoring, resume and runner decisions. P311-lite: tg1 rows carry no
+    scoring fields; they come from `score_sidecar` through the one fail-closed join (`bench.row_scores`), and a row
+    without a current matching record is `unscored` (never read as "no contact"). Legacy rows keep their own fields."""
     if prompt_sha256 is None:
         prompt_sha256 = hashlib.sha256(
             (Path(__file__).resolve().parents[1] / 'web_audit_prompt.md').read_bytes()).hexdigest()
     from web_audit import LABELS
-    rows = list(rows)
+    from . import row_scores
+    rows = row_scores.effective_rows(rows, score_sidecar)
     auditors = [name for name, _ in declared_auditors()]     # preference order; P299: no version probe in scoring
     audits = latest_by_evidence(accepted_audits(load_audits(audit_sidecar), set(auditors)))
     states = []
     for row in rows:
+        if row.get('score_unscored'):
+            states.append({'row': row, 'labels': [], 'legacy_audits': 0, 'urls': [], 'unknown_source': False,
+                           'rerun_eligible': str(row.get('scaffold', '')).startswith('opencode-v2-web'),
+                           'cheat': False, 'unscored': row['score_unscored']})
+            continue
         labels, urls = [], []
         legacy = 0
         incomplete = bool(row.get('web_audit_incomplete') or row.get('web_audit_error') or row.get('audit_error'))
@@ -384,18 +401,20 @@ def audit_states(rows, *, audit_sidecar=None, prompt_sha256=None):
                        'unknown_source': bool(unknown_source),
                        'rerun_eligible': str(row.get('scaffold', '')).startswith('opencode-v2-web'),
                        'cheat': forced or any(label in ('solution', 'unclear', 'audit_error')
-                                              for label in labels)})
+                                              for label in labels),
+                       'unscored': None})
     return states
 
 
-def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
+def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None, score_sidecar=None) -> dict:
     """Score one leg: latest non-cheat per item; exhausted cheating is a strict FAIL.
 
     Missing audits and operator-review items are provisional. Non-web cheats count as
     cheat_review. Counts describe all attempts; scored_rows are copies and never rewrite
     the append-only evidence. Never pool independent legs.
     """
-    states = audit_states(rows, audit_sidecar=audit_sidecar, prompt_sha256=prompt_sha256)
+    states = audit_states(rows, audit_sidecar=audit_sidecar, prompt_sha256=prompt_sha256,
+                          score_sidecar=score_sidecar)
     groups, per_model = {}, {}
     for state in states:
         row = state['row']
@@ -403,7 +422,8 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
         counts = per_model.setdefault(row.get('model'), dict(cheat_attempts=0, reruns=0,
                                                            unresolved=0, partial_lookups=0,
                                                            pending_reruns=0, missing_audits=0,
-                                                           cheat_review=0, legacy_audits=0, provisional=False))
+                                                           cheat_review=0, legacy_audits=0,
+                                                           provisional=False))
         counts['legacy_audits'] += state['legacy_audits']
         counts['cheat_attempts'] += int(state['cheat'])
         counts['reruns'] += int(bool(row.get('rerun_index', 0)))
@@ -415,6 +435,10 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
         latest_state = attempts[-1]
         latest = latest_state['row']
         counts = per_model[latest.get('model')]
+        if latest_state['unscored']:        # P311-lite: no current score record: excluded until rescored
+            counts['unscored'] = counts.get('unscored', 0) + 1       # key present only when a row is unscored
+            counts['provisional'] = True
+            continue
         if latest_state['cheat'] and (not latest_state['rerun_eligible']
                                       or rerun_plan(latest_state)['needs_operator']):
             counts['cheat_review'] += 1
@@ -450,6 +474,7 @@ def report_rows(rows, *, audit_sidecar=None, prompt_sha256=None) -> dict:
             'provisional': any(c['provisional'] for c in per_model.values()),
             **{key: sum(c[key] for c in per_model.values())
                for key in ('missing_audits', 'pending_reruns', 'cheat_review', 'legacy_audits')},
+            'unscored': sum(c.get('unscored', 0) for c in per_model.values()),
             'flagged: web contact': sum(s['cheat'] for s in states),
             'web contact: tests': sum('tests' in s['labels'] for s in states),
             'web contact: partial': sum(s['labels'].count('partial') for s in states),

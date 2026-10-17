@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import answer_key, stats  # noqa: E402
+from bench import answer_key, row_scores, stats  # noqa: E402
 
 RES = REPO / "benchmark/results"
 P1, P2 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "Qwen3.8-27B-mlx-uniform-4bit"
@@ -80,10 +80,11 @@ for m in (P1, P2):
     for lang in LANGS:
         for s in SESS:
             f = RES / m / f"opencode_v2_{lang}.c144base.{s}.jsonl"
-            rs = rows(f)
+            rs = row_scores.effective_rows(rows(f), row_scores.sidecar_path(f))   # P311-lite: one fail-closed join
             raw[(m, lang, s)] = rs
             side = Path(str(f) + ".webaudit.jsonl")      # P201 sidecar (C158: codex or Cursor auditor)
-            rep = answer_key.report_rows(rs, audit_sidecar=side if side.exists() else None)
+            rep = answer_key.report_rows(rs, audit_sidecar=side if side.exists() else None,
+                                         score_sidecar=row_scores.sidecar_path(f))
             pm = rep["per_model"].get(m, {})
             it = {k: v for k, v in rep["strict_items"].items() if k not in INVALID}
             items[(m, lang, s)] = it

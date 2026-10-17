@@ -18,18 +18,19 @@ NET_SHELL = re.compile(
 NET_OUTPUT_FILE = re.compile(r"(?:^|\s)(?:-[oO](?:\s|$|[^\s]+)|--output(?:=|\s|$))|>|\btee\b")
 
 
-def web_audit(export, item_dir, transcript_target, *, scaffold="opencode-v2-web", stack_workdir=None):
+def web_audit(export, item_dir, transcript_target, *, scaffold="opencode-v2-web", stack_workdir=None,
+              contact_fn=None):
     """Audit failures exclude a row without interrupting generation or grading."""
     result = {"web_fetches": [], "net_shell": [], "web_denied": 0, "subagent_calls": 0,
               "web_audit_incomplete": False, "answer_key_contact": False, "answer_key_evidence": []}
     try:
-        collect_web_audit(export, item_dir, transcript_target, scaffold, result, stack_workdir)
+        collect_web_audit(export, item_dir, transcript_target, scaffold, result, stack_workdir, contact_fn)
     except Exception as exc:
         result["web_audit_error"] = f"{type(exc).__name__}: {exc}"
     return result
 
 
-def collect_web_audit(export, item_dir, transcript_target, scaffold, result, stack_workdir):
+def collect_web_audit(export, item_dir, transcript_target, scaffold, result, stack_workdir, contact_fn=None):
     """Audit native v2 tool parts; permission.rejected is pinned by real mock captures."""
     fetches, commands, texts = result["web_fetches"], result["net_shell"], []
     result["subagent_calls"] = sum(
@@ -81,5 +82,5 @@ def collect_web_audit(export, item_dir, transcript_target, scaffold, result, sta
                          sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
             if text:
                 texts.append({"source": source, "text": text})
-    contact = answer_key.contact(item_dir, texts)
+    contact = (contact_fn or answer_key.contact)(item_dir, texts)
     result.update(answer_key_contact=contact["flag"], answer_key_evidence=contact["evidence"])

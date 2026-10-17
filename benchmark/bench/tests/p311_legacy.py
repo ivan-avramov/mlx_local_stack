@@ -1,5 +1,6 @@
 """Verbatim pre-P311 reference copies (HEAD 551890e4) for byte-equality tests. Do not edit; do not import in production."""
 import hashlib
+from pathlib import Path
 import re
 from bench import answer_key
 from bench.opencode_common import _stack_workdir
@@ -95,3 +96,68 @@ def legacy_shell_deny_patterns(patterns):
                 result.append(command)
                 result.extend(command + boundary + '*' for boundary in (*boundaries, '/'))
     return list(dict.fromkeys(result))
+
+
+def legacy_normalize(text: str) -> list[str]:
+    """Strip lines; omit blank, short and comment-only lines (including block comments)."""
+    lines = []
+    block_end = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if block_end:
+            if block_end in line:
+                line = line.split(block_end, 1)[1].strip()
+                block_end = None
+            else:
+                continue
+        for start, end in (("/*", "*/"), ("<!--", "-->"), ('"""', '"""'), ("'''", "'''")):
+            if line.startswith(start):
+                rest = line[len(start):]
+                if end in rest:
+                    line = rest.split(end, 1)[1].strip()
+                else:
+                    block_end = end
+                    line = ""
+                break
+        if len(line) >= 12 and not line.startswith(("//", "#", "--", ";")):
+            lines.append(line)
+    return lines
+
+
+def legacy_overlap(reference: list[str], observed: list[str]) -> tuple[int, int]:
+    """Count covered reference positions and the longest contiguous shared line sequence."""
+    seen = set(observed)
+    matched = sum(line in seen for line in reference)
+    previous = [0] * (len(reference) + 1)
+    longest = 0
+    for line in observed:
+        current = [0]
+        for i, ref in enumerate(reference):
+            length = previous[i] + 1 if line == ref else 0
+            current.append(length)
+            longest = max(longest, length)
+        previous = current
+    return matched, longest
+
+
+def legacy_contact(item_dir, texts) -> dict:
+    """Check {source, text} records against recursive .meta/{example,exemplar,proof}* files."""
+    item = Path(item_dir)
+    references = sorted(p for p in (item / '.meta').rglob('*')
+                        if p.is_file() and p.name.startswith(('example', 'exemplar', 'proof')))
+    observed = [(entry['source'], legacy_normalize(entry['text'])) for entry in texts]
+    evidence = []
+    flag = False
+    for path in references:
+        reference = legacy_normalize(path.read_text(encoding='utf-8', errors='replace'))
+        if not reference:
+            continue
+        for source, lines in observed:
+            matched, run = legacy_overlap(reference, lines)
+            hit = run >= 5 or matched / len(reference) >= 0.4
+            flag |= hit
+            if matched:
+                evidence.append({'reference': path.relative_to(item).as_posix(), 'source': source,
+                                 'matched_lines': matched, 'reference_lines': len(reference),
+                                 'run_length': run, 'flag': hit})
+    return {'flag': flag, 'evidence': evidence}
