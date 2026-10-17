@@ -333,9 +333,9 @@ def test_wash_result_reports_guarded_verdict_and_full_payload(tmp_results):
                               "draft_n_accepted": 15})
     r = CP.compare_predictor("M", "math500", "m37med", "m40on")
     assert r["comparable"] is True
-    # P359: identical arms = wash (tie); at this tiny n the axis MDE is > 10 pp, so the lever guard blocks the ship
+    # P359/C173: identical arms = wash (tie), zero discordance at n=5: exact bound 45 pp > 10 pp, so the guard blocks the ship
     assert r["verdict"] == "loss_not_ruled_out"
-    assert "loss not ruled out above" in r["verdict_note"] and "wash" in r["verdict_note"]
+    assert "loss not ruled out above 45 pp" in r["verdict_note"] and "wash" in r["verdict_note"]
     assert r["delta"]["acc_strict"]["delta"] == pytest.approx(0.0)
     assert r["delta"]["acc_strict"]["verdict"] == "wash"
     assert r["delta"]["acc_strict"]["directional"] == "tie"
@@ -420,12 +420,21 @@ def test_verdict_strict_inequality_at_the_margin_boundary():
     assert CP._verdict(inside, margin=0.05) == "PASS"
 
 
-def test_p359_lever_guard_wash_passes_only_at_mde_le_10pp():
-    wash = {"lo": -0.04, "hi": 0.05, "delta": 0.005, "verdict": "wash", "directional": "tune_b"}
-    assert CP._verdict({**wash, "mde": 0.10}, margin=0.05) == "PASS"            # boundary: <= 0.10 ships
-    assert CP._verdict({**wash, "mde": 0.1001}, margin=0.05) == "loss_not_ruled_out"
-    assert CP._verdict({**wash, "mde": 0.32}, margin=0.05) == "loss_not_ruled_out"
-    assert CP._verdict(wash, margin=0.05) == "loss_not_ruled_out"                # unknown MDE never ships
+def test_p359_lever_guard_ships_a_wash_only_when_the_observed_loss_bound_is_within_10pp():
+    wash = {"hi": 0.05, "delta": 0.0, "verdict": "wash", "directional": "tie", "mde": 0.3}   # MDE no longer matters (C173)
+    assert CP._verdict({**wash, "lo": -0.09}, margin=0.05) == "PASS"
+    assert CP._verdict({**wash, "lo": -0.10}, margin=0.05) == "PASS"               # boundary: lo >= -0.10 ships
+    assert CP._verdict({**wash, "lo": -0.11}, margin=0.05) == "loss_not_ruled_out"
+
+
+def test_p359_degenerate_cell_uses_the_exact_discordance_bound_not_the_collapsed_ci():
+    n50 = {"lo": 0.0, "hi": 0.0, "delta": 0.0, "verdict": "wash", "directional": "tie", "mde": 0.177,
+           "degenerate": True, "discordance_upper95": 1 - 0.05 ** (1 / 50)}      # 5.8 pp
+    assert CP._verdict(n50, margin=0.05) == "PASS"
+    n20 = {**n50, "discordance_upper95": 1 - 0.05 ** (1 / 20)}                   # 13.9 pp
+    assert CP._verdict(n20, margin=0.05) == "loss_not_ruled_out"
+    assert "loss not ruled out above 14 pp" in CP._verdict_note("loss_not_ruled_out", n20)
+    assert "observed loss bound 6 pp" in CP._verdict_note("PASS", n50)
 
 
 def test_p359_wash_with_point_estimate_beyond_margin_still_fails_and_gain_passes():
@@ -440,7 +449,7 @@ def test_p359_wash_with_point_estimate_beyond_margin_still_fails_and_gain_passes
 def test_p359_wash_note_states_loss_bound_and_directional():
     chosen = {"lo": -0.13, "hi": 0.05, "delta": 0.0, "verdict": "wash", "directional": "tie", "mde": 0.2}
     note = CP._verdict_note("loss_not_ruled_out", chosen)
-    assert "wash (MDE 20 pp; directional: tie)" in note and "loss not ruled out above 20 pp" in note
+    assert "wash (MDE 20 pp; directional: tie)" in note and "loss not ruled out above 13 pp" in note
 
 
 def test_draft_acceptance_reports_mean_and_pooled_ratio():

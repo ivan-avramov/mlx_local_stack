@@ -610,7 +610,7 @@ the panel. All 620 generated rows converged in both states; `nonconv_kinds` empt
 
 | axis (n) | OFF | ON | paired read (ON−OFF) | verdict |
 |---|---|---|---|---|
-| Math500 `acc_strict@81920` (100) | 99 % | 99 % | **0 discordant items**, CI [0, 0], MDE ±12.5pp | **WASH** (MDE 12.5 pp; directional: tie; no discordance, discordance ≤ 3.0 pp; no OFF advantage, not FAIL; stored label was PASS, P348 relabelled it INCONCLUSIVE; P359 lever guard: MDE > 10 pp, so loss is not ruled out — see `benchmark/results/p359_wash/P359_AUDIT.md`) |
+| Math500 `acc_strict@81920` (100) | 99 % | 99 % | **0 discordant items**, CI [0, 0], MDE ±12.5pp | **WASH** (MDE 12.5 pp; directional: tie; no discordance, discordance ≤ 3.0 pp; no OFF advantage, not FAIL; stored label was PASS, P348 relabelled it INCONCLUSIVE; P359/C173 lever guard: exact discordance bound 3.0 pp ≤ 10 pp, ships — see `benchmark/results/p359_wash/P359_AUDIT.md`) |
 | cjudge panel (40 × 2 orders × 3 judges) | — | — | OFF preferred **0.56 [0.45, 0.68]**, Holm p = 0.28, MDE ±20pp; family split anthropic 0.53 / openai 0.50; gate PASS 6/6 (degrade 1.0, flip ≤0.03, κ 1.0, α 0.98, longer-pref 0.0, identity-tie 1.0) | **PASS** — wash at n=40 (MDE 20 pp, directional: OFF by 6pp, not a shown difference; underpowered, labelled so) |
 | HumanEvalPlus strict (100, native grading) | 93 % | 94 % | **+1pp [0, +3pp]**, 1 discordant (ON-win `HumanEval/68`) | **PASS** |
 | MBPPPlus strict (100, native grading) | 83 % | 82 % | **−1pp [−6, +3pp]**, 5 discordant: ON-only `Mbpp/604`, `Mbpp/752`; OFF-only `Mbpp/643`, `Mbpp/757`, `Mbpp/765` | **WASH** (MDE 12.5 pp; directional: OFF; CI lower edge −6pp crosses the margin; CI includes 0, point > −5pp → not FAIL; C72 does not apply, OFF-only wins exist) |
@@ -2081,7 +2081,7 @@ items, decode tok/s median, pre-registered 1.3× gate).
   acceptance ≈0.86 (2 drafts/round, block 3), all `finish=stop`; coherent-text smoke PASS.
   Acceptance clears M28's ~0.8 fine-tune trigger — M28 stays dormant. **The B 2nd choice's
   missing predictor is now plausible**: next is the M6b/M6d-protocol ±5pp quality OFAT
-  (5-item seeded pilot → n=164 humanevalplus, `--tune mtpon|mtpoff`) and, on a wash at MDE ≤ 10 pp (P359 lever guard),
+  (5-item seeded pilot → n=164 humanevalplus, `--tune mtpon|mtpoff`) and, on a wash whose observed loss bound is ≤ 10 pp (P359/C173 lever guard),
   the certified registry flip completing the (model, tune, predictor) triple.
 - Probe artifacts: `$STACK_WORKDIR/m14/mtp_probe_v2/`, `$STACK_WORKDIR/m27/mtp_probe_v2/`;
   sidecars under `$STACK_WORKDIR/scratch/m6a/`.

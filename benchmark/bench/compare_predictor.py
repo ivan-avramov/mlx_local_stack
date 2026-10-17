@@ -74,7 +74,7 @@ def _known(v):
 _VERDICT_RELABEL = {"a_better": "tune_b_better", "b_better": "tune_a_better",
                     "wash": "wash"}
 _DIRECTIONAL_RELABEL = {"a": "tune_b", "b": "tune_a", "tie": "tie"}   # same swap: called as (B, A)
-LEVER_MDE_MAX = 0.10   # P359 / C172 lever guard: a wash ships a lossy lever only at axis MDE <= 10 pp
+LEVER_LOSS_MAX = 0.10   # P359 / C173 lever guard: a wash ships a lossy lever only if the observed loss bound is <= 10 pp
 
 
 def _refuse(reason):
@@ -356,14 +356,21 @@ def _paired_ratio(per_item_a, per_item_b, *, iters=4000, seed=0):
            "n_reps_used": len(reps)}
 
 
-def _verdict(chosen, margin):
-    """PASS / FAIL / loss_not_ruled_out from one metric's paired_delta result (P359, C172: no equivalence).
+def _loss_bound(chosen):
+    """Largest loss (fraction) the observed data cannot rule out: the exact one-sided 95% discordance bound for a
+    degenerate (zero-discordance) cell, else minus the CI lower bound (C173)."""
+    if chosen.get("degenerate") and chosen.get("discordance_upper95") is not None:
+        return chosen["discordance_upper95"]
+    return max(0.0, -chosen["lo"])
 
-    PRECEDENCE: a SHOWN gain (CI above 0) PASSes; a SHOWN loss (CI below 0) PASSes while sub-margin
-    (`lo > -margin`, the <=5% lossy-lever rule, AGENTS.md) and FAILs otherwise. A WASH (CI includes 0) FAILs when
-    the point estimate is beyond -margin (an OFF advantage beyond +-5pp: unchanged shipping rule); else it is the
-    LEVER GUARD: PASS only when the axis MDE <= `LEVER_MDE_MAX` (10 pp; missing MDE never passes), otherwise
-    `loss_not_ruled_out` (the decision goes to the operator; see `_verdict_note`)."""
+
+def _verdict(chosen, margin):
+    """PASS / FAIL / loss_not_ruled_out from one metric's paired_delta result (P359 / C172 / C173: no equivalence).
+
+    A SHOWN gain (CI above 0) PASSes; a SHOWN loss (CI below 0) PASSes while sub-margin (`lo > -margin`, the <=5%
+    lossy-lever rule, AGENTS.md) and FAILs otherwise. A WASH (CI includes 0) FAILs when the point estimate is beyond
+    -margin (an OFF advantage beyond +-5pp: unchanged shipping rule); else it is the LEVER GUARD (C173): PASS only when
+    the observed loss bound (`_loss_bound`) is <= `LEVER_LOSS_MAX` (10 pp), otherwise `loss_not_ruled_out`."""
     lo, hi, delta = chosen["lo"], chosen["hi"], chosen["delta"]
     if lo > 0:
         return "PASS"
@@ -371,21 +378,20 @@ def _verdict(chosen, margin):
         return "PASS" if lo > -margin else "FAIL"
     if delta < -margin:
         return "FAIL"
-    mde = chosen.get("mde")
-    return "PASS" if mde is not None and mde <= LEVER_MDE_MAX else "loss_not_ruled_out"
+    return "PASS" if _loss_bound(chosen) <= LEVER_LOSS_MAX + 1e-12 else "loss_not_ruled_out"
 
 
 def _verdict_note(verdict, chosen):
-    """Human-readable qualifier for a wash-derived verdict: actual numbers/MDE/directional pick and, when the lever
-    guard blocks, the loss bound (the larger of the CI's lower bound and the axis MDE: a loss that size
-    could not be seen)."""
+    """Human-readable qualifier for a wash-derived verdict: numbers, MDE, directional pick and the loss bound."""
     if chosen.get("verdict") != "wash":
         return None
-    label = (f"wash (MDE {chosen['mde'] * 100:.0f} pp; directional: {chosen.get('directional', 'tie')}"
-             f"{'' if chosen.get('directional', 'tie') == 'tie' else ' (not a shown difference)'})")
+    dr = chosen.get("directional", "tie")
+    label = (f"wash (MDE {chosen['mde'] * 100:.0f} pp; directional: {dr}"
+             f"{'' if dr == 'tie' else ' (not a shown difference)'})")
+    bound = f"{_loss_bound(chosen) * 100:.0f} pp"
     if verdict == "loss_not_ruled_out":
-        return f"{label}; loss not ruled out above {max(-chosen['lo'], chosen['mde']) * 100:.0f} pp"
-    return label
+        return f"{label}; loss not ruled out above {bound}"
+    return f"{label}; observed loss bound {bound}"
 
 
 def compare_predictor(model, bench, tune_a, tune_b, *, key="acc_strict", margin=0.05,
