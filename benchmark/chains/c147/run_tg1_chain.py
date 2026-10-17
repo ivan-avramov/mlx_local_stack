@@ -244,11 +244,12 @@ class Chain:
         pinned = doc.get("pinned")
         if not isinstance(pinned, dict):
             return "pinned absent or malformed"
-        for key in ("generation_identity_sha256", "scaffold_policy_sha256"):
-            if key in pinned and not hexed(pinned[key]):
-                return f"pinned {key} malformed"
-        if "policy_sha256" not in doc or not (doc["policy_sha256"] is None or hexed(doc["policy_sha256"])):
-            return "policy_sha256 absent or malformed"
+        if "generation_identity_sha256" in pinned and not hexed(pinned["generation_identity_sha256"]):
+            return "pinned generation_identity_sha256 malformed"
+        if not hexed(doc.get("policy_sha256")):
+            return "policy_sha256 absent, null or malformed"
+        if pinned.get("scaffold_policy_sha256") != doc["policy_sha256"]:
+            return "pinned scaffold_policy_sha256 missing or differs from policy_sha256"
         return None
 
     def init_lifecycle(self):
@@ -354,10 +355,9 @@ class Chain:
             return self.rc
         try:
             self.derive_policy()
-        except co.ChainAbort as e:
+        except co.ChainAbort as e:                       # nothing is written: no half-formed or re-derived record
             self.log(f"CHAIN ABORT: {e}")
             self.rc = e.code
-            self.write_json("aborted")
             return self.rc
         self.write_json("starting")
         if self.stop_requested():

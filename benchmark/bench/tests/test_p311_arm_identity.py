@@ -49,8 +49,8 @@ def hf(tmp_path):
 APC_OFF = {"router": "0", "worker": "0"}
 
 
-def sha(argv, entry, hf_home, apc=APC_OFF):
-    return ai.arm_identity_sha256(ai.fingerprint(argv, entry, hf_home=hf_home, apc=apc))
+def sha(argv, entry, hf_home, apc=APC_OFF, retain="on"):
+    return ai.arm_identity_sha256(ai.fingerprint(argv, entry, hf_home=hf_home, apc=apc, retain_default=retain))
 
 
 def with_flag(argv, flag, value):
@@ -165,7 +165,7 @@ def test_entry_presentation_does_not_matter_but_other_entry_keys_do(hf):
 
 
 def test_fingerprint_is_json_and_home_normalised(hf):
-    fp = ai.fingerprint(ARGV_ON, ENTRY_ON, hf_home=hf, apc=APC_OFF)
+    fp = ai.fingerprint(ARGV_ON, ENTRY_ON, hf_home=hf, apc=APC_OFF, retain_default="on")
     text = json.dumps(fp)
     assert "/Users/" not in text and str(hf) not in text
     assert fp["target"]["repo"] == TARGET and fp["draft"]["repo"] == DRAFT
@@ -227,15 +227,17 @@ def test_observe_reads_apc_from_the_router_and_worker_environments(monkeypatch, 
     monkeypatch.setattr(provenance, "_worker_argvs", lambda doc: [ARGV])
     monkeypatch.setattr(provenance, "_descends_from", lambda pid, anc: True)
     envs = {111: {"PATH": "x"}, 777: {"APC_ENABLED": "1"}}
-    fp, sha_on = ai.observe("m", {"pid": 111}, registry_path=reg, hf_home=hf, env_reader=lambda pid: envs[pid])
+    fp, sha_on = ai.observe("m", {"pid": 111}, registry_path=reg, hf_home=hf, env_reader=lambda pid: envs[pid],
+                            retain_default_reader=lambda: "on")
     assert fp["apc"] == {"router": "0", "worker": "1"}
     envs[777] = {}
-    assert ai.observe("m", {"pid": 111}, registry_path=reg, hf_home=hf, env_reader=lambda pid: envs[pid])[1] != sha_on
+    assert ai.observe("m", {"pid": 111}, registry_path=reg, hf_home=hf, env_reader=lambda pid: envs[pid],
+                      retain_default_reader=lambda: "on")[1] != sha_on
 
     def denied(pid):
         raise PermissionError("environ")
     with pytest.raises(ai.ArmIdentityError, match="APC"):
-        ai.observe("m", {"pid": 111}, registry_path=reg, hf_home=hf, env_reader=denied)
+        ai.observe("m", {"pid": 111}, registry_path=reg, hf_home=hf, env_reader=denied, retain_default_reader=lambda: "on")
 
 
 def test_every_flag_literal_in_mlx_serve_build_command_is_classified():
@@ -251,3 +253,34 @@ def test_every_flag_literal_in_mlx_serve_build_command_is_classified():
     literals = set(re.findall(r'"(--[a-z][a-z0-9-]*)"', body))
     known = set(ai.OUTPUT_VALUE_FLAGS) | set(ai.OUTPUT_BOOL_FLAGS) | set(ai.INERT_VALUE_FLAGS)
     assert literals and literals <= known, sorted(literals - known)
+
+
+# ---- confirmation L10: the EFFECTIVE session-retain-prompt-end is part of the identity
+def test_omitted_retain_flag_resolves_to_the_default_and_equals_the_explicit_value(hf):
+    explicit_on = with_flag(ARGV, "--cache-session-retain-prompt-end", "on")
+    assert sha(ARGV, ENTRY, hf, retain="on") == sha(explicit_on, ENTRY, hf, retain="off")   # explicit wins, default unused
+    assert sha(ARGV, ENTRY, hf, retain="on") != sha(ARGV, ENTRY, hf, retain="off")          # omitted: the default counts
+    assert sha(ARGV, ENTRY, hf, retain="off") == sha(with_flag(ARGV, "--cache-session-retain-prompt-end", "off"), ENTRY, hf)
+    assert sha(ARGV, ENTRY, hf, retain="on") != sha(with_flag(ARGV, "--cache-session-retain-prompt-end", "off"), ENTRY, hf)
+
+
+@pytest.mark.parametrize("bad", [None, "", "maybe"])
+def test_unreadable_or_malformed_retain_default_refuses_when_the_flag_is_omitted(hf, bad):
+    with pytest.raises(ai.ArmIdentityError, match="retain"):
+        sha(ARGV, ENTRY, hf, retain=bad)
+    sha(with_flag(ARGV, "--cache-session-retain-prompt-end", "on"), ENTRY, hf, retain=bad)     # explicit: not needed
+
+
+def test_observe_refuses_when_the_fork_default_cannot_be_read(monkeypatch, tmp_path, hf):
+    from bench import provenance
+    reg = tmp_path / "reg.yaml"
+    reg.write_text("mlx_port: 8091\nmanager_port: 8000\nmodels:\n  - name: m\n    hf_path: " + TARGET + "\n")
+    monkeypatch.setattr(provenance, "_port_listener_pids", lambda port: [777])
+    monkeypatch.setattr(provenance, "_worker_argvs", lambda doc: [ARGV])
+    monkeypatch.setattr(provenance, "_descends_from", lambda pid, anc: True)
+
+    def unreadable():
+        raise ImportError("mlx_vlm")
+    with pytest.raises(ai.ArmIdentityError, match="retain"):
+        ai.observe("m", {"pid": 111}, registry_path=reg, hf_home=hf, env_reader=lambda pid: {},
+                   retain_default_reader=unreadable)

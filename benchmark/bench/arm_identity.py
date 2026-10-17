@@ -140,7 +140,25 @@ def _apc(apc):
     return dict(apc)
 
 
-def fingerprint(argv, entry, *, hf_home=None, apc):
+
+
+
+RETAIN_FLAG = "--cache-session-retain-prompt-end"
+
+
+def _effective_retain(flags, default):
+    """The EFFECTIVE prompt-end retention (review L10): the explicit flag, else the worker's own default (mlx-serve omits
+    the flag by default, so the fork's default decides). Unreadable or malformed refuses."""
+    value = flags.get(RETAIN_FLAG)
+    if value is None:
+        value = default
+    value = str(value).lower() if value is not None else ""
+    if value not in ("on", "off"):
+        raise ArmIdentityError("effective session retain-prompt-end state is unreadable (no flag and no readable default)")
+    return value
+
+
+def fingerprint(argv, entry, *, hf_home=None, apc, retain_default=None):
     """The effective worker fingerprint (JSON-able): output-determining flags, the served registry entry without
     its presentation block, and the target and (when a drafter is on) draft artifacts. The argv must agree with
     the entry on the model and the drafter."""
@@ -162,11 +180,12 @@ def fingerprint(argv, entry, *, hf_home=None, apc):
     elif drafter:
         raise ArmIdentityError("worker has --draft-model without a draft kind")
     return _normalise({
-        "flags": {k: v for k, v in sorted(flags.items()) if k not in INERT_VALUE_FLAGS},
+        "flags": {k: v for k, v in sorted(flags.items()) if k not in INERT_VALUE_FLAGS and k != RETAIN_FLAG},
         "entry": entry,
         "target": artifact_identity(flags["--model"], hf_home),
         "draft": artifact_identity(drafter, hf_home) if drafter else None,
         "apc": _apc(apc),
+        "retain_prompt_end": _effective_retain(flags, retain_default),
     })
 
 
@@ -179,7 +198,13 @@ def _environ(pid):
     return psutil.Process(pid).environ()
 
 
-def observe(model, router, *, registry_path=None, hf_home=None, env_reader=None):
+def _fork_retain_default():
+    """The fork's own default, read from the same mlx_vlm the worker serves (`session_retain_prompt_end()`)."""
+    from mlx_vlm.generate.common import session_retain_prompt_end
+    return "on" if session_retain_prompt_end() else "off"
+
+
+def observe(model, router, *, registry_path=None, hf_home=None, env_reader=None, retain_default_reader=None):
     """(fingerprint, sha256) of THE live worker serving `model`: the single mlx_port listener, an mlx_vlm server
     descending from `router`, whose argv equals the served entry (`provenance._worker_argvs` already refuses an
     unreadable, squatting or ambiguous listener). Anything unverifiable refuses."""
@@ -203,5 +228,13 @@ def observe(model, router, *, registry_path=None, hf_home=None, env_reader=None)
                (("router", router["pid"]), ("worker", before[0]))}
     except Exception as exc:  # noqa: BLE001
         raise ArmIdentityError(f"APC state unreadable from the router/worker environment: {type(exc).__name__}") from exc
-    fp = fingerprint(workers[0], entry, hf_home=hf_home, apc=apc)
+    flags = parse_argv(workers[0])
+    default = None
+    if RETAIN_FLAG not in flags:
+        try:
+            default = (retain_default_reader or _fork_retain_default)()
+        except Exception as exc:  # noqa: BLE001
+            raise ArmIdentityError("effective session retain-prompt-end default unreadable: "
+                                   f"{type(exc).__name__}") from exc
+    fp = fingerprint(workers[0], entry, hf_home=hf_home, apc=apc, retain_default=default)
     return fp, arm_identity_sha256(fp)

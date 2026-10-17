@@ -272,6 +272,9 @@ def _rewrite(path, fn):
     ("pinned not a dict", lambda path: _rewrite(path, lambda d: d.update(pinned=[]))),
     ("pinned composite malformed", lambda path: _rewrite(path, lambda d: d["pinned"].update(generation_identity_sha256="x"))),
     ("policy absent", lambda path: _rewrite(path, lambda d: d.pop("policy_sha256"))),
+    ("policy null", lambda path: _rewrite(path, lambda d: d.update(policy_sha256=None))),
+    ("pinned policy missing", lambda path: _rewrite(path, lambda d: d["pinned"].pop("scaffold_policy_sha256"))),
+    ("pinned policy differs", lambda path: _rewrite(path, lambda d: d["pinned"].update(scaffold_policy_sha256="9" * 64))),
     ("policy malformed", lambda path: _rewrite(path, lambda d: d.update(policy_sha256="x"))),
 ])
 def test_an_existing_malformed_chain_json_refuses_and_is_never_overwritten(env, name, damage):
@@ -328,3 +331,24 @@ def test_a_probe_that_cannot_print_its_identity_refuses(env, mode):
 def test_no_policy_constant_survives():
     from bench import tg1_runner
     assert not hasattr(co, "CAMPAIGN_POLICY_SHA") and not hasattr(tg1_runner, "CAMPAIGN_POLICY_SHA256")
+
+
+# ---------------------------------------------------------------- confirmation L4: no half-written record
+def test_a_failed_policy_derivation_writes_no_chain_json(env):
+    assert run(env, CHAIN, extra_env={"FAKE_PRINT_MODE": "fail"}) == 2
+    assert not (env["out"] / "chain.json").exists()
+
+
+def test_a_supplied_policy_mismatch_writes_no_chain_json(env):
+    assert run(env, CHAIN + ["--policy-sha", "5" * 64]) == 2
+    assert not (env["out"] / "chain.json").exists()
+
+
+def test_resume_never_overwrites_a_frozen_policy(env):
+    files = lifecycle_copy(env["wd"])
+    assert run(env, PILOT, lifecycle=files) == 0
+    path = env["out"] / "chain.json"
+    before = path.read_bytes()
+    assert run(env, CHAIN, lifecycle=files, extra_env={"FAKE_PRINT_POLICY_SHA": "4" * 64,
+                                                       "FAKE_POLICY_SHA": "4" * 64}) == 2
+    assert path.read_bytes() == before

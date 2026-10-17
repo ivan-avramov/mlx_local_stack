@@ -117,3 +117,25 @@ def test_every_report_script_gates_through_the_pairing(script):
     from pathlib import Path
     text = (Path(__file__).resolve().parents[2] / "results" / script).read_text()
     assert "tg1_pairing.gate_items" in text and "tg1_pairing.gate_note" in text
+
+
+# ---- confirmation L5: the FULL pair identity, never pooled across arm tuples
+def test_gate_items_never_pools_across_arm_identity_tuples():
+    ra = [row("python/x", arm="A1"), row("python/y", arm="A2")]
+    rb = [row("python/x", arm="B"), row("python/y", arm="B")]
+    ia, ib = {"python/x": [1], "python/y": [1]}, {"python/x": [0], "python/y": [0]}
+    a, b, report = tg1_pairing.gate_items(ia, ra, ib, rb)
+    assert a == {} and b == {}                                   # two (arm A, arm B) tuples: nothing is pooled
+    groups = report["multiple_pair_identities"]
+    assert sorted(groups.values()) == [["python/x"], ["python/y"]]
+    assert all(k.startswith("('g', 'A") for k in groups)
+    assert "multiple pair identities" in tg1_pairing.gate_note("s1 python", report)
+
+
+def test_gate_items_with_one_arm_tuple_is_unchanged_and_uses_pair_identity(monkeypatch):
+    seen = []
+    real = tg1_pairing.pair_identity
+    monkeypatch.setattr(tg1_pairing, "pair_identity", lambda a, b: seen.append(1) or real(a, b))
+    ra, rb = [row("python/x", arm="A"), row("python/y", arm="A")], [row("python/x", arm="B"), row("python/y", arm="B")]
+    a, b, report = tg1_pairing.gate_items({"python/x": [1], "python/y": [1]}, ra, {"python/x": [0], "python/y": [0]}, rb)
+    assert sorted(a) == sorted(b) == ["python/x", "python/y"] and seen and "multiple_pair_identities" not in report

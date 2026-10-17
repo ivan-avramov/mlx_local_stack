@@ -58,12 +58,20 @@ def gate_items(items_a, rows_a, items_b, rows_b):
     if not any(is_current(r) for r in rows_a + rows_b):
         return items_a, items_b, None
     got = pair_rows(rows_a, rows_b)
-    ok = {a["id"] for a, _ in got["paired"]}
+    groups = {}
+    for a, b in got["paired"]:
+        groups.setdefault(pair_identity(a, b), []).append(a["id"])
+    if len(groups) > 1:               # never pool across (generation, arm A, arm B, date) tuples
+        ok = set()
+    else:
+        ok = {a["id"] for a, _ in got["paired"]}
     report = {"paired": sorted(ok),
               "date_mismatch": sorted(a["id"] for a, _ in got["date_mismatch"]),
               "generation_mismatch": sorted(a["id"] for a, _ in got["generation_mismatch"]),
               "legacy": sorted({r["id"] for r in got["legacy"]}),
               "unpaired": sorted({r["id"] for r in got["unpaired_a"] + got["unpaired_b"]})}
+    if len(groups) > 1:
+        report["multiple_pair_identities"] = {str(k): sorted(v) for k, v in groups.items()}
     return ({k: v for k, v in items_a.items() if k in ok}, {k: v for k, v in items_b.items() if k in ok}, report)
 
 
@@ -71,4 +79,7 @@ def gate_note(label, report):
     """One line per non-empty mismatch class (descriptive; these items are NOT in the paired deltas)."""
     parts = [f"{key.replace('_', ' ')}: {report[key]}" for key in
              ("date_mismatch", "generation_mismatch", "legacy", "unpaired") if report[key]]
+    if report.get("multiple_pair_identities"):
+        parts.append(f"multiple pair identities (arm tuples; nothing pooled, compute one delta per group): "
+                     f"{report['multiple_pair_identities']}")
     return f"- pairing gate {label}: {len(report['paired'])} paired" + ("; excluded " + "; ".join(parts) if parts else "")
