@@ -336,3 +336,27 @@ def _declared_auditor_probes_absent(monkeypatch):
         raise FileNotFoundError("auditor CLI stubbed absent in tests (C158 A5)")
     monkeypatch.setattr(_web_audit, "auditor_version", absent)
     monkeypatch.setattr(_web_audit_cursor, "cursor_version", absent)
+
+
+# G1 round 2: the guard's reconcile deadline stays at its production value (10 s); tests that wait on it inject the
+# guard's clock and sleep instead (modules opt in with `pytestmark = pytest.mark.usefixtures("fake_guard_clock")`).
+class FakeGuardClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def fake_guard_clock(monkeypatch):
+    from bench import proc_guard as _pg
+    clock = FakeGuardClock()
+    monkeypatch.setattr(_pg.ProcessGuard, "_monotonic", staticmethod(clock.monotonic), raising=False)
+    monkeypatch.setattr(_pg.ProcessGuard, "_sleep", staticmethod(clock.sleep), raising=False)
+    return clock

@@ -274,8 +274,9 @@ audit applies to every arm. Tests: Pi and dsh cheat → audit → same-slot re-r
 ## 10. Endpoints and inference (pre-registered)
 
 **P347 (operator 2026-10-16): M64 is an ESTIMATION SCREEN.** The pre-launch power simulation
-(`benchmark/m64/POWER_SIM.md`) gave the 4-cell accuracy claim power 0.000 and a pooled alternative 0.30–0.34 at the
-observed run-to-run discordance (0.041). So no PASS/FAIL is declared: every endpoint below is reported as a point
+(`benchmark/m64/POWER_SIM.md`) gave the 4-cell accuracy claim power 0.000 (0/400, 95 % upper bound 0.0075) at the observed
+run-to-run discordance (0.041); the pooled alternative is INVALID (false pass ≈ 0.178 at the margin, P358), so its power
+is not evidence (P357 round 2). So no PASS/FAIL is declared: every endpoint below is reported as a point
 estimate with its interval (and, where defined, its TOST p for the record), per pick, contrast, language and session;
 the Holm family and joint PASS rule below are kept only as the descriptive presentation of those p values. A scaffold
 recommendation from M64 is an operator judgement on the estimates (tokens/task, incidence of cuts / compaction /
@@ -300,7 +301,7 @@ transport DNFs, subjective quality, failure modes), labelled provisional.
 - **One Holm family over the 12 claims.** Joint PASS for an arm on a pick = its accuracy, token and subjective claims
   all pass after Holm.
 - Method validated by simulation BEFORE any build (§12 step 2): coverage and TOST error under sparse/zero
-  discordance, plausible unseen discordance, shared loaded-instance effects; inputs P223 / M63 / c144-base. Simulated
+  discordance, plausible unseen discordance, shared loaded-instance effects; inputs P223 / M63 / c144-base. (Shared loaded-instance effect sensitivity deferred — P357; not needed for the estimation-only conclusion.) Simulated
   power < 80% at this N → M64 is an estimation screen (no PASS; estimates + intervals), unless the operator approves a
   larger N first.
 - Pre-registered sensitivity: primary scoring over all items; paired sensitivity excluding items where either arm had
