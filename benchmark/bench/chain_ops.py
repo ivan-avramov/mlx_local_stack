@@ -17,7 +17,10 @@ import time
 import urllib.request
 from pathlib import Path
 
-CAMPAIGN_POLICY_SHA = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"
+# P311-lite: the campaign scaffold policy now embeds the runtime toolchain (bench lock sha, interpreter, local grader image
+# id), so this value is the one printed by `run_tg1_probe.py --print-identity` on THIS box (m5max-128, 2026-10-17). A box
+# with another image id or interpreter passes its own value with `--policy-sha` (and `--universe`).
+CAMPAIGN_POLICY_SHA = "e109dcc4c54bf6b07ca5c4bf6e405187388d60b60c46664d43bd10ce415cd54b"
 SCAFFOLD = "opencode-v2-web-tg1"
 PICK1 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 PICK2 = "Qwen3.8-27B-mlx-uniform-4bit"

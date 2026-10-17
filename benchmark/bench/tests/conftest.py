@@ -336,3 +336,12 @@ def _declared_auditor_probes_absent(monkeypatch):
         raise FileNotFoundError("auditor CLI stubbed absent in tests (C158 A5)")
     monkeypatch.setattr(_web_audit, "auditor_version", absent)
     monkeypatch.setattr(_web_audit_cursor, "cursor_version", absent)
+
+
+# --------------------------------------------------------------------------- P311-lite: no docker in unit tests
+@pytest.fixture(autouse=True)
+def _fixed_grader_image(monkeypatch):
+    """The tg1 scaffold policy records the local grader image id; unit tests never talk to docker. Tests of the
+    real probe use `toolchain.docker_image_id(run=<fake>)`."""
+    from bench import toolchain
+    monkeypatch.setattr(toolchain, "grader_image_id", lambda: "sha256:" + "f" * 64)

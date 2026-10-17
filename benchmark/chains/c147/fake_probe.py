@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from bench import rowschema  # noqa: E402
 
-CAMPAIGN = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"
+CAMPAIGN = "e109dcc4c54bf6b07ca5c4bf6e405187388d60b60c46664d43bd10ce415cd54b"
 SCAFFOLD = "opencode-v2-web-tg1"
 SERVING = {"src/mlx-vlm": "5" * 64, "src/mlx-serve": "6" * 64}
 

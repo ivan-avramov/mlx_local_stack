@@ -19,6 +19,8 @@ from . import (
     proc_guard as pg,
     opencode_export as ox,
     provenance,
+    identity_closure as ic,
+    toolchain,
 )
 from m62 import universe_preflight
 
@@ -33,7 +35,15 @@ HEARTBEAT_INTERVAL_S = 30
 GRACEFUL_CLIENT_S = 15
 ACK_TIMEOUT_S = 300
 ACK_POLL_S = 0.5
-CAMPAIGN_POLICY_SHA256 = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"
+CAMPAIGN_POLICY_SHA256 = "e109dcc4c54bf6b07ca5c4bf6e405187388d60b60c46664d43bd10ce415cd54b"
+
+# P311-lite: the non-Python inputs of the generation identity (plugins and the carrier the probe writes); the Python
+# part is the static import closure of the tg1 entry (`bench.identity_closure`), not a hand-kept module list.
+GENERATION_DATA = (
+    "benchmark/opencode_plugins/toolbounds.js",
+    "benchmark/opencode_plugins/noretry.js",
+    "benchmark/opencode_bench_v2_web_tg1.json",
+)
 
 # C147 §2: frozen injected-positive policy. Each kind lowers exactly ONE constant; every other constant stays at the
 # campaign value (derived at call time by `effective_policy`). No CLI override exists.
@@ -296,8 +306,9 @@ def tool_bounds_rejections(export):
 
 
 def identity(p, selection, universe_sha, version, binary, *, inject=None):
-    """Probe identity. `inject=None` is the campaign mode and MUST keep the policy dict (hence
-    `scaffold_policy_sha256`) byte-identical to the V3/V4 manifests; inject-only keys live in inject mode only."""
+    """Probe identity. `probe_code_sha256` is the static import closure of the tg1 entry plus `GENERATION_DATA`
+    (P311-lite); the policy carries the runtime toolchain (lock sha, interpreter, grader image id). Inject-only
+    keys live in inject mode only; the code identity is the same in both modes."""
     gate, hygiene = effective_policy(inject)
     label = inject_label(inject) if inject else SCAFFOLD
     policy = dict(
@@ -314,39 +325,18 @@ def identity(p, selection, universe_sha, version, binary, *, inject=None):
         env=p.SCAFFOLD_ENV_POLICY_V2,
         scaffold=label,
     )
+    policy["toolchain"] = toolchain.current()       # P23: lock sha, interpreter, grader image id (missing refuses)
     if inject:
         policy["inject"] = dict(kind=inject, prompt_addendum_sha256=inject_addendum_sha256(inject))
-    modules = [
-        Path(__file__),
-        Path(tg.__file__),
-        Path(sg.__file__),
-        Path(pg.__file__),
-        Path(universe_preflight.__file__),
-        REPO / "benchmark/m62/replay.py",
-        Path(p.__file__),
-        Path(provenance.__file__),
-        Path(p.opencode_common.__file__),
-        Path(ox.__file__),
-        # Transitive scoring/accounting: budget clamp, seeds, audit/cheat labels,
-        # registry resolution and deployed sampling/provenance. Legacy progress_gate
-        # and generate execution are not called by tg1.
-        *(REPO / "benchmark" / name for name in (
-            "bench/convergence.py", "bench/rowschema.py", "bench/answer_key.py",
-            "web_audit.py", "web_audit_prompt.md", "web_audit_cursor.py", "bench/paths.py",
-            "bench/model_params.py", "bench/quant_info.py",
-        )),
-    ]
-    digest = hashlib.sha256()
-    for path in modules:
-        digest.update(path.relative_to(REPO).as_posix().encode() + b"\0")
-        digest.update(path.read_bytes())
+    entry = Path(p.__file__).resolve().relative_to(REPO.resolve()).as_posix()
+    probe_code_sha256 = ic.closure_sha256(entry, REPO, data=GENERATION_DATA)
     result = dict(
         scaffold=label,
         policy=policy,
         scaffold_policy_sha256=hashlib.sha256(
             json.dumps(policy, sort_keys=True).encode()
         ).hexdigest(),
-        probe_code_sha256=digest.hexdigest(),
+        probe_code_sha256=probe_code_sha256,
         opencode_version=version,
         opencode_exe_sha256=p._sha_of(binary),
     )
@@ -370,6 +360,7 @@ def print_identity(p, a):
         scaffold_policy_sha256=ident["scaffold_policy_sha256"],
         probe_code_sha256=ident["probe_code_sha256"],
         opencode_version=ident["opencode_version"],
+        toolchain=ident["policy"]["toolchain"],
     )
     if exe.is_file():
         out["opencode_exe_sha256"] = ident["opencode_exe_sha256"]
@@ -977,6 +968,7 @@ def _main(p, a, names):
     selection = p._carrier_selection(SCAFFOLD, a.agent_system_file, source=CARRIER)
     if kind:
         selection["fields"] = {**selection["fields"], "scaffold": inject_label(kind)}
+    tool0 = toolchain.current()          # P23: lock + interpreter + grader image; a missing one refuses before any spawn
     carrier = json.loads(selection["bytes"])
     model = carrier["providers"]["mlx-local"]["models"].get(a.model)
     if model is None:
@@ -1030,6 +1022,10 @@ def _main(p, a, names):
             != selection["fields"]["agent_system_sha256"]
         ):
             raise tg.TransportAbort("tg1 input provenance drift")
+        try:
+            toolchain.verify(tool0)
+        except toolchain.ToolchainError as exc:
+            raise tg.TransportAbort("tg1 " + str(exc)) from exc
 
     if cancel is not None and cancel():
         raise RunnerCancelled()      # C147 §3a: before the first spawn of any kind
@@ -1068,6 +1064,8 @@ def _main(p, a, names):
         provenance.assert_served_config_unchanged(router, destination)
     shutil.rmtree(env["TMPDIR"])
     ident = identity(p, selection, universe_sha, version, binary, inject=kind)
+    if ident["policy"]["toolchain"] != tool0:
+        raise tg.TransportAbort("tg1 toolchain drift: changed while the probe started")
     ident.update(
         seed_base=a.seed_base,
         lang=a.lang,
@@ -1075,8 +1073,7 @@ def _main(p, a, names):
         a4_v2_pass=bool(receipt),
         **selection["fields"],
     )
-    if a.sampling_profile:
-        ident["sampling_profile"] = a.sampling_profile
+    ident["sampling_profile"] = a.sampling_profile        # a present None is a value (the composite requires the key)
     out = (
         Path(a.out)
         if a.out

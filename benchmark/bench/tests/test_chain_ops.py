@@ -627,7 +627,7 @@ def test_seed_overlay_sha_matches_probe_recipe():
 
 
 def test_campaign_hash_pinned():
-    assert co.CAMPAIGN_POLICY_SHA == "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"
+    assert co.CAMPAIGN_POLICY_SHA == "e109dcc4c54bf6b07ca5c4bf6e405187388d60b60c46664d43bd10ce415cd54b"
 
 
 # --------------------------------------------------------------------------- teardown ownership (Q1)
