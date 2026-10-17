@@ -1,7 +1,8 @@
-# P369 — MTP certification: prove exactness, fix M2–M5 (PLAN v2, 2026-10-17)
+# P369 — MTP certification: prove exactness, fix M2–M5 (PLAN v3, 2026-10-17)
 
 Status: PLAN v2 (Cursor `gpt-5.6-sol-high` plan review round 1: AGREE WITH CHANGES Q1–Q10, all applied;
-`docs/reviews/p369-plan-round1.cursor-gpt-5.6-sol-high.md`) → round 2 confirmation → execute.
+`docs/reviews/p369-plan-round1.cursor-gpt-5.6-sol-high.md`); round 2 AGREE WITH CHANGES Q11–Q13 (+Q14), applied in v3
+(`docs/reviews/p369-plan-round2.cursor-gpt-5.6-sol-high.md`) → execute.
 Origin: P368 layer 1 (`docs/reviews/p368-layer1-mtp-mechanism.cursor-gpt-5.6-sol-high.md`, NOT NEUTRAL M3 M4).
 Both B picks ship `draft_kind: mtp`. Claim being certified: **MTP-ON output is distributed exactly as MTP-OFF output on
 the deployed serving path.** "No detectable shift" is not an exactness result (Q2).
@@ -46,6 +47,23 @@ AGENTS.md; operator go needed — it is a serving-config change). Bench runs: OF
   of the C84 set + tg1 multi-turn sessions with session continuity, per pick; report events / opportunities with request-
   and accepted-block denominators and 95 % upper bounds (zero events → ≈ 3/n). Informs the incident record, not the
   interim decision.
+
+## Execution details (round 2, Q11–Q14)
+
+- **E1a enumerator (Q11):** a TEST sampler that reuses `_PositionedTargetSampler._filter`, forces each candidate token
+  by emitted position, records its exact conditional mass `softmax(filtered_logits / temperature)`, and reruns clean ON /
+  OFF state for every prefix of the finite support; deterministic scripted low- and high-acceptance drafters. Only the
+  categorical selection is replaced; `generate_step`, verifier, acceptance and transaction code are the production ones.
+  E1b separately validates the real position-keyed categorical draw (`seed=` selects `_PositionedTargetSampler`; plain
+  and MTP use identical (seed, row, position) keys — no production change).
+- **E1c observer + state (Q12, Q13):** a test-local wrapper around `_mtp_verify_target` / `speculative_logits_from_hidden`
+  records inputs and outputs and returns them unchanged; sequential clean replays (never clone 262K preallocated caches).
+  After each commit compare cache offsets and valid KV prefixes, recurrent / GDN state and next-step singleton logits
+  (not unused preallocated tails). Per pick: **Fable** — native KV, `joint_v1`, assert straddle counters; **uniform** —
+  TurboQuant KV, registered `per_query` (`joint_v1` is refused when `kv_bits > 0`): record externally verified boundary
+  lengths and per-query / TurboQuant routing instead of straddle counters.
+- **Branch coverage (Q14):** spies / counters prove both `quantized_verifier` and dense `exact_speculative_verify` kernels
+  executed; tiny dimensions satisfy affine group-size / kernel eligibility.
 
 ## F — fixes in `../mlx-vlm` (minimal, fail-closed; Cursor code review)
 
