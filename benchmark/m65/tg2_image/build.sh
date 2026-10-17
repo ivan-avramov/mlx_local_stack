@@ -14,12 +14,11 @@ context_sha="$("$python" -I -c 'import sys; sys.path.insert(0, sys.argv[1]); imp
 nice -n 19 docker build --pull=false --provenance=false -t "$tag" \
   --build-arg "POLYGLOT_SHA=$polyglot_sha" --build-arg "CONTEXT_SHA256=$context_sha" "$here"
 digest="$(docker image inspect --format '{{.Id}}' "$tag")"
-sha() { shasum -a 256 "$@" | shasum -a 256 | cut -d' ' -f1; }
 {
   printf '%s\n' "$digest"
   printf 'polyglot_sha=%s\n' "$polyglot_sha"
   printf 'context_sha256=%s\n' "$context_sha"
-  printf 'js_lock_sha256=%s\n' "$(sha "$here/locks/js/package-lock.json")"
+  printf 'js_lock_sha256=%s\n' "$(shasum -a 256 < "$here/locks/js/package-lock.json" | cut -d' ' -f1)"
   printf 'cargo_locks_sha256=%s\n' "$(cd "$here/locks/rust" && find . -name Cargo.lock | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256 | cut -d' ' -f1)"
 } > "$here/IMAGE_ID"
 echo "$tag $digest"

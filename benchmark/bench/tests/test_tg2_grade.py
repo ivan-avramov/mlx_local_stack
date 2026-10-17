@@ -20,6 +20,27 @@ from bench.token_turn_gate import TransportAbort
 IMG = "sha256:" + "ab" * 32
 
 
+# P361: OrbStack bind mounts under $TMPDIR serve stale file sizes, and the grader refuses such sources, so every test
+# tree lives under a non-TMPDIR root.
+def _test_root():
+    base = os.environ.get("STACK_WORKDIR")
+    root = Path(base) / "m65/test-tmp" if base else Path(__file__).resolve().parents[3] / ".tg2-test-tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+TEST_ROOT = _test_root()
+
+
+@pytest.fixture
+def tmp_path():
+    import uuid
+    path = TEST_ROOT / ("t-" + uuid.uuid4().hex[:10])
+    path.mkdir()
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
+
+
 # --------------------------------------------------------------------------------------------------------- parsers
 RUST_TWO_BINARIES = """\
    Compiling x v0.1.0
@@ -159,11 +180,17 @@ class Plan:
 def step_of(cmd):
     if cmd[:3] == ["docker", "image", "inspect"]:
         return "image"
+    if cmd[:2] == ["docker", "volume"]:
+        return "volume"
+    if cmd[:3] == ["docker", "run", "-d"]:
+        return "holder"
+    if "TG2_COLLECT_START" in cmd[-1]:
+        return "collect"
+    if "TG2_STAGE" in cmd[-1]:
+        return "launch"
     if cmd[:2] == ["docker", "inspect"]:
         return "inspect"
     script = cmd[-1] if cmd[-2:-1] == ["-c"] else " ".join(cmd[-3:])
-    if cmd[-1] == "true":
-        return "launch"
     if "TG2_PREFLIGHT" in script:
         return "preflight"
     if "TG2_COMPILE_START" in script:
@@ -172,12 +199,33 @@ def step_of(cmd):
 
 
 def mounts(cmd):
+    """dst -> src (bind path or volume name) from `--mount type=...,src=...,dst=...[,readonly]` arguments."""
     out = {}
     for i, a in enumerate(cmd):
-        if a == "-v":
-            host, _, target = cmd[i + 1].rpartition(":")
-            out[target] = host
+        if a == "--mount":
+            kv = dict(x.split("=", 1) for x in cmd[i + 1].split(",") if "=" in x)
+            out[kv["dst"]] = kv["src"]
     return out
+
+
+def make_tar(members):
+    """members: [(name, kind, payload)] with kind file/dir/symlink/fifo/chr; payload = bytes or link target."""
+    import io
+    import tarfile
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        for name, kind, payload in members:
+            info = tarfile.TarInfo(name)
+            if kind == "file":
+                info.size = len(payload)
+                tf.addfile(info, io.BytesIO(payload))
+                continue
+            info.type = {"dir": tarfile.DIRTYPE, "symlink": tarfile.SYMTYPE, "fifo": tarfile.FIFOTYPE,
+                         "chr": tarfile.CHRTYPE}[kind]
+            if kind == "symlink":
+                info.linkname = payload
+            tf.addfile(info)
+    return buf.getvalue()
 
 
 class FakeGuard:
@@ -188,6 +236,9 @@ class FakeGuard:
         self.n = 0
         self.mem_kill_step = mem_kill_step
         self.step_by_name = {}
+        self.volumes, self.volume_ops, self.holders = {}, [], []
+        self.volume_names = set()
+        self.vroot = Path(__import__("tempfile").mkdtemp(prefix="fakevol-", dir=TEST_ROOT))
 
     def container_name(self):
         self.n += 1
@@ -199,8 +250,28 @@ class FakeGuard:
     def remove_container(self, name):
         self.removed.append(name)
 
+    def vol(self, src):
+        return self.volumes[src] if src in self.volumes else Path(src)
+
     def run_grader(self, cmd, **kw):
         step = step_of(cmd)
+        if step == "volume":
+            self.volume_ops.append(cmd)
+            if cmd[2] == "create":
+                path = self.vroot / cmd[-1]
+                path.mkdir()
+                self.volumes[cmd[-1]] = path
+                self.volume_names.add(cmd[-1])
+            elif cmd[2] == "rm":
+                shutil.rmtree(self.volumes.pop(cmd[-1], self.vroot / "none"), ignore_errors=True)
+            elif cmd[2] == "ls":
+                want = cmd[-1].split("name=^", 1)[1].rstrip("$")
+                kw["stdout"].write("".join(n + "\n" for n in self.volumes if n == want))
+            return subprocess.CompletedProcess(cmd, 0, None, None)
+        if step == "holder":
+            self.holders.append(cmd)
+            kw["stdout"].write("holder-id\n")
+            return subprocess.CompletedProcess(cmd, self.plan.get("holder").get("rc", 0), None, None)
         if step == "inspect":
             spec = self.plan.get(self.step_by_name.get(cmd[-1], "?"))
             if spec.get("inspect_rc"):
@@ -228,12 +299,34 @@ class FakeGuard:
         kw["stdout"].write(spec.get("stdout", ""))
         kw["stderr"].write(spec.get("stderr", ""))
         m = mounts(cmd)
+        wdst = next((d for d in m if d.startswith("/work/")), None)
+        if wdst and wdst != "/work/slug":
+            m["/work/slug"] = m[wdst]
+        if step == "launch":
+            shutil.copytree(self.vol(m["/src"]), self.vol(m["/work/slug"]), dirs_exist_ok=True)
         for rel, data in spec.get("report", {}).items():
-            (Path(m["/report"]) / rel).write_bytes(data if isinstance(data, bytes) else data.encode())
+            (self.vol(m["/report"]) / rel).write_bytes(data if isinstance(data, bytes) else data.encode())
         for rel, data in spec.get("work", {}).items():
-            p = next(Path(h) for t, h in m.items() if t.startswith("/work/")) / rel
+            p = self.vol(m["/work/slug"]) / rel
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(data if isinstance(data, bytes) else data.encode())
+        if step == "collect":
+            tag = "TG2_COLLECT_START"
+            if not spec.get("no_marker"):
+                kw["stderr"].write("%s %s\n" % (tag, re.search(tag + r" (\w+)", cmd[-1]).group(1)))
+            if "tar" in spec:
+                data = spec["tar"]
+            elif "test-results" in cmd[-1]:
+                root = self.vol(m["/work/slug"]) / "build/test-results/test"
+                data = make_tar([("test", "dir", None)] + [("test/" + f.name, "file", f.read_bytes())
+                                                           for f in sorted(root.glob("*.xml"))]) if root.is_dir() else b""
+            else:
+                name = "jest.json" if "jest.json" in cmd[-1] else "cpp.xml"
+                f = self.vol(m["/report"]) / name
+                data = make_tar([(name, "file", f.read_bytes())]) if f.is_file() else b""
+            kw["stdout"].buffer.write(data)
+            kw["stdout"].flush()
+            return subprocess.CompletedProcess(cmd, spec.get("rc", 0 if data else 2), None, None)
         if step == "image":
             kw["stdout"].write(spec.get("image_id", IMG) + "\n")
         return subprocess.CompletedProcess(cmd, spec.get("rc", 0), None, None)
@@ -291,7 +384,7 @@ def test_phase_commands_flags_and_mounts_per_language(tree, lang):
     assert result.outcome == "parsed" and not result.all_failed
     assert result.passing == result.collected and len(result.collected) == 2
     steps = [s for s, _ in guard.calls]
-    assert steps == ["image", "launch", "preflight", "compile", "execute"]
+    assert steps == ["image", "launch", "preflight", "compile", "execute"] + ([] if lang == "rust" else ["collect"])
     for step, cmd in guard.calls[1:]:
         text = " ".join(cmd)
         for flag in ("--pull=never", "--network none", "--memory 4g", "--memory-swap 4g", "--name"):
@@ -299,8 +392,12 @@ def test_phase_commands_flags_and_mounts_per_language(tree, lang):
         assert cmd[:2] == ["docker", "run"] and "--rm" not in cmd          # kept for OOM inspection
         assert IMG in cmd                                                    # run by the verified image id
         m = mounts(cmd)
-        assert set(m) == {"/work/slug", "/report"}                           # nothing else mounted
-        assert m["/work/slug"] == str(tree[0].resolve()) and m["/report"] != m["/work/slug"]
+        if step == "launch":                                                 # only the stage step sees the host tree
+            assert set(m) == {"/src", "/work/slug", "/report"} and m["/src"] == str(tree[0].resolve())
+            assert "readonly" in [x for x in cmd if x.endswith("dst=/src,readonly")][0]
+        else:
+            assert set(m) == {"/work/slug", "/report"}                       # volumes only: no host bind at all
+            assert m["/work/slug"] in guard.volume_names and m["/report"] in guard.volume_names
         assert "/work/slug" in cmd                                           # -w
     compile_cmd, execute_cmd = (guard.calls[3][1][-1], guard.calls[4][1][-1])
     for part in EXPECTED[lang][0]:
@@ -308,7 +405,7 @@ def test_phase_commands_flags_and_mounts_per_language(tree, lang):
     for part in EXPECTED[lang][1]:
         assert part in execute_cmd
     # every launched container was registered with the guard and removed
-    assert len(guard.registered) == 4 and sorted(guard.removed) == sorted(guard.registered)
+    assert sorted(guard.removed) == sorted(guard.registered)
     assert guard.calls[0][1][:3] == ["docker", "image", "inspect"]
 
 
@@ -490,7 +587,7 @@ def test_raw_outputs_retained_by_sha256_with_phase_records(tree, tmp_path):
     phases = json.loads((d / "phases.json").read_text())
     assert phases["version"] == tg.VERSION == "m65-tg2-v1" and phases["image_id"] == IMG
     names = [p["step"] for p in phases["phases"]]
-    assert names == ["setup-image", "setup-launch", "preflight", "compile", "execute"]
+    assert names == ["setup-image", "setup-launch", "preflight", "compile", "execute", "collect"]
     compile_phase = phases["phases"][3]
     assert compile_phase["rc"] == 0 and compile_phase["seconds"] >= 0
     assert compile_phase["stdout_sha256"] == hashlib.sha256((d / "compile.stdout").read_bytes()).hexdigest()
@@ -995,6 +1092,115 @@ def test_g16_private_and_keep_must_be_disjoint_from_the_mounted_tree(tree, tmp_p
 def test_g17_unverifiable_container_state_aborts(tree, over):
     with pytest.raises(TransportAbort, match="container state"):
         do_grade("rust", tree, basic_plan("rust", execute=dict(over)))
+
+
+# ============================================================================================ round-3 (G18-G20, P361)
+# G18: reports reach the host only as a tar stream emitted by a collect step; model-created symlinks, FIFOs and device
+# entries inside the report area become tar members that are refused, never opened on the host.
+J = b'{"success": true, "testResults": []}'
+
+
+@pytest.mark.parametrize("members", [
+    [("jest.json", "symlink", "/etc/passwd")],
+    [("jest.json", "fifo", None)],
+    [("jest.json", "chr", None)],
+    [("sub", "symlink", "/etc"), ("sub/jest.json", "file", J)],
+    [("../jest.json", "file", J)],
+    [("/abs/jest.json", "file", J)],
+    [("other.json", "file", J)],
+    [],
+])
+def test_g18_unsafe_or_unexpected_tar_members_are_report_errors_for_jest(members):
+    with pytest.raises(tg.ReportError):
+        tg.parse_collect("javascript", make_tar(members))
+
+
+@pytest.mark.parametrize("members", [
+    [("test", "dir", None), ("test/a.xml", "symlink", "/etc/passwd")],
+    [("test", "dir", None), ("test/a.xml", "fifo", None)],
+    [("test", "dir", None), ("test/a.xml", "chr", None)],
+    [("test", "symlink", "/etc"), ("test/a.xml", "file", b"<x/>")],
+    [("test", "dir", None), ("test/../../b.xml", "file", b"<x/>")],
+])
+def test_g18_unsafe_java_tar_members_are_report_errors(members):
+    with pytest.raises(tg.ReportError):
+        tg.parse_collect("java", make_tar(members))
+
+
+def test_g18_valid_java_and_single_file_tars_are_returned_by_member_name():
+    got = tg.parse_collect("java", make_tar([("test", "dir", None), ("test/A.xml", "file", b"<a/>"),
+                                             ("test/note.txt", "file", b"ignored")]))
+    assert got == {"A.xml": b"<a/>"}
+    assert tg.parse_collect("cpp", make_tar([("cpp.xml", "file", b"<c/>")])) == {"cpp.xml": b"<c/>"}
+
+
+def test_g18_hostile_tar_after_start_is_a_model_outcome_and_nothing_is_read_from_the_host_tree(tree):
+    plan = basic_plan("javascript", collect=dict(tar=make_tar([("jest.json", "symlink", "/etc/passwd")])))
+    result, _ = do_grade("javascript", tree, plan)
+    assert result.outcome == "crash" and result.reason == "runner_crash_after_start"
+
+
+def test_g18_collect_marker_absent_is_infrastructure(tree):
+    with pytest.raises(TransportAbort, match="marker"):
+        do_grade("javascript", tree, basic_plan("javascript", collect=dict(no_marker=True)))
+
+
+# G19: aggregate storage bound -> per-grade size-limited tmpfs volumes; the host tree is only a read-only stage source.
+def test_g19_work_and_report_live_on_size_limited_volumes_held_open_and_removed(tree):
+    _, guard = do_grade("java", tree, basic_plan("java"))
+    creates = [c for c in guard.volume_ops if c[2] == "create"]
+    assert len(creates) == 2 and all("type=tmpfs" in " ".join(c) and "size=" in " ".join(c) for c in creates)
+    assert guard.holders and "sleep" in guard.holders[0]
+    assert guard.volumes == {} and any(c[2] == "rm" for c in guard.volume_ops)       # removed again
+    assert guard.removed.count(guard.registered[0]) >= 1
+
+
+def test_g19_volumes_and_holder_are_removed_on_infrastructure_abort_too(tree):
+    guard = FakeGuard(basic_plan("rust", execute=dict(no_marker=True)))
+    with pytest.raises(TransportAbort):
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert guard.volumes == {} and set(guard.removed) == set(guard.registered)
+
+
+def test_g19_oversized_input_tree_is_a_model_outcome_without_any_container(tree, monkeypatch):
+    monkeypatch.setattr(tg, "TREE_CAP", 10)
+    (tree[0] / "big.bin").write_bytes(b"x" * 100)
+    guard = FakeGuard(basic_plan("rust"))
+    result = tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert result.outcome == "storage_cap" and result.all_failed and guard.calls == []
+
+
+def test_g19_cumulative_report_size_is_capped_during_parsing(monkeypatch):
+    monkeypatch.setattr(tg, "REPORT_CAP", 100)
+    members = [("test", "dir", None)] + [("test/%d.xml" % i, "file", b"x" * 60) for i in range(3)]
+    with pytest.raises(tg.ReportError, match="cap"):
+        tg.parse_collect("java", make_tar(members))
+    monkeypatch.setattr(tg, "MAX_JUNIT_FILES", 2)
+    monkeypatch.setattr(tg, "REPORT_CAP", 10_000)
+    with pytest.raises(tg.ReportError, match="cap"):
+        tg.parse_collect("java", make_tar(members))
+
+
+# P361: bind-mount sources under $TMPDIR or /var/folders serve stale file sizes on OrbStack.
+def test_p361_mount_source_under_tmpdir_is_refused(tmp_path):
+    import tempfile
+    bad = Path(tempfile.mkdtemp())
+    try:
+        (bad / "f").write_text("x")
+        guard = FakeGuard(basic_plan("rust"))
+        with pytest.raises(TransportAbort, match="TMPDIR"):
+            tg.grade("rust", bad, "slug", tmp_path / "p", image_id=IMG, guard=guard, run=guard.run_grader)
+        with pytest.raises(TransportAbort, match="TMPDIR"):
+            tg.generate_cargo_locks(bad, "slug", tmp_path / "p", image_id=IMG, run=guard.run_grader)
+        assert guard.calls == []
+    finally:
+        shutil.rmtree(bad, ignore_errors=True)
+
+
+@pytest.mark.parametrize("path", ["/var/folders/zz/x/T/tree", "/private/var/folders/zz/x/T/tree"])
+def test_p361_var_folders_prefixes_are_refused_by_name(path):
+    with pytest.raises(TransportAbort, match="TMPDIR"):
+        tg.refuse_tmp_source(Path(path))
 
 
 # ----------------------------------------------------------------------------------------- docker integration

@@ -22,8 +22,10 @@ import re
 import secrets
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import time
+import io
 import uuid
 import xml.etree.ElementTree as ET
 from .structured_grade import _sha256, _write_index, manifest, protected_manifest, write_receipt
@@ -39,6 +41,7 @@ JEST = "/opt/tg2/js/node_modules/.bin/jest"
 BABEL = "/opt/tg2/js/node_modules/@babel/core"
 SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 MARKER = "TG2_RUNNER_START"
+COLLECT_MARKER = "TG2_COLLECT_START"
 COMPILE_MARKER = "TG2_COMPILE_START"
 # Agent-created build outputs: top-level dirs absent from the prepared tree are stripped before tamper and grading.
 STRIP_TOP_LEVEL = ("build", "target", "node_modules", ".gradle")
@@ -49,6 +52,11 @@ FSIZE_LIMIT = 1 << 30
 OUTPUT_CAP = 16_000_000
 REPORT_CAP = 32_000_000
 MAX_JUNIT_FILES = 2000
+# G19: the host tree is only a read-only stage source; build outputs and reports live on per-grade size-limited tmpfs
+# volumes (quota-bounded, memory-backed in the container VM, never host disk).
+TREE_CAP = 1_500_000_000
+WORK_VOLUME_SIZE = "2g"
+REPORT_VOLUME_SIZE = "64m"
 # JS `test.skip` leaves are Exercism's optional expensive tests: frozen exclusions from scoring (listed by id).
 OPTIONAL_LEAVES = {
     ("javascript", "palindrome-products"): frozenset(
@@ -226,15 +234,34 @@ def pinned_image_id():
     return value
 
 
-def _docker_run(name, image_id, slug, work, report, inner):
-    return [
-        "docker", "run", "--name", name, "--pull=never", "--network", "none",
+def _mount(kind, src, dst, *, readonly=False):
+    if "," in str(src) or '"' in str(src):
+        raise TransportAbort("unsafe mount source path")
+    return "type=%s,src=%s,dst=%s%s" % (kind, src, dst, ",readonly" if readonly else "")
+
+
+def _docker_run(name, image_id, slug, mounts, inner, *, extra=()):
+    cmd = [
+        "docker", "run", *extra, "--name", name, "--pull=never", "--network", "none",
         "--memory", "4g", "--memory-swap", "4g",
         "--pids-limit", str(PIDS_LIMIT),
         "--ulimit", "nofile=%d:%d" % (NOFILE_LIMIT, NOFILE_LIMIT), "--ulimit", "fsize=%d:%d" % (FSIZE_LIMIT, FSIZE_LIMIT),
-        "-v", "%s:/work/%s" % (work, slug), "-v", "%s:/report" % report,
-        "-w", "/work/" + slug, image_id, *inner,
     ]
+    for spec in mounts:
+        cmd += ["--mount", spec]
+    return cmd + ["-w", "/work/" + slug, image_id, *inner]
+
+
+def refuse_tmp_source(path):
+    """P361: OrbStack bind mounts whose source is under $TMPDIR (/var/folders/...) serve stale file sizes after an
+    in-place host overwrite; refuse any such mount source (resolved path)."""
+    path = Path(path).resolve()
+    roots = [Path("/var/folders"), Path("/private/var/folders"), Path(tempfile.gettempdir()).resolve()]
+    if os.environ.get("TMPDIR"):
+        roots.append(Path(os.environ["TMPDIR"]).resolve())
+    for root in roots:
+        if path == root or root in path.parents:
+            raise TransportAbort("mount source %s is under TMPDIR/var/folders (stale bind-mount attributes, P361)" % path)
 
 
 def _bounded(script):
@@ -264,6 +291,64 @@ def _commands(lang, slug, nonce="0"):
     compile_script, execute_script = _raw_commands(lang, slug)
     return (_bounded('echo "%s %s"; %s' % (COMPILE_MARKER, nonce, compile_script)),
             _bounded('echo "%s %s"; %s' % (MARKER, nonce, execute_script)))
+
+
+STAGE_SCRIPT = "# TG2_STAGE\nset -e\ncp -a /src/. .\n"
+
+
+def _collect_script(lang, slug, nonce):
+    """tar of the report files, bounded; the start marker goes to stderr so stdout is the pure tar stream."""
+    if lang == "java":
+        src = "-C /work/%s/build/test-results --exclude=test/binary test" % slug
+    else:
+        src = "-C /report %s" % ("jest.json" if lang == "javascript" else "cpp.xml")
+    return 'echo "%s %s" >&2; tar -cf - %s 2>/dev/null | head -c %d; exit ${PIPESTATUS[0]}' % (
+        COLLECT_MARKER, nonce, src, REPORT_CAP + 1)
+
+
+def parse_collect(lang, data):
+    """Report files from the collect step's tar stream: {member name: bytes}. Only plain regular files with the
+    expected names are accepted; symlinks, FIFOs, devices, odd paths and over-cap archives are ReportErrors (no
+    model-created path is ever opened on the host)."""
+    if not data:
+        raise ReportError("no report data collected")
+    if len(data) > REPORT_CAP:
+        raise ReportError("report archive exceeds the %d byte cap" % REPORT_CAP)
+    try:
+        tf = tarfile.open(fileobj=io.BytesIO(data), mode="r:")
+        members = tf.getmembers()
+    except tarfile.TarError as exc:
+        raise ReportError("unreadable report archive: %s" % exc) from None
+    out, total = {}, 0
+    want = {"javascript": "jest.json", "cpp": "cpp.xml"}.get(lang)
+    for m in members:
+        name = m.name.rstrip("/")
+        parts = name.split("/")
+        if name.startswith("/") or ".." in parts or "" in parts:
+            raise ReportError("unsafe report member path %r" % m.name)
+        if lang == "java":
+            if parts == ["test"]:
+                if not m.isdir():
+                    raise ReportError("report member 'test' is not a directory")
+                continue
+            if len(parts) != 2 or parts[0] != "test":
+                raise ReportError("unexpected report member %r" % m.name)
+            if not m.isreg():
+                raise ReportError("non-regular report member %r" % m.name)
+            if not parts[1].endswith(".xml"):
+                continue
+            key = parts[1]
+        else:
+            if parts != [want] or not m.isreg():
+                raise ReportError("unexpected or non-regular report member %r" % m.name)
+            key = want
+        total += m.size
+        if total > REPORT_CAP or len(out) >= MAX_JUNIT_FILES:
+            raise ReportError("cumulative report size / count exceeds the cap")
+        out[key] = tf.extractfile(m).read(m.size)
+    if not out:
+        raise ReportError("no report files in the archive")
+    return out
 
 
 _PREFLIGHT_PY_RUST = """
@@ -638,6 +723,7 @@ def grade(lang, work, slug, private, *, prepared=None, image_id=None, image_tag=
     work = Path(work).resolve()
     private = Path(private).resolve()
     _disjoint(work, private, keep)
+    refuse_tmp_source(work)
     image_id = image_id or pinned_image_id()
     timeout = TIMEOUT_FLOOR if timeout is None else timeout
     ops = guard if guard is not None else (LocalDocker() if run is None else _NullOps())
@@ -670,11 +756,9 @@ def grade(lang, work, slug, private, *, prepared=None, image_id=None, image_tag=
     try:
         with tempfile.TemporaryDirectory(prefix="grade-tg2-", dir=private) as tmp:
             tmp = Path(tmp)
-            report = tmp / "report"
-            report.mkdir()
             outputs = directory if directory is not None else tmp / "out"
             outputs.mkdir(exist_ok=True)
-            _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, report, outputs, index)
+            _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, outputs, index)
             return result
     except BaseException:
         # Every escaping exception is an infrastructure outcome; the receipt index exists before it propagates.
@@ -736,8 +820,8 @@ def _text(rec):
     return rec["stdout"].read_text(errors="replace") + rec["stderr"].read_text(errors="replace")
 
 
-def _marker_seen(rec, tag, nonce):
-    return ("%s %s" % (tag, nonce)) in rec["stdout"].read_text(errors="replace").splitlines()
+def _marker_seen(rec, tag, nonce, stream="stdout"):
+    return ("%s %s" % (tag, nonce)) in rec[stream].read_text(errors="replace").splitlines()
 
 
 def _resource(rec):
@@ -749,29 +833,98 @@ def _resource(rec):
     return None
 
 
-def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, report, outputs, index):
-    # --- setup: pinned image present by id, mounts and runtime launch, then the fixed preflight
+def _tree_bytes(work):
+    total = 0
+    for dirpath, dirs, files in os.walk(work):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(dirpath, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def _plain(run, cmd, outputs, tag, timeout=60):
+    """A docker bookkeeping command (volume create/rm/ls, detached holder): (rc, stdout text)."""
+    path = outputs / (tag + ".out")
+    try:
+        with path.open("w") as out, (outputs / (tag + ".err")).open("w") as err:
+            p = run(cmd, stdout=out, stderr=err, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
+                    env={**os.environ})
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise TransportAbort("docker command failed (%s): %s" % (tag, exc)) from exc
+    return p.returncode, path.read_text(errors="replace").strip()
+
+
+def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, outputs, index):
     for violation in skip_form_violations(work, lang):
         raise TransportAbort("tree contains a rewritten skip form (refused): " + violation)
+    if _tree_bytes(work) > TREE_CAP:
+        result.reason_detail = "input tree exceeds the %d byte cap" % TREE_CAP
+        return _all_failed(result, "storage_cap", index)
     inspect = _step(result, "setup-image", ["docker", "image", "inspect", "--format", "{{.Id}}", image_tag], run, ops,
                     outputs, 60, work)
     seen = _text(inspect).strip()
     if inspect["rc"] != 0 or seen != image_id:
         raise TransportAbort("tg2 image %s does not match the pinned id (found %r)" % (image_tag, seen[:80]))
-    launch = _launch(result, "setup-launch", ["true"], run, ops, image_id, slug, work, report, outputs, timeout)
+    base = "mlxbench-tg2-" + uuid.uuid4().hex[:12]
+    vol_work, vol_report = base + "-w", base + "-r"
+    holder = ops.container_name()
+    failure = None
+    created = []
+    try:
+        for name, size in ((vol_work, WORK_VOLUME_SIZE), (vol_report, REPORT_VOLUME_SIZE)):
+            rc, text = _plain(run, ["docker", "volume", "create", "--driver", "local", "--opt", "type=tmpfs", "--opt",
+                                    "device=tmpfs", "--opt", "o=size=%s,mode=1777" % size, name], outputs, "volume-" + name)
+            created.append(name)
+            if rc != 0:
+                raise TransportAbort("tg2 volume create failed: %s" % text[-200:])
+        vols = [_mount("volume", vol_work, "/work/" + slug), _mount("volume", vol_report, "/report")]
+        # A tmpfs volume only keeps its contents while some container has it mounted: a tiny holder keeps both alive.
+        ops.register_container(holder)
+        rc, text = _plain(run, _docker_run(holder, image_id, slug, vols, ["sleep", "7200"], extra=("-d",)), outputs,
+                          "holder")
+        if rc != 0:
+            raise TransportAbort("tg2 volume holder failed to start: %s" % text[-200:])
+        return _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs, index, vols)
+    except BaseException as exc:
+        failure = exc
+        raise
+    finally:
+        problems = []
+        try:
+            ops.remove_container(holder)
+        except TransportAbort as exc:
+            problems.append(str(exc))
+        for name in created:
+            try:
+                _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "rm-" + name)
+                rc, listing = _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name], outputs,
+                                     "ls-" + name)
+                if rc != 0 or listing:
+                    problems.append("volume %s not removed" % name)
+            except TransportAbort as exc:
+                problems.append(str(exc))
+        if problems and failure is None:
+            raise TransportAbort("tg2 cleanup uncertain: " + "; ".join(problems))
+
+
+def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs, index, vols):
+    stage_mounts = [_mount("bind", work, "/src", readonly=True), *vols]
+    launch = _launch(result, "setup-launch", ["bash", "-c", STAGE_SCRIPT], run, ops, image_id, slug, stage_mounts,
+                     outputs, timeout)
     if launch["rc"] != 0 or launch["timed_out"]:
-        raise TransportAbort("tg2 setup failed (rc=%s timeout=%s): %s" % (launch["rc"], launch["timed_out"],
-                                                                          _text(launch)[-300:]))
-    pre = _launch(result, "preflight", ["bash", "-c", _preflight(lang)], run, ops, image_id, slug, work, report,
-                  outputs, timeout)
+        raise TransportAbort("tg2 stage failed (rc=%s timeout=%s): %s" % (launch["rc"], launch["timed_out"],
+                                                                         _text(launch)[-300:]))
+    pre = _launch(result, "preflight", ["bash", "-c", _preflight(lang)], run, ops, image_id, slug, vols, outputs,
+                  timeout)
     if pre["rc"] != 0 or pre["timed_out"] or pre["oom"]:
         raise TransportAbort("tg2 preflight failed (rc=%s): %s" % (pre["rc"], _text(pre)[-300:]))
     nonce = secrets.token_hex(8)
     compile_script, execute_script = _commands(lang, slug, nonce)
     # The per-grade nonce marker proves the shell reached the compiler / runner invocation; it is checked BEFORE any
     # timeout / OOM / exit-status classification, and its absence is always infrastructure.
-    comp = _launch(result, "compile", ["bash", "-c", compile_script], run, ops, image_id, slug, work, report, outputs,
-                   timeout)
+    comp = _launch(result, "compile", ["bash", "-c", compile_script], run, ops, image_id, slug, vols, outputs, timeout)
     if not _marker_seen(comp, COMPILE_MARKER, nonce):
         raise TransportAbort("tg2 compile: start marker absent (rc=%s): %s" % (comp["rc"], _text(comp)[-300:]))
     kind = _resource(comp)
@@ -779,15 +932,23 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, rep
         return _all_failed(result, kind, index)
     if comp["rc"] != 0:
         return _all_failed(result, "compile_failure", index)
-    exe = _launch(result, "execute", ["bash", "-c", execute_script], run, ops, image_id, slug, work, report, outputs,
-                  timeout)
+    exe = _launch(result, "execute", ["bash", "-c", execute_script], run, ops, image_id, slug, vols, outputs, timeout)
     if not _marker_seen(exe, MARKER, nonce):
         raise TransportAbort("tg2 execute: runner-start marker absent (rc=%s): %s" % (exe["rc"], _text(exe)[-300:]))
     kind = _resource(exe)
     if kind:
         return _all_failed(result, kind, index)
     try:
-        leaves = _parse(lang, slug, work, report, outputs, exe)
+        if lang == "rust":
+            leaves = parse_rust(_text(exe))
+        else:
+            col = _launch(result, "collect", ["bash", "-c", _collect_script(lang, slug, nonce)], run, ops, image_id, slug,
+                          vols, outputs, timeout)
+            if not _marker_seen(col, COLLECT_MARKER, nonce, stream="stderr"):
+                raise TransportAbort("tg2 collect: start marker absent (rc=%s): %s" % (col["rc"], _text(col)[-300:]))
+            if col["timed_out"] or col["oom"] or col["mem_kill"] or col["rc"] != 0:
+                raise ReportError("report collection failed (rc=%s)" % col["rc"])
+            leaves = _parse_reports(lang, slug, parse_collect(lang, col["stdout"].read_bytes()), outputs)
     except (ReportError, KeyError, TypeError, AttributeError, ValueError) as exc:
         result.reason = "runner_crash_after_start"
         result.reason_detail = str(exc)
@@ -798,10 +959,10 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, rep
     return result
 
 
-def _launch(result, step, inner, run, ops, image_id, slug, work, report, outputs, timeout):
+def _launch(result, step, inner, run, ops, image_id, slug, mounts, outputs, timeout):
     name = ops.container_name()
-    return _step(result, step, _docker_run(name, image_id, slug, work, report, inner), run, ops, outputs, timeout,
-                 work, container=name)
+    return _step(result, step, _docker_run(name, image_id, slug, mounts, inner), run, ops, outputs, timeout,
+                 None, container=name)
 
 
 def _all_failed(result, outcome, index):
@@ -811,35 +972,18 @@ def _all_failed(result, outcome, index):
     return result
 
 
-def _read_report(path):
-    if path.stat().st_size > REPORT_CAP:
-        raise ReportError("report %s exceeds the %d byte cap" % (path.name, REPORT_CAP))
-    return path.read_bytes()
-
-
-def _parse(lang, slug, work, report, outputs, exe):
-    if lang == "rust":
-        return parse_rust(_text(exe))
+def _parse_reports(lang, slug, files, outputs):
     if lang == "java":
-        files = sorted((work / "build/test-results/test").glob("*.xml"))
-        if not files:
-            raise ReportError("no JUnit XML under build/test-results/test")
-        if len(files) > MAX_JUNIT_FILES:
-            raise ReportError("too many JUnit XML files (cap %d)" % MAX_JUNIT_FILES)
         parts = []
-        for n, path in enumerate(files):
-            data = _read_report(path)
-            (outputs / ("junit-%03d.xml" % n)).write_bytes(data)
-            parts.append(parse_junit(data.decode(errors="replace")))
+        for n, name in enumerate(sorted(files)):
+            (outputs / ("junit-%03d.xml" % n)).write_bytes(files[name])
+            parts.append(parse_junit(files[name].decode(errors="replace")))
         return merge_leaves(*parts)
-    name, parser = ("jest.json", lambda t: parse_jest(t, "/work/" + slug)) if lang == "javascript" else (
-        "cpp.xml", parse_junit)
-    path = report / name
-    if not path.is_file():
-        raise ReportError("report %s was not written" % name)
-    data = _read_report(path)
+    data = files["jest.json" if lang == "javascript" else "cpp.xml"]
     (outputs / ("report.json" if lang == "javascript" else "report.xml")).write_bytes(data)
-    return parser(data.decode(errors="replace"))
+    if lang == "javascript":
+        return parse_jest(data.decode(errors="replace"), "/work/" + slug)
+    return parse_junit(data.decode(errors="replace"))
 
 
 def generate_cargo_locks(work, slug, private, *, image_id=None, run=None, guard=None, timeout=None):
@@ -848,6 +992,7 @@ def generate_cargo_locks(work, slug, private, *, image_id=None, run=None, guard=
     work = Path(work).resolve()
     private = Path(private).resolve()
     _disjoint(work, private)
+    refuse_tmp_source(work)
     private.mkdir(parents=True, exist_ok=True)
     image_id = image_id or pinned_image_id()
     ops = guard if guard is not None else (LocalDocker() if run is None else _NullOps())
@@ -855,10 +1000,9 @@ def generate_cargo_locks(work, slug, private, *, image_id=None, run=None, guard=
     script = r"find . -name Cargo.toml -not -path '*/target/*' -execdir cargo generate-lockfile --offline \;"
     with tempfile.TemporaryDirectory(prefix="locks-tg2-", dir=private) as tmp:
         tmp = Path(tmp)
-        (tmp / "report").mkdir()
         result = Tg2Grade(lang="rust", image_id=image_id)
-        rec = _launch(result, "locks", ["bash", "-c", script], run, ops, image_id, slug, work, tmp / "report", tmp,
-                      TIMEOUT_FLOOR if timeout is None else timeout)
+        rec = _launch(result, "locks", ["bash", "-c", script], run, ops, image_id, slug,
+                      [_mount("bind", work, "/work/" + slug)], tmp, TIMEOUT_FLOOR if timeout is None else timeout)
         if rec["rc"] != 0 or rec["timed_out"]:
             raise TransportAbort("cargo lock generation failed: %s" % _text(rec)[-300:])
     return sorted(p.relative_to(work).as_posix() for p in work.rglob("Cargo.lock") if "target" not in p.parts)

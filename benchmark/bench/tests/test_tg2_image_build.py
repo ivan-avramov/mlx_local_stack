@@ -97,3 +97,10 @@ def test_image_id_file_records_metadata():
     meta = dict(line.split("=", 1) for line in lines[1:])
     assert {"polyglot_sha", "context_sha256", "js_lock_sha256", "cargo_locks_sha256"} <= set(meta)
     assert meta["polyglot_sha"] == (IMAGE_DIR / "polyglot_sha").read_text().strip()
+
+
+def test_g20_js_lock_digest_is_the_sha256_of_the_lock_file_bytes():
+    import hashlib
+    meta = dict(line.split("=", 1) for line in (IMAGE_DIR / "IMAGE_ID").read_text().splitlines()[1:])
+    assert meta["js_lock_sha256"] == hashlib.sha256((IMAGE_DIR / "locks/js/package-lock.json").read_bytes()).hexdigest()
+    assert "shasum -a 256 \"$here/locks/js/package-lock.json\" | shasum" not in (IMAGE_DIR / "build.sh").read_text()

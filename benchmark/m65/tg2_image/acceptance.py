@@ -4,6 +4,7 @@ Covers every dependency family the image bakes: Rust crates (time, rand, anyhow 
 Java Gradle closures (common JUnit/AssertJ, hangman RxJava, rest-api org.json; each from an empty writable Gradle
 home, with the read-only dependency cache supplying artifacts), the JS bundle and C++ (Catch2 + Boost). Fails when any
 item needs network, does not collect all-pass, or the no-network control does not hold."""
+import os
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,11 @@ def container(image, script):
 
 
 def main(corpus):
+    base = os.environ.get("STACK_WORKDIR")
+    if not base:
+        sys.exit("STACK_WORKDIR is required: trees must live outside $TMPDIR (P361)")
+    root = Path(base) / "m65/test-tmp"
+    root.mkdir(parents=True, exist_ok=True)
     image = tg.pinned_image_id()
     guard = tg.LocalDocker("mlxbench-tg2-accept")
     failures = []
@@ -37,7 +43,7 @@ def main(corpus):
     home = container(image, "ls -A /root/.gradle")
     if home.stdout.split() != ["wrapper"]:
         failures.append("writable Gradle home must hold only wrapper/dists, found: " + home.stdout.strip())
-    with tempfile.TemporaryDirectory(prefix="tg2-accept-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="tg2-accept-", dir=root) as tmp:
         tmp = Path(tmp)
         for lang, slug in ITEMS:
             # `grep:stub`: the corpus grep reference needs `thiserror`, which its Cargo.toml does not declare, so it

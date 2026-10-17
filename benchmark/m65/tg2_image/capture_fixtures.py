@@ -58,7 +58,9 @@ def expected_cpp(corpus, slug):
 
 def capture(corpus, lang, slug, name, expected, tweak=None, extra=None):
     guard = tg.LocalDocker()
-    tmp = Path(tempfile.mkdtemp(prefix="tg2-fixture-"))
+    root = Path(os.environ["STACK_WORKDIR"]) / "m65/test-tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix="tg2-fixture-", dir=root))
     try:
         stub = tg2_trees.stub_tree(corpus, lang, slug, tmp / "stub")
         if lang == "rust":
