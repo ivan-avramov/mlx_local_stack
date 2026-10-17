@@ -184,6 +184,10 @@ def step_of(cmd):
         return "volume"
     if cmd[:3] == ["docker", "run", "-d"]:
         return "holder"
+    if cmd[:2] == ["docker", "ps"]:
+        return "ps"
+    if cmd[:3] == ["docker", "rm", "-f"]:
+        return "rm"
     if "TG2_COLLECT_START" in cmd[-1]:
         return "collect"
     if "TG2_STAGE" in cmd[-1]:
@@ -238,6 +242,7 @@ class FakeGuard:
         self.step_by_name = {}
         self.volumes, self.volume_ops, self.holders = {}, [], []
         self.volume_names = set()
+        self.volume_labels, self.holder_names = {}, {}
         self.vroot = Path(__import__("tempfile").mkdtemp(prefix="fakevol-", dir=TEST_ROOT))
 
     def container_name(self):
@@ -248,7 +253,10 @@ class FakeGuard:
         self.registered.append(name)
 
     def remove_container(self, name):
+        if self.plan.get("holder_rm").get("raise") and name == "fake-1":
+            raise TransportAbort("container cleanup uncertain (fake)")
         self.removed.append(name)
+        self.holder_names.pop(name, None)
 
     def vol(self, src):
         return self.volumes[src] if src in self.volumes else Path(src)
@@ -262,14 +270,41 @@ class FakeGuard:
                 path.mkdir()
                 self.volumes[cmd[-1]] = path
                 self.volume_names.add(cmd[-1])
+                self.volume_labels[cmd[-1]] = dict(x.split("=", 1) for i, x in enumerate(cmd) if cmd[i - 1] == "--label")
             elif cmd[2] == "rm":
-                shutil.rmtree(self.volumes.pop(cmd[-1], self.vroot / "none"), ignore_errors=True)
+                rm = self.plan.get("volume_rm")
+                if rm.get("timeout"):
+                    raise subprocess.TimeoutExpired(cmd, 1)
+                if not rm.get("rc"):
+                    shutil.rmtree(self.volumes.pop(cmd[-1], self.vroot / "none"), ignore_errors=True)
+                return subprocess.CompletedProcess(cmd, rm.get("rc", 0), None, None)
             elif cmd[2] == "ls":
-                want = cmd[-1].split("name=^", 1)[1].rstrip("$")
-                kw["stdout"].write("".join(n + "\n" for n in self.volumes if n == want))
+                flt = cmd[cmd.index("--filter") + 1]
+                if flt.startswith("label="):
+                    key, _, val = flt[len("label="):].partition("=")
+                    kw["stdout"].write("".join("%s %s\n" % (n, self.volume_labels.get(n, {}).get("mlxbench.tg2.created", ""))
+                                               for n in self.volumes if self.volume_labels.get(n, {}).get(key) == val))
+                else:
+                    want = flt.split("name=^", 1)[1].rstrip("$")
+                    kw["stdout"].write("".join(n + "\n" for n in self.volumes if n == want))
+            return subprocess.CompletedProcess(cmd, 0, None, None)
+        if step == "ps":
+            flt = cmd[cmd.index("--filter") + 1]
+            if flt.startswith("label="):
+                key, _, val = flt[len("label="):].partition("=")
+                kw["stdout"].write("".join("%s %s\n" % (n, l.get("mlxbench.tg2.created", ""))
+                                           for n, l in self.holder_names.items() if l.get(key) == val))
+            else:
+                want = flt.split("name=^/", 1)[1].rstrip("$")
+                kw["stdout"].write("".join(n + "\n" for n in self.holder_names if n == want))
+            return subprocess.CompletedProcess(cmd, 0, None, None)
+        if step == "rm":
+            self.holder_names.pop(cmd[-1], None)
             return subprocess.CompletedProcess(cmd, 0, None, None)
         if step == "holder":
             self.holders.append(cmd)
+            self.holder_names[cmd[cmd.index("--name") + 1]] = dict(
+                x.split("=", 1) for i, x in enumerate(cmd) if cmd[i - 1] == "--label")
             kw["stdout"].write("holder-id\n")
             return subprocess.CompletedProcess(cmd, self.plan.get("holder").get("rc", 0), None, None)
         if step == "inspect":
@@ -282,7 +317,7 @@ class FakeGuard:
             self.step_by_name[cmd[cmd.index("--name") + 1]] = step
         self.calls.append((step, cmd))
         spec = self.plan.get(step)
-        if step in ("compile", "execute") and spec.get("mem_kill"):
+        if step in ("compile", "execute", "collect") and spec.get("mem_kill"):
             self.grader_mem_kill = True
         if step in ("compile", "execute"):
             tag = "TG2_RUNNER_START" if step == "execute" else "TG2_COMPILE_START"
@@ -291,6 +326,8 @@ class FakeGuard:
                 kw["stdout"].write(tag + " deadbeef\n")
             if not spec.get("no_marker"):
                 kw["stdout"].write("%s %s\n" % (tag, nonce))
+        if step == "collect" and not spec.get("no_marker"):
+            kw["stderr"].write("TG2_COLLECT_START %s\n" % re.search(r"TG2_COLLECT_START (\w+)", cmd[-1]).group(1))
         if spec.get("timeout"):
             kw["stdout"].write(spec.get("stdout", ""))
             raise subprocess.TimeoutExpired(cmd, kw.get("timeout") or 1)
@@ -311,9 +348,6 @@ class FakeGuard:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(data if isinstance(data, bytes) else data.encode())
         if step == "collect":
-            tag = "TG2_COLLECT_START"
-            if not spec.get("no_marker"):
-                kw["stderr"].write("%s %s\n" % (tag, re.search(tag + r" (\w+)", cmd[-1]).group(1)))
             if "tar" in spec:
                 data = spec["tar"]
             elif "test-results" in cmd[-1]:
@@ -1150,7 +1184,7 @@ def test_g19_work_and_report_live_on_size_limited_volumes_held_open_and_removed(
     _, guard = do_grade("java", tree, basic_plan("java"))
     creates = [c for c in guard.volume_ops if c[2] == "create"]
     assert len(creates) == 2 and all("type=tmpfs" in " ".join(c) and "size=" in " ".join(c) for c in creates)
-    assert guard.holders and "sleep" in guard.holders[0]
+    assert guard.holders and "sleep" in guard.holders[0] and "7200" not in guard.holders[0]
     assert guard.volumes == {} and any(c[2] == "rm" for c in guard.volume_ops)       # removed again
     assert guard.removed.count(guard.registered[0]) >= 1
 
@@ -1201,6 +1235,129 @@ def test_p361_mount_source_under_tmpdir_is_refused(tmp_path):
 def test_p361_var_folders_prefixes_are_refused_by_name(path):
     with pytest.raises(TransportAbort, match="TMPDIR"):
         tg.refuse_tmp_source(Path(path))
+
+
+# ============================================================================================ round-4 (G21-G24)
+def labels_of(cmd):
+    return dict(x.split("=", 1) for i, x in enumerate(cmd) if cmd[i - 1] == "--label")
+
+
+# G21 ------------------------------------------------------------------------------------------------------------
+def test_g21_volumes_and_holder_carry_ownership_labels_and_the_holder_self_expires(tree):
+    _, guard = do_grade("java", tree, basic_plan("java"), timeout=100)
+    for c in (c for c in guard.volume_ops if c[2] == "create"):
+        assert labels_of(c)["mlxbench.tg2"] == "1" and labels_of(c)["mlxbench.tg2.created"].isdigit()
+    holder = guard.holders[0]
+    assert labels_of(holder)["mlxbench.tg2"] == "1"
+    assert holder[-2] == "sleep" and int(holder[-1]) == 5 * 100 + 300           # bounded by the grade timeout
+
+
+def test_g21_cleanup_continues_past_every_failure_and_surfaces_uncertainty_on_success(tree, tmp_path):
+    guard = FakeGuard(basic_plan("rust", holder_rm=dict(raise_=1), volume_rm=dict(rc=1)))
+    guard.plan.steps["holder_rm"] = {"raise": True}
+    with pytest.raises(TransportAbort, match="cleanup uncertain") as exc:
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert "volume" in str(exc.value) and "holder" in str(exc.value).lower() or "container" in str(exc.value)
+    rms = [c for c in guard.volume_ops if c[2] == "rm"]
+    assert len(rms) == 2                                                    # both volumes attempted despite failures
+
+
+def test_g21_original_exception_is_preserved_with_cleanup_notes(tree):
+    guard = FakeGuard(basic_plan("rust", execute=dict(no_marker=True), volume_rm=dict(timeout=True)))
+    with pytest.raises(TransportAbort, match="marker") as exc:
+        tg.grade("rust", tree[0], "slug", tree[1], image_id=IMG, guard=guard, run=guard.run_grader)
+    assert any("cleanup" in n for n in getattr(exc.value, "__notes__", []))
+    assert len([c for c in guard.volume_ops if c[2] == "rm"]) == 2
+
+
+def test_g21_registry_entry_exists_during_the_grade_and_is_removed_after_verified_cleanup(tree):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    seen = []
+    inner = guard.run_grader
+
+    def run(cmd, **kw):
+        if step_of(cmd) == "preflight":
+            seen.append(sorted(p.name for p in (private / ".tg2-registry").glob("*.json")))
+        return inner(cmd, **kw)
+
+    tg.grade("rust", work, "slug", private, image_id=IMG, guard=guard, run=run)
+    assert len(seen[0]) == 1 and not list((private / ".tg2-registry").glob("*.json"))
+
+
+def test_g21_registry_entry_survives_uncertain_cleanup(tree):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust", volume_rm=dict(rc=1)))
+    with pytest.raises(TransportAbort):
+        tg.grade("rust", work, "slug", private, image_id=IMG, guard=guard, run=guard.run_grader)
+    assert len(list((private / ".tg2-registry").glob("*.json"))) == 1
+
+
+def test_g21_sweep_removes_only_old_labelled_leftovers_and_verifies(tree):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    old, new = "100", str(int(__import__("time").time()))
+    for name, created in (("mlxbench-tg2-old-w", old), ("mlxbench-tg2-new-w", new)):
+        (guard.vroot / name).mkdir()
+        guard.volumes[name] = guard.vroot / name
+        guard.volume_labels[name] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": created}
+    (guard.vroot / "foreign").mkdir()
+    guard.volumes["mlxbench-tg2-foreign"] = guard.vroot / "foreign"        # same prefix, NO label: never touched
+    guard.volume_labels["mlxbench-tg2-foreign"] = {}
+    guard.holder_names["h-old"] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": old}
+    guard.holder_names["h-other"] = {}
+    out = tg.sweep_leftovers(guard.run_grader, private, min_age_s=3600)
+    assert out["volumes"] == ["mlxbench-tg2-old-w"] and out["containers"] == ["h-old"]
+    assert set(guard.volumes) == {"mlxbench-tg2-new-w", "mlxbench-tg2-foreign"} and set(guard.holder_names) == {"h-other"}
+    assert tg.sweep_leftovers(guard.run_grader, private, min_age_s=0)["volumes"] == ["mlxbench-tg2-new-w"]
+    assert "mlxbench-tg2-foreign" in guard.volumes
+
+
+def test_g21_sweep_fails_loudly_when_removal_cannot_be_verified(tree):
+    guard = FakeGuard(basic_plan("rust", volume_rm=dict(rc=1)))
+    (guard.vroot / "v").mkdir()
+    guard.volumes["mlxbench-tg2-x-w"] = guard.vroot / "v"
+    guard.volume_labels["mlxbench-tg2-x-w"] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1"}
+    with pytest.raises(TransportAbort, match="sweep"):
+        tg.sweep_leftovers(guard.run_grader, tree[1], min_age_s=0)
+
+
+# G22 ------------------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("over,outcome", [(dict(timeout=True), "timeout"), (dict(oom=True, rc=137), "oom"),
+                                          (dict(mem_kill=True, rc=137), "mem_kill")])
+def test_g22_collect_resource_exhaustion_after_its_marker_is_a_resource_outcome(tree, over, outcome):
+    result, _ = do_grade("javascript", tree, basic_plan("javascript", collect=over))
+    assert result.outcome == outcome and result.all_failed
+
+
+# G24 ------------------------------------------------------------------------------------------------------------
+def test_g24_duplicate_tar_member_keys_are_rejected():
+    dup = make_tar([("test", "dir", None), ("test/A.xml", "file", b"<a/>"), ("test/A.xml", "file", b"<b/>")])
+    with pytest.raises(tg.ReportError, match="duplicate"):
+        tg.parse_collect("java", dup)
+    with pytest.raises(tg.ReportError, match="duplicate"):
+        tg.parse_collect("javascript", make_tar([("jest.json", "file", J), ("jest.json", "file", J)]))
+
+
+def test_g24_extracted_length_must_equal_the_declared_size(monkeypatch):
+    import tarfile as tf
+
+    class Short:
+        def read(self, n):
+            return b"x"
+
+    real = tf.TarFile.extractfile
+    monkeypatch.setattr(tf.TarFile, "extractfile", lambda self, m: Short())
+    with pytest.raises(tg.ReportError, match="size"):
+        tg.parse_collect("cpp", make_tar([("cpp.xml", "file", b"<c/>")]))
+    monkeypatch.setattr(tf.TarFile, "extractfile", real)
+
+
+# G23 ------------------------------------------------------------------------------------------------------------
+def test_g23_test_trees_are_rooted_outside_tmpdir(tmp_path):
+    with pytest.raises(TransportAbort):
+        tg.refuse_tmp_source(Path(__import__("tempfile").gettempdir()) / "x")
+    tg.refuse_tmp_source(tmp_path)          # the overriding fixture lives under $STACK_WORKDIR, never TMPDIR
 
 
 # ----------------------------------------------------------------------------------------- docker integration
@@ -1288,6 +1445,64 @@ def test_suite_level_afterall_failure_is_a_counted_failure_in_the_real_runner(tm
     bad = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared, solutions=sols,
                         guard=guard, timeout=300)
     assert bad.outcome == "parsed" and bad.failing(universe) >= 1, (bad.outcome, bad.leaves)
+
+
+HOSTILE = {                                            # shell run by a detached child AFTER jest wrote its report
+    "symlink": "ln -s /etc/passwd /report/jest.json",
+    "fifo": "mkfifo /report/jest.json",
+    "oversize": "head -c 34000000 /dev/zero > /report/jest.json",
+}
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+@pytest.mark.parametrize("kind", sorted(HOSTILE))
+def test_g23_hostile_report_replaced_by_the_solution_is_a_model_failure_in_the_real_runner(tmp_path, kind):
+    _docker_env()
+    guard = tg.LocalDocker()
+    stub, prepared, sols = _item(tmp_path, "javascript", "affine-cipher", guard)
+    ref = _ref_of(tmp_path, stub, "javascript", "affine-cipher")
+    # the child inherits stdout, so the bounded-output pipe (and the container) stays up until it has replaced the report
+    hook = ("require('child_process').spawn('sh', ['-c', 'sleep 4; rm -f /report/jest.json; %s'], "
+            "{detached: true, stdio: ['ignore', 'inherit', 'inherit']}).unref();\n" % HOSTILE[kind])
+    (ref / "affine-cipher.js").write_text(hook + (ref / "affine-cipher.js").read_text())
+    result = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared,
+                           solutions=sols, guard=guard, timeout=300)
+    assert result.outcome == "crash" and result.reason == "runner_crash_after_start", (result.outcome, result.reason_detail)
+    assert result.all_failed and not guard.leftover() and not guard.leftover_volumes()
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+def test_g23_a_grader_killed_between_steps_leaves_storage_that_the_sweep_recovers(tmp_path):
+    import signal
+    import sys
+    import textwrap
+    _docker_env()
+    guard = tg.LocalDocker()
+    stub, prepared, sols = _item(tmp_path, "javascript", "affine-cipher", guard)
+    bench_root = Path(__file__).resolve().parents[2]
+    script = textwrap.dedent("""
+        import os, signal, sys
+        sys.path.insert(0, %r)
+        from bench import tg2_grade as tg
+        tg._grade_steps = lambda *a, **k: os.kill(os.getpid(), signal.SIGKILL)
+        tg.grade("javascript", %r, "affine-cipher", %r)
+    """) % (str(bench_root), str(stub), str(tmp_path / "private"))
+    env = dict(os.environ, PYTHONPATH=str(bench_root))
+    proc = subprocess.run([sys.executable, "-c", script], env=env, timeout=120)
+    assert proc.returncode == -signal.SIGKILL
+    assert guard.leftover_volumes() and guard.leftover_holders()                    # real orphaned state
+    foreign = "mlxbench-tg2-foreign-" + __import__("uuid").uuid4().hex[:6]
+    subprocess.run(["docker", "volume", "create", foreign], check=True, capture_output=True)
+    try:
+        out = tg.sweep_leftovers(guard.run_grader, tmp_path / "private", min_age_s=0)
+        assert out["volumes"] and out["containers"]
+        assert not guard.leftover_volumes() and not guard.leftover_holders()
+        listed = subprocess.run(["docker", "volume", "ls", "-q"], capture_output=True, text=True).stdout.split()
+        assert foreign in listed                                                     # unlabelled: never touched
+    finally:
+        subprocess.run(["docker", "volume", "rm", "-f", foreign], capture_output=True)
 
 
 @pytest.mark.docker

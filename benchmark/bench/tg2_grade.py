@@ -42,6 +42,10 @@ BABEL = "/opt/tg2/js/node_modules/@babel/core"
 SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 MARKER = "TG2_RUNNER_START"
 COLLECT_MARKER = "TG2_COLLECT_START"
+OWNER_LABEL = "mlxbench.tg2=1"
+OWNER_FILTER = "label=" + OWNER_LABEL
+CREATED_LABEL = "mlxbench.tg2.created"
+REGISTRY_DIR = ".tg2-registry"
 COMPILE_MARKER = "TG2_COMPILE_START"
 # Agent-created build outputs: top-level dirs absent from the prepared tree are stripped before tamper and grading.
 STRIP_TOP_LEVEL = ("build", "target", "node_modules", ".gradle")
@@ -207,6 +211,16 @@ class LocalDocker:
                              capture_output=True, text=True, timeout=15)
         return out.stdout.split()
 
+    def leftover_holders(self):
+        out = subprocess.run(["docker", "ps", "-a", "--filter", OWNER_FILTER, "--format", "{{.Names}}"],
+                             capture_output=True, text=True, timeout=15)
+        return out.stdout.split()
+
+    def leftover_volumes(self):
+        out = subprocess.run(["docker", "volume", "ls", "-q", "--filter", OWNER_FILTER], capture_output=True,
+                             text=True, timeout=15)
+        return out.stdout.split()
+
 
 class _NullOps:
     """Used when a caller injects `run` without a guard (fixtures): no docker bookkeeping."""
@@ -319,13 +333,16 @@ def parse_collect(lang, data):
         members = tf.getmembers()
     except tarfile.TarError as exc:
         raise ReportError("unreadable report archive: %s" % exc) from None
-    out, total = {}, 0
+    out, total, seen = {}, 0, set()
     want = {"javascript": "jest.json", "cpp": "cpp.xml"}.get(lang)
     for m in members:
         name = m.name.rstrip("/")
         parts = name.split("/")
         if name.startswith("/") or ".." in parts or "" in parts:
             raise ReportError("unsafe report member path %r" % m.name)
+        if name in seen:
+            raise ReportError("duplicate report member %r" % m.name)
+        seen.add(name)
         if lang == "java":
             if parts == ["test"]:
                 if not m.isdir():
@@ -345,7 +362,10 @@ def parse_collect(lang, data):
         total += m.size
         if total > REPORT_CAP or len(out) >= MAX_JUNIT_FILES:
             raise ReportError("cumulative report size / count exceeds the cap")
-        out[key] = tf.extractfile(m).read(m.size)
+        body = tf.extractfile(m).read(m.size)
+        if len(body) != m.size:
+            raise ReportError("extracted size differs from the declared size for %r" % m.name)
+        out[key] = body
     if not out:
         raise ReportError("no report files in the archive")
     return out
@@ -662,6 +682,7 @@ class Tg2Grade:
     reason: str = ""
     reason_detail: str = ""
     stripped: list = field(default_factory=list)
+    cleanup_problems: list = field(default_factory=list)
     tamper_reasons: list = field(default_factory=list)
     optional: frozenset = frozenset()
 
@@ -758,7 +779,8 @@ def grade(lang, work, slug, private, *, prepared=None, image_id=None, image_tag=
             tmp = Path(tmp)
             outputs = directory if directory is not None else tmp / "out"
             outputs.mkdir(exist_ok=True)
-            _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, outputs, index)
+            _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, outputs, index,
+                   private / REGISTRY_DIR)
             return result
     except BaseException:
         # Every escaping exception is an infrastructure outcome; the receipt index exists before it propagates.
@@ -824,11 +846,12 @@ def _marker_seen(rec, tag, nonce, stream="stdout"):
     return ("%s %s" % (tag, nonce)) in rec[stream].read_text(errors="replace").splitlines()
 
 
-def _resource(rec):
+def _resource(rec, cap="default"):
+    cap = OUTPUT_CAP if cap == "default" else cap
     for key, outcome in (("timed_out", "timeout"), ("oom", "oom"), ("mem_kill", "mem_kill")):
         if rec[key]:
             return outcome
-    if rec["stdout"].stat().st_size >= OUTPUT_CAP:
+    if cap is not None and rec["stdout"].stat().st_size >= cap:
         return "output_cap"
     return None
 
@@ -856,7 +879,7 @@ def _plain(run, cmd, outputs, tag, timeout=60):
     return p.returncode, path.read_text(errors="replace").strip()
 
 
-def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, outputs, index):
+def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, outputs, index, registry=None):
     for violation in skip_form_violations(work, lang):
         raise TransportAbort("tree contains a rewritten skip form (refused): " + violation)
     if _tree_bytes(work) > TREE_CAP:
@@ -870,20 +893,25 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
     base = "mlxbench-tg2-" + uuid.uuid4().hex[:12]
     vol_work, vol_report = base + "-w", base + "-r"
     holder = ops.container_name()
+    label = ["--label", OWNER_LABEL, "--label", "%s=%d" % (CREATED_LABEL, int(time.time()))]
     failure = None
-    created = []
+    entry = _registry_write(registry, base, [vol_work, vol_report], holder)
+    if hasattr(ops, "register_volume"):
+        for name in (vol_work, vol_report):
+            ops.register_volume(name)
     try:
         for name, size in ((vol_work, WORK_VOLUME_SIZE), (vol_report, REPORT_VOLUME_SIZE)):
             rc, text = _plain(run, ["docker", "volume", "create", "--driver", "local", "--opt", "type=tmpfs", "--opt",
-                                    "device=tmpfs", "--opt", "o=size=%s,mode=1777" % size, name], outputs, "volume-" + name)
-            created.append(name)
+                                    "device=tmpfs", "--opt", "o=size=%s,mode=1777" % size, *label, name], outputs,
+                              "volume-" + name)
             if rc != 0:
                 raise TransportAbort("tg2 volume create failed: %s" % text[-200:])
         vols = [_mount("volume", vol_work, "/work/" + slug), _mount("volume", vol_report, "/report")]
-        # A tmpfs volume only keeps its contents while some container has it mounted: a tiny holder keeps both alive.
+        # A tmpfs volume only keeps its contents while some container has it mounted: a tiny holder keeps both alive;
+        # it self-expires (bounded by the step timeouts) if the grader dies before cleaning up.
         ops.register_container(holder)
-        rc, text = _plain(run, _docker_run(holder, image_id, slug, vols, ["sleep", "7200"], extra=("-d",)), outputs,
-                          "holder")
+        rc, text = _plain(run, _docker_run(holder, image_id, slug, vols, ["sleep", str(5 * timeout + 300)],
+                                           extra=("-d", *label)), outputs, "holder")
         if rc != 0:
             raise TransportAbort("tg2 volume holder failed to start: %s" % text[-200:])
         return _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs, index, vols)
@@ -891,22 +919,100 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
         failure = exc
         raise
     finally:
-        problems = []
+        problems = _cleanup(run, ops, outputs, holder, [vol_work, vol_report])
+        result.cleanup_problems = problems
+        if problems:
+            note = "tg2 cleanup uncertain: " + "; ".join(problems)
+            if failure is None:
+                raise TransportAbort(note)
+            failure.add_note(note)
+        elif entry is not None:
+            entry.unlink(missing_ok=True)
+
+
+def _cleanup(run, ops, outputs, holder, volumes):
+    """Remove the holder and every volume, continuing past each failure; verify absence. Returns the problems."""
+    problems = []
+    try:
+        ops.remove_container(holder)
+    except Exception as exc:  # noqa: BLE001 -- cleanup must reach the volumes whatever happened to the holder
+        problems.append("holder %s: %s" % (holder, exc))
+    for name in volumes:
         try:
-            ops.remove_container(holder)
-        except TransportAbort as exc:
-            problems.append(str(exc))
-        for name in created:
-            try:
-                _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "rm-" + name)
-                rc, listing = _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name], outputs,
-                                     "ls-" + name)
-                if rc != 0 or listing:
-                    problems.append("volume %s not removed" % name)
-            except TransportAbort as exc:
-                problems.append(str(exc))
-        if problems and failure is None:
-            raise TransportAbort("tg2 cleanup uncertain: " + "; ".join(problems))
+            rc, text = _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "rm-" + name)
+            if rc != 0:
+                problems.append("volume %s rm rc=%s" % (name, rc))
+        except Exception as exc:  # noqa: BLE001
+            problems.append("volume %s rm: %s" % (name, exc))
+        try:
+            rc, listing = _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name], outputs,
+                                 "ls-" + name)
+            if rc != 0 or listing:
+                problems.append("volume %s still present or unverifiable" % name)
+        except Exception as exc:  # noqa: BLE001
+            problems.append("volume %s verify: %s" % (name, exc))
+    return problems
+
+
+def _registry_write(registry, base, volumes, holder):
+    if registry is None:
+        return None
+    registry.mkdir(parents=True, exist_ok=True)
+    path = registry / (base + ".json")
+    path.write_text(json.dumps(dict(base=base, volumes=volumes, holder=holder, created=int(time.time()))))
+    return path
+
+
+def sweep_leftovers(run, private, *, min_age_s=3600, now=None):
+    """Recovery sweep for crashed grades: remove only containers and volumes carrying the `mlxbench.tg2=1` label
+    that are older than `min_age_s` (so a live grade is never touched), then verify absence. Unlabelled objects -
+    even with an `mlxbench-tg2` name - are never touched. Returns {'containers': [...], 'volumes': [...]}."""
+    outputs = Path(private) / ".tg2-sweep"
+    outputs.mkdir(parents=True, exist_ok=True)
+    now = time.time() if now is None else now
+    problems, removed = [], dict(containers=[], volumes=[])
+
+    def old(listing):
+        names = []
+        for line in listing.splitlines():
+            parts = line.split()
+            if not parts:
+                continue
+            created = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+            if now - created >= min_age_s:
+                names.append(parts[0])
+        return names
+
+    fmt = '{{.%s}} {{.Label "' + CREATED_LABEL + '"}}'
+    rc, text = _plain(run, ["docker", "ps", "-a", "--filter", OWNER_FILTER, "--format", fmt % "Names"], outputs, "sw-ps")
+    if rc != 0:
+        raise TransportAbort("tg2 sweep: cannot list containers")
+    for name in old(text):
+        _plain(run, ["docker", "rm", "-f", name], outputs, "sw-rm")
+        rc, left = _plain(run, ["docker", "ps", "-a", "--filter", "name=^/%s$" % name, "--format", "{{.Names}}"],
+                          outputs, "sw-pv")
+        (problems.append("container %s not removed" % name) if rc != 0 or left else removed["containers"].append(name))
+    rc, text = _plain(run, ["docker", "volume", "ls", "--filter", OWNER_FILTER, "--format", fmt % "Name"], outputs,
+                      "sw-vls")
+    if rc != 0:
+        raise TransportAbort("tg2 sweep: cannot list volumes")
+    for name in old(text):
+        _plain(run, ["docker", "volume", "rm", "-f", name], outputs, "sw-vrm")
+        rc, left = _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % name], outputs, "sw-vv")
+        (problems.append("volume %s not removed" % name) if rc != 0 or left else removed["volumes"].append(name))
+    if problems:
+        raise TransportAbort("tg2 sweep could not verify removal: " + "; ".join(problems))
+    registry = Path(private) / REGISTRY_DIR
+    for entry in registry.glob("*.json") if registry.is_dir() else ():
+        try:
+            names = json.loads(entry.read_text())["volumes"]
+        except (ValueError, KeyError):
+            continue
+        present = [n for n in names if _plain(run, ["docker", "volume", "ls", "-q", "--filter", "name=^%s$" % n],
+                                              outputs, "sw-reg")[1]]
+        if not present:
+            entry.unlink(missing_ok=True)
+    return removed
 
 
 def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs, index, vols):
@@ -946,7 +1052,10 @@ def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs,
                           vols, outputs, timeout)
             if not _marker_seen(col, COLLECT_MARKER, nonce, stream="stderr"):
                 raise TransportAbort("tg2 collect: start marker absent (rc=%s): %s" % (col["rc"], _text(col)[-300:]))
-            if col["timed_out"] or col["oom"] or col["mem_kill"] or col["rc"] != 0:
+            kind = _resource(col, cap=None)
+            if kind:
+                return _all_failed(result, kind, index)
+            if col["rc"] != 0:
                 raise ReportError("report collection failed (rc=%s)" % col["rc"])
             leaves = _parse_reports(lang, slug, parse_collect(lang, col["stdout"].read_bytes()), outputs)
     except (ReportError, KeyError, TypeError, AttributeError, ValueError) as exc:
