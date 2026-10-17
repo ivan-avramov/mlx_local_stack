@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 from urllib.parse import unquote, urlsplit
 
+from .deny_rules import shell_deny_patterns  # noqa: F401  (P311-lite: re-export; defined in the generation module)
+
 
 def normalize(text: str) -> list[str]:
     """Strip lines; omit blank, short and comment-only lines (including block comments)."""
@@ -299,24 +301,6 @@ def deny_patterns_for(urls, *, dropped_urls=None):
                     if len(parts) >= 3:
                         patterns.append(base + '/*')
     return list(dict.fromkeys(patterns))
-
-
-def shell_deny_patterns(patterns):
-    """Match whole shell nodes; keep exact URLs bounded at token ends."""
-    result = []
-    boundaries = (' ', '\t', '\n', '"', "'", ';', '|', '&', ')', '>', '<', ',', '`', '$(', '@')
-    for pattern in patterns:
-        pattern = '*' + pattern.lstrip('*')
-        result.append(pattern)
-        if not pattern.endswith('*'):
-            result.extend(pattern + boundary + '*' for boundary in boundaries)
-        github = re.fullmatch(r'\*github\.com/([^/]+)/([^/*?#]+)', pattern)
-        if github:
-            project = '/'.join(github.groups())
-            for command in (f'*gh repo clone {project}', f'*gh api repos/{project}'):
-                result.append(command)
-                result.extend(command + boundary + '*' for boundary in (*boundaries, '/'))
-    return list(dict.fromkeys(result))
 
 
 def rerun_plan(state):
