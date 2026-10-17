@@ -21,6 +21,7 @@ def pytest_sessionfinish(session, exitstatus):
         if not file:
             continue
         path = Path(file).resolve()
-        if path.is_relative_to(repo):
+        # third-party code (an in-repo venv's site-packages) is not repo code
+        if path.is_relative_to(repo) and "site-packages" not in path.parts:
             found.add(path.relative_to(repo).as_posix())
     Path(os.environ["P311_MODULES_OUT"]).write_text(json.dumps(sorted(found)))
