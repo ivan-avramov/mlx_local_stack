@@ -13,6 +13,11 @@ procedures are archived in `docs/two-box-archive.md`.
 - **`uv sync` in `../mlx-vlm` DROPS pytest** (not declared in its pyproject; 2026-09-28): reinstall with `uv pip install pytest pytest-subtests` before running the fork suite.
 - **Venvs:** `.venv-bench` = mlx+pytest+json_repair, NO `mlx_audio` (epicache/unit tests run here; `test_server.py` won't collect). `.venv` / `../mlx-vlm/.venv` = full deps. bfcl-eval (2026.3.23) is in `.venv-bench` on this box. **`mlx_optiq` is 0.4.21 and its import name is `optiq`. These uv venvs have no `pip`, so `pip show` prints nothing — that is not evidence of absence.** <!-- allow-shorthand -->
 
+- **OrbStack bind mounts under `$TMPDIR` (`/var/folders/…`) serve stale file attributes (2026-10-17, P361):** after a container mounted a
+  tree there, an in-place host overwrite that changes a file's size is seen by the NEXT container with the OLD size (truncated content)
+  — 4/4 and 6/6 trials, with or without writes by the first container; the same sequence under `$STACK_WORKDIR` (`~/ws/…`) 0/4. Fresh
+  directories are unaffected. Mount only fresh copies, never from `$TMPDIR`; tg1 grades fresh snapshots under the run dir (safe).
+
 ## Shell and agent-tooling traps (apply on every M5 box)
 
 - **`rm` and `cp` are interactive aliases in the operator's shell.** In a non-tty tool call `rm` reads EOF at the prompt and silently deletes nothing; `cp` over an existing file hangs until the timeout. Use `rm -f`, `/bin/cp -f`, and verify (`test ! -f`, `diff`).
