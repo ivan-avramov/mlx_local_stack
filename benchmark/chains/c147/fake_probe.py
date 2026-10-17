@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import signal
 import sys
 import tempfile
@@ -64,7 +65,15 @@ def arm_identity(model, draft_kind):
     return hashlib.sha256(f"fake-arm|{model}|{draft_kind}".encode()).hexdigest()
 
 
-def build_manifest(model, lang, seed_base, worker, run_id, override=None):
+DATE_SHAPE = re.compile(r"^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) "
+                        r"(0[1-9]|[12][0-9]|3[01]) [0-9]{4}$")
+
+
+def valid_date(value):
+    return isinstance(value, str) and bool(DATE_SHAPE.match(value))
+
+
+def build_manifest(model, lang, seed_base, worker, run_id, override=None, frozen=None):
     h = lambda c: c * 64  # noqa: E731
     man = {
         "model": model, "run_id": run_id, "worker": worker, "sampling_profile": "deployed",
@@ -77,6 +86,7 @@ def build_manifest(model, lang, seed_base, worker, run_id, override=None):
             "policy": {"universe_sha256": h("2")},     # P276: where the real probe records it
             "seed_base": seed_base, "lang": lang, "draft_kind": served_draft_kind(model),
             "sampling_profile": "deployed",
+            "frozen_prompt_date": frozen if frozen is not None else REAL_DATE(),
         },
     }
     man["runtime"]["arm_identity_sha256"] = arm_identity(model, man["runtime"]["draft_kind"])
@@ -105,6 +115,10 @@ def _sha(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
 
+def REAL_DATE():
+    return time.strftime("%a %b %d %Y")
+
+
 def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, events_extra=b"", runtime=None):
     ev = _evidence_dir(wd, model, out, run_id, item)
     ev.mkdir(parents=True, exist_ok=True)
@@ -112,6 +126,8 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
     if not files["events"].exists():
         files["events"].write_bytes(b'{"type":"step_finish"}\n' + events_extra)
     files["stderr"].write_bytes(b"")
+    files["datefreeze"] = ev / "datefreeze.jsonl"          # P364 parity: the receipt file is row evidence
+    files["datefreeze"].write_text("")
     files["export"].write_text(json.dumps({"id": item}))
     names = ("report.xml", "stdout.txt", "stderr.txt") if item.startswith("python/") else ("go.jsonl", "go.stderr")
     arts = {}
@@ -128,9 +144,10 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
         "evidence_sha256": {k: _sha(v) for k, v in files.items()},
         "generation_identity_sha256": (runtime or {}).get("generation_identity_sha256"),
         "arm_identity_sha256": (runtime or {}).get("arm_identity_sha256"),
-        "prompt_date": time.strftime("%a %b %d %Y"),
+        "prompt_date": (runtime or {}).get("frozen_prompt_date", REAL_DATE()),
+        "prompt_date_real": REAL_DATE(), "prompt_date_update_removed": False,
         "events_path": _portable(wd, files["events"]), "transcript_path": _portable(wd, files["export"]),
-        "stderr_path": _portable(wd, files["stderr"]),
+        "stderr_path": _portable(wd, files["stderr"]), "datefreeze_path": _portable(wd, files["datefreeze"]),
         "grade_reports": [{"boundary": 1, "seq": 1, "final": True, "outcome": "parsed",
                            "artifacts": arts}],
         "gate": {"output_tokens_completed": 1000, "requests_completed": 5},
@@ -176,7 +193,8 @@ def main(argv=None):
         return print_identity(raw)
     ap = argparse.ArgumentParser()
     for f in ("--model", "--items", "--lang", "--out", "--scaffold", "--expect-items", "--a4-v2-receipt",
-              "--sampling-profile", "--cancel-file", "--manifest-ack", "--tg1-inject", "--chain-total", "--universe"):
+              "--sampling-profile", "--cancel-file", "--manifest-ack", "--tg1-inject", "--chain-total", "--universe",
+              "--frozen-prompt-date"):
         ap.add_argument(f)
     ap.add_argument("--seed-base", type=int)
     ap.add_argument("--limit", type=int)
@@ -201,6 +219,9 @@ def main(argv=None):
     if a.scaffold != SCAFFOLD or not a.expect_items or not a.a4_v2_receipt or a.sampling_profile != "deployed":
         print("REFUSED: bad arguments", flush=True)
         return 2
+    if not valid_date(a.frozen_prompt_date):      # P364 parity: the real probe refuses a missing / malformed date
+        print("REFUSED: --frozen-prompt-date is required ('Www Mmm DD YYYY')", flush=True)
+        return 2
     wd = env.get("STACK_WORKDIR", "")
     out = Path(a.out)
     mp = out.with_suffix(".manifest.json")
@@ -218,7 +239,7 @@ def main(argv=None):
     if state and env.get("FAKE_MANIFEST_PLAN"):
         plan_m = json.loads(env["FAKE_MANIFEST_PLAN"])
         overrides = {**overrides, **plan_m[min(n_inv, len(plan_m) - 1)]}
-    man = build_manifest(a.model, a.lang, a.seed_base, worker, run_id, overrides)
+    man = build_manifest(a.model, a.lang, a.seed_base, worker, run_id, overrides, frozen=a.frozen_prompt_date)
     cleanup = {"survivors": [], "containers_remaining": [], "uncertain": env.get("FAKE_CLEANUP_UNCERTAIN") == "1",
                "orphans_unattributed": []}
 

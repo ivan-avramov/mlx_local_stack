@@ -62,6 +62,8 @@ def _parser():
     ap.add_argument("--cancel-file")
     ap.add_argument("--manifest-ack")
     ap.add_argument("--sampling-profile", choices=("deployed",))
+    ap.add_argument("--frozen-prompt-date", help="P364: the date opencode shows the model ('Www Mmm DD YYYY'); "
+                    "required, never defaulted (a stored reference arm pairs only on the same date)")
     ap.add_argument("--print-identity", action="store_true", help="print the probe identity JSON and exit")
     # Legacy v2 flags: parsed only so that `tg1_runner.main` refuses them with its own message.
     for flag, kind in (("--extra-deny-file", Path), ("--rerun-of", str), ("--rerun-index", int), ("--tick-s", int),

@@ -831,7 +831,7 @@ def typed_worker(w):
             and isinstance(w.get("registry_sha256"), str) and bool(HEX64.match(w["registry_sha256"])))
 
 
-def validate_leg(leg, pinned, workdir=None, policy_sha=None):
+def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=None):
     """Completion = validation (spec 3). Returns a list of `code: detail` failure reasons; [] means complete.
 
     leg: {session, model, lang, seed_base, expected_ids, out, rc}. pinned: runtime field -> value (None = not yet
@@ -873,6 +873,8 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None):
         why.append("pinned_incomplete: scaffold_policy_sha256 not pinned")
     if rt.get("scaffold_policy_sha256") != policy_sha:
         why.append(f"runtime_scaffold_policy_sha256: {rt.get('scaffold_policy_sha256')}")
+    if frozen_prompt_date is not None and rt.get("frozen_prompt_date") != frozen_prompt_date:
+        why.append(f"runtime_frozen_prompt_date: {rt.get('frozen_prompt_date')} != {frozen_prompt_date}")
     if rt.get("draft_kind") != leg.get("draft_kind", "off"):              # M63: the leg's predictor
         why.append(f"runtime_draft_kind: {rt.get('draft_kind')}")
     if rt.get("sampling_profile", man.get("sampling_profile")) != "deployed":
@@ -910,6 +912,12 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None):
             why.append(f"row_arm_identity: {rid} differs from the manifest or is malformed")
         if not (isinstance(r.get("prompt_date"), str) and r["prompt_date"].strip()):
             why.append(f"row_prompt_date: {rid} absent or malformed")
+        if frozen_prompt_date is not None:                                # P364: the date the model was shown
+            if r.get("prompt_date") != frozen_prompt_date:
+                why.append(f"row_prompt_date: {rid} {r.get('prompt_date')!r} != frozen {frozen_prompt_date!r}")
+            if not (isinstance(r.get("prompt_date_real"), str) and r["prompt_date_real"].strip()
+                    and isinstance(r.get("prompt_date_update_removed"), bool)):
+                why.append(f"row_prompt_date_real: {rid} prompt_date_real / prompt_date_update_removed absent or malformed")
         if r.get("scaffold") != SCAFFOLD:
             why.append(f"row_scaffold: {rid} {r.get('scaffold')}")
         if r.get("model") != leg["model"]:
@@ -922,7 +930,12 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None):
             elif typed_worker(mw) and r[key] != mw:
                 why.append(f"worker_mismatch: {rid} {key} != manifest worker")
         ev = r.get("evidence_sha256") or {}
-        for name, pkey in (("events", "events_path"), ("stderr", "stderr_path"), ("export", "transcript_path")):
+        kinds = [("events", "events_path"), ("stderr", "stderr_path"), ("export", "transcript_path")]
+        if frozen_prompt_date is not None:                                # P364: the receipt file is load-bearing evidence
+            kinds.append(("datefreeze", "datefreeze_path"))
+            if set(ev) != {k for k, _ in kinds}:
+                why.append(f"evidence_keys: {rid} {sorted(ev)} != {sorted(k for k, _ in kinds)}")
+        for name, pkey in kinds:
             sha = ev.get(name)
             if not isinstance(sha, str) or not HEX64.match(sha):
                 why.append(f"evidence_sha_missing: {rid} {name}")

@@ -32,6 +32,7 @@ def ident(p, **kw):
 def test_generation_data_lists_the_non_python_inputs():
     assert set(runner.GENERATION_DATA) == {"benchmark/opencode_plugins/toolbounds.js",
                                            "benchmark/opencode_plugins/noretry.js",
+                                           "benchmark/opencode_plugins/datefreeze.js",
                                            "benchmark/opencode_bench_v2_web_tg1.json"}
     assert all((REPO / rel).is_file() for rel in runner.GENERATION_DATA)
 

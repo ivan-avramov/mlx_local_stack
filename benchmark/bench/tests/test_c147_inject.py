@@ -8,7 +8,7 @@ import sys
 import pytest
 from bench import tg1_runner as runner, proc_guard as pg, token_turn_gate as tg
 from bench.tests.test_opencode_v2_probe import probe as std_probe, tg1_probe as probe, MODEL
-from bench.tests.test_tg1_integration import tg_fixture
+from bench.tests.test_tg1_integration import tg_fixture, fake_receipts
 from bench.tests.test_token_turn_gate import event, usage
 
 OLD_CAMPAIGN_HASH = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"      # the campaign policy before P311-lite added the toolchain block
@@ -36,12 +36,12 @@ def campaign_identity(probe):
 def test_campaign_scaffold_policy_hash_is_pinned(probe):
     selection, usha = campaign_identity(probe)
     ident = runner.identity(probe, selection, usha, "2.0.20", Path(probe.__file__))
-    base = {k: v for k, v in ident["policy"].items() if k != "toolchain"}
+    base = {k: v for k, v in ident["policy"].items() if k not in ("toolchain", "datefreeze_sha256")}   # P364 adds one key
     assert hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest() == OLD_CAMPAIGN_HASH   # unchanged
     assert hashlib.sha256(json.dumps(ident["policy"], sort_keys=True).encode()).hexdigest() == ident["scaffold_policy_sha256"]
     assert set(ident["policy"]) == {
-        "gate", "hygiene", "toolbounds_sha256", "noretry_sha256", "carrier_sha256", "universe_sha256",
-        "grader_version", "grader_timeout_s", "grade_join_timeout_s", "plugin_proof", "env", "scaffold", "toolchain"}
+        "gate", "hygiene", "toolbounds_sha256", "noretry_sha256", "datefreeze_sha256", "carrier_sha256",
+        "universe_sha256", "grader_version", "grader_timeout_s", "grade_join_timeout_s", "plugin_proof", "env", "scaffold", "toolchain"}
     assert "inject" not in ident and ident["scaffold"] == "opencode-v2-web-tg1"
 
 
@@ -182,6 +182,7 @@ def stall_events(f, tmp_path, monkeypatch, requests=5):
     f["export"].write_text(json.dumps(dict(info=dict(id="s1"), messages=messages)))
     binary = Path(os.environ["OPENCODE_PROBE_BIN"])
     text = binary.read_text()
+    text = text.replace(fake_receipts([("s1", 2)]), fake_receipts([("s1", requests + 1)]))   # P364: one per started request
     text = text.replace('printf "answer = 42\\n" > solution.py', ':')       # no progress
     text = text.replace('\nexit "$(cat ', '\nsleep 30\nexit "$(cat ')
     binary.write_text(text)

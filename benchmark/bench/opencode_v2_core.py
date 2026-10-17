@@ -28,7 +28,7 @@ from types import FunctionType
 
 # The shared `opencode_common` bodies are rebound to the importing namespace (`reexport` / `bind`), so every global
 # they read must exist here: getpass, tempfile, progress_gate, the stdlib names above.
-from bench import deny_rules, opencode_common, progress_gate, provenance
+from bench import datefreeze, deny_rules, opencode_common, progress_gate, provenance
 
 opencode_common.reexport(globals())
 
@@ -46,6 +46,9 @@ BENCH_OPENCODE_WEB_CONFIG = REPO / "benchmark/opencode_bench_v2_web.json"
 
 
 NORETRY_PLUGIN = REPO / "benchmark/opencode_plugins/noretry.js"
+
+
+DATEFREEZE_PLUGIN = REPO / "benchmark/opencode_plugins/datefreeze.js"
 
 
 OVERLAY_SCHEMA_V2 = "OPENCODE_CONFIG_CONTENT:providers.mlx-local.models.<model>.body.seed"
@@ -100,9 +103,15 @@ def _seed_overlay(model, seed):
     return {"providers": {"mlx-local": {"models": {model: {"body": {"seed": int(seed)}}}}}}
 
 
-def _opencode_env(run_dir, scratch, overlay):
+def _opencode_env(run_dir, scratch, overlay, *, frozen_date=None, receipts=None):
+    """The hermetic spawn environment. P364 (tg1 only): `frozen_date` + `receipts` add the two env entries the
+    datefreeze plugin reads (the date the model is shown, the per-item receipt file outside the config dir)."""
     root = Path(run_dir).resolve()
+    extra = {}
+    if frozen_date is not None or receipts is not None:
+        extra = datefreeze.env_for(frozen_date, receipts)
     return {
+        **extra,
         "HOME": str(root / "home"),
         "XDG_CONFIG_HOME": str(root / "cfg"),
         "XDG_DATA_HOME": str(root / "data"),

@@ -30,6 +30,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
 from bench import chain_ops as co  # noqa: E402
+from bench import datefreeze  # noqa: E402
 
 PICK1, PICK2 = co.PICK1, co.PICK2
 SCAFFOLD = co.SCAFFOLD
@@ -131,7 +132,7 @@ def steps_for(block, idx):
     return [pilot] if leg["pilot_names"] == leg["full_names"] else [pilot, full]
 
 
-def build_cmd(py, probe, leg, step, receipt, cancel, ack, universe=None):
+def build_cmd(py, probe, leg, step, receipt, cancel, ack, universe=None, frozen=None):
     ids = [f"{leg['lang']}/{n}" for n in step["names"]]
     cmd = [str(py), str(probe), "--model", leg["model"], "--items", ",".join(step["names"]), "--lang", leg["lang"],
            "--seed-base", str(leg["seed_base"]), "--out", leg["out"], "--scaffold", SCAFFOLD,
@@ -141,6 +142,8 @@ def build_cmd(py, probe, leg, step, receipt, cancel, ack, universe=None):
         cmd += ["--limit", str(step["limit"])]
     if universe:                                    # P351: the probe grades against the chain's universe
         cmd += ["--universe", str(universe)]
+    if frozen:                                      # P364: the date the model is shown, frozen with the epoch
+        cmd += ["--frozen-prompt-date", frozen]
     return cmd
 
 
@@ -212,6 +215,8 @@ class Chain:
         self.probe = Path(args.probe)
         # a key is present once pinned; a pinned None (e.g. agent_system_sha256 without an overlay) is a value
         self.expected_policy = None           # P362: derived from the probe's --print-identity at chain start, frozen
+        self.frozen = None                    # P364: the date opencode shows the model; epoch metadata, frozen in chain.json
+        self.frozen_source = None
         self.pinned = {}
         self.universe = Path(args.universe).resolve() if args.universe else None
         if args.probe_code_sha:
@@ -250,7 +255,44 @@ class Chain:
             return "policy_sha256 absent, null or malformed"
         if pinned.get("scaffold_policy_sha256") != doc["policy_sha256"]:
             return "pinned scaffold_policy_sha256 missing or differs from policy_sha256"
+        if not datefreeze.valid(doc.get("frozen_prompt_date")):
+            return "frozen_prompt_date absent or malformed"
         return None
+
+    def resolve_frozen(self, previous):
+        """P364: the epoch's frozen prompt date. A new epoch takes it from the reference epoch's chain.json
+        (`--frozen-date-from`) or states it explicitly (`--frozen-prompt-date`); it is NEVER defaulted to today (that
+        would defeat cross-day reference reuse). A resumed chain keeps its recorded date; a differing argument refuses."""
+        given = getattr(self.a, "frozen_prompt_date", None)
+        ref = getattr(self.a, "frozen_date_from", None)
+        if given is not None and ref is not None:
+            raise RecordInvalid("give --frozen-prompt-date OR --frozen-date-from, not both")
+        date, source = given, (dict(kind="explicit") if given is not None else None)
+        if ref is not None:
+            try:
+                raw = Path(ref).read_bytes()
+                doc = json.loads(raw)
+            except (OSError, ValueError) as exc:
+                raise RecordInvalid(f"--frozen-date-from {Path(ref).name} unreadable ({type(exc).__name__})") from None
+            date = doc.get("frozen_prompt_date") if isinstance(doc, dict) else None
+            if not datefreeze.valid(date):
+                raise RecordInvalid(f"--frozen-date-from {Path(ref).name} has no valid frozen_prompt_date "
+                                    "(a reference epoch from before P364 cannot be reused)")
+            source = dict(kind="reference", chain_json=Path(ref).parent.name + "/" + Path(ref).name,
+                          chain_json_sha256=co.hashlib.sha256(raw).hexdigest(),
+                          reference_policy_sha256=doc.get("policy_sha256"))
+        if given is not None and not datefreeze.valid(given):
+            raise RecordInvalid(f"--frozen-prompt-date {given!r} is not 'Www Mmm DD YYYY'")
+        if previous is not None:
+            if date is not None and date != previous["frozen_prompt_date"]:
+                raise RecordInvalid(f"frozen prompt date {date!r} differs from the chain's frozen "
+                                    f"{previous['frozen_prompt_date']!r} (a changed chain needs a new out-root)")
+            self.frozen = previous["frozen_prompt_date"]
+            self.frozen_source = previous.get("frozen_prompt_date_source")
+            return
+        if date is None:
+            raise RecordInvalid("a new epoch needs --frozen-prompt-date or --frozen-date-from (never defaulted to today)")
+        self.frozen, self.frozen_source = date, source
 
     def init_lifecycle(self):
         """Freeze the sha256 of the chain's own code at chain creation, or verify it against the frozen record of an
@@ -272,8 +314,10 @@ class Chain:
             if composite and "generation_identity_sha256" not in self.pinned:
                 self.pinned["generation_identity_sha256"] = composite
             self.expected_policy = previous["policy_sha256"]
+            self.resolve_frozen(previous)
             self.verify_lifecycle("resume")
             return
+        self.resolve_frozen(None)                       # before anything is frozen or written
         fresh = co.lifecycle_shas(self.lifecycle_files)
         if any(v is None for v in fresh.values()):
             raise co.ChainAbort("lifecycle file unreadable at chain creation: "
@@ -320,6 +364,7 @@ class Chain:
                                launcher=lc.get("launcher"), launch_tg1=lc.get("launch_tg1"),
                                overlay=self.ops.overlay_sha()),
                    lifecycle=self.lifecycle, arms=self.arms, policy_sha256=self.expected_policy,
+                   frozen_prompt_date=self.frozen, frozen_prompt_date_source=self.frozen_source,
                    probe=str(self.probe), probe_code_sha=self.a.probe_code_sha, pinned=self.pinned,
                    attempts=self.attempts, restarts=self.restarts, stop=self.stop_info, rc=self.rc,
                    block_workers=self.block_workers, smoke=getattr(self.a, "smoke", False),
@@ -499,7 +544,8 @@ class Chain:
         if leg["lang"] == "go" and not self.ops.docker_ok():
             raise co.ChainAbort("docker gate FAIL before launch")                                    # P290
         ids = [f"{leg['lang']}/{x}" for x in step["names"]]
-        cmd = build_cmd(self.py, self.probe, leg, step, block["receipt"], cancel, ack, universe=self.universe)
+        cmd = build_cmd(self.py, self.probe, leg, step, block["receipt"], cancel, ack, universe=self.universe,
+                        frozen=self.frozen)
         att = dict(attempt=n, step=step["kind"], stem=leg["stem"], argv=cmd, cancel=str(cancel), ack=str(ack),
                    log=str(logp), worker=dict(block["worker"]), started=co.utc_stamp(), rc=None,
                    cleanup_status=None, run_id=None, probe_pid=None, probe_create_time=None, outcome=None)
@@ -533,7 +579,8 @@ class Chain:
         vleg = dict(session=leg["session"], model=leg["model"], lang=leg["lang"], seed_base=leg["seed_base"],
                     expected_ids=ids, out=leg["out"], rc=att["rc"], draft_kind=leg.get("draft_kind", "off"),
                     arm_identity_sha256=self.arms.get(self.arm_key(leg)))
-        why = co.validate_leg(vleg, self.pinned, self.ops.wd, policy_sha=self.expected_policy)
+        why = co.validate_leg(vleg, self.pinned, self.ops.wd, policy_sha=self.expected_policy,
+                              frozen_prompt_date=self.frozen)
         if not why:
             self.pin_from(leg)
             att["outcome"] = "validated"
@@ -626,6 +673,7 @@ class Chain:
         rt, wk = man.get("runtime") or {}, man.get("worker")
         chk = [("scaffold", rt.get("scaffold"), SCAFFOLD),
                ("scaffold_policy_sha256", rt.get("scaffold_policy_sha256"), self.expected_policy),
+               ("frozen_prompt_date", rt.get("frozen_prompt_date"), self.frozen),
                ("draft_kind", rt.get("draft_kind"), leg.get("draft_kind", "off")),
                ("seed_base", rt.get("seed_base"), leg["seed_base"]),
                ("lang", rt.get("lang"), leg["lang"]), ("model", man.get("model"), leg["model"]),
@@ -881,12 +929,19 @@ def parse_args(argv):
     ap.add_argument("--probe", default=str(REPO / "benchmark/run_tg1_probe.py"))
     ap.add_argument("--python", default=str(REPO / ".venv-bench/bin/python"))
     ap.add_argument("--universe")
+    ap.add_argument("--frozen-prompt-date", default=None, metavar="'Www Mmm DD YYYY'",
+                    help="P364: the date opencode shows the model, frozen for the epoch (a new epoch states it or takes "
+                         "--frozen-date-from; never defaulted to today; a resumed chain keeps its recorded date)")
+    ap.add_argument("--frozen-date-from", default=None, metavar="CHAIN_JSON",
+                    help="P364: take the frozen date from a reference epoch's chain.json (cross-day reference reuse)")
     ap.add_argument("--policy-sha", default=None,
                     help="P362: an ASSERTION of scaffold_policy_sha256 (64 hex); the expected value is derived from the "
                          "probe's --print-identity at chain start and frozen in chain.json")
     a = ap.parse_args(argv)
     if a.policy_sha is not None and not co.HEX64.match(a.policy_sha):
         ap.error("--policy-sha must be 64 lowercase hex")
+    if a.frozen_prompt_date is not None and not datefreeze.valid(a.frozen_prompt_date):
+        ap.error("--frozen-prompt-date must be 'Www Mmm DD YYYY' (e.g. 'Sat Oct 17 2026')")
     if a.generation_sha is not None and not co.HEX64.match(a.generation_sha):
         ap.error("--generation-sha must be 64 lowercase hex")
     if a.smoke and a.mode != "chain":
