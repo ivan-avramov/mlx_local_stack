@@ -1,0 +1,7 @@
+A1 — Low — `benchmark/results/p348_audit/P348_AUDIT.md:38-41`: completeness inventory misses 26 degenerate `raw_helper_verdict: "equivalent"` fields across `m42_quality_pilot_2026-09-13.json`, `m42_c82_quality_2026-09-13.json`, and `m43_c84_quality_20260914.json`. Each is already explicitly marked non-operative, so no decision is wrong. Failure scenario: grep-based audits still find unexplained equivalent labels. Fix: list these pre-caveated historical fields in §4; do not replace originals.
+
+A2 — Medium — `benchmark/results/p348_audit/scripts/rerun_jg.py:28-34`: the judge rerun omits the original `usage` inputs/output and deliberately excludes `/usage` from comparison. Consequently, regenerated `judge_c_v1/ranking.json` drops the original tokens/task, latency, and runaway estimates at `benchmark/results/judge_c_v1/ranking.json:196-227`, contradicting the report’s “same inputs” and “only diffs” claims. The ranking verdicts remain unchanged. Fix: reproduce and compare `usage` using the original model/tune inputs, or explicitly scope the artifact and report to preference statistics only.
+
+Otherwise verified: exactly eight PASS→INCONCLUSIVE changes; scores/CIs unchanged; originals retained; YAML semantics identical; wording preserves shipping; M40 CERTIFIED and M57 Q1 no-loss PASS are defensible; historical IFEval equivalence is non-degenerate; no new private identifiers.
+
+VERDICT: CLEARED AFTER FIXES A1 A2No follow-up needed; the additional results do not change the findings or verdict.
