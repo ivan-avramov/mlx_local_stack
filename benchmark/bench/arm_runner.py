@@ -430,6 +430,8 @@ def _run_item(p, adapter, *, model, work, prompt, env, binary, evidence, entry, 
                 window_overruns=list(dog.window_overruns) if dog else [])
         return result
     finally:
+        if ctx is not None:
+            ctx["gate_report"] = gate.report()           # spec 8.3: a failed attempt's tokens count toward its task
         try:
             with pg.defer_signals():
                 try:
@@ -735,7 +737,7 @@ def _main(p, adapter, a, names):
         status = ctx.get("cleanup_status")
         man["cleanup_status"] = status          # the receipt location (top level) on EVERY abort path
         stamp = dict(error=p._scrub_error(exc), cleanup_status=status, grade_reports=ctx.get("grade_reports", []),
-                     termination=ctx.get("termination"))
+                     termination=ctx.get("termination"), gate=ctx.get("gate_report"))
         cause = adapter.transport_cause(exc)
         if cause is not None:
             stamp["cause"] = cause                # spec 8.3: the incident class the chain retries on
