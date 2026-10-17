@@ -193,7 +193,7 @@ def test_cancel_during_generation_runs_the_full_terminal_path_and_leaves_no_row(
     assert "cancelled by runner" in man["transport_abort"]["error"]
     item = man["cancelled_item"]
     assert item["id"] == "python/one"
-    assert set(item["evidence_sha256"]) == {"events", "stderr", "export"} and all(item["evidence_sha256"].values())
+    assert set(item["evidence_sha256"]) == {"events", "stderr", "export", "datefreeze"} and all(item["evidence_sha256"].values())
     assert item["reconciliation"] == dict(unmatched_export_messages=1, trailing="interrupted")
     assert item["termination"]["reason"] == "runner_cancel"
     assert item["termination"]["killed"][0]["role"] == "client" and item["termination"]["killed_verified"] is True
@@ -229,7 +229,7 @@ def test_cancel_during_grading_is_honoured_after_the_terminal_phases_and_before_
     assert item["id"] == "python/one"
     assert item["grade_reports"][-1]["final"] is True and item["grade_reports"][-1]["outcome"] == "parsed"
     assert item["reconciliation"]["trailing"] in ("none", "final")
-    assert item["termination"]["reason"] is None and set(item["evidence_sha256"]) == {"events", "stderr", "export"}
+    assert item["termination"]["reason"] is None and set(item["evidence_sha256"]) == {"events", "stderr", "export", "datefreeze"}
     assert man["cleanup_status"]["uncertain"] is False
 
 

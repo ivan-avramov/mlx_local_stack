@@ -22,6 +22,7 @@ from . import (
     identity_closure as ic,
     toolchain,
     arm_identity,
+    datefreeze,
 )
 from m62 import universe_preflight
 
@@ -29,6 +30,7 @@ SCAFFOLD = "opencode-v2-web-tg1"
 REPO = Path(__file__).resolve().parents[2]
 CARRIER = REPO / "benchmark/opencode_bench_v2_web_tg1.json"
 PLUGIN = REPO / "benchmark/opencode_plugins/toolbounds.js"
+DATEFREEZE_PLUGIN = REPO / "benchmark/opencode_plugins/datefreeze.js"
 
 
 GRADE_JOIN_OVERHEAD_S = 60
@@ -42,6 +44,7 @@ ACK_POLL_S = 0.5
 GENERATION_DATA = (
     "benchmark/opencode_plugins/toolbounds.js",
     "benchmark/opencode_plugins/noretry.js",
+    "benchmark/opencode_plugins/datefreeze.js",          # P364: the date the model is shown
     "benchmark/opencode_bench_v2_web_tg1.json",
 )
 # The scoring tool's closure (informational: `--print-identity` shows it; it is NOT part of the generation identity and
@@ -347,6 +350,7 @@ def identity(p, selection, universe_sha, version, binary, *, inject=None):
         hygiene=hygiene,
         toolbounds_sha256=p._sha_of(PLUGIN),
         noretry_sha256=p._sha_of(p.NORETRY_PLUGIN),
+        datefreeze_sha256=p._sha_of(DATEFREEZE_PLUGIN),
         carrier_sha256=selection["fields"]["opencode_bench_config_sha256"],
         universe_sha256=universe_sha,
         grader_version=sg.VERSION,
@@ -450,6 +454,7 @@ def _run_item(
     policy=None,
     cancel=None,
     ctx=None,
+    frozen_date=None,
 ):
     gate_policy, hygiene = policy if policy is not None else effective_policy()
     scrub = p._scrub_pii if p is not None else (lambda text: text)
@@ -479,6 +484,13 @@ def _run_item(
             ("export", ".json"),
         )
     }
+    if frozen_date is not None:
+        # P364: one receipt file per item, in the item's evidence directory (never the config directory); the env the
+        # client is spawned with must name exactly this file and this date.
+        paths["datefreeze"] = evidence.with_suffix(".datefreeze.jsonl")
+        if (env.get(datefreeze.ENV_DATE) != frozen_date
+                or env.get(datefreeze.ENV_RECEIPTS) != str(paths["datefreeze"])):
+            raise tg.TransportAbort("P364: the spawn env does not name this item's frozen date and receipt file")
     for path in paths.values():
         pg.reserve_evidence(path)
     keep = Path(str(evidence) + ".grades")
@@ -632,7 +644,8 @@ def _run_item(
             client_launch_attempted = True
             # P17/C170: the date opencode prints into the system prompt, read immediately before the spawn (a
             # midnight-crossing item must record the date the model was shown, not the date it finished).
-            prompt_date = p._prompt_date() if p is not None else time.strftime("%a %b %d %Y")
+            prompt_date_real = p._prompt_date() if p is not None else time.strftime("%a %b %d %Y")
+            prompt_date = frozen_date if frozen_date is not None else prompt_date_real
             proc = guard.spawn(
                 [
                     binary,
@@ -776,6 +789,12 @@ def _run_item(
             if exit_hang:
                 raise tg.TransportAbort("client silent, worker idle: " + str(exc)) from exc
             raise
+        date_summary = None
+        if frozen_date is not None:
+            # P364: every request of the item must have been masked: exact reconciliation, any mismatch aborts (no row).
+            date_summary = datefreeze.reconcile(
+                paths["datefreeze"], frozen=frozen_date, session_id=stream.session_id,
+                requests_observed=len(stream.starts), killed=bool(killed or guard.client_resource))
         final_boundary_actual = len(gate.request_usage)
         if final_boundary != final_boundary_actual:
             gate.pending.discard(final_boundary)
@@ -837,6 +856,8 @@ def _run_item(
             wall_s=time.monotonic() - started,
             export=export,
             prompt_date=prompt_date,
+            prompt_date_real=prompt_date_real,
+            prompt_date_update_removed=None if date_summary is None else date_summary["update_removed"],
             session_id=stream.session_id,
             requests_observed=len(stream.starts),
             tool_bounds_rejections=tool_bounds_rejections(export),
@@ -948,6 +969,11 @@ def main(p, a):
         names = names[: a.limit]
     if a.sampling_profile not in (None, "deployed"):
         sys.exit("REFUSED: --sampling-profile accepts only 'deployed'")
+    frozen = getattr(a, "frozen_prompt_date", None)
+    if frozen is None:
+        sys.exit("REFUSED: --frozen-prompt-date is required (P364: the date the model is shown; never defaulted to today)")
+    if not datefreeze.valid(frozen):
+        sys.exit("REFUSED: --frozen-prompt-date must be 'Www Mmm DD YYYY' (e.g. 'Sat Oct 17 2026')")
     kind = a.tg1_inject
     if kind:
         if kind not in INJECT_POLICY:
@@ -1017,6 +1043,7 @@ def _main(p, a, names):
         selection["fields"] = {**selection["fields"], "scaffold": inject_label(kind)}
     tool0 = toolchain.current()          # P23: lock + interpreter + grader image; a missing one refuses before any spawn
     carrier = json.loads(selection["bytes"])
+    datefreeze.refuse_websocket(carrier)             # P364: the hooks are transport-neutral; WebSocket is untested
     model = carrier["providers"]["mlx-local"]["models"].get(a.model)
     if model is None:
         raise tg.TransportAbort("model absent from tg1 carrier")
@@ -1045,10 +1072,19 @@ def _main(p, a, names):
     run_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:12]
     run_dir = p._make_run_dir(workdir, run_id, selection)
     shutil.copyfile(PLUGIN, run_dir / "cfg/opencode/plugins/toolbounds.js")
+    shutil.copyfile(DATEFREEZE_PLUGIN, run_dir / "cfg/opencode/plugins/datefreeze.js")
     private = run_dir / "grading-private"
     private.mkdir()
     plugin_sha = p._sha_of(PLUGIN)
     noretry_sha = p._sha_of(p.NORETRY_PLUGIN)
+    datefreeze_sha = p._sha_of(DATEFREEZE_PLUGIN)
+    frozen = a.frozen_prompt_date
+    out = (
+        Path(a.out)
+        if a.out
+        else REPO / "benchmark/results" / a.model / "opencode-v2-web-tg1.jsonl"
+    )
+    evidence_dir = workdir / "opencode_transcripts" / a.model / (out.stem + "." + run_id)
 
     def check_env(env, overlay):
         provenance.opencode_v2_env_check(
@@ -1059,11 +1095,13 @@ def _main(p, a, names):
             overlay,
             scaffold=SCAFFOLD,
             toolbounds_sha=plugin_sha,
+            datefreeze_sha=datefreeze_sha,
         )
         if (
             p._sha_of(CARRIER) != selection["fields"]["carrier_source_sha256"]
             or p._sha_of(PLUGIN) != plugin_sha
             or p._sha_of(p.NORETRY_PLUGIN) != noretry_sha
+            or p._sha_of(DATEFREEZE_PLUGIN) != datefreeze_sha
             or universe_preflight.load(universe_path)[1] != universe_sha
             or selection["system_path"]
             and p._sha_of(selection["system_path"])
@@ -1082,7 +1120,9 @@ def _main(p, a, names):
         overlay = p._seed_overlay(
             a.model, p._item_seed(a.lang + "/" + names[0], a.seed_base)
         )
-        env = p._opencode_env(run_dir, scratch, overlay)
+        # discovery runs no session, so the plugin never writes this file (it is named only to satisfy the env contract)
+        env = p._opencode_env(run_dir, scratch, overlay, frozen_date=frozen,
+                              receipts=evidence_dir / "discovery.datefreeze.jsonl")
         p._fresh_tmpdir(env)
         check_env(env, overlay)
         with _DiscoveryGuard(p, [scratch, env["TMPDIR"]],
@@ -1117,6 +1157,7 @@ def _main(p, a, names):
     ident.update(
         seed_base=a.seed_base,
         lang=a.lang,
+        frozen_prompt_date=frozen,          # P364: chain metadata and resume identity; NOT in the generation composite
         polyglot_sha=p._polyglot_sha(p._polyglot_root()),
         a4_v2_pass=bool(receipt),
         **selection["fields"],
@@ -1124,11 +1165,6 @@ def _main(p, a, names):
     ident["sampling_profile"] = a.sampling_profile        # a present None is a value (the composite requires the key)
     ident["generation_identity_sha256"] = generation_identity_sha256(ident)
     ident.update(arm_identity_sha256=arm_sha, arm_identity=arm_fp)
-    out = (
-        Path(a.out)
-        if a.out
-        else REPO / "benchmark/results" / a.model / "opencode-v2-web-tg1.jsonl"
-    )
     mp = out.with_suffix(".manifest.json")
     rows = pg.load_rows(out)
     if rows:
@@ -1182,7 +1218,9 @@ def _main(p, a, names):
                         "prepared exercise differs from frozen universe"
                     )
                 overlay = p._seed_overlay(a.model, p._item_seed(item, a.seed_base))
-                env = p._opencode_env(run_dir, work, overlay)
+                evidence = evidence_dir / (a.lang + "__" + name)
+                env = p._opencode_env(run_dir, work, overlay, frozen_date=frozen,
+                                      receipts=evidence.with_suffix(".datefreeze.jsonl"))
                 p._fresh_tmpdir(env)
                 check_env(env, overlay)
                 with _DiscoveryGuard(p, [work, env["TMPDIR"]],
@@ -1205,13 +1243,6 @@ def _main(p, a, names):
                 )
                 if kind:
                     prompt += " " + INJECT_ADDENDA[kind]
-                evidence = (
-                    workdir
-                    / "opencode_transcripts"
-                    / a.model
-                    / (out.stem + "." + run_id)
-                    / (a.lang + "__" + name)
-                )
                 initial = (work / entry["solution"]).read_bytes()
                 result = run_item(
                     p,
@@ -1230,6 +1261,7 @@ def _main(p, a, names):
                     policy=effective_policy(kind),
                     cancel=cancel,
                     ctx=ctx,
+                    frozen_date=frozen,
                 )
                 after = worker_identity(p, a.model, router)
                 pg.require_identity(before, after)

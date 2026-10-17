@@ -1893,8 +1893,10 @@ def write(model: str, bench: str, registry_path: str | None = None,
 
 
 def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overlay, *,
-                          scaffold=None, toolbounds_sha=None):
-    """P151: permit only the hashed carrier/plugin and the exact per-item seed overlay."""
+                          scaffold=None, toolbounds_sha=None, datefreeze_sha=None):
+    """P151: permit only the hashed carrier/plugin and the exact per-item seed overlay. P364: under tg1 also the
+    hashed `datefreeze.js`, the frozen date and a per-item receipt path OUTSIDE the config directory (evidence is not
+    configuration); no other scaffold may carry any of the three."""
     from pathlib import Path
 
     def refuse(reason):
@@ -1913,8 +1915,22 @@ def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overla
         if scaffold == "opencode-v2-web-tg1":
             expected_entries.add("plugins/toolbounds.js")
             hashes.append(("plugins/toolbounds.js", toolbounds_sha))
+            expected_entries.add("plugins/datefreeze.js")
+            hashes.append(("plugins/datefreeze.js", datefreeze_sha))
         elif toolbounds_sha is not None:
             refuse("toolbounds is allowed only under tg1")
+        elif datefreeze_sha is not None or any(k in env for k in ("BENCH_FROZEN_PROMPT_DATE", "BENCH_DATEFREEZE_RECEIPTS")):
+            refuse("datefreeze is allowed only under tg1")
+        if scaffold == "opencode-v2-web-tg1":
+            frozen = env.get("BENCH_FROZEN_PROMPT_DATE")
+            from . import datefreeze as _datefreeze
+            if not _datefreeze.valid(frozen):
+                refuse("BENCH_FROZEN_PROMPT_DATE is absent or not 'Www Mmm DD YYYY'")
+            receipts = env.get("BENCH_DATEFREEZE_RECEIPTS")
+            if not receipts or not Path(receipts).is_absolute():
+                refuse("BENCH_DATEFREEZE_RECEIPTS is absent or not absolute")
+            if Path(receipts).resolve().is_relative_to(config.resolve()):
+                refuse("BENCH_DATEFREEZE_RECEIPTS must be outside the config directory")
         if entries != expected_entries:
             refuse("config directory contains missing or unexpected entries")
         if any(p.is_symlink() for p in config.rglob("*")) or config.is_symlink():
@@ -1987,7 +2003,9 @@ def opencode_v2_destination(
             )
             if activation.returncode:
                 refuse(f"tg1 plugin activation discovery exit {activation.returncode}")
-            for name in ("noretry.js", "toolbounds.js"):
+            if "failed to load plugin" in activation.stderr:
+                refuse("tg1 plugin activation log records a failed plugin load")
+            for name in ("noretry.js", "toolbounds.js", "datefreeze.js"):
                 plugin = config.parent / "plugins" / name
                 source = Path(__file__).resolve().parents[1] / "opencode_plugins" / name
                 if not plugin.is_file() or _file_sha256(str(plugin)) != _file_sha256(str(source)):

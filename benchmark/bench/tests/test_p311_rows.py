@@ -6,7 +6,7 @@ import pytest
 
 from bench import tg1_pairing
 from bench.tests.test_opencode_v2_probe import tg1_probe as probe, MODEL        # noqa: F401
-from bench.tests.test_tg1_integration import tg_fixture
+from bench.tests.test_tg1_integration import tg_fixture, FROZEN
 
 
 def test_manifest_and_rows_carry_the_composite_and_the_arm_identity(probe, monkeypatch, tmp_path):
@@ -48,12 +48,15 @@ def test_resume_refuses_a_changed_arm_identity(probe, monkeypatch, tmp_path):
 
 
 def test_prompt_date_is_captured_at_spawn_not_after_generation(probe, monkeypatch, tmp_path):
-    """An item spawned before midnight and finished after records the spawn date (spec test 7)."""
+    """An item spawned before midnight and finished after records the spawn date (spec test 7). P364: `prompt_date` is
+    now the FROZEN date the model is shown; the real spawn-time date is the covariate `prompt_date_real`."""
     f = tg_fixture(probe, monkeypatch, tmp_path)
     dates = iter(["Fri Oct 16 2026"] + ["Sat Oct 17 2026"] * 50)
     monkeypatch.setattr(probe, "_prompt_date", lambda: next(dates))
     assert f["run"]("one") == 0
-    assert json.loads(f["out"].read_text())["prompt_date"] == "Fri Oct 16 2026"
+    row = json.loads(f["out"].read_text())
+    assert row["prompt_date_real"] == "Fri Oct 16 2026" and row["prompt_date"] == FROZEN
+    assert row["prompt_date_update_removed"] is False
 
 
 # ---- pairing (spec 5)

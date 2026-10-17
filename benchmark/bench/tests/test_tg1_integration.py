@@ -12,6 +12,23 @@ from bench.tests.opencode_v2_mock import MockServer
 from m62 import universe_preflight as up
 
 
+FROZEN = "Mon Jan 05 2026"
+SHA = "a" * 64
+
+
+def fake_receipts(sessions_requests):
+    """Shell lines that make a fake opencode write the date-freeze receipts the real plugin would (P364)."""
+    out = []
+    for session, n in sessions_requests:
+        for seq in range(1, n + 1):
+            out.append(
+                "printf '%s\\n' '"
+                + json.dumps(dict(sessionID=session, seq=seq, kind="primary", frozen=FROZEN, n_initial_replaced=1,
+                                  n_update_removed=0, system_sha256=SHA))
+                + "' >> \"$BENCH_DATEFREEZE_RECEIPTS\"\n")
+    return "".join(out)
+
+
 def tg_fixture(probe, monkeypatch, tmp_path, *, binary=None, mock=None):
     p = probe
     destination = runner.provenance.opencode_v2_destination
@@ -71,6 +88,8 @@ def tg_fixture(probe, monkeypatch, tmp_path, *, binary=None, mock=None):
             m["finish"] = "stop"
             m["tokens"]["cache"] = {"read": 0, "write": 0}
         f["export"].write_text(json.dumps(export))
+        fake = Path(os.environ["OPENCODE_PROBE_BIN"])
+        fake.write_text(fake.read_text().replace("run)\n", "run)\n" + fake_receipts([("s1", 2)]), 1))
         from bench.tests.test_token_turn_gate import event, usage
 
         (tmp_path / "events.jsonl").write_text(
@@ -84,7 +103,7 @@ def tg_fixture(probe, monkeypatch, tmp_path, *, binary=None, mock=None):
             )
         )
 
-    def run(items="one", extra=()):
+    def run(items="one", extra=(), frozen=FROZEN):
         monkeypatch.setattr(
             sys,
             "argv",
@@ -104,6 +123,7 @@ def tg_fixture(probe, monkeypatch, tmp_path, *, binary=None, mock=None):
                 str(f["out"]),
                 "--universe",
                 str(universe),
+                *(["--frozen-prompt-date", frozen] if frozen is not None else []),
                 *extra,
             ],
         )

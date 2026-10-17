@@ -59,3 +59,21 @@ Operator 2026-10-17: "yes, let's fix that. potentially mask the OC timestamps?"
 - The model never sees the real date (all arms equal; harmless for coding tasks; a model running `date` in the shell
   still sees the real clock — not masked, P201-visible).
 - M64's Pi / dsh arms need their own equivalent (built in each adapter); until then their rows pair same-day only.
+
+## Build notes (2026-10-17, branch `p364-datefreeze`; corrections to the text above)
+
+- Hook shape verified on the pinned binary against the mock server: `context` / `compaction` / `title` payloads carry `system`
+  (array of `{type, text}`; the date sits inside one entry) and `messages`; in-place edits reach the wire bytes (`generate`
+  is registered by the same code path and is handled identically, but no carrier request used it). `http.request` was not needed.
+- A throwing plugin SETUP does not stop opencode (it logs `failed to load plugin` and runs on with the real date); only a
+  throwing HOOK aborts the request. Fail-closed therefore rests on (a) the activation proof refusing any `failed to load
+  plugin` line and (b) the exact receipt reconciliation (requests without receipts abort the item).
+- The tg1 carrier disables title and compaction, so those hooks never fire in a campaign run; they are exercised by wire tests
+  with a modified carrier. A title request carries no date instruction (receipt `n_initial_replaced = 0` is valid there only).
+- The midnight update is `session.instructions.updated` -> a `role: "system"` message. The clock cannot be injected and no
+  other instruction change re-rendered mid-session, so the real shape was not observable; the wire test injects a system
+  message with the update line from a plugin loaded before `datefreeze.js`. Residual: the shape is from binary string search.
+- Reconciliation is exact for a client that exited by itself; a killed item may differ by the one request in flight (+-1).
+- `scripts/session_pinning_gate.py` (A4, tg1 scaffold) does not copy `datefreeze.js`; A4 checks session pinning, not the prompt.
+- chain.json records `frozen_prompt_date` and `frozen_prompt_date_source` (explicit, or reference chain.json basename + sha256);
+  an existing chain.json without it is refused on resume (it belongs to the previous epoch anyway).
