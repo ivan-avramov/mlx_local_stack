@@ -21,7 +21,7 @@ def test_a_cancel_before_any_manifest_records_unavailable_for_the_head_slot(env)
     cj = chain_json(env)
     rec = cj["progress"]["invocations"][0]
     (found,) = cj["progress"]["abort_evidence"]
-    assert found["invocation"] == rec["file"] and found["slot"] == rec["expected_slots"][0]
+    assert Path(found["invocation"]).name == Path(rec["file"]).name and found["slot"] == rec["expected_slots"][0]
     assert found["web_evidence"] == dict(web_evidence="unavailable", reason="no manifest (pre-manifest exit)")
     assert rec["manifest_problem"] == "missing"
 

@@ -12,7 +12,8 @@ from bench.tests.test_p371_m64_resume import LEG3_SLOT2, CrashAt, crash_run
 def build(tmp_path):
     a = M.parse_args(SMOKE + ["--out-root", str(tmp_path / "o")])
     chain = M.build_chain(a, FakeOps(tmp_path), M.Timers(), lambda m: None, {"python": ["a"], "go": ["b"]}, tmp_path / "o", {})
-    out = tmp_path / "rows.a1.jsonl"
+    out = tmp_path / "o" / "s1" / "rows.a1.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
     view = dict(out=str(out), slot_base="e|oc|m|s1|python", arm="oc", model="m", lang="python", seed_base=1001,
                 label=chain.label_of("oc"))
     worker = dict(pid=7, create_time=1.5)

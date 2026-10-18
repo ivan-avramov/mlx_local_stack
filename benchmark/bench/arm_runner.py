@@ -1132,15 +1132,17 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
     save_manifest()
     barrier = ib.ItemBarrier(out.with_suffix(""), evidence.item_barrier == "on", ACK_TIMEOUT_S, cancel,
                              cancel_exc=RunnerCancelled, poll_s=ACK_POLL_S)
+    ctx["boundary_after"] = None                         # F19: the last committed item id (None: none yet)
     try:
         if a.manifest_ack:
             _wait_for_ack(a.manifest_ack, cancel)
         for k, name in enumerate(names):
             item = a.lang + "/" + name
+            ctx.update(id=None)                          # F19: between items no item is current (a cancel here is a boundary)
+            ctx.pop("evidence_paths", None)              # never a previous item's evidence in this item's abort stamp
             if cancel is not None and cancel():
                 raise RunnerCancelled()
             ctx.update(id=item)
-            ctx.pop("evidence_paths", None)              # never a previous item's evidence in this item's abort stamp
             current = worker_identity(p, a.model, router)
             pg.require_identity(before, current)
             with p._item_scratch_dir(name) as scratch:
@@ -1223,6 +1225,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                     token_accounting=accounting,
                 )
                 rows.append(json.loads(p._scrub_pii(json.dumps(row))))
+                ctx["boundary_after"] = item
                 pg.atomic_write(out, ("".join(json.dumps(r) + "\n" for r in rows)).encode())
                 print(f'{item}: passed={passed} nonconv={row["nonconv_kind"]}', flush=True)
                 if barrier.enabled and barrier.done(k, _done_record(p, rows[-1], attempt, artifacts)) == "stop":
@@ -1241,7 +1244,10 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
             stamp["gate"] = ctx.get("gate_report")     # spec 8.3: a failed attempt's tokens count toward its task
         if ctx.get("receipt_tokens") is not None:
             stamp["receipts"] = ctx["receipt_tokens"]  # P371 3b: the fenced worker receipts' totals (the better count)
-        if ctx.get("evidence_paths") is not None and ctx.get("id"):          # every configuration (P382)
+        if ctx.get("id") is None and ctx.get("boundary_after", False) is not False:
+            # F19: the cancel / abort fell between items: an explicit boundary, attributed to no slot
+            stamp["evidence"] = dict(boundary=True, after=ctx["boundary_after"])
+        elif ctx.get("evidence_paths") is not None and ctx.get("id"):          # every configuration (P382)
             # F6 (A12): the failing slot's evidence files with their sha256 AT the abort (null: the file does not exist)
             stamp["evidence"] = dict(id=ctx["id"], files={
                 k: dict(path=p._portable(v), sha256=p._sha_of(v) if Path(v).is_file() else None)

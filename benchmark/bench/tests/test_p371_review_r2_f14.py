@@ -36,16 +36,20 @@ def test_a_missing_invalid_or_foreign_manifest_after_exit_is_recorded_explicitly
     from bench.tests.m64_support import FakeOps, M, SMOKE as ARGV
     a = M.parse_args(ARGV + ["--out-root", str(tmp_path / "o")])
     chain = M.build_chain(a, FakeOps(tmp_path), M.Timers(), lambda m: None, {"python": ["a"], "go": ["b"]}, tmp_path / "o", {})
-    out = tmp_path / "rows.a1.jsonl"
-    view = dict(out=str(out), slot_base="e|oc|m|s1|python", arm="oc")
-    att = dict(run_id=None, transport_abort=None, cancelled_item=None, cleanup_status=None)
+    out = tmp_path / "o" / "s1" / "rows.a1.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    view = dict(out=str(out), slot_base="e|oc|m|s1|python", arm="oc", model="m", lang="python", seed_base=1,
+                label=chain.label_of("oc"))
+    worker = dict(pid=7, create_time=1.0)
+    att = dict(attempt=1, worker=worker, run_id=None, transport_abort=None, cancelled_item=None, cleanup_status=None)
     chain.hydrate_from_manifest(att, view, out)
     assert att["manifest_problem"] == "missing" and att["cleanup_status"] is None and att["manifest_observed"] is False
     out.with_suffix(".manifest.json").write_text("{not json")
-    att = dict(run_id=None, transport_abort=None, cancelled_item=None, cleanup_status=None)
+    att = dict(attempt=1, worker=worker, run_id=None, transport_abort=None, cancelled_item=None, cleanup_status=None)
     chain.hydrate_from_manifest(att, view, out)
     assert att["manifest_problem"] == "invalid"
-    out.with_suffix(".manifest.json").write_text(json.dumps({"run_id": "other", "cleanup_status": {}}))
-    att = dict(run_id="mine", transport_abort=None, cancelled_item=None, cleanup_status=None)
+    out.with_suffix(".manifest.json").write_text(json.dumps({"run_id": "other", "model": "m", "worker": worker, "cleanup_status": {},
+                                                                   "runtime": {"lang": "python", "seed_base": 1, "scaffold": chain.label_of("oc"), "arm": "oc"}}))
+    att = dict(attempt=1, worker=worker, run_id="mine", transport_abort=None, cancelled_item=None, cleanup_status=None)
     chain.hydrate_from_manifest(att, view, out)
     assert att["manifest_problem"] == "run_id differs" and att["cleanup_status"] is None

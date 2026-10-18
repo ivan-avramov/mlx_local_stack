@@ -498,6 +498,8 @@ class Chain:
         self.progress.setdefault("txns", [])
         self.progress.setdefault("abort_evidence", [])
         self.attempts = list(previous.get("attempts") or [])
+        self.seen_run_ids = (set(self.progress.get("seen_run_ids") or [])
+                             | {a["run_id"] for a in self.attempts if a.get("run_id")})      # F16: rebuilt + verified at resume
         self.restarts = list(previous.get("restarts") or [])
         self.block_workers = list(previous.get("block_workers") or [])
         self.snapshots = dict(previous["snapshots"])
@@ -710,6 +712,7 @@ class Chain:
                     realized=self.realized)
 
     def write_json(self, status=None):
+        self.progress["seen_run_ids"] = sorted(self.seen_run_ids)         # F16: persisted, verified at resume
         doc = dict(status=status, mode=self.a.mode, argv=sys.argv[1:], updated=co.utc_stamp(),
                    sha256=self.sha256_block(), lifecycle=self.lifecycle, arms=self.arms,
                    frozen_prompt_date=self.frozen, frozen_prompt_date_source=self.frozen_source,
@@ -1012,6 +1015,7 @@ class Chain:
         crashed invocation are replayed (an accepted prefix is salvaged), the rest of its files is quarantined."""
         running = [i for i in self.progress["invocations"] if i["leg_key"][0] == load["idx"]
                    and i["load_gen"] == rec["load_gen"] and i["status"] == "running"]
+        self.hydrate_running(load, running)               # F17: before any salvage / quarantine / archive moves the files
         if self.config.resume_policy == "new_segment":
             self.check_cursor(load, rec)
             running = self.salvage_hook_stops(load, running)
@@ -1027,6 +1031,22 @@ class Chain:
             self.quarantine(running)
         dest = self.archive_load(load, resume=True)
         self.log(f"RESUME load {load['session']}/{load['model']}: interrupted load archived to {dest}")
+
+    def hydrate_running(self, load, running):
+        """F17: a crash after the probe exited but before `attempt-ended` leaves a `running` invocation whose cleanup receipt and
+        abort evidence were never read; each is hydrated from its own final manifest (the F16 validation), idempotently."""
+        for r in running:
+            if "manifest_problem" in r:
+                continue                                   # hydrated already
+            want = str(self.out_root / r["file"])
+            att = next((a for a in self.attempts if "--out" in a.get("argv", [])
+                        and a["argv"][a["argv"].index("--out") + 1] == want), None)
+            if att is None:
+                continue
+            view = self.leg_of(load, r)
+            self.hydrate_from_manifest(att, view, Path(view["out"]), r)
+            att["outcome"] = att.get("outcome") or "exited_before_attempt_end"
+            self.write_json("resume-hydrated")
 
     def check_cursor(self, load, rec):
         """The persisted progress cursor must be consistent with what is scored: every leg BEFORE it is complete."""
@@ -1530,15 +1550,38 @@ class Chain:
             raise Stopped("leg")
         return self.handle_incomplete(load, leg, inv, rec, att, why, sup=sup, view=view)
 
-    def _manifest_problem(self, att, view, out):
-        man = self._manifest(view)
+    def _manifest_problem(self, att, view, out, man):
+        """F16: why `man` (read ONCE by the caller) is not THIS invocation's manifest, or None. Its binding (model, language,
+        seed base, scaffold label, arm, the worker at launch) must match the invocation, its run id must not be one already seen
+        in this chain (a copied-in or reused manifest), and it must match the run id the barrier observed. The manifest carries
+        no attempt / phase / rerun fields (adding them would change the A14 manifest shape): the invocation's own immutable
+        path binds those."""
         if man is None:
             return "missing" if not Path(out).with_suffix(".manifest.json").exists() else "invalid"
         if not isinstance(man, dict) or not isinstance(man.get("run_id"), str) or not man["run_id"]:
             return "invalid"
-        if att.get("run_id") and man["run_id"] != att["run_id"]:
-            return "run_id differs"
+        rt, wk, launch = man.get("runtime") or {}, man.get("worker") or {}, att.get("worker") or {}
+        checks = [("model", man.get("model"), view.get("model")), ("lang", rt.get("lang"), view.get("lang")),
+                  ("seed_base", rt.get("seed_base"), view.get("seed_base")), ("scaffold", rt.get("scaffold"), view.get("label")),
+                  ("worker", (wk.get("pid"), wk.get("create_time")), (launch.get("pid"), launch.get("create_time")))]
+        if self.per_arm:
+            checks.append(("arm", rt.get("arm"), view.get("arm")))
+        bad = [name for name, got, want in checks if got != want]
+        if bad:
+            return "binding differs: " + ", ".join(bad)
+        if att.get("run_id"):
+            return "run_id differs" if man["run_id"] != att["run_id"] else None
+        if man["run_id"] in self.seen_run_ids:
+            return "run_id already seen"
         return None
+
+    def _record_abort_evidence(self, out, att, found):
+        """One `progress.abort_evidence` record per (invocation, attempt): a second hydration replaces, never duplicates."""
+        inv = self._relpath(out)
+        records = [r for r in self.progress.setdefault("abort_evidence", [])
+                   if not (r.get("invocation") == inv and r.get("attempt") == att["attempt"])]
+        records.append(dict(invocation=inv, attempt=att["attempt"], **found))
+        self.progress["abort_evidence"] = records
 
     def hydrate_from_manifest(self, att, view, out, rec=None):
         """F14: after the probe exits, ALWAYS read the invocation's own final manifest (its path is the invocation's rows file
@@ -1546,16 +1589,25 @@ class Chain:
         whether or not the barrier observed it. A missing / invalid / foreign manifest is recorded in `manifest_problem`
         and hydrates nothing (restart eligibility keeps refusing without a receipt)."""
         observed = bool(att.get("run_id"))
-        problem = self._manifest_problem(att, view, out)
+        man = self._manifest(view)
+        problem = self._manifest_problem(att, view, out, man)
         # the per-arm attempts carry the state; every configuration's inventory record carries it (tg1 attempts keep their A14 shape)
         if self.per_arm:
             att["manifest_observed"], att["manifest_problem"] = observed, problem
         if rec is not None:
             rec["manifest_observed"], rec["manifest_problem"] = observed, problem
         if problem:
+            # F18: no usable manifest (a cancel before the probe wrote one): an explicit `unavailable` for the head slot
+            reason = ("no manifest (pre-manifest exit)" if problem == "missing"
+                      else f"the invocation's manifest is not usable ({problem})")
+            head = (rec or {}).get("expected_slots", [None])[0]
+            found = dict(slot=head, evidence=None, web_evidence=we.unavailable(reason))
+            if self.per_arm:
+                att["abort_evidence"] = found
+            self._record_abort_evidence(out, att, found)
             return
-        man = self._manifest(view)
         att["run_id"] = att.get("run_id") or man["run_id"]
+        self.seen_run_ids.add(man["run_id"])
         att["cleanup_status"] = receipt_from_manifest(man)
         att["cancelled_item"] = man.get("cancelled_item")
         att["transport_abort"] = man.get("transport_abort")
@@ -1564,8 +1616,7 @@ class Chain:
             if self.per_arm:
                 att["abort_evidence"] = found
             # one record per aborted attempt in the inventory for EVERY configuration (tg1's attempts keep their A14 shape)
-            self.progress.setdefault("abort_evidence", []).append(dict(
-                invocation=self._relpath(out), attempt=att["attempt"], **found))
+            self._record_abort_evidence(out, att, found)
 
     def abort_evidence(self, att, view, out):
         """A12 (F6): the evidence of the slot an abort (incident, cancel, STOP) hit BEFORE its row was committed: the probe's
@@ -1574,6 +1625,8 @@ class Chain:
         row's own evidence (the barrier extracted it) and is never extracted twice."""
         stamp = att.get("transport_abort") or {}
         ev = stamp.get("evidence") if isinstance(stamp.get("evidence"), dict) else None
+        if ev is not None and ev.get("boundary"):         # F19: a cancel between items belongs to no slot
+            return dict(slot=None, evidence=ev, boundary=True, after=ev.get("after"))
         item = (ev or {}).get("id") or (att.get("cancelled_item") or {}).get("id")
         slot = cr.slot_for(view["slot_base"], item) if item else None
         try:
