@@ -26,6 +26,33 @@ STUB_RUNS = 2
 GRADE_TIMEOUT = 900
 
 
+def policy(ref_runs=None, stub_runs=None):
+    """The freeze policy every cached record depends on (run counts, timeouts, resource limits, optional leaves, the
+    Rust allowlist file's sha256)."""
+    return dict(ref_runs=REF_RUNS if ref_runs is None else ref_runs, stub_runs=STUB_RUNS if stub_runs is None else stub_runs,
+                grade_timeout=GRADE_TIMEOUT, timeout_rule="max(180, int(3 * max reference seconds) + 1)",
+                timeout_floor=tg.TIMEOUT_FLOOR, pids_limit=tg.PIDS_LIMIT, nofile_limit=tg.NOFILE_LIMIT,
+                fsize_limit=tg.FSIZE_LIMIT, output_cap=tg.OUTPUT_CAP, report_cap=tg.REPORT_CAP,
+                max_junit_files=tg.MAX_JUNIT_FILES, tree_cap=tg.TREE_CAP, work_volume=tg.WORK_VOLUME_SIZE,
+                report_volume=tg.REPORT_VOLUME_SIZE,
+                optional_leaves=sorted([lang, slug, sorted(v)] for (lang, slug), v in tg.OPTIONAL_LEAVES.items()),
+                allowlist_sha256=hashlib.sha256(Path(tg.ALLOWLIST_FILE).read_bytes()).hexdigest())
+
+
+def fingerprint(*, image_id, polyglot_sha, ref_runs=None, stub_runs=None, grader_version=None):
+    """Everything a cached freeze record's validity depends on; a record is reusable only on an exact match."""
+    pol = json.dumps(policy(ref_runs, stub_runs), sort_keys=True)
+    return dict(polyglot_sha=polyglot_sha, image_id=image_id, grader_version=grader_version or tg.VERSION,
+                materializer_version=mat.VERSION, policy=hashlib.sha256(pol.encode()).hexdigest())
+
+
+def _mismatch(item, found, expected):
+    if not isinstance(found, dict):
+        return "%s: no fingerprint (record from before fingerprinting)" % item
+    diff = sorted(k for k in expected if found.get(k) != expected[k])
+    return "%s: fingerprint differs in %s" % (item, ", ".join(diff)) if diff else None
+
+
 def default_grader(guard):
     def grader(lang, tree, slug, private, *, prepared, solutions, timeout, prepared_cargo_toml=None, extra_crates=()):
         return tg.grade_item(lang, tree, slug, private, prepared=prepared, solutions=solutions, guard=guard,
@@ -122,6 +149,11 @@ def freeze_item(corpus, lang, slug, root, grader, *, locks_fn=None, ref_runs=REF
 
 
 def assemble(records, *, image_id, polyglot_sha, grader_version=None):
+    expected = fingerprint(image_id=image_id, polyglot_sha=polyglot_sha, grader_version=grader_version)
+    bad = [m for r in records for m in [_mismatch(r["item"], r.get("fingerprint"), expected)] if m]
+    if bad:
+        raise TransportAbort("stale freeze records refused (assemble): " + "; ".join(bad))
+    records = [{k: v for k, v in r.items() if k != "fingerprint"} for r in records]
     languages = {}
     for rec in records:
         lang = rec["item"].split("/")[0]
@@ -133,8 +165,8 @@ def assemble(records, *, image_id, polyglot_sha, grader_version=None):
     for entry in languages.values():
         entry["valid"].sort()
         entry["N_actual"] = len(entry["valid"])
-    return dict(grader_version=grader_version or tg.VERSION, image_id=image_id, polyglot_sha=polyglot_sha,
-                spec="docs/specs/m65-tg2-corpus.md", ref_runs=REF_RUNS, stub_runs=STUB_RUNS,
+    return dict(grader_version=expected["grader_version"], materializer_version=mat.VERSION, fingerprint=expected,
+                policy=policy(), image_id=image_id, polyglot_sha=polyglot_sha, spec="docs/specs/m65-tg2-corpus.md", ref_runs=REF_RUNS, stub_runs=STUB_RUNS,
                 languages={k: languages[k] for k in sorted(languages)},
                 items={r["item"]: r for r in sorted(records, key=lambda r: r["item"])})
 
@@ -161,6 +193,8 @@ def load(path):
         doc = json.loads(raw)
         if doc["grader_version"] != tg.VERSION or not isinstance(doc["items"], dict):
             raise ValueError("grader version")
+        if doc.get("materializer_version") != mat.VERSION:
+            raise ValueError("materializer version %r != %r" % (doc.get("materializer_version"), mat.VERSION))
         return doc, sha
     except (OSError, ValueError, KeyError) as exc:
         raise TransportAbort("invalid frozen tg2 universe: " + str(exc)) from exc
@@ -206,12 +240,26 @@ def report(doc, sha):
     return "\n".join(lines) + "\n"
 
 
-def run_all(corpus, workdir, log, grader, *, locks_fn=None, only=None, ref_runs=REF_RUNS, stub_runs=STUB_RUNS):
+def run_all(corpus, workdir, log, grader, *, image_id, polyglot_sha, locks_fn=None, only=None, ref_runs=REF_RUNS,
+            stub_runs=STUB_RUNS):
+    """Resumable. A cached record is reused only on an EXACT fingerprint match; any mismatch (or a record from before
+    fingerprinting) aborts the whole run before anything executes, listing every stale item (nothing is discarded or
+    overwritten: the operator removes the cache directory deliberately)."""
+    fp = fingerprint(image_id=image_id, polyglot_sha=polyglot_sha, ref_runs=ref_runs, stub_runs=stub_runs)
     items = [(lang, slug) for lang, slugs in mat.list_items(corpus).items() for slug in slugs]
     if only:
         items = [i for i in items if "%s/%s" % i in only or i[0] in only]
     cache = Path(workdir) / "items"
     cache.mkdir(parents=True, exist_ok=True)
+    stale = []
+    for lang, slug in items:
+        path = cache / ("%s__%s.json" % (lang, slug))
+        if path.exists():
+            m = _mismatch("%s/%s" % (lang, slug), json.loads(path.read_text()).get("fingerprint"), fp)
+            if m:
+                stale.append(m)
+    if stale:
+        raise TransportAbort("stale cached freeze records in %s (remove the cache to refreeze): %s" % (cache, "; ".join(stale)))
     records, started = [], time.monotonic()
     done_new = 0
     for n, (lang, slug) in enumerate(items, 1):
@@ -224,6 +272,7 @@ def run_all(corpus, workdir, log, grader, *, locks_fn=None, only=None, ref_runs=
             shutil.rmtree(scratch, ignore_errors=True)
             rec = freeze_item(corpus, lang, slug, scratch, grader, locks_fn=locks_fn, ref_runs=ref_runs,
                               stub_runs=stub_runs)
+            rec["fingerprint"] = fp
             shutil.rmtree(scratch, ignore_errors=True)
             path.write_text(json.dumps(rec, sort_keys=True))
             tag, done_new = "run", done_new + 1
@@ -253,12 +302,16 @@ def main(argv=None):
     leftover = tg.list_leftovers(guard.run_grader, args.workdir)
     if leftover["containers"] or leftover["volumes"]:
         raise TransportAbort("tg2 leftovers present: %s" % leftover)
-    records = run_all(args.corpus, args.workdir, log, default_grader(guard), only=args.only)
+    sha_poly = subprocess.run(["git", "-C", str(args.corpus), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    if not sha_poly:
+        raise TransportAbort("cannot resolve the polyglot corpus commit for the freeze fingerprint")
+    image_id = tg.pinned_image_id()
+    records = run_all(args.corpus, args.workdir, log, default_grader(guard), only=args.only, image_id=image_id,
+                      polyglot_sha=sha_poly)
     if args.only:
         print("partial run (--only): not frozen")
         return 0
-    sha_poly = subprocess.run(["git", "-C", str(args.corpus), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    doc = assemble(records, image_id=tg.pinned_image_id(), polyglot_sha=sha_poly)
+    doc = assemble(records, image_id=image_id, polyglot_sha=sha_poly)
     sha = freeze(args.out, doc)
     args.report.write_text(report(doc, sha))
     print("frozen", args.out, sha)
