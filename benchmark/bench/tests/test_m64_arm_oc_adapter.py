@@ -14,6 +14,7 @@ from bench import arm_adapter as aa
 from bench import arm_opencode as ao
 from bench import datefreeze, tg1_runner, toolchain
 from bench import token_turn_gate as tg
+from bench import worker_receipts as wr
 from bench.tests.test_opencode_v2_probe import MODEL, tg1_probe as probe          # noqa: F401  (fixture)
 from bench.tests.test_token_turn_gate import event, usage
 
@@ -202,11 +203,11 @@ def test_tg1_mode_run_dir_and_plugin_set_equal_the_tg1_path(probe, tmp_path):
                                                    "plugins/toolbounds.js"]
 
 
-def test_m64_mode_loads_the_same_plugin_set_as_tg1(probe, tmp_path):
+def test_m64_mode_loads_the_tg1_plugin_set_plus_toolwindows(probe, tmp_path):
     arm = m64_arm(probe)
     run = arm.make_run_dir(tmp_path, "r1", arm.selection())
     names = sorted(k for k in tree(run / "cfg/opencode") if k.startswith("plugins/"))
-    assert names == ["plugins/datefreeze.js", "plugins/noretry.js", "plugins/toolbounds.js"]
+    assert names == ["plugins/datefreeze.js", "plugins/noretry.js", "plugins/toolbounds.js", "plugins/toolwindows.js"]
     assert (run / "cfg/opencode/opencode.json").read_bytes() == arm.selection()["bytes"]
 
 
@@ -229,7 +230,9 @@ def test_verify_env_accepts_the_built_env_and_refuses_a_tampered_one(probe, tmp_
         scratch = tmp_path / ("s-" + arm.label)
         scratch.mkdir()
         overlay = probe._seed_overlay(MODEL, 7)
-        env = arm.build_env(run, scratch, overlay, receipts=tmp_path / "x" / "r.jsonl", frozen_date=FROZEN)
+        env = arm.build_env(run, scratch, overlay, receipts=tmp_path / "x" / "r.jsonl", frozen_date=FROZEN,
+                            toolwindow_receipts=tmp_path / "x" / "t.jsonl" if arm.m64 else None,
+                            attempt=wr.AttemptContext.make("python/one", 1))
         arm.verify_env(env, run, sel, overlay)
         (run / "cfg/opencode/plugins/extra.js").write_text("export default {}")
         with pytest.raises(Exception, match="unexpected entries"):
@@ -496,7 +499,7 @@ def test_snapshot_states_what_is_known_and_what_the_snapshot_tooling_still_owes(
     f = snap.fields
     assert f["version"] == "2.0.20" and f["exe_sha256"] == hashlib.sha256(binary.read_bytes()).hexdigest()
     assert f["plugins"] == {n: hashlib.sha256((REPO / "benchmark/opencode_plugins" / n).read_bytes()).hexdigest()
-                            for n in ("datefreeze.js", "noretry.js", "toolbounds.js")}
+                            for n in ("datefreeze.js", "noretry.js", "toolbounds.js", "toolwindows.js")}
     assert f["carrier_sha256"] == arm.selection()["fields"]["opencode_bench_config_sha256"]
     assert f["label"] == "opencode-v2-web-tg1c"
 

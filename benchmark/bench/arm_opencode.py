@@ -36,6 +36,7 @@ from . import run_config as rc
 from . import structured_grade as sg
 from . import token_turn_gate as tg
 from . import toolchain
+from . import toolwindows as tw
 from .arm_adapter import Transcript, Usage  # noqa: F401  (re-exported for callers and tests)
 
 REPO = Path(__file__).resolve().parents[2]
@@ -43,6 +44,7 @@ TG1_LABEL = "opencode-v2-web-tg1"
 CARRIER = REPO / "benchmark/opencode_bench_v2_web_tg1.json"
 PLUGIN = REPO / "benchmark/opencode_plugins/toolbounds.js"
 DATEFREEZE_PLUGIN = REPO / "benchmark/opencode_plugins/datefreeze.js"
+TOOLWINDOWS_PLUGIN = REPO / "benchmark/opencode_plugins/toolwindows.js"           # M64 only (A4)
 # P311-lite: the non-Python inputs of the generation identity (plugins and the carrier the probe writes); the Python
 # part is the static import closure of the entry (`bench.identity_closure`).
 GENERATION_DATA = (
@@ -63,6 +65,7 @@ REMOVED_TOOLS = ("subagent", "execute", "question", "websearch")
 M64_CARRIER_CHANGES = (("compaction.auto", False, True), ("mcp.searxng", None, "shared search service"))
 SNAPSHOT_OWED = ("dependency_tree", "bottle_sha256", "tool_schemas")        # build step 6 (snapshot / adoption tooling)
 PLUGINS = ("noretry.js", "toolbounds.js", "datefreeze.js")
+PLUGINS_M64 = PLUGINS + ("toolwindows.js",)
 TRANSPORT_CAUSES = ("server_error", "connection", "dropped_stream", "timeout")
 OPENCODE_CONFIG_CONTENT = "OPENCODE_CONFIG_CONTENT"
 ATTEMPT_HEADER = "X-Bench-Attempt"
@@ -104,9 +107,9 @@ def m64_evidence(receipts="absent", item_barrier="off"):
 
 def m64_template():
     """The `m64-oc-tg1` configuration's static policy: watchdog on, compaction accounted (plan 3.2). The tool-window
-    source is the live `tool_use` events through `arm_watchdog` (phase 2b adds the start receipts), identified by the
-    watchdog module's sha."""
-    toolwindows = hashlib.sha256((REPO / "benchmark/bench/arm_watchdog.py").read_bytes()).hexdigest()
+    source is the start / end receipts of `toolwindows.js` merged with the completed `tool_use` events (A4), identified
+    by the plugin's sha."""
+    toolwindows = hashlib.sha256(TOOLWINDOWS_PLUGIN.read_bytes()).hexdigest()
     return rc.PolicyTemplate(config_id="m64-oc-tg1", langs=("python", "go"),
                              watchdog=rc.watchdog_on(limit_s=arm_watchdog.LIMIT_S, grace_s=arm_watchdog.GRACE_S,
                                                      toolwindows_sha256=toolwindows),
@@ -182,6 +185,9 @@ class OcStream(tg.EventStream):
         self.compaction_events = []        # (after_request, info), filled at reconcile from the session export
         self.late_finishes = {}            # request_seq -> Usage of a request the live events never closed (reconcile)
         self.terminal_shape = None
+        self.toolwindows = None            # `toolwindows.Receipts` (M64, bound per item by `OpencodeArm.bind_stream`)
+        self.completed_calls = set()       # call ids of the completed `tool_use` events
+        self.unexecuted_calls = set()      # ... of those the toolbounds plugin rejected before any window hook ran
 
     def accept(self, e):
         super().accept(e)
@@ -195,6 +201,9 @@ class OcStream(tg.EventStream):
             self.normalized.append(aa.NormalizedEvent.tool(len(self.starts), part["tool"], state["input"],
                                                            state["status"], start=start, end=end))
             self.tool_windows.append((start, end, part["tool"]))
+            self.completed_calls.add(part["id"])
+            if state["status"] == "error" and str(state.get("error", "")).startswith("M62_TOOL_BOUND:"):
+                self.unexecuted_calls.add(part["id"])
         elif kind == "step_finish":
             t = part["tokens"]
             self.normalized.append(aa.NormalizedEvent.request_finish(len(self.starts), Usage(
@@ -223,6 +232,7 @@ class OpencodeArm(aa.ArmAdapter):
         self.p, self.mode = p, mode
         self.search = search if search is not None else aa.UnavailableSearchService()
         self.m64 = mode == "m64"
+        self.plugin_names = PLUGINS_M64 if self.m64 else PLUGINS
         self.label = M64_LABEL if self.m64 else TG1_LABEL
         self.receipt_kinds = ("primary", "compaction") if self.m64 else ("primary",)
         self.account_compaction = self.m64
@@ -272,7 +282,7 @@ class OpencodeArm(aa.ArmAdapter):
         sel = self.selection()
         fields = dict(
             label=self.label, version=p.PINNED_OPENCODE_VERSION_V2, exe_sha256=p._sha_of(binary),
-            plugins={name: p._sha_of(REPO / "benchmark/opencode_plugins" / name) for name in sorted(PLUGINS)},
+            plugins={name: p._sha_of(REPO / "benchmark/opencode_plugins" / name) for name in sorted(self.plugin_names)},
             carrier_sha256=sel["fields"]["opencode_bench_config_sha256"],
             carrier_source_sha256=sel["fields"]["carrier_source_sha256"],
             env_policy=p.SCAFFOLD_ENV_POLICY_V2, receipt_kinds=list(self.receipt_kinds),
@@ -334,7 +344,8 @@ class OpencodeArm(aa.ArmAdapter):
             events_path=portable(artifacts["events"]), datefreeze_path=portable(artifacts["datefreeze"]),
             transcript_path=portable(artifacts["export"]),
             evidence_sha256={k: sha_of(v) for k, v in artifacts.items()},
-            stderr_path=portable(artifacts["stderr"]))
+            stderr_path=portable(artifacts["stderr"]),
+            **({"toolwindows_path": portable(artifacts["toolwindows"])} if "toolwindows" in artifacts else {}))
 
     # ---------------------------------------------------------------- run construction
     def declared_model(self, selection, model):
@@ -382,13 +393,17 @@ class OpencodeArm(aa.ArmAdapter):
         if frozen_date is not None and (env.get(datefreeze.ENV_DATE) != frozen_date
                                         or env.get(datefreeze.ENV_RECEIPTS) != str(paths["datefreeze"])):
             raise tg.TransportAbort("P364: the spawn env does not name this item's frozen date and receipt file")
+        if self.m64 and "toolwindows" in paths and env.get(tw.ENV_RECEIPTS) != str(paths["toolwindows"]):
+            raise tg.TransportAbort("A4: the spawn env does not name this item's tool-window receipt file")
 
     def make_run_dir(self, workdir, run_id, selection):
         p = self.p
         run_dir = p._make_run_dir(workdir, run_id, selection)
         shutil.copyfile(PLUGIN, run_dir / "cfg/opencode/plugins/toolbounds.js")
         shutil.copyfile(DATEFREEZE_PLUGIN, run_dir / "cfg/opencode/plugins/datefreeze.js")
-        self._pinned = dict(noretry=p._sha_of(p.NORETRY_PLUGIN), toolbounds=p._sha_of(PLUGIN),
+        if self.m64:
+            shutil.copyfile(TOOLWINDOWS_PLUGIN, run_dir / "cfg/opencode/plugins/toolwindows.js")
+        self._pinned = dict(toolwindows=p._sha_of(TOOLWINDOWS_PLUGIN) if self.m64 else None, noretry=p._sha_of(p.NORETRY_PLUGIN), toolbounds=p._sha_of(PLUGIN),
                             datefreeze=p._sha_of(DATEFREEZE_PLUGIN),
                             carrier_source=selection["fields"]["carrier_source_sha256"],
                             system=selection["fields"].get("agent_system_sha256"),
@@ -396,7 +411,12 @@ class OpencodeArm(aa.ArmAdapter):
         return run_dir
 
     def build_env(self, run_dir, scratch, overlay, *, receipts, frozen_date, toolwindow_receipts=None, attempt=None):
-        return self.p._opencode_env(run_dir, scratch, overlay, frozen_date=frozen_date, receipts=receipts)
+        env = self.p._opencode_env(run_dir, scratch, overlay, frozen_date=frozen_date, receipts=receipts)
+        if self.m64 and toolwindow_receipts is not None:
+            if attempt is None:
+                raise aa.ArmContractError("the tool-window receipts need the item attempt's id")
+            env.update(tw.env_for(attempt.attempt_id, toolwindow_receipts))
+        return env
 
     def verify_env(self, env, run_dir, selection, overlay):
         """P151/P364: the hashed carrier + the three hashed plugins + exactly the seed overlay, the frozen date, a receipt
@@ -405,8 +425,10 @@ class OpencodeArm(aa.ArmAdapter):
         p, pin = self.p, self._pinned
         provenance.opencode_v2_env_check(
             env, run_dir, selection["fields"]["opencode_bench_config_sha256"], pin["noretry"], overlay,
-            scaffold=TG1_LABEL, toolbounds_sha=pin["toolbounds"], datefreeze_sha=pin["datefreeze"])
+            scaffold=TG1_LABEL, toolbounds_sha=pin["toolbounds"], datefreeze_sha=pin["datefreeze"],
+            toolwindows_sha=pin["toolwindows"])
         if (p._sha_of(pin["source_path"]) != pin["carrier_source"]
+                or (self.m64 and p._sha_of(TOOLWINDOWS_PLUGIN) != pin["toolwindows"])
                 or p._sha_of(PLUGIN) != pin["toolbounds"] or p._sha_of(p.NORETRY_PLUGIN) != pin["noretry"]
                 or p._sha_of(DATEFREEZE_PLUGIN) != pin["datefreeze"]
                 or pin["system_path"] and p._sha_of(pin["system_path"]) != pin["system"]):
@@ -457,7 +479,7 @@ class OpencodeArm(aa.ArmAdapter):
             refuse(f"M64 plugin activation discovery exit {activation.returncode}")
         if "failed to load plugin" in activation.stderr:
             refuse("M64 plugin activation log records a failed plugin load")
-        for name in sorted(PLUGINS):
+        for name in sorted(self.plugin_names):
             plugin = config.parent / "plugins" / name
             source = REPO / "benchmark/opencode_plugins" / name
             if not plugin.is_file() or self.p._sha_of(plugin) != self.p._sha_of(source):
@@ -479,8 +501,11 @@ class OpencodeArm(aa.ArmAdapter):
                 "probe", prompt]
 
     def evidence_suffixes(self):
-        return {"events": ".events.jsonl", "stderr": ".stderr.txt", "export": ".json",
-                "datefreeze": ".datefreeze.jsonl"}
+        suffixes = {"events": ".events.jsonl", "stderr": ".stderr.txt", "export": ".json",
+                    "datefreeze": ".datefreeze.jsonl"}
+        if self.m64:
+            suffixes["toolwindows"] = ".toolwindows.jsonl"          # A4: the plugin's start / end receipts
+        return suffixes
 
     def guard_roots(self, work, env, private):
         return [work, env["TMPDIR"], private]
@@ -606,8 +631,28 @@ class OpencodeArm(aa.ArmAdapter):
                 out.append(dict(cls="compaction", repeat=(2, 2) if message.get("status") == "failed" else (1, 2)))
         return out
 
-    def tool_windows(self, stream):
-        return list(stream.tool_windows)
+    def bind_stream(self, stream, *, paths, attempt):
+        if self.m64 and "toolwindows" in paths:
+            stream.toolwindows = tw.Receipts(paths["toolwindows"], attempt.attempt_id)
+
+    def tool_windows(self, stream, final=False):
+        """`[(start, end_or_None, name)]` epoch seconds: the completed `tool_use` events, plus (M64, A4) every call the
+        plugin saw start that no event has completed yet (open, or closed by its end receipt). Validated on every call:
+        a corrupt receipt file, or a completed `tool_use` whose call id has no start receipt (the plugin did not run for
+        it; a call the toolbounds plugin rejected before any window hook ran is the one exception), raises
+        `ArmContractError`. `final`: the client is gone (a torn last receipt line is corruption)."""
+        windows = list(stream.tool_windows)
+        receipts = stream.toolwindows
+        if receipts is None:
+            return windows
+        receipts.poll(stream.session_id, final=final)
+        for call in sorted(stream.completed_calls):
+            if call not in receipts.calls and call not in stream.unexecuted_calls:
+                raise aa.ArmContractError(
+                    f"tool_use {call!r} has no start receipt: the tool-window plugin did not run for it")
+        extra = [(c["start_ms"] / 1000.0, None if c["end_ms"] is None else c["end_ms"] / 1000.0, c["tool"])
+                 for call, c in receipts.calls.items() if call not in stream.completed_calls]
+        return windows + sorted(extra, key=lambda w: (w[0], w[2]))
 
     def evidence_root(self, workdir):
         """tg1 keeps `opencode_transcripts`; the M64 arms use `transcripts/<arm>` (spec 9)."""

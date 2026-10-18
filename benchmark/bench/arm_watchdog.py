@@ -51,12 +51,18 @@ class ShellWatchdog:
             self.windows[key]["end"] = float(end)
 
     def set_windows(self, windows):
-        """Replace the event-derived windows with `[(start, end_or_None, name)]` (keys `ev<n>`); live windows opened
-        by `open_window` are kept. For clients that report a tool only when it completes."""
-        kept = {k: w for k, w in self.windows.items() if not k.startswith("ev")}
-        self.windows = {**kept, **{f"ev{i}": dict(key=f"ev{i}", name=name, start=float(start),
-                                                  end=None if end is None else float(end))
-                                   for i, (start, end, name) in enumerate(windows)}}
+        """Replace the event-derived windows with `[(start, end_or_None, name)]`; live windows opened by `open_window`
+        are kept. For clients that report a tool only when it completes. A window's key comes from its own
+        `(start, name)` (plus an ordinal among identical ones), never from its position in the list, so a window that
+        appears before others or changes from open to closed keeps its identity (and its overrun is counted once)."""
+        kept = {k: w for k, w in self.windows.items() if not k.startswith("ev:")}
+        events, seen = {}, {}
+        for start, end, name in windows:
+            ident = (float(start), name)
+            ordinal = seen[ident] = seen.get(ident, -1) + 1
+            key = f"ev:{float(start)!r}:{name}:{ordinal}"
+            events[key] = dict(key=key, name=name, start=float(start), end=None if end is None else float(end))
+        self.windows = {**kept, **events}
 
     def _window_of(self, wall_start):
         for w in sorted(self.windows.values(), key=lambda w: (w["start"], w["key"])):

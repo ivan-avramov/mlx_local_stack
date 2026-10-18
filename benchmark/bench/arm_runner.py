@@ -427,6 +427,9 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
     worker = GradeWorker(gate, lock, work, private, grade, join_timeout_s=join_timeout_s, corpus=corpus)
     stream = adapter.new_stream(gate, worker.notify)
     stream.base_url = base
+    if attempt is None:
+        attempt = wr.AttemptContext.make(entry.get("id", work.name), 1)       # a direct run_item caller: attempt 1
+    adapter.bind_stream(stream, paths=paths, attempt=attempt)
     proc = None
     client_launch_attempted = False
     ingester = None
@@ -577,9 +580,10 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                     last_dog = now
                     with lock:
                         dog.set_windows(adapter.tool_windows(stream))
-                    if dog.tick():
+                    dog.tick()
+                    if dog.exec_timeout:                          # a kill OR a completed window past the limit (spec 5.4)
                         with lock:
-                            gate.flags.add("exec_timeout")        # spec 5.4: the row gets the flag; the client sees the tool fail
+                            gate.flags.add("exec_timeout")        # the row gets the flag; the client sees the tool fail
                 with lock:
                     if guard.client_resource:
                         gate.stop("client_resource")
@@ -619,6 +623,15 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             raise tg.TransportAbort("ingestion thread did not drain")
         if ingest_failure:
             raise ingest_failure[0]
+        if dog is not None:
+            # A4: one final watchdog tick after the client exit, before reconcile (a window that completed or overran after
+            # the last in-loop tick; a corrupt receipt file aborts here too)
+            heartbeat.set_phase("final_watchdog_tick")
+            with lock:
+                dog.set_windows(adapter.tool_windows(stream, final=True))
+            dog.tick()
+            if dog.exec_timeout:
+                gate.flags.add("exec_timeout")
         fence = owned = receipts_sha = None
         if receipts is not None:
             heartbeat.set_phase("receipt_fence")
@@ -721,7 +734,7 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             grade_reports=grade_reports(keep, portable),
             reconciled=rec,
             normalized_events=adapter.events(stream),
-            tool_windows=adapter.tool_windows(stream),
+            tool_windows=adapter.tool_windows(stream, final=True),
             **resources,
         )
         if compaction:

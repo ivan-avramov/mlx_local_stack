@@ -273,7 +273,11 @@ def test_a_shell_descendant_past_the_deadline_flags_exec_timeout_in_the_row(prob
         event("step_start", "m2"),
     ]))
     binary = Path(os.environ["OPENCODE_PROBE_BIN"])
-    binary.write_text(binary.read_text().replace("run)\n", "run)\nsleep 311 &\n", 1)
+    # the fake client writes the tool-window receipts the real plugin would: a start now, the end with the completion
+    tw = [dict(attempt_id="python/one#a1.r0", session_id="s1", call_id="t1", tool="shell", phase=phase, seq=seq, ms=ms)
+          for seq, (phase, ms) in enumerate((("start", window["start"]), ("end", window["end"])), 1)]
+    receipts = "".join("printf '%s\\n' '" + json.dumps(r) + "' >> \"$BENCH_TOOLWINDOW_RECEIPTS\"\n" for r in tw)
+    binary.write_text(binary.read_text().replace("run)\n", "run)\n" + receipts + "sleep 311 &\n", 1)
                       .replace('\nexit "$(cat ', '\nsleep 5\nexit "$(cat ', 1))
     adapter = ao.OpencodeArm(probe, mode="m64", search=ao.OfflineTestSearchService())
     import dataclasses

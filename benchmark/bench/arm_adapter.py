@@ -396,9 +396,11 @@ class ArmAdapter(abc.ABC):
         `Reconciliation`; an unregistered terminal shape raises `TransportAbort`."""
 
     @abc.abstractmethod
-    def tool_windows(self, stream):
+    def tool_windows(self, stream, final=False):
         """`[(start, end, name)]` tool-execution windows (epoch seconds; `end` None while open) for the shell
-        watchdog (spec 5.4)."""
+        watchdog (spec 5.4). Called every watchdog tick and once more with `final=True` after the client exited. An
+        adapter that learns windows from receipts validates them here: a violation raises `ArmContractError` (the
+        attempt aborts; never a transport class)."""
 
     @abc.abstractmethod
     def tmp_escapes(self, transcript, env):
