@@ -113,6 +113,9 @@ class OcHarness(cs.ArmHarness):
         last = (body.get("messages") or [{}])[-1].get("content")
         return isinstance(last, str) and last.startswith("You MUST summarize the conversation above")
 
+    def request_class(self, req):
+        return "compaction" if self._is_compaction(req.body) else "task"
+
     @staticmethod
     def _usage_of(script, i):
         kind = script.get(i)
@@ -310,3 +313,40 @@ def test_a_shell_descendant_past_the_deadline_flags_exec_timeout_in_the_row(prob
 def test_m64_evidence_lives_under_transcripts_oc_and_tg1_keeps_its_root(probe, tmp_path):
     assert ao.OpencodeArm(probe, mode="m64").evidence_root(tmp_path) == tmp_path / "transcripts/oc"
     assert ao.OpencodeArm(probe, mode="tg1").evidence_root(tmp_path) == tmp_path / "opencode_transcripts"
+
+
+# ---------------------------------------------------------------- P371 phase 4 (A13): defects injected into REAL runs of the real client
+def test_a_real_run_with_an_adapter_that_sends_the_wrong_paired_seed_turns_the_wire_check_red(
+        probe, pinned_binary, monkeypatch, tmp_path):
+    """Adapter configuration defect: the generated seed overlay differs from the paired seed by one. The real client puts
+    it on every request (task and compaction alike); the wire check reads it off the capture and is red."""
+    harness = OcHarness(probe, pinned_binary, monkeypatch, tmp_path)
+    cs.check_wire_controls(harness)                                      # the conforming adapter is clean
+    original = ao.OpencodeArm.seed_overlay
+    monkeypatch.setattr(ao.OpencodeArm, "seed_overlay", lambda self, model, seed, **kw: original(self, model, seed + 1, **kw))
+    with pytest.raises(AssertionError, match="seed="):
+        cs.check_wire_controls(OcHarness(probe, pinned_binary, monkeypatch, tmp_path))
+
+
+def test_a_real_compaction_run_whose_provider_breaks_the_summary_template_turns_the_compaction_check_red(
+        probe, pinned_binary, monkeypatch, tmp_path):
+    """Mock-provider script defect: both summary answers miss opencode's template, so the real client fails its
+    compaction (registered, scored `compaction_failed`): the run is a row, but the compaction check, which wants the
+    compaction counted and the session to end in a normal stop, is red."""
+    harness = OcHarness(probe, pinned_binary, monkeypatch, tmp_path)
+    script = {**harness.compaction_script(), 2: "badsummary", 3: "badsummary"}
+    monkeypatch.setattr(harness, "compaction_script", lambda: script)
+    run = harness.run(script, window=harness.reduced_window)
+    assert run.row is not None and run.row["nonconv_kind"] == "compaction_failed"
+    with pytest.raises(AssertionError):
+        cs.check_compaction(harness)
+
+
+def test_every_request_of_the_real_compaction_run_is_checked_per_class(probe, pinned_binary, monkeypatch, tmp_path):
+    """The summary request carries the controls and the tool set (P378); the real run has both classes on the wire."""
+    harness = OcHarness(probe, pinned_binary, monkeypatch, tmp_path)
+    run = harness.run(harness.compaction_script(), window=harness.reduced_window)
+    classes = cs.check_request_contract(harness, run)
+    assert classes.count("compaction") == 1 and classes.count("task") == 3
+    summary = next(r for r in run.requests if harness.request_class(r) == "compaction")
+    assert {t["function"]["name"] for t in summary.body["tools"]} >= {"shell", "write", "read", "edit"}
