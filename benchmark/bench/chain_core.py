@@ -870,6 +870,7 @@ class Chain:
         try:
             self.init_lifecycle()
             self.recover_txns()                          # F4: an interrupted archive / quarantine completes before anything reads
+            self.adopt_receipts()                        # F10: an A4 receipt created but never referenced
         except RecordInvalid as e:                       # never touch an invalid existing record
             self.log(f"CHAIN ABORT: {e}")
             self.rc = e.code
@@ -1071,18 +1072,52 @@ class Chain:
         rec = load["rec"]
         wn = len(rec["workers"])
         receipts, refs = {}, {}
+        # F10: the worker record names the receipts it is about to create and is durable BEFORE the gate runs, so a crash
+        # between a receipt's creation and its reference leaves a reserved name a resume can adopt (`adopt_receipts`)
+        worker = dict(n=wn, pid=ident["pid"], create_time=ident["create_time"], a4_receipts=refs,
+                      a4_reserved={arm: self._relpath(self.receipt_path(load, wn, arm)) for arm in self.arm_ids})
+        rec["workers"].append(worker)
+        self.write_json("worker-reserved")
         for arm in self.arm_ids:
             tag = f"{load['session']}_{n}_{load['model']}" + (f"_{arm}" if self.per_arm else "")
             latest = (self.ops.a4_gate(load["model"], tag, scaffold=self.label_of(arm)) if self.per_arm
                       else self.ops.a4_gate(load["model"], tag))
             path, sha = self.bind_receipt(latest, load, wn, arm)
             receipts[arm], refs[arm] = str(path), dict(path=self._relpath(path), sha256=sha)
+            self.write_json("a4-bound")                  # the reference is durable before the next arm's gate
         load["receipts"], load["receipt_refs"] = receipts, refs
         load["receipt"] = receipts[self.arm_ids[0]]
-        worker = dict(n=wn, pid=ident["pid"], create_time=ident["create_time"], a4_receipts=refs)
         if not self.per_arm:
             worker["a4_receipt_sha256"] = refs[self.arm_ids[0]]["sha256"]
-        rec["workers"].append(worker)
+
+    def receipt_path(self, load, wn, arm):
+        return self.out_root / "a4" / f"{load['idx']}.{wn}.{arm}.json"
+
+    def adopt_receipts(self):
+        """Resume (F10): an A4 receipt a crash left created but unreferenced is adopted into its reserved worker record once its
+        binding (load, worker, arm) and the worker identity the record names are verified; anything else aborts."""
+        changed = False
+        for load in self.progress["loads"]:
+            for worker in load["workers"]:
+                for arm, rel in (worker.get("a4_reserved") or {}).items():
+                    path = self.out_root / rel
+                    if arm in worker["a4_receipts"] or not path.is_file():
+                        continue
+                    try:
+                        binding = (json.loads(path.read_text()) or {}).get("bench_binding")
+                    except (OSError, ValueError, AttributeError):
+                        binding = None
+                    want = dict(worker=dict(pid=worker["pid"], create_time=worker["create_time"]), load=load["load"],
+                                worker_n=worker["n"], arm=arm)
+                    if not isinstance(binding, dict) or {k: binding.get(k) for k in want} != want:
+                        raise co.ChainAbort(f"orphaned A4 receipt {rel} does not match its reserved worker record "
+                                            "(binding differs or unreadable)")
+                    worker["a4_receipts"][arm] = dict(path=rel, sha256=sha_file(path))
+                    worker["adopted"] = True
+                    changed = True
+                    self.log(f"RESUME: adopted the orphaned A4 receipt {rel}")
+        if changed:
+            self.write_json("a4-adopted")
 
     def bind_receipt(self, latest, load, wn, arm):
         """A10: copy the gate's `latest` receipt to its immutable per-(load, worker, arm) path (exclusive create) with the
@@ -1096,7 +1131,7 @@ class Chain:
         doc = dict(doc, bench_binding=dict(worker=dict(load["worker"]), load=load["idx"], worker_n=wn, arm=arm,
                                            load_gen=load["rec"]["load_gen"]))
         raw = (json.dumps(doc, sort_keys=True, indent=1) + "\n").encode()
-        dest = self.out_root / "a4" / f"{load['idx']}.{wn}.{arm}.json"
+        dest = self.receipt_path(load, wn, arm)
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
             fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
