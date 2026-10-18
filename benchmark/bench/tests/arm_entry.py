@@ -46,4 +46,6 @@ def run_item_tg1(p, *, work, entry, **kwargs):
         editable=(solution,), baseline={solution: hashlib.sha256(base).hexdigest()}, protected=entry.get("protected", {}),
         prepared=entry.get("prepared", {}), tests=(entry.get("test", "t"),))
     corpus = corpus_tg1.Tg1Corpus(arm_runner.DEFAULT_UNIVERSE)
+    from bench import structured_grade as sg
+    kwargs.setdefault("join_timeout_s", arm_runner.grade_join_timeout_s(sg.TIMEOUTS))     # the entry passes the policy's
     return arm_runner.run_item(p, ao.OpencodeArm(p, mode="tg1"), corpus=corpus, prepared=prepared, **kwargs)

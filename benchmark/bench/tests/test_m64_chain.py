@@ -47,7 +47,8 @@ def fake_specs(monkeypatch):
         monkeypatch.setitem(arm_specs.SPECS, arm, arm_specs.ArmSpec(
             arm_id=arm, label=LABELS[arm], probe="benchmark/chains/m64/fake_arm_probe.py",
             generation_fields=arm_specs.OC.generation_fields, runtime_pinned=arm_specs.OC.runtime_pinned,
-            sha_fields=arm_specs.OC.sha_fields, version_field="opencode_version"))
+            sha_fields=arm_specs.OC.sha_fields, version_field="opencode_version",
+            web_evidence_rules=arm_specs.OC.web_evidence_rules))
 
 
 class FakeOps(BaseFakeOps):
