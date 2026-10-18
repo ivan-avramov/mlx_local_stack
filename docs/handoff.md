@@ -1,135 +1,91 @@
-# Handoff — 2026-10-17 (morning): M65 pilot DONE (both picks 29/29 — Python/Go saturated); G1 + P348 + P357 merged (new tg1 epoch `67e382b3…`); tg2 step 1, P311-lite, P359 in flight
+# Handoff — 2026-10-17 (evening): resume in a FRESH session with P371 (shared arm-neutral runner core, C178)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (C172, P361, P360, C171, P359, P358, C170, G3, P357, C169, C168, P356, P355,
-P353, P352, P351), `docs/specs/m65-tg2-corpus.md` (v5), `docs/specs/p311-identity-split.md` (v4), `benchmark/results/m65_pilot/M65_PILOT_REPORT.md`.
-
-## Now (2026-10-17 ~06:30Z)
-
-- **Box idle** (no chain; :8000 free). **P359 merged** (`eeee1784`, Cursor CLEARED AFTER FIXES W1–W6, verified): wash verdicts, no
-  equivalence claims, lever guard on the observed loss bound (C172/C173); all 12 stored lever cells still ship. Full suite 4748 passed,
-  3 skipped, 1 xfailed. **Pushed** `origin/main` 2ef70a67..eeee1784 (operator C173); later commits need a new push go.
-- **M65 pilot DONE** (rc 0): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` and `Qwen3.8-27B-mlx-uniform-4bit` both 12/12 Python + 17/17 Go strict;
-  second pick ≈ 1.3–1.8× output tokens. One web row audited `generic` (Cursor auditor; codex is absent here — use
-  `benchmark/web_audit_cursor.py`, C158).
-- **Merged:** P351 runner, P348 audit, P357 power sim, **G1 by operator override (C170)** with residuals in G3. G1 changed the guard →
-  **tg1 probe identity is now `67e382b32f7206242b72b088161da9973e52d072f042dff442b667dd60aafbc8`** (new epoch; old `ebcfe6fb…`).
-- **In flight (worktrees under `$STACK_WORKDIR/worktrees/`, each with an untracked `.venv-bench` symlink):**
-  - `tg2` / `tg2-build`: step 1 grader + offline image (`tg2-grader:m65-v1`, now `sha256:09f2b30e…`); Cursor round 2 NOT CLEARED
-    (G18–G20) → round 3 with the implementer (+ P361 mount-source guard). Then steps 2–4; GPU runs need an operator go (C169).
-- **P311-lite MERGED** (`7fcf0433` + test fixes `a9c6f62f`; Cursor build rounds 1–2, cleared after fixes, lead-verified): tg1 now runs
-  `benchmark/run_tg1_probe.py`; web contact scored post hoc (`bench/tg1_score.py` sidecar, single fail-closed join `bench/row_scores.py`);
-  identity = AST import closure + toolchain; pairing key = (generation identity, both arm identities, spawn-time prompt_date);
-  expected policy sha derived per box at chain start (P362). **tg1 epoch `probe_code_sha256` `e91a2450acff07669865a81f1b7dfc0544fe9bce86c10be3540fb78b9e601bb7`**
-  (generation composite `29f40799…`). `--print-identity` needs docker on PATH (grader image id; fails closed). Full suite 4994 passed.
-  Before the next MTP-ON run: check `arm_identity.py`'s flag table against a live ON worker argv.
-- **P364 MERGED** (`10fe6e7a`; design + build Cursor rounds, cleared after fixes; C174): `benchmark/opencode_plugins/datefreeze.js` freezes the date
-  opencode shows the model (structured `context`/`compaction`/`generate`/`title` hooks; midnight `Today's date is now:` update removed); per-item
-  receipts reconciled against requests and hash-checked in `validate_leg`; activation refuses any `failed to load plugin` line (covers all three
-  plugins). Chain runner: `--frozen-prompt-date` / `--frozen-date-from <reference chain.json>` — never defaults to today; an old-epoch
-  `chain.json` without a frozen date refuses on resume. Residual: the model's shell can read the frozen date + receipt path (same-UID evidence
-  limit). **tg1 epoch now `probe_code_sha256` `ae7fca94e77b1ea025f67bbac27a0b816aa0f8de8b771aa3683a8170a80fc2a1`**, scaffold policy `33d79b32…`.
-  Full suite on main 5092 passed. Reference arms are reusable across days within an epoch (C168's ≈ 4 GPU h screen holds).
-- **tg2 step 1 MERGED** (`a22f0db7`; Cursor rounds 1–6 + round 7 closed by lead verification, P365): `bench/tg2_grade.py`
-  (Rust/Java/JS/C++; phase-typed, nonce-marked, tmpfs-volume grading; nonce-label ownership; list-and-refuse leftovers, explicit
-  `benchmark/m65/tg2_cleanup.py`), image `tg2-grader:m65-v1` `sha256:09f2b30e…` (`benchmark/m65/tg2_image/`). Main full suite 5404
-  passed; tg2 docker tests need the machine config sourced (`STACK_WORKDIR`) or they skip. **Step 2 in progress** (branch `tg2-step2`):
-  materializer, universe freeze, nested draw.
-- **Operator answers pending:** none. Local main is ahead of origin (P311-lite, P364, tg2 step 1, docs) — push needs a new go.
-- **Push rule (C176):** active WIP build branches (`tg2-step2`, `m64-build`, …) may be pushed after each commit batch (privacy scan each
-  time); `main` and everything else still need an explicit in-turn go.
-- **Rules:** never run two full suites concurrently (load flakes timing tests and once leaked a chain-test runner thread for 7 h — fixed
-  defensively on `tg2-build`); always write suite output to a file and read the summary line.
-- **P361:** OrbStack bind mounts under `$TMPDIR` serve stale sizes after in-place overwrites; tg1 unaffected (fresh snapshots under
-  the run dir). See box-notes.
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C178, P371, P370, C177, C176, P369, C175,
+P368, P367, P366, P365, P364, C174, P363, P362, P361, P360, C173, C172, P359 …), then the specs named below.
 
 ## State of the world
 
-- **Box `m5max-128` (this box), idle:** no router, :8000 free, no chain. Docker (OrbStack) up; the agent shell has no
-  docker on PATH — launch chains with `benchmark/chains/c147/launchers/launch_tg1.sh <out-root-name> <runner args>`
-  (adds `$HOME/.orbstack/bin`; writes `driver.chain.out/.rc` under the out-root). The other box `m5max` (64 GB, codex)
-  is not used by this session; a throwaway worktree `~/ws/mlx_local_stack_workdir/worktrees/review-1016` on m5max can
-  be removed by the operator (`git worktree remove`).
-- **Cold reviewer: Cursor `gpt-5.6-sol-high` here only** (operator: "no more codex checks"): `cursor-agent -p
-  --output-format text --model gpt-5.6-sol-high --mode plan --sandbox enabled --force --trust --workspace <repo>
-  "<prompt>"`; re-run until the output has a verdict line; name the commit hash.
-- **Branches.** Local `main` is ahead of `origin/main` (`2ef70a67`) by the P346 + review fixes, power sim, P347, P340 +
-  review fixes, G1, P311 proposal and these docs — **push needs the operator**. `m64-plan-review` (pushed) is merged
-  into main; the sync worktree `$STACK_WORKDIR/worktrees/sync-1015` can be removed (`git worktree remove`) — no branch
-  deletions without the operator (parked: `p297-uncertain-gone`, `c152-alloc-tool-scope-wip`, `sync-upstream-1015`,
-  `m64-plan-review`; active: `g1-fix`).
-- **G1 reverted off main (P350, `2dd80916`):** its Cursor review was not cleared, so `main` carries the pre-G1 guard
-  (C157 + P306 — byte-identical to `3cfb8c5d`, the guard that ran c144-base). The G1 attempt is on local branch
-  **`g1-fix`** (= `5f9fdbc4`); fix it there and merge only after Cursor clears it.
-- **Identity on main:** `probe_code_sha256` `ebcfe6fb890e723c06c6ccaed39869aa3f4c31e86007c9c089ef489e715df2ea`
-  (re-verify with `run_opencode_probe_v2.py --print-identity` before any chain).
-- **Records:** P223, M63, c144-base (`benchmark/results/c144_base/C144BASE_REPORT.md`: pick 2 86/86, pick 1 84/86,
-  descriptive). Reports print "no discordance — equivalence NOT established" for collapsed intervals (P346).
-- **Full suite** after the G1 commit: 4676 passed, 3 skipped, 1 xfailed.
+- **Box `m5max-128`, idle:** no router (:8000 free), no chain, no benchmark process. Docker (OrbStack) up; the agent shell needs
+  `export PATH="$HOME/.orbstack/bin:$PATH"` and the machine config sourced (`. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`)
+  or docker-backed tests skip.
+- **Cold reviewer:** Cursor `gpt-5.6-sol-high` only (`cursor-agent -p --output-format text --model gpt-5.6-sol-high --mode plan
+  --sandbox enabled --force --trust --workspace <repo> "<prompt>"`). **Every plan goes to Cursor before execution** (operator
+  2026-10-17, memory `plans-through-cursor`), as well as specs and built code. Run ONE Cursor review at a time (concurrent runs
+  return empty output); write outputs to the scratchpad, not inside the workspace (one output file vanished); re-run until a
+  `VERDICT` line appears.
+- **Daily driver is MTP-OFF (C177):** both B picks (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`)
+  have `draft_kind` / `draft_model` (and Fable's `mtp_verify_scan: joint_v1`) commented out in `main_models.yaml` until the P369
+  fixes ship and are re-certified. Restore all three lines + `bench/tests/test_opencode_probe_seeding.py` (expects `per_query` now).
+- **tg1 epoch:** `probe_code_sha256` `ae7fca94e77b1ea025f67bbac27a0b816aa0f8de8b771aa3683a8170a80fc2a1` (P311-lite + P364 datefreeze),
+  scaffold policy `33d79b32…`; **no rows recorded in it yet** — P371 will change it once more (accepted, C178).
+- **Branches.** origin: `main`, `evidence` (orphan, irreproducible evidence — keep), `c152-alloc-tool-scope-wip`, `p297-uncertain-gone`
+  (parked), `tg2-step2` (`b8bfe989`), `m64-build` (`406cc10e`). Local `main` is **ahead of origin by ~13 docs/registry commits**
+  (P369 plan/results, C177 MTP-off registry, C178) — **push needs the operator**. Worktrees: `$STACK_WORKDIR/worktrees/{tg2,m64}`
+  (each with an untracked `.venv-bench` symlink — never stage). Fork worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369` (branch
+  `p369-mtp`, **local only — fork push needs the operator**).
+- **Push rule (C176):** active WIP build branches (`tg2-step2`, `m64-build`, any new stack build branch) may be pushed after each
+  commit batch, privacy-scanned each time; `main`, the fork, tags, PRs and anything else need an explicit in-turn go.
+- **Full suite on main:** 5404 passed (after tg2 step 1); later commits on main are docs + the C177 registry edit (its tests pass).
 
-## Rulings to keep in mind (all in open-questions)
+## Done this session (all on main unless noted)
 
-C164 (P311 identity split approved; no filler chains), C165 (decision epochs E1; M64 spec requirements E2; G1
-approved; web allowed per arm + P201 audit; 2a capability principle — each arm's normal default tools; 2b compaction
-ON, retries OFF with transport failures counted as transport DNF, equal ceilings; 2c no fan-out / ask-user tools; 2d
-one shared local SearXNG search via a pinned MCP server, hosted search removed), C166 (M64 BUILD go; judges = two
-providers, each the box's strongest model, configured per box, never hard-coded — on this box Claude Opus via Claude
-Code + Cursor `gpt-5.6-sol-high`; P346 go), P347 (M64 = estimation screen), C167 (P348 audit approved; P349 → PLAN
-M65 harder corpus).
+M65 pilot (both picks 29/29 on Python + Go outside tg1 → saturated; `benchmark/results/m65_pilot/`); P351 runner `--universe`;
+P348 audit; P357 power sim; G1 (operator override; residual races = G3); P359 / C172 / C173 wash verdict (no equivalence claims;
+lever guard on the observed loss bound ≤ 10 pp; AGENTS.md amended); P311-lite (generation-only identity by import closure,
+post-hoc web scoring, full pairing key); P364 datefreeze (frozen epoch date in opencode's prompt; reference arms reusable across
+days); tg2 step 1 (grader + offline image, nonce ownership, list-and-refuse cleanup; P360–P365); C168 tiers (screen 40 / k = 1,
+≈ 4 GPU h, diagnostic; decider 80 / k = 2, ≈ 18 GPU h; AGENTS.md k = 1 screen exception); C175 (tg2 GPU go after steps 3–4,
+keep C++, M64 on the tg2 screen); branch cleanup (Cursor audit, `docs/reviews/branch-audit-2026-10-17/`).
 
 ## Next work, in order
 
-1. **M65 step 1 — headroom pilot (GPU; start it first so the GPU works while the CPU items run; runs from `main` on the
-   pre-G1 guard — G1 is NOT on main):** both picks, k = 1,
-   predictor OFF, on the 30 polyglot Python + Go items outside `benchmark/m62/universe.json` (12 Python, 18 Go): new
-   universe file (same format; run `universe_preflight` on it), own out-root (e.g. `$STACK_WORKDIR/m65-pilot`),
-   `--smoke` first, the runner's `--universe`. Check whether the runner's schedule (s1/s2/reload) needs a k=1 mode — a
-   runner change is a runner-file change: test-first, never with a live chain. Report strict per pick vs tg1, nonconv
-   kinds, tokens; this sizes tg2.
-2. **G1 fix round on branch `g1-fix`, in a worktree** (`benchmark/chains/c147/reviews/g1/round1.cursor-gpt-5.6-sol-high.md`,
-   NOT cleared): P1 record a
-   later tick start-order failure; P2 keep root and descendant obligations separately (never drop a protected root's
-   recorded children; refresh descendants from every cleanup listing for every exact recorded root); P3 resolve against
-   (pid, start time), tri-state, an occupied (pid, None) stays unresolved; plus the rest. Test-first → Cursor round 2 →
-   full suite. Watch the false-abort risk for young benign processes that flicker and stay alive. Merge into main only
-   after Cursor clears it, and never while a chain launched from main is live.
-3. **P311 build** (`docs/specs/p311-identity-split.md`; Cursor round 1 AGREE WITH CHANGES P1–P9 in
-   `benchmark/chains/c147/reviews/p311/round1.cursor-gpt-5.6-sol-high.md`): apply P1–P9 to the proposal, then
-   test-first build (three hashes; `bench/deny_rules.py` carve-out; chain pins `generation_code_sha256`), Cursor review,
-   full suite.
-4. **P348 audit (CPU, approved):** re-run `compare_predictor` / `judge_gate` / `agentbench_compare` over committed rows
-   with the P346 logic; relabel README / `main_models.yaml` CERTIFIED comments / campaign-results where a PASS or
-   "equivalent" becomes not-established; no score changes.
-5. **M65 step 2 — tg2 design (CPU):** Rust / JavaScript / Java / C++ grading in `structured_grade` (+ images), a draw
-   rule independent of our models, size from the pilot + power math → proposal → Cursor review → operator.
-6. **M64 build** (spec §12, after 2–3): ArmAdapter contract + arm-aware runner + opencode wrap/parity; `../mlx-vlm`
-   receipts (fork rules; push needs the operator); Pi adapter; dsh research + adapter (REJECT/HOLD to the operator if it
-   cannot meet a required contract); shared SearXNG service (M64-owned container; the daily stack's `searxng` must be
-   stopped during M64 runs); per-box two-judge config (C166); arm-neutral P201; snapshot/adoption tooling; per-arm
-   smokes; then the operator's chain go. M64's corpus is decided after M65 (spec amendment if tg2).
+1. **P371 (C178) — ONE shared arm-neutral item + chain core.** `arm_runner.py` (on `m64-build`) becomes the single implementation;
+   tg1, tg2 and the M64 arms are configurations; `tg1_runner.py` a thin entry. It absorbs the **M64 step 4a fix round** — Cursor
+   `benchmark/chains/m64/reviews/step4a-round1.cursor-gpt-5.6-sol-high.md` on `m64-build`, NOT CLEARED A1–A14: tg2-screen schedule
+   + four languages (A1), spec §7 worker receipts (A3), tool-start watchdog (A4), epoch / snapshot pinning (A5), crash + recovery
+   (A6–A8), one segment reader (A9), immutable per-arm A4 receipts (A10), adapter-owned client specifics (A11), P201 raw evidence
+   (A12), real-client contract checks (A13), parity widened (A14); plus P370 (`compaction_failed` scored, post-hoc compaction tokens
+   disclosed). New tg1 epoch accepted; amend tg2 spec T14 ("tg2 is a configuration of the shared core"). Process: **plan →
+   Cursor plan review → test-first build → Cursor code review → full suite from the worktree alone → merge**. Built BEFORE tg2
+   step 3 (tg2's runner IS the core). M64 spec §12 still lists Pi / dsh adapters, SearXNG service, snapshots, judge panel later.
+2. **tg2 step 2 fixes** (branch `tg2-step2`, Cursor `benchmark/m65/reviews/step2-round1…`: CLEARED AFTER FIXES S1–S4): **S1 leak —
+   `prepare_tree()` must exclude `.approaches/**`** (five items expose solution snippets) + corpus-backed leakage tests; S2 semver
+   check of `[dependencies]` against vendored versions (tamper, not compile failure); S3 fingerprint freeze-cache records (corpus,
+   image, grader/materializer version, policy) and reject mismatches; S4 assert reference sources are excluded. Then **regenerate the
+   universe + draw** (current: universe `e8abba5c…`, draw `d6aae71b…`, 149 valid: Rust 30 / Java 45 / JS 48 / C++ 26; image
+   `sha256:98559f41…`), full suite, lead verification, merge. A freeze takes ≈ 71 min — watch its log yourself.
+3. **P369 MTP certification** (`docs/specs/p369-mtp-certification.md` v3): phase 1 DONE on fork branch `p369-mtp`
+   (`88724023` E1a/E1b exactness tests, `0b43dae4` M4 + M3, `5e70c2e4` M2 + M5; fork suite 6037 passed). **Cursor code review of the
+   fork diff is OWED** — it returned empty twice from the worktree workspace; re-run with `--workspace ~/ws/mlx-vlm` and
+   `git diff 24551869...p369-mtp`. Then phase 2 (GPU, ≈ 1 h): E1c per-pick real-weight conformance (Fable native KV `joint_v1`
+   with straddle counters; uniform TurboQuant `per_query`), E2 greedy identity, E7 firing rates; then fork push (operator) → submodule
+   bump → per-pick re-certification (wash rule, fresh OFF controls) → restore MTP-ON in the registry (C177) → P368 layers 2–3.
+4. **tg2 steps 3–4** on the shared core: runner + legs, injected positives per language, four-language smoke (GPU go given, C175),
+   sizing report; then M64 spec amendment to the tg2 screen (C175 D3).
+5. **M64** remaining build per its spec §12 (after P371): `../mlx-vlm` receipts (fork rules), Pi adapter, dsh adapter, SearXNG
+   service, snapshots / adoption, per-box two-judge panel (C166), per-arm smokes, then the operator's chain go.
 
-## Known gaps / owed (not blocking the above)
+## Known gaps / owed
 
-- The c144-base report has a pick-vs-pick comparison without the AGENTS.md two-judge subjective measure (the panel is
-  an M64 build item); add it when the panel exists, or mark it owed in the report.
-- G2 (readable never-recorded owned orphans) stays open — design question.
-- C154: re-check opencode's 60-min inactivity TTL on every opencode release (standing).
-- `docs/README.md` index: add the new specs/reports (M64 spec, P311 proposal, plan/spec review packets, c144-base,
-  POWER_SIM).
-- (Done 2026-10-16: the box-topology memory note was refreshed.)
+- G2, G3 (guard races; structural fix = per-item containment at an M64 epoch).
+- MTP-ON arm-identity flag table check folds into the first MTP-ON smoke (C175).
+- mlx 0.32.4 breaks the fork's quantized-verifier exactness tests — stay on 0.32.3 (box-notes).
+- C154: re-check opencode's 60-min inactivity TTL and the datefreeze hooks on every opencode release.
+- `docs/README.md` index: add the new specs/reports (P311 v4, P364, P369, m65 tg2, M65 pilot, reviews).
 
-## Rules learned (2026-10-11 → 16)
-- Run the FULL suite once from a branch's worktree before merging it: worktrees symlink `.venv-bench` outside the repo, which hid
-  two P311-lite test failures that only showed on main (in-repo venv).
+## Rules learned (2026-10-11 → 17)
 
-- Never edit runner/probe/scoring files in the main checkout while a chain runs; build in worktrees. Never run the full
-  suite under a live chain. Suite: from `benchmark/`, `../.venv-bench/bin/python -m pytest bench/tests -q` (~11 min).
-- Edit-then-commit scripts must stop on failure (`set -e`, Edit tool) — failed edits twice produced commits whose
-  messages claimed changes they did not contain; check `git show --stat` before trusting a commit.
-- Archive a failed chain attempt with a sha256 manifest BEFORE moving anything (the runner rewrites `chain.json`).
-- Decision epochs: one immutable harness snapshot per decision family; cross-epoch results descriptive (C165 E1).
-- A collapsed bootstrap interval (zero discordance) never establishes equivalence (P346).
-- Never select "harder" items by which items the current picks fail (selection on noise) — pre-register the draw.
-- Launch chains with a command line that names no watched process; after a reboot `docker info` before Go legs.
-- Pushes need explicit operator approval each time.
+- Never edit runner/probe/scoring files in the main checkout while a chain runs; build in worktrees. Never run the full suite under a
+  live chain, and **never two full suites concurrently** (load flakes timing tests; once leaked a chain-test runner thread for 7 h).
+  Suite: from `benchmark/`, `../.venv-bench/bin/python -m pytest bench/tests -q -p no:cacheprovider -o faulthandler_timeout=600 > <file>`;
+  read the summary line from the file. Run the FULL suite from a branch's worktree before merging (symlinked venv hid failures).
+- **Watch long jobs yourself:** an agent waiting on its own background job shows a frozen token count and looks stuck; check the job's
+  log. When you kill a job an agent waits on, also kill the agent's waiter (a killed job never writes its EXIT marker).
+- Edit-then-commit scripts must stop on failure; check `git show --stat` before trusting a commit.
+- Archive a failed chain attempt with a sha256 manifest BEFORE moving anything.
+- Decision epochs: cross-epoch results descriptive (C165 E1). No equivalence claims — wash + MDE + directional pick (C172).
+- Never select items by which items the picks fail; pre-register draws.
+- OrbStack bind mounts under `$TMPDIR` serve stale file sizes after in-place overwrites — mount fresh copies outside `$TMPDIR` (P361).
+- `--print-identity` needs docker on PATH (grader image id; fails closed).
 
-Next decision id C168; discussion ids continue from P350.
+Next decision id C179; discussion ids continue from P372.
