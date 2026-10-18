@@ -28,6 +28,8 @@ def test_a_stop_before_the_first_manifest_is_observed_still_hydrates_the_attempt
     assert att["cleanup_status"] is not None and att["cleanup_status"]["completed"] is True
     assert att["transport_abort"] is not None and "abort_evidence" in att
     assert att["manifest_observed"] is False
+    rec = chain_json(env)["progress"]["invocations"][0]
+    assert rec["manifest_observed"] is False and rec["manifest_problem"] is None
 
 
 def test_a_missing_invalid_or_foreign_manifest_after_exit_is_recorded_explicitly(env, tmp_path):

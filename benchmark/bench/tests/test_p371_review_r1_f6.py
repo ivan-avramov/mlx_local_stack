@@ -96,9 +96,3 @@ def test_the_probes_abort_stamp_carries_the_current_items_evidence_paths_and_sha
         path = Path(entry["path"].replace("$STACK_WORKDIR", str(world.tmp)))
         assert entry["sha256"] == (sha(path) if path.is_file() else None)
     assert ev["files"]["export"]["sha256"] is not None          # the export existed when the join aborted
-
-
-def test_a_non_reporting_adapter_adds_no_evidence_to_its_abort_stamp(world):
-    from bench.tests.test_p371_a3_core import SEED, abort_of, source
-    msg, stamp = abort_of(world, source(world, [dict(cls="task", seed=SEED)]))
-    assert "evidence" not in stamp                  # tg1: the A14 differential's manifest shape is unchanged

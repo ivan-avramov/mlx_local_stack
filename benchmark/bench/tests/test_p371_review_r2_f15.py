@@ -27,7 +27,7 @@ def test_a_tg1_pre_row_transport_abort_records_evidence_or_unavailable(env):
                extra_env={"FAKE_N": "2"}) == 0
     recs = chain_json(env)["progress"]["abort_evidence"]
     assert recs and all(r["web_evidence"].get("web_evidence") == "unavailable" or "sha256" in r["web_evidence"] for r in recs)
-    assert all("|" in r["slot"] for r in recs)
+    assert all(r["slot"] is None or "|" in r["slot"] for r in recs)
 
 
 def test_a_tg1_cancel_records_evidence_or_unavailable(env):

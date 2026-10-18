@@ -40,6 +40,8 @@ TABLE = {
     "manifest_additions": ["/runtime/" + k for k in ("config_id", "arm", "epoch_id", "snapshot_sha256", "snapshot_complete",
                                                      "snapshot_fields", "evidence_policy")]
     # F8: every new policy key is named (no `/runtime/policy/` prefix acceptance); an unlisted key is a failure
+    # P382 (lead call, review r2 F15): the abort stamp's evidence paths + shas exist for every configuration, tg1 included
+    + ["/transport_abort/evidence", "/cancelled_item/evidence"]
     + ["/runtime/policy/" + k for k in ("budgets", "compaction", "config_id", "corpus_id", "corpus_identity",
                                          "inject_allowed", "langs", "watchdog")],
     "manifest_addition_prefixes": [],

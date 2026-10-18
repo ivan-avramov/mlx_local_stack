@@ -289,7 +289,7 @@ class Chain:
                 self.pinned["generation_identity_sha256"] = args.generation_sha
         self.attempts, self.restarts, self.stop_info = [], [], None
         self.attempt_no, self.seen_run_ids, self.block_workers = {}, set(), []
-        self.progress = dict(loads=[], invocations=[], slot_attempts=[], pre_spawn=[], txns=[])
+        self.progress = dict(loads=[], invocations=[], slot_attempts=[], pre_spawn=[], txns=[], abort_evidence=[])
         self.incidents, self.dnf, self.realized = [], [], []
         self.schedule, self.schedule_sha = None, None
         self.loads, self.snapshot_tools = [], {}
@@ -496,6 +496,7 @@ class Chain:
         """What a resumed chain takes over from the record (the progress inventory and the run history)."""
         self.progress = previous["progress"]
         self.progress.setdefault("txns", [])
+        self.progress.setdefault("abort_evidence", [])
         self.attempts = list(previous.get("attempts") or [])
         self.restarts = list(previous.get("restarts") or [])
         self.block_workers = list(previous.get("block_workers") or [])
@@ -1495,7 +1496,7 @@ class Chain:
         self.write_json("running")
         sup = self.supervise(att, proc, view, step, load, rec=rec, inv=inv, base=base)
         att["rc"] = proc.returncode
-        self.hydrate_from_manifest(att, view, out)
+        self.hydrate_from_manifest(att, view, out, rec)
         att["outcome"] = sup["state"]
         co.atomic_json(ajson, att)
         self.log(f"END {leg['stem']} attempt {n} rc={att['rc']} state={sup['state']}")
@@ -1529,29 +1530,42 @@ class Chain:
             raise Stopped("leg")
         return self.handle_incomplete(load, leg, inv, rec, att, why, sup=sup, view=view)
 
-    def hydrate_from_manifest(self, att, view, out):
+    def _manifest_problem(self, att, view, out):
+        man = self._manifest(view)
+        if man is None:
+            return "missing" if not Path(out).with_suffix(".manifest.json").exists() else "invalid"
+        if not isinstance(man, dict) or not isinstance(man.get("run_id"), str) or not man["run_id"]:
+            return "invalid"
+        if att.get("run_id") and man["run_id"] != att["run_id"]:
+            return "run_id differs"
+        return None
+
+    def hydrate_from_manifest(self, att, view, out, rec=None):
         """F14: after the probe exits, ALWAYS read the invocation's own final manifest (its path is the invocation's rows file
         stem, unique per invocation) and hydrate the cleanup receipt, cancelled item, abort stamp and abort evidence from it,
         whether or not the barrier observed it. A missing / invalid / foreign manifest is recorded in `manifest_problem`
         and hydrates nothing (restart eligibility keeps refusing without a receipt)."""
-        att["manifest_observed"] = bool(att.get("run_id"))
-        att["manifest_problem"] = None
+        observed = bool(att.get("run_id"))
+        problem = self._manifest_problem(att, view, out)
+        # the per-arm attempts carry the state; every configuration's inventory record carries it (tg1 attempts keep their A14 shape)
+        if self.per_arm:
+            att["manifest_observed"], att["manifest_problem"] = observed, problem
+        if rec is not None:
+            rec["manifest_observed"], rec["manifest_problem"] = observed, problem
+        if problem:
+            return
         man = self._manifest(view)
-        if man is None:
-            att["manifest_problem"] = "missing" if not Path(out).with_suffix(".manifest.json").exists() else "invalid"
-            return
-        if not isinstance(man, dict) or not isinstance(man.get("run_id"), str) or not man["run_id"]:
-            att["manifest_problem"] = "invalid"
-            return
-        if att.get("run_id") and man["run_id"] != att["run_id"]:
-            att["manifest_problem"] = "run_id differs"
-            return
         att["run_id"] = att.get("run_id") or man["run_id"]
         att["cleanup_status"] = receipt_from_manifest(man)
         att["cancelled_item"] = man.get("cancelled_item")
         att["transport_abort"] = man.get("transport_abort")
-        if self.per_arm and att["transport_abort"] is not None:
-            att["abort_evidence"] = self.abort_evidence(att, view, out)
+        if att["transport_abort"] is not None:
+            found = self.abort_evidence(att, view, out)
+            if self.per_arm:
+                att["abort_evidence"] = found
+            # one record per aborted attempt in the inventory for EVERY configuration (tg1's attempts keep their A14 shape)
+            self.progress.setdefault("abort_evidence", []).append(dict(
+                invocation=self._relpath(out), attempt=att["attempt"], **found))
 
     def abort_evidence(self, att, view, out):
         """A12 (F6): the evidence of the slot an abort (incident, cancel, STOP) hit BEFORE its row was committed: the probe's
