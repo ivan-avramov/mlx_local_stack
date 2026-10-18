@@ -1098,6 +1098,10 @@ class Chain:
         """Resume (F10): an A4 receipt a crash left created but unreferenced is adopted into its reserved worker record once its
         binding (load, worker, arm) and the worker identity the record names are verified; anything else aborts."""
         changed = False
+        a4 = self.out_root / "a4"
+        for tmp in sorted(a4.glob(".*.tmp.*")) if a4.is_dir() else []:       # F13: a receipt that never reached its destination
+            self.log(f"RESUME: removed leftover A4 receipt temp file {tmp.name}")
+            tmp.unlink()
         for load in self.progress["loads"]:
             for worker in load["workers"]:
                 for arm, rel in (worker.get("a4_reserved") or {}).items():
@@ -1134,15 +1138,25 @@ class Chain:
         raw = (json.dumps(doc, sort_keys=True, indent=1) + "\n").encode()
         dest = self.receipt_path(load, wn, arm)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-        except FileExistsError:
-            raise co.ChainAbort(f"A4 receipt {self._relpath(dest)} exists (A4 receipts are immutable: a new out-root is "
-                                "needed)") from None
-        with os.fdopen(fd, "wb") as fp:
+        # F13: temp file (same directory) written + fsynced, then linked exclusively into the destination: the destination is
+        # either absent or complete
+        tmp = dest.with_name(f".{dest.name}.tmp.{os.getpid()}")
+        with open(tmp, "wb") as fp:
             fp.write(raw)
             fp.flush()
             os.fsync(fp.fileno())
+        try:
+            os.link(tmp, dest)
+        except FileExistsError:
+            tmp.unlink(missing_ok=True)
+            raise co.ChainAbort(f"A4 receipt {self._relpath(dest)} exists (A4 receipts are immutable: a new out-root is "
+                                "needed)") from None
+        tmp.unlink(missing_ok=True)
+        dfd = os.open(dest.parent, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
         return dest, hashlib.sha256(raw).hexdigest()
 
     def verify_receipt(self, load, arm):
