@@ -536,3 +536,10 @@ def test_tier_prefix_verification_refuses_a_mismatch():
     assert D.tier_items(draw, "rust", "screen") == draw["languages"]["rust"]["screen"]
     with pytest.raises(TransportAbort):
         D.tier_items(draw, "rust", "bogus")
+
+
+def test_s9_an_unknown_file_in_the_prepared_tree_excludes_the_item_with_the_reason(tmp_path):
+    c = corpus(tmp_path / "c")
+    (c / "javascript/exercises/practice/x/answer.js").write_text("LEAK")
+    rec = U.freeze_item(c, "javascript", "x", tmp_path / "s", Grader())
+    assert rec["status"] == "excluded" and "answer.js" in rec["reason"] and rec["reason"].startswith("prepare:")

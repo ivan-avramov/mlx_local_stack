@@ -384,3 +384,67 @@ def test_an_example_under_any_excluded_root_is_accepted_and_absent_from_the_prep
     tree = mat.prepare_tree(c, "javascript", "x", tmp_path / "t").tree
     assert sorted(p.name for p in tree.rglob("*") if p.is_file()) == ["x.js", "x.spec.js"]
     assert "REF" not in "".join(p.read_text() for p in tree.rglob("*") if p.is_file())
+
+
+# ------------------------------------------------------------------ S9: audited scaffold allow-list (fail on unknown)
+@pytest.mark.parametrize("lang,slug,cfg,files,stray", [
+    ("javascript", "x", dict(solution=["x.js"], test=["x.spec.js"], example=[".meta/proof.ci.js"]),
+     {"x.js": "s", "x.spec.js": "t", ".meta/proof.ci.js": "r", "package.json": "{}"}, "answer.js"),
+    ("javascript", "x", dict(solution=["x.js"], test=["x.spec.js"], example=[".meta/proof.ci.js"]),
+     {"x.js": "s", "x.spec.js": "t", ".meta/proof.ci.js": "r"}, "data/solution.txt"),
+    ("java", "a", dict(solution=["src/main/java/A.java"], test=["src/test/java/ATest.java"],
+                       example=[".meta/src/reference/java/A.java"]),
+     {"src/main/java/A.java": "s", "src/test/java/ATest.java": "t", ".meta/src/reference/java/A.java": "r",
+      "build.gradle": "g"}, "src/main/java/Answer.java"),
+    ("rust", "x", dict(solution=["src/lib.rs", "Cargo.toml"], test=["tests/x.rs"], example=[".meta/example.rs"]),
+     {"src/lib.rs": "s", "Cargo.toml": STUB, "tests/x.rs": "t", ".meta/example.rs": "r"}, "src/answer.rs"),
+    ("cpp", "a", dict(solution=["a.cpp", "a.h"], test=["test/a_test.cpp"], example=[".meta/example.cpp", ".meta/example.h"]),
+     {"a.cpp": "s", "a.h": "s", "test/a_test.cpp": "t", ".meta/example.cpp": "r", ".meta/example.h": "r"}, "test/answer.cpp"),
+])
+def test_s9_an_undeclared_file_outside_the_scaffold_patterns_is_a_freeze_error_naming_it(tmp_path, lang, slug, cfg, files, stray):
+    c = make_corpus(tmp_path / "c", lang, slug, cfg, dict(files, **{stray: "LEAK"}))
+    with pytest.raises(mat.FreezeError, match=stray.replace(".", r"\.")):
+        mat.prepare_tree(c, lang, slug, tmp_path / "t")
+    assert not (tmp_path / "t").exists()
+
+
+def test_s9_declared_files_and_the_language_scaffold_are_accepted(tmp_path):
+    c = make_corpus(tmp_path / "c", "javascript", "x", dict(solution=["x.js"], test=["x.spec.js"],
+                                                           example=[".meta/proof.ci.js"]),
+                    {"x.js": "s", "x.spec.js": "t", ".meta/proof.ci.js": "r", "package.json": "{}", "babel.config.js": "b",
+                     ".eslintrc": "e", ".npmrc": "n", "LICENSE": "l"})
+    assert mat.prepare_tree(c, "javascript", "x", tmp_path / "t").tree.is_dir()
+
+
+def test_s9_per_item_extras_apply_to_that_item_only(tmp_path):
+    cfg = dict(solution=["x.js"], test=["x.spec.js"], example=[".meta/proof.ci.js"])
+    files = {"x.js": "s", "x.spec.js": "t", ".meta/proof.ci.js": "r", "data/iliad.txt": "text"}
+    ok = make_corpus(tmp_path / "ok", "javascript", "grep", cfg, files)
+    assert (mat.prepare_tree(ok, "javascript", "grep", tmp_path / "t1").tree / "data/iliad.txt").is_file()
+    other = make_corpus(tmp_path / "other", "javascript", "x", cfg, files)
+    with pytest.raises(mat.FreezeError, match="data/iliad.txt"):
+        mat.prepare_tree(other, "javascript", "x", tmp_path / "t2")
+
+
+def test_s9_the_pattern_lists_are_the_audited_minimum_every_pattern_is_used_by_the_pinned_corpus():
+    if not HAVE_CORPUS:
+        pytest.skip("polyglot corpus not found")
+    used = set()
+    for lang, slugs in mat.list_items(POLYGLOT).items():
+        for slug in slugs:
+            try:
+                plan = mat.read_plan(POLYGLOT, lang, slug)
+            except mat.FreezeError:
+                continue
+            src = mat.exercise_dir(POLYGLOT, lang, slug)
+            declared = set(plan.solutions) | set(plan.tests) | set(plan.config.get("editor", []))
+            for path in src.rglob("*"):
+                rel = path.relative_to(src).as_posix()
+                if path.is_file() and rel.split("/")[0] not in mat.EXCLUDED_ROOTS and rel not in declared:
+                    used |= {("scaffold", lang, pat) for pat in mat.SCAFFOLD[lang] if mat.matches_pattern(rel, pat)}
+                    used |= {("item", "%s/%s" % (lang, slug), pat) for pat in mat.ITEM_SCAFFOLD.get("%s/%s" % (lang, slug), ())
+                             if mat.matches_pattern(rel, pat)}
+    every = {("scaffold", lang, pat) for lang, pats in mat.SCAFFOLD.items() for pat in pats}
+    every |= {("item", item, pat) for item, pats in mat.ITEM_SCAFFOLD.items() for pat in pats}
+    # OFFLINE_CRATES.md is generated into the tree after the copy
+    assert every - used == {("scaffold", "rust", "OFFLINE_CRATES.md")}, sorted(every - used)
