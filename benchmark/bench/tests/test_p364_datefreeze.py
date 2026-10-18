@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,14 @@ from bench.tests.test_opencode_v2_probe import INSTALLED_BIN, MODEL, tg1_probe a
 REPO = Path(__file__).resolve().parents[3]
 PLUGIN = REPO / "benchmark/opencode_plugins/datefreeze.js"
 FROZEN = "Mon Jan 05 2026"
-REAL = "Sat Oct 17 2026"
+# P381: the date the REAL pinned binary prints (JS `toDateString()`), read from the clock, never hard-coded
+REAL = time.strftime("%a %b %d %Y")
+
+
+def require_same_day():
+    """A real-binary run that crossed local midnight saw two dates; it proves nothing either way (P381)."""
+    if time.strftime("%a %b %d %Y") != REAL:
+        pytest.skip("P381: the run crossed local midnight; the binary's date changed during the test")
 NODE = shutil.which("node", path="/opt/homebrew/bin:/usr/local/bin:/usr/bin")
 
 
@@ -375,7 +383,8 @@ def test_changing_the_plugin_changes_the_policy_and_the_code_identity(probe, mon
     base = ident(probe)
     other = tmp_path / "datefreeze.js"
     other.write_text(PLUGIN.read_text() + "\n// changed\n")
-    monkeypatch.setattr(runner, "DATEFREEZE_PLUGIN", other)
+    from bench import arm_opencode
+    monkeypatch.setattr(arm_opencode, "DATEFREEZE_PLUGIN", other)
     assert ident(probe)["scaffold_policy_sha256"] != base["scaffold_policy_sha256"]
     entry = "benchmark/run_tg1_probe.py"
     without = [d for d in runner.GENERATION_DATA if "datefreeze" not in d]
@@ -480,6 +489,7 @@ def test_wire_masking_changes_only_the_date_text_headers_and_cache_keys_unchange
     with MockServer() as control, MockServer() as masked:
         rc1, err1, _ = run_direct(tmp_path, control, real_bin, plugins=plain, name="arm-a")
         rc2, err2, _ = run_direct(tmp_path, masked, real_bin, plugins={"datefreeze.js": PLUGIN.read_text()}, name="arm-b")
+        require_same_day()
         assert rc1 == 0 and rc2 == 0, (err1[-300:], err2[-300:])
         assert len(control.chats) == len(masked.chats) == 2
         for a, b in zip(control.chats, masked.chats):

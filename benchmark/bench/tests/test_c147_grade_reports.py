@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import pytest
 from bench import structured_grade as sg
-from bench import tg1_runner as runner
+from bench import arm_runner as runner
 from bench.token_turn_gate import TransportAbort
 
 JUNIT = (b'<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" tests="2">'

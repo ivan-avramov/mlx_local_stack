@@ -6,7 +6,8 @@ import os
 from pathlib import Path
 import sys
 import pytest
-from bench import tg1_runner as runner, proc_guard as pg, token_turn_gate as tg
+from bench import arm_runner as core, corpus_tg1, run_config as rc, tg1_runner as runner, proc_guard as pg, token_turn_gate as tg
+from m62 import universe_preflight
 from bench.tests.test_opencode_v2_probe import probe as std_probe, tg1_probe as probe, MODEL
 from bench.tests.test_tg1_integration import tg_fixture, fake_receipts
 from bench.tests.test_token_turn_gate import event, usage
@@ -29,7 +30,7 @@ ADDENDUM_SHA256 = {
 
 def campaign_identity(probe):
     selection = probe._carrier_selection(runner.SCAFFOLD, None, source=runner.CARRIER)
-    _, usha = runner.universe_preflight.load(runner.REPO / "benchmark/m62/universe.json")
+    _, usha = universe_preflight.load(runner.REPO / "benchmark/m62/universe.json")
     return selection, usha
 
 
@@ -86,15 +87,23 @@ def test_inject_identity_changes_the_hash_and_records_effective_policy(probe):
 
 
 def test_print_identity_is_read_only_and_exits_zero(probe, monkeypatch, capsys):
-    monkeypatch.setattr(runner.provenance, "assert_served_config",
+    monkeypatch.setattr(core.provenance, "assert_served_config",
                         lambda *a, **k: pytest.fail("print-identity touched the router"))
-    monkeypatch.setattr(runner, "worker_json", lambda *a: pytest.fail("print-identity touched a worker"))
+    monkeypatch.setattr(core, "worker_json", lambda *a: pytest.fail("print-identity touched a worker"))
     monkeypatch.setattr(sys, "argv", ["probe", "--print-identity"])
     assert probe.main() == 0
     doc = json.loads(capsys.readouterr().out)
     selection, usha = campaign_identity(probe)
-    want = runner.identity(probe, selection, usha, "2.0.20", Path(probe.__file__))["scaffold_policy_sha256"]
-    assert doc["scaffold_policy_sha256"] == want
+    legacy = runner.identity(probe, selection, usha, "2.0.20", Path(probe.__file__))
+    pol = legacy["policy"]
+    corpus = corpus_tg1.Tg1Corpus(runner.REPO / "benchmark/m62/universe.json")
+    corpus.load_universe()
+    want = runner.TG1_POLICY.build(
+        scaffold=legacy["scaffold"], corpus_id="tg1", corpus_identity=corpus.identity(),
+        toolbounds_sha256=pol["toolbounds_sha256"], noretry_sha256=pol["noretry_sha256"],
+        datefreeze_sha256=pol["datefreeze_sha256"], carrier_sha256=pol["carrier_sha256"],
+        universe_sha256=pol["universe_sha256"], env=pol["env"], toolchain=pol["toolchain"]).sha256()
+    assert doc["scaffold_policy_sha256"] == want and want != legacy["scaffold_policy_sha256"]
     assert len(doc["probe_code_sha256"]) == 64 and doc["opencode_version"] == "2.0.20"
     if os.environ.get("OPENCODE_PROBE_BIN") and Path(os.environ["OPENCODE_PROBE_BIN"]).is_file():
         assert len(doc["opencode_exe_sha256"]) == 64
@@ -218,13 +227,13 @@ def test_inject_stall_labelled_row_manifest_and_causal_fields(probe, monkeypatch
 def test_inject_prompt_carries_the_addendum_verbatim(probe, monkeypatch, tmp_path):
     f = tg_fixture(probe, monkeypatch, tmp_path)
     captured = {}
-    real = runner.run_item
+    real = core.run_item
 
-    def spy(p, **kwargs):
+    def spy(p, adapter, **kwargs):
         captured["prompt"] = kwargs["prompt"]
         captured["policy"] = kwargs["policy"]
-        return real(p, **kwargs)
-    monkeypatch.setattr(runner, "run_item", spy)
+        return real(p, adapter, **kwargs)
+    monkeypatch.setattr(core, "run_item", spy)
     out = inject_out(tmp_path, "loop.attempt1.jsonl")
     f["run"]("one", extra=["--tg1-inject", "loop", "--expect-items", "python/one", "--limit", "1",
                            "--out", str(out)])
@@ -234,8 +243,8 @@ def test_inject_prompt_carries_the_addendum_verbatim(probe, monkeypatch, tmp_pat
 
 
 def test_campaign_run_never_reads_inject_policy_and_rows_gain_the_new_fields(probe, monkeypatch, tmp_path):
-    monkeypatch.setattr(runner, "INJECT_POLICY", None)      # any read would raise
-    monkeypatch.setattr(runner, "INJECT_ADDENDA", None)
+    monkeypatch.setattr(rc, "INJECT_POLICY", None)      # any read would raise
+    monkeypatch.setattr(corpus_tg1, "INJECT_ADDENDA", None)
     f = tg_fixture(probe, monkeypatch, tmp_path)
     assert f["run"]("one") == 0
     row = json.loads(f["out"].read_text())
@@ -298,7 +307,7 @@ KILLED_FIXTURE_SHA256 = "17bc77adb106c2c285a75d547f3297d6da9b61982733e757a71bf09
 def real_inject(probe, pinned_binary, monkeypatch, tmp_path, mock, kind):
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     f = tg_fixture(probe, monkeypatch, tmp_path, binary=pinned_binary, mock=mock)
-    monkeypatch.setattr(runner.provenance, "opencode_v2_destination", lambda *a, **k: mock.base)
+    monkeypatch.setattr(core.provenance, "opencode_v2_destination", lambda *a, **k: mock.base)
     out = inject_out(tmp_path, f"{kind}.attempt1.jsonl")
     rc = f["run"]("one", extra=["--tg1-inject", kind, "--expect-items", "python/one", "--limit", "1",
                                 "--out", str(out)])

@@ -17,6 +17,8 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "benchmark"))
+from bench import chain_rows  # noqa: E402
 RES = REPO / "benchmark/results"
 P1, P2 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "Qwen3.8-27B-mlx-uniform-4bit"
 LANGS, SESS = ("python", "go"), ("s1", "s2")
@@ -29,8 +31,8 @@ def strict(r):
 
 
 def load(model, lang, tag, sess):
-    f = RES / model / f"opencode_v2_{lang}.{tag}.{sess}.jsonl"
-    return {r["id"]: strict(r) for r in map(json.loads, f.read_text().splitlines()) if r["id"] not in INVALID}
+    rows = chain_rows.read_rows(chain_rows.stored_path(RES / model, lang, tag, sess))      # P371 R7
+    return {r["id"]: strict(r) for r in rows if r["id"] not in INVALID}
 
 
 def observed_discordance():

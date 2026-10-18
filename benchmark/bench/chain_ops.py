@@ -22,8 +22,8 @@ PICK1 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 PICK2 = "Qwen3.8-27B-mlx-uniform-4bit"
 GRADER_IMAGE = "aider-benchmark"     # P290: the Go grader image, as structured_grade/opencode_common run it
 BUSY = ("mlx_vlm.server", "mlx_vlm/server", "mlx-serve start", "session_cache_probe", "opencode run",
-        "run.py generate", "run_opencode_probe", "run_tg1_probe", "run_agentbench_os", "runserver.sh")
-SELF_MARKERS = ("run_tg1_chain.py", "run_inject.py", "drive_chain.sh", "drive_inject.sh")
+        "run.py generate", "run_opencode_probe", "run_tg1_probe", "run_oc_probe", "run_agentbench_os", "runserver.sh")
+SELF_MARKERS = ("run_tg1_chain.py", "run_m64_chain.py", "run_inject.py", "drive_chain.sh", "drive_inject.sh")
 GRADER_TIMEOUT_S = {"python": 300, "go": 180}
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -246,6 +246,7 @@ class ChainOps:
         self.parents = parents or default_parents
         self.killpg = killpg or os.killpg
         self.router = None          # identities of what THIS process started: {pid, create_time, spawned: {pid, create_time}}
+        self.router_config_sha = None
         self.worker_started = None
 
     # -- environment
@@ -394,6 +395,7 @@ class ChainOps:
                          f"descendant; foreign (diagnostic only), nothing recorded as own")
                 raise ChainAbort(f"TRIPWIRE: :8000 listener {pid} not owned by the router this process spawned")
             self.router = {"pid": pid, "create_time": self.create_time(pid), "spawned": spawned}    # ours from here on
+            self.router_config_sha = file_sha(self.overlay)
             e = self.proc_env(pid)
             probs = (["not mlx-serve"] if "mlx-serve" not in e else []) + env_tripwires(e, self.overlay)
             cwd = self.sh(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"]).stdout
@@ -407,6 +409,18 @@ class ChainOps:
             self.router = None
             self._reap_spawned(spawned)
             raise
+
+    def router_ok(self):
+        """A6 (P371 3b): the router THIS process started is still the same process (pid + create_time), still the sole owner
+        of :8000, and still serves the config it started with (the overlay's sha256). Any doubt is False."""
+        if self.router is None or not self._alive(self.router):
+            return False
+        try:
+            if self.listeners() != [self.router["pid"]]:
+                return False
+        except Exception:  # noqa: BLE001
+            return False
+        return file_sha(self.overlay) == getattr(self, "router_config_sha", None)
 
     def _reap_spawned(self, spawned):
         """Refusal path: stop the process WE spawned (own session, start_new_session=True), never a foreign pid."""
@@ -574,12 +588,12 @@ class ChainOps:
             return None
 
     # -- A4
-    def a4_gate(self, model, tag):
+    def a4_gate(self, model, tag, scaffold=SCAFFOLD):
         env = self.env_base()
         logf = self.a4_log_dir / f"a4_{tag}.log"
         logf.parent.mkdir(parents=True, exist_ok=True)
         cmd = [str(self.py), str(self.repo / "scripts/session_pinning_gate.py"), "--model", model, "--opencode",
-               "v2", "--scaffold", SCAFFOLD, "--skip-owui", "--log", str(self.repo / "logs/mlx_vlm.log")]
+               "v2", "--scaffold", scaffold, "--skip-owui", "--log", str(self.repo / "logs/mlx_vlm.log")]
         self.log(f"RUN A4 v2 gate ({model}) -> {logf.name}")
         t0 = time.time()
         try:
@@ -642,8 +656,8 @@ class ChainOps:
         return 0 if free else 1
 
     def rows(self, path):
-        from bench import proc_guard as pg
-        return pg.load_rows(path)
+        from bench import chain_rows
+        return chain_rows.rows_if_present(path)
 
     def leftovers(self, roots, run_ids=()):
         """Same-uid processes with a root in their argv and `mlxbench-<run_id>-*` containers: LISTED, never killed."""
@@ -734,16 +748,8 @@ def composite_sha(runtime):
 
 
 # P24 (spec 3): the chain's own lifecycle code is frozen at chain creation and re-verified before every launch,
-# barrier, validation, resume and at exit. Repo-relative; `lifecycle_files` resolves them (tests pass temp copies).
-LIFECYCLE_FILES = {"runner": "benchmark/chains/c147/run_tg1_chain.py", "chain_ops": "benchmark/bench/chain_ops.py",
-                   "gate": "scripts/session_pinning_gate.py", "launcher": "benchmark/chains/c147/drive_chain.sh",
-                   "launch_tg1": "benchmark/chains/c147/launchers/launch_tg1.sh"}
-
-
-def lifecycle_files(repo):
-    return {name: Path(repo) / rel for name, rel in LIFECYCLE_FILES.items()}
-
-
+# barrier, validation, resume and at exit. P371 R15: the member set is per chain ENTRY (its static import closure + gate +
+# launchers, `chain_core.lifecycle_member_files`); `files` maps member name -> path (tests pass temp copies).
 def lifecycle_shas(files):
     return {name: file_sha(path) for name, path in files.items()}
 
@@ -762,12 +768,13 @@ ROW_SEED_FIELD = "sampler_seed"
 POLICY_HELD = ("universe_sha256",)
 
 
-def runtime_identity(man):
-    """The RUNTIME_PINNED fields where the real probe writes them; an absent key stays absent."""
+def runtime_identity(man, pinned=None):
+    """The RUNTIME_PINNED fields where the real probe writes them; an absent key stays absent. `pinned` (an arm spec's
+    `runtime_pinned`, M64) replaces the tg1 tuple."""
     rt = man.get("runtime") or {}
     pol = rt.get("policy") or {}
     ident = {}
-    for k in RUNTIME_PINNED:
+    for k in (RUNTIME_PINNED if pinned is None else pinned):
         src = pol if k in POLICY_HELD else rt
         if k in src:
             ident[k] = src[k]
@@ -778,26 +785,29 @@ def _hex(v, *lengths):
     return isinstance(v, str) and len(v) in lengths and re.fullmatch(r"[0-9a-f]+", v) is not None
 
 
-def malformed_identity(man):
+def malformed_identity(man, spec=None):
     """Mandatory identity fields of a manifest that are absent, null or malformed. Only `agent_system_sha256` may
-    be null (no overlay), but when present as a string it must be 64-hex."""
-    rt = runtime_identity(man)
+    be null (no overlay), but when present as a string it must be 64-hex. `spec` (an `arm_specs.ArmSpec`, M64) supplies
+    the arm's pinned fields, sha fields, version field and composite; absent, the tg1 constants apply."""
+    rt = runtime_identity(man, None if spec is None else spec.runtime_pinned)
     bad = []
-    for k in SHA_FIELDS:
+    for k in (SHA_FIELDS if spec is None else spec.sha_fields):
         if not _hex(rt.get(k), 64):
             bad.append(f"runtime_{k}")
     if not _hex(rt.get("polyglot_sha"), 40, 64):
         bad.append("runtime_polyglot_sha")
-    v = rt.get("opencode_version")
+    version_field = "opencode_version" if spec is None else spec.version_field
+    v = rt.get(version_field)
     if not (isinstance(v, str) and v.strip()):
-        bad.append("runtime_opencode_version")
+        bad.append("runtime_" + version_field)
     if "agent_system_sha256" not in rt or (rt["agent_system_sha256"] is not None and not _hex(rt["agent_system_sha256"], 64)):
         bad.append("runtime_agent_system_sha256")
     full = man.get("runtime") or {}
     if _hex(rt.get("generation_identity_sha256"), 64):
         try:
-            consistent = composite_sha({**full, "sampling_profile": full.get(
-                "sampling_profile", man.get("sampling_profile"))}) == rt["generation_identity_sha256"]
+            fields = {**full, "sampling_profile": full.get("sampling_profile", man.get("sampling_profile"))}
+            consistent = (composite_sha(fields) if spec is None else spec.composite(fields)) == \
+                rt["generation_identity_sha256"]
         except ValueError:
             consistent = False
         if not consistent:
@@ -831,20 +841,24 @@ def typed_worker(w):
             and isinstance(w.get("registry_sha256"), str) and bool(HEX64.match(w["registry_sha256"])))
 
 
-def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=None):
+def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=None, spec=None):
     """Completion = validation (spec 3). Returns a list of `code: detail` failure reasons; [] means complete.
 
     leg: {session, model, lang, seed_base, expected_ids, out, rc}. pinned: runtime field -> value (None = not yet
-    pinned, skipped) plus `serving_path`, `registry_sha256`; scaffold policy hash and probe-code are mandatory."""
+    pinned, skipped) plus `serving_path`, `registry_sha256`; scaffold policy hash and probe-code are mandatory.
+    `spec` (M64, an `arm_specs.ArmSpec`): the arm's scaffold label, pinned fields and identity rules replace the tg1
+    constants; every other check is unchanged."""
+    scaffold = SCAFFOLD if spec is None else spec.label
+    runtime_pinned = RUNTIME_PINNED if spec is None else spec.runtime_pinned
     from bench import rowschema
-    from bench import proc_guard as pg
+    from bench import chain_rows
     why = []
     wd = workdir or os.environ.get("STACK_WORKDIR") or ""
     out = Path(leg["out"])
     if leg.get("rc") != 0:
         why.append(f"rc_nonzero: probe rc {leg.get('rc')}")
     try:
-        rows = pg.load_rows(out)
+        rows = chain_rows.rows_if_present(out)
     except Exception as e:  # noqa: BLE001
         return why + [f"rows_torn: {e}"]
     ids = [r.get("id") for r in rows]
@@ -866,7 +880,7 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=
         why.append(f"runtime_seed_base: {rt.get('seed_base')} != {leg['seed_base']}")
     if rt.get("lang") != leg["lang"]:
         why.append(f"runtime_lang: {rt.get('lang')} != {leg['lang']}")
-    if rt.get("scaffold") != SCAFFOLD:
+    if rt.get("scaffold") != scaffold:
         why.append(f"runtime_scaffold: {rt.get('scaffold')}")
     policy_sha = policy_sha or pinned.get("scaffold_policy_sha256")    # P362: derived from the probe, never a constant
     if not policy_sha:
@@ -881,11 +895,11 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=
         why.append("runtime_sampling_profile: not deployed")
     if pinned.get("probe_code_sha256") is None:
         why.append("pinned_incomplete: probe_code_sha256 not pinned")
-    ident = runtime_identity(man)
-    for k in RUNTIME_PINNED:
+    ident = runtime_identity(man, runtime_pinned)
+    for k in runtime_pinned:
         if k in pinned and (k not in ident or ident[k] != pinned[k]):   # a pinned null is a value; an absent key is not
             why.append(f"runtime_{k}: {ident.get(k, '<absent>')} != pinned {pinned[k]}")
-    for f in malformed_identity(man):
+    for f in malformed_identity(man, spec):
         why.append(f"{f}_invalid: absent, null or malformed" if f != "serving_path" else "serving_path_invalid: absent, null or malformed")
     expected_arm = leg.get("arm_identity_sha256")                    # P311-lite: frozen at the arm's first manifest
     if expected_arm is not None and rt.get("arm_identity_sha256") != expected_arm:
@@ -918,7 +932,7 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=
             if not (isinstance(r.get("prompt_date_real"), str) and r["prompt_date_real"].strip()
                     and isinstance(r.get("prompt_date_update_removed"), bool)):
                 why.append(f"row_prompt_date_real: {rid} prompt_date_real / prompt_date_update_removed absent or malformed")
-        if r.get("scaffold") != SCAFFOLD:
+        if r.get("scaffold") != scaffold:
             why.append(f"row_scaffold: {rid} {r.get('scaffold')}")
         if r.get("model") != leg["model"]:
             why.append(f"row_model: {rid} {r.get('model')} != {leg['model']}")

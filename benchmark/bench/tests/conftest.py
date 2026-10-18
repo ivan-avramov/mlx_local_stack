@@ -28,6 +28,24 @@ import bench.generate as G
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "docker: needs docker and the built tg2-grader image (skipped when absent)")
+    config.addinivalue_line("markers", "real_process_scan: keeps the real `psutil.process_iter` sweep in `ProcessGuard` (the "
+                                       "test deliberately detects a real detached / orphaned process on the box)")
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_process_scan(request):
+    """P371: a `ProcessGuard` built without `scan=` sees only this process's family (descendants + their sessions), never box
+    activity such as Spotlight's `mdworker` (see `bench/tests/hermetic_scan.py`). Opt out: `@pytest.mark.real_process_scan`."""
+    if request.node.get_closest_marker("real_process_scan"):
+        yield
+        return
+    from bench import proc_guard
+    from bench.tests import hermetic_scan
+    undo = hermetic_scan.install(proc_guard, os.getpid())
+    try:
+        yield
+    finally:
+        undo()
 
 
 # --------------------------------------------------------------------------- orphan-shell sweep

@@ -1,5 +1,6 @@
 # FROZEN copy (P229, 2026-10-10) of $STACK_WORKDIR/m59/m59_report.py, the driver behind the opencode_v2_*.m59.* (M59) rows.
-# Only change: absolute home paths -> $STACK_WORKDIR / $STACK_REPO. See benchmark/chains/README.md.
+# Only changes: absolute home paths -> $STACK_WORKDIR / $STACK_REPO; P371 R7: rows are read and leg paths named through
+# bench.chain_rows (output byte-identical, fixture golden). See benchmark/chains/README.md.
 """M59 report: v2 re-baseline of the two B picks (Python + Go, 22 items, k=2 sessions). Per (model, lang, session):
 acc_strict@budget (miss = fail or any non-convergence), convergence, nonconv kinds, wall; per-item consistency; paired
 two-stage bootstrap deltas (descriptive): v2 session vs 1.18 medium (k=1, scaffold delta, never pooled) and pick 1 vs
@@ -8,7 +9,7 @@ import json, os, sys
 from pathlib import Path
 REPO = Path(os.environ.get("STACK_REPO") or (Path.home() / "ws/mlx_local_stack"))
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import stats  # noqa: E402
+from bench import chain_rows, stats  # noqa: E402
 
 WD = Path(os.environ.get("STACK_WORKDIR") or (Path.home() / "ws/mlx_local_stack_workdir"))
 M = WD / "m59"
@@ -20,14 +21,11 @@ MEMORY_PRESSURE = {(P1, "s2", "python/food-chain")}   # P183 trigger item
 
 
 def rows(p):
-    try:
-        return [json.loads(l) for l in open(p) if l.strip()]
-    except FileNotFoundError:
-        return []
+    return chain_rows.rows_if_present(p)
 
 
 def v2_file(s, model, lang):
-    return M / s / (f"{model}.opencode_{lang}.jsonl" if s == "s1" else f"{model}.{s}.opencode_{lang}.jsonl")
+    return chain_rows.legacy_path(M, "m59", model=model, session=s, lang=lang)
 
 
 def strict(r):
@@ -80,7 +78,7 @@ for model in (P1, P2):
         arms = [("1.18 medium", BASE118[(model, lang)], None)]
         arms += [(s, v2_file(s, model, lang), v2_file(s, model, lang).with_suffix(".manifest.json")) for s in ("s1", "s2")]
         if model == P2:
-            a = M / "archive/s1_pick2_window558" / f"{model}.opencode_{lang}.jsonl"
+            a = chain_rows.legacy_path(M / "archive/s1_pick2_window558", "m59flat", model=model, session="s1", lang=lang)
             arms.append(("s1@558 (superseded)", a, a.with_suffix(".manifest.json")))
         for name, f, mf in arms:
             rs = rows(f)

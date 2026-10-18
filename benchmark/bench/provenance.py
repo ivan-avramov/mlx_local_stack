@@ -1893,7 +1893,7 @@ def write(model: str, bench: str, registry_path: str | None = None,
 
 
 def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overlay, *,
-                          scaffold=None, toolbounds_sha=None, datefreeze_sha=None):
+                          scaffold=None, toolbounds_sha=None, datefreeze_sha=None, toolwindows_sha=None):
     """P151: permit only the hashed carrier/plugin and the exact per-item seed overlay. P364: under tg1 also the
     hashed `datefreeze.js`, the frozen date and a per-item receipt path OUTSIDE the config directory (evidence is not
     configuration); no other scaffold may carry any of the three."""
@@ -1931,6 +1931,21 @@ def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overla
                 refuse("BENCH_DATEFREEZE_RECEIPTS is absent or not absolute")
             if Path(receipts).resolve().is_relative_to(config.resolve()):
                 refuse("BENCH_DATEFREEZE_RECEIPTS must be outside the config directory")
+        if toolwindows_sha is not None:
+            # M64 only (A4): the hashed `toolwindows.js`, this item's receipt file OUTSIDE the config dir, the attempt id
+            if scaffold != "opencode-v2-web-tg1":
+                refuse("toolwindows is allowed only with the tg1-family plugin set")
+            expected_entries.add("plugins/toolwindows.js")
+            hashes.append(("plugins/toolwindows.js", toolwindows_sha))
+            tw_receipts = env.get("BENCH_TOOLWINDOW_RECEIPTS")
+            if not tw_receipts or not Path(tw_receipts).is_absolute():
+                refuse("BENCH_TOOLWINDOW_RECEIPTS is absent or not absolute")
+            if Path(tw_receipts).resolve().is_relative_to(config.resolve()):
+                refuse("BENCH_TOOLWINDOW_RECEIPTS must be outside the config directory")
+            if not env.get("BENCH_ATTEMPT_ID"):
+                refuse("BENCH_ATTEMPT_ID is absent or empty")
+        elif any(k in env for k in ("BENCH_TOOLWINDOW_RECEIPTS", "BENCH_ATTEMPT_ID")):
+            refuse("toolwindows is allowed only under M64")
         if entries != expected_entries:
             refuse("config directory contains missing or unexpected entries")
         if any(p.is_symlink() for p in config.rglob("*")) or config.is_symlink():

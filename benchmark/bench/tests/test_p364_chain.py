@@ -51,7 +51,7 @@ def test_explicit_date_is_frozen_in_chain_json_and_reaches_the_probe_rows(env):
     doc = chain_json(env)
     assert doc["frozen_prompt_date"] == EPOCH_DATE and doc["frozen_prompt_date_source"] == {"kind": "explicit"}
     assert all(arg(i["argv"], "--frozen-prompt-date") == EPOCH_DATE for i in invocations(env))
-    out = env["out"] / "pilot" / f"{PICK1}.pilot.opencode_python.jsonl"
+    out = env["out"] / "pilot" / f"{PICK1}.pilot.opencode_python.L0.pilot.a1.jsonl"
     rows = [json.loads(s) for s in out.read_text().splitlines()]
     assert rows and all(r["prompt_date"] == EPOCH_DATE for r in rows)
     assert all(r["prompt_date_update_removed"] is False for r in rows)

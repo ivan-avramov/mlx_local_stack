@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import answer_key, row_scores, stats, tg1_pairing  # noqa: E402
+from bench import answer_key, chain_rows, row_scores, stats, tg1_pairing  # noqa: E402
 
 RES = REPO / "benchmark/results"
 P1, P2 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "Qwen3.8-27B-mlx-uniform-4bit"
@@ -26,9 +26,8 @@ def p(s=""):
 
 
 def load(m, lang, s, arm):
-    f = RES / m / f"opencode_v2_{lang}.{ARMS[arm]}.{s}.jsonl"
-    rows = row_scores.effective_rows([json.loads(line) for line in open(f) if line.strip()],
-                                     row_scores.sidecar_path(f))   # P311-lite: one fail-closed join
+    f = chain_rows.stored_path(RES / m, lang, ARMS[arm], s)
+    rows = row_scores.effective_rows(chain_rows.read_rows(f), row_scores.sidecar_path(f))   # P311-lite: one fail-closed join
     side = Path(str(f) + ".webaudit.jsonl")
     rep = answer_key.report_rows(rows, audit_sidecar=side if side.exists() else None,
                                  score_sidecar=row_scores.sidecar_path(f))
@@ -139,7 +138,7 @@ for m in (P1, P2):
 
 p("\n## Reload control (pick 1, fresh instance, s1 seed)\n")
 for arm in ARMS:
-    rl = [json.loads(line) for line in open(RES / P1 / f"opencode_v2_python.{ARMS[arm]}.reload.jsonl") if line.strip()]
+    rl = chain_rows.read_rows(chain_rows.stored_path(RES / P1, "python", ARMS[arm], "reload"))
     s1 = {r["id"]: r for r in data[(P1, "python", "s1", arm)][0]}
     st = lambda r: int(bool(r.get("passed")) and not r.get("nonconv_kind"))  # noqa: E731
     p(f"- {arm}: reload strict {sum(st(r) for r in rl)}/{len(rl)}; agreement with s1 on the same items "
