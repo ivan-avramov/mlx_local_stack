@@ -31,7 +31,7 @@ def policy(ref_runs=None, stub_runs=None):
     Rust allowlist file's sha256)."""
     return dict(ref_runs=REF_RUNS if ref_runs is None else ref_runs, stub_runs=STUB_RUNS if stub_runs is None else stub_runs,
                 grade_timeout=GRADE_TIMEOUT, timeout_rule="max(180, int(3 * max reference seconds) + 1)",
-                timeout_floor=tg.TIMEOUT_FLOOR, pids_limit=tg.PIDS_LIMIT, nofile_limit=tg.NOFILE_LIMIT,
+                timeout_floor=tg.TIMEOUT_FLOOR, pids_limit=tg.PIDS_LIMIT, memory_limit=tg.MEMORY_LIMIT, nofile_limit=tg.NOFILE_LIMIT,
                 fsize_limit=tg.FSIZE_LIMIT, output_cap=tg.OUTPUT_CAP, report_cap=tg.REPORT_CAP,
                 max_junit_files=tg.MAX_JUNIT_FILES, tree_cap=tg.TREE_CAP, work_volume=tg.WORK_VOLUME_SIZE,
                 report_volume=tg.REPORT_VOLUME_SIZE,
@@ -39,12 +39,18 @@ def policy(ref_runs=None, stub_runs=None):
                 allowlist_sha256=hashlib.sha256(Path(tg.ALLOWLIST_FILE).read_bytes()).hexdigest())
 
 
+def freezer_sha256(root=None):
+    """sha256 over the static import closure of this freezer (grader, materializer, helpers it imports)."""
+    from bench import identity_closure as ic
+    return ic.closure_sha256("m65/tg2_universe.py", Path(root) if root else Path(__file__).resolve().parents[1])
+
+
 def fingerprint(*, image_id, polyglot_sha, ref_runs=None, stub_runs=None, grader_version=None):
     """Everything a cached freeze record's validity depends on; a record is reusable only on an exact match."""
     pol = json.dumps(policy(ref_runs, stub_runs), sort_keys=True)
     return dict(polyglot_sha=polyglot_sha, image_id=image_id, grader_version=grader_version or tg.VERSION,
                 materializer_version=mat.VERSION, policy=hashlib.sha256(pol.encode()).hexdigest(),
-                cargo_locks_sha256=tg.verified_cargo_locks_sha256())
+                cargo_locks_sha256=tg.verified_cargo_locks_sha256(), freezer_sha256=freezer_sha256())
 
 
 def _mismatch(item, found, expected):
@@ -222,9 +228,15 @@ def load(path):
             raise ValueError("sha256 differs")
         doc = json.loads(raw)
         if doc["grader_version"] != tg.VERSION or not isinstance(doc["items"], dict):
-            raise ValueError("grader version")
+            raise ValueError("grader version %r != %r: re-freeze needed" % (doc["grader_version"], tg.VERSION))
         if doc.get("materializer_version") != mat.VERSION:
-            raise ValueError("materializer version %r != %r" % (doc.get("materializer_version"), mat.VERSION))
+            raise ValueError("materializer version %r != %r: re-freeze needed" % (doc.get("materializer_version"), mat.VERSION))
+        now = fingerprint(image_id=doc["image_id"], polyglot_sha=doc["polyglot_sha"], grader_version=doc["grader_version"],
+                          ref_runs=doc["ref_runs"], stub_runs=doc["stub_runs"])
+        if doc.get("fingerprint") != now or doc.get("policy") != policy(doc["ref_runs"], doc["stub_runs"]):
+            diff = sorted(k for k in now if (doc.get("fingerprint") or {}).get(k) != now[k]) or ["policy"]
+            raise ValueError("the freeze fingerprint differs from the current grader/freezer/policy in %s: re-freeze needed"
+                             % ", ".join(diff))
         return doc, sha
     except (OSError, ValueError, KeyError) as exc:
         raise TransportAbort("invalid frozen tg2 universe: " + str(exc)) from exc

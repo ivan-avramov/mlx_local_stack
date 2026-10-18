@@ -56,6 +56,7 @@ COMPILE_MARKER = "TG2_COMPILE_START"
 STRIP_TOP_LEVEL = ("build", "target", "node_modules", ".gradle")
 # Resource bounds (G15): process count, open files, single-file size, captured output and report size.
 PIDS_LIMIT = 2048
+MEMORY_LIMIT = "4g"            # container memory and memory+swap cap
 NOFILE_LIMIT = 4096
 FSIZE_LIMIT = 1 << 30
 OUTPUT_CAP = 16_000_000
@@ -491,7 +492,7 @@ def _mount(kind, src, dst, *, readonly=False):
 def _docker_run(name, image_id, slug, mounts, inner, *, extra=(), nonce=None):
     cmd = [
         "docker", "run", *extra, "--name", name, "--pull=never", "--network", "none",
-        "--memory", "4g", "--memory-swap", "4g",
+        "--memory", MEMORY_LIMIT, "--memory-swap", MEMORY_LIMIT,
         "--pids-limit", str(PIDS_LIMIT),
         "--ulimit", "nofile=%d:%d" % (NOFILE_LIMIT, NOFILE_LIMIT), "--ulimit", "fsize=%d:%d" % (FSIZE_LIMIT, FSIZE_LIMIT),
     ]
