@@ -45,6 +45,14 @@ def main(search=None):
         sys.exit("REFUSED: " + _scrub_error(e))
 
 
+def _nonce(value):
+    """P384: the chain-issued per-invocation binding nonce: 64 lowercase hex (anything else is refused)."""
+    import re
+    if not re.fullmatch("[0-9a-f]{64}", value):
+        raise argparse.ArgumentTypeError("--invocation-nonce must be 64 lowercase hex characters")
+    return value
+
+
 def _parser():
     ap = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     ap.add_argument("--model", required=True)
@@ -71,6 +79,8 @@ def _parser():
                     help="attempt number of each slot in this invocation (worker receipt attempt id; the chain sets it)")
     ap.add_argument("--attempt-rerun-index", type=int, default=0,
                     help="same-slot re-run index of this invocation's attempt ids (the chain sets it)")
+    ap.add_argument("--invocation-nonce", type=_nonce,
+                    help="P384: the chain's per-invocation nonce, written into the manifest as runtime.invocation_nonce")
     ap.add_argument("--print-identity", action="store_true", help="print the probe identity JSON and exit")
     # Legacy v2 flags: parsed only so that the runner refuses them with its own message.
     for flag, kind in (("--extra-deny-file", Path), ("--rerun-of", str), ("--rerun-index", int), ("--tick-s", int),

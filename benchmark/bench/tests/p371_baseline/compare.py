@@ -42,6 +42,8 @@ TABLE = {
     # F8: every new policy key is named (no `/runtime/policy/` prefix acceptance); an unlisted key is a failure
     # P382 (lead call, review r2 F15): the abort stamp's evidence paths + shas exist for every configuration, tg1 included
     + ["/transport_abort/evidence", "/cancelled_item/evidence"]
+    # P384 (review r4 F16): the chain-issued per-invocation nonce the probe writes into its manifest
+    + ["/runtime/invocation_nonce"]
     + ["/runtime/policy/" + k for k in ("budgets", "compaction", "config_id", "corpus_id", "corpus_identity",
                                          "inject_allowed", "langs", "watchdog")],
     "manifest_addition_prefixes": [],
@@ -245,9 +247,21 @@ def _drop_pair(argv, name, value_ok):
     return argv
 
 
+def _drop_nonce(argv):
+    """P384 (rule 6): `--invocation-nonce <64 lowercase hex>` is the chain's per-invocation binding nonce, absent from every
+    pre-P371 argv; exactly that pair is dropped, a malformed value stays (and so differs)."""
+    argv = list(argv)
+    if "--invocation-nonce" in argv:
+        i = argv.index("--invocation-nonce")
+        if i + 1 < len(argv) and re.fullmatch("[0-9a-f]{64}", str(argv[i + 1])):
+            return argv[:i] + argv[i + 2:]
+    return argv
+
+
 def legacy_argv(argv, pilot_items=None):
     """One NEW-layout probe argv mapped onto its pre-P371 form (rules 1 and 2 of the module docstring); an argv that is
     not in the new layout, or whose attempt flags do not match its `--out` name, is returned unchanged."""
+    argv = _drop_nonce(argv)
     stem, phase, n = _stem_phase(argv)
     if stem is None:
         return list(argv)

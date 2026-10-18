@@ -7,7 +7,7 @@ import json
 
 from bench.tests.test_p371_review_r3_f16 import build
 
-SLOTS = ["e|oc|m|s1|python|python/a", "e|oc|m|s1|python|python/b", "e|oc|m|s1|python|python/c"]
+SLOTS = ["e|oc|m|s1|python|a", "e|oc|m|s1|python|b", "e|oc|m|s1|python|c"]
 
 
 def attribute(tmp_path, rows_text):

@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import signal
 import subprocess
@@ -209,7 +210,7 @@ def probe_rel(repo, given):
 
 # --------------------------------------------------------------------------- probe command
 def build_cmd(py, probe, leg, step, receipt, cancel, ack, *, scaffold, universe=None, frozen=None, out=None, attempt=None,
-              rerun_index=None, epoch=None):
+              rerun_index=None, epoch=None, nonce=None):
     ids = [f"{leg['lang']}/{n}" for n in step["names"]]
     cmd = [str(py), str(probe), "--model", leg["model"], "--items", ",".join(step["names"]), "--lang", leg["lang"],
            "--seed-base", str(leg["seed_base"]), "--out", str(out if out is not None else leg["out"]),
@@ -223,6 +224,8 @@ def build_cmd(py, probe, leg, step, receipt, cancel, ack, *, scaffold, universe=
         cmd += ["--frozen-prompt-date", frozen]
     if epoch:
         cmd += ["--epoch-id", epoch]
+    if nonce:                                       # P384: the chain-issued per-invocation binding nonce
+        cmd += ["--invocation-nonce", nonce]
     if attempt is not None:                         # P371 A8: the invocation's attempt number (worker receipt attempt id)
         cmd += ["--attempt", str(attempt), "--attempt-rerun-index", str(rerun_index or 0)]
     return cmd
@@ -1036,8 +1039,8 @@ class Chain:
         """F17: a crash after the probe exited but before `attempt-ended` leaves a `running` invocation whose cleanup receipt and
         abort evidence were never read; each is hydrated from its own final manifest (the F16 validation), idempotently."""
         for r in running:
-            if "manifest_problem" in r:
-                continue                                   # hydrated already
+            if r.get("manifest_hydrated"):
+                continue                                   # hydrated already (F20: set only when hydration completed)
             want = str(self.out_root / r["file"])
             att = next((a for a in self.attempts if "--out" in a.get("argv", [])
                         and a["argv"][a["argv"].index("--out") + 1] == want), None)
@@ -1300,6 +1303,10 @@ class Chain:
                     if op["file"] is not None:
                         rec["file"], rec["manifest"] = op["file"], op["manifest"]
                     rec["status"] = op["status"]
+            if op["file"] is not None:                    # F22: the abort-evidence references follow the move in the same txn
+                for r in self.progress.get("abort_evidence", []):
+                    if r.get("invocation") == op["old"]:
+                        r["invocation"] = op["file"]
         elif kind == "archive_attempts":
             self._archive_attempts(set(op["files"]))
         elif kind == "mark_archived_records":
@@ -1492,15 +1499,17 @@ class Chain:
         view = dict(leg, out=str(out), model=leg["model"], phase=inv["phase"], model_load=load["idx"])
         view["prior_files"], view["prior_ids"] = self.prior_rows(load, leg)
         step = dict(inv, names=list(inv["names"]))
+        nonce = secrets.token_hex(32)                    # P384: persisted in the invocation record BEFORE the launch
         cmd = build_cmd(self.py, self.probe_of(arm), view, step, load["receipts"][arm], cancel, ack, scaffold=leg["label"],
                         universe=self.universe, frozen=self.frozen, attempt=n, rerun_index=inv.get("rerun_index", 0),
-                        epoch=self.epoch_arg())
+                        epoch=self.epoch_arg(), nonce=nonce)
         att = dict(attempt=n, step=inv["phase"], stem=leg["stem"], argv=cmd, cancel=str(cancel), ack=str(ack),
                    log=str(logp), worker=dict(load["worker"]), started=co.utc_stamp(), rc=None,
                    cleanup_status=None, run_id=None, probe_pid=None, probe_create_time=None, outcome=None)
         if self.per_arm:
             att["arm"] = arm
         rec = self.register_invocation(load, leg, inv, n, out, ids)
+        rec["nonce"] = nonce
         self.attempts.append(att)
         self.write_json("running")                      # the invocation is in the inventory BEFORE its probe exists
         self.log(f"START {leg['stem']} attempt {n} ({inv['phase']}, {len(ids)} items): {' '.join(cmd[2:])}")
@@ -1550,7 +1559,7 @@ class Chain:
             raise Stopped("leg")
         return self.handle_incomplete(load, leg, inv, rec, att, why, sup=sup, view=view)
 
-    def _manifest_problem(self, att, view, out, man):
+    def _manifest_problem(self, att, view, out, man, rec=None):
         """F16: why `man` (read ONCE by the caller) is not THIS invocation's manifest, or None. Its binding (model, language,
         seed base, scaffold label, arm, the worker at launch) must match the invocation, its run id must not be one already seen
         in this chain (a copied-in or reused manifest), and it must match the run id the barrier observed. The manifest carries
@@ -1566,6 +1575,9 @@ class Chain:
                   ("worker", (wk.get("pid"), wk.get("create_time")), (launch.get("pid"), launch.get("create_time")))]
         if self.per_arm:
             checks.append(("arm", rt.get("arm"), view.get("arm")))
+        nonce = (rec or {}).get("nonce")               # F16 / P384: the chain-issued per-invocation nonce
+        if nonce:
+            checks.append(("invocation_nonce", rt.get("invocation_nonce"), nonce))
         bad = [name for name, got, want in checks if got != want]
         if bad:
             return "binding differs: " + ", ".join(bad)
@@ -1583,40 +1595,79 @@ class Chain:
         records.append(dict(invocation=inv, attempt=att["attempt"], **found))
         self.progress["abort_evidence"] = records
 
+    def unusable_attribution(self, view, out, rec):
+        """F21: the slot an unusable-manifest `unavailable` belongs to: the first UNCOMMITTED expected slot, proven from the
+        invocation's immutable rows file (its rows must be exactly the expected prefix). `(slot, None)` or `(None, reason)`."""
+        expected = list((rec or {}).get("expected_slots") or [])
+        try:
+            got = [cr.slot_for(view["slot_base"], r["id"]) for r in cr.rows_if_present(out)]
+        except cr.ChainRowsError:
+            return None, "attribution unproven"
+        if not expected or got != expected[:len(got)] or len(got) >= len(expected):
+            return None, "attribution unproven"
+        return expected[len(got)], None
+
     def hydrate_from_manifest(self, att, view, out, rec=None):
         """F14: after the probe exits, ALWAYS read the invocation's own final manifest (its path is the invocation's rows file
         stem, unique per invocation) and hydrate the cleanup receipt, cancelled item, abort stamp and abort evidence from it,
-        whether or not the barrier observed it. A missing / invalid / foreign manifest is recorded in `manifest_problem`
-        and hydrates nothing (restart eligibility keeps refusing without a receipt)."""
+        whether or not the barrier observed it. A missing / invalid / foreign manifest hydrates nothing (restart eligibility
+        keeps refusing without a receipt). F20: `manifest_hydrated` (and the observed / problem state) is set on the
+        invocation record only AFTER everything, evidence extraction included, completed, so a crash in the middle is retried
+        at resume; an extraction failure is recorded in `hydration_failure` before it propagates."""
+        if rec is not None and rec.get("manifest_hydrated"):
+            return
         observed = bool(att.get("run_id"))
         man = self._manifest(view)
-        problem = self._manifest_problem(att, view, out, man)
-        # the per-arm attempts carry the state; every configuration's inventory record carries it (tg1 attempts keep their A14 shape)
+        problem = self._manifest_problem(att, view, out, man, rec)
+        try:
+            if problem:
+                # F18 / F21: no usable manifest (e.g. a cancel before the probe wrote one): an explicit `unavailable`
+                reason = ("no manifest (pre-manifest exit)" if problem == "missing"
+                          else f"the invocation's manifest is not usable ({problem})")
+                slot, why = self.unusable_attribution(view, out, rec)
+                found = dict(slot=slot, evidence=None, web_evidence=we.unavailable(reason))
+                if why:
+                    found["reason"] = why
+                if self.per_arm:
+                    att["abort_evidence"] = found
+                self._record_abort_evidence(out, att, found)
+            else:
+                att["run_id"] = att.get("run_id") or man["run_id"]
+                att["cleanup_status"] = receipt_from_manifest(man)
+                att["cancelled_item"] = man.get("cancelled_item")
+                att["transport_abort"] = man.get("transport_abort")
+                if att["transport_abort"] is not None:
+                    found = self.abort_evidence(att, view, out)
+                    if self.per_arm:
+                        att["abort_evidence"] = found
+                    # one record per aborted attempt in the inventory for EVERY configuration (tg1 attempts keep their shape)
+                    self._record_abort_evidence(out, att, found)
+                self.seen_run_ids.add(man["run_id"])
+        except co.ChainAbort as exc:
+            if rec is not None:
+                rec["hydration_failure"] = str(exc)[:300]
+                self.write_json("hydration-failed")
+            raise
+        # the per-arm attempts carry the state; every configuration's inventory record carries it (tg1 attempts keep their shape)
         if self.per_arm:
             att["manifest_observed"], att["manifest_problem"] = observed, problem
         if rec is not None:
             rec["manifest_observed"], rec["manifest_problem"] = observed, problem
-        if problem:
-            # F18: no usable manifest (a cancel before the probe wrote one): an explicit `unavailable` for the head slot
-            reason = ("no manifest (pre-manifest exit)" if problem == "missing"
-                      else f"the invocation's manifest is not usable ({problem})")
-            head = (rec or {}).get("expected_slots", [None])[0]
-            found = dict(slot=head, evidence=None, web_evidence=we.unavailable(reason))
-            if self.per_arm:
-                att["abort_evidence"] = found
-            self._record_abort_evidence(out, att, found)
-            return
-        att["run_id"] = att.get("run_id") or man["run_id"]
-        self.seen_run_ids.add(man["run_id"])
-        att["cleanup_status"] = receipt_from_manifest(man)
-        att["cancelled_item"] = man.get("cancelled_item")
-        att["transport_abort"] = man.get("transport_abort")
-        if att["transport_abort"] is not None:
-            found = self.abort_evidence(att, view, out)
-            if self.per_arm:
-                att["abort_evidence"] = found
-            # one record per aborted attempt in the inventory for EVERY configuration (tg1's attempts keep their A14 shape)
-            self._record_abort_evidence(out, att, found)
+            rec["manifest_hydrated"] = True
+            rec.pop("hydration_failure", None)
+
+    def _reverify_extraction(self, view, path, sha, dest):
+        """The extraction file already exists (a crash after it was written): accept it only when re-extracting the transcript
+        (sha256 re-verified) yields byte-identical content."""
+        tmp = dest.with_name(dest.name + ".verify")
+        tmp.unlink(missing_ok=True)
+        try:
+            again = we.extract(self.web_rules(view["arm"]), path, sha, tmp)
+            if "path" not in again or tmp.read_bytes() != dest.read_bytes():
+                raise we.WebEvidenceError(f"{dest.name} exists and differs from the transcript's extraction")
+        finally:
+            tmp.unlink(missing_ok=True)
+        return dict(path=str(dest), sha256=again["sha256"], count=again["count"])
 
     def abort_evidence(self, att, view, out):
         """A12 (F6): the evidence of the slot an abort (incident, cancel, STOP) hit BEFORE its row was committed: the probe's
@@ -1642,7 +1693,10 @@ class Chain:
         path = co.resolve_portable(export["path"], self.wd) if export.get("sha256") and export.get("path") else None
         dest = path.with_name(path.stem + ".web.jsonl") if path is not None else None
         try:
-            web = we.extract(self.web_rules(view["arm"]), path, export.get("sha256"), dest)
+            if dest is not None and dest.exists():
+                web = self._reverify_extraction(view, path, export.get("sha256"), dest)     # F20: a retry after a crash
+            else:
+                web = we.extract(self.web_rules(view["arm"]), path, export.get("sha256"), dest)
         except (we.TranscriptShaMismatch, we.WebEvidenceError) as exc:
             raise co.ChainAbort(f"web evidence: {exc}") from None
         if "path" in web:
@@ -2182,7 +2236,7 @@ class Chain:
     def arm_key(leg):
         return f"{leg['model']}|{leg.get('draft_kind', 'off')}"
 
-    def verify_manifest(self, man, leg, block):
+    def verify_manifest(self, man, leg, block, nonce=None):
         arm = leg.get("arm") or self.arm_ids[0]
         spec = self.spec_of(arm)
         why = []
@@ -2206,6 +2260,8 @@ class Chain:
                ("lang", rt.get("lang"), leg["lang"]), ("model", man.get("model"), leg["model"]),
                ("sampling_profile", rt.get("sampling_profile", man.get("sampling_profile")), "deployed"),
                ("registry.sha256", (man.get("registry") or {}).get("sha256"), self.ops.overlay_sha())]
+        if nonce:
+            chk.append(("invocation_nonce", rt.get("invocation_nonce"), nonce))
         frozen_snapshot = (self.snapshots.get(arm) or {}).get("sha256")
         if frozen_snapshot is not None:
             chk.append(("snapshot_sha256", rt.get("snapshot_sha256"), frozen_snapshot))
@@ -2256,7 +2312,7 @@ class Chain:
         if not man or not man.get("run_id") or man["run_id"] in self.seen_run_ids:
             return
         arm = leg.get("arm") or self.arm_ids[0]
-        why = self.verify_manifest(man, leg, block)
+        why = self.verify_manifest(man, leg, block, nonce=((st.get("ctx") or {}).get("rec") or {}).get("nonce"))
         self.seen_run_ids.add(man["run_id"])
         att["run_id"] = man["run_id"]
         if why:

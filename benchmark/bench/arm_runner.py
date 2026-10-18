@@ -1125,6 +1125,8 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                                 "the chain names one per leg attempt")
     man = provenance.gather(a.model, profile="deployed", runtime=ident, router=router)
     man.update(worker=before, run_id=run_id)
+    if getattr(a, "invocation_nonce", None):
+        man.setdefault("runtime", {})["invocation_nonce"] = a.invocation_nonce      # P384: the chain's binding nonce
 
     def save_manifest():
         pg.atomic_write(mp, p._scrub_pii(json.dumps(man, indent=2)).encode())

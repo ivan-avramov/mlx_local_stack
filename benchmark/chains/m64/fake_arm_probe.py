@@ -237,6 +237,7 @@ def main(argv=None):
     ap.add_argument("--limit", type=int)
     ap.add_argument("--attempt", type=int, default=1)
     ap.add_argument("--attempt-rerun-index", type=int, default=0)
+    ap.add_argument("--invocation-nonce")
     a = ap.parse_args(argv)
     env = os.environ
     arm = arm_of(a.scaffold)
@@ -289,6 +290,8 @@ def main(argv=None):
         overrides = {**overrides, **plan_m[min(n_inv, len(plan_m) - 1)]}
     man = build_manifest(arm, a.scaffold, a.model, a.lang, a.seed_base, worker, run_id, a.epoch_id,
                          a.frozen_prompt_date, overrides)
+    if a.invocation_nonce:
+        man["runtime"]["invocation_nonce"] = a.invocation_nonce
     barrier_on = man["runtime"]["evidence_policy"]["item_barrier"] == "on"
     cleanup_variant = plan_step.get("cleanup") if isinstance(plan_step, dict) else None
     cleanup = cleanup_status(cleanup_variant)

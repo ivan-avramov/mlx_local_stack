@@ -220,6 +220,7 @@ def main(argv=None):
     ap.add_argument("--limit", type=int)
     ap.add_argument("--attempt", type=int, default=1)
     ap.add_argument("--attempt-rerun-index", type=int, default=0)
+    ap.add_argument("--invocation-nonce")
     a = ap.parse_args(argv)
     env = os.environ
     state = Path(env["FAKE_PROBE_STATE"]) if env.get("FAKE_PROBE_STATE") else None
@@ -259,6 +260,8 @@ def main(argv=None):
         plan_m = json.loads(env["FAKE_MANIFEST_PLAN"])
         overrides = {**overrides, **plan_m[min(n_inv, len(plan_m) - 1)]}
     man = build_manifest(a.model, a.lang, a.seed_base, worker, run_id, overrides, frozen=a.frozen_prompt_date)
+    if a.invocation_nonce:
+        man["runtime"]["invocation_nonce"] = a.invocation_nonce
     cleanup = {"survivors": [], "containers_remaining": [], "uncertain": env.get("FAKE_CLEANUP_UNCERTAIN") == "1",
                "orphans_unattributed": []}
 
