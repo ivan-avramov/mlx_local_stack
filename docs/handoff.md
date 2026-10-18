@@ -91,4 +91,4 @@ keep C++, M64 on the tg2 screen); branch cleanup (Cursor audit, `docs/reviews/br
 - OrbStack bind mounts under `$TMPDIR` serve stale file sizes after in-place overwrites — mount fresh copies outside `$TMPDIR` (P361).
 - `--print-identity` needs docker on PATH (grader image id; fails closed).
 
-Next decision id C179; discussion ids continue from P372.
+Next decision id C180; discussion ids continue from P378.

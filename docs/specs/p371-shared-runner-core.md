@@ -175,7 +175,8 @@ watchdog ticks and compaction accounting when the generation policy enables them
   handoff with the merge commit; no rows exist in `ae7fca94…`.
 - **Campaign freeze (P377):** every generation-path core change rotates all configurations' identities together; a decision
   campaign freezes the core at a tagged commit, non-urgent fixes wait for the campaign's end, validity fixes merge and
-  re-baseline the affected arms.
+  re-baseline the affected arms. Enforced (C179): chain entries take `--campaign-core <tag>`; the chain refuses when its
+  core closure differs from the closure at that tag (entry, every launch, resume, exit); built in phase 3 with a red test.
 - Pairing composite and arm identity recipes unchanged (P311 spec 4); M64 arms keep `arm_generation_sha256`.
 - **Chain lifecycle closure (R15):** per chain entry, the static import closure of the entry (`identity_closure`, as the
   probe identity) + the serialized `ChainConfig` + the A4 gate + the launcher; frozen in `chain.json` at creation,
