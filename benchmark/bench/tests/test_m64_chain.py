@@ -17,6 +17,7 @@ from bench import arm_specs
 from bench import chain_core as core
 from bench import chain_ops as co
 from bench import chain_rows as cr
+from bench import contract_artifact as ca
 from bench import schedules
 from bench.tests.m64_support import (  # noqa: F401  (fixture: env)
     FAP, FROZEN, LABELS, M, PICK1, PICK2, REPO, SMOKE, SMOKE3, arg, calls, chain_json, env, invocations, log_has, run,
@@ -282,7 +283,10 @@ def test_the_lifecycle_closure_names_the_core_and_drift_aborts_and_leaves_the_re
 
 def test_the_contract_artifact_refs_are_frozen_in_the_config_and_in_chain_json(env, tmp_path):
     art = tmp_path / "contract_oc.json"
-    art.write_text('{"arm": "oc"}')
+    # P371 phase 4: the chain verifies the artifact's content, so it must be a real (incomplete: smoke) artifact of the
+    # arm's snapshot; this test is about the frozen refs
+    ca.write(art, ca.build("oc", FAP.snapshot_for("oc")["sha256"], "2.0.20",
+                           {n: (("OWED", "owed") if n in ca.OWED_BY else ("pass", "")) for n in ca.CHECKS}))
     argv = SMOKE + ["--contract-artifact", f"oc={art}"]
     cfg = M.m64_config(M.parse_args(argv))
     assert [a.as_dict() for a in cfg.contract_artifacts] == [dict(arm="oc", path=str(art),

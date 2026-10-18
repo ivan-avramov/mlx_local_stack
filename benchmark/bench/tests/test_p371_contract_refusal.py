@@ -115,8 +115,8 @@ def test_a_smoke_chain_refuses_an_artifact_of_another_snapshot(env, tmp_path):
 
 # ---------------------------------------------------------------- drift, replacement and removal while the chain runs
 class AtCall:
-    """Run `act` at the n-th `power_ok` call of the chain's ops (once per launch: after the launch verification, before the
-    probe is spawned) - the moment between two contract verifications."""
+    """Run `act` at the n-th `power_ok` call of the chain's ops (1: the entry gate, 2: before the load, then one per launch,
+    after the launch verification and before the probe is spawned) - the moment between two contract verifications."""
 
     def __init__(self, ops, n, act):
         self.ops, self.n, self.count, self.act = ops, n, 0, act
@@ -143,7 +143,7 @@ def test_replacing_the_artifact_mid_chain_aborts_rc_2_even_with_another_valid_ar
 
 def test_a_change_between_the_launch_check_and_the_first_manifest_is_a_barrier_mismatch(env, tmp_path):
     path = put(tmp_path, "incomplete")
-    AtCall(env["ops"], 1, lambda: path.write_bytes(path.read_bytes() + b" "))
+    AtCall(env["ops"], 3, lambda: path.write_bytes(path.read_bytes() + b" "))      # calls 1, 2: entry, before the load
     assert run(env, with_artifact(SMOKE, path)) == 2
     assert log_has(env, "BARRIER MISMATCH") and log_has(env, "contract artifact of oc")
 

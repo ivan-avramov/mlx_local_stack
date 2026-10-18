@@ -51,6 +51,7 @@ from . import chain_hooks
 from . import chain_incident as ci
 from . import chain_ops as co
 from . import chain_rows as cr
+from . import contract_artifact as ca
 from . import datefreeze
 from . import schedules
 from . import web_evidence as we
@@ -328,6 +329,33 @@ class Chain:
 
     def contract_refs(self):
         return {a.arm: dict(path=a.path, sha256=a.sha256) for a in self.config.contract_artifacts}
+
+    def contract_problems(self):
+        """A13 / R8 / P374: why an arm's contract artifact must be refused NOW (a list; empty = every arm's is accepted).
+        Only the per-arm layout (M64) runs against contract artifacts; tg1 / tg2 name none. A non-smoke chain needs an
+        artifact with verdict `pass` for EVERY arm; a smoke chain may run an arm with no artifact named or an `incomplete`
+        one, but never a failed, missing, malformed or drifted one. The artifact must be of the arm's frozen snapshot, and its
+        file sha256 must still be the one frozen at chain creation (a replacement mid-chain is drift, valid or not)."""
+        if not self.per_arm:
+            return []
+        smoke = bool(getattr(self.a, "smoke", False))
+        refs = {r.arm: r for r in self.config.contract_artifacts}
+        out = []
+        for arm in self.arm_ids:
+            ref = refs.get(arm)
+            if ref is None:
+                if not smoke:
+                    out.append(f"no contract artifact named for arm {arm} (--contract-artifact {arm}=PATH; "
+                               f"benchmark/m64/contract_artifact.py --arm {arm})")
+                continue
+            out += ca.problems(ref.path, arm=arm, file_sha256_frozen=ref.sha256, smoke=smoke,
+                               snapshot_sha256=(self.snapshots.get(arm) or {}).get("sha256"))
+        return out
+
+    def verify_contract(self, where):
+        problems = self.contract_problems()
+        if problems:
+            raise co.ChainAbort(f"contract artifact check failed at {where}: {'; '.join(problems)}")
 
     # -- lifecycle freeze (P24, R15) and the chain.json record (L4)
     def record_problem(self, doc):
@@ -643,6 +671,7 @@ class Chain:
         problem = self.campaign_problem() if getattr(self, "campaign_core", None) is not None else None
         if problem:
             raise co.ChainAbort(f"{problem} (at {where})")
+        self.verify_contract(where)
 
     # -- chain.json
     def sha256_block(self):
@@ -838,6 +867,7 @@ class Chain:
             return self.rc
         try:
             self.derive_policy()
+            self.verify_contract("entry")                # A13: the arms' contract artifacts (snapshots are known now)
         except co.ChainAbort as e:                       # nothing is written: no half-formed or re-derived record
             self.log(f"CHAIN ABORT: {e}")
             self.rc = e.code
@@ -1892,6 +1922,7 @@ class Chain:
         problem = self.campaign_problem() if getattr(self, "campaign_core", None) is not None else None
         if problem:
             why.append(f"{problem} (at barrier)")
+        why.extend(f"{p} (at barrier)" for p in self.contract_problems())
         frozen_arm = self.arms.get(self.arm_key(leg))
         if frozen_arm is not None and (man.get("runtime") or {}).get("arm_identity_sha256") != frozen_arm:
             why.append(f"arm_identity_sha256: {(man.get('runtime') or {}).get('arm_identity_sha256')!r} != frozen "
