@@ -324,8 +324,9 @@ def test_a_real_run_with_an_adapter_that_sends_the_wrong_paired_seed_turns_the_w
     cs.check_wire_controls(harness)                                      # the conforming adapter is clean
     original = ao.OpencodeArm.seed_overlay
     monkeypatch.setattr(ao.OpencodeArm, "seed_overlay", lambda self, model, seed, **kw: original(self, model, seed + 1, **kw))
+    (tmp_path / "defective").mkdir()
     with pytest.raises(AssertionError, match="seed="):
-        cs.check_wire_controls(OcHarness(probe, pinned_binary, monkeypatch, tmp_path))
+        cs.check_wire_controls(OcHarness(probe, pinned_binary, monkeypatch, tmp_path / "defective"))
 
 
 def test_a_real_compaction_run_whose_provider_breaks_the_summary_template_turns_the_compaction_check_red(

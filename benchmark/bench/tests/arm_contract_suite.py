@@ -3,7 +3,12 @@
 Test support, not a test module. An arm's test module subclasses `ArmContractSuite` and supplies `harness`, an
 `ArmHarness`: how to drive THAT client once against the mock provider and report what happened in arm-neutral terms
 (`ArmRun`). The `check_*` functions hold the assertions; `ArmContractSuite` only wires them to pytest, and the harness
-selftest (`test_m64_arm_contract_suite_selftest.py`) proves every check red against a defective harness.
+selftest (`test_m64_arm_contract_suite_selftest.py`) proves every check red against a defective REAL run.
+
+P371 phase 4 (A13): an `ArmRun` is always built from a real run of the shared item core (`arm_runner.main`) with wire
+capture, never from a literal: the real pinned opencode 2.0.20 against `opencode_v2_mock.py` (`test_m64_arm_oc_contract.py`)
+and the fake client process of `arm_contract_real.py`. Every request, compaction requests included, is checked for the
+control contract (sampling, seed, thinking budget, max_tokens, roles) and the tools contract of its class.
 
 Coverage of spec 6 (each is one check; `owed` ones skip with the reason, never pass silently):
   wire controls (sampling / seed / budgets / roles / tools on EVERY request), retries off (injected 500 -> abort, no
@@ -63,6 +68,8 @@ class ArmRun:
     wire_compaction_usage: list = field(default_factory=list)   # usage the mock reported for compaction requests
     wire_usage: list = field(default_factory=list)              # usage the mock reported for every request
     tool_windows: list = field(default_factory=list)            # adapter.tool_windows(stream)
+    cancelled_item: dict | None = None                          # the manifest's `cancelled_item` of a cooperative cancel
+    client_signals: list | None = None                          # signals the client process saw (a real cancel run)
 
 
 class ArmHarness(abc.ABC):
@@ -102,6 +109,16 @@ class ArmHarness(abc.ABC):
     def watchdog_windows(self, run):
         return run.tool_windows
 
+    def request_class(self, req):
+        """The worker-request class of one captured request: `task` | `compaction` | `auxiliary` (the arm tells them
+        apart on the wire; default: every request is a task request)."""
+        return "task"
+
+    def cancel_run(self):
+        """A REAL cooperative cancel mid-session: an `ArmRun` whose `client_signals` lists what the client process saw
+        (None: the arm checks cancellation through its adapter's `cancel` against a guard double only)."""
+        return None
+
     def inject_script(self, kind):
         """Mock scripts for the M62 gate positives: distinct calls (stall, hard ceiling) or one repeated call (loop)."""
         if kind == "loop":
@@ -118,24 +135,41 @@ def tools_hash(body):
     return hashlib.sha256(json.dumps(body.get("tools"), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def check_request_contract(h, run, *, what="request"):
+    """The control and tools contract of EVERY captured request of a run, compaction requests included: sampling, seed,
+    thinking budget, max_tokens (`h.expected.sampling`), the roles of the request's class, and its tools per class (the
+    adapter's `receipt_class_rules`: a class that must carry the tool set carries at least the required tools, a class
+    that must not carries none; P378: opencode's compaction class carries tools). Returns the classes seen."""
+    hashes, classes = {}, []
+    rules = getattr(h.adapter, "receipt_class_rules", None) or aa.ArmAdapter.receipt_class_rules
+    for i, req in enumerate(run.requests, 1):
+        body, cls = req.body, h.request_class(req)
+        classes.append(cls)
+        for key, want in h.expected.sampling.items():
+            if want is None:
+                assert key in body, f"{what} {i} ({cls}): {key} absent"
+            else:
+                assert body.get(key) == want, f"{what} {i} ({cls}): {key}={body.get(key)!r}, expected {want!r}"
+        roles = {m.get("role") for m in body.get("messages", [])}
+        allowed = set(h.expected.roles) & set(h.adapter.expected_roles(cls))
+        assert roles <= allowed, f"{what} {i} ({cls}): roles {sorted(roles)} outside {sorted(allowed)}"
+        names = set(_names(body))
+        if rules.get(cls) == "required":
+            assert h.expected.required_tools <= names, \
+                f"{what} {i} ({cls}): missing tools {sorted(h.expected.required_tools - names)}"
+        else:
+            assert not names, f"{what} {i} ({cls}): a {cls} request must carry no tools, got {sorted(names)}"
+        hashes.setdefault(cls, set()).add(tools_hash(body))
+    for cls, found in hashes.items():
+        assert len(found) == 1, f"a later {cls} request changed its tools (request_tools_sha256 differs)"
+    return classes
+
+
 def check_wire_controls(h):
     run = h.run(DEFAULT_SCRIPT)
     assert run.abort is None, f"the baseline run aborted: {run.abort!r}"
     assert len(run.requests) >= 2, "the default script must produce a tool call and a final request"
-    task_hashes = set()
-    for i, req in enumerate(run.requests, 1):
-        body = req.body
-        for key, want in h.expected.sampling.items():
-            if want is None:
-                assert key in body, f"request {i}: {key} absent"
-            else:
-                assert body.get(key) == want, f"request {i}: {key}={body.get(key)!r}, expected {want!r}"
-        roles = {m.get("role") for m in body.get("messages", [])}
-        assert roles <= h.expected.roles, f"request {i}: roles {sorted(roles)} outside {sorted(h.expected.roles)}"
-        names = set(_names(body))
-        assert h.expected.required_tools <= names, f"request {i}: missing tools {sorted(h.expected.required_tools - names)}"
-        task_hashes.add(tools_hash(body))
-    assert len(task_hashes) == 1, "a later task request changed its tools (request_tools_sha256 differs)"
+    check_request_contract(h, run)
 
 
 def check_removed_tools_absent(h):
@@ -175,6 +209,15 @@ def check_compaction(h):
     want = sorted(u["output"] + u["reasoning"] for u in run.wire_compaction_usage)
     assert got == want and want, f"compaction tokens not counted: accounted {got}, the wire reported {want}"
     assert run.events[-1].kind == "terminal" and run.events[-1].terminal == "stop"
+    # every request of the run, the summary (compaction) requests included, carries the same controls and the tools of
+    # its class (P378)
+    classes = check_request_contract(h, run, what="compaction-run request")
+    assert "compaction" in classes, "the compaction run produced no compaction-class request on the wire"
+    assert classes.count("compaction") == len(run.wire_compaction_usage), \
+        "the wire's compaction requests and their reported usage disagree"
+    for i, req in enumerate(run.requests, 1):
+        present = set(_names(req.body)) & set(h.adapter.removed_tools)
+        assert not present, f"compaction-run request {i}: D1/D2-removed tools present: {sorted(present)}"
 
 
 def check_terminal_shapes(h):
@@ -183,7 +226,11 @@ def check_terminal_shapes(h):
     length = h.shape("length")
     assert length.abort is None, "a length finish is a registered shape"
     cancel = h.shape("cancel")
-    assert cancel.abort is None and cancel.reconciliation.outcome == "runner_cancel"
+    if cancel.cancelled_item is not None:             # a real run: the runner's cooperative cancel stops it (no row)
+        assert cancel.row is None and cancel.cancelled_item["termination"]["reason"] == "runner_cancel", \
+            "a cooperative cancel must be recorded as runner_cancel"
+    else:
+        assert cancel.abort is None and cancel.reconciliation.outcome == "runner_cancel"
     error = h.shape("error")
     assert error.abort is not None, "an unclassifiable error shape must abort, never score"
     cuts = h.adapter.native_client_cuts
@@ -279,6 +326,11 @@ def _alive(pid):
 
 
 def check_cancel_sigterm_first(h):
+    real = h.cancel_run()
+    if real is not None:                                # a real cancel: the client process saw SIGTERM, and only that
+        assert real.client_signals == ["SIGTERM"], \
+            f"cancel must SIGTERM first and never SIGKILL itself: the client saw {real.client_signals}"
+        return
     calls = []
 
     class Guard:
