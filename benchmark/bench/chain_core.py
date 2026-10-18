@@ -289,7 +289,7 @@ class Chain:
                 self.pinned["generation_identity_sha256"] = args.generation_sha
         self.attempts, self.restarts, self.stop_info = [], [], None
         self.attempt_no, self.seen_run_ids, self.block_workers = {}, set(), []
-        self.progress = dict(loads=[], invocations=[], slot_attempts=[], pre_spawn=[])
+        self.progress = dict(loads=[], invocations=[], slot_attempts=[], pre_spawn=[], txns=[])
         self.incidents, self.dnf, self.realized = [], [], []
         self.schedule, self.schedule_sha = None, None
         self.loads, self.snapshot_tools = [], {}
@@ -494,6 +494,7 @@ class Chain:
     def load_record(self, previous):
         """What a resumed chain takes over from the record (the progress inventory and the run history)."""
         self.progress = previous["progress"]
+        self.progress.setdefault("txns", [])
         self.attempts = list(previous.get("attempts") or [])
         self.restarts = list(previous.get("restarts") or [])
         self.block_workers = list(previous.get("block_workers") or [])
@@ -868,6 +869,7 @@ class Chain:
             return 2
         try:
             self.init_lifecycle()
+            self.recover_txns()                          # F4: an interrupted archive / quarantine completes before anything reads
         except RecordInvalid as e:                       # never touch an invalid existing record
             self.log(f"CHAIN ABORT: {e}")
             self.rc = e.code
@@ -1165,39 +1167,101 @@ class Chain:
     def _stamp(self):
         return time.strftime("%Y%m%dT%H%M%S", time.gmtime())
 
-    def _move_prefix(self, sdir, prefix, dest):
-        dest.mkdir(parents=True, exist_ok=True)
-        for f in sorted(sdir.iterdir()):
-            if f.is_file() and f.name.startswith(prefix):
-                shutil.move(str(f), str(dest / f.name))
-        return dest
-
     def _relpath(self, path):
         return Path(path).relative_to(self.out_root).as_posix()
 
-    def _repoint(self, records, files_by_name, dest, status):
-        """Rewrite the `file` / `manifest` of the records whose files moved to `dest`, set `status`."""
+    # -- two-phase file moves (F4): intent (src -> dst + sha256, the record repoints) fsynced BEFORE the first move, idempotent
+    # moves, then the commit; a resume completes a transaction a crash left open
+    def _repoint_ops(self, records, names, dest, status):
+        """One `repoint` op per record: where its `file` / `manifest` go (when any of its files moves) and its new `status`."""
+        ops = []
         for rec in records:
             base = Path(rec["file"]).name[:-len(".jsonl")] + "."
-            if any(n.startswith(base) for n in files_by_name):          # a probe that never wrote its rows file moved too
-                for key in ("file", "manifest"):
-                    rec[key] = self._relpath(Path(dest) / Path(rec[key]).name)
-            rec["status"] = status
+            moved = any(n.startswith(base) for n in names)           # a probe that never wrote its rows file moved too
+            ops.append(dict(op="repoint", old=rec["file"], status=status,
+                            file=self._relpath(Path(dest) / Path(rec["file"]).name) if moved else None,
+                            manifest=self._relpath(Path(dest) / Path(rec["manifest"]).name) if moved else None))
+        return ops
 
-    def _mark_archived(self, load, rec, dest, names):
-        gen = rec["load_gen"]
-        mine = [i for i in self.progress["invocations"] if i["leg_key"][0] == load["idx"] and i["load_gen"] == gen
-                and i["status"] not in ("archived", "quarantined")]
-        self._repoint(mine, names, dest, "archived")
-        for key in ("slot_attempts", "pre_spawn"):
-            for r in self.progress[key]:
-                if r.get("load") == load["idx"] and r.get("load_gen") == gen:
-                    r["status"] = "archived"
+    def run_txn(self, kind, moves, ops):
+        """`moves`: [(src, dst)] absolute paths; `ops`: the record changes the commit applies (JSON, replayable)."""
+        txn = dict(id=len(self.progress["txns"]), kind=kind, status="intent", at=co.utc_stamp(), ops=ops,
+                   files=[dict(src=self._relpath(src), dst=self._relpath(dst), sha256=sha_file(src)) for src, dst in moves])
+        self.progress["txns"].append(txn)
+        self.write_json("txn-intent")                    # durable BEFORE the first file moves
+        self.complete_txn(txn)
+        return txn
+
+    def complete_txn(self, txn):
+        for f in txn["files"]:
+            self._move_one(self.out_root / f["src"], self.out_root / f["dst"], f["sha256"], txn["id"])
+        for op in txn["ops"]:
+            self.apply_txn_op(op)
+        txn["status"] = "committed"
+        self.write_json("txn-committed")
+
+    @staticmethod
+    def _move_one(src, dst, sha, tid):
+        """Idempotent: a file already at `dst` (its sha256 verified) is done; a file in neither place or one that changed
+        since the intent aborts (never guessed)."""
+        if dst.exists():
+            if sha_file(dst) != sha:
+                raise co.ChainAbort(f"file-move transaction {tid}: {dst.name} at its destination differs from the intent sha256")
+            if src.exists():
+                if sha_file(src) != sha:
+                    raise co.ChainAbort(f"file-move transaction {tid}: {src.name} exists at both ends with different content")
+                src.unlink()
+            return
+        if not src.exists():
+            raise co.ChainAbort(f"file-move transaction {tid}: {src.name} is at neither end (lost)")
+        if sha_file(src) != sha:
+            raise co.ChainAbort(f"file-move transaction {tid}: {src.name} changed since the intent was recorded")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        if sha_file(dst) != sha:
+            raise co.ChainAbort(f"file-move transaction {tid}: {dst.name} differs from the intent sha256 after the move")
+
+    def apply_txn_op(self, op):
+        kind = op["op"]
+        if kind == "repoint":
+            for rec in self.progress["invocations"]:
+                if rec["file"] in (op["old"], op["file"]):
+                    if op["file"] is not None:
+                        rec["file"], rec["manifest"] = op["file"], op["manifest"]
+                    rec["status"] = op["status"]
+        elif kind == "archive_attempts":
+            self._archive_attempts(set(op["files"]))
+        elif kind == "mark_archived_records":
+            for key in ("slot_attempts", "pre_spawn"):
+                for r in self.progress[key]:
+                    if r.get("load") == op["load"] and r.get("load_gen") == op["gen"]:
+                        r["status"] = "archived"
+        elif kind == "advance_load":
+            rec = next(r for r in self.progress["loads"] if r["load"] == op["load"])
+            if rec["load_gen"] != op["gen"]:
+                return                                   # already advanced (an idempotent replay)
+            if op.get("dnf_slots") is not None:          # incident_retry: the load reruns from scratch
+                self.dnf = [r for r in self.dnf if r["slot"] not in set(op["dnf_slots"])]
+                self.realized = [r for r in self.realized if r[0] != op["sched_idx"]]
+            rec["load_gen"] += 1
+            rec["status"] = "pending"
+            rec["cursor"] = dict(leg_index=0, phase=None)
+        else:
+            raise co.ChainAbort(f"file-move transaction: unknown op {kind!r}")
+
+    def recover_txns(self):
+        """Resume: roll every open (`intent`) transaction forward, before anything reads the inventory."""
+        for txn in self.progress["txns"]:
+            if txn["status"] == "intent":
+                self.log(f"RESUME: completing the interrupted file-move transaction {txn['id']} ({txn['kind']}, "
+                         f"{len(txn['files'])} files)")
+                self.complete_txn(txn)
 
     def archive_load(self, load, resume=False):
         """`restart_load`: the load's files go to `<session>/incomplete/<model>.<ts>/`. The sha manifest is recorded in
-        chain.json (fsynced) BEFORE the first file moves; the load's records are marked `archived` (paths rewritten to the
-        archive, shas kept), they leave the active inventory, and the load's generation advances."""
+        chain.json (fsynced) BEFORE the first file moves; the moves are one transaction (F4); the load's records are marked
+        `archived` (paths rewritten to the archive, shas kept), they leave the active inventory, and the load's generation
+        advances."""
         rec = load["rec"]
         sdir = self.session_dir(load)
         dest = sdir / "incomplete" / f"{load['model']}.{self._stamp()}"
@@ -1206,18 +1270,17 @@ class Chain:
         manifest = {f.name: sha_file(f) for f in files}
         gen = rec["load_gen"]
         rec["archives"].append(dict(dir=self._relpath(dest), at=co.utc_stamp(), files=manifest, load_gen=gen))
-        self.write_json("archiving")
-        self._move_prefix(sdir, prefix, dest)
-        self._mark_archived(load, rec, dest, manifest)
+        mine = [i for i in self.progress["invocations"] if i["leg_key"][0] == load["idx"] and i["load_gen"] == gen
+                and i["status"] not in ("archived", "quarantined")]
+        ops = self._repoint_ops(mine, manifest, dest, "archived")
+        ops.append(dict(op="mark_archived_records", load=load["idx"], gen=gen))
+        advance = dict(op="advance_load", load=load["idx"], gen=gen)
         if self.config.transport_policy == "incident_retry":
-            # the load reruns from scratch: its DNF rows (sidecars moved with the files), incidents and realized legs go too
-            mine = [r for r in self.dnf if r["slot"].split("|")[2:4] == [load["model"], load["session"]]]
-            rec["archives"][-1]["dnf"] = mine
-            self.dnf = [r for r in self.dnf if r not in mine]
-            self.realized = [r for r in self.realized if r[0] != self.sched_load_index(load)]
-        rec["load_gen"] += 1
-        rec["status"] = "pending"
-        rec["cursor"] = dict(leg_index=0, phase=None)
+            dnf = [r for r in self.dnf if r["slot"].split("|")[2:4] == [load["model"], load["session"]]]
+            rec["archives"][-1]["dnf"] = dnf
+            advance.update(dnf_slots=[r["slot"] for r in dnf], sched_idx=self.sched_load_index(load))
+        ops.append(advance)
+        self.run_txn("archive_load", [(f, dest / f.name) for f in files], ops)
         self.write_json("archived")
         return dest
 
@@ -1228,9 +1291,9 @@ class Chain:
         return None
 
     def quarantine(self, records):
-        """Never-validated invocation files -> `quarantine/<ts>/` with a sha256 manifest written FIRST. The ACCEPTED slot
-        attempts persisted for those files are archived (their rows no longer count); a persisted cheat / unclear
-        disposition stays (it is what makes the slot re-run, with its tokens)."""
+        """Never-validated invocation files -> `quarantine/<ts>/` with a sha256 manifest written FIRST, then ONE move
+        transaction (F4). The ACCEPTED slot attempts persisted for those files are archived (their rows no longer count); a
+        persisted cheat / unclear disposition stays (it is what makes the slot re-run, with its tokens)."""
         stamp = self._stamp()
         dest = self.out_root / "quarantine" / stamp
         n = 0
@@ -1245,32 +1308,31 @@ class Chain:
                     files[f.name] = f
         dest.mkdir(parents=True, exist_ok=True)
         fsync_json(dest / "MANIFEST.json", dict(at=co.utc_stamp(), files={n_: sha_file(f) for n_, f in files.items()}))
-        self._archive_attempts({r["file"] for r in records})
-        for name, f in files.items():
-            shutil.move(str(f), str(dest / name))
-        self._repoint(records, files, dest, "quarantined")
+        ops = [dict(op="archive_attempts", files=[r["file"] for r in records])]
+        ops += self._repoint_ops(records, files, dest, "quarantined")
+        self.run_txn("quarantine", [(f, dest / name) for name, f in files.items()], ops)
         self.write_json("quarantined")
         return dest
 
     def archive_stopped(self, load, leg, rec=None):
         """STOP during a leg: the partial leg's files go to `<session>/stopped/` (tg1: every file of the leg's stem; M64: only the
-        stopped invocation's own files, its siblings are other blocks' accepted rows)."""
+        stopped invocation's own files, its siblings are other blocks' accepted rows). One move transaction (F4)."""
         sdir = self.session_dir(load)
         own = self.per_arm and rec is not None
         prefix = (Path(rec["file"]).name[:-len(".jsonl")] if own else leg["stem"]) + "."
         dest = sdir / "stopped" / f"{leg['stem']}.{self._stamp()}"
-        names = {f.name for f in sdir.iterdir() if f.is_file() and f.name.startswith(prefix)}
-        self._move_prefix(sdir, prefix, dest)
+        files = [f for f in sorted(sdir.iterdir()) if f.is_file() and f.name.startswith(prefix)]
+        names = {f.name for f in files}
         if own:
             mine = [rec]
         else:
             mine = [i for i in self.progress["invocations"] if Path(i["file"]).name.startswith(leg["stem"] + ".")
                     and Path(i["file"]).parent.name == load["session"] and i["load_gen"] == load["rec"]["load_gen"]
                     and i["status"] in ("running", "validated", "partial_incident", "hook_stopped")]
-        self._archive_attempts({r["file"] for r in mine})
+        ops = [dict(op="archive_attempts", files=[r["file"] for r in mine])]
         for r in mine:
-            was = r["status"]
-            self._repoint([r], names, dest, "quarantined" if was == "running" else "archived")
+            ops += self._repoint_ops([r], names, dest, "quarantined" if r["status"] == "running" else "archived")
+        self.run_txn("archive_stopped", [(f, dest / f.name) for f in files], ops)
         return dest
 
     def _archive_attempts(self, files):
