@@ -10,7 +10,7 @@ import pytest
 
 from bench import arm_adapter as aa
 from bench import arm_opencode as ao
-from bench import tg1_runner
+from bench import arm_opencode
 from bench.tests.test_c147_a4_gate import fake, run, run_root, config_tree     # noqa: F401  (fixtures and helpers)
 from bench.tests.test_session_pinning_a4_v2 import gate, FakeLogTail, row     # noqa: F401
 
@@ -24,7 +24,7 @@ def tg1c(fake, monkeypatch):
     doc["compaction"] = {"auto": False}
     doc["permissions"] = [dict(action="websearch", resource="*", effect="deny")]
     (repo / "benchmark/opencode_bench_v2_web_tg1.json").write_text(json.dumps(doc, sort_keys=True) + "\n")
-    monkeypatch.setattr(tg1_runner, "CARRIER", repo / "benchmark/opencode_bench_v2_web_tg1.json")
+    monkeypatch.setattr(arm_opencode, "CARRIER", repo / "benchmark/opencode_bench_v2_web_tg1.json")
     (repo / "benchmark/opencode_plugins/datefreeze.js").write_text("// fake datefreeze\n")
     return module, binary, repo
 

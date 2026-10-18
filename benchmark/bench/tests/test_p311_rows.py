@@ -27,22 +27,22 @@ def test_manifest_and_rows_carry_the_composite_and_the_arm_identity(probe, monke
 
 
 def test_an_unidentifiable_worker_refuses_before_the_manifest(probe, monkeypatch, tmp_path):
-    from bench import arm_identity, tg1_runner
+    from bench import arm_identity, arm_runner
     f = tg_fixture(probe, monkeypatch, tmp_path)
 
     def boom(*a):
         raise arm_identity.ArmIdentityError("unknown worker flag --surprise")
-    monkeypatch.setattr(tg1_runner, "arm_identity_of", boom)
+    monkeypatch.setattr(arm_runner, "arm_identity_of", boom)
     with pytest.raises(SystemExit, match="REFUSED.*unknown worker flag"):
         f["run"]("one")
     assert not f["mp"].exists() and not f["out"].exists()
 
 
 def test_resume_refuses_a_changed_arm_identity(probe, monkeypatch, tmp_path):
-    from bench import tg1_runner
+    from bench import arm_runner
     f = tg_fixture(probe, monkeypatch, tmp_path)
     assert f["run"]("one") == 0
-    monkeypatch.setattr(tg1_runner, "arm_identity_of", lambda *a: ({"flags": {}}, "d" * 64))
+    monkeypatch.setattr(arm_runner, "arm_identity_of", lambda *a: ({"flags": {}}, "d" * 64))
     with pytest.raises(SystemExit, match="REFUSED"):
         f["run"]("one,two")
 

@@ -172,14 +172,32 @@ def _check_fields(rows, manifest, binary, tmp_path, root):
         assert man.is_file() and _sha(man.read_bytes()) == tree["manifest_sha256"], "final tree manifest sha"
 
 
-def run_item_new_side(scenario):
-    with pytest.MonkeyPatch.context() as mp, tempfile.TemporaryDirectory(prefix="p371-new-") as tmp:
-        tmp_path = Path(tmp).resolve()
-        result, raw = _run_item_scenario(scenario, tmp_path, mp)
-        binary = Path(os.environ.get("OPENCODE_PROBE_BIN", ""))
-        result["_raw"] = raw
-        result["_expected"] = [derive(r["manifest"], binary) if r["manifest"] else None for r in raw]
+def run_in_pytest(tmp_path, monkeypatch, scenario):
+    """Runs INSIDE a pytest process (so the repository conftest guards apply, as for the bundle side): the scenario on
+    the current tree, plus `_raw` and `_expected` (see the module docstring)."""
+    result, raw = _run_item_scenario(scenario, tmp_path, monkeypatch)
+    binary = Path(os.environ.get("OPENCODE_PROBE_BIN", ""))
+    result["_raw"] = raw
+    result["_expected"] = [derive(r["manifest"], binary) if r["manifest"] else None for r in raw]
     return result
+
+
+def run_item_new_side(scenario, timeout=170):
+    """Execute `scenario` on the current tree in a fresh pytest subprocess (cwd = benchmark/) and return its result."""
+    import subprocess
+    driver = Path(__file__).resolve().parent / "new_side_driver.py"
+    with tempfile.TemporaryDirectory(prefix="p371-new-") as scratch:
+        sfile, rfile = Path(scratch) / "scenario.json", Path(scratch) / "result.json"
+        sfile.write_text(json.dumps(scenario))
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST", "P371_"))}
+        env.update(P371_SCENARIO=str(sfile), P371_RESULT=str(rfile))
+        got = subprocess.run([sys.executable, "-m", "pytest", str(driver), "-p", "no:cacheprovider", "-q", "-x", "-s",
+                              "-o", "addopts=", "-k", "test_run_scenario"], cwd=str(REPO / "benchmark"), env=env,
+                             capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        if got.returncode:
+            raise RuntimeError("new-side scenario %s failed (rc %d)\n%s" % (scenario.get("name"), got.returncode,
+                                                                           (got.stdout + got.stderr)[-3000:]))
+        return json.loads(rfile.read_text())
 
 
 POINTERS = {"/probe_code_sha256": "probe_code_sha256", "/scaffold_policy_sha256": "scaffold_policy_sha256",

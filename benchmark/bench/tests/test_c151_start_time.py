@@ -14,7 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from bench import chain_ops, proc_guard, tg1_runner
+from bench import arm_runner, chain_ops, proc_guard
+from bench.tests.arm_entry import run_item_tg1
 from bench.token_turn_gate import TransportAbort
 
 psutil = pytest.importorskip("psutil")
@@ -102,16 +103,16 @@ def test_default_parents_matches_psutil_ancestry(boot_shift, child):
 def test_tg1_worker_identity_survives_a_boot_time_shift(boot_shift, child, monkeypatch, tmp_path):
     reg = tmp_path / "registry.yaml"
     reg.write_text("mlx_port: 8091\n")
-    monkeypatch.setattr(tg1_runner.provenance.paths, "registry_path", lambda: reg)
+    monkeypatch.setattr(arm_runner.provenance.paths, "registry_path", lambda: reg)
 
     class Probe:
         @staticmethod
         def _worker_load_identity(model, router):
             return {"pid": child.pid, "model_path": "org/model"}
 
-    before = tg1_runner.worker_identity(Probe, "m", {"pid": os.getpid()})
+    before = arm_runner.worker_identity(Probe, "m", {"pid": os.getpid()})
     boot_shift()
-    after = tg1_runner.worker_identity(Probe, "m", {"pid": os.getpid()})
+    after = arm_runner.worker_identity(Probe, "m", {"pid": os.getpid()})
     proc_guard.require_identity(before, after)          # raised "worker identity missing or drifted" before C151
 
 
@@ -404,7 +405,7 @@ def test_failing_grader_kill_still_runs_cleanup(tmp_path, monkeypatch):
     monkeypatch.setattr(proc_guard, "ProcessGuard", Guard)
     monkeypatch.setattr(proc_guard, "wait_cancel", lambda *a, **k: calls.append("cancel"))
     with pytest.raises(TransportAbort):
-        tg1_runner.run_item(None, model="fixture", work=tmp_path, prompt="fixture",
+        run_item_tg1(None, model="fixture", work=tmp_path, prompt="fixture",
                             env={"TMPDIR": str(tmp_path / "itemtmp")}, binary="fixture",
                             evidence=tmp_path / "evidence/one", entry=dict(baseline_failing=1, leaves=[["a"]],
                                                                          lang="python"),

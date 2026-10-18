@@ -2,8 +2,8 @@
 """M64 `oc` arm probe (spec 5, 5.1): seeded opencode 2.x sessions through the ArmAdapter. GENERATION ONLY (P311-lite).
 
 The M64 configuration of the tg1 path: the compaction-ON carrier `opencode-v2-web-tg1c` with the shared SearXNG MCP
-server (D2), retries off, the shell watchdog, compaction accounted. Imports only the generation core, the tg1 runner (as
-a library), the ArmAdapter contract, the opencode adapter and the arm runner; the rows carry no web-audit or answer-key
+server (D2), retries off, the shell watchdog, compaction accounted. Imports only the generation core, the shared item core, the ArmAdapter
+contract, the opencode adapter and the tg1 corpus (never `chain_hooks` / `web_evidence`; the search service is injected here); the rows carry no web-audit or answer-key
 fields (`bench/tg1_score.py` derives those post hoc). `probe_code_sha256` is the static import closure of this file
 (`bench/identity_closure.py`), so a scoring fix never changes it. `run_tg1_probe.py` is untouched and keeps its identity.
 
@@ -20,7 +20,7 @@ import sys
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import arm_adapter, arm_opencode, arm_runner, m64_search
+from bench import arm_adapter, arm_opencode, arm_runner, corpus_tg1, m64_search
 from bench import opencode_v2_core as _core
 
 _core.bind(globals())
@@ -76,9 +76,15 @@ def _parser():
     return ap
 
 
+def _corpus(a):
+    return corpus_tg1.Tg1Corpus(getattr(a, "universe", None) or arm_runner.DEFAULT_UNIVERSE,
+                                polyglot_root=_polyglot_root, polyglot_sha=_polyglot_sha)
+
+
 def _main(search):
     adapter = arm_opencode.OpencodeArm(sys.modules[__name__], mode="m64",
                                        search=search if search is not None else m64_search.service())
+    template = arm_opencode.m64_template()
     if "--print-identity" in sys.argv[1:]:
         # read-only provenance identity; no router, worker or model is touched
         pre = argparse.ArgumentParser(allow_abbrev=False)
@@ -89,11 +95,13 @@ def _main(search):
         pre.add_argument("--sampling-profile", choices=("deployed",), default="deployed")
         known, _ = pre.parse_known_args()
         try:
-            return arm_runner.print_identity(sys.modules[__name__], adapter, known)
+            return arm_runner.print_identity(sys.modules[__name__], adapter, known, template=template,
+                                             corpus=_corpus(known))
         except arm_adapter.ArmRefused as exc:
             sys.exit("REFUSED: " + _scrub_error(exc))
     a = _parser().parse_args()
-    return arm_runner.main(sys.modules[__name__], adapter, a)
+    return arm_runner.main(sys.modules[__name__], adapter, a, template=template,
+                           evidence=arm_opencode.m64_evidence(), corpus=_corpus(a))
 
 
 if __name__ == "__main__":

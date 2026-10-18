@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import pytest
-from bench import tg1_runner as runner, structured_grade as sg
+from bench import arm_opencode, arm_runner as runner, structured_grade as sg
 from bench.tests.test_opencode_v2_probe import tg1_probe as probe, fixture_probe, MODEL
 from bench.tests.opencode_v2_mock import MockServer
 from m62 import universe_preflight as up
@@ -41,7 +41,7 @@ def tg_fixture(probe, monkeypatch, tmp_path, *, binary=None, mock=None):
             "/v1", "/vllm-tripwire/v1"
         )
     f["carrier"].write_text(json.dumps(carrier))
-    monkeypatch.setattr(runner, "CARRIER", f["carrier"])
+    monkeypatch.setattr(arm_opencode, "CARRIER", f["carrier"])
     identity = dict(
         pid=1234, create_time=100, model_path="fixture/model", registry_sha256="sha"
     )

@@ -273,6 +273,8 @@ class ArmAdapter(abc.ABC):
     watchdog_enabled = False            # the runner runs the spec 5.4 shell watchdog
     pinned_version = ""                 # the client version the identity is read against
     observed = None                     # set by the runner after each item: {events, reconciliation, tool_windows}
+    date_receipt_key = None             # evidence key of the per-item date-freeze receipts (None: the arm has none)
+    report_gate_on_abort = False        # the abort stamp carries the failed attempt's gate report (M64 chains count it)
 
     # -- identity and provenance
     @abc.abstractmethod
@@ -305,8 +307,24 @@ class ArmAdapter(abc.ABC):
         """Path of the pinned client executable (refuses when absent)."""
 
     @abc.abstractmethod
-    def preflight(self, **kw):
-        """A4-equivalent: the session routing / server cache-session proof. Returns the receipt or None."""
+    def preflight(self, *, selection, path=None, router=None, limit=None, model=None, exe_sha=None):
+        """A4-equivalent: the session routing / server cache-session proof for THIS selection (the adapter extracts its
+        own carrier fields from `selection`). Returns the receipt or None."""
+
+    @abc.abstractmethod
+    def seed_overlay(self, model, seed):
+        """The per-item seed overlay the client config receives (client-native shape)."""
+
+    @abc.abstractmethod
+    def overlay_sha(self, env):
+        """sha256 of the overlay actually present in the spawn environment `env` (the row's `overlay_sha256`)."""
+
+    def generation_identity_sha256(self, fields):
+        """The generation composite over `fields` (default: the per-arm recipe, spec 4)."""
+        return arm_generation_sha256(self.arm_id, fields, self.GENERATION_FIELDS)
+
+    def verify_item_env(self, env, paths, frozen_date):
+        """Refuse a spawn environment that does not name this item's evidence paths / frozen date (default: nothing)."""
 
     @abc.abstractmethod
     def make_run_dir(self, workdir, run_id, selection):

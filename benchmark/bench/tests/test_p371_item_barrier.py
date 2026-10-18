@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from bench import item_barrier as ib
-from bench import tg1_runner
+from bench import arm_runner
 from bench import token_turn_gate as tg
 
 
@@ -39,7 +39,7 @@ def touch(path):
 
 
 def test_the_timing_constants_are_the_manifest_acks():
-    assert ib.ACK_TIMEOUT_S == tg1_runner.ACK_TIMEOUT_S and ib.ACK_POLL_S == tg1_runner.ACK_POLL_S
+    assert ib.ACK_TIMEOUT_S == arm_runner.ACK_TIMEOUT_S and ib.ACK_POLL_S == arm_runner.ACK_POLL_S
 
 
 def test_disabled_writes_no_files_and_never_waits(tmp_path):

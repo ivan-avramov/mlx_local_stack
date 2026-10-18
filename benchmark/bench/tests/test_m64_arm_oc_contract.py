@@ -11,7 +11,8 @@ import pytest
 
 from bench import arm_adapter as aa
 from bench import arm_opencode as ao
-from bench import arm_runner, model_params, rowschema
+from bench import arm_opencode, arm_runner, model_params, rowschema
+from bench.tests.arm_entry import m64_main
 from bench import token_turn_gate as tg
 from bench.tests import arm_contract_suite as cs
 from bench.tests.opencode_v2_mock import MockServer
@@ -64,10 +65,9 @@ class OcHarness(cs.ArmHarness):
         sub = self.tmp / f"run{self.n}"
         sub.mkdir()
         f = tg_fixture(self.p, self.mp, sub, binary=self.binary, mock=mock)
-        t1 = sys.modules["bench.tg1_runner"]
         carrier, context = self._carrier(mock, window)
-        self.mp.setattr(t1, "CARRIER", carrier)
-        self.mp.setattr(t1, "worker_json", lambda endpoint: ({"configured_context_limit": context}
+        self.mp.setattr(arm_opencode, "CARRIER", carrier)
+        self.mp.setattr(arm_runner, "worker_json", lambda endpoint: ({"configured_context_limit": context}
                                                              if endpoint == "health" else {"summary": {"in_flight": 0}}))
         return f, sub
 
@@ -92,7 +92,7 @@ class OcHarness(cs.ArmHarness):
             adapter = ao.OpencodeArm(self.p, mode="m64", search=ao.OfflineTestSearchService())
             abort, row = None, None
             try:
-                arm_runner.main(self.p, adapter, a)
+                m64_main(self.p, adapter, a)
             except SystemExit as exc:
                 abort = exc if exc.code not in (0, None) else None
             if out.exists():
@@ -222,12 +222,11 @@ def test_the_exposed_context_is_262144_and_checked_against_health(probe, pinned_
     h = OcHarness(probe, pinned_binary, monkeypatch, tmp_path)
     with MockServer({}) as mock:
         f, sub = h._setup(mock, None)
-        t1 = sys.modules["bench.tg1_runner"]
-        monkeypatch.setattr(t1, "worker_json", lambda endpoint: ({"configured_context_limit": 131072}
+        monkeypatch.setattr(arm_runner, "worker_json", lambda endpoint: ({"configured_context_limit": 131072}
                                                                  if endpoint == "health" else {"summary": {"in_flight": 0}}))
         a = entry_parser().parse_args(h._argv(sub, sub / "rows.jsonl", [])[1:])
         with pytest.raises(SystemExit, match="configured_context_limit differs from carrier"):
-            arm_runner.main(probe, h.adapter, a)
+            m64_main(probe, h.adapter, a)
         assert not (sub / "rows.jsonl").exists() and mock.chats == []
 
 
@@ -239,7 +238,7 @@ def test_the_m64_arm_refuses_before_any_effect_without_the_search_service(probe,
         monkeypatch.setattr(sys, "argv", ["probe", *h._argv(sub, sub / "rows.jsonl", [])[1:]])
         before = sorted(p.name for p in Path(os.environ["STACK_WORKDIR"]).iterdir())
         with pytest.raises(SystemExit, match="REFUSED: the shared search service"):
-            arm_runner.main(probe, ao.OpencodeArm(probe, mode="m64"), a)
+            m64_main(probe, ao.OpencodeArm(probe, mode="m64"), a)
         assert mock.requests == [] and not (sub / "rows.jsonl").exists()
         assert sorted(p.name for p in Path(os.environ["STACK_WORKDIR"]).iterdir()) == before     # no run dir, no manifest
 
@@ -259,9 +258,8 @@ def test_a_shell_descendant_past_the_deadline_flags_exec_timeout_in_the_row(prob
     a tool only when it completes, so the window is learned from its `tool_use` event and the child attributed then.)"""
     import time as _time
     f = tg_fixture(probe, monkeypatch, tmp_path)
-    t1 = sys.modules["bench.tg1_runner"]
-    monkeypatch.setattr(t1, "CARRIER", REPO / "benchmark/opencode_bench_v2_web_tg1.json")
-    monkeypatch.setattr(t1, "worker_json", lambda e: (
+    monkeypatch.setattr(arm_opencode, "CARRIER", REPO / "benchmark/opencode_bench_v2_web_tg1.json")
+    monkeypatch.setattr(arm_runner, "worker_json", lambda e: (
         {"configured_context_limit": 262144} if e == "health" else {"summary": {"in_flight": 0}}))
     now = _time.time()
     window = dict(start=int((now - 5) * 1000), end=int((now + 600) * 1000))
@@ -278,14 +276,16 @@ def test_a_shell_descendant_past_the_deadline_flags_exec_timeout_in_the_row(prob
     binary.write_text(binary.read_text().replace("run)\n", "run)\nsleep 311 &\n", 1)
                       .replace('\nexit "$(cat ', '\nsleep 5\nexit "$(cat ', 1))
     adapter = ao.OpencodeArm(probe, mode="m64", search=ao.OfflineTestSearchService())
-    adapter.watchdog_limit_s, adapter.watchdog_grace_s = 1.0, 0.5
+    import dataclasses
+    from bench import run_config as rc
+    template = dataclasses.replace(ao.m64_template(), watchdog=rc.watchdog_on(limit_s=1.0, grace_s=0.5, toolwindows_sha256="w" * 64))
     monkeypatch.setattr(adapter, "_prove_plugins", lambda *a, **k: None)      # the fake client has no plugin API
     out = tmp_path / "rows.jsonl"
     argv = ["probe", "--model", MODEL, "--items", "one", "--seed-base", "77", "--scaffold", "opencode-v2-web-tg1c",
             "--limit", "5", "--out", str(out), "--universe", str(tmp_path / "universe.json"),
             "--frozen-prompt-date", FROZEN]
     monkeypatch.setattr(sys, "argv", argv)
-    assert arm_runner.main(probe, adapter, entry_parser().parse_args(argv[1:])) == 0
+    assert m64_main(probe, adapter, entry_parser().parse_args(argv[1:]), template) == 0
     (row,) = [json.loads(line) for line in out.read_text().splitlines()]
     dog = row["shell_watchdog"]
     # the background `sleep 311` and the fake client's own idle `sleep 5` both started inside the reported window

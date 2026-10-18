@@ -82,3 +82,12 @@ def test_every_tg1_runner_host_call_that_is_client_neutral_is_in_the_seam():
     unclassified = called - set(EXPECTED) - non_seam
     assert not unclassified, sorted(unclassified)
     assert not (non_seam & set(EXPECTED))
+
+
+def test_every_core_host_call_is_in_the_seam_or_classified():
+    """The shared core (`arm_runner`) is held to the same drift guard as the thinned tg1 runner."""
+    src = (BENCH / "arm_runner.py").read_text()
+    called = {n.attr for n in ast.walk(ast.parse(src))
+              if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "p"}
+    unclassified = called - set(EXPECTED) - set(hostmod.NON_SEAM_HOST_USES)
+    assert not unclassified, sorted(unclassified)

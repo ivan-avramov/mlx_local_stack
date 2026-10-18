@@ -1,7 +1,8 @@
 import json, os, subprocess, threading, time
 from pathlib import Path
 import pytest
-from bench import proc_guard as pg, token_turn_gate as tg, structured_grade as sg, tg1_runner as runner
+from bench.tests.arm_entry import run_item_tg1
+from bench import proc_guard as pg, token_turn_gate as tg, structured_grade as sg, arm_runner as runner
 from bench.tests.test_proc_guard import Process, guard
 from bench.tests.test_token_turn_gate import request, assistant, event
 
@@ -97,7 +98,7 @@ def test_resource_kill_cancels_before_export(tmp_path,monkeypatch,capsys,slow_ph
             time.sleep(0.04)
         return sg.Grade(passing={("test.py", "test", "ok")})
     monkeypatch.setattr(sg, "grade", grade)
-    result=runner.run_item(None,model="fixture",work=work,prompt="fixture",env={"TMPDIR":str(tmp_path/"itemtmp")},binary="fixture",evidence=tmp_path/"evidence/one",entry=entry,limit=262144,private=private,router={},base="fixture")
+    result=run_item_tg1(None,model="fixture",work=work,prompt="fixture",env={"TMPDIR":str(tmp_path/"itemtmp")},binary="fixture",evidence=tmp_path/"evidence/one",entry=entry,limit=262144,private=private,router={},base="fixture")
     assert calls[0] == "busy" and calls.index("kill-client") == 1, calls   # C147 pre-kill summary sample
     after_cancel = lambda name: calls.index(name, calls.index("cancel"))
     order = ["kill-client", "kill-model", "cancel", "busy", "idle", "drain", "finish-grades", "export"]
@@ -259,7 +260,7 @@ def test_interrupted_acquisition_runner_cleans_and_cancels(tmp_path, monkeypatch
         return {'summary': {'in_flight': 0}}
     monkeypatch.setattr(runner, 'worker_json', metrics)
     with pytest.raises(SystemExit):
-        runner.run_item(None, model='fixture', work=work, prompt='fixture',
+        run_item_tg1(None, model='fixture', work=work, prompt='fixture',
             env={'TMPDIR': str(tmp_path/'itemtmp')}, binary='fixture', evidence=tmp_path/'evidence/one',
             entry=dict(baseline_failing=1, leaves=[['a']], lang='python'),
             limit=262144, private=private, router={}, base='fixture')
@@ -299,7 +300,7 @@ def test_failed_cancellation_is_not_retried_or_exported(tmp_path, monkeypatch):
         raise tg.TransportAbort('worker health: did not cancel')
     monkeypatch.setattr(pg, 'wait_cancel', cancel)
     with pytest.raises(tg.TransportAbort, match='did not cancel'):
-        runner.run_item(None, model='fixture', work=tmp_path, prompt='fixture',
+        run_item_tg1(None, model='fixture', work=tmp_path, prompt='fixture',
             env={'TMPDIR': str(tmp_path/'itemtmp')}, binary='fixture', evidence=tmp_path/'evidence/one',
             entry=dict(baseline_failing=1, leaves=[['a']], lang='python'),
             limit=262144, private=tmp_path, router={}, base='fixture')

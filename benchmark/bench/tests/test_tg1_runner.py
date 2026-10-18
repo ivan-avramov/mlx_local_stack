@@ -6,7 +6,7 @@ import threading
 import time
 from pathlib import Path
 import pytest
-from bench import tg1_runner as runner
+from bench import arm_opencode, arm_runner as runner
 from bench import structured_grade as sg
 from bench.token_turn_gate import TokenTurnGate, TransportAbort
 from bench.tests.test_token_turn_gate import usage
@@ -146,7 +146,7 @@ def test_export_bounds_rejection_count_exact():
             }
         ]
     }
-    assert runner.tool_bounds_rejections(export) == 1
+    assert arm_opencode.tool_bounds_rejections(export) == 1
 
 
 def test_k_and_ceiling_skip_unnecessary_grading(tmp_path):

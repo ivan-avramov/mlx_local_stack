@@ -118,7 +118,7 @@ class NeutralArm(aa.ArmAdapter):
     def snapshot(self):
         return aa.Snapshot(tool=self.tool, fields=dict(label=self.label, version="1.0"), complete=True)
 
-    def identity(self, *, selection, universe_sha, version, binary, inject=None):
+    def identity(self, *, selection, universe_sha, version, binary, inject=None, inject_addendum_sha256=None):
         label = self.label + "-inject:" + inject if inject else self.label
         policy = dict(
             gate=dict(tg.POLICY), hygiene=dict(__import__("bench.proc_guard", fromlist=["POLICY"]).POLICY),

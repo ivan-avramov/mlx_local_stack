@@ -12,7 +12,7 @@ import pytest
 
 from bench import arm_adapter as aa
 from bench import arm_opencode as ao
-from bench import datefreeze, tg1_runner
+from bench import datefreeze, tg1_runner, toolchain
 from bench import token_turn_gate as tg
 from bench.tests.test_opencode_v2_probe import MODEL, tg1_probe as probe          # noqa: F401  (fixture)
 from bench.tests.test_token_turn_gate import event, usage
@@ -263,7 +263,7 @@ def fake_binary(tmp_path):
 
 
 def test_tg1_mode_identity_equals_tg1_runner_identity(probe, tmp_path, monkeypatch):
-    monkeypatch.setattr(tg1_runner.toolchain, "current", lambda: {"lock_sha256": "l", "interpreter": "i",
+    monkeypatch.setattr(toolchain, "current", lambda: {"lock_sha256": "l", "interpreter": "i",
                                                                   "grader_image_id": "g"})
     arm = tg1_arm(probe)
     sel = arm.selection()
@@ -272,11 +272,12 @@ def test_tg1_mode_identity_equals_tg1_runner_identity(probe, tmp_path, monkeypat
     theirs = tg1_runner.identity(probe, sel, "u" * 64, "2.0.20", binary)
     assert mine == theirs
     assert arm.identity(selection=sel, universe_sha="u" * 64, version="2.0.20", binary=binary,
-                        inject="stall") == tg1_runner.identity(probe, sel, "u" * 64, "2.0.20", binary, inject="stall")
+                        inject="stall", inject_addendum_sha256=tg1_runner.inject_addendum_sha256("stall")
+                        ) == tg1_runner.identity(probe, sel, "u" * 64, "2.0.20", binary, inject="stall")
 
 
 def test_m64_identity_has_its_own_label_policy_and_generation_data(probe, tmp_path, monkeypatch):
-    monkeypatch.setattr(tg1_runner.toolchain, "current", lambda: {"lock_sha256": "l", "interpreter": "i",
+    monkeypatch.setattr(toolchain, "current", lambda: {"lock_sha256": "l", "interpreter": "i",
                                                                   "grader_image_id": "g"})
     binary = fake_binary(tmp_path)
     t, m = tg1_arm(probe), m64_arm(probe)

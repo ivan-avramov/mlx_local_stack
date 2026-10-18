@@ -12,8 +12,9 @@ Two configurations of one class:
               Compaction requests are visible only in the session export (opencode 2.0.20 emits no event for them), so
               they are accounted from it (their tokens count to the task) and from the datefreeze receipts.
 
-Nothing here edits a file in the tg1 generation closure: the tg1 modules are used as a library. The M64 arm refuses to
-run (`ArmRefused`) while the D2 search service is the stub (`UnavailableSearchService`)."""
+P371: this module owns every opencode specific (A11) and the tg1 constants the tg1 entry re-exports (`tg1_runner`):
+carrier / plugin paths, the generation data and composite fields. It imports no search service: the entry injects one
+(`run_oc_probe.py`); the M64 arm refuses to run (`ArmRefused`) while the service is the stub (`UnavailableSearchService`)."""
 from __future__ import annotations
 
 import copy
@@ -27,17 +28,35 @@ import subprocess
 import tempfile
 
 from . import arm_adapter as aa
-from . import m64_search
+from . import arm_runner as core
+from . import arm_watchdog
 from . import datefreeze, identity_closure as ic, opencode_export as ox, provenance
 from . import proc_guard as pg
+from . import run_config as rc
 from . import structured_grade as sg
-from . import tg1_runner as t1
 from . import token_turn_gate as tg
 from . import toolchain
 from .arm_adapter import Transcript, Usage  # noqa: F401  (re-exported for callers and tests)
 
 REPO = Path(__file__).resolve().parents[2]
-TG1_LABEL = t1.SCAFFOLD
+TG1_LABEL = "opencode-v2-web-tg1"
+CARRIER = REPO / "benchmark/opencode_bench_v2_web_tg1.json"
+PLUGIN = REPO / "benchmark/opencode_plugins/toolbounds.js"
+DATEFREEZE_PLUGIN = REPO / "benchmark/opencode_plugins/datefreeze.js"
+# P311-lite: the non-Python inputs of the generation identity (plugins and the carrier the probe writes); the Python
+# part is the static import closure of the entry (`bench.identity_closure`).
+GENERATION_DATA = (
+    "benchmark/opencode_plugins/toolbounds.js",
+    "benchmark/opencode_plugins/noretry.js",
+    "benchmark/opencode_plugins/datefreeze.js",          # P364: the date the model is shown
+    "benchmark/opencode_bench_v2_web_tg1.json",
+)
+# The fields of the pairing composite shared by every arm (spec 4); model-specific identity is separate (arm identity).
+GENERATION_FIELDS = (
+    "probe_code_sha256", "scaffold_policy_sha256", "opencode_version", "opencode_exe_sha256",
+    "opencode_bench_config_sha256", "carrier_source_sha256", "agent_system_sha256", "polyglot_sha",
+    "sampling_profile",
+)
 M64_LABEL = "opencode-v2-web-tg1c"
 REMOVED_TOOLS = ("subagent", "execute", "question", "websearch")
 # Spec 5.1, the whole of it: the M64 carrier = the tg1 carrier + these, nothing else. (key, tg1 value, M64 value)
@@ -45,6 +64,51 @@ M64_CARRIER_CHANGES = (("compaction.auto", False, True), ("mcp.searxng", None, "
 SNAPSHOT_OWED = ("dependency_tree", "bottle_sha256", "tool_schemas")        # build step 6 (snapshot / adoption tooling)
 PLUGINS = ("noretry.js", "toolbounds.js", "datefreeze.js")
 TRANSPORT_CAUSES = ("server_error", "connection", "dropped_stream", "timeout")
+OPENCODE_CONFIG_CONTENT = "OPENCODE_CONFIG_CONTENT"
+
+
+def generation_fields(ident):
+    """The composite's inputs from an identity dict; an absent key fails closed (a present None is a value)."""
+    missing = [k for k in GENERATION_FIELDS if k not in ident]
+    if missing:
+        raise ValueError("generation identity field absent: " + ", ".join(missing))
+    return {k: ident[k] for k in GENERATION_FIELDS}
+
+
+def p311_generation_identity_sha256(ident):
+    """The tg1 pairing composite (P311 recipe, unchanged): sha256 of the canonical JSON of the shared fields."""
+    return hashlib.sha256(json.dumps(generation_fields(ident), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def tool_bounds_rejections(export):
+    return sum(
+        part.get("type") == "tool"
+        and part.get("name") == "shell"
+        and part.get("state", {}).get("status") == "error"
+        and "M62_TOOL_BOUND:"
+        in str(part.get("state", {}).get("error", {}).get("message", ""))
+        for message in export["messages"]
+        for part in message.get("content", [])
+        if isinstance(part, dict)
+    )
+
+
+def m64_evidence():
+    """The `m64-oc-tg1` evidence policy. Phase 2a keeps worker receipts `absent` and the item barrier `off` (both
+    become required / on with A3 and the barrier wiring in phase 2b)."""
+    return rc.EvidencePolicy(namespace="transcripts/oc", web_evidence=True, final_tree=True,
+                             worker_receipts="absent", item_barrier="off")
+
+
+def m64_template():
+    """The `m64-oc-tg1` configuration's static policy: watchdog on, compaction accounted (plan 3.2). The tool-window
+    source is the live `tool_use` events through `arm_watchdog` (phase 2b adds the start receipts), identified by the
+    watchdog module's sha."""
+    toolwindows = hashlib.sha256((REPO / "benchmark/bench/arm_watchdog.py").read_bytes()).hexdigest()
+    return rc.PolicyTemplate(config_id="m64-oc-tg1", langs=("python", "go"),
+                             watchdog=rc.watchdog_on(limit_s=arm_watchdog.LIMIT_S, grace_s=arm_watchdog.GRACE_S,
+                                                     toolwindows_sha256=toolwindows),
+                             compaction="on_accounted")
 
 
 class TransportFailure(tg.TransportAbort):
@@ -142,7 +206,8 @@ class OpencodeArm(aa.ArmAdapter):
     arm_id = "oc"
     tool = "opencode"
     label = M64_LABEL
-    GENERATION_FIELDS = t1.GENERATION_FIELDS
+    GENERATION_FIELDS = GENERATION_FIELDS
+    date_receipt_key = "datefreeze"
     native_client_cuts = ("client_inactivity",)
     removed_tools = REMOVED_TOOLS
 
@@ -152,12 +217,13 @@ class OpencodeArm(aa.ArmAdapter):
         if mode not in ("tg1", "m64"):
             raise aa.ArmContractError(f"unknown opencode arm mode {mode!r}")
         self.p, self.mode = p, mode
-        self.search = search if search is not None else m64_search.service()
+        self.search = search if search is not None else aa.UnavailableSearchService()
         self.m64 = mode == "m64"
         self.label = M64_LABEL if self.m64 else TG1_LABEL
         self.receipt_kinds = ("primary", "compaction") if self.m64 else ("primary",)
         self.account_compaction = self.m64
         self.watchdog_enabled = self.m64
+        self.report_gate_on_abort = self.m64
         self._pinned = {}
 
     @property
@@ -168,29 +234,29 @@ class OpencodeArm(aa.ArmAdapter):
     def generation_data(self):
         """Non-Python inputs of the generation identity: the tg1 set (plugins, the tg1 carrier = the base the M64
         carrier derives from); the M64 transform itself is Python and is in the import closure."""
-        return t1.GENERATION_DATA
+        return GENERATION_DATA
 
     # ---------------------------------------------------------------- identity / provenance
     def selection(self, system_file=None):
         p = self.p
         if not self.m64:
-            return p._carrier_selection(self.label, system_file, source=t1.CARRIER)
+            return p._carrier_selection(self.label, system_file, source=CARRIER)
         if self.search_is_offline_test:
             entry = None
         else:
             entry = self.search.mcp_entry("opencode")
             if not isinstance(entry, dict) or not entry:
                 raise aa.ArmRefused("the shared search service gave no client-native MCP entry for opencode (C165 2d)")
-        base_bytes = t1.CARRIER.read_bytes()
+        base_bytes = CARRIER.read_bytes()
         doc = m64_carrier_doc(json.loads(base_bytes), entry)
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "opencode_bench_v2_web_tg1c.json"
             source.write_bytes(json.dumps(doc, sort_keys=True, indent=2).encode())
             sel = p._carrier_selection(self.label, system_file, source=source)
-        sel["source"] = t1.CARRIER
+        sel["source"] = CARRIER
         sel["fields"] = {**sel["fields"],
-                         "carrier_source": (t1.CARRIER.relative_to(REPO).as_posix() if t1.CARRIER.is_relative_to(REPO)
-                                            else p._portable(t1.CARRIER)),
+                         "carrier_source": (CARRIER.relative_to(REPO).as_posix() if CARRIER.is_relative_to(REPO)
+                                            else p._portable(CARRIER)),
                          "carrier_source_sha256": hashlib.sha256(base_bytes).hexdigest(),
                          "carrier_transform": "opencode-v2-web-tg1c",
                          "carrier_changes": json.dumps([list(c) for c in M64_CARRIER_CHANGES])}
@@ -210,30 +276,35 @@ class OpencodeArm(aa.ArmAdapter):
             search_service="shared-searxng-mcp" if self.m64 and not self.search_is_offline_test else None)
         return aa.Snapshot(tool=self.tool, fields=fields, complete=False, missing=SNAPSHOT_OWED)
 
-    def identity(self, *, selection, universe_sha, version, binary, inject=None):
-        """`tg1_runner.identity` with this arm's label, plus (M64 only) the arm's own policy keys. In tg1 mode the result
-        equals `tg1_runner.identity` for the same inputs."""
+    def generation_identity_sha256(self, fields):
+        """tg1 mode keeps the P311 composite (no arm in it); the M64 arm joins the arm id (spec 4)."""
+        return aa.ArmAdapter.generation_identity_sha256(self, fields) if self.m64 else p311_generation_identity_sha256(fields)
+
+    def identity(self, *, selection, universe_sha, version, binary, inject=None, inject_addendum_sha256=None):
+        """The pre-P371 tg1 identity recipe with this arm's label, plus (M64 only) the arm's own policy keys. In tg1 mode
+        the policy equals the pre-P371 `tg1_runner.identity` policy. `inject_addendum_sha256` is the corpus prompt's."""
         p = self.p
-        gate, hygiene = t1.effective_policy(inject)
+        if inject and not inject_addendum_sha256:
+            raise aa.ArmContractError("an inject identity needs the corpus prompt addendum sha256")
+        gate, hygiene = core.effective_policy(inject)
         label = (self.label + "-inject:" + inject) if inject else self.label
         policy = dict(
             gate=gate, hygiene=hygiene,
-            toolbounds_sha256=p._sha_of(t1.PLUGIN), noretry_sha256=p._sha_of(p.NORETRY_PLUGIN),
-            datefreeze_sha256=p._sha_of(t1.DATEFREEZE_PLUGIN),
+            toolbounds_sha256=p._sha_of(PLUGIN), noretry_sha256=p._sha_of(p.NORETRY_PLUGIN),
+            datefreeze_sha256=p._sha_of(DATEFREEZE_PLUGIN),
             carrier_sha256=selection["fields"]["opencode_bench_config_sha256"],
             universe_sha256=universe_sha, grader_version=sg.VERSION, grader_timeout_s=sg.TIMEOUTS,
-            grade_join_timeout_s=t1.grade_join_timeout_s(),
+            grade_join_timeout_s=core.grade_join_timeout_s(),
             plugin_proof="GET /api/integration awaits Plugin.awaitActivation",
             env=p.SCAFFOLD_ENV_POLICY_V2, scaffold=label)
         policy["toolchain"] = toolchain.current()
         if self.m64:
-            from . import arm_watchdog
             policy["arm"] = dict(arm=self.arm_id, compaction="on", receipt_kinds=list(self.receipt_kinds),
                                  removed_tools=list(self.removed_tools),
                                  search_service="shared-searxng-mcp" if not self.search_is_offline_test else None,
                                  watchdog=dict(limit_s=arm_watchdog.LIMIT_S, grace_s=arm_watchdog.GRACE_S))
         if inject:
-            policy["inject"] = dict(kind=inject, prompt_addendum_sha256=t1.inject_addendum_sha256(inject))
+            policy["inject"] = dict(kind=inject, prompt_addendum_sha256=inject_addendum_sha256)
         entry = Path(p.__file__).resolve().relative_to(REPO.resolve()).as_posix()
         result = dict(
             scaffold=label, policy=policy,
@@ -242,7 +313,7 @@ class OpencodeArm(aa.ArmAdapter):
             opencode_version=version, opencode_exe_sha256=p._sha_of(binary))
         if inject:
             result["inject"] = dict(kind=inject, policy=dict(gate=gate, hygiene=hygiene),
-                                    prompt_addendum_sha256=t1.inject_addendum_sha256(inject))
+                                    prompt_addendum_sha256=inject_addendum_sha256)
         return result
 
     def manifest_fields(self):
@@ -273,17 +344,30 @@ class OpencodeArm(aa.ArmAdapter):
     def require_binary(self):
         return self.p._require_opencode_bin()
 
-    def preflight(self, *, path, router, limit, model, exe_sha, carrier_sha):
+    def preflight(self, *, selection, path=None, router=None, limit=None, model=None, exe_sha=None):
         """A4-equivalent: the session-pinning receipt for THIS carrier (the receipt records the carrier sha)."""
-        return self.p._a4_receipt(path, router, limit, model, exe_sha, carrier_sha)
+        return self.p._a4_receipt(path, router, limit, model, exe_sha,
+                                  selection["fields"]["opencode_bench_config_sha256"])
+
+    def seed_overlay(self, model, seed):
+        return self.p._seed_overlay(model, seed)
+
+    def overlay_sha(self, env):
+        return hashlib.sha256(env[OPENCODE_CONFIG_CONTENT].encode()).hexdigest()
+
+    def verify_item_env(self, env, paths, frozen_date):
+        """P364: the spawn env must name exactly this item's frozen date and receipt file."""
+        if frozen_date is not None and (env.get(datefreeze.ENV_DATE) != frozen_date
+                                        or env.get(datefreeze.ENV_RECEIPTS) != str(paths["datefreeze"])):
+            raise tg.TransportAbort("P364: the spawn env does not name this item's frozen date and receipt file")
 
     def make_run_dir(self, workdir, run_id, selection):
         p = self.p
         run_dir = p._make_run_dir(workdir, run_id, selection)
-        shutil.copyfile(t1.PLUGIN, run_dir / "cfg/opencode/plugins/toolbounds.js")
-        shutil.copyfile(t1.DATEFREEZE_PLUGIN, run_dir / "cfg/opencode/plugins/datefreeze.js")
-        self._pinned = dict(noretry=p._sha_of(p.NORETRY_PLUGIN), toolbounds=p._sha_of(t1.PLUGIN),
-                            datefreeze=p._sha_of(t1.DATEFREEZE_PLUGIN),
+        shutil.copyfile(PLUGIN, run_dir / "cfg/opencode/plugins/toolbounds.js")
+        shutil.copyfile(DATEFREEZE_PLUGIN, run_dir / "cfg/opencode/plugins/datefreeze.js")
+        self._pinned = dict(noretry=p._sha_of(p.NORETRY_PLUGIN), toolbounds=p._sha_of(PLUGIN),
+                            datefreeze=p._sha_of(DATEFREEZE_PLUGIN),
                             carrier_source=selection["fields"]["carrier_source_sha256"],
                             system=selection["fields"].get("agent_system_sha256"),
                             source_path=selection["source"], system_path=selection["system_path"])
@@ -301,8 +385,8 @@ class OpencodeArm(aa.ArmAdapter):
             env, run_dir, selection["fields"]["opencode_bench_config_sha256"], pin["noretry"], overlay,
             scaffold=TG1_LABEL, toolbounds_sha=pin["toolbounds"], datefreeze_sha=pin["datefreeze"])
         if (p._sha_of(pin["source_path"]) != pin["carrier_source"]
-                or p._sha_of(t1.PLUGIN) != pin["toolbounds"] or p._sha_of(p.NORETRY_PLUGIN) != pin["noretry"]
-                or p._sha_of(t1.DATEFREEZE_PLUGIN) != pin["datefreeze"]
+                or p._sha_of(PLUGIN) != pin["toolbounds"] or p._sha_of(p.NORETRY_PLUGIN) != pin["noretry"]
+                or p._sha_of(DATEFREEZE_PLUGIN) != pin["datefreeze"]
                 or pin["system_path"] and p._sha_of(pin["system_path"]) != pin["system"]):
             raise tg.TransportAbort("tg1 input provenance drift")
 
@@ -510,7 +594,7 @@ class OpencodeArm(aa.ArmAdapter):
         return dict(bench="opencode", schema_version=3)
 
     def metrics(self, p, transcript, export):
-        return dict(tool_bounds_rejections=t1.tool_bounds_rejections(export),
+        return dict(tool_bounds_rejections=tool_bounds_rejections(export),
                     loop_metrics=p.loop_metrics(p._metric_export(export)),
                     traffic=p.traffic_metrics(p._metric_export(export)))
 
@@ -532,7 +616,8 @@ class OpencodeArm(aa.ArmAdapter):
                 summary["compaction_receipts"] == reconciliation.compaction_count)
 
     def transport_cause(self, exc):
-        return exc.cause if isinstance(exc, TransportFailure) else None
+        """Incident classification belongs to the M64 chain policy (incident_retry); tg1 aborts and restarts the load."""
+        return exc.cause if self.m64 and isinstance(exc, TransportFailure) else None
 
     def tmp_escapes(self, transcript, env):
         return pg.tmp_escapes(transcript.doc, env)

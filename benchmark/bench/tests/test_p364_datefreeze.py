@@ -375,7 +375,8 @@ def test_changing_the_plugin_changes_the_policy_and_the_code_identity(probe, mon
     base = ident(probe)
     other = tmp_path / "datefreeze.js"
     other.write_text(PLUGIN.read_text() + "\n// changed\n")
-    monkeypatch.setattr(runner, "DATEFREEZE_PLUGIN", other)
+    from bench import arm_opencode
+    monkeypatch.setattr(arm_opencode, "DATEFREEZE_PLUGIN", other)
     assert ident(probe)["scaffold_policy_sha256"] != base["scaffold_policy_sha256"]
     entry = "benchmark/run_tg1_probe.py"
     without = [d for d in runner.GENERATION_DATA if "datefreeze" not in d]

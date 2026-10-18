@@ -9,6 +9,7 @@ from bench import arm_adapter as aa
 from bench import arm_opencode as ao
 from bench import arm_runner
 from bench import identity_closure as ic
+from bench.tests.arm_entry import m64_print_identity
 from bench.tests.test_opencode_v2_probe import tg1_probe as probe          # noqa: F401  (fixture)
 
 REPO = Path(__file__).resolve().parents[3]
@@ -85,7 +86,7 @@ def test_print_identity_round_trip_through_the_arm_runner(probe, monkeypatch, tm
         tg1_inject = None
         sampling_profile = "deployed"
 
-    assert arm_runner.print_identity(probe, adapter, A) == 0
+    assert m64_print_identity(probe, adapter, A) == 0
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["arm"] == "oc" and out["scaffold"] == "opencode-v2-web-tg1c" and out["opencode_version"] == "2.0.20"
     assert out["generation_identity_sha256"] and len(out["generation_identity_sha256"]) == 64

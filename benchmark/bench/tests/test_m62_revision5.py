@@ -3,7 +3,7 @@ import json
 import threading
 from pathlib import Path
 import pytest
-from bench import token_turn_gate as tg, tg1_runner as runner, proc_guard as pg, structured_grade as sg
+from bench import token_turn_gate as tg, arm_runner as runner, proc_guard as pg, structured_grade as sg
 from bench.tests.test_token_turn_gate import event, usage, request, assistant, tool_state
 from bench.tests.test_proc_guard import Process, guard
 from m62 import replay

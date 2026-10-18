@@ -11,7 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 from bench import run_config as rc
-from bench import tg1_runner
+from bench import identity_closure, tg1_runner
+from bench import toolchain as toolchain_mod
 
 REPO = Path(__file__).resolve().parents[3]
 TOOLCHAIN = dict(lock_sha256="1" * 64, interpreter="3.12.1", grader_image_id="sha256:" + "2" * 64)
@@ -27,8 +28,8 @@ def host():
 
 
 def old_identity(monkeypatch, inject=None, toolchain=None):
-    monkeypatch.setattr(tg1_runner.ic, "closure_sha256", lambda *a, **k: "c" * 64)
-    monkeypatch.setattr(tg1_runner.toolchain, "current", lambda: dict(toolchain or TOOLCHAIN))
+    monkeypatch.setattr(identity_closure, "closure_sha256", lambda *a, **k: "c" * 64)
+    monkeypatch.setattr(toolchain_mod, "current", lambda: dict(toolchain or TOOLCHAIN))
     p = host()
     selection = {"fields": {"opencode_bench_config_sha256": "b" * 64}}
     return tg1_runner.identity(p, selection, "u" * 64, "2.0.20", Path("/nonexistent/opencode"), inject=inject)

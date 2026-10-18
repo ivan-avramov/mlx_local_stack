@@ -25,8 +25,14 @@ class MinimalAdapter(aa.ArmAdapter):
     def require_binary(self):
         return "/x"
 
-    def preflight(self, **kw):
+    def preflight(self, *, selection, path=None, router=None, limit=None, model=None, exe_sha=None):
         return None
+
+    def seed_overlay(self, model, seed):
+        return {}
+
+    def overlay_sha(self, env):
+        return "0" * 64
 
     def make_run_dir(self, workdir, run_id, selection):
         return workdir
