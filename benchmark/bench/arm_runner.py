@@ -254,6 +254,13 @@ def worker_json(endpoint):
         raise tg.TransportAbort("unreadable worker " + endpoint) from exc
 
 
+def http_receipt_source():
+    """F2: the production `HttpReceiptSource`, pointed at the registry's worker (the control endpoint's host, like
+    `worker_json`), with the worker's bearer key when one is configured."""
+    doc = provenance.yaml.safe_load(provenance.paths.registry_path().read_text())
+    return wr.HttpReceiptSource(f'http://127.0.0.1:{int(doc["mlx_port"])}', api_key=os.environ.get("MLX_VLM_SERVER_API_KEY") or None)
+
+
 def worker_identity(p, model, router):
     import psutil
 

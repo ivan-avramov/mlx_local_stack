@@ -85,6 +85,12 @@ def _corpus(a):
                                 polyglot_root=_polyglot_root, polyglot_sha=_polyglot_sha)
 
 
+def production_binding():
+    """`(evidence policy, receipt source)` the production M64 entry runs with: receipts `required` through the worker's
+    control endpoint (F2; refuses before any spawn until it exists, P372)."""
+    return arm_opencode.m64_evidence(), arm_runner.http_receipt_source()
+
+
 def _main(search):
     adapter = arm_opencode.OpencodeArm(sys.modules[__name__], mode="m64",
                                        search=search if search is not None else m64_search.service())
@@ -104,8 +110,9 @@ def _main(search):
         except arm_adapter.ArmRefused as exc:
             sys.exit("REFUSED: " + _scrub_error(exc))
     a = _parser().parse_args()
-    return arm_runner.main(sys.modules[__name__], adapter, a, template=template,
-                           evidence=arm_opencode.m64_evidence(), corpus=_corpus(a))
+    evidence, receipts = production_binding()
+    return arm_runner.main(sys.modules[__name__], adapter, a, template=template, evidence=evidence, corpus=_corpus(a),
+                           receipts=receipts)
 
 
 if __name__ == "__main__":

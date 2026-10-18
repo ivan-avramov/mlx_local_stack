@@ -63,9 +63,9 @@ OC = ArmSpec(
                 "carrier_source_sha256", "universe_sha256", "generation_identity_sha256"),
     version_field="opencode_version",
     web_evidence_rules=OC_WEB_EVIDENCE_RULES,
-    # = `arm_opencode.m64_evidence().as_dict()` (tested equal). Production worker receipts stay `absent` until the fork
-    # endpoint exists (P372); the chain answers the item barrier since P371 phase 3b.
-    evidence_policy=dict(namespace="transcripts/oc", web_evidence=True, final_tree=True, worker_receipts="absent",
+    # = `arm_opencode.m64_evidence().as_dict()` (tested equal). Production worker receipts are `required` (plan 3.2); they
+    # refuse before any spawn until the fork endpoint exists (P372); the chain answers the item barrier since P371 3b.
+    evidence_policy=dict(namespace="transcripts/oc", web_evidence=True, final_tree=True, worker_receipts="required",
                          item_barrier="on"),
     generation_data=("benchmark/opencode_plugins/toolbounds.js", "benchmark/opencode_plugins/noretry.js",
                      "benchmark/opencode_plugins/datefreeze.js", "benchmark/opencode_bench_v2_web_tg1.json"),

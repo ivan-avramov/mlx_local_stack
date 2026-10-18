@@ -260,6 +260,22 @@ class HttpReceiptSource(ReceiptSource):
         self.api_key = api_key
         self.timeout_s = timeout_s
 
+    def check(self):
+        """Refuse before any spawn unless the worker serves the receipt route (F2). The probe is a GET of the start route:
+        a POST-only route answers 405 (it exists), an absent one 404, a worker that is down a transport error."""
+        headers = {"Authorization": "Bearer " + self.api_key} if self.api_key else {}
+        request = urllib.request.Request(self.base + "/bench/attempt/start", headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_s):
+                return
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                return                                  # 405 / 400 / 401 ...: the route exists
+            why = "the worker has no /bench/attempt/start route"
+        except (urllib.error.URLError, socket.timeout, OSError) as exc:
+            why = f"the worker is unreachable ({type(exc).__name__})"
+        raise ReceiptUnavailable(f"the worker receipt endpoint is not available: {why} (fork control endpoint: P372)")
+
     def _post(self, path, body):
         headers = {"Content-Type": "application/json"}
         if self.api_key:

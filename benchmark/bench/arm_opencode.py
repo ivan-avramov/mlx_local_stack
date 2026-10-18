@@ -97,10 +97,10 @@ def tool_bounds_rejections(export):
     )
 
 
-def m64_evidence(receipts="absent", item_barrier="on"):
-    """The `m64-oc-tg1` evidence policy. Production binds worker receipts `absent` until the fork endpoint exists (P372;
-    `required` without a source refuses before any spawn) and the item barrier `on` since P371 phase 3b (the chain core
-    answers the barrier files, runs `ChainHooks` and the web evidence at it); tests bind `required` with fakes."""
+def m64_evidence(receipts="required", item_barrier="on"):
+    """The `m64-oc-tg1` evidence policy (plan 3.2): worker receipts `required` and the item barrier `on` (the chain core
+    answers the barrier files, runs `ChainHooks` and the web evidence at it). `required` refuses before any spawn while the
+    worker's receipt endpoint does not exist (P372); tests bind `absent` / fakes explicitly."""
     return rc.EvidencePolicy(namespace="transcripts/oc", web_evidence=True, final_tree=True,
                              worker_receipts=receipts, item_barrier=item_barrier)
 
