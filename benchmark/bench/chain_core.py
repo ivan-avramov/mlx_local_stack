@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -1569,15 +1570,16 @@ class Chain:
             return "missing" if not Path(out).with_suffix(".manifest.json").exists() else "invalid"
         if not isinstance(man, dict) or not isinstance(man.get("run_id"), str) or not man["run_id"]:
             return "invalid"
+        nonce = (rec or {}).get("nonce")               # F16 / P384: the chain-issued per-invocation nonce, REQUIRED (fail closed)
+        if not (isinstance(nonce, str) and re.fullmatch("[0-9a-f]{64}", nonce)):
+            return "invocation record has no nonce"
         rt, wk, launch = man.get("runtime") or {}, man.get("worker") or {}, att.get("worker") or {}
         checks = [("model", man.get("model"), view.get("model")), ("lang", rt.get("lang"), view.get("lang")),
                   ("seed_base", rt.get("seed_base"), view.get("seed_base")), ("scaffold", rt.get("scaffold"), view.get("label")),
                   ("worker", (wk.get("pid"), wk.get("create_time")), (launch.get("pid"), launch.get("create_time")))]
         if self.per_arm:
             checks.append(("arm", rt.get("arm"), view.get("arm")))
-        nonce = (rec or {}).get("nonce")               # F16 / P384: the chain-issued per-invocation nonce
-        if nonce:
-            checks.append(("invocation_nonce", rt.get("invocation_nonce"), nonce))
+        checks.append(("invocation_nonce", rt.get("invocation_nonce"), nonce))
         bad = [name for name, got, want in checks if got != want]
         if bad:
             return "binding differs: " + ", ".join(bad)
@@ -2260,7 +2262,9 @@ class Chain:
                ("lang", rt.get("lang"), leg["lang"]), ("model", man.get("model"), leg["model"]),
                ("sampling_profile", rt.get("sampling_profile", man.get("sampling_profile")), "deployed"),
                ("registry.sha256", (man.get("registry") or {}).get("sha256"), self.ops.overlay_sha())]
-        if nonce:
+        if not (isinstance(nonce, str) and re.fullmatch("[0-9a-f]{64}", nonce)):
+            why.append("invocation record has no nonce")
+        else:
             chk.append(("invocation_nonce", rt.get("invocation_nonce"), nonce))
         frozen_snapshot = (self.snapshots.get(arm) or {}).get("sha256")
         if frozen_snapshot is not None:

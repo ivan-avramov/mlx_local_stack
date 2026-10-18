@@ -46,5 +46,5 @@ def test_hydrating_twice_does_not_duplicate_the_abort_evidence(tmp_path):
     att = hydrate(chain, out, view, worker, good)
     chain.seen_run_ids.discard("R-good")
     att["run_id"] = None
-    chain.hydrate_from_manifest(att, view, out, {"expected_slots": ["e|oc|m|s1|python|a"]})
+    chain.hydrate_from_manifest(att, view, out, {"expected_slots": ["e|oc|m|s1|python|a"], "nonce": "a" * 64})
     assert len([r for r in chain.progress["abort_evidence"] if r["attempt"] == 1]) == 1

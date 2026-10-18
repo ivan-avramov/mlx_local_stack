@@ -49,7 +49,8 @@ def test_a_missing_invalid_or_foreign_manifest_after_exit_is_recorded_explicitly
     chain.hydrate_from_manifest(att, view, out)
     assert att["manifest_problem"] == "invalid"
     out.with_suffix(".manifest.json").write_text(json.dumps({"run_id": "other", "model": "m", "worker": worker, "cleanup_status": {},
-                                                                   "runtime": {"lang": "python", "seed_base": 1, "scaffold": chain.label_of("oc"), "arm": "oc"}}))
+                                                                   "runtime": {"lang": "python", "seed_base": 1, "scaffold": chain.label_of("oc"), "arm": "oc",
+                                                                              "invocation_nonce": "a" * 64}}))
     att = dict(attempt=1, worker=worker, run_id="mine", transport_abort=None, cancelled_item=None, cleanup_status=None)
-    chain.hydrate_from_manifest(att, view, out)
+    chain.hydrate_from_manifest(att, view, out, {"expected_slots": ["e|oc|m|s1|python|a"], "nonce": "a" * 64})
     assert att["manifest_problem"] == "run_id differs" and att["cleanup_status"] is None
