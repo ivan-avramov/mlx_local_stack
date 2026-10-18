@@ -496,6 +496,26 @@ def _check_controls(cls, want, r):
                 f"{cls} receipt {r['seq']}: roles {r['roles']!r} are not a nonempty subset of {sorted(allowed)!r}")
 
 
+def fence_totals(mark, fence):
+    """What a fence lists for the attempt (`seq > mark.seq`), for the ABORT stamp (P371 3b): requests and token totals of
+    EVERY listed receipt (all classes: an aborted attempt has no classified requests), plus `worker_ok` (the start, the
+    fence and every receipt name one worker). Never raises on a malformed receipt: a bad one is counted as unreadable."""
+    reqs, tokens, bad, seen = 0, {k: 0 for k in TOKEN_FIELDS}, 0, set()
+    worker_ok = mark.worker == fence.worker
+    for r in fence.receipts:
+        try:
+            if r["seq"] <= mark.seq or r["seq"] in seen:
+                continue
+            seen.add(r["seq"])
+            worker_ok = worker_ok and r["worker"] == mark.worker
+            for k in TOKEN_FIELDS:
+                tokens[k] += int(r[k])
+            reqs += 1
+        except (KeyError, TypeError, ValueError):
+            bad += 1
+    return dict(fence_taken=True, requests=reqs, worker_ok=bool(worker_ok), unreadable=bad, **tokens)
+
+
 def write_receipts_file(path, ctx, mark, fence):
     """Persist the raw fenced receipt set (`<evidence>.receipts.json`), exclusive create; returns its sha256."""
     doc = dict(attempt_id=ctx.attempt_id, start=dict(worker=mark.worker, seq=mark.seq),

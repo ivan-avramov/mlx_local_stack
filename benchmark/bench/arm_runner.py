@@ -375,6 +375,7 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                        worker_summary_before=None, worker_summary_after=None, client_stop=None, graceful_wait_s=None)
     if ctx is not None:
         ctx.update(termination=termination)      # abort manifests carry whatever the kill path recorded
+        ctx.pop("receipt_tokens", None)          # per item: an earlier item's fence totals never reach a later abort stamp
     silence_observer = pg.SilenceObserver()
     exit_hang = False
     cancelled = False
@@ -438,6 +439,7 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
     heartbeat = PhaseHeartbeat(gate, lock, started)
     reconciliation = None
     mark = None
+    fence_attempted = False
     tmp_before = None
     tmp_window_start = time.time()
     dog = None
@@ -635,7 +637,9 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
         fence = owned = receipts_sha = None
         if receipts is not None:
             heartbeat.set_phase("receipt_fence")
+            fence_attempted = True
             fence = receipts.fence(attempt)                 # after the client exit and the drain: every admitted request ended
+            ctx["receipt_tokens"] = wr.fence_totals(mark, fence)       # reported in any abort stamp from here on
             receipts_sha = wr.write_receipts_file(receipts_path, attempt, mark, fence)    # the raw fenced set, even if the join aborts
             owned = wr.owned_receipts(mark, fence)
         heartbeat.set_phase("terminal_grading")
@@ -773,6 +777,8 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                 try:
                     if client_launch_attempted and (sys.exc_info()[0] is not None or proc and proc.poll() is None):
                         terminate_client()
+                    if receipts is not None and mark is not None and not fence_attempted and ctx is not None:
+                        _abort_fence(receipts, attempt, mark, receipts_path, ctx, proc)
                 finally:
                     stop.set()
                     if ingester:
@@ -800,6 +806,29 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                             proc.wait(timeout=10)
         finally:
             heartbeat.close()
+
+
+def _abort_fence(receipts, attempt, mark, receipts_path, ctx, proc):
+    """P371 3b / P378 (6): an abort, cancel or transport path that never reached the normal fence takes it NOW, once the
+    client is gone, so a failed attempt's tokens are counted. Best effort: nothing here may mask the original error; the
+    outcome (totals, or the fence's own error) lands in `ctx["receipt_tokens"]` for the abort stamp."""
+    if proc is not None and proc.poll() is None:
+        ctx["receipt_tokens"] = dict(fence_taken=False, fence_error="the client was still running; no fence taken")
+        return
+    try:
+        fence = receipts.fence(attempt)
+    except BaseException as exc:  # noqa: BLE001 — never masks the original error
+        ctx["receipt_tokens"] = dict(fence_taken=False, fence_error=f"{type(exc).__name__}: {exc}"[:300])
+        return
+    try:
+        ctx["receipt_tokens"] = wr.fence_totals(mark, fence)
+    except BaseException as exc:  # noqa: BLE001
+        ctx["receipt_tokens"] = dict(fence_taken=True, fence_error=f"{type(exc).__name__}: {exc}"[:300])
+        return
+    try:
+        wr.write_receipts_file(receipts_path, attempt, mark, fence)
+    except BaseException:  # noqa: BLE001 — evidence only
+        pass
 
 
 def _done_record(p, row, attempt, artifacts):
@@ -1169,6 +1198,8 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                      termination=ctx.get("termination"))
         if adapter.report_gate_on_abort:
             stamp["gate"] = ctx.get("gate_report")     # spec 8.3: a failed attempt's tokens count toward its task
+        if ctx.get("receipt_tokens") is not None:
+            stamp["receipts"] = ctx["receipt_tokens"]  # P371 3b: the fenced worker receipts' totals (the better count)
         cause = adapter.transport_cause(exc)
         if cause is None and isinstance(exc, wr.ReceiptAbort):
             cause = exc.cause                    # a worker replaced mid-attempt: worker_crash (R21); other receipt faults: none
