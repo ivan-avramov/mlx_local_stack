@@ -234,7 +234,7 @@ class NeutralArm(aa.ArmAdapter):
         return aa.Reconciliation(outcome=outcome, unmatched_export_messages=summary["unmatched_export_messages"],
                                  trailing=summary["trailing"], uncharged_trailing=summary["uncharged_trailing"])
 
-    def tool_windows(self, stream):
+    def tool_windows(self, stream, final=False):
         return []
 
     def tmp_escapes(self, transcript, env):

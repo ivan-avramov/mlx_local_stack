@@ -79,7 +79,7 @@ class MinimalAdapter(aa.ArmAdapter):
     def row_fields(self, **kw):
         return {}
 
-    def tool_windows(self, stream):
+    def tool_windows(self, stream, final=False):
         return []
 
     def tmp_escapes(self, transcript, env):
