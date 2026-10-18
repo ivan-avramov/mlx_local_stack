@@ -642,8 +642,8 @@ class ChainOps:
         return 0 if free else 1
 
     def rows(self, path):
-        from bench import proc_guard as pg
-        return pg.load_rows(path)
+        from bench import chain_rows
+        return chain_rows.rows_if_present(path)
 
     def leftovers(self, roots, run_ids=()):
         """Same-uid processes with a root in their argv and `mlxbench-<run_id>-*` containers: LISTED, never killed."""
@@ -837,14 +837,14 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=
     scaffold = SCAFFOLD if spec is None else spec.label
     runtime_pinned = RUNTIME_PINNED if spec is None else spec.runtime_pinned
     from bench import rowschema
-    from bench import proc_guard as pg
+    from bench import chain_rows
     why = []
     wd = workdir or os.environ.get("STACK_WORKDIR") or ""
     out = Path(leg["out"])
     if leg.get("rc") != 0:
         why.append(f"rc_nonzero: probe rc {leg.get('rc')}")
     try:
-        rows = pg.load_rows(out)
+        rows = chain_rows.rows_if_present(out)
     except Exception as e:  # noqa: BLE001
         return why + [f"rows_torn: {e}"]
     ids = [r.get("id") for r in rows]

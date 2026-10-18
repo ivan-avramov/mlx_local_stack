@@ -13,7 +13,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import answer_key, row_scores, stats, tg1_pairing  # noqa: E402
+from bench import answer_key, chain_rows, row_scores, stats, tg1_pairing  # noqa: E402
 
 RES = REPO / "benchmark/results"
 P1, P2 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed", "Qwen3.8-27B-mlx-uniform-4bit"
@@ -28,7 +28,7 @@ def p(s=""):
 
 
 def rows(f):
-    return [json.loads(line) for line in open(f) if line.strip()] if f.exists() else []
+    return chain_rows.rows_if_present(f)       # P371 R7: the one reader of chain rows
 
 
 def strict(r):
@@ -73,7 +73,7 @@ items, raw, provisional, scored_by = {}, {}, [], {}
 for m in (P1, P2):
     for lang in LANGS:
         for s in SESS:
-            f = RES / m / f"opencode_v2_{lang}.p223.{s}.jsonl"
+            f = chain_rows.stored_path(RES / m, lang, "p223", s)
             rs = row_scores.effective_rows(rows(f), row_scores.sidecar_path(f))   # P311-lite: one fail-closed join
             raw[(m, lang, s)] = rs
             side = Path(str(f) + ".webaudit.jsonl")      # P201 sidecar (C158: codex or Cursor auditor)
@@ -144,7 +144,7 @@ for s in SESS:
            f"(dropped {dropped or 'none'})", pairs, names=(P1, P2))
 
 p("\n## Reload control (pick 1, fresh instance, s1 seed, the s1 pilot items)\n")
-rl = {r["id"]: strict(r) for r in rows(RES / P1 / "opencode_v2_python.p223.reload.jsonl")}
+rl = {r["id"]: strict(r) for r in chain_rows.stored_rows(RES / P1, "python", "p223", "reload")}
 s1 = {k: v[0] for k, v in items[(P1, "python", "s1")].items()}
 agree = sum(rl[k] == s1.get(k) for k in rl)
 p(f"- {len(rl)} items {sorted(rl)}; reload strict {sum(rl.values())}/{len(rl)}, s1 strict on the same items "
@@ -154,7 +154,7 @@ for s in SESS:
     pairs = []
     for m in (P1, P2):
         for lang in LANGS:
-            m61 = {r["id"]: [strict(r)] for r in rows(RES / m / f"opencode_v2_{lang}.m61.{s}.jsonl") if r["id"] not in INVALID}
+            m61 = {r["id"]: [strict(r)] for r in chain_rows.stored_rows(RES / m, lang, "m61", s) if r["id"] not in INVALID}
             pairs.append((f"{m} {lang}", items[(m, lang, s)], m61))
     family(f"DESCRIPTIVE: P223 tg1 {s} minus M61 {s} (same seeds; scaffold opencode-v2-web-tg1 vs opencode-v2-web — never pooled)",
            pairs, names=("P223", "M61"))
@@ -164,7 +164,7 @@ p("| model | lang | session | item | kind | passed (lenient) | wall s | requests
   "uncharged reasoning chars | uncharged streamed s | max identical run |")
 p("|---|---|---|---|---|---|---|---|---|---|---|---|")
 legs = dict(raw)
-legs[(P1, "python", "reload")] = rows(RES / P1 / "opencode_v2_python.p223.reload.jsonl")
+legs[(P1, "python", "reload")] = chain_rows.stored_rows(RES / P1, "python", "p223", "reload")
 for (m, lang, s), rs in legs.items():
     for r in rs:
         if strict(r) or r["id"] in INVALID:

@@ -51,6 +51,7 @@ def test_the_legacy_out_root_leg_paths(tmp_path):
     assert p("m61rr", session="s2", lang="go") == tmp_path / "M.rr.s2.opencode_go.jsonl"
     assert p("m59", session="s1", lang="go") == tmp_path / "s1" / "M.opencode_go.jsonl"
     assert p("m59", session="s2", lang="go") == tmp_path / "s2" / "M.s2.opencode_go.jsonl"
+    assert p("m59flat", session="s1", lang="go") == tmp_path / "M.opencode_go.jsonl"
     with pytest.raises(ValueError):
         p("nope", session="s1", lang="go")
     assert cr.legacy_rows(tmp_path, "m59", model="M", session="s1", lang="go") == []
@@ -81,9 +82,6 @@ ALLOW = {
     "benchmark/bench/proc_guard.py": "defines load_rows (generic probe-side loader; the probe no longer reads rows)",
     "benchmark/bench/schedules.py": "names the stems / files the chain writes (layout author, no reads)",
     "benchmark/chains/m64/run_m64_chain.py": "M64 chain: moves onto the shared core and chain_rows in phase 3b",
-    "benchmark/chains/m64/fake_arm_probe.py": "M64 probe writer fake: follows the M64 layout in phase 3b",
-    "benchmark/chains/c147/run_inject.py": "inject driver: its own `<kind>.attempt<n>.jsonl` runs, not a chain",
-    "benchmark/m62/inject_verify.py": "reads inject runs (`<kind>.attempt<n>.jsonl`), not chain rows",
     "benchmark/chains/m55/m55_report.py": "frozen M55 chain report (legacy, own dir; AGENTS: frozen runners stay)",
     "benchmark/chains/m55/run_m55.py": "frozen M55 runner / writer (own dir)",
     "benchmark/chains/m59/run_m59.py": "frozen M59 runner / writer (own dir)",

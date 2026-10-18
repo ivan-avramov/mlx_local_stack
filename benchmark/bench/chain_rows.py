@@ -23,27 +23,25 @@ scored); `unclear` -> blocked for the operator. A hook-stopped record's prefix B
 never re-run. `legacy(root, layout)` is the read-only mode for stored chains (c147 / m63: `<session>/<stem>.jsonl`; m64:
 base + `.w<n>` segments + `.dnf.jsonl`).
 
-Consumers to migrate (phase 3) -- every module under benchmark/ (tests excluded) that reads or lays out chain out-root
-rows today; none is migrated by phase 1:
- - benchmark/bench/chain_ops.py  `ChainOps.rows` and `validate_leg` read the probe's rows file (`pg.load_rows`)
- - benchmark/chains/c147/run_tg1_chain.py  `session_dir`, `archive_block`, `archive_stopped`, per-step `<stem>.jsonl`, resume
- - benchmark/chains/m64/run_m64_chain.py  `scored_ids`, `segment_out`, `archive_load`, the `.dnf.jsonl` sidecar, `.w<n>`
- - benchmark/chains/c147/fake_probe.py  writer fake of the probe's rows contract (follows the new layout)
- - benchmark/chains/m64/fake_arm_probe.py  writer fake of the M64 probe's rows contract
- - benchmark/chains/c147/run_inject.py  inject attempt rows (a non-chain probe run: allow-list candidate)
- - benchmark/m62/inject_verify.py  reads `<kind>.attempt<n>.jsonl` of inject runs (allow-list candidate)
- - benchmark/chains/c147/drive_chain.sh  launcher: out-root `c147/` and its `chain.json`
- - benchmark/chains/c147/drive_m63.sh  launcher: out-root `m63/` and its `chain.json`
- - benchmark/chains/c147/launchers/launch_tg1.sh  launcher: out-root and `chain.json`
- - benchmark/results/p223_tg1/tg1_report.py  reads the copied P223 chain rows (legacy layout)
- - benchmark/results/m63_mtp/m63_report.py  reads the copied M63 chain rows (legacy layout)
- - benchmark/results/c144_base/c144base_report.py  reads the copied c144-base chain rows (legacy layout)
- - benchmark/results/m61_rr/rr_report.py  reads `<model>.rr.<session>.opencode_<lang>.jsonl` of the M61 rerun chain
- - benchmark/chains/m59/m59_report.py  reads the M59 chain out-root (`<session>/<model>.opencode_<lang>.jsonl`)
-Non-chain readers that stay as they are: benchmark/chains/m62/run_m62_live.py (its own live rows), benchmark/m1/*
-(per-model results rows), the frozen M55 / M59 / M61 runners (their own dirs, legacy).
-Probe-level resume readers (phase 2, removed with probe-level resume): benchmark/bench/tg1_runner.py and
-benchmark/bench/arm_runner.py (`pg.load_rows(out)`)."""
+Consumers (R7, migrated in phase 3a; `test_p371_r7_consumers.py` scans for direct readers outside this module):
+ - benchmark/bench/chain_ops.py  `ChainOps.rows` / `validate_leg` read rows through `read_rows` / `rows_if_present`
+ - benchmark/bench/chain_core.py  the invocation files, `load_slots` for load completeness (the chain core)
+ - benchmark/chains/c147/run_tg1_chain.py  thin entry; names no rows file
+ - benchmark/chains/c147/fake_probe.py  writer fake of the probe's rows contract (new layout, fresh file, no reads)
+ - benchmark/chains/c147/drive_chain.sh  launcher: out-root `c147/` and its `chain.json` only
+ - benchmark/chains/c147/drive_m63.sh  launcher: out-root `m63/` and its `chain.json` only
+ - benchmark/chains/c147/launchers/launch_tg1.sh  launcher: out-root and `chain.json` only
+ - benchmark/results/p223_tg1/tg1_report.py  stored P223 chain rows (`stored_path` / `stored_rows`)
+ - benchmark/results/m63_mtp/m63_report.py  stored M63 chain rows
+ - benchmark/results/c144_base/c144base_report.py  stored c144-base chain rows
+ - benchmark/results/m61_rr/rr_report.py  the M61 rerun chain (`legacy_path` layout `m61rr`)
+ - benchmark/chains/m59/m59_report.py  the M59 chain out-root (`legacy_path` layouts `m59` / `m59flat`)
+ - benchmark/m64/power_sim.py  stored P223 / c144-base rows
+ - benchmark/chains/m64/run_m64_chain.py  M64 chain: moves onto the shared core and `chain_rows` in phase 3b
+ - benchmark/chains/m64/fake_arm_probe.py  M64 probe writer fake: follows the M64 layout in phase 3b
+Non-chain readers that stay as they are: benchmark/chains/c147/run_inject.py and benchmark/m62/inject_verify.py (inject runs),
+benchmark/chains/m62/run_m62_live.py (its own live rows), benchmark/m1/* (per-model results rows), the frozen M55 / M59 / M61
+runners and the M55 report (their own dirs, legacy). The probe no longer reads rows at all (probe-level resume is gone)."""
 from __future__ import annotations
 
 import hashlib
@@ -63,6 +61,7 @@ INV_KEYS = ("leg_key", "phase", "attempt", "worker_n", "file", "manifest", "stat
             "accepted_slots", "sha256", "load_gen", "slot_base")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 LEGACY_LAYOUTS = ("c147", "m63", "m64")
+PATH_LAYOUTS = ("c147", "m63", "m61rr", "m59", "m59flat")             # leg paths of stored chain out-roots (`legacy_path`)
 LEGACY_SKIP_DIRS = ("a4", "incomplete", "stopped", "quarantine", "archive")
 
 
@@ -111,6 +110,45 @@ def read_rows(path):
     if any(not isinstance(r, dict) or "id" not in r for r in rows):
         _fail(f"invalid rows in {path.name}: every row must be an object with an id")
     return rows
+
+
+def rows_if_present(path):
+    """`read_rows`, or `[]` when the file does not exist (a leg that was never run)."""
+    return read_rows(path) if Path(path).exists() else []
+
+
+# ---------------------------------------------------------------- stored chains (frozen layouts, read-only)
+def stored_name(lang, tag, session):
+    """A chain leg copied into `benchmark/results/<model>/`: `opencode_v2_<lang>.<tag>.<session>.jsonl`."""
+    return f"opencode_v2_{lang}.{tag}.{session}.jsonl"
+
+
+def stored_path(results_dir, lang, tag, session):
+    return Path(results_dir) / stored_name(lang, tag, session)
+
+
+def stored_rows(results_dir, lang, tag, session):
+    return rows_if_present(stored_path(results_dir, lang, tag, session))
+
+
+def legacy_path(root, layout, *, model, session, lang):
+    """The rows file of one leg of a stored chain out-root: c147 / m63 `<session>/<model>.<session>.opencode_<lang>.jsonl`;
+    m61rr `<model>.rr.<session>.opencode_<lang>.jsonl` (flat); m59 `<session>/<model>[.<session>].opencode_<lang>.jsonl`
+    (s1 carries no session in its name); m59flat `<model>.opencode_<lang>.jsonl` directly in `root`."""
+    root = Path(root)
+    if layout in ("c147", "m63"):
+        return root / session / f"{model}.{session}.opencode_{lang}.jsonl"
+    if layout == "m61rr":
+        return root / f"{model}.rr.{session}.opencode_{lang}.jsonl"
+    if layout == "m59":
+        return root / session / (f"{model}.opencode_{lang}.jsonl" if session == "s1" else f"{model}.{session}.opencode_{lang}.jsonl")
+    if layout == "m59flat":                    # the archived s1 arm: `<archive dir>/<model>.opencode_<lang>.jsonl`
+        return root / f"{model}.opencode_{lang}.jsonl"
+    raise ValueError(f"layout must be one of {PATH_LAYOUTS}")
+
+
+def legacy_rows(root, layout, *, model, session, lang):
+    return rows_if_present(legacy_path(root, layout, model=model, session=session, lang=lang))
 
 
 # ---------------------------------------------------------------- records

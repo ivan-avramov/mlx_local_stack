@@ -449,17 +449,19 @@ def test_legacy_duplicates_and_bad_input_are_errors(tmp_path):
 
 # ---------------------------------------------------------------- R7: the consumers of chain out-root rows
 def test_the_consumer_enumeration_is_in_the_module_docstring_and_complete():
+    """Phase 3a: the section is now "Consumers (R7, migrated in phase 3a ...)": every listed path exists and every module
+    that reads chain rows through today's loaders or layouts is listed or an allow-listed non-chain reader (the stricter,
+    pattern-based check is `test_p371_r7_consumers`)."""
+    from bench.tests.test_p371_r7_consumers import ALLOW
     doc = cr.__doc__
-    assert "Consumers to migrate (phase 3)" in doc
-    listed = set(re.findall(r"^\s*-\s+(benchmark/\S+\.(?:py|sh))\b", doc.split("Consumers to migrate (phase 3)")[1],
+    assert "Consumers (R7, migrated in phase 3a" in doc
+    listed = set(re.findall(r"^\s*-\s+(benchmark/\S+\.(?:py|sh))\b", doc.split("Consumers (R7, migrated in phase 3a")[1],
                             re.M))
     assert len(listed) >= 8
     for path in listed:
         assert (REPO / path).is_file(), path
-    # every non-test module that reads chain rows through today's loaders or layouts must be listed (or be an allowed
-    # non-chain reader / the loader itself / a writer fake)
-    allowed = {"benchmark/bench/chain_rows.py", "benchmark/bench/proc_guard.py"}
-    probes = {"benchmark/bench/tg1_runner.py", "benchmark/bench/arm_runner.py"}        # probe-level resume, phase 2
+    inject = {"benchmark/chains/c147/run_inject.py", "benchmark/m62/inject_verify.py"}       # inject runs, not chains
+    allowed = {"benchmark/bench/chain_rows.py", "benchmark/bench/proc_guard.py"} | set(ALLOW) | inject
     pattern = re.compile(r"pg\.load_rows\(|\.dnf\.jsonl|chains/c147|/ \"c147\"")
     found = set()
     for path in (REPO / "benchmark").rglob("*.py"):
@@ -468,6 +470,5 @@ def test_the_consumer_enumeration_is_in_the_module_docstring_and_complete():
             continue
         if pattern.search(path.read_text()):
             found.add(rel)
-    missing = {f for f in found - allowed - probes if f not in listed}
+    missing = {f for f in found - allowed if f not in listed}
     assert not missing, sorted(missing)
-    assert all(p in doc for p in probes)                  # the probe-level resume readers are named too (phase 2)
