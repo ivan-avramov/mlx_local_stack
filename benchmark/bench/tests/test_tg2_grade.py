@@ -853,7 +853,7 @@ def test_s2_cargo_requirement_matcher(req, version, ok):
                                  "*.1", "1.*.3", "^1.2.x.3", "v1.2", "01", "1.02", "1.2.03", "00", "1.2.3-01",
                                  "1.2.3-alpha.01", "1.2.3-a_b", "1.2-rc.1", "1.*-rc", "1.2.3+", "1.2.3-rc..1", "^01.2",
                                  "1.2.3-rc,", ",1",
-                                 "*.*", "*.*.*", "1.*.*", "1.2.*-rc", "1.2.*+b", "*-rc", "1.*+b", "1.2.*-rc.1+b", "x.x", "^*.*"])
+                                 "*.*", "*.*.*", "1.2.*-rc", "1.2.*+b", "*-rc", "1.*+b", "1.2.*-rc.1+b", "x.x", "^*.*"])
 def test_s2_malformed_or_unsupported_requirements_raise(req):
     with pytest.raises(ValueError):
         tg.cargo_req_matches(req, "1.2.3")
@@ -873,6 +873,7 @@ def test_s2_malformed_or_unsupported_requirements_raise(req):
     ("<=1.2.3-rc.2", "1.2.3-rc.2", True), (">=1.0.0-alpha.1, <1.0.0-beta", "1.0.0-alpha.beta", True),
     (">=1.0.0-alpha.1, <1.0.0-beta", "1.0.0-beta", False), (">=1.0.0-alpha.1, <1.0.0-beta", "1.0.0-alpha", False),
     (">=1.0.0-beta.2", "1.0.0-beta.11", True), (">=1.0.0-beta.11", "1.0.0-beta.2", False), (">=1.0.0-rc.1", "1.0.0-beta.11", False),
+    ("1.*.*", "1.9.9", True), ("1.x.x", "2.0.0", False), ("1.2.*", "1.2.9", True),
     ("1.0.0-0", "1.0.0-0", True), ("0", "0.0.0", True), ("0.0.0", "0.0.0", True),
 ])
 def test_s5_prerelease_and_build_metadata_follow_cargo_semver_rules(req, version, ok):

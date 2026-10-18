@@ -201,7 +201,9 @@ def _comparator(part, req):
     op, raw = m.group("op"), [m.group(k) for k in ("maj", "min", "pat")]
     present = [x for x in raw if x is not None]
     wild = [i for i, x in enumerate(present) if re.fullmatch(_WILD, x)]
-    if wild and wild != list(range(wild[0], len(present))):
+    if wild and (wild != list(range(wild[0], len(present))) or (wild[0] == 0 and len(present) > 1)
+                 or m.group("pre") is not None or m.group("build") is not None):
+        # wildcards form a trailing run after a numeric major (`1.*.*` is valid for cargo, `*.*` is not); no pre-release / build
         raise ValueError("malformed Cargo version requirement %r" % req)
     nums = [int(x) for x in present if not re.fullmatch(_WILD, x)]
     return op, nums, m.group("pre"), bool(wild)
