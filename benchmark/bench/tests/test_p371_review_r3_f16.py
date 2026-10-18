@@ -18,17 +18,18 @@ def build(tmp_path):
                 label=chain.label_of("oc"))
     worker = dict(pid=7, create_time=1.5)
     good = {"run_id": "R-good", "model": "m", "worker": dict(worker, model_path="x"),
-            "runtime": {"lang": "python", "seed_base": 1001, "scaffold": chain.label_of("oc"), "arm": "oc"},
+            "runtime": {"lang": "python", "seed_base": 1001, "scaffold": chain.label_of("oc"), "arm": "oc",
+                        "invocation_nonce": "a" * 64},
             "cleanup_status": {"completed": True}}
     return chain, out, view, worker, good
 
 
-def hydrate(chain, out, view, worker, man, nonce=None, **att_extra):
+def hydrate(chain, out, view, worker, man, nonce="a" * 64, **att_extra):
     out.with_suffix(".manifest.json").write_text(json.dumps(man))
     att = dict(attempt=1, run_id=None, worker=worker, transport_abort=None, cancelled_item=None, cleanup_status=None, **att_extra)
     rec = {"expected_slots": ["e|oc|m|s1|python|a"]}
     if nonce is not None:
-        rec["nonce"] = nonce
+        rec["nonce"] = nonce                 # every record carries one (fail closed); a test passes None / a bad one to plant it
     chain.hydrate_from_manifest(att, view, out, rec)
     return att
 
