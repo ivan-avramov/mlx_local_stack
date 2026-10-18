@@ -25,6 +25,8 @@ def load(name):
 
 
 U = load("tg2_universe")
+ID = dict(image_id="sha256:" + "a" * 64, polyglot_sha="p" * 40)
+REAL_LOCKS = tg.image_record()["cargo_locks_sha256"]
 
 
 @pytest.fixture
@@ -35,6 +37,17 @@ def tmp_path():
     path.mkdir()
     yield path
     shutil.rmtree(path, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def pin(tmp_path_factory, monkeypatch):
+    """A pin file whose image id / polyglot sha are the fake test identities and whose lock hash is the real one."""
+    pin_file = TEST_ROOT / ("pin-" + __import__("uuid").uuid4().hex[:8])
+    TEST_ROOT.mkdir(parents=True, exist_ok=True)
+    pin_file.write_text("%s\npolyglot_sha=%s\ncargo_locks_sha256=%s\n" % (ID["image_id"], ID["polyglot_sha"], REAL_LOCKS))
+    monkeypatch.setattr(tg, "IMAGE_ID_FILE", pin_file)
+    yield pin_file
+    pin_file.unlink(missing_ok=True)
 
 
 def corpus(root, lang="javascript", slug="x", extra_docs=None, rust=False):
@@ -196,7 +209,6 @@ def test_run_all_caches_finished_items_logs_one_line_each_and_resumes(tmp_path):
     assert len(g.calls) == calls and "cached" in log.read_text().splitlines()[-1]
 
 
-ID = dict(image_id="sha256:" + "a" * 64, polyglot_sha="p" * 40)
 
 
 def doc_for(records):
@@ -450,6 +462,52 @@ def test_s8_load_revalidates_the_embedded_fingerprint_and_asks_for_a_refreeze(tm
         monkeypatch.setattr(tg, what, 1 if what == "PIDS_LIMIT" else "9g")
     with pytest.raises(TransportAbort, match="re-freeze"):
         U.load(out)
+
+
+# ---------------------------------------------------- S14: load compares against the CURRENT pins, not itself
+def _repin(pin_file, **kw):
+    fields = dict(image_id=ID["image_id"], polyglot_sha=ID["polyglot_sha"], cargo=REAL_LOCKS)
+    fields.update(kw)
+    pin_file.write_text("%s\npolyglot_sha=%s\ncargo_locks_sha256=%s\n" % (fields["image_id"], fields["polyglot_sha"], fields["cargo"]))
+
+
+@pytest.mark.parametrize("what", ["image_id", "polyglot_sha", "cargo"])
+def test_s14_load_refuses_a_universe_whose_embedded_pins_are_not_the_current_ones(tmp_path, pin, what):
+    out = tmp_path / "u.json"
+    U.freeze(out, doc_for([rec("rust/a")]))
+    assert U.load(out)[1]
+    _repin(pin, **{what: {"image_id": "sha256:" + "d" * 64, "polyglot_sha": "9" * 40, "cargo": "0" * 64}[what]})
+    with pytest.raises(TransportAbort, match="re-freeze"):
+        U.load(out)
+
+
+def test_s14_a_self_consistent_doc_for_another_image_is_refused(tmp_path):
+    other = dict(image_id="sha256:" + "e" * 64, polyglot_sha="q" * 40)
+    out = tmp_path / "u.json"
+    U.freeze(out, U.assemble([dict(rec("rust/a"), fingerprint=dict(U.fingerprint(**other), inputs_sha256="i" * 64))], **other))
+    with pytest.raises(TransportAbort, match="re-freeze"):
+        U.load(out)
+
+
+# ------------------------------------------------ S15: the corpus verifier is part of the freezer identity
+def test_s15_editing_the_corpus_verifier_changes_the_freezer_hash(tmp_path):
+    from bench import identity_closure as ic
+    bench_root = Path(__file__).resolve().parents[2]
+    copy = tmp_path / "bench-copy"
+    rels = {p.relative_to(bench_root).as_posix() for p in ic.python_closure(bench_root / "m65/tg2_universe.py", bench_root)}
+    for rel in rels | {"m65/tg2_image/verify_corpus.py"}:
+        (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(bench_root / rel, copy / rel)
+    before = U.freezer_sha256(copy)
+    assert before == U.freezer_sha256(bench_root)
+    (copy / "m65/tg2_image/verify_corpus.py").write_text((copy / "m65/tg2_image/verify_corpus.py").read_text() + "\n# edit\n")
+    assert U.freezer_sha256(copy) != before
+
+
+def test_s15_the_verifier_that_runs_is_the_file_that_is_hashed(tmp_path, monkeypatch):
+    assert U.VERIFY_CORPUS_FILE == Path(U.__file__).resolve().parent / "tg2_image/verify_corpus.py"
+    monkeypatch.setattr(tg, "IMAGE_ID_FILE", tmp_path / "elsewhere/IMAGE_ID")
+    assert U.require_pinned_corpus.__globals__["VERIFY_CORPUS_FILE"] == U.VERIFY_CORPUS_FILE
 
 
 def test_s3_load_refuses_a_universe_frozen_by_another_materializer(tmp_path, monkeypatch):
