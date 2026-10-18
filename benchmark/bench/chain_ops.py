@@ -734,16 +734,8 @@ def composite_sha(runtime):
 
 
 # P24 (spec 3): the chain's own lifecycle code is frozen at chain creation and re-verified before every launch,
-# barrier, validation, resume and at exit. Repo-relative; `lifecycle_files` resolves them (tests pass temp copies).
-LIFECYCLE_FILES = {"runner": "benchmark/chains/c147/run_tg1_chain.py", "chain_ops": "benchmark/bench/chain_ops.py",
-                   "gate": "scripts/session_pinning_gate.py", "launcher": "benchmark/chains/c147/drive_chain.sh",
-                   "launch_tg1": "benchmark/chains/c147/launchers/launch_tg1.sh"}
-
-
-def lifecycle_files(repo):
-    return {name: Path(repo) / rel for name, rel in LIFECYCLE_FILES.items()}
-
-
+# barrier, validation, resume and at exit. P371 R15: the member set is per chain ENTRY (its static import closure + gate +
+# launchers, `chain_core.lifecycle_member_files`); `files` maps member name -> path (tests pass temp copies).
 def lifecycle_shas(files):
     return {name: file_sha(path) for name, path in files.items()}
 

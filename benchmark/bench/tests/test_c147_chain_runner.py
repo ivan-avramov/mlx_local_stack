@@ -314,10 +314,10 @@ def test_pilot_mode_end_to_end(env):
     assert arg(argv, "--limit") == "5" and len(arg(argv, "--items").split(",")) == 5
     assert arg(argv, "--expect-items") == ",".join("python/" + n for n in arg(argv, "--items").split(","))
     assert arg(argv, "--scaffold") == "opencode-v2-web-tg1" and arg(argv, "--sampling-profile") == "deployed"
-    assert arg(argv, "--cancel-file").endswith(".attempt1.CANCEL") and arg(argv, "--manifest-ack").endswith(".attempt1.ACK")
-    out = env["out"] / "pilot" / f"{PICK1}.pilot.opencode_python.jsonl"
+    assert arg(argv, "--cancel-file").endswith(".L0.pilot.a1.CANCEL") and arg(argv, "--manifest-ack").endswith(".L0.pilot.a1.ACK")
+    out = env["out"] / "pilot" / f"{PICK1}.pilot.opencode_python.L0.pilot.a1.jsonl"      # P371 A8: leg-attempt file name
     assert len(out.read_text().splitlines()) == 5
-    att = json.loads((env["out"] / "pilot" / f"{PICK1}.pilot.opencode_python.attempt1.json").read_text())
+    att = json.loads((env["out"] / "pilot" / f"{PICK1}.pilot.opencode_python.L0.pilot.a1.json").read_text())
     assert att["rc"] == 0 and att["run_id"] and att["worker"]["pid"] == 1001 and att["cancel"] and att["ack"] and att["argv"]
     assert att["cleanup_status"]["uncertain"] is False and att["probe_pid"] > 0
     names = [c[0] for c in env["ops"].calls]
@@ -327,7 +327,9 @@ def test_pilot_mode_end_to_end(env):
     assert all(len(cj["sha256"][k]) == 64 for k in ("runner", "chain_ops", "gate", "overlay"))
 
 
-def test_pilot_then_full_same_rows_file_and_blocks(env):
+def test_pilot_then_full_disjoint_rows_files_and_blocks(env):
+    """P371 A8 / P376: was `..._same_rows_file_...`: the full invocation no longer re-runs the pilot's rows into one
+    shared file; each invocation has its own immutable rows file and the full runs the cell minus the pilot."""
     rc = run(env, CHAIN)
     assert rc == 0
     inv = [i["argv"] for i in invocations(env)]
@@ -335,22 +337,25 @@ def test_pilot_then_full_same_rows_file_and_blocks(env):
     for blk in (0, 3):
         pilot, full, go = inv[blk], inv[blk + 1], inv[blk + 2]
         model = arg(pilot, "--model")
-        assert arg(pilot, "--limit") == "5" and arg(pilot, "--out") == arg(full, "--out")
-        assert "--limit" not in full and len(arg(full, "--items").split(",")) == 6
-        assert set(arg(pilot, "--items").split(",")) <= set(arg(full, "--items").split(","))
+        assert arg(pilot, "--limit") == "5" and arg(pilot, "--out") != arg(full, "--out")
+        assert "--limit" not in full and len(arg(full, "--items").split(",")) == 1
+        assert not set(arg(pilot, "--items").split(",")) & set(arg(full, "--items").split(","))
+        assert len(set(arg(pilot, "--items").split(",")) | set(arg(full, "--items").split(","))) == 6
         assert arg(go, "--lang") == "go" and "--limit" not in go and arg(go, "--model") == model
         assert arg(pilot, "--a4-v2-receipt") == arg(go, "--a4-v2-receipt")
     assert [arg(inv[i], "--model") for i in (0, 3)] == [PICK1, PICK2]
     for stem_model in (PICK1, PICK2):
-        for lang in ("python", "go"):
-            f = env["out"] / "s1" / f"{stem_model}.s1.opencode_{lang}.jsonl"
-            assert len(f.read_text().splitlines()) == 6
+        for lang, files in (("python", 2), ("go", 1)):
+            rows = sorted((env["out"] / "s1").glob(f"{stem_model}.s1.opencode_{lang}.L*.jsonl"))
+            assert len(rows) == files
+            assert sum(len(f.read_text().splitlines()) for f in rows) == 6
     loads = env["ops"].names("load")
     assert [c[1] for c in loads] == [PICK1, PICK2]
     # worker identity: one value inside a block (both legs), distinct across blocks
-    def worker(model, lang):
-        return json.loads((env["out"] / "s1" / f"{model}.s1.opencode_{lang}.manifest.json").read_text())["worker"]
-    assert worker(PICK1, "python") == worker(PICK1, "go") != worker(PICK2, "python") == worker(PICK2, "go")
+    def worker(model, lang, name):
+        return json.loads((env["out"] / "s1" / f"{model}.s1.opencode_{lang}.{name}.manifest.json").read_text())["worker"]
+    assert worker(PICK1, "python", "L0.full.a2") == worker(PICK1, "go", "L1.full.a1") != worker(PICK2, "python", "L0.full.a2")
+    assert worker(PICK2, "python", "L0.full.a2") == worker(PICK2, "go", "L1.full.a1")
     names = [c[0] for c in env["ops"].calls]
     assert names.index("unload") < [i for i, n in enumerate(names) if n == "load"][1]       # fresh load per block
 
@@ -360,10 +365,10 @@ def test_all_sessions_reload_control(env):
     assert rc == 0
     assert [c[1] for c in env["ops"].names("load")] == [PICK1, PICK2, PICK2, PICK1, PICK1]
     assert len({c[2] for c in env["ops"].names("load")}) == 5
-    rl = env["out"] / "reload" / f"{PICK1}.reload.opencode_python.jsonl"
+    rl = env["out"] / "reload" / f"{PICK1}.reload.opencode_python.L0.pilot.a1.jsonl"
     assert len(rl.read_text().splitlines()) == 5
     assert len([i for i in invocations(env) if arg(i["argv"], "--out") == str(rl)]) == 1     # pilot == full set: one step
-    s2 = json.loads((env["out"] / "s2" / f"{PICK2}.s2.opencode_python.manifest.json").read_text())
+    s2 = json.loads((env["out"] / "s2" / f"{PICK2}.s2.opencode_python.L0.pilot.a1.manifest.json").read_text())
     assert s2["runtime"]["seed_base"] == 2002
 
 
@@ -471,13 +476,15 @@ def test_idle_cancel_archive_restart_validates_block(env):
     arch = Path(cj["restarts"][0]["archive"])
     names = sorted(f.name for f in arch.iterdir())
     # block = both legs archived (the completed python leg too), every attempt: rows/manifest/log/attempt.json/cancel/ack
+    # (P371 A8: each invocation has its own `<stem>.L<leg>.<phase>.a<n>.*` files)
     for lang in ("python", "go"):
         stem = f"{PICK1}.s1.opencode_{lang}"
         if lang == "python":
-            assert stem + ".jsonl" in names                 # the completed leg is archived with the block
-        assert stem + ".manifest.json" in names
-        assert any(n.startswith(stem + ".attempt") and n.endswith(".log") for n in names)
-        assert any(n.startswith(stem + ".attempt") and n.endswith(".json") for n in names)
+            assert any(n.startswith(stem + ".L0.pilot.a1") and n.endswith(".jsonl") for n in names)   # completed legs too
+            assert any(n.startswith(stem + ".L0.full.a2") and n.endswith(".jsonl") for n in names)
+        assert any(n.startswith(stem + ".L") and n.endswith(".manifest.json") for n in names)
+        assert any(n.startswith(stem + ".L") and n.endswith(".log") for n in names)
+        assert any(n.startswith(stem + ".L") and n.endswith(".json") and not n.endswith(".manifest.json") for n in names)
     assert any(n.endswith(".CANCEL") for n in names) and any(n.endswith(".ACK") for n in names)
     assert arch.parent.name == "incomplete" and arch.name.startswith(PICK1 + ".")
     # fresh instance, rerun from the first leg incl. the pilot step, same items and seeds
@@ -490,9 +497,10 @@ def test_idle_cancel_archive_restart_validates_block(env):
     assert arg(inv[3], "--seed-base") == arg(inv[0], "--seed-base")
     assert arg(inv[3], "--cancel-file") != arg(inv[0], "--cancel-file")                # unique per attempt
     for lang in ("python", "go"):
-        assert len((env["out"] / "s1" / f"{PICK1}.s1.opencode_{lang}.jsonl").read_text().splitlines()) == 6
+        rows = sorted((env["out"] / "s1").glob(f"{PICK1}.s1.opencode_{lang}.L*.jsonl"))
+        assert sum(len(f.read_text().splitlines()) for f in rows) == 6                 # the rerun's files only (disjoint)
     assert log_has(env, "CANCEL file written (idle)") and log_has(env, "T_coop=")
-    w1 = json.loads((env["out"] / "s1" / f"{PICK1}.s1.opencode_python.manifest.json").read_text())["worker"]
+    w1 = json.loads((env["out"] / "s1" / f"{PICK1}.s1.opencode_python.L0.pilot.a3.manifest.json").read_text())["worker"]
     assert w1["pid"] == 1002                                                             # the restarted instance
 
 
@@ -587,7 +595,7 @@ def test_escalation_worker_identity_drift_sends_no_signal_exit_2(env):
 def test_escalation_held_when_heartbeat_activity_resumed(env):
     def helper():
         wait_for(lambda: log_has(env, "CANCEL file written (idle)"))
-        logf = next((env["out"] / "reload").glob("*.attempt1.log"))
+        logf = next((env["out"] / "reload").glob("*.a1.log"))
         for k in range(12):
             with logf.open("a") as f:
                 f.write(json.dumps({"m62_watch": {"requests_completed": 10 + k, "last_prompt_tokens": 1}, "elapsed_s": k}) + "\n")
@@ -643,7 +651,7 @@ def test_stop_during_pilot_exit_3_archives_under_stopped(env):
 def test_stop_during_full_leg(env):
     def helper():
         wait_for(lambda: len(invocations(env)) == 2)
-        wait_for(lambda: list((env["out"] / "s1").glob("*attempt2.ACK")))
+        wait_for(lambda: list((env["out"] / "s1").glob("*.a2.ACK")))
         (env["out"] / "STOP").write_text("")
     rc = run(env, CHAIN, plan=["normal", "hang_in_item"], helper=helper)
     assert rc == 3
@@ -684,7 +692,7 @@ def test_stop_present_at_start_launches_nothing(env):
 def test_stale_cancel_file_refuses_spawn(env):
     sdir = env["out"] / "pilot"
     sdir.mkdir(parents=True)
-    (sdir / f"{PICK1}.pilot.opencode_python.attempt1.CANCEL").write_text("x")
+    (sdir / f"{PICK1}.pilot.opencode_python.L0.pilot.a1.CANCEL").write_text("x")
     rc = run(env, PILOT)
     assert rc == 2 and not invocations(env) and log_has(env, "stale cancel/ack")
 
@@ -692,7 +700,7 @@ def test_stale_cancel_file_refuses_spawn(env):
 def test_stale_ack_file_refuses_spawn(env):
     sdir = env["out"] / "pilot"
     sdir.mkdir(parents=True)
-    (sdir / f"{PICK1}.pilot.opencode_python.attempt1.ACK").write_text("x")
+    (sdir / f"{PICK1}.pilot.opencode_python.L0.pilot.a1.ACK").write_text("x")
     assert run(env, PILOT) == 2
 
 
@@ -745,9 +753,9 @@ def test_watcher_alarm_past_threshold(env, monkeypatch):
 
 def test_watcher_flags_transport_abort_lines(env):
     def helper():
-        wait_for(lambda: list((env["out"] / "pilot").glob("*.attempt1.log")))
+        wait_for(lambda: list((env["out"] / "pilot").glob("*.a1.log")))
         time.sleep(0.3)
-        with next((env["out"] / "pilot").glob("*.attempt1.log")).open("a") as f:
+        with next((env["out"] / "pilot").glob("*.a1.log")).open("a") as f:
             f.write("TransportAbort: injected\n")
         assert wait_for(lambda: any("CORRECTION?" in ln for ln in env["lines"] if " WATCH " in ln), 10)
         (env["out"] / "STOP").write_text("")

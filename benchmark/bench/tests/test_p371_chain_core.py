@@ -174,7 +174,7 @@ def test_restart_load_marks_the_loads_records_archived_and_scores_only_the_rerun
     assert run(env, CHAIN, plan=PLAN_RESTART) == 0
     cj = chain_json(env)
     prog = cj["progress"]
-    old = [i for i in prog["invocations"] if i["load_gen"] == 0 and i["file"].split("/")[1].startswith(PICK1)]
+    old = [i for i in prog["invocations"] if i["load_gen"] == 0 and i["leg_key"][0] == 0]
     assert old and all(i["status"] == "archived" for i in old)
     assert all("incomplete" in i["file"] for i in old)                               # paths rewritten to the archive
     assert any(i["sha256"] for i in old)                                             # validated shas kept
@@ -380,8 +380,8 @@ def test_without_the_flag_the_campaign_core_is_recorded_as_null(env):
 
 @pytest.mark.parametrize("which", ["probe_closure_sha256", "chain_closure_sha256"])
 def test_a_core_file_changed_after_the_tag_refuses_before_anything_is_written(env, which):
-    cam = FakeCampaign(at=dict(tag="campaign-1", commit="c" * 40, probe_closure_sha256="a" * 64,
-                               chain_closure_sha256="b" * 64, **{which: "0" * 64}))
+    base = dict(tag="campaign-1", commit="c" * 40, probe_closure_sha256="a" * 64, chain_closure_sha256="b" * 64)
+    cam = FakeCampaign(at={**base, which: "0" * 64})
     assert run_campaign(env, CHAIN + ["--campaign-core", "campaign-1"], cam) == 2
     assert log_has(env, "campaign core drift") and invocations(env) == [] and not (env["out"] / "chain.json").exists()
     assert not env["ops"].names("start_router")
