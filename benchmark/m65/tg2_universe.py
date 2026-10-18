@@ -54,6 +54,30 @@ def _mismatch(item, found, expected):
     return "%s: fingerprint differs in %s" % (item, ", ".join(diff)) if diff else None
 
 
+def require_pinned_corpus(corpus, pinned=None):
+    """The corpus checkout must be exactly the image-recorded `polyglot_sha` (IMAGE_ID) with clean target-language
+    subtrees (m65/tg2_image/verify_corpus.py); anything else is refused."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("tg2_image_verify_corpus", Path(tg.IMAGE_ID_FILE).parent / "verify_corpus.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    pinned = pinned or tg.image_record().get("polyglot_sha", "")
+    try:
+        return module.verify(corpus, pinned)
+    except SystemExit as exc:
+        raise TransportAbort("tg2 corpus is not the pinned clean checkout: %s" % exc) from exc
+
+
+def inputs_sha256(corpus, lang, slug):
+    """sha256 over (relative path, content) of every file of one exercise directory (tests, stubs, `.meta`, `.docs`,
+    `.approaches`...): everything an item's freeze record depends on."""
+    root = mat.exercise_dir(corpus, lang, slug)
+    digest = hashlib.sha256()
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        digest.update(path.relative_to(root).as_posix().encode() + b"\0" + hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
 def default_grader(guard):
     def grader(lang, tree, slug, private, *, prepared, solutions, timeout, prepared_cargo_toml=None, extra_crates=()):
         return tg.grade_item(lang, tree, slug, private, prepared=prepared, solutions=solutions, guard=guard,
@@ -154,7 +178,12 @@ def assemble(records, *, image_id, polyglot_sha, grader_version=None):
     bad = [m for r in records for m in [_mismatch(r["item"], r.get("fingerprint"), expected)] if m]
     if bad:
         raise TransportAbort("stale freeze records refused (assemble): " + "; ".join(bad))
-    records = [{k: v for k, v in r.items() if k != "fingerprint"} for r in records]
+    for r in records:
+        value = (r["fingerprint"] or {}).get("inputs_sha256")
+        if not (isinstance(value, str) and len(value) == 64):
+            raise TransportAbort("stale freeze records refused (assemble): %s: no inputs_sha256" % r["item"])
+    records = [dict({k: v for k, v in r.items() if k != "fingerprint"}, inputs_sha256=r["fingerprint"]["inputs_sha256"])
+               for r in records]
     languages = {}
     for rec in records:
         lang = rec["item"].split("/")[0]
@@ -256,7 +285,8 @@ def run_all(corpus, workdir, log, grader, *, image_id, polyglot_sha, locks_fn=No
     for lang, slug in items:
         path = cache / ("%s__%s.json" % (lang, slug))
         if path.exists():
-            m = _mismatch("%s/%s" % (lang, slug), json.loads(path.read_text()).get("fingerprint"), fp)
+            want = dict(fp, inputs_sha256=inputs_sha256(corpus, lang, slug))
+            m = _mismatch("%s/%s" % (lang, slug), json.loads(path.read_text()).get("fingerprint"), want)
             if m:
                 stale.append(m)
     if stale:
@@ -273,7 +303,7 @@ def run_all(corpus, workdir, log, grader, *, image_id, polyglot_sha, locks_fn=No
             shutil.rmtree(scratch, ignore_errors=True)
             rec = freeze_item(corpus, lang, slug, scratch, grader, locks_fn=locks_fn, ref_runs=ref_runs,
                               stub_runs=stub_runs)
-            rec["fingerprint"] = fp
+            rec["fingerprint"] = dict(fp, inputs_sha256=inputs_sha256(corpus, lang, slug))
             shutil.rmtree(scratch, ignore_errors=True)
             path.write_text(json.dumps(rec, sort_keys=True))
             tag, done_new = "run", done_new + 1
@@ -299,13 +329,11 @@ def main(argv=None):
     args = ap.parse_args(argv)
     args.workdir.mkdir(parents=True, exist_ok=True)
     log = args.log or args.workdir / "freeze.log"
+    sha_poly = require_pinned_corpus(args.corpus)
     guard = tg.LocalDocker()
     leftover = tg.list_leftovers(guard.run_grader, args.workdir)
     if leftover["containers"] or leftover["volumes"]:
         raise TransportAbort("tg2 leftovers present: %s" % leftover)
-    sha_poly = subprocess.run(["git", "-C", str(args.corpus), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    if not sha_poly:
-        raise TransportAbort("cannot resolve the polyglot corpus commit for the freeze fingerprint")
     image_id = tg.pinned_image_id()
     records = run_all(args.corpus, args.workdir, log, default_grader(guard), only=args.only, image_id=image_id,
                       polyglot_sha=sha_poly)
