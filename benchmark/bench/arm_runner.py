@@ -1161,6 +1161,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                 prompt = corpus.prompt(prepared, kind)
                 if barrier.ready(k) == "stop":                       # R23 / R25: after the env, before receipts.start and the spawn
                     man["hook_stop"] = dict(before_slot=item)
+                    man["cleanup_status"] = ctx.get("cleanup_status")      # A7 (F5): a clean hook stop is its own receipt
                     save_manifest()
                     break
                 result = run_item(
@@ -1223,6 +1224,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                 print(f'{item}: passed={passed} nonconv={row["nonconv_kind"]}', flush=True)
                 if barrier.enabled and barrier.done(k, _done_record(p, rows[-1], attempt, artifacts)) == "stop":
                     man["hook_stop"] = dict(after_slot=item, disposition=barrier.stop_payload(k).get("disposition"))
+                    man["cleanup_status"] = ctx.get("cleanup_status")      # A7 (F5)
                     save_manifest()
                     break
         if a.expect_items:

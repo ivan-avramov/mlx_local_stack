@@ -1409,7 +1409,7 @@ class Chain:
             self.pin_from(view)
             att["outcome"] = "validated"
             co.atomic_json(ajson, att)
-            return self.accept_invocation(load, leg, inv, rec, out, hook)
+            return self.accept_invocation(load, leg, inv, rec, out, hook, att=att, view=view)
         for w in why:
             self.log(f"INCOMPLETE {leg['stem']} attempt {n}: {w}")
         self.abandoned_web_evidence(rec, out)
@@ -1453,7 +1453,15 @@ class Chain:
         want = dict(before_slot=item) if hook["kind"] == "before" else dict(after_slot=item, disposition=hook["disposition"])
         return [] if got == want else [f"hook_stop: the manifest records {got!r}, the chain wrote {want!r}"]
 
-    def accept_invocation(self, load, leg, inv, rec, out, hook=None):
+    def require_certain_cleanup(self, att, view, what):
+        """A7 (F5): the exact `ProcessGuard.status()` receipt (certain, completed, empty) before ANY retry / restart: the hook
+        re-run, the pre-spawn retry and the restart of a hook-stopped invocation take the same validator as an incident."""
+        problems = cleanup_problems((att or {}).get("cleanup_status"))
+        if problems:
+            self.listing(att or {}, view)
+            raise co.ChainAbort(f"{what} refused: cleanup is not certain and complete: " + "; ".join(problems))
+
+    def accept_invocation(self, load, leg, inv, rec, out, hook=None, att=None, view=None):
         """A validated invocation: sha256 recorded AFTER validation (fsynced), then the chain-side web evidence. A hook-stopped
         invocation is accepted for the prefix it ran (`hook_stopped`)."""
         rows = cr.rows_if_present(out)
@@ -1470,12 +1478,15 @@ class Chain:
             return "ok"
         if hook["kind"] == "before":
             if self.config.transport_policy != "incident_retry":
+                self.require_certain_cleanup(att, view, "restart")
                 return "incomplete"                       # abort_restart: the load restarts
+            self.require_certain_cleanup(att, view, "retry")
             self.recover(load, leg, hook["cause"])
             return "incident"
         if hook["disposition"] == "unclear":
             raise co.ChainAbort(f"slot {hook['slot']} is blocked for the operator (unclear disposition: "
                                 f"{hook.get('reason') or 'no reason recorded'})")
+        self.require_certain_cleanup(att, view, "retry")
         return "hook"
 
     def abandoned_web_evidence(self, rec, out):
@@ -1594,6 +1605,10 @@ class Chain:
                 why.append("cleanup uncertain: containers remaining")
             if cs.get("uncertain") is not False:
                 why.append("cleanup uncertain: uncertain flag set")
+            if self.config.transport_policy == "incident_retry":
+                # A7 (F5): the M64 layout's every retry / restart takes the EXACT receipt; tg1 (`abort_restart`) keeps the
+                # C147 rule (a receipt's `orphans_unattributed` are diagnostics there, and its probe predates the six keys)
+                why += [f"cleanup receipt not exact / certain / complete: {p}" for p in cleanup_problems(cs)]
         fl = co.in_flight(self.ops.worker_metrics() or {})
         if fl != 0:
             why.append(f"worker health: metrics unreadable or in_flight={fl}")

@@ -8,6 +8,8 @@ import pytest
 from bench import chain_hooks as ch
 from bench.tests.m64_support import (  # noqa: F401  (fixture: env)
     FAP, PICK1, SMOKE, calls, chain_json, env, invocations, log_has, run, schedule)
+from bench.tests.p371_world import manifest, world      # noqa: F401  (fixture)
+from bench.tests.test_p371_barrier_core import drive
 from bench.tests.test_p371_m64_hooks import Script, cell_items, cheat_on, pre_spawn_on, slot
 
 BAD = ["incomplete", "unknown", "extra", "orphans"]
@@ -47,20 +49,32 @@ def test_a_pre_spawn_retry_requires_the_exact_cleanup_receipt(env, variant):
     assert log_has(env, "retry refused")
 
 
-# ---------------------------------------------------------------- restart_load (tg1): the same validator, unit level
-@pytest.mark.parametrize("variant", BAD)
-def test_the_tg1_restart_eligibility_requires_the_exact_cleanup_receipt(variant):
-    from bench import chain_ops as co
-    from bench.tests import test_c147_chain_runner as t
+# ---------------------------------------------------------------- tg1 (`abort_restart`) keeps the C147 receipt rule
+@pytest.mark.parametrize("variant", ["orphans", "extra"])
+def test_tg1_restart_eligibility_keeps_the_c147_rule_orphans_are_diagnostics(variant):
     import tempfile
     from pathlib import Path
+    from bench.tests import test_c147_chain_runner as t
     with tempfile.TemporaryDirectory() as tmp:
         ops = t.FakeOps(tmp)
         chain = t.R.Chain(t.R.parse_args(t.CHAIN + ["--probe", str(t.C147 / "fake_probe.py"), "--out-root", tmp + "/o"]),
                           ops, t.R.Timers(), lambda m: None, t.R.load_universe(), Path(tmp) / "o", {})
         ops.load(t.PICK1)
         block = {"worker": {"pid": ops.ident["pid"], "create_time": ops.ident["create_time"]}}
-        receipt = FAP.cleanup_status(variant)
-        with pytest.raises(co.ChainAbort, match="restart refused.*cleanup"):
-            chain.check_restart_eligible(dict(cleanup_status=receipt, rc=1, outcome="exited"), {"model": t.PICK1}, block)
-        chain.check_restart_eligible(dict(cleanup_status=FAP.cleanup_status(), rc=1, outcome="exited"), {"model": t.PICK1}, block)
+        chain.check_restart_eligible(dict(cleanup_status=FAP.cleanup_status(variant), rc=1, outcome="exited"),
+                                     {"model": t.PICK1}, block)
+
+
+# ---------------------------------------------------------------- the real probe's clean hook stop is its own receipt
+def test_the_probe_records_the_exact_cleanup_receipt_on_a_stop_at_ready(world):
+    from bench import arm_runner
+    from bench.chain_incident import cleanup_problems
+    drive(world, dict(stop_ready=1), a=dict(expect_items="fake/one"))
+    assert manifest(world)["hook_stop"] == dict(before_slot="fake/two")
+    assert manifest(world)["cleanup_status"] == arm_runner.CLEAN_STATUS and cleanup_problems(manifest(world)["cleanup_status"]) == []
+
+
+def test_the_probe_records_the_exact_cleanup_receipt_on_a_stop_at_done(world):
+    from bench import arm_runner
+    drive(world, dict(stop_done=0, payload=dict(disposition="rerun_same_slot")), a=dict(expect_items="fake/one"))
+    assert manifest(world)["cleanup_status"] == arm_runner.CLEAN_STATUS
