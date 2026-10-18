@@ -1974,8 +1974,12 @@ class Chain:
                 continue
             rec["accepted_slots"] = want
             rec["sha256"] = sha_file(path) if path.exists() else None
-            rec["status"] = "hook_stopped"
-            rec["hook_stop"] = dict(before_slot=slot) if kind == "before" else dict(after_slot=slot, disposition=disposition)
+            if kind == "after" and disposition in ("accepted", "exhausted") and want == expected:
+                rec["status"] = "validated"             # F9: the whole invocation was decided, only its `.continue` was lost
+            else:
+                rec["status"] = "hook_stopped"
+                rec["hook_stop"] = (dict(before_slot=slot) if kind == "before"
+                                    else dict(after_slot=slot, disposition=disposition))
             self.write_json("hook-stop-salvaged")
             self.log(f"RESUME: {rec['file']} finalized as hook_stopped from its persisted disposition ({kind} {slot})")
         return left
@@ -1988,6 +1992,16 @@ class Chain:
         for p in self.progress["pre_spawn"]:
             if p.get("invocation") == rec["file"] and p.get("status") != "archived":
                 return "before", p["slot"], None
+        # F9: the latest persisted accepted / exhausted decision of the invocation WHOSE `.continue` was never linked (the crash
+        # fell between the decision and the barrier file that acts on it); the caller proves the prefix against the rows file
+        decided = [a for a in self.progress["slot_attempts"] if a.get("invocation") == rec["file"]
+                   and a.get("disposition") in ("accepted", "exhausted") and a.get("status") != "archived"
+                   and a["slot"] in rec["expected_slots"]]
+        if decided:
+            last = max(decided, key=lambda a: rec["expected_slots"].index(a["slot"]))
+            base = str(self.out_root / rec["file"])[:-len(".jsonl")]
+            if not Path(f"{base}.item{rec['expected_slots'].index(last['slot'])}.continue").exists():
+                return "after", last["slot"], last["disposition"]
         return None
 
     def leg_of(self, load, rec):
