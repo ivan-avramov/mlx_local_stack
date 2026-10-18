@@ -298,7 +298,7 @@ class FakeReceiptSource(ReceiptSource):
 
     def admit(self, cls="task", *, header=None, tools=None, tools_sha256=None, seed=1234567, thinking_budget=81920,
               max_tokens=102400, sampling=None, prompt_tokens=1000, cache_tokens=0, completion_tokens=100,
-              reasoning_tokens=0, disconnected=False, terminal="stop"):
+              reasoning_tokens=0, disconnected=False, terminal="stop", roles=None):
         self.calls.append(("admit", cls))
         self._seq += 1
         has_tools = (cls == "task") if tools is None else tools
@@ -309,7 +309,8 @@ class FakeReceiptSource(ReceiptSource):
             seq=self._seq, worker=dict(self.worker), attempt_header=header, received_mono=self._mono,
             finished_mono=self._mono + 0.5,
             sampling=dict(sampling or dict(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5)),
-            seed=seed, thinking_budget=thinking_budget, max_tokens=max_tokens, roles=["system", "user"],
+            seed=seed, thinking_budget=thinking_budget, max_tokens=max_tokens,
+            roles=list(roles) if roles is not None else ["system", "user"],
             request_tools_present=has_tools, request_tools_sha256=(tools_sha256 or "ab" * 32) if has_tools else None,
             prompt_tokens=prompt_tokens, cache_tokens=cache_tokens, completion_tokens=completion_tokens,
             reasoning_tokens=reasoning_tokens, disconnected=disconnected, terminal=terminal))

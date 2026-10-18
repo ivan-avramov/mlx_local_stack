@@ -12,10 +12,13 @@ def corpus_for(p, a):
                                 polyglot_root=p._polyglot_root, polyglot_sha=p._polyglot_sha)
 
 
-def m64_main(p, adapter, a, template=None):
-    """`run_oc_probe` binding: the m64 template / evidence policy, the tg1 corpus."""
-    return arm_runner.main(p, adapter, a, template=template or ao.m64_template(), evidence=ao.m64_evidence(),
-                           corpus=corpus_for(p, a))
+def m64_main(p, adapter, a, template=None, *, receipts_policy="absent", receipt_source=None, evidence=None):
+    """`run_oc_probe` binding: the m64 template / evidence policy, the tg1 corpus. Tests may bind `required` worker
+    receipts with a fake source (production stays `absent` until P372)."""
+    if evidence is None:
+        evidence = ao.m64_evidence() if receipts_policy == "absent" else ao.m64_evidence(receipts=receipts_policy)
+    return arm_runner.main(p, adapter, a, template=template or ao.m64_template(), evidence=evidence,
+                           corpus=corpus_for(p, a), receipts=receipt_source)
 
 
 def m64_print_identity(p, adapter, a, template=None):

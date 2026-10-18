@@ -161,7 +161,8 @@ class NeutralArm(aa.ArmAdapter):
                     fields=dict(scaffold=self.label, neutral_config_sha256="9" * 64))
 
     def declared_model(self, selection, model):
-        return dict(body=dict(thinking_budget=81920, max_tokens=102400), limit=dict(context=262144)), \
+        return dict(body=dict(temperature=1.0, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5,
+                              thinking_budget=81920, max_tokens=102400), limit=dict(context=262144)), \
             "http://127.0.0.1:1/v1"
 
     def require_binary(self):
