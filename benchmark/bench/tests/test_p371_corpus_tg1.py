@@ -252,3 +252,14 @@ def test_identity_before_load_universe_refuses(tmp_path):
 
 def test_it_is_a_corpus():
     assert issubclass(ct.Tg1Corpus, cp.Corpus)
+
+
+# ---------------------------------------------------------------- P371 phase 2a: the host-injected polyglot seam
+def test_the_polyglot_root_and_sha_may_be_injected_as_callables_and_are_resolved_lazily(tmp_path):
+    from bench import corpus_tg1
+    calls = []
+    c = corpus_tg1.Tg1Corpus(tmp_path / "u.json", polyglot_root=lambda: calls.append("root") or tmp_path,
+                             polyglot_sha=lambda root: calls.append("sha") or "7" * 40)
+    assert calls == []
+    assert c.source_root("python") == tmp_path / "python/exercises/practice"
+    assert c.source_sha() == "7" * 40 and calls == ["root", "root", "sha"]

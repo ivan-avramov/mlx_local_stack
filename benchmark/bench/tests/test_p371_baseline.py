@@ -409,13 +409,13 @@ def test_normalizer_removes_clocks_uuids_run_ids_and_temp_paths():
 
 
 # ------------------------------------------------------------------------------------------------ (e) differential
-@pytest.mark.xfail(strict=True, reason="P371 phase 2/3: new core not built")
 @pytest.mark.parametrize("name", ITEM)
 def test_item_differential(name):
+    from bench.tests.p371_baseline import new_side
     scenario = run_mod.load_scenario(name)
     new = run_mod.run_new_side(scenario)                 # phase 2: runs the same scenario on the new core
     old = run_mod.load_golden(name)
-    res = cmp_mod.compare(old, new, cmp_mod.TABLE)
+    res = cmp_mod.compare(old, new, cmp_mod.TABLE, rederive=new_side.rederive(new))
     assert res.ok, res.failures
 
 
@@ -429,6 +429,17 @@ def test_chain_differential(name):
     assert res.ok, res.failures
 
 
-def test_run_new_side_is_not_implemented_yet():
+def test_run_new_side_chain_scenarios_are_pending_phase_3():
     with pytest.raises(NotImplementedError):
-        run_mod.run_new_side(run_mod.load_scenario("item_normal_pass"))
+        run_mod.run_new_side(run_mod.load_scenario("chain_stop"))
+
+
+def test_the_new_side_rederivation_rejects_a_wrong_value():
+    from bench.tests.p371_baseline import new_side
+    result = {"_expected": [dict(probe_code_sha256="a" * 64, scaffold_policy_sha256="b" * 64,
+                                 generation_identity_sha256="c" * 64, opencode_exe_sha256="d" * 64)]}
+    hook = new_side.rederive(result)
+    assert hook("/runs/0/manifest/runtime/probe_code_sha256", "x", "a" * 64)
+    assert not hook("/runs/0/manifest/runtime/probe_code_sha256", "x", "f" * 64)
+    assert hook("/runs/0/rows/0/generation_identity_sha256", "x", "c" * 64)
+    assert not hook("/runs/0/manifest/runtime/policy/gate", "x", "c" * 64)

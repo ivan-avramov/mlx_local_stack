@@ -100,6 +100,12 @@ def test_real_closure_excludes_scoring_and_legacy_generation():
         assert rel not in got, rel
     assert {"benchmark/run_tg1_probe.py", "benchmark/bench/opencode_v2_core.py", "benchmark/bench/tg1_runner.py",
             "benchmark/bench/provenance.py", "benchmark/bench/deny_rules.py"} <= got
+    # P371 (plan 3.1 dependency rule): the shared core is in, and these stay out of the tg1 closure
+    assert {"benchmark/bench/arm_runner.py", "benchmark/bench/corpus_tg1.py", "benchmark/bench/arm_opencode.py"} <= got
+    for rel in ("benchmark/bench/m64_search.py", "benchmark/bench/chain_hooks.py", "benchmark/bench/web_evidence.py",
+                "benchmark/bench/chain_core.py", "benchmark/bench/tg1_score.py", "benchmark/bench/row_scores.py"):
+        assert rel not in got, rel
+    assert not [m for m in got if "/tg2_" in m or "/arm_pi" in m or "/arm_dsh" in m], got
 
 
 def imported_names(path):

@@ -245,3 +245,26 @@ def test_chain_config_refuses_bad_values(bad):
 def test_chain_config_is_frozen():
     with pytest.raises(dataclasses.FrozenInstanceError):
         chain_config().predictor = "mtp"
+
+
+# ---------------------------------------------------------------- P371 phase 2a: the policy template the entries bind
+def test_policy_template_is_frozen_data_with_the_static_part_of_the_policy():
+    t = rc.PolicyTemplate(config_id="tg1", langs=["python", "go"])
+    assert t.langs == ("python", "go") and t.inject_allowed == rc.INJECT_KINDS and t.compaction == "off"
+    assert t.watchdog == {"mode": "off"} and t.budgets == rc.DEFAULT_BUDGETS
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        t.config_id = "x"
+    for bad in (dict(config_id=""), dict(langs=()), dict(compaction="bogus"),
+                dict(watchdog=dict(mode="on")), dict(inject_allowed=("nope",))):
+        with pytest.raises(ValueError):
+            rc.PolicyTemplate(**{**dict(config_id="tg1", langs=("python",)), **bad})
+
+
+def test_policy_template_build_equals_the_direct_constructor():
+    t = rc.PolicyTemplate(config_id="tg1", langs=("python", "go"))
+    p = host()
+    kw = dict(scaffold=tg1_runner.SCAFFOLD, corpus_id="tg1", corpus_identity=CORPUS_ID,
+              toolbounds_sha256=p._sha_of(tg1_runner.PLUGIN), noretry_sha256=p._sha_of(p.NORETRY_PLUGIN),
+              datefreeze_sha256=p._sha_of(tg1_runner.DATEFREEZE_PLUGIN), carrier_sha256="b" * 64,
+              universe_sha256="u" * 64, env=p.SCAFFOLD_ENV_POLICY_V2, toolchain=dict(TOOLCHAIN))
+    assert t.build(**kw).sha256() == new_policy().sha256()

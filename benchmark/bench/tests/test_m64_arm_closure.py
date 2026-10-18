@@ -22,26 +22,50 @@ def closure(entry):
     return {p.resolve().relative_to(REPO.resolve()).as_posix() for p in ic.python_closure(REPO / entry, REPO)}
 
 
-def test_the_tg1_probe_closure_contains_none_of_the_arm_modules():
-    assert not (closure("benchmark/run_tg1_probe.py") & NEW)
+# P371 (C178): the shared core, corpus and adapter are IN every probe closure now (the tg1 epoch rotated once, accepted);
+# what stays out is checked per entry. Exclusions only ever grow.
+CORE = {"benchmark/bench/arm_runner.py", "benchmark/bench/arm_adapter.py", "benchmark/bench/arm_opencode.py",
+        "benchmark/bench/arm_watchdog.py", "benchmark/bench/corpus.py", "benchmark/bench/corpus_tg1.py",
+        "benchmark/bench/run_config.py", "benchmark/bench/host.py", "benchmark/bench/worker_receipts.py"}
+NEVER = {"benchmark/bench/chain_hooks.py", "benchmark/bench/web_evidence.py", "benchmark/bench/chain_ops.py",
+         "benchmark/bench/chain_rows.py", "benchmark/bench/schedules.py"}
 
 
-def test_the_tg1_modules_the_arm_wraps_are_unedited_by_this_build():
+def pi_dsh_or_tg2(files):
+    return sorted(f for f in files if "/tg2_" in f or "/arm_pi" in f or "/arm_dsh" in f or "/pi_" in f or "/dsh_" in f)
+
+
+def test_the_tg1_probe_closure_holds_the_core_and_excludes_the_forbidden_modules():
+    got = closure("benchmark/run_tg1_probe.py")
+    assert CORE <= got
+    assert not (got & SCORING), sorted(got & SCORING)
+    assert not (got & NEVER), sorted(got & NEVER)
+    assert "benchmark/bench/m64_search.py" not in got and "benchmark/run_oc_probe.py" not in got
+    assert not pi_dsh_or_tg2(got), pi_dsh_or_tg2(got)
+
+
+def test_the_tg1_carrier_and_plugins_the_arm_wraps_are_unedited_by_this_build():
     import subprocess
     base = subprocess.run(["git", "merge-base", "HEAD", "main"], cwd=REPO, capture_output=True, text=True).stdout.strip()
     assert base, "no merge base with main"
     changed = subprocess.run(["git", "diff", "--name-only", base, "HEAD"], cwd=REPO, capture_output=True,
                              text=True).stdout.split()
-    tg1 = closure("benchmark/run_tg1_probe.py")
-    assert not (set(changed) & tg1), sorted(set(changed) & tg1)
     assert "benchmark/opencode_bench_v2_web_tg1.json" not in changed
-    assert not any(c.startswith("benchmark/opencode_plugins/") for c in changed)
+    kept = {"benchmark/opencode_plugins/" + n for n in ("noretry.js", "toolbounds.js", "datefreeze.js")}
+    assert not (set(changed) & kept), sorted(set(changed) & kept)
 
 
 def test_the_m64_oc_probe_closure_is_generation_only():
     got = closure("benchmark/run_oc_probe.py")
-    assert NEW <= got and not (got & SCORING)
-    assert closure("benchmark/run_tg1_probe.py") <= got | {"benchmark/run_tg1_probe.py"}
+    assert NEW <= got and CORE <= got and not (got & SCORING)
+    assert not (got & NEVER), sorted(got & NEVER)
+    assert not pi_dsh_or_tg2(got), pi_dsh_or_tg2(got)
+    assert closure("benchmark/run_tg1_probe.py") - {"benchmark/run_tg1_probe.py", "benchmark/bench/tg1_runner.py"} <= got
+
+
+def test_the_search_service_is_imported_by_the_oc_entry_only():
+    assert "benchmark/bench/m64_search.py" in closure("benchmark/run_oc_probe.py")
+    assert "benchmark/bench/m64_search.py" not in closure("benchmark/bench/arm_opencode.py")
 
 
 def test_print_identity_round_trip_through_the_arm_runner(probe, monkeypatch, tmp_path, capsys):
