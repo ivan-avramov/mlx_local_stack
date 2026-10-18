@@ -1241,7 +1241,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
             stamp["gate"] = ctx.get("gate_report")     # spec 8.3: a failed attempt's tokens count toward its task
         if ctx.get("receipt_tokens") is not None:
             stamp["receipts"] = ctx["receipt_tokens"]  # P371 3b: the fenced worker receipts' totals (the better count)
-        if ctx.get("evidence_paths") is not None and ctx.get("id"):
+        if adapter.report_gate_on_abort and ctx.get("evidence_paths") is not None and ctx.get("id"):
             # F6 (A12): the failing slot's evidence files with their sha256 AT the abort (null: the file does not exist)
             stamp["evidence"] = dict(id=ctx["id"], files={
                 k: dict(path=p._portable(v), sha256=p._sha_of(v) if Path(v).is_file() else None)

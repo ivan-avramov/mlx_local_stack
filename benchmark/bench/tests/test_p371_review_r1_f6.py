@@ -83,11 +83,22 @@ def test_a_slot_whose_row_was_committed_before_the_abort_is_covered_by_its_rows_
 # ---------------------------------------------------------------- the probe's abort stamp
 def test_the_probes_abort_stamp_carries_the_current_items_evidence_paths_and_shas(world):
     from bench import worker_receipts as wr
+    from bench.tests.arm_neutral import NeutralArm
     from bench.tests.test_p371_a3_core import SEED, abort_of, source
-    msg, stamp = abort_of(world, source(world, [dict(cls="task", seed=SEED)]))
+
+    class Reporting(NeutralArm):
+        report_gate_on_abort = True                 # the M64 adapters stamp the failed attempt (spec 8.3); tg1 never does
+
+    msg, stamp = abort_of(world, source(world, [dict(cls="task", seed=SEED)]), adapter=Reporting(world.host))
     ev = stamp["evidence"]
     assert ev["id"] == "fake/one" and set(ev["files"]) >= {"events", "stderr", "export"}
     for entry in ev["files"].values():
         path = Path(entry["path"].replace("$STACK_WORKDIR", str(world.tmp)))
         assert entry["sha256"] == (sha(path) if path.is_file() else None)
     assert ev["files"]["export"]["sha256"] is not None          # the export existed when the join aborted
+
+
+def test_a_non_reporting_adapter_adds_no_evidence_to_its_abort_stamp(world):
+    from bench.tests.test_p371_a3_core import SEED, abort_of, source
+    msg, stamp = abort_of(world, source(world, [dict(cls="task", seed=SEED)]))
+    assert "evidence" not in stamp                  # tg1: the A14 differential's manifest shape is unchanged
