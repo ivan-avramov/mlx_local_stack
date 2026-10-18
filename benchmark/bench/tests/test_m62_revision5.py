@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 import pytest
 from bench import token_turn_gate as tg, arm_runner as runner, proc_guard as pg, structured_grade as sg
+from bench import corpus_tg1
 from bench.tests.test_token_turn_gate import event, usage, request, assistant, tool_state
 from bench.tests.test_proc_guard import Process, guard
 from m62 import replay
@@ -198,7 +199,8 @@ def test_f2_unchanged_successful_manifest_not_enqueued_ungradeable_retried(tmp_p
     work.mkdir()
     (work / 'a').write_text('a')
     g = tg.TokenTurnGate(1)
-    w = runner.GradeWorker(g, threading.RLock(), work, tmp_path, lambda s: (1, False))
+    w = runner.GradeWorker(g, threading.RLock(), work, tmp_path, lambda s: (1, False),
+                            runner.grade_join_timeout_s(sg.TIMEOUTS), corpus=corpus_tg1.Tg1Corpus(runner.DEFAULT_UNIVERSE))
     w.last_manifest = sg.manifest(work)
     w.notify(1)
     assert w.queued is None and not g.pending
@@ -208,7 +210,8 @@ def test_f2_unchanged_successful_manifest_not_enqueued_ungradeable_retried(tmp_p
 
 
 def test_f2_grading_worker_death_aborts(tmp_path):
-    w = runner.GradeWorker(tg.TokenTurnGate(1), threading.RLock(), tmp_path, tmp_path, lambda s: (1,False))
+    w = runner.GradeWorker(tg.TokenTurnGate(1), threading.RLock(), tmp_path, tmp_path, lambda s: (1,False),
+                            runner.grade_join_timeout_s(sg.TIMEOUTS), corpus=corpus_tg1.Tg1Corpus(runner.DEFAULT_UNIVERSE))
     w.start()
     w.finish()
     w.closed = False  # dead without a requested shutdown

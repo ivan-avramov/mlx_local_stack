@@ -21,8 +21,7 @@ def test_arm_ids_are_the_three_scaffolds_of_the_spec():
 
 def test_the_abstract_members_are_the_spec_5_contract():
     required = {
-        "snapshot", "build_env", "command", "preflight", "events", "transcript", "reconcile", "web_evidence",
-        "manifest_fields",
+        "snapshot", "build_env", "command", "preflight", "events", "transcript", "reconcile", "manifest_fields",
     }                                                          # the spec 5 list (cancel is concrete, see below)
     assert required <= aa.ArmAdapter.__abstractmethods__
     assert "cancel" in dir(aa.ArmAdapter) and "cancel" not in aa.ArmAdapter.__abstractmethods__

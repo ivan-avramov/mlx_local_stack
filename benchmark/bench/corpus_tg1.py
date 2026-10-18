@@ -129,6 +129,12 @@ class Tg1Corpus(Corpus):
             prompt += " " + INJECT_ADDENDA[inject]
         return prompt
 
+    def manifest(self, work):
+        return sg.manifest(work)
+
+    def snapshot(self, work, private, boundary):
+        return sg.snapshot(work, private, boundary=boundary)
+
     def tampered(self, snap, prepared):
         return True if snap is None else sg.tampered(snap.path, prepared.protected, prepared.prepared, prepared.lang)
 

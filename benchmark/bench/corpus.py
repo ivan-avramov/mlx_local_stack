@@ -114,6 +114,17 @@ class Corpus(abc.ABC):
         """The user prompt (with the inject kind's addendum when given)."""
 
     @abc.abstractmethod
+    def manifest(self, work):
+        """The relative-path -> sha256 manifest of the work tree as the corpus's grader sees it (the core's change
+        detector for grade coalescing); raises `OSError` / `ValueError` when the tree cannot be read."""
+
+    @abc.abstractmethod
+    def snapshot(self, work, private, boundary):
+        """Context manager yielding a content-stable capture of the work tree (an object with `.path`, `.boundary`
+        and `.manifest`) or None when no stable capture could be taken; captures live under `private`, never in the
+        model's scratch."""
+
+    @abc.abstractmethod
     def tampered(self, snap, prepared):
         """True when the snapshot (None = unsnapshottable) violates the protected inputs."""
 

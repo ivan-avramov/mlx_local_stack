@@ -4,7 +4,7 @@ client, scoring or tg1-runner import, so the chain (a lifecycle file) and `chain
 loading a client. `tests/test_m64_chain_ops.py` pins each spec equal to its adapter's attributes."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import arm_adapter as aa
 
@@ -18,6 +18,13 @@ class ArmSpec:
     runtime_pinned: tuple      # manifest fields pinned at the arm's first complete leg
     sha_fields: tuple          # mandatory 64-hex identity fields
     version_field: str         # the client-named version field of the manifest runtime
+    # R30: how the chain extracts raw web evidence from this arm's hashed transcript, as DATA consumed by
+    # `bench.web_evidence.extract` (a second client is a rules dict, not adapter code)
+    web_evidence_rules: dict = field(default_factory=dict, hash=False)
+
+    def __post_init__(self):
+        if not (isinstance(self.web_evidence_rules, dict) and self.web_evidence_rules):
+            raise ValueError(f"arm {self.arm_id!r}: web_evidence_rules must be a nonempty dict (R30)")
 
     def composite(self, runtime):
         return aa.arm_generation_sha256(self.arm_id, runtime, self.generation_fields)
@@ -26,6 +33,14 @@ class ArmSpec:
     def evidence_dir(self):
         return "transcripts/" + self.arm_id
 
+
+OC_WEB_EVIDENCE_RULES = dict(
+    schema=1, client="opencode",
+    messages="messages", message_role_field="type", message_role="assistant",
+    parts="content", part_type_field="type", part_type="tool",
+    name_field="name", id_field="id", tool_names=["webfetch", "websearch", "shell"], name_contains=["search"],
+    input_path=["state", "input"], output_paths=[["state", "output"], ["state", "content"]],
+    status_path=["state", "status"])
 
 OC = ArmSpec(
     arm_id="oc",
@@ -40,6 +55,7 @@ OC = ArmSpec(
     sha_fields=("scaffold_policy_sha256", "probe_code_sha256", "opencode_exe_sha256", "opencode_bench_config_sha256",
                 "carrier_source_sha256", "universe_sha256", "generation_identity_sha256"),
     version_field="opencode_version",
+    web_evidence_rules=OC_WEB_EVIDENCE_RULES,
 )
 
 SPECS = {"oc": OC}      # Pi and dsh register theirs with their adapters (build step 5)

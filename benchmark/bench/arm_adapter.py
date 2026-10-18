@@ -312,8 +312,10 @@ class ArmAdapter(abc.ABC):
         own carrier fields from `selection`). Returns the receipt or None."""
 
     @abc.abstractmethod
-    def seed_overlay(self, model, seed):
-        """The per-item seed overlay the client config receives (client-native shape)."""
+    def seed_overlay(self, model, seed, *, attempt=None):
+        """The per-item seed overlay the client config receives (client-native shape). `attempt` (an
+        `AttemptContext`) is passed ONLY when the evidence policy requires worker receipts and the adapter
+        `supports_attempt_header`: the overlay then carries the correlation header (R3, R31)."""
 
     @abc.abstractmethod
     def overlay_sha(self, env):
@@ -323,6 +325,10 @@ class ArmAdapter(abc.ABC):
         """The generation composite over `fields` (default: the per-arm recipe, spec 4)."""
         return arm_generation_sha256(self.arm_id, fields, self.GENERATION_FIELDS)
 
+    def valid_frozen_date(self, date):
+        """Is `date` the shape this client prints into its prompt (the P364 frozen date)? Default: any nonempty string."""
+        return isinstance(date, str) and bool(date)
+
     def verify_item_env(self, env, paths, frozen_date):
         """Refuse a spawn environment that does not name this item's evidence paths / frozen date (default: nothing)."""
 
@@ -331,8 +337,10 @@ class ArmAdapter(abc.ABC):
         """Create the hermetic run directory (HOME/config/plugins) and return it."""
 
     @abc.abstractmethod
-    def build_env(self, run_dir, scratch, overlay, *, receipts, frozen_date):
-        """Hermetic spawn environment for one item (cwd = the fixed scratch path)."""
+    def build_env(self, run_dir, scratch, overlay, *, receipts, frozen_date, toolwindow_receipts=None, attempt=None):
+        """Hermetic spawn environment for one item (cwd = the fixed scratch path). `toolwindow_receipts` (an absolute
+        path outside the config dir) is passed when the generation policy's watchdog is on (A4); `attempt` is this
+        item attempt's `AttemptContext` (always passed)."""
 
     @abc.abstractmethod
     def verify_env(self, env, run_dir, selection, overlay):
@@ -376,10 +384,6 @@ class ArmAdapter(abc.ABC):
     def reconcile(self, stream, transcript, receipts, rc, outcome):
         """Match the live stream, the transcript and the receipts; exit code never establishes success. Returns a
         `Reconciliation`; an unregistered terminal shape raises `TransportAbort`."""
-
-    @abc.abstractmethod
-    def web_evidence(self, transcript, env):
-        """Web tool calls and shell networking found in the transcript (raw evidence; classification is scoring)."""
 
     @abc.abstractmethod
     def tool_windows(self, stream):

@@ -294,7 +294,7 @@ class OpencodeArm(aa.ArmAdapter):
             datefreeze_sha256=p._sha_of(DATEFREEZE_PLUGIN),
             carrier_sha256=selection["fields"]["opencode_bench_config_sha256"],
             universe_sha256=universe_sha, grader_version=sg.VERSION, grader_timeout_s=sg.TIMEOUTS,
-            grade_join_timeout_s=core.grade_join_timeout_s(),
+            grade_join_timeout_s=core.grade_join_timeout_s(sg.TIMEOUTS),
             plugin_proof="GET /api/integration awaits Plugin.awaitActivation",
             env=p.SCAFFOLD_ENV_POLICY_V2, scaffold=label)
         policy["toolchain"] = toolchain.current()
@@ -349,8 +349,11 @@ class OpencodeArm(aa.ArmAdapter):
         return self.p._a4_receipt(path, router, limit, model, exe_sha,
                                   selection["fields"]["opencode_bench_config_sha256"])
 
-    def seed_overlay(self, model, seed):
+    def seed_overlay(self, model, seed, *, attempt=None):
         return self.p._seed_overlay(model, seed)
+
+    def valid_frozen_date(self, date):
+        return datefreeze.valid(date)
 
     def overlay_sha(self, env):
         return hashlib.sha256(env[OPENCODE_CONFIG_CONTENT].encode()).hexdigest()
@@ -373,7 +376,7 @@ class OpencodeArm(aa.ArmAdapter):
                             source_path=selection["source"], system_path=selection["system_path"])
         return run_dir
 
-    def build_env(self, run_dir, scratch, overlay, *, receipts, frozen_date):
+    def build_env(self, run_dir, scratch, overlay, *, receipts, frozen_date, toolwindow_receipts=None, attempt=None):
         return self.p._opencode_env(run_dir, scratch, overlay, frozen_date=frozen_date, receipts=receipts)
 
     def verify_env(self, env, run_dir, selection, overlay):
@@ -566,22 +569,6 @@ class OpencodeArm(aa.ArmAdapter):
         if self.m64:
             got = dict(got, compaction_receipts=got["receipts"] - got["requests"])
         return got
-
-    def web_evidence(self, transcript, env):
-        """Raw evidence: every web-capable or shell tool call in the session, with its request. Whether one is a fetch,
-        a search or networking is the audit's classification (scoring, step 5), not generation's."""
-        found, request = [], 0
-        for message in transcript.doc.get("messages", []):
-            if message.get("type") != "assistant":
-                continue
-            request += 1
-            for part in message.get("content", []):
-                if isinstance(part, dict) and part.get("type") == "tool" and (
-                        part.get("name") in ("webfetch", "websearch", "shell") or "search" in str(part.get("name"))):
-                    found.append(dict(request=request, tool=part.get("name"), id=part.get("id"),
-                                      inputs=(part.get("state") or {}).get("input"),
-                                      status=(part.get("state") or {}).get("status")))
-        return found
 
     def tool_windows(self, stream):
         return list(stream.tool_windows)

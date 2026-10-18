@@ -28,13 +28,11 @@ import uuid
 from . import arm_adapter as aa
 from . import arm_identity
 from . import arm_watchdog
-from . import datefreeze
 from . import host as hostmod
 from . import proc_guard as pg
 from . import provenance
 from . import rowschema
 from . import run_config as rc
-from . import structured_grade as sg
 from . import token_turn_gate as tg
 from . import toolchain
 from . import worker_receipts as wr
@@ -129,15 +127,17 @@ class PhaseHeartbeat:
         self.thread.join(5)
 
 
-def grade_join_timeout_s():
-    """Grader timeouts are per grade; a terminal drain may hold the active grade plus one queued capture."""
-    return 2 * max(sg.TIMEOUTS.values()) + GRADE_JOIN_OVERHEAD_S
+def grade_join_timeout_s(timeouts):
+    """Grader timeouts are per grade; a terminal drain may hold the active grade plus one queued capture. `timeouts`
+    is the corpus identity's `grader_timeout_s` (the core knows no grader)."""
+    return 2 * max(timeouts.values()) + GRADE_JOIN_OVERHEAD_S
 
 
 class GradeWorker:
     """One grader, one coalesced capture; ingestion never waits on a grade. `grade(snap) -> (failing, tampered)`."""
 
-    def __init__(self, gate, lock, work, private, grade, join_timeout_s=None):
+    def __init__(self, gate, lock, work, private, grade, join_timeout_s, *, corpus):
+        self.corpus = corpus
         self.gate = gate
         self.lock = lock
         self.work = work
@@ -157,7 +157,7 @@ class GradeWorker:
     def notify(self, boundary):
         with self.condition:
             try:
-                current = sg.manifest(self.work)
+                current = self.corpus.manifest(self.work)
             except (OSError, ValueError):
                 current = None
             if current is not None and current == self.last_manifest:
@@ -192,7 +192,7 @@ class GradeWorker:
                         self.gate.stall_wait.add(boundary)
                     self.queued = None
                 # Capture began at the recorded completed-request observation, not an atomic step.
-                with sg.snapshot(self.work, self.private, boundary=boundary) as snap:
+                with self.corpus.snapshot(self.work, self.private, boundary) as snap:
                     failing = None
                     tampered = False
                     if snap is not None and snap.manifest != self.last_manifest:
@@ -214,7 +214,7 @@ class GradeWorker:
         with self.condition:
             self.closed = True
             self.condition.notify()
-        self.thread.join(self.join_timeout_s if self.join_timeout_s is not None else grade_join_timeout_s())
+        self.thread.join(self.join_timeout_s)
         if self.thread.is_alive():
             raise tg.TransportAbort(
                 "grading worker did not finish within grader timeout"
@@ -357,7 +357,7 @@ def run_item(p, adapter, *, ctx=None, **kwargs):
 
 def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evidence, limit, private, router, base,
               protected_pids=(), policy=None, cancel=None, ctx=None, frozen_date=None, gate_overrides=None,
-              watchdog=None, compaction=False, join_timeout_s=None):
+              watchdog=None, compaction=False, join_timeout_s):
     work, entry = prepared.work, prepared.entry
     gate_policy, hygiene = policy if policy is not None else effective_policy()
     if gate_overrides:
@@ -419,7 +419,7 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
         resources["grader_oom"] |= outcome.resources["grader_oom"]
         return outcome.failing, False
 
-    worker = GradeWorker(gate, lock, work, private, grade, join_timeout_s=join_timeout_s)
+    worker = GradeWorker(gate, lock, work, private, grade, join_timeout_s=join_timeout_s, corpus=corpus)
     stream = adapter.new_stream(gate, worker.notify)
     stream.base_url = base
     proc = None
@@ -657,7 +657,7 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             entry.get("id", work.name), len(tmp_found), sum(c["exact"] for c in tmp_found),
             sum(not c["exact"] for c in tmp_found), len(tmp_cleaned), json.dumps(tmp_kept)), flush=True)
         heartbeat.set_phase("terminal_grading")
-        with sg.snapshot(work, private, boundary=final_boundary_actual) as snap:
+        with corpus.snapshot(work, private, final_boundary_actual) as snap:
             # A tampered / unsnapshottable tree runs no grader and still leaves a typed final receipt (the corpus).
             final = corpus.grade(snap, prepared, private, guard, keep, next_seq(), final_boundary_actual, True)
             resources["grader_mem_kill"] |= final.resources["grader_mem_kill"]
@@ -759,13 +759,15 @@ def _identity_inputs(adapter, template, corpus, selection, universe_sha, version
     base = adapter.identity(selection=selection, universe_sha=universe_sha, version=version, binary=binary,
                             inject=kind, **extra)
     pol = base["policy"]
+    cid = corpus.identity()
+    timeouts = dict(cid["grader_timeout_s"])
     policy = template.build(
         scaffold=base["scaffold"], corpus_id=corpus.corpus_id, corpus_identity=corpus.identity(),
         toolbounds_sha256=pol["toolbounds_sha256"], noretry_sha256=pol["noretry_sha256"],
         datefreeze_sha256=pol["datefreeze_sha256"], carrier_sha256=pol["carrier_sha256"],
         universe_sha256=pol["universe_sha256"], env=pol["env"], toolchain=pol["toolchain"], inject=kind,
-        gate=pol["gate"], hygiene=pol["hygiene"], grader_version=pol["grader_version"],
-        grader_timeout_s=pol["grader_timeout_s"], grade_join_timeout_s=pol["grade_join_timeout_s"],
+        gate=pol["gate"], hygiene=pol["hygiene"], grader_version=cid["grader_version"],
+        grader_timeout_s=timeouts, grade_join_timeout_s=grade_join_timeout_s(timeouts),
         plugin_proof=pol["plugin_proof"], arm=pol.get("arm"), **extra)
     ident = dict(base)
     ident["policy"] = policy.as_dict()
@@ -827,8 +829,9 @@ def main(p, adapter, a, *, template, evidence, corpus, receipts=None):
     frozen = getattr(a, "frozen_prompt_date", None)
     if frozen is None:
         sys.exit("REFUSED: --frozen-prompt-date is required (P364: the date the model is shown; never defaulted to today)")
-    if not datefreeze.valid(frozen):
-        sys.exit("REFUSED: --frozen-prompt-date must be 'Www Mmm DD YYYY' (e.g. 'Sat Oct 17 2026')")
+    if not adapter.valid_frozen_date(frozen):
+        sys.exit("REFUSED: --frozen-prompt-date must be the date shape the client prints "
+                 "(opencode: 'Www Mmm DD YYYY', e.g. 'Sat Oct 17 2026')")
     kind = a.tg1_inject
     if kind:
         if kind not in template.inject_allowed:

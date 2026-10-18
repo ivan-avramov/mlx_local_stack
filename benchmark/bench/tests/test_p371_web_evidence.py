@@ -70,14 +70,6 @@ def test_extract_writes_raw_calls_with_returned_content_and_returns_path_sha_cou
     assert got[3]["output"] is None                                                         # still running: no output
 
 
-def test_extraction_selects_exactly_what_the_adapter_selected_today(tmp_path):
-    path, sha = write(tmp_path)
-    today = ao.OpencodeArm.web_evidence(None, SimpleNamespace(doc=DOC), {})
-    out = we.extract(we.OPENCODE_RULES, path, sha, tmp_path / "w.jsonl")
-    assert [(r["request"], r["tool"], r["id"], r["status"], r["input"]) for r in lines(out["path"])] == [
-        (t["request"], t["tool"], t["id"], t["status"], t["inputs"]) for t in today]
-
-
 def test_the_transcript_sha_is_verified_before_anything_is_written(tmp_path):
     path, sha = write(tmp_path)
     dest = tmp_path / "ev/x.web.jsonl"

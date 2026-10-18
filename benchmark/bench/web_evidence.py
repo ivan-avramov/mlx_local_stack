@@ -7,8 +7,8 @@ search result, shell command output, or None when the call never returned) and r
 Classification (fetch vs search vs networking) is scoring's job, not this module's. No transcript, or an export that
 cannot be read, yields `unavailable(reason)` (P201: unauditable, never "no contact").
 
-The per-arm extraction rules are DATA (`OPENCODE_RULES` here; `ArmSpec.web_evidence_rules` consumes them in phase 2), so
-a second client is a rules dict, not code. Only the chain imports this module; a probe closure never does."""
+The per-arm extraction rules are DATA: `ArmSpec.web_evidence_rules` (`bench.arm_specs`; `OPENCODE_RULES` is the oc
+spec's dict), so a second client is a rules dict, not code. Only the chain imports this module; a probe closure never does."""
 from __future__ import annotations
 
 import hashlib
@@ -16,16 +16,11 @@ import json
 import os
 from pathlib import Path
 
+from . import arm_specs
 from . import token_turn_gate as tg
 
 RULES_SCHEMA = 1
-OPENCODE_RULES = dict(
-    schema=RULES_SCHEMA, client="opencode",
-    messages="messages", message_role_field="type", message_role="assistant",
-    parts="content", part_type_field="type", part_type="tool",
-    name_field="name", id_field="id", tool_names=["webfetch", "websearch", "shell"], name_contains=["search"],
-    input_path=["state", "input"], output_paths=[["state", "output"], ["state", "content"]],
-    status_path=["state", "status"])
+OPENCODE_RULES = arm_specs.OC.web_evidence_rules       # the data lives in the arm spec (R30); kept here as an alias
 _RULE_KEYS = tuple(OPENCODE_RULES)
 
 
