@@ -126,12 +126,6 @@ def test_prepare_refuses_a_tree_that_differs_from_the_frozen_universe(tmp_path):
         c.prepare("python/foo", tmp_path / "scratch/foo")
 
 
-def snap_of(work, tmp_path, boundary=0):
-    with sg.snapshot(work, tmp_path / "private", boundary=boundary) as snap:
-        yield_snap = snap
-    return yield_snap
-
-
 def test_tampered_matches_structured_grade_on_fixture_trees(corpus, tmp_path):
     (tmp_path / "private").mkdir()
     work = tmp_path / "scratch/foo"
