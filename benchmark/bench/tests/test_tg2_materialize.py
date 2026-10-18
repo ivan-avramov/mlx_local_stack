@@ -395,15 +395,29 @@ def valid_items():
     return [i for entry in doc["languages"].values() for i in entry["valid"]]
 
 
-def test_prepared_tree_drops_approaches_articles_and_unknown_top_level_directories(tmp_path):
-    c = make_corpus(tmp_path / "c", "javascript", "a", dict(solution=["lib/a.js"], test=["a.spec.js"],
-                                                           example=[".meta/proof.ci.js"]),
-                    {"lib/a.js": "s", "a.spec.js": "t", ".meta/proof.ci.js": "r", ".approaches/x/snippet.txt": "SOLUTION",
-                     ".articles/p/a.md": "ARTICLE", "notes/n.md": "NOTES", "package.json": "p",
-                     ".docs/i.md": "d", "data/.approaches/deep.md": "DEEP"})
+def test_prepared_tree_drops_the_reference_roots_and_fails_on_an_undeclared_directory(tmp_path):
+    cfg = dict(solution=["lib/a.js"], test=["a.spec.js"], example=[".meta/proof.ci.js"])
+    files = {"lib/a.js": "s", "a.spec.js": "t", ".meta/proof.ci.js": "r", ".approaches/x/snippet.txt": "SOLUTION",
+             ".articles/p/a.md": "ARTICLE", "package.json": "p", ".docs/i.md": "d", "lib/.approaches/deep.md": "DEEP"}
+    c = make_corpus(tmp_path / "c", "javascript", "a", cfg, files)
     tree = mat.prepare_tree(c, "javascript", "a", tmp_path / "t").tree
-    got = sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file())
-    assert got == ["a.spec.js", "lib/a.js", "package.json"]
+    assert sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file()) == ["a.spec.js", "lib/a.js", "package.json"]
+    c2 = make_corpus(tmp_path / "c2", "javascript", "a", cfg, dict(files, **{"notes/n.md": "NOTES"}))
+    with pytest.raises(mat.FreezeError, match=r"notes/n\.md"):
+        mat.prepare_tree(c2, "javascript", "a", tmp_path / "t2")
+    assert not (tmp_path / "t2").exists()
+
+
+@pytest.mark.parametrize("key", ["solution", "test", "editor"])
+def test_s13_every_declared_file_must_be_present_in_the_prepared_tree(tmp_path, key):
+    cfg = dict(solution=["x.js"], test=["x.spec.js"], example=[".meta/proof.ci.js"], editor=["helper.js"])
+    cfg[key] = [".meta/hidden.js"] if key != "solution" else [".approaches/hidden.js"]
+    files = {"x.js": "s", "x.spec.js": "t", "helper.js": "h", ".meta/proof.ci.js": "r", ".meta/hidden.js": "x",
+             ".approaches/hidden.js": "x"}
+    c = make_corpus(tmp_path / "c", "javascript", "x", cfg, files)
+    with pytest.raises(mat.FreezeError, match="declared"):
+        mat.prepare_tree(c, "javascript", "x", tmp_path / "t")
+    assert not (tmp_path / "t").exists()
 
 
 @pytest.mark.skipif(not (HAVE_CORPUS and UNIVERSE.is_file()), reason="polyglot corpus / frozen universe not found")
