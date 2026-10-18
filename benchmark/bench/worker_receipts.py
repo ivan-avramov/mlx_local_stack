@@ -269,8 +269,10 @@ class HttpReceiptSource(ReceiptSource):
             with urllib.request.urlopen(request, timeout=self.timeout_s):
                 return
         except urllib.error.HTTPError as exc:
-            if exc.code != 404:
-                return                                  # 405 / 400 / 401 ...: the route exists
+            if exc.code == 405:
+                return                                  # a POST-only route answers GET with 405: it exists
+            if exc.code != 404:                         # 401 / 403 / 5xx ... : the route is not usable (F11)
+                raise ReceiptUnavailable(f"the worker receipt endpoint answered HTTP {exc.code} to the readiness probe") from None
             why = "the worker has no /bench/attempt/start route"
         except (urllib.error.URLError, socket.timeout, OSError) as exc:
             why = f"the worker is unreachable ({type(exc).__name__})"
