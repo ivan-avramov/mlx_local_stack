@@ -32,11 +32,12 @@ import xml.etree.ElementTree as ET
 from .structured_grade import _sha256, _write_index, manifest, protected_manifest, write_receipt
 from .token_turn_gate import TransportAbort
 
-VERSION = "m65-tg2-v1"
+VERSION = "m65-tg2-v2"
 IMAGE_TAG = "tg2-grader:m65-v1"
 REPO = Path(__file__).resolve().parents[2]
 IMAGE_ID_FILE = REPO / "benchmark/m65/tg2_image/IMAGE_ID"
 ALLOWLIST_FILE = REPO / "benchmark/m65/tg2_image/rust_allowlist.json"
+RUST_LOCKS_DIR = REPO / "benchmark/m65/tg2_image/locks/rust"
 LANGS = ("rust", "java", "javascript", "cpp")
 TIMEOUT_FLOOR = 180
 JEST = "/opt/tg2/js/node_modules/.bin/jest"
@@ -88,6 +89,72 @@ def rust_disclosure_line():
 _DEP_KEYS = {"version", "features", "default-features"}
 
 
+def vendored_versions():
+    """{crate: sorted exact versions} vendored in the image: the union of every committed per-manifest `Cargo.lock`
+    the image's `cargo vendor --locked --sync` ran over (registry packages only)."""
+    global _VENDORED
+    if _VENDORED is None:
+        found = {}
+        for lock in sorted(RUST_LOCKS_DIR.glob("*/Cargo.lock")):
+            for pkg in tomllib.loads(lock.read_text()).get("package", []):
+                if "source" in pkg and re.fullmatch(r"\d+\.\d+\.\d+", pkg["version"]):
+                    found.setdefault(pkg["name"], set()).add(pkg["version"])
+        _VENDORED = {k: sorted(v, key=_vtuple) for k, v in found.items()}
+    return _VENDORED
+
+
+_VENDORED = None
+_COMPARATOR = re.compile(r"^(?P<op>\^|~|=|>=|<=|>|<)?\s*(?P<ver>(?:\d+|[*xX])(?:\.(?:\d+|[*xX])){0,2})$")
+
+
+def _vtuple(version):
+    return tuple(int(x) for x in version.split("."))
+
+
+def cargo_req_matches(req, version):
+    """Does the Cargo version requirement `req` (comma-joined comparators: `^` caret / bare default, `~`, `=`, `>`,
+    `>=`, `<`, `<=`, wildcards `*` / `1.*` / `1.2.x`) match the exact stable `version`? Pre-release / build-metadata
+    requirements and anything malformed raise ValueError."""
+    v = _vtuple(version)
+    for part in req.split(","):
+        m = _COMPARATOR.match(part.strip())
+        if not m:
+            raise ValueError("malformed Cargo version requirement %r" % req)
+        op, raw = m.group("op"), m.group("ver").split(".")
+        wild = [i for i, x in enumerate(raw) if x in "*xX"]
+        if wild and (wild[0] == 0 and len(raw) > 1 or wild != list(range(wild[0], len(raw))) or op not in (None, "=")):
+            raise ValueError("malformed Cargo version requirement %r" % req)
+        if wild and wild[0] == 0:
+            continue                                                        # `*`: any version
+        nums = [int(x) for x in (raw[:wild[0]] if wild else raw)]
+        n = len(nums)
+        lo = tuple(nums + [0] * (3 - n))
+        bump = tuple(nums[:-1] + [nums[-1] + 1] + [0] * (3 - n))             # first version past the partial prefix
+        if wild or op == "=":
+            ok = lo <= v < bump
+        elif op == ">=":
+            ok = v >= lo
+        elif op == ">":
+            ok = v >= bump
+        elif op == "<":
+            ok = v < lo
+        elif op == "<=":
+            ok = v < bump
+        elif op == "~":
+            ok = lo <= v < ((nums[0] + 1, 0, 0) if n == 1 else (nums[0], nums[1] + 1, 0))
+        else:                                                               # caret (bare default)
+            if nums[0] > 0 or n == 1:
+                hi = (nums[0] + 1, 0, 0)
+            elif nums[1] > 0 or n == 2:
+                hi = (0, nums[1] + 1, 0)
+            else:
+                hi = (0, 0, nums[2] + 1)
+            ok = lo <= v < hi
+        if not ok:
+            return False
+    return True
+
+
 def cargo_manifest_reasons(prepared_text, current_text, extra_crates=()):
     """P367: the root Cargo.toml may differ from the prepared one ONLY in `[dependencies]`: every entry names an
     allowlisted crate with a string version requirement (optionally `features` / `default-features`); paths, git,
@@ -109,6 +176,7 @@ def cargo_manifest_reasons(prepared_text, current_text, extra_crates=()):
     for name, spec in sorted(deps.items()):
         if prepared.get("dependencies", {}).get(name) == spec:
             continue
+        before = len(reasons)
         if name not in RUST_ALLOWLIST and name not in extra_crates:
             reasons.append("Cargo.toml dependency %s is not in the offline allowlist" % name)
         elif isinstance(spec, str):
@@ -125,6 +193,18 @@ def cargo_manifest_reasons(prepared_text, current_text, extra_crates=()):
                 reasons.append("Cargo.toml dependency %s has malformed default-features" % name)
         else:
             reasons.append("Cargo.toml dependency %s has a malformed specification" % name)
+            continue
+        if len(reasons) == before:
+            req = spec if isinstance(spec, str) else spec["version"]
+            have = vendored_versions().get(name, [])
+            try:
+                satisfiable = any(cargo_req_matches(req, ver) for ver in have)
+            except ValueError as exc:
+                reasons.append("Cargo.toml dependency %s has an unsupported version requirement: %s" % (name, exc))
+                continue
+            if not satisfiable:
+                reasons.append("Cargo.toml dependency %s requirement %r is not satisfiable by the vendored versions %s"
+                               % (name, req, have))
     return reasons
 
 

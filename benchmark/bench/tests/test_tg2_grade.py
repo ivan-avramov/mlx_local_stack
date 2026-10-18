@@ -1,4 +1,4 @@
-"""M65 tg2 grader (`bench/tg2_grade.py`, version m65-tg2-v1): parsers, phase-typed grading, outcome classes, tamper
+"""M65 tg2 grader (`bench/tg2_grade.py`, version m65-tg2-v2): parsers, phase-typed grading, outcome classes, tamper
 checks, skip-form refusal. Unit tests use a fake `run` (no docker); docker-marked integration tests grade real
 reference / stub trees inside the built `tg2-grader` image and are skipped (with the reason) when docker, the image or
 the polyglot corpus is absent."""
@@ -650,7 +650,7 @@ def test_raw_outputs_retained_by_sha256_with_phase_records(tree, tmp_path):
     for name, meta in index["artifacts"].items():
         assert hashlib.sha256((keep / meta["path"]).read_bytes()).hexdigest() == meta["sha256"]
     phases = json.loads((d / "phases.json").read_text())
-    assert phases["version"] == tg.VERSION == "m65-tg2-v1" and phases["image_id"] == IMG
+    assert phases["version"] == tg.VERSION == "m65-tg2-v2" and phases["image_id"] == IMG
     names = [p["step"] for p in phases["phases"]]
     assert names == ["setup-image", "setup-launch", "preflight", "compile", "execute", "collect"]
     compile_phase = phases["phases"][3]
@@ -870,10 +870,14 @@ def s2_reasons(dep, extra=()):
 
 
 @pytest.mark.parametrize("dep", ['regex = "99"', 'rand = "0.9"', 'rand = { version = "0.9", features = ["x"] }',
-                                 'itertools = ">=0.6, <0.15"', 'regex = "=1.0.0"', 'thiserror = "~1.1"', 'regex = "1.*.3"'])
+                                 'itertools = ">=0.6, <0.15"', 'regex = "=1.0.0"', 'thiserror = "~1.1"'])
 def test_s2_a_requirement_no_vendored_version_satisfies_is_tampering_with_a_reason(dep):
     reasons = s2_reasons(dep)
     assert reasons and any(dep.split(" ")[0] in r and "vendored" in r for r in reasons), reasons
+
+
+def test_s2_a_malformed_requirement_in_a_manifest_is_tampering():
+    assert s2_reasons('regex = "1.*.3"') and s2_reasons('regex = "1.0.0-rc.1"') and s2_reasons('regex = ""')
 
 
 @pytest.mark.parametrize("dep", ['regex = "1.*"', 'regex = ">=1, <2"', 'thiserror = "~1.0"', 'rand = "=0.8.8"', 'rand = "0.3"',
