@@ -145,9 +145,10 @@ def test_interrupt_in_pilot_then_after_pilot_then_inside_full_resume_without_dou
     f1 = chain.inv(["c"], phase="full", status="running", expected=["c", "d", "e"])   # interrupted inside full, 1 row
     assert scored(chain.load()) == sorted(slot(i) for i in "ab")              # the running file is not counted
     f1["status"] = "quarantined"
-    chain.inv(["c", "d", "e"], phase="full", attempt=2)                       # resumed once
-    chain.inv(["c", "d", "e"], phase="full", attempt=3, status="quarantined")  # interrupted again, quarantined again
-    chain.inv(["c", "d", "e"], phase="full", attempt=4)                       # resumed twice: only this one counts
+    f2 = chain.inv(["c", "d"], phase="full", attempt=2, status="running", expected=["c", "d", "e"])  # resumed once
+    assert scored(chain.load()) == sorted(slot(i) for i in "ab")
+    f2["status"] = "quarantined"                                              # interrupted again, set aside again
+    chain.inv(["c", "d", "e"], phase="full", attempt=3)                       # resumed twice: only this one counts
     t = chain.load()
     assert scored(t) == sorted(slot(i) for i in "abcde") and len(t.attempts[slot("c")]) == 1
 
