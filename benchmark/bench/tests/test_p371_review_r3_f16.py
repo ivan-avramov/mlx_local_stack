@@ -23,10 +23,13 @@ def build(tmp_path):
     return chain, out, view, worker, good
 
 
-def hydrate(chain, out, view, worker, man, **att_extra):
+def hydrate(chain, out, view, worker, man, nonce=None, **att_extra):
     out.with_suffix(".manifest.json").write_text(json.dumps(man))
     att = dict(attempt=1, run_id=None, worker=worker, transport_abort=None, cancelled_item=None, cleanup_status=None, **att_extra)
-    chain.hydrate_from_manifest(att, view, out, {"expected_slots": ["e|oc|m|s1|python|a"]})
+    rec = {"expected_slots": ["e|oc|m|s1|python|a"]}
+    if nonce is not None:
+        rec["nonce"] = nonce
+    chain.hydrate_from_manifest(att, view, out, rec)
     return att
 
 
