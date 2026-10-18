@@ -123,6 +123,9 @@ def read_plan(corpus, lang, slug):
         if not (src / rel).is_file():
             raise FreezeError("declared file %s is missing from the prepared tree" % rel)
     for rel in examples:
+        if PurePosixPath(rel).parts[0] not in EXCLUDED_ROOTS:
+            raise FreezeError("example %s is not under an excluded root %s (it would be model-visible)"
+                              % (rel, list(EXCLUDED_ROOTS)))
         if not (src / rel).is_file():
             raise FreezeError("example %s is missing" % rel)
     if lang == "rust":
@@ -180,7 +183,12 @@ def prepare_tree(corpus, lang, slug, dest):
             drop |= {n for n in names if (src / n).is_dir() and n not in allowed}
         return drop
 
+    plan = read_plan(corpus, lang, slug)          # S4: every configured reference source must be outside the tree
     shutil.copytree(src, dest, ignore=ignore)
+    for rel in {src_rel for src_rel, _ in plan.mapping} | set(plan.config["example"]):
+        if (dest / rel).exists():
+            shutil.rmtree(dest, ignore_errors=True)
+            raise FreezeError("reference source %s is present in the prepared tree" % rel)
     rewrites = {}
     if lang == "javascript":
         for path in sorted(dest.glob("*.spec.js")):

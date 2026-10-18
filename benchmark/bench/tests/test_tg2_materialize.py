@@ -316,14 +316,14 @@ def valid_items():
 
 
 def test_prepared_tree_drops_approaches_articles_and_unknown_top_level_directories(tmp_path):
-    c = make_corpus(tmp_path / "c", "java", "a", dict(solution=["lib/A.java"], test=["src/test/java/ATest.java"],
-                                                     example=[".meta/src/reference/java/A.java"]),
-                    {"lib/A.java": "s", "src/test/java/ATest.java": "t", ".meta/src/reference/java/A.java": "r",
-                     ".approaches/x/snippet.txt": "SOLUTION", ".articles/p/a.md": "ARTICLE", "notes/n.md": "NOTES",
-                     "build.gradle": "g", "gradle/wrapper/w.properties": "w", ".docs/i.md": "d"})
-    tree = mat.prepare_tree(c, "java", "a", tmp_path / "t").tree
+    c = make_corpus(tmp_path / "c", "javascript", "a", dict(solution=["lib/a.js"], test=["a.spec.js"],
+                                                           example=[".meta/proof.ci.js"]),
+                    {"lib/a.js": "s", "a.spec.js": "t", ".meta/proof.ci.js": "r", ".approaches/x/snippet.txt": "SOLUTION",
+                     ".articles/p/a.md": "ARTICLE", "notes/n.md": "NOTES", "data/d.json": "{}", "package.json": "p",
+                     ".docs/i.md": "d", "data/.approaches/deep.md": "DEEP"})
+    tree = mat.prepare_tree(c, "javascript", "a", tmp_path / "t").tree
     got = sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file())
-    assert got == ["build.gradle", "gradle/wrapper/w.properties", "lib/A.java", "src/test/java/ATest.java"]
+    assert got == ["a.spec.js", "data/d.json", "lib/a.js", "package.json"]
 
 
 @pytest.mark.skipif(not (HAVE_CORPUS and UNIVERSE.is_file()), reason="polyglot corpus / frozen universe not found")
