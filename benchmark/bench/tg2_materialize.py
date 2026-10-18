@@ -13,6 +13,12 @@ import shutil
 import tomllib
 
 LANGS = ("rust", "java", "javascript", "cpp")
+VERSION = "m65-tg2-mat-v2"
+# S1: reference / instruction material that never reaches a prepared tree, at any depth.
+EXCLUDED_ROOTS = (".docs", ".meta", ".approaches", ".articles")
+# S1: a prepared tree is an ALLOW-list. Top-level files are kept; a top-level directory is kept only when it is one of
+# the language's stub directories below or holds a file the item's config declares (solution / editor / test).
+STUB_DIRS = {"rust": ("src", "tests", "benches"), "java": ("src", "gradle"), "javascript": ("data",), "cpp": ("test",)}
 JAVA_REFERENCE_ROOT = ".meta/src/reference/java/"
 _JS_SKIP = re.compile(r"\b(xtest|xit|xdescribe)\(")
 _JAVA_DISABLED = re.compile(r"@Disabled(?:\([^)]*\))?[ \t]*\n?")
@@ -156,11 +162,25 @@ def read_plan(corpus, lang, slug):
 
 
 def prepare_tree(corpus, lang, slug, dest):
-    """The prepared (untouched stub) tree in a fresh directory: `.docs`/`.meta` removed, skip forms rewritten
+    """The prepared (untouched stub) tree in a fresh directory: only allow-listed content kept (`.docs` / `.meta` / `.approaches` / `.articles` and unknown top-level directories removed), skip forms rewritten
     (JS `xtest`/`xit`/`xdescribe`, Java `@Disabled` in both forms); the rewrite counts are recorded."""
     src = exercise_dir(corpus, lang, slug)
     dest = Path(dest)
-    shutil.copytree(src, dest, ignore=shutil.ignore_patterns(".docs", ".meta"))
+    allowed = set(STUB_DIRS[lang])
+    try:
+        files = json.loads((src / ".meta/config.json").read_text())["files"]
+        allowed |= {PurePosixPath(rel).parts[0] for key in ("solution", "editor", "test") for rel in files.get(key, [])
+                    if len(PurePosixPath(rel).parts) > 1}
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+
+    def ignore(directory, names):
+        drop = {n for n in names if n in EXCLUDED_ROOTS}
+        if Path(directory) == src:
+            drop |= {n for n in names if (src / n).is_dir() and n not in allowed}
+        return drop
+
+    shutil.copytree(src, dest, ignore=ignore)
     rewrites = {}
     if lang == "javascript":
         for path in sorted(dest.glob("*.spec.js")):

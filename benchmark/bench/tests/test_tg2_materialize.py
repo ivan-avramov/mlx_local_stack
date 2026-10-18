@@ -286,7 +286,8 @@ def leaked_chunks(reference_files, tree, chunk=LEAK_CHUNK):
 
 # Inspected overlaps (200+ chars) that are the stub's own shipped scaffolding (API skeletons, helper classes the reference
 # re-includes, test data / lyrics shared with a test file), never solution code: (item, prepared file). Each must still
-# occur (no stale entries) and cover < half of the reference file it overlaps.
+# occur (no stale entries) and either cover < half of the reference file or be a shipped file (stub / editor helper) that the
+# reference re-includes verbatim, so it adds nothing the model does not already have.
 STUB_SCAFFOLDING = {
     ("java/bottle-song", "src/test/java/BottleSongTest.java"), ("java/dominoes", "src/main/java/Domino.java"),
     ("java/hangman", "src/main/java/Output.java"), ("java/kindergarten-garden", "src/main/java/Plant.java"),
@@ -295,15 +296,16 @@ STUB_SCAFFOLDING = {
     ("java/satellite", "src/main/java/Tree.java"), ("java/sgf-parsing", "src/main/java/SgfNode.java"),
     ("java/word-search", "src/main/java/Pair.java"), ("java/word-search", "src/main/java/WordLocation.java"),
     ("javascript/food-chain", "food-chain.spec.js"), ("javascript/grep", "grep.js"),
-    ("rust/gigasecond", "tests/gigasecond.rs"), ("rust/grep", "tests/grep.rs"), ("rust/poker", "src/lib.rs"),
-    ("rust/react", "src/lib.rs"), ("rust/two-bucket", "src/lib.rs"), ("rust/xorcism", "src/lib.rs"),
-    ("rust/xorcism", "tests/xorcism.rs"),
+    ("rust/poker", "src/lib.rs"), ("rust/react", "src/lib.rs"), ("rust/two-bucket", "src/lib.rs"),
+    ("rust/xorcism", "src/lib.rs"),
 }
 
 
 def reference_files(corpus, lang, slug):
     src = mat.exercise_dir(corpus, lang, slug)
-    files = [p for root in REFERENCE_ROOTS if (src / root).is_dir() for p in sorted((src / root).rglob("*")) if p.is_file()]
+    # test-generation templates / data (`*.tera`, `*.j2`, tests.toml, config.json) restate the visible tests, not a solution
+    files = [p for root in REFERENCE_ROOTS if (src / root).is_dir() for p in sorted((src / root).rglob("*"))
+             if p.is_file() and p.suffix not in (".tera", ".j2") and p.name not in ("tests.toml", "config.json")]
     files += [src / e for e in mat.read_plan(corpus, lang, slug).config["example"]]
     return files
 
@@ -334,8 +336,11 @@ def test_every_valid_item_prepared_tree_has_nothing_from_an_excluded_root_and_no
         if top & set(REFERENCE_ROOTS + (".docs",)):
             bad[item] = ("excluded root present", sorted(top & set(REFERENCE_ROOTS + (".docs",))))
             continue
-        for (rel, ref), share in leaked_chunks(reference_files(POLYGLOT, lang, slug), tree).items():
-            if (item, rel) in STUB_SCAFFOLDING and share < 0.5:
+        refs = reference_files(POLYGLOT, lang, slug)
+        for (rel, ref), share in leaked_chunks(refs, tree).items():
+            verbatim = any(r.name == ref and _norm(r.read_text(errors="replace")) ==
+                                                    _norm((tree / rel).read_text(errors="replace")) for r in refs)
+            if (item, rel) in STUB_SCAFFOLDING and (share < 0.5 or verbatim):
                 seen.add((item, rel))
             else:
                 bad.setdefault(item, []).append((rel, ref, round(share, 2)))
