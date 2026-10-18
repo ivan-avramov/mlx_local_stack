@@ -88,11 +88,10 @@ def run_old_side(bundle, scenario, *, plant=None, timeout=150):
 
 def run_new_side(scenario):
     """Run the SAME scenario on the new shared core with the current tree's equivalent fakes and return a result of the
-    same schema (plus `_raw` / `_expected`, see `new_side`). ITEM scenarios only; the chain core is phase 3."""
-    if scenario["kind"] != "item":
-        raise NotImplementedError("P371 phase 3: the chain core is not built; run_new_side(%s) is pending"
-                                  % scenario.get("name"))
+    same schema (ITEM: plus `_raw` / `_expected`, see `new_side`). CHAIN scenarios run the current chain entry."""
     from . import new_side
+    if scenario["kind"] == "chain":
+        return new_side.run_chain_new_side(scenario)
     return new_side.run_item_new_side(scenario)
 
 

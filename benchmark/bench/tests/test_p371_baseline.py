@@ -1,4 +1,4 @@
-"""P371 phase 1b (plan 4 A14): the isolated pre-P371 baseline harness, its JSON-pointer comparator and the pending
+"""P371 phase 1b (plan 4 A14): the isolated pre-P371 baseline harness, its JSON-pointer comparator and the
 differential tests. Test-only: nothing under benchmark/ outside bench/tests may import `p371_baseline`.
 
 Layers:
@@ -6,7 +6,7 @@ Layers:
   (b) import guard: a driver run that loads a current-tree module FAILS.
   (c) every scenario runs on the bundle (the bundle's own code and fakes) and equals its stored golden output.
   (d) `compare` unit tests: the plan's exact table.
-  (e) `test_item_differential` / `test_chain_differential`: new side = `run_new_side` (phase 2/3), xfail(strict) now.
+  (e) `test_item_differential` / `test_chain_differential`: new side = `run_new_side` (item: phase 2, chain: phase 3).
 Regenerate goldens: `P371_REGEN_GOLDEN=1 ../.venv-bench/bin/python -m pytest bench/tests/test_p371_baseline.py -k golden`."""
 from __future__ import annotations
 
@@ -419,19 +419,25 @@ def test_item_differential(name):
     assert res.ok, res.failures
 
 
-@pytest.mark.xfail(strict=True, reason="P371 phase 2/3: new core not built")
 @pytest.mark.parametrize("name", CHAIN)
 def test_chain_differential(name):
+    from bench.tests.p371_baseline import new_side
     scenario = run_mod.load_scenario(name)
     new = run_mod.run_new_side(scenario)                 # phase 3: runs the same scenario on the new chain core
     old = run_mod.load_golden(name)
-    res = cmp_mod.compare(old, new, cmp_mod.TABLE)
+    res = cmp_mod.compare(old, new, cmp_mod.TABLE, rederive=new_side.chain_rederive())
     assert res.ok, res.failures
 
 
-def test_run_new_side_chain_scenarios_are_pending_phase_3():
-    with pytest.raises(NotImplementedError):
-        run_mod.run_new_side(run_mod.load_scenario("chain_stop"))
+def test_the_chain_rederivation_accepts_only_the_current_file_shas():
+    import hashlib
+    from bench.tests.p371_baseline import new_side
+    hook = new_side.chain_rederive()
+    sha = hashlib.sha256((REPO / new_side.LIFECYCLE_NAMED["chain_ops"]).read_bytes()).hexdigest()
+    assert hook("/chain_json/lifecycle/chain_ops", "x", sha) and hook("/chain_json/sha256/chain_ops", "x", sha)
+    assert not hook("/chain_json/lifecycle/chain_ops", "x", "f" * 64)
+    assert not hook("/chain_json/lifecycle/other", "x", sha)              # only the pre-P371 named members
+    assert not hook("/chain_json/policy_sha256", "x", sha) and not hook("/chain_json/rc", 0, 2)
 
 
 def test_the_new_side_rederivation_rejects_a_wrong_value():

@@ -11,3 +11,9 @@ def test_run_scenario(tmp_path, monkeypatch):
     sc = scn.load(os.environ["P371_SCENARIO"])
     result = new_side.run_in_pytest(tmp_path, monkeypatch, sc)
     Path(os.environ["P371_RESULT"]).write_text(json.dumps(result, sort_keys=True))
+
+
+def test_run_chain_scenario(tmp_path, monkeypatch):
+    sc = scn.load(os.environ["P371_SCENARIO"])
+    result = new_side.run_chain_in_pytest(tmp_path, monkeypatch, sc)
+    Path(os.environ["P371_RESULT"]).write_text(json.dumps(result, sort_keys=True))
