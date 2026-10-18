@@ -282,7 +282,7 @@ class Chain:
             self.probe = None
             self.pinned_by_arm = {arm: {"probe_code_sha256": self.arm_arg("probe_code_sha", arm)} for arm in self.arm_ids}
         else:
-            self.probe = Path(args.probe)
+            self.probe = self.repo / config.arms[0].probe
             if args.probe_code_sha:
                 self.pinned["probe_code_sha256"] = args.probe_code_sha
             if getattr(args, "generation_sha", None):
@@ -312,8 +312,9 @@ class Chain:
         return value.get(arm) if isinstance(value, dict) else value
 
     def probe_of(self, arm):
-        given = self.arm_arg("probe", arm) if self.per_arm else self.a.probe
-        return Path(given) if given else self.repo / self.bindings[arm].probe
+        # F12: always the resolved repo-relative entry frozen in the ChainConfig, never the raw `--probe` path (a symlink
+        # retargeted after init would otherwise launch code outside the frozen closure)
+        return self.repo / self.bindings[arm].probe
 
     def label_of(self, arm):
         return self.bindings[arm].label
