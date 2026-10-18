@@ -347,3 +347,40 @@ def test_every_valid_item_prepared_tree_has_nothing_from_an_excluded_root_and_no
         shutil.rmtree(tree)
     assert bad == {}, bad
     assert seen == STUB_SCAFFOLDING, sorted(STUB_SCAFFOLDING - seen)
+
+
+# --------------------------------------------------------------------- S4: references must sit under an excluded root
+@pytest.mark.parametrize("lang,cfg,files", [
+    ("rust", dict(solution=["src/lib.rs", "Cargo.toml"], test=["tests/x.rs"], example=["examples/ref.rs"]),
+     {"src/lib.rs": "s", "Cargo.toml": "m", "tests/x.rs": "t", "examples/ref.rs": "REF"}),
+    ("javascript", dict(solution=["x.js"], test=["x.spec.js"], example=["proof.ci.js"]),
+     {"x.js": "s", "x.spec.js": "t", "proof.ci.js": "REF"}),
+    ("cpp", dict(solution=["a.cpp", "a.h"], test=["a_test.cpp"], example=["example.cpp", "example.h"]),
+     {"a.cpp": "s", "a.h": "s", "a_test.cpp": "t", "example.cpp": "REF", "example.h": "REF"}),
+    ("java", dict(solution=["src/main/java/A.java"], test=["src/test/java/ATest.java"],
+                  example=[".meta/src/reference/java/../../../../src/main/java/Ref.java"]),
+     {"src/main/java/A.java": "s", "src/test/java/ATest.java": "t", "src/main/java/Ref.java": "REF"}),
+])
+def test_an_example_outside_an_excluded_root_is_a_freeze_error(tmp_path, lang, cfg, files):
+    c = make_corpus(tmp_path / "c", lang, "x" if lang != "cpp" and lang != "java" else "a", cfg, files)
+    with pytest.raises(mat.FreezeError, match="excluded root|unsafe"):
+        mat.read_plan(c, lang, "x" if lang not in ("cpp", "java") else "a")
+
+
+def test_prepare_tree_refuses_a_configured_reference_that_would_land_in_the_tree(tmp_path):
+    c = make_corpus(tmp_path / "c", "javascript", "x", dict(solution=["x.js"], test=["x.spec.js"], example=["proof.ci.js"]),
+                    {"x.js": "s", "x.spec.js": "t", "proof.ci.js": "REF"})
+    with pytest.raises(mat.FreezeError):
+        mat.prepare_tree(c, "javascript", "x", tmp_path / "t")
+    assert not (tmp_path / "t/proof.ci.js").exists()
+
+
+@pytest.mark.parametrize("root", [".meta", ".approaches", ".articles"])
+def test_an_example_under_any_excluded_root_is_accepted_and_absent_from_the_prepared_tree(tmp_path, root):
+    c = make_corpus(tmp_path / "c", "javascript", "x", dict(solution=["x.js"], test=["x.spec.js"],
+                                                           example=[root + "/proof.ci.js"]),
+                    {"x.js": "s", "x.spec.js": "t", root + "/proof.ci.js": "REF"})
+    assert mat.read_plan(c, "javascript", "x").mapping == [(root + "/proof.ci.js", "x.js")]
+    tree = mat.prepare_tree(c, "javascript", "x", tmp_path / "t").tree
+    assert sorted(p.name for p in tree.rglob("*") if p.is_file()) == ["x.js", "x.spec.js"]
+    assert "REF" not in "".join(p.read_text() for p in tree.rglob("*") if p.is_file())
