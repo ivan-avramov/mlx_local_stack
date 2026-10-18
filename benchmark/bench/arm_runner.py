@@ -29,6 +29,7 @@ from . import arm_adapter as aa
 from . import arm_identity
 from . import arm_watchdog
 from . import host as hostmod
+from . import item_barrier as ib
 from . import proc_guard as pg
 from . import provenance
 from . import rowschema
@@ -788,6 +789,26 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             heartbeat.close()
 
 
+def _done_record(p, row, attempt, artifacts):
+    """The `.done` barrier record: the row key and every evidence path with its sha256 (the chain hashes and indexes
+    them before it decides: accept / re-run / block)."""
+    record = dict(id=row["id"], attempt_id=attempt.attempt_id, passed=row["passed"], nonconv_kind=row["nonconv_kind"],
+                  evidence={name: dict(path=p._portable(path), sha256=p._sha_of(path)) for name, path in artifacts.items()},
+                  receipts=row.get("receipts"), final_tree=row.get("final_tree"))
+    return record
+
+
+def _expected_prefix(expected, hook_stop):
+    """`--expect-items` against a hook-stopped invocation: the prefix before the slot stopped at ready, through the slot
+    stopped at done; any other list is compared whole."""
+    if hook_stop:
+        slot = hook_stop.get("before_slot") or hook_stop.get("after_slot")
+        if slot in expected:
+            cut = expected.index(slot)
+            return expected[:cut] if "before_slot" in hook_stop else expected[:cut + 1]
+    return expected
+
+
 def receipt_controls(adapter, model, seed, budgets):
     """Per-class generation controls a worker receipt must show (A3): the paired seed, the declared sampling (when the
     carrier states all five fields), the thinking budget, a max_tokens bound and the adapter's allowed roles."""
@@ -1028,10 +1049,12 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
         pg.atomic_write(mp, p._scrub_pii(json.dumps(man, indent=2)).encode())
 
     save_manifest()
+    barrier = ib.ItemBarrier(out.with_suffix(""), evidence.item_barrier == "on", ACK_TIMEOUT_S, cancel,
+                             cancel_exc=RunnerCancelled, poll_s=ACK_POLL_S)
     try:
         if a.manifest_ack:
             _wait_for_ack(a.manifest_ack, cancel)
-        for name in names:
+        for k, name in enumerate(names):
             item = a.lang + "/" + name
             if any(r["id"] == item for r in rows):
                 continue
@@ -1059,6 +1082,10 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                                                       overlay=overlay, runner=dg.run_grader)
                 provenance.assert_served_config_unchanged(router, destination)
                 prompt = corpus.prompt(prepared, kind)
+                if barrier.ready(k) == "stop":                       # R23 / R25: after the env, before receipts.start and the spawn
+                    man["hook_stop"] = dict(before_slot=item)
+                    save_manifest()
+                    break
                 result = run_item(
                     p, adapter, corpus=corpus, prepared=prepared, model=a.model, prompt=prompt, env=env,
                     binary=binary, evidence=item_evidence, limit=limit, private=private, router=router, base=base,
@@ -1117,8 +1144,12 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                 rows.append(json.loads(p._scrub_pii(json.dumps(row))))
                 pg.atomic_write(out, ("".join(json.dumps(r) + "\n" for r in rows)).encode())
                 print(f'{item}: passed={passed} nonconv={row["nonconv_kind"]}', flush=True)
+                if barrier.enabled and barrier.done(k, _done_record(p, rows[-1], attempt, artifacts)) == "stop":
+                    man["hook_stop"] = dict(after_slot=item, disposition=barrier.stop_payload(k).get("disposition"))
+                    save_manifest()
+                    break
         if a.expect_items:
-            pg.expect_items(rows, [s.strip() for s in a.expect_items.split(",")])
+            pg.expect_items(rows, _expected_prefix([s.strip() for s in a.expect_items.split(",")], man.get("hook_stop")))
     except BaseException as exc:
         status = ctx.get("cleanup_status")
         man["cleanup_status"] = status          # the receipt location (top level) on EVERY abort path

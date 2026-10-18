@@ -84,6 +84,15 @@ class ItemBarrier:
                 raise BarrierTimeout(f"item barrier {accept} for item {k} not acknowledged")
             self.sleep(self.poll_s)
 
+    def stop_payload(self, k):
+        """The JSON object the chain wrote into `.stop` (`{}` when it wrote none or not an object): the disposition the
+        probe records in its manifest's `hook_stop`."""
+        try:
+            doc = json.loads(self.path(k, "stop").read_text() or "{}")
+        except (OSError, ValueError):
+            return {}
+        return doc if isinstance(doc, dict) else {}
+
     def ready(self, k):
         """Write `.ready`, wait for the chain: returns `go` or `stop`."""
         self._check(k)

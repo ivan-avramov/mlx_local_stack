@@ -140,11 +140,10 @@ def test_expect_items_is_checked_against_the_prefix_through_the_stopped_slot(wor
     assert [r["id"] for r in rows(world)] == ["fake/one"]
 
 
-def test_expect_items_still_refuses_a_prefix_that_differs(world):
+@pytest.mark.parametrize("expect", ["fake/two,fake/one", "fake/two"])
+def test_expect_items_still_refuses_a_prefix_that_differs(world, expect):
     with pytest.raises(SystemExit, match="expect-items"):
-        drive(world, dict(stop_done=0), a=dict(expect_items="fake/two,fake/one"))
-    with pytest.raises(SystemExit, match="expect-items"):
-        drive(world, dict(stop_ready=0), a=dict(expect_items="fake/one"))                # nothing ran, one was expected
+        drive(world, dict(stop_done=0), a=dict(expect_items=expect))
 
 
 def test_a_stop_at_the_first_ready_runs_nothing_and_satisfies_an_empty_prefix(world):
