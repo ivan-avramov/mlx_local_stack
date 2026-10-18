@@ -786,7 +786,7 @@ def test_p367_freeze_time_reference_trees_may_use_their_own_example_crates_only(
 
 
 def test_p367_removing_or_changing_a_stub_dependency_requirement_is_allowed_within_the_allowlist():
-    assert manifest_reasons(BASE.replace('rand = "0.8"', 'rand = "0.9"')) == []
+    assert manifest_reasons(BASE.replace('rand = "0.8"', 'rand = "0.10"')) == []
     assert manifest_reasons(BASE.replace('rand = "0.8"\n', "")) == []
 
 
@@ -830,6 +830,61 @@ def test_p367_tamper_reasons_applies_the_structural_check_to_the_root_manifest_o
     assert reasons_for(tmp_path, "rust", ok, files=files) == []
     assert reasons_for(tmp_path / "b", "rust", lambda w: write(w, "Cargo.toml", BASE + 'serde = "1"\n'), files=files)
     assert reasons_for(tmp_path / "c", "rust", lambda w: write(w, "nested/Cargo.toml", BASE + 'regex = "1"\n'), files=files)
+
+
+# ------------------------------------------------------------- S2: version requirements vs the vendored versions
+@pytest.mark.parametrize("req,version,ok", [
+    ("1", "1.0.104", True), ("^1.0", "1.0.104", True), ("1.5", "1.0.104", False), ("0.8", "0.8.8", True),
+    ("0.8", "0.10.3", False), ("0.3.12", "0.3.23", True), ("0.3.12", "0.3.11", False), ("^0.0.3", "0.0.3", True),
+    ("^0.0.3", "0.0.4", False), ("0", "0.9.9", True), ("0", "1.0.0", False), ("0.0", "0.0.9", True), ("0.0", "0.1.0", False),
+    ("^0.2.3", "0.2.9", True), ("^0.2.3", "0.3.0", False), ("^1.2.3", "1.2.2", False),
+    ("~1.2.3", "1.2.9", True), ("~1.2.3", "1.3.0", False), ("~1.2", "1.2.9", True), ("~1", "1.9.0", True), ("~1", "2.0.0", False),
+    ("=1.2.3", "1.2.3", True), ("=1.2.3", "1.2.4", False), ("=1.2", "1.2.9", True), ("=1", "1.9.0", True), ("=1", "2.0.0", False),
+    (">=1.2, <2", "1.9.0", True), (">=1.2,<2", "2.0.0", False), (">=1.2,<2", "1.1.9", False), (">1.2", "1.2.9", False),
+    (">1.2", "1.3.0", True), ("<=1.2", "1.2.9", True), ("<=1.2", "1.3.0", False), ("<1.2", "1.2.0", False),
+    ("<1.2", "1.1.9", True), (">1", "1.9.0", False), (">1", "2.0.0", True), (">= 1.2.3", "1.2.3", True),
+    ("*", "3.4.5", True), ("1.*", "1.9.9", True), ("1.*", "2.0.0", False), ("1.2.*", "1.2.7", True), ("1.2.*", "1.3.0", False),
+    ("1.x", "1.2.0", True), ("1.*, >=1.5", "1.4.0", False), ("99", "1.0.104", False)])
+def test_s2_cargo_requirement_matcher(req, version, ok):
+    assert tg.cargo_req_matches(req, version) is ok
+
+
+@pytest.mark.parametrize("req", ["", "abc", "1.2.3.4", ">=", "^", "1..2", "=>1", "1.2.3-", "1.0.0-rc.1", "1.0.0+b", "1,,2",
+                                 "*.1", "1.*.3", "^1.2.x.3", "v1.2"])
+def test_s2_malformed_or_unsupported_requirements_raise(req):
+    with pytest.raises(ValueError):
+        tg.cargo_req_matches(req, "1.2.3")
+
+
+def test_s2_vendored_versions_come_from_the_image_locks_and_cover_every_allowlisted_crate():
+    v = tg.vendored_versions()
+    assert {"0.8.8", "0.10.3", "0.3.23"} <= set(v["rand"]) and {"0.5.7", "0.7.1"} <= set(v["counter"])
+    assert set(tg.RUST_ALLOWLIST) <= set(v) and "permutohedron" in v
+
+
+BARE = BASE.replace('rand = "0.8"\n', "")
+
+
+def s2_reasons(dep, extra=()):
+    return tg.cargo_manifest_reasons(BARE, BARE + dep + "\n", extra)
+
+
+@pytest.mark.parametrize("dep", ['regex = "99"', 'rand = "0.9"', 'rand = { version = "0.9", features = ["x"] }',
+                                 'itertools = ">=0.6, <0.15"', 'regex = "=1.0.0"', 'thiserror = "~1.1"', 'regex = "1.*.3"'])
+def test_s2_a_requirement_no_vendored_version_satisfies_is_tampering_with_a_reason(dep):
+    reasons = s2_reasons(dep)
+    assert reasons and any(dep.split(" ")[0] in r and "vendored" in r for r in reasons), reasons
+
+
+@pytest.mark.parametrize("dep", ['regex = "1.*"', 'regex = ">=1, <2"', 'thiserror = "~1.0"', 'rand = "=0.8.8"', 'rand = "0.3"',
+                                 'itertools = { version = ">=0.5, <0.6", features = ["use_std"] }', 'time = "0.3"'])
+def test_s2_a_requirement_a_vendored_version_satisfies_is_allowed(dep):
+    assert s2_reasons(dep) == []
+
+
+def test_s2_reference_extra_crates_are_checked_against_the_vendored_versions_too():
+    assert s2_reasons('counter = "0.5.2"', ("counter",)) == []
+    assert s2_reasons('counter = "0.6"', ("counter",))
 
 
 def test_p367_compile_regenerates_the_lockfile_offline_before_the_frozen_build(tree):
@@ -1949,7 +2004,7 @@ def test_p367_a_model_style_solution_using_a_current_crate_version_builds_and_pa
 
 @pytest.mark.docker
 @pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
-def test_p367_an_unlisted_crate_is_a_tamper_failure_and_an_unsatisfiable_version_a_compile_failure(tmp_path):
+def test_p367_an_unlisted_crate_or_an_unsatisfiable_version_is_a_tamper_failure(tmp_path):
     _docker_env()
     guard, stub, ref, prepared, sols = _robot_variant(tmp_path, 'serde = "1"', _modern_source())
     result = tg.grade_item("rust", ref, "robot-name", tmp_path / "private", prepared=prepared, solutions=sols,
@@ -1960,7 +2015,7 @@ def test_p367_an_unlisted_crate_is_a_tamper_failure_and_an_unsatisfiable_version
     guard, stub, ref, prepared, sols = _robot_variant(second, 'regex = "99"', _modern_source())
     result = tg.grade_item("rust", ref, "robot-name", second / "private", prepared=prepared, solutions=sols,
                            prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600)
-    assert result.outcome == "compile_failure" and result.all_failed
+    assert result.outcome == "tampered" and result.all_failed and any("regex" in r and "vendored" in r for r in result.tamper_reasons)
 
 
 @pytest.mark.docker
