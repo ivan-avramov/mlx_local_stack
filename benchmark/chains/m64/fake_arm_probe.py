@@ -161,6 +161,21 @@ def cleanup_status(variant=None):
     return cs
 
 
+def abort_evidence(plan_step, items, k, arm, a, out, run_id, wd):
+    """`evidence`: "export" writes the failing item's exported transcript (a webfetch tool part) and stamps its path + sha256;
+    "none" stamps the paths with no export; `evidence_item: committed` names the previous (committed) item instead."""
+    item = items[k - 1] if plan_step.get("evidence_item") == "committed" and k else items[k]
+    ev = evidence_dir(wd, arm, a.model, out, run_id, item)
+    ev.mkdir(parents=True, exist_ok=True)
+    export = ev / "export.json"
+    if plan_step["evidence"] == "export" and not export.is_file():
+        export.write_text(json.dumps({"messages": [{"type": "assistant", "content": [
+            {"type": "tool", "name": "webfetch", "id": "c1", "state": {
+                "status": "completed", "input": {"url": "https://example.test/doc"}, "output": "<html>body</html>"}}]}]}))
+    files = {"export": dict(path=fp._portable(wd, export), sha256=fp._sha(export) if export.is_file() else None)}
+    return dict(id=item, files=files)
+
+
 def write_leg(out, arm, label, model, lang, seed_base, ids, worker, wd, epoch_id="e" * 64, frozen=None, run_id="fixture-run",
               override=None):
     """Complete, valid rows + manifest for tests (the same builders the probe uses)."""
@@ -336,6 +351,8 @@ def main(argv=None):
                 extra["receipts"] = {"fence_taken": True, "requests": 3, "completion_tokens": plan_step["receipt_tokens"],
                                      "prompt_tokens": 0, "cache_tokens": 0, "reasoning_tokens": 0, "worker_ok": True,
                                      "unreadable": 0}
+            if plan_step.get("evidence"):                         # F6: the failing slot's evidence in the abort stamp
+                extra["evidence"] = abort_evidence(plan_step, items, k, arm, a, out, run_id, wd)
             for flag, marker in (("kill_worker", "worker_gone"), ("kill_router", "router_gone")):
                 if plan_step.get(flag) and state:                 # the test's FakeOps reads these markers
                     (state / marker).write_text("1")
