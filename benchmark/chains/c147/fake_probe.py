@@ -76,6 +76,15 @@ def valid_date(value):
     return isinstance(value, str) and bool(DATE_SHAPE.match(value))
 
 
+def snapshot():
+    """The tg1 arm's snapshot as the probe reports it (print-identity and every manifest). Always INCOMPLETE (the real
+    snapshot tooling is owed, build step 6); FAKE_SNAPSHOT_SALT changes the sha (the A5 drift tests)."""
+    fields = dict(label=SCAFFOLD, salt=os.environ.get("FAKE_SNAPSHOT_SALT", ""))
+    sha = hashlib.sha256(json.dumps(dict(tool="opencode", fields=fields, complete=False), sort_keys=True,
+                                    separators=(",", ":")).encode()).hexdigest()
+    return dict(tool="opencode", sha256=sha, complete=False, fields=fields)
+
+
 def build_manifest(model, lang, seed_base, worker, run_id, override=None, frozen=None):
     h = lambda c: c * 64  # noqa: E731
     man = {
@@ -90,6 +99,8 @@ def build_manifest(model, lang, seed_base, worker, run_id, override=None, frozen
             "seed_base": seed_base, "lang": lang, "draft_kind": served_draft_kind(model),
             "sampling_profile": "deployed",
             "frozen_prompt_date": frozen if frozen is not None else REAL_DATE(),
+            "arm": "oc", "config_id": "tg1", "epoch_id": None, "snapshot_sha256": snapshot()["sha256"],
+            "snapshot_complete": snapshot()["complete"], "snapshot_fields": snapshot()["fields"],
         },
     }
     man["runtime"]["arm_identity_sha256"] = arm_identity(model, man["runtime"]["draft_kind"])
@@ -189,7 +200,10 @@ def print_identity(argv):
         print("not json at all")
         return 0
     value = "short" if mode == "malformed" else env.get("FAKE_PRINT_POLICY_SHA", CAMPAIGN)
-    print(json.dumps({"scaffold": SCAFFOLD, "scaffold_policy_sha256": value}))
+    snap = snapshot()
+    print(json.dumps({"scaffold": SCAFFOLD, "scaffold_policy_sha256": value, "snapshot_tool": snap["tool"],
+                      "snapshot_sha256": snap["sha256"], "snapshot_complete": snap["complete"],
+                      "snapshot_fields": snap["fields"]}))
     return 0
 
 

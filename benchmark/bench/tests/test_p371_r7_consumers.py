@@ -81,7 +81,6 @@ ALLOW = {
     "benchmark/bench/chain_rows.py": "the loader itself",
     "benchmark/bench/proc_guard.py": "defines load_rows (generic probe-side loader; the probe no longer reads rows)",
     "benchmark/bench/schedules.py": "names the stems / files the chain writes (layout author, no reads)",
-    "benchmark/chains/m64/run_m64_chain.py": "M64 chain: moves onto the shared core and chain_rows in phase 3b",
     "benchmark/chains/m55/m55_report.py": "frozen M55 chain report (legacy, own dir; AGENTS: frozen runners stay)",
     "benchmark/chains/m55/run_m55.py": "frozen M55 runner / writer (own dir)",
     "benchmark/chains/m59/run_m59.py": "frozen M59 runner / writer (own dir)",
@@ -126,6 +125,13 @@ def test_a_planted_direct_reader_fails_the_scan(tmp_path):
     (root / "results" / "fine.py").write_text("from bench import chain_rows\nrows = chain_rows.stored_rows(d, 'go', 't', 's1')\n")
     got = scan(root)
     assert set(got) == {"benchmark/results/evil.py", "benchmark/results/evil2.py"}
+
+
+def test_the_m64_chain_names_no_rows_file_itself_it_runs_on_the_core_and_the_loader():
+    entry = (REPO / "benchmark/chains/m64/run_m64_chain.py").read_text()
+    assert ".dnf." not in entry and ".jsonl" not in entry and "opencode_{" not in entry
+    core = (REPO / "benchmark/bench/chain_core.py").read_text()
+    assert ".dnf.jsonl" not in core and "cr.dnf_" in core
 
 
 def test_the_migrated_consumers_import_chain_rows():

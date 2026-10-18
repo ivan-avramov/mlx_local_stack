@@ -476,6 +476,40 @@ def test_an_archived_leg_keeps_only_its_last_manifest_a_live_leg_keeps_every_one
     assert [list(v["manifests"]) for v in live["legs"].values()] == [["pilot", "full"]]
 
 
+# P371 phase 3b (A10, reported as a P379 addendum): the probe's `--a4-v2-receipt` is now the chain's immutable per-load copy
+# `<out_root>/a4/<load>.<worker_n>.<arm>.json`; the pre-P371 value is the gate's shared `.../session_gate/a4_v2_latest.json`.
+# Mapped ONLY by these two exact path shapes; the new side's receipt files are the only extra files they explain.
+OLD_A4 = "$TMP/session_gate/a4_v2_latest.json"
+
+
+def test_the_a4_receipt_argument_maps_only_from_the_exact_immutable_path_shape():
+    assert cmp_mod.tok("$TMP/c147/a4/0.0.oc.json") == cmp_mod.tok(OLD_A4) == "<A4-RECEIPT>"
+    assert cmp_mod.tok("$TMP/c147/a4/12.3.oc.json") == "<A4-RECEIPT>"
+    for other in ("$TMP/c147/a4/x.json", "$TMP/c147/a4/0.0.oc.json.bak", "$TMP/c147/a5/0.0.oc.json",
+                  "$TMP/c147/a4/0.0.oc.json/extra", "$TMP/other/a4_v2_latest.json.1", "$TMP/c147/a4/0.0.OC.json"):
+        assert cmp_mod.tok(other) != "<A4-RECEIPT>", other
+
+
+def test_a_planted_receipt_argument_difference_still_fails_the_chain_comparison():
+    old, new = chain_sample(), chain_sample()
+    argv = lambda path: ["python", "probe.py", "--a4-v2-receipt", path, "--limit", "5"]      # noqa: E731
+    old["chain_json"]["attempts"] = [{"argv": argv(OLD_A4)}]
+    new["chain_json"]["attempts"] = [{"argv": argv("$TMP/c147/a4/0.0.oc.json")}]
+    assert cmp_mod.compare(old, new, cmp_mod.TABLE).ok
+    new["chain_json"]["attempts"] = [{"argv": argv("$TMP/c147/a4/elsewhere.json")}]
+    res = cmp_mod.compare(old, new, cmp_mod.TABLE)
+    assert not res.ok and any("/chain_json/attempts/0/argv" in f for f in res.failures)
+
+
+def test_the_new_sides_a4_receipt_files_are_the_only_new_files_the_a4_rule_explains():
+    base = layout_old("c")
+    old, new = dict(base), dict(base, files=dict(base["files"]))
+    new["files"]["a4/0.0.oc.json"] = {"kind": "other", "size": 80}
+    assert cmp_mod._extras(new) == {} and cmp_mod.compare(old, new, cmp_mod.TABLE).ok
+    new["files"]["a4/notes.txt"] = {"kind": "other", "size": 3}
+    assert list(cmp_mod._extras(new)) == ["a4/notes.txt"] and not cmp_mod.compare(old, new, cmp_mod.TABLE).ok
+
+
 def test_normalizer_removes_clocks_uuids_run_ids_and_temp_paths():
     n = norm_mod.Normalizer(tmp_roots=["/tmp/abc/x", "/private/tmp/abc/x"])
     doc = {"started": "2026-10-17T10:11:12Z", "wall_s": 3.2, "pid": 1234, "probe_pid": 9,

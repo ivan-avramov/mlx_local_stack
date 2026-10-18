@@ -50,6 +50,7 @@ class FakeOps:
         self.docker = True                      # P290: bool, or a list consumed per call (last repeats)
         self.leftover_calls = []
         self.cancelled = False
+        self.router_alive = True
 
     def _c(self, name, *a):
         self._check()
@@ -121,7 +122,18 @@ class FakeOps:
 
     def a4_gate(self, model, tag):
         self._c("a4_gate", model)
-        return str(self.wd / "session_gate/a4_v2_latest.json")
+        return self.write_a4_receipt(model)
+
+    def write_a4_receipt(self, model):
+        """The gate's `a4_v2_latest.json` (overwritten by every gate run, like the real one); the chain copies it (A10)."""
+        path = self.wd / "session_gate/a4_v2_latest.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"pass": True, "run_id": f"fake-a4-{len(self.names('a4_gate'))}", "model": model}))
+        return str(path)
+
+    def router_ok(self):
+        self._check()
+        return self.router_alive
 
     def stop_stack(self):
         self._c("stop_stack")

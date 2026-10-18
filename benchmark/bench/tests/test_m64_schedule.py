@@ -1,4 +1,6 @@
-"""M64 spec 8.1: the seeded, permutation-balanced block schedule."""
+"""M64 spec 8.1: the seeded, permutation-balanced block schedule (`schedules.blocks`; P371 phase 3b moved its callers off
+`m64_schedule`, which is gone; the pinned golden values of the old builder are in
+`fixtures/p371_m64_schedule_golden.json`)."""
 from __future__ import annotations
 
 import collections
@@ -7,7 +9,7 @@ import json
 
 import pytest
 
-from bench import m64_schedule as ms
+from bench import schedules as ms
 
 PICK1 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 PICK2 = "Qwen3.8-27B-mlx-uniform-4bit"
@@ -16,7 +18,7 @@ ARMS3 = ("oc", "pi", "dsh")
 
 
 def build(arms=ARMS3, **kw):
-    return ms.build(arms, NAMES, picks=(PICK1, PICK2), **kw)
+    return ms.blocks(arms, NAMES, picks=(PICK1, PICK2), **kw)
 
 
 def cells(schedule):

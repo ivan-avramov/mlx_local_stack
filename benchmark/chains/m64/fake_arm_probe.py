@@ -7,8 +7,18 @@ the manifest and rows carry `arm`, `epoch_id`, `snapshot_sha256` and the per-arm
 under `transcripts/<arm>/`. The worker identity comes from $FAKE_PROBE_STATE/worker.json.
 
 Behaviour per invocation of ONE arm (FAKE_ARM_PLAN = JSON {arm: [step, ...]}, consumed in order, the last repeats; needs
-FAKE_PROBE_STATE): "normal", or {"abort_after": k, "cause": "server_error" | null, "tokens": n} = complete k items, then
-abort like a transport failure (manifest `transport_abort` with `cause` and the item's gate tokens, exit 1)."""
+FAKE_PROBE_STATE): "normal", or {"abort_after": k, "cause": "server_error" | null, "tokens": n, "receipt_tokens": m,
+"cleanup": variant, "kill_worker" | "kill_router": true (markers the test's FakeOps reads), "row_snapshot": sha (rows
+disagree with the manifest)} = complete k items, then abort like a transport failure (manifest `transport_abort` with `cause`, the
+item's gate tokens and optionally the fenced receipt totals, exit 1; `cleanup` names a deviation of the cleanup receipt
+from the exact six-key schema: uncertain | incomplete | unknown | orphans | extra | missing | none).
+
+P371 phase 3b: every invocation writes a FRESH rows file (an existing one refuses, rc 2); `--attempt` /
+`--attempt-rerun-index` are accepted; the A4 receipt named by `--a4-v2-receipt` is checked against the current worker when
+the chain bound it (`bench_binding.worker`); `print-identity` and every manifest carry the arm's snapshot (tool, sha256,
+complete, fields; FAKE_SNAPSHOT_SALT_<ARM>, FAKE_SNAPSHOT_COMPLETE) and the manifest the arm's evidence policy
+(FAKE_ITEM_BARRIER on | off); with the item barrier on the probe writes `<run>.item<k>.ready` / `.done` and waits for the
+chain's `.go` / `.continue` / `.stop` exactly as `bench.item_barrier` does (a stop is recorded as `hook_stop`)."""
 import argparse
 import hashlib
 import json
@@ -24,6 +34,7 @@ sys.path.insert(0, str(HERE.parents[3] / "benchmark"))
 sys.path.insert(0, str(HERE.parents[1] / "c147"))
 import fake_probe as fp  # noqa: E402
 from bench import arm_adapter as aa, arm_specs, rowschema  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
 
 OC = arm_specs.OC
 CAMPAIGN = "d" * 64
@@ -38,6 +49,27 @@ def composite(arm, runtime):
     return aa.arm_generation_sha256(arm, runtime, OC.generation_fields)
 
 
+def snapshot_for(arm):
+    """The arm's snapshot as the probe reports it (print-identity and every manifest): deterministic per arm, with the
+    knobs the A5 tests turn (a salt changes the sha; FAKE_SNAPSHOT_COMPLETE=0 makes it incomplete)."""
+    env = os.environ
+    fields = dict(arm=arm, salt=env.get(f"FAKE_SNAPSHOT_SALT_{arm.upper()}", ""))
+    complete = env.get("FAKE_SNAPSHOT_COMPLETE", "1") == "1"
+    sha = hashlib.sha256(json.dumps(dict(tool=arm, fields=fields, complete=complete), sort_keys=True,
+                                    separators=(",", ":")).encode()).hexdigest()
+    return dict(tool=arm, sha256=sha, complete=complete, fields=fields)
+
+
+def epoch_for(arms):
+    """The epoch id the chain must compute from these arms' snapshots (`arm_adapter.epoch_id`)."""
+    return aa.epoch_id([SimpleNamespace(tool=snapshot_for(a)["tool"], sha256=snapshot_for(a)["sha256"]) for a in arms])
+
+
+def evidence_policy(arm):
+    spec = arm_specs.SPECS.get(arm) or OC
+    return dict(spec.evidence_policy, item_barrier=os.environ.get("FAKE_ITEM_BARRIER", spec.evidence_policy["item_barrier"]))
+
+
 def build_manifest(arm, label, model, lang, seed_base, worker, run_id, epoch_id, frozen, override=None):
     h = lambda c: c * 64  # noqa: E731
     man = {
@@ -50,8 +82,9 @@ def build_manifest(arm, label, model, lang, seed_base, worker, run_id, epoch_id,
             "agent_system_sha256": None, "polyglot_sha": "1" * 40, "policy": {"universe_sha256": h("2")},
             "seed_base": seed_base, "lang": lang, "draft_kind": fp.served_draft_kind(model),
             "sampling_profile": "deployed", "frozen_prompt_date": frozen,
-            "arm": arm, "epoch_id": epoch_id, "snapshot_sha256": hashlib.sha256(arm.encode()).hexdigest(),
-            "snapshot_complete": True,
+            "arm": arm, "epoch_id": epoch_id, "snapshot_sha256": snapshot_for(arm)["sha256"],
+            "snapshot_complete": snapshot_for(arm)["complete"], "snapshot_fields": snapshot_for(arm)["fields"],
+            "evidence_policy": evidence_policy(arm),
         },
     }
     man["runtime"]["arm_identity_sha256"] = fp.arm_identity(model, man["runtime"]["draft_kind"])
@@ -105,13 +138,35 @@ def build_row(arm, label, model, item, seed_base, worker, wd, out, run_id, runti
     }
 
 
+def cleanup_status(variant=None):
+    """`proc_guard.ProcessGuard.status()`'s exact six keys; `variant` deviates from it (A7 tests)."""
+    cs = {"survivors": [], "containers_remaining": [], "uncertain": False, "orphans_unattributed": [], "unknown": [],
+          "completed": True}
+    variant = variant or os.environ.get("FAKE_CLEANUP_VARIANT") or ("uncertain" if os.environ.get("FAKE_CLEANUP_UNCERTAIN") == "1" else None)
+    if variant == "uncertain":
+        cs["uncertain"] = True
+    elif variant == "incomplete":
+        cs["completed"] = False
+    elif variant == "unknown":
+        cs["unknown"] = [{"pid": 1, "why": "identity unreadable"}]
+    elif variant == "orphans":
+        cs["orphans_unattributed"] = [{"pid": 2}]
+    elif variant == "extra":
+        cs["extra"] = 1
+    elif variant == "missing":
+        del cs["completed"]
+    elif variant == "none":
+        return None
+    return cs
+
+
 def write_leg(out, arm, label, model, lang, seed_base, ids, worker, wd, epoch_id="e" * 64, frozen=None, run_id="fixture-run",
               override=None):
     """Complete, valid rows + manifest for tests (the same builders the probe uses)."""
     man = build_manifest(arm, label, model, lang, seed_base, worker, run_id, epoch_id, frozen or fp.REAL_DATE(), override)
     rows = [build_row(arm, label, model, i, seed_base, worker, wd, out, run_id, man["runtime"]) for i in ids]
     fp._atomic(out, "".join(json.dumps(r) + "\n" for r in rows).encode())
-    man["cleanup_status"] = {"survivors": [], "containers_remaining": [], "uncertain": False, "orphans_unattributed": []}
+    man["cleanup_status"] = cleanup_status()
     fp._atomic(Path(out).with_suffix(".manifest.json"), json.dumps(man, indent=2).encode())
 
 
@@ -128,8 +183,27 @@ def print_identity(argv):
         print("print-identity failed", file=sys.stderr)
         return 1
     value = env.get(f"FAKE_PRINT_POLICY_SHA_{arm.upper()}", env.get(f"FAKE_POLICY_SHA_{arm.upper()}", CAMPAIGN))
-    print(json.dumps({"arm": arm, "scaffold": label, "scaffold_policy_sha256": value}))
+    snap = snapshot_for(arm)
+    out = {"arm": arm, "scaffold": label, "scaffold_policy_sha256": value, "snapshot_tool": snap["tool"],
+           "snapshot_sha256": snap["sha256"], "snapshot_complete": snap["complete"], "snapshot_fields": snap["fields"]}
+    if env.get("FAKE_PRINT_NO_SNAPSHOT") == "1":
+        for k in ("snapshot_tool", "snapshot_sha256", "snapshot_complete", "snapshot_fields"):
+            out[k] = None
+    print(json.dumps(out))
     return 0
+
+
+def barrier_path(out, k, kind):
+    return Path(f"{Path(out).with_suffix('')}.item{k}.{kind}")
+
+
+def barrier_create(path, content=b""):
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_bytes(content)
+    try:
+        os.link(tmp, path)                       # exclusive create, complete before visible (as bench.item_barrier)
+    finally:
+        tmp.unlink()
 
 
 def main(argv=None):
@@ -143,11 +217,14 @@ def main(argv=None):
         ap.add_argument(f)
     ap.add_argument("--seed-base", type=int)
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--attempt", type=int, default=1)
+    ap.add_argument("--attempt-rerun-index", type=int, default=0)
     a = ap.parse_args(argv)
     env = os.environ
     arm = arm_of(a.scaffold)
     state = Path(env["FAKE_PROBE_STATE"]) if env.get("FAKE_PROBE_STATE") else None
     plan_step = "normal"
+    n_inv = 0
     if state:
         state.mkdir(parents=True, exist_ok=True)
         counter = state / f"count_{arm}"
@@ -173,17 +250,19 @@ def main(argv=None):
     mp = out.with_suffix(".manifest.json")
     worker = json.loads((state / "worker.json").read_text()) if state and (state / "worker.json").exists() else {
         "pid": 1, "create_time": 1.0, "model_path": "caslca/" + a.model, "registry_sha256": "a" * 64}
-    rows = []
-    if out.exists():
-        rows = [json.loads(line) for line in out.read_text().splitlines() if line.strip()]
-        old = json.loads(mp.read_text()) if mp.exists() else {}
-        if old.get("transport_abort"):
-            print("REFUSED: rows file has a manifest recording transport_abort", flush=True)
+    receipt_path = Path(a.a4_v2_receipt)
+    if receipt_path.is_file():                      # A10: a receipt the chain bound to a worker must be THIS worker's
+        try:
+            binding = (json.loads(receipt_path.read_text()) or {}).get("bench_binding")
+        except ValueError:
+            binding = None
+        if binding is not None and binding.get("worker") != {"pid": worker["pid"], "create_time": worker["create_time"]}:
+            print("REFUSED: the A4 receipt belongs to another worker", flush=True)
             return 2
-        for r in rows:
-            if r.get("worker_after") != worker:
-                print("REFUSED: rows from another worker instance", flush=True)
-                return 2
+    if out.exists():                                # a fresh rows file per invocation, never resumed
+        print("REFUSED: rows file already exists (every invocation writes a fresh rows file)", flush=True)
+        return 2
+    rows = []
     run_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:12]
     overrides = json.loads(env.get("FAKE_MANIFEST_OVERRIDE", "{}"))
     if state and env.get("FAKE_MANIFEST_PLAN"):
@@ -191,8 +270,9 @@ def main(argv=None):
         overrides = {**overrides, **plan_m[min(n_inv, len(plan_m) - 1)]}
     man = build_manifest(arm, a.scaffold, a.model, a.lang, a.seed_base, worker, run_id, a.epoch_id,
                          a.frozen_prompt_date, overrides)
-    cleanup = {"survivors": [], "containers_remaining": [], "uncertain": env.get("FAKE_CLEANUP_UNCERTAIN") == "1",
-               "orphans_unattributed": []}
+    barrier_on = man["runtime"]["evidence_policy"]["item_barrier"] == "on"
+    cleanup_variant = plan_step.get("cleanup") if isinstance(plan_step, dict) else None
+    cleanup = cleanup_status(cleanup_variant)
 
     def save():
         fp._atomic(mp, json.dumps(man, indent=2).encode())
@@ -228,16 +308,46 @@ def main(argv=None):
     if a.limit:
         items = items[:a.limit]
     item_s = float(env.get("FAKE_ITEM_S", "0.05"))
+    barrier_wait = float(env.get("FAKE_BARRIER_WAIT", "60"))
+
+    def wait_barrier(k, accept):
+        stop, ok = barrier_path(out, k, "stop"), barrier_path(out, k, accept)
+        end = time.time() + barrier_wait
+        while True:
+            if stop.exists():
+                return "stop"
+            if ok.exists():
+                return accept
+            if cancel.exists():
+                return "cancelled"
+            if time.time() > end:
+                return "timeout"
+            time.sleep(tick)
+
     done_here = 0
-    for item in items:
-        if any(r["id"] == item for r in rows):
-            continue
+    for k, item in enumerate(items):
         if cancel.exists():
             return abort("cancelled by runner", item)
-        if isinstance(plan_step, dict) and done_here >= plan_step["abort_after"]:
+        if isinstance(plan_step, dict) and plan_step.get("abort_after") is not None and done_here >= plan_step["abort_after"]:
             extra = {"cause": plan_step["cause"]} if plan_step.get("cause") else {}
             extra["gate"] = {"output_tokens_completed": plan_step.get("tokens", 0), "requests_completed": 3}
+            if plan_step.get("receipt_tokens") is not None:
+                extra["receipts"] = {"fence_taken": True, "requests": 3, "completion_tokens": plan_step["receipt_tokens"],
+                                     "prompt_tokens": 0, "cache_tokens": 0, "reasoning_tokens": 0, "worker_ok": True,
+                                     "unreadable": 0}
+            for flag, marker in (("kill_worker", "worker_gone"), ("kill_router", "router_gone")):
+                if plan_step.get(flag) and state:                 # the test's FakeOps reads these markers
+                    (state / marker).write_text("1")
             return abort("injected transport failure", item, **extra)
+        if barrier_on:
+            barrier_create(barrier_path(out, k, "ready"))
+            got = wait_barrier(k, "go")
+            if got == "stop":
+                man["hook_stop"] = dict(before_slot=item)
+                save()
+                break
+            if got != "go":
+                return abort("item barrier go " + got, item)
         time.sleep(item_s)
         print(json.dumps({"m62_watch": {"requests_completed": 3, "output_tokens_completed": 500, "no_progress_tokens": 0,
                                         "no_progress_requests": 0, "best_failing": 1, "baseline_failing": 2,
@@ -245,13 +355,37 @@ def main(argv=None):
                           "phase": "run", "elapsed_s": time.time() - t0}), flush=True)
         rows.append(build_row(arm, a.scaffold, a.model, item, a.seed_base, worker, wd, out, run_id, man["runtime"],
                               wall_s=time.time() - t0))
+        if isinstance(plan_step, dict) and plan_step.get("row_snapshot"):
+            rows[-1]["snapshot_sha256"] = plan_step["row_snapshot"]       # a row that disagrees with its manifest
         fp._atomic(out, "".join(json.dumps(r) + "\n" for r in rows).encode())
         print(f"{item}: passed=True nonconv=None", flush=True)
         done_here += 1
+        if barrier_on:
+            row = rows[-1]
+            record = dict(id=item, attempt_id=f"{item}#a{a.attempt}.r{a.attempt_rerun_index}", passed=row["passed"],
+                          nonconv_kind=row["nonconv_kind"], evidence={}, receipts=None, final_tree=None)
+            barrier_create(barrier_path(out, k, "done"), (json.dumps(record, sort_keys=True) + "\n").encode())
+            got = wait_barrier(k, "continue")
+            if got == "stop":
+                try:
+                    payload = json.loads(barrier_path(out, k, "stop").read_text() or "{}")
+                except ValueError:
+                    payload = {}
+                man["hook_stop"] = dict(after_slot=item, disposition=payload.get("disposition"))
+                save()
+                break
+            if got != "continue":
+                return abort("item barrier continue " + got, item)
     expected = [x for x in a.expect_items.split(",") if x]
+    stop = man.get("hook_stop")
+    if stop:
+        slot = stop.get("before_slot") or stop.get("after_slot")
+        if slot in expected:
+            cut = expected.index(slot)
+            expected = expected[:cut] if "before_slot" in stop else expected[:cut + 1]
     if sorted(r["id"] for r in rows) != sorted(expected):
         return abort("expect-items mismatch")
-    man["cleanup_status"] = cleanup
+    man["cleanup_status"] = cleanup_status() if cleanup_variant in (None,) else cleanup
     save()
     return 0
 

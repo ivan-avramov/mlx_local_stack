@@ -15,7 +15,6 @@ import pytest
 
 from bench import arm_adapter as aa
 from bench import chain_ops as co
-from bench import m64_schedule as ms
 from bench import schedules as sch
 from bench.token_turn_gate import TransportAbort
 
@@ -39,8 +38,10 @@ C147 = load_chain("run_tg1_chain", "benchmark/chains/c147/run_tg1_chain.py")
 
 # ---------------------------------------------------------------- constants copied from today's modules
 def test_the_constants_equal_the_modules_they_absorb():
-    assert (sch.SESSION_SEEDS, sch.RELOAD_SEED, sch.RELOAD_ITEMS, sch.BLOCK_SIZE, sch.SMOKE_ITEMS, sch.DERIVATION) == (
-        ms.SESSION_SEEDS, ms.RELOAD_SEED, ms.RELOAD_ITEMS, ms.BLOCK_SIZE, ms.SMOKE_ITEMS, ms.DERIVATION)
+    assert (sch.SESSION_SEEDS, sch.RELOAD_SEED, sch.RELOAD_ITEMS, sch.BLOCK_SIZE, sch.SMOKE_ITEMS) == (
+        {"s1": 1001, "s2": 2002}, 1001, 5, 3, 4)
+    assert sch.DERIVATION == ("order=Random(sha256('m64-order|seed|pick|lang')).shuffle(sorted(names)); "
+                              "perms=Random(sha256('m64-perm|seed|pick|lang'))")
     assert sch.ARM_IDS == aa.ARM_IDS and (sch.PICK1, sch.PICK2) == (PICK1, PICK2)
     assert sch.TG1_SEEDS == C147.SEEDS and sch.PILOT_N == C147.PILOT_N
     assert (sch.SMOKE_PILOT_N, sch.SMOKE_FULL_N) == (C147.SMOKE_PILOT_N, C147.SMOKE_FULL_N)
@@ -48,23 +49,35 @@ def test_the_constants_equal_the_modules_they_absorb():
 
 def test_the_module_is_pure():
     code = ("import sys; import bench.schedules; print([m for m in sys.modules if m in ('bench.arm_adapter',"
-            "'bench.chain_ops','bench.m64_schedule','bench.corpus_tg1','bench.proc_guard','bench.arm_opencode')])")
+            "'bench.chain_ops','bench.corpus_tg1','bench.proc_guard','bench.arm_opencode')])")
     out = subprocess.run([sys.executable, "-c", code], cwd=REPO / "benchmark", capture_output=True, text=True)
     assert out.stdout.strip() == "[]", out.stderr
 
 
-# ---------------------------------------------------------------- blocks == m64_schedule.build
-@pytest.mark.parametrize("kw", [dict(), dict(smoke=True), dict(reload_control=False), dict(sessions=("s1",)),
-                                dict(arms=("oc", "pi")), dict(arms=("oc",))])
-def test_blocks_reproduces_m64_schedule_build_exactly_for_the_tg1_corpus(kw):
-    kw = dict(kw)
+# ---------------------------------------------------------------- blocks == the pre-3b m64_schedule.build (pinned golden)
+GOLDEN = json.loads((REPO / "benchmark/bench/tests/fixtures/p371_m64_schedule_golden.json").read_text())["cases"]
+CASES = {"default": dict(), "smoke": dict(smoke=True), "no_reload": dict(reload_control=False),
+         "s1_only": dict(sessions=("s1",)), "arms_oc_pi": dict(arms=("oc", "pi")), "arms_oc": dict(arms=("oc",))}
+
+
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_blocks_reproduces_the_retired_m64_schedule_build_exactly_for_the_tg1_corpus(case):
+    kw = dict(CASES[case])
     arms = kw.pop("arms", ARMS3)
-    old = ms.build(arms, NAMES, picks=(PICK1, PICK2), **kw)
     new = sch.blocks(arms, NAMES, picks=(PICK1, PICK2), **kw)
-    assert new == old
-    assert sch.schedule_sha256(new) == ms.schedule_sha256(old)
-    assert sch.legs(new) == ms.legs(old)
-    assert [sch.leg_key(l) for l in sch.legs(new)] == [ms.leg_key(l) for l in ms.legs(old)]
+    legs = sch.legs(new)
+    want = GOLDEN[case]
+    assert sch.schedule_sha256(new) == want["schedule_sha256"] and len(legs) == want["legs"]
+    assert hashlib.sha256(json.dumps([sch.leg_key(l) for l in legs], sort_keys=True).encode()).hexdigest() == want["leg_keys_sha256"]
+    assert hashlib.sha256(json.dumps(legs, sort_keys=True).encode()).hexdigest() == want["legs_sha256"]
+
+
+def test_m64_schedule_is_retired_no_module_imports_it():
+    assert not (REPO / "benchmark/bench/m64_schedule.py").exists()
+    for path in (REPO / "benchmark").rglob("*.py"):
+        if "/tests/" in str(path) or ".venv" in str(path):
+            continue
+        assert "m64_schedule" not in path.read_text(), path
 
 
 def test_blocks_refuses_what_the_old_builder_refused():

@@ -496,3 +496,53 @@ def test_the_fake_probe_refuses_an_existing_rows_file_and_takes_the_attempt_flag
     (tmp_path / "a").write_text("")                                      # an ack file that exists refuses first
     got = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     assert got.returncode == 2 and "REFUSED" in got.stdout
+
+
+# ---------------------------------------------------------------- P371 phase 3b: A10 (immutable A4 receipts) and A5 for tg1
+def test_tg1_probes_get_the_immutable_a4_receipt_of_their_load_and_the_sha_is_in_chain_json(env):
+    assert run(env, CHAIN) == 0
+    cj = chain_json(env)
+    assert sorted(p.name for p in (env["out"] / "a4").glob("*.json")) == ["0.0.oc.json", "1.0.oc.json"]
+    for load in cj["progress"]["loads"]:
+        w = load["workers"][0]
+        path = env["out"] / "a4" / f"{load['load']}.0.oc.json"
+        assert w["a4_receipt_sha256"] == sha_of(path) == w["a4_receipts"]["oc"]["sha256"]
+        doc = json.loads(path.read_text())
+        assert doc["pass"] is True and doc["bench_binding"] == dict(
+            worker=dict(pid=w["pid"], create_time=w["create_time"]), load=load["load"], worker_n=0, arm="oc", load_gen=0)
+    for call in invocations(env):
+        idx = 0 if arg(call["argv"], "--model") == PICK1 else 1
+        assert arg(call["argv"], "--a4-v2-receipt") == str(env["out"] / "a4" / f"{idx}.0.oc.json")
+
+
+def test_a_restart_load_takes_a_new_worker_and_a_new_receipt_never_overwriting_the_old(env):
+    assert run(env, CHAIN, plan=PLAN_RESTART) == 0
+    assert sorted(p.name for p in (env["out"] / "a4").glob("*.json")) == ["0.0.oc.json", "0.1.oc.json", "1.0.oc.json"]
+    w = chain_json(env)["progress"]["loads"][0]["workers"]
+    assert [x["n"] for x in w] == [0, 1] and w[0]["a4_receipt_sha256"] != w[1]["a4_receipt_sha256"]
+    assert json.loads((env["out"] / "a4/0.1.oc.json").read_text())["bench_binding"]["load_gen"] == 1
+
+
+def test_tg1_records_the_epoch_and_snapshot_and_runs_with_an_incomplete_snapshot(env):
+    assert run(env, CHAIN) == 0
+    cj = chain_json(env)
+    snap = FP.snapshot()
+    assert cj["snapshots"] == {"oc": dict(sha256=snap["sha256"], complete=False)}
+    from bench import arm_adapter as aa
+    from types import SimpleNamespace
+    assert cj["epoch_id"] == aa.epoch_id([SimpleNamespace(tool=snap["tool"], sha256=snap["sha256"])])
+    assert all("--epoch-id" not in i["argv"] for i in invocations(env))                  # the tg1 argv is unchanged
+
+
+def test_tg1_refuses_a_snapshot_that_changed_between_legs_or_during_the_chain(env):
+    rc = run(env, CHAIN, extra_env={"FAKE_MANIFEST_OVERRIDE": json.dumps({"runtime.snapshot_sha256": "b" * 64})})
+    assert rc == 2 and log_has(env, "snapshot_sha256")
+    env2 = dict(env, out=env["wd"] / "c147-x", lines=[])
+    ops = env["ops"]
+    ops.on_unload = lambda: ops.extra_env.update(FAKE_SNAPSHOT_SALT="late") if len(ops.names("unload")) >= 2 else None
+    assert run(env2, CHAIN) == 2 and any("snapshot" in ln and "exit" in ln for ln in env2["lines"])
+
+
+def test_tg1_epoch_id_is_not_a_cli_flag_of_the_tg1_entry():
+    with pytest.raises(SystemExit):
+        R.parse_args(CHAIN + ["--epoch-id", "e" * 64])
