@@ -1,7 +1,7 @@
-# Handoff — 2026-10-18 (early): P371 build phases 0–4 done on `m64-build`; Cursor code review round 1 running
+# Handoff — 2026-10-18: P371 MERGED into main (`7915bccc`); next = tg2 step 2 fixes
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P381, P380, P379, C179, P378, P377, P376,
-P375, P374, P373, P372, C178, P371, P370, C177, C176, P369, C175 …), then `docs/specs/p371-shared-runner-core.md` (PLAN v6).
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P384, P383, P382, P381, P380, P379, C179,
+P378, P377 … C178, P371), then `docs/specs/p371-shared-runner-core.md` (PLAN v6) for the new code layout.
 
 ## State of the world
 
@@ -10,40 +10,38 @@ P375, P374, P373, P372, C178, P371, P370, C177, C176, P369, C175 …), then `doc
   or docker-backed tests skip.
 - **Cold reviewer:** Cursor `gpt-5.6-sol-high` only (`cursor-agent -p --output-format text --model gpt-5.6-sol-high --mode plan
   --sandbox enabled --force --trust --workspace <repo> "<prompt>"`). Every plan, spec and build goes to Cursor. ONE review at a
-  time; outputs to the scratchpad; re-run until a `VERDICT` line appears. Fork reviews: workspace `../mlx-vlm` at the diff base with
-  the diff INLINE (the worktree workspace returned empty twice).
+  time; outputs to the scratchpad; launch detached with a background waiter on its EXIT marker. Fork reviews: workspace
+  `../mlx-vlm` at the diff base with the diff INLINE.
 - **Daily driver MTP-OFF (C177)** until P369 ships; restore the three registry lines + `test_opencode_probe_seeding.py` expectation.
-- **Branches.** origin: `main` (pushed through `f0366550`; local main has docs commits after it — P378–P381, spec amendments,
-  this handoff — push needs the operator), `evidence`, `c152-alloc-tool-scope-wip`, `p297-uncertain-gone`, `tg2-step2`
-  (`b8bfe989`), `m64-build` (P371 build, pushed through `bda0f2b5`). Worktrees `$STACK_WORKDIR/worktrees/{tg2,m64}` (untracked
-  `.venv-bench` symlink each — never stage). Fork worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369` (branch `p369-mtp`, local only).
+- **Branches.** origin: `main` (pushed through `f0366550`; local main is ahead with docs + the P371 merge — push needs the
+  operator), `evidence`, `c152-alloc-tool-scope-wip`, `p297-uncertain-gone`, `tg2-step2` (`b8bfe989`), `m64-build` (P371 build,
+  pushed through `a78d14a8`, merged). Worktrees `$STACK_WORKDIR/worktrees/{tg2,m64}` (untracked `.venv-bench` symlink each —
+  never stage). Fork worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369` (branch `p369-mtp`, local only).
 - **Push rule (C176):** WIP build branches may be pushed after each commit batch, privacy-scanned; `main`, the fork, tags, PRs
   need an explicit in-turn go (one go = one push).
 
-## P371 (C178) — status
+## P371 — DONE (merged `7915bccc`)
 
-- **Plan closed at v6** (`docs/specs/p371-shared-runner-core.md`; Cursor plan rounds 1–4 `docs/reviews/p371/`; R1–R31 applied;
-  P379 amendment).
-- **Built on `m64-build`** (implementation subagents, lead-reviewed per phase; red-then-green commits):
-  1a contracts (`run_config`, `corpus` + `corpus_tg1`, `worker_receipts`, `item_barrier`, `chain_hooks`, `web_evidence`,
-  `schedules`, `chain_rows`); 1b `host` + the isolated pre-P371 baseline harness (`bench/tests/p371_baseline/`, `git archive
-  0c9bd32a`, 19 scenarios); 2a ONE item core (`arm_runner.py`; `tg1_runner.py` thin; A11); 2b A2 `compaction_failed`, A3 runner
-  side, item barrier, A4 `toolwindows.js` (works on real 2.0.20), R30, dependency rule; 3a ONE chain core (`chain_core.py`),
-  disjoint pilot / full invocations (P376), progress inventory, web evidence chain-side, lifecycle closure, C179
-  `--campaign-core`, R7 (all readers via `chain_rows`; stored reports byte-identical); 3b M64 on the core (A1, A5–A8, A10,
-  hooks at the barrier, abort-path fence; `m64_schedule.py` deleted); 4 A13 contract suite on real runs + artifact mode
-  (`benchmark/m64/contract_artifact.py --arm oc`: verdict `incomplete`, 13 checks pass, 3 OWED) + chain refusal, C179 on M64,
-  closures per entry, R17 isolation.
-- **Tests:** phase-4 bar (77 files, alone) 1992 passed / 4 skipped / 1 failed — the failure is P381 (date-hard-coded test,
-  pre-existing, also fails on main since 2026-10-18). Baseline full suite before the build: 5590 passed.
-- **Identities move until merge;** record the final tg1 / oc `probe_code_sha256` at the merge commit (`--print-identity`).
-- **Next:** Cursor code review round 1 on `bda0f2b5` (running; prompt + output in the session scratchpad) → fixes (P375 revised:
-  semantic fixes get another cold round) → P381 fix (needs the operator's go) → full suite from the m64 worktree ALONE → lead
-  verification of plan §8 → merge `m64-build` into main (no chain live) → handoff with the new epoch's identities.
+- ONE item core `benchmark/bench/arm_runner.py`, ONE chain core `benchmark/bench/chain_core.py`; tg1 (`run_tg1_probe.py`,
+  `chains/c147/run_tg1_chain.py`) and M64 oc (`run_oc_probe.py`, `chains/m64/run_m64_chain.py`) are configurations; tg2 becomes
+  one at tg2 step 3 (`run_tg2_probe.py` + `corpus_tg2.py`, T14 amended). Contracts: `run_config`, `corpus`/`corpus_tg1`,
+  `worker_receipts` (P372 protocol fixture), `item_barrier`, `chain_hooks`, `web_evidence`, `schedules`, `chain_rows` (the ONLY
+  chain-row reader), `campaign_core` (C179 `--campaign-core`), `contract_artifact`, `atomic_publish`.
+- **New tg1 epoch** (no rows yet): `probe_code_sha256` `5a4a9df8875c1e43c28d0acd4fb92f55258400ceb24c2ba39fe2e6b2de8688a9`,
+  `scaffold_policy_sha256` `42a2485b…`, `generation_identity_sha256` `1c2e748b8e97b386a7719e37d988eb74e0e01bc94bcd2eb8da76dc6e67bb5ad5`;
+  `m64-oc-tg1` `probe_code_sha256` `e7733c413689c7b295fe0a189816f32af10d6b4ed5893a9fe85e642efe04ef22` (its `--print-identity`
+  refuses until D2 exists). Any generation-path core change rotates all of them (P377; freeze per campaign, C179).
+- Reviews: plan rounds 1–4, code rounds 1–7 (`docs/reviews/p371/`), cleared at `a78d14a8`. Full suite from the m64 worktree
+  alone at `a78d14a8`: 6536 passed / 21 skipped (tg2 grader image not built 15, dsh absent 2, OWED contract checks 3, mlx-serve
+  source 1) / 1 xfailed / 0 failed. Contract artifact `--arm oc` on this box: `incomplete` (13 pass, 3 OWED).
+- Test flakes root-caused (P383): the guard's sweep records ambient box processes (Spotlight `mdworker_shared`) as unattributed
+  orphans; real-guard tests are hermetic now (`bench/tests/hermetic_scan.py`, autouse; opt-out `real_process_scan`); stress
+  regression test with an ambient generator. **Production decision for M64 A7 is OPEN (P383).**
+- M64 real chain still refuses by design: D2 stub, worker receipts `required` until the P372 fork endpoint, OWED contract checks.
 
 ## Next work after P371, in order
 
-2. **tg2 step 2 fixes** (branch `tg2-step2`, Cursor `benchmark/m65/reviews/step2-round1…`, CLEARED AFTER FIXES S1–S4: S1
+2. **tg2 step 2 fixes — NEXT** (branch `tg2-step2`, Cursor `benchmark/m65/reviews/step2-round1…`, CLEARED AFTER FIXES S1–S4: S1
    `.approaches/**` leak, S2 semver check, S3 freeze-cache fingerprint, S4 reference sources excluded); regenerate universe + draw
    (≈ 71 min freeze — watch its log), full suite, lead verification, merge. Then rebase tg2 step 3 onto the P371 core (tg2 =
    `run_tg2_probe.py` + `corpus_tg2.py` configuration; T14 amended).
@@ -82,4 +80,4 @@ P375, P374, P373, P372, C178, P371, P370, C177, C176, P369, C175 …), then `doc
 - OrbStack bind mounts under `$TMPDIR` serve stale file sizes after in-place overwrites — mount fresh copies outside `$TMPDIR` (P361).
 - `--print-identity` needs docker on PATH (grader image id; fails closed).
 
-Next decision id C180; discussion ids continue from P382.
+Next decision id C180; discussion ids continue from P385.
