@@ -408,15 +408,15 @@ def test_prepared_tree_drops_the_reference_roots_and_fails_on_an_undeclared_dire
     assert not (tmp_path / "t2").exists()
 
 
-@pytest.mark.parametrize("key", ["solution", "test", "editor"])
-def test_s13_every_declared_file_must_be_present_in_the_prepared_tree(tmp_path, key):
-    cfg = dict(solution=["x.js"], test=["x.spec.js"], example=[".meta/proof.ci.js"], editor=["helper.js"])
-    cfg[key] = [".meta/hidden.js"] if key != "solution" else [".approaches/hidden.js"]
-    files = {"x.js": "s", "x.spec.js": "t", "helper.js": "h", ".meta/proof.ci.js": "r", ".meta/hidden.js": "x",
-             ".approaches/hidden.js": "x"}
-    c = make_corpus(tmp_path / "c", "javascript", "x", cfg, files)
+@pytest.mark.parametrize("key,hidden", [("solution", ".approaches/h.rs"), ("test", ".meta/h.rs"), ("editor", ".meta/h.rs")])
+def test_s13_every_declared_file_must_be_present_in_the_prepared_tree(tmp_path, key, hidden):
+    cfg = dict(solution=["src/lib.rs", "Cargo.toml"], test=["tests/x.rs"], example=[".meta/example.rs"])
+    cfg[key] = cfg.get(key, []) + [hidden] if key == "solution" else ([hidden] if key == "test" else [hidden])
+    files = {"src/lib.rs": "s", "Cargo.toml": STUB, "tests/x.rs": "t", ".meta/example.rs": "r", ".meta/h.rs": "x",
+             ".approaches/h.rs": "x"}
+    c = make_corpus(tmp_path / "c", "rust", "x", cfg, files)
     with pytest.raises(mat.FreezeError, match="declared"):
-        mat.prepare_tree(c, "javascript", "x", tmp_path / "t")
+        mat.prepare_tree(c, "rust", "x", tmp_path / "t")
     assert not (tmp_path / "t").exists()
 
 

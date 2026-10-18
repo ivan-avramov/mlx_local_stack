@@ -16,9 +16,8 @@ LANGS = ("rust", "java", "javascript", "cpp")
 VERSION = "m65-tg2-mat-v2"
 # S1: reference / instruction material that never reaches a prepared tree, at any depth.
 EXCLUDED_ROOTS = (".docs", ".meta", ".approaches", ".articles")
-# S1: a prepared tree is an ALLOW-list. Top-level files are kept; a top-level directory is kept only when it is one of
-# the language's stub directories below or holds a file the item's config declares (solution / editor / test).
-STUB_DIRS = {"rust": ("src", "tests", "benches"), "java": ("src", "gradle"), "javascript": ("data",), "cpp": ("test",)}
+# S1/S13: only the reference roots above are dropped (at any depth); every other file is kept and then audited against
+# the declared set and the scaffold allow-list below, so an undeclared directory fails loudly instead of vanishing.
 JAVA_REFERENCE_ROOT = ".meta/src/reference/java/"
 _JS_SKIP = re.compile(r"\b(xtest|xit|xdescribe)\(")
 _JAVA_DISABLED = re.compile(r"@Disabled(?:\([^)]*\))?[ \t]*\n?")
@@ -194,19 +193,9 @@ def prepare_tree(corpus, lang, slug, dest):
     (JS `xtest`/`xit`/`xdescribe`, Java `@Disabled` in both forms); the rewrite counts are recorded."""
     src = exercise_dir(corpus, lang, slug)
     dest = Path(dest)
-    allowed = set(STUB_DIRS[lang])
-    try:
-        files = json.loads((src / ".meta/config.json").read_text())["files"]
-        allowed |= {PurePosixPath(rel).parts[0] for key in ("solution", "editor", "test") for rel in files.get(key, [])
-                    if len(PurePosixPath(rel).parts) > 1}
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
 
     def ignore(directory, names):
-        drop = {n for n in names if n in EXCLUDED_ROOTS}
-        if Path(directory) == src:
-            drop |= {n for n in names if (src / n).is_dir() and n not in allowed}
-        return drop
+        return {n for n in names if n in EXCLUDED_ROOTS}
 
     plan = read_plan(corpus, lang, slug)          # S4: every configured reference source must be outside the tree
     shutil.copytree(src, dest, ignore=ignore)
@@ -232,6 +221,11 @@ def prepare_tree(corpus, lang, slug, dest):
         from bench import tg2_grade
         (dest / "OFFLINE_CRATES.md").write_text(tg2_grade.rust_disclosure_line() + "\n")
     declared = set(plan.solutions) | set(plan.tests) | set(plan.config.get("editor", []))
+    missing = sorted(rel for rel in declared | {"Cargo.toml"} & set(plan.config.get("solution", []))
+                     if not (dest / rel).is_file())
+    if missing:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise FreezeError("declared file(s) missing from the prepared tree: %s" % missing)
     patterns = SCAFFOLD[lang] + ITEM_SCAFFOLD.get("%s/%s" % (lang, slug), ())
     unknown = sorted(rel for rel in (f.relative_to(dest).as_posix() for f in dest.rglob("*") if f.is_file())
                      if rel not in declared and not any(matches_pattern(rel, pat) for pat in patterns))
