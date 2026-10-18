@@ -111,7 +111,9 @@ def test_task_totals_come_from_the_join_including_a_disconnected_generation(worl
     assert t["accounting"] == "receipts" and t["receipts"]["completion_tokens"] == 4100
     assert t["receipts"]["prompt_tokens"] == 2200 and t["receipts"]["requests"] == 2
     assert t["gate_completion_tokens"] == row["gate"]["output_tokens_completed"] == 20           # what the client saw
-    assert t["completion_tokens"] == 20 and t["compaction_completion_tokens"] == 0
+    # P371 review r1 F3: with receipts the task total IS the worker's (incl. the disconnected generation), never the gate's
+    assert t["completion_tokens"] == 4100 and t["compaction_completion_tokens"] == 0
+    assert t["completion_tokens"] == t["receipts"]["completion_tokens"] and t["gate_completion_tokens"] == 20
 
 
 def test_compaction_counts_to_the_task_and_auxiliary_is_reported_apart(world):
