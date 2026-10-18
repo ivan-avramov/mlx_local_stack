@@ -168,11 +168,13 @@ def abort_evidence(plan_step, items, k, arm, a, out, run_id, wd):
     ev = evidence_dir(wd, arm, a.model, out, run_id, item)
     ev.mkdir(parents=True, exist_ok=True)
     export = ev / "export.json"
-    if plan_step["evidence"] == "export" and not export.is_file():
+    if plan_step["evidence"] in ("export", "export_badsha") and not export.is_file():
         export.write_text(json.dumps({"messages": [{"type": "assistant", "content": [
             {"type": "tool", "name": "webfetch", "id": "c1", "state": {
                 "status": "completed", "input": {"url": "https://example.test/doc"}, "output": "<html>body</html>"}}]}]}))
     files = {"export": dict(path=fp._portable(wd, export), sha256=fp._sha(export) if export.is_file() else None)}
+    if plan_step["evidence"] == "export_badsha":
+        files["export"]["sha256"] = "0" * 64                  # the stamped sha256 disagrees with the file (F20 tests)
     return dict(id=item, files=files)
 
 
