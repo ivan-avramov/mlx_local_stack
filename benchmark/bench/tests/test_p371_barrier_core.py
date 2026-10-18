@@ -185,7 +185,11 @@ def test_a_replayed_item_index_is_refused(world):
 
 # ---------------------------------------------------------------- off: no files, no waits
 def test_with_the_barrier_off_there_are_no_files_and_no_waits(world, monkeypatch):
-    monkeypatch.setattr(ib.time, "sleep", lambda s: (_ for _ in ()).throw(AssertionError("the barrier waited")))
+    def waited(*a, **k):
+        raise AssertionError("the barrier waited")
+
+    monkeypatch.setattr(ib.ItemBarrier, "_wait", waited)
+    monkeypatch.setattr(ib.ItemBarrier, "_create", waited)
     assert run_core(world, a=dict(items="one,two"))[0] == 0
     assert [r["id"] for r in rows(world)] == ["fake/one", "fake/two"]
     assert list(world.tmp.glob("rows.item*")) == [] and "hook_stop" not in manifest(world)
