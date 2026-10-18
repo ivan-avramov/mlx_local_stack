@@ -533,7 +533,7 @@ def test_s16_a_corpus_mutation_during_an_item_aborts_naming_it_and_writes_no_rec
     for lang in ("rust", "java", "cpp"):
         (c / lang / "exercises/practice").mkdir(parents=True)
     g = Mutating(c / "javascript/exercises/practice/x/.meta/proof.ci.js", at)
-    with pytest.raises(TransportAbort, match=r"javascript/x.*changed"):
+    with pytest.raises(TransportAbort, match=r"changed while freezing javascript/x"):
         U.run_all(c, tmp_path / "w", tmp_path / "log", g, **ID)
     assert not (tmp_path / "w/items/javascript__x.json").exists()
 
