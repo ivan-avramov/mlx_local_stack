@@ -28,7 +28,7 @@ class MinimalAdapter(aa.ArmAdapter):
     def preflight(self, *, selection, path=None, router=None, limit=None, model=None, exe_sha=None):
         return None
 
-    def seed_overlay(self, model, seed):
+    def seed_overlay(self, model, seed, *, attempt=None):
         return {}
 
     def overlay_sha(self, env):
@@ -37,7 +37,7 @@ class MinimalAdapter(aa.ArmAdapter):
     def make_run_dir(self, workdir, run_id, selection):
         return workdir
 
-    def build_env(self, run_dir, scratch, overlay, *, receipts, frozen_date):
+    def build_env(self, run_dir, scratch, overlay, *, receipts, frozen_date, toolwindow_receipts=None, attempt=None):
         return {}
 
     def verify_env(self, env, run_dir, selection, overlay):
@@ -72,9 +72,6 @@ class MinimalAdapter(aa.ArmAdapter):
 
     def reconcile(self, stream, transcript, receipts, rc, outcome):
         return aa.Reconciliation(outcome=None)
-
-    def web_evidence(self, transcript, env):
-        return []
 
     def manifest_fields(self):
         return {"arm": self.arm_id}

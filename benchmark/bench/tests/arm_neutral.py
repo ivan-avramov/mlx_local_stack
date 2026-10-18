@@ -5,6 +5,8 @@
 The scripted client is a `/bin/sh -c` one-liner that prints the gate's own event lines and writes the solution."""
 from __future__ import annotations
 
+import collections
+import contextlib
 import hashlib
 import json
 import os
@@ -16,6 +18,7 @@ from bench import corpus as cp
 from bench import token_turn_gate as tg
 from bench.tests.test_token_turn_gate import event, usage
 
+Snap = collections.namedtuple("Snap", "path boundary manifest")
 LABEL = "neutral-v1"
 EVENTS = [event("step_start", "m1"), event("step_finish", "m1", tokens=usage(10, 100)),
           event("step_start", "m2"), event("step_finish", "m2", tokens=usage(10, 120))]
@@ -30,9 +33,11 @@ class NeutralCorpus(cp.Corpus):
     corpus_id = "neutral"
     languages = ("fake",)
 
-    def __init__(self, root):
+    def __init__(self, root, *, timeouts=None, grader_version="neutral-grade-1"):
         self.root = Path(root)
         self.sha = "7" * 40
+        self.timeouts = dict(timeouts or dict(fake=5))
+        self.grader_version = grader_version
 
     def load_universe(self, path=None):
         return {"items": {f"fake/{n}": {} for n in ("one", "two")}}, "u" * 64
@@ -66,6 +71,13 @@ class NeutralCorpus(cp.Corpus):
     def prompt(self, prepared, inject=None):
         return "set the answer to 42" + (" [inject:%s]" % inject if inject else "")
 
+    def manifest(self, work):
+        return {p.name: _sha(p.read_bytes()) for p in sorted(Path(work).iterdir()) if p.is_file()}
+
+    @contextlib.contextmanager
+    def snapshot(self, work, private, boundary):
+        yield Snap(path=Path(work), boundary=boundary, manifest=self.manifest(work))
+
     def tampered(self, snap, prepared):
         return snap is None
 
@@ -94,8 +106,8 @@ class NeutralCorpus(cp.Corpus):
                             manifest_sha256=_sha(raw), manifest_path=dest / "manifest.json")
 
     def identity(self):
-        return dict(corpus_id=self.corpus_id, universe_sha256="u" * 64, grader_version="neutral-grade-1",
-                    grader_timeout_s=dict(fake=5), image=None)
+        return dict(corpus_id=self.corpus_id, universe_sha256="u" * 64, grader_version=self.grader_version,
+                    grader_timeout_s=dict(self.timeouts), image=None)
 
 
 class NeutralArm(aa.ArmAdapter):
@@ -113,6 +125,8 @@ class NeutralArm(aa.ArmAdapter):
         self.p = p
         self.workdir = workdir
         self.binary_path = "/bin/sh"
+        self.overlay_attempts = []
+        self.env_attempts = []
 
     # identity / provenance
     def snapshot(self):
@@ -161,13 +175,18 @@ class NeutralArm(aa.ArmAdapter):
         run_dir.mkdir(parents=True)
         return run_dir
 
-    def seed_overlay(self, model, seed):
-        return {"neutral_seed": int(seed), "model": model}
+    def seed_overlay(self, model, seed, *, attempt=None):
+        self.overlay_attempts.append(attempt)
+        out = {"neutral_seed": int(seed), "model": model}
+        if attempt is not None:
+            out["attempt_header"] = attempt.header
+        return out
 
     def overlay_sha(self, env):
         return hashlib.sha256(env["NEUTRAL_OVERLAY"].encode()).hexdigest()
 
-    def build_env(self, run_dir, scratch, overlay, *, receipts, frozen_date):
+    def build_env(self, run_dir, scratch, overlay, *, receipts, frozen_date, toolwindow_receipts=None, attempt=None):
+        self.env_attempts.append(attempt)
         return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "TMPDIR": str(Path(run_dir).parent / "tmp" /
                                                                                Path(scratch).name) + "/",
                 "NEUTRAL_OVERLAY": json.dumps(overlay, sort_keys=True), "PWD": str(scratch)}
@@ -213,9 +232,6 @@ class NeutralArm(aa.ArmAdapter):
         summary = tg.reconcile(stream, transcript.doc, rc, outcome)
         return aa.Reconciliation(outcome=outcome, unmatched_export_messages=summary["unmatched_export_messages"],
                                  trailing=summary["trailing"], uncharged_trailing=summary["uncharged_trailing"])
-
-    def web_evidence(self, transcript, env):
-        return []
 
     def tool_windows(self, stream):
         return []

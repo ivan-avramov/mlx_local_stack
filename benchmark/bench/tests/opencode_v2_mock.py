@@ -114,9 +114,13 @@ class MockServer:
                 # (e.g. three identical shell calls) are possible; other requests finish after a tool result.
                 finished = any(m.get("role") == "tool" for m in messages) and not isinstance(kind, dict)
                 last = messages[-1] if messages else {}
-                summarizing = (kind == "ok" or kind == "summary") and isinstance(last.get("content"), str) \
+                is_summary_request = isinstance(last.get("content"), str) \
                     and last["content"].startswith("You MUST summarize the conversation above")
-                if summarizing or kind == "summary":
+                summarizing = (kind == "ok" or kind == "summary") and is_summary_request
+                if kind == "badsummary":
+                    # a summary that violates opencode's template (the model failing the compaction template)
+                    chunks = [chunk({"role": "assistant", "content": "I cannot summarize this."}), chunk({}, "stop")]
+                elif summarizing or kind == "summary":
                     # a compaction request (opencode 2.0.20 summary template); answer with a conforming summary
                     chunks = [chunk({"role": "assistant", "content": SUMMARY}), chunk({}, "stop")]
                 elif finished:
