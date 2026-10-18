@@ -21,6 +21,12 @@ MODEL = "neutral/model"
 
 @pytest.fixture
 def world(monkeypatch, tmp_path):
+    return neutral_world(monkeypatch, tmp_path)
+
+
+def neutral_world(monkeypatch, tmp_path):
+    """The neutral world as a plain function (the `world` fixture's body): the isolation test builds one per configuration
+    inside `monkeypatch.context()` so that nothing it patches survives into the next configuration."""
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     monkeypatch.delenv("MLX_SERVE_CONFIG", raising=False)
     host = types.ModuleType("neutral_host")

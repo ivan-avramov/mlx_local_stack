@@ -18,7 +18,8 @@ from bench.tests.test_tg1_integration import FROZEN, tg_fixture
 REPO = Path(__file__).resolve().parents[3]
 
 
-def test_a_fake_item_runs_through_the_oc_entry(monkeypatch, tmp_path):
+def run_fake_oc_item(monkeypatch, tmp_path):
+    """One fake item through the oc entry; returns the rows file (the manifest is its sibling)."""
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     entry = importlib.import_module("run_oc_probe")
     f = tg_fixture(entry, monkeypatch, tmp_path)
@@ -36,5 +37,10 @@ def test_a_fake_item_runs_through_the_oc_entry(monkeypatch, tmp_path):
                                   polyglot_sha=entry._polyglot_sha)              # what `run_oc_probe._main` binds
     assert arm_runner.main(entry, adapter, a, template=ao.m64_template(),
                            evidence=ao.m64_evidence(receipts="absent", item_barrier="off"), corpus=corpus) == 0
+    return out
+
+
+def test_a_fake_item_runs_through_the_oc_entry(monkeypatch, tmp_path):
+    out = run_fake_oc_item(monkeypatch, tmp_path)
     (row,) = [json.loads(line) for line in out.read_text().splitlines()]
     assert row["config_id"] == "m64-oc-tg1" and row["arm"] == "oc" and row["passed"] is True
