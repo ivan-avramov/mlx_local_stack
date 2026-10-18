@@ -41,7 +41,8 @@ def new_policy(inject=None, toolchain=None, **over):
               toolbounds_sha256=p._sha_of(tg1_runner.PLUGIN), noretry_sha256=p._sha_of(p.NORETRY_PLUGIN),
               datefreeze_sha256=p._sha_of(tg1_runner.DATEFREEZE_PLUGIN), carrier_sha256="b" * 64,
               universe_sha256="u" * 64, env=p.SCAFFOLD_ENV_POLICY_V2, toolchain=dict(toolchain or TOOLCHAIN),
-              inject=inject)
+              inject=inject, inject_addendum_sha256=(tg1_runner.inject_addendum_sha256(inject)
+                                      if inject in tg1_runner.INJECT_ADDENDA else "x" if inject else None))
     kw.update(over)
     return rc.tg1_generation_policy(**kw)
 
