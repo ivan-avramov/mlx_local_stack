@@ -107,48 +107,97 @@ _VENDORED = None
 _COMPARATOR = re.compile(r"^(?P<op>\^|~|=|>=|<=|>|<)?\s*(?P<ver>(?:\d+|[*xX])(?:\.(?:\d+|[*xX])){0,2})$")
 
 
+_NUM = r"(?:0|[1-9][0-9]*)"
+_PRE_ID = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+_BUILD_ID = r"[0-9A-Za-z-]+"
+_WILD = r"[*xX]"
+_COMPARATOR = re.compile(
+    r"^(?P<op>>=|<=|\^|~|=|>|<)?\s*(?P<maj>%(n)s|%(w)s)(?:\.(?P<min>%(n)s|%(w)s)(?:\.(?P<pat>%(n)s|%(w)s)"
+    r"(?:-(?P<pre>%(p)s(?:\.%(p)s)*))?(?:\+(?P<build>%(b)s(?:\.%(b)s)*))?)?)?$"
+    % dict(n=_NUM, w=_WILD, p=_PRE_ID, b=_BUILD_ID))
+_VERSION = re.compile(r"^(%(n)s)\.(%(n)s)\.(%(n)s)(?:-(%(p)s(?:\.%(p)s)*))?(?:\+%(b)s(?:\.%(b)s)*)?$"
+                      % dict(n=_NUM, p=_PRE_ID, b=_BUILD_ID))
+_STABLE, _MIN_PRE = (1,), (0,)
+
+
+def _pre_key(pre):
+    """Semver precedence of a pre-release: a stable release sorts after any pre-release; numeric identifiers sort
+    before alphanumeric ones; a longer identifier list sorts after its prefix."""
+    if pre is None:
+        return _STABLE
+    return (0,) + tuple((0, int(x)) if x.isdigit() else (1, x) for x in pre.split("."))
+
+
+def _vkey(major, minor, patch, pre=None):
+    return (major, minor, patch, _pre_key(pre))
+
+
+def _parse_version(version):
+    m = _VERSION.match(version)
+    if not m:
+        raise ValueError("malformed version %r" % version)
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)
+
+
 def _vtuple(version):
-    return tuple(int(x) for x in version.split("."))
+    return _vkey(*_parse_version(version))
+
+
+def _comparator(part, req):
+    """(op, nums, pre, wildcard) of one comparator; ValueError when Cargo / semver would reject it."""
+    m = _COMPARATOR.match(part.strip())
+    if not m:
+        raise ValueError("malformed Cargo version requirement %r" % req)
+    op, raw = m.group("op"), [m.group(k) for k in ("maj", "min", "pat")]
+    present = [x for x in raw if x is not None]
+    wild = [i for i, x in enumerate(present) if re.fullmatch(_WILD, x)]
+    if wild and wild != list(range(wild[0], len(present))):
+        raise ValueError("malformed Cargo version requirement %r" % req)
+    nums = [int(x) for x in present if not re.fullmatch(_WILD, x)]
+    return op, nums, m.group("pre"), bool(wild)
 
 
 def cargo_req_matches(req, version):
-    """Does the Cargo version requirement `req` (comma-joined comparators: `^` caret / bare default, `~`, `=`, `>`,
-    `>=`, `<`, `<=`, wildcards `*` / `1.*` / `1.2.x`) match the exact stable `version`? Pre-release / build-metadata
-    requirements and anything malformed raise ValueError."""
-    v = _vtuple(version)
-    for part in req.split(","):
-        m = _COMPARATOR.match(part.strip())
-        if not m:
-            raise ValueError("malformed Cargo version requirement %r" % req)
-        op, raw = m.group("op"), m.group("ver").split(".")
-        wild = [i for i, x in enumerate(raw) if x in "*xX"]
-        if wild and (wild[0] == 0 and len(raw) > 1 or wild != list(range(wild[0], len(raw))) or op not in (None, "=")):
-            raise ValueError("malformed Cargo version requirement %r" % req)
-        if wild and wild[0] == 0:
+    """Does the Cargo version requirement `req` match `version`? Comma-joined comparators: `^` caret (the default for a
+    bare version), `~`, `=`, `>`, `>=`, `<`, `<=`, wildcards `*` / `1.*` / `1.2.x`; numeric components without leading
+    zeros; `1.2.3-pre` pre-release and `+build` syntax only on a full version. Cargo-book / semver rules: a
+    pre-release version matches only when some comparator names the same major.minor.patch with a pre-release; build
+    metadata is ignored; a stable release sorts after its pre-releases. Malformed requirements raise ValueError."""
+    major, minor, patch, pre = _parse_version(version)
+    v = _vkey(major, minor, patch, pre)
+    comps = [_comparator(part, req) for part in req.split(",")]
+    if pre is not None and not any(len(nums) == 3 and cpre is not None and tuple(nums) == (major, minor, patch)
+                                   for _, nums, cpre, _ in comps):
+        return False
+    for op, nums, cpre, wild in comps:
+        if not nums:
             continue                                                        # `*`: any version
-        nums = [int(x) for x in (raw[:wild[0]] if wild else raw)]
         n = len(nums)
-        lo = tuple(nums + [0] * (3 - n))
-        bump = tuple(nums[:-1] + [nums[-1] + 1] + [0] * (3 - n))             # first version past the partial prefix
-        if wild or op == "=":
-            ok = lo <= v < bump
+        full = n == 3
+        lo = _vkey(*nums, cpre) if full and cpre is not None else (
+            _vkey(*nums) if full else _vkey(*(nums + [0] * (3 - n)), "0"))
+        floor = _vkey(*(nums + [0] * (3 - n)), "0") if not full else lo
+        bump = _vkey(*(nums[:-1] + [nums[-1] + 1] + [0] * (3 - n)), "0")      # first version past the partial prefix
+        if (wild and op is None) or op == "=":
+            ok = (v == lo) if full else (floor <= v < bump)
         elif op == ">=":
             ok = v >= lo
         elif op == ">":
-            ok = v >= bump
+            ok = v > lo if full else v >= bump
         elif op == "<":
             ok = v < lo
         elif op == "<=":
-            ok = v < bump
+            ok = v <= lo if full else v < bump
         elif op == "~":
-            ok = lo <= v < ((nums[0] + 1, 0, 0) if n == 1 else (nums[0], nums[1] + 1, 0))
+            hi = _vkey(nums[0] + 1, 0, 0, "0") if n == 1 else _vkey(nums[0], nums[1] + 1, 0, "0")
+            ok = lo <= v < hi
         else:                                                               # caret (bare default)
             if nums[0] > 0 or n == 1:
-                hi = (nums[0] + 1, 0, 0)
+                hi = _vkey(nums[0] + 1, 0, 0, "0")
             elif nums[1] > 0 or n == 2:
-                hi = (0, nums[1] + 1, 0)
+                hi = _vkey(0, nums[1] + 1, 0, "0")
             else:
-                hi = (0, 0, nums[2] + 1)
+                hi = _vkey(0, 0, nums[2] + 1, "0")
             ok = lo <= v < hi
         if not ok:
             return False
