@@ -415,7 +415,8 @@ def test_s7_assemble_requires_each_records_input_hash_and_publishes_it():
 def test_s8_the_fingerprint_names_the_static_import_closure_of_the_freezer():
     from bench import identity_closure as ic
     bench_root = Path(__file__).resolve().parents[2]
-    assert U.fingerprint(**ID)["freezer_sha256"] == ic.closure_sha256("m65/tg2_universe.py", bench_root)
+    assert U.fingerprint(**ID)["freezer_sha256"] == ic.closure_sha256(
+        "m65/tg2_universe.py", bench_root, data=("m65/tg2_image/verify_corpus.py",))
     assert {"bench/tg2_grade.py", "bench/tg2_materialize.py", "m65/tg2_universe.py"} <= {
         p.relative_to(bench_root).as_posix() for p in ic.python_closure(bench_root / "m65/tg2_universe.py", bench_root)}
 
@@ -428,6 +429,8 @@ def test_s8_any_change_inside_the_freezer_closure_changes_the_fingerprint(tmp_pa
         dest = copy / p.relative_to(bench_root)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(p, dest)
+    (copy / "m65/tg2_image").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(bench_root / "m65/tg2_image/verify_corpus.py", copy / "m65/tg2_image/verify_corpus.py")
     before = U.freezer_sha256(copy)
     assert before == U.freezer_sha256(bench_root)
     (copy / "bench/tg2_materialize.py").write_text((copy / "bench/tg2_materialize.py").read_text() + "\n# edit\n")

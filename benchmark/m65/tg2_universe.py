@@ -42,7 +42,8 @@ def policy(ref_runs=None, stub_runs=None):
 def freezer_sha256(root=None):
     """sha256 over the static import closure of this freezer (grader, materializer, helpers it imports)."""
     from bench import identity_closure as ic
-    return ic.closure_sha256("m65/tg2_universe.py", Path(root) if root else Path(__file__).resolve().parents[1])
+    return ic.closure_sha256("m65/tg2_universe.py", Path(root) if root else Path(__file__).resolve().parents[1],
+                             data=("m65/tg2_image/verify_corpus.py",))      # loaded by path, so hashed as a data dependency
 
 
 def fingerprint(*, image_id, polyglot_sha, ref_runs=None, stub_runs=None, grader_version=None):
@@ -60,11 +61,14 @@ def _mismatch(item, found, expected):
     return "%s: fingerprint differs in %s" % (item, ", ".join(diff)) if diff else None
 
 
+VERIFY_CORPUS_FILE = Path(__file__).resolve().parent / "tg2_image/verify_corpus.py"
+
+
 def require_pinned_corpus(corpus, pinned=None):
     """The corpus checkout must be exactly the image-recorded `polyglot_sha` (IMAGE_ID) with clean target-language
     subtrees (m65/tg2_image/verify_corpus.py); anything else is refused."""
     import importlib.util
-    spec = importlib.util.spec_from_file_location("tg2_image_verify_corpus", Path(tg.IMAGE_ID_FILE).parent / "verify_corpus.py")
+    spec = importlib.util.spec_from_file_location("tg2_image_verify_corpus", VERIFY_CORPUS_FILE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     pinned = pinned or tg.image_record().get("polyglot_sha", "")
@@ -235,8 +239,15 @@ def load(path):
             raise ValueError("grader version %r != %r: re-freeze needed" % (doc["grader_version"], tg.VERSION))
         if doc.get("materializer_version") != mat.VERSION:
             raise ValueError("materializer version %r != %r: re-freeze needed" % (doc.get("materializer_version"), mat.VERSION))
-        now = fingerprint(image_id=doc["image_id"], polyglot_sha=doc["polyglot_sha"], grader_version=doc["grader_version"],
-                          ref_runs=doc["ref_runs"], stub_runs=doc["stub_runs"])
+        pinned_image, pinned_corpus = tg.pinned_image_id(), tg.image_record().get("polyglot_sha")
+        if doc["image_id"] != pinned_image or doc["polyglot_sha"] != pinned_corpus:
+            raise ValueError("embedded image / corpus (%s, %s) are not the current pins (%s, %s): re-freeze needed"
+                             % (doc["image_id"], doc["polyglot_sha"], pinned_image, pinned_corpus))
+        try:
+            now = fingerprint(image_id=pinned_image, polyglot_sha=pinned_corpus, grader_version=doc["grader_version"],
+                              ref_runs=doc["ref_runs"], stub_runs=doc["stub_runs"])
+        except TransportAbort as exc:
+            raise ValueError("%s: re-freeze needed" % exc) from exc
         if doc.get("fingerprint") != now or doc.get("policy") != policy(doc["ref_runs"], doc["stub_runs"]):
             diff = sorted(k for k in now if (doc.get("fingerprint") or {}).get(k) != now[k]) or ["policy"]
             raise ValueError("the freeze fingerprint differs from the current grader/freezer/policy in %s: re-freeze needed"
