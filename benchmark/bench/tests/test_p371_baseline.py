@@ -394,6 +394,88 @@ def test_a_planted_layout_difference_fails(shape):
     assert not cmp_mod.compare(old, new3, cmp_mod.TABLE).ok
 
 
+# ---- the P376 mapping (plan 4 A8 / R10): exact, and only where the new layout implies it
+def probe_argv(phase, n, items, *, attempt=None, rerun="0", leg=0, lang="python", stem="/o/s1/m.s1.opencode_python"):
+    argv = ["--model", "m", "--items", ",".join(items), "--lang", lang, "--seed-base", "1", "--out",
+            f"{stem}.L{leg}.{phase}.a{n}.jsonl", "--scaffold", "s", "--expect-items", ",".join(f"{lang}/{i}" for i in items)]
+    if phase == "pilot":
+        argv += ["--limit", str(len(items))]
+    return argv + ["--attempt", str(n if attempt is None else attempt), "--attempt-rerun-index", rerun]
+
+
+def old_argv(argv):
+    i = argv.index("--attempt")
+    return argv[:i] + argv[i + 4:]                                  # the two flag pairs are the argv's tail
+
+
+def test_the_attempt_flags_are_dropped_only_when_they_match_the_out_name():
+    pilot = probe_argv("pilot", 1, ["a", "b"])
+    mapped = cmp_mod.legacy_argv(pilot)
+    assert "--attempt" not in mapped and "--attempt-rerun-index" not in mapped and mapped == old_argv(pilot)
+    assert "--attempt" in cmp_mod.legacy_argv(probe_argv("pilot", 1, ["a"], attempt=7))        # a planted mismatch stays
+    assert "--attempt" in cmp_mod.legacy_argv(probe_argv("pilot", 1, ["a"], rerun="1"))
+    old = ["--model", "m", "--out", "/o/x.jsonl"]                                              # an OLD-layout argv is untouched
+    assert cmp_mod.legacy_argv(old) == old
+
+
+def test_a_full_invocation_is_rejoined_with_its_pilot_to_the_old_full_step():
+    pilot = probe_argv("pilot", 1, ["p1", "p3", "p5"])
+    full = probe_argv("full", 2, ["p2", "p4", "p6"])
+    got = cmp_mod._map_argvs([pilot, full])
+    assert got[1][got[1].index("--items") + 1] == "p1,p2,p3,p4,p5,p6"
+    assert got[1][got[1].index("--expect-items") + 1] == ",".join(f"python/p{i}" for i in range(1, 7))
+    assert "--limit" not in got[1] and got[0] == old_argv(pilot)
+    alone = cmp_mod._map_argvs([probe_argv("full", 1, ["g1", "g2"], lang="go", stem="/o/s1/m.s1.opencode_go", leg=1)])
+    assert alone[0][alone[0].index("--items") + 1] == "g1,g2"                                  # no pilot: items unchanged
+    other = probe_argv("full", 2, ["x1"], stem="/o/s1/other.s1.opencode_python")              # another stem's pilot never joins
+    assert cmp_mod._map_argvs([pilot, other])[1][cmp_mod._map_argvs([pilot, other])[1].index("--items") + 1] == "x1"
+
+
+def test_the_start_milestone_of_a_full_invocation_adds_its_pilots_count_in_a_new_layout_run_only():
+    lines = ["START m.s1.opencode_python attempt 1 (pilot, 5 items)", "START m.s1.opencode_python attempt 2 (full, 1 items)",
+             "START m.s1.opencode_go attempt 1 (full, 6 items)"]
+    assert cmp_mod._map_milestones(lines)[1] == "START m.s1.opencode_python attempt 2 (full, 6 items)"
+    assert cmp_mod._map_milestones(lines)[2] == lines[2]
+    old = chain_sample()
+    old["milestones"] = list(lines)
+    assert cmp_mod.canonical(old, "old")["milestones"] == lines                               # not a new-layout result
+
+
+def test_a_planted_item_difference_in_a_full_invocation_still_fails():
+    old, new = chain_sample(), chain_sample()
+    pilot, full = probe_argv("pilot", 1, ["p1", "p2"]), probe_argv("full", 2, ["p3"])
+    legacy_full = cmp_mod.legacy_argv(full, ["p1", "p2"])
+    old["chain_json"]["attempts"] = [{"argv": old_argv(pilot)}, {"argv": legacy_full}]
+    new["chain_json"]["attempts"] = [{"argv": pilot}, {"argv": full}]
+    assert cmp_mod.compare(old, new, cmp_mod.TABLE).ok
+    new["chain_json"]["attempts"][1]["argv"] = probe_argv("full", 2, ["p4"])
+    res = cmp_mod.compare(old, new, cmp_mod.TABLE)
+    assert not res.ok and any("/chain_json/attempts/1/argv" in f for f in res.failures)
+
+
+def test_the_evidence_directory_name_drops_the_leg_attempt_coordinates():
+    assert cmp_mod.tok("/w/opencode_transcripts/m/x.opencode_python.L0.pilot.a1.<run-3>/python__p1/events.jsonl") == \
+        "/w/opencode_transcripts/m/x.opencode_python.<run-3>/python__p1/events.jsonl"
+    assert cmp_mod.tok("x.opencode_python.L0.pilot.a1.jsonl") == "x.opencode_python.ROWS"
+
+
+def test_an_archived_leg_keeps_only_its_last_manifest_a_live_leg_keeps_every_one():
+    def result(dirname):
+        stem = "m.s1.opencode_python"
+        f = {}
+        for n, phase in ((1, "pilot"), (2, "full")):
+            base = f"{dirname}/{stem}.L0.{phase}.a{n}"
+            f[base + ".jsonl"] = {"kind": "rows", "rows": [{"id": f"python/{phase}"}]}
+            f[base + ".manifest.json"] = {"kind": "manifest", "doc": {"run_id": phase}}
+            f[base + ".json"] = {"kind": "attempt_json", "doc": {"step": phase, "attempt": n}}
+        return {"scenario": "c", "kind": "chain", "rc": 0, "shapes": [], "chain_json": {}, "files": f, "invocations": [],
+                "ops_calls": []}
+    archived = cmp_mod.canonical(result("s1/incomplete/m.<ts>"))
+    live = cmp_mod.canonical(result("s1"))
+    assert [list(v["manifests"]) for v in archived["legs"].values()] == [["full"]]
+    assert [list(v["manifests"]) for v in live["legs"].values()] == [["pilot", "full"]]
+
+
 def test_normalizer_removes_clocks_uuids_run_ids_and_temp_paths():
     n = norm_mod.Normalizer(tmp_roots=["/tmp/abc/x", "/private/tmp/abc/x"])
     doc = {"started": "2026-10-17T10:11:12Z", "wall_s": 3.2, "pid": 1234, "probe_pid": 9,

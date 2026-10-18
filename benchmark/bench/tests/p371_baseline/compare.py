@@ -16,7 +16,17 @@ results must be listed in the table, else it is a failure naming the JSON pointe
 File layout (chain results): `canonical(result, side)` maps both layouts onto one logical form (per leg: concatenated rows,
 manifests per step, attempts, logs, cancel/ack texts) so the pre-P371 `<stem>.jsonl` / `<stem>.attempt<n>.*` files and the
 new `<stem>.L<leg>.<phase>.a<n>.*` files compare 1:1 per tg1 phase shape (a pilot only / b pilot+full / c full only /
-d smoke). `to_new_layout` is the inverse, used by tests to build conforming (and planted-difference) new-side results."""
+d smoke). `to_new_layout` is the inverse, used by tests to build conforming (and planted-difference) new-side results.
+
+P376 mapping (phase 3a; part of the file-layout mapping, NOT of the pointer table): the probe argv, the evidence directory
+names and the START milestone of a NEW-layout run are mapped onto their pre-P371 form before the pointer comparison, each
+EXACTLY and only where the new layout implies it: (1) `--attempt N --attempt-rerun-index 0` is dropped when N equals the
+attempt number in the `--out` name; (2) a `full` invocation's `--items` / `--expect-items` (the cell MINUS the pilot) are
+rejoined with the preceding pilot invocation of the same stem (sorted union = the old full step's items); (3) the
+`.L<leg>.<phase>.a<n>` coordinates inside an evidence directory name (`<stem>.<run id>`) are dropped; (4) the START
+milestone's item count of a full invocation adds the pilot's; (5) an ARCHIVED leg (`incomplete/`, `stopped/`) keeps only
+its last invocation's manifest (the old shared manifest file held the last writer's; the old harness could not capture the
+pilot-step manifest of an archived leg). Anything else that differs stays a difference."""
 from __future__ import annotations
 
 import copy
@@ -147,7 +157,10 @@ OLD_MAN = re.compile(rf"^{STEM}\.manifest\.json$")
 OLD_ATT = re.compile(rf"^{STEM}\.attempt(?P<n>\d+)\.(?P<ext>json|log|CANCEL|ACK)$")
 NEW_FILE = re.compile(rf"^{STEM}\.L(?P<leg>\d+)\.(?P<phase>pilot|full|block|rerun|retry)\.a(?P<n>\d+)\."
                       r"(?P<ext>jsonl|manifest\.json|json|log|CANCEL|ACK)$")
+ATTEMPT_OUT = re.compile(r"\.L\d+\.(?P<phase>pilot|full|block|rerun|retry)\.a(?P<n>\d+)\.jsonl$")
+ARCHIVED = ("/incomplete/", "/stopped/")
 TOK = [
+    (re.compile(r"\.L\d+\.(?:pilot|full|block|rerun|retry)\.a\d+(?=\.<run-\d+>)"), ""),
     (re.compile(r"\.attempt(\d+)\.(json|log|CANCEL|ACK)\b"), r".A\1.\2"),
     (re.compile(r"\.L\d+\.(?:pilot|full|block|rerun|retry)\.a(\d+)\.(json|log|CANCEL|ACK)\b"), r".A\1.\2"),
     (re.compile(r"\.L\d+\.(?:pilot|full|block|rerun|retry)\.a\d+\.jsonl\b"), ".ROWS"),
@@ -183,11 +196,97 @@ def canonical(result, side=None):
     legs = out.pop("legs", None) if not result.get("files") else None
     if legs is None:
         legs = _legs(result)
+    legs = {k: _map_leg(v) for k, v in legs.items()}
     out["legs"] = {k: tok(v) for k, v in legs.items()}
+    if "chain_json" in out:
+        out["chain_json"] = dict(out["chain_json"], attempts=_map_attempts(out["chain_json"].get("attempts")))
+    if "invocations" in out:
+        out["invocations"] = _map_argvs(out["invocations"])
+    if "milestones" in out and any(NEW_FILE.match(_split(rel)[1]) for rel in (result.get("files") or {})):
+        out["milestones"] = _map_milestones(out["milestones"])          # only a NEW-layout run's counts are per invocation
     for key in ("chain_json", "invocations", "ops_calls", "milestones"):
         if key in out:
             out[key] = tok(out[key])
     out["extras"] = tok({k: v for k, v in _extras(result).items()})
+    return out
+
+
+def _flag(argv, name):
+    return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
+
+
+def _stem_phase(argv):
+    out = _flag(argv, "--out") or ""
+    m = ATTEMPT_OUT.search(out)
+    return (out[:m.start()], m["phase"], m["n"]) if m else (None, None, None)
+
+
+def _drop_pair(argv, name, value_ok):
+    if name in argv and value_ok(argv[argv.index(name) + 1]):
+        i = argv.index(name)
+        return argv[:i] + argv[i + 2:]
+    return argv
+
+
+def legacy_argv(argv, pilot_items=None):
+    """One NEW-layout probe argv mapped onto its pre-P371 form (rules 1 and 2 of the module docstring); an argv that is
+    not in the new layout, or whose attempt flags do not match its `--out` name, is returned unchanged."""
+    stem, phase, n = _stem_phase(argv)
+    if stem is None:
+        return list(argv)
+    out = list(argv)
+    if _flag(out, "--attempt") == n and _flag(out, "--attempt-rerun-index") == "0":
+        out = _drop_pair(_drop_pair(out, "--attempt", lambda v: v == n), "--attempt-rerun-index", lambda v: v == "0")
+    if phase == "full" and pilot_items is not None:
+        items = sorted(set(pilot_items) | set(_flag(out, "--items").split(",")))
+        lang = _flag(out, "--lang")
+        i, j = out.index("--items"), out.index("--expect-items")
+        out[i + 1] = ",".join(items)
+        out[j + 1] = ",".join(f"{lang}/{x}" for x in items)
+    return out
+
+
+def _map_argvs(argvs):
+    """Map a time-ordered list of argv lists (a pilot's items are remembered for the full invocation after it)."""
+    if not isinstance(argvs, list):
+        return argvs
+    pilots, out = {}, []
+    for argv in argvs:
+        if not isinstance(argv, list):
+            out.append(argv)
+            continue
+        stem, phase, _ = _stem_phase(argv)
+        out.append(legacy_argv(argv, pilots.get(stem) if phase == "full" else None))
+        if phase == "pilot":
+            pilots[stem] = _flag(argv, "--items").split(",")
+    return out
+
+
+def _map_attempts(attempts):
+    if not isinstance(attempts, list):
+        return attempts
+    argvs = _map_argvs([a.get("argv") if isinstance(a, dict) else None for a in attempts])
+    return [dict(a, argv=m) if isinstance(a, dict) and "argv" in a else a for a, m in zip(attempts, argvs)]
+
+
+def _map_leg(leg):
+    leg = dict(leg)
+    leg["attempts"] = _map_attempts(leg.get("attempts"))
+    return leg
+
+
+START = re.compile(r"^(?P<head>START (?P<stem>\S+) attempt \d+ \((?P<phase>[a-z]+), )(?P<k>\d+)(?P<tail> items\))$")
+
+
+def _map_milestones(lines):
+    pilots, out = {}, []
+    for ln in lines:
+        m = START.match(ln) if isinstance(ln, str) else None
+        if m and m["phase"] == "pilot":
+            pilots[m["stem"]] = int(m["k"])
+        elif m and m["phase"] == "full" and m["stem"] in pilots:
+            ln = f"{m['head']}{int(m['k']) + pilots[m['stem']]}{m['tail']}"
+        out.append(ln)
     return out
 
 
@@ -230,11 +329,13 @@ def _legs(result):
         if "new" in p:
             for n in sorted(p["new"]):
                 slot = p["new"][n]
+                last_manifest = None
                 leg["rows"] += (slot.get("jsonl") or {}).get("rows", [])
                 phase = slot["phase"]
                 name = phase if phase not in leg["manifests"] else "%s#%d" % (phase, n)
                 if "manifest.json" in slot:
                     leg["manifests"][name] = slot["manifest.json"].get("doc")
+                    last_manifest = name
                 if "json" in slot:
                     leg["attempts"].append(slot["json"].get("doc"))
                 _side_files(leg, n, slot)
@@ -259,6 +360,11 @@ def _legs(result):
                         leg["manifests"][name] = pick
                 leg["attempts"].append(d_)
                 _side_files(leg, n, atts[n])
+        if "new" in p and any(a in "/" + key + "/" for a in ARCHIVED) and len(leg["manifests"]) > 1:
+            last = max(p["new"], key=int)
+            keep = [n for n, doc in leg["manifests"].items()
+                    if doc == (p["new"][last].get("manifest.json") or {}).get("doc")]
+            leg["manifests"] = {n: leg["manifests"][n] for n in keep[-1:]}
         legs[key] = leg
     return legs
 
