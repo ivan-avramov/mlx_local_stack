@@ -178,10 +178,21 @@ def test_an_adapter_that_disagrees_with_the_policy_on_compaction_is_refused(worl
         run(world, template=template(compaction="on_accounted"))
 
 
-def test_resume_within_one_rows_file_still_skips_done_items(world):
+def test_a_second_invocation_on_an_existing_rows_file_is_refused_not_resumed(world):
+    """P371 phase 3a (plan 4 A8 / R6): probe-level resume is gone. Every invocation writes a fresh rows file (the chain
+    names it `<stem>.L<leg>.<phase>.a<n>.jsonl`); a pre-existing rows file at the target path refuses, nothing appended."""
     assert run(world)[0] == 0
-    assert run(world)[0] == 0
-    assert len((world.tmp / "rows.jsonl").read_text().splitlines()) == 1
+    before = (world.tmp / "rows.jsonl").read_bytes()
+    with pytest.raises(SystemExit, match="REFUSED.*rows file"):
+        run(world)
+    assert (world.tmp / "rows.jsonl").read_bytes() == before and len(before.splitlines()) == 1
+
+
+def test_a_stray_manifest_without_a_rows_file_also_refuses(world):
+    (world.tmp / "rows.manifest.json").write_text("{}")
+    with pytest.raises(SystemExit, match="REFUSED"):
+        run(world)
+    assert not (world.tmp / "rows.jsonl").exists()
 
 
 def test_print_identity_runs_without_a_router(world, capsys):
