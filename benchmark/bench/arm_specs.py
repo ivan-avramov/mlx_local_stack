@@ -21,6 +21,9 @@ class ArmSpec:
     # R30: how the chain extracts raw web evidence from this arm's hashed transcript, as DATA consumed by
     # `bench.web_evidence.extract` (a second client is a rules dict, not adapter code)
     web_evidence_rules: dict = field(default_factory=dict, hash=False)
+    # P371 3b: the evidence policy (`run_config.EvidencePolicy.as_dict()`) the arm's probe records in every manifest's
+    # `runtime.evidence_policy`; the chain verifies it at the barrier (data here, so the chain imports no adapter module)
+    evidence_policy: dict = field(default_factory=dict, hash=False)
 
     def __post_init__(self):
         if not (isinstance(self.web_evidence_rules, dict) and self.web_evidence_rules):
@@ -56,6 +59,10 @@ OC = ArmSpec(
                 "carrier_source_sha256", "universe_sha256", "generation_identity_sha256"),
     version_field="opencode_version",
     web_evidence_rules=OC_WEB_EVIDENCE_RULES,
+    # = `arm_opencode.m64_evidence().as_dict()` (tested equal). Production worker receipts stay `absent` until the fork
+    # endpoint exists (P372); the chain answers the item barrier since P371 phase 3b.
+    evidence_policy=dict(namespace="transcripts/oc", web_evidence=True, final_tree=True, worker_receipts="absent",
+                         item_barrier="on"),
 )
 
 SPECS = {"oc": OC}      # Pi and dsh register theirs with their adapters (build step 5)

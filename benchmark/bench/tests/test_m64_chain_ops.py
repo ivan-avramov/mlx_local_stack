@@ -54,6 +54,7 @@ def test_the_oc_spec_equals_its_adapter():
     assert OC.label == ao.M64_LABEL and OC.arm_id == ao.OpencodeArm.arm_id
     assert OC.generation_fields == ao.OpencodeArm.GENERATION_FIELDS
     assert (REPO / OC.probe).is_file() and OC.evidence_dir == "transcripts/oc"
+    assert OC.evidence_policy == ao.m64_evidence().as_dict() and OC.evidence_policy["namespace"] == OC.evidence_dir
     assert set(OC.generation_fields) <= set(OC.runtime_pinned) | {"sampling_profile"}
     assert ao.OpencodeArm(None, mode="m64").evidence_root(Path("/w")) == Path("/w") / OC.evidence_dir
     rt = {k: k for k in OC.generation_fields}

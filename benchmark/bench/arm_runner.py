@@ -851,6 +851,23 @@ def _expected_prefix(expected, hook_stop):
     return expected
 
 
+def verify_a4_binding(path, worker):
+    """A10 (P371 3b): an A4 receipt the chain bound to a worker (`bench_binding.worker`, written when the chain copied the
+    gate's receipt for THAT load) must name the CURRENT worker; a receipt from before a reload refuses before any spawn. A raw
+    gate receipt without a binding (a hand run) is left to the adapter's own checks."""
+    if not path:
+        return
+    try:
+        binding = (json.loads(Path(path).read_text()) or {}).get("bench_binding")
+    except (OSError, ValueError, AttributeError):
+        return
+    if binding is None:
+        return
+    want = dict(pid=worker["pid"], create_time=worker["create_time"])
+    if not isinstance(binding, dict) or binding.get("worker") != want:
+        raise tg.TransportAbort("the A4 receipt belongs to another worker than the one this probe observed")
+
+
 def receipt_controls(adapter, model, seed, budgets):
     """Per-class generation controls a worker receipt must show (A3): the paired seed, the declared sampling (when the
     carrier states all five fields), the thinking budget, a max_tokens bound and the adapter's allowed roles."""
@@ -908,6 +925,14 @@ def print_identity(p, adapter, a, *, template, corpus, extras=None):
     except SystemExit:
         polyglot_sha = None
     out["polyglot_sha"] = polyglot_sha
+    # A5 (P371 3b): the snapshot the chain computes the epoch from. Without the client binary there is nothing to snapshot.
+    try:
+        snap = adapter.snapshot() if exists else None
+    except SystemExit:                       # a pinned binary that is present but unusable: no snapshot, never a guess
+        snap = None
+    out.update(snapshot_tool=None if snap is None else snap.tool, snapshot_sha256=None if snap is None else snap.sha256,
+               snapshot_complete=None if snap is None else snap.complete,
+               snapshot_fields=None if snap is None else snap.fields)
     if extras:
         out.update(extras())
     if exists and polyglot_sha:
@@ -1007,6 +1032,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
     attempt_rerun = int(getattr(a, "attempt_rerun_index", None) or 0)
     receipt = adapter.preflight(selection=selection, path=a.a4_v2_receipt, router=router, limit=a.limit,
                                 model=a.model, exe_sha=p._sha_of(binary))
+    verify_a4_binding(a.a4_v2_receipt, before)
     run_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:12]
     run_dir = adapter.make_run_dir(workdir, run_id, selection)
     private = run_dir / "grading-private"

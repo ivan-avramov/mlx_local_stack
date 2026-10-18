@@ -16,7 +16,8 @@ def m64_main(p, adapter, a, template=None, *, receipts_policy="absent", receipt_
     """`run_oc_probe` binding: the m64 template / evidence policy, the tg1 corpus. Tests may bind `required` worker
     receipts with a fake source (production stays `absent` until P372)."""
     if evidence is None:
-        evidence = ao.m64_evidence() if receipts_policy == "absent" else ao.m64_evidence(receipts=receipts_policy)
+        # the production policy has the item barrier ON (the chain answers it, P371 3b); a direct item run has no chain
+        evidence = ao.m64_evidence(receipts=receipts_policy, item_barrier="off")
     return arm_runner.main(p, adapter, a, template=template or ao.m64_template(), evidence=evidence,
                            corpus=corpus_for(p, a), receipts=receipt_source)
 

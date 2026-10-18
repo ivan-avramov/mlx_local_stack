@@ -199,5 +199,5 @@ def test_the_tg1_and_m64_evidence_policies_bind_the_barrier_as_the_plan_says():
     from bench import arm_opencode as ao
     from bench import tg1_runner
     assert tg1_runner.TG1_EVIDENCE.item_barrier == "off"
-    assert ao.m64_evidence().item_barrier == "off"                      # production stays off until the chain core drives it
-    assert ao.m64_evidence(item_barrier="on").item_barrier == "on"
+    assert ao.m64_evidence().item_barrier == "on"                       # phase 3b: the chain core answers the barrier files
+    assert ao.m64_evidence(item_barrier="off").item_barrier == "off"
