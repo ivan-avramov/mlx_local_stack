@@ -51,7 +51,7 @@ def run_chain(env, chain, timeout=120):
 
 # ---------------------------------------------------------------- blocks over a four-language corpus
 def test_a_fake_four_language_corpus_runs_the_blocks_chain_end_to_end(env):
-    cfg = M.m64_config(M.parse_args(SMOKE), langs=LANGS4)
+    cfg = M.m64_config(M.parse_args(SMOKE + ["--probe", f"oc={FAP_PATH}"]), langs=LANGS4)
     chain = build_chain(env, SMOKE, cfg, names4(), needs_docker=lambda lang: False)
     assert run_chain(env, chain) == 0
     sched = schedule(env)
@@ -67,7 +67,7 @@ def test_a_fake_four_language_corpus_runs_the_blocks_chain_end_to_end(env):
 
 
 def test_the_docker_gate_comes_from_the_corpus_not_from_a_hard_coded_language(env):
-    cfg = M.m64_config(M.parse_args(SMOKE), langs=LANGS4)
+    cfg = M.m64_config(M.parse_args(SMOKE + ["--probe", f"oc={FAP_PATH}"]), langs=LANGS4)
     env["ops"].docker = False
     chain = build_chain(env, SMOKE, cfg, names4(), needs_docker=lambda lang: lang == "cpp")
     assert run_chain(env, chain) == 2 and log_has(env, "docker gate FAIL")
