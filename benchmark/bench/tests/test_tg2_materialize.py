@@ -319,11 +319,11 @@ def test_prepared_tree_drops_approaches_articles_and_unknown_top_level_directori
     c = make_corpus(tmp_path / "c", "javascript", "a", dict(solution=["lib/a.js"], test=["a.spec.js"],
                                                            example=[".meta/proof.ci.js"]),
                     {"lib/a.js": "s", "a.spec.js": "t", ".meta/proof.ci.js": "r", ".approaches/x/snippet.txt": "SOLUTION",
-                     ".articles/p/a.md": "ARTICLE", "notes/n.md": "NOTES", "data/d.json": "{}", "package.json": "p",
+                     ".articles/p/a.md": "ARTICLE", "notes/n.md": "NOTES", "package.json": "p",
                      ".docs/i.md": "d", "data/.approaches/deep.md": "DEEP"})
     tree = mat.prepare_tree(c, "javascript", "a", tmp_path / "t").tree
     got = sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file())
-    assert got == ["a.spec.js", "data/d.json", "lib/a.js", "package.json"]
+    assert got == ["a.spec.js", "lib/a.js", "package.json"]
 
 
 @pytest.mark.skipif(not (HAVE_CORPUS and UNIVERSE.is_file()), reason="polyglot corpus / frozen universe not found")

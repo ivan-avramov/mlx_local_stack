@@ -26,6 +26,31 @@ _DEPRECATED = re.compile(r"(?i)\b(?:this|the) exercise (?:is|has been)\b[^.\n]{0
 _MENTION = re.compile(r"(?i)\b(?:deprecated|inverted)\b")
 
 
+# S9: audited scaffold allow-list. A prepared file must be a config-declared solution / editor / test file OR match one of
+# these patterns (`*` = within one path segment; no other wildcard). Derived from the pinned corpus (every file of every
+# plannable item that is not declared) and reviewed; a pattern no pinned item uses is a test failure. Anything else in a
+# prepared tree is a FreezeError naming the file.
+SCAFFOLD = {
+    "rust": ("Cargo.toml", "OFFLINE_CRATES.md"),
+    "java": ("build.gradle", "gradlew", "gradlew.bat", "gradle/wrapper/gradle-wrapper.jar",
+             "gradle/wrapper/gradle-wrapper.properties"),
+    "javascript": (".eslintrc", ".npmrc", "LICENSE", "babel.config.js", "package.json"),
+    "cpp": ("CMakeLists.txt", "test/catch.hpp", "test/tests-main.cpp"),
+}
+ITEM_SCAFFOLD = {            # shipped extras of single items (helper tests, benches, data files, trybuild fixtures)
+    "java/satellite": ("src/test/java/TreeTest.java",),
+    "javascript/grep": ("data/iliad.txt", "data/midsummer-night.txt", "data/paradise-lost.txt"),
+    "rust/parallel-letter-frequency": ("benches/benchmark.rs",),
+    "rust/doubly-linked-list": ("src/pre_implemented.rs", "tests/step_4_leak_test_1.rs", "tests/step_4_leak_test_2.rs"),
+    "rust/macros": ("tests/invalid/Cargo.toml", "tests/invalid/*.rs"),
+}
+
+
+def matches_pattern(rel, pattern):
+    """Scaffold pattern match: `*` stays inside one path segment, everything else is literal."""
+    return re.fullmatch("[^/]*".join(re.escape(part) for part in pattern.split("*")), rel) is not None
+
+
 class FreezeError(ValueError):
     """An item that cannot be materialized unambiguously (excluded with this reason; never a model outcome)."""
 
@@ -206,6 +231,13 @@ def prepare_tree(corpus, lang, slug, dest):
         # P367: the model-facing manifest is the stub's; every Rust item discloses the same single crates line.
         from bench import tg2_grade
         (dest / "OFFLINE_CRATES.md").write_text(tg2_grade.rust_disclosure_line() + "\n")
+    declared = set(plan.solutions) | set(plan.tests) | set(plan.config.get("editor", []))
+    patterns = SCAFFOLD[lang] + ITEM_SCAFFOLD.get("%s/%s" % (lang, slug), ())
+    unknown = sorted(rel for rel in (f.relative_to(dest).as_posix() for f in dest.rglob("*") if f.is_file())
+                     if rel not in declared and not any(matches_pattern(rel, pat) for pat in patterns))
+    if unknown:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise FreezeError("prepared tree has file(s) outside the declared set and the scaffold allow-list: %s" % unknown)
     return Prepared(dest, rewrites)
 
 

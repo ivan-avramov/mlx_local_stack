@@ -116,7 +116,11 @@ def freeze_item(corpus, lang, slug, root, grader, *, locks_fn=None, ref_runs=REF
         return rec
     private = root / "private"
     private.mkdir(parents=True, exist_ok=True)
-    prep = mat.prepare_tree(corpus, lang, slug, root / "prepared")
+    try:
+        prep = mat.prepare_tree(corpus, lang, slug, root / "prepared")
+    except mat.FreezeError as exc:
+        rec["reason"] = "prepare: %s" % exc
+        return rec
     prepared = sg.manifest(prep.tree)
     cargo_toml = (prep.tree / "Cargo.toml").read_text() if lang == "rust" else None
     rec.update(solutions=plan.solutions, tests=plan.tests, mapping=[list(m) for m in plan.mapping], rewrites=prep.rewrites,
