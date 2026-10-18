@@ -1,27 +1,34 @@
-"""P371 phase 3a (plan 3.1 `chain_core`): THE chain core. The tg1 chain (C147 / M63 / P340 / P364 / P311-lite) moved here from
-`chains/c147/run_tg1_chain.py` and generalized over a `run_config.ChainConfig`; the chain ENTRY is a thin CLI + out-root rules
-that builds the config and the ops.
+"""P371 phase 3a / 3b (plan 3.1 `chain_core`): THE chain core. The tg1 chain (C147 / M63 / P340 / P364 / P311-lite) and the M64
+chain (spec 8) run on it, generalized over a `run_config.ChainConfig`; a chain ENTRY is a thin CLI + out-root rules that builds
+the config and the ops.
 
 What the core owns: the lifecycle freeze (the entry's static import closure + the serialized ChainConfig + the A4 gate + the
 launchers, R15, frozen in chain.json at creation and verified before every launch, barrier, validation, resume and at exit),
-the C179 campaign-core check, the frozen prompt date, the probe-derived policy sha, STOP, the run loop, loads / legs /
-invocations, the first-manifest barrier ack, supervision (idle predicate, escalation, watch log), validation + pinning,
-archive / restart, quarantine, the persisted progress inventory (`bench.chain_rows`), and chain-side web evidence.
+the C179 campaign-core check, the frozen prompt date, the probe-derived policy sha, the A5 epoch / snapshots, immutable A4
+receipts per worker (re)load and arm (A10), STOP, the run loop, loads / legs / invocations, the first-manifest barrier ack,
+the item barrier answered with `ChainHooks` (R13 R23 R25 R29), supervision (idle predicate, escalation, watch log), validation +
+pinning, the transport policy, archive / quarantine / resume, the persisted progress inventory (`bench.chain_rows`) and the
+chain-side web evidence.
 
 Layout (plan 4 A8): ONE immutable rows file per leg INVOCATION, `<session>/<stem>.L<leg>.<phase>.a<n>.jsonl` (+ manifest, +
-`.log` / `.json` / `.CANCEL` / `.ACK`); a full invocation runs exactly the cell minus the pilot's validated slots. Every
-invocation is registered in `chain.json.progress.invocations` (status `running`) BEFORE the probe is spawned, and its sha256
-is recorded after validation. `resume_policy = restart_load` (tg1): an interrupted load's never-validated files go to
-`quarantine/` (sha manifest first), the rest of the load is archived (sha manifest recorded in chain.json FIRST), its records
-are marked `archived`, and the load reruns from leg 0 with `load_gen + 1`.
+`.log` / `.json` / `.CANCEL` / `.ACK`, + `.item<k>.<kind>` barrier files). Every invocation is registered in
+`chain.json.progress.invocations` (status `running`) BEFORE the probe is spawned, and its sha256 is recorded after validation.
 
-Seams for the M64 features (phase 3b, by configuration and small overrides, not by re-implementing the loop):
-  * `plan()` normalizes a schedule into loads -> legs -> invocations (`blocks` is the 3b builder);
-  * `ChainConfig.transport_policy / resume_policy / arm_switch_ops` are read in `handle_incomplete` / `prepare_resume` /
-    `arm_switch`; `incident_retry`, `new_segment`, arm switches and DNF rows are the 3b branches of those methods;
-  * `record_layout()` serializes `pinned` / `policies` flat (tg1) or per arm (3b); `extra_record()` adds keys;
-  * `before_invocation()` / `after_invocation()` are the places the item-barrier hooks (`chain_hooks`) run;
-  * `evidence_namespace` / `web_rules()` name the arm's evidence directory and extraction rules.
+Configurations (plan 3.2):
+  * tg1 (`abort_restart` / `restart_load`, builder `tg1`, flat record): an interrupted load's never-validated files go to
+    `quarantine/` (sha manifest first), the rest of the load is archived (sha manifest recorded in chain.json FIRST), its
+    records are marked `archived`, and the load reruns from leg 0 with `load_gen + 1`; a transport failure archives and
+    restarts the load once, then aborts.
+  * M64 (`incident_retry` / `new_segment`, builder `blocks`, per-arm record): a leg is one (block, arm) over the items of the
+    block. A transport incident (`chain_incident`: router + worker checked independently, then the client's cause; the EXACT
+    cleanup schema; the partial rows validated -> `partial_incident` with the accepted prefix) recovers the worker (unload +
+    reload, A4 per arm, cache reset, warm-up) and retries the SAME slot in a new `retry` invocation; a second incident in a slot
+    is a `transport_dnf` row (sidecar + chain.json copy). A hook disposition (`rerun_same_slot`) is a one-slot `rerun`
+    invocation (index + 1, max 2, then the slot is `exhausted`: a strict fail); `block` stops the chain for the operator.
+    A resume takes a FRESH worker and continues at the progress cursor with only the unaccepted slots; partial / never-validated
+    invocation files are quarantined (sha manifest first) unless the persisted dispositions prove an accepted prefix.
+  * tg2 (`tg2_tier`, flat record, tg1 semantics): the frozen seed-6501 draw artifact (sha + tier in schedule.json and the
+    ChainConfig) is verified at every leg.
 Exit codes: 0 done, 2 chain abort (listing printed, nothing killed), 3 STOP latch honoured, 1 unexpected error."""
 from __future__ import annotations
 
@@ -36,14 +43,19 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
+from . import arm_adapter as aa
 from . import arm_specs
 from . import chain_hooks
+from . import chain_incident as ci
 from . import chain_ops as co
 from . import chain_rows as cr
 from . import datefreeze
 from . import schedules
 from . import web_evidence as we
+from .chain_incident import (CLEANUP_KEYS, INCIDENT_CAUSES, classify_incident_cause, cleanup_problems, dnf_row,  # noqa: F401
+                             incident_tokens, slot_key, slot_tokens, validate_dnf_row)
 
 PICK1, PICK2 = co.PICK1, co.PICK2
 SCAFFOLD = co.SCAFFOLD
@@ -52,6 +64,7 @@ PILOT_N = 5
 # P279 --smoke: a short live rehearsal of the real schedule (rows are rehearsal evidence only, never graded or pooled)
 SMOKE_PILOT_N, SMOKE_FULL_N, SMOKE_ARM_IDLE_S = 1, 2, 60.0
 NAMED_LIFECYCLE = ("runner", "chain_ops", "gate", "launcher", "launch_tg1")     # the pre-P371 chain.json lifecycle names
+TG1_SEEDS_ORDER = ("s1", "s2", "reload")
 
 
 class RecordInvalid(co.ChainAbort):
@@ -202,17 +215,37 @@ def build_cmd(py, probe, leg, step, receipt, cancel, ack, *, scaffold, universe=
     return cmd
 
 
+def barrier_signal(path, payload=None):
+    """The chain's side of `bench.item_barrier`: `.go` / `.continue` / `.stop` are created exclusively and written COMPLETE
+    before they become visible (the probe never reads a partial file). `payload` (a JSON object) is the `.stop` disposition."""
+    path = Path(path)
+    body = b"" if payload is None else (json.dumps(payload, sort_keys=True) + "\n").encode()
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_bytes(body)
+    try:
+        os.link(tmp, path)
+    except FileExistsError:
+        raise co.ChainAbort(f"barrier file {path.name} already exists") from None
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 # --------------------------------------------------------------------------- the chain
 class Chain:
-    evidence_namespace = "opencode_transcripts"
-
-    def __init__(self, config, args, ops, timers, log, *, repo, out_root, names, lifecycle_files, campaign=None, hooks=None):
+    def __init__(self, config, args, ops, timers, log, *, repo, out_root, names, lifecycle_files, campaign=None, hooks=None,
+                 needs_docker=None):
         self.config = config
         self.repo = Path(repo)
         self.a, self.ops, self.tm, self.log = args, ops, timers, log
         self.lifecycle_files = dict(lifecycle_files)
         self.campaign = campaign
         self.hooks = hooks or chain_hooks.ChainHooks()
+        self.needs_docker = needs_docker or (lambda lang: lang == "go")
+        self.builder = config.schedule["builder"]
+        self.per_arm = self.builder == "blocks"                 # per-arm record layout (M64); tg1 / tg2 keep the flat one
+        self.arm_ids = [b.arm for b in config.arms]
+        self.bindings = {b.arm: b for b in config.arms}
+        self.specs = {}                       # arm -> ArmSpec (per-arm layout only; tg1 keeps the pre-P371 constants)
         self.campaign_core = None             # {tag, commit, probe_closure_sha256, chain_closure_sha256} or None (C179)
         self.lifecycle = None                 # frozen at chain creation (init_lifecycle), never recomputed
         self.arms = {}                        # "<model>|<predictor>" -> arm_identity_sha256, frozen at the first manifest
@@ -220,21 +253,33 @@ class Chain:
         self.names = names
         self.clock = time.monotonic
         self.py = Path(args.python)
-        self.probe = Path(args.probe)
         self.wd = Path(ops.wd)
         # a key is present once pinned; a pinned None (e.g. agent_system_sha256 without an overlay) is a value
-        self.expected_policy = None           # P362: derived from the probe's --print-identity at chain start, frozen
-        self.frozen = None                    # P364: the date opencode shows the model; epoch metadata, frozen in chain.json
+        self.expected_policy = None           # flat: P362, derived from the probe's --print-identity at chain start, frozen
+        self.policies = {}                    # per-arm: arm -> scaffold_policy_sha256
+        self.frozen = None                    # P364: the date the client shows the model; epoch metadata, frozen in chain.json
         self.frozen_source = None
-        self.pinned = {}
+        self.pinned = {}                      # flat layout
+        self.pinned_by_arm = {}               # per-arm layout: arm -> pinned fields; shared: serving_path, registry_sha256
+        self.pinned_shared = {}
+        self.snapshots = {}                   # arm -> {sha256, complete} (A5), frozen at chain creation
+        self.epoch_id = None                  # computed from every arm's snapshot (A5)
         self.universe = Path(args.universe).resolve() if args.universe else None
-        if args.probe_code_sha:
-            self.pinned["probe_code_sha256"] = args.probe_code_sha
-        if getattr(args, "generation_sha", None):
-            self.pinned["generation_identity_sha256"] = args.generation_sha
+        if self.per_arm:
+            self.probe = None
+            self.pinned_by_arm = {arm: {"probe_code_sha256": self.arm_arg("probe_code_sha", arm)} for arm in self.arm_ids}
+        else:
+            self.probe = Path(args.probe)
+            if args.probe_code_sha:
+                self.pinned["probe_code_sha256"] = args.probe_code_sha
+            if getattr(args, "generation_sha", None):
+                self.pinned["generation_identity_sha256"] = args.generation_sha
         self.attempts, self.restarts, self.stop_info = [], [], None
         self.attempt_no, self.seen_run_ids, self.block_workers = {}, set(), []
         self.progress = dict(loads=[], invocations=[], slot_attempts=[], pre_spawn=[])
+        self.incidents, self.dnf, self.realized = [], [], []
+        self.schedule, self.schedule_sha = None, None
+        self.loads, self.snapshot_tools = [], {}
         self.loaded = None
         self.rc = None
         self.pred, self.explicit_pred = dict(PRED_S), {}
@@ -243,13 +288,46 @@ class Chain:
             lang, model = key.split(":", 1)
             self.explicit_pred[(lang, model)] = float(val)
 
-    # -- the chain config's arm
+    # -- the chain config's arms
     @property
     def arm(self):
         return self.config.arms[0]
 
-    def web_rules(self):
-        return arm_specs.spec_for(self.arm.arm_spec).web_evidence_rules
+    def arm_arg(self, name, arm):
+        """An entry argument that is per-arm in the per-arm layout (a dict ARM -> value) and one value in the flat one."""
+        value = getattr(self.a, name, None)
+        return value.get(arm) if isinstance(value, dict) else value
+
+    def probe_of(self, arm):
+        given = self.arm_arg("probe", arm) if self.per_arm else self.a.probe
+        return Path(given) if given else self.repo / self.bindings[arm].probe
+
+    def label_of(self, arm):
+        return self.bindings[arm].label
+
+    def spec_of(self, arm):
+        return self.specs.get(arm)
+
+    def pinned_for(self, arm):
+        return {**self.pinned_by_arm[arm], **self.pinned_shared} if self.per_arm else self.pinned
+
+    def policy_for(self, arm):
+        return self.policies[arm] if self.per_arm else self.expected_policy
+
+    def runtime_pinned(self, arm):
+        return self.specs[arm].runtime_pinned if self.per_arm else co.RUNTIME_PINNED
+
+    def web_rules(self, arm=None):
+        return arm_specs.spec_for(self.bindings[arm or self.arm_ids[0]].arm_spec).web_evidence_rules
+
+    def resolve_specs(self):
+        """Per-arm layout: refuse an arm that has no chain spec BEFORE anything starts."""
+        if self.per_arm:
+            for arm in self.arm_ids:
+                self.specs[arm] = arm_specs.spec_for(self.bindings[arm].arm_spec)
+
+    def contract_refs(self):
+        return {a.arm: dict(path=a.path, sha256=a.sha256) for a in self.config.contract_artifacts}
 
     # -- lifecycle freeze (P24, R15) and the chain.json record (L4)
     def record_problem(self, doc):
@@ -267,12 +345,28 @@ class Chain:
         pinned = doc.get("pinned")
         if not isinstance(pinned, dict):
             return "pinned absent or malformed"
-        if "generation_identity_sha256" in pinned and not hexed(pinned["generation_identity_sha256"]):
-            return "pinned generation_identity_sha256 malformed"
-        if not hexed(doc.get("policy_sha256")):
-            return "policy_sha256 absent, null or malformed"
-        if pinned.get("scaffold_policy_sha256") != doc["policy_sha256"]:
-            return "pinned scaffold_policy_sha256 missing or differs from policy_sha256"
+        if self.per_arm:
+            for key in ("arm_generations", "policies"):
+                if not isinstance(doc.get(key), dict):
+                    return f"{key} absent or malformed"
+            if not all(hexed(v) for v in {**doc["arm_generations"], **doc["policies"]}.values()):
+                return "an identity is absent, null or malformed"
+            if not hexed(doc.get("epoch_id")) or not hexed(doc.get("schedule_sha256")):
+                return "epoch_id or schedule_sha256 absent or malformed"
+            for key in ("incidents", "dnf", "realized"):
+                if not isinstance(doc.get(key), list):
+                    return f"{key} absent"
+        else:
+            if "generation_identity_sha256" in pinned and not hexed(pinned["generation_identity_sha256"]):
+                return "pinned generation_identity_sha256 malformed"
+            if not hexed(doc.get("policy_sha256")):
+                return "policy_sha256 absent, null or malformed"
+            if pinned.get("scaffold_policy_sha256") != doc["policy_sha256"]:
+                return "pinned scaffold_policy_sha256 missing or differs from policy_sha256"
+            if self.freezes_schedule and not hexed(doc.get("schedule_sha256")):
+                return "schedule_sha256 absent or malformed"
+        if not isinstance(doc.get("snapshots"), dict) or "epoch_id" not in doc:
+            return "snapshots / epoch_id absent"
         if not datefreeze.valid(doc.get("frozen_prompt_date")):
             return "frozen_prompt_date absent or malformed"
         if not isinstance(doc.get("chain_config"), dict):
@@ -284,6 +378,10 @@ class Chain:
         if not isinstance(doc.get("artifacts"), dict) or "campaign_core" not in doc["artifacts"]:
             return "artifacts.campaign_core absent"
         return None
+
+    @property
+    def freezes_schedule(self):
+        return self.builder in ("blocks", "tg2_tier")
 
     def resolve_frozen(self, previous):
         """P364: the epoch's frozen prompt date. A new epoch takes it from the reference epoch's chain.json
@@ -340,10 +438,7 @@ class Chain:
             self.lifecycle = previous["lifecycle"]
             self.arms = dict(previous["arms"])
             self.load_record(previous)
-            composite = previous["pinned"].get("generation_identity_sha256")
-            if composite and "generation_identity_sha256" not in self.pinned:
-                self.pinned["generation_identity_sha256"] = composite
-            self.expected_policy = previous["policy_sha256"]
+            self.expected_policy = previous.get("policy_sha256")
             self.resolve_frozen(previous)
             self.resume_campaign(previous["artifacts"]["campaign_core"])
             self.verify_lifecycle("resume")
@@ -362,6 +457,24 @@ class Chain:
         self.attempts = list(previous.get("attempts") or [])
         self.restarts = list(previous.get("restarts") or [])
         self.block_workers = list(previous.get("block_workers") or [])
+        self.snapshots = dict(previous["snapshots"])
+        self.epoch_id = previous["epoch_id"]
+        if self.per_arm or self.freezes_schedule:
+            self.schedule_sha = previous.get("schedule_sha256")
+            self.realized = list(previous.get("realized") or [])
+        if self.per_arm:
+            self.policies = dict(previous["policies"])
+            for arm, pinned in previous["pinned"].items():
+                if arm == "shared":
+                    self.pinned_shared = dict(pinned)
+                elif arm in self.pinned_by_arm:
+                    self.pinned_by_arm[arm].update(pinned)
+        else:
+            composite = previous["pinned"].get("generation_identity_sha256")
+            if composite and "generation_identity_sha256" not in self.pinned:
+                self.pinned["generation_identity_sha256"] = composite
+        if self.config.transport_policy == "incident_retry":
+            self.incidents, self.dnf = list(previous.get("incidents") or []), list(previous.get("dnf") or [])
         for rec in self.progress["invocations"]:
             stem, n = self.stem_attempt(rec)
             if stem is not None:
@@ -410,31 +523,107 @@ class Chain:
             return str(exc)
         return None
 
-    def derive_policy(self):
-        """P362: the expected scaffold_policy_sha256 is what the configured probe reports for THIS box (its policy embeds
-        the grader image id and toolchain lock), asked with the chain's --universe. A supplied --policy-sha is an
-        assertion against it; a frozen value (resume) must still equal it."""
-        cmd = [str(self.py), str(self.probe), "--print-identity"] + (["--universe", str(self.universe)] if self.universe else [])
+    # -- identities: the probe's policy (P362) and snapshot (A5)
+    def print_identity(self, arm):
+        """The arm's probe `--print-identity` document (read-only: no router, worker or model is touched)."""
+        cmd = [str(self.py), str(self.probe_of(arm)), "--print-identity"]
+        if self.per_arm:
+            cmd += ["--scaffold", self.label_of(arm)]
+        if self.universe:
+            cmd += ["--universe", str(self.universe)]
+        who = f"{arm}: " if self.per_arm else ""
         try:
             got = subprocess.run(cmd, cwd=str(self.repo), env=self.ops.env_base(), capture_output=True, text=True,
                                  timeout=300, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise co.ChainAbort(f"probe --print-identity could not run ({type(exc).__name__})") from None
+            raise co.ChainAbort(f"{who}probe --print-identity could not run ({type(exc).__name__})") from None
         lines = [ln for ln in got.stdout.splitlines() if ln.strip()]
         try:
-            value = json.loads(lines[-1]).get("scaffold_policy_sha256") if got.returncode == 0 and lines else None
-        except (ValueError, AttributeError):
-            value = None
-        if not (isinstance(value, str) and co.HEX64.match(value)):
-            raise co.ChainAbort(f"probe --print-identity gave no valid scaffold_policy_sha256 (rc {got.returncode})")
-        if self.a.policy_sha and self.a.policy_sha != value:
-            raise co.ChainAbort(f"supplied --policy-sha {self.a.policy_sha} != the probe's policy {value}")
-        if self.expected_policy and self.expected_policy != value:
-            raise co.ChainAbort(f"frozen policy {self.expected_policy} != the probe's policy now {value} (toolchain or "
-                                f"universe changed; a changed chain needs a new out-root)")
-        self.expected_policy = value
-        self.pinned["scaffold_policy_sha256"] = value
-        self.log(f"policy: scaffold_policy_sha256 {value} derived from the probe's --print-identity")
+            doc = json.loads(lines[-1]) if got.returncode == 0 and lines else None
+        except ValueError:
+            doc = None
+        if not isinstance(doc, dict):
+            doc = {}
+        if not (isinstance(doc.get("scaffold_policy_sha256"), str) and co.HEX64.match(doc["scaffold_policy_sha256"])):
+            raise co.ChainAbort(f"{who}probe --print-identity gave no valid scaffold_policy_sha256 (rc {got.returncode}"
+                                + (f": {(got.stderr or got.stdout)[-200:].strip()}" if self.per_arm else "") + ")")
+        return doc
+
+    def derive_policy(self):
+        """P362: the expected scaffold_policy_sha256 is what the configured probe reports for THIS box (its policy embeds
+        the grader image id and toolchain lock), asked with the chain's --universe. A supplied --policy-sha is an
+        assertion against it; a frozen value (resume) must still equal it. A5: every arm's snapshot and the epoch computed
+        from them are frozen / verified here too."""
+        docs = {arm: self.print_identity(arm) for arm in self.arm_ids}
+        for arm, doc in docs.items():
+            value = doc["scaffold_policy_sha256"]
+            who = f"{arm}: " if self.per_arm else ""
+            asserted = self.arm_arg("policy_sha", arm)
+            if asserted and asserted != value:
+                raise co.ChainAbort(f"{who}supplied --policy-sha {asserted} != the probe's policy {value}")
+            frozen = self.policies.get(arm) if self.per_arm else self.expected_policy
+            if frozen and frozen != value:
+                raise co.ChainAbort(f"{who}frozen policy {frozen} != the probe's policy now {value}" + (
+                    "" if self.per_arm else " (toolchain or universe changed; a changed chain needs a new out-root)"))
+            if self.per_arm:
+                self.policies[arm] = value
+                self.pinned_by_arm[arm]["scaffold_policy_sha256"] = value
+                self.log(f"policy[{arm}]: scaffold_policy_sha256 {value} derived from the probe's --print-identity")
+            else:
+                self.expected_policy = value
+                self.pinned["scaffold_policy_sha256"] = value
+                self.log(f"policy: scaffold_policy_sha256 {value} derived from the probe's --print-identity")
+        self.freeze_snapshots(docs)
+
+    @staticmethod
+    def parse_snapshot(arm, doc):
+        sha = doc.get("snapshot_sha256")
+        if sha is None:
+            return None
+        if not (isinstance(sha, str) and co.HEX64.match(sha) and isinstance(doc.get("snapshot_complete"), bool)
+                and isinstance(doc.get("snapshot_tool"), str) and doc["snapshot_tool"]):
+            raise co.ChainAbort(f"{arm}: probe --print-identity reports a malformed snapshot")
+        return dict(tool=doc["snapshot_tool"], sha256=sha, complete=doc["snapshot_complete"])
+
+    def epoch_of(self, snaps):
+        return aa.epoch_id([SimpleNamespace(tool=s["tool"], sha256=s["sha256"]) for s in snaps.values()])
+
+    def freeze_snapshots(self, docs):
+        """A5: the epoch is COMPUTED from every arm's snapshot; `--epoch-id` is an assertion. At creation the snapshots are
+        frozen (an incomplete one refuses unless the config allows it); a resume refuses any change."""
+        snaps = {arm: self.parse_snapshot(arm, doc) for arm, doc in docs.items()}
+        absent = sorted(arm for arm, s in snaps.items() if s is None)
+        if absent and (self.per_arm or self.config.snapshot_complete_required):
+            raise co.ChainAbort(f"probe --print-identity of {absent} reports no snapshot (the client binary is missing?)")
+        if self.config.snapshot_complete_required:
+            incomplete = sorted(arm for arm, s in snaps.items() if s and not s["complete"])
+            if incomplete:
+                raise co.ChainAbort(f"snapshot of {incomplete} is incomplete: a registered epoch needs the complete "
+                                    "snapshot (the snapshot tooling is owed; only --smoke may run without it)")
+        now = {arm: (dict(sha256=s["sha256"], complete=s["complete"]) if s else dict(sha256=None, complete=None))
+               for arm, s in snaps.items()}
+        for arm, frozen in self.snapshots.items():
+            if arm in now and now[arm]["sha256"] != frozen["sha256"]:
+                raise co.ChainAbort(f"snapshot of arm {arm} changed since chain creation "
+                                    f"({str(frozen['sha256'])[:12]} -> {str(now[arm]['sha256'])[:12]}; a changed chain needs "
+                                    "a new out-root)")
+        epoch = None if absent else self.epoch_of(snaps)
+        asserted = getattr(self.a, "epoch_id", None)
+        if asserted and asserted != epoch:
+            raise co.ChainAbort(f"--epoch-id {asserted} differs from the epoch computed from the arms' snapshots {epoch}")
+        if self.snapshots and self.epoch_id != epoch:
+            raise co.ChainAbort(f"epoch {epoch} differs from the chain's frozen epoch {self.epoch_id}")
+        self.snapshots, self.epoch_id = now, epoch
+        self.snapshot_tools = {arm: s["tool"] for arm, s in snaps.items() if s}
+
+    def verify_snapshots(self, where):
+        """A5 at exit: every arm's probe is asked again; a changed snapshot aborts."""
+        for arm in self.arm_ids:
+            s = self.parse_snapshot(arm, self.print_identity(arm))
+            frozen = (self.snapshots.get(arm) or {}).get("sha256")
+            if frozen is not None and (s is None or s["sha256"] != frozen):
+                raise co.ChainAbort(f"snapshot of arm {arm} changed during the chain (at {where}: {frozen[:12]} -> "
+                                    f"{(s or {}).get('sha256', 'unavailable')[:12]})")
 
     def lifecycle_problems(self):
         """Closure members (or the chain_config) that drifted since chain creation, then a campaign core drift."""
@@ -458,21 +647,34 @@ class Chain:
     # -- chain.json
     def sha256_block(self):
         lc = self.lifecycle or {}
-        return dict({n: lc.get(n) for n in NAMED_LIFECYCLE}, overlay=self.ops.overlay_sha())
+        names = [n for n in NAMED_LIFECYCLE if n in self.lifecycle_files]
+        return dict({n: lc.get(n) for n in names}, overlay=self.ops.overlay_sha())
 
     def record_layout(self):
-        """The per-arm identity keys of the record. tg1 (one arm): flat `policy_sha256` / `pinned`."""
-        return dict(policy_sha256=self.expected_policy, pinned=self.pinned)
+        """The per-arm identity keys of the record. tg1 / tg2 (flat): `policy_sha256` / `pinned`; M64 (per-arm): `policies`,
+        `pinned` per arm + `shared`, `arm_generations`, the frozen schedule, the incident / DNF / realized state."""
+        if not self.per_arm:
+            out = dict(policy_sha256=self.expected_policy, pinned=self.pinned, probe=str(self.probe))
+            if self.freezes_schedule:
+                out.update(schedule_sha256=self.schedule_sha, realized=self.realized)
+            return out
+        gens = {arm: p["generation_identity_sha256"] for arm, p in self.pinned_by_arm.items()
+                if p.get("generation_identity_sha256")}
+        return dict(policies=self.policies, pinned={**self.pinned_by_arm, "shared": self.pinned_shared},
+                    arm_generations=gens, schedule_sha256=self.schedule_sha, arm_ids=self.arm_ids,
+                    probes={arm: str(self.probe_of(arm)) for arm in self.arm_ids}, incidents=self.incidents, dnf=self.dnf,
+                    realized=self.realized)
 
     def write_json(self, status=None):
         doc = dict(status=status, mode=self.a.mode, argv=sys.argv[1:], updated=co.utc_stamp(),
                    sha256=self.sha256_block(), lifecycle=self.lifecycle, arms=self.arms,
                    frozen_prompt_date=self.frozen, frozen_prompt_date_source=self.frozen_source,
-                   probe=str(self.probe), probe_code_sha=self.a.probe_code_sha,
+                   probe_code_sha=self.a.probe_code_sha,
                    attempts=self.attempts, restarts=self.restarts, stop=self.stop_info, rc=self.rc,
                    block_workers=self.block_workers, smoke=getattr(self.a, "smoke", False),
                    predictor=getattr(self.a, "predictor", "off"), chain_config=self.config.as_dict(),
-                   progress=self.progress, artifacts=dict(campaign_core=self.campaign_core), **self.record_layout())
+                   progress=self.progress, epoch_id=self.epoch_id, snapshots=self.snapshots,
+                   artifacts=dict(campaign_core=self.campaign_core, contract=self.contract_refs()), **self.record_layout())
         fsync_json(self.out_root / "chain.json", doc)
 
     # -- STOP
@@ -489,11 +691,69 @@ class Chain:
             self.stop_info["where"] = where
             raise Stopped(where)
 
-    # -- plan: the schedule normalized into loads -> legs -> invocations
+    # -- schedule: frozen and hashed before the first launch (blocks, tg2_tier), then normalized into loads -> legs
+    def freeze_schedule(self):
+        """Hash the schedule BEFORE launch; a resumed chain must regenerate exactly the frozen one. `blocks` (M64) and
+        `tg2_tier` (the frozen draw artifact) only; tg1 / pilot schedules depend on the run selection and are not frozen."""
+        if not self.freezes_schedule:
+            return
+        sched = self.build_schedule()
+        path = self.out_root / "schedule.json"
+        if self.schedule_sha is not None:
+            try:
+                schedules.require_frozen(sched, self.schedule_sha)
+            except ValueError as exc:
+                raise co.ChainAbort(str(exc)) from None
+        else:
+            self.schedule_sha = schedules.schedule_sha256(sched)
+            co.atomic_json(path, sched)
+        self.schedule = sched
+        self.write_json("schedule-frozen")
+
+    def build_schedule(self):
+        params = self.config.schedule["params"]
+        if self.builder == "blocks":
+            sessions = list(self.a.sessions)
+            return schedules.blocks(
+                self.arm_ids, self.names, picks=tuple(params.get("picks") or (PICK1, PICK2)),
+                sessions=[s for s in sessions if s != "reload"], reload_control="reload" in sessions,
+                langs=tuple(params.get("langs") or ("python", "go")),
+                reload_langs=tuple(params.get("reload_langs") or ("python",)), smoke=getattr(self.a, "smoke", False))
+        doc = self.tg2_draw_doc()
+        try:
+            return schedules.tg2_tier(doc, self.config.schedule["draw_sha256"], self.config.schedule["tier"],
+                                      acknowledged=tuple(getattr(self.a, "tg2_acknowledged", ()) or ()))
+        except schedules.TransportAbort as exc:
+            raise co.ChainAbort(str(exc)) from None
+
+    def tg2_draw_doc(self):
+        try:
+            return json.loads(Path(self.a.tg2_draw).read_text())
+        except (OSError, ValueError, AttributeError) as exc:
+            raise co.ChainAbort(f"the tg2 draw artifact cannot be read ({type(exc).__name__})") from None
+
+    def verify_schedule(self, leg):
+        """A1: a tg2 leg's items are re-derived from the frozen draw artifact at EVERY launch (never redrawn)."""
+        if self.builder != "tg2_tier":
+            return
+        try:
+            schedules.check_tg2_membership(self.schedule, self.tg2_draw_doc(), self.config.schedule["draw_sha256"],
+                                           leg=dict(session=leg["session"], lang=leg["lang"],
+                                                    items=[f"{leg['lang']}/{n}" for n in leg["items"]]))
+        except schedules.TransportAbort as exc:
+            raise co.ChainAbort(f"the tg2 draw artifact check failed at a leg: {exc}") from None
+
     def plan(self):
-        builder = self.config.schedule["builder"]
-        if builder != "tg1":
-            raise NotImplementedError(f"schedule builder {builder!r} is a phase 3b configuration")
+        """The schedule normalized into loads -> legs -> invocations (the per-builder 'plan')."""
+        if self.builder == "tg1":
+            return self.plan_tg1()
+        if self.builder == "blocks":
+            return self.plan_blocks()
+        if self.builder == "tg2_tier":
+            return self.plan_tg2()
+        raise NotImplementedError(f"schedule builder {self.builder!r}")
+
+    def plan_tg1(self):
         sched = schedules.tg1(self.a.mode, self.a.sessions, self.names, smoke=getattr(self.a, "smoke", False),
                               predictor=getattr(self.a, "predictor", "off"))
         loads = []
@@ -501,7 +761,7 @@ class Chain:
             legs = []
             for li, leg in enumerate(block["legs"]):
                 legs.append(dict(
-                    leg, li=li, load=idx, arm=self.arm.arm, label=self.arm.label, items=list(leg["full_names"]),
+                    leg, li=li, pos=li, load=idx, arm=self.arm.arm, label=self.arm.label, items=list(leg["full_names"]),
                     slot_base=f"{self.config.config_id}|{self.arm.arm}|{leg['model']}|{leg['session']}|{leg['lang']}",
                     invocations=[dict(kind=i["phase"], phase=i["phase"], names=list(i["names"]), limit=i["limit"],
                                       expect=list(i["expect"])) for i in leg["invocations"]]))
@@ -510,8 +770,61 @@ class Chain:
                               pilot_only=block.get("pilot_only", False)))
         return loads
 
+    def plan_blocks(self):
+        """M64 (spec 8.1): one load per (session, pick); a leg is one (block, arm) = ONE planned `block` invocation over the
+        block's items (incidents / re-runs split it dynamically at run time, `run_block_leg`)."""
+        by_load = {}
+        for sleg in schedules.legs(self.schedule):
+            by_load.setdefault(sleg["load"], []).append(sleg)
+        loads = []
+        for li, sload in enumerate(self.schedule["loads"]):
+            legs = []
+            for pos, sleg in enumerate(by_load.get(li, [])):
+                arm, lang, names = sleg["arm"], sleg["lang"], list(sleg["items"])
+                legs.append(dict(
+                    li=sleg["block"], pos=pos, load=li, block=sleg["block"], arm=arm, label=self.label_of(arm),
+                    model=sleg["pick"], pick=sleg["pick"], session=sleg["session"], lang=lang,
+                    seed_base=sleg["seed_base"], stem=f"{sleg['pick']}.{sleg['session']}.{arm}_{lang}", draft_kind="off",
+                    items=names, residual=sleg["residual"], sched_leg=sleg, realized_key=schedules.leg_key(sleg),
+                    slot_base=f"{self.epoch_id}|{arm}|{sleg['pick']}|{sleg['session']}|{lang}",
+                    invocations=[dict(kind="block", phase="block", names=names, limit=None,
+                                      expect=[f"{lang}/{n}" for n in names])]))
+            loads.append(dict(idx=li, key=f"{sload['session']}|{sload['pick']}", session=sload["session"],
+                              model=sload["pick"], seed_base=sload["seed_base"], legs=legs, pilot_only=False))
+        return loads
+
+    def plan_tg2(self):
+        """tg2 (tg1 semantics): per session the picks in the tg1 order, one `full` invocation per (language) cell."""
+        picks = tuple(self.config.schedule["params"].get("picks") or (PICK1, PICK2))
+        order = {"s1": picks, "s2": tuple(reversed(picks)), "reload": picks[:1]}
+        loads = []
+        arm = self.arm
+        for sess in self.schedule["sessions"]:
+            for model in order[sess["session"]]:
+                legs = []
+                for li, cell in enumerate(sess["cells"]):
+                    lang = cell["lang"]
+                    names = [i.split("/", 1)[1] for i in cell["items"]]
+                    legs.append(dict(
+                        li=li, pos=li, load=len(loads), arm=arm.arm, label=arm.label, model=model, session=sess["session"],
+                        lang=lang, seed_base=sess["seed_base"], stem=schedules.flat_stem(model, sess["session"], lang),
+                        draft_kind=getattr(self.a, "predictor", "off"), items=names, full_names=names,
+                        realized_key=schedules.leg_key(dict(session=sess["session"], lang=lang, items=cell["items"])) + [model],
+                        slot_base=f"{self.config.config_id}|{arm.arm}|{model}|{sess['session']}|{lang}",
+                        invocations=[dict(kind="full", phase="full", names=names, limit=None,
+                                          expect=[f"{lang}/{n}" for n in names])]))
+                loads.append(dict(idx=len(loads), key=f"{sess['session']}|{model}", session=sess["session"], model=model,
+                                  seed_base=sess["seed_base"], legs=legs, pilot_only=False))
+        return loads
+
     # -- run
     def run(self):
+        try:
+            self.resolve_specs()
+        except aa.ArmRefused as e:
+            self.log(f"CHAIN ABORT: {e}")
+            self.rc = 2
+            return 2
         try:
             self.init_lifecycle()
         except RecordInvalid as e:                       # never touch an invalid existing record
@@ -537,21 +850,30 @@ class Chain:
             return 3
         try:
             self.ops.ensure_overlay()
-            self.pinned["registry_sha256"] = self.ops.overlay_sha()
+            (self.pinned_shared if self.per_arm else self.pinned)["registry_sha256"] = self.ops.overlay_sha()
             if not self.ops.power_ok():
                 raise co.ChainAbort("power gate FAIL")
             predictor = getattr(self.a, "predictor", "off")
-            loads = self.plan()
-            if any(leg["lang"] == "go" for load in loads for leg in load["legs"]) and not self.ops.docker_ok():
-                raise co.ChainAbort("docker gate FAIL: Go grading needs a reachable docker daemon")   # P290
+            self.freeze_schedule()
+            loads = self.loads = self.plan()
+            if any(self.needs_docker(leg["lang"]) for load in loads for leg in load["legs"]) and not self.ops.docker_ok():
+                raise co.ChainAbort("docker gate FAIL: grading needs a reachable docker daemon")   # P290
+            if self.config.arm_switch_ops:
+                self.ops.require_arm_ops()
             self.ops.start_router()
-            self.log(f"START {self.a.mode} predictor={predictor} blocks={[(b['session'], b['model']) for b in loads]}")
+            if self.per_arm:
+                self.log(f"START chain arms={self.arm_ids} epoch={str(self.epoch_id)[:12]} loads="
+                         f"{[(b['session'], b['model']) for b in loads]}")
+            else:
+                self.log(f"START {self.a.mode} predictor={predictor} blocks={[(b['session'], b['model']) for b in loads]}")
             try:
                 for load in loads:
                     self.run_load(load)
                 if self.loaded and not self.ops.unload(self.loaded):
                     raise co.ChainAbort("final unload failed")
                 self.loaded = None
+                self.verify_snapshots("exit")
+                self.check_realized()
                 self.verify_lifecycle("exit")
                 self.rc = 0
                 self.log("ALL LEGS DONE")
@@ -570,7 +892,28 @@ class Chain:
                 self.write_json("finished")
         return self.rc
 
-    # -- loads (a block: one model within one session, both languages)
+    def check_realized(self):
+        """The realized leg order equals the frozen schedule's (`blocks`); a tg2 chain runs each cell once per pick, so its
+        expected order is the plan's (each leg's `realized_key`: the schedule's key + the model)."""
+        if not self.freezes_schedule:
+            return
+        try:
+            if self.builder == "blocks":
+                schedules.check_realized(self.schedule, self.realized)
+            elif [list(r) for r in self.realized] != [leg["realized_key"] for load in self.loads for leg in load["legs"]]:
+                raise ValueError(f"realized order differs from the frozen schedule ({len(self.realized)} legs run, "
+                                 f"{sum(len(load['legs']) for load in self.loads)} scheduled)")
+        except ValueError as exc:
+            raise co.ChainAbort(str(exc)) from None
+
+    def record_realized(self, leg):
+        """Appended ONCE per leg key, in schedule order, when the leg's slots are all accounted."""
+        key = leg.get("realized_key")
+        if self.freezes_schedule and key is not None and key not in self.realized:
+            self.realized.append(key)
+            self.write_json("leg-done")
+
+    # -- loads (a block: one model within one session, all its languages / arms)
     def session_dir(self, load):
         return self.out_root / load["session"]
 
@@ -593,6 +936,8 @@ class Chain:
         load["rec"] = rec
         if rec["status"] == "done":
             self.log(f"SKIP load {load['session']}/{load['model']}: done")
+            for leg in load["legs"]:
+                self.record_realized(leg)
             return
         if rec["status"] == "running" or any(i["load_gen"] == rec["load_gen"] and i["leg_key"][0] == load["idx"]
                                               and i["status"] != "archived" for i in self.progress["invocations"]):
@@ -615,15 +960,36 @@ class Chain:
 
     def prepare_resume(self, load, rec):
         """`restart_load` (tg1): an interrupted load of a previous run is quarantined (never-validated files) and archived
-        (the rest), its records marked, and the load reruns from leg 0 with load_gen + 1."""
-        if self.config.resume_policy != "restart_load":
-            raise NotImplementedError(f"resume_policy {self.config.resume_policy!r} is a phase 3b configuration")
+        (the rest), its records marked, and the load reruns from leg 0 with load_gen + 1. `new_segment` (M64): the load
+        continues in a FRESH worker at the progress cursor with only the unaccepted slots; the persisted dispositions of a
+        crashed invocation are replayed (an accepted prefix is salvaged), the rest of its files is quarantined."""
         running = [i for i in self.progress["invocations"] if i["leg_key"][0] == load["idx"]
                    and i["load_gen"] == rec["load_gen"] and i["status"] == "running"]
+        if self.config.resume_policy == "new_segment":
+            self.check_cursor(load, rec)
+            running = self.salvage_hook_stops(load, running)
+            for r in running:
+                self.abandoned_web_evidence(r, self.out_root / r["file"])
+            if running:
+                self.quarantine(running)
+            self.sync_dnf_sidecars()
+            self.log(f"RESUME load {load['session']}/{load['model']}: new worker, continuing at leg "
+                     f"{rec['cursor']['leg_index']} ({rec['cursor']['phase']}), only the unaccepted slots")
+            return
         if running:
             self.quarantine(running)
         dest = self.archive_load(load, resume=True)
         self.log(f"RESUME load {load['session']}/{load['model']}: interrupted load archived to {dest}")
+
+    def check_cursor(self, load, rec):
+        """The persisted progress cursor must be consistent with what is scored: every leg BEFORE it is complete."""
+        pos = rec["cursor"]["leg_index"]
+        if pos > len(load["legs"]):
+            raise co.ChainAbort(f"progress cursor leg {pos} is beyond the load's {len(load['legs'])} legs")
+        table = self.slot_table()
+        for leg in load["legs"][:pos]:
+            if table.unscored(self.leg_slots(leg)):
+                raise co.ChainAbort(f"progress cursor at leg {pos} but leg {leg['pos']} ({leg['stem']}) is not complete")
 
     def prepare(self, load, restart=False):
         self.check_stop("restart preparation" if restart else "block boundary")
@@ -639,6 +1005,15 @@ class Chain:
         self.log(f"START STATE {load['session']}/{load['model']}: {json.dumps(st, default=str)}")
         if not self.ops.power_ok():
             raise co.ChainAbort("power gate FAIL before load")
+        rec = load["rec"]
+        rec["status"] = "running"
+        rec["cursor"] = dict(leg_index=0, phase=None) if not self.per_arm else rec["cursor"]
+        self.load_worker(load)
+        self.write_json("block-loaded")
+
+    def load_worker(self, load):
+        """Load the model (a NEW worker identity), then A4 per arm on it (A10): each gate receipt is copied to an immutable
+        `<out_root>/a4/<load>.<worker_n>.<arm>.json` bound to the worker; the probes get that path."""
         ident = self.ops.load(load["model"])
         self.loaded = load["model"]
         key = (ident["pid"], ident["create_time"])
@@ -647,14 +1022,54 @@ class Chain:
         n = len(self.block_workers)
         self.block_workers.append(dict(pid=ident["pid"], create_time=ident["create_time"], cmdline=ident.get("cmdline"),
                                        session=load["session"], model=load["model"]))
-        load["worker"], load["manifest_worker"] = dict(pid=ident["pid"], create_time=ident["create_time"]), None
-        load["receipt"] = self.ops.a4_gate(load["model"], f"{load['session']}_{n}_{load['model']}")
+        load["worker"], load["manifest_worker"], load["last_arm"] = (
+            dict(pid=ident["pid"], create_time=ident["create_time"]), None, None)
         rec = load["rec"]
-        rec["status"] = "running"
-        rec["cursor"] = dict(leg_index=0, phase=None)
-        rec["workers"].append(dict(n=len(rec["workers"]), pid=ident["pid"], create_time=ident["create_time"],
-                                   a4_receipt_sha256=co.file_sha(load["receipt"])))
-        self.write_json("block-loaded")
+        wn = len(rec["workers"])
+        receipts, refs = {}, {}
+        for arm in self.arm_ids:
+            tag = f"{load['session']}_{n}_{load['model']}" + (f"_{arm}" if self.per_arm else "")
+            latest = (self.ops.a4_gate(load["model"], tag, scaffold=self.label_of(arm)) if self.per_arm
+                      else self.ops.a4_gate(load["model"], tag))
+            path, sha = self.bind_receipt(latest, load, wn, arm)
+            receipts[arm], refs[arm] = str(path), dict(path=self._relpath(path), sha256=sha)
+        load["receipts"], load["receipt_refs"] = receipts, refs
+        load["receipt"] = receipts[self.arm_ids[0]]
+        worker = dict(n=wn, pid=ident["pid"], create_time=ident["create_time"], a4_receipts=refs)
+        if not self.per_arm:
+            worker["a4_receipt_sha256"] = refs[self.arm_ids[0]]["sha256"]
+        rec["workers"].append(worker)
+
+    def bind_receipt(self, latest, load, wn, arm):
+        """A10: copy the gate's `latest` receipt to its immutable per-(load, worker, arm) path (exclusive create) with the
+        worker identity it belongs to; returns (path, sha256)."""
+        try:
+            doc = json.loads(Path(latest).read_text())
+        except (OSError, ValueError) as exc:
+            raise co.ChainAbort(f"A4 receipt of {arm} unreadable ({type(exc).__name__}: {Path(latest).name})") from None
+        if not isinstance(doc, dict):
+            raise co.ChainAbort(f"A4 receipt of {arm} is not a JSON object")
+        doc = dict(doc, bench_binding=dict(worker=dict(load["worker"]), load=load["idx"], worker_n=wn, arm=arm,
+                                           load_gen=load["rec"]["load_gen"]))
+        raw = (json.dumps(doc, sort_keys=True, indent=1) + "\n").encode()
+        dest = self.out_root / "a4" / f"{load['idx']}.{wn}.{arm}.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            raise co.ChainAbort(f"A4 receipt {self._relpath(dest)} exists (A4 receipts are immutable: a new out-root is "
+                                "needed)") from None
+        with os.fdopen(fd, "wb") as fp:
+            fp.write(raw)
+            fp.flush()
+            os.fsync(fp.fileno())
+        return dest, hashlib.sha256(raw).hexdigest()
+
+    def verify_receipt(self, load, arm):
+        ref = load["receipt_refs"][arm]
+        path = self.out_root / ref["path"]
+        if co.file_sha(path) != ref["sha256"]:
+            raise co.ChainAbort(f"A4 receipt {ref['path']} differs from its recorded sha256 (receipts are immutable)")
 
     def arm_idle(self):
         end = self.clock() + self.a.arm_idle_s
@@ -664,24 +1079,41 @@ class Chain:
             time.sleep(min(self.tm.poll_s, max(0.0, end - self.clock())))
 
     def execute_load(self, load):
+        if self.per_arm:
+            for leg in load["legs"]:
+                if self.run_block_leg(load, leg) != "ok":
+                    return "incomplete"
+                self.record_realized(leg)
+            self.require_load_complete(load)
+            return "ok"
         for leg in load["legs"]:
             for inv in leg["invocations"]:
                 self.check_stop("before launch")
                 load["rec"]["cursor"] = dict(leg_index=leg["li"], phase=inv["phase"])
                 if self.run_invocation(load, leg, inv) != "ok":
                     return "incomplete"
+            self.record_realized(leg)
         self.require_load_complete(load)
         return "ok"
 
-    def require_load_complete(self, load):
-        """The cell is complete only when `chain_rows` scores every expected slot of the load (sha re-checked)."""
-        doc = dict(progress=self.progress, dnf=[])
+    # -- the slot table: `chain_rows` is the only reader
+    def chain_doc(self):
+        return dict(progress=self.progress, dnf=self.dnf)
+
+    def slot_table(self):
         try:
-            table = cr.load_slots(doc, self.out_root)
+            return cr.load_slots(self.chain_doc(), self.out_root)
         except cr.ChainRowsError as exc:
             raise co.ChainAbort(f"the progress inventory does not load: {exc}") from None
-        expected = [cr.slot_for(leg["slot_base"], i) for leg in load["legs"] for inv in leg["invocations"]
-                    for i in inv["expect"]]
+
+    def leg_slots(self, leg):
+        return [cr.slot_for(leg["slot_base"], i) for i in leg["invocations"][0]["expect"]] if self.per_arm else \
+            [cr.slot_for(leg["slot_base"], i) for inv in leg["invocations"] for i in inv["expect"]]
+
+    def require_load_complete(self, load):
+        """The cell is complete only when `chain_rows` scores every expected slot of the load (sha re-checked)."""
+        table = self.slot_table()
+        expected = [s for leg in load["legs"] for s in self.leg_slots(leg)]
         missing = table.unscored(expected)
         if missing:
             raise co.ChainAbort(f"load {load['session']}/{load['model']} complete but {len(missing)} slots are unscored: "
@@ -727,22 +1159,42 @@ class Chain:
         rec = load["rec"]
         sdir = self.session_dir(load)
         dest = sdir / "incomplete" / f"{load['model']}.{self._stamp()}"
-        prefix = f"{load['model']}.{load['session']}.opencode_"
+        prefix = f"{load['model']}.{load['session']}."
         files = [f for f in sorted(sdir.iterdir()) if f.is_file() and f.name.startswith(prefix)] if sdir.exists() else []
         manifest = {f.name: sha_file(f) for f in files}
-        rec["archives"].append(dict(dir=self._relpath(dest), at=co.utc_stamp(), files=manifest, load_gen=rec["load_gen"]))
+        gen = rec["load_gen"]
+        rec["archives"].append(dict(dir=self._relpath(dest), at=co.utc_stamp(), files=manifest, load_gen=gen))
         self.write_json("archiving")
         self._move_prefix(sdir, prefix, dest)
         self._mark_archived(load, rec, dest, manifest)
+        if self.config.transport_policy == "incident_retry":
+            # the load reruns from scratch: its DNF rows (sidecars moved with the files), incidents and realized legs go too
+            mine = [r for r in self.dnf if r["slot"].split("|")[2:4] == [load["model"], load["session"]]]
+            rec["archives"][-1]["dnf"] = mine
+            self.dnf = [r for r in self.dnf if r not in mine]
+            self.realized = [r for r in self.realized if r[0] != self.sched_load_index(load)]
         rec["load_gen"] += 1
         rec["status"] = "pending"
         rec["cursor"] = dict(leg_index=0, phase=None)
         self.write_json("archived")
         return dest
 
+    def sched_load_index(self, load):
+        for i, sload in enumerate((self.schedule or {}).get("loads", [])):
+            if (sload["session"], sload["pick"]) == (load["session"], load["model"]):
+                return i
+        return None
+
     def quarantine(self, records):
-        """Never-validated invocation files -> `quarantine/<ts>/` with a sha256 manifest written FIRST."""
-        dest = self.out_root / "quarantine" / self._stamp()
+        """Never-validated invocation files -> `quarantine/<ts>/` with a sha256 manifest written FIRST. The ACCEPTED slot
+        attempts persisted for those files are archived (their rows no longer count); a persisted cheat / unclear
+        disposition stays (it is what makes the slot re-run, with its tokens)."""
+        stamp = self._stamp()
+        dest = self.out_root / "quarantine" / stamp
+        n = 0
+        while dest.exists():
+            n += 1
+            dest = self.out_root / "quarantine" / f"{stamp}.{n}"
         files = {}
         for rec in records:
             base = (self.out_root / rec["file"]).name[:-len(".jsonl")]
@@ -750,24 +1202,41 @@ class Chain:
                 if f.is_file():
                     files[f.name] = f
         dest.mkdir(parents=True, exist_ok=True)
-        fsync_json(dest / "MANIFEST.json", dict(at=co.utc_stamp(), files={n: sha_file(f) for n, f in files.items()}))
+        fsync_json(dest / "MANIFEST.json", dict(at=co.utc_stamp(), files={n_: sha_file(f) for n_, f in files.items()}))
+        self._archive_attempts({r["file"] for r in records})
         for name, f in files.items():
             shutil.move(str(f), str(dest / name))
         self._repoint(records, files, dest, "quarantined")
         self.write_json("quarantined")
         return dest
 
-    def archive_stopped(self, load, leg):
+    def archive_stopped(self, load, leg, rec=None):
+        """STOP during a leg: the partial leg's files go to `<session>/stopped/` (tg1: every file of the leg's stem; M64: only the
+        stopped invocation's own files, its siblings are other blocks' accepted rows)."""
         sdir = self.session_dir(load)
+        own = self.per_arm and rec is not None
+        prefix = (Path(rec["file"]).name[:-len(".jsonl")] if own else leg["stem"]) + "."
         dest = sdir / "stopped" / f"{leg['stem']}.{self._stamp()}"
-        names = {f.name for f in sdir.iterdir() if f.is_file() and f.name.startswith(leg["stem"] + ".")}
-        self._move_prefix(sdir, leg["stem"] + ".", dest)
-        mine = [i for i in self.progress["invocations"] if i["leg_key"][:2] == [load["idx"], leg["lang"]]
-                and i["load_gen"] == load["rec"]["load_gen"] and i["status"] in ("running", "validated")]
-        for rec in mine:
-            was = rec["status"]
-            self._repoint([rec], names, dest, "quarantined" if was == "running" else "archived")
+        names = {f.name for f in sdir.iterdir() if f.is_file() and f.name.startswith(prefix)}
+        self._move_prefix(sdir, prefix, dest)
+        if own:
+            mine = [rec]
+        else:
+            mine = [i for i in self.progress["invocations"] if Path(i["file"]).name.startswith(leg["stem"] + ".")
+                    and Path(i["file"]).parent.name == load["session"] and i["load_gen"] == load["rec"]["load_gen"]
+                    and i["status"] in ("running", "validated", "partial_incident", "hook_stopped")]
+        self._archive_attempts({r["file"] for r in mine})
+        for r in mine:
+            was = r["status"]
+            self._repoint([r], names, dest, "quarantined" if was == "running" else "archived")
         return dest
+
+    def _archive_attempts(self, files):
+        """The ACCEPTED / exhausted slot attempts persisted for invocation files that leave the inventory are archived (their
+        rows no longer count); a persisted cheat / unclear disposition stays (it is what makes the slot re-run)."""
+        for a in self.progress["slot_attempts"]:
+            if a.get("invocation") in files and a.get("disposition") in ("accepted", "exhausted"):
+                a["status"] = "archived"
 
     # -- invocation (a leg attempt)
     def invocation_paths(self, load, leg, inv):
@@ -777,12 +1246,17 @@ class Chain:
         base = Path(str(rows)[:-len(".jsonl")])
         return n, sdir, rows, base
 
+    def leg_key(self, load, leg):
+        return [load["idx"], leg["lang"], leg["li"]] + ([leg["arm"]] if self.per_arm else [])
+
     def register_invocation(self, load, leg, inv, n, rows, ids):
-        rec = dict(leg_key=[load["idx"], leg["lang"], leg["li"]], phase=inv["phase"], attempt=n,
+        rec = dict(leg_key=self.leg_key(load, leg), phase=inv["phase"], attempt=n,
                    worker_n=len(load["rec"]["workers"]) - 1, file=self._relpath(rows),
                    manifest=self._relpath(rows.with_suffix(".manifest.json")), status="running",
                    expected_slots=[cr.slot_for(leg["slot_base"], i) for i in ids], accepted_slots=[], sha256=None,
                    load_gen=load["rec"]["load_gen"], slot_base=leg["slot_base"])
+        if inv["phase"] == "rerun":
+            rec["rerun_index"] = inv["rerun_index"]
         self.progress["invocations"].append(rec)
         return rec
 
@@ -790,17 +1264,38 @@ class Chain:
         """Validated rows files of this leg's earlier invocations (for the watch log's cell totals)."""
         files, ids = [], []
         for rec in self.progress["invocations"]:
-            if (rec["leg_key"] == [load["idx"], leg["lang"], leg["li"]] and rec["load_gen"] == load["rec"]["load_gen"]
+            if (rec["leg_key"] == self.leg_key(load, leg) and rec["load_gen"] == load["rec"]["load_gen"]
                     and rec["status"] in cr.COUNTED_STATUSES):
                 files.append(self.out_root / rec["file"])
                 ids += [s.split("|")[-1] for s in rec["expected_slots"]]
         return files, ids
 
     def before_invocation(self, load, leg, inv):
-        """Seam (3b): the place the chain hooks / arm switch run before a probe is spawned."""
+        """Arm switches (M64 spec 5.5 / 8.1): the search service restarts before EVERY invocation; an arm switch (or a re-run)
+        resets the cache session and sends one unscored warm-up request."""
+        ops = self.config.arm_switch_ops
+        if not ops:
+            return
+        if "search_restart" in ops:
+            self.ops.search_restart(leg)
+        if load.get("last_arm") != leg["arm"] or inv["phase"] == "rerun":
+            if "cache_reset" in ops:
+                self.ops.reset_cache_session(load["model"])
+            if "warmup" in ops:
+                self.ops.warmup(load["model"])
+        load["last_arm"] = leg["arm"]
+
+    def epoch_arg(self):
+        return self.epoch_id if self.per_arm else None
 
     def run_invocation(self, load, leg, inv):
+        """One probe invocation. Returns "ok" (validated), "hook" (a hook disposition stopped it after an accepted prefix:
+        the leg loop re-derives what is left), "incident" (a transport incident was recovered, the same slot retries) or
+        "incomplete" (the load is archived and restarted once)."""
         self.verify_lifecycle("launch")
+        self.verify_schedule(leg)
+        arm = leg["arm"]
+        self.verify_receipt(load, arm)
         n, sdir, out, base = self.invocation_paths(load, leg, inv)
         sdir.mkdir(parents=True, exist_ok=True)
         self.attempt_no[leg["stem"]] = n
@@ -815,18 +1310,21 @@ class Chain:
             raise co.ChainAbort("worker identity changed before launch")
         if not self.ops.power_ok():
             raise co.ChainAbort("power gate FAIL before launch")
-        if leg["lang"] == "go" and not self.ops.docker_ok():
+        if self.needs_docker(leg["lang"]) and not self.ops.docker_ok():
             raise co.ChainAbort("docker gate FAIL before launch")                                    # P290
         self.before_invocation(load, leg, inv)
         ids = list(inv["expect"])
         view = dict(leg, out=str(out), model=leg["model"], phase=inv["phase"], model_load=load["idx"])
         view["prior_files"], view["prior_ids"] = self.prior_rows(load, leg)
         step = dict(inv, names=list(inv["names"]))
-        cmd = build_cmd(self.py, self.probe, view, step, load["receipt"], cancel, ack, scaffold=self.arm.label,
-                        universe=self.universe, frozen=self.frozen, attempt=n, rerun_index=0)
+        cmd = build_cmd(self.py, self.probe_of(arm), view, step, load["receipts"][arm], cancel, ack, scaffold=leg["label"],
+                        universe=self.universe, frozen=self.frozen, attempt=n, rerun_index=inv.get("rerun_index", 0),
+                        epoch=self.epoch_arg())
         att = dict(attempt=n, step=inv["phase"], stem=leg["stem"], argv=cmd, cancel=str(cancel), ack=str(ack),
                    log=str(logp), worker=dict(load["worker"]), started=co.utc_stamp(), rc=None,
                    cleanup_status=None, run_id=None, probe_pid=None, probe_create_time=None, outcome=None)
+        if self.per_arm:
+            att["arm"] = arm
         rec = self.register_invocation(load, leg, inv, n, out, ids)
         self.attempts.append(att)
         self.write_json("running")                      # the invocation is in the inventory BEFORE its probe exists
@@ -841,7 +1339,7 @@ class Chain:
             pass
         co.atomic_json(ajson, att)
         self.write_json("running")
-        sup = self.supervise(att, proc, view, step, load)
+        sup = self.supervise(att, proc, view, step, load, rec=rec, inv=inv, base=base)
         att["rc"] = proc.returncode
         man = self._manifest(view)
         if man and att["run_id"] and man.get("run_id") == att["run_id"]:
@@ -856,47 +1354,92 @@ class Chain:
             self.listing(att, view)
             raise co.ChainAbort("first-manifest mismatch: " + "; ".join(sup["reasons"]))
         self.verify_lifecycle("validation")
+        hook = sup.get("hook")
+        expect_ids = ids if not hook else (ids[:hook["k"]] if hook["kind"] == "before" else ids[:hook["k"] + 1])
         vleg = dict(session=leg["session"], model=leg["model"], lang=leg["lang"], seed_base=leg["seed_base"],
-                    expected_ids=ids, out=str(out), rc=att["rc"], draft_kind=leg.get("draft_kind", "off"),
+                    expected_ids=expect_ids, out=str(out), rc=att["rc"], draft_kind=leg.get("draft_kind", "off"),
                     arm_identity_sha256=self.arms.get(self.arm_key(leg)))
-        why = co.validate_leg(vleg, self.pinned, self.ops.wd, policy_sha=self.expected_policy,
-                              frozen_prompt_date=self.frozen)
+        why = co.validate_leg(vleg, self.pinned_for(arm), self.ops.wd, policy_sha=self.policy_for(arm),
+                              frozen_prompt_date=self.frozen, spec=self.spec_of(arm))
+        if self.per_arm:
+            why += self.arm_row_problems(view, out) + self.hook_manifest_problems(view, hook)
         if not why:
             self.pin_from(view)
             att["outcome"] = "validated"
             co.atomic_json(ajson, att)
-            self.accept_invocation(load, leg, inv, rec, out)
-            return "ok"
+            return self.accept_invocation(load, leg, inv, rec, out, hook)
         for w in why:
             self.log(f"INCOMPLETE {leg['stem']} attempt {n}: {w}")
         self.abandoned_web_evidence(rec, out)
         if sup["stop"]:
-            dest = self.archive_stopped(load, leg)
+            dest = self.archive_stopped(load, leg, rec)
             self.log(f"STOP: partial leg archived to {dest}")
             self.stop_info["where"] = "leg"
             self.write_json("stopped")
             raise Stopped("leg")
-        self.check_restart_eligible(att, view, load)
-        return self.handle_incomplete(load, leg, inv, rec, att, why)
+        return self.handle_incomplete(load, leg, inv, rec, att, why, sup=sup, view=view)
 
-    def handle_incomplete(self, load, leg, inv, rec, att, why):
-        """`abort_restart` (tg1): the whole load is archived once and rerun, then the chain aborts."""
-        if self.config.transport_policy != "abort_restart":
-            raise NotImplementedError(f"transport_policy {self.config.transport_policy!r} is a phase 3b configuration")
-        return "incomplete"
+    def arm_row_problems(self, leg, out):
+        """Arm-identifying fields every row and the manifest must carry (rows: arm, epoch_id, snapshot_sha256) and the frozen
+        snapshot of the arm (A5)."""
+        why = []
+        man = self._manifest(leg) or {}
+        rt = man.get("runtime") or {}
+        frozen = (self.snapshots.get(leg["arm"]) or {}).get("sha256")
+        for key, want in (("arm", leg["arm"]), ("epoch_id", self.epoch_id)):
+            if rt.get(key) != want:
+                why.append(f"runtime_{key}: {rt.get(key)!r} != {want!r}")
+        if frozen is not None and rt.get("snapshot_sha256") != frozen:
+            why.append(f"runtime_snapshot_sha256: {rt.get('snapshot_sha256')!r} != frozen {frozen!r}")
+        try:
+            rows = cr.rows_if_present(out)
+        except cr.ChainRowsError:
+            rows = []
+        for r in rows:
+            for key, want in (("arm", leg["arm"]), ("epoch_id", self.epoch_id), ("snapshot_sha256", rt.get("snapshot_sha256"))):
+                if r.get(key) != want or not want:
+                    why.append(f"row_{key}: {r.get('id')} {r.get(key)!r} != {want!r}")
+        return why
 
-    def accept_invocation(self, load, leg, inv, rec, out):
-        """A validated invocation: sha256 recorded AFTER validation (fsynced), then the chain-side web evidence."""
-        rows = cr.read_rows(out)
-        rec["accepted_slots"] = list(rec["expected_slots"])
-        rec["sha256"] = sha_file(out)
-        rec["status"] = "validated"
+    def hook_manifest_problems(self, leg, hook):
+        """The probe's recorded `hook_stop` must be exactly the stop the chain wrote (and none without one)."""
+        man = self._manifest(leg) or {}
+        got = man.get("hook_stop")
+        if hook is None:
+            return [] if got is None else [f"hook_stop: the manifest records {got!r} but the chain wrote no stop"]
+        item = f"{leg['lang']}/{hook['name']}"
+        want = dict(before_slot=item) if hook["kind"] == "before" else dict(after_slot=item, disposition=hook["disposition"])
+        return [] if got == want else [f"hook_stop: the manifest records {got!r}, the chain wrote {want!r}"]
+
+    def accept_invocation(self, load, leg, inv, rec, out, hook=None):
+        """A validated invocation: sha256 recorded AFTER validation (fsynced), then the chain-side web evidence. A hook-stopped
+        invocation is accepted for the prefix it ran (`hook_stopped`)."""
+        rows = cr.rows_if_present(out)
+        rec["accepted_slots"] = ([cr.slot_for(rec["slot_base"], r["id"]) for r in rows] if hook
+                                 else list(rec["expected_slots"]))
+        rec["sha256"] = sha_file(out) if Path(out).exists() else None
+        rec["status"] = "hook_stopped" if hook else "validated"
+        if hook:
+            rec["hook_stop"] = (dict(before_slot=hook["slot"]) if hook["kind"] == "before"
+                                else dict(after_slot=hook["slot"], disposition=hook["disposition"]))
         self.write_json("invocation-validated")
         self.after_invocation(load, leg, inv, rec, rows)
+        if not hook:
+            return "ok"
+        if hook["kind"] == "before":
+            if self.config.transport_policy != "incident_retry":
+                return "incomplete"                       # abort_restart: the load restarts
+            self.recover(load, leg, hook["cause"])
+            return "incident"
+        if hook["disposition"] == "unclear":
+            raise co.ChainAbort(f"slot {hook['slot']} is blocked for the operator (unclear disposition: "
+                                f"{hook.get('reason') or 'no reason recorded'})")
+        return "hook"
 
     def abandoned_web_evidence(self, rec, out):
         """A12: an invocation that did not validate (cut, cancelled, aborted ...) still has stored transcripts for the rows it
-        wrote; their web evidence is extracted (and hashed in the invocation record) before the files are archived."""
+        wrote; their web evidence is extracted (and hashed in the invocation record) before the files are archived. Rows
+        whose evidence the item barrier already extracted keep that record."""
         try:
             rows = cr.rows_if_present(out)
         except cr.ChainRowsError as exc:
@@ -904,28 +1447,38 @@ class Chain:
             return
         if not rows:
             return
-        rules = self.web_rules()
+        rules = self.web_rules(rec["slot_base"].split("|")[1])
+        known = {(a["slot"], a["rerun_index"]) for a in self.progress["slot_attempts"]}
         found = {}
         for row in rows:
+            slot = cr.slot_for(rec["slot_base"], row["id"])
+            if (slot, rec.get("rerun_index", 0)) in known:
+                continue
             tp = row.get("transcript_path")
             path = co.resolve_portable(tp, self.wd) if tp else None
-            found[cr.slot_for(rec["slot_base"], row["id"])] = self.web_record(
-                row, rules, path.with_name(path.stem + ".web.jsonl") if path is not None else None)
-        rec["web_evidence"] = found
-        self.write_json("web-evidence-partial")
+            found[slot] = self.web_record(row, rules, path.with_name(path.stem + ".web.jsonl") if path is not None else None)
+        if found:
+            rec["web_evidence"] = found
+            self.write_json("web-evidence-partial")
 
     def after_invocation(self, load, leg, inv, rec, rows):
-        """Chain-side web evidence for every row with a stored transcript; the sha256 is recorded per slot attempt."""
-        rules = self.web_rules()
+        """Chain-side web evidence for every row with a stored transcript; the sha256 is recorded per slot attempt. Rows
+        the item barrier already decided (a persisted slot attempt at their re-run index) are not extracted twice."""
+        rules = self.web_rules(rec["slot_base"].split("|")[1])
+        rindex = rec.get("rerun_index", 0)
+        known = {(a["slot"], a["rerun_index"]) for a in self.progress["slot_attempts"] if a.get("status") != "archived"}
         for row in rows:
             slot = cr.slot_for(rec["slot_base"], row["id"])
+            if (slot, rindex) in known:
+                continue
             tp = row.get("transcript_path")
             path = co.resolve_portable(tp, self.wd) if tp else None
             dest = path.with_name(path.stem + ".web.jsonl") if path is not None else None
-            w = self.web_record(row, rules, dest)
+            w = (rec.get("web_evidence") or {}).get(slot) or self.web_record(row, rules, dest)    # evidence is immutable
             self.progress["slot_attempts"].append(dict(
-                slot=slot, rerun_index=0, disposition="accepted", load=load["idx"], load_gen=rec["load_gen"],
-                output_tokens=(row.get("gate") or {}).get("output_tokens_completed"), web_evidence=w))
+                slot=slot, rerun_index=rindex, disposition="accepted", load=load["idx"], load_gen=rec["load_gen"],
+                invocation=rec["file"], output_tokens=(row.get("gate") or {}).get("output_tokens_completed"),
+                web_evidence=w))
         self.write_json("web-evidence")
 
     def web_record(self, row, rules, dest):
@@ -947,23 +1500,27 @@ class Chain:
         return "$STACK_WORKDIR" + s[len(w):] if s.startswith(w) else s
 
     def pin_from(self, leg):
+        arm = leg.get("arm") or self.arm_ids[0]
         man = self._manifest(leg) or {}
-        bad = co.malformed_identity(man)
+        spec = self.spec_of(arm)
+        bad = co.malformed_identity(man, spec)
         if bad:
             raise co.ChainAbort(f"first complete leg has absent/null/malformed identity fields: {bad}")
         missing = []
-        ident = co.runtime_identity(man)                 # P276: where the real probe writes each pinned field
-        for k in co.RUNTIME_PINNED:
-            if k in self.pinned:
+        ident = co.runtime_identity(man, None if spec is None else spec.runtime_pinned)      # P276: where the real probe writes each pinned field
+        pinned = self.pinned_by_arm[arm] if self.per_arm else self.pinned
+        for k in self.runtime_pinned(arm):
+            if k in pinned:
                 continue
             if k in ident:
-                self.pinned[k] = ident[k]
+                pinned[k] = ident[k]
             else:
                 missing.append(k)
-        if "serving_path" not in self.pinned:
+        shared = self.pinned_shared if self.per_arm else self.pinned
+        if "serving_path" not in shared:
             sp = (man.get("git") or {}).get("serving_path")
             if sp:
-                self.pinned["serving_path"] = sp
+                shared["serving_path"] = sp
             else:
                 missing.append("serving_path")
         if missing:
@@ -1005,12 +1562,329 @@ class Chain:
             self.listing(att, leg)
             raise co.ChainAbort("restart refused: " + "; ".join(why))
 
+    # -- M64: a leg is run until every one of its slots is accounted for (scored attempt, DNF row)
+    def run_block_leg(self, load, leg):
+        """The dynamic leg loop (A8): each iteration derives what is left from the slot table (`chain_rows`), runs ONE
+        invocation (`block`; `retry` after an incident of its head slot; a one-slot `rerun` for a cheat) and re-derives. So a
+        fresh run, an incident, a hook stop and a resume are the same code."""
+        names = leg["items"]
+        mine = {n: cr.slot_for(leg["slot_base"], f"{leg['lang']}/{n}") for n in names}
+        while True:
+            self.check_stop("before launch")
+            self.settle_dnf(load, leg)
+            table = self.slot_table()
+            blocked = [s for s in mine.values() if s in table.blocked]
+            if blocked:
+                raise co.ChainAbort(f"slot {blocked[0]} is blocked for the operator (its latest attempt has an unclear "
+                                    "disposition); resolve it before the chain continues")
+            todo = [n for n in names if mine[n] not in table.scored]
+            if not todo:
+                return "ok"
+            head = mine[todo[0]]
+            reruns = dict(table.pending_reruns)
+            if head in reruns:
+                inv = dict(kind="rerun", phase="rerun", names=[todo[0]], limit=None, expect=[f"{leg['lang']}/{todo[0]}"],
+                           rerun_index=reruns[head])
+            else:
+                phase = "retry" if self.incident_count(head, load) else "block"
+                inv = dict(kind=phase, phase=phase, names=list(todo), limit=None,
+                           expect=[f"{leg['lang']}/{n}" for n in todo])
+            load["rec"]["cursor"] = dict(leg_index=leg["pos"], phase=inv["phase"])
+            if self.run_invocation(load, leg, inv) == "incomplete":
+                return "incomplete"
+
+    def incident_count(self, slot, load):
+        gen = load["rec"]["load_gen"]
+        return sum(1 for i in self.incidents if i["slot"] == slot and i.get("load_gen") == gen)
+
+    def settle_dnf(self, load, leg):
+        """Spec 8.3: a slot whose second incident is recorded and that has no scored attempt becomes a `transport_dnf` row
+        (chain.json first, then the sidecar; a resume re-creates a missing sidecar from chain.json)."""
+        gen = load["rec"]["load_gen"]
+        table = None
+        for n in leg["items"]:
+            slot = cr.slot_for(leg["slot_base"], f"{leg['lang']}/{n}")
+            mine = [i for i in self.incidents if i["slot"] == slot and i.get("load_gen") == gen]
+            if len(mine) < ci.MAX_INCIDENTS or any(r["slot"] == slot for r in self.dnf):
+                continue
+            table = table or self.slot_table()
+            if slot in table.scored:
+                continue
+            arm = leg["arm"]
+            row = dnf_row(slot=slot, arm=arm, label=leg["label"], pick=leg["model"], session=leg["session"],
+                          lang=leg["lang"], item=n, seed_base=leg["seed_base"], incidents=mine[:ci.MAX_INCIDENTS],
+                          worker=mine[-1].get("worker_full") or mine[-1]["worker"], frozen=self.frozen,
+                          epoch=self.epoch_id, runtime=dict(
+                              self.pinned_for(arm), arm_identity_sha256=self.arms.get(self.arm_key(leg))))
+            why = validate_dnf_row(row, arm=arm, slot=slot)
+            if why:
+                raise co.ChainAbort("; ".join(why))
+            self.dnf.append(row)
+            self.write_json("dnf")
+            self.sync_dnf_sidecars()
+            self.log(f"DNF {slot}: transport_dnf row written; the schedule continues")
+
+    def sync_dnf_sidecars(self):
+        """The DNF sidecar of every leg with a DNF row equals the chain.json copy (chain.json is the record: it is written
+        first, a sidecar a crash left missing or stale is rewritten from it)."""
+        by_path = {}
+        for r in self.dnf:
+            epoch, arm, pick, session, lang, _item = r["slot"].split("|")
+            by_path.setdefault(cr.dnf_path(self.out_root, session, f"{pick}.{session}.{arm}_{lang}"), []).append(r)
+        for path, rows in by_path.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            want = "".join(json.dumps(r) + "\n" for r in rows)
+            if not path.exists() or path.read_text() != want:
+                path.write_text(want)
+
+    # -- the transport policy
+    def handle_incomplete(self, load, leg, inv, rec, att, why, sup=None, view=None):
+        """`abort_restart` (tg1): the whole load is archived once and rerun, then the chain aborts. `incident_retry` (M64):
+        a classified transport incident is recorded, its partial rows accepted, the worker recovered and the same slot
+        retried; anything else restarts the load once like tg1."""
+        if self.config.transport_policy == "abort_restart" or view is None:
+            self.check_restart_eligible(att, view, load)
+            return "incomplete"
+        cause = self.classify_incident(att, sup, load, view)
+        if cause is None:
+            self.check_restart_eligible(att, view, load)
+            return "incomplete"
+        self.record_incident(load, leg, inv, rec, att, view, cause)
+        self.recover(load, leg, cause)
+        return "incident"
+
+    def classify_incident(self, att, sup, load, leg):
+        """A6: the router and the worker are checked INDEPENDENTLY first, then the probe's own cause."""
+        cur = self.ops.worker_ident(leg["model"])
+        worker_ok = bool(cur) and (cur["pid"], cur["create_time"]) == (load["worker"]["pid"], load["worker"]["create_time"])
+        check = getattr(self.ops, "router_ok", None)
+        router_ok = True if check is None else bool(check())
+        stamp = att.get("transport_abort") or {}
+        return classify_incident_cause(
+            stamp_cause=stamp.get("cause"), cancelled_idle=bool(sup and sup.get("state") == "cancelled"
+                                                                 and sup.get("cancel_reason") == "idle"),
+            worker_ok=worker_ok, router_ok=router_ok)
+
+    def partial_ids(self, out):
+        try:
+            return [r["id"] for r in cr.rows_if_present(out)]
+        except cr.ChainRowsError as exc:
+            raise co.ChainAbort(f"incident refused: the rows file of the failed attempt is unreadable ({exc})") from None
+
+    def validate_partial(self, leg, out, ids, *, who="incident"):
+        """The rows a failed attempt wrote before it failed must validate (everything but the abort itself): config, arm,
+        epoch, snapshot and the row schema. Anything wrong there is not an incident."""
+        vleg = dict(session=leg["session"], model=leg["model"], lang=leg["lang"], seed_base=leg["seed_base"],
+                    expected_ids=list(ids), out=str(out), rc=0, draft_kind=leg.get("draft_kind", "off"),
+                    arm_identity_sha256=self.arms.get(self.arm_key(leg)))
+        bad = [w for w in co.validate_leg(vleg, self.pinned_for(leg["arm"]), self.ops.wd,
+                                          policy_sha=self.policy_for(leg["arm"]), frozen_prompt_date=self.frozen,
+                                          spec=self.spec_of(leg["arm"]))
+               if not w.startswith(("manifest_abort", "rc_nonzero"))]
+        bad += self.arm_row_problems(leg, out)
+        if bad:
+            raise co.ChainAbort(f"{who} refused: the rows of the failed attempt do not validate: " + "; ".join(bad[:3]))
+
+    def record_incident(self, load, leg, inv, rec, att, view, cause):
+        """A7 + A9: the exact cleanup schema, the validated partial rows (`partial_incident`, accepted prefix) and the
+        incident record (cause, the failed attempt's tokens, the slot's attempt number)."""
+        problems = cleanup_problems(att.get("cleanup_status"))
+        if problems:
+            self.listing(att, view)
+            raise co.ChainAbort("incident refused: cleanup is not certain and complete: " + "; ".join(problems))
+        out = Path(view["out"])
+        ids = self.partial_ids(out)
+        expected = list(inv["expect"])
+        if ids != expected[:len(ids)] or len(ids) >= len(expected):
+            raise co.ChainAbort(f"incident refused: the failed attempt's rows {ids} are not a proper prefix of {expected}")
+        self.validate_partial(view, out, ids)
+        rec["accepted_slots"] = [cr.slot_for(rec["slot_base"], i) for i in ids]
+        rec["sha256"] = sha_file(out) if out.exists() else None
+        rec["status"] = "partial_incident"
+        failing = cr.slot_for(rec["slot_base"], expected[len(ids)])
+        stamp = att.get("transport_abort") or {}
+        tokens, gate_tokens, receipt_tokens = incident_tokens(stamp)
+        n = self.incident_count(failing, load) + 1
+        self.incidents.append(dict(
+            cause=cause, output_tokens=tokens, gate_output_tokens=gate_tokens, receipt_output_tokens=receipt_tokens,
+            requests=((stamp.get("gate") or {}).get("requests_completed")), attempt_file=str(att["log"]),
+            manifest=rec["manifest"], worker=dict(load["worker"]), worker_full=att.get("worker_full"),
+            error=str(stamp.get("error"))[:200], slot=failing, attempt=n, arm=leg["arm"], pick=leg["model"],
+            session=leg["session"], lang=leg["lang"], item=failing.split("|")[-1], at=co.utc_stamp(),
+            load_gen=load["rec"]["load_gen"], load=load["idx"], invocation=rec["file"], pre_spawn=False))
+        self.log(f"INCIDENT {leg['stem']} {failing.split('|')[-1]} attempt {n}: cause={cause} tokens={tokens}")
+        self.write_json("incident")
+        self.after_invocation(load, leg, inv, rec, cr.rows_if_present(out))
+
+    def recover(self, load, leg, cause):
+        """Spec 8.3 recovery before the next attempt: unload + reload the worker (a new identity recorded, A4 per arm),
+        cache-session reset, one warm-up request. A dead router needs the ops' `restart_router` (an operator action else)."""
+        if cause == "router_error":
+            restart = getattr(self.ops, "restart_router", None)
+            if restart is None:
+                raise co.ChainAbort("recovery: the router is gone or replaced (router_error) and restarting it is an "
+                                    "operator action; the incident is recorded")
+            restart()
+        if self.loaded and not self.ops.unload(self.loaded):
+            raise co.ChainAbort(f"recovery: unload of {self.loaded} not verified")
+        self.loaded = None
+        self.load_worker(load)
+        ops = self.config.arm_switch_ops
+        if "cache_reset" in ops:
+            self.ops.reset_cache_session(load["model"])
+        if "warmup" in ops:
+            self.ops.warmup(load["model"])
+        load["last_arm"] = leg["arm"]
+        self.write_json("recovered")
+
+    # -- hooks at the item barrier (R13 R23 R25 R29)
+    def item_barrier_on(self, man, arm):
+        """The manifest's evidence policy says whether the probe waits at the item barrier; the per-arm layout verifies the
+        whole policy against the arm spec (the chain answers exactly what the arm was built for)."""
+        return ((man.get("runtime") or {}).get("evidence_policy") or {}).get("item_barrier") == "on"
+
+    def new_barrier(self, rec, inv, base, view, load):
+        return dict(k=0, stage="ready", stop=None, rec=rec, inv=inv, base=str(base), view=view, load=load,
+                    names=list(inv["names"]), rindex=inv.get("rerun_index", 0))
+
+    def barrier_path(self, bar, kind):
+        return Path(f"{bar['base']}.item{bar['k']}.{kind}")
+
+    def pump_barrier(self, bar):
+        """One poll of the item barrier: answer `.ready` with `.go` after `run_before(slot)` and `.done` with `.continue`
+        after the item's web evidence was extracted and `run_after(slot, done)` decided. Every disposition is persisted in
+        chain.json BEFORE the barrier file that acts on it is written."""
+        if bar["stage"] == "stopped" or bar["k"] >= len(bar["names"]):
+            return
+        view, load, rec = bar["view"], bar["load"], bar["rec"]
+        name = bar["names"][bar["k"]]
+        slot = cr.slot_for(view["slot_base"], f"{view['lang']}/{name}")
+        if bar["stage"] == "ready":
+            if not self.barrier_path(bar, "ready").exists():
+                return
+            disp = self.hooks.run_before(slot)
+            if disp.kind == "pre_spawn_incident":
+                self.persist_pre_spawn(bar, slot, name, disp.cause)
+                barrier_signal(self.barrier_path(bar, "stop"), {"disposition": "pre_spawn_incident"})
+                bar["stage"], bar["stop"] = "stopped", dict(kind="before", k=bar["k"], name=name, slot=slot, cause=disp.cause)
+            else:
+                barrier_signal(self.barrier_path(bar, "go"))
+                bar["stage"] = "done"
+            return
+        if not self.barrier_path(bar, "done").exists():
+            return
+        done = json.loads(self.barrier_path(bar, "done").read_text())
+        row = next((r for r in cr.read_rows(view["out"]) if r["id"] == done["id"]), None)
+        if row is None:
+            raise co.ChainAbort(f"item barrier: the row of {done['id']} is not in {Path(view['out']).name} at its done barrier")
+        tp = row.get("transcript_path")
+        path = co.resolve_portable(tp, self.wd) if tp else None
+        web = self.web_record(row, self.web_rules(view["arm"]),
+                              path.with_name(path.stem + ".web.jsonl") if path is not None else None)
+        done = dict(done, web_evidence=web)
+        disp = self.hooks.run_after(slot, done)
+        rindex = bar["rindex"]
+        if disp.kind != "accept" and not self.per_arm:
+            raise co.ChainAbort(f"{disp.kind} for {slot}: this configuration has no same-slot re-run (tg2 step)")
+        disposition = chain_hooks.slot_disposition(disp)
+        if disp.kind == "rerun_same_slot" and rindex >= cr.MAX_RERUNS:
+            disposition = "exhausted"                                  # P201: cheating at the last attempt is a strict fail
+        att_rec = dict(slot=slot, rerun_index=rindex, disposition=disposition, load=load["idx"],
+                       load_gen=rec["load_gen"], invocation=rec["file"],
+                       output_tokens=(row.get("gate") or {}).get("output_tokens_completed"), web_evidence=web)
+        if disp.reason:
+            att_rec["reason"] = disp.reason
+        self.progress["slot_attempts"].append(att_rec)
+        self.write_json("slot-disposition")
+        if disposition in ("accepted", "exhausted"):
+            barrier_signal(self.barrier_path(bar, "continue"))
+            bar["k"], bar["stage"] = bar["k"] + 1, "ready"
+        else:
+            barrier_signal(self.barrier_path(bar, "stop"), {"disposition": disposition})
+            bar["stage"], bar["stop"] = "stopped", dict(kind="after", k=bar["k"], name=name, slot=slot,
+                                                         disposition=disposition, reason=disp.reason)
+
+    def persist_pre_spawn(self, bar, slot, name, cause):
+        """R13: a `before_attempt` failure is a transport incident of the slot (no tokens): the pre-spawn record AND the
+        incident are persisted together, THEN the probe is stopped before it spawns anything."""
+        view, load, rec = bar["view"], bar["load"], bar["rec"]
+        n = self.incident_count(slot, load) + 1
+        self.progress["pre_spawn"].append(dict(slot=slot, disposition="pre_spawn_incident", cause=cause, load=load["idx"],
+                                               load_gen=rec["load_gen"], invocation=rec["file"], at=co.utc_stamp()))
+        self.incidents.append(dict(
+            cause=cause, output_tokens=0, gate_output_tokens=0, receipt_output_tokens=None, requests=0,
+            attempt_file=None, manifest=rec["manifest"], worker=dict(load["worker"]), worker_full=None, error=None,
+            slot=slot, attempt=n, arm=view["arm"], pick=view["model"], session=view["session"], lang=view["lang"],
+            item=name, at=co.utc_stamp(), load_gen=rec["load_gen"], load=load["idx"], invocation=rec["file"],
+            pre_spawn=True))
+        self.log(f"PRE-SPAWN INCIDENT {slot}: {cause}")
+        self.write_json("pre-spawn-incident")
+
+    def salvage_hook_stops(self, load, running):
+        """Resume: an invocation a crash left `running` whose persisted dispositions prove a hook stop (a cheat / unclear
+        slot attempt, or a pre-spawn record) and whose rows file is exactly the prefix that stop implies is finalized as
+        `hook_stopped`; everything else stays for the quarantine. Returns the records still `running`."""
+        left = []
+        for rec in running:
+            stop = self.persisted_stop(rec)
+            path = self.out_root / rec["file"]
+            if stop is None:
+                left.append(rec)
+                continue
+            kind, slot, disposition = stop
+            expected = rec["expected_slots"]
+            if slot not in expected:
+                left.append(rec)
+                continue
+            cut = expected.index(slot)
+            want = expected[:cut] if kind == "before" else expected[:cut + 1]
+            try:
+                rows = cr.rows_if_present(path)
+            except cr.ChainRowsError:
+                left.append(rec)
+                continue
+            if [cr.slot_for(rec["slot_base"], r["id"]) for r in rows] != want:
+                left.append(rec)
+                continue
+            leg = self.leg_of(load, rec)
+            try:
+                self.validate_partial(leg, path, [r["id"] for r in rows], who="resume")
+            except co.ChainAbort as exc:
+                self.log(f"resume: {exc}; the invocation is quarantined instead")
+                left.append(rec)
+                continue
+            rec["accepted_slots"] = want
+            rec["sha256"] = sha_file(path) if path.exists() else None
+            rec["status"] = "hook_stopped"
+            rec["hook_stop"] = dict(before_slot=slot) if kind == "before" else dict(after_slot=slot, disposition=disposition)
+            self.write_json("hook-stop-salvaged")
+            self.log(f"RESUME: {rec['file']} finalized as hook_stopped from its persisted disposition ({kind} {slot})")
+        return left
+
+    def persisted_stop(self, rec):
+        for a in self.progress["slot_attempts"]:
+            if a.get("invocation") == rec["file"] and a.get("disposition") in ("cheat", "unclear") \
+                    and a.get("status") != "archived":
+                return "after", a["slot"], a["disposition"]
+        for p in self.progress["pre_spawn"]:
+            if p.get("invocation") == rec["file"] and p.get("status") != "archived":
+                return "before", p["slot"], None
+        return None
+
+    def leg_of(self, load, rec):
+        for leg in load["legs"]:
+            if rec["leg_key"] == self.leg_key(load, leg):
+                return dict(leg, out=str(self.out_root / rec["file"]))
+        raise co.ChainAbort(f"progress record {rec['file']} names no leg of this load")
+
     # -- barrier
     @staticmethod
     def arm_key(leg):
         return f"{leg['model']}|{leg.get('draft_kind', 'off')}"
 
     def verify_manifest(self, man, leg, block):
+        arm = leg.get("arm") or self.arm_ids[0]
+        spec = self.spec_of(arm)
         why = []
         problems = self.lifecycle_problems()
         if problems:
@@ -1023,24 +1897,36 @@ class Chain:
             why.append(f"arm_identity_sha256: {(man.get('runtime') or {}).get('arm_identity_sha256')!r} != frozen "
                        f"{frozen_arm!r} for {self.arm_key(leg)}")
         rt, wk = man.get("runtime") or {}, man.get("worker")
-        chk = [("scaffold", rt.get("scaffold"), self.arm.label),
-               ("scaffold_policy_sha256", rt.get("scaffold_policy_sha256"), self.expected_policy),
+        chk = [("scaffold", rt.get("scaffold"), self.label_of(arm)),
+               ("scaffold_policy_sha256", rt.get("scaffold_policy_sha256"), self.policy_for(arm)),
                ("frozen_prompt_date", rt.get("frozen_prompt_date"), self.frozen),
                ("draft_kind", rt.get("draft_kind"), leg.get("draft_kind", "off")),
                ("seed_base", rt.get("seed_base"), leg["seed_base"]),
                ("lang", rt.get("lang"), leg["lang"]), ("model", man.get("model"), leg["model"]),
                ("sampling_profile", rt.get("sampling_profile", man.get("sampling_profile")), "deployed"),
                ("registry.sha256", (man.get("registry") or {}).get("sha256"), self.ops.overlay_sha())]
-        ident = co.runtime_identity(man)
-        for k in co.RUNTIME_PINNED:
-            if k in self.pinned:
-                chk.append((k, ident.get(k, "<absent>"), self.pinned[k]))
-        if self.pinned.get("serving_path") is not None:
-            chk.append(("git.serving_path", (man.get("git") or {}).get("serving_path"), self.pinned["serving_path"]))
+        frozen_snapshot = (self.snapshots.get(arm) or {}).get("sha256")
+        if frozen_snapshot is not None:
+            chk.append(("snapshot_sha256", rt.get("snapshot_sha256"), frozen_snapshot))
+        if self.per_arm:
+            chk += [("arm", rt.get("arm"), arm), ("epoch_id", rt.get("epoch_id"), self.epoch_id)]
+            if not spec.evidence_policy:
+                why.append(f"evidence_policy: the arm spec of {arm} states none")
+            else:
+                chk.append(("evidence_policy", rt.get("evidence_policy"), spec.evidence_policy))
+            if self.config.snapshot_complete_required and rt.get("snapshot_complete") is not True:
+                why.append("snapshot_complete: the arm's snapshot is incomplete (a real chain needs the registered epoch)")
+        pinned = self.pinned_for(arm)
+        ident = co.runtime_identity(man, None if spec is None else spec.runtime_pinned)
+        for k in self.runtime_pinned(arm):
+            if k in pinned:
+                chk.append((k, ident.get(k, "<absent>"), pinned[k]))
+        if pinned.get("serving_path") is not None:
+            chk.append(("git.serving_path", (man.get("git") or {}).get("serving_path"), pinned["serving_path"]))
         for k, got, want in chk:
             if got != want:
                 why.append(f"{k}: {got!r} != {want!r}")
-        if self.a.probe_code_sha is None and self.pinned.get("probe_code_sha256") is None and not rt.get("probe_code_sha256"):
+        if self.probe_code_arg(arm) is None and pinned.get("probe_code_sha256") is None and not rt.get("probe_code_sha256"):
             why.append("probe_code_sha256 absent")
         if not co.typed_worker(wk):
             why.append("worker identity untyped")
@@ -1053,8 +1939,11 @@ class Chain:
                 why.append("worker registry_sha256 differs from the overlay")
         if man.get("transport_abort"):
             why.append("manifest already records transport_abort")
-        why += [f"{f}_invalid" for f in co.malformed_identity(man)]
+        why += [f"{f}_invalid" for f in co.malformed_identity(man, spec)]
         return why
+
+    def probe_code_arg(self, arm):
+        return self.arm_arg("probe_code_sha", arm) if self.per_arm else self.a.probe_code_sha
 
     def _barrier(self, att, leg, block, st, t_spawn):
         mp = Path(leg["out"]).with_suffix(".manifest.json")
@@ -1065,6 +1954,7 @@ class Chain:
             pass
         if not man or not man.get("run_id") or man["run_id"] in self.seen_run_ids:
             return
+        arm = leg.get("arm") or self.arm_ids[0]
         why = self.verify_manifest(man, leg, block)
         self.seen_run_ids.add(man["run_id"])
         att["run_id"] = man["run_id"]
@@ -1072,14 +1962,17 @@ class Chain:
             st["reasons"] = why
             self.log(f"BARRIER MISMATCH {leg['stem']}: {'; '.join(why)} -- no ack")
             return
-        if self.a.probe_code_sha is None and self.pinned.get("probe_code_sha256") is None:
-            self.pinned["probe_code_sha256"] = (man["runtime"] or {}).get("probe_code_sha256")
-            self.log(f"pilot: probe_code_sha256 pinned from first manifest {self.pinned['probe_code_sha256']}")
+        pinned = self.pinned_by_arm[arm] if self.per_arm else self.pinned
         runtime = man["runtime"] or {}
-        if "generation_identity_sha256" not in self.pinned:       # P311-lite: the shared composite, at the first manifest
-            self.pinned["generation_identity_sha256"] = runtime.get("generation_identity_sha256")
-            self.log(f"generation_identity_sha256 pinned from first manifest {self.pinned['generation_identity_sha256']}")
-        if self.arm_key(leg) not in self.arms:                    # one arm identity per (model, predictor)
+        if self.probe_code_arg(arm) is None and pinned.get("probe_code_sha256") is None:
+            pinned["probe_code_sha256"] = runtime.get("probe_code_sha256")
+            self.log(f"pilot: probe_code_sha256 pinned from first manifest {pinned['probe_code_sha256']}")
+        if "generation_identity_sha256" not in pinned:            # P311-lite: the composite, at the arm's first manifest
+            pinned["generation_identity_sha256"] = runtime.get("generation_identity_sha256")
+            self.log(f"arm {arm}: generation_identity_sha256 frozen from first manifest {pinned['generation_identity_sha256']}"
+                     if self.per_arm else
+                     f"generation_identity_sha256 pinned from first manifest {pinned['generation_identity_sha256']}")
+        if self.arm_key(leg) not in self.arms:                    # one worker identity per (model, predictor)
             self.arms[self.arm_key(leg)] = runtime.get("arm_identity_sha256")
             self.log(f"arm {self.arm_key(leg)}: arm_identity_sha256 frozen from first manifest "
                      f"{self.arms[self.arm_key(leg)]}")
@@ -1088,13 +1981,18 @@ class Chain:
         Path(att["ack"]).write_text("ack\n")
         st["barrier_done"] = True
         att["worker_full"] = man["worker"]
+        if self.item_barrier_on(man, arm) and st.get("ctx"):
+            st["bar"] = self.new_barrier(st["ctx"]["rec"], st["ctx"]["inv"], st["ctx"]["base"], leg, block)
         self.log(f"BARRIER ok {leg['stem']} run_id={man['run_id']}: ack created")
 
     # -- supervise
+    def evidence_namespace(self, leg):
+        return self.specs[leg["arm"]].evidence_dir if self.per_arm else "opencode_transcripts"
+
     def evidence_root(self, leg, att):
         if not att.get("run_id"):
             return None
-        return Path(self.ops.wd) / self.evidence_namespace / leg["model"] / f"{Path(leg['out']).stem}.{att['run_id']}"
+        return Path(self.ops.wd) / self.evidence_namespace(leg) / leg["model"] / f"{Path(leg['out']).stem}.{att['run_id']}"
 
     def _signals(self, att, leg, block):
         """Activity inputs for the idle predicate and the escalation re-evaluation."""
@@ -1158,13 +2056,13 @@ class Chain:
             raise co.ChainAbort(f"probe pid {proc.pid} survived SIGKILL")
         st["base"], st["base_hb"] = cur, hb.line
 
-    def supervise(self, att, proc, leg, step, block):
+    def supervise(self, att, proc, leg, step, block, rec=None, inv=None, base=None):
         clock, tm = self.clock, self.tm
         t0 = clock()
         hb = Heartbeat(att["log"], clock, t0)
         idle = co.IdlePredicate(tm.idle_sample_s, tm.hb_age_s, tm.idle_needed)
         st = dict(barrier_done=False, reasons=None, cancel_at=None, tcoop=None, stage=0, deadline=None, base=None,
-                  stop=False, cancel_reason=None)
+                  stop=False, cancel_reason=None, bar=None, ctx=(dict(rec=rec, inv=inv, base=base) if rec is not None else None))
         halt = threading.Event()
 
         def loop():
@@ -1188,6 +2086,8 @@ class Chain:
                     self._barrier(att, leg, block, st, t0)
                     if st["reasons"] is not None:
                         self._cancel(att, st, "barrier mismatch", hb, leg, tcoop=tm.barrier_exit_wait_s)
+                if st["bar"] is not None and st["cancel_at"] is None:
+                    self.pump_barrier(st["bar"])
                 if st["cancel_at"] is None and self.stop_requested():
                     self._cancel(att, st, "STOP", hb, leg)
                 if st["cancel_at"] is None and st["barrier_done"] and now - last_idle >= tm.idle_sample_s:
@@ -1206,7 +2106,8 @@ class Chain:
             halt.set()
             th.join(5)
         state = "barrier_mismatch" if st["reasons"] else ("cancelled" if st["cancel_at"] is not None else "exited")
-        return dict(state=state, reasons=st["reasons"] or [], stop=st["stop"], cancel_reason=st["cancel_reason"])
+        return dict(state=state, reasons=st["reasons"] or [], stop=st["stop"], cancel_reason=st["cancel_reason"],
+                    hook=(st["bar"] or {}).get("stop"))
 
     # -- watcher
     def watch_rows(self, leg, step):

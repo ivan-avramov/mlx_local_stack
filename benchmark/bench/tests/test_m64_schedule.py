@@ -1,6 +1,6 @@
 """M64 spec 8.1: the seeded, permutation-balanced block schedule (`schedules.blocks`; P371 phase 3b moved its callers off
 `m64_schedule`, which is gone; the pinned golden values of the old builder are in
-`fixtures/p371_m64_schedule_golden.json`)."""
+`fixtures/p371_blocks_golden.json`)."""
 from __future__ import annotations
 
 import collections

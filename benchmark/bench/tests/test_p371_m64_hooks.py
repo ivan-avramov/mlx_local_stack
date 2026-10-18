@@ -6,6 +6,8 @@ per slot = the latest non-cheat attempt; a re-run is a one-slot `rerun` invocati
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,7 +17,7 @@ from bench import chain_core as core
 from bench import chain_hooks as ch
 from bench import chain_rows as cr
 from bench.tests.m64_support import (  # noqa: F401  (fixture: env)
-    FAP, PICK1, PICK2, SMOKE, Crash, arg, calls, chain_json, env, invocations, kill_probes, log_has, run, schedule)
+    FAP, PICK1, PICK2, REPO, SMOKE, Crash, arg, calls, chain_json, env, invocations, kill_probes, log_has, run, schedule)
 
 EPOCH = FAP.epoch_for(["oc"])
 
@@ -92,7 +94,7 @@ def test_before_and_after_hooks_see_every_slot_in_order_with_the_done_record(env
 
 def test_the_item_barrier_is_answered_only_when_the_manifest_says_it_is_on(env, monkeypatch):
     import dataclasses
-    off = dict(arm_specs.OC.evidence_policy, item_barrier="off")
+    off = dict(arm_specs.OC.evidence_policy, namespace="transcripts/pi", item_barrier="off")
     monkeypatch.setitem(arm_specs.SPECS, "pi", dataclasses.replace(arm_specs.SPECS["pi"], evidence_policy=off))
     hooks = Script()
     argv = ["chain", "s1", "--smoke", "--arms", "pi", "--probe-code-sha", "pi=" + "9" * 64]
@@ -176,7 +178,8 @@ def test_the_cheat_attempts_row_is_an_attempt_record_never_a_scored_row(env):
     t = table(env)
     assert t.scored[target].file.endswith("L0.rerun.a2.jsonl")
     assert t.attempts[target][0].row is not None and t.attempts[target][0].file.endswith("L0.block.a1.jsonl")
-    assert sum(1 for s in t.scored.values() if s.file and "L0.block.a1" in s.file) == 1          # only slot 1 from the stopped file
+    stopped = f"{PICK1}.s1.oc_python.L0.block.a1"
+    assert sum(1 for s in t.scored.values() if s.file and stopped in s.file) == 1                 # only slot 1 from the stopped file
 
 
 def test_two_further_cheats_exhaust_the_slot_and_score_its_latest_attempt_as_a_strict_fail(env):
@@ -328,7 +331,7 @@ def test_a_pre_spawn_incident_twice_in_one_slot_is_a_transport_dnf_row(env):
     assert [i["attempt"] for i in cj["incidents"]] == [1, 2]
     t = table(env)
     assert t.scored[target].source == "dnf" and len(t.scored) == 16 and t.open_pre_spawn == []
-    assert [r["phase"] for r in cj["progress"]["invocations"][:3]] == ["block", "retry", "retry"]
+    assert [r["phase"] for r in cj["progress"]["invocations"][:3]] == ["block", "retry", "block"]   # after the DNF the head is slot 3
 
 
 def test_a_crash_after_the_pre_spawn_record_is_persisted_replays_the_retry_once(env, monkeypatch):
@@ -354,3 +357,15 @@ def test_a_crash_after_the_pre_spawn_record_is_persisted_replays_the_retry_once(
     assert len(t.scored) == 16 and t.open_pre_spawn == [] and len(t.attempts[slot(items[0])]) == 1
     retries = [i for i in cj["progress"]["invocations"] if i["phase"] == "retry"]
     assert len(retries) == 1 and retries[0]["expected_slots"][0] == target and retries[0]["status"] == "validated"
+
+
+def test_the_chain_side_modules_are_in_no_probe_entry_closure():
+    code = ("import sys; sys.path.insert(0, '.'); from bench import identity_closure as ic; from pathlib import Path; "
+            "R = Path('..').resolve(); "
+            "names = {p.name for e in ('benchmark/run_tg1_probe.py', 'benchmark/run_oc_probe.py') "
+            "for p in ic.python_closure(R / e, R)}; "
+            "print(sorted(names & {'chain_core.py', 'chain_incident.py', 'chain_hooks.py', 'web_evidence.py', 'chain_rows.py', "
+            "'schedules.py', 'campaign_core.py'}))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=REPO / "benchmark", capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "[]"

@@ -91,12 +91,8 @@ def test_leg_attempt_file_names():
 
 
 def test_slot_for_is_the_m64_slot_key():
-    from importlib import util
-    spec = util.spec_from_file_location("m64chain_p371", REPO / "benchmark/chains/m64/run_m64_chain.py")
-    sys.path[:0] = [str(REPO / "benchmark"), str(REPO / "benchmark/chains/c147")]
-    mod = util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert cr.slot_for("e|oc|P|s1|python", "python/foo") == mod.slot_key("e", "oc", "P", "s1", "python", "foo")
+    from bench import chain_core
+    assert cr.slot_for("e|oc|P|s1|python", "python/foo") == chain_core.slot_key("e", "oc", "P", "s1", "python", "foo")
 
 
 def test_a_progress_document_with_a_malformed_record_is_refused(chain):

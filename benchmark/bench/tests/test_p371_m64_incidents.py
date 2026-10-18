@@ -57,7 +57,8 @@ def test_a_first_transport_failure_recovers_the_worker_and_retries_the_same_slot
     assert arg(inv[1]["argv"], "--items").split(",") == cell[1:] and arg(inv[1]["argv"], "--attempt") == "2"
     assert arg(inv[1]["argv"], "--out").endswith("L0.retry.a2.jsonl") and arg(inv[1]["argv"], "--expect-items") == ",".join(
         "python/" + n for n in cell[1:])
-    recs = [r for r in cj["progress"]["invocations"] if r["file"].endswith(("L0.block.a1.jsonl", "L0.retry.a2.jsonl"))]
+    recs = [r for r in cj["progress"]["invocations"]
+            if r["file"].endswith((f"{PICK1}.s1.oc_python.L0.block.a1.jsonl", f"{PICK1}.s1.oc_python.L0.retry.a2.jsonl"))]
     assert [(r["phase"], r["status"]) for r in recs] == [("block", "partial_incident"), ("retry", "validated")]
     assert len(recs[0]["accepted_slots"]) == 1 and len(recs[0]["expected_slots"]) == 3 and recs[0]["sha256"]
     t = table(env)

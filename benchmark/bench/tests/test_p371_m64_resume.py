@@ -153,3 +153,31 @@ def test_the_progress_cursor_is_consistent_or_the_resume_refuses(env):
     doc["progress"]["loads"][0]["cursor"] = {"leg_index": 99, "phase": "block"}      # ahead of every scored slot
     path.write_text(json.dumps(doc))
     assert run(env, SMOKE) == 2 and log_has(env, "cursor")
+
+
+class StopAt(ch.ChainHooks):
+    """Writes the STOP latch at the n-th `before_attempt` call (and accepts)."""
+
+    def __init__(self, env, n):
+        self.env, self.n, self.calls = env, n, 0
+
+    def before_attempt(self, slot):
+        self.calls += 1
+        if self.calls == self.n:
+            (self.env["out"] / "STOP").write_text("x")
+        return ch.Disposition.accept()
+
+
+def test_a_stop_in_the_middle_of_a_leg_archives_only_that_invocation_and_the_resume_reruns_it(env):
+    assert run(env, SMOKE, hooks=StopAt(env, LEG3_SLOT2)) == 3
+    cj = chain_json(env)
+    stopped = list((env["out"] / "s1" / "stopped").glob("*/*"))
+    assert stopped and all(".oc_go.L0.block." in p.name for p in stopped)             # only the stopped invocation's files
+    live = sorted(p.name for p in (env["out"] / "s1").glob("*.jsonl"))
+    assert [n for n in live if ".oc_python." in n] and not [n for n in live if ".oc_go." in n]
+    statuses = {i["status"] for i in cj["progress"]["invocations"] if ".oc_go.L0.block." in i["file"]}
+    assert statuses == {"quarantined"} and len(table(env).scored) == 4                 # the partial rows are not scored
+    (env["out"] / "STOP").unlink()
+    before = len(invocations(env))
+    assert run(env, SMOKE) == 0
+    assert len(table(env).scored) == 16 and len(invocations(env)) - before == 6        # go b0, go b1, then PICK2's four legs - python's two kept

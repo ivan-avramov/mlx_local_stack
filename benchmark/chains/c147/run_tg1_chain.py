@@ -83,9 +83,9 @@ def tg1_config(a):
 class Chain(core.Chain):
     """The tg1 chain with the pre-P371 constructor (`Chain(args, ops, timers, log, names, out_root, lifecycle_files)`)."""
 
-    def __init__(self, args, ops, timers, log, names, out_root, lifecycle_files_=None, campaign=None):
+    def __init__(self, args, ops, timers, log, names, out_root, lifecycle=None, campaign=None):
         super().__init__(tg1_config(args), args, ops, timers, log, repo=REPO, out_root=out_root, names=names,
-                         lifecycle_files=lifecycle_files_ if lifecycle_files_ else lifecycle_files(REPO),
+                         lifecycle_files=lifecycle if lifecycle else lifecycle_files(REPO),
                          campaign=campaign if campaign is not None else campaign_core.Campaign(REPO, **CORE_SPECS))
 
 

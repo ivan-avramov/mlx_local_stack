@@ -66,8 +66,9 @@ def epoch_for(arms):
 
 
 def evidence_policy(arm):
-    spec = arm_specs.SPECS.get(arm) or OC
-    return dict(spec.evidence_policy, item_barrier=os.environ.get("FAKE_ITEM_BARRIER", spec.evidence_policy["item_barrier"]))
+    spec = arm_specs.SPECS.get(arm) or OC                      # the probe process only knows the real `oc` spec
+    return dict(spec.evidence_policy, namespace="transcripts/" + arm,
+                item_barrier=os.environ.get("FAKE_ITEM_BARRIER", spec.evidence_policy["item_barrier"]))
 
 
 def build_manifest(arm, label, model, lang, seed_base, worker, run_id, epoch_id, frozen, override=None):

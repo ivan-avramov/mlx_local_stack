@@ -10,7 +10,8 @@ next action); an unregistered rows file is an error. Record shapes (`validate_pr
                              sha256, load_gen, slot_base, [rerun_index], [hook_stop], [status archived after restart_load]}
                             status running | validated | partial_incident | hook_stopped | quarantined | archived
     progress.slot_attempts[] {slot, rerun_index, disposition accepted|cheat|unclear|exhausted, load_gen,
-                             [output_tokens], [status archived]}        (persisted BEFORE `.stop`, so cheat tokens survive)
+                             [output_tokens], [invocation], [status archived]}   (persisted BEFORE `.stop`, so cheat tokens
+                             survive; an accepted / exhausted one of a still `running` invocation is provisional: not read)
     progress.pre_spawn[]    {slot, disposition pre_spawn_incident, cause, load_gen, [status archived]}
     dnf[]                   chain.json copy of the synthetic transport_dnf rows (sidecar `<stem>.dnf.jsonl` must equal it)
 
@@ -37,8 +38,8 @@ Consumers (R7, migrated in phase 3a; `test_p371_r7_consumers.py` scans for direc
  - benchmark/results/m61_rr/rr_report.py  the M61 rerun chain (`legacy_path` layout `m61rr`)
  - benchmark/chains/m59/m59_report.py  the M59 chain out-root (`legacy_path` layouts `m59` / `m59flat`)
  - benchmark/m64/power_sim.py  stored P223 / c144-base rows
- - benchmark/chains/m64/run_m64_chain.py  M64 chain: moves onto the shared core and `chain_rows` in phase 3b
- - benchmark/chains/m64/fake_arm_probe.py  M64 probe writer fake: follows the M64 layout in phase 3b
+ - benchmark/chains/m64/run_m64_chain.py  thin entry of the shared core (phase 3b): names no rows file; the core reads through here
+ - benchmark/chains/m64/fake_arm_probe.py  M64 probe writer fake (fresh file per invocation, no reads) of the M64 layout
 Non-chain readers that stay as they are: benchmark/chains/c147/run_inject.py and benchmark/m62/inject_verify.py (inject runs),
 benchmark/chains/m62/run_m62_live.py (its own live rows), benchmark/m1/* (per-model results rows), the frozen M55 / M59 / M61
 runners and the M55 report (their own dirs, legacy). The probe no longer reads rows at all (probe-level resume is gone)."""
@@ -82,6 +83,15 @@ def rows_name(stem, leg, phase, attempt):
 
 def manifest_name(stem, leg, phase, attempt):
     return rows_name(stem, leg, phase, attempt)[:-len(".jsonl")] + ".manifest.json"
+
+
+def dnf_name(stem):
+    """The sidecar of a leg's synthetic `transport_dnf` rows (`<stem>.dnf.jsonl`, next to its rows files)."""
+    return f"{stem}.dnf.jsonl"
+
+
+def dnf_path(root, session, stem):
+    return Path(root) / session / dnf_name(stem)
 
 
 def slot_for(base, row_id):
@@ -297,7 +307,7 @@ def _dnf_rows(doc, root):
         if r["slot"] in by_slot:
             _fail(f"duplicate dnf row for slot {r['slot']}")
         by_slot[r["slot"]] = r
-        sidecars.setdefault(Path(root) / session / f"{pick}.{session}.{arm}_{lang}.dnf.jsonl", {})
+        sidecars.setdefault(dnf_path(root, session, f"{pick}.{session}.{arm}_{lang}"), {})
     root_ = Path(root)
     for extra in sorted(root_.glob("*/*.dnf.jsonl")) if root_.is_dir() else []:
         sidecars.setdefault(extra, {})
@@ -313,7 +323,7 @@ def _dnf_rows(doc, root):
             side_all[s] = r
     for s, r in by_slot.items():
         parts = s.split("|")
-        path = root_ / parts[3] / f"{parts[2]}.{parts[3]}.{parts[1]}_{parts[4]}.dnf.jsonl"
+        path = dnf_path(root_, parts[3], f"{parts[2]}.{parts[3]}.{parts[1]}_{parts[4]}")
         if s not in sidecars.get(path, {}):
             _fail(f"dnf row {s} has no sidecar record in {path.name}")
         if json.dumps(sidecars[path][s], sort_keys=True) != json.dumps(r, sort_keys=True):
@@ -350,9 +360,12 @@ def load_slots(chain_doc, root, *, check_unregistered=True):
             attempts[(slot, rindex)] = AttemptRow(rindex, r, rec["file"], "accepted",
                                                   r.get("output_tokens") if _is_int(r.get("output_tokens")) else None)
     seen = set()
+    running = {r["file"] for r in invocations if r["status"] == "running"}
     for rec in progress["slot_attempts"]:
         if rec.get("status") == "archived":
             continue
+        if rec.get("invocation") in running and rec["disposition"] in ("accepted", "exhausted"):
+            continue                       # decided at the item barrier but its rows are not counted yet (provisional)
         key = (rec["slot"], rec["rerun_index"])
         if key in seen:
             _fail(f"duplicate slot attempt record for {key[0]} (re-run index {key[1]})")

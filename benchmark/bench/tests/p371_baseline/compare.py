@@ -26,7 +26,9 @@ rejoined with the preceding pilot invocation of the same stem (sorted union = th
 `.L<leg>.<phase>.a<n>` coordinates inside an evidence directory name (`<stem>.<run id>`) are dropped; (4) the START
 milestone's item count of a full invocation adds the pilot's; (5) an ARCHIVED leg (`incomplete/`, `stopped/`) keeps only
 its last invocation's manifest (the old shared manifest file held the last writer's; the old harness could not capture the
-pilot-step manifest of an archived leg). Anything else that differs stays a difference."""
+pilot-step manifest of an archived leg). P371 phase 3b (A10, a P379 addendum): the probe's `--a4-v2-receipt` value maps from
+`<out_root>/a4/<load>.<worker_n>.<arm>.json` (new) and `.../session_gate/a4_v2_latest.json` (old) onto one token, and the new
+side's `a4/<load>.<worker_n>.<arm>.json` files are not extras; every other path shape stays a difference."""
 from __future__ import annotations
 
 import copy
@@ -159,7 +161,12 @@ NEW_FILE = re.compile(rf"^{STEM}\.L(?P<leg>\d+)\.(?P<phase>pilot|full|block|reru
                       r"(?P<ext>jsonl|manifest\.json|json|log|CANCEL|ACK)$")
 ATTEMPT_OUT = re.compile(r"\.L\d+\.(?P<phase>pilot|full|block|rerun|retry)\.a(?P<n>\d+)\.jsonl$")
 ARCHIVED = ("/incomplete/", "/stopped/")
+A4_NEW = re.compile(r"^a4/\d+\.\d+\.[a-z0-9]+\.json$")        # the chain's immutable per-load A4 receipt (P371 3b, A10)
 TOK = [
+    # A10 (P379 addendum): the probe's `--a4-v2-receipt` was the gate's shared latest receipt; it is now the chain's
+    # immutable `<out_root>/a4/<load>.<worker_n>.<arm>.json`. Both exact path shapes map to one token, nothing else does.
+    (re.compile(r"[^\s\"']*/a4/\d+\.\d+\.[a-z0-9]+\.json"), "<A4-RECEIPT>"),
+    (re.compile(r"[^\s\"']*/session_gate/a4_v2_latest\.json"), "<A4-RECEIPT>"),
     (re.compile(r"\.L\d+\.(?:pilot|full|block|rerun|retry)\.a\d+(?=\.<run-\d+>)"), ""),
     (re.compile(r"\.attempt(\d+)\.(json|log|CANCEL|ACK)\b"), r".A\1.\2"),
     (re.compile(r"\.L\d+\.(?:pilot|full|block|rerun|retry)\.a(\d+)\.(json|log|CANCEL|ACK)\b"), r".A\1.\2"),
@@ -310,6 +317,8 @@ def _parsed(result):
         if m:
             slot = parsed.setdefault((d, m["stem"]), {}).setdefault("new", {}).setdefault(int(m["n"]), {"phase": m["phase"]})
             slot[m["ext"]] = entry
+            continue
+        if A4_NEW.match(rel):                         # the new side's receipt copies (explained by the rule above)
             continue
         extras[rel] = entry
     return parsed, extras

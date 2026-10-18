@@ -414,7 +414,7 @@ def test_a_matching_campaign_core_is_recorded_and_the_chain_runs(env):
 
 def test_without_the_flag_the_campaign_core_is_recorded_as_null(env):
     assert run(env, PILOT) == 0
-    assert chain_json(env)["artifacts"] == {"campaign_core": None}
+    assert chain_json(env)["artifacts"] == {"campaign_core": None, "contract": {}}
 
 
 @pytest.mark.parametrize("which", ["probe_closure_sha256", "chain_closure_sha256"])
@@ -539,7 +539,9 @@ def test_tg1_refuses_a_snapshot_that_changed_between_legs_or_during_the_chain(en
     assert rc == 2 and log_has(env, "snapshot_sha256")
     env2 = dict(env, out=env["wd"] / "c147-x", lines=[])
     ops = env["ops"]
-    ops.on_unload = lambda: ops.extra_env.update(FAKE_SNAPSHOT_SALT="late") if len(ops.names("unload")) >= 2 else None
+    ops.extra_env.pop("FAKE_MANIFEST_OVERRIDE")
+    base = len(ops.names("unload"))
+    ops.on_unload = lambda: ops.extra_env.update(FAKE_SNAPSHOT_SALT="late") if len(ops.names("unload")) >= base + 2 else None
     assert run(env2, CHAIN) == 2 and any("snapshot" in ln and "exit" in ln for ln in env2["lines"])
 
 

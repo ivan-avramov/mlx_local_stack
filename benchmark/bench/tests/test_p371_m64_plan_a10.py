@@ -44,6 +44,8 @@ def run_chain(env, chain, timeout=120):
     if th.is_alive():
         env["ops"].cancel()
         pytest.fail("chain did not finish: " + "\n".join(env["lines"][-10:]))
+    if res["rc"] not in (0, 3):
+        print("\n".join(env["lines"][-25:]))
     return res["rc"]
 
 
@@ -123,7 +125,8 @@ def test_a_tg2_tier_chain_records_the_draw_sha_and_tier_in_schedule_json_and_the
     assert cj["chain_config"]["schedule"]["draw_sha256"] == draw_sha(tg2["doc"]) and cj["chain_config"]["schedule"]["tier"] == "screen"
     assert cj["schedule_sha256"] == schedules.schedule_sha256(sched)
     legs = schedules.legs(sched)
-    assert len(legs) == 4 and cj["realized"] == [schedules.leg_key(l) for l in legs]
+    assert len(legs) == 4                                        # each frozen cell runs once per pick: the realized key adds the model
+    assert cj["realized"] == [schedules.leg_key(l) + [pick] for pick in (PICK1, PICK2) for l in legs]
     t = cr.load_slots(cj, tg2["out"])
     assert len(t.scored) == 2 * 4 * 10 and {s.split("|")[4] for s in t.scored} == set(LANGS4)
 
@@ -206,15 +209,17 @@ def test_an_existing_receipt_path_is_never_overwritten(env):
 
 def test_a_receipt_changed_after_the_gate_aborts_before_the_next_launch(env):
     ops = env["ops"]
-    original = ops.a4_gate
+    original = ops.search_restart
+    seen = {"n": 0}
 
-    def gate(model, tag, scaffold=None):
-        if model == PICK2:
-            (env["out"] / "a4" / "0.0.oc.json").write_text("{}")
-        return original(model, tag, scaffold)
-    ops.a4_gate = gate
+    def restart(leg):
+        seen["n"] += 1
+        if seen["n"] == 5:                                       # the first launch of the second load: its receipt is replaced
+            (env["out"] / "a4" / "1.0.oc.json").write_text("{}")
+        return original(leg)
+    ops.search_restart = restart
     assert run(env, SMOKE) == 2 and log_has(env, "A4 receipt") and log_has(env, "sha256")
-    assert len(invocations(env)) == 4
+    assert len(invocations(env)) == 5
 
 
 def test_a_gate_that_leaves_no_receipt_aborts(env):

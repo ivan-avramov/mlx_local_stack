@@ -1,8 +1,9 @@
-"""P371 (plan 3.1, 4 A1 / A8): pure, hashed schedule builders. Absorbs `m64_schedule` (which stays untouched until phase 3
-switches its callers). No corpus, adapter, client or process import; entries inject the item lists.
+"""P371 (plan 3.1, 4 A1 / A8): pure, hashed schedule builders. Absorbed the retired M64 block-schedule module (its callers moved
+here in phase 3b; pinned golden values in `tests/fixtures/p371_blocks_golden.json`). No corpus, adapter, client or
+process import; entries inject the item lists.
 
 - `blocks(arms, names, ...)`: M64 spec 8.1 (seeded order, blocks of 3, balanced arm permutations, reload control) over
-  ANY language list; for the tg1 corpus it reproduces `m64_schedule.build` EXACTLY (same dict, same sha256).
+  ANY language list; for the tg1 corpus it reproduces the retired M64 builder EXACTLY (same dict, same sha256).
 - `tg1(mode, sessions, names, ...)`: `run_tg1_chain.schedule` / `make_leg` / `steps_for` semantics, but every leg carries
   DISJOINT invocations (P376): a leg's pilot invocation runs the 5 seeded pilot items and its full invocation the
   cell's REMAINING items (today's full step re-launches all items and the probe skips the pilot rows). The seeded pilot
@@ -25,7 +26,7 @@ import random
 from .token_turn_gate import TransportAbort
 
 SCHEMA = 1
-# ---- blocks (copies of m64_schedule's constants; equality is tested)
+# ---- blocks (the retired M64 builder's constants; pinned by the golden fixture)
 BLOCK_SIZE = 3
 SESSION_SEEDS = {"s1": 1001, "s2": 2002}
 RELOAD_SEED = 1001
@@ -44,6 +45,11 @@ TG2_SEED = 6501
 TG2_TIERS = {"screen": 10, "decider": 20}
 TG2_SESSIONS = {"screen": ("s1",), "decider": ("s1", "s2", "reload")}
 TG2_RELOAD_ITEMS = 5
+
+
+def flat_stem(model, session, lang):
+    """The leg stem of the flat (tg1 / tg2) layout: `<model>.<session>.opencode_<lang>` (rows files are `<stem>.L<leg>...`)."""
+    return f"{model}.{session}.opencode_{lang}"
 
 
 def _rng(kind, seed, pick, lang):

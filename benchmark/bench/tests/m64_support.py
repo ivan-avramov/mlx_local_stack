@@ -166,6 +166,8 @@ def run(env, argv, *, timers=None, plan=None, extra_env=None, timeout=120, lifec
         pytest.fail("runner did not finish: " + "\n".join(env["lines"][-15:]))
     if "exc" in res:
         raise res["exc"]
+    if res["rc"] not in (0, 3):                                      # shown by pytest when the test then fails
+        print("\n".join(env["lines"][-25:]))
     return res["rc"]
 
 
@@ -209,4 +211,11 @@ SMOKE3 = ["chain", "s1", "--smoke", "--arms", "oc,pi,dsh", "--probe-code-sha", "
 
 
 def schedule(env):
-    return json.loads((env["out"] / "schedule.json").read_text())
+    """The chain's frozen schedule.json, or (before the chain ran) the one a SMOKE s1 chain of `oc` will freeze."""
+    path = env["out"] / "schedule.json"
+    if path.exists():
+        return json.loads(path.read_text())
+    from bench import schedules
+    items = json.loads(Path(env["uni"]).read_text())["items"]
+    names = {lang: sorted(k.split("/", 1)[1] for k in items if k.startswith(lang + "/")) for lang in ("python", "go")}
+    return schedules.blocks(["oc"], names, picks=(PICK1, PICK2), sessions=["s1"], reload_control=False, smoke=True)

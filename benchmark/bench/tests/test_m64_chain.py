@@ -63,7 +63,7 @@ def test_the_entry_is_thin_no_chain_logic_no_base_inheritance_no_reexports():
                         ).snapshot_complete_required is True
 
 
-def test_the_chain_config_excludes_run_selection_but_not_the_arms():
+def test_the_chain_config_excludes_run_selection_but_not_the_arms(env):
     base = M.m64_config(M.parse_args(SMOKE)).as_dict()
     assert M.m64_config(M.parse_args(["chain", "s1", "s2", "--smoke", "--arms", "oc", "--probe-code-sha",
                                       "oc=" + "9" * 64])).as_dict() == base
@@ -226,10 +226,11 @@ def test_an_incomplete_snapshot_is_refused_outside_smoke_at_entry_and_allowed_in
     assert run(env, SMOKE, extra_env={"FAKE_SNAPSHOT_COMPLETE": "0"}) == 0
     assert chain_json(env)["snapshots"]["oc"]["complete"] is False
     env2 = dict(env, out=tmp_path / "m64", lines=[])
+    routers = len(calls(env, "start_router"))
     rc = run(env2, ["chain", "s1", "--arms", "oc", "--probe-code-sha", "oc=" + "9" * 64],
              extra_env={"FAKE_SNAPSHOT_COMPLETE": "0"})
     assert rc == 2 and any("snapshot" in ln and "incomplete" in ln for ln in env2["lines"])
-    assert not (tmp_path / "m64" / "chain.json").exists() and not calls(env2, "start_router")
+    assert not (tmp_path / "m64" / "chain.json").exists() and len(calls(env, "start_router")) == routers
     assert not list((tmp_path / "m64").glob("s1/*"))
 
 
@@ -335,7 +336,7 @@ def test_a_stop_latch_exits_3_and_a_rerun_resumes_at_the_first_load_not_complete
     ops.unload = unload
     assert run(env, SMOKE) == 3
     cj = chain_json(env)
-    assert [l["status"] for l in cj["progress"]["loads"]] == ["done"] and cj["stop"]["where"]
+    assert [l["status"] for l in cj["progress"]["loads"]] == ["done", "pending"] and cj["stop"]["where"]    # STOP at the boundary
     (env["out"] / "STOP").unlink()
     ops.unload = orig
     before = len(invocations(env))

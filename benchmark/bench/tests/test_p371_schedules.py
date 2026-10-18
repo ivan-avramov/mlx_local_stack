@@ -55,7 +55,7 @@ def test_the_module_is_pure():
 
 
 # ---------------------------------------------------------------- blocks == the pre-3b m64_schedule.build (pinned golden)
-GOLDEN = json.loads((REPO / "benchmark/bench/tests/fixtures/p371_m64_schedule_golden.json").read_text())["cases"]
+GOLDEN = json.loads((REPO / "benchmark/bench/tests/fixtures/p371_blocks_golden.json").read_text())["cases"]
 CASES = {"default": dict(), "smoke": dict(smoke=True), "no_reload": dict(reload_control=False),
          "s1_only": dict(sessions=("s1",)), "arms_oc_pi": dict(arms=("oc", "pi")), "arms_oc": dict(arms=("oc",))}
 

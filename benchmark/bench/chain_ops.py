@@ -246,6 +246,7 @@ class ChainOps:
         self.parents = parents or default_parents
         self.killpg = killpg or os.killpg
         self.router = None          # identities of what THIS process started: {pid, create_time, spawned: {pid, create_time}}
+        self.router_config_sha = None
         self.worker_started = None
 
     # -- environment
@@ -394,6 +395,7 @@ class ChainOps:
                          f"descendant; foreign (diagnostic only), nothing recorded as own")
                 raise ChainAbort(f"TRIPWIRE: :8000 listener {pid} not owned by the router this process spawned")
             self.router = {"pid": pid, "create_time": self.create_time(pid), "spawned": spawned}    # ours from here on
+            self.router_config_sha = file_sha(self.overlay)
             e = self.proc_env(pid)
             probs = (["not mlx-serve"] if "mlx-serve" not in e else []) + env_tripwires(e, self.overlay)
             cwd = self.sh(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"]).stdout
@@ -407,6 +409,18 @@ class ChainOps:
             self.router = None
             self._reap_spawned(spawned)
             raise
+
+    def router_ok(self):
+        """A6 (P371 3b): the router THIS process started is still the same process (pid + create_time), still the sole owner
+        of :8000, and still serves the config it started with (the overlay's sha256). Any doubt is False."""
+        if self.router is None or not self._alive(self.router):
+            return False
+        try:
+            if self.listeners() != [self.router["pid"]]:
+                return False
+        except Exception:  # noqa: BLE001
+            return False
+        return file_sha(self.overlay) == getattr(self, "router_config_sha", None)
 
     def _reap_spawned(self, spawned):
         """Refusal path: stop the process WE spawned (own session, start_new_session=True), never a foreign pid."""

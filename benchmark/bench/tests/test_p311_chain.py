@@ -308,7 +308,7 @@ def test_the_expected_policy_sha_is_derived_from_the_probes_print_identity_and_f
     cj = chain_json(env)
     assert cj["policy_sha256"] == FP.CAMPAIGN == cj["pinned"]["scaffold_policy_sha256"]
     calls = identity_calls(env)
-    assert len(calls) == 1 and "--universe" in calls[0]["argv"]
+    assert len(calls) == 2 and all("--universe" in c["argv"] for c in calls)        # entry + the A5 exit re-run (snapshot)
     assert calls[0]["argv"][calls[0]["argv"].index("--universe") + 1] == str(env["uni"].resolve())
     assert len(invocations(env)) == 6                               # print-identity is not a generation attempt
 
