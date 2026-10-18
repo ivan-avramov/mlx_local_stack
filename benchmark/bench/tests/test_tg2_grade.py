@@ -878,6 +878,74 @@ def test_s5_prerelease_and_build_metadata_follow_cargo_semver_rules(req, version
     assert tg.cargo_req_matches(req, version) is ok
 
 
+def _locks_dir(tmp_path, extra=None):
+    d = tmp_path / "locks"
+    for rel, versions in {"a/Cargo.lock": ["1.2.3"], "b/nested/deeper/Cargo.lock": ["0.4.0"]}.items():
+        (d / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / rel).write_text("".join('[[package]]\nname = "demo"\nversion = "%s"\nsource = "registry+x"\n\n' % v
+                                     for v in versions))
+    for rel, text in (extra or {}).items():
+        (d / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / rel).write_text(text)
+    return d
+
+
+def _pin(tmp_path, monkeypatch, d):
+    pin = tmp_path / "IMAGE_ID"
+    pin.write_text("sha256:" + "0" * 64 + "\ncargo_locks_sha256=%s\n" % tg.cargo_locks_sha256(d))
+    monkeypatch.setattr(tg, "RUST_LOCKS_DIR", d)
+    monkeypatch.setattr(tg, "IMAGE_ID_FILE", pin)
+    return pin
+
+
+def test_s6_the_real_committed_locks_hash_equals_the_image_pin():
+    assert tg.cargo_locks_sha256() == tg.image_record()["cargo_locks_sha256"]
+    assert len(tg.rust_lock_files()) == 33 and "_allowlist/Cargo.lock" in tg.rust_lock_files()
+
+
+def test_s6_the_walk_is_recursive_and_the_vendored_set_comes_from_every_lock(tmp_path, monkeypatch):
+    d = _locks_dir(tmp_path)
+    _pin(tmp_path, monkeypatch, d)
+    assert tg.rust_lock_files(d) == ["a/Cargo.lock", "b/nested/deeper/Cargo.lock"]
+    assert tg.vendored_versions() == {"demo": ["0.4.0", "1.2.3"]}
+
+
+def test_s6_a_lock_that_differs_from_the_image_pin_is_refused(tmp_path, monkeypatch):
+    d = _locks_dir(tmp_path)
+    _pin(tmp_path, monkeypatch, d)
+    (d / "a/Cargo.lock").write_text((d / "a/Cargo.lock").read_text().replace("1.2.3", "9.9.9"))
+    with pytest.raises(TransportAbort, match="cargo_locks_sha256"):
+        tg.vendored_versions()
+    with pytest.raises(TransportAbort):
+        tg.cargo_manifest_reasons(BASE, BASE + 'regex = "1"\n')
+
+
+def test_s6_an_added_or_removed_lock_changes_the_hash_and_is_refused(tmp_path, monkeypatch):
+    d = _locks_dir(tmp_path)
+    _pin(tmp_path, monkeypatch, d)
+    (d / "c").mkdir()
+    (d / "c/Cargo.lock").write_text("")
+    with pytest.raises(TransportAbort, match="cargo_locks_sha256"):
+        tg.vendored_versions()
+    (d / "c/Cargo.lock").unlink()
+    (d / "a/Cargo.lock").unlink()
+    with pytest.raises(TransportAbort, match="cargo_locks_sha256"):
+        tg.vendored_versions()
+
+
+def test_s6_in_a_git_tree_an_untracked_lock_is_refused(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    d = _locks_dir(repo)
+    for args in (["init", "-q"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "c"]):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    _pin(tmp_path, monkeypatch, d)
+    assert tg.rust_lock_files(d) == ["a/Cargo.lock", "b/nested/deeper/Cargo.lock"]
+    (d / "c").mkdir()
+    (d / "c/Cargo.lock").write_text("")
+    with pytest.raises(TransportAbort, match="untracked|tracked"):
+        tg.rust_lock_files(d)
+
+
 def test_s2_vendored_versions_come_from_the_image_locks_and_cover_every_allowlisted_crate():
     v = tg.vendored_versions()
     assert {"0.8.8", "0.10.3", "0.3.23"} <= set(v["rand"]) and {"0.5.7", "0.7.1"} <= set(v["counter"])

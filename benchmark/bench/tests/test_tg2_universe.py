@@ -212,7 +212,11 @@ def rec(item, status="valid", reason=""):
 def test_s3_fingerprint_names_corpus_image_grader_materializer_and_policy():
     fp = U.fingerprint(**ID)
     assert fp == dict(polyglot_sha="p" * 40, image_id="sha256:" + "a" * 64, grader_version=tg.VERSION,
-                      materializer_version=mat.VERSION, policy=fp["policy"]) and len(fp["policy"]) == 64
+                      materializer_version=mat.VERSION, policy=fp["policy"], cargo_locks_sha256=fp["cargo_locks_sha256"]) and len(fp["policy"]) == 64
+
+
+def test_s6_fingerprint_carries_the_verified_cargo_locks_hash():
+    assert U.fingerprint(**ID)["cargo_locks_sha256"] == tg.image_record()["cargo_locks_sha256"]
 
 
 @pytest.mark.parametrize("attr,value", [("PIDS_LIMIT", 1), ("NOFILE_LIMIT", 1), ("FSIZE_LIMIT", 1), ("TIMEOUT_FLOOR", 1),
