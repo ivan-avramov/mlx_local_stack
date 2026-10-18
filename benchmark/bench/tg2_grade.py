@@ -14,9 +14,10 @@ stdout/stderr and timing retained by sha256. Outcome classes:
 from __future__ import annotations
 from dataclasses import dataclass, field
 import fnmatch
+import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import posixpath
 import re
 import secrets
@@ -89,21 +90,69 @@ def rust_disclosure_line():
 _DEP_KEYS = {"version", "features", "default-features"}
 
 
+def image_record():
+    """IMAGE_ID metadata: {key: value} for the `key=value` lines after the pinned image id."""
+    try:
+        lines = IMAGE_ID_FILE.read_text().splitlines()[1:]
+    except OSError as exc:
+        raise TransportAbort("tg2 image id pin missing: %s" % exc) from exc
+    return dict(line.split("=", 1) for line in lines if "=" in line)
+
+
+def rust_lock_files(root=None):
+    """Sorted repo-relative paths of every `Cargo.lock` under the locks directory: the full recursive walk, which in a git
+    tree must equal `git ls-files` (an untracked or ignored lock is refused, never silently included)."""
+    root = Path(root or RUST_LOCKS_DIR)
+    walked = sorted(p.relative_to(root).as_posix() for p in root.rglob("Cargo.lock") if p.is_file())
+    try:
+        inside = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"], capture_output=True,
+                                text=True).stdout.strip() == "true"
+    except OSError:
+        inside = False
+    if inside:
+        listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "."], capture_output=True, text=True,
+                                check=True).stdout.split("\0")
+        tracked = sorted(f for f in listed if f and PurePosixPath(f).name == "Cargo.lock")
+        if tracked != walked:
+            raise TransportAbort("tg2 Cargo.lock set is not the tracked set (untracked / missing locks): %s"
+                                 % sorted(set(tracked) ^ set(walked)))
+    return walked
+
+
+def cargo_locks_sha256(root=None):
+    """The image build's lock digest (benchmark/m65/tg2_image/build.sh): sha256 over the C-sorted `shasum -a 256` lines
+    (`<sha256>  ./<path>`) of every Cargo.lock."""
+    root = Path(root or RUST_LOCKS_DIR)
+    lines = sorted("%s  ./%s\n" % (hashlib.sha256((root / rel).read_bytes()).hexdigest(), rel)
+                   for rel in rust_lock_files(root))
+    lines.sort(key=lambda line: line.split("  ", 1)[1].encode())
+    return hashlib.sha256("".join(lines).encode()).hexdigest()
+
+
+def verified_cargo_locks_sha256():
+    """`cargo_locks_sha256()` of the committed locks, refused unless equal to the image pin."""
+    have, pinned = cargo_locks_sha256(), image_record().get("cargo_locks_sha256")
+    if have != pinned:
+        raise TransportAbort("tg2 committed Cargo.lock set (cargo_locks_sha256 %s) differs from the image pin (%s)"
+                             % (have, pinned))
+    return have
+
+
+_VENDORED = {}
+
+
 def vendored_versions():
     """{crate: sorted exact versions} vendored in the image: the union of every committed per-manifest `Cargo.lock`
-    the image's `cargo vendor --locked --sync` ran over (registry packages only)."""
-    global _VENDORED
-    if _VENDORED is None:
+    the image's `cargo vendor --locked --sync` ran over (registry packages only), verified against the image pin."""
+    key = verified_cargo_locks_sha256()
+    if key not in _VENDORED:
         found = {}
-        for lock in sorted(RUST_LOCKS_DIR.glob("*/Cargo.lock")):
-            for pkg in tomllib.loads(lock.read_text()).get("package", []):
+        for rel in rust_lock_files():
+            for pkg in tomllib.loads((RUST_LOCKS_DIR / rel).read_text()).get("package", []):
                 if "source" in pkg and re.fullmatch(r"\d+\.\d+\.\d+", pkg["version"]):
                     found.setdefault(pkg["name"], set()).add(pkg["version"])
-        _VENDORED = {k: sorted(v, key=_vtuple) for k, v in found.items()}
-    return _VENDORED
-
-
-_VENDORED = None
+        _VENDORED[key] = {k: sorted(v, key=_vtuple) for k, v in found.items()}
+    return _VENDORED[key]
 _COMPARATOR = re.compile(r"^(?P<op>\^|~|=|>=|<=|>|<)?\s*(?P<ver>(?:\d+|[*xX])(?:\.(?:\d+|[*xX])){0,2})$")
 
 

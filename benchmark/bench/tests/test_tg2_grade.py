@@ -900,7 +900,7 @@ def _pin(tmp_path, monkeypatch, d):
 
 def test_s6_the_real_committed_locks_hash_equals_the_image_pin():
     assert tg.cargo_locks_sha256() == tg.image_record()["cargo_locks_sha256"]
-    assert len(tg.rust_lock_files()) == 33 and "_allowlist/Cargo.lock" in tg.rust_lock_files()
+    assert len(tg.rust_lock_files()) == 32 and "_allowlist/Cargo.lock" in tg.rust_lock_files()
 
 
 def test_s6_the_walk_is_recursive_and_the_vendored_set_comes_from_every_lock(tmp_path, monkeypatch):

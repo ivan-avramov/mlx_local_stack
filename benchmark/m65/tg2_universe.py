@@ -43,7 +43,8 @@ def fingerprint(*, image_id, polyglot_sha, ref_runs=None, stub_runs=None, grader
     """Everything a cached freeze record's validity depends on; a record is reusable only on an exact match."""
     pol = json.dumps(policy(ref_runs, stub_runs), sort_keys=True)
     return dict(polyglot_sha=polyglot_sha, image_id=image_id, grader_version=grader_version or tg.VERSION,
-                materializer_version=mat.VERSION, policy=hashlib.sha256(pol.encode()).hexdigest())
+                materializer_version=mat.VERSION, policy=hashlib.sha256(pol.encode()).hexdigest(),
+                cargo_locks_sha256=tg.verified_cargo_locks_sha256())
 
 
 def _mismatch(item, found, expected):
