@@ -236,6 +236,7 @@ class OpencodeArm(aa.ArmAdapter):
         self.label = M64_LABEL if self.m64 else TG1_LABEL
         self.receipt_kinds = ("primary", "compaction") if self.m64 else ("primary",)
         self.account_compaction = self.m64
+        self.scaffold_outcomes = ("compaction_failed",) if self.m64 else ()
         self.watchdog_enabled = self.m64
         self.report_gate_on_abort = self.m64
         self._pinned = {}
@@ -548,7 +549,7 @@ class OpencodeArm(aa.ArmAdapter):
     def reconcile(self, stream, transcript, receipts, rc, outcome):
         doc = transcript.doc
         try:
-            summary = tg.reconcile(stream, doc, rc, outcome)
+            summary = tg.reconcile(stream, doc, rc, outcome, compaction_failed="compaction_failed" in self.scaffold_outcomes)
         except tg.TransportAbort as exc:
             causes = [classify_error(e) for e in stream.errors]
             if stream.errors and all(causes):
@@ -572,8 +573,9 @@ class OpencodeArm(aa.ArmAdapter):
             if self.account_compaction:
                 extra["compaction_receipts"] = dated["compaction_receipts"]
                 extra["compaction_accounting_complete"] = dated["compaction_receipts"] == len(compaction)
-        # `tg.reconcile` derives these two outcomes itself (from the client's error event and exit code)
-        derived = outcome or next((f for f in ("client_inactivity", "context_overflow") if f in stream.gate.flags), None)
+        # `tg.reconcile` derives these outcomes itself (from the client's error event and exit code)
+        derived = outcome or next((f for f in ("client_inactivity", "context_overflow", "compaction_failed")
+                                  if f in stream.gate.flags), None)
         stream.terminal_shape = self._terminal_shape(doc, rc, derived)
         return aa.Reconciliation(
             outcome=derived,
@@ -601,6 +603,8 @@ class OpencodeArm(aa.ArmAdapter):
     def _terminal_shape(self, doc, rc, outcome):
         if outcome == "client_inactivity":
             return "client_cut"
+        if outcome == "compaction_failed":
+            return "error"
         if outcome in tg.KILL_OUTCOMES:
             return "cancel"
         if outcome == "context_overflow":

@@ -238,9 +238,9 @@ def test_a_receipt_set_that_has_one_summary_request_for_a_failed_compaction_abor
         argv = h._argv(sub, out, [])
         monkeypatch.setattr(sys, "argv", argv)
         a = entry_parser().parse_args(argv[1:])
-        worker = MockWorker(mock, SCRIPT, mutate=lambda s: s._receipts.pop())
+        worker = MockWorker(mock, SCRIPT, mutate=lambda s: (s._receipts.pop(), setattr(s, "_seq", s._seq - 1)))
         adapter = ao.OpencodeArm(probe, mode="m64", search=ao.OfflineTestSearchService())
-        with pytest.raises(SystemExit, match="REFUSED.*receipts"):
+        with pytest.raises(SystemExit, match="REFUSED.*3 requests but only 2 receipts"):
             m64_main(probe, adapter, a, receipts_policy="required", receipt_source=worker)
         assert not out.exists()
 

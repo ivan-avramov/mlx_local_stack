@@ -279,6 +279,8 @@ class ArmAdapter(abc.ABC):
     observed = None                     # set by the runner after each item: {events, reconciliation, tool_windows}
     date_receipt_key = None             # evidence key of the per-item date-freeze receipts (None: the arm has none)
     report_gate_on_abort = False        # the abort stamp carries the failed attempt's gate report (M64 chains count it)
+    scaffold_outcomes = ()              # registered terminal shapes scored as strict failures, not aborts (opencode M64:
+    #                                     `compaction_failed`); a configuration that does not run the feature aborts on them
     # Per-class tool rule of a worker request (`required` / `forbidden`): which classes carry the tool definitions. The
     # default is the plan's (a compaction or auxiliary request is tool-less); a client that sends its tools with every
     # request (opencode 2.0.20 does, summary request included) overrides it.
