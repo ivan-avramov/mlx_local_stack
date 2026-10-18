@@ -39,7 +39,10 @@ keep C++, M64 on the tg2 screen); branch cleanup (Cursor audit, `docs/reviews/br
 
 ## Next work, in order
 
-1. **P371 (C178) — ONE shared arm-neutral item + chain core.** `arm_runner.py` (on `m64-build`) becomes the single implementation;
+1. **P371 (C178) — ONE shared arm-neutral item + chain core.** **STATUS 2026-10-17 late:** plan CLOSED at v5
+   (`docs/specs/p371-shared-runner-core.md`; Cursor plan rounds 1–4 `docs/reviews/p371/`, R1–R31 applied; lead calls
+   P372–P376); main merged into `m64-build` (`63ff3397`); baseline full suite in the m64 worktree 5590 passed / 21 skipped /
+   1 xfailed; BUILD phase 1 next (plan §7). Original scope: `arm_runner.py` (on `m64-build`) becomes the single implementation;
    tg1, tg2 and the M64 arms are configurations; `tg1_runner.py` a thin entry. It absorbs the **M64 step 4a fix round** — Cursor
    `benchmark/chains/m64/reviews/step4a-round1.cursor-gpt-5.6-sol-high.md` on `m64-build`, NOT CLEARED A1–A14: tg2-screen schedule
    + four languages (A1), spec §7 worker receipts (A3), tool-start watchdog (A4), epoch / snapshot pinning (A5), crash + recovery
