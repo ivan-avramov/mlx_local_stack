@@ -1485,6 +1485,8 @@ class Chain:
             att["cleanup_status"] = receipt_from_manifest(man)
             att["cancelled_item"] = man.get("cancelled_item")
             att["transport_abort"] = man.get("transport_abort")
+            if self.per_arm and att["transport_abort"] is not None:
+                att["abort_evidence"] = self.abort_evidence(att, view, out)
         att["outcome"] = sup["state"]
         co.atomic_json(ajson, att)
         self.log(f"END {leg['stem']} attempt {n} rc={att['rc']} state={sup['state']}")
@@ -1517,6 +1519,35 @@ class Chain:
             self.write_json("stopped")
             raise Stopped("leg")
         return self.handle_incomplete(load, leg, inv, rec, att, why, sup=sup, view=view)
+
+    def abort_evidence(self, att, view, out):
+        """A12 (F6): the evidence of the slot an abort (incident, cancel, STOP) hit BEFORE its row was committed: the probe's
+        abort stamp names the item's evidence files with their sha256; the exported transcript's web evidence is extracted
+        (sha256 re-verified) or recorded `unavailable` with the reason. A slot whose row was committed is covered by the
+        row's own evidence (the barrier extracted it) and is never extracted twice."""
+        stamp = att.get("transport_abort") or {}
+        ev = stamp.get("evidence") if isinstance(stamp.get("evidence"), dict) else None
+        item = (ev or {}).get("id") or (att.get("cancelled_item") or {}).get("id")
+        slot = cr.slot_for(view["slot_base"], item) if item else None
+        try:
+            committed = {r["id"] for r in cr.rows_if_present(out)}
+        except cr.ChainRowsError:
+            committed = set()
+        if item in committed:
+            return dict(slot=slot, evidence=ev, covered="row")
+        if ev is None:
+            return dict(slot=slot, evidence=None, web_evidence=we.unavailable(
+                "the abort stamp carries no evidence for the failing slot"))
+        export = (ev.get("files") or {}).get("export") or {}
+        path = co.resolve_portable(export["path"], self.wd) if export.get("sha256") and export.get("path") else None
+        dest = path.with_name(path.stem + ".web.jsonl") if path is not None else None
+        try:
+            web = we.extract(self.web_rules(view["arm"]), path, export.get("sha256"), dest)
+        except (we.TranscriptShaMismatch, we.WebEvidenceError) as exc:
+            raise co.ChainAbort(f"web evidence: {exc}") from None
+        if "path" in web:
+            web = dict(web, path=self._portable(web["path"]))
+        return dict(slot=slot, evidence=ev, web_evidence=web)
 
     def arm_row_problems(self, leg, out):
         """Arm-identifying fields every row and the manifest must carry (rows: arm, epoch_id, snapshot_sha256) and the frozen
@@ -1863,7 +1894,8 @@ class Chain:
             cause=cause, output_tokens=tokens, gate_output_tokens=gate_tokens, receipt_output_tokens=receipt_tokens,
             requests=((stamp.get("gate") or {}).get("requests_completed")), attempt_file=str(att["log"]),
             manifest=rec["manifest"], worker=dict(load["worker"]), worker_full=att.get("worker_full"),
-            error=str(stamp.get("error"))[:200], slot=failing, attempt=n, arm=leg["arm"], pick=leg["model"],
+            error=str(stamp.get("error"))[:200], evidence=(att.get("abort_evidence") or {}).get("evidence"),
+            web_evidence=(att.get("abort_evidence") or {}).get("web_evidence"), slot=failing, attempt=n, arm=leg["arm"], pick=leg["model"],
             session=leg["session"], lang=leg["lang"], item=failing.split("|")[-1], at=co.utc_stamp(),
             load_gen=load["rec"]["load_gen"], load=load["idx"], invocation=rec["file"], pre_spawn=False))
         self.log(f"INCIDENT {leg['stem']} {failing.split('|')[-1]} attempt {n}: cause={cause} tokens={tokens}")

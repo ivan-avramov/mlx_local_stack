@@ -366,7 +366,11 @@ def main(argv=None):
                 break
             if got != "go":
                 return abort("item barrier go " + got, item)
-        time.sleep(item_s)
+        slept = time.time() + item_s                              # a cooperative cancel is honoured DURING the item (no row)
+        while time.time() < slept:
+            if cancel.exists():
+                return abort("cancelled by runner", item)
+            time.sleep(min(tick, max(0.0, slept - time.time())))
         print(json.dumps({"m62_watch": {"requests_completed": 3, "output_tokens_completed": 500, "no_progress_tokens": 0,
                                         "no_progress_requests": 0, "best_failing": 1, "baseline_failing": 2,
                                         "stop_reason": None, "last_prompt_tokens": 3000},

@@ -390,6 +390,8 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
     paths = {key: evidence.with_suffix(suffix) for key, suffix in adapter.evidence_suffixes().items()
              if key != adapter.date_receipt_key or frozen_date is not None}
     adapter.verify_item_env(env, paths, frozen_date)
+    if ctx is not None:
+        ctx["evidence_paths"] = paths            # F6: an abort before the row commit stamps this item's evidence paths + shas
     for path in paths.values():
         pg.reserve_evidence(path)
     if Path(str(evidence) + ".final_tree").exists():
@@ -1138,6 +1140,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
             if cancel is not None and cancel():
                 raise RunnerCancelled()
             ctx.update(id=item)
+            ctx.pop("evidence_paths", None)              # never a previous item's evidence in this item's abort stamp
             current = worker_identity(p, a.model, router)
             pg.require_identity(before, current)
             with p._item_scratch_dir(name) as scratch:
@@ -1238,6 +1241,11 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
             stamp["gate"] = ctx.get("gate_report")     # spec 8.3: a failed attempt's tokens count toward its task
         if ctx.get("receipt_tokens") is not None:
             stamp["receipts"] = ctx["receipt_tokens"]  # P371 3b: the fenced worker receipts' totals (the better count)
+        if ctx.get("evidence_paths") is not None and ctx.get("id"):
+            # F6 (A12): the failing slot's evidence files with their sha256 AT the abort (null: the file does not exist)
+            stamp["evidence"] = dict(id=ctx["id"], files={
+                k: dict(path=p._portable(v), sha256=p._sha_of(v) if Path(v).is_file() else None)
+                for k, v in ctx["evidence_paths"].items()})
         cause = adapter.transport_cause(exc)
         if cause is None and isinstance(exc, wr.ReceiptAbort):
             cause = exc.cause                    # a worker replaced mid-attempt: worker_crash (R21); other receipt faults: none
