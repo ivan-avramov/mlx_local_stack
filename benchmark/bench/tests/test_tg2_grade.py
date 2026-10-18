@@ -849,11 +849,33 @@ def test_s2_cargo_requirement_matcher(req, version, ok):
     assert tg.cargo_req_matches(req, version) is ok
 
 
-@pytest.mark.parametrize("req", ["", "abc", "1.2.3.4", ">=", "^", "1..2", "=>1", "1.2.3-", "1.0.0-rc.1", "1.0.0+b", "1,,2",
-                                 "*.1", "1.*.3", "^1.2.x.3", "v1.2"])
+@pytest.mark.parametrize("req", ["", "abc", "1.2.3.4", ">=", "^", "1..2", "=>1", "1.2.3-", "1,,2",
+                                 "*.1", "1.*.3", "^1.2.x.3", "v1.2", "01", "1.02", "1.2.03", "00", "1.2.3-01",
+                                 "1.2.3-alpha.01", "1.2.3-a_b", "1.2-rc.1", "1.*-rc", "1.2.3+", "1.2.3-rc..1", "^01.2",
+                                 ">=1.*", "1.2.3-rc,", ",1"])
 def test_s2_malformed_or_unsupported_requirements_raise(req):
     with pytest.raises(ValueError):
         tg.cargo_req_matches(req, "1.2.3")
+
+
+@pytest.mark.parametrize("req,version,ok", [
+    # Cargo book "Specifying Dependencies" + semver crate VersionReq: a pre-release version matches only when some
+    # comparator names the SAME major.minor.patch with a pre-release; build metadata never takes part in matching;
+    # numeric identifiers < alphanumeric ones; a stable release sorts after its pre-releases.
+    (">=1.2.3-alpha.1", "1.2.3-alpha.2", True), (">=1.2.3-alpha.1", "1.2.3", True), (">=1.2.3-alpha.1", "1.2.4", True),
+    (">=1.2.3-alpha.1", "1.2.4-alpha.1", False), (">=1.2.3-alpha.1", "1.2.3-alpha.0", False),
+    ("^1.2.3-alpha.1", "1.9.0", True), ("^1.2.3-alpha.1", "2.0.0", False), ("^1.2.3-alpha.1", "2.0.0-alpha", False),
+    ("1.2.3", "1.2.3-alpha", False), ("^1.2.3", "1.2.4-alpha", False), ("=1.2.3-rc.1", "1.2.3-rc.1", True),
+    ("=1.2.3-rc.1", "1.2.3", False), ("<1.2.3", "1.2.3-alpha", False), (">=1.2.3-alpha, <1.2.3", "1.2.3-beta", True),
+    ("~1.2.3-alpha", "1.2.5", True), ("~1.2.3-alpha", "1.3.0", False), (">1.2.3-alpha.1", "1.2.3-alpha.1", False),
+    ("1.2.3-rc.1+build.5", "1.2.3-rc.1+other", True), ("1.2.3+build", "1.2.3", True), ("1.2.3+build.01", "1.2.4", True),
+    ("<=1.2.3-rc.2", "1.2.3-rc.2", True), (">=1.0.0-alpha.1, <1.0.0-beta", "1.0.0-alpha.beta", True),
+    (">=1.0.0-alpha.1, <1.0.0-beta", "1.0.0-beta", False), (">=1.0.0-alpha.1, <1.0.0-beta", "1.0.0-alpha", False),
+    (">=1.0.0-beta.2", "1.0.0-beta.11", True), (">=1.0.0-beta.11", "1.0.0-beta.2", False), (">=1.0.0-rc.1", "1.0.0-beta.11", False),
+    ("1.0.0-0", "1.0.0-0", True), ("0", "0.0.0", True), ("0.0.0", "0.0.0", True),
+])
+def test_s5_prerelease_and_build_metadata_follow_cargo_semver_rules(req, version, ok):
+    assert tg.cargo_req_matches(req, version) is ok
 
 
 def test_s2_vendored_versions_come_from_the_image_locks_and_cover_every_allowlisted_crate():
@@ -877,7 +899,9 @@ def test_s2_a_requirement_no_vendored_version_satisfies_is_tampering_with_a_reas
 
 
 def test_s2_a_malformed_requirement_in_a_manifest_is_tampering():
-    assert s2_reasons('regex = "1.*.3"') and s2_reasons('regex = "1.0.0-rc.1"') and s2_reasons('regex = ""')
+    assert s2_reasons('regex = "1.*.3"') and s2_reasons('regex = "01"') and s2_reasons('regex = ""')
+    assert any("malformed" in r for r in s2_reasons('regex = "01"'))
+    assert s2_reasons('regex = ">=1.0.0-rc.1, <2"') == []              # Cargo-valid prerelease syntax is accepted
 
 
 @pytest.mark.parametrize("dep", ['regex = "1.*"', 'regex = ">=1, <2"', 'thiserror = "~1.0"', 'rand = "=0.8.8"', 'rand = "0.3"',
@@ -2060,3 +2084,43 @@ def test_reference_all_pass_and_untouched_stub_fails_in_the_built_image(tmp_path
 
 def test_p366_pids_limit_allows_a_thousand_test_threads():
     assert tg.PIDS_LIMIT == 2048
+
+
+def _cargo_parity_cases():
+    reqs = ["1", "01", "1.0", "1.02", "^1.0", "~1", "~1.0", "=1", "=1.13.1", "=1.13", ">=1, <2", ">=1.13.2", ">1.13.1", "<1.13.1",
+            "<=1.13.1", "*", "1.*", "1.x", "0.2", "0.2.11", "0.2.12", "0.1", "0", "99", "1.0.0-rc.1", ">=1.0.0-rc.1, <2",
+            "=1.13.1-rc.1", "1.13.1+build", "1.2.3.4", "1.*.3", ">=", "", "^", "1,,2", "~0.2", "<0.2", "^0.2.5", ">=0.2, <1"]
+    return [("regex", r) for r in reqs] + [("rand", r) for r in ("0.3", "0.4", "0.5", "0.8", "0.8.9", "0.9", "0.10", "^0.10.3", "~0.8.0")]
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+def test_s5_matcher_agrees_with_real_cargo_resolving_offline_against_the_vendored_registry(tmp_path):
+    """Parity: the grader image's own cargo (offline, vendored sources) accepts exactly the requirements the matcher says
+    some vendored version satisfies, and rejects what the matcher calls malformed or unsatisfiable."""
+    _docker_env()
+    cases = _cargo_parity_cases()
+    script = (
+        "import json,subprocess,sys,pathlib\n"
+        "out=[]\n"
+        "for i,(crate,req) in enumerate(json.load(sys.stdin)):\n"
+        "    d=pathlib.Path('/tmp/p%d'%i); (d/'src').mkdir(parents=True); (d/'src/lib.rs').write_text('')\n"
+        "    (d/'Cargo.toml').write_text('[package]\\nname=\"p\"\\nversion=\"0.0.0\"\\nedition=\"2021\"\\n\\n[dependencies]\\n%s = %s\\n'%(crate,json.dumps(req)))\n"
+        "    r=subprocess.run(['cargo','generate-lockfile','--offline'],cwd=d,capture_output=True,text=True)\n"
+        "    out.append(r.returncode==0)\n"
+        "print('RESULT'+json.dumps(out))\n")
+    run = subprocess.run(["docker", "run", "--rm", "-i", "--pull=never", "--network", "none", "--entrypoint", "python3",
+                          tg.pinned_image_id(), "-c", script], input=json.dumps(cases), capture_output=True, text=True,
+                         timeout=600)
+    assert run.returncode == 0, run.stderr[-2000:]
+    cargo_ok = json.loads(run.stdout.rsplit("RESULT", 1)[1])
+    vendored = tg.vendored_versions()
+    mismatches = []
+    for (crate, req), real in zip(cases, cargo_ok):
+        try:
+            mine = any(tg.cargo_req_matches(req, v) for v in vendored[crate])
+        except ValueError:
+            mine = False
+        if mine != real:
+            mismatches.append((crate, req, "cargo" if real else "cargo-rejects", "matcher", mine))
+    assert mismatches == []
