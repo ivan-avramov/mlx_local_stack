@@ -333,7 +333,13 @@ def test_run_scenario(tmp_path, monkeypatch):
     sc = scn.load(os.environ["P371_SCENARIO"])
     bundle = Path(os.environ["P371_BUNDLE"])
     fn = run_item_scenario if sc["kind"] == "item" else run_chain_scenario
-    result = fn(sc, tmp_path, monkeypatch, bundle)
+    from bench import proc_guard
+    from bench.tests import p371_hermetic_scan
+    undo = p371_hermetic_scan.install(proc_guard, os.getpid())      # the OLD guard sees only this process's family
+    try:
+        result = fn(sc, tmp_path, monkeypatch, bundle)
+    finally:
+        undo()
     Path(os.environ["P371_RESULT"]).write_text(json.dumps(result, indent=1, sort_keys=True))
 
 

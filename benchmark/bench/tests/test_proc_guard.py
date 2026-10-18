@@ -261,6 +261,7 @@ def test_real_detached_child_and_host_grader_allocation(tmp_path):
     assert not child.is_running() or child.status() == psutil.STATUS_ZOMBIE
 
 
+@pytest.mark.real_process_scan      # detects a setsid'd grandchild whose parent exits at once: only the real box-wide sweep sees it
 def test_real_rapid_fork_detach_chdir_is_attributed_or_diagnostic(tmp_path):
     import psutil
 

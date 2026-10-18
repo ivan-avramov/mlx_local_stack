@@ -18,7 +18,8 @@ from . import scenario as scn
 HERE = Path(__file__).resolve().parent
 SCENARIO_DIR = HERE / "scenarios"
 GOLDEN_DIR = HERE / "golden"
-DRIVER_COPIES = {"driver.py": "p371_driver_run.py", "scenario.py": "p371_scenario.py", "normalize.py": "p371_normalize.py"}
+DRIVER_COPIES = {"driver.py": "p371_driver_run.py", "scenario.py": "p371_scenario.py", "normalize.py": "p371_normalize.py",
+                 "../hermetic_scan.py": "p371_hermetic_scan.py"}
 
 
 class DriverError(RuntimeError):

@@ -17,7 +17,7 @@ EXCLUDES = ("benchmark/results", "docs")
 MANIFEST_NAME = "BUNDLE_MANIFEST.json"
 # the only files the harness adds to an extracted bundle (copies of the stdlib-only harness modules)
 HARNESS_FILES = ("benchmark/bench/tests/p371_driver_run.py", "benchmark/bench/tests/p371_scenario.py",
-                 "benchmark/bench/tests/p371_normalize.py")
+                 "benchmark/bench/tests/p371_normalize.py", "benchmark/bench/tests/p371_hermetic_scan.py")
 
 
 class BundleError(RuntimeError):
