@@ -513,6 +513,75 @@ def test_s15_the_verifier_that_runs_is_the_file_that_is_hashed(tmp_path, monkeyp
     assert U.require_pinned_corpus.__globals__["VERIFY_CORPUS_FILE"] == U.VERIFY_CORPUS_FILE
 
 
+# ----------------------------------------------- S16: the corpus must not change while (or between) items are frozen
+class Mutating(Grader):
+    """Edits a corpus file during the n-th grade call."""
+
+    def __init__(self, path, at, **kw):
+        super().__init__(**kw)
+        self.path, self.at = path, at
+
+    def __call__(self, *a, **k):
+        if len(self.calls) == self.at:
+            self.path.write_text("changed while grading")
+        return Grader.__call__(self, *a, **k)
+
+
+@pytest.mark.parametrize("at", [0, 2, 4])
+def test_s16_a_corpus_mutation_during_an_item_aborts_naming_it_and_writes_no_record(tmp_path, at):
+    c = corpus(tmp_path / "c")
+    g = Mutating(c / "javascript/exercises/practice/x/.meta/proof.ci.js", at)
+    with pytest.raises(TransportAbort, match=r"javascript/x.*changed"):
+        U.run_all(c, tmp_path / "w", tmp_path / "log", g, **ID)
+    assert not (tmp_path / "w/items/javascript__x.json").exists()
+
+
+def test_s16_verify_unchanged_refuses_any_item_whose_bytes_differ_from_the_recorded_hash(tmp_path, monkeypatch):
+    c, g, calls = _frozen_cache(tmp_path)
+    recs = U.run_all(c, tmp_path / "w", tmp_path / "log", g, **ID)
+    monkeypatch.setattr(U, "require_pinned_corpus", lambda corpus, pinned=None: "p" * 40)
+    U.verify_unchanged(c, recs)
+    (c / "javascript/exercises/practice/x/x.spec.js").write_text("changed between items")
+    with pytest.raises(TransportAbort, match=r"javascript/x.*inputs_sha256"):
+        U.verify_unchanged(c, recs)
+
+
+def test_s16_verify_unchanged_reverifies_the_corpus_head_and_cleanliness(tmp_path):
+    c, sha = _git_corpus(tmp_path)
+    recs = [dict(item="javascript/x", fingerprint=dict(inputs_sha256=U.inputs_sha256(c, "javascript", "x")))]
+    (tmp_path / "pin").write_text("sha256:%s\npolyglot_sha=%s\n" % ("a" * 64, sha))
+    import bench.tg2_grade as g2
+    g2.IMAGE_ID_FILE = tmp_path / "pin"            # restored by the autouse fixture's monkeypatch teardown
+    U.verify_unchanged(c, recs)
+    (c / "javascript/exercises/practice/x/x.js").write_text("dirty")
+    with pytest.raises(TransportAbort):
+        U.verify_unchanged(c, recs)
+
+
+def test_s16_main_reverifies_before_assembling(tmp_path, monkeypatch):
+    c = corpus(tmp_path / "c")
+    calls = []
+    monkeypatch.setattr(U, "require_pinned_corpus", lambda corpus, pinned=None: calls.append(1) or ID["polyglot_sha"])
+
+    class Docker:
+        run_grader = None
+
+    monkeypatch.setattr(tg, "LocalDocker", Docker)
+    monkeypatch.setattr(tg, "list_leftovers", lambda *a, **k: dict(containers=[], volumes=[]))
+    monkeypatch.setattr(tg, "pinned_image_id", lambda: ID["image_id"])
+
+    def fake_run_all(corpus_, *a, **k):
+        recs = [dict(rec("javascript/x"), fingerprint=dict(U.fingerprint(**ID), inputs_sha256=U.inputs_sha256(corpus_, "javascript", "x")))]
+        (corpus_ / "javascript/exercises/practice/x/x.js").write_text("mutated after the item finished")
+        return recs
+
+    monkeypatch.setattr(U, "run_all", fake_run_all)
+    with pytest.raises(TransportAbort, match="inputs_sha256"):
+        U.main(["--corpus", str(c), "--workdir", str(tmp_path / "w"), "--out", str(tmp_path / "u.json"),
+                "--report", str(tmp_path / "r.md")])
+    assert not (tmp_path / "u.json").exists() and len(calls) >= 2
+
+
 def test_s3_load_refuses_a_universe_frozen_by_another_materializer(tmp_path, monkeypatch):
     out = tmp_path / "u.json"
     U.freeze(out, doc_for([rec("rust/a")]))
