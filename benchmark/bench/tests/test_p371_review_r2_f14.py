@@ -4,6 +4,7 @@ that lands before the first manifest is seen); a missing or invalid manifest is 
 from __future__ import annotations
 
 import json
+import threading
 
 from bench.tests.m64_support import SMOKE, chain_json, env, log_has, run      # noqa: F401  (fixture: env)
 
@@ -12,14 +13,16 @@ def stop_at_spawn(env):
     ops, real = env["ops"], env["ops"].create_time
 
     def create_time(pid):
-        (env["out"] / "STOP").write_text("stop\n")          # the probe was just spawned: it has not written its manifest yet
+        # the probe is past its start checks but still sleeping before its first manifest when STOP lands
+        threading.Timer(0.8, lambda: (env["out"] / "STOP").write_text("stop\n")).start()
         return real(pid)
+    ops.extra_env["FAKE_PRE_MANIFEST_S"] = "2.5"
     ops.create_time = create_time
 
 
 def test_a_stop_before_the_first_manifest_is_observed_still_hydrates_the_attempt(env):
     stop_at_spawn(env)
-    assert run(env, SMOKE) == 3
+    assert run(env, SMOKE, timers={"t_coop_scale": 0.05}) == 3
     att = chain_json(env)["attempts"][0]
     assert att["run_id"], "the final manifest's run id is recorded although the barrier never saw it"
     assert att["cleanup_status"] is not None and att["cleanup_status"]["completed"] is True

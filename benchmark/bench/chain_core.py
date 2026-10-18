@@ -1495,13 +1495,7 @@ class Chain:
         self.write_json("running")
         sup = self.supervise(att, proc, view, step, load, rec=rec, inv=inv, base=base)
         att["rc"] = proc.returncode
-        man = self._manifest(view)
-        if man and att["run_id"] and man.get("run_id") == att["run_id"]:
-            att["cleanup_status"] = receipt_from_manifest(man)
-            att["cancelled_item"] = man.get("cancelled_item")
-            att["transport_abort"] = man.get("transport_abort")
-            if self.per_arm and att["transport_abort"] is not None:
-                att["abort_evidence"] = self.abort_evidence(att, view, out)
+        self.hydrate_from_manifest(att, view, out)
         att["outcome"] = sup["state"]
         co.atomic_json(ajson, att)
         self.log(f"END {leg['stem']} attempt {n} rc={att['rc']} state={sup['state']}")
@@ -1534,6 +1528,30 @@ class Chain:
             self.write_json("stopped")
             raise Stopped("leg")
         return self.handle_incomplete(load, leg, inv, rec, att, why, sup=sup, view=view)
+
+    def hydrate_from_manifest(self, att, view, out):
+        """F14: after the probe exits, ALWAYS read the invocation's own final manifest (its path is the invocation's rows file
+        stem, unique per invocation) and hydrate the cleanup receipt, cancelled item, abort stamp and abort evidence from it,
+        whether or not the barrier observed it. A missing / invalid / foreign manifest is recorded in `manifest_problem`
+        and hydrates nothing (restart eligibility keeps refusing without a receipt)."""
+        att["manifest_observed"] = bool(att.get("run_id"))
+        att["manifest_problem"] = None
+        man = self._manifest(view)
+        if man is None:
+            att["manifest_problem"] = "missing" if not Path(out).with_suffix(".manifest.json").exists() else "invalid"
+            return
+        if not isinstance(man, dict) or not isinstance(man.get("run_id"), str) or not man["run_id"]:
+            att["manifest_problem"] = "invalid"
+            return
+        if att.get("run_id") and man["run_id"] != att["run_id"]:
+            att["manifest_problem"] = "run_id differs"
+            return
+        att["run_id"] = att.get("run_id") or man["run_id"]
+        att["cleanup_status"] = receipt_from_manifest(man)
+        att["cancelled_item"] = man.get("cancelled_item")
+        att["transport_abort"] = man.get("transport_abort")
+        if self.per_arm and att["transport_abort"] is not None:
+            att["abort_evidence"] = self.abort_evidence(att, view, out)
 
     def abort_evidence(self, att, view, out):
         """A12 (F6): the evidence of the slot an abort (incident, cancel, STOP) hit BEFORE its row was committed: the probe's

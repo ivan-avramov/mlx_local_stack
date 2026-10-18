@@ -255,6 +255,7 @@ def main(argv=None):
     if cancel.exists() or ack.exists():
         print("REFUSED: cancel or ack file already exists", flush=True)
         return 2
+    time.sleep(float(os.environ.get("FAKE_PRE_MANIFEST_S", "0")))     # a slow start: no manifest yet (F14 tests)
     if arm is None or not a.expect_items or not a.a4_v2_receipt or a.sampling_profile != "deployed" or not a.epoch_id:
         print("REFUSED: bad arguments", flush=True)
         return 2
