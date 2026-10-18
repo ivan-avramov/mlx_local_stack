@@ -1,0 +1,46 @@
+"""P371 review r2 F14: after the probe exits the chain always reads the invocation's own final manifest and hydrates the cleanup
+receipt, the abort stamp / cancelled item and the abort evidence from it, whether or not the barrier ever observed it (a STOP
+that lands before the first manifest is seen); a missing or invalid manifest is recorded explicitly."""
+from __future__ import annotations
+
+import json
+
+from bench.tests.m64_support import SMOKE, chain_json, env, log_has, run      # noqa: F401  (fixture: env)
+
+
+def stop_at_spawn(env):
+    ops, real = env["ops"], env["ops"].create_time
+
+    def create_time(pid):
+        (env["out"] / "STOP").write_text("stop\n")          # the probe was just spawned: it has not written its manifest yet
+        return real(pid)
+    ops.create_time = create_time
+
+
+def test_a_stop_before_the_first_manifest_is_observed_still_hydrates_the_attempt(env):
+    stop_at_spawn(env)
+    assert run(env, SMOKE) == 3
+    att = chain_json(env)["attempts"][0]
+    assert att["run_id"], "the final manifest's run id is recorded although the barrier never saw it"
+    assert att["cleanup_status"] is not None and att["cleanup_status"]["completed"] is True
+    assert att["transport_abort"] is not None and "abort_evidence" in att
+    assert att["manifest_observed"] is False
+
+
+def test_a_missing_invalid_or_foreign_manifest_after_exit_is_recorded_explicitly(env, tmp_path):
+    from bench.tests.m64_support import FakeOps, M, SMOKE as ARGV
+    a = M.parse_args(ARGV + ["--out-root", str(tmp_path / "o")])
+    chain = M.build_chain(a, FakeOps(tmp_path), M.Timers(), lambda m: None, {"python": ["a"], "go": ["b"]}, tmp_path / "o", {})
+    out = tmp_path / "rows.a1.jsonl"
+    view = dict(out=str(out), slot_base="e|oc|m|s1|python", arm="oc")
+    att = dict(run_id=None, transport_abort=None, cancelled_item=None, cleanup_status=None)
+    chain.hydrate_from_manifest(att, view, out)
+    assert att["manifest_problem"] == "missing" and att["cleanup_status"] is None and att["manifest_observed"] is False
+    out.with_suffix(".manifest.json").write_text("{not json")
+    att = dict(run_id=None, transport_abort=None, cancelled_item=None, cleanup_status=None)
+    chain.hydrate_from_manifest(att, view, out)
+    assert att["manifest_problem"] == "invalid"
+    out.with_suffix(".manifest.json").write_text(json.dumps({"run_id": "other", "cleanup_status": {}}))
+    att = dict(run_id="mine", transport_abort=None, cancelled_item=None, cleanup_status=None)
+    chain.hydrate_from_manifest(att, view, out)
+    assert att["manifest_problem"] == "run_id differs" and att["cleanup_status"] is None
