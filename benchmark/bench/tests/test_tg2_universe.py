@@ -204,7 +204,7 @@ def doc_for(records):
 
 
 def rec(item, status="valid", reason=""):
-    return dict(fingerprint=U.fingerprint(**ID), item=item, status=status, reason=reason, scan=None, reference_runs=[dict(leaf_sha256="x", seconds=3.0)] * 3,
+    return dict(fingerprint=dict(U.fingerprint(**ID), inputs_sha256="i" * 64), item=item, status=status, reason=reason, scan=None, reference_runs=[dict(leaf_sha256="x", seconds=3.0)] * 3,
                 stub_runs=[dict(leaf_sha256="y")] * 2, rewrites={}, optional_excluded=[])
 
 
@@ -252,9 +252,10 @@ def _frozen_cache(tmp_path):
 def test_s3_resume_reuses_only_records_with_the_exact_fingerprint(tmp_path):
     c, g, calls = _frozen_cache(tmp_path)
     cached = json.loads((tmp_path / "w/items/javascript__x.json").read_text())
-    assert cached["fingerprint"] == U.fingerprint(**ID)
+    want = dict(U.fingerprint(**ID), inputs_sha256=U.inputs_sha256(c, "javascript", "x"))
+    assert cached["fingerprint"] == want
     recs = U.run_all(c, tmp_path / "w", tmp_path / "log", g, **ID)
-    assert len(g.calls) == calls and recs[0]["fingerprint"] == U.fingerprint(**ID)
+    assert len(g.calls) == calls and recs[0]["fingerprint"] == want
 
 
 @pytest.mark.parametrize("change", ["polyglot_sha", "image_id", "grader_version", "materializer_version", "policy"])
@@ -299,6 +300,102 @@ def test_s3_assemble_refuses_records_whose_fingerprint_is_missing_or_differs():
     doc = doc_for([good])
     assert doc["fingerprint"] == U.fingerprint(**ID) and doc["materializer_version"] == mat.VERSION
     assert "fingerprint" not in doc["items"]["rust/a"]
+
+
+# ------------------------------------------------------------------ S7: corpus identity and per-item input content
+def _git(repo, *args):
+    import subprocess
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args], check=True,
+                   capture_output=True)
+
+
+def _git_corpus(tmp_path):
+    c = corpus(tmp_path / "gc")
+    (c / "python").mkdir()
+    (c / "python/p.py").write_text("x")
+    _git(c, "init", "-q")
+    _git(c, "add", ".")
+    _git(c, "commit", "-qm", "c")
+    import subprocess
+    sha = subprocess.run(["git", "-C", str(c), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    return c, sha
+
+
+def test_s7_a_clean_corpus_at_the_pinned_commit_is_accepted_and_non_target_dirt_is_ignored(tmp_path):
+    c, sha = _git_corpus(tmp_path)
+    assert U.require_pinned_corpus(c, sha) == sha
+    (c / "python/p.py").write_text("dirty")
+    assert U.require_pinned_corpus(c, sha) == sha
+
+
+@pytest.mark.parametrize("dirt", ["modify", "untracked", "delete"])
+def test_s7_a_dirty_target_language_subtree_is_refused(tmp_path, dirt):
+    c, sha = _git_corpus(tmp_path)
+    ex = c / "javascript/exercises/practice/x"
+    if dirt == "modify":
+        (ex / "x.js").write_text("changed")
+    elif dirt == "untracked":
+        (ex / "answer.js").write_text("leak")
+    else:
+        (ex / "x.js").unlink()
+    with pytest.raises(TransportAbort, match="clean|dirty|status"):
+        U.require_pinned_corpus(c, sha)
+
+
+def test_s7_a_clean_checkout_of_the_wrong_commit_is_refused(tmp_path):
+    c, sha = _git_corpus(tmp_path)
+    with pytest.raises(TransportAbort, match="pinned"):
+        U.require_pinned_corpus(c, "f" * 40)
+    with pytest.raises(TransportAbort):
+        U.require_pinned_corpus(tmp_path / "not-a-repo", sha)
+
+
+def test_s7_main_refuses_a_corpus_that_is_not_the_image_recorded_commit_before_touching_docker(tmp_path, monkeypatch):
+    c, _ = _git_corpus(tmp_path)
+
+    class NoDocker:
+        def __init__(self, *a, **k):
+            raise AssertionError("docker touched")
+
+    monkeypatch.setattr(tg, "LocalDocker", NoDocker)
+    with pytest.raises(TransportAbort, match="pinned"):
+        U.main(["--corpus", str(c), "--workdir", str(tmp_path / "w"), "--out", str(tmp_path / "u.json"),
+                "--report", str(tmp_path / "r.md")])
+
+
+def test_s7_item_inputs_hash_covers_every_file_of_the_exercise_including_reference_material(tmp_path):
+    c = corpus(tmp_path / "c")
+    base = U.inputs_sha256(c, "javascript", "x")
+    assert base == U.inputs_sha256(c, "javascript", "x") and len(base) == 64
+    ex = c / "javascript/exercises/practice/x"
+    for rel, text in ((".meta/proof.ci.js", "other ref"), ("x.spec.js", "other test"), (".approaches/a.md", "new"),
+                      (".docs/i.md", "docs")):
+        (ex / rel).parent.mkdir(exist_ok=True)
+        before = (ex / rel).read_text() if (ex / rel).exists() else None
+        (ex / rel).write_text(text)
+        assert U.inputs_sha256(c, "javascript", "x") != base, rel
+        if before is None:
+            (ex / rel).unlink()
+        else:
+            (ex / rel).write_text(before)
+        assert U.inputs_sha256(c, "javascript", "x") == base
+
+
+def test_s7_resume_refuses_a_cached_record_whose_item_inputs_changed(tmp_path):
+    c, g, calls = _frozen_cache(tmp_path)
+    (c / "javascript/exercises/practice/x/.meta/proof.ci.js").write_text("a different reference")
+    with pytest.raises(TransportAbort, match=r"javascript/x.*inputs_sha256"):
+        U.run_all(c, tmp_path / "w", tmp_path / "log", g, **ID)
+    assert len(g.calls) == calls
+
+
+def test_s7_assemble_requires_each_records_input_hash_and_publishes_it():
+    bad = dict(rec("rust/a"))
+    bad["fingerprint"] = dict(bad["fingerprint"])
+    del bad["fingerprint"]["inputs_sha256"]
+    with pytest.raises(TransportAbort, match="inputs_sha256"):
+        doc_for([bad])
+    assert doc_for([rec("rust/a")])["items"]["rust/a"]["inputs_sha256"] == "i" * 64
 
 
 def test_s3_load_refuses_a_universe_frozen_by_another_materializer(tmp_path, monkeypatch):
