@@ -343,16 +343,35 @@ LIFECYCLE_NAMED = {"runner": "benchmark/chains/c147/run_tg1_chain.py", "chain_op
                    "launch_tg1": "benchmark/chains/c147/launchers/launch_tg1.sh"}
 
 
-def chain_rederive():
-    """The hook for `compare(..., rederive=)` on CHAIN results: a changed `/chain_json/lifecycle/<name>` or
+def chain_rederive(result=None):
+    """The hook for `compare(..., rederive=)` on CHAIN results. A changed `/chain_json/lifecycle/<name>` or
     `/chain_json/sha256/<name>` value is accepted only when it equals the sha256 of that repo file NOW (read here, never
-    through the core). Every other chain value change (policy, pinned identities, rc, attempts ...) is refused."""
+    through the core). F8: a NEW `/chain_json/lifecycle/<member>` is accepted only when it is re-derived too: a repo-relative
+    member of the runner's static import closure whose value is that file's sha256 now, or `chain_config` whose value is the
+    sha256 of the canonical JSON of the result's own `chain_config` document. Every other chain value change (policy, pinned
+    identities, rc, attempts ...) is refused."""
     def hook(ptr, old, new):
         m = re.match(r"^/chain_json/(?:lifecycle|sha256)/(?P<name>[a-z_0-9]+)$", ptr)
-        if not m or m["name"] not in LIFECYCLE_NAMED:
+        if m and m["name"] in LIFECYCLE_NAMED:
+            return new == _sha((REPO / LIFECYCLE_NAMED[m["name"]]).read_bytes())
+        added = re.match(r"^/chain_json/lifecycle/(?P<name>[^/]+)$", ptr)
+        if old is not None or not added:
             return False
-        return new == _sha((REPO / LIFECYCLE_NAMED[m["name"]]).read_bytes())
+        name = added["name"].replace("~1", "/").replace("~0", "~")
+        if name == "chain_config":
+            cfg = ((result or {}).get("chain_json") or {}).get("chain_config")
+            return cfg is not None and new == _sha(json.dumps(cfg, sort_keys=True, separators=(",", ":")).encode())
+        if name in _closure_members():
+            return new == _sha((REPO / name).read_bytes())
+        return False
     return hook
+
+
+def _closure_members():
+    """Repo-relative paths of the runner entry's static import closure (`identity_closure`, the definition of the lifecycle)."""
+    from bench import identity_closure as ic
+    return {p.resolve().relative_to(REPO.resolve()).as_posix()
+            for p in ic.python_closure(REPO / LIFECYCLE_NAMED["runner"], REPO)}
 
 
 POINTERS = {"/probe_code_sha256": "probe_code_sha256", "/scaffold_policy_sha256": "scaffold_policy_sha256",

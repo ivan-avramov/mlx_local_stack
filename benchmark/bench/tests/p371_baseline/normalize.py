@@ -13,7 +13,7 @@ VOLATILE = "<volatile>"
 VOLATILE_KEYS = frozenset({
     "wall_s", "started", "updated", "at", "probe_pid", "probe_create_time", "sampled_at_s", "silent_s",
     "inflight_s_at_stop", "inflight_s", "cancel_wait_s", "graceful_wait_s", "elapsed_s", "tmp_window", "started_at",
-    "finished_at", "timestamp", "ts", "hostname", "interpreter", "opencode_exe_sha256", "prompt_date_real",
+    "finished_at", "timestamp", "ts", "hostname", "opencode_exe_sha256", "prompt_date_real",
     "decode_tps", "tracker_s_observed",
 })
 # (ancestor key, key) pairs: a key is volatile only under that ancestor (real pids of killed processes, report hashes

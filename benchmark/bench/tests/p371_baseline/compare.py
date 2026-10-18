@@ -38,10 +38,15 @@ TABLE = {
     "row_additions": ["/config_id", "/arm", "/epoch_id", "/snapshot_sha256", "/token_accounting"],
     "row_addition_prefixes": ["/final_tree/", "/final_tree"],
     "manifest_additions": ["/runtime/" + k for k in ("config_id", "arm", "epoch_id", "snapshot_sha256", "snapshot_complete",
-                                                     "snapshot_fields", "evidence_policy")],
-    "manifest_addition_prefixes": ["/runtime/policy/"],
+                                                     "snapshot_fields", "evidence_policy")]
+    # F8: every new policy key is named (no `/runtime/policy/` prefix acceptance); an unlisted key is a failure
+    + ["/runtime/policy/" + k for k in ("budgets", "compaction", "config_id", "corpus_id", "corpus_identity",
+                                         "inject_allowed", "langs", "watchdog")],
+    "manifest_addition_prefixes": [],
     "chain_additions": ["/progress", "/chain_config", "/snapshots", "/epoch_id", "/artifacts"],
-    "chain_addition_prefixes": ["/lifecycle/"],
+    "chain_addition_prefixes": [],
+    # F8: a new lifecycle member is accepted only when the independent `rederive` hook re-derives ITS value (no prefix acceptance)
+    "chain_rederived_additions": ["/lifecycle/"],
     "row_value_changes": ["/generation_identity_sha256", "/probe_code_sha256", "/scaffold_policy_sha256"],
     "manifest_value_changes": ["/runtime/probe_code_sha256", "/runtime/scaffold_policy_sha256",
                                "/runtime/generation_identity_sha256"],
@@ -126,6 +131,9 @@ def compare(old, new, table=TABLE, rederive=None):
             ok = ((doc == "row" and _listed(rel, table["row_additions"], table["row_addition_prefixes"]))
                   or (doc == "manifest" and _listed(rel, table["manifest_additions"], table["manifest_addition_prefixes"]))
                   or (doc == "chain" and _listed(rel, table["chain_additions"], table["chain_addition_prefixes"])))
+            if not ok and doc == "chain" and rederive is not None and any(rel.startswith(p) for p in table.get(
+                    "chain_rederived_additions", ())):
+                ok = bool(rederive(ptr, None, b))
             if not ok:
                 failures.append("%s: addition not in the table" % ptr)
         elif kind == "removed":

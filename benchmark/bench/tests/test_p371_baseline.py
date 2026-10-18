@@ -295,8 +295,11 @@ def test_chain_json_new_keys_are_listed_and_everything_else_is_compared():
     old, new = chain_sample(), chain_sample()
     for key in ("progress", "chain_config", "snapshots", "epoch_id", "artifacts"):
         new["chain_json"][key] = {"x": 1}
-    new["chain_json"]["lifecycle"]["chain_core"] = "z"                         # a new lifecycle member
     assert cmp_mod.compare(old, new, cmp_mod.TABLE).ok
+    new["chain_json"]["lifecycle"]["chain_core"] = "z"                         # a new lifecycle member (F8: re-derived)
+    assert not cmp_mod.compare(old, new, cmp_mod.TABLE).ok
+    assert cmp_mod.compare(old, new, cmp_mod.TABLE, rederive=lambda p, o, n: p.endswith("/lifecycle/chain_core")).ok
+    del new["chain_json"]["lifecycle"]["chain_core"]
     new["chain_json"]["rc"] = 2
     res = cmp_mod.compare(old, new, cmp_mod.TABLE)
     assert not res.ok and any("/chain_json/rc" in f for f in res.failures)
@@ -541,7 +544,7 @@ def test_chain_differential(name):
     scenario = run_mod.load_scenario(name)
     new = run_mod.run_new_side(scenario)                 # phase 3: runs the same scenario on the new chain core
     old = run_mod.load_golden(name)
-    res = cmp_mod.compare(old, new, cmp_mod.TABLE, rederive=new_side.chain_rederive())
+    res = cmp_mod.compare(old, new, cmp_mod.TABLE, rederive=new_side.chain_rederive(new))
     assert res.ok, res.failures
 
 

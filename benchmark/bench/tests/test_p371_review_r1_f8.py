@@ -44,7 +44,8 @@ def test_a_changed_interpreter_between_the_sides_is_a_difference():
     old, new = sample(), sample()
     for side, value in ((old, "CPython 3.12.15"), (new, "CPython 3.13.0")):
         side["runs"][0]["manifest"]["runtime"]["policy"]["toolchain"] = {"interpreter": value}
-    res = cmp_mod.compare(old, new, cmp_mod.TABLE, rederive=lambda *a: True)
+    assert not cmp_mod.compare(old, new, cmp_mod.TABLE).ok
+    res = cmp_mod.compare(old, new, cmp_mod.TABLE, rederive=new_side.rederive({"_expected": [None]}))     # the real hook
     assert not res.ok and any("toolchain/interpreter" in f for f in res.failures)
 
 
