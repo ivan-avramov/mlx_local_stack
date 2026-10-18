@@ -252,3 +252,93 @@ def test_every_real_reference_manifest_passes_the_structural_allowlist_check(tmp
         mat.apply_reference(POLYGLOT, plan, ref)
         assert tg.cargo_manifest_reasons((prep.tree / "Cargo.toml").read_text(), (ref / "Cargo.toml").read_text(),
                                          mat.reference_extra_crates(POLYGLOT, "rust", slug)) == [], slug
+
+
+# ------------------------------------------------------------------------- S1: allow-listed prepared tree, leakage
+UNIVERSE = Path(__file__).resolve().parents[2] / "m65/tg2_universe.json"
+LEAK_CHUNK = 200
+REFERENCE_ROOTS = (".meta", ".approaches", ".articles")
+
+
+def _norm(text):
+    return " ".join(text.split())
+
+
+def leaked_chunks(reference_files, tree, chunk=LEAK_CHUNK):
+    """{(prepared file, reference file): share of the reference file's `chunk`-char windows (whitespace-normalized)
+    that also occur in the prepared file} for every pair that shares at least one window."""
+    windows = {}
+    for path in sorted(Path(tree).rglob("*")):
+        if path.is_file():
+            text = _norm(path.read_text(errors="replace"))
+            windows[path.relative_to(tree).as_posix()] = {hash(text[i:i + chunk]) for i in range(max(0, len(text) - chunk + 1))}
+    leaks = {}
+    for ref in reference_files:
+        text = _norm(ref.read_text(errors="replace"))
+        total = max(0, len(text) - chunk + 1)
+        hashes = [hash(text[i:i + chunk]) for i in range(total)]
+        for rel, ws in windows.items():
+            hit = sum(h in ws for h in hashes)
+            if hit:
+                leaks[(rel, ref.name)] = hit / total
+    return leaks
+
+
+# Inspected overlaps (200+ chars) that are the stub's own shipped scaffolding (API skeletons, helper classes the reference
+# re-includes, test data / lyrics shared with a test file), never solution code: (item, prepared file). Each must still
+# occur (no stale entries) and cover < half of the reference file it overlaps.
+STUB_SCAFFOLDING = {
+    ("java/bottle-song", "src/test/java/BottleSongTest.java"), ("java/dominoes", "src/main/java/Domino.java"),
+    ("java/hangman", "src/main/java/Output.java"), ("java/kindergarten-garden", "src/main/java/Plant.java"),
+    ("java/mazy-mice", "src/test/java/MazeGeneratorTest.java"), ("java/pov", "src/main/java/Tree.java"),
+    ("java/rest-api", "src/main/java/Iou.java"), ("java/rest-api", "src/main/java/User.java"),
+    ("java/satellite", "src/main/java/Tree.java"), ("java/sgf-parsing", "src/main/java/SgfNode.java"),
+    ("java/word-search", "src/main/java/Pair.java"), ("java/word-search", "src/main/java/WordLocation.java"),
+    ("javascript/food-chain", "food-chain.spec.js"), ("javascript/grep", "grep.js"),
+    ("rust/gigasecond", "tests/gigasecond.rs"), ("rust/grep", "tests/grep.rs"), ("rust/poker", "src/lib.rs"),
+    ("rust/react", "src/lib.rs"), ("rust/two-bucket", "src/lib.rs"), ("rust/xorcism", "src/lib.rs"),
+    ("rust/xorcism", "tests/xorcism.rs"),
+}
+
+
+def reference_files(corpus, lang, slug):
+    src = mat.exercise_dir(corpus, lang, slug)
+    files = [p for root in REFERENCE_ROOTS if (src / root).is_dir() for p in sorted((src / root).rglob("*")) if p.is_file()]
+    files += [src / e for e in mat.read_plan(corpus, lang, slug).config["example"]]
+    return files
+
+
+def valid_items():
+    doc = json.loads(UNIVERSE.read_text())
+    return [i for entry in doc["languages"].values() for i in entry["valid"]]
+
+
+def test_prepared_tree_drops_approaches_articles_and_unknown_top_level_directories(tmp_path):
+    c = make_corpus(tmp_path / "c", "java", "a", dict(solution=["lib/A.java"], test=["src/test/java/ATest.java"],
+                                                     example=[".meta/src/reference/java/A.java"]),
+                    {"lib/A.java": "s", "src/test/java/ATest.java": "t", ".meta/src/reference/java/A.java": "r",
+                     ".approaches/x/snippet.txt": "SOLUTION", ".articles/p/a.md": "ARTICLE", "notes/n.md": "NOTES",
+                     "build.gradle": "g", "gradle/wrapper/w.properties": "w", ".docs/i.md": "d"})
+    tree = mat.prepare_tree(c, "java", "a", tmp_path / "t").tree
+    got = sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file())
+    assert got == ["build.gradle", "gradle/wrapper/w.properties", "lib/A.java", "src/test/java/ATest.java"]
+
+
+@pytest.mark.skipif(not (HAVE_CORPUS and UNIVERSE.is_file()), reason="polyglot corpus / frozen universe not found")
+def test_every_valid_item_prepared_tree_has_nothing_from_an_excluded_root_and_no_reference_chunk(tmp_path):
+    bad, seen = {}, set()
+    for item in valid_items():
+        lang, slug = item.split("/")
+        tree = mat.prepare_tree(POLYGLOT, lang, slug, tmp_path / item.replace("/", "-")).tree
+        top = {p.relative_to(tree).parts[0] for p in tree.rglob("*")}
+        if top & set(REFERENCE_ROOTS + (".docs",)):
+            bad[item] = ("excluded root present", sorted(top & set(REFERENCE_ROOTS + (".docs",))))
+            continue
+        for (rel, ref), share in leaked_chunks(reference_files(POLYGLOT, lang, slug), tree).items():
+            if (item, rel) in STUB_SCAFFOLDING and share < 0.5:
+                seen.add((item, rel))
+            else:
+                bad.setdefault(item, []).append((rel, ref, round(share, 2)))
+        shutil.rmtree(tree)
+    assert bad == {}, bad
+    assert seen == STUB_SCAFFOLDING, sorted(STUB_SCAFFOLDING - seen)
