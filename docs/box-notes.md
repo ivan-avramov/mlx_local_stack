@@ -18,6 +18,10 @@ procedures are archived in `docs/two-box-archive.md`.
   — 4/4 and 6/6 trials, with or without writes by the first container; the same sequence under `$STACK_WORKDIR` (`~/ws/…`) 0/4. Fresh
   directories are unaffected. Mount only fresh copies, never from `$TMPDIR`; tg1 grades fresh snapshots under the run dir (safe).
 
+- **mlx 0.32.4 breaks quantized speculative-verifier exactness (2026-10-17, P369):** a fresh `pip install -e .` of the fork pulls mlx 0.32.4,
+  which fails 138 quantized-verifier exactness tests; 0.32.3 (the stack's `uv.lock`) passes. Any mlx bump must re-run the fork's verifier
+  exactness tests before serving MTP. TF32 on → f32 MTP-ON/OFF laws differ ≈ 5e-4 (tests disable it; bf16 unaffected).
+
 ## Shell and agent-tooling traps (apply on every M5 box)
 
 - **`rm` and `cp` are interactive aliases in the operator's shell.** In a non-tty tool call `rm` reads EOF at the prompt and silently deletes nothing; `cp` over an existing file hangs until the timeout. Use `rm -f`, `/bin/cp -f`, and verify (`test ! -f`, `diff`).
