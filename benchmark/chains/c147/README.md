@@ -1,6 +1,6 @@
 # C147 chain drivers
 
-Spec: `docs/specs/c147-tg1-chain-clearance.md` (rev 3). Library: `benchmark/bench/chain_ops.py`.
+Spec: `docs/specs/c147-tg1-chain-clearance.md` (rev 3). Library: `benchmark/bench/chain_ops.py`; P371 phase 3a: the chain itself is `benchmark/bench/chain_core.py` (`run_tg1_chain.py` is the thin entry: CLI, out-root rules, the tg1 `ChainConfig`).
 Everything detached: `nohup <script> ... &`; rc files hold the exit code. Stack stays stopped afterwards.
 
 | File | Use |
@@ -28,10 +28,21 @@ Runner options: `--pred-s LANG:MODEL=SECONDS` (repeatable), `--arm-idle-s` (defa
 `run_tg1_probe.py --print-identity --universe <file>` prints; the policy also embeds the bench lock sha, the interpreter
 and the local grader image id, so each box passes its own value). `--generation-sha` optionally pins the shared composite
 up front (otherwise it is pinned from the first manifest); one arm identity per (model, predictor) is frozen at the
-arm's first manifest. The runner, `chain_ops.py`, the A4 gate and `drive_chain.sh` are hashed into `chain.json`
-(`lifecycle`) at chain creation and re-verified before every launch, barrier, validation, resume and at exit: drift
-aborts with rc 2 (a changed chain needs a new out-root). Draft-OFF overlay: `$C147_OVERLAY` (default `$STACK_WORKDIR/c147/overlay_c147_draft_off.yaml`,
-generated from `main_models.yaml` on first use).
+arm's first manifest. The chain's lifecycle (P24, R15) is the entry's static import closure (`identity_closure`: `chain_core`,
+`chain_ops`, `chain_rows`, `schedules`, `run_config`, `web_evidence`, `campaign_core` ...) + the serialized `ChainConfig` + the
+A4 gate + the launchers; it is hashed into `chain.json` (`lifecycle`, `chain_config`) at chain creation and re-verified before
+every launch, barrier, validation, resume and at exit: drift aborts with rc 2 (a changed chain needs a new out-root).
+`--campaign-core <tag>` (C179 / P377) additionally refuses unless the probe and chain entry closures equal their closures at
+that git tag (`chain.json` `artifacts.campaign_core`; enforced at the same points; absent = recorded null). Draft-OFF overlay:
+`$C147_OVERLAY` (default `$STACK_WORKDIR/c147/overlay_c147_draft_off.yaml`, generated from `main_models.yaml` on first use).
+
+Rows layout (P371 A8 / P376): every pilot / full invocation writes its own immutable `<session>/<stem>.L<leg>.<phase>.a<n>.jsonl`
+(+ `.manifest.json`, `.log`, `.json`, `.CANCEL`, `.ACK`; `a<n>` counts the stem's invocations); the full invocation runs the cell
+minus the pilot's items. `chain.json.progress` (the `bench/chain_rows.py` schema) is the inventory: scored slots come only from
+`chain_rows.load_slots`. A restarted load is archived under `<session>/incomplete/` with its sha manifest recorded first; a
+resumed chain quarantines never-validated files under `quarantine/<ts>/MANIFEST.json` and reruns the interrupted load. Web
+evidence per row is extracted chain-side to `<evidence>.web.jsonl` (sha in `progress`). Stored pre-P371 chains are read only
+through `chain_rows.legacy` / `legacy_path`.
 
 Cancellation is cooperative only (idle predicate or STOP). The runner never kills a probe without
 a prior cancel file and `T_coop` expiry; on a refused restart it lists leftovers and kills nothing.

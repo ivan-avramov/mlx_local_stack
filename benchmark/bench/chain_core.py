@@ -864,6 +864,7 @@ class Chain:
             return "ok"
         for w in why:
             self.log(f"INCOMPLETE {leg['stem']} attempt {n}: {w}")
+        self.abandoned_web_evidence(rec, out)
         if sup["stop"]:
             dest = self.archive_stopped(load, leg)
             self.log(f"STOP: partial leg archived to {dest}")
@@ -887,6 +888,26 @@ class Chain:
         rec["status"] = "validated"
         self.write_json("invocation-validated")
         self.after_invocation(load, leg, inv, rec, rows)
+
+    def abandoned_web_evidence(self, rec, out):
+        """A12: an invocation that did not validate (cut, cancelled, aborted ...) still has stored transcripts for the rows it
+        wrote; their web evidence is extracted (and hashed in the invocation record) before the files are archived."""
+        try:
+            rows = cr.rows_if_present(out)
+        except cr.ChainRowsError as exc:
+            self.log(f"web evidence: partial rows file {Path(out).name} unreadable ({exc}); nothing extracted")
+            return
+        if not rows:
+            return
+        rules = self.web_rules()
+        found = {}
+        for row in rows:
+            tp = row.get("transcript_path")
+            path = co.resolve_portable(tp, self.wd) if tp else None
+            found[cr.slot_for(rec["slot_base"], row["id"])] = self.web_record(
+                row, rules, path.with_name(path.stem + ".web.jsonl") if path is not None else None)
+        rec["web_evidence"] = found
+        self.write_json("web-evidence-partial")
 
     def after_invocation(self, load, leg, inv, rec, rows):
         """Chain-side web evidence for every row with a stored transcript; the sha256 is recorded per slot attempt."""

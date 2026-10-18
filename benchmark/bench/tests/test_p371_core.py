@@ -188,11 +188,13 @@ def test_a_second_invocation_on_an_existing_rows_file_is_refused_not_resumed(wor
     assert (world.tmp / "rows.jsonl").read_bytes() == before and len(before.splitlines()) == 1
 
 
-def test_a_stray_manifest_without_a_rows_file_also_refuses(world):
+def test_a_manifest_without_a_rows_file_is_not_a_resume_and_is_overwritten(world):
+    """Only a pre-existing ROWS file refuses; a leftover manifest of an invocation that wrote no row is simply replaced (the
+    chain never reuses a leg-attempt path, and refuses a stale one itself)."""
     (world.tmp / "rows.manifest.json").write_text("{}")
-    with pytest.raises(SystemExit, match="REFUSED"):
-        run(world)
-    assert not (world.tmp / "rows.jsonl").exists()
+    assert run(world)[0] == 0
+    assert len((world.tmp / "rows.jsonl").read_text().splitlines()) == 1
+    assert json.loads((world.tmp / "rows.manifest.json").read_text())["runtime"]
 
 
 def test_print_identity_runs_without_a_router(world, capsys):

@@ -1038,10 +1038,10 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                  evidence_policy=evidence.as_dict())
     mp = out.with_suffix(".manifest.json")
     rows = []
-    if out.exists() or mp.exists():
+    if out.exists():
         # P371 phase 3a (plan 4 A8 / R6): probe-level resume is gone. Every invocation writes a FRESH rows file (the chain
-        # names it `<stem>.L<leg>.<phase>.a<n>.jsonl`), so a pre-existing rows file or manifest at the target path
-        # refuses. The old manifest is still read to say WHY (transport abort, provenance, serving or worker drift).
+        # names it `<stem>.L<leg>.<phase>.a<n>.jsonl`), so a pre-existing rows file at the target path refuses. The old
+        # manifest is still read to say WHY (transport abort, provenance, serving or worker drift).
         try:
             old = json.loads(mp.read_text())
         except (ValueError, OSError) as exc:

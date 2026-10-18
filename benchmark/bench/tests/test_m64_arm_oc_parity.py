@@ -78,11 +78,14 @@ def test_the_tg1_composite_is_the_p311_recipe_and_the_m64_arm_joins_the_arm(prob
     assert m64.generation_identity_sha256(rt) == aa.arm_generation_sha256("oc", rt, ao.OpencodeArm.GENERATION_FIELDS)
 
 
-def test_a_resumed_arm_probe_skips_done_items_and_refuses_a_changed_arm_field(probe, monkeypatch, tmp_path):
+def test_an_arm_probe_refuses_an_existing_rows_file_and_names_a_changed_arm_field(probe, monkeypatch, tmp_path):
+    """P371 phase 3a: probe-level resume is gone (was `..._a_resumed_arm_probe_skips_done_items_...`): a second invocation on the
+    same rows file refuses instead of skipping the done items; the diagnostic still names a changed arm field."""
     f = tg_fixture(probe, monkeypatch, tmp_path)
     out = tmp_path / "b.jsonl"
     assert run_arm(f, probe, tmp_path, monkeypatch, out, ao.OpencodeArm(probe, mode="tg1")) == 0
-    assert run_arm(f, probe, tmp_path, monkeypatch, out, ao.OpencodeArm(probe, mode="tg1")) == 0       # resume: no-op
+    with pytest.raises(SystemExit, match="REFUSED.*rows file"):
+        run_arm(f, probe, tmp_path, monkeypatch, out, ao.OpencodeArm(probe, mode="tg1"))
     assert len(rows_of(out)) == 1
     with pytest.raises(SystemExit, match="resume provenance differs"):
         _changed_epoch(f, probe, tmp_path, monkeypatch, out)

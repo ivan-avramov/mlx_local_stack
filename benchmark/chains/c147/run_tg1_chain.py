@@ -110,8 +110,16 @@ def schedule(mode, sessions, names, out_root, smoke=False, predictor="off"):
 
 
 def steps_for(block, idx):
-    """The leg's invocations as steps `{kind, names, limit}` (pilot, then the full invocation's remaining items)."""
-    return [dict(kind=i["phase"], names=i["names"], limit=i["limit"]) for i in block["legs"][idx]["invocations"]]
+    """The PRE-P371 steps of leg `idx`: a pilot, then (first leg, pilot != cell) a full step over the WHOLE cell; later legs
+    one full step. Kept for the A14 baseline mapping and tests: the chain itself runs the disjoint `invocations`."""
+    leg = block["legs"][idx]
+    pilot = dict(kind="pilot", names=leg["pilot_names"], limit=len(leg["pilot_names"]))
+    full = dict(kind="full", names=leg["full_names"], limit=None)
+    if block.get("pilot_only"):
+        return [pilot]
+    if idx > 0:
+        return [full]
+    return [pilot] if leg["pilot_names"] == leg["full_names"] else [pilot, full]
 
 
 def build_cmd(py, probe, leg, step, receipt, cancel, ack, universe=None, frozen=None, out=None, attempt=None,

@@ -249,6 +249,20 @@ def test_web_evidence_is_extracted_per_row_with_the_sha_recorded_per_slot_attemp
     assert len(cr.load_slots(cj, env["out"]).scored) == 5
 
 
+def test_web_evidence_of_an_abandoned_invocations_partial_rows_is_extracted_before_the_load_is_archived(env):
+    """A12: every attempt with a stored transcript (pass, fail, cut, incident, cancel ...) leaves a hashed evidence file."""
+    plan = ["abort_after_n", "normal"]
+    assert run(env, ["chain", "reload", "--probe-code-sha", "9" * 64], plan=plan,
+               extra_env={"FAKE_N": "2", "FAKE_EXPORT_DOC": json.dumps(DOC)}) == 0
+    recs = [i for i in chain_json(env)["progress"]["invocations"] if i["load_gen"] == 0]
+    assert len(recs) == 1 and recs[0]["status"] == "archived"
+    w = recs[0]["web_evidence"]
+    assert len(w) == 2 and all(v["count"] == 4 and v["sha256"] for v in w.values())
+    for slot, v in w.items():
+        path = Path(v["path"].replace("$STACK_WORKDIR", str(env["wd"])))
+        assert path.name == "export.web.jsonl" and sha_of(path) == v["sha256"] and slot.startswith("tg1|oc|")
+
+
 def test_an_unreadable_export_leaves_an_unavailable_record_never_a_no_contact_claim(env):
     assert run(env, PILOT, extra_env={"FAKE_EXPORT_RAW": "not json at all"}) == 0
     for a in chain_json(env)["progress"]["slot_attempts"]:

@@ -2,7 +2,7 @@
 
 Honours: manifest written (atomic) BEFORE item one, then blocks until the ack file exists (<= FAKE_PROBE_ACK_WAIT s,
 default 300; no ack -> nonzero exit having generated nothing); rows file rewritten atomically; P371 phase 3a: every
-invocation writes a FRESH rows file (a pre-existing rows file or manifest at --out refuses, rc 2; no probe-level resume)
+invocation writes a FRESH rows file (a pre-existing rows file at --out refuses, rc 2; no probe-level resume)
 and `--attempt` / `--attempt-rerun-index` are accepted (recorded in invocations.jsonl with the rest of argv);
 heartbeat JSON lines with key "m62_watch"; cooperative cancel file; SIGTERM -> cleanup-only exit 143; refuses to
 start when the cancel or ack file already exists; rc 0 only when every expected item has a row and nothing aborted.
@@ -236,8 +236,8 @@ def main(argv=None):
     worker = json.loads((state / "worker.json").read_text()) if state and (state / "worker.json").exists() else {
         "pid": 1, "create_time": 1.0, "model_path": "caslca/" + a.model, "registry_sha256": "a" * 64}
     rows = []
-    if out.exists() or mp.exists():                 # P371 phase 3a: a fresh rows file per invocation, never resumed
-        print("REFUSED: rows file or manifest already exists (every invocation writes a fresh rows file)", flush=True)
+    if out.exists():                                # P371 phase 3a: a fresh rows file per invocation, never resumed
+        print("REFUSED: rows file already exists (every invocation writes a fresh rows file)", flush=True)
         return 2
     run_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:12]
     overrides = json.loads(env.get("FAKE_MANIFEST_OVERRIDE", "{}"))
