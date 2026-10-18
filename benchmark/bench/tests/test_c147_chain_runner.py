@@ -179,7 +179,7 @@ EPOCH_DATE = "Mon Jan 05 2026"       # P364: a past date, so a row that showed t
 
 
 def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeout=90, helper=None, universe=True,
-        lifecycle=None, frozen=EPOCH_DATE):
+        lifecycle=None, frozen=EPOCH_DATE, campaign=None):
     ops = env["ops"]
     if plan is not None:
         ops.extra_env["FAKE_PROBE_PLAN"] = json.dumps(plan)
@@ -197,7 +197,8 @@ def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeo
 
     def target():
         try:
-            res["rc"] = R.main(full, ops=ops, timers=tm, log_out=env["lines"].append, lifecycle_files=lifecycle)
+            res["rc"] = R.main(full, ops=ops, timers=tm, log_out=env["lines"].append, lifecycle_files=lifecycle,
+                               campaign=campaign)
         except BaseException as e:  # noqa: BLE001
             res["exc"] = e
 
