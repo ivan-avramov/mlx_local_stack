@@ -209,6 +209,15 @@ cut); shell watchdog positives (foreground, background, a child that detaches AF
 SearXNG fixture (D2, §5.5); infrastructure-failure classification (container down, MCP crash, all engines erroring); injected stall, loop,
 hard-ceiling positives through each arm's events; P201 cheat → re-run through each arm (§9).
 
+### 5.6 Shared core (P371, C178; `docs/specs/p371-shared-runner-core.md`)
+Every arm runs on ONE item core (`bench/arm_runner.py`) and ONE chain core (`bench/chain_core.py`); an arm × corpus is a
+configuration bound to one thin probe entry (`m64-oc-tg1` = `run_oc_probe.py`; `m64-oc-tg2` after the tg2 smoke, C175 D3).
+Contract additions over §5: `seed_overlay`, `overlay_sha`, `preflight(selection)`, `build_env(…, attempt=)`,
+`request_classes` (from the finalized transcript), `supports_attempt_header`; web evidence is extracted CHAIN-side from the
+hashed transcript (`bench/web_evidence.py`, per-arm rules in `ArmSpec`); the probe runs a per-item file barrier that the
+chain answers (`ChainHooks.before_attempt` / `after_attempt`: D2 health and P201 dispositions live there, outside every
+probe closure).
+
 ## 7. Receipts and token accounting
 
 **Owner: the `../mlx-vlm` fork worker** (it generates tokens and sees client disconnects; the `mlx-serve` router only
@@ -229,6 +238,12 @@ receipt. Primary token quantity: completion tokens per assigned task over all ta
 failed attempts included (§8.3). Without complete receipts token superiority is "not established" and joint PASS is
 impossible.
 
+**Runner side built (P371, P372):** the start / fence protocol is fixed by a fixture both sides test against
+(`POST /bench/attempt/start`, `POST /bench/attempt/fence`; every receipt names its worker; the raw fenced set is persisted
+as `<evidence>.receipts.json`, sha in the row); requests are classified from the finalized transcript and joined
+one-to-one; opencode's compaction requests carry tools (P378). The fork endpoint is the M64 fork step (after P369's fork
+push); until then a configuration requiring receipts refuses at start.
+
 ## 8. Schedule, attempts and transport incidents
 
 ### 8.1 Blocks
@@ -241,6 +256,12 @@ warm-up request (not scored); SearXNG restarted before every leg (§5.5). Reload
 fresh worker load.
 ### 8.2 Worker
 One worker load per (pick, session) shared by its three arms; fresh session id per item attempt; no cross-arm resume.
+### 8.2a Invocations and resume (P371)
+Schedules come from `bench/schedules.py` (`blocks` for M64 over any corpus' languages; the tg2 screen via `tg2_tier`).
+Each probe invocation writes one immutable rows file `<stem>.L<leg>.<phase>.a<n>.jsonl`; `chain.json.progress` records
+every invocation (status, expected / accepted slots, sha after validation); resume continues on a fresh worker segment;
+`bench/chain_rows.py` is the only chain-row reader.
+
 ### 8.3 Attempts and transport incidents (C165 2b)
 **Classification.** A NATIVE CLIENT CUT is a client-side termination registered per arm by its contract test (opencode
 2.0.20 `client_inactivity`, C154; any analogue in Pi/dsh): a scored strict failure, no retry. A TRANSPORT FAILURE is a
