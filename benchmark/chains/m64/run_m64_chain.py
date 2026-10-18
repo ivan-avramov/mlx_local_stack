@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO / "benchmark"))
 from bench import arm_adapter as aa  # noqa: E402
 from bench import arm_ops  # noqa: E402
 from bench import arm_specs  # noqa: E402
+from bench import campaign_core  # noqa: E402
 from bench import chain_core as core  # noqa: E402
 from bench import chain_ops as co  # noqa: E402
 from bench import datefreeze  # noqa: E402
@@ -36,6 +37,14 @@ Timers, RecordInvalid, Stopped, Refused = core.Timers, core.RecordInvalid, core.
 SMOKE_ARM_IDLE_S = core.SMOKE_ARM_IDLE_S
 LANGS = ("python", "go")
 NAMED_LIFECYCLE = {"runner": "benchmark/chains/m64/run_m64_chain.py", "chain_ops": "benchmark/bench/chain_ops.py"}
+
+
+def core_specs(arms):
+    """C179 (P377): the campaign core of an M64 chain = ONE probe closure per arm (the `probe_code_sha256` recipe: the arm
+    probe entry's import closure + its generation data files, from the arm spec) and this entry's closure."""
+    return dict(probes={arm: dict(entry=arm_specs.spec_for(arm).probe, data=tuple(arm_specs.spec_for(arm).generation_data))
+                        for arm in arms},
+                chain_entry=NAMED_LIFECYCLE["runner"], chain_data=())
 
 
 def lifecycle_files(repo):
@@ -103,6 +112,10 @@ def build_parser():
                     help="the arm's contract artifact (path + sha256 frozen in chain.json; the refusal checks are phase 4)")
     ap.add_argument("--pred-s", action="append", default=[], metavar="LANG:MODEL=SECONDS")
     ap.add_argument("--arm-idle-s", type=float, default=None)
+    ap.add_argument("--campaign-core", default=None, metavar="TAG_OR_COMMIT",
+                    help="C179 / P377: the campaign's frozen core. The chain refuses unless every arm's probe closure and "
+                         "this entry's closure equal their closures at this git tag / commit (at creation, every launch, "
+                         "resume and exit); recorded in chain.json artifacts.campaign_core")
     ap.add_argument("--smoke", action="store_true", help="rehearsal: tiny cells, 60 s arm idle, own out-root")
     ap.add_argument("--out-root")
     ap.add_argument("--python", default=str(REPO / ".venv-bench/bin/python"))
@@ -132,6 +145,8 @@ def parse_args(argv):
         ap.error("--epoch-id must be 64 lowercase hex")
     if a.frozen_prompt_date is not None and not datefreeze.valid(a.frozen_prompt_date):
         ap.error("--frozen-prompt-date must be 'Www Mmm DD YYYY' (e.g. 'Sat Oct 17 2026')")
+    if a.campaign_core is not None and not a.campaign_core.strip():
+        ap.error("--campaign-core must name a git tag or commit")
     if a.arm_idle_s is None:
         a.arm_idle_s = SMOKE_ARM_IDLE_S if a.smoke else 600.0
     a.sessions = a.sessions or ["s1", "s2", "reload"]
@@ -176,6 +191,8 @@ def main(argv=None, ops=None, timers=None, log_out=None, lifecycle_files=None, h
     if ops is None:
         overlay = os.environ.get("C147_OVERLAY") or str(out_root / "overlay_m64_draft_off.yaml")
         ops = arm_ops.M64ChainOps(REPO, wd, overlay, log, out_root=out_root)
+    if campaign is None:
+        campaign = campaign_core.Campaign(REPO, **core_specs(a.arms))
     chain = build_chain(a, ops, timers or Timers(), log, load_universe(a.universe), out_root, lifecycle_files, hooks,
                         campaign, config)
     try:

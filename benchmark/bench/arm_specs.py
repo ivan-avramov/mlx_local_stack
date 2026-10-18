@@ -24,6 +24,10 @@ class ArmSpec:
     # P371 3b: the evidence policy (`run_config.EvidencePolicy.as_dict()`) the arm's probe records in every manifest's
     # `runtime.evidence_policy`; the chain verifies it at the barrier (data here, so the chain imports no adapter module)
     evidence_policy: dict = field(default_factory=dict, hash=False)
+    # P371 phase 4 (C179): the non-Python inputs of the arm probe's identity (`probe_code_sha256` = the probe entry's import
+    # closure + these files); the campaign core's per-arm probe closure is computed over them (= the adapter's
+    # `generation_data`, tested equal)
+    generation_data: tuple = ()
 
     def __post_init__(self):
         if not (isinstance(self.web_evidence_rules, dict) and self.web_evidence_rules):
@@ -63,6 +67,8 @@ OC = ArmSpec(
     # endpoint exists (P372); the chain answers the item barrier since P371 phase 3b.
     evidence_policy=dict(namespace="transcripts/oc", web_evidence=True, final_tree=True, worker_receipts="absent",
                          item_barrier="on"),
+    generation_data=("benchmark/opencode_plugins/toolbounds.js", "benchmark/opencode_plugins/noretry.js",
+                     "benchmark/opencode_plugins/datefreeze.js", "benchmark/opencode_bench_v2_web_tg1.json"),
 )
 
 SPECS = {"oc": OC}      # Pi and dsh register theirs with their adapters (build step 5)
