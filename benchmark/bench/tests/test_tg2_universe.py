@@ -212,14 +212,15 @@ def rec(item, status="valid", reason=""):
 def test_s3_fingerprint_names_corpus_image_grader_materializer_and_policy():
     fp = U.fingerprint(**ID)
     assert fp == dict(polyglot_sha="p" * 40, image_id="sha256:" + "a" * 64, grader_version=tg.VERSION,
-                      materializer_version=mat.VERSION, policy=fp["policy"], cargo_locks_sha256=fp["cargo_locks_sha256"]) and len(fp["policy"]) == 64
+                      materializer_version=mat.VERSION, policy=fp["policy"], cargo_locks_sha256=fp["cargo_locks_sha256"],
+                      freezer_sha256=fp["freezer_sha256"]) and len(fp["policy"]) == 64
 
 
 def test_s6_fingerprint_carries_the_verified_cargo_locks_hash():
     assert U.fingerprint(**ID)["cargo_locks_sha256"] == tg.image_record()["cargo_locks_sha256"]
 
 
-@pytest.mark.parametrize("attr,value", [("PIDS_LIMIT", 1), ("NOFILE_LIMIT", 1), ("FSIZE_LIMIT", 1), ("TIMEOUT_FLOOR", 1),
+@pytest.mark.parametrize("attr,value", [("PIDS_LIMIT", 1), ("MEMORY_LIMIT", "8g"), ("NOFILE_LIMIT", 1), ("FSIZE_LIMIT", 1), ("TIMEOUT_FLOOR", 1),
                                         ("OUTPUT_CAP", 1), ("REPORT_CAP", 1), ("TREE_CAP", 1), ("WORK_VOLUME_SIZE", "9g"),
                                         ("OPTIONAL_LEAVES", {})])
 def test_s3_policy_covers_the_grader_resource_limits_and_optional_leaves(monkeypatch, attr, value):
@@ -396,6 +397,59 @@ def test_s7_assemble_requires_each_records_input_hash_and_publishes_it():
     with pytest.raises(TransportAbort, match="inputs_sha256"):
         doc_for([bad])
     assert doc_for([rec("rust/a")])["items"]["rust/a"]["inputs_sha256"] == "i" * 64
+
+
+# ------------------------------------------------------- S8: freezer identity, memory limit, load revalidates the policy
+def test_s8_the_fingerprint_names_the_static_import_closure_of_the_freezer():
+    from bench import identity_closure as ic
+    bench_root = Path(__file__).resolve().parents[2]
+    assert U.fingerprint(**ID)["freezer_sha256"] == ic.closure_sha256("m65/tg2_universe.py", bench_root)
+    assert {"bench/tg2_grade.py", "bench/tg2_materialize.py", "m65/tg2_universe.py"} <= {
+        p.relative_to(bench_root).as_posix() for p in ic.python_closure(bench_root / "m65/tg2_universe.py", bench_root)}
+
+
+def test_s8_any_change_inside_the_freezer_closure_changes_the_fingerprint(tmp_path):
+    from bench import identity_closure as ic
+    bench_root = Path(__file__).resolve().parents[2]
+    copy = tmp_path / "bench-copy"
+    for p in ic.python_closure(bench_root / "m65/tg2_universe.py", bench_root):
+        dest = copy / p.relative_to(bench_root)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(p, dest)
+    before = U.freezer_sha256(copy)
+    assert before == U.freezer_sha256(bench_root)
+    (copy / "bench/tg2_materialize.py").write_text((copy / "bench/tg2_materialize.py").read_text() + "\n# edit\n")
+    assert U.freezer_sha256(copy) != before
+
+
+def test_s8_the_container_memory_limit_is_one_constant_used_by_the_docker_command(monkeypatch):
+    assert tg.MEMORY_LIMIT == "4g"
+    assert tg._docker_run("n", "img", "s", [], ["x"])[tg._docker_run("n", "img", "s", [], ["x"]).index("--memory") + 1] == "4g"
+    monkeypatch.setattr(tg, "MEMORY_LIMIT", "3g")
+    cmd = tg._docker_run("n", "img", "s", [], ["x"])
+    assert cmd[cmd.index("--memory") + 1] == "3g" and cmd[cmd.index("--memory-swap") + 1] == "3g"
+
+
+@pytest.mark.parametrize("what", ["PIDS_LIMIT", "MEMORY_LIMIT", "freezer", "grader_version", "image_id", "cargo_locks"])
+def test_s8_load_revalidates_the_embedded_fingerprint_and_asks_for_a_refreeze(tmp_path, monkeypatch, what):
+    out = tmp_path / "u.json"
+    U.freeze(out, doc_for([rec("rust/a")]))
+    assert U.load(out)[0]["fingerprint"] == U.fingerprint(**ID)
+    if what == "freezer":
+        monkeypatch.setattr(U, "freezer_sha256", lambda *a, **k: "0" * 64)
+    elif what == "grader_version":
+        monkeypatch.setattr(tg, "VERSION", "other")
+    elif what == "image_id":
+        doc = json.loads(out.read_text())
+        doc["image_id"] = "sha256:" + "c" * 64
+        out.write_text(json.dumps(doc))
+        (tmp_path / "u.json.sha256").write_text(__import__("hashlib").sha256(out.read_bytes()).hexdigest() + "\n")
+    elif what == "cargo_locks":
+        monkeypatch.setattr(tg, "verified_cargo_locks_sha256", lambda: "0" * 64)
+    else:
+        monkeypatch.setattr(tg, what, 1 if what == "PIDS_LIMIT" else "9g")
+    with pytest.raises(TransportAbort, match="re-freeze"):
+        U.load(out)
 
 
 def test_s3_load_refuses_a_universe_frozen_by_another_materializer(tmp_path, monkeypatch):
