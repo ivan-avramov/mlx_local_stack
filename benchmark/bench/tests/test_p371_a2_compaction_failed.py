@@ -60,7 +60,7 @@ def test_the_fixture_is_the_real_2_0_20_failed_compaction_shape():
 
 def test_no_home_path_or_username_is_in_the_fixture():
     text = (Path(__file__).parent / "fixtures/opencode_2.0.20_compaction_failed.json").read_text()
-    assert "/Users/" not in text and "/private/var" not in text and os.environ.get("USER", "-x-") not in text
+    assert str(Path.home()) not in text and "/private/var" not in text and Path.home().name not in text
 
 
 def test_compaction_failed_sits_after_the_client_cuts_and_before_budget_hit():
