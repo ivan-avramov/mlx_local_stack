@@ -227,6 +227,31 @@ def test_a_finished_load_is_not_run_again_on_resume(env):
     assert len(invocations(env)) == before and len(env["ops"].names("load")) == 1
 
 
+def test_a_pilot_then_the_chain_in_one_out_root_keep_their_loads_apart(env):
+    """The operator flow (drive_chain.sh pilot, then chain ...) shares one chain.json: the pilot's load is a different load
+    from the chain's first block even though both are the first of their schedule."""
+    assert run(env, PILOT) == 0
+    assert run(env, CHAIN) == 0
+    cj = chain_json(env)
+    loads = cj["progress"]["loads"]
+    assert [(l["load"], l["key"], l["status"], l["load_gen"]) for l in loads] == [
+        (0, f"pilot|{PICK1}", "done", 0), (1, f"s1|{PICK1}", "done", 0), (2, f"s1|{PICK2}", "done", 0)]
+    assert all(i["status"] == "validated" for i in cj["progress"]["invocations"]) and len(cj["progress"]["invocations"]) == 7
+    assert len(cr.load_slots(cj, env["out"]).scored) == 5 + 24
+    assert not (env["out"] / "pilot" / "incomplete").exists()
+
+
+def test_the_campaign_core_specs_follow_the_probe_identity_recipe_and_the_entry_closure():
+    from bench import campaign_core as cc
+    from bench import identity_closure as ic
+    from bench import tg1_runner
+    assert tuple(R.CORE_SPECS["probe_data"]) == tuple(tg1_runner.GENERATION_DATA)
+    now = cc.closure_shas(REPO, **R.CORE_SPECS)
+    assert now["probe_closure_sha256"] == ic.closure_sha256("benchmark/run_tg1_probe.py", REPO, data=tg1_runner.GENERATION_DATA)
+    assert {"benchmark/bench/chain_core.py", "benchmark/bench/campaign_core.py"} <= set(
+        cc.members(REPO, R.CORE_SPECS["chain_entry"], R.CORE_SPECS["chain_data"]))
+
+
 def test_an_unregistered_rows_file_in_the_out_root_is_refused_by_the_loader(env):
     assert run(env, PILOT) == 0
     (env["out"] / "pilot" / f"{PICK1}.pilot.opencode_python.L0.pilot.a9.jsonl").write_text("")

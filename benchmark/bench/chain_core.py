@@ -575,12 +575,17 @@ class Chain:
         return self.out_root / load["session"]
 
     def load_rec(self, load):
+        """The progress record of a load, found by its key (`<session>|<model>`) or created with the next load ordinal. The
+        ordinal (`load["idx"]`, the first element of every invocation's `leg_key`) is the CREATION order in this chain.json,
+        so a pilot and the chain after it (one out-root) never share a load id."""
         for rec in self.progress["loads"]:
-            if rec.get("key") == load["key"] and rec.get("load") == load["idx"]:
+            if rec.get("key") == load["key"]:
+                load["idx"] = rec["load"]
                 return rec
-        rec = dict(load=load["idx"], key=load["key"], session=load["session"], model=load["model"], status="pending",
-                   load_gen=0, workers=[], cursor=dict(leg_index=0, phase=None), archives=[])
+        rec = dict(load=len(self.progress["loads"]), key=load["key"], session=load["session"], model=load["model"],
+                   status="pending", load_gen=0, workers=[], cursor=dict(leg_index=0, phase=None), archives=[])
         self.progress["loads"].append(rec)
+        load["idx"] = rec["load"]
         return rec
 
     def run_load(self, load):
