@@ -900,6 +900,25 @@ def _pin(tmp_path, monkeypatch, d):
     return pin
 
 
+def test_s12_vendored_versions_keep_build_metadata_and_count_only_crates_io_registry_packages(tmp_path, monkeypatch):
+    reg = "registry+https://github.com/rust-lang/crates.io-index"
+    lock = "".join('[[package]]\nname = "%s"\nversion = "%s"\n%s\n' % (n, v, ('source = "%s"\n' % src) if src else "")
+                   for n, v, src in [("wasi", "0.11.1+wasi-snapshot-preview1", reg), ("pre", "1.0.0-rc.1", reg),
+                                     ("gitdep", "2.0.0", "git+https://example.invalid/x#abc"), ("local", "0.1.0", None),
+                                     ("other", "3.0.0", "registry+https://example.invalid/index"),
+                                     ("sparse", "4.0.0", "sparse+https://index.crates.io/")])
+    d = _locks_dir(tmp_path, {"c/Cargo.lock": lock})
+    _pin(tmp_path, monkeypatch, d)
+    v = tg.vendored_versions()
+    assert v["wasi"] == ["0.11.1+wasi-snapshot-preview1"] and v["pre"] == ["1.0.0-rc.1"] and v["sparse"] == ["4.0.0"]
+    assert "gitdep" not in v and "local" not in v and "other" not in v
+    assert tg.cargo_req_matches("0.11", "0.11.1+wasi-snapshot-preview1") and tg.cargo_req_matches("^1.0.0-rc.1", "1.0.0-rc.1")
+
+
+def test_s12_the_real_wasi_lock_entry_is_vendored():
+    assert "0.11.1+wasi-snapshot-preview1" in tg.vendored_versions()["wasi"]
+
+
 def test_s6_the_real_committed_locks_hash_equals_the_image_pin():
     assert tg.cargo_locks_sha256() == tg.image_record()["cargo_locks_sha256"]
     assert len(tg.rust_lock_files()) == 32 and "_allowlist/Cargo.lock" in tg.rust_lock_files()
