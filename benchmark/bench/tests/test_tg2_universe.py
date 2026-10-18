@@ -9,6 +9,7 @@ import shutil
 import pytest
 
 from bench import tg2_grade as tg
+from bench import tg2_materialize as mat
 from bench.token_turn_gate import TransportAbort
 
 M65 = Path(__file__).resolve().parents[2] / "m65"
@@ -188,20 +189,120 @@ def test_run_all_caches_finished_items_logs_one_line_each_and_resumes(tmp_path):
         (c / lang / "exercises/practice").mkdir(parents=True)
     g = Grader()
     log = tmp_path / "freeze.log"
-    recs = U.run_all(c, tmp_path / "w", log, g)
+    recs = U.run_all(c, tmp_path / "w", log, g, **ID)
     assert [r["item"] for r in recs] == ["javascript/x"] and len(log.read_text().splitlines()) == 1
     calls = len(g.calls)
-    U.run_all(c, tmp_path / "w", log, g)
+    U.run_all(c, tmp_path / "w", log, g, **ID)
     assert len(g.calls) == calls and "cached" in log.read_text().splitlines()[-1]
 
 
+ID = dict(image_id="sha256:" + "a" * 64, polyglot_sha="p" * 40)
+
+
 def doc_for(records):
-    return U.assemble(records, image_id="sha256:" + "a" * 64, polyglot_sha="p" * 40)
+    return U.assemble(records, **ID)
 
 
 def rec(item, status="valid", reason=""):
-    return dict(item=item, status=status, reason=reason, scan=None, reference_runs=[dict(leaf_sha256="x", seconds=3.0)] * 3,
+    return dict(fingerprint=U.fingerprint(**ID), item=item, status=status, reason=reason, scan=None, reference_runs=[dict(leaf_sha256="x", seconds=3.0)] * 3,
                 stub_runs=[dict(leaf_sha256="y")] * 2, rewrites={}, optional_excluded=[])
+
+
+# --------------------------------------------------------------------- S3: resumable records carry a fingerprint
+def test_s3_fingerprint_names_corpus_image_grader_materializer_and_policy():
+    fp = U.fingerprint(**ID)
+    assert fp == dict(polyglot_sha="p" * 40, image_id="sha256:" + "a" * 64, grader_version=tg.VERSION,
+                      materializer_version=mat.VERSION, policy=fp["policy"]) and len(fp["policy"]) == 64
+
+
+@pytest.mark.parametrize("attr,value", [("PIDS_LIMIT", 1), ("NOFILE_LIMIT", 1), ("FSIZE_LIMIT", 1), ("TIMEOUT_FLOOR", 1),
+                                        ("OUTPUT_CAP", 1), ("REPORT_CAP", 1), ("TREE_CAP", 1), ("WORK_VOLUME_SIZE", "9g"),
+                                        ("OPTIONAL_LEAVES", {})])
+def test_s3_policy_covers_the_grader_resource_limits_and_optional_leaves(monkeypatch, attr, value):
+    before = U.fingerprint(**ID)["policy"]
+    monkeypatch.setattr(tg, attr, value)
+    assert U.fingerprint(**ID)["policy"] != before
+
+
+def test_s3_policy_covers_run_counts_timeout_and_the_allowlist(monkeypatch, tmp_path):
+    before = U.fingerprint(**ID)["policy"]
+    assert U.fingerprint(**ID, ref_runs=1)["policy"] != before and U.fingerprint(**ID, stub_runs=1)["policy"] != before
+    monkeypatch.setattr(U, "GRADE_TIMEOUT", 1)
+    assert U.fingerprint(**ID)["policy"] != before
+    monkeypatch.undo()
+    other = tmp_path / "allow.json"
+    other.write_text(tg.ALLOWLIST_FILE.read_text() + " ")
+    monkeypatch.setattr(tg, "ALLOWLIST_FILE", other)
+    assert U.fingerprint(**ID)["policy"] != before
+
+
+def _frozen_cache(tmp_path):
+    c = corpus(tmp_path / "c")
+    for lang in ("rust", "java", "cpp"):
+        (c / lang / "exercises/practice").mkdir(parents=True)
+    g = Grader()
+    U.run_all(c, tmp_path / "w", tmp_path / "log", g, **ID)
+    return c, g, len(g.calls)
+
+
+def test_s3_resume_reuses_only_records_with_the_exact_fingerprint(tmp_path):
+    c, g, calls = _frozen_cache(tmp_path)
+    cached = json.loads((tmp_path / "w/items/javascript__x.json").read_text())
+    assert cached["fingerprint"] == U.fingerprint(**ID)
+    recs = U.run_all(c, tmp_path / "w", tmp_path / "log", g, **ID)
+    assert len(g.calls) == calls and recs[0]["fingerprint"] == U.fingerprint(**ID)
+
+
+@pytest.mark.parametrize("change", ["polyglot_sha", "image_id", "grader_version", "materializer_version", "policy"])
+def test_s3_resume_refuses_every_fingerprint_mismatch_before_running_anything(tmp_path, monkeypatch, change):
+    c, g, calls = _frozen_cache(tmp_path)
+    before = (tmp_path / "w/items/javascript__x.json").read_bytes()
+    kw = dict(ID)
+    if change == "polyglot_sha":
+        kw["polyglot_sha"] = "q" * 40
+    elif change == "image_id":
+        kw["image_id"] = "sha256:" + "b" * 64
+    elif change == "grader_version":
+        monkeypatch.setattr(tg, "VERSION", "other")
+    elif change == "materializer_version":
+        monkeypatch.setattr(mat, "VERSION", "other")
+    else:
+        monkeypatch.setattr(tg, "PIDS_LIMIT", 1)
+    with pytest.raises(TransportAbort, match=r"javascript/x.*%s" % change):
+        U.run_all(c, tmp_path / "w", tmp_path / "log", g, **kw)
+    assert len(g.calls) == calls and (tmp_path / "w/items/javascript__x.json").read_bytes() == before
+
+
+def test_s3_a_legacy_unfingerprinted_cache_record_is_refused(tmp_path):
+    c, g, calls = _frozen_cache(tmp_path)
+    path = tmp_path / "w/items/javascript__x.json"
+    legacy = json.loads(path.read_text())
+    del legacy["fingerprint"]
+    path.write_text(json.dumps(legacy))
+    with pytest.raises(TransportAbort, match="fingerprint"):
+        U.run_all(c, tmp_path / "w", tmp_path / "log", g, **ID)
+    assert len(g.calls) == calls
+
+
+def test_s3_assemble_refuses_records_whose_fingerprint_is_missing_or_differs():
+    good = rec("rust/a")
+    with pytest.raises(TransportAbort, match="rust/b.*image_id"):
+        doc_for([good, dict(rec("rust/b"), fingerprint=U.fingerprint(image_id="sha256:" + "c" * 64, polyglot_sha="p" * 40))])
+    stale = rec("rust/c")
+    del stale["fingerprint"]
+    with pytest.raises(TransportAbort, match="rust/c"):
+        doc_for([good, stale])
+    doc = doc_for([good])
+    assert doc["fingerprint"] == U.fingerprint(**ID) and doc["materializer_version"] == mat.VERSION
+    assert "fingerprint" not in doc["items"]["rust/a"]
+
+
+def test_s3_load_refuses_a_universe_frozen_by_another_materializer(tmp_path, monkeypatch):
+    out = tmp_path / "u.json"
+    U.freeze(out, doc_for([rec("rust/a")]))
+    monkeypatch.setattr(mat, "VERSION", "other")
+    with pytest.raises(TransportAbort, match="materializer"):
+        U.load(out)
 
 
 def test_assemble_counts_n_actual_per_language_and_lists_exclusions():
