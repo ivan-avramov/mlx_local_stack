@@ -43,9 +43,12 @@ class Tg1Corpus(Corpus):
     corpus_id = "tg1"
     languages = ("python", "go")
 
-    def __init__(self, universe_path, polyglot_root=None):
+    def __init__(self, universe_path, polyglot_root=None, polyglot_sha=None):
+        """`polyglot_root` / `polyglot_sha` may be callables (the entry injects its own, so a test patching the entry
+        reaches the corpus); they are resolved lazily on every use, as the pre-P371 loop did."""
         self.universe_path = Path(universe_path)
-        self._polyglot_root = None if polyglot_root is None else Path(polyglot_root)
+        self._polyglot_root = polyglot_root if (polyglot_root is None or callable(polyglot_root)) else Path(polyglot_root)
+        self._polyglot_sha = polyglot_sha
         self.universe = None
         self.universe_sha256 = None
 
@@ -78,10 +81,22 @@ class Tg1Corpus(Corpus):
         return lang == "go"
 
     def _root(self):
+        if callable(self._polyglot_root):
+            return Path(self._polyglot_root())
         if self._polyglot_root is None:
             from . import opencode_v2_core as core
             self._polyglot_root = core._polyglot_root()
-        return self._polyglot_root
+        return Path(self._polyglot_root)
+
+    def inject_addendum_sha256(self, kind):
+        return inject_addendum_sha256(kind)
+
+    def source_sha(self):
+        sha = self._polyglot_sha
+        if sha is None:
+            from . import opencode_v2_core as core
+            sha = core._polyglot_sha
+        return sha(self._root())
 
     def source_root(self, lang):
         return self._root() / lang / "exercises/practice"

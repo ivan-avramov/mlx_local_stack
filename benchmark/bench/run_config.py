@@ -169,6 +169,44 @@ def tg1_generation_policy(*, config_id, scaffold, corpus_id, corpus_identity, la
         watchdog=dict(WATCHDOG_OFF if watchdog is None else watchdog), compaction=compaction, arm=arm)
 
 
+@dataclass(frozen=True)
+class PolicyTemplate:
+    """The STATIC part of a `GenerationPolicy`, bound by a probe entry (config id, languages, inject kinds, budgets,
+    watchdog, compaction). The runtime inputs (plugin / carrier shas, universe, toolchain, ...) complete it in `build`."""
+    config_id: str
+    langs: tuple
+    inject_allowed: tuple = INJECT_KINDS
+    budgets: dict = field(default_factory=lambda: dict(DEFAULT_BUDGETS))
+    watchdog: dict = field(default_factory=lambda: dict(WATCHDOG_OFF))
+    compaction: str = "off"
+
+    def __post_init__(self):
+        if not (isinstance(self.config_id, str) and self.config_id):
+            raise ValueError("config_id must be a nonempty string")
+        if not self.langs:
+            raise ValueError("langs must be nonempty")
+        if self.compaction not in COMPACTION:
+            raise ValueError(f"compaction must be one of {COMPACTION}")
+        if any(k not in INJECT_KINDS for k in self.inject_allowed):
+            raise ValueError(f"inject_allowed must be drawn from {INJECT_KINDS}")
+        wd = self.watchdog
+        if not isinstance(wd, dict) or wd.get("mode") not in ("off", "on"):
+            raise ValueError("watchdog.mode must be off or on")
+        if wd["mode"] == "on" and not all(wd.get(k) for k in ("limit_s", "grace_s", "toolwindows_sha256")):
+            raise ValueError("an on-watchdog needs limit_s, grace_s and toolwindows_sha256")
+        _frozen_set(self, "langs", tuple(self.langs))
+        _frozen_set(self, "inject_allowed", tuple(self.inject_allowed))
+        _frozen_set(self, "budgets", canonical(self.budgets))
+        _frozen_set(self, "watchdog", canonical(self.watchdog))
+
+    def build(self, **runtime):
+        """The complete `GenerationPolicy` (via `tg1_generation_policy`); `runtime` carries scaffold, corpus_id,
+        corpus_identity and the shas / env / toolchain inputs."""
+        return tg1_generation_policy(config_id=self.config_id, langs=self.langs, inject_allowed=self.inject_allowed,
+                                     budgets=self.budgets, watchdog=self.watchdog, compaction=self.compaction,
+                                     **runtime)
+
+
 # ---------------------------------------------------------------- evidence policy
 @dataclass(frozen=True)
 class EvidencePolicy:

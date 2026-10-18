@@ -138,6 +138,14 @@ class Corpus(abc.ABC):
     def needs_docker(self, lang):
         ...
 
+    def inject_addendum_sha256(self, kind):
+        """sha256 of the prompt addendum of an injected-positive kind (the corpus prompt owns the text)."""
+        raise NotImplementedError(f"corpus {self.corpus_id!r} has no inject addenda")
+
+    def source_sha(self):
+        """sha of the corpus source tree (the `polyglot_sha` of the generation composite); None when not applicable."""
+        return None
+
     @abc.abstractmethod
     def identity(self):
         """Corpus sha, grader version, timeouts and image: the corpus part of the generation policy."""
