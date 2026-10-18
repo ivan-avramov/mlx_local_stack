@@ -257,6 +257,7 @@ def test_every_real_reference_manifest_passes_the_structural_allowlist_check(tmp
 # ------------------------------------------------------------------------- S1: allow-listed prepared tree, leakage
 UNIVERSE = Path(__file__).resolve().parents[2] / "m65/tg2_universe.json"
 LEAK_CHUNK = 200
+LEAK_FLOOR = 40
 REFERENCE_ROOTS = (".meta", ".approaches", ".articles")
 
 
@@ -264,41 +265,38 @@ def _norm(text):
     return " ".join(text.split())
 
 
-def leaked_chunks(reference_files, tree, chunk=LEAK_CHUNK):
-    """{(prepared file, reference file): share of the reference file's `chunk`-char windows (whitespace-normalized)
-    that also occur in the prepared file} for every pair that shares at least one window."""
-    windows = {}
+def leaked_chunks(reference_files, tree, root=None, chunk=LEAK_CHUNK, floor=LEAK_FLOOR):
+    """{(prepared file, reference path): (sha256 of the prepared file, sha256 of the reference)} for every pair where a
+    `min(chunk, len)`-char run of the reference (whitespace-normalized; references shorter than `floor` chars carry no
+    signal and are skipped) occurs in the prepared file: a reference shorter than `chunk` must be contained whole."""
+    import hashlib
+    prepared = {}
     for path in sorted(Path(tree).rglob("*")):
         if path.is_file():
-            text = _norm(path.read_text(errors="replace"))
-            windows[path.relative_to(tree).as_posix()] = {hash(text[i:i + chunk]) for i in range(max(0, len(text) - chunk + 1))}
+            prepared[path.relative_to(tree).as_posix()] = (_norm(path.read_text(errors="replace")), path.read_bytes())
+    windows = {}
     leaks = {}
     for ref in reference_files:
-        text = _norm(ref.read_text(errors="replace"))
-        total = max(0, len(text) - chunk + 1)
-        hashes = [hash(text[i:i + chunk]) for i in range(total)]
-        for rel, ws in windows.items():
-            hit = sum(h in ws for h in hashes)
-            if hit:
-                leaks[(rel, ref.name)] = hit / total
+        raw = ref.read_bytes()
+        text = _norm(raw.decode(errors="replace"))
+        if len(text) < floor:
+            continue
+        w = min(chunk, len(text))
+        hashes = {hash(text[i:i + w]) for i in range(len(text) - w + 1)}
+        for rel, (ptext, pbytes) in prepared.items():
+            if (rel, w) not in windows:
+                windows[(rel, w)] = {hash(ptext[i:i + w]) for i in range(max(0, len(ptext) - w + 1))}
+            if hashes & windows[(rel, w)]:
+                name = ref.relative_to(root).as_posix() if root else ref.name
+                leaks[(rel, name)] = (hashlib.sha256(pbytes).hexdigest(), hashlib.sha256(raw).hexdigest())
     return leaks
 
 
-# Inspected overlaps (200+ chars) that are the stub's own shipped scaffolding (API skeletons, helper classes the reference
-# re-includes, test data / lyrics shared with a test file), never solution code: (item, prepared file). Each must still
-# occur (no stale entries) and either cover < half of the reference file or be a shipped file (stub / editor helper) that the
-# reference re-includes verbatim, so it adds nothing the model does not already have.
-STUB_SCAFFOLDING = {
-    ("java/bottle-song", "src/test/java/BottleSongTest.java"), ("java/dominoes", "src/main/java/Domino.java"),
-    ("java/hangman", "src/main/java/Output.java"), ("java/kindergarten-garden", "src/main/java/Plant.java"),
-    ("java/mazy-mice", "src/test/java/MazeGeneratorTest.java"), ("java/pov", "src/main/java/Tree.java"),
-    ("java/rest-api", "src/main/java/Iou.java"), ("java/rest-api", "src/main/java/User.java"),
-    ("java/satellite", "src/main/java/Tree.java"), ("java/sgf-parsing", "src/main/java/SgfNode.java"),
-    ("java/word-search", "src/main/java/Pair.java"), ("java/word-search", "src/main/java/WordLocation.java"),
-    ("javascript/food-chain", "food-chain.spec.js"), ("javascript/grep", "grep.js"),
-    ("rust/poker", "src/lib.rs"), ("rust/react", "src/lib.rs"), ("rust/two-bucket", "src/lib.rs"),
-    ("rust/xorcism", "src/lib.rs"),
-}
+# Inspected overlaps between a prepared file and a reference file: (item, prepared path, reference path, sha256 of the
+# prepared file, sha256 of the reference). Each is the stub's own shipped scaffolding (API skeleton, helper class the
+# reference re-includes, test data / lyrics shared with a test file), never solution code. A changed reference or prepared
+# file, or an overlap not listed here, fails the test; a listed pair that no longer overlaps fails it too.
+LEAK_EXCEPTIONS = set()
 
 
 def reference_files(corpus, lang, slug):
@@ -307,7 +305,7 @@ def reference_files(corpus, lang, slug):
     files = [p for root in REFERENCE_ROOTS if (src / root).is_dir() for p in sorted((src / root).rglob("*"))
              if p.is_file() and p.suffix not in (".tera", ".j2") and p.name not in ("tests.toml", "config.json")]
     files += [src / e for e in mat.read_plan(corpus, lang, slug).config["example"]]
-    return files
+    return sorted(set(files))
 
 
 def valid_items():
@@ -336,17 +334,50 @@ def test_every_valid_item_prepared_tree_has_nothing_from_an_excluded_root_and_no
         if top & set(REFERENCE_ROOTS + (".docs",)):
             bad[item] = ("excluded root present", sorted(top & set(REFERENCE_ROOTS + (".docs",))))
             continue
-        refs = reference_files(POLYGLOT, lang, slug)
-        for (rel, ref), share in leaked_chunks(refs, tree).items():
-            verbatim = any(r.name == ref and _norm(r.read_text(errors="replace")) ==
-                                                    _norm((tree / rel).read_text(errors="replace")) for r in refs)
-            if (item, rel) in STUB_SCAFFOLDING and (share < 0.5 or verbatim):
-                seen.add((item, rel))
-            else:
-                bad.setdefault(item, []).append((rel, ref, round(share, 2)))
+        for (rel, ref), (psha, rsha) in leaked_chunks(reference_files(POLYGLOT, lang, slug), tree,
+                                                      mat.exercise_dir(POLYGLOT, lang, slug)).items():
+            seen.add((item, rel, ref, psha, rsha))
         shutil.rmtree(tree)
     assert bad == {}, bad
-    assert seen == STUB_SCAFFOLDING, sorted(STUB_SCAFFOLDING - seen)
+    assert seen == LEAK_EXCEPTIONS, ("unlisted", sorted(seen - LEAK_EXCEPTIONS), "stale", sorted(LEAK_EXCEPTIONS - seen))
+
+
+def test_s10_a_short_reference_contained_whole_in_a_prepared_file_is_a_hit_and_a_tiny_one_is_not(tmp_path):
+    tree = tmp_path / "t"
+    tree.mkdir()
+    (tree / "stub.rs").write_text("fn  main() {\n  let answer = compute_the_thing(42);   }\n")
+    refs = tmp_path / "r"
+    refs.mkdir()
+    (refs / "short.rs").write_text("let answer = compute_the_thing(42);")           # 35 chars: below the floor
+    (refs / "mid.rs").write_text("fn main() { let answer = compute_the_thing(42); }")   # 49 chars, contained after normalizing
+    (refs / "tiny.rs").write_text("fn main")
+    hits = leaked_chunks(sorted(refs.iterdir()), tree, refs)
+    assert set(hits) == {("stub.rs", "mid.rs")}
+
+
+def test_s10_any_long_run_of_a_reference_is_a_hit_whatever_share_of_the_reference_it_is(tmp_path):
+    tree = tmp_path / "t"
+    tree.mkdir()
+    run = " ".join("word%d" % i for i in range(60))                                  # well over 200 chars
+    (tree / "stub.txt").write_text("header " + run + " footer")
+    refs = tmp_path / "r"
+    refs.mkdir()
+    (refs / "partial.txt").write_text(run + " " + " ".join("other%d" % i for i in range(400)))       # run is < 15% of it
+    (refs / "unrelated.txt").write_text(" ".join("zzz%d" % i for i in range(100)))
+    assert set(leaked_chunks(sorted(refs.iterdir()), tree, refs)) == {("stub.txt", "partial.txt")}
+
+
+def test_s10_exceptions_are_content_addressed_to_both_files(tmp_path):
+    tree = tmp_path / "t"
+    tree.mkdir()
+    (tree / "a.txt").write_text("x" * 10 + " the shared scaffold sentence that is long enough to count" + "y" * 10)
+    refs = tmp_path / "r"
+    refs.mkdir()
+    (refs / "r.txt").write_text("the shared scaffold sentence that is long enough to count")
+    first = leaked_chunks([refs / "r.txt"], tree, refs)
+    (refs / "r.txt").write_text("the shared scaffold sentence that is long enough to count, extended")
+    (tree / "a.txt").write_text("the shared scaffold sentence that is long enough to count, extended")
+    assert leaked_chunks([refs / "r.txt"], tree, refs) != first
 
 
 # --------------------------------------------------------------------- S4: references must sit under an excluded root
