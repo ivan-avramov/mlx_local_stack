@@ -762,7 +762,10 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             result["task_tokens"] = dict(
                 accounting="receipts" if joined is not None else "client",
                 gate_completion_tokens=gate_tokens, compaction_completion_tokens=compaction_tokens,
-                completion_tokens=gate_tokens + compaction_tokens,
+                # F3 (review r1): receipt accounting makes the task total the worker's own (every task + compaction request it
+                # served, a disconnected generation included); the gate's count stays beside it as `gate_completion_tokens`
+                completion_tokens=(joined.task_tokens["completion_tokens"] if joined is not None
+                                   else gate_tokens + compaction_tokens),
                 receipts=None if joined is None else dict(joined.task_tokens, by_class=joined.by_class))
         if watchdog_on:
             result["shell_watchdog"] = dict(
