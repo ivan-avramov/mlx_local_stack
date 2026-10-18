@@ -29,6 +29,10 @@ TOOL_STATUSES = ("running", "completed", "error")
 # Native client cuts registered by an arm's contract test (spec 8.3): client-side terminations scored as strict
 # failures, never retried. opencode 2.0.20: `client_inactivity` (C154); an analogue in Pi / dsh is added here when found.
 KNOWN_CLIENT_CUTS = ("client_inactivity",)
+# Allowed message roles per worker-request class (worker receipt controls, spec 7 / A3): a task and a compaction request
+# carry the whole conversation; an auxiliary request (title, summary helper ...) only a system and a user message.
+ROLES_BY_CLASS = dict(task=("system", "user", "assistant", "tool"), compaction=("system", "user", "assistant", "tool"),
+                      auxiliary=("system", "user"))
 
 
 class ArmRefused(RuntimeError):
@@ -275,6 +279,12 @@ class ArmAdapter(abc.ABC):
     observed = None                     # set by the runner after each item: {events, reconciliation, tool_windows}
     date_receipt_key = None             # evidence key of the per-item date-freeze receipts (None: the arm has none)
     report_gate_on_abort = False        # the abort stamp carries the failed attempt's gate report (M64 chains count it)
+    # Per-class tool rule of a worker request (`required` / `forbidden`): which classes carry the tool definitions. The
+    # default is the plan's (a compaction or auxiliary request is tool-less); a client that sends its tools with every
+    # request (opencode 2.0.20 does, summary request included) overrides it.
+    receipt_class_rules = dict(task="required", compaction="forbidden", auxiliary="forbidden")
+    supports_attempt_header = False     # the client can send the `X-Bench-Attempt` correlation header (R31): a custom provider
+    #                                     header in its generated config. Used only when worker receipts are required.
 
     # -- identity and provenance
     @abc.abstractmethod
@@ -397,6 +407,21 @@ class ArmAdapter(abc.ABC):
     @abc.abstractmethod
     def receipts_reconcile(self, paths, **kw):
         """Reconcile per-request receipts (date freeze today; worker receipts, spec 7, in the fork step)."""
+
+    # -- worker receipts (A3): classification of the requests the client made, from its FINALIZED transcript
+    def request_classes(self, stream, transcript):
+        """`[{cls, [tools_sha256], [repeat]}]` in admission order: one entry per worker request the session made (class
+        `task` / `compaction` / `auxiliary`). `repeat=(lo, hi)` states a range for an entry whose request count the
+        transcript cannot give exactly. Default: every request the live stream saw start is a task request."""
+        return [dict(cls="task") for _ in stream.starts]
+
+    def expected_roles(self, cls):
+        """The message roles a worker request of class `cls` may carry."""
+        return ROLES_BY_CLASS[cls]
+
+    def bind_stream(self, stream, *, paths, attempt):
+        """Called once per item after `new_stream`: lets the adapter read per-item evidence files (tool-window receipts)
+        for the live watchdog. Default: nothing."""
 
     # -- arm naming (defaults suit a client with none of these needs)
     @abc.abstractmethod

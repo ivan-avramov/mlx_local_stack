@@ -255,7 +255,7 @@ def test_receipts_from_a_worker_the_probe_did_not_observe_are_a_worker_crash(wor
     (dict(sampling=dict(temperature=0.1, top_p=0.95, top_k=20, min_p=0.0, presence_penalty=1.5)), "sampling"),
 ])
 def test_the_effective_controls_must_equal_the_declared_ones(world, override, why):
-    admits = [dict(cls="task", seed=SEED, **override), dict(cls="task", seed=SEED)]
+    admits = [dict(dict(cls="task", seed=SEED), **override), dict(cls="task", seed=SEED)]
     assert why in abort_of(world, source(world, admits))[0]
 
 

@@ -47,8 +47,10 @@ def test_the_overlay_carries_the_header_only_when_an_attempt_is_passed(probe):
     plain = arm.seed_overlay(MODEL, 7)
     assert plain == probe._seed_overlay(MODEL, 7)
     headed = arm.seed_overlay(MODEL, 7, attempt=ctx)
-    assert headed["providers"]["mlx-local"]["settings"]["headers"] == {HEADER: "python/one#a2.r1"}
-    assert headed["providers"]["mlx-local"]["models"] == plain["providers"]["mlx-local"]["models"]
+    assert headed["providers"]["mlx-local"]["models"][MODEL]["headers"] == {HEADER: "python/one#a2.r1"}
+    assert "settings" not in headed["providers"]["mlx-local"]            # the destination proof refuses any settings
+    assert headed["providers"]["mlx-local"]["models"][MODEL]["body"] == plain["providers"]["mlx-local"]["models"][
+        MODEL]["body"]
     assert arm.seed_overlay(MODEL, 7, attempt=None) == plain
 
 
@@ -75,6 +77,15 @@ def test_the_tg1_env_is_unchanged_by_the_attempt_seam(probe, tmp_path):
     got = arm.build_env(run, scratch, overlay, receipts=tmp_path / "r.jsonl", frozen_date=FROZEN,
                         attempt=wr.AttemptContext.make("python/one", 1))
     assert got == probe._opencode_env(run, scratch, overlay, frozen_date=FROZEN, receipts=tmp_path / "r.jsonl")
+
+
+def test_the_oc_entry_takes_the_attempt_number_and_rerun_index_from_the_chain():
+    ap = entry_parser()
+    base = ["--model", MODEL, "--items", "one", "--seed-base", "1"]
+    got = ap.parse_args(base)
+    assert (got.attempt, got.attempt_rerun_index) == (1, 0)
+    got = ap.parse_args(base + ["--attempt", "3", "--attempt-rerun-index", "1"])
+    assert (got.attempt, got.attempt_rerun_index) == (3, 1)
 
 
 # ---------------------------------------------------------------- request classes from the finalized export
@@ -105,6 +116,11 @@ def test_a_failed_compaction_is_exactly_two_requests(probe):
     err = dict(type="compaction.failed", message="Compaction summary did not match the required template")
     got = classes(m64_arm(probe), assistant("m1"), compaction("failed", error=err), dict(type="idle", outcome="failed"))
     assert got == [dict(cls="task"), dict(cls="compaction", repeat=(2, 2))]
+
+
+def test_opencodes_class_rules_expect_tools_on_every_request_of_the_session(probe):
+    assert m64_arm(probe).receipt_class_rules == dict(task="required", compaction="required", auxiliary="forbidden")
+    assert aa.ArmAdapter.receipt_class_rules == dict(task="required", compaction="forbidden", auxiliary="forbidden")
 
 
 def test_there_are_no_auxiliary_requests_because_the_title_agent_is_disabled(probe):
@@ -199,7 +215,7 @@ def test_an_absent_policy_sends_no_header_and_writes_no_receipt_file(probe, pinn
     assert got["worker"].calls == []
 
 
-def test_a_compaction_run_joins_its_summary_request_as_a_tool_less_compaction_class(
+def test_the_real_compaction_summary_request_carries_the_tool_definitions_and_joins_as_compaction(
         probe, pinned_binary, monkeypatch, tmp_path):
     got = run_oc(probe, pinned_binary, monkeypatch, tmp_path, OcHarness.compaction_script(None),
                  window=OcHarness.reduced_window)
@@ -211,6 +227,7 @@ def test_a_compaction_run_joins_its_summary_request_as_a_tool_less_compaction_cl
     assert row["compaction"]["completion_tokens"] == 10 and row["compaction"]["receipts"] == 1
     summary = [c for c in got["mock"].chats if is_summary(c["body"])]
     assert len(summary) == 1 and {k.lower(): v for k, v in summary[0]["headers"].items()}[HEADER.lower()]
+    assert len(summary[0]["body"]["tools"]) == 8        # pinned 2.0.20 sends the tool set with the summary request too
     assert row["task_tokens"]["compaction_completion_tokens"] == 10
 
 
@@ -225,3 +242,4 @@ def test_a_receipt_naming_another_worker_is_a_worker_crash_for_the_real_run(
     got = run_oc(probe, pinned_binary, monkeypatch, tmp_path, {},
                  mutate=lambda s: s._receipts[1].update(worker=dict(pid=9, create_time=1.0)))
     assert got["abort"] is not None and got["manifest"]["transport_abort"]["cause"] == "worker_crash"
+

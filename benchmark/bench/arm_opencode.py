@@ -65,6 +65,7 @@ SNAPSHOT_OWED = ("dependency_tree", "bottle_sha256", "tool_schemas")        # bu
 PLUGINS = ("noretry.js", "toolbounds.js", "datefreeze.js")
 TRANSPORT_CAUSES = ("server_error", "connection", "dropped_stream", "timeout")
 OPENCODE_CONFIG_CONTENT = "OPENCODE_CONFIG_CONTENT"
+ATTEMPT_HEADER = "X-Bench-Attempt"
 
 
 def generation_fields(ident):
@@ -93,11 +94,12 @@ def tool_bounds_rejections(export):
     )
 
 
-def m64_evidence():
-    """The `m64-oc-tg1` evidence policy. Phase 2a keeps worker receipts `absent` and the item barrier `off` (both
-    become required / on with A3 and the barrier wiring in phase 2b)."""
+def m64_evidence(receipts="absent", item_barrier="on"):
+    """The `m64-oc-tg1` evidence policy. Production binds worker receipts `absent` until the fork endpoint exists (P372;
+    `required` without a source refuses before any spawn); tests bind `required` with a fake source. The item barrier
+    is on for M64 (the chain's hooks run between the barrier files)."""
     return rc.EvidencePolicy(namespace="transcripts/oc", web_evidence=True, final_tree=True,
-                             worker_receipts="absent", item_barrier="off")
+                             worker_receipts=receipts, item_barrier=item_barrier)
 
 
 def m64_template():
@@ -212,6 +214,8 @@ class OpencodeArm(aa.ArmAdapter):
     removed_tools = REMOVED_TOOLS
 
     pinned_version = "2.0.20"
+    receipt_class_rules = dict(task="required", compaction="required", auxiliary="forbidden")   # 2.0.20 sends tools always
+    supports_attempt_header = True          # `providers.<id>.settings.headers` reaches every request (verified on 2.0.20)
 
     def __init__(self, p=None, *, mode="m64", search=None):
         if mode not in ("tg1", "m64"):
@@ -350,13 +354,28 @@ class OpencodeArm(aa.ArmAdapter):
                                   selection["fields"]["opencode_bench_config_sha256"])
 
     def seed_overlay(self, model, seed, *, attempt=None):
-        return self.p._seed_overlay(model, seed)
+        overlay = self.p._seed_overlay(model, seed)
+        if attempt is not None:
+            # R3 / R31: the correlation header for the worker receipts, on EVERY request of the model (task and compaction).
+            # Model level, not `settings`: the destination proof refuses any non-file document that declares settings.
+            overlay["providers"]["mlx-local"]["models"][model]["headers"] = {ATTEMPT_HEADER: attempt.header}
+        return overlay
 
     def valid_frozen_date(self, date):
         return datefreeze.valid(date)
 
     def overlay_sha(self, env):
-        return hashlib.sha256(env[OPENCODE_CONFIG_CONTENT].encode()).hexdigest()
+        """sha256 of the SEED overlay in `env`: the attempt-correlation header is evidence, not generation, so it is
+        stripped first (the chain validates the row against the pure seed overlay's hash)."""
+        raw = env[OPENCODE_CONFIG_CONTENT]
+        overlay = json.loads(raw)
+        for entry in overlay.get("providers", {}).get("mlx-local", {}).get("models", {}).values():
+            if ATTEMPT_HEADER in entry.get("headers", {}):
+                del entry["headers"][ATTEMPT_HEADER]
+                if not entry["headers"]:
+                    del entry["headers"]
+                raw = json.dumps(overlay, sort_keys=True)
+        return hashlib.sha256(raw.encode()).hexdigest()
 
     def verify_item_env(self, env, paths, frozen_date):
         """P364: the spawn env must name exactly this item's frozen date and receipt file."""
@@ -569,6 +588,23 @@ class OpencodeArm(aa.ArmAdapter):
         if self.m64:
             got = dict(got, compaction_receipts=got["receipts"] - got["requests"])
         return got
+
+    def request_classes(self, stream, transcript):
+        """The worker requests of the session, from the FINALIZED export (opencode 2.0.20 emits no live event for a
+        compaction request): one task request per assistant message (an interrupted trailing one included: its generation
+        was admitted), and per compaction message its summary request(s) between the tasks it separates. A completed
+        compaction is 1 request, or 2 when the first summary missed the template and the retry matched; a failed one is
+        exactly 2 (the template twice, P370). The title agent is disabled in the carrier: no auxiliary requests."""
+        out = []
+        for message in transcript.doc.get("messages", []):
+            kind = message.get("type")
+            if kind == "assistant":
+                out.append(dict(cls="task"))
+            elif kind == "compaction":
+                if not self.account_compaction:
+                    raise tg.TransportAbort("the export holds a compaction request in a configuration without compaction")
+                out.append(dict(cls="compaction", repeat=(2, 2) if message.get("status") == "failed" else (1, 2)))
+        return out
 
     def tool_windows(self, stream):
         return list(stream.tool_windows)

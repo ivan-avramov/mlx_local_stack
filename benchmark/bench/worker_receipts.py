@@ -17,7 +17,11 @@ headerless client's receipts carry a null header; a non-null header must always 
 required / forbidden per class (`DEFAULT_CLASS_RULES`: a compaction or auxiliary request is tool-less), the request's
 own tool-set hash when it states one, and the generation controls (`controls[cls]`: sampling, seed, thinking budget,
 max tokens). Task tokens = every owned task + compaction receipt, disconnected generations included; auxiliary
-requests are joined and reported apart (`by_class`). Every failure is a `tg.TransportAbort` subclass; only
+requests are joined and reported apart (`by_class`). Controls may also carry `roles` (the class's allowed message roles; a receipt's roles must be a nonempty subset),
+`max_tokens_max` (the client clamps `max_tokens` to the remaining window, so it is bounded, not pinned) and a request
+may declare `repeat=(lo, hi)` (see `_repeat_range`). Token convention the worker endpoint must follow (P372):
+`completion_tokens` is ALL generated tokens and `reasoning_tokens` the thinking subset of them (never summed here).
+Every failure is a `tg.TransportAbort` subclass; only
 `WorkerMismatch` carries a cause (`worker_crash`, R21).
 
 No adapter, corpus, scoring or process module is imported (it is in the probe closure by construction, R26)."""
@@ -381,6 +385,45 @@ def _zero():
     return dict(requests=0, **{k: 0 for k in TOKEN_FIELDS})
 
 
+def _repeat_range(request):
+    """`(lo, hi)` receipts a classified request may own. Default `(1, 1)`. A client that cannot state how many worker
+    requests one transcript entry made (opencode: one compaction message = its summary request, retried once when the
+    summary misses the template) declares a range; the join resolves it from the receipts' own tool rule."""
+    repeat = request.get("repeat", (1, 1))
+    if not (isinstance(repeat, (tuple, list)) and len(repeat) == 2 and all(type(x) is int for x in repeat)
+            and 1 <= repeat[0] <= repeat[1]):
+        raise ReceiptAbort(f"request repeat must be (lo, hi) integers with 1 <= lo <= hi, got {repeat!r}")
+    return repeat[0], repeat[1]
+
+
+def _tools_fit(rule, receipt):
+    present = receipt["request_tools_present"]
+    return (present if rule == "required" else not present) if rule in ("required", "forbidden") else True
+
+
+def _assign(receipts, requests, rules):
+    """`[(request, receipt)]` in admission order: every request takes its `lo` receipts and extends towards `hi` only
+    over following receipts that satisfy its class's tool rule while enough receipts remain for every later request."""
+    ranges = [_repeat_range(r) for r in requests]
+    lo_total, hi_total = sum(lo for lo, _ in ranges), sum(hi for _, hi in ranges)
+    if len(receipts) < lo_total:
+        raise ReceiptMissing(f"{lo_total} requests but only {len(receipts)} receipts")
+    if len(receipts) > hi_total:
+        raise ReceiptUnmatched(f"{len(receipts)} receipts but only {hi_total} requests")
+    pairs, i = [], 0
+    for index, (request, (lo, hi)) in enumerate(zip(requests, ranges)):
+        later = sum(lo for lo, _ in ranges[index + 1:])
+        take = lo
+        while (take < hi and len(receipts) - (i + take) > later and i + take < len(receipts)
+               and _tools_fit(rules.get(request.get("cls")), receipts[i + take])):
+            take += 1
+        pairs.extend((request, r) for r in receipts[i:i + take])
+        i += take
+    if i != len(receipts):
+        raise ReceiptUnmatched(f"{len(receipts) - i} receipts left after the last request")
+    return pairs
+
+
 def join(receipts, classified_requests, *, supports_header, ctx=None, controls=None, class_rules=None, mark=None,
          fence=None):
     """One-to-one join + per-class checks (see the module docstring). `receipts` are the attempt's owned receipts."""
@@ -392,19 +435,17 @@ def join(receipts, classified_requests, *, supports_header, ctx=None, controls=N
         raise ReceiptDuplicate(f"duplicate receipts for seq {dupes}")
     receipts.sort(key=lambda r: r["seq"])
     requests = list(classified_requests)
-    if len(receipts) < len(requests):
-        raise ReceiptMissing(f"{len(requests)} requests but only {len(receipts)} receipts")
-    if len(receipts) > len(requests):
-        raise ReceiptUnmatched(f"{len(receipts)} receipts but only {len(requests)} requests")
+    for request in requests:
+        if request.get("cls") not in CLASSES:
+            raise ReceiptAbort(f"unknown request class {request.get('cls')!r}")
+    pairs = _assign(receipts, requests, rules)
     for a, b in zip(receipts, receipts[1:]):
         if not b["received_mono"] > a["received_mono"]:
             raise ReceiptAmbiguous(f"receipts {a['seq']} and {b['seq']} are not ordered by timestamp")
     expected = None if ctx is None else ctx.header
     result = JoinResult(pairs=[], by_class={}, task_tokens=_zero())
-    for request, r in zip(requests, receipts):
-        cls = request.get("cls")
-        if cls not in CLASSES:
-            raise ReceiptAbort(f"unknown request class {cls!r}")
+    for request, r in pairs:
+        cls = request["cls"]
         if mark is not None and r["worker"] != mark.worker:
             raise WorkerMismatch(f"receipt {r['seq']} names another worker than the attempt's")
         header = r["attempt_header"]
@@ -445,6 +486,14 @@ def _check_controls(cls, want, r):
             raise ReceiptControlsMismatch(f"{cls} receipt {r['seq']}: {key} {r[key]!r} != {want[key]!r}")
     if "sampling" in want and r["sampling"] != want["sampling"]:
         raise ReceiptControlsMismatch(f"{cls} receipt {r['seq']}: sampling {r['sampling']!r} != {want['sampling']!r}")
+    if "max_tokens_max" in want and r["max_tokens"] > want["max_tokens_max"]:
+        raise ReceiptControlsMismatch(
+            f"{cls} receipt {r['seq']}: max_tokens {r['max_tokens']!r} exceeds the bound {want['max_tokens_max']!r}")
+    if "roles" in want:
+        allowed = set(want["roles"])
+        if not r["roles"] or not set(r["roles"]) <= allowed:
+            raise ReceiptControlsMismatch(
+                f"{cls} receipt {r['seq']}: roles {r['roles']!r} are not a nonempty subset of {sorted(allowed)!r}")
 
 
 def write_receipts_file(path, ctx, mark, fence):

@@ -67,6 +67,10 @@ def _parser():
     ap.add_argument("--frozen-prompt-date", help="P364: the date opencode shows the model ('Www Mmm DD YYYY'); "
                     "required, never defaulted")
     ap.add_argument("--epoch-id", help="the M64 epoch this run belongs to (recorded in the manifest and every row)")
+    ap.add_argument("--attempt", type=int, default=1,
+                    help="attempt number of each slot in this invocation (worker receipt attempt id; the chain sets it)")
+    ap.add_argument("--attempt-rerun-index", type=int, default=0,
+                    help="same-slot re-run index of this invocation's attempt ids (the chain sets it)")
     ap.add_argument("--print-identity", action="store_true", help="print the probe identity JSON and exit")
     # Legacy v2 flags: parsed only so that the runner refuses them with its own message.
     for flag, kind in (("--extra-deny-file", Path), ("--rerun-of", str), ("--rerun-index", int), ("--tick-s", int),

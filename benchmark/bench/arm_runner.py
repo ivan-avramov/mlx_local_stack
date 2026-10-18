@@ -357,7 +357,8 @@ def run_item(p, adapter, *, ctx=None, **kwargs):
 
 def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evidence, limit, private, router, base,
               protected_pids=(), policy=None, cancel=None, ctx=None, frozen_date=None, gate_overrides=None,
-              watchdog=None, compaction=False, join_timeout_s):
+              watchdog=None, compaction=False, join_timeout_s, receipts=None, attempt=None, header_sent=False,
+              controls=None, expected_worker=None):
     work, entry = prepared.work, prepared.entry
     gate_policy, hygiene = policy if policy is not None else effective_policy()
     if gate_overrides:
@@ -384,6 +385,9 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
         pg.reserve_evidence(path)
     if Path(str(evidence) + ".final_tree").exists():
         raise tg.TransportAbort("immutable evidence path exists: " + Path(str(evidence) + ".final_tree").name)
+    receipts_path = Path(str(evidence) + ".receipts.json")
+    if receipts is not None and receipts_path.exists():
+        raise tg.TransportAbort("immutable evidence path exists: " + receipts_path.name)
     keep = Path(str(evidence) + ".grades")
     try:
         keep.mkdir(parents=True)
@@ -429,6 +433,7 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
     cancellation_attempted = False
     heartbeat = PhaseHeartbeat(gate, lock, started)
     reconciliation = None
+    mark = None
     tmp_before = None
     tmp_window_start = time.time()
     dog = None
@@ -529,6 +534,11 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             # midnight-crossing item must record the date the model was shown, not the date it finished).
             prompt_date_real = p._prompt_date() if p is not None else time.strftime("%a %b %d %Y")
             prompt_date = frozen_date if frozen_date is not None else prompt_date_real
+            if receipts is not None:
+                # A3 / R3: the start mark is taken IMMEDIATELY before the spawn; it must name the worker the probe observed
+                mark = receipts.start(attempt)
+                if expected_worker is not None and mark.worker != expected_worker:
+                    raise wr.WorkerMismatch("the receipt endpoint's worker is not the one the probe observed")
             proc = guard.spawn(adapter.command(binary, model, prompt), cwd=work, env=env, stdin=subprocess.DEVNULL,
                                stdout=stdout, stderr=stderr)
             if watchdog_on:
@@ -608,6 +618,12 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             raise tg.TransportAbort("ingestion thread did not drain")
         if ingest_failure:
             raise ingest_failure[0]
+        fence = owned = receipts_sha = None
+        if receipts is not None:
+            heartbeat.set_phase("receipt_fence")
+            fence = receipts.fence(attempt)                 # after the client exit and the drain: every admitted request ended
+            receipts_sha = wr.write_receipts_file(receipts_path, attempt, mark, fence)    # the raw fenced set, even if the join aborts
+            owned = wr.owned_receipts(mark, fence)
         heartbeat.set_phase("terminal_grading")
         worker.finish()
         if guard.client_resource:
@@ -637,6 +653,10 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                 paths[adapter.date_receipt_key], frozen=frozen_date, session_id=stream.session_id,
                 requests_observed=len(stream.starts), killed=bool(killed or guard.client_resource))
             adapter.merge_receipts(rec, date_summary)
+        joined = None
+        if receipts is not None:
+            joined = wr.join(owned, adapter.request_classes(stream, transcript), supports_header=header_sent, ctx=attempt,
+                             controls=controls, mark=mark, fence=fence, class_rules=adapter.receipt_class_rules)
         final_boundary_actual = len(gate.request_usage)
         if final_boundary != final_boundary_actual:
             gate.pending.discard(final_boundary)
@@ -708,7 +728,24 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                 count=rec.compaction_count, completion_tokens=rec.compaction_completion_tokens,
                 requests=list(rec.compaction),
                 receipts=rec.extra.get("compaction_receipts"),
-                accounting_complete=rec.extra.get("compaction_accounting_complete"))
+                accounting_complete=rec.extra.get("compaction_accounting_complete"),
+                accounting="post_hoc")
+        if joined is not None:
+            result["receipts"] = dict(path=portable(receipts_path), sha256=receipts_sha)
+            result["token_accounting"] = "receipts"
+            if compaction:
+                # A2 / P370: compaction tokens come from the worker's receipts when present (else post hoc from the export)
+                result["compaction"].update(
+                    export_completion_tokens=rec.compaction_completion_tokens, accounting="receipts",
+                    completion_tokens=joined.by_class.get("compaction", {}).get("completion_tokens", 0))
+        if compaction or joined is not None:
+            gate_tokens = gate.output_tokens
+            compaction_tokens = result["compaction"]["completion_tokens"] if compaction else 0
+            result["task_tokens"] = dict(
+                accounting="receipts" if joined is not None else "client",
+                gate_completion_tokens=gate_tokens, compaction_completion_tokens=compaction_tokens,
+                completion_tokens=gate_tokens + compaction_tokens,
+                receipts=None if joined is None else dict(joined.task_tokens, by_class=joined.by_class))
         if watchdog_on:
             result["shell_watchdog"] = dict(
                 limit_s=dog.limit_s if dog else None, kills=list(dog.kills) if dog else [],
@@ -749,6 +786,17 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                             proc.wait(timeout=10)
         finally:
             heartbeat.close()
+
+
+def receipt_controls(adapter, model, seed, budgets):
+    """Per-class generation controls a worker receipt must show (A3): the paired seed, the declared sampling (when the
+    carrier states all five fields), the thinking budget, a max_tokens bound and the adapter's allowed roles."""
+    body = model.get("body", {})
+    sampling = {k: body[k] for k in wr.SAMPLING_FIELDS if k in body}
+    base = dict(seed=seed, thinking_budget=budgets["thinking_budget"], max_tokens_max=budgets["max_tokens"])
+    if set(sampling) == set(wr.SAMPLING_FIELDS):
+        base["sampling"] = sampling
+    return {cls: dict(base, roles=list(adapter.expected_roles(cls))) for cls in wr.CLASSES}
 
 
 # ---------------------------------------------------------------- identity
@@ -889,7 +937,11 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
             raise tg.TransportAbort("item absent/refused in universe: " + item)
     workdir = p._stack_workdir().resolve()
     binary = adapter.require_binary()
+    receipts_required = evidence.worker_receipts == "required"
     wr.require_source(evidence.worker_receipts, receipts if receipts is not None else wr.UnavailableReceiptSource())
+    receipt_source = receipts if receipts_required else None
+    attempt_n = int(getattr(a, "attempt", None) or 1)
+    attempt_rerun = int(getattr(a, "attempt_rerun_index", None) or 0)
     receipt = adapter.preflight(selection=selection, path=a.a4_v2_receipt, router=router, limit=a.limit,
                                 model=a.model, exe_sha=p._sha_of(binary))
     run_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:12]
@@ -918,10 +970,13 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
         raise RunnerCancelled()      # C147 section 3a: before the first spawn of any kind
     with p._scratch_dir("tg1-discovery") as scratch:
         p._git_init_scratch(scratch)
-        overlay = adapter.seed_overlay(a.model, seed_of(a.lang + "/" + names[0]))
-        # discovery runs no session, so the plugin never writes this file (it is named only to satisfy the env contract)
+        overlay = adapter.seed_overlay(a.model, seed_of(a.lang + "/" + names[0]), attempt=None)
+        # discovery runs no session, so the plugins never write these files (named only to satisfy the env contract)
         env = adapter.build_env(run_dir, scratch, overlay, receipts=evidence_dir / "discovery.datefreeze.jsonl",
-                                frozen_date=frozen)
+                                frozen_date=frozen,
+                                toolwindow_receipts=(evidence_dir / "discovery.toolwindows.jsonl"
+                                                     if adapter.watchdog_enabled else None),
+                                attempt=wr.AttemptContext.make("discovery", 1))
         p._fresh_tmpdir(env)
         check_env(env, overlay)
         with _DiscoveryGuard(p, [scratch, env["TMPDIR"]], (router.get("pid"), before["pid"]), ctx) as dg:
@@ -988,10 +1043,15 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
             with p._item_scratch_dir(name) as scratch:
                 prepared = corpus.prepare(item, scratch / name)
                 work = prepared.work
-                overlay = adapter.seed_overlay(a.model, seed_of(item))
+                attempt = wr.AttemptContext.make(item, attempt_n, attempt_rerun)       # R3: before the env is generated
+                header_ctx = attempt if receipts_required and adapter.supports_attempt_header else None
+                overlay = adapter.seed_overlay(a.model, seed_of(item), attempt=header_ctx)
                 item_evidence = evidence_dir / (a.lang + "__" + name)
                 env = adapter.build_env(run_dir, work, overlay,
-                                        receipts=item_evidence.with_suffix(".datefreeze.jsonl"), frozen_date=frozen)
+                                        receipts=item_evidence.with_suffix(".datefreeze.jsonl"), frozen_date=frozen,
+                                        toolwindow_receipts=(item_evidence.with_suffix(".toolwindows.jsonl")
+                                                             if adapter.watchdog_enabled else None),
+                                        attempt=attempt)
                 p._fresh_tmpdir(env)
                 check_env(env, overlay)
                 with _DiscoveryGuard(p, [work, env["TMPDIR"]], (router.get("pid"), before["pid"]), ctx) as dg:
@@ -1005,7 +1065,10 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                     protected_pids=(before["pid"],), policy=(policy.gate, policy.hygiene), cancel=cancel, ctx=ctx,
                     frozen_date=frozen, gate_overrides=getattr(a, "gate_overrides", None),
                     watchdog=policy.watchdog, compaction=policy.compaction == "on_accounted",
-                    join_timeout_s=policy.grade_join_timeout_s)
+                    join_timeout_s=policy.grade_join_timeout_s, receipts=receipt_source, attempt=attempt,
+                    header_sent=header_ctx is not None,
+                    controls=receipt_controls(adapter, model, seed_of(item), policy.budgets),
+                    expected_worker=dict(pid=before["pid"], create_time=before["create_time"]))
                 after = worker_identity(p, a.model, router)
                 pg.require_identity(before, after)
                 check_env(env, overlay)
@@ -1016,6 +1079,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                 rc_ = result.pop("rc")
                 adapter.observed = dict(events=result.pop("normalized_events"), reconciliation=result.pop("reconciled"),
                                         tool_windows=result.pop("tool_windows"))
+                accounting = result.pop("token_accounting", "client")
                 changed = corpus.changed(prepared)
                 # M59/M61 rule kept: an untouched solution fails (go/ledger, go/markdown stubs pass every test).
                 passed = result.pop("passed") and changed
@@ -1048,7 +1112,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                     epoch_id=getattr(a, "epoch_id", None),
                     snapshot_sha256=snapshot.sha256,
                     final_tree=final_tree,
-                    token_accounting="client",
+                    token_accounting=accounting,
                 )
                 rows.append(json.loads(p._scrub_pii(json.dumps(row))))
                 pg.atomic_write(out, ("".join(json.dumps(r) + "\n" for r in rows)).encode())
@@ -1063,6 +1127,8 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
         if adapter.report_gate_on_abort:
             stamp["gate"] = ctx.get("gate_report")     # spec 8.3: a failed attempt's tokens count toward its task
         cause = adapter.transport_cause(exc)
+        if cause is None and isinstance(exc, wr.ReceiptAbort):
+            cause = exc.cause                    # a worker replaced mid-attempt: worker_crash (R21); other receipt faults: none
         if cause is not None:
             stamp["cause"] = cause                # spec 8.3: the incident class the chain retries on
         man["transport_abort"] = stamp
