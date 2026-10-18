@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 
 from . import arm_specs
+from . import atomic_publish
 from . import token_turn_gate as tg
 
 RULES_SCHEMA = 1
@@ -98,11 +99,7 @@ def extract(rules, transcript_path, transcript_sha256, dest):
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        atomic_publish.publish_exclusive(dest, body)          # F23: absent or complete, never partial
     except FileExistsError:
         raise WebEvidenceError("web evidence is immutable: " + dest.name + " exists") from None
-    with os.fdopen(fd, "wb") as fp:
-        fp.write(body)
-        fp.flush()
-        os.fsync(fp.fileno())
     return dict(path=str(dest), sha256=hashlib.sha256(body).hexdigest(), count=body.count(b"\n"))

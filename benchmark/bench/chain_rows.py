@@ -96,7 +96,14 @@ def dnf_path(root, session, stem):
 
 def slot_for(base, row_id):
     """`base` = `epoch|arm|pick|session|lang`; the slot is that + the bare item name (M64 spec 8.3)."""
-    item = row_id.split("/", 1)[1] if "/" in row_id else row_id
+    if not isinstance(row_id, str):
+        _fail(f"row id {row_id!r} is not a string")
+    if "/" in row_id:
+        lang, item = row_id.split("/", 1)
+        if lang != str(base).rsplit("|", 1)[-1]:                    # F24: the language of the id is the slot base's
+            _fail(f"row id {row_id!r} is of another language than the slot base {base!r}")
+    else:
+        item = row_id
     return f"{base}|{item}"
 
 
@@ -117,8 +124,8 @@ def read_rows(path):
         rows = [json.loads(line) for line in raw.splitlines()]
     except (ValueError, UnicodeError):
         _fail(f"torn/invalid rows file {path.name}")
-    if any(not isinstance(r, dict) or "id" not in r for r in rows):
-        _fail(f"invalid rows in {path.name}: every row must be an object with an id")
+    if any(not isinstance(r, dict) or not isinstance(r.get("id"), str) for r in rows):          # F25: a string id
+        _fail(f"invalid rows in {path.name}: every row must be an object with a string id")
     return rows
 
 

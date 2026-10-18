@@ -10,6 +10,7 @@ from pathlib import Path
 
 from m62 import universe_preflight
 
+from . import atomic_publish
 from . import structured_grade as sg
 from .corpus import Corpus, FinalTree, GradeOutcome, PreparedItem
 from .token_turn_gate import TransportAbort
@@ -176,11 +177,13 @@ class Tg1Corpus(Corpus):
             sha = hashlib.sha256(data).hexdigest()
             files[rel] = sha
             target = dest / "objects" / sha
-            if not target.exists():
-                target.write_bytes(data)
+            try:
+                atomic_publish.publish_exclusive(target, data)      # F23: content-addressed, absent or complete
+            except FileExistsError:
+                pass
         manifest = dest / "manifest.json"
         raw = (json.dumps(dict(files=files, missing=missing), sort_keys=True, indent=1) + "\n").encode()
-        manifest.write_bytes(raw)
+        atomic_publish.publish_exclusive(manifest, raw)
         return FinalTree(root=dest, files=files, missing=tuple(missing),
                          manifest_sha256=hashlib.sha256(raw).hexdigest(), manifest_path=manifest)
 

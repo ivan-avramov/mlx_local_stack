@@ -49,6 +49,7 @@ from types import SimpleNamespace
 
 from . import arm_adapter as aa
 from . import arm_specs
+from . import atomic_publish
 from . import chain_hooks
 from . import chain_incident as ci
 from . import chain_ops as co
@@ -1048,6 +1049,10 @@ class Chain:
             if att is None:
                 continue
             view = self.leg_of(load, r)
+            if att.get("run_id"):
+                root = self.evidence_root(view, att)
+                if root is not None and root.exists():
+                    self.sweep_temps(root, recursive=True)           # F23: receipts / final-tree / web evidence temps
             self.hydrate_from_manifest(att, view, Path(view["out"]), r)
             att["outcome"] = att.get("outcome") or "exited_before_attempt_end"
             self.write_json("resume-hydrated")
@@ -1602,12 +1607,14 @@ class Chain:
         invocation's immutable rows file (its rows must be exactly the expected prefix). `(slot, None)` or `(None, reason)`."""
         expected = list((rec or {}).get("expected_slots") or [])
         try:
-            got = [cr.slot_for(view["slot_base"], r["id"]) for r in cr.rows_if_present(out)]
-        except cr.ChainRowsError:
+            ids = [r["id"] for r in cr.rows_if_present(out)]
+        except (cr.ChainRowsError, TypeError, KeyError):
             return None, "attribution unproven"
-        if not expected or got != expected[:len(got)] or len(got) >= len(expected):
+        # F24 / F25: the EXACT expected row ids (`<lang>/<item>`, strings) are compared before any slot is derived
+        want = [f"{view['lang']}/{s.rsplit('|', 1)[-1]}" for s in expected]
+        if (not expected or not all(isinstance(i, str) for i in ids) or ids != want[:len(ids)] or len(ids) >= len(expected)):
             return None, "attribution unproven"
-        return expected[len(got)], None
+        return expected[len(ids)], None
 
     def hydrate_from_manifest(self, att, view, out, rec=None):
         """F14: after the probe exits, ALWAYS read the invocation's own final manifest (its path is the invocation's rows file
@@ -1658,6 +1665,16 @@ class Chain:
             rec["manifest_hydrated"] = True
             rec.pop("hydration_failure", None)
 
+    def sweep_temps(self, directory, recursive=False):
+        """F23: remove leftover `.<name>.tmp.<pid>` publish temps (a process died before it linked its evidence file); each is
+        listed in the log. Returns the names."""
+        names = []
+        for tmp in atomic_publish.leftover_temps(directory, recursive):
+            self.log(f"RESUME: removed leftover evidence temp file {tmp.name}")
+            tmp.unlink(missing_ok=True)
+            names.append(tmp.name)
+        return names
+
     def _reverify_extraction(self, view, path, sha, dest):
         """The extraction file already exists (a crash after it was written): accept it only when re-extracting the transcript
         (sha256 re-verified) yields byte-identical content."""
@@ -1694,6 +1711,8 @@ class Chain:
         export = (ev.get("files") or {}).get("export") or {}
         path = co.resolve_portable(export["path"], self.wd) if export.get("sha256") and export.get("path") else None
         dest = path.with_name(path.stem + ".web.jsonl") if path is not None else None
+        if dest is not None:
+            self.sweep_temps(dest.parent)
         try:
             if dest is not None and dest.exists():
                 web = self._reverify_extraction(view, path, export.get("sha256"), dest)     # F20: a retry after a crash

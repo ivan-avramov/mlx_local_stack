@@ -92,7 +92,9 @@ def test_the_final_tree_manifest_and_objects_are_absent_or_complete_after_a_torn
     manifest = tmp_path / "torn" / "manifest.json"
     assert not manifest.exists() or manifest.read_bytes() == clean.manifest_path.read_bytes()
     for obj in (tmp_path / "torn" / "objects").glob("*"):
-        assert not obj.name.startswith(".") and hashlib.sha256(obj.read_bytes()).hexdigest() == obj.name
+        if obj.name.startswith("."):
+            continue                                                  # a leftover publish temp (swept at resume)
+        assert hashlib.sha256(obj.read_bytes()).hexdigest() == obj.name
 
 
 def test_the_chain_removes_leftover_evidence_temps_at_hydration_with_a_listing(tmp_path):

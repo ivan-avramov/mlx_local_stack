@@ -38,6 +38,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import atomic_publish
 from . import token_turn_gate as tg
 
 ATTEMPT_HEADER = "X-Bench-Attempt"
@@ -542,11 +543,7 @@ def write_receipts_file(path, ctx, mark, fence):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        atomic_publish.publish_exclusive(path, raw)           # F23: absent or complete, never partial
     except FileExistsError:
         raise ReceiptAbort("receipt evidence is immutable: " + path.name + " exists") from None
-    with os.fdopen(fd, "wb") as fp:
-        fp.write(raw)
-        fp.flush()
-        os.fsync(fp.fileno())
     return hashlib.sha256(raw).hexdigest()
