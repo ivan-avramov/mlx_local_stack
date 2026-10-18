@@ -140,6 +140,7 @@ def verified_cargo_locks_sha256():
 
 
 _VENDORED = {}
+CRATES_IO_SOURCES = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
 
 
 def vendored_versions():
@@ -150,7 +151,7 @@ def vendored_versions():
         found = {}
         for rel in rust_lock_files():
             for pkg in tomllib.loads((RUST_LOCKS_DIR / rel).read_text()).get("package", []):
-                if "source" in pkg and re.fullmatch(r"\d+\.\d+\.\d+", pkg["version"]):
+                if pkg.get("source") in CRATES_IO_SOURCES and _VERSION.match(pkg["version"]):
                     found.setdefault(pkg["name"], set()).add(pkg["version"])
         _VENDORED[key] = {k: sorted(v, key=_vtuple) for k, v in found.items()}
     return _VENDORED[key]

@@ -884,7 +884,7 @@ def _locks_dir(tmp_path, extra=None):
     d = tmp_path / "locks"
     for rel, versions in {"a/Cargo.lock": ["1.2.3"], "b/nested/deeper/Cargo.lock": ["0.4.0"]}.items():
         (d / rel).parent.mkdir(parents=True, exist_ok=True)
-        (d / rel).write_text("".join('[[package]]\nname = "demo"\nversion = "%s"\nsource = "registry+x"\n\n' % v
+        (d / rel).write_text("".join('[[package]]\nname = "demo"\nversion = "%s"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n\n' % v
                                      for v in versions))
     for rel, text in (extra or {}).items():
         (d / rel).parent.mkdir(parents=True, exist_ok=True)
