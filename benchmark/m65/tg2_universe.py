@@ -88,6 +88,20 @@ def inputs_sha256(corpus, lang, slug):
     return digest.hexdigest()
 
 
+def verify_unchanged(corpus, records):
+    """Before assembling: the corpus is still the pinned clean checkout and every recorded item's inputs hash equals the
+    current bytes (a mutation between or after items is refused, never mixed into the universe)."""
+    require_pinned_corpus(corpus)
+    changed = []
+    for r in records:
+        lang, slug = r["item"].split("/", 1)
+        recorded = (r.get("fingerprint") or {}).get("inputs_sha256")
+        if inputs_sha256(corpus, lang, slug) != recorded:
+            changed.append(r["item"])
+    if changed:
+        raise TransportAbort("corpus changed during the freeze: inputs_sha256 differs for %s" % ", ".join(changed))
+
+
 def default_grader(guard):
     def grader(lang, tree, slug, private, *, prepared, solutions, timeout, prepared_cargo_toml=None, extra_crates=()):
         return tg.grade_item(lang, tree, slug, private, prepared=prepared, solutions=solutions, guard=guard,
@@ -328,9 +342,15 @@ def run_all(corpus, workdir, log, grader, *, image_id, polyglot_sha, locks_fn=No
         else:
             scratch = Path(workdir) / "scratch" / ("%s__%s" % (lang, slug))
             shutil.rmtree(scratch, ignore_errors=True)
+            before = inputs_sha256(corpus, lang, slug)
             rec = freeze_item(corpus, lang, slug, scratch, grader, locks_fn=locks_fn, ref_runs=ref_runs,
                               stub_runs=stub_runs)
-            rec["fingerprint"] = dict(fp, inputs_sha256=inputs_sha256(corpus, lang, slug))
+            after = inputs_sha256(corpus, lang, slug)
+            if before != after:
+                shutil.rmtree(scratch, ignore_errors=True)
+                raise TransportAbort("corpus changed while freezing %s/%s (inputs_sha256 %s -> %s); freeze aborted, "
+                                     "no record written" % (lang, slug, before, after))
+            rec["fingerprint"] = dict(fp, inputs_sha256=before)
             shutil.rmtree(scratch, ignore_errors=True)
             path.write_text(json.dumps(rec, sort_keys=True))
             tag, done_new = "run", done_new + 1
@@ -367,6 +387,7 @@ def main(argv=None):
     if args.only:
         print("partial run (--only): not frozen")
         return 0
+    verify_unchanged(args.corpus, records)
     doc = assemble(records, image_id=image_id, polyglot_sha=sha_poly)
     sha = freeze(args.out, doc)
     args.report.write_text(report(doc, sha))

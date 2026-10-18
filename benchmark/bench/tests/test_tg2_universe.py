@@ -530,6 +530,8 @@ class Mutating(Grader):
 @pytest.mark.parametrize("at", [0, 2, 4])
 def test_s16_a_corpus_mutation_during_an_item_aborts_naming_it_and_writes_no_record(tmp_path, at):
     c = corpus(tmp_path / "c")
+    for lang in ("rust", "java", "cpp"):
+        (c / lang / "exercises/practice").mkdir(parents=True)
     g = Mutating(c / "javascript/exercises/practice/x/.meta/proof.ci.js", at)
     with pytest.raises(TransportAbort, match=r"javascript/x.*changed"):
         U.run_all(c, tmp_path / "w", tmp_path / "log", g, **ID)
@@ -542,7 +544,7 @@ def test_s16_verify_unchanged_refuses_any_item_whose_bytes_differ_from_the_recor
     monkeypatch.setattr(U, "require_pinned_corpus", lambda corpus, pinned=None: "p" * 40)
     U.verify_unchanged(c, recs)
     (c / "javascript/exercises/practice/x/x.spec.js").write_text("changed between items")
-    with pytest.raises(TransportAbort, match=r"javascript/x.*inputs_sha256"):
+    with pytest.raises(TransportAbort, match=r"inputs_sha256 differs for javascript/x"):
         U.verify_unchanged(c, recs)
 
 
