@@ -1037,8 +1037,11 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                  snapshot_complete=snapshot.complete, snapshot_fields=snapshot.fields,
                  evidence_policy=evidence.as_dict())
     mp = out.with_suffix(".manifest.json")
-    rows = pg.load_rows(out)
-    if rows:
+    rows = []
+    if out.exists() or mp.exists():
+        # P371 phase 3a (plan 4 A8 / R6): probe-level resume is gone. Every invocation writes a FRESH rows file (the chain
+        # names it `<stem>.L<leg>.<phase>.a<n>.jsonl`), so a pre-existing rows file or manifest at the target path
+        # refuses. The old manifest is still read to say WHY (transport abort, provenance, serving or worker drift).
         try:
             old = json.loads(mp.read_text())
         except (ValueError, OSError) as exc:
@@ -1051,10 +1054,8 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                 "serving_path"):
             raise tg.TransportAbort("tg1 resume serving identity differs")
         pg.require_identity(old.get("worker"), before)
-        for row in rows:
-            pg.require_identity(row.get("worker_after"), before)
-        if len({r["id"] for r in rows}) != len(rows):
-            raise tg.TransportAbort("duplicate rows")
+        raise tg.TransportAbort("tg1 rows file already exists: every invocation writes a fresh rows file (P371 A8); "
+                                "the chain names one per leg attempt")
     man = provenance.gather(a.model, profile="deployed", runtime=ident, router=router)
     man.update(worker=before, run_id=run_id)
 
@@ -1069,8 +1070,6 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
             _wait_for_ack(a.manifest_ack, cancel)
         for k, name in enumerate(names):
             item = a.lang + "/" + name
-            if any(r["id"] == item for r in rows):
-                continue
             if cancel is not None and cancel():
                 raise RunnerCancelled()
             ctx.update(id=item)
