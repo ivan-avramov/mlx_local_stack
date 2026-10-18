@@ -102,7 +102,7 @@ def test_the_chain_removes_leftover_evidence_temps_at_hydration_with_a_listing(t
     a = M.parse_args(SMOKE + ["--out-root", str(tmp_path / "o")])
     lines = []
     chain = M.build_chain(a, FakeOps(tmp_path), M.Timers(), lines.append, {"python": ["a"], "go": ["b"]}, tmp_path / "o", {})
-    stray = tmp_path / ".t.web.jsonl.tmp.4242"
+    stray = tmp_path / f".t.web.jsonl.tmp.4242.{'ab' * 8}"
     stray.write_text("half")
     assert chain.sweep_temps(tmp_path) == [stray.name] and not stray.exists()
     assert any("removed leftover" in l and stray.name in l for l in lines)

@@ -1049,13 +1049,21 @@ class Chain:
             if att is None:
                 continue
             view = self.leg_of(load, r)
-            if att.get("run_id"):
-                root = self.evidence_root(view, att)
-                if root is not None and root.exists():
-                    self.sweep_temps(root, recursive=True)           # F23: receipts / final-tree / web evidence temps
+            self.sweep_running_evidence(view, att, Path(view["out"]), r)       # F23 / F29
             self.hydrate_from_manifest(att, view, Path(view["out"]), r)
             att["outcome"] = att.get("outcome") or "exited_before_attempt_end"
             self.write_json("resume-hydrated")
+
+    def sweep_running_evidence(self, view, att, out, rec):
+        """F23 / F29: remove the publish temps under the crashed invocation's evidence root. The run id comes from the attempt
+        when the barrier saw it, else from the final manifest ONLY when it is bound to this invocation (F16 / P384)."""
+        run_id = att.get("run_id")
+        if not run_id:
+            man = self._manifest(view)
+            if self._manifest_problem(att, view, out, man, rec) is None:
+                run_id = man["run_id"]
+        root = self.evidence_root(view, dict(att, run_id=run_id)) if run_id else None
+        return self.sweep_temps(root, recursive=True) if root is not None and root.exists() else []
 
     def check_cursor(self, load, rec):
         """The persisted progress cursor must be consistent with what is scored: every leg BEFORE it is complete."""
@@ -1128,10 +1136,7 @@ class Chain:
         """Resume (F10): an A4 receipt a crash left created but unreferenced is adopted into its reserved worker record once its
         binding (load, worker, arm) and the worker identity the record names are verified; anything else aborts."""
         changed = False
-        a4 = self.out_root / "a4"
-        for tmp in sorted(a4.glob(".*.tmp.*")) if a4.is_dir() else []:       # F13: a receipt that never reached its destination
-            self.log(f"RESUME: removed leftover A4 receipt temp file {tmp.name}")
-            tmp.unlink()
+        self.sweep_temps(self.out_root / "a4")                              # F13: a receipt that never reached its destination
         for load in self.progress["loads"]:
             for worker in load["workers"]:
                 for arm, rel in (worker.get("a4_reserved") or {}).items():
@@ -1168,25 +1173,11 @@ class Chain:
         raw = (json.dumps(doc, sort_keys=True, indent=1) + "\n").encode()
         dest = self.receipt_path(load, wn, arm)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        # F13: temp file (same directory) written + fsynced, then linked exclusively into the destination: the destination is
-        # either absent or complete
-        tmp = dest.with_name(f".{dest.name}.tmp.{os.getpid()}")
-        with open(tmp, "wb") as fp:
-            fp.write(raw)
-            fp.flush()
-            os.fsync(fp.fileno())
         try:
-            os.link(tmp, dest)
+            atomic_publish.publish_exclusive(dest, raw)          # F13 / F23 / F26: absent or complete, own temp grammar
         except FileExistsError:
-            tmp.unlink(missing_ok=True)
             raise co.ChainAbort(f"A4 receipt {self._relpath(dest)} exists (A4 receipts are immutable: a new out-root is "
                                 "needed)") from None
-        tmp.unlink(missing_ok=True)
-        dfd = os.open(dest.parent, os.O_RDONLY)
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
         return dest, hashlib.sha256(raw).hexdigest()
 
     def verify_receipt(self, load, arm):
@@ -1666,8 +1657,8 @@ class Chain:
             rec.pop("hydration_failure", None)
 
     def sweep_temps(self, directory, recursive=False):
-        """F23: remove leftover `.<name>.tmp.<pid>` publish temps (a process died before it linked its evidence file); each is
-        listed in the log. Returns the names."""
+        """F23 / F27: remove leftover publish temps (EXACTLY `.<name>.tmp.<pid>.<16 hex>`: a process died before it linked its
+        evidence file; no other dotfile); each is listed in the log. Returns the names."""
         names = []
         for tmp in atomic_publish.leftover_temps(directory, recursive):
             self.log(f"RESUME: removed leftover evidence temp file {tmp.name}")
@@ -1807,7 +1798,11 @@ class Chain:
         known = {(a["slot"], a["rerun_index"]) for a in self.progress["slot_attempts"]}
         found = {}
         for row in rows:
-            slot = cr.slot_for(rec["slot_base"], row["id"])
+            try:
+                slot = cr.slot_for(rec["slot_base"], row["id"])
+            except cr.ChainRowsError as exc:                 # a row that is not this leg's (F24 / F28): no evidence is guessed
+                self.log(f"web evidence: row skipped in {Path(out).name} ({exc})")
+                continue
             if (slot, rec.get("rerun_index", 0)) in known:
                 continue
             tp = row.get("transcript_path")
@@ -2204,7 +2199,13 @@ class Chain:
             except cr.ChainRowsError:
                 left.append(rec)
                 continue
-            if [cr.slot_for(rec["slot_base"], r["id"]) for r in rows] != want:
+            try:
+                got = [cr.slot_for(rec["slot_base"], r["id"]) for r in rows]
+            except cr.ChainRowsError as exc:                     # F28: e.g. a row of another language: not salvageable
+                self.log(f"resume: {exc}; the invocation is quarantined instead")
+                left.append(rec)
+                continue
+            if got != want:
                 left.append(rec)
                 continue
             leg = self.leg_of(load, rec)
