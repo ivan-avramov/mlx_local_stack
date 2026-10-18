@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import pytest
-from bench import tg1_runner as runner, structured_grade as sg
+from bench import arm_opencode, arm_runner as runner, structured_grade as sg
 from bench.tests.test_opencode_v2_probe import tg1_probe as probe, fixture_probe, MODEL
 from bench.tests.opencode_v2_mock import MockServer
 from m62 import universe_preflight as up
@@ -41,7 +41,7 @@ def tg_fixture(probe, monkeypatch, tmp_path, *, binary=None, mock=None):
             "/v1", "/vllm-tripwire/v1"
         )
     f["carrier"].write_text(json.dumps(carrier))
-    monkeypatch.setattr(runner, "CARRIER", f["carrier"])
+    monkeypatch.setattr(arm_opencode, "CARRIER", f["carrier"])
     identity = dict(
         pid=1234, create_time=100, model_path="fixture/model", registry_sha256="sha"
     )
@@ -150,10 +150,28 @@ def test_mocked_tg1_rows_evidence_resume_and_worker_drift(probe, monkeypatch, tm
     assert path.is_relative_to(tmp_path / "opencode_transcripts") and f[
         "out"
     ].stem + "." in str(path)
-    assert f["run"]("one") == 0
+    with pytest.raises(SystemExit, match="rows file"):          # P371 phase 3a: no probe-level resume (fresh file per invocation)
+        f["run"]("one")
+    assert len(f["out"].read_text().splitlines()) == 1
     f["identity"]["create_time"] = 101
-    with pytest.raises(SystemExit, match="identity"):
+    with pytest.raises(SystemExit, match="identity"):          # the refusal still names a drifted worker first
         f["run"]("two")
+
+
+def test_the_probe_takes_the_chain_attempt_flags_into_the_attempt_context(probe, monkeypatch, tmp_path):
+    """P371 phase 3a: the chain passes `--attempt` (the invocation's attempt number) and `--attempt-rerun-index`; the item
+    attempt context (id = slot + attempt + re-run index) is built from them. Defaults are 1 and 0."""
+    from bench import worker_receipts as wr
+    seen = []
+    real = wr.AttemptContext.make.__func__
+    monkeypatch.setattr(wr.AttemptContext, "make", classmethod(lambda cls, *a: (seen.append(a), real(cls, *a))[1]))
+    f = tg_fixture(probe, monkeypatch, tmp_path)
+    assert f["run"]("one", extra=["--attempt", "3", "--attempt-rerun-index", "1"]) == 0
+    assert ("python/one", 3, 1) in seen
+    seen.clear()
+    f2 = tg_fixture(probe, monkeypatch, tmp_path / "second")
+    assert f2["run"]("one") == 0
+    assert ("python/one", 1, 0) in seen
 
 
 def test_tg1_protected_final_edit_fails(probe, monkeypatch, tmp_path):
@@ -178,7 +196,9 @@ def test_resume_accepts_gather_runtime_observations(probe, monkeypatch, tmp_path
 
     monkeypatch.setattr(runner.provenance, "gather", with_observations)
     assert f["run"]() == 0
-    assert f["run"]("two") == 0
+    second = f["out"].with_name("second.jsonl")                 # P371 phase 3a: a fresh rows file per invocation
+    assert f["run"]("two", extra=["--out", str(second)]) == 0
+    assert len(second.read_text().splitlines()) == 1
 
 
 def test_driver_registry_export_does_not_leak_to_caller(probe, monkeypatch, tmp_path):

@@ -1,7 +1,9 @@
 """Fake tg1 probe implementing the recorded runner/probe CONTRACT (C147 spec 3). TESTS ONLY.
 
 Honours: manifest written (atomic) BEFORE item one, then blocks until the ack file exists (<= FAKE_PROBE_ACK_WAIT s,
-default 300; no ack -> nonzero exit having generated nothing); rows file rewritten atomically, existing ids skipped;
+default 300; no ack -> nonzero exit having generated nothing); rows file rewritten atomically; P371 phase 3a: every
+invocation writes a FRESH rows file (a pre-existing rows file at --out refuses, rc 2; no probe-level resume)
+and `--attempt` / `--attempt-rerun-index` are accepted (recorded in invocations.jsonl with the rest of argv);
 heartbeat JSON lines with key "m62_watch"; cooperative cancel file; SIGTERM -> cleanup-only exit 143; refuses to
 start when the cancel or ack file already exists; rc 0 only when every expected item has a row and nothing aborted.
 
@@ -10,7 +12,8 @@ FAKE_PROBE_BEHAVIOUR = normal | hang_after_manifest | hang_in_item | no_manifest
 stale_heartbeat_growing_events | ignore_cancel; FAKE_PROBE_PLAN = JSON list of behaviours consumed per invocation
 (needs FAKE_PROBE_STATE, a directory; the last entry repeats); FAKE_N, FAKE_ITEM_S, FAKE_HB_S, FAKE_TICK_S,
 FAKE_IGNORE_TERM=1, FAKE_CLEANUP_UNCERTAIN=1, FAKE_ABORT_LINGER_S (abort manifest written, exit delayed), FAKE_MANIFEST_OVERRIDE (JSON merged into the manifest, dotted keys),
-FAKE_PROBE_CODE_SHA, FAKE_REGISTRY_SHA. The worker identity comes from $FAKE_PROBE_STATE/worker.json.
+FAKE_PROBE_CODE_SHA, FAKE_REGISTRY_SHA, FAKE_EXPORT_DOC (JSON object merged into every item's export transcript) /
+FAKE_EXPORT_RAW (raw text written as the export instead). The worker identity comes from $FAKE_PROBE_STATE/worker.json.
 P311-lite: manifests carry the pairing composite (recomputed from the manifest's own fields AFTER the overrides unless an
 override sets it) and a per-arm identity (a hash of model + served draft kind); rows carry both and the spawn-time
 `prompt_date`. FAKE_MANIFEST_PLAN = JSON list of dotted-override dicts consumed per invocation (the last repeats; needs
@@ -73,6 +76,15 @@ def valid_date(value):
     return isinstance(value, str) and bool(DATE_SHAPE.match(value))
 
 
+def snapshot():
+    """The tg1 arm's snapshot as the probe reports it (print-identity and every manifest). Always INCOMPLETE (the real
+    snapshot tooling is owed, build step 6); FAKE_SNAPSHOT_SALT changes the sha (the A5 drift tests)."""
+    fields = dict(label=SCAFFOLD, salt=os.environ.get("FAKE_SNAPSHOT_SALT", ""))
+    sha = hashlib.sha256(json.dumps(dict(tool="opencode", fields=fields, complete=False), sort_keys=True,
+                                    separators=(",", ":")).encode()).hexdigest()
+    return dict(tool="opencode", sha256=sha, complete=False, fields=fields)
+
+
 def build_manifest(model, lang, seed_base, worker, run_id, override=None, frozen=None):
     h = lambda c: c * 64  # noqa: E731
     man = {
@@ -87,6 +99,8 @@ def build_manifest(model, lang, seed_base, worker, run_id, override=None, frozen
             "seed_base": seed_base, "lang": lang, "draft_kind": served_draft_kind(model),
             "sampling_profile": "deployed",
             "frozen_prompt_date": frozen if frozen is not None else REAL_DATE(),
+            "arm": "oc", "config_id": "tg1", "epoch_id": None, "snapshot_sha256": snapshot()["sha256"],
+            "snapshot_complete": snapshot()["complete"], "snapshot_fields": snapshot()["fields"],
         },
     }
     man["runtime"]["arm_identity_sha256"] = arm_identity(model, man["runtime"]["draft_kind"])
@@ -128,7 +142,10 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
     files["stderr"].write_bytes(b"")
     files["datefreeze"] = ev / "datefreeze.jsonl"          # P364 parity: the receipt file is row evidence
     files["datefreeze"].write_text("")
-    files["export"].write_text(json.dumps({"id": item}))
+    if os.environ.get("FAKE_EXPORT_RAW") is not None:
+        files["export"].write_text(os.environ["FAKE_EXPORT_RAW"])
+    else:
+        files["export"].write_text(json.dumps({"id": item, **json.loads(os.environ.get("FAKE_EXPORT_DOC", "{}"))}))
     names = ("report.xml", "stdout.txt", "stderr.txt") if item.startswith("python/") else ("go.jsonl", "go.stderr")
     arts = {}
     for n in names:
@@ -183,7 +200,10 @@ def print_identity(argv):
         print("not json at all")
         return 0
     value = "short" if mode == "malformed" else env.get("FAKE_PRINT_POLICY_SHA", CAMPAIGN)
-    print(json.dumps({"scaffold": SCAFFOLD, "scaffold_policy_sha256": value}))
+    snap = snapshot()
+    print(json.dumps({"scaffold": SCAFFOLD, "scaffold_policy_sha256": value, "snapshot_tool": snap["tool"],
+                      "snapshot_sha256": snap["sha256"], "snapshot_complete": snap["complete"],
+                      "snapshot_fields": snap["fields"]}))
     return 0
 
 
@@ -198,6 +218,9 @@ def main(argv=None):
         ap.add_argument(f)
     ap.add_argument("--seed-base", type=int)
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--attempt", type=int, default=1)
+    ap.add_argument("--attempt-rerun-index", type=int, default=0)
+    ap.add_argument("--invocation-nonce")
     a = ap.parse_args(argv)
     env = os.environ
     state = Path(env["FAKE_PROBE_STATE"]) if env.get("FAKE_PROBE_STATE") else None
@@ -228,18 +251,17 @@ def main(argv=None):
     worker = json.loads((state / "worker.json").read_text()) if state and (state / "worker.json").exists() else {
         "pid": 1, "create_time": 1.0, "model_path": "caslca/" + a.model, "registry_sha256": "a" * 64}
     rows = []
-    if out.exists():
-        rows = [json.loads(line) for line in out.read_text().splitlines() if line.strip()]
-        old = json.loads(mp.read_text()) if mp.exists() else {}
-        if old.get("transport_abort"):
-            print("REFUSED: rows file has a manifest recording transport_abort", flush=True)
-            return 2
+    if out.exists():                                # P371 phase 3a: a fresh rows file per invocation, never resumed
+        print("REFUSED: rows file already exists (every invocation writes a fresh rows file)", flush=True)
+        return 2
     run_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:12]
     overrides = json.loads(env.get("FAKE_MANIFEST_OVERRIDE", "{}"))
     if state and env.get("FAKE_MANIFEST_PLAN"):
         plan_m = json.loads(env["FAKE_MANIFEST_PLAN"])
         overrides = {**overrides, **plan_m[min(n_inv, len(plan_m) - 1)]}
     man = build_manifest(a.model, a.lang, a.seed_base, worker, run_id, overrides, frozen=a.frozen_prompt_date)
+    if a.invocation_nonce:
+        man["runtime"]["invocation_nonce"] = a.invocation_nonce
     cleanup = {"survivors": [], "containers_remaining": [], "uncertain": env.get("FAKE_CLEANUP_UNCERTAIN") == "1",
                "orphans_unattributed": []}
 
@@ -302,8 +324,6 @@ def main(argv=None):
     item_s, hb_s = float(env.get("FAKE_ITEM_S", "0.1")), float(env.get("FAKE_HB_S", "0.05"))
     done_here = 0
     for item in items:
-        if any(r["id"] == item for r in rows):
-            continue
         if cancelled():
             return abort("cancelled by runner")
         ev = _evidence_dir(wd, a.model, out, run_id, item)

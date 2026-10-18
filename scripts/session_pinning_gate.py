@@ -102,8 +102,15 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="op
     if not carrier.is_file() and scaffold == "opencode-v2" and agent_system_file is None:
         carrier = REPO / "opencode_config/opencode.json"
         print("[A4 v2] WARNING: benchmark/opencode_bench_v2.json absent; copying the daily-driver carrier verbatim (compaction ON)", flush=True)
-    selection = _carrier_selection(scaffold, agent_system_file, repo=REPO, source=carrier,
-                                   extra_deny_file=extra_deny_file)
+    if scaffold == "opencode-v2-web-tg1c":
+        # M64: the arm's own carrier, built by the arm adapter (the receipt must name the sha the probe runs). Refuses
+        # (ArmRefused) while the D2 search service is the stub.
+        import run_opencode_probe_v2 as _p
+        from bench import arm_opencode, m64_search
+        selection = arm_opencode.OpencodeArm(_p, mode="m64", search=m64_search.service()).selection(agent_system_file)
+    else:
+        selection = _carrier_selection(scaffold, agent_system_file, repo=REPO, source=carrier,
+                                       extra_deny_file=extra_deny_file)
     content = selection["bytes"]
     if json.loads(content)["providers"]["mlx-local"]["settings"]["baseURL"] != base:
         raise SystemExit("M50 tripwire: A4 v2 carrier destination differs from the verified router")
@@ -115,7 +122,7 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="op
         target.write_bytes(plugin.read_bytes())
     else:
         print("[A4 v2] WARNING: noretry.js absent; A4 verifies session headers only", flush=True)
-    if scaffold == "opencode-v2-web-tg1":
+    if scaffold in ("opencode-v2-web-tg1", "opencode-v2-web-tg1c"):
         # C147 §3: the tg1 carrier loads BOTH bench plugins; copied by content, never from a shared config dir.
         toolbounds = REPO / "benchmark/opencode_plugins/toolbounds.js"
         if not toolbounds.is_file():
@@ -247,7 +254,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--opencode", choices=("1.18", "v2"), default="v2",
                     help="A4 client (default v2; the 1.18 leg is frozen)")
-    ap.add_argument("--scaffold", choices=("opencode-v2", "opencode-v2-web", "opencode-v2-web-tg1"),
+    ap.add_argument("--scaffold", choices=("opencode-v2", "opencode-v2-web", "opencode-v2-web-tg1",
+                                           "opencode-v2-web-tg1c"),
                     default="opencode-v2")
     ap.add_argument("--agent-system-file")
     ap.add_argument("--extra-deny-file", type=Path)

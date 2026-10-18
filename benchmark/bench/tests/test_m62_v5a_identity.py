@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import sys
 import pytest
-from bench import tg1_runner as runner, convergence
+from bench import arm_runner, tg1_runner as runner, convergence, proc_guard as pg
 from bench.tests.test_tg1_integration import tg_fixture
 from bench.tests.test_opencode_v2_probe import tg1_probe as probe, MODEL
 from m62 import build_replay_manifest as builder
@@ -56,7 +56,7 @@ def test_clamp_mutation_refuses_append(probe, monkeypatch, tmp_path):
 @pytest.mark.parametrize('flag', ['--tick', '--first-write', '--hard-ceiling', '--stall-t', '--loop-rep', '--poll'])
 @pytest.mark.parametrize('equals', [False, True])
 def test_tg1_refuses_abbreviated_legacy_flags(probe, monkeypatch, flag, equals):
-    monkeypatch.setattr(runner, '_main', lambda *a: pytest.fail('accepted legacy option'))
+    monkeypatch.setattr(arm_runner, '_main', lambda *a: pytest.fail('accepted legacy option'))
     monkeypatch.setattr(sys, 'argv', ['probe','--model',MODEL,'--items','one','--seed-base','1',
         '--scaffold','opencode-v2-web-tg1', *([flag+'=1'] if equals else [flag,'1'])])
     with pytest.raises(SystemExit):
@@ -87,7 +87,7 @@ def test_replay_manifest_refreeze_atomic(tmp_path, monkeypatch):
         assert out.read_bytes() == b'frozen\n'
         assert json.loads(Path(src).read_text())['entries'] == []
         raise OSError('interrupted replacement')
-    monkeypatch.setattr(runner.pg.os, 'replace', interrupted_replace)
+    monkeypatch.setattr(pg.os, 'replace', interrupted_replace)
     with pytest.raises(OSError, match='interrupted replacement'):
         builder.main()
     assert calls and out.read_bytes() == b'frozen\n'

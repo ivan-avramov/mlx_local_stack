@@ -6,11 +6,16 @@ import threading
 import time
 from pathlib import Path
 import pytest
-from bench import tg1_runner as runner
+from bench import arm_opencode, arm_runner as runner
+from bench import corpus_tg1
 from bench import structured_grade as sg
 from bench.token_turn_gate import TokenTurnGate, TransportAbort
 from bench.tests.test_token_turn_gate import usage
 from bench.tests.test_opencode_v2_probe import probe as std_probe, tg1_probe as probe, fixture_probe, MODEL
+
+
+CORPUS = corpus_tg1.Tg1Corpus(runner.DEFAULT_UNIVERSE)
+JOIN = runner.grade_join_timeout_s(sg.TIMEOUTS)
 
 
 def test_slow_grading_backlog_and_exit_during_grade(tmp_path):
@@ -30,7 +35,7 @@ def test_slow_grading_backlog_and_exit_during_grade(tmp_path):
             assert release.wait(3)
         return (2, False)
 
-    worker = runner.GradeWorker(gate, lock, work, tmp_path, grade)
+    worker = runner.GradeWorker(gate, lock, work, tmp_path, grade, JOIN, corpus=CORPUS)
     worker.start()
     try:
         with lock:
@@ -146,7 +151,7 @@ def test_export_bounds_rejection_count_exact():
             }
         ]
     }
-    assert runner.tool_bounds_rejections(export) == 1
+    assert arm_opencode.tool_bounds_rejections(export) == 1
 
 
 def test_k_and_ceiling_skip_unnecessary_grading(tmp_path):
@@ -156,7 +161,7 @@ def test_k_and_ceiling_skip_unnecessary_grading(tmp_path):
     gate = TokenTurnGate(1)
     lock = threading.RLock()
     worker = runner.GradeWorker(
-        gate, lock, work, tmp_path, lambda snap: pytest.fail("graded mandatory stop")
+        gate, lock, work, tmp_path, lambda snap: pytest.fail("graded mandatory stop"), JOIN, corpus=CORPUS
     )
     with lock:
         worker.notify(1)
@@ -178,7 +183,7 @@ def test_f11_slow_grader_edits_every_request_still_stalls(tmp_path):
         entered.set()
         assert release.wait(3)
         return 3, False
-    worker = runner.GradeWorker(gate, lock, work, tmp_path, grade)
+    worker = runner.GradeWorker(gate, lock, work, tmp_path, grade, JOIN, corpus=CORPUS)
     from bench.token_turn_gate import EventStream
     from bench.tests.test_token_turn_gate import request
     stream = EventStream(gate, worker.notify)
@@ -213,7 +218,7 @@ def test_f2_ungradeable_manifest_retried(tmp_path):
         calls.append(snap.boundary)
         graded.set()
         return None, False
-    worker = runner.GradeWorker(gate, lock, work, tmp_path, grade)
+    worker = runner.GradeWorker(gate, lock, work, tmp_path, grade, JOIN, corpus=CORPUS)
     from bench.token_turn_gate import EventStream
     from bench.tests.test_token_turn_gate import request
     stream = EventStream(gate, worker.notify)
@@ -236,7 +241,7 @@ def test_f2_ungradeable_manifest_retried(tmp_path):
 def test_f11_terminal_join_covers_active_plus_queued_grade(tmp_path, monkeypatch):
     """Spec rev 5 §2: grader timeouts are per grade; the frozen cohort is at most the active grade plus one queued
     capture, so the terminal join allows two full grades plus overhead (Python 300 s → 660 s)."""
-    assert runner.grade_join_timeout_s() == 2 * max(sg.TIMEOUTS.values()) + runner.GRADE_JOIN_OVERHEAD_S == 660
+    assert runner.grade_join_timeout_s(sg.TIMEOUTS) == 2 * max(sg.TIMEOUTS.values()) + runner.GRADE_JOIN_OVERHEAD_S == 660
     monkeypatch.setattr(sg, "TIMEOUTS", {"python": 0.3, "go": 0.3})
     monkeypatch.setattr(runner, "GRADE_JOIN_OVERHEAD_S", 0.3)
     work = tmp_path / "work"
@@ -253,7 +258,7 @@ def test_f11_terminal_join_covers_active_plus_queued_grade(tmp_path, monkeypatch
         time.sleep(0.25)   # under one per-grade timeout; two in series exceed one timeout
         return (2, False)
 
-    worker = runner.GradeWorker(gate, lock, work, tmp_path, grade)
+    worker = runner.GradeWorker(gate, lock, work, tmp_path, grade, runner.grade_join_timeout_s(sg.TIMEOUTS), corpus=CORPUS)
     worker.start()
     with lock:
         worker.notify(1)
@@ -276,7 +281,8 @@ def test_f11_terminal_join_still_aborts_a_hung_grader(tmp_path, monkeypatch):
     gate = TokenTurnGate(3)
     lock = threading.RLock()
     release = threading.Event()
-    worker = runner.GradeWorker(gate, lock, work, tmp_path, lambda snap: (release.wait(5), (2, False))[1])
+    worker = runner.GradeWorker(gate, lock, work, tmp_path, lambda snap: (release.wait(5), (2, False))[1],
+                                 runner.grade_join_timeout_s(sg.TIMEOUTS), corpus=CORPUS)
     worker.start()
     with lock:
         worker.notify(1)

@@ -17,10 +17,7 @@ levels are indicative only.
 
 - Languages: Rust (30), Java (47), JavaScript (49), C++ (26), pinned polyglot corpus (`polyglot_sha` as tg1).
 - Harness: the tg1 probe policy family under a new scaffold label `opencode-v2-web-tg2` (own
-  `scaffold_policy_sha256`). **tg1 identity untouched (T14):** tg2 code lives in NEW modules (`bench/tg2_grade.py`,
-  own version `m65-tg2-v1`; `bench/tg2_runner.py`; a tg2 universe builder) that import tg1 modules without editing
-  them; no module in the tg1 identity list changes. If the build finds a tg1 identity module must change, that is a
-  tg1 epoch change and goes to the operator before it is made. Agent-phase web and shell networking stay as tg1 and are
+  `scaffold_policy_sha256`). **tg2 is a configuration of the shared core (T14, amended 2026-10-17 by C178 / P371):** tg2 has its own probe entry (`run_tg2_probe.py`), corpus (`bench/corpus_tg2.py` over `bench/tg2_grade.py` + `bench/tg2_materialize.py`, version `m65-tg2-v1`), label and chain configuration on the ONE item core (`bench/arm_runner.py`) and chain core (`bench/chain_core.py`; schedule `schedules.tg2_tier` over the frozen draw); the core is in every probe closure, so a core change moves the tg1, tg2 and M64 identities together (accepted, C178; campaign freeze P377 / C179). tg2 transport semantics = tg1's (P373). Agent-phase web and shell networking stay as tg1 and are
   audited by P201 (T13).
 - **Protocol (T20):** per pick, two independent loaded sessions s1 / s2 with distinct paired seeds
   (`rowschema.sample_seed`, seed bases as tg1) plus a same-seed reload control (5 items per language), deployed
@@ -132,7 +129,7 @@ overlap with M55's draws is allowed.
    compile failure, missing report, every tamper vector above); image build script + digest pin.
 2. Multi-file materializer + tg2 universe freeze + determinism report + the three candidate draw artifacts.
 3. `bench/tg2_runner.py` (`--lang` rust / java / javascript / cpp under `opencode-v2-web-tg2`) and chain runner tg2
-   LEGS, with no tg1 identity module edited (T14); final solution trees retained for the panel (T22).
+   LEGS as a configuration of the shared core (T14 amended, P371); final solution trees retained for the panel (T22).
 4. Injected positives (stall / loop / alloc) on one item per language; four-language `--smoke`; sizing report; then
    the operator's chain go.
 

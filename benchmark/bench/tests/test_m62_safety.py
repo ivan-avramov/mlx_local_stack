@@ -46,7 +46,8 @@ def test_kill_role_can_kill_then_raise(tmp_path, monkeypatch):
 
 
 def test_kill_then_error_cannot_bypass_worker_cancellation(tmp_path, monkeypatch):
-    from bench import tg1_runner as runner, token_turn_gate as tg
+    from bench import token_turn_gate as tg
+    from bench.tests.arm_entry import run_item_tg1
     calls = []
     class Guard:
         client_resource = True
@@ -69,7 +70,7 @@ def test_kill_then_error_cannot_bypass_worker_cancellation(tmp_path, monkeypatch
     monkeypatch.setattr(pg, 'ProcessGuard', Guard)
     monkeypatch.setattr(pg, 'wait_cancel', lambda *a, **k: calls.append('cancel'))
     with pytest.raises(tg.TransportAbort, match='scan failed'):
-        runner.run_item(None, model='fixture', work=tmp_path, prompt='fixture',
+        run_item_tg1(None, model='fixture', work=tmp_path, prompt='fixture',
             env={'TMPDIR': str(tmp_path/'itemtmp')}, binary='fixture',
             evidence=tmp_path/'evidence/one', entry=dict(baseline_failing=1,
             leaves=[['a']], lang='python'), limit=262144, private=tmp_path,

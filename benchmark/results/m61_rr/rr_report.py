@@ -6,7 +6,7 @@ import json, math, os, sys
 from pathlib import Path
 REPO = Path(os.environ.get("STACK_REPO") or (Path.home() / "ws/mlx_local_stack"))
 sys.path.insert(0, str(REPO / "benchmark"))
-from bench import stats, answer_key  # noqa: E402
+from bench import stats, answer_key, chain_rows  # noqa: E402
 
 WD = Path(os.environ.get("STACK_WORKDIR") or (Path.home() / "ws/mlx_local_stack_workdir"))
 RR = WD / "m61/rr"
@@ -19,7 +19,7 @@ def p(s=""):
     out.append(s); print(s)
 
 def rows(f):
-    return [json.loads(l) for l in open(f) if l.strip()] if f.exists() else []
+    return chain_rows.rows_if_present(f)       # P371 R7: the one reader of chain rows
 
 def strict(r):
     return int(r.get("passed") is True and not r.get("nonconv_kind") and r.get("stop_reason") in (None, "completed"))
@@ -51,7 +51,7 @@ items, raw = {}, {}
 for m in (P1, P2):
     for l in LANGS:
         for s in SESS:
-            f = RR / f"{m}.rr.{s}.opencode_{l}.jsonl"
+            f = chain_rows.legacy_path(RR, "m61rr", model=m, session=s, lang=l)
             rs = rows(f); raw[(m, l, s)] = rs
             side = Path(str(f) + ".webaudit.jsonl")
             rep = answer_key.report_rows(rs, audit_sidecar=side if side.exists() else None)
@@ -83,7 +83,7 @@ for s in SESS:
     pairs = []
     for m in (P1, P2):
         for l in LANGS:
-            m59 = {r["id"]: [strict(r)] for r in rows(RES / m / f"opencode_v2_{l}.m59.{s}.jsonl") if r["id"] not in INVALID}
+            m59 = {r["id"]: [strict(r)] for r in chain_rows.stored_rows(RES / m, l, "m59", s) if r["id"] not in INVALID}
             pairs.append((f"{m} {l}", items[(m, l, s)], m59))
     family(f"DESCRIPTIVE: M61 re-record {s} minus M59 {s} (same seeds; scaffold opencode-v2-web 48K vs opencode-v2 16K — never pooled)", pairs, names=("M61", "M59"))
 

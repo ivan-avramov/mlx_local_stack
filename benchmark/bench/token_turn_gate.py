@@ -26,6 +26,7 @@ PRECEDENCE = (
     "client_resource",
     "context_overflow",
     "client_inactivity",
+    "compaction_failed",
     "budget_hit",
 )
 # C154 (P280): pinned 2.0.20 `run` interrupts an execution after 60 min without a durable session event (hard-coded
@@ -34,6 +35,12 @@ PRECEDENCE = (
 # usage; error suppressed after an earlier error) are not this shape and still abort.
 INACTIVITY_ERROR = {"type": "aborted", "message": "Session interrupted: inactivity"}
 INACTIVITY_TRAILING_ERROR = {"type": "aborted", "message": "Step interrupted"}
+# P370 / A2 (pinned 2.0.20, fixture `opencode_2.0.20_compaction_failed.json`): the model fails opencode's summary template
+# twice. The client emits ONE part-less error event and exits 1; the export ends with the compaction message (`status:
+# failed`, the same error, the tokens of BOTH summary requests) and a single `idle` message with `outcome: failed`; no
+# assistant message follows. A scaffold OUTCOME (scored strict-fail), not transport corruption: registered only for an
+# arm that runs compaction (`reconcile(..., compaction_failed=True)`).
+COMPACTION_FAILED_ERROR = {"type": "compaction.failed", "message": "Compaction summary did not match the required template"}
 
 
 class TransportAbort(RuntimeError):
@@ -442,8 +449,24 @@ def tolerated_abort_errors(stream):
     return tolerated
 
 
-def reconcile(stream, export, rc, outcome=None):
-    """Match native IDs before normalization, then charge permitted missing completions."""
+def failed_compaction_export(export):
+    """Does the export end exactly as a failed compaction does (the last compaction message failed with the registered
+    error, and only the `idle` / `failed` marker follows it)?"""
+    try:
+        messages = export["messages"]
+        at = [i for i, m in enumerate(messages) if isinstance(m, dict) and m.get("type") == "compaction"]
+    except (KeyError, TypeError):
+        return False
+    if not at:
+        return False
+    last, tail = messages[at[-1]], messages[at[-1] + 1:]
+    return (last.get("status") == "failed" and last.get("error") == COMPACTION_FAILED_ERROR and len(tail) == 1
+            and isinstance(tail[0], dict) and tail[0].get("type") == "idle" and tail[0].get("outcome") == "failed")
+
+
+def reconcile(stream, export, rc, outcome=None, *, compaction_failed=False):
+    """Match native IDs before normalization, then charge permitted missing completions. `compaction_failed`: the
+    configuration runs compaction, so the registered failed-compaction shape is a scored outcome instead of an abort."""
     stream.finish(killed=outcome in KILL_OUTCOMES or outcome == "client_exit_hang")
     gate = stream.gate
     exit_hang = outcome == "client_exit_hang"
@@ -460,10 +483,14 @@ def reconcile(stream, export, rc, outcome=None):
             outcome = "context_overflow"
         elif rc == 1 and len(stream.errors) == 1 and outcome is None and stream.errors[0] == INACTIVITY_ERROR:
             outcome = "client_inactivity"
+        elif (compaction_failed and rc == 1 and len(stream.errors) == 1 and outcome is None
+              and stream.errors[0] == COMPACTION_FAILED_ERROR and failed_compaction_export(export)):
+            outcome = "compaction_failed"
         else:
             raise TransportAbort("error event / Step.Failed")
     killed = outcome in KILL_OUTCOMES
-    if outcome is not None and not killed and outcome not in ("context_overflow", "client_inactivity"):
+    if outcome is not None and not killed and outcome not in ("context_overflow", "client_inactivity",
+                                                              "compaction_failed"):
         raise TransportAbort("unknown terminal outcome")
     if not killed and not outcome and rc != 0:
         raise TransportAbort("unexpected exit")

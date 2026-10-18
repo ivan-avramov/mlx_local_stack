@@ -43,6 +43,14 @@ def _print_identity_requested():
     return "--print-identity" in sys.argv[1:]
 
 
+def _nonce(value):
+    """P384: the chain-issued per-invocation binding nonce: 64 lowercase hex (anything else is refused)."""
+    import re
+    if not re.fullmatch("[0-9a-f]{64}", value):
+        raise argparse.ArgumentTypeError("--invocation-nonce must be 64 lowercase hex characters")
+    return value
+
+
 def _parser():
     ap = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     ap.add_argument("--model", required=True)
@@ -64,6 +72,12 @@ def _parser():
     ap.add_argument("--sampling-profile", choices=("deployed",))
     ap.add_argument("--frozen-prompt-date", help="P364: the date opencode shows the model ('Www Mmm DD YYYY'); "
                     "required, never defaulted (a stored reference arm pairs only on the same date)")
+    ap.add_argument("--attempt", type=int, default=1,
+                    help="attempt number of each slot in this invocation (worker receipt attempt id; the chain sets it)")
+    ap.add_argument("--attempt-rerun-index", type=int, default=0,
+                    help="same-slot re-run index of this invocation's attempt ids (the chain sets it)")
+    ap.add_argument("--invocation-nonce", type=_nonce,
+                    help="P384: the chain's per-invocation nonce, written into the manifest as runtime.invocation_nonce")
     ap.add_argument("--print-identity", action="store_true", help="print the probe identity JSON and exit")
     # Legacy v2 flags: parsed only so that `tg1_runner.main` refuses them with its own message.
     for flag, kind in (("--extra-deny-file", Path), ("--rerun-of", str), ("--rerun-index", int), ("--tick-s", int),

@@ -126,8 +126,10 @@ def test_validate_leg_checks_the_frozen_arm_and_pinned_composite(leg_env):
 
 # ---------------------------------------------------------------- the chain
 def manifest_runtime(env, model, session="s1", lang="python"):
-    path = env["out"] / session / f"{model}.{session}.opencode_{lang}.manifest.json"
-    return json.loads(path.read_text())["runtime"]
+    """The runtime block of the leg's LAST invocation manifest (P371 A8: one manifest per leg attempt)."""
+    paths = sorted((env["out"] / session).glob(f"{model}.{session}.opencode_{lang}.L*.manifest.json"),
+                   key=lambda p: int(p.name.split(".a")[-1].split(".")[0]))
+    return json.loads(paths[-1].read_text())["runtime"]
 
 
 def test_chain_pins_the_composite_and_freezes_one_arm_identity_per_pick(env):
@@ -173,13 +175,13 @@ def test_bad_generation_sha_flag_is_refused():
 
 # ---------------------------------------------------------------- lifecycle freeze (P24)
 def lifecycle_copy(tmp_path):
+    """Temp copies of every lifecycle member (P371 R15: the entry's import closure, gate, launchers), same relative paths."""
     directory = tmp_path / "lifecycle"
-    directory.mkdir()
     files = {}
-    for name, rel in co.LIFECYCLE_FILES.items():
-        source = REPO / rel
-        files[name] = directory / source.name
-        files[name].write_bytes(source.read_bytes())
+    for name, source in R.lifecycle_files(REPO).items():
+        files[name] = directory / Path(source).relative_to(REPO)
+        files[name].parent.mkdir(parents=True, exist_ok=True)
+        files[name].write_bytes(Path(source).read_bytes())
     return files
 
 
@@ -191,8 +193,9 @@ def test_lifecycle_is_frozen_in_chain_json_and_an_unchanged_chain_completes(env)
     files = lifecycle_copy(env["wd"])
     assert run(env, CHAIN, lifecycle=files) == 0
     cj = chain_json(env)
-    assert set(cj["lifecycle"]) == {"runner", "chain_ops", "gate", "launcher", "launch_tg1"}
-    assert cj["lifecycle"] == co.lifecycle_shas(files)
+    assert {"runner", "chain_ops", "gate", "launcher", "launch_tg1", "chain_config"} <= set(cj["lifecycle"])
+    assert set(cj["lifecycle"]) == set(files) | {"chain_config"}         # P371 R15: + the entry's import closure members
+    assert {k: v for k, v in cj["lifecycle"].items() if k != "chain_config"} == co.lifecycle_shas(files)
     assert all(len(cj["sha256"][k]) == 64 for k in ("runner", "chain_ops", "gate", "overlay", "launcher", "launch_tg1"))
 
 
@@ -219,7 +222,8 @@ def test_lifecycle_drift_between_pilot_and_full_aborts_on_resume(env):
     touch(files["chain_ops"])
     assert run(env, CHAIN, lifecycle=files) == 2
     assert log_has(env, "lifecycle drift") and len(invocations(env)) == launched
-    assert chain_json(env)["lifecycle"] != co.lifecycle_shas(files)                      # never silently rewritten
+    frozen = {k: v for k, v in chain_json(env)["lifecycle"].items() if k != "chain_config"}
+    assert frozen != co.lifecycle_shas(files)                                           # never silently rewritten
 
 
 def test_lifecycle_drift_at_exit_is_an_abort(env):
@@ -241,8 +245,10 @@ def test_lifecycle_drift_names_exactly_the_changed_files(tmp_path):
 
 # ---------------------------------------------------------------- review L3: the active launcher is frozen
 def test_the_launcher_the_operator_actually_uses_is_in_the_lifecycle():
-    assert co.LIFECYCLE_FILES["launch_tg1"] == "benchmark/chains/c147/launchers/launch_tg1.sh"
-    assert (REPO / co.LIFECYCLE_FILES["launch_tg1"]).is_file() and (REPO / co.LIFECYCLE_FILES["launcher"]).is_file()
+    named = R.NAMED_LIFECYCLE
+    assert named["launch_tg1"] == "benchmark/chains/c147/launchers/launch_tg1.sh"
+    assert (REPO / named["launch_tg1"]).is_file() and (REPO / named["launcher"]).is_file()
+    assert set(R.lifecycle_files(REPO)) >= {"launcher", "launch_tg1", "gate", "runner", "chain_ops"}
 
 
 # ---------------------------------------------------------------- review L4: an existing chain.json must be complete
@@ -265,6 +271,7 @@ def _rewrite(path, fn):
     ("no lifecycle", lambda path: _rewrite(path, lambda d: d.pop("lifecycle"))),
     ("lifecycle null", lambda path: _rewrite(path, lambda d: d.update(lifecycle=None))),
     ("lifecycle missing a file", lambda path: _rewrite(path, lambda d: d["lifecycle"].pop("gate"))),
+    ("lifecycle missing the chain_config sha", lambda path: _rewrite(path, lambda d: d["lifecycle"].pop("chain_config"))),
     ("lifecycle extra file", lambda path: _rewrite(path, lambda d: d["lifecycle"].update(other="a" * 64))),
     ("lifecycle not hex", lambda path: _rewrite(path, lambda d: d["lifecycle"].update(gate="nothex"))),
     ("arms absent", lambda path: _rewrite(path, lambda d: d.pop("arms"))),
@@ -301,7 +308,7 @@ def test_the_expected_policy_sha_is_derived_from_the_probes_print_identity_and_f
     cj = chain_json(env)
     assert cj["policy_sha256"] == FP.CAMPAIGN == cj["pinned"]["scaffold_policy_sha256"]
     calls = identity_calls(env)
-    assert len(calls) == 1 and "--universe" in calls[0]["argv"]
+    assert len(calls) == 2 and all("--universe" in c["argv"] for c in calls)        # entry + the A5 exit re-run (snapshot)
     assert calls[0]["argv"][calls[0]["argv"].index("--universe") + 1] == str(env["uni"].resolve())
     assert len(invocations(env)) == 6                               # print-identity is not a generation attempt
 
