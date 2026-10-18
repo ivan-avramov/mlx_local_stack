@@ -243,9 +243,14 @@ class ArmBinding:
     probe: str                          # repo-relative probe entry
     label: str                          # scaffold label of rows / manifests
     arm_spec: str                       # id of the chain-side arm spec (data, `arm_specs`)
+    probe_data: tuple = ()              # repo-relative non-Python inputs of the probe's identity (generation data files)
+
+    def __post_init__(self):
+        _frozen_set(self, "probe_data", tuple(self.probe_data))
 
     def as_dict(self):
-        return dict(arm=self.arm, probe=self.probe, label=self.label, arm_spec=self.arm_spec)
+        return dict(arm=self.arm, probe=self.probe, label=self.label, arm_spec=self.arm_spec,
+                    probe_data=list(self.probe_data))
 
 
 @dataclass(frozen=True)

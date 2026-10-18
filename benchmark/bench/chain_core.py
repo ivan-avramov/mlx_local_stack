@@ -195,6 +195,18 @@ def lifecycle_member_files(repo, entry, named, gate="scripts/session_pinning_gat
     return files
 
 
+def probe_rel(repo, given):
+    """F7: the repo-relative POSIX path of a probe entry (`--probe`). A relative path is the repository's (the chain spawns the
+    probe with cwd = the repository); an entry that is not a file inside the repository refuses (its closure could not be
+    named in the campaign core)."""
+    repo = Path(repo).resolve()
+    path = Path(given)
+    path = (path if path.is_absolute() else repo / path).resolve()
+    if not path.is_relative_to(repo) or not path.is_file():
+        raise Refused(f"REFUSED: --probe must name a file inside the repository (got {Path(given).name!r})")
+    return path.relative_to(repo).as_posix()
+
+
 # --------------------------------------------------------------------------- probe command
 def build_cmd(py, probe, leg, step, receipt, cancel, ack, *, scaffold, universe=None, frozen=None, out=None, attempt=None,
               rerun_index=None, epoch=None):

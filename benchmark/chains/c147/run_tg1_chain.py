@@ -60,6 +60,17 @@ CORE_SPECS = dict(probe_entry="benchmark/run_tg1_probe.py",
                   chain_entry="benchmark/chains/c147/run_tg1_chain.py", chain_data=())
 
 
+def probe_entry(a):
+    """F7: the resolved probe entry (repo-relative; `--probe` may override the default)."""
+    given = getattr(a, "probe", None)
+    return core.probe_rel(REPO, given) if given else CORE_SPECS["probe_entry"]
+
+
+def core_specs(a):
+    """The campaign core specs of THIS invocation: `CORE_SPECS` with the resolved probe entry."""
+    return dict(CORE_SPECS, probe_entry=probe_entry(a))
+
+
 def lifecycle_files(repo):
     return core.lifecycle_member_files(repo, NAMED_LIFECYCLE["runner"], NAMED_LIFECYCLE)
 
@@ -71,7 +82,8 @@ def tg1_config(a):
     predictor = getattr(a, "predictor", "off")
     return rc.ChainConfig(
         config_id="tg1",
-        arms=(rc.ArmBinding(arm="oc", probe="benchmark/run_tg1_probe.py", label=SCAFFOLD, arm_spec="oc"),),
+        arms=(rc.ArmBinding(arm="oc", probe=probe_entry(a), label=SCAFFOLD, arm_spec="oc",
+                            probe_data=CORE_SPECS["probe_data"]),),
         schedule={"builder": "tg1", "params": dict(seeds=SEEDS, legs={k: [list(x) for x in v] for k, v in LEGS.items()},
                                                    pilot_n=PILOT_N, smoke_pilot_n=SMOKE_PILOT_N,
                                                    smoke_full_n=SMOKE_FULL_N)},
@@ -86,7 +98,7 @@ class Chain(core.Chain):
     def __init__(self, args, ops, timers, log, names, out_root, lifecycle=None, campaign=None):
         super().__init__(tg1_config(args), args, ops, timers, log, repo=REPO, out_root=out_root, names=names,
                          lifecycle_files=lifecycle if lifecycle else lifecycle_files(REPO),
-                         campaign=campaign if campaign is not None else campaign_core.Campaign(REPO, **CORE_SPECS))
+                         campaign=campaign if campaign is not None else campaign_core.Campaign(REPO, **core_specs(args)))
 
 
 # --------------------------------------------------------------------------- schedule

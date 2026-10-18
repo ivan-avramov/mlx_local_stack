@@ -20,7 +20,7 @@ from bench import chain_rows as cr
 from bench import contract_artifact as ca
 from bench import schedules
 from bench.tests.m64_support import (  # noqa: F401  (fixture: env)
-    FAP, FROZEN, LABELS, M, PICK1, PICK2, REPO, SMOKE, SMOKE3, arg, calls, chain_json, env, invocations, log_has, run,
+    FAP, FAP_PATH, FROZEN, LABELS, M, PICK1, PICK2, REPO, SMOKE, SMOKE3, arg, calls, chain_json, env, invocations, log_has, run,
     schedule)
 
 
@@ -100,7 +100,8 @@ def test_smoke_chain_with_one_arm_runs_every_leg_and_freezes_the_identities(env)
     names = sorted(p.name for p in (env["out"] / "s1").glob("*.jsonl"))
     assert names == sorted(f"{pick}.s1.oc_{lang}.L{b}.block.a{b + 1}.jsonl" for pick in (PICK1, PICK2)
                            for lang in ("python", "go") for b in (0, 1))
-    assert "chain_config" in cj and cj["chain_config"] == M.m64_config(M.parse_args(SMOKE)).as_dict()
+    assert "chain_config" in cj and cj["chain_config"] == M.m64_config(
+        M.parse_args(SMOKE + ["--probe", f"oc={FAP_PATH}"])).as_dict()               # F7: the resolved probe entry
 
 
 def test_every_leg_is_one_immutable_invocation_with_its_own_expect_items(env):
@@ -201,7 +202,7 @@ def test_every_manifest_must_name_its_arm_and_the_chains_epoch(env):
 
 def test_every_manifest_must_carry_the_arms_evidence_policy(env):
     rc = run(env, SMOKE, extra_env={"FAKE_MANIFEST_OVERRIDE": json.dumps({"runtime.evidence_policy.worker_receipts":
-                                                                          "required"})})
+                                                                          "absent"})})
     assert rc == 2 and log_has(env, "evidence_policy")
 
 

@@ -15,7 +15,7 @@ from bench import chain_ops as co
 from bench import chain_rows as cr
 from bench import web_evidence as we
 from bench.tests.test_c147_chain_runner import (  # noqa: F401  (fixtures: env)
-    CHAIN, FP, PICK1, PICK2, PILOT, R, REPO, TIMERS, arg, chain_json, env, invocations, log_has, run)
+    C147, CHAIN, FP, PICK1, PICK2, PILOT, R, REPO, TIMERS, arg, chain_json, env, invocations, log_has, run)
 from bench.tests.test_p371_web_evidence import DOC
 
 
@@ -31,8 +31,10 @@ def rel(env, path):
 def test_the_tg1_chain_config_is_serialized_into_chain_json_and_its_sha_is_a_lifecycle_member(env):
     assert run(env, CHAIN) == 0
     cj = chain_json(env)
-    cfg = R.tg1_config(R.parse_args(CHAIN))
+    cfg = R.tg1_config(R.parse_args(CHAIN + ["--probe", str(C147 / "fake_probe.py")]))      # F7: the RESOLVED probe entry
     assert cj["chain_config"] == cfg.as_dict() and cj["lifecycle"]["chain_config"] == cfg.sha256()
+    assert cfg.arms[0].probe == "benchmark/chains/c147/fake_probe.py"
+    cfg = R.tg1_config(R.parse_args(CHAIN))
     assert (cfg.transport_policy, cfg.resume_policy, cfg.predictor) == ("abort_restart", "restart_load", "off")
     assert cfg.schedule["builder"] == "tg1" and cfg.arm_switch_ops == () and cfg.contract_artifacts == ()
     assert cfg.arms[0].probe == "benchmark/run_tg1_probe.py" and cfg.arms[0].label == co.SCAFFOLD

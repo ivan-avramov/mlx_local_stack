@@ -39,10 +39,17 @@ LANGS = ("python", "go")
 NAMED_LIFECYCLE = {"runner": "benchmark/chains/m64/run_m64_chain.py", "chain_ops": "benchmark/bench/chain_ops.py"}
 
 
-def core_specs(arms):
+def probe_entry(a, arm):
+    """F7: the arm's resolved probe entry (repo-relative; `--probe ARM=PATH` overrides the arm spec's)."""
+    given = (getattr(a, "probe", None) or {}).get(arm)
+    return core.probe_rel(REPO, given) if given else arm_specs.spec_for(arm).probe
+
+
+def core_specs(arms, a=None):
     """C179 (P377): the campaign core of an M64 chain = ONE probe closure per arm (the `probe_code_sha256` recipe: the arm
-    probe entry's import closure + its generation data files, from the arm spec) and this entry's closure."""
-    return dict(probes={arm: dict(entry=arm_specs.spec_for(arm).probe, data=tuple(arm_specs.spec_for(arm).generation_data))
+    probe entry's import closure (the RESOLVED entry, F7) + its generation data files, from the arm spec) and this entry's
+    closure."""
+    return dict(probes={arm: dict(entry=probe_entry(a, arm), data=tuple(arm_specs.spec_for(arm).generation_data))
                         for arm in arms},
                 chain_entry=NAMED_LIFECYCLE["runner"], chain_data=())
 
@@ -61,7 +68,8 @@ def m64_config(a, langs=None):
     bindings = []
     for arm in a.arms:
         spec = arm_specs.spec_for(arm)                   # refuses an arm without a chain spec (aa.ArmRefused)
-        bindings.append(rc.ArmBinding(arm=arm, probe=spec.probe, label=spec.label, arm_spec=arm))
+        bindings.append(rc.ArmBinding(arm=arm, probe=probe_entry(a, arm), label=spec.label, arm_spec=arm,
+                                      probe_data=spec.generation_data))
     params = dict(arms=list(a.arms), picks=[co.PICK1, co.PICK2], block_size=schedules.BLOCK_SIZE,
                   seeds=dict(schedules.SESSION_SEEDS, reload=schedules.RELOAD_SEED), langs=list(langs or LANGS),
                   reload_langs=["python"], reload_items=schedules.RELOAD_ITEMS, smoke_items=schedules.SMOKE_ITEMS,
@@ -192,7 +200,7 @@ def main(argv=None, ops=None, timers=None, log_out=None, lifecycle_files=None, h
         overlay = os.environ.get("C147_OVERLAY") or str(out_root / "overlay_m64_draft_off.yaml")
         ops = arm_ops.M64ChainOps(REPO, wd, overlay, log, out_root=out_root)
     if campaign is None:
-        campaign = campaign_core.Campaign(REPO, **core_specs(a.arms))
+        campaign = campaign_core.Campaign(REPO, **core_specs(a.arms, a))
     chain = build_chain(a, ops, timers or Timers(), log, load_universe(a.universe), out_root, lifecycle_files, hooks,
                         campaign, config)
     try:

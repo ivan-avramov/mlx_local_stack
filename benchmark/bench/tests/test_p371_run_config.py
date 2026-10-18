@@ -207,7 +207,7 @@ def test_chain_config_canonical_serialization_and_sha():
     d = a.as_dict()
     assert json.loads(json.dumps(d)) == d
     assert d["arms"][0] == dict(arm="oc", probe="benchmark/run_tg1_probe.py", label="opencode-v2-web-tg1",
-                                arm_spec="oc")
+                                arm_spec="oc", probe_data=[])
     assert d["transport_policy"] == "abort_restart" and d["resume_policy"] == "restart_load"
 
 

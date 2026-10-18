@@ -165,7 +165,7 @@ def test_the_m64_entry_builds_the_real_campaign_helper_from_the_arms_specs_when_
     monkeypatch.setattr(M.campaign_core, "Campaign", Spy)
     assert run(env, SMOKE + FLAG) == 2
     assert set(seen["specs"]["probes"]) == {"oc"} and seen["specs"]["chain_entry"] == "benchmark/chains/m64/run_m64_chain.py"
-    assert seen["specs"]["probes"]["oc"]["entry"] == "benchmark/run_oc_probe.py"
+    assert seen["specs"]["probes"]["oc"]["entry"] == "benchmark/chains/m64/fake_arm_probe.py"       # F7: the resolved entry (`run` passes --probe oc=)
 
 
 def test_without_the_flag_nothing_is_recorded_and_nothing_is_computed(env):
