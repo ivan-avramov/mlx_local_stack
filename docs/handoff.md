@@ -5,6 +5,21 @@ C215, P448, P447, C214, P446, P445, P444, C213, C212, P443, P442, C211, P438, P4
 `docs/specs/p426-fable-mtp-recert.md` (§6 Wave 2, §8 signals, §9 B2 / B6 / B8) and `docs/specs/p434-local-gate.md` (v4).
 Model names: FULL registry names only, always.
 
+## m5max (64 GB) session 2026-10-18 — CLOSED (operator: GPU work is dispatched on m5max-128)
+
+- Pulled: stack `main` fast-forwarded to `origin/main` `4fde8482`; `../mlx-vlm` `main` `24551869` (= pin; upstream is 61 commits
+  ahead incl. `1a4ddb68` "Fix remaining affine QMV precision mismatches on MLX 0.32.4 (#2527)" — relevant to the mlx 0.32.3 pin,
+  a separate reviewed sync item after P369); `../mlx-serve` `main` `e6a7a5a` (operator merged upstream v0.3.0 2026-10-17:
+  `POST /v1/systemone`, `/v1/decisions` deprecated alias) while the stack pin is `86921f0` — **bump needs a go** (serving change).
+- Fork docs commit `f8a91f67` on `../mlx-vlm` `main` (UNPUSHED): `docs/proposals/nemotron-rerank-head.md` draft 4, not approved for
+  build; base = the fork head after P369 merges (P372: one fork branch in flight).
+- Plan for this box + codex review: `docs/reviews/m5max-plan-2026-10-18/` (P1–P6 adjudicated). When this box reopens: P383 build,
+  Pi / dsh adapters (unit completion; D2 integration gated), per-box two-judge config. Rules adopted from the review: full suite on
+  the frozen candidate AFTER fetch + rebase; a shared runner/scoring change is pushed (on a go) before the other box starts a phase
+  that consumes it; `p369-mtp` pushed as a WIP fork branch would let P369 development run on either box.
+- This box: codex 0.163.0, no cursor-agent, OrbStack installed but stopped (docker-backed tests skip), mlx 0.32.3, no chain, no router.
+- Unpushed here: stack `main` (this handoff + the review record), `../mlx-vlm` `main` (`f8a91f67`). Push needs a go.
+
 ## State of the world
 
 - **Box `m5max-128`**, AC 140 W / 28 V. ALWAYS `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`. GPU IDLE
