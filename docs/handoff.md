@@ -13,12 +13,10 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
 - **Daily driver MTP-OFF (C177)** until P369 ships and is re-certified; then restore the three registry lines in `main_models.yaml`
   (`draft_kind` / `draft_model` for both B picks, Fable's `mtp_verify_scan: joint_v1`) + the `test_opencode_probe_seeding.py` expectation.
 - **Branches / pushes:**
-  - stack `main` pushed to origin (`67fe150f`, operator go 2026-10-18).
-  - `m64-build` (`a78d14a8`) and `tg2-step2` (`bb7ca624`) are merged and pushed; their worktrees were removed (operator go); the
-    branches remain locally and on origin.
+  - stack `main` pushed to origin through `4fde8482` (operator go 2026-10-18); later local commits need a new go.
+  - `m64-build` and `tg2-step2` were fully merged (0 commits outside main) and DELETED locally and on origin (operator go 2026-10-18).
   - fork `../mlx-vlm` branch **`p369-mtp` at `e6d2c32c`, local only** in `$STACK_WORKDIR/worktrees/mlx-vlm-p369` — **push needs the operator**.
-  - **Branch inventory (2026-10-18):** `m64-build`, `tg2-step2` — 0 commits not in main (fully merged; redundant pointers; the
-    operator decides deletion, local + origin). `c152-alloc-tool-scope-wip` — 1 unmerged commit `a1e9901e`: the C152 tool-scope
+  - **Branch inventory (2026-10-18; operator: keep both parked branches):** `c152-alloc-tool-scope-wip` — 1 unmerged commit `a1e9901e`: the C152 tool-scope
     redesign + P273 variant the operator did NOT choose (waiver A won; P273 landed separately) — nothing to merge, kept as a record.
     `p297-uncertain-gone` — 3 unmerged commits (`510ad800` restart-after-uncertain-cleanup in the tg1 chain + fixture, `4e3a107a` /
     `fe626427` Cursor round 1 NOT CLEARED U1–U3) — rejected approach, nothing to merge; BUT its fixture (an M63 abort from a vanished
