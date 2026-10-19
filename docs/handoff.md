@@ -1,4 +1,13 @@
-# Handoff — 2026-10-19 (session 2): P369 harness fix round 1 + P387 built; Cursor code round 2 in flight; P393 (E2 same-instance) awaits the operator
+# Handoff — 2026-10-19 (session 2): P369 harness fix rounds 1–2 + P387 built; Cursor code round 3 in flight; P393 (E2 same-instance) awaits the operator
+
+**UPDATE (latest, supersedes the state below where they differ):** Cursor round 2 (`docs/reviews/p369-harness/code-round2…`)
+was NOT CLEARED H2 H6 H9 H10 H14 H15 (+ H8 / H12 residuals, H16–H18); all fixed test-first except H12's CI part (deferred to
+the fork `main` merge, P394 (5)); round-3 decisions in P394 (refined: unreviewed smoke iterations allowed, never authorize a
+full run). Fork `p369-mtp` now at **`a004a922`**: suite **6296 / 17 / 0 twice**, identical skips, eight audits green.
+**Cursor round 3 in flight** at `a004a922` (round-2 fixes + the P387 code review): prompt head
+`docs/reviews/p369-harness/code-round3.prompt-head.md` + round-2 output + P394 + the P387 note + `git diff dec95d95..a004a922`
++ plan v7; output `…/scratchpad/p369-harness-code-r3-a1.out` (session 2's scratchpad). Smoke launch now takes optional
+`--reviewed-head <sha>` (full: required, == HEAD, smoke bound to the same reviewed head); exit 0 / 2 / 1; no wall limit (C184).
 
 THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P393, C184, P392, C183, P391, P390,
 P389, P388, C182, P387, P386, C181, C180, P385 …), then `docs/specs/p369-phase2-run-plan.md` (**v7, Cursor AGREE**; P393 would
