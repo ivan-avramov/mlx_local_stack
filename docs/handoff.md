@@ -1,121 +1,107 @@
-# Handoff — 2026-10-19: resume in a FRESH session with the P369 phase-2 harness code review, then the GPU smoke
+# Handoff — 2026-10-19 (session 2): P369 harness fix round 1 + P387 built; Cursor code round 2 in flight; P393 (E2 same-instance) awaits the operator
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C183, P391, P390, P389, P388, C182, P387,
-P386, C181, C180, P385, P384, P383 …), then `docs/specs/p369-phase2-run-plan.md` (**v7, Cursor AGREE**),
-`docs/specs/p383-build-plan.md` (v4), `docs/specs/p369-mtp-certification.md` (v3), `docs/specs/p371-shared-runner-core.md`
-(PLAN v6), `docs/specs/m65-tg2-corpus.md` (v5) and `docs/specs/m64-scaffold-arms.md` §4–§8, §12.
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P393, C184, P392, C183, P391, P390,
+P389, P388, C182, P387, P386, C181, C180, P385 …), then `docs/specs/p369-phase2-run-plan.md` (**v7, Cursor AGREE**; P393 would
+make it v8), `docs/specs/p387-build-note.md` (v2), `docs/specs/p383-build-plan.md` (v4), `docs/specs/p369-mtp-certification.md`
+(v3), `docs/specs/p371-shared-runner-core.md` (PLAN v6), `docs/specs/m65-tg2-corpus.md` (v5), `docs/specs/m64-scaffold-arms.md`.
 
-## State of the world (2026-10-19)
+## State of the world (2026-10-19, end of session 2)
 
-- **Box `m5max-128`.** No router (:8000 / :8091 free), no chain. **ON BATTERY (no adapter attached, 68 % at handoff) — the
-  P369 phase-2 preflight refuses until the 140 W adapter is attached; ask the operator if it still is not.** Docker
-  (OrbStack) up; the agent shell needs `export PATH="$HOME/.orbstack/bin:$PATH"` and the machine config sourced
-  (`. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`).
-- **Possibly still running when you start** (launched by the previous session at about the handoff commit; verify with `ps`;
-  never two Cursor runs at once): (a) the Cursor CODE review of the P369 harness at fork `c10205ae` — output in the previous
-  session's scratchpad `/private/tmp/claude-502/-Users-<user>-ws-mlx-local-stack/89ebd352-12ee-4e58-b74d-7c49ff36237b/scratchpad/p369-harness-code-r1-a1.out`;
-  if it is complete (has a `VERDICT` line) copy it to `docs/reviews/p369-harness/code-round1.cursor-gpt-5.6-sol-high.md`;
-  else kill any stale `cursor-agent` (and its shell) and RE-RUN it: prompt = `docs/reviews/p369-harness/code-round1.prompt-head.md`
-  with `<HEAD>` → the fork HEAD, then `git diff 4e6d0e03..HEAD`, a closing fence, then the plan v7 inline; workspace
-  `~/ws/mlx-vlm` (at the base `24551869`; branch commits readable with `git show <sha>:<path>`). Already DONE on `c10205ae`:
-  fork suite twice back to back **6202 passed / 17 skipped / 0 failed**, identical skip lists; eight audits green, exclusion
-  counts 269 / 675 / 3 / 0 / 34 / 50 / 16.
-- **Daily driver MTP-OFF (C177)** until P369 ships and is re-certified; then restore the three registry lines in `main_models.yaml`
-  (`draft_kind` / `draft_model` for both B picks, Fable's `mtp_verify_scan: joint_v1`) + the `test_opencode_probe_seeding.py` expectation.
-- **Branches / pushes:**
-  - stack `main` is **18+ docs commits ahead of origin** (push needs the operator's in-turn go; see "Push points").
-  - fork `../mlx-vlm` branch **`p369-mtp` at `c10205ae`, local only**, worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369`:
-    production fixes cleared by code review round 8 at `4e6d0e03` + the phase-2 harness (test / dev only; production diff vs
-    `4e6d0e03` EMPTY — the orchestrator refuses otherwise). Push needs the operator.
-  - Parked (keep): `c152-alloc-tool-scope-wip`, `p297-uncertain-gone`, orphan `evidence`.
-  - Push rule (C176): WIP build branches may be pushed after each commit batch, privacy-scanned; `main`, the fork, tags, PRs
-    need an explicit in-turn go (one go = one push).
+- **Box `m5max-128`.** 140 W / 28 V adapter ATTACHED (operator, this session); no router (:8000 / :8091 free), no chain.
+  **There is NO `.env` on this box** — the agent shell already carries `HF_TOKEN`; do not `. ./.env` (it errors and continues).
+  Docker (OrbStack): `export PATH="$HOME/.orbstack/bin:$PATH"`; machine config: `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`.
+- **Possibly still running:** the Cursor CODE review ROUND 2 of the harness at fork `dec95d95` (attempt 2; attempt 1 printed
+  nothing). Prompt `docs/reviews/p369-harness/code-round2.prompt-head.md` (`<HEAD>` → `dec95d95`) + round-1 output + `git diff
+  c10205ae..dec95d95` + plan v7, workspace `~/ws/mlx-vlm`. Output in session 2's scratchpad
+  `/private/tmp/claude-502/-Users-<user>-ws-mlx-local-stack/dcde3cac-5ea1-4aec-96d2-ebe6a80be439/scratchpad/p369-harness-code-r2-a2.out`;
+  if it has a `VERDICT` line copy it to `docs/reviews/p369-harness/code-round2.cursor-gpt-5.6-sol-high.md`, else kill stale
+  `cursor-agent` and re-run (prompt rebuild: head + the round-1 output section + the diff + plan v7). Never two Cursor runs.
+- **Fork `../mlx-vlm` branch `p369-mtp` at `764fe7dc`, local only**, worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369`. Production
+  diff vs `4e6d0e03` EMPTY (verified). On top of `c10205ae`: the round-1 fixes H1–H14 + C184 (`dec95d95`, 14 red/green commits)
+  and P387 (2 commits). Fork suite on `dec95d95`: **6261 passed / 17 skipped / 0 failed twice**, identical skip lists; eight
+  audits green, exclusions 269 / 675 / 3 / 0 / 34 / 50 / 16. NOT yet run on `764fe7dc` (P387): suites ×2 + audits owed.
+- **Daily driver MTP-OFF (C177)** until P369 ships + re-certification; then restore the five marked registry lines (they are
+  `test_mtp_verify_scan.INTERIM_LINES` in reverse) + the `test_opencode_probe_seeding.py` expectation.
+- **Branches / pushes:** stack `main` 21+ docs commits ahead of origin; fork `p369-mtp` local only (push = operator); parked
+  `c152-alloc-tool-scope-wip`, `p297-uncertain-gone`, orphan `evidence`. C176 push rule unchanged.
+
+## What changed this session
+
+- Harness code review round 1 (`docs/reviews/p369-harness/code-round1…`): NOT CLEARED H1–H9 (+ H10–H14). Fixed test-first:
+  H1 state hash covers ArraysCache `left_padding` / `lengths` + TurboQuant codec mode / kind / bits / coordinates
+  (`metadata_revision` excluded: an invalidation counter every ON block / probe bumps) and refuses an open transaction;
+  H2 per-module kernel attributions (tuple fallbacks classified per module), expected families from the production
+  eligibility predicates, coverage of every on-path projection; H3 allowlisted worker env (mlx-serve spawns with the router's
+  inherited env; the tuple is in argv incl. `--generation-defaults`); H4 C1 needs every ON offset in both replays; H5 E7a
+  counts only engaged uncensored requests; H6 templated-prompt digests bind E2 / E7 to the C84 reconstruction (the bundles
+  store counts only — disclosed); H7 E7b echoes `content` + `reasoning_content` and checks token-level continuity against
+  `PromptCacheState.token_ids` (production never appends the assistant hash); H8 per-request heartbeat + supervisor
+  (request / boot / job deadlines, SIGTERM→SIGKILL, `timeout.json`), E7 censoring + relaunch; H9 clean fork tree, harness
+  tree sha, the full run bound to its smoke; H10 E2 verdict + overall status, exit 0 / 2; H11 structural argv refusal;
+  H12 oracle gate scoped to the git-dependent tests (`MLX_REQUIRE_P369_ORACLE=1` fails closed); H13 release clears the
+  production session entry; H14 `{pid, create_time}` lock, stale reclaim only for a dead / reused owner; + 140 W AND 28 V.
+- **C184 (operator):** no default campaign hard stop (`--wall-limit-s` opt-in); per-request watchdogs are the only automatic
+  stops; each pick's step results reach `summary.json` as each step finishes.
+- **P392 / P387:** the pinned fixture was pre-M58 (no Fable `joint_v1`); refreshed to the last MTP-ON registry `7021bdbb`;
+  ordinary tests read only the fixture; opt-in live check accepts exactly the fixture or the byte-exact C177 interim
+  (Cursor plan round 1 AGREE WITH CHANGES K1–K4, applied in build note v2). Acceptance in the commit message.
+- **P393 (OPEN, operator):** E2 compares OFF and ON across two loads — reload nondeterminism would fail the smoke (no control)
+  and make the full E2 at best INFORMATIVE_ONLY. Recommendation: E2 on the same-instance design (ON, detached OFF1 + OFF2
+  control in the ON worker; the separate OFF process reported only). Needs the operator's go → plan v8 + Cursor plan check
+  + test-first build in the same fix round as Cursor round 2's findings.
 
 ## Next work, in order
 
-1. **P369 harness code review → fixes → green.** Finish / re-run the Cursor code review (above); fix findings test-first (a cold
-   re-review after any semantic fix, P375 rule); fork suite twice back to back (identical counts, 0 failed; the 17th skip is the
-   documented `test_p369_phase2_orchestrate.py` live-registry skip — no sibling stack beside the worktree) + the EIGHT audits
-   after `git add -A` (`--upstream-ref 952d4f6b`).
-2. **P387 (C183, the Q26 design)** on `p369-mtp`, test-only, red first: ordinary P369 tests read the MTP tuple AND sampling from the
-   pinned golden fixture (sibling presence must not change the normal suite); an opt-in `MLX_REQUIRE_STACK_REGISTRY=1` test
-   compares the live registry field by field and accepts exactly identical or the C177 interim (the marked `draft_kind` lines and
-   Fable's marked `mtp_verify_scan`; the adjacent UNMARKED `draft_model` must equal the fixture's). Verify by running the
-   registry-reading modules with `MLX_STACK_REGISTRY=<stack>/main_models.yaml` (today: 56 failed + 9 errors + 1 collection error).
-   Production diff vs `4e6d0e03` stays empty. Then suites ×2 + audits.
-3. **P369 phase 2 on GPU** (C175 go; C183 budget 3–3.5 h). Adapter attached first. From the stack root, detached, with a background
-   waiter (no foreground sleep): `set -a; . ./.env; set +a; nohup .venv/bin/python <fork-worktree>/dev/p369_phase2/orchestrate.py
-   --stack-root . --fork-root <fork-worktree> --out $STACK_WORKDIR/p369/phase2/<run-id>-smoke --phase smoke > <log> 2>&1 &`
-   (never READ `.env` — sourcing it in the launch shell is the lean-router convention). Watch `monitor.log` (5-min ticks) and the
-   job dirs; check `summary.json` `smoke_gate` (every live positive fired — `tq_norm` REQUIRED for uniform; every E1c cell PASS incl.
-   C1; E2 identical; projected full ≤ 3.5 h, else stop for the operator). Then `--phase full --smoke-summary <smoke>/summary.json`.
-   Report per pick: E1c (same-instance pair; C1; C2 `identical | unestablished`), E2, E7a (Clopper–Pearson), E7b (descriptive);
-   results → P369 + handoff. An E1c FAIL → the bound to the operator ("bounded non-neutrality"). The worker's first live boot is
-   the smoke — expect harness fixes there, each test-first.
-4. **Fork push (operator)** → stack submodule bump (full suites in BOTH repos; P387 makes the fork suite pass against the live
-   registry) → per-pick re-certification ON vs OFF on real router chains (own plan, Cursor review, operator GPU go) → restore
-   MTP-ON (C177) → P368 layers 2–3.
-5. **P383 build + P389 + P388 snapshot (C180, C183)** — `docs/specs/p383-build-plan.md` v4, stack worktree `p383-build`; test-first;
-   Cursor code review (commit named); full stack suite from the worktree alone (never while the fork suite runs); merge when no
-   chain from main is live.
-6. **P385 investigation (C181) with Cursor** — standalone repro first; ask the operator before the real-MoE GPU check.
-7. **tg2 steps 3–4 on the P371 core**; 8. **M64 remaining** (fork receipt endpoint P372, branched from the fork AFTER the P369
-   push; D2; Pi / dsh; snapshots; P201 auditor; two-judge panel; contract artifacts; smokes; the chain go).
+1. **Cursor round 2 → fixes → green.** Collect / re-run round 2 (above). Fix its findings test-first; with the operator's P393
+   go, add the E2 same-instance change (plan v8, Cursor plan check first). Then fork suite twice back to back on the new HEAD
+   (expect 17 skips: the opt-in live test + the opt-in overlay test replace the sibling skips; verify the list) + the EIGHT
+   audits (`--upstream-ref 952d4f6b`, scratchpad script `run_audits.sh` pattern: the 8 `dev/check_*.py`), then a cold
+   round 3 naming the commit (covers P387 + any P393 code too). Repeat until `VERDICT: CLEARED`.
+2. **Fork branch push (operator go)** — before the GPU smoke, so the manifest's `fork_head` is published.
+3. **P369 phase 2 on GPU** (C175; C183 budget 3–3.5 h projected; C184: no hard stop). From the stack root, detached:
+   `nohup .venv/bin/python <fork-worktree>/dev/p369_phase2/orchestrate.py --stack-root . --fork-root <fork-worktree> --out
+   $STACK_WORKDIR/p369/phase2/<run-id>-smoke --phase smoke > <log> 2>&1 &` with a background waiter; watch `monitor.log`
+   (5-min ticks: job, current request from `progress.json`, power) and the job dirs. Exit 0 = `SMOKE_PASS`, 2 = completed
+   without pass (read `summary.json`: `smoke_gate`, per-pick `outcome` / `e2.verdict`), 1 = harness error. Smoke gate: every live
+   positive (`tq_norm` for uniform), every E1c cell PASS incl. C1, E2 PASS, projected full ≤ 3.5 h (else the operator). Then
+   `--phase full --smoke-summary <smoke>/summary.json` (refuses unless the binding matches). Expect harness fixes at the first
+   live boot (size / count dry runs through `_preprocess_request`, the kernel coverage set on real weights, the E7b
+   continuity numbers), each test-first.
+4. Fork `main` merge + submodule bump (suites in both repos; P387 makes the fork suite pass against the live registry) →
+   per-pick re-certification (own plan, Cursor, operator GPU go) → restore MTP-ON (C177) → P368 layers 2–3.
+5. P383 build + P389 + P388 snapshot (`docs/specs/p383-build-plan.md` v4, worktree `p383-build`); 6. P385 with Cursor (fresh
+   session); 7. tg2 steps 3–4; 8. M64 remaining.
 
-## Push points (advice given to the operator 2026-10-19; each push still needs its in-turn go)
+## Push points (each needs its in-turn go)
 
-1. **Now:** stack `main` (docs only: the P369 fork review cleared, the phase-2 plan v1–v7 + seven Cursor rounds, the P383 plan
-   v1–v4, P386–P391, C182, C183, this handoff) — preserves the plan of record for the other box; zero risk.
-2. **Fork `p369-mtp` as a branch (not fork `main`):** once the harness code review clears and P387 lands — BEFORE the GPU smoke,
-   so the exact code the phase-2 manifest names (`fork_head`) is published and recoverable.
-3. **Fork `main` merge + stack submodule bump:** after phase 2 passes (with the merge-time suites in both repos).
-4. **P383 build branch:** push after each commit batch (C176, privacy-scanned; no go needed). Stack `main` again after the P383
-   merge and after the phase-2 results land.
-
-## Done 2026-10-18 → 19
-
-- **P369 fork review CLEARED** (round 8 on `e6d2c32c..124de41f`; F23 + F27–F30 test-first; F31 closed by lead verification in
-  `4e6d0e03`); fork suite 6118 / 16 / 0 twice; eight audits green (P386: the fork CI gates on EIGHT, not six).
-- **P369 phase-2 plan v7** — Cursor rounds 1–7 (`docs/reviews/p369-phase2-plan-round{1..7}…`), AGREE. Design: worker-conformance
-  harness (the fork's real CLI with `uvicorn.run` intercepted + `TestClient`; argv from mlx-serve's `_build_command` on a
-  C177-restoring overlay); E1c observation at the production sampler (`_PositionedTargetSampler.sample_target`), full-state SHA-256
-  at every commit + neutral probes, runtime kernel telemetry, exact straddle sizing + key-length proof; P391 same-instance pairing
-  (drafter detached) with C1 / C2; E2 OFF / ON / OFF-reload; E7 classes bound to measured pre-fix defects; per-pick precedence.
-- **Harness built** (fork `dev/p369_phase2/*`, tests `mlx_vlm/tests/test_p369_phase2_*.py`). CPU / tiny-fixture facts: bf16-quantized
-  MTP rows + full state + probes bit-identical for both picks' recipes; dense float32 NOT (P390 — E1a was a 1e-5 law tolerance);
-  the pre-fix oracle shows each defect (M4a +1 committed past a first-draft stop; M4b terminal token missing on bonus / first
-  token / length; M3 overshoot 2 / 1 / 0 with a cut forced sequence) and the fix none; the real argv per pick / arm matches the
-  overlay; the C84-item reconstruction yields 20 items per pick (`.venv-bench`).
-- **P383 plan v4** (Cursor rounds 1–3; R15 applied without a 4th round — the code review verifies it).
-- Rulings: C182 (go with the recs), C183 (all six recs accepted).
+1. Stack `main` (docs: reviews, P387 note, P392, C184, P393, this handoff). 2. Fork `p369-mtp` as a branch once round N
+clears — before the smoke. 3. Fork `main` merge + submodule bump after phase 2. 4. P383 build branch per C176.
 
 ## Known gaps / owed
 
-- E7 tool-session exposure (no tool sessions in E7b; would need production MTP event counters in the worker).
-- The TurboQuant live positive (`tq_norm`) was never exercised on a tiny fixture (the tiny path builds plain `KVCache`); the uniform
-  smoke must fire it (the gate requires it).
-- G2, G3 (guard races); the MTP-ON arm-identity flag table check folds into the first MTP-ON smoke (C175); C154 opencode release
-  checks; `docs/README.md` index additions (P311 v4, P364, P369, P371, m65 tg2, M65 pilot, `docs/reviews/p371/`, the P369 rounds,
-  the phase-2 plan + `docs/reviews/p369-harness/`); the P371 receipt fence on abort paths only against `FakeReceiptSource`; fork:
-  the quantized length-17 MoE precision cases a smoke until P385; non-MTP drafter dynamic fallbacks lose logprobs.
+- E7 tool-session exposure (no tool sessions in E7b); E2 / E7 link to the original C84 runs is count-only (no stored digest).
+- `tq_norm` positive never exercised on a tiny fixture (uniform smoke must fire it); the kernel coverage set
+  (`model.layers.*` + head) is unproven on the real checkpoints (an unexpected module fails closed in the smoke).
+- G2, G3; MTP-ON arm-identity flag table check at the first MTP-ON smoke (C175); C154 checks; `docs/README.md` index additions
+  (P311 v4, P364, P369, P371, m65 tg2, M65 pilot, `docs/reviews/p371/`, `docs/reviews/p369-harness/`, `docs/reviews/p387/`,
+  the phase-2 plan, the P387 note); P371 receipt fence on abort paths only vs `FakeReceiptSource`; fork quantized length-17 MoE
+  precision cases a smoke until P385; non-MTP drafter fallbacks lose logprobs; one pre-existing pyflakes note in
+  `test_mtp_verify_scan.py` (`harness` unused, ~line 2112).
 
 ## Rules learned (2026-10-11 → 19)
 
-- Never edit runner / probe / scoring files in the main checkout while a chain runs; build in worktrees. Never run the full suite
-  under a live chain, and **never two full suites concurrently**. Stack suite: from `benchmark/`,
-  `../.venv-bench/bin/python -m pytest bench/tests -q -p no:cacheprovider -o faulthandler_timeout=600 -rs > <file>`. Fork suite:
-  `(cd mlx_vlm && ../.venv/bin/python -m pytest -q ./tests --ignore=tests/test_smoke.py -rs)` from the worktree.
-- **Zero flakes:** a test that passes on rerun is a bug to root-cause; compare skip lists between runs; seed every randomized test.
-- **Red-first honesty:** a red test that passes against a stub raising `NotImplementedError` (a `RuntimeError` subclass) is vacuous —
-  match the specific message. If implementation got written first, set it aside, commit the tests red against a stub, restore.
-- **Edit scripts:** black reflows lines, so multi-replacement `python3` scripts abort before writing — and a chained `git commit`
-  then commits a misleading message (happened twice on 2026-10-19; both amended). A failed `Write` (file changed since read) does
-  the same. Use the Edit tool on the file as it reads, stop the chain on failure, check `git show --stat` before trusting a commit.
-- Cursor: output may print only the last finding — add "your FINAL message must contain everything" and re-run; one run at a time.
-- macOS: system-wide `psutil.net_connections` needs root — use `lsof -nP -iTCP:<port> -sTCP:LISTEN`. `datasets` lives in
-  `.venv-bench`, `mlx_serve` in `.venv`, `mlx` 0.32.3 in the fork venv. Never read `.env` (secrets); source it in launch shells.
-- Determinism holds within ONE loaded-model lifetime only (`docs/metrics.md`); compare ON / OFF on the same instance.
-- Watch long jobs and subagents yourself; kill leftovers by PID (zsh: arrays). Monitors expire after 30 min — re-arm.
-- Archive a failed chain attempt with a sha256 manifest BEFORE moving anything; never select items by which items the picks fail.
+- Never edit runner / probe / scoring files in the main checkout while a chain runs; build in worktrees; never two full suites
+  at once; never edit a worktree while its suite runs. Stack suite: from `benchmark/`, `../.venv-bench/bin/python -m pytest
+  bench/tests -q -p no:cacheprovider -o faulthandler_timeout=600 -rs > <file>`. Fork suite: `(cd mlx_vlm && ../.venv/bin/python
+  -m pytest -q ./tests --ignore=tests/test_smoke.py -rs)` from the worktree (≈ 2.5 min).
+- Formatting: `uvx --offline black@26.3.1` / `isort@5.13.2 --profile=black` / `pyflakes` (cached; no network). zsh: arrays for
+  file lists (no word splitting); BSD `sed` chokes on the em dash — use Python for exact-line work.
+- Zero flakes; red-first honesty (say when a red is "helper absent" vs behavioural); a test that starts subprocesses owns
+  them in a fixture that kills them at teardown (a failing assertion left 4 sleepers this session — killed by PID).
+- The Edit tool needs a Read of the file in this session (a `sed` view does not count); a failed Edit + chained commit:
+  check `git show --stat` before trusting it.
+- Cursor: an empty output (exit 0) happens — re-run; one run at a time; FINAL message must contain everything.
+- macOS: `lsof` for ports; `datasets` in `.venv-bench`, `mlx_serve` in `.venv`, `mlx` 0.32.3 in the fork venv.
+- Determinism holds within ONE loaded-model lifetime only (`docs/metrics.md`): compare ON / OFF on the same instance (P391, P393).
 
-Next decision id C184; discussion ids continue from P392.
+Next decision id C185; discussion ids continue from P394.
