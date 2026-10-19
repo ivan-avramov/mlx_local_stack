@@ -1,4 +1,4 @@
-# Handoff — 2026-10-18: P371 MERGED into main (`7915bccc`); next = tg2 step 2 fixes
+# Handoff — 2026-10-18 (evening): P371 + tg2 step 2 MERGED (`7915bccc`, `436acd11`); next = P369 fork fix round
 
 THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P384, P383, P382, P381, P380, P379, C179,
 P378, P377 … C178, P371), then `docs/specs/p371-shared-runner-core.md` (PLAN v6) for the new code layout.
@@ -41,11 +41,13 @@ P378, P377 … C178, P371), then `docs/specs/p371-shared-runner-core.md` (PLAN v
 
 ## Next work after P371, in order
 
-2. **tg2 step 2 fixes — NEXT** (branch `tg2-step2`, Cursor `benchmark/m65/reviews/step2-round1…`, CLEARED AFTER FIXES S1–S4: S1
-   `.approaches/**` leak, S2 semver check, S3 freeze-cache fingerprint, S4 reference sources excluded); regenerate universe + draw
-   (≈ 71 min freeze — watch its log), full suite, lead verification, merge. Then rebase tg2 step 3 onto the P371 core (tg2 =
-   `run_tg2_probe.py` + `corpus_tg2.py` configuration; T14 amended).
-3. **P369:** fork code review round 1 NOT CLEARED F1–F4 (B>1 MTP paths; `docs/reviews/p369-code-round1…`) → fix round in the fork
+2. **tg2 step 2 — DONE** (merged `436acd11`): Cursor rounds 1–4 cleared S1–S16 (`benchmark/m65/reviews/step2-round{1..4}…`);
+   universe re-frozen `ff76573b…` (149 valid: Rust 30 / Java 45 / JS 48 / C++ 26; exclusions java/ledger, java/tree-building,
+   javascript/ledger; five items lost `.approaches`; leaves unchanged), draw `8eb9d8ef…` (permutations unchanged); fingerprinted
+   freeze cache under `$STACK_WORKDIR/m65/tg2-freeze-s16` (old universe e8abba5c / draw d6aae71b archived with a manifest in
+   `$STACK_WORKDIR/m65/stale-universe-pre-s16`). Full suite from the tg2 worktree: 6861 passed / 6 skipped / 0 failed. tg1
+   identity unchanged by the merge (`5a4a9df8…`). Next for tg2: step 3 on the P371 core (`run_tg2_probe.py` + `corpus_tg2.py`).
+3. **P369 — NEXT:** fork code review round 1 NOT CLEARED F1–F4 (B>1 MTP paths; `docs/reviews/p369-code-round1…`) → fix round in the fork
    (plain decoding wherever MTP cannot match it), test-first, Cursor round 2; then phase 2 on GPU (E1c, E2, E7), fork push
    (operator), submodule bump, re-certification, restore MTP-ON (C177).
 4. tg2 steps 3–4 on the shared core (GPU go given for positives + smoke, C175); M64 spec amendment to the tg2 screen (C175 D3).
