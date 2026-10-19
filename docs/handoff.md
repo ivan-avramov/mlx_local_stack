@@ -13,9 +13,9 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
 - **Daily driver MTP-OFF (C177)** until P369 ships and is re-certified; then restore the three registry lines in `main_models.yaml`
   (`draft_kind` / `draft_model` for both B picks, Fable's `mtp_verify_scan: joint_v1`) + the `test_opencode_probe_seeding.py` expectation.
 - **Branches / pushes:**
-  - stack `main` is **≈ 206 commits ahead of origin** (P371 merge `7915bccc`, tg2 step 2 merge `436acd11`, docs) — **push needs the operator**.
-  - `m64-build` (`a78d14a8`) and `tg2-step2` (`bb7ca624`) are merged and pushed; worktrees `$STACK_WORKDIR/worktrees/{m64,tg2}` can be
-    removed once the operator confirms (each holds an untracked `.venv-bench` symlink — never stage).
+  - stack `main` pushed to origin (`67fe150f`, operator go 2026-10-18).
+  - `m64-build` (`a78d14a8`) and `tg2-step2` (`bb7ca624`) are merged and pushed; their worktrees were removed (operator go); the
+    branches remain locally and on origin.
   - fork `../mlx-vlm` branch **`p369-mtp` at `e6d2c32c`, local only** in `$STACK_WORKDIR/worktrees/mlx-vlm-p369` — **push needs the operator**.
   - Push rule (C176): WIP build branches may be pushed after each commit batch, privacy-scanned; `main`, the fork, tags, PRs need an
     explicit in-turn go (one go = one push).
