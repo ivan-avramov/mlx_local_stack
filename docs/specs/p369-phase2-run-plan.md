@@ -1,6 +1,7 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v6, 2026-10-19
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v7, 2026-10-19
 
-Status: v6 → Cursor round 6 (narrow). v5 (= v4 + §2.5, P391) → round 5 `DISAGREE Q35–Q40`, all applied here
+Status: v7 → Cursor round 7 (narrow). v6 → round 6 `DISAGREE Q35 Q38` (incomplete closures; Q36 Q37 Q39 Q40 closed;
+`docs/reviews/p369-phase2-plan-round6.cursor-gpt-5.6-sol-high.md`), both applied in v7. v5 (= v4 + §2.5, P391) → round 5 `DISAGREE Q35–Q40`, all applied here
 (`docs/reviews/p369-phase2-plan-round5.cursor-gpt-5.6-sol-high.md`). **v4 — Cursor round 4 `VERDICT: AGREE`** (`docs/reviews/p369-phase2-plan-round4.cursor-gpt-5.6-sol-high.md`) → build the harness;
 the operator items (2.5–3.5 h budget, the E7b narrowing, P387 per Q26) are pending in the handoff. v3 → round 3 `DISAGREE Q29 Q34` (all else closed; both applied here;
 `docs/reviews/p369-phase2-plan-round3.cursor-gpt-5.6-sol-high.md`). v2 → round 2 `DISAGREE` (closed Q15 Q17 Q19–Q21 Q25–Q27; open Q16 Q18 Q22–Q24 via
@@ -95,10 +96,16 @@ after an unload + reload, seeded rows differed on 55 / 142 AgentBench tasks (mec
   `None`; the cached path reads both per request via `_inline_draft_kwargs`), the forced OFF1 replay and the forced
   OFF2 replay. ON vs OFF1 = the verdict (§2.2 criteria).
 - **Trajectory isolation (Q35):** ON, OFF1 and OFF2 share the target model and its verify-policy objects (asserted
-  unchanged) but each runs a fresh chat id on a fresh, identity-disjoint, initially empty cache tree (no reused prefix:
-  `cached_tokens == 0`, asserted); earlier sessions are released (`MLX_VLM_CACHE_SESSION_MAX=1`).
-- **Detachment window (Q38):** set after the ON request's worker is idle (request queue empty, `in_flight == 0`),
-  held through both replays' complete responses and worker idle, restored in `finally`; no concurrent ingress (one
+  unchanged) but each runs a fresh chat id on a fresh, initially empty cache tree (no reused prefix:
+  `cached_tokens == 0`, asserted). Release (v7, round 6): after each trajectory the harness clears that chat's
+  `PromptCacheState`, removes the session entry, drops its recorder's cache reference and proves with weak references
+  (after `gc.collect()`) that every leaf cache of the tree was collected — BEFORE the next trajectory starts (eviction by
+  `MLX_VLM_CACHE_SESSION_MAX=1` alone only drops the dict entry). Identity-disjointness follows (an `id()` comparison
+  would be unsound once objects are freed). The smoke positives run on OFF1's live cache before OFF1 is retired.
+- **Detachment window (Q38):** set only after the ON request's `_process_cached_request` has RETURNED (a
+  harness-observed exit acknowledgement on the GPU thread, counted in a wrapper's `finally`) and the worker is idle
+  (request queue empty, `in_flight == 0`); held through both replays — each again waits for its exit acknowledgement
+  and idleness — and restored in `finally`; no concurrent ingress (one
   harness thread). During it, a guard asserts `_inline_draft_kwargs` returned `{}`, no speculative-prefill capture was
   requested, zero verify-scope projection calls and zero draft rounds; the transactional probes are tagged apart.
 - **Control C1 (within instance, Q37):** OFF1 vs OFF2 — raw rows, transformed distributions, the emitted token
