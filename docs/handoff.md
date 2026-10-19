@@ -17,6 +17,13 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
   - `m64-build` (`a78d14a8`) and `tg2-step2` (`bb7ca624`) are merged and pushed; their worktrees were removed (operator go); the
     branches remain locally and on origin.
   - fork `../mlx-vlm` branch **`p369-mtp` at `e6d2c32c`, local only** in `$STACK_WORKDIR/worktrees/mlx-vlm-p369` — **push needs the operator**.
+  - **Branch inventory (2026-10-18):** `m64-build`, `tg2-step2` — 0 commits not in main (fully merged; redundant pointers; the
+    operator decides deletion, local + origin). `c152-alloc-tool-scope-wip` — 1 unmerged commit `a1e9901e`: the C152 tool-scope
+    redesign + P273 variant the operator did NOT choose (waiver A won; P273 landed separately) — nothing to merge, kept as a record.
+    `p297-uncertain-gone` — 3 unmerged commits (`510ad800` restart-after-uncertain-cleanup in the tg1 chain + fixture, `4e3a107a` /
+    `fe626427` Cursor round 1 NOT CLEARED U1–U3) — rejected approach, nothing to merge; BUT its fixture (an M63 abort from a vanished
+    Spotlight `mdworker`) is the P383 ambient-process root cause on the tg1 side, which C180 does not cover (see Next work 3).
+    `evidence` — orphan branch of irreproducible evidence, keep.
   - Push rule (C176): WIP build branches may be pushed after each commit batch, privacy-scanned; `main`, the fork, tags, PRs need an
     explicit in-turn go (one go = one push).
 
@@ -25,6 +32,11 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
 1. **P369 fork fix round 7 — NEXT.** Cursor code reviews of `git diff 24551869...p369-mtp`: rounds 1–7 in `docs/reviews/p369-code-round{1..7}…`.
    Round 7 (narrow, on `9820e61c..e6d2c32c`) is **NOT CLEARED F23 only** (merge-blocking: `mlx_vlm/generate/dispatch.py:902-906` — an
    explicit `is_asymmetric_rendering=False` falls back to the session's legacy `True`; use a `None` sentinel so explicit `False` wins).
+   F23 is WORK, not an operator call: today `is_asymmetric_rendering = bool(kwargs.pop("is_asymmetric_rendering", False))` and then,
+   when False, falls back to `prompt_cache_state.is_asymmetric_rendering` — so the per-request `False` that round 6 (F23 residual) now
+   passes is overridden by a stale session `True`, reopening the cross-request leak. Fix: pop with default `None`; an explicit
+   True/False is authoritative; fall back to the session only when `None`; red test = request with explicit False on a session whose
+   legacy flag is True must publish symmetric.
    Residual (cheap, fix in the same round): F27 (`dispatch.py:1630-1641` — breaking after the terminal chunk without closing leaves
    `_inflight_epoch` set, so the next request clears a valid published cache; clear the epoch before yielding terminal), F28
    (`dispatch.py:1619-1631` — stateless streams delay terminal delivery through APC cleanup; restrict pre-terminal draining to
@@ -51,6 +63,12 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
 3. **P383 build (C180, option a):** M64's exact cleanup check before an incident retry no longer blocks on `orphans_unattributed`
    (recorded in the incident; survivors / containers / `unknown` / `uncertain` still block). Test-first in a stack worktree, Cursor code
    review, full suite, merge. Never while the fork suite runs (one suite at a time).
+   **tg1 side, still open (needs its own proposal):** an ambient process (Spotlight) can make a tg1 probe cleanup `uncertain`
+   (path-only / access denied / unreadable identity of a process that is NOT ours), which refuses the one block restart and aborts the
+   chain (C147 rule; the M63 abort in `p297-uncertain-gone`'s fixture). P297's chain-side approach was rejected (U1–U3); its review put
+   the fix probe-side (P296) at the next identity boundary — P371 was that boundary and did not take it. Propose it together with the
+   P383 build (likely: classify session-foreign, never-observed processes as ambient in the probe's cleanup record instead of
+   `uncertain`, recorded as evidence), Cursor-reviewed, as a tg1 epoch change.
 4. **P385 investigation (C181) — with Cursor:** MLX 0.32.3 quantized sorted-dispatch MoE prefill nondeterminism incl. NaN (evidence in
    the P385 entry; fork commits `bbffeec1`, `1f0e6b40`). (1) minimal standalone repro at the real MoE models' expert count / group size,
    many fresh processes, bitwise; check whether an isolated MLX upgrade changes it; (2) if it reproduces: one real quantized MoE model
