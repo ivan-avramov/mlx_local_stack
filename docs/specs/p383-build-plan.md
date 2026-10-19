@@ -1,6 +1,7 @@
-# P383 build (C180 option a) + P389 (resume bypasses A7) + the tg1 side (P388) — PLAN v3, 2026-10-19
+# P383 build (C180 option a) + P389 (resume bypasses A7) + the tg1 side (P388) — PLAN v4, 2026-10-19
 
-Status: v3 → Cursor plan review round 3 (narrow). v2 → round 2 `AGREE WITH CHANGES R1 R10–R14` (R2–R9 closed; all applied here;
+Status: v4 → build (pending the operator on P389 / P388). v3 → round 3 `AGREE WITH CHANGES R15` (R1, R10–R14 closed;
+`docs/reviews/p383-plan-round3.cursor-gpt-5.6-sol-high.md`); R15 applied here, verified by the code review. v2 → round 2 `AGREE WITH CHANGES R1 R10–R14` (R2–R9 closed; all applied here;
 `docs/reviews/p383-plan-round2.cursor-gpt-5.6-sol-high.md`). v1 → round 1 `AGREE WITH CHANGES R1–R9`
 (`docs/reviews/p383-plan-round1.cursor-gpt-5.6-sol-high.md`; the first run printed only R8, the re-run printed all nine);
 R2–R5, R9 applied; R1 is a pre-existing bug → its own proposal P389 (§2, operator); R6–R8 make the v1 P388 measurement
@@ -56,6 +57,13 @@ Fix (R11): in `prepare_resume()`, AFTER `hydrate_running()` (~line 1023) and BEF
 passes the same validator (`allow_reasonless_orphans` per policy) on its hydrated receipt, whether or not the row-prefix
 salvage later succeeds (a quarantined invocation still leads to another launch); a resumed pre-spawn incident is backfilled
 there (§1). The result is persisted before any invocation starts. `unclear` keeps blocking for the operator as today.
+
+Live ordering (R15): `accept_invocation()` persists `hook_stopped` (~lines 1765–1769) BEFORE `require_certain_cleanup()`
+(~1777 / 1782); a crash in that window leaves a non-`running` record that `prepare_resume()` never selects. Fix: for every
+hook stop that implies another invocation, validate the cleanup receipt and backfill the pre-spawn evidence BEFORE the first
+write that changes `running` → `hook_stopped`, durable in the SAME `chain.json` write. Tests: a crash injected immediately
+after that write, for a pre-spawn and a cheat stop: the evidence is already present, and a failing receipt can never launch
+another invocation (the write never happened).
 
 Missing receipt (R12), pre-registered: absence is never treated as clean — the resume refuses with the listing, and the
 out-root is ABANDONED (the chain restarts in a fresh out-root; the abandoned root's files stay as evidence). An
