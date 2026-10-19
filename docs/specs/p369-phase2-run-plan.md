@@ -1,6 +1,6 @@
 # P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v7, 2026-10-19
 
-Status: v7 → Cursor round 7 (narrow). v6 → round 6 `DISAGREE Q35 Q38` (incomplete closures; Q36 Q37 Q39 Q40 closed;
+Status: **v7 — Cursor round 7 `VERDICT: AGREE`** (`docs/reviews/p369-phase2-plan-round7.cursor-gpt-5.6-sol-high.md`); the harness is built → its code review. v6 → round 6 `DISAGREE Q35 Q38` (incomplete closures; Q36 Q37 Q39 Q40 closed;
 `docs/reviews/p369-phase2-plan-round6.cursor-gpt-5.6-sol-high.md`), both applied in v7. v5 (= v4 + §2.5, P391) → round 5 `DISAGREE Q35–Q40`, all applied here
 (`docs/reviews/p369-phase2-plan-round5.cursor-gpt-5.6-sol-high.md`). **v4 — Cursor round 4 `VERDICT: AGREE`** (`docs/reviews/p369-phase2-plan-round4.cursor-gpt-5.6-sol-high.md`) → build the harness;
 the operator items (2.5–3.5 h budget, the E7b narrowing, P387 per Q26) are pending in the handoff. v3 → round 3 `DISAGREE Q29 Q34` (all else closed; both applied here;
