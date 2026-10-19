@@ -12,8 +12,8 @@ This note records what the build adds to §5 (P392). v1 → Cursor plan round 1 
   `test_mtp_exactness.deployed_sampling()` reads `_stack_registry()` (env, else sibling, else fixture) and asserts
   `draft_kind == mtp`.
 - **P392 — the pinned fixture is stale.** `tests/fixtures/stack_registry_golden.yaml` (sha `323ee54a…`) is the stack registry
-  at `d92c7419` (M57, 2026-10-05), BEFORE M58. Parsed, it differs from the last MTP-ON registry (stack `78a730fe^` =
-  `7021bdbb`, sha `1d07c9dd…`) in exactly one field: Fable's `mtp_verify_scan: joint_v1` is absent (every other difference is
+  at `d92c7419` (M57, 2026-10-05), BEFORE M58. Parsed, it differs from the last MTP-ON registry (stack `7021bdbb`, the last
+  commit changing it before C177 `78a730fe`; byte-identical to `78a730fe^` = `98a14f2e`; sha `1d07c9dd…`) in exactly one field: Fable's `mtp_verify_scan: joint_v1` is absent (every other difference is
   comment text). So the fixture does not hold the certified Fable tuple, and the plan's "identical" state is unreachable
   after the C177 restore (live would carry `joint_v1`, the fixture not).
 - Textually, the live registry = `7021bdbb:main_models.yaml` with exactly five lines changed: each pick's `draft_kind: mtp`
