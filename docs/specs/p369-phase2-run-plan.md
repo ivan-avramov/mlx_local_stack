@@ -1,7 +1,8 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v2, 2026-10-18
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v3, 2026-10-18
 
-Status: v2 → Cursor plan review round 2. v1 → round 1 `DISAGREE Q15–Q27`
-(`docs/reviews/p369-phase2-plan-round1.cursor-gpt-5.6-sol-high.md`), all accepted and applied here. Parent:
+Status: v3 → Cursor plan review round 3. v2 → round 2 `DISAGREE` (closed Q15 Q17 Q19–Q21 Q25–Q27; open Q16 Q18 Q22–Q24 via
+new Q28–Q33, all accepted and applied here; `docs/reviews/p369-phase2-plan-round2.cursor-gpt-5.6-sol-high.md`). v1 → round 1
+`DISAGREE Q15–Q27` (`docs/reviews/p369-phase2-plan-round1.cursor-gpt-5.6-sol-high.md`), all accepted. Parent:
 `docs/specs/p369-mtp-certification.md` (v3) §E1c, §E2, §E7. GPU go: C175 (this phase only). Operator choices: C182 (in-process
 worker harness, reconstructed C84 items, full variant); the round-1 changes to time (Q25) and P387 (Q26) go back to the operator.
 **Production source pinned: fork `p369-mtp` `4e6d0e03`** (code review cleared, round 8). Harness and P387 commits are test /
@@ -49,20 +50,27 @@ Fork-only, test-only code (`dev/p369_phase2/`, CPU tests in `mlx_vlm/tests/test_
   then canonicalised to probabilities (log-sum-exp normalised, so an additive constant cannot false-fail); PASS needs
   bit-equal support and values. On any mismatch: support changes, worst per-token probability delta, total-variation
   distance, near-tie margins (diagnostic only).
-- **State (Q16):** at prompt end and at EVERY target commit (block commits and width-one `_mtp_commit_pending_token`
-  commits), at the same logical offsets in the replay: per cache leaf the offset, shape and dtype, the valid K / V (incl.
-  TurboQuant scales / biases / metadata), every recurrent / GatedDeltaNet state component, and the full next-token logit
-  vector of a fixed probe token (id recorded) through a transactional verify-forward followed by `abort()`. Never the
-  preallocated tails. Cost control: per commit an exact GPU digest (two independent multiply-accumulate digests over the
-  bit-cast bytes, mod 2^32, over the newly written K / V slots and every recurrent component); the full valid prefix by
-  sha256 at prompt end, at each threshold crossing and at request end. A digest mismatch is a FAIL.
-- **Kernels (Q18):** before any GPU minute, a CPU inventory from each pick's weights lists every linear the verifier calls
-  with its type (quantized bits / group size, or dense) and which `speculative.ops.linear` alias it reaches; spies sit on
-  those aliases (`_target_verify_quantized_linear`, `_target_verify_quantized_argmax`, `_target_verify_weight`, the
-  singleton / timewise fallbacks). PASS needs, per ON request, hits on every kernel family the inventory says is reachable,
-  and zero hits on a fallback the inventory says is not used. If the dense `exact_speculative_verify` kernel is unreachable
-  on both real tuples (all text linears quantized), its coverage stays phase-1 fixture evidence (the parent's Q14 named the
-  tiny fixtures) and the report says so; E1c then certifies the quantized verifier only.
+- **State (Q16, Q28):** at prompt end and at EVERY target commit (block commits and width-one
+  `_mtp_commit_pending_token` commits), at the same logical offsets in the replay, ONE SHA-256 over a canonical byte stream of
+  the COMPLETE logical valid state: per cache leaf (in layer order) its type, offset, valid length, shapes and dtypes, every
+  valid packed / native K / V component (TurboQuant codes, scales, biases and codec metadata included) and every recurrent /
+  GatedDeltaNet component (conv + SSM state); hashed in bounded chunks after `mx.eval`; preallocated tails never included.
+  Then the full next-token logit vector of a fixed probe token (id recorded) through a transactional verify-forward
+  followed by `abort()`, compared bitwise; each probe is proven observationally neutral by an equal state hash before and
+  after it. Any hash or probe-logit mismatch is a FAIL. Size: Fable native16 KV is 64 KB per token over its 16 attention
+  layers (≈ 4.3 GB valid at 65,536), the 48 GDN layers ≈ 150 MB; uniform TQ4 ≈ ¼ of the KV. Cost is calibrated at 65,536 in the
+  smoke (§3) and the wall estimate revised before the full run.
+- **Kernels (Q18, Q29):** a CPU manifest from each pick's weights lists every linear the verifier can call with its type
+  (quantized bits / group size, or dense) = the EXPECTED eligibility only. Runtime outcome telemetry is authoritative:
+  instrumented are every consuming alias (incl. the by-value imports in `models/qwen3_5/speculative_verifier.py`:
+  `_target_verify_linear`, `_target_verify_linears`, `_target_verify_embedding_as_linear`, `_target_verify_quantized_linear`,
+  `_target_verify_quantized_argmax`) AND the nested implementations they dispatch among (optimized affine, NVFP4, singleton
+  quantized, timewise / singleton fallbacks, `_target_verify_weight`, plain `linear(x)`); a family counts only when it
+  returned a non-`None` result; every projection call is classified exactly once with module, shape and dtype. PASS needs,
+  per ON request, positive verifier (and, at T = 0, argmax) calls, the expected successful families, and zero unclassified or
+  forbidden fallback calls. The full campaign is gated on the smoke's runtime inventory reconciling with the static
+  manifest. If the dense `exact_speculative_verify` kernel is unreachable on both real tuples, its coverage stays phase-1
+  fixture evidence (the parent's Q14 named the tiny fixtures) and the report says so.
 - **Straddles (Q19):** the prompt's FINAL post-template token count is constructed and asserted to be T − 64 for
   T ∈ {1,024; 8,192; 32,768; 65,536}; the observer captures every verifier call's actual key lengths and planner
   classification. Fable: per-request `verify_blocks_straddle` delta > 0 at each T and an empty `verify_fallback_reasons`;
@@ -80,8 +88,12 @@ prefill's first token. Classes:
   token stayed out of the cache and the next turn diverged).
 - **M3** — the thinking-budget criterion requests a forced token at index i of a block with ≥ 1 token after i emitted
   pre-fix; recorded with the trigger index and the pre-fix overshoot count.
-Each predicate has a scripted positive (and a near-miss negative) on the tiny hybrid fixture, run both live (current code)
-and against the `0b43dae4^` behaviour.
+Oracle (Q30): the classes are validated by a self-contained external regression test that runs the same scripted cases
+on the tiny hybrid fixture in two isolated checkouts — `88724023` (= `0b43dae4^`, pre-fix) and `0b43dae4` (the fix) — each in
+a fresh interpreter with only that tree on `sys.path`; each case must show its precise old defect (M4a: committed past the
+stop; M4b: the terminal token missing from the cache and the next turn diverging; M3: the overshoot count) pre-fix and the
+fixed outcome post-fix, plus a near-miss negative. The live wrappers on the current code only OBSERVE events; they are never
+the oracle. M4b's hooks cover `speculative/utils.py` and the generation consumer, not only `_mtp_rounds`.
 
 ### 2.4 Operations (Q25)
 
@@ -100,9 +112,12 @@ shrink on, drafter `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-draf
 `per_query`, prefill 512, prealloc 262,144, drafter `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter`. Weight revisions + file
 sha256 recorded before load.
 
-- **Smoke (≈ 10 min):** Fable E1c at T = 1,024 + E2 on 2 items, both arms; the comparator's injected positives (a 1-ulp
-  logit change at one emitted row, a flipped K byte at one commit, a changed GDN element, a changed probe logit) must each
-  fire on the live data; kernel spies non-zero.
+- **Smoke (≈ 20 min):** Fable E1c at T = 1,024 and at T = 65,536 (hashing / probe cost calibration), + E2 on 2 items, both
+  arms. Injected positives on the live data (Q32): a 1-ulp raw-logit change detected AT THE RAW RECORDER; a precomputed
+  in-support perturbation guaranteed to change a retained transformed probability (or the support boundary) detected by
+  the comparator; a flipped K byte in an OLD prefix position, a changed TurboQuant scale (uniform smoke), a changed GDN
+  element and a changed probe logit each detected by the state check. The runtime kernel inventory must reconcile with the
+  static manifest (Q29). Uniform gets the same smoke before its full run.
 - **E1c:** 4 straddle prompts + 1 short chat prompt; deployed sampling, fixed seed list; 160 generated tokens. Criteria §2.2.
   On FAIL: finish that pick's E1c (to measure the bound), skip its E2 / E7, report.
 - **E2 (Q21, Q22):** the **C84-item reconstruction** (not the frozen C84 set — its raw requests are not on this box): the
@@ -115,20 +130,26 @@ sha256 recorded before load.
   request. PASS: first-512-token (straddles: 160) identity ON == OFF on every request, given an identical control; a
   differing control makes E2 informative only.
 - **E7a (Q24):** the 20 reconstructed items per pick at deployed sampling with recorded seeds, MTP ON, full deployed budgets,
-  cached-session path. **E7b:** two stored tg1 / M63 opencode sessions per pick replayed with TRUE continuity: each request
-  appends the model's own previous assistant turn (and the recorded tool results / user turns that follow it), one chat id;
-  cached-token reuse must be > 0 after turn one, else the session is labelled teacher-forced exposure; time-boxed 10 min per
-  pick, unfinished sessions reported as censored. Statistics: per class, requests-with-event / requests with a
-  Clopper–Pearson 95 % interval (zero events → ≈ 3/n); class-eligible block rates descriptive only. Censored requests do not
-  count as event-free.
+  cached-session path; independent requests ⇒ per class requests-with-event / requests with a Clopper–Pearson 95 % interval
+  (zero events → ≈ 3/n); class-eligible block rates descriptive only; censored requests never count as event-free.
+- **E7b (Q31, Q33) — narrowed, operator to confirm:** stored opencode sessions cannot be continued faithfully without
+  executing the model's own (different) tool calls, so E7b is SCRIPTED multi-turn chat continuity without tools: 5 of the
+  reconstructed items per pick, each followed by two fixed user follow-ups; every request appends the model's own previous
+  assistant turn; one chat id; the cached-token count must reach the token boundary through the previous generated assistant
+  turn (asserted against the session's recorded hash chain), else the session is censored. Reported descriptively per
+  session, never pooled with E7a. Tool-session exposure is NOT measured here (parent §E7 named tg1 sessions); it would need
+  production MTP event counters in the worker (a fork change of its own) and is recorded as a gap.
 
 ## 4. Estimate (Q25)
 
-E1c ≈ 215K prefill tokens + ≈ 1.6K decode / replay steps per pick (+ per-commit digests and probe forwards); E2 three arms ×
+E1c ≈ 215K prefill tokens + ≈ 1.6K decode / replay steps per pick, plus full-state SHA-256 at every commit (≈ 450 GB hashed
+per side per pick for Fable at ≈ 2 GB/s ⇒ ≈ 4 min per side, doubled by the probe-neutrality hashes; uniform ≈ ¼) and one probe
+forward per commit; E2 three arms ×
 20 items × 512 tokens + two arms × ≈ 107K straddle prefill per pick; E7a ≈ 11–14 min per pick from C84 history with a
 heavy-tail allowance (one 102,400-token runaway ≈ 1–2 h — bounded by the per-request watchdog, reported as censored).
-Reserve **2.5–3 h of GPU time** plus harness build, review and suites (≈ half a session). The handoff's "≈ 1 h" and v1's
-"≈ 100 min" were optimistic.
+Reserve **2.5–3.5 h of GPU time** plus harness build, review and suites (≈ half a session); the smoke's calibration revises
+it, and a revised estimate above 3.5 h goes to the operator before the full run. The handoff's "≈ 1 h" and v1's "≈ 100 min"
+were optimistic.
 
 ## 5. P387 (fork tests vs the C177 registry), revised by Q26
 
