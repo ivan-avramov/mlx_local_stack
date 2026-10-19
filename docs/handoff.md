@@ -1,6 +1,6 @@
-# Handoff — 2026-10-18 (night): resume in a FRESH session with the P369 fork fix round 7 (F23)
+# Handoff — 2026-10-18 (late night): P369 fork review CLEARED (round 8); next P387 + the P369 phase-2 plan review
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C181, C180, P385, P384, P383, P382, P381,
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P387, P386, C181, C180, P385, P384, P383, P382, P381,
 P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C177, P369 …), then
 `docs/specs/p369-mtp-certification.md` (v3), `docs/specs/p371-shared-runner-core.md` (PLAN v6, the new code layout),
 `docs/specs/m65-tg2-corpus.md` (v5, T14 amended) and `docs/specs/m64-scaffold-arms.md` §4–§8, §12 (amended §5.6, §7, §8.2a).
@@ -15,7 +15,8 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
 - **Branches / pushes:**
   - stack `main` pushed to origin through `4fde8482` (operator go 2026-10-18); later local commits need a new go.
   - `m64-build` and `tg2-step2` were fully merged (0 commits outside main) and DELETED locally and on origin (operator go 2026-10-18).
-  - fork `../mlx-vlm` branch **`p369-mtp` at `e6d2c32c`, local only** in `$STACK_WORKDIR/worktrees/mlx-vlm-p369` — **push needs the operator**.
+  - fork `../mlx-vlm` branch **`p369-mtp` at `4e6d0e03`, local only** in `$STACK_WORKDIR/worktrees/mlx-vlm-p369` — **push needs the operator**
+    (and P387 first).
   - **Branch inventory (2026-10-18; operator: keep both parked branches):** `c152-alloc-tool-scope-wip` — 1 unmerged commit `a1e9901e`: the C152 tool-scope
     redesign + P273 variant the operator did NOT choose (waiver A won; P273 landed separately) — nothing to merge, kept as a record.
     `p297-uncertain-gone` — 3 unmerged commits (`510ad800` restart-after-uncertain-cleanup in the tg1 chain + fixture, `4e3a107a` /
@@ -27,34 +28,22 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
 
 ## Next work, in order
 
-1. **P369 fork fix round 7 — NEXT.** Cursor code reviews of `git diff 24551869...p369-mtp`: rounds 1–7 in `docs/reviews/p369-code-round{1..7}…`.
-   Round 7 (narrow, on `9820e61c..e6d2c32c`) is **NOT CLEARED F23 only** (merge-blocking: `mlx_vlm/generate/dispatch.py:902-906` — an
-   explicit `is_asymmetric_rendering=False` falls back to the session's legacy `True`; use a `None` sentinel so explicit `False` wins).
-   F23 is WORK, not an operator call: today `is_asymmetric_rendering = bool(kwargs.pop("is_asymmetric_rendering", False))` and then,
-   when False, falls back to `prompt_cache_state.is_asymmetric_rendering` — so the per-request `False` that round 6 (F23 residual) now
-   passes is overridden by a stale session `True`, reopening the cross-request leak. Fix: pop with default `None`; an explicit
-   True/False is authoritative; fall back to the session only when `None`; red test = request with explicit False on a session whose
-   legacy flag is True must publish symmetric.
-   Residual (cheap, fix in the same round): F27 (`dispatch.py:1630-1641` — breaking after the terminal chunk without closing leaves
-   `_inflight_epoch` set, so the next request clears a valid published cache; clear the epoch before yielding terminal), F28
-   (`dispatch.py:1619-1631` — stateless streams delay terminal delivery through APC cleanup; restrict pre-terminal draining to
-   session-backed streams), F29 (`server/generation.py:2618-2639` — zero-budget requests log "Prefill started"), F30
-   (`tests/conftest.py:85-87` — use `request.scope`, not the declared `fixturedef.scope`). Then a narrow confirmation round.
+1. **P369 fork review — DONE 2026-10-18.** Round 7 fixes F23 + F27–F30 (test-first, `e6d2c32c..124de41f`), Cursor round 8
+   `VERDICT: CLEARED` (`docs/reviews/p369-code-round8…`); F31 LOW (the F30 red proof was implicit) closed by lead verification
+   in `4e6d0e03` (the red-state draw is the per-test seed's stream, now asserted; red 3/3 on the pre-fix conftest). Fork suite
+   at `4e6d0e03` 6118 passed / 16 skipped / 0 failed twice, identical skip lists; all EIGHT audits green (P386: not six).
    - Fork rules: work in `$STACK_WORKDIR/worktrees/mlx-vlm-p369`; read its own `AGENTS.md` / `CLAUDE.md`; suite =
      `(cd mlx_vlm && ../.venv/bin/python -m pytest -q ./tests --ignore=tests/test_smoke.py)` from the worktree root, alone, twice back to
-     back (identical counts required — last: 6107 passed / 16 skipped / 0 failed); `git add -A` BEFORE the six fork audits
-     (`--upstream-ref 952d4f6b`; the worktree has no `upstream/main`); pinned black 26.3.1 / isort 5.13.2 (profile black) /
-     autoflake 2.2.1 over touched files; **mlx stays 0.32.3** (0.32.4 breaks the verifier exactness tests).
-   - Fork reviews: Cursor workspace `~/ws/mlx-vlm` (checked out at the base `24551869`) with the diff INLINE in the prompt; Cursor
-     returns empty about every other run — re-run alone until a `VERDICT` line appears; never two Cursor runs at once (kill a stale one
-     AND its shell before relaunching, or its `EXIT` line lands in the new `.err` file).
-   - What the fix rounds changed (all test-first): batched MTP always decodes plainly (`mtp_batched`, counted + logged), lockstep B>1
-     refuses, public batched entry points refuse MTP; abnormal exits of cached requests retire the session (all draft kinds); terminal
-     chunk held until publication; per-session epochs; zero-budget requests emit nothing (all paths); logprobs/APC kept for batched MTP;
-     DFlash/Eagle fallback discards prefill captures; per-test seeds from `sha256(nodeid)` + fixture-setup seeding. **B==1 cached MTP
-     (the bench / opencode path) is cleared as equal to plain decoding.** Documented perf change: a single UNCACHED request on the
-     batched path now decodes at plain speed (record in the re-certification).
-2. **P369 phase 2 (GPU, ≈ 1 h; covered by C175):** write a short run plan + Cursor plan review first; E1c per-pick real-weight
+     back (identical counts required); `git add -A` BEFORE the EIGHT fork audits (`check_upstream_parity`, `_symbols`,
+     `_deletions --strict`, `check_fork_markers`, `check_dead_helpers`, `check_body_divergence`, `check_upstream_registries`,
+     `check_call_arguments`, each `--upstream-ref 952d4f6b`; the worktree has no `upstream/main`; the fork CI gates on all eight);
+     pinned black 26.3.1 / isort 5.13.2 (profile black) / autoflake 2.2.1 over touched files; **mlx stays 0.32.3**.
+   - Fork reviews: Cursor workspace `~/ws/mlx-vlm` (checked out at the base `24551869`; branch commits readable there with
+     `git show <sha>:<path>`) with the diff INLINE; re-run alone until a `VERDICT` line appears; never two Cursor runs at once.
+   - **P387 (before the fork push):** the fork's P369 tests read the LIVE sibling registry when it exists and require
+     `draft_kind: mtp` — against the C177 registry 56 failed + 9 errors + a collection error; the worktree hides it. Test-only fix
+     proposed in `docs/specs/p369-phase2-run-plan.md` §6 (in the phase-2 plan review).
+2. **P369 phase 2 (GPU, ≈ 100 min per the plan; covered by C175):** plan v1 `docs/specs/p369-phase2-run-plan.md` → Cursor plan review (NEXT); E1c per-pick real-weight
    conformance (Fable native KV `joint_v1` with straddle counters; uniform TurboQuant `per_query`), E2 greedy ON vs OFF identity, E7
    M3 / M4 firing rates. Then **fork push (operator)** → stack submodule bump → per-pick re-certification ON vs OFF (real GPU chains:
    own plan, Cursor review, operator go) → restore MTP-ON (C177) → P368 layers 2–3.
@@ -133,4 +122,4 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
 - OrbStack bind mounts under `$TMPDIR` serve stale file sizes after in-place overwrites (P361).
 - `--print-identity` needs docker on PATH (grader image id; fails closed).
 
-Next decision id C182; discussion ids continue from P386.
+Next decision id C182; discussion ids continue from P388.
