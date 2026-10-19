@@ -109,7 +109,9 @@ clears — before the smoke. 3. Fork `main` merge + submodule bump after phase 2
   them in a fixture that kills them at teardown (a failing assertion left 4 sleepers this session — killed by PID).
 - The Edit tool needs a Read of the file in this session (a `sed` view does not count); a failed Edit + chained commit:
   check `git show --stat` before trusting it.
-- Cursor: an empty output (exit 0) happens — re-run; one run at a time; FINAL message must contain everything.
+- Cursor: run reviews with `--mode ask --output-format stream-json` and take the `result` event's text. `--mode plan`
+  sometimes ends on a `createPlan` tool call (`interaction_query` in the stream) with NO review text — the cause of every
+  empty output this session. One run at a time; FINAL message must contain everything.
 - macOS: `lsof` for ports; `datasets` in `.venv-bench`, `mlx_serve` in `.venv`, `mlx` 0.32.3 in the fork venv.
 - Determinism holds within ONE loaded-model lifetime only (`docs/metrics.md`): compare ON / OFF on the same instance (P391, P393).
 
