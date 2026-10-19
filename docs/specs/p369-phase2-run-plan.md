@@ -1,6 +1,7 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v3, 2026-10-18
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v4, 2026-10-18
 
-Status: v3 → Cursor plan review round 3. v2 → round 2 `DISAGREE` (closed Q15 Q17 Q19–Q21 Q25–Q27; open Q16 Q18 Q22–Q24 via
+Status: v4 → Cursor plan review round 4 (narrow). v3 → round 3 `DISAGREE Q29 Q34` (all else closed; both applied here;
+`docs/reviews/p369-phase2-plan-round3.cursor-gpt-5.6-sol-high.md`). v2 → round 2 `DISAGREE` (closed Q15 Q17 Q19–Q21 Q25–Q27; open Q16 Q18 Q22–Q24 via
 new Q28–Q33, all accepted and applied here; `docs/reviews/p369-phase2-plan-round2.cursor-gpt-5.6-sol-high.md`). v1 → round 1
 `DISAGREE Q15–Q27` (`docs/reviews/p369-phase2-plan-round1.cursor-gpt-5.6-sol-high.md`), all accepted. Parent:
 `docs/specs/p369-mtp-certification.md` (v3) §E1c, §E2, §E7. GPU go: C175 (this phase only). Operator choices: C182 (in-process
@@ -65,7 +66,9 @@ Fork-only, test-only code (`dev/p369_phase2/`, CPU tests in `mlx_vlm/tests/test_
   instrumented are every consuming alias (incl. the by-value imports in `models/qwen3_5/speculative_verifier.py`:
   `_target_verify_linear`, `_target_verify_linears`, `_target_verify_embedding_as_linear`, `_target_verify_quantized_linear`,
   `_target_verify_quantized_argmax`) AND the nested implementations they dispatch among (optimized affine, NVFP4, singleton
-  quantized, timewise / singleton fallbacks, `_target_verify_weight`, plain `linear(x)`); a family counts only when it
+  quantized, timewise / singleton fallbacks, `_target_verify_weight`, plain `linear(x)`, and — inside
+  `_target_verify_linears` — the fused `_decode_quantized_linears_fused` branch (`mx.quantized_matmul`) classified apart from
+  that function's per-linear tuple fallback, Q29); a family counts only when it
   returned a non-`None` result; every projection call is classified exactly once with module, shape and dtype. PASS needs,
   per ON request, positive verifier (and, at T = 0, argmax) calls, the expected successful families, and zero unclassified or
   forbidden fallback calls. The full campaign is gated on the smoke's runtime inventory reconciling with the static
@@ -157,8 +160,11 @@ Measured: against the live MTP-OFF registry the P369 tests give 56 failed + 9 er
 it: no sibling ⇒ pinned fixture). Revised fix (test-only, red first, before the fork push): ordinary tests are DETERMINISTIC —
 both the certified MTP tuple and the sampling come from the pinned golden fixture, and the presence of a sibling checkout no
 longer changes the normal suite. A separate opt-in live-registry test (`MLX_REQUIRE_STACK_REGISTRY=1`) compares the live
-registry with the fixture field by field and accepts exactly two states: identical, or the C177 interim (only `draft_kind`,
-`draft_model` and Fable's `mtp_verify_scan` absent, each with the `P369 INTERIM (C177` marker). C182 approved the v1 variant
+registry with the fixture field by field and accepts exactly two states: identical, or the C177 interim — only `draft_kind`,
+`draft_model` and Fable's `mtp_verify_scan` absent, where (Q34) each pick's commented `draft_kind` line and Fable's commented
+`mtp_verify_scan` line carry the `P369 INTERIM (C177` marker and the commented `draft_model` line ADJACENT to that pick's
+marked `draft_kind` equals the fixture's `draft_model` exactly (the registry's `draft_model` lines carry no marker; the
+registry is not edited). C182 approved the v1 variant
 (sampling from the live registry); this change goes back to the operator.
 
 ## 6. After this phase
