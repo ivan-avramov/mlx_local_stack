@@ -51,6 +51,15 @@ P378, P377 … C178, P371), then `docs/specs/p371-shared-runner-core.md` (PLAN v
    (plain decoding wherever MTP cannot match it), test-first, Cursor round 2; then phase 2 on GPU (E1c, E2, E7), fork push
    (operator), submodule bump, re-certification, restore MTP-ON (C177).
 4. tg2 steps 3–4 on the shared core (GPU go given for positives + smoke, C175); M64 spec amendment to the tg2 screen (C175 D3).
+6. **P383 build (C180, option a):** M64 incident retry no longer blocked by `orphans_unattributed` (recorded in the incident);
+   test-first in a stack worktree, Cursor code review, full suite, merge — after the P369 fork fix round.
+7. **P385 investigation — FRESH SESSION, with Cursor (C181):** MLX 0.32.3 quantized sorted-dispatch MoE prefill nondeterminism
+   (incl. NaN; evidence in the P385 entry and fork commit `bbffeec1` / F13 `1f0e6b40`). Steps: (1) minimal standalone repro at the
+   real MoE models' expert count / group size, many fresh processes, bitwise; check whether an isolated MLX upgrade changes it;
+   (2) if it reproduces: one real quantized MoE model (`gemma-4-26B-A4B-it-OptiQ-4bit` or `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit`),
+   same prompt, greedy, ~10 fresh processes — a GPU job: ask the operator first; (3) upstream MLX report with the repro, disclosure on
+   affected models' results, workaround decision. Cursor `gpt-5.6-sol-high` helps design the repro, read the kernel, and cold-reviews
+   the conclusion.
 5. M64 remaining: fork receipt endpoint (P372, the A3 protocol fixture), Pi / dsh adapters, D2 SearXNG + MCP, snapshots /
    adoption, P201 hooks, two-judge panel, smokes, chain go.
 
