@@ -1,8 +1,9 @@
-# P387 build note — fork P369 tests deterministic against the pinned fixture + an opt-in live-registry check — v1, 2026-10-19
+# P387 build note — fork P369 tests deterministic against the pinned fixture + an opt-in live-registry check — v2, 2026-10-19
 
 Parent: `docs/specs/p369-phase2-run-plan.md` v7 §5 (Q26, Q34; Cursor plan rounds 1–7); ruling C183 (3). Fork branch `p369-mtp`
 (worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369`), test-only: `git diff 4e6d0e03 -- mlx_vlm ':!mlx_vlm/tests'` stays empty.
-This note records what the build adds to §5 (P392) for a Cursor plan review before any code.
+This note records what the build adds to §5 (P392). v1 → Cursor plan round 1 `AGREE WITH CHANGES K1–K4`
+(`docs/reviews/p387/plan-round1.cursor-gpt-5.6-sol-high.md`), all applied here (no further plan round; the code review verifies).
 
 ## 1. Measured facts (2026-10-19)
 
@@ -32,27 +33,33 @@ This note records what the build adds to §5 (P392) for a Cursor plan review bef
    needed). `MLX_STACK_REGISTRY` and the sibling are read ONLY by the opt-in tests.
 3. **Opt-in live tests** (marker `requires_stack_registry`, re-documented): skip with one fixed reason unless
    `MLX_REQUIRE_STACK_REGISTRY=1`; when set, live = `MLX_STACK_REGISTRY` (set-but-absent FAILS) else the sibling, else FAIL.
-   PASS iff the live text equals the fixture verbatim, or equals it with EXACTLY the five interim substitutions of §1 (all
-   five or none; marker matched by the prefix `# P369 INTERIM (C177`; the `draft_model` line must be the fixture's line
-   commented, content byte-equal, and must directly follow its pick's marked `draft_kind`). Anything else FAILS with
-   "refresh the fixture". Text level (stricter than Q34's field level) keeps today's require-mode semantics (live ==
-   fixture verbatim) and implies the field rule; the parsed-minus-five-keys equality is also asserted.
+   One classifier `live_registry_state(text)` → `"mtp_on"` iff the live text equals the fixture verbatim, `"c177_interim"`
+   iff it equals the EXPECTED INTERIM byte for byte — the fixture with exactly the five lines of §1 replaced by their
+   complete verbatim interim lines, held as constants in the test (K2: no prefix match; a changed marker suffix or a
+   changed trailing comment on a commented `draft_model` fails) — else FAIL with "refresh the fixture". The
+   parsed-minus-five-keys equality of the interim is asserted once as a consistency check of the constants.
 4. **Sibling-dependent tests:** `test_golden_sibling_registry_drift_warns_but_does_not_fail` is removed (superseded by 3);
-   the phase-2 `test_overlay_on_the_live_stack_registry` moves under the same opt-in gate and resolution. New always-run
-   test: the orchestrator's `overlay_registry` applied to the interim SYNTHESIZED from the fixture restores, per pick,
-   exactly the fixture's parsed entry (links the phase-2 ON argv to the certified tuple).
-5. **Red tests** (each fails today for the stated reason, then passes): with `MLX_STACK_REGISTRY` pointing at a synthesized
-   interim and a synthesized sibling, `deployed_sampling(PICKS[0])` returns the fixture's values (today: "no longer ships
-   MTP"); the fixture holds Fable `joint_v1` and the source sha (today: absent); opt-in acceptance matrix — identical →
-   pass; full interim → pass; four of five lines / an unmarked `draft_kind` / a `draft_model` differing from the
-   fixture's / not adjacent / any other edited line / env set-but-absent / no live registry → fail; without the env the
-   opt-in tests skip with the fixed reason whatever the sibling and `MLX_STACK_REGISTRY` say.
+   the phase-2 `test_overlay_on_the_live_stack_registry` moves under the same opt-in gate and resolution and branches on the
+   classifier (K1): `c177_interim` → `overlay_registry` restores, per pick, exactly the fixture's parsed entry;
+   `mtp_on` → the live text equals the fixture and `overlay_registry` refuses (nothing to restore). New always-run test:
+   `overlay_registry` applied to the expected interim restores, per pick, exactly the fixture's parsed entry (links the
+   phase-2 ON argv to the certified tuple).
+5. **Tests** (K4: red vs guard stated honestly; the red commit lists the failing ids). RED today: `deployed_sampling`
+   returns the fixture's values (a) with `MLX_STACK_REGISTRY` → the expected interim and the sibling absent, and (b) with
+   the env unset and `SIBLING_REGISTRY` → the expected interim (K3: two separate poison channels; today both fail "no longer
+   ships MTP"); the fixture holds Fable `joint_v1` and names its source commit; the classifier accepts the full interim
+   (today require mode refuses anything but verbatim); the overlay restores the fixture entry from the expected interim.
+   GUARDS (pass before and after; characterize the classifier): verbatim fixture → `mtp_on`; four of five lines, an
+   unmarked `draft_kind`, a changed marker suffix, a changed commented `draft_model` (path or trailing comment), a
+   non-adjacent `draft_model`, any other edited line, CRLF, a missing trailing newline, env set-but-absent, no live
+   registry → fail; without the env every opt-in test skips with the fixed reason whatever the sibling and
+   `MLX_STACK_REGISTRY` say.
 
 ## 3. Acceptance
 
 - The registry-reading modules (+ `test_p369_phase2_*`) with `MLX_STACK_REGISTRY=<stack>/main_models.yaml`: 0 failed, 0
-  errors; the same with `MLX_REQUIRE_STACK_REGISTRY=1`: 0 failed (interim accepted); with a planted extra edit: the opt-in
-  test fails.
+  errors; the same with `MLX_REQUIRE_STACK_REGISTRY=1`: 0 failed (interim accepted); the same with `MLX_STACK_REGISTRY` →
+  a copy of the fixture verbatim (the MTP-ON state, K1): 0 failed; with a planted extra edit: the opt-in tests fail.
 - Fork suite twice back to back: 0 failed, identical skip lists; expected skips 17 (the sibling-drift skip disappears, the
   opt-in live test adds one, the orchestrate live-registry skip changes its reason). Eight audits green, exclusion counts
   unchanged. Production diff vs `4e6d0e03` empty. Then a cold Cursor code review naming the commit.
