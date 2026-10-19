@@ -122,4 +122,4 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
 - OrbStack bind mounts under `$TMPDIR` serve stale file sizes after in-place overwrites (P361).
 - `--print-identity` needs docker on PATH (grader image id; fails closed).
 
-Next decision id C182; discussion ids continue from P388.
+Next decision id C183; discussion ids continue from P389.
