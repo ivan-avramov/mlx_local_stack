@@ -1,6 +1,6 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v4, 2026-10-18
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v5, 2026-10-19
 
-Status: **v4 — Cursor round 4 `VERDICT: AGREE`** (`docs/reviews/p369-phase2-plan-round4.cursor-gpt-5.6-sol-high.md`) → build the harness;
+Status: v5 = v4 + §2.5 (P391, reload nondeterminism) → Cursor round 5 (narrow). **v4 — Cursor round 4 `VERDICT: AGREE`** (`docs/reviews/p369-phase2-plan-round4.cursor-gpt-5.6-sol-high.md`) → build the harness;
 the operator items (2.5–3.5 h budget, the E7b narrowing, P387 per Q26) are pending in the handoff. v3 → round 3 `DISAGREE Q29 Q34` (all else closed; both applied here;
 `docs/reviews/p369-phase2-plan-round3.cursor-gpt-5.6-sol-high.md`). v2 → round 2 `DISAGREE` (closed Q15 Q17 Q19–Q21 Q25–Q27; open Q16 Q18 Q22–Q24 via
 new Q28–Q33, all accepted and applied here; `docs/reviews/p369-phase2-plan-round2.cursor-gpt-5.6-sol-high.md`). v1 → round 1
@@ -81,6 +81,26 @@ Fork-only, test-only code (`dev/p369_phase2/`, CPU tests in `mlx_vlm/tests/test_
   uniform: observed per-query TurboQuant verifier calls with key lengths on both sides of every T. A request that terminates
   before covering its threshold is INVALID (never a pass); the next seed from a pre-registered list of 5 is used; five
   invalid seeds fail that cell.
+
+### 2.5 Same-instance pairing and the two controls (P391, v5)
+
+`docs/metrics.md` (Seeds, scope correction) measured that byte-identity holds only within ONE loaded-model lifetime:
+after an unload + reload, seeded rows differed on 55 / 142 AgentBench tasks (mechanism open). v4's E1c compared ON
+and OFF in two processes, so a reload effect would be reported as MTP non-neutrality. v5:
+
+- **E1c verdict = same instance.** In the ON worker, after each ON request the drafter is detached in process
+  (`ResponseGenerator.draft_model` / `draft_kind` set to `None`; the cached path reads both per request; restored
+  after) and the forced OFF replay runs on the SAME loaded target with a fresh chat id. ON vs this OFF: rows, the full
+  state at every ON commit offset and the probes, bit-identical (§2.2 criteria unchanged).
+- **Control C1 (within instance):** a second forced OFF replay, still detached, compared with the first; must be
+  bit-identical on every cell — else the harness / serving path is nondeterministic within one instance: stop and
+  investigate (no E1c verdict).
+- **Control C2 (across loads):** the cross-load OFF arm of v4 (its own subprocess, the deployed OFF argv, no drafter
+  loaded) replays the same forced tokens and is compared with the same-instance OFF. Reported per cell; a C2
+  difference is a reload-nondeterminism finding (P391), never an MTP finding; E1c stands on the same-instance pair.
+- Both controls run on every E1c cell (smoke and full); cost ≈ +1 replay per cell.
+- The served state of the paired job is the ON arm's (§2.1 assertions); during the detached replays the job asserts
+  zero draft rounds and that the target, its verify policy and its caches are the same objects as for the ON request.
 
 ### 2.3 E7 classes, reconstructed against the pre-fix code (Q23)
 
