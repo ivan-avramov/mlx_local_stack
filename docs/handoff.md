@@ -43,7 +43,11 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
    - **P387 (before the fork push):** the fork's P369 tests read the LIVE sibling registry when it exists and require
      `draft_kind: mtp` — against the C177 registry 56 failed + 9 errors + a collection error; the worktree hides it. Test-only fix
      proposed in `docs/specs/p369-phase2-run-plan.md` §6 (in the phase-2 plan review).
-2. **P369 phase 2 (GPU, ≈ 100 min per the plan; covered by C175):** plan v1 `docs/specs/p369-phase2-run-plan.md` → Cursor plan review (NEXT); E1c per-pick real-weight
+2. **P369 phase 2 (GPU 2.5–3.5 h; covered by C175):** plan v4 `docs/specs/p369-phase2-run-plan.md` — Cursor plan rounds 1–4
+   (`docs/reviews/p369-phase2-plan-round{1..4}…`), round 4 `VERDICT: AGREE`. NEXT: build the fork-side harness test-first
+   (`dev/p369_phase2/` + CPU tests), Cursor code review, fork suite twice + eight audits, then the smoke. **Operator items pending:**
+   the 2.5–3.5 h budget, the E7b narrowing (scripted chat continuity, no tool sessions), P387 per Q26 (all from the pinned fixture
+   + an opt-in live check), P389 (resume bypasses A7) in the P383 branch, P388 reframed (no study). E1c per-pick real-weight
    conformance (Fable native KV `joint_v1` with straddle counters; uniform TurboQuant `per_query`), E2 greedy ON vs OFF identity, E7
    M3 / M4 firing rates. Then **fork push (operator)** → stack submodule bump → per-pick re-certification ON vs OFF (real GPU chains:
    own plan, Cursor review, operator go) → restore MTP-ON (C177) → P368 layers 2–3.
