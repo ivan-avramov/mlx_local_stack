@@ -43,22 +43,20 @@ P380, P379, C179, P378, P377, P376, P375, P374, P373, P372, C178, P371, P370, C1
    - **P387 (before the fork push):** the fork's P369 tests read the LIVE sibling registry when it exists and require
      `draft_kind: mtp` — against the C177 registry 56 failed + 9 errors + a collection error; the worktree hides it. Test-only fix
      proposed in `docs/specs/p369-phase2-run-plan.md` §6 (in the phase-2 plan review).
-2. **P369 phase 2 (GPU 2.5–3.5 h; covered by C175):** plan v4 `docs/specs/p369-phase2-run-plan.md` — Cursor plan rounds 1–4
-   (`docs/reviews/p369-phase2-plan-round{1..4}…`), round 4 `VERDICT: AGREE`. **Harness build IN PROGRESS** on `p369-mtp`
-   (`dev/p369_phase2/`, tests `mlx_vlm/tests/test_p369_phase2_*.py`, 41 passed ×3): DONE — `compare.py` (E1c post-transform
-   comparator), `observe.py` (full-state SHA-256, neutral probe, sampler-level ON / OFF recorders with forcing + per-commit
-   snapshots; the observation point is `_PositionedTargetSampler.sample_target`, not a logits processor — note it in the code
-   review), `telemetry.py` (runtime kernel outcomes, verify scope, manifest verdict), `oracle_cases.py` / `oracle.py` /
-   `classes.py` (E7 classes bound to measured pre-fix defects in isolated `88724023` / `0b43dae4` checkouts). TODO — `worker.py`
-   (sanitized subprocess, mlx-serve argv → `cli.main` with `uvicorn.run` intercepted → `TestClient`, per-mode jobs, rows to .npz,
-   atomic results), prompts (exact post-template straddle lengths via the server's own templating; C84-item reconstruction with
-   the stack bench builders), static manifest from safetensors headers, E7b, orchestrator (stack venv: lock, ports 8000 / 8091,
-   disk, power, watchdogs, monitor, manifest), then Cursor code review, fork suite ×2 + eight audits, the smoke. **Operator items pending:**
-   the 2.5–3.5 h budget, the E7b narrowing (scripted chat continuity, no tool sessions), P387 per Q26 (all from the pinned fixture
-   + an opt-in live check), P389 (resume bypasses A7) in the P383 branch, P388 reframed (no study). E1c per-pick real-weight
-   conformance (Fable native KV `joint_v1` with straddle counters; uniform TurboQuant `per_query`), E2 greedy ON vs OFF identity, E7
-   M3 / M4 firing rates. Then **fork push (operator)** → stack submodule bump → per-pick re-certification ON vs OFF (real GPU chains:
-   own plan, Cursor review, operator go) → restore MTP-ON (C177) → P368 layers 2–3.
+2. **P369 phase 2 (GPU 3–3.5 h; covered by C175):** plan v6 `docs/specs/p369-phase2-run-plan.md` — Cursor plan rounds 1–6
+   (`docs/reviews/p369-phase2-plan-round{1..6}…`; round 4 AGREE on v4; v5 = P391 same-instance pairing after a side-agent note,
+   round 5 DISAGREE Q35–Q40 applied in v6; round 6 pending). **Harness BUILT** on `p369-mtp` (test / dev only; production diff vs
+   `4e6d0e03` empty): `dev/p369_phase2/{compare,observe,telemetry,oracle_cases,oracle,classes,worker,orchestrate}.py`, tests
+   `mlx_vlm/tests/test_p369_phase2_*.py`; early full fork suite 6195 passed / 17 skipped (+1 documented env skip) / 0 failed.
+   Measured on CPU / tiny fixtures: bf16-quantized MTP rows + full state + probes bit-identical (P390: the dense float32
+   fixture is not); the E7 classes are bound to measured pre-fix defects (isolated `88724023` / `0b43dae4` checkouts); the real
+   mlx-serve argv for both picks / arms matches the overlay; the C84-item reconstruction yields 20 items per pick.
+   NEXT: round-6 verdict → Cursor CODE review of the harness (commit hash named, diff inline) → fork suite ×2 + eight audits →
+   the smoke: `set -a; . ./.env; set +a; .venv/bin/python <fork>/dev/p369_phase2/orchestrate.py --stack-root . --fork-root
+   <fork> --out $STACK_WORKDIR/p369/phase2/<run-id> --phase smoke` (detached, waiter; the orchestrator writes `monitor.log`
+   every 5 min) → full run with `--phase full --smoke-summary <smoke>/summary.json`. **Blocker: the box is on BATTERY (no
+   adapter) — the preflight refuses until the 140 W adapter is attached.** **Operator items pending:** the 3–3.5 h budget,
+   the E7b narrowing (scripted chat continuity), P387 per Q26, P389 in the P383 branch, P388 reframed (no study).
 3. **P383 build (C180, option a):** M64's exact cleanup check before an incident retry no longer blocks on `orphans_unattributed`
    (recorded in the incident; survivors / containers / `unknown` / `uncertain` still block). Test-first in a stack worktree, Cursor code
    review, full suite, merge. Never while the fork suite runs (one suite at a time).
