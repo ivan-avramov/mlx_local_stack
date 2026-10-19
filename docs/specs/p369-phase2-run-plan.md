@@ -1,6 +1,7 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v5, 2026-10-19
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v6, 2026-10-19
 
-Status: v5 = v4 + §2.5 (P391, reload nondeterminism) → Cursor round 5 (narrow). **v4 — Cursor round 4 `VERDICT: AGREE`** (`docs/reviews/p369-phase2-plan-round4.cursor-gpt-5.6-sol-high.md`) → build the harness;
+Status: v6 → Cursor round 6 (narrow). v5 (= v4 + §2.5, P391) → round 5 `DISAGREE Q35–Q40`, all applied here
+(`docs/reviews/p369-phase2-plan-round5.cursor-gpt-5.6-sol-high.md`). **v4 — Cursor round 4 `VERDICT: AGREE`** (`docs/reviews/p369-phase2-plan-round4.cursor-gpt-5.6-sol-high.md`) → build the harness;
 the operator items (2.5–3.5 h budget, the E7b narrowing, P387 per Q26) are pending in the handoff. v3 → round 3 `DISAGREE Q29 Q34` (all else closed; both applied here;
 `docs/reviews/p369-phase2-plan-round3.cursor-gpt-5.6-sol-high.md`). v2 → round 2 `DISAGREE` (closed Q15 Q17 Q19–Q21 Q25–Q27; open Q16 Q18 Q22–Q24 via
 new Q28–Q33, all accepted and applied here; `docs/reviews/p369-phase2-plan-round2.cursor-gpt-5.6-sol-high.md`). v1 → round 1
@@ -36,8 +37,9 @@ Fork-only, test-only code (`dev/p369_phase2/`, CPU tests in `mlx_vlm/tests/test_
   `"mlx_vlm.server:app"` string resolved AFTER the CLI setup; requests go through `TestClient(app)` (lifespan preload) with
   `X-MLX-VLM-Chat-Id`.
 - Asserted per process: every imported `mlx_vlm` module resolves under the reviewed worktree; backend `cached_session` on
-  every request; APC disabled; ON has the drafter loaded and positive MTP rounds on EVERY request; OFF has no drafter loaded
-  and zero draft rounds; the verify policy (`joint_v1` / `per_query`) observed on the instance.
+  every request; APC disabled; the verify policy (`joint_v1` / `per_query`) observed on the instance. Per TRAJECTORY
+  (v6, Q39): an ON request has the drafter attached and positive MTP rounds; a detached replay in the ON process and
+  every request of an OFF-arm process have zero draft rounds (an OFF-arm process has no drafter loaded).
 
 ### 2.2 E1c observation and replay (Q15–Q19)
 
@@ -45,9 +47,10 @@ Fork-only, test-only code (`dev/p369_phase2/`, CPU tests in `mlx_vlm/tests/test_
   terminal index and every verifier logit row. Compared rows = every EMITTED target row: the accepted drafts' rows, plus the
   first rejection's replacement row, or the bonus row when all drafts accept. Only rows after the first rejection (unreachable
   history) are excluded. Position 0 (the prefill's first token) is compared separately from the prefill logits on both sides.
-- **Reference (Q17):** a sequential clean replay in a fresh subprocess through the OFF arm's `stream_generate` with a
-  recording + forcing logits processor injected ONLY there: it records the raw logits BEFORE modifying them, then forces the
-  ON-emitted token, so the replay walks the identical history one token at a time. OFF asserts no drafter, ON positive rounds.
+- **Reference (Q17; v6 §2.5):** a sequential clean replay of the forced ON tokens one token at a time — the verdict's
+  reference is the SAME-INSTANCE detached replay (OFF1, §2.5), the cross-load OFF arm is comparison C2. Observation point
+  (build note): the production sampler (`_PositionedTargetSampler.sample_target`) records the rows it is handed and,
+  in a replay, returns the forced token — no logits processor is installed, so the plain path is unchanged.
 - **Comparator (Q17):** both sides through `_PositionedTargetSampler._filter` + temperature with the pick's deployed values,
   then canonicalised to probabilities (log-sum-exp normalised, so an additive constant cannot false-fail); PASS needs
   bit-equal support and values. On any mismatch: support changes, worst per-token probability delta, total-variation
@@ -82,25 +85,35 @@ Fork-only, test-only code (`dev/p369_phase2/`, CPU tests in `mlx_vlm/tests/test_
   before covering its threshold is INVALID (never a pass); the next seed from a pre-registered list of 5 is used; five
   invalid seeds fail that cell.
 
-### 2.5 Same-instance pairing and the two controls (P391, v5)
+### 2.5 Same-instance pairing and the two controls (P391, v5; round 5 applied in v6)
 
 `docs/metrics.md` (Seeds, scope correction) measured that byte-identity holds only within ONE loaded-model lifetime:
-after an unload + reload, seeded rows differed on 55 / 142 AgentBench tasks (mechanism open). v4's E1c compared ON
-and OFF in two processes, so a reload effect would be reported as MTP non-neutrality. v5:
+after an unload + reload, seeded rows differed on 55 / 142 AgentBench tasks (mechanism open). So:
 
-- **E1c verdict = same instance.** In the ON worker, after each ON request the drafter is detached in process
-  (`ResponseGenerator.draft_model` / `draft_kind` set to `None`; the cached path reads both per request; restored
-  after) and the forced OFF replay runs on the SAME loaded target with a fresh chat id. ON vs this OFF: rows, the full
-  state at every ON commit offset and the probes, bit-identical (§2.2 criteria unchanged).
-- **Control C1 (within instance):** a second forced OFF replay, still detached, compared with the first; must be
-  bit-identical on every cell — else the harness / serving path is nondeterministic within one instance: stop and
-  investigate (no E1c verdict).
-- **Control C2 (across loads):** the cross-load OFF arm of v4 (its own subprocess, the deployed OFF argv, no drafter
-  loaded) replays the same forced tokens and is compared with the same-instance OFF. Reported per cell; a C2
-  difference is a reload-nondeterminism finding (P391), never an MTP finding; E1c stands on the same-instance pair.
-- Both controls run on every E1c cell (smoke and full); cost ≈ +1 replay per cell.
-- The served state of the paired job is the ON arm's (§2.1 assertions); during the detached replays the job asserts
-  zero draft rounds and that the target, its verify policy and its caches are the same objects as for the ON request.
+- **E1c claim and verdict (Q36):** "MTP-ON equals PLAIN decoding on the same MTP-loaded target instance". In the ON
+  worker, per cell: the ON request; then, with the drafter detached (`ResponseGenerator.draft_model` / `draft_kind` =
+  `None`; the cached path reads both per request via `_inline_draft_kwargs`), the forced OFF1 replay and the forced
+  OFF2 replay. ON vs OFF1 = the verdict (§2.2 criteria).
+- **Trajectory isolation (Q35):** ON, OFF1 and OFF2 share the target model and its verify-policy objects (asserted
+  unchanged) but each runs a fresh chat id on a fresh, identity-disjoint, initially empty cache tree (no reused prefix:
+  `cached_tokens == 0`, asserted); earlier sessions are released (`MLX_VLM_CACHE_SESSION_MAX=1`).
+- **Detachment window (Q38):** set after the ON request's worker is idle (request queue empty, `in_flight == 0`),
+  held through both replays' complete responses and worker idle, restored in `finally`; no concurrent ingress (one
+  harness thread). During it, a guard asserts `_inline_draft_kwargs` returned `{}`, no speculative-prefill capture was
+  requested, zero verify-scope projection calls and zero draft rounds; the transactional probes are tagged apart.
+- **Control C1 (within instance, Q37):** OFF1 vs OFF2 — raw rows, transformed distributions, the emitted token
+  sequence = the forced tokens for both, ON's finish reason, the complete expected offsets / requests, state hashes at
+  every offset, probe logits. Any difference or incompleteness (early stop, timeout, missing offset, a token not
+  emitted) fails C1.
+- **Comparison C2 (cross-load / configuration, Q36):** the OFF arm in its own subprocess (the deployed OFF argv: no
+  drafter loaded, no Fable verify-policy stamping, a different process and allocator history) replays the same
+  forced tokens and is compared with OFF1. Reported per cell as `identical` or `unestablished`; a difference is
+  CONSISTENT WITH reload nondeterminism (P391) but does not identify a mechanism; a match is evidence for the sampled
+  cells only. It never decides E1c.
+- **Precedence per pick (Q37):** (1) C1 fails or is incomplete on any cell → ABORT that pick: no E1c verdict, no
+  measured bound, its E2 / E7 skipped; (2) C1 passes and the ON / OFF1 pair differs on any cell → FAIL: that pick's
+  remaining E1c cells finish (for the bound), its E2 / E7 skipped; (3) all pairs pass → E1c PASS (the claim above),
+  `cross_load: identical | unestablished` from C2.
 
 ### 2.3 E7 classes, reconstructed against the pre-fix code (Q23)
 
@@ -136,8 +149,8 @@ shrink on, drafter `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-draf
 `per_query`, prefill 512, prealloc 262,144, drafter `caslca/Qwen3.8-27B-mlx-uniform-4bit-mtp-drafter`. Weight revisions + file
 sha256 recorded before load.
 
-- **Smoke (≈ 20 min):** Fable E1c at T = 1,024 and at T = 65,536 (hashing / probe cost calibration), + E2 on 2 items, both
-  arms. Injected positives on the live data (Q32): a 1-ulp raw-logit change detected AT THE RAW RECORDER; a precomputed
+- **Smoke (≈ 30 min):** Fable E1c at T = 1,024 and at T = 65,536 (hashing / probe cost calibration) with the full §2.5
+  structure (ON, OFF1, OFF2 in the ON process; the cross-load OFF arm), + E2 on 2 items (OFF and ON processes). Injected positives on the live data (Q32): a 1-ulp raw-logit change detected AT THE RAW RECORDER; a precomputed
   in-support perturbation guaranteed to change a retained transformed probability (or the support boundary) detected by
   the comparator; a flipped K byte in an OLD prefix position, a changed TurboQuant scale (uniform smoke), a changed GDN
   element and a changed probe logit each detected by the state check. The runtime kernel inventory must reconcile with the
@@ -166,12 +179,12 @@ sha256 recorded before load.
 
 ## 4. Estimate (Q25)
 
-E1c ≈ 215K prefill tokens + ≈ 1.6K decode / replay steps per pick, plus full-state SHA-256 at every commit (≈ 450 GB hashed
-per side per pick for Fable at ≈ 2 GB/s ⇒ ≈ 4 min per side, doubled by the probe-neutrality hashes; uniform ≈ ¼) and one probe
-forward per commit; E2 three arms ×
+E1c (v6, Q40): four trajectories per cell (ON, OFF1, OFF2, cross-load OFF) ⇒ ≈ 430K prefill tokens and ≈ 3.2K decode /
+replay steps per pick, plus full-state SHA-256 at every commit on all four (≈ 450 GB per trajectory per pick for Fable at
+≈ 2 GB/s ⇒ ≈ 4 min each, doubled by the probe-neutrality hashes; uniform ≈ ¼) and one probe forward per commit; E2 three arms ×
 20 items × 512 tokens + two arms × ≈ 107K straddle prefill per pick; E7a ≈ 11–14 min per pick from C84 history with a
 heavy-tail allowance (one 102,400-token runaway ≈ 1–2 h — bounded by the per-request watchdog, reported as censored).
-Reserve **2.5–3.5 h of GPU time** plus harness build, review and suites (≈ half a session); the smoke's calibration revises
+Reserve **3–3.5 h of GPU time** plus harness build, review and suites (≈ half a session); the smoke's calibration revises
 it, and a revised estimate above 3.5 h goes to the operator before the full run. The handoff's "≈ 1 h" and v1's "≈ 100 min"
 were optimistic.
 
