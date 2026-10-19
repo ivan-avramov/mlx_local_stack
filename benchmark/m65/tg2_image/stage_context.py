@@ -9,6 +9,9 @@ import sys
 from pathlib import Path
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from bench import tg2_materialize as mat  # noqa: E402
+
 LOCKS = Path(__file__).resolve().parent / "locks"
 
 
@@ -63,7 +66,17 @@ def main(corpus, ctx):
     # Rust: every manifest, with the full exercise dir minus docs (path dependencies and [[bin]] targets must exist).
     rust = corpus / "rust/exercises/practice"
     for ex in sorted(p for p in rust.iterdir() if (p / "Cargo.toml").is_file()):
-        shutil.copytree(ex, ctx / "rust" / ex.name, ignore=shutil.ignore_patterns(".docs", ".meta"))
+        mat.prepare_tree(corpus, "rust", ex.name, ctx / "rust" / ex.name)
+    # P367: one synthetic crate depends on every allowlisted (crate, requirement) under renamed keys, so `cargo vendor`
+    # vendors the current versions and the exact older ones the references need, with their transitive closure.
+    allow = json.loads((Path(__file__).resolve().parent / "rust_allowlist.json").read_text())
+    synthetic = ctx / "rust/_allowlist"
+    (synthetic / "src").mkdir(parents=True)
+    (synthetic / "src/lib.rs").write_text("")
+    lines = ['[package]', 'name = "tg2-allowlist"', 'version = "0.0.0"', 'edition = "2021"', "", "[dependencies]"]
+    for n, (crate, req) in enumerate(allow["vendor"]):
+        lines.append('dep%02d = { package = %s, version = %s }' % (n, json.dumps(crate), json.dumps(req)))
+    (synthetic / "Cargo.toml").write_text("\n".join(lines) + "\n")
     for manifest in sorted((ctx / "rust").rglob("Cargo.toml")):
         committed = LOCKS / "rust" / manifest.parent.relative_to(ctx / "rust") / "Cargo.lock"
         if not committed.is_file():

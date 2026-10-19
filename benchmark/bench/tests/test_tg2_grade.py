@@ -1,4 +1,4 @@
-"""M65 tg2 grader (`bench/tg2_grade.py`, version m65-tg2-v1): parsers, phase-typed grading, outcome classes, tamper
+"""M65 tg2 grader (`bench/tg2_grade.py`, version m65-tg2-v2): parsers, phase-typed grading, outcome classes, tamper
 checks, skip-form refusal. Unit tests use a fake `run` (no docker); docker-marked integration tests grade real
 reference / stub trees inside the built `tg2-grader` image and are skipped (with the reason) when docker, the image or
 the polyglot corpus is absent."""
@@ -195,12 +195,12 @@ def step_of(cmd):
     if cmd[:2] == ["docker", "inspect"]:
         return "inspect"
     script = cmd[-1] if cmd[-2:-1] == ["-c"] else " ".join(cmd[-3:])
-    if "generate-lockfile" in script:
-        return "locks"
     if "TG2_PREFLIGHT" in script:
         return "preflight"
     if "TG2_COMPILE_START" in script:
         return "compile"
+    if "generate-lockfile" in script:
+        return "locks"
     return "execute"
 
 
@@ -650,7 +650,7 @@ def test_raw_outputs_retained_by_sha256_with_phase_records(tree, tmp_path):
     for name, meta in index["artifacts"].items():
         assert hashlib.sha256((keep / meta["path"]).read_bytes()).hexdigest() == meta["sha256"]
     phases = json.loads((d / "phases.json").read_text())
-    assert phases["version"] == tg.VERSION == "m65-tg2-v1" and phases["image_id"] == IMG
+    assert phases["version"] == tg.VERSION == "m65-tg2-v2" and phases["image_id"] == IMG
     names = [p["step"] for p in phases["phases"]]
     assert names == ["setup-image", "setup-launch", "preflight", "compile", "execute", "collect"]
     compile_phase = phases["phases"][3]
@@ -722,8 +722,9 @@ CASES = {"rust": (RUST, ["src/lib.rs"]), "java": (JAVA, ["src/main/java/Foo.java
 def reasons_for(tmp_path, lang, mutate, *, files=None, solutions=None):
     base, sols = CASES[lang]
     work, prepared, protected = prep(tmp_path, files or base, solutions or sols)
+    ptext = (work / "Cargo.toml").read_text() if lang == "rust" else None
     mutate(work)
-    return tg.tamper_reasons(work, protected, prepared, lang, solutions=solutions or sols)
+    return tg.tamper_reasons(work, protected, prepared, lang, solutions=solutions or sols, prepared_cargo_toml=ptext)
 
 
 def write(work, rel, text="x\n"):
@@ -739,7 +740,7 @@ def test_editing_only_declared_solution_files_is_not_tampering(tmp_path, lang):
 
 
 @pytest.mark.parametrize("lang,rel", [
-    ("rust", "tests/x.rs"), ("rust", "Cargo.lock"), ("java", "src/test/java/FooTest.java"),
+    ("rust", "tests/x.rs"), ("java", "src/test/java/FooTest.java"),
     ("java", "build.gradle"), ("java", "gradlew"), ("javascript", "x.spec.js"), ("javascript", "package.json"),
     ("cpp", "x_test.cpp"), ("cpp", "test/catch.hpp"), ("cpp", "CMakeLists.txt")])
 def test_modifying_a_protected_file_is_tampering(tmp_path, lang, rel):
@@ -752,12 +753,273 @@ def test_deleting_a_protected_file_is_tampering(tmp_path, lang, rel):
     assert reasons_for(tmp_path, lang, lambda w: (Path(w) / rel).unlink())
 
 
-def test_rust_cargo_toml_edit_is_tampering_even_when_metadata_lists_it_as_a_solution(tmp_path):
-    reasons = reasons_for(tmp_path, "rust", lambda w: write(w, "Cargo.toml", "[package]\nname='y'\n"),
-                          solutions=["src/lib.rs", "Cargo.toml"])
-    assert any("Cargo.toml" in r for r in reasons)
-    assert any("Cargo.lock" in r for r in reasons_for(tmp_path / "b", "rust",
-                                                      lambda w: write(w, "Cargo.lock", "# other\n")))
+def test_rust_cargo_lock_is_regenerated_by_the_grader_so_editing_it_is_not_tampering(tmp_path):
+    assert reasons_for(tmp_path, "rust", lambda w: write(w, "Cargo.lock", "# other\n")) == []
+
+
+# ----------------------------------------------------------------------------- P367: structural Cargo.toml manifest check
+ALLOW = tg.RUST_ALLOWLIST
+BASE = '[package]\nname = "x"\nedition = "2021"\nversion = "1.0.0"\n\n[dependencies]\nrand = "0.8"\n'
+
+
+def manifest_reasons(current, prepared=BASE):
+    return tg.cargo_manifest_reasons(prepared, current)
+
+
+def test_p367_allowlist_is_one_global_set_of_general_purpose_crates_plus_the_reference_crates():
+    assert {"rand", "regex", "itertools", "num-bigint", "num-traits", "num-integer", "thiserror", "anyhow",
+            "once_cell", "lazy_static", "unicode-segmentation"} <= set(ALLOW)
+    assert not ({"permutohedron", "counter"} & set(ALLOW))                  # reference-only crates are never disclosed
+    assert "permutohedron" not in tg.rust_disclosure_line() and "counter" not in tg.rust_disclosure_line()
+    assert tg.rust_disclosure_line() == "Offline crates available for [dependencies]: " + ", ".join(sorted(ALLOW)) + "."
+
+
+@pytest.mark.parametrize("dep", ['regex = "1"', 'regex = "0.2"', 'itertools = { version = "0.5", features = ["use_std"] }',
+                                 'itertools = { version = "0.5", default-features = false }', 'anyhow = "^1.0"'])
+def test_p367_adding_an_allowlisted_dependency_is_allowed(dep):
+    assert manifest_reasons(BASE + dep + "\n") == []
+
+
+def test_p367_freeze_time_reference_trees_may_use_their_own_example_crates_only(tmp_path):
+    assert tg.cargo_manifest_reasons(BASE, BASE + 'counter = "0.5.2"\n', extra_crates=("counter",)) == []
+    assert tg.cargo_manifest_reasons(BASE, BASE + 'permutohedron = "0.2"\n', extra_crates=("counter",))
+
+
+def test_p367_removing_or_changing_a_stub_dependency_requirement_is_allowed_within_the_allowlist():
+    assert manifest_reasons(BASE.replace('rand = "0.8"', 'rand = "0.10"')) == []
+    assert manifest_reasons(BASE.replace('rand = "0.8"\n', "")) == []
+
+
+@pytest.mark.parametrize("dep", ['serde = "1"', 'tokio = { version = "1" }', 'rand_chacha = "0.3"', 'counter = "0.5.2"',
+                                 'permutohedron = "0.2"'])
+def test_p367_unlisted_crates_are_tampering(dep):
+    assert manifest_reasons(BASE + dep + "\n")
+
+
+@pytest.mark.parametrize("dep", [
+    'regex = { path = "../x" }', 'regex = { git = "https://example.invalid/r" }', 'regex = { version = "1", registry = "evil" }',
+    'regex = { version = "1", package = "serde" }', 'regex = { version = "1", branch = "x" }', 'regex = { workspace = true }',
+    'regex = { version = 1 }', 'regex = { features = ["x"] }', 'regex = 3', 'regex = { version = "1", unknown = "x" }'])
+def test_p367_forbidden_dependency_forms_are_tampering(dep):
+    assert manifest_reasons(BASE + dep + "\n")
+
+
+@pytest.mark.parametrize("extra", [
+    '[patch.crates-io]\nrand = { path = "x" }', '[replace]\n"rand:0.8.0" = { path = "x" }',
+    '[build-dependencies]\nrand = "0.8"', '[dev-dependencies]\nrand = "0.8"', '[features]\nfoo = []',
+    '[workspace]\nmembers = []', '[profile.release]\nopt-level = 3', '[lib]\npath = "x.rs"', '[[bin]]\nname = "b"\npath = "b.rs"',
+    '[target.x.dependencies]\nrand = "0.8"', '[lints.clippy]\nx = "allow"'])
+def test_p367_every_table_other_than_dependencies_is_frozen(extra):
+    assert manifest_reasons(BASE + "\n" + extra + "\n")
+
+
+def test_p367_package_edits_and_unparseable_manifests_are_tampering():
+    assert manifest_reasons(BASE.replace('name = "x"', 'name = "y"'))
+    assert manifest_reasons(BASE.replace('edition = "2021"', 'edition = "2018"'))
+    assert manifest_reasons("this is [not toml")
+
+
+def test_p367_a_stub_with_extra_prepared_tables_must_keep_them_exactly():
+    prepared = BASE + '\n[lints.clippy]\nnew_without_default = "allow"\n'
+    assert manifest_reasons(prepared.replace("allow", "deny"), prepared)
+
+
+def test_p367_tamper_reasons_applies_the_structural_check_to_the_root_manifest_only(tmp_path):
+    files = dict(RUST, **{"Cargo.toml": BASE, "nested/Cargo.toml": BASE})
+    ok = lambda w: write(w, "Cargo.toml", BASE + 'regex = "1"\n')
+    assert reasons_for(tmp_path, "rust", ok, files=files) == []
+    assert reasons_for(tmp_path / "b", "rust", lambda w: write(w, "Cargo.toml", BASE + 'serde = "1"\n'), files=files)
+    assert reasons_for(tmp_path / "c", "rust", lambda w: write(w, "nested/Cargo.toml", BASE + 'regex = "1"\n'), files=files)
+
+
+# ------------------------------------------------------------- S2: version requirements vs the vendored versions
+@pytest.mark.parametrize("req,version,ok", [
+    ("1", "1.0.104", True), ("^1.0", "1.0.104", True), ("1.5", "1.0.104", False), ("0.8", "0.8.8", True),
+    ("0.8", "0.10.3", False), ("0.3.12", "0.3.23", True), ("0.3.12", "0.3.11", False), ("^0.0.3", "0.0.3", True),
+    ("^0.0.3", "0.0.4", False), ("0", "0.9.9", True), ("0", "1.0.0", False), ("0.0", "0.0.9", True), ("0.0", "0.1.0", False),
+    ("^0.2.3", "0.2.9", True), ("^0.2.3", "0.3.0", False), ("^1.2.3", "1.2.2", False),
+    ("~1.2.3", "1.2.9", True), ("~1.2.3", "1.3.0", False), ("~1.2", "1.2.9", True), ("~1", "1.9.0", True), ("~1", "2.0.0", False),
+    ("=1.2.3", "1.2.3", True), ("=1.2.3", "1.2.4", False), ("=1.2", "1.2.9", True), ("=1", "1.9.0", True), ("=1", "2.0.0", False),
+    (">=1.2, <2", "1.9.0", True), (">=1.2,<2", "2.0.0", False), (">=1.2,<2", "1.1.9", False), (">1.2", "1.2.9", False),
+    (">1.2", "1.3.0", True), ("<=1.2", "1.2.9", True), ("<=1.2", "1.3.0", False), ("<1.2", "1.2.0", False),
+    ("<1.2", "1.1.9", True), (">1", "1.9.0", False), (">1", "2.0.0", True), (">= 1.2.3", "1.2.3", True),
+    ("*", "3.4.5", True), ("1.*", "1.9.9", True), ("1.*", "2.0.0", False), ("1.2.*", "1.2.7", True), ("1.2.*", "1.3.0", False),
+    ("1.x", "1.2.0", True), ("1.*, >=1.5", "1.4.0", False), ("99", "1.0.104", False)])
+def test_s2_cargo_requirement_matcher(req, version, ok):
+    assert tg.cargo_req_matches(req, version) is ok
+
+
+@pytest.mark.parametrize("req", ["", "abc", "1.2.3.4", ">=", "^", "1..2", "=>1", "1.2.3-", "1,,2",
+                                 "*.1", "1.*.3", "^1.2.x.3", "v1.2", "01", "1.02", "1.2.03", "00", "1.2.3-01",
+                                 "1.2.3-alpha.01", "1.2.3-a_b", "1.2-rc.1", "1.*-rc", "1.2.3+", "1.2.3-rc..1", "^01.2",
+                                 "1.2.3-rc,", ",1",
+                                 "*.*", "*.*.*", "1.2.*-rc", "1.2.*+b", "*-rc", "1.*+b", "1.2.*-rc.1+b", "x.x", "^*.*"])
+def test_s2_malformed_or_unsupported_requirements_raise(req):
+    with pytest.raises(ValueError):
+        tg.cargo_req_matches(req, "1.2.3")
+
+
+@pytest.mark.parametrize("req,version,ok", [
+    # Cargo book "Specifying Dependencies" + semver crate VersionReq: a pre-release version matches only when some
+    # comparator names the SAME major.minor.patch with a pre-release; build metadata never takes part in matching;
+    # numeric identifiers < alphanumeric ones; a stable release sorts after its pre-releases.
+    (">=1.2.3-alpha.1", "1.2.3-alpha.2", True), (">=1.2.3-alpha.1", "1.2.3", True), (">=1.2.3-alpha.1", "1.2.4", True),
+    (">=1.2.3-alpha.1", "1.2.4-alpha.1", False), (">=1.2.3-alpha.1", "1.2.3-alpha.0", False),
+    ("^1.2.3-alpha.1", "1.9.0", True), ("^1.2.3-alpha.1", "2.0.0", False), ("^1.2.3-alpha.1", "2.0.0-alpha", False),
+    ("1.2.3", "1.2.3-alpha", False), ("^1.2.3", "1.2.4-alpha", False), ("=1.2.3-rc.1", "1.2.3-rc.1", True),
+    ("=1.2.3-rc.1", "1.2.3", False), ("<1.2.3", "1.2.3-alpha", False), (">=1.2.3-alpha, <1.2.3", "1.2.3-beta", True),
+    ("~1.2.3-alpha", "1.2.5", True), ("~1.2.3-alpha", "1.3.0", False), (">1.2.3-alpha.1", "1.2.3-alpha.1", False),
+    ("1.2.3-rc.1+build.5", "1.2.3-rc.1+other", True), ("1.2.3+build", "1.2.3", True), ("1.2.3+build.01", "1.2.4", True),
+    ("<=1.2.3-rc.2", "1.2.3-rc.2", True), (">=1.0.0-alpha.1, <1.0.0-beta", "1.0.0-alpha.beta", True),
+    (">=1.0.0-alpha.1, <1.0.0-beta", "1.0.0-beta", False), (">=1.0.0-alpha.1, <1.0.0-beta", "1.0.0-alpha", False),
+    (">=1.0.0-beta.2", "1.0.0-beta.11", True), (">=1.0.0-beta.11", "1.0.0-beta.2", False), (">=1.0.0-rc.1", "1.0.0-beta.11", False),
+    ("1.*.*", "1.9.9", True), ("1.x.x", "2.0.0", False), ("1.2.*", "1.2.9", True),
+    ("1.0.0-0", "1.0.0-0", True), ("0", "0.0.0", True), ("0.0.0", "0.0.0", True),
+])
+def test_s5_prerelease_and_build_metadata_follow_cargo_semver_rules(req, version, ok):
+    assert tg.cargo_req_matches(req, version) is ok
+
+
+def _locks_dir(tmp_path, extra=None):
+    d = tmp_path / "locks"
+    for rel, versions in {"a/Cargo.lock": ["1.2.3"], "b/nested/deeper/Cargo.lock": ["0.4.0"]}.items():
+        (d / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / rel).write_text("".join('[[package]]\nname = "demo"\nversion = "%s"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n\n' % v
+                                     for v in versions))
+    for rel, text in (extra or {}).items():
+        (d / rel).parent.mkdir(parents=True, exist_ok=True)
+        (d / rel).write_text(text)
+    return d
+
+
+def _pin(tmp_path, monkeypatch, d):
+    pin = tmp_path / "IMAGE_ID"
+    pin.write_text("sha256:" + "0" * 64 + "\ncargo_locks_sha256=%s\n" % tg.cargo_locks_sha256(d))
+    monkeypatch.setattr(tg, "RUST_LOCKS_DIR", d)
+    monkeypatch.setattr(tg, "IMAGE_ID_FILE", pin)
+    return pin
+
+
+def test_s12_vendored_versions_keep_build_metadata_and_count_only_crates_io_registry_packages(tmp_path, monkeypatch):
+    reg = "registry+https://github.com/rust-lang/crates.io-index"
+    lock = "".join('[[package]]\nname = "%s"\nversion = "%s"\n%s\n' % (n, v, ('source = "%s"\n' % src) if src else "")
+                   for n, v, src in [("wasi", "0.11.1+wasi-snapshot-preview1", reg), ("pre", "1.0.0-rc.1", reg),
+                                     ("gitdep", "2.0.0", "git+https://example.invalid/x#abc"), ("local", "0.1.0", None),
+                                     ("other", "3.0.0", "registry+https://example.invalid/index"),
+                                     ("sparse", "4.0.0", "sparse+https://index.crates.io/")])
+    d = _locks_dir(tmp_path, {"c/Cargo.lock": lock})
+    _pin(tmp_path, monkeypatch, d)
+    v = tg.vendored_versions()
+    assert v["wasi"] == ["0.11.1+wasi-snapshot-preview1"] and v["pre"] == ["1.0.0-rc.1"] and v["sparse"] == ["4.0.0"]
+    assert "gitdep" not in v and "local" not in v and "other" not in v
+    assert tg.cargo_req_matches("0.11", "0.11.1+wasi-snapshot-preview1") and tg.cargo_req_matches("^1.0.0-rc.1", "1.0.0-rc.1")
+
+
+def test_s12_the_real_wasi_lock_entry_is_vendored():
+    assert "0.11.1+wasi-snapshot-preview1" in tg.vendored_versions()["wasi"]
+
+
+def test_s6_the_real_committed_locks_hash_equals_the_image_pin():
+    assert tg.cargo_locks_sha256() == tg.image_record()["cargo_locks_sha256"]
+    assert len(tg.rust_lock_files()) == 32 and "_allowlist/Cargo.lock" in tg.rust_lock_files()
+
+
+def test_s6_the_walk_is_recursive_and_the_vendored_set_comes_from_every_lock(tmp_path, monkeypatch):
+    d = _locks_dir(tmp_path)
+    _pin(tmp_path, monkeypatch, d)
+    assert tg.rust_lock_files(d) == ["a/Cargo.lock", "b/nested/deeper/Cargo.lock"]
+    assert tg.vendored_versions() == {"demo": ["0.4.0", "1.2.3"]}
+
+
+def test_s6_a_lock_that_differs_from_the_image_pin_is_refused(tmp_path, monkeypatch):
+    d = _locks_dir(tmp_path)
+    _pin(tmp_path, monkeypatch, d)
+    (d / "a/Cargo.lock").write_text((d / "a/Cargo.lock").read_text().replace("1.2.3", "9.9.9"))
+    with pytest.raises(TransportAbort, match="cargo_locks_sha256"):
+        tg.vendored_versions()
+    with pytest.raises(TransportAbort):
+        tg.cargo_manifest_reasons(BASE, BASE + 'regex = "1"\n')
+
+
+def test_s6_an_added_or_removed_lock_changes_the_hash_and_is_refused(tmp_path, monkeypatch):
+    d = _locks_dir(tmp_path)
+    _pin(tmp_path, monkeypatch, d)
+    (d / "c").mkdir()
+    (d / "c/Cargo.lock").write_text("")
+    with pytest.raises(TransportAbort, match="cargo_locks_sha256"):
+        tg.vendored_versions()
+    (d / "c/Cargo.lock").unlink()
+    (d / "a/Cargo.lock").unlink()
+    with pytest.raises(TransportAbort, match="cargo_locks_sha256"):
+        tg.vendored_versions()
+
+
+def test_s6_in_a_git_tree_an_untracked_lock_is_refused(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    d = _locks_dir(repo)
+    for args in (["init", "-q"], ["add", "."], ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "c"]):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    _pin(tmp_path, monkeypatch, d)
+    assert tg.rust_lock_files(d) == ["a/Cargo.lock", "b/nested/deeper/Cargo.lock"]
+    (d / "c").mkdir()
+    (d / "c/Cargo.lock").write_text("")
+    with pytest.raises(TransportAbort, match="untracked|tracked"):
+        tg.rust_lock_files(d)
+
+
+def test_s2_vendored_versions_come_from_the_image_locks_and_cover_every_allowlisted_crate():
+    v = tg.vendored_versions()
+    assert {"0.8.8", "0.10.3", "0.3.23"} <= set(v["rand"]) and {"0.5.7", "0.7.1"} <= set(v["counter"])
+    assert set(tg.RUST_ALLOWLIST) <= set(v) and "permutohedron" in v
+
+
+BARE = BASE.replace('rand = "0.8"\n', "")
+
+
+def s2_reasons(dep, extra=()):
+    return tg.cargo_manifest_reasons(BARE, BARE + dep + "\n", extra)
+
+
+@pytest.mark.parametrize("dep", ['regex = "99"', 'rand = "0.9"', 'rand = { version = "0.9", features = ["x"] }',
+                                 'itertools = ">=0.6, <0.15"', 'regex = "=1.0.0"', 'thiserror = "~1.1"'])
+def test_s2_a_requirement_no_vendored_version_satisfies_is_tampering_with_a_reason(dep):
+    reasons = s2_reasons(dep)
+    assert reasons and any(dep.split(" ")[0] in r and "vendored" in r for r in reasons), reasons
+
+
+def test_s2_a_malformed_requirement_in_a_manifest_is_tampering():
+    assert s2_reasons('regex = "1.*.3"') and s2_reasons('regex = "01"') and s2_reasons('regex = ""')
+    assert any("malformed" in r for r in s2_reasons('regex = "01"'))
+    assert s2_reasons('regex = ">=1.0.0-rc.1, <2"') == []              # Cargo-valid prerelease syntax is accepted
+
+
+@pytest.mark.parametrize("dep", ['regex = "1.*"', 'regex = ">=1, <2"', 'thiserror = "~1.0"', 'rand = "=0.8.8"', 'rand = "0.3"',
+                                 'itertools = { version = ">=0.5, <0.6", features = ["use_std"] }', 'time = "0.3"'])
+def test_s2_a_requirement_a_vendored_version_satisfies_is_allowed(dep):
+    assert s2_reasons(dep) == []
+
+
+def test_s2_reference_extra_crates_are_checked_against_the_vendored_versions_too():
+    assert s2_reasons('counter = "0.5.2"', ("counter",)) == []
+    assert s2_reasons('counter = "0.6"', ("counter",))
+
+
+def test_p367_compile_regenerates_the_lockfile_offline_before_the_frozen_build(tree):
+    _, guard = do_grade("rust", tree, basic_plan("rust"))
+    script = guard.calls[3][1][-1]
+    assert "cargo generate-lockfile --offline" in script and script.index("generate-lockfile") < script.index("--frozen")
+
+
+def test_p367_a_failing_lock_generation_is_a_compile_failure_not_infrastructure(tree):
+    plan = basic_plan("rust", compile=dict(rc=101, stderr="error: failed to select a version for the requirement `regex = \"99\"`"))
+    result, _ = do_grade("rust", tree, plan)
+    assert result.outcome == "compile_failure"
+
+
+def test_p367_rust_preflight_checks_every_allowlisted_crate_is_vendored(tree):
+    _, guard = do_grade("rust", tree, basic_plan("rust"))
+    script = guard.calls[2][1][-1]
+    assert "permutohedron" in script and "unicode-segmentation" in script and "Cargo.lock" not in script.split("python3")[0]
 
 
 @pytest.mark.parametrize("rel", ["build.rs", "src/build.rs", ".cargo/config.toml", "target/debug/x.rs", "tests/extra.rs",
@@ -1065,7 +1327,7 @@ def test_g13_resource_outcomes_require_the_nonce_marker_first(tree, step, over):
 def test_g13_compile_script_prints_its_own_marker_right_before_the_compiler(tree):
     _, guard = do_grade("rust", tree, basic_plan("rust"))
     compile_script = guard.calls[3][1][-1]
-    assert re.search(r'echo "TG2_COMPILE_START [0-9a-f]{16}"; cargo test --frozen --offline --no-run', compile_script)
+    assert re.search(r'echo "TG2_COMPILE_START [0-9a-f]{16}"; \{ find \. -name Cargo.toml', compile_script)
     assert "TG2_RUNNER_START" not in compile_script
 
 
@@ -1315,11 +1577,11 @@ def test_g21_registry_entry_survives_uncertain_cleanup(tree):
 NONCE = "a1" * 16
 
 
-def _leftover(guard, vol="mlxbench-tg2-aaaaaaaaaaaa-w", holder="old-holder", registry=None):
+def _leftover(guard, vol="mlxbench-tg2-aaaaaaaaaaaa-w", holder="old-holder", registry=None, nonce=None):
     (guard.vroot / vol).mkdir(exist_ok=True)
     guard.volumes[vol] = guard.vroot / vol
-    guard.volume_labels[vol] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1", "mlxbench.tg2.nonce": NONCE}
-    guard.holder_names[holder] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1", "mlxbench.tg2.nonce": NONCE}
+    guard.volume_labels[vol] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1", "mlxbench.tg2.nonce": nonce or NONCE}
+    guard.holder_names[holder] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1", "mlxbench.tg2.nonce": nonce or NONCE}
     return vol, holder
 
 
@@ -1365,7 +1627,7 @@ def test_p363_remove_registered_removes_exactly_the_recorded_names_and_verifies(
     work, private = tree
     guard = FakeGuard(basic_plan("rust"))
     vol, holder = _leftover(guard)
-    other_vol, other_holder = _leftover(guard, vol="mlxbench-tg2-bbbbbbbbbbbb-w", holder="other-holder")
+    other_vol, other_holder = _leftover(guard, vol="mlxbench-tg2-bbbbbbbbbbbb-w", holder="other-holder", nonce="c3" * 16)
     guard.volumes["mlxbench-tg2-aaaaaaaaaaaa-r"] = guard.vroot
     guard.volume_labels["mlxbench-tg2-aaaaaaaaaaaa-r"] = {"mlxbench.tg2": "1", "mlxbench.tg2.created": "1",
                                                           "mlxbench.tg2.nonce": NONCE}
@@ -1523,6 +1785,20 @@ def test_g29_remove_registered_deletes_only_nonce_matching_objects_and_lists_the
     assert reg.exists()                                                     # not every recorded object was removed
 
 
+def test_p367_remove_registered_also_removes_step_containers_carrying_the_registered_nonce(tree):
+    work, private = tree
+    guard = FakeGuard(basic_plan("rust"))
+    vol, holder = _leftover(guard)
+    guard.volumes["mlxbench-tg2-aaaaaaaaaaaa-r"] = guard.vroot
+    guard.volume_labels["mlxbench-tg2-aaaaaaaaaaaa-r"] = {"mlxbench.tg2": "1", "mlxbench.tg2.nonce": NONCE}
+    guard.holder_names["step-1"] = {"mlxbench.tg2": "1", "mlxbench.tg2.nonce": NONCE}          # killed mid-step
+    guard.holder_names["other-grade-step"] = {"mlxbench.tg2": "1", "mlxbench.tg2.nonce": "b2" * 16}
+    reg = _registry(private, vol, holder)
+    out = tg.remove_registered(guard.run_grader, reg, private)
+    assert sorted(out["containers"]) == sorted([holder, "step-1"])
+    assert "other-grade-step" in guard.holder_names and "step-1" not in guard.holder_names
+
+
 # G30 ------------------------------------------------------------------------------------------------------------
 def test_g30_a_failed_listing_during_removal_is_uncertainty_not_absence(tree):
     work, private = tree
@@ -1678,7 +1954,7 @@ def _docker_skip_reason():
 DOCKER_SKIP = _docker_skip_reason()
 ITEMS = [("rust", "gigasecond"), ("rust", "macros"), ("java", "affine-cipher"), ("java", "connect"),
          ("javascript", "affine-cipher"), ("javascript", "alphametics"), ("cpp", "gigasecond"),
-         ("cpp", "binary-search-tree")]
+         ("cpp", "binary-search-tree"), ("cpp", "bank-account"), ("rust", "poker"), ("rust", "robot-name")]
 
 
 def _docker_env():
@@ -1694,8 +1970,6 @@ def _item(tmp_path, lang, slug, guard):
     """(prepared stub tree, its manifest, solutions) with Rust lockfiles generated offline at preparation."""
     from bench.tests import tg2_trees
     stub = tg2_trees.stub_tree(POLYGLOT, lang, slug, tmp_path / "stub")
-    if lang == "rust":
-        tg.generate_cargo_locks(stub, slug, tmp_path / "private", guard=guard)
     return stub, _prepared(stub), tg2_trees.solutions(POLYGLOT, lang, slug)
 
 
@@ -1812,6 +2086,55 @@ def test_p363_a_killed_grader_leaves_listed_leftovers_that_block_grading_until_e
         subprocess.run(["docker", "volume", "rm", "-f", foreign], capture_output=True)
 
 
+def _robot_variant(tmp_path, dep_line, source=None):
+    guard = tg.LocalDocker()
+    stub, prepared, sols = _item(tmp_path, "rust", "robot-name", guard)
+    ref = tmp_path / "model"
+    shutil.copytree(stub, ref)
+    from bench.tests import tg2_trees
+    tg2_trees.apply_reference(POLYGLOT, "rust", "robot-name", ref)             # gets the example's rand 0.3 manifest...
+    (ref / "Cargo.toml").write_text((stub / "Cargo.toml").read_text() + "\n[dependencies]\n" + dep_line + "\n")
+    if source:
+        (ref / "src/lib.rs").write_text(source)
+    return guard, stub, ref, prepared, sols
+
+
+MODERN_ROBOT = (POLYGLOT / "rust/exercises/practice/robot-name/.meta/example.rs") if POLYGLOT else None
+
+
+def _modern_source():
+    text = MODERN_ROBOT.read_text()
+    text = text.replace("use rand::{thread_rng, Rng};", "use rand::{seq::SliceRandom, thread_rng};")
+    text = text.replace("*thread_rng().choose(LETTERS).unwrap()", "*LETTERS.choose(&mut thread_rng()).unwrap()")
+    return text.replace("*thread_rng().choose(NUMBERS).unwrap()", "*NUMBERS.choose(&mut thread_rng()).unwrap()")
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+def test_p367_a_model_style_solution_using_a_current_crate_version_builds_and_passes_offline(tmp_path):
+    _docker_env()
+    guard, stub, ref, prepared, sols = _robot_variant(tmp_path, 'rand = "0.8"', _modern_source())
+    result = tg.grade_item("rust", ref, "robot-name", tmp_path / "private", prepared=prepared, solutions=sols,
+                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600)
+    assert result.outcome == "parsed" and result.leaves and result.passing == result.collected, (result.outcome, result.reason_detail)
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+def test_p367_an_unlisted_crate_or_an_unsatisfiable_version_is_a_tamper_failure(tmp_path):
+    _docker_env()
+    guard, stub, ref, prepared, sols = _robot_variant(tmp_path, 'serde = "1"', _modern_source())
+    result = tg.grade_item("rust", ref, "robot-name", tmp_path / "private", prepared=prepared, solutions=sols,
+                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600)
+    assert result.outcome == "tampered" and any("serde" in r for r in result.tamper_reasons)
+    second = tmp_path / "second"
+    second.mkdir()
+    guard, stub, ref, prepared, sols = _robot_variant(second, 'regex = "99"', _modern_source())
+    result = tg.grade_item("rust", ref, "robot-name", second / "private", prepared=prepared, solutions=sols,
+                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600)
+    assert result.outcome == "tampered" and result.all_failed and any("regex" in r and "vendored" in r for r in result.tamper_reasons)
+
+
 @pytest.mark.docker
 @pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
 def test_tamper_is_caught_through_the_production_entry_point(tmp_path):
@@ -1829,17 +2152,68 @@ def test_tamper_is_caught_through_the_production_entry_point(tmp_path):
 @pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
 @pytest.mark.parametrize("lang,slug", ITEMS)
 def test_reference_all_pass_and_untouched_stub_fails_in_the_built_image(tmp_path, lang, slug):
+    from bench.tests import tg2_trees
     _docker_env()
     guard = tg.LocalDocker()
     stub, prepared, sols = _item(tmp_path, lang, slug, guard)
     ref = _ref_of(tmp_path, stub, lang, slug)
     stub_copy = tmp_path / "stub_copy"
     shutil.copytree(stub, stub_copy)
+    pct = (stub / "Cargo.toml").read_text() if lang == "rust" else None
     good = tg.grade_item(lang, ref, slug, tmp_path / "private", prepared=prepared, solutions=sols, guard=guard,
-                         timeout=900, keep=tmp_path / "keep", seq=0, boundary=0, final=True)
+                         prepared_cargo_toml=pct, extra_crates=tg2_trees.extra_crates(POLYGLOT, lang, slug), timeout=900,
+                         keep=tmp_path / "keep", seq=0, boundary=0, final=True)
     assert good.outcome == "parsed", good.phases
     assert good.collected and good.passing == good.collected, sorted(good.collected - good.passing)
     base = tg.grade_item(lang, stub_copy, slug, tmp_path / "private", prepared=prepared, solutions=sols, guard=guard,
-                         timeout=900)
+                         prepared_cargo_toml=pct, timeout=900)
     assert base.failing(good.collected) > 0, (base.outcome, base.passing)
     assert not guard.leftover()
+
+
+def test_p366_pids_limit_allows_a_thousand_test_threads():
+    assert tg.PIDS_LIMIT == 2048
+
+
+def _cargo_parity_cases():
+    reqs = ["1", "01", "1.0", "1.02", "^1.0", "~1", "~1.0", "=1", "=1.13.1", "=1.13", ">=1, <2", ">=1.13.2", ">1.13.1", "<1.13.1",
+            "<=1.13.1", "*", "1.*", "1.x", "0.2", "0.2.11", "0.2.12", "0.1", "0", "99", "1.0.0-rc.1", ">=1.0.0-rc.1, <2",
+            "=1.13.1-rc.1", "1.13.1+build", "1.2.3.4", "1.*.3", ">=", "", "^", "1,,2", "~0.2", "<0.2", "^0.2.5", ">=0.2, <1",
+            ">=1.*", "^1.*", "=1.*", "~1.*", "1.13.*", "=1.13.*", "1.13.1-0", ">=1.13.0-0", "^1.0.0-0", "1.0.0-rc..1",
+            "1.0.0-01", ">= 1", "^ 1", "1 ", " 1", "1, 2", "=0.2.11", "0.2.*", "v1", "1.0.0-rc.1+b.01", "<=0.2.11", ">0.2.10, <0.2.12",
+            ">1.*", "<2.*", "<=1.*", ">1.13.*", "<1.13.*", "<=1.13.*", ">=1.13.*", "^1.13.*", "~1.13.*", ">0.*", "<1.*",
+            "*.*", "*.*.*", "1.*.*", "1.2.*-rc", "1.2.*+b", "*-rc", "1.*+b", "x.x", "^*.*", "1.2.*-rc.1+b", "1.x.x"]
+    return [("regex", r) for r in reqs] + [("rand", r) for r in ("0.3", "0.4", "0.5", "0.8", "0.8.9", "0.9", "0.10", "^0.10.3", "~0.8.0")]
+
+
+@pytest.mark.docker
+@pytest.mark.skipif(DOCKER_SKIP is not None, reason=DOCKER_SKIP or "")
+def test_s5_matcher_agrees_with_real_cargo_resolving_offline_against_the_vendored_registry(tmp_path):
+    """Parity: the grader image's own cargo (offline, vendored sources) accepts exactly the requirements the matcher says
+    some vendored version satisfies, and rejects what the matcher calls malformed or unsatisfiable."""
+    _docker_env()
+    cases = _cargo_parity_cases()
+    script = (
+        "import json,subprocess,sys,pathlib\n"
+        "out=[]\n"
+        "for i,(crate,req) in enumerate(json.load(sys.stdin)):\n"
+        "    d=pathlib.Path('/tmp/p%d'%i); (d/'src').mkdir(parents=True); (d/'src/lib.rs').write_text('')\n"
+        "    (d/'Cargo.toml').write_text('[package]\\nname=\"p\"\\nversion=\"0.0.0\"\\nedition=\"2021\"\\n\\n[dependencies]\\n%s = %s\\n'%(crate,json.dumps(req)))\n"
+        "    r=subprocess.run(['cargo','generate-lockfile','--offline'],cwd=d,capture_output=True,text=True)\n"
+        "    out.append(r.returncode==0)\n"
+        "print('RESULT'+json.dumps(out))\n")
+    run = subprocess.run(["docker", "run", "--rm", "-i", "--pull=never", "--network", "none", "--entrypoint", "python3",
+                          tg.pinned_image_id(), "-c", script], input=json.dumps(cases), capture_output=True, text=True,
+                         timeout=600)
+    assert run.returncode == 0, run.stderr[-2000:]
+    cargo_ok = json.loads(run.stdout.rsplit("RESULT", 1)[1])
+    vendored = tg.vendored_versions()
+    mismatches = []
+    for (crate, req), real in zip(cases, cargo_ok):
+        try:
+            mine = any(tg.cargo_req_matches(req, v) for v in vendored[crate])
+        except ValueError:
+            mine = False
+        if mine != real:
+            mismatches.append((crate, req, "cargo" if real else "cargo-rejects", "matcher", mine))
+    assert mismatches == []

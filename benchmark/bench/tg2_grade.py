@@ -14,15 +14,17 @@ stdout/stderr and timing retained by sha256. Outcome classes:
 from __future__ import annotations
 from dataclasses import dataclass, field
 import fnmatch
+import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import posixpath
 import re
 import secrets
 import shutil
 import subprocess
 import tarfile
+import tomllib
 import tempfile
 import time
 import io
@@ -31,10 +33,12 @@ import xml.etree.ElementTree as ET
 from .structured_grade import _sha256, _write_index, manifest, protected_manifest, write_receipt
 from .token_turn_gate import TransportAbort
 
-VERSION = "m65-tg2-v1"
+VERSION = "m65-tg2-v2"
 IMAGE_TAG = "tg2-grader:m65-v1"
 REPO = Path(__file__).resolve().parents[2]
 IMAGE_ID_FILE = REPO / "benchmark/m65/tg2_image/IMAGE_ID"
+ALLOWLIST_FILE = REPO / "benchmark/m65/tg2_image/rust_allowlist.json"
+RUST_LOCKS_DIR = REPO / "benchmark/m65/tg2_image/locks/rust"
 LANGS = ("rust", "java", "javascript", "cpp")
 TIMEOUT_FLOOR = 180
 JEST = "/opt/tg2/js/node_modules/.bin/jest"
@@ -51,7 +55,8 @@ COMPILE_MARKER = "TG2_COMPILE_START"
 # Agent-created build outputs: top-level dirs absent from the prepared tree are stripped before tamper and grading.
 STRIP_TOP_LEVEL = ("build", "target", "node_modules", ".gradle")
 # Resource bounds (G15): process count, open files, single-file size, captured output and report size.
-PIDS_LIMIT = 512
+PIDS_LIMIT = 2048
+MEMORY_LIMIT = "4g"            # container memory and memory+swap cap
 NOFILE_LIMIT = 4096
 FSIZE_LIMIT = 1 << 30
 OUTPUT_CAP = 16_000_000
@@ -68,6 +73,241 @@ OPTIONAL_LEAVES = {
         {"palindrome-products.spec.js::Palindromes largest palindrome from four digit factors"}),
     ("javascript", "robot-name"): frozenset({"robot-name.spec.js::Robot all the names can be generated"}),
 }
+
+
+def _load_allowlist():
+    return tuple(json.loads(ALLOWLIST_FILE.read_text())["crates"])
+
+
+RUST_ALLOWLIST = _load_allowlist()
+RUST_VENDORED = tuple(sorted({c for c, _ in json.loads(ALLOWLIST_FILE.read_text())["vendor"]}))          # P367: one global crate allowlist, identical for every Rust item
+
+
+def rust_disclosure_line():
+    """The ONE line every Rust item discloses (identical text for all items)."""
+    return "Offline crates available for [dependencies]: " + ", ".join(sorted(RUST_ALLOWLIST)) + "."
+
+
+_DEP_KEYS = {"version", "features", "default-features"}
+
+
+def image_record():
+    """IMAGE_ID metadata: {key: value} for the `key=value` lines after the pinned image id."""
+    try:
+        lines = IMAGE_ID_FILE.read_text().splitlines()[1:]
+    except OSError as exc:
+        raise TransportAbort("tg2 image id pin missing: %s" % exc) from exc
+    return dict(line.split("=", 1) for line in lines if "=" in line)
+
+
+def rust_lock_files(root=None):
+    """Sorted repo-relative paths of every `Cargo.lock` under the locks directory: the full recursive walk, which in a git
+    tree must equal `git ls-files` (an untracked or ignored lock is refused, never silently included)."""
+    root = Path(root or RUST_LOCKS_DIR)
+    walked = sorted(p.relative_to(root).as_posix() for p in root.rglob("Cargo.lock") if p.is_file())
+    try:
+        inside = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"], capture_output=True,
+                                text=True).stdout.strip() == "true"
+    except OSError:
+        inside = False
+    if inside:
+        listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "."], capture_output=True, text=True,
+                                check=True).stdout.split("\0")
+        tracked = sorted(f for f in listed if f and PurePosixPath(f).name == "Cargo.lock")
+        if tracked != walked:
+            raise TransportAbort("tg2 Cargo.lock set is not the tracked set (untracked / missing locks): %s"
+                                 % sorted(set(tracked) ^ set(walked)))
+    return walked
+
+
+def cargo_locks_sha256(root=None):
+    """The image build's lock digest (benchmark/m65/tg2_image/build.sh): sha256 over the C-sorted `shasum -a 256` lines
+    (`<sha256>  ./<path>`) of every Cargo.lock."""
+    root = Path(root or RUST_LOCKS_DIR)
+    lines = sorted("%s  ./%s\n" % (hashlib.sha256((root / rel).read_bytes()).hexdigest(), rel)
+                   for rel in rust_lock_files(root))
+    lines.sort(key=lambda line: line.split("  ", 1)[1].encode())
+    return hashlib.sha256("".join(lines).encode()).hexdigest()
+
+
+def verified_cargo_locks_sha256():
+    """`cargo_locks_sha256()` of the committed locks, refused unless equal to the image pin."""
+    have, pinned = cargo_locks_sha256(), image_record().get("cargo_locks_sha256")
+    if have != pinned:
+        raise TransportAbort("tg2 committed Cargo.lock set (cargo_locks_sha256 %s) differs from the image pin (%s)"
+                             % (have, pinned))
+    return have
+
+
+_VENDORED = {}
+CRATES_IO_SOURCES = ("registry+https://github.com/rust-lang/crates.io-index", "sparse+https://index.crates.io/")
+
+
+def vendored_versions():
+    """{crate: sorted exact versions} vendored in the image: the union of every committed per-manifest `Cargo.lock`
+    the image's `cargo vendor --locked --sync` ran over (registry packages only), verified against the image pin."""
+    key = verified_cargo_locks_sha256()
+    if key not in _VENDORED:
+        found = {}
+        for rel in rust_lock_files():
+            for pkg in tomllib.loads((RUST_LOCKS_DIR / rel).read_text()).get("package", []):
+                if pkg.get("source") in CRATES_IO_SOURCES and _VERSION.match(pkg["version"]):
+                    found.setdefault(pkg["name"], set()).add(pkg["version"])
+        _VENDORED[key] = {k: sorted(v, key=_vtuple) for k, v in found.items()}
+    return _VENDORED[key]
+_COMPARATOR = re.compile(r"^(?P<op>\^|~|=|>=|<=|>|<)?\s*(?P<ver>(?:\d+|[*xX])(?:\.(?:\d+|[*xX])){0,2})$")
+
+
+_NUM = r"(?:0|[1-9][0-9]*)"
+_PRE_ID = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+_BUILD_ID = r"[0-9A-Za-z-]+"
+_WILD = r"[*xX]"
+_COMPARATOR = re.compile(
+    r"^(?P<op>>=|<=|\^|~|=|>|<)?\s*(?P<maj>%(n)s|%(w)s)(?:\.(?P<min>%(n)s|%(w)s)(?:\.(?P<pat>%(n)s|%(w)s)"
+    r"(?:-(?P<pre>%(p)s(?:\.%(p)s)*))?(?:\+(?P<build>%(b)s(?:\.%(b)s)*))?)?)?$"
+    % dict(n=_NUM, w=_WILD, p=_PRE_ID, b=_BUILD_ID))
+_VERSION = re.compile(r"^(%(n)s)\.(%(n)s)\.(%(n)s)(?:-(%(p)s(?:\.%(p)s)*))?(?:\+%(b)s(?:\.%(b)s)*)?$"
+                      % dict(n=_NUM, p=_PRE_ID, b=_BUILD_ID))
+_STABLE, _MIN_PRE = (1,), (0,)
+
+
+def _pre_key(pre):
+    """Semver precedence of a pre-release: a stable release sorts after any pre-release; numeric identifiers sort
+    before alphanumeric ones; a longer identifier list sorts after its prefix."""
+    if pre is None:
+        return _STABLE
+    return (0,) + tuple((0, int(x)) if x.isdigit() else (1, x) for x in pre.split("."))
+
+
+def _vkey(major, minor, patch, pre=None):
+    return (major, minor, patch, _pre_key(pre))
+
+
+def _parse_version(version):
+    m = _VERSION.match(version)
+    if not m:
+        raise ValueError("malformed version %r" % version)
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)
+
+
+def _vtuple(version):
+    return _vkey(*_parse_version(version))
+
+
+def _comparator(part, req):
+    """(op, nums, pre, wildcard) of one comparator; ValueError when Cargo / semver would reject it."""
+    m = _COMPARATOR.match(part.strip())
+    if not m:
+        raise ValueError("malformed Cargo version requirement %r" % req)
+    op, raw = m.group("op"), [m.group(k) for k in ("maj", "min", "pat")]
+    present = [x for x in raw if x is not None]
+    wild = [i for i, x in enumerate(present) if re.fullmatch(_WILD, x)]
+    if wild and (wild != list(range(wild[0], len(present))) or (wild[0] == 0 and len(present) > 1)
+                 or m.group("pre") is not None or m.group("build") is not None):
+        # wildcards form a trailing run after a numeric major (`1.*.*` is valid for cargo, `*.*` is not); no pre-release / build
+        raise ValueError("malformed Cargo version requirement %r" % req)
+    nums = [int(x) for x in present if not re.fullmatch(_WILD, x)]
+    return op, nums, m.group("pre"), bool(wild)
+
+
+def cargo_req_matches(req, version):
+    """Does the Cargo version requirement `req` match `version`? Comma-joined comparators: `^` caret (the default for a
+    bare version), `~`, `=`, `>`, `>=`, `<`, `<=`, wildcards `*` / `1.*` / `1.2.x`; numeric components without leading
+    zeros; `1.2.3-pre` pre-release and `+build` syntax only on a full version. Cargo-book / semver rules: a
+    pre-release version matches only when some comparator names the same major.minor.patch with a pre-release; build
+    metadata is ignored; a stable release sorts after its pre-releases. Malformed requirements raise ValueError."""
+    major, minor, patch, pre = _parse_version(version)
+    v = _vkey(major, minor, patch, pre)
+    comps = [_comparator(part, req) for part in req.split(",")]
+    if pre is not None and not any(len(nums) == 3 and cpre is not None and tuple(nums) == (major, minor, patch)
+                                   for _, nums, cpre, _ in comps):
+        return False
+    for op, nums, cpre, wild in comps:
+        if not nums:
+            continue                                                        # `*`: any version
+        n = len(nums)
+        full = n == 3
+        lo = _vkey(*nums, cpre) if full and cpre is not None else (
+            _vkey(*nums) if full else _vkey(*(nums + [0] * (3 - n)), "0"))
+        floor = _vkey(*(nums + [0] * (3 - n)), "0") if not full else lo
+        bump = _vkey(*(nums[:-1] + [nums[-1] + 1] + [0] * (3 - n)), "0")      # first version past the partial prefix
+        if (wild and op is None) or op == "=":
+            ok = (v == lo) if full else (floor <= v < bump)
+        elif op == ">=":
+            ok = v >= lo
+        elif op == ">":
+            ok = v > lo if full else v >= bump
+        elif op == "<":
+            ok = v < lo
+        elif op == "<=":
+            ok = v <= lo if full else v < bump
+        elif op == "~":
+            hi = _vkey(nums[0] + 1, 0, 0, "0") if n == 1 else _vkey(nums[0], nums[1] + 1, 0, "0")
+            ok = lo <= v < hi
+        else:                                                               # caret (bare default)
+            if nums[0] > 0 or n == 1:
+                hi = _vkey(nums[0] + 1, 0, 0, "0")
+            elif nums[1] > 0 or n == 2:
+                hi = _vkey(0, nums[1] + 1, 0, "0")
+            else:
+                hi = _vkey(0, 0, nums[2] + 1, "0")
+            ok = lo <= v < hi
+        if not ok:
+            return False
+    return True
+
+
+def cargo_manifest_reasons(prepared_text, current_text, extra_crates=()):
+    """P367: the root Cargo.toml may differ from the prepared one ONLY in `[dependencies]`: every entry names an
+    allowlisted crate with a string version requirement (optionally `features` / `default-features`); paths, git,
+    registries, renames, workspace entries, patches, build/dev dependencies, features, profiles, lints and every other
+    table must equal the prepared manifest. Structural (parsed TOML), never regex."""
+    try:
+        prepared = tomllib.loads(prepared_text)
+        current = tomllib.loads(current_text)
+    except tomllib.TOMLDecodeError as exc:
+        return ["Cargo.toml is not valid TOML: %s" % exc]
+    reasons = []
+    others = {k for k in set(prepared) | set(current) if k != "dependencies"}
+    for key in sorted(others):
+        if prepared.get(key) != current.get(key):
+            reasons.append("Cargo.toml [%s] changed (only [dependencies] is editable)" % key)
+    deps = current.get("dependencies", {})
+    if not isinstance(deps, dict):
+        return reasons + ["Cargo.toml [dependencies] is not a table"]
+    for name, spec in sorted(deps.items()):
+        if prepared.get("dependencies", {}).get(name) == spec:
+            continue
+        before = len(reasons)
+        if name not in RUST_ALLOWLIST and name not in extra_crates:
+            reasons.append("Cargo.toml dependency %s is not in the offline allowlist" % name)
+        elif isinstance(spec, str):
+            pass
+        elif isinstance(spec, dict):
+            extra = set(spec) - _DEP_KEYS
+            if extra or not isinstance(spec.get("version"), str):
+                reasons.append("Cargo.toml dependency %s uses forbidden keys %s or lacks a string version"
+                               % (name, sorted(extra)))
+            elif "features" in spec and not (isinstance(spec["features"], list)
+                                             and all(isinstance(f, str) for f in spec["features"])):
+                reasons.append("Cargo.toml dependency %s has malformed features" % name)
+            elif "default-features" in spec and not isinstance(spec["default-features"], bool):
+                reasons.append("Cargo.toml dependency %s has malformed default-features" % name)
+        else:
+            reasons.append("Cargo.toml dependency %s has a malformed specification" % name)
+            continue
+        if len(reasons) == before:
+            req = spec if isinstance(spec, str) else spec["version"]
+            have = vendored_versions().get(name, [])
+            try:
+                satisfiable = any(cargo_req_matches(req, ver) for ver in have)
+            except ValueError as exc:
+                reasons.append("Cargo.toml dependency %s has an unsupported version requirement: %s" % (name, exc))
+                continue
+            if not satisfiable:
+                reasons.append("Cargo.toml dependency %s requirement %r is not satisfiable by the vendored versions %s"
+                               % (name, req, have))
+    return reasons
 
 
 class ReportError(ValueError):
@@ -255,7 +495,7 @@ def _mount(kind, src, dst, *, readonly=False):
 def _docker_run(name, image_id, slug, mounts, inner, *, extra=(), nonce=None):
     cmd = [
         "docker", "run", *extra, "--name", name, "--pull=never", "--network", "none",
-        "--memory", "4g", "--memory-swap", "4g",
+        "--memory", MEMORY_LIMIT, "--memory-swap", MEMORY_LIMIT,
         "--pids-limit", str(PIDS_LIMIT),
         "--ulimit", "nofile=%d:%d" % (NOFILE_LIMIT, NOFILE_LIMIT), "--ulimit", "fsize=%d:%d" % (FSIZE_LIMIT, FSIZE_LIMIT),
     ]
@@ -285,7 +525,9 @@ def _bounded(script):
 
 def _raw_commands(lang, slug):
     if lang == "rust":
-        return ("cargo test --frozen --offline --no-run 2>&1",
+        return ("{ find . -name Cargo.toml -not -path './target/*' -execdir sh -c "
+                "'rm -f Cargo.lock && cargo generate-lockfile --offline' \\; ; } 2>&1 && "
+                "cargo test --frozen --offline --no-run 2>&1",
                 "cargo test --frozen --offline --no-fail-fast -- --include-ignored 2>&1")
     if lang == "java":
         return ("bash ./gradlew --offline --no-daemon compileTestJava",
@@ -372,18 +614,13 @@ def parse_collect(lang, data):
 
 
 _PREFLIGHT_PY_RUST = """
-import os, re, sys
+import os, sys
 vendor = "/opt/tg2/cargo-vendor"
-locks = [os.path.join(d, f) for d, ds, fs in os.walk(".") if "target" not in d.split(os.sep) for f in fs if f == "Cargo.lock"]
-if not locks:
-    sys.exit("no Cargo.lock in the tree")
-for lock in locks:
-    for block in open(lock).read().split("[[package]]")[1:]:
-        name = re.search(r'^name = "([^"]+)"', block, re.M).group(1)
-        version = re.search(r'^version = "([^"]+)"', block, re.M).group(1)
-        if 'source = "registry' in block and not (os.path.isdir(os.path.join(vendor, name)) or os.path.isdir(os.path.join(vendor, name + "-" + version))):
-            sys.exit("crate %s %s missing from the image vendor dir" % (name, version))
+for name in %r:
+    if not os.path.isdir(os.path.join(vendor, name)) and not any(d.startswith(name + "-") for d in os.listdir(vendor)):
+        sys.exit("allowlisted crate %%s missing from the image vendor dir" %% name)
 """
+
 _PREFLIGHT_PY_JAVA = """
 import os, re, sys
 ro = os.environ["GRADLE_RO_DEP_CACHE"] + "/modules-2/files-2.1"
@@ -403,7 +640,7 @@ def _preflight(lang):
     head = "# TG2_PREFLIGHT\nset -e\n"
     if lang == "rust":
         return (head + "command -v cargo rustc >/dev/null\ngrep -q cargo-vendor /root/.cargo/config.toml\n"
-                "python3 - <<'PY'\n" + _PREFLIGHT_PY_RUST + "PY\n")
+                "python3 - <<'PY'\n" + _PREFLIGHT_PY_RUST % (list(RUST_VENDORED),) + "PY\n")
     if lang == "java":
         return (head + "command -v java javac >/dev/null\nls /root/.gradle/wrapper/dists/gradle-8.7-bin/*/gradle-8.7/bin/gradle"
                 " >/dev/null\ntest -d \"$GRADLE_RO_DEP_CACHE/modules-2/files-2.1\"\n"
@@ -635,7 +872,7 @@ def _new_file_reason(work, rel, lang, solution_dirs, existing_fqns):
     return "cpp: only .h/.cpp helpers beside the solution (named in no CMake test glob) may be added"
 
 
-def tamper_reasons(work, protected, prepared, lang, *, solutions=()):
+def tamper_reasons(work, protected, prepared, lang, *, solutions=(), prepared_cargo_toml=None, extra_crates=()):
     """Reasons the tree must not be graded as the model's work; [] = clean."""
     work = Path(work)
     try:
@@ -644,12 +881,19 @@ def tamper_reasons(work, protected, prepared, lang, *, solutions=()):
         return ["unreadable or non-regular (symlink) tree entry: %s" % exc]
     reasons = ["case-colliding paths: %s vs %s" % pair for pair in case_collisions(current)]
     for rel, digest in sorted(protected.items()):
+        if lang == "rust" and (rel == "Cargo.toml" or posixpath.basename(rel).casefold() == "cargo.lock"):
+            continue                      # root manifest: structural check below; locks: regenerated by the grader
         if current.get(rel) != digest:
             reasons.append("protected file %s: %s" % ("missing" if rel not in current else "modified", rel))
     if lang == "rust":
-        for rel in sorted(set(current) | set(prepared)):
-            if posixpath.basename(rel).casefold() in RUST_ALWAYS_PROTECTED and current.get(rel) != prepared.get(rel):
-                reasons.append("rust: %s is protected (changed or added): %s" % (posixpath.basename(rel), rel))
+        if "Cargo.toml" not in current:
+            reasons.append("protected file missing: Cargo.toml")
+        elif "Cargo.toml" in prepared and current["Cargo.toml"] != prepared["Cargo.toml"]:
+            if prepared_cargo_toml is None:
+                reasons.append("rust: the prepared Cargo.toml text is required to check a changed manifest")
+            else:
+                reasons += cargo_manifest_reasons(prepared_cargo_toml, (work / "Cargo.toml").read_text(errors="replace"),
+                                                  extra_crates)
     solution_dirs = {posixpath.dirname(s) for s in solutions}
     existing = set()
     if lang == "java":
@@ -664,8 +908,9 @@ def tamper_reasons(work, protected, prepared, lang, *, solutions=()):
     return reasons
 
 
-def tampered(work, protected, prepared, lang, *, solutions=()):
-    return bool(tamper_reasons(work, protected, prepared, lang, solutions=solutions))
+def tampered(work, protected, prepared, lang, *, solutions=(), prepared_cargo_toml=None, extra_crates=()):
+    return bool(tamper_reasons(work, protected, prepared, lang, solutions=solutions,
+                               prepared_cargo_toml=prepared_cargo_toml, extra_crates=extra_crates))
 
 
 # --------------------------------------------------------------------------------------------------------- grade
@@ -713,13 +958,14 @@ def _disjoint(work, *others):
             raise TransportAbort("private/keep paths must be disjoint from the mounted work tree: %s" % other)
 
 
-def grade_item(lang, work, slug, private, *, prepared, solutions, **kw):
+def grade_item(lang, work, slug, private, *, prepared, solutions, prepared_cargo_toml=None, extra_crates=(), **kw):
     """The production entry point: strip agent build outputs, tamper-check, then grade. A tampered tree is never
     mounted; it returns outcome `tampered` (every leaf failed) and, with `keep`, writes the typed receipt."""
     work = Path(work).resolve()
     _disjoint(work, private, kw.get("keep"))
     stripped = strip_build_outputs(work, prepared)
-    reasons = tamper_reasons(work, protected_manifest(prepared, solutions), prepared, lang, solutions=solutions)
+    reasons = tamper_reasons(work, protected_manifest(prepared, solutions), prepared, lang, solutions=solutions,
+                             prepared_cargo_toml=prepared_cargo_toml, extra_crates=extra_crates)
     if reasons:
         result = Tg2Grade(lang=lang, outcome="tampered", all_failed=True, stripped=stripped, tamper_reasons=reasons,
                           reason="tampered", reason_detail="; ".join(reasons)[:2000])
@@ -1084,7 +1330,13 @@ def remove_registered(run, registry_file, private):
     outputs = private / ".tg2-cleanup"
     outputs.mkdir(parents=True, exist_ok=True)
     removed, foreign, problems = dict(containers=[], volumes=[]), [], []
-    objects = [("container", holder)] + [("volume", v) for v in volumes]
+    # step containers killed mid-grade carry the same nonce and hold the volumes: they are provably ours too
+    rc, listed = _plain(run, ["docker", "ps", "-a", "--filter", "label=%s=%s" % (NONCE_LABEL, nonce), "--format",
+                              "{{.Names}}"], outputs, "cl-steps")
+    if rc != 0:
+        raise TransportAbort("tg2 cannot list containers carrying the registry nonce (rc=%s)" % rc)
+    steps = sorted(n for n in listed.split() if n != holder and _REGISTERED_HOLDER.match(n))
+    objects = [("container", holder)] + [("container", n) for n in steps] + [("volume", v) for v in volumes]
     for kind, name in objects:
         if not _exists(run, kind, name, outputs, "cl-find"):
             continue

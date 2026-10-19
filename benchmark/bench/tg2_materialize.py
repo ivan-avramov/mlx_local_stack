@@ -1,0 +1,278 @@
+"""M65 tg2 step 2: per-language reference materializer (spec docs/specs/m65-tg2-corpus.md, T4 / T17 / T24 / T27).
+
+Reads each exercise's `.meta/config.json` and builds (a) the prepared stub tree with the freeze-time skip rewrites and
+(b) a separate reference overlay by a per-language path mapping (never copy-by-index). An ambiguous or missing
+destination is a `FreezeError`. Pure host-side; no docker."""
+
+from __future__ import annotations
+from dataclasses import dataclass, field
+import json
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import tomllib
+
+LANGS = ("rust", "java", "javascript", "cpp")
+VERSION = "m65-tg2-mat-v2"
+# S1: reference / instruction material that never reaches a prepared tree, at any depth.
+EXCLUDED_ROOTS = (".docs", ".meta", ".approaches", ".articles")
+# S1/S13: only the reference roots above are dropped (at any depth); every other file is kept and then audited against
+# the declared set and the scaffold allow-list below, so an undeclared directory fails loudly instead of vanishing.
+JAVA_REFERENCE_ROOT = ".meta/src/reference/java/"
+_JS_SKIP = re.compile(r"\b(xtest|xit|xdescribe)\(")
+_JAVA_DISABLED = re.compile(r"@Disabled(?:\([^)]*\))?[ \t]*\n?")
+_DEPRECATED = re.compile(r"(?i)\b(?:this|the) exercise (?:is|has been)\b[^.\n]{0,40}\bdeprecated\b|\binverted exercise\b")
+_MENTION = re.compile(r"(?i)\b(?:deprecated|inverted)\b")
+
+
+# S9: audited scaffold allow-list. A prepared file must be a config-declared solution / editor / test file OR match one of
+# these patterns (`*` = within one path segment; no other wildcard). Derived from the pinned corpus (every file of every
+# plannable item that is not declared) and reviewed; a pattern no pinned item uses is a test failure. Anything else in a
+# prepared tree is a FreezeError naming the file.
+SCAFFOLD = {
+    "rust": ("Cargo.toml", "OFFLINE_CRATES.md"),
+    "java": ("build.gradle", "gradlew", "gradlew.bat", "gradle/wrapper/gradle-wrapper.jar",
+             "gradle/wrapper/gradle-wrapper.properties"),
+    "javascript": (".eslintrc", ".npmrc", "LICENSE", "babel.config.js", "package.json"),
+    "cpp": ("CMakeLists.txt", "test/catch.hpp", "test/tests-main.cpp"),
+}
+ITEM_SCAFFOLD = {            # shipped extras of single items (helper tests, benches, data files, trybuild fixtures)
+    "java/satellite": ("src/test/java/TreeTest.java",),
+    "javascript/grep": ("data/iliad.txt", "data/midsummer-night.txt", "data/paradise-lost.txt"),
+    "rust/parallel-letter-frequency": ("benches/benchmark.rs",),
+    "rust/doubly-linked-list": ("src/pre_implemented.rs", "tests/step_4_leak_test_1.rs", "tests/step_4_leak_test_2.rs"),
+    "rust/macros": ("tests/invalid/Cargo.toml", "tests/invalid/*.rs"),
+}
+
+
+def matches_pattern(rel, pattern):
+    """Scaffold pattern match: `*` stays inside one path segment, everything else is literal."""
+    return re.fullmatch("[^/]*".join(re.escape(part) for part in pattern.split("*")), rel) is not None
+
+
+class FreezeError(ValueError):
+    """An item that cannot be materialized unambiguously (excluded with this reason; never a model outcome)."""
+
+
+@dataclass
+class Plan:
+    lang: str
+    slug: str
+    solutions: list                 # editable implementation paths (solution + editor, Cargo.toml excluded)
+    tests: list
+    mapping: list                   # [(source rel under the exercise, destination rel in the tree)]
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class Prepared:
+    tree: Path
+    rewrites: dict                  # {test file: skip forms rewritten}
+
+
+_DEP_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
+
+
+def _toml_value(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, str):
+        return json.dumps(v)
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join("%s = %s" % (k, _toml_value(x)) for k, x in v.items()) + " }"
+    raise FreezeError("unsupported TOML value %r" % (v,))
+
+
+def merge_cargo_dependencies(stub_text, example_text):
+    """P366: the protected Cargo.toml is the union of the stub's and `.meta/Cargo-example.toml`'s dependencies, so the
+    crates the reference needs are declared (and vendored offline) and a model may use exactly those. A crate declared
+    differently in both is a conflict (FreezeError)."""
+    stub, example = tomllib.loads(stub_text), tomllib.loads(example_text)
+    text = stub_text
+    for section in _DEP_SECTIONS:
+        have, want = stub.get(section, {}), example.get(section, {})
+        for name, spec in want.items():
+            if name in have and have[name] != spec:
+                raise FreezeError("conflicting %s entry %s: stub %r vs example %r" % (section, name, have[name], spec))
+        missing = {k: v for k, v in want.items() if k not in have}
+        if not missing:
+            continue
+        lines = "".join("%s = %s\n" % (k, _toml_value(v)) for k, v in missing.items())
+        header = re.search(r"^\[%s\][ \t]*\n" % re.escape(section), text, re.M)
+        if header:
+            text = text[:header.end()] + lines + text[header.end():]
+        else:
+            text = text.rstrip("\n") + "\n\n[%s]\n%s" % (section, lines)
+    merged = tomllib.loads(text)
+    for section in _DEP_SECTIONS:
+        if merged.get(section, {}) != {**stub.get(section, {}), **example.get(section, {})}:
+            raise FreezeError("dependency union did not round-trip for [%s]" % section)
+    return text
+
+
+def exercise_dir(corpus, lang, slug):
+    return Path(corpus) / lang / "exercises/practice" / slug
+
+
+def list_items(corpus):
+    return {lang: sorted(p.name for p in (Path(corpus) / lang / "exercises/practice").iterdir() if p.is_dir())
+            for lang in LANGS}
+
+
+def _safe(rel, what):
+    p = PurePosixPath(rel)
+    if not isinstance(rel, str) or not rel or p.is_absolute() or ".." in p.parts:
+        raise FreezeError("unsafe %s path %r" % (what, rel))
+    return p.as_posix()
+
+
+def read_plan(corpus, lang, slug):
+    src = exercise_dir(corpus, lang, slug)
+    try:
+        files = json.loads((src / ".meta/config.json").read_text())["files"]
+        solution, editor = list(files["solution"]), list(files.get("editor", []))
+        tests, examples = list(files["test"]), list(files["example"])
+    except (OSError, ValueError, KeyError) as exc:
+        raise FreezeError("unreadable .meta/config.json: %s" % exc) from exc
+    if not solution or not tests or not examples:
+        raise FreezeError("config needs at least one solution, test and example file")
+    for rel in solution + editor + tests + examples:
+        _safe(rel, "config")
+    solutions = [s for s in solution + editor if s != "Cargo.toml"]
+    for rel in solutions + tests:
+        if not (src / rel).is_file():
+            raise FreezeError("declared file %s is missing from the prepared tree" % rel)
+    for rel in examples:
+        if PurePosixPath(rel).parts[0] not in EXCLUDED_ROOTS:
+            raise FreezeError("example %s is not under an excluded root %s (it would be model-visible)"
+                              % (rel, list(EXCLUDED_ROOTS)))
+        if not (src / rel).is_file():
+            raise FreezeError("example %s is missing" % rel)
+    if lang == "rust":
+        if len(examples) != 1 or "src/lib.rs" not in solutions:
+            raise FreezeError("rust needs exactly one example and src/lib.rs as a solution")
+        mapping = [(examples[0], "src/lib.rs")]
+    elif lang == "javascript":
+        if len(examples) != 1 or len(solutions) != 1:
+            raise FreezeError("javascript needs exactly one example and one solution file")
+        mapping = [(examples[0], solutions[0])]
+    elif lang == "java":
+        mapping = []
+        roots = {PurePosixPath(s).parent.as_posix() for s in solutions}
+        for ex in examples:
+            if not ex.startswith(JAVA_REFERENCE_ROOT):
+                raise FreezeError("java example %s is outside %s" % (ex, JAVA_REFERENCE_ROOT))
+            dest = "src/main/java/" + ex[len(JAVA_REFERENCE_ROOT):]
+            inside_roots = any(dest.startswith(r + "/") for r in roots)
+            if dest not in solutions and not inside_roots:
+                raise FreezeError("java example %s maps to %s, which is neither declared nor under a package root"
+                                  % (ex, dest))
+            mapping.append((ex, dest))
+    elif lang == "cpp":
+        mapping = []
+        for ex in examples:
+            suffix = PurePosixPath(ex).suffix
+            matches = [s for s in solutions if PurePosixPath(s).suffix == suffix]
+            if len(matches) != 1:
+                raise FreezeError("cpp example %s has %d candidate destinations %s" % (ex, len(matches), matches))
+            mapping.append((ex, matches[0]))
+    else:
+        raise FreezeError("unsupported language %s" % lang)
+    dests = [d for _, d in mapping]
+    if len(set(dests)) != len(dests):
+        raise FreezeError("two examples map to one destination")
+    return Plan(lang, slug, solutions, tests, mapping, files)
+
+
+def prepare_tree(corpus, lang, slug, dest):
+    """The prepared (untouched stub) tree in a fresh directory: only allow-listed content kept (`.docs` / `.meta` / `.approaches` / `.articles` and unknown top-level directories removed), skip forms rewritten
+    (JS `xtest`/`xit`/`xdescribe`, Java `@Disabled` in both forms); the rewrite counts are recorded."""
+    src = exercise_dir(corpus, lang, slug)
+    dest = Path(dest)
+
+    def ignore(directory, names):
+        return {n for n in names if n in EXCLUDED_ROOTS}
+
+    plan = read_plan(corpus, lang, slug)          # S4: every configured reference source must be outside the tree
+    shutil.copytree(src, dest, ignore=ignore)
+    for rel in {src_rel for src_rel, _ in plan.mapping} | set(plan.config["example"]):
+        if (dest / rel).exists():
+            shutil.rmtree(dest, ignore_errors=True)
+            raise FreezeError("reference source %s is present in the prepared tree" % rel)
+    rewrites = {}
+    if lang == "javascript":
+        for path in sorted(dest.glob("*.spec.js")):
+            text, n = _JS_SKIP.subn(lambda m: m.group(1)[1:] + "(", path.read_text())
+            if n:
+                path.write_text(text)
+                rewrites[path.relative_to(dest).as_posix()] = n
+    if lang == "java" and (dest / "src/test").is_dir():
+        for path in sorted((dest / "src/test").rglob("*.java")):
+            text, n = _JAVA_DISABLED.subn("", path.read_text())
+            if n:
+                path.write_text(text)
+                rewrites[path.relative_to(dest).as_posix()] = n
+    if lang == "rust":
+        # P367: the model-facing manifest is the stub's; every Rust item discloses the same single crates line.
+        from bench import tg2_grade
+        (dest / "OFFLINE_CRATES.md").write_text(tg2_grade.rust_disclosure_line() + "\n")
+    declared = set(plan.solutions) | set(plan.tests) | set(plan.config.get("editor", []))
+    missing = sorted(rel for rel in declared | {"Cargo.toml"} & set(plan.config.get("solution", []))
+                     if not (dest / rel).is_file())
+    if missing:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise FreezeError("declared file(s) missing from the prepared tree: %s" % missing)
+    patterns = SCAFFOLD[lang] + ITEM_SCAFFOLD.get("%s/%s" % (lang, slug), ())
+    unknown = sorted(rel for rel in (f.relative_to(dest).as_posix() for f in dest.rglob("*") if f.is_file())
+                     if rel not in declared and not any(matches_pattern(rel, pat) for pat in patterns))
+    if unknown:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise FreezeError("prepared tree has file(s) outside the declared set and the scaffold allow-list: %s" % unknown)
+    return Prepared(dest, rewrites)
+
+
+def apply_reference(corpus, plan, tree):
+    """Overlay the reference solution onto a prepared tree (in a fresh directory, never an in-place edit of a tree a
+    container has mounted)."""
+    src, tree = exercise_dir(corpus, plan.lang, plan.slug), Path(tree)
+    for source, dest in plan.mapping:
+        target = (tree / dest).resolve()
+        if tree.resolve() not in target.parents:
+            raise FreezeError("destination %s escapes the tree" % dest)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src / source, target)
+    example_toml = src / ".meta/Cargo-example.toml"
+    if plan.lang == "rust" and example_toml.is_file():
+        # freeze-time only (never shown to a model): the reference gets the example's dependencies
+        manifest = tree / "Cargo.toml"
+        manifest.write_text(merge_cargo_dependencies(manifest.read_text(), example_toml.read_text()))
+    return tree
+
+
+def reference_extra_crates(corpus, lang, slug):
+    """Crates the item's reference manifest names (freeze time only): checked as explicit extras on reference trees."""
+    example_toml = exercise_dir(corpus, lang, slug) / ".meta/Cargo-example.toml"
+    if lang != "rust" or not example_toml.is_file():
+        return ()
+    doc = tomllib.loads(example_toml.read_text())
+    return tuple(sorted({c for sec in ("dependencies", "dev-dependencies") for c in doc.get(sec, {})}))
+
+
+def deprecated_scan(corpus, lang, slug):
+    """`deprecated: ...` for an exercise that declares itself deprecated / inverted (C145), `mention: ...` when the
+    words only occur in prose, None otherwise."""
+    src = exercise_dir(corpus, lang, slug)
+    texts = [p for p in (src / ".docs").glob("*.md")] if (src / ".docs").is_dir() else []
+    mention = None
+    for path in sorted(texts):
+        text = path.read_text(errors="replace")
+        m = _DEPRECATED.search(text)
+        if m:
+            return "deprecated: %s (%s)" % (m.group(0), path.name)
+        m = _MENTION.search(text)
+        mention = mention or ("mention: %s (%s)" % (m.group(0), path.name) if m else None)
+    return mention
