@@ -1,9 +1,13 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v10, 2026-10-20
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v11, 2026-10-20
 
-**v10 (C191, operator 2026-10-20: "the goal here must be to qualify and enable MTP across the picks") = v9 + §3.1: the phase
-covers EVERY MTP-certified registry entry** — `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` and `Ornith-1.0-35B-mlx-uniform-4bit`
-join the two Qwen3.8-27B picks; production pin = the P405 head (P400 + P401 + P405; `docs/specs/p405-kv-scheme-precedence.md`
-v4); §5 accepts the P406 interim registry state. v10 is in Cursor plan review (round 1 of 3) before its harness changes.
+**v11 (2026-10-20) = v10 after Cursor plan round 1 of 3 (DISAGREE V1 V2 V3 V5 V6 V7; all seven findings accepted —
+`docs/reviews/p369-v10/plan-round1.*`).** v10 (C191, operator: "the goal here must be to qualify and enable MTP across the
+picks") = v9 + §3.1: the phase covers EVERY MTP-certified registry entry — `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` and
+`Ornith-1.0-35B-mlx-uniform-4bit` join the two Qwen3.8-27B picks; §5 accepts the P406 interim registry state.
+**Pins (v11, V1):** PRODUCTION-code pin = fork `7207179b` (P400 + P401 + P405 F1 / F2 / K6; the run refuses unless
+`git diff 7207179b -- mlx_vlm ':!mlx_vlm/tests'` is empty) — this supersedes every earlier production pin named below
+(`4e6d0e03`, `da27f0ef`), which describe completed runs only; the HARNESS / reviewed head is bound separately
+(`--reviewed-head`, the Cursor-cleared descendant of `6911b17f`); both hashes are recorded in every manifest.
 
 Status: **v9 = v8 + §2.2 forced positions (P398, found by GPU smoke 3)**; v8 = v7 + §3 E2 on the same-instance design (C185 / P393); reviewed with its build (code review round 1 of 3, C186). v7 — Cursor round 7 `VERDICT: AGREE` (`docs/reviews/p369-phase2-plan-round7.cursor-gpt-5.6-sol-high.md`); the harness is built → its code review. v6 → round 6 `DISAGREE Q35 Q38` (incomplete closures; Q36 Q37 Q39 Q40 closed;
 `docs/reviews/p369-phase2-plan-round6.cursor-gpt-5.6-sol-high.md`), both applied in v7. v5 (= v4 + §2.5, P391) → round 5 `DISAGREE Q35–Q40`, all applied here
@@ -214,38 +218,58 @@ sha256 recorded before load.
   session, never pooled with E7a. Tool-session exposure is NOT measured here (parent §E7 named tg1 sessions); it would need
   production MTP event counters in the worker (a fork change of its own) and is recorded as a gap.
 
-### 3.1 v10 — the two further MTP-certified entries (C191)
+### 3.1 v10 / v11 — the two further MTP-certified entries (C191)
 
-Both are MTP-ON certified (M6b / M27) and were served MTP-ON on the pre-fix fork until C191 (P406). Each is qualified exactly
-like the two picks (smoke → full run on a reviewed head, criteria §2.2 / §3), after `Qwen3.8-27B-mlx-uniform-4bit`, with these
-differences:
+Both are MTP-ON certified (M6b / M27) and were served MTP-ON on the pre-fix fork until C191 (P406).
 
-- **Tuples (from the registry, P406 lines restored by the overlay):** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — `qwen3_5`
-  dense hybrid, TurboQuant 4-bit KV (served as such only with P405), per-query verification (harness `verify_policy=None`, the
-  runtime form of the default; the argv must select / default to `per_query` — P405 round 3 T15), drafter
+- **Campaigns (v11, V2):** every entry is its OWN campaign — its own smoke, its own smoke gate (`wall_s × 6 ≤ 3.5 h` for that
+  entry alone) and its own full run bound to that smoke; never one four-entry campaign. Order: `Qwen3.8-27B-mlx-uniform-4bit`,
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `Ornith-1.0-35B-mlx-uniform-4bit`. Budget ≈ 3–3.5 h per entry, ≈ 9–10 GPU h for the
+  three plus E7 heavy tails; a smoke projecting > 3.5 h goes to the operator. No Ornith wall estimate is assumed from its
+  3B active parameters — its smoke sets it.
+- **Tuples:** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — `qwen3_5` dense hybrid, TurboQuant 4-bit KV (P405), per-query
+  (harness `verify_policy=None` + an argv check that the scan resolves to `per_query`), drafter
   `caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter`. `Ornith-1.0-35B-mlx-uniform-4bit` — `qwen3_5_moe` (40 layers, full
-  attention every 4th, 256 experts + shared; its language model subclasses `qwen3_5`'s), native KV (`kv_bits: 0`), per-query,
-  TRANSPLANTED drafter `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter` (split via `--model-type qwen3_next`, M27).
-- **Overlay:** `overlay_registry` restores exactly the two `P406 INTERIM (C191` marked lines of the entry (draft_kind +
-  adjacent draft_model); the C177 marker logic is unchanged for the two picks; anything else refuses.
-- **Items (no C84 bundles exist for either entry):** E2 / E7a / E7b use the SAME item ids as `Qwen3.8-27B-mlx-uniform-4bit`'s
-  `*.c84bundle-after-tq4-20260914.jsonl` (five per axis), rebuilt by the same prompt builders at the same pins for the entry's
-  own template; the reconstruction's `prompt_tokens == row` check (which proves faithfulness to a C84 request) does not apply —
-  replaced by the recorded per-item templated-prompt sha256 + token count, and the run labels these items "borrowed (no C84
-  run for this entry)". E2 decides as in §3; E7a / E7b stay descriptive and here also record how often the pre-fix conditions
-  would have hit while the entry served MTP-ON (an exposure record for P406).
-- **Ornith coverage, before any GPU minute (test-first):** the observation hooks (§2.2 recorder, emission cut, verifier block
-  boundaries, probe) and the kernel inventory (Q29) must be proven on a tiny `qwen3_5_moe` fixture (MoE MLP via `SwitchGLU`;
-  the static manifest gains the MoE verify-path kernels); a hook that does not fire on the MoE stack is a harness error, not a
-  pass. Expected risk (recorded, not assumed): batched vs singleton expert dispatch inside a verify block is the MoE analogue
-  of P400 — E1c measures it.
-- **Smoke positives:** the KV positive follows the leaf census / exact manifest (P405 F3): `tq_norm` for
+  attention every 4th, 256 experts / top-k 8 + shared), native KV, per-query, TRANSPLANTED drafter
+  `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter` (split via `--model-type qwen3_next`, M27).
+- **Registry states and overlay (v11, V5):** `Campaign.prepare` itself (not an opt-in test) requires the live registry to be
+  byte-identical to one of THREE states derived deterministically from the pinned golden fixture: (1) the fixture; (2) the
+  C177 interim (the fixture with exactly C177's raw-byte substitutions); (3) state 2 plus exactly both complete P406 pairs (each
+  entry's `draft_kind` line replaced by the commented line carrying the `P406 INTERIM (C191 2026-10-20)` marker text, and the
+  ADJACENT `draft_model` line commented, bytes otherwise unchanged). Partial P406, an altered comment / path / whitespace /
+  newline, a duplicate marker, non-adjacency or any other edit refuses. Each overlay replaces exactly that entry's pair with
+  the fixture's bytes and asserts the entry's restored block equals the fixture block. The fork's opt-in live-registry test
+  (§5) accepts the same three states by the same derivation.
+- **Model pins (v11, V6):** a reviewed pins file in the harness (`dev/p369_phase2/pins.json`) names, per entry, the target and
+  drafter Hugging Face revisions and the sha256 of every loaded file, including every prompt- / template-affecting file
+  (tokenizer, chat template, generation config): the registry's recorded revision where it has one (e.g.
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` `eee677f5`), else the cached snapshot fixed at review time and labelled "pinned at
+  qualification" (no certification-time hash exists to prove equality). Smoke and full run refuse a snapshot or file that
+  differs. The worker asserts the loaded drafter is `qwen3_5_mtp` with the pinned block size / depth, hidden and vocabulary
+  dims equal to the target's, the target text type (dense vs `qwen3_5_moe`, Ornith 256 experts / top-k 8 and its quantization),
+  the observed verify widths and the effective `per_query` policy. Ornith also binds an extraction manifest (the
+  `qwen3_next` source revision and the resulting drafter hashes) if M27 recorded one; if not, the gap is recorded.
+- **Items (v11, V4):** no C84 bundles exist for either entry. E2 / E7 use a reviewed BORROWED PANEL fixture
+  (`dev/p369_phase2/borrowed_panel.json`): per item the source bundle path (under `Qwen3.8-27B-mlx-uniform-4bit`) and its sha256,
+  the item id, seed, dataset revision and content hash, and the canonical built-message sha256; per entry its templated token
+  count and digest, precomputed with the pinned tokenizer BEFORE any GPU minute and bound into smoke-to-full authorization. A
+  live reconstruction differing from the fixture refuses. E2 decides as in §3; E7a / E7b are a "synthetic borrowed-panel
+  incidence record" — descriptive, never an estimate of how often events occurred while the entry served.
+- **Ornith observability, before any GPU minute (v11, V3), test-first on a tiny `qwen3_5_moe` fixture:** (a) the loaded target
+  is structurally MoE — model class, layer count / type census, full-attention / GDN split, MoE block count, expert count and
+  top-k asserted; (b) one complete MTP request exercises recorder rows, accepted / rejected and bonus emission cuts, commit
+  snapshots, neutral probes and verifier block boundaries; (c) the kernel inventory classifies the router gate, the shared
+  expert and EACH routed bank projection (gate / up / down) exactly once per invocation in verifier scope, for both
+  `SwitchLinear` and `QuantizedSwitchLinear` — coverage per routed-bank invocation, not "all experts observed"; (d) width-2 /
+  width-3 verifier execution is bitwise-compared with sequential singleton execution on independent caches (routed output,
+  target rows, selected expert indices, final state) — the MoE analogue of P400, measured not assumed; (e) negative tests that
+  disable each new hook or omit a routed projection make the harness fail.
+- **Smoke positives:** the KV positive follows the exact manifest (P405 F3): `tq_norm` for
   `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `old_prefix_k` for Ornith.
-- **Restore after PASS** (per entry, with the fork bump and its re-certification plan): the P406 lines uncommented; a FAIL
-  keeps the entry MTP-OFF and goes to the operator with the measured bound.
-- **Estimate:** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ≈ `Qwen3.8-27B-mlx-uniform-4bit` (≈ 2.7 h full + 0.5 h smoke);
-  Ornith ≈ 2 h full (≈ 3B active parameters decode faster; 10 attention layers of native KV hash like Fable's 16 scaled) —
-  the smoke calibrates; > 3.5 h projected goes to the operator first.
+- **Restore (v11, V7):** a worker PASS changes NO registry line. Per entry: worker PASS → reviewed fork push + submodule bump →
+  reviewed router-chain ON / OFF re-certification against the pinned tuple → only then the exact restoration of that entry's
+  C177 or P406 pair (and its registry-dependent tests, e.g. `test_opencode_probe_seeding.py`). FAIL, ABORT or INCOMPLETE
+  keeps it MTP-OFF and goes to the operator with the measured bound.
 
 ## 4. Estimate (Q25)
 
@@ -277,5 +301,5 @@ fixture's. C182 approved the v1 variant
 ## 6. After this phase
 
 Results → `docs/open-questions.md` P369 + handoff. Then fork push (operator) → submodule bump (full suites in both repos) →
-per-pick re-certification ON vs OFF on real router chains (own plan, Cursor review, operator GPU go) → restore MTP-ON (C177
-lines + `test_opencode_probe_seeding.py` expectation) → P368 layers 2–3.
+per-pick re-certification ON vs OFF on real router chains (own plan, Cursor review, operator GPU go) → restore MTP-ON per
+entry that passed both (its C177 or P406 pair + `test_opencode_probe_seeding.py` expectation; §3.1 Restore) → P368 layers 2–3.
