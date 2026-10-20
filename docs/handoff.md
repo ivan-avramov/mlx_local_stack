@@ -21,6 +21,17 @@ C194), `docs/specs/p405-kv-scheme-precedence.md` (v4, accepted C192). Model name
 - **Stack `main`** ≈ 110 commits ahead of origin. Pushes need the operator's in-turn go ("no push yet").
 - Stack suite: 6887 passed; 4 failed + 9 errors PRE-EXISTING (P409: docker absent → p371 isolation errors; tg2 Cargo.lock set).
 
+- **Fork `p369-v13`** (P405 worktree, local only) HEAD `5f407d5d` on `64afc7dd`: the P369 v13 harness build — 16-state
+  registry generator (`dev/p369_phase2/registry_states.py`), four-entry `PICKS` + one-entry campaigns + argv scan check,
+  `pins.json` (Hub-verified identical to the certification uploads), loaded-drafter assertions, borrowed panel +
+  `--phase panel`, phase-based projection, MoE telemetry (routed banks, drafter draft-scope inventory, smoke-gate
+  requirement), split-path characterization (adversarial nested `qwen3_next` refused by strict load), V3 (d) MoE bitwise
+  test. CPU tests pass; **Metal-dependent tests (`test_p369_phase2_moe.py` b–e, `test_p369_phase2_worker.py`) not yet run**
+  (GPU campaign). Cursor code review round 1 of 3 running.
+- **GPU:** chain `$S/chain_uniform_tq.sh` (pid at launch 75312): smoke 13 bound to `64afc7dd` → the `Qwen3.8-27B-mlx-uniform-4bit`
+  TurboQuant full run (`…/p369/phase2/20261020-64afc7dd-full-uniform-tq`, `--projection-ruling C193`, no wall cap); the
+  chain restores the p369 worktree afterwards — verify.
+
 ## Waiting on the operator
 
 - Nothing blocking. Pushes (`p400-tq-width2`, `p405-kv-scheme`, stack `main`) when wanted. P409 fix proposal (small).
