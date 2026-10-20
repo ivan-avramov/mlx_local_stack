@@ -26,11 +26,15 @@ C194), `docs/specs/p405-kv-scheme-precedence.md` (v4, accepted C192). Model name
   `pins.json` (Hub-verified identical to the certification uploads), loaded-drafter assertions, borrowed panel +
   `--phase panel`, phase-based projection, MoE telemetry (routed banks, drafter draft-scope inventory, smoke-gate
   requirement), split-path characterization (adversarial nested `qwen3_next` refused by strict load), V3 (d) MoE bitwise
-  test. CPU tests pass; **Metal-dependent tests (`test_p369_phase2_moe.py` b–e, `test_p369_phase2_worker.py`) not yet run**
-  (GPU campaign). Cursor code review round 1 of 3 running.
-- **GPU:** chain `$S/chain_uniform_tq.sh` (pid at launch 75312): smoke 13 bound to `64afc7dd` → the `Qwen3.8-27B-mlx-uniform-4bit`
-  TurboQuant full run (`…/p369/phase2/20261020-64afc7dd-full-uniform-tq`, `--projection-ruling C193`, no wall cap); the
-  chain restores the p369 worktree afterwards — verify.
+  test. Code review round 1 of 3 NOT CLEARED M1–M10 → all fixed (M1 / M2 / M3 / M9 / M10 tested on CPU; M4–M8 + V3 tests
+  written, **Metal-only — run after the GPU campaign**, then code round 2).
+- **GPU: the `Qwen3.8-27B-mlx-uniform-4bit` TurboQuant FULL RUN** (started 2026-10-20 11:27, ≈ 3.5–4 h;
+  `$STACK_WORKDIR/p369/phase2/20261020-64afc7dd-full-uniform-tq-2`, manifest: reviewed head `64afc7dd`, production
+  `7207179b`, `--projection-ruling C193`, no wall cap C194), bound to smoke 14 (`…-smoke14-uniform-tq-bound`: gate pass,
+  only `fits` open, 12,942 s). Chain `$S/chain_uniform_tq.sh` (pid at launch 4004) restores the p369 worktree after — verify.
+  Smoke 13 (unbound: run without `--reviewed-head`) could not authorize; the first full attempt `…-full-uniform-tq` refused.
+- **Fork `p404-arm-a`** (worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p404a`) `e12780d0` = `p369-mtp` + the P405 production commits
+  (F1 / F2 + the K6 hunk): the R4 ABBA arm A; production-differs from `64afc7dd` by P400 + P401 only.
 
 ## Waiting on the operator
 
