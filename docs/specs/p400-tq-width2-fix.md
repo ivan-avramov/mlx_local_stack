@@ -1,6 +1,7 @@
-# P400 — TurboQuant KV × width-2 verify block: fix proposal — v3, 2026-10-19
+# P400 — TurboQuant KV × width-2 verify block: fix proposal — v4, 2026-10-19
 
-Status: **v3** = v2 + plan-review round 2 (T4 T6 T8 T9, `docs/reviews/p400/plan-round2…`; T1 T2 T3 T5 T7 resolved) — for
+Status: **v4** = v3 + plan-review round 3's only finding T10 (the memory gate measures the decode phase; T4 T8 T9 resolved,
+T6 completed by T10) — rounds exhausted (C186), to the operator. **v3** = v2 + plan-review round 2 (T4 T6 T8 T9, `docs/reviews/p400/plan-round2…`; T1 T2 T3 T5 T7 resolved) — for
 round 3 of 3, then operator approval. **v2** = v1 + every Cursor plan-review round-1 finding (T1–T7, `docs/reviews/p400/plan-round1…`) + the operator's
 answers (fix **A**, "the quality-maximizing option"; no upstream issue; the re-certification scope of §5) + P401's hardening
 (bundled: one production review, one re-pin). For plan review round 2 of 3, then operator approval. Production change in the
@@ -118,9 +119,12 @@ the P369 worker env allowlist — filed separately as P402 (logical-offset slici
   3. **Performance (T6, pre-registered):** a width-2-heavy probe — the deployed tuple of `Qwen3.8-27B-mlx-uniform-4bit`
      (TurboQuant 4-bit) and of `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (native16) with the MTP block forced to 2, a fixed
      8,192-token prefix and 256 decoded tokens, fixed seeds; old pin vs new pin, order-balanced (ABBA), 3 warmup + 10 measured
-     repetitions per arm on an idle box at 140 W, ≥ 10 min idle between arms (AGENTS.md); statistic = the median decode tok/s
-     per arm and `mx.get_peak_memory` after the prefill. **Bounds:** median decode tok/s regression ≤ 3 % and peak memory
-     increase ≤ 1 % (> either → back to the operator with the numbers); the regression smokes only confirm, never decide; the
+     repetitions per arm on an idle box at 140 W, ≥ 10 min idle between arms (AGENTS.md). Per measured repetition (round 3
+     T10): run and synchronize the identical prefill, `mx.reset_peak_memory()`, run and synchronize all 256 decoded tokens,
+     then record the DECODE-PHASE peak (`mx.get_peak_memory`) and decode tok/s. ABBA = two legs per arm, each 3 warmup + 5
+     measured; the 10 measured repetitions of an arm are pooled across its two legs. Statistic per arm: the median of the 10
+     (decode tok/s; decode-phase peak), with the per-arm maximum peak also reported. **Bounds:** median decode tok/s regression
+     ≤ 3 % and median decode-phase peak increase ≤ 1 % (> either → back to the operator with the numbers); the regression smokes only confirm, never decide; the
      end-to-end speed is re-measured by M6d.
   4. Then the fork main merge + submodule bump (suites in both repos) → M6d re-certification on real router chains for both
      picks (≥ 1.3× speed, ±5 pp quality; own plan, Cursor review, operator GPU go) → MTP-ON restore (C177 lines, CERTIFIED
