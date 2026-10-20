@@ -2,6 +2,24 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-20 — P369 phase 2: `Qwen3.8-27B-mlx-uniform-4bit` worker-qualified ON TURBOQUANT (PASS)
+
+**What:** the P369 phase-2 worker-conformance full run for `Qwen3.8-27B-mlx-uniform-4bit` on fork `64afc7dd` (P400 verifier fix
++ P401 guard + P405 `--kv-quant-scheme` fix), i.e. on the TurboQuant 4-bit KV its registry entry asks for — served for the first
+time since 2026-08-23 (P405). Run `$STACK_WORKDIR/p369/phase2/20261020-64afc7dd-full-uniform-tq-2`, 6,481 s.
+
+**Result:** E1c PASS on all five cells (short, 1,024 / 8,192 / 32,768 / 65,536 tokens): every sampled MTP-ON row equals plain
+decoding on the same instance, state and probes equal at every commit, C1 / C2 identical; leaf census per cell 15
+`TurboQuantKVCache` + 1 native (last layer) + 48 `ArraysCache`. E2 PASS (greedy identity). E7a (n = 20, the pre-fix condition
+incidence): M4a 6 / 20 (CI 0.12–0.54), M4b 11 / 20 (CI 0.32–0.77), M4b_first 0 / 20, M3 0 / 20. E7b 5 / 5 continuous.
+
+**Mechanism:** P400's length-2 verifier shortcut was non-exact on quantized KV under TF32; fix A (per-query singleton
+verification) is exact on the codec now served. P405 made TurboQuant engage.
+
+**Implication / recommendation:** MTP-ON is exact for this pick at the worker level on the shipped codec. MTP stays OFF in the
+daily driver (C177) until the fork merge + submodule bump + router-chain re-certification (P369 v13 §3.1) and the P405 codec
+measurements (R5 performance, R6 matched quality, R7 256K) — the codec change itself still needs its quality verdict.
+
 ## 2026-10-20 — P369 phase 2: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` MTP-ON is exact on real weights (E1c / E2 PASS); `Qwen3.8-27B-mlx-uniform-4bit` blocked by a production defect (P400, fixed on a branch)
 
 Worker-conformance certification on the box's production numerics (fork `3a92943d`, production `4e6d0e03`; the fork's real
