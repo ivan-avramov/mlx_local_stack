@@ -1,7 +1,8 @@
-# P405 — the server honours `--kv-quant-scheme` (plan v3, 2026-10-20)
+# P405 — the server honours `--kv-quant-scheme` (plan v4, 2026-10-20)
 
-Status: v3 after Cursor plan round 2 of 3 (DISAGREE T10 T11 T12; all accepted — `docs/reviews/p405/plan-round2.*`); v2
-resolved round 1 (T1–T9). F1 / F2 and T1–T5 are implemented red-first on `p405-kv-scheme` (`ad36e941` red, `0163f212` green). Defect, mechanism and affected entries: `docs/open-questions.md` P405.
+Status: v4 after Cursor plan round 3 of 3 (DISAGREE T13 T14 T15; T10–T12 and round-1 T4 / T9 confirmed resolved) — escalated
+to the operator (lead rec: accept v4 without a fourth round). T15 applied; T13 / T14 are latent defects outside every served
+configuration, recorded as P407 / P408 with their own proposals (not P405 scope). v3 resolved round 2, v2 round 1. F1 / F2 and T1–T5 are implemented red-first on `p405-kv-scheme` (`ad36e941` red, `0163f212` green). Defect, mechanism and affected entries: `docs/open-questions.md` P405.
 
 ## 1. Decision (C189, operator 2026-10-20)
 
@@ -31,14 +32,18 @@ it passes to `ResponseGenerator`. The `lifespan` line that reads `KV_BITS` / `KV
 
 F3. The P369 harness (`dev/p369_phase2/worker.py`) fails closed on the served codec (round 1 T4, round 2 T10):
 `served_state` records EVERY resolved `ResponseGenerator` KV field (`kv_bits`, `kv_key_bits`, `kv_value_bits`,
-`kv_key_scheme`, `kv_value_scheme`, `kv_quant_scheme`, `kv_group_size`, `quantized_kv_start`) plus `TQ_KV_QUANT_MODE`;
+`kv_key_scheme`, `kv_value_scheme`, `kv_quant_scheme`, `kv_group_size`, `quantized_kv_start`) plus `TQ_KV_QUANT_MODE` (pure module
+`dev/p369_phase2/kvmanifest.py`);
 `assert_served` requires each to equal what the argv resolves to (the CLI's own defaults where a flag is absent; native when
 bits are absent / 0), as the P400 perf probe does for bits / scheme (`ce04439b`, extended to the same field set). The smoke
 gate requires an EXACT leaf manifest, ordered by layer path (not aggregate class counts): the expected entry per attention
 layer — class, and for TurboQuant leaves the key / value bit widths and the quantization mode — is derived from the model
-config's layer types, the argv's KV flags and `--quantized-kv-start`, and the documented last-full-attention-layer exemption
-(`models/cache.py` ~17–23). Any `QuantizedKVCache` leaf under `turboquant`, a missing / extra leaf, a wrong width, mode,
-start or exempt-layer placement fails.
+cache template (`make_cache()`), the argv's KV flags, and the SERVED path's policy (`generate/common.py`
+`maybe_quantize_kv_cache`: the TurboQuant branch keeps the last top-level cache entry native when there are more than two;
+the uniform branch converts every KV layer; `models/cache.py` `should_quantize_kv_layer` is APC's, not the served path's).
+Only `quantized_kv_start` 0 is modelled (every registry entry); anything else is refused. Any `QuantizedKVCache` leaf under
+`turboquant`, a missing / extra leaf, a wrong width (so a lost split key / value width, P407, fails closed), mode or
+exempt-layer placement fails.
 
 Rejected alternative: a `None` default for `kv_quant_scheme` with an env fallback in `app.py`. Narrower — leaves
 `--vision-cache-size` (also frozen: CLI writes `MLX_VLM_VISION_CACHE_SIZE` after import) and the `replace` restore point stale.
@@ -49,7 +54,8 @@ Audit of every `RuntimeConfig.from_env` knob against the CLI's env writes (`cli.
 |---|---|---|---|
 | `kv_quant_scheme` | yes | `"uniform"` (truthy) | **ignored** (P405) |
 | `vision_cache_size` | yes | `20` | **ignored** (latent; the stack never sets it) |
-| `kv_bits`, `kv_key_bits`, `kv_value_bits`, `kv_key_scheme`, `kv_value_scheme`, `kv_group_size`, `quantized_kv_start` | yes | `None` | correct via `app.py` env fallbacks |
+| `kv_bits`, `kv_group_size`, `quantized_kv_start` | yes | `None` | correct via `app.py` env fallbacks |
+| `kv_key_bits`, `kv_value_bits`, `kv_key_scheme`, `kv_value_scheme` | yes | `None` | reach the generator via fallbacks, but the cached-session path does not forward them (P407, latent: no registry entry sets them) |
 | `max_kv_size` | yes | `None` | correct via `generation.py` fallback |
 | `spec_draft_model`, `spec_draft_kind` | yes | `None` | correct via `ResponseGenerator` env fallback |
 | `apc_*`, `token_queue_timeout` | no | — | unaffected |
@@ -90,7 +96,8 @@ R3. MTP exactness on the chosen codec for EVERY affected MTP-enabled main pick (
 the full run on a reviewed head; acceptance = `docs/specs/p369-phase2-run-plan.md` v9 — E1c every cell PASS incl. C1 / C2,
 E2 PASS, E7a / E7b reported) on P400 + P401 + P405 for `Qwen3.8-27B-mlx-uniform-4bit` (replaces the planned affine run) and
 for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (added to the harness `PICKS` with its registry tuple: `--draft-kind mtp`, its
-extracted drafter, verify policy `per_query`). Run on TurboQuant first; if R6 chooses affine for a pick, its R3 reruns on
+extracted drafter, `verify_policy=None` — the runtime form of the default per-query path, as for
+`Qwen3.8-27B-mlx-uniform-4bit` — plus a separate check that its argv selects / defaults to `per_query`; round 3 T15). Run on TurboQuant first; if R6 chooses affine for a pick, its R3 reruns on
 affine. M63 (MTP-ON tg1 arm) waits for R3 + R6 and runs on the chosen codec.
 
 R4. P404 re-measured: the P400 ABBA probe for `Qwen3.8-27B-mlx-uniform-4bit` with P405 in BOTH arms (arm A = `p369-mtp` +
@@ -126,7 +133,16 @@ authoritative evidence and no unambiguous bounded revision.
 Annotated in docs; affine, TurboQuant and unknown rows are never pooled. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
 (`kv_bits: 0`) is unaffected.
 
-## 6. Acceptance
+## 6. Out of scope (latent; own proposals)
+
+- P407 (round 3 T13): `_process_cached_request` forwards base bits / group / scheme / start but not the split key / value
+  bits and schemes; an asymmetric launch would serve symmetric widths on the session path. No registry entry sets split
+  fields; F3's manifest check fails closed if one ever does.
+- P408 (round 3 T14): the APC disk namespace does not fingerprint split schemes or `TQ_KV_QUANT_MODE`, so snapshots could
+  cross modes. APC is disabled stack-wide (`APC_ENABLED` absent, AGENTS.md); the base scheme IS fingerprinted, so the
+  affine → TurboQuant transition is separated.
+
+## 7. Acceptance
 
 T1–T6 red on `ce04439b` (T1–T4 behavioural; T5 / T6 helper absent or behavioural as stated), green on the fix; suites ×2
 identical + 8 audits; R2 live; promotion to stack `main` only after R6 (or the operator's R1 alternative).
