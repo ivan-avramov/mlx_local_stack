@@ -1,50 +1,58 @@
-# Handoff — 2026-10-19 (session 3, in progress): H34 H36 H38 + P396 fixed (harness review closed, C186); C185 same-instance E2 built, Cursor review round 1 of 3 running; fork push awaits the operator
+# Handoff — 2026-10-19 (session 3, in progress): harness review closed (C186); C185 E2 built, review rounds 1–2 fixed (round 3 of 3 deferred until a smoke passes, operator agreed); GPU smoke iterations 1–3 found 3 live bugs (fixed); smoke 4 running
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P396, C186, C185, P395 (closed), P394,
-P393, C184, P392, C183, P391 …), then `docs/specs/p369-phase2-run-plan.md` (**v8**: §3 E2 on the same-instance design, C185),
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P398, P397, P396, C186, C185, P395 (closed),
+P394, P393, C184 …), then `docs/specs/p369-phase2-run-plan.md` (**v9**: v8 §3 E2 same-instance (C185) + §2.2 forced positions (P398)),
 `docs/specs/p387-build-note.md` (v2), `docs/specs/p383-build-plan.md` (v4).
 
 ## State of the world
 
-- **Box `m5max-128`.** 140 W / 28 V adapter attached. No router, no chain, no pytest running. **No `.env` on this box** (the
-  shell already carries `HF_TOKEN`; never `. ./.env`). Machine config: `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`.
-- **Fork `../mlx-vlm` branch `p369-mtp` at `f4c841be`, local only**, worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369`, clean.
-  Production diff vs `4e6d0e03` EMPTY. Since `d9027a60`: P396 (`fc2dbb7e` red, `59b32042` fix), H34 / H36 / H38 (`5157af6a` red,
-  `508bab78` green), C185 E2 (`6b69ed85` red, `f4c841be` green). Green: at `508bab78` fork suite
-  **6357 / 17 / 0 twice**; at `f4c841be` **6361 / 17 / 0 twice**, identical skips; eight audits green at both, exclusions
-  268 (symbols) / 675 (deletions) / 34 (alignment) / 50 (registries) / 16 (call arguments) — the handoff's earlier "269" was a
-  recording slip (`d9027a60` also gives 268).
-- **Cursor C185 review round 1 of 3** running (prompt `docs/reviews/p369-c185/code-round1.prompt-head.md` + plan v8 §3 E2 +
-  `git diff 508bab78..f4c841be`; output → `docs/reviews/p369-c185/code-round1.cursor-gpt-5.6-sol-high.md`).
-- **Stack `main` 39+ commits ahead of origin** (docs only). Push needs the operator's in-turn go.
-- **Fork push:** the operator asked (2026-10-19) "are you done with the p369-mtp branch? if so, push it" — not done then; lead
-  recommendation: push after the C185 review closes (the smoke needs C185 anyway). Ask before pushing.
+- **Box `m5max-128`.** 140 W / 28 V adapter attached. **No `.env` on this box** (the shell carries `HF_TOKEN`; never `. ./.env`).
+  Machine config: `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`.
+- **Fork `p369-mtp` at `8d1cf115`** (worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369`); **pushed to origin at `a44a8070`** (operator
+  go 2026-10-19) — local is ahead by the smoke / round-2 fixes (push again only with a new go). Side worktree
+  `$STACK_WORKDIR/worktrees/mlx-vlm-p369-r2` (branch `p369-r2`, = `8d1cf115`) used for edits while a smoke owns the main
+  worktree (its tree guard refuses any change); its tests run with the main worktree's venv, whose editable `mlx_vlm` makes
+  `test_check_sources_refuses_a_module_outside_the_reviewed_tree` fail there (artefact; green in the main worktree).
+  Production diff vs `4e6d0e03` EMPTY. Green at `8d1cf115`: fork suite **6406 / 17 / 0 twice**, identical skips; eight audits
+  green, exclusions 268 / 675 / 34 / 50 / 16.
+- **GPU smoke 4** running: `$STACK_WORKDIR/p369/phase2/20261019-8d1cf115-smoke4` (+ `.log`), no `--reviewed-head` (P394 iteration).
+  Smokes 1–3 (`…-a44a8070-smoke1`, `…-f0bfce29-smoke2`, `…-7b87192e-smoke3`): HARNESS_ERROR, HARNESS_ERROR, INTERRUPTED (stopped by
+  the lead after P398 made its E1c FAIL certain).
+- **C185 review:** round 1 (`f4c841be`) NOT CLEARED E1 E2 E3 (+E4) → fixed; round 2 (`a44a8070`) NOT CLEARED E5 (+E1 partial)
+  → fixed on `p369-r2`. **Round 3 of 3 runs only after a smoke passes** (operator agreed 2026-10-19) so it covers E5 + every
+  smoke fix and its closing commit is the `--reviewed-head`.
+- **Stack `main` ≈ 45 commits ahead of origin** (docs only). Push needs the operator's in-turn go.
 - Daily driver MTP-OFF (C177) until P369 ships + re-certification.
 
-## Rulings / calls this session
+## Smoke-found bugs (fixed test-first; P394: smoke iterations need no review round)
 
-- **C186 applied:** the harness review is CLOSED; closure note appended to `docs/reviews/p369-harness/code-round6…` (H34 H36 H38
-  fixed, H35 accepted, H37 residual).
-- **P396 (lead call):** the `ignore-term` supervise test flake (≈ 4 / 15) was a real harness bug — `_stop()`'s grace-loop ps scan
-  bounded by the grace end alone timed out and a TERM-ignoring worker became a harness error; scans now keep `PS_MARGIN_S`.
-- **C185 built** per plan v8 §3 E2 (lead decisions D1–D4 in the review prompt): worker mode `e2_pair`; precedence C1-E2 ABORT >
-  INCOMPLETE > FAIL > PASS; cross-load OFF arm reported, never decides; v7's reload-control OFF process dropped; triple budget 3×.
+- Smoke 1: requests carried the registry name; mlx-serve's router rewrites `body["model"] = hf_path` (`router.py:483`) → the
+  worker unloaded its target and tried an offline load. Fix: `routed()` in `post` / `prompt_ids` (`f0bfce29`).
+- Smoke 2: the dry-run `DryRun(BaseException)` unwound through `@app.middleware("http")` as a `BaseExceptionGroup` and killed the
+  TestClient portal (reproduced on CPU). Fix: plain `Exception`, ids recorded on the side (`7b87192e`).
+- Smoke 3: **P398** — E1c compared a stale ON row at a thinking-budget forced position (E1c `max_tokens` 160 → budget 128 →
+  forced `\n</think>`). Fix: rows cut at each block's emission decision, forced positions proven and excluded (`8d1cf115`).
+- Observed, not a bug: Fable T = 1,024 seed a0 had no observed key-length straddle (a block boundary landed on 1,024) while the
+  production counter read 16 → that cell retries the next seed (by design). T = 65,536 E1c cell > 11 min (hash cost).
 
 ## Next work, in order
 
-1. **C185 review**: read round 1; fix test-first; suites ×2 + audits; round 2 / 3 as needed (each prompt states "round k of 3");
-   after round 3 escalate the open findings to the operator as a table (finding + context; recommendation + justification +
-   strongest counterpoint, 2–3 sentences each). The closing commit is the `--reviewed-head`.
-2. **Ask the operator for the fork branch push** (`p369-mtp`) — then the **GPU smoke** (C175 go): from the stack root, detached,
-   background waiter: `nohup .venv/bin/python <fork-worktree>/dev/p369_phase2/orchestrate.py --stack-root . --fork-root <fork-worktree>
-   --out $STACK_WORKDIR/p369/phase2/<run-id>-smoke --phase smoke [--reviewed-head <closed sha>] > <log> 2>&1 &`. `--out` must be under
-   `$STACK_WORKDIR/p369/phase2/`; lock `$STACK_WORKDIR/p369/phase2/.lock` (flock). Watch `monitor.log` (5 min) + job dirs; exit 0
-   SMOKE_PASS / 2 not pass / 1 harness error. Expect live-boot fixes (dry-run tokenization via `_preprocess_request`, kernel coverage
-   on real weights, E7b continuity numbers, E2 `cached_tokens` / detached-replay telemetry) — fix test-first; smoke iterations need no
-   review round (P394), the full run needs the reviewed head + a passing smoke on it. Then `--phase full --smoke-summary
-   <smoke>/summary.json --reviewed-head <sha>` (the summary is re-validated and its gate recomputed, H36); report per pick E1c (pair,
-   C1, C2), E2 (verdict, C1-E2, cross_load), E7a (Clopper–Pearson), E7b (descriptive) → P369 + handoff.
-3. Then: fork main merge + submodule bump (suites in both repos) → per-pick re-certification (own plan, operator GPU go) → restore
+1. **Iterate the GPU smoke to SMOKE_PASS** (C175 go): from the stack root, detached, background waiter:
+   `nohup .venv/bin/python <fork-worktree>/dev/p369_phase2/orchestrate.py --stack-root . --fork-root <fork-worktree>
+   --out $STACK_WORKDIR/p369/phase2/<date>-<head>-smokeN --phase smoke > <out>.log 2>&1 < /dev/null &` (`--out` under
+   `$STACK_WORKDIR/p369/phase2/`; flock `$STACK_WORKDIR/p369/phase2/.lock`; preflight refuses while any pytest runs). Watch
+   `monitor.log` (5 min) + job dirs; exit 0 SMOKE_PASS / 2 not pass / 1 harness error. Fix live bugs test-first (in the side
+   worktree while a smoke runs), suites ×2 + audits, relaunch. Still unproven live: kernel coverage on real weights, `tq_norm`,
+   E2 triple telemetry (`cached_tokens == 0`, detached replay counters), E7b continuity, the uniform pick end to end.
+2. **C185 review round 3 of 3** on `a44a8070..<smoke-passing head>` (E5 + E1 residual + every smoke fix incl. P398); fix; if
+   anything stays open, escalate to the operator as a table (finding + context; recommendation + justification + strongest
+   counterpoint, 2–3 sentences each). The closing commit is the `--reviewed-head`; if round 3 changes code, a confirming smoke on
+   that head is still required (P394).
+3. **Full run** (operator push go first for the reviewed head): `--phase full --smoke-summary <smoke>/summary.json
+   --reviewed-head <sha>` (the summary is re-validated and its gate recomputed, H36; a projected wall > 3.5 h returns to the
+   operator). Report per pick E1c (pair, C1, C2, forced positions), E2 (verdict, C1-E2, cross_load), E7a (Clopper–Pearson), E7b
+   (descriptive) → P369 + handoff.
+4. Then: fork main merge + submodule bump (suites in both repos) → per-pick re-certification (own plan, operator GPU go) → restore
    MTP-ON (C177 lines = `test_mtp_verify_scan.INTERIM_LINES` reversed) → P368 layers 2–3; P383 build (+P389, P388 snapshot); P385
    with Cursor; tg2 steps 3–4; M64.
 
@@ -73,4 +81,4 @@ P393, C184, P392, C183, P391 …), then `docs/specs/p369-phase2-run-plan.md` (**
 - Tests that start processes own them in fixtures that kill the PGID and any self-recorded child pid at teardown.
 - Zero flakes; red-first honesty (say "helper absent" vs behavioural); check `git show --stat` after every commit.
 
-Next decision id C187; discussion ids continue from P397.
+Next decision id C187; discussion ids continue from P399.
