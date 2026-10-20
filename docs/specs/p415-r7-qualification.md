@@ -1,6 +1,7 @@
-# P415 — R7 256K operational qualification tool (plan v2, 2026-10-20)
+# P415 — R7 256K operational qualification tool (plan v3, 2026-10-20)
 
-Status: v2 = v1 after Cursor plan review round 1 of 3 (`docs/reviews/p415/plan-round1.*`: DISAGREE Q1–Q8, all accepted; §2.1
+Status: v3 = v2 after Cursor plan review round 2 of 3 (`docs/reviews/p415/plan-round2.*`: Q5 Q6 Q8 closed; Q1 Q2 Q3 Q4 Q7 open +
+new Q9 — applied in §2.2, one bounded exception in Q2). v2 = v1 after Cursor plan review round 1 of 3 (`docs/reviews/p415/plan-round1.*`: DISAGREE Q1–Q8, all accepted; §2.1
 adds them, §3 / §4 amended). Operator: "p415: go for it" (2026-10-20); "my primary pick across is the
 Fable distill though so want to make sure that one is covered". Parent: `docs/specs/p405-kv-scheme-precedence.md` v4 §5 R7.
 
@@ -55,9 +56,8 @@ unaffected by P405) as the primary pick's own 256K record on the shipping code a
   table; a registry key the table does not know refuses (no silent pass for a new knob). Keys present in the seven blocks
   today: serving — `hf_path`, `max_kv_cache_size`, `kv_prealloc_tokens`, `kv_bits`, `kv_quant_scheme`, `quantized_kv_start`,
   `prefill_step_size`, and (Fable only) `cache_session_shrink`, `attention_policy`, `lazy_prompt_embeddings`; non-serving,
-  an explicit allowlist — `name`, `type`, `on_demand`, `presentation`, `generation_defaults`, `display_name`, `description`
-  (the request's sampling comes from the server's own registry defaults and is recorded, not asserted: it cannot move the
-  prefill peak).
+  an explicit allowlist — `name`, `on_demand`, `presentation`, `display_name`, `description` (v3: `type` and
+  `generation_defaults` are serving keys, §2.2 Q1 / Q9).
 - **Q2 live attestation of every peak-relevant field.** The worker records the value each of those fields resolves to where it
   is consumed (the `ResponseGenerator` / runtime config attribute and the kwargs captured at the request's generation call:
   `prefill_step_size`, `max_kv_size`, prealloc, attention policy, lazy embeddings) and compares it with the expectation; a
@@ -91,6 +91,41 @@ unaffected by P405) as the primary pick's own 256K record on the shipping code a
   tok/s + 600 s ≈ 2,360 s; per-entry job deadline 3,600 s incl. cleanup; worst case 7 × 3,600 + 6 × 600 ≈ 8 h, nominal
   2–2.5 h. Timeouts are entry failures (`FAILED timeout`), never retries.
 
+### 2.2 v3 — plan round 2 (Q1 Q2 Q3 Q4 Q7 Q9)
+
+- **Q1 generation defaults are serving.** Registry `generation_defaults` → the canonical `--generation-defaults` JSON in the
+  argv (key-for-key equal) → the live server's resolved defaults (`runtime` config) → the measured request's resolved sampling
+  (the server's `resolved sampling:` values, captured from the request path, not the log text): every key equal at each hop.
+- **Q2 behavioural evidence for every peak-relevant field** (none may stay `argv-only` and yield `COMPLETED`):
+  `kv_prealloc_tokens` — each live preallocating leaf's allocated sequence capacity (its backing array's sequence dimension)
+  equals the value, read from the measured request's own cache; `prefill_step_size` — every target forward during prefill is
+  observed (input length per call): all chunks = 512 except a shorter last, their sum = the prompt; `attention_policy:
+  fused_v1` — the request's `sdpa_forced` usage counter > 0 for Fable and 0 / absent for the six `auto` entries;
+  `lazy_prompt_embeddings` — a hook on the lazy-embedding path in `models/qwen3_5/qwen3_5.py` counts its use (> 0 for Fable,
+  0 for the others); memory limits — `mx.get_memory_limit()` / cache limit / wired limit recorded and equal to what the CLI
+  resolves (the MLX defaults when it sets none); `max_kv_cache_size` — the cap resolved on the generator equals it and the
+  prompt + 32 stays below it. **Bounded exception:** `cache_session_shrink` acts only after a request retires and its session
+  idles — it cannot move a single request's prefill or decode peak — so it is attested (registry → argv → generator attribute)
+  and reported as `not exercised (post-request behaviour)`; it does not block `COMPLETED`.
+- **Q3 the ids actually prefilled.** A second capture at `generate/dispatch.py` `_prepare_generation_inputs`' return (the ids
+  `generate_step` receives): count 261,120 and digest equal to BOTH the sizing digest and the `_preprocess_request` digest;
+  any difference fails the entry.
+- **Q4 interference between ticks.** The supervisor polls every 15 s while an entry runs; each poll checks power and the
+  ownership-aware process scan (own pid tree excluded by PGID); the same checks run at the request's start and end. The
+  qualification takes the exclusive run lock `$STACK_WORKDIR/p369/phase2/.lock` (shared with P369 campaigns, so cooperating
+  runs cannot overlap). The 5-minute monitor thread's liveness and any exception in it are checked before an entry may be
+  `COMPLETED`.
+- **Q7 reference schema.** Mandatory fields: prompt tokens, KV codec (+ P405 window flag), MTP state, attention policy,
+  prealloc, lazy embeddings, prefill step, mlx version, measurement method (`mx.get_peak_memory` prefill spike or other) —
+  any field absent or unknown ⇒ `non-comparable: <fields>`; a delta only for a complete, exactly matching fingerprint.
+  Expected: every historical reference is non-comparable on at least the mlx version / harness — shown side by side, labelled.
+- **Q9 the backend.** `type` is a serving key: the full `_build_command` command (prefix included) is kept; its executable /
+  module prefix must be exactly the mlx-vlm server entry that `worker.boot` runs in-process — for `type: vision`,
+  `_build_command`'s `_MLX_VLM_SERVER` = the stack venv's `bin/mlx_vlm.server` console script, whose entry point (read from
+  that script / the installed distribution's `entry_points`) must be `mlx_vlm.server.cli:main` resolving into the attested
+  fork tree — else the entry refuses; a test with a wrong prefix (e.g. the `mlx_lm` server) and valid trailing arguments.
+  Router-level routing stays out of scope (worker conformance, as P369).
+
 ## 3. Tests (CPU, red first)
 
 T1 default entries are exactly the seven of §1; `--entry` must name one of them. T8 (Q1 / Q2) the registry-parsed expectation:
@@ -98,7 +133,11 @@ an unknown registry key refuses; each mapped field's mismatch (registry vs argv,
 count / digest / cached tokens / backend and the peak-boundary sequencing. T10 (Q4) a bad power tick or an interfering process
 (incl. `python -c` and console-script forms) mid-entry marks it INVALID. T11 (Q5) the lifecycle cases listed there. T12 (Q6)
 a dirty or mismatched `mlx-serve` submodule, a registry change mid-run, and an `mlx_serve` imported from elsewhere refuse.
-T13 (Q7) a delta only for a matching fingerprint. T2 argv comes from the live registry without
+T13 (Q7) a delta only for a complete, matching fingerprint. T14 (v3 Q1) a generation-defaults key dropped or changed at
+any hop fails. T15 (v3 Q2) each behavioural field's sabotage (capacity, chunking, `sdpa_forced`, lazy path, memory limit, cap)
+fails. T16 (v3 Q3) prefilled ids differing from the preprocessed ids fail. T17 (v3 Q4) an interfering process or power drop
+between monitor ticks (seen by a 15 s poll) marks INVALID; a dead monitor thread blocks COMPLETED. T18 (v3 Q9) a wrong backend
+prefix refuses. T2 argv comes from the live registry without
 overlay (a non-pick entry; no `--draft-model` when the registry has none). T3 the generalised served check refuses a drafter
 the argv does not name, a missing one it does, a wrong verify policy, and any KV field off the argv. T4 request validation:
 32 tokens, `length`, finite positive metrics. T5 the schedule: idle before every entry after the first; power refusal. T6 the
