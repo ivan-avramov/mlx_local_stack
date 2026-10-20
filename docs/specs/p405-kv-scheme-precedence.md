@@ -1,7 +1,7 @@
-# P405 — the server honours `--kv-quant-scheme` (plan v2, 2026-10-20)
+# P405 — the server honours `--kv-quant-scheme` (plan v3, 2026-10-20)
 
-Status: v2 after Cursor plan round 1 of 3 (DISAGREE T1 T2 T4 T5 T6 T7; all nine findings accepted —
-`docs/reviews/p405/plan-round1.*`). Defect, mechanism and affected entries: `docs/open-questions.md` P405.
+Status: v3 after Cursor plan round 2 of 3 (DISAGREE T10 T11 T12; all accepted — `docs/reviews/p405/plan-round2.*`); v2
+resolved round 1 (T1–T9). F1 / F2 and T1–T5 are implemented red-first on `p405-kv-scheme` (`ad36e941` red, `0163f212` green). Defect, mechanism and affected entries: `docs/open-questions.md` P405.
 
 ## 1. Decision (C189, operator 2026-10-20)
 
@@ -9,7 +9,7 @@ Status: v2 after Cursor plan round 1 of 3 (DISAGREE T1 T2 T4 T5 T6 T7; all nine 
 whatever the codec change invalidates. Not chosen: relabel the six entries `uniform` (no serving change).
 
 Lead counterpoint (recorded): fixing the precedence changes the served KV codec of two main picks
-(`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `Qwen3.8-27B-mlx-uniform-4bit`) whose certifications since 2026-08-23 describe affine
+(`Qwen3.8-27B-mlx-uniform-4bit`, B 2nd; `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, B 4th — both called "main" below) whose certifications since 2026-08-23 describe affine
 4-bit KV. No TurboQuant serving reaches stack `main` (the daily driver) before they re-certify (§5 R1, plan round 1 T5).
 
 ## 2. Defect window
@@ -29,13 +29,16 @@ F2. The effective codec is logged where it is resolved: `get_cached_model` logs 
 it passes to `ResponseGenerator`. The `lifespan` line that reads `KV_BITS` / `KV_QUANT_SCHEME` from the environment
 (`app.py` ~437–440 — the line that printed `scheme=turboquant` while affine was served) is removed.
 
-F3. The P369 harness (`dev/p369_phase2/worker.py`) fails closed on the served codec: `served_state` records the
-`ResponseGenerator`'s resolved KV fields; `assert_served` requires them to equal the argv's (`--kv-bits`, `--kv-quant-scheme`;
-native when bits are absent / 0), as the P400 perf probe now does (`ce04439b`). The smoke gate requires an EXACT leaf
-manifest (round 1 T4): the expected class per attention layer is derived from the model config's layer types, the argv's
-`--quantized-kv-start`, and the documented last-full-attention-layer exemption (`models/cache.py` ~17–23); for
-`kv_quant_scheme: turboquant` every eligible leaf is TurboQuant, the exempt layer native, and any `QuantizedKVCache` leaf is a
-failure (a census containing ANY TurboQuant leaf no longer suffices).
+F3. The P369 harness (`dev/p369_phase2/worker.py`) fails closed on the served codec (round 1 T4, round 2 T10):
+`served_state` records EVERY resolved `ResponseGenerator` KV field (`kv_bits`, `kv_key_bits`, `kv_value_bits`,
+`kv_key_scheme`, `kv_value_scheme`, `kv_quant_scheme`, `kv_group_size`, `quantized_kv_start`) plus `TQ_KV_QUANT_MODE`;
+`assert_served` requires each to equal what the argv resolves to (the CLI's own defaults where a flag is absent; native when
+bits are absent / 0), as the P400 perf probe does for bits / scheme (`ce04439b`, extended to the same field set). The smoke
+gate requires an EXACT leaf manifest, ordered by layer path (not aggregate class counts): the expected entry per attention
+layer — class, and for TurboQuant leaves the key / value bit widths and the quantization mode — is derived from the model
+config's layer types, the argv's KV flags and `--quantized-kv-start`, and the documented last-full-attention-layer exemption
+(`models/cache.py` ~17–23). Any `QuantizedKVCache` leaf under `turboquant`, a missing / extra leaf, a wrong width, mode,
+start or exempt-layer placement fails.
 
 Rejected alternative: a `None` default for `kv_quant_scheme` with an env fallback in `app.py`. Narrower — leaves
 `--vision-cache-size` (also frozen: CLI writes `MLX_VLM_VISION_CACHE_SIZE` after import) and the `replace` restore point stale.
@@ -67,9 +70,9 @@ package import sees; no ambient value can mask a failure), `cli.uvicorn.run` pat
   `{"op": "replace", "values": {}}` → the scheme is restored to the CLI's `turboquant`.
 - T5. F2: the `KV cache resolved:` line exists and equals T3's captured constructor arguments; the env-derived `lifespan` line
   is gone (red today: helper absent).
-- T6. F3: `assert_served` refuses a served codec that differs from the argv (the P405 shape: argv TurboQuant, served
-  uniform); the smoke gate refuses a mixed census (TurboQuant + affine leaves), a missing TurboQuant leaf, and a wrong
-  exempt-layer class.
+- T6. F3: `assert_served` refuses any resolved KV field that differs from the argv (the P405 shape: argv TurboQuant, served
+  uniform; and each other field singly); the manifest check refuses, by layer path, a mixed census (TurboQuant + affine), a
+  missing / extra leaf, a wrong key or value width, a wrong mode, a wrong start, and a misplaced exempt layer.
 
 ## 5. Rollout and re-measurement
 
@@ -83,8 +86,12 @@ accept TurboQuant serving on `main` during the window, both main picks marked PR
 R2. Live engagement (GPU, inside R3's smoke): F3's exact leaf manifest and served-codec assertion pass for
 `Qwen3.8-27B-mlx-uniform-4bit`, and the `tq_norm` positive fires.
 
-R3. `Qwen3.8-27B-mlx-uniform-4bit` P369 phase 2 on P400 + P401 + P405 (smoke, then the full run on a reviewed head).
-Replaces the planned affine run.
+R3. MTP exactness on the chosen codec for EVERY affected MTP-enabled main pick (round 2 T11): P369 phase 2 (smoke, then
+the full run on a reviewed head; acceptance = `docs/specs/p369-phase2-run-plan.md` v9 — E1c every cell PASS incl. C1 / C2,
+E2 PASS, E7a / E7b reported) on P400 + P401 + P405 for `Qwen3.8-27B-mlx-uniform-4bit` (replaces the planned affine run) and
+for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (added to the harness `PICKS` with its registry tuple: `--draft-kind mtp`, its
+extracted drafter, verify policy `per_query`). Run on TurboQuant first; if R6 chooses affine for a pick, its R3 reruns on
+affine. M63 (MTP-ON tg1 arm) waits for R3 + R6 and runs on the chosen codec.
 
 R4. P404 re-measured: the P400 ABBA probe for `Qwen3.8-27B-mlx-uniform-4bit` with P405 in BOTH arms (arm A = `p369-mtp` +
 the P405 commit cherry-picked on a dev branch; arm B = P400 + P401 + P405), so only the verifier change varies, against the
@@ -110,10 +117,12 @@ R7. Operational qualification of all six entries (round 1 T8): on TurboQuant, lo
 the prefill peak against the registry's recorded peak and the ≈ 48 GB guidance. The four non-pick entries that fail, or are
 not run, get `kv_quant_scheme: uniform` at promotion (their evidence is affine) — operator call per entry.
 
-R8. Evidence classification (round 1 T9), never by date alone: each result row / doc claim for the six entries is classified
-from its recorded launcher, worker argv and (where present) runtime / leaf census as `affine` (router- or CLI-served
-`--kv-quant-scheme turboquant` on a fork containing `83e2aadb`, i.e. stack bump `111bb538` or later), `turboquant`
-(direct-generation paths that passed the scheme explicitly, or pre-`111bb538` serving) or `unknown` (no launch evidence).
+R8. Evidence classification (round 1 T9, round 2 T12), never by date alone: a resolved-codec log line (F2) or a leaf manifest
+(F3) is authoritative where present. Otherwise each result row / doc claim for the six entries is classified from its
+recorded launcher, worker argv and submodule revision: `affine` = router- or CLI-served `--kv-quant-scheme turboquant` on a
+stack revision from bump `111bb538` up to, NOT including, the first stack bump containing P405; `turboquant` = such serving
+before `111bb538` or from the P405 bump on, or a direct-generation path that passed the scheme explicitly; `unknown` = no
+authoritative evidence and no unambiguous bounded revision.
 Annotated in docs; affine, TurboQuant and unknown rows are never pooled. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
 (`kv_bits: 0`) is unaffected.
 
