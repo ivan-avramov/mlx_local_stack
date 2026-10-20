@@ -237,10 +237,9 @@ Both are MTP-ON certified (M6b / M27) and were served MTP-ON on the pre-fix fork
   carry exactly ONE entry; no entry is restored on evidence from an older production pin (Fable only through its
   `7207179b` regression smoke + C188). Projection (V13): per phase from the smoke's measured components × full-run
   cardinalities (E1c cells, E2 20 items + 4 straddles, E7a 20, E7b 5) plus an explicit E7 tail reserve (one full-budget
-  runaway per entry ≈ 1–2 h); the gate compares the nominal projection with 3.5 h, and a total-wall watchdog stops a
-  campaign at its AUTHORIZED WALL CAP (nominal + one reserved tail) — exhausting it yields ABORT / INCOMPLETE and an operator
-  disposition (v13 V17: one reserved tail is an allowance, not a worst case; several E7 requests can each reach their
-  watchdogs). Nominal ≈ 10.5 GPU h for all four campaigns; ≈ 13.5–16.5 h with one reserved tail per full campaign; an entry projecting > 3.5 h goes to the operator. No Ornith estimate
+  runaway per entry ≈ 1–2 h); the gate compares the nominal projection with 3.5 h. **No campaign wall cap (C194, operator
+  2026-10-20: "no hard stop"; C184 stands — v13 V17's authorized wall cap is withdrawn):** only the per-request watchdogs stop
+  a run; the reserved tail is reported as an expectation, not enforced. Nominal ≈ 10.5 GPU h for all four campaigns; ≈ 13.5–16.5 h with one reserved tail per full campaign; an entry projecting > 3.5 h goes to the operator. No Ornith estimate
   from its 3B active parameters — its smoke sets it.
 - **Tuples:** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — `qwen3_5` dense hybrid, TurboQuant 4-bit KV (P405), per-query
   (harness `verify_policy=None` + an argv check that the scan resolves to `per_query`), drafter
