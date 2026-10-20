@@ -134,3 +134,33 @@ P4 — Claim integrity
 H34, H35 and H36 still permit PASS without establishing required evidence. H34 can also classify malformed harness evidence as an MTP outcome. H37 can leave an orphan process after failed cleanup. The E7b policy itself is correctly narrowed—descriptive in the full run and attempted once in smoke—but H38 does not prove the smoke report’s structure.
 
 VERDICT: NOT CLEARED H34 H35 H36 H37
+
+---
+
+## Closure (lead, 2026-10-19, session 3) — the harness review is CLOSED (C186; no further round)
+
+Operator ruling on the round-6 escalation (C186): fix H34, H36, H38; accept H35; record H37 as a residual.
+
+- **H34 — FIXED** (fork `p369-mtp`: red `5157af6a`, green `508bab78`).
+  `exact_bool` raises `MalformedEvidence` (a harness error → `HARNESS_ERROR`, never an MTP outcome) at every evidence site:
+  `pick_outcome` (every cell's `c1.identical` / `neutral` / `evidence_ok` / `pass_` / `c2.identical` validated before any
+  decides), `e1c_verdict` (comparator rows / states / kernel + the per-query straddle), `e1c()` (cell straddle, C1
+  acceptance, C2 rows + states), `e2()` kernel verdicts, `e7a_stats` / `e7b_session` kernel verdicts, every E7b follow-up
+  continuity record (a missing record is malformed: the worker writes one for every turn > 0), `e7b_status`, and the
+  smoke gate in `overall_status`.
+- **H36 — FIXED.** `main` authorizes a full run only through `smoke_authorization_problems`: phase smoke, status
+  `SMOKE_PASS` with exit code 0, exact `True` for `pass_` and `fits`, and the stored gate EQUAL to `smoke_gate()`
+  recomputed from the summary's own evidence (`smoke_gate` is now a pure module function; the binding check is unchanged).
+- **H38 — FIXED.** The smoke gate requires EXACTLY one E7b session named after the first reconstructed C84 item; the
+  session is exactly a timeout censor `{name, censored: true, reason: "timeout"}` or a typed `e7b_session` record
+  (`censored` agrees with `reason`), and the report's status is re-derived via `e7b_status`. Continuity stays descriptive.
+- **H35 — ACCEPTED (operator).** A request that completed and wrote its result before the supervisor's next poll is a
+  valid observation; the per-request watchdog exists to stop requests that cannot converge or have wedged, not to censor
+  a finished one.
+- **H37 — RESIDUAL (operator), disclosed.** If `ps` fails completely after a tracked descendant has called `setsid()`,
+  `_kill_unverified` SIGKILLs only the worker's own group and the worker; the escaped helper may survive. The harness
+  still fails closed (it raises; extinction is never claimed). The operator verifies the box after any such abort.
+- **Found while closing — P396 (lead call), FIXED.** The `ignore-term` supervise test flaked (≈ 4 / 15): `_stop()`'s grace
+  loop limited each `ps` scan to the grace end alone, so the last scan ran `ps` with a few ms left, timed out, and a
+  TERM-ignoring worker became a harness error instead of reaching the SIGKILL reap. Fix: the scan keeps `PS_MARGIN_S`
+  past the grace end (as `reap()`'s do). Deterministic red test (ps modelled as needing ≥ 0.3 s) `fc2dbb7e`, fix `59b32042`.

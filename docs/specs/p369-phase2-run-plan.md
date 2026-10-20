@@ -1,6 +1,6 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v7, 2026-10-19
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v8, 2026-10-19
 
-Status: **v7 — Cursor round 7 `VERDICT: AGREE`** (`docs/reviews/p369-phase2-plan-round7.cursor-gpt-5.6-sol-high.md`); the harness is built → its code review. v6 → round 6 `DISAGREE Q35 Q38` (incomplete closures; Q36 Q37 Q39 Q40 closed;
+Status: **v8 = v7 + §3 E2 on the same-instance design (C185 / P393)**; reviewed with its build (code review round 1 of 3, C186). v7 — Cursor round 7 `VERDICT: AGREE` (`docs/reviews/p369-phase2-plan-round7.cursor-gpt-5.6-sol-high.md`); the harness is built → its code review. v6 → round 6 `DISAGREE Q35 Q38` (incomplete closures; Q36 Q37 Q39 Q40 closed;
 `docs/reviews/p369-phase2-plan-round6.cursor-gpt-5.6-sol-high.md`), both applied in v7. v5 (= v4 + §2.5, P391) → round 5 `DISAGREE Q35–Q40`, all applied here
 (`docs/reviews/p369-phase2-plan-round5.cursor-gpt-5.6-sol-high.md`). **v4 — Cursor round 4 `VERDICT: AGREE`** (`docs/reviews/p369-phase2-plan-round4.cursor-gpt-5.6-sol-high.md`) → build the harness;
 the operator items (2.5–3.5 h budget, the E7b narrowing, P387 per Q26) are pending in the handoff. v3 → round 3 `DISAGREE Q29 Q34` (all else closed; both applied here;
@@ -157,22 +157,42 @@ shrink on, drafter `caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-draf
 sha256 recorded before load.
 
 - **Smoke (≈ 30 min):** Fable E1c at T = 1,024 and at T = 65,536 (hashing / probe cost calibration) with the full §2.5
-  structure (ON, OFF1, OFF2 in the ON process; the cross-load OFF arm), + E2 on 2 items (OFF and ON processes). Injected positives on the live data (Q32): a 1-ulp raw-logit change detected AT THE RAW RECORDER; a precomputed
+  structure (ON, OFF1, OFF2 in the ON process; the cross-load OFF arm), + E2 on 2 items (v8: the same-instance triple in the ON process + the cross-load OFF process). Injected positives on the live data (Q32): a 1-ulp raw-logit change detected AT THE RAW RECORDER; a precomputed
   in-support perturbation guaranteed to change a retained transformed probability (or the support boundary) detected by
   the comparator; a flipped K byte in an OLD prefix position, a changed TurboQuant scale (uniform smoke), a changed GDN
   element and a changed probe logit each detected by the state check. The runtime kernel inventory must reconcile with the
   static manifest (Q29). Uniform gets the same smoke before its full run.
 - **E1c:** 4 straddle prompts + 1 short chat prompt; deployed sampling, fixed seed list; 160 generated tokens. Criteria §2.2.
   On FAIL: finish that pick's E1c (to measure the bound), skip its E2 / E7, report.
-- **E2 (Q21, Q22):** the **C84-item reconstruction** (not the frozen C84 set — its raw requests are not on this box): the
-  five ids per axis in `benchmark/results/<pick>/{math500,humanevalplus,mbppplus,cjudge}.c84bundle-after-<kv>-20260914.jsonl`
-  (`<kv>` = `native16` for Fable, `tq4` for uniform), rebuilt by the stack bench's prompt builders at a pinned commit and
-  dataset revisions; the reconstructed token ids are recorded (sha256) and their count must equal the row's `prompt_tokens`;
-  a failed reconstruction FAILS coverage (never silently dropped). Temperature 0, `max_tokens` 512; plus straddle prompts at
-  1,024 / 8,192 / 32,768 / 65,536 (160 tokens). Arms: OFF, ON, OFF again (reload control) on the 20 items; OFF and ON on the
-  straddles. Spies on `speculative_argmax_from_hidden` and the quantized-argmax alias, positive verifier rounds on every ON
-  request. PASS: first-512-token (straddles: 160) identity ON == OFF on every request, given an identical control; a
-  differing control makes E2 informative only.
+- **E2 (Q21, Q22; v8 same-instance design, C185 / P393):** items = the **C84-item reconstruction** (not the frozen C84 set — its
+  raw requests are not on this box): the five ids per axis in
+  `benchmark/results/<pick>/{math500,humanevalplus,mbppplus,cjudge}.c84bundle-after-<kv>-20260914.jsonl` (`<kv>` = `native16` for
+  Fable, `tq4` for uniform), rebuilt by the stack bench's prompt builders at a pinned commit and dataset revisions; the
+  reconstructed token ids are recorded (sha256) and their count must equal the row's `prompt_tokens`; a failed reconstruction
+  FAILS coverage (never silently dropped). Temperature 0, `max_tokens` 512; plus (full run only) straddle prompts at 1,024 /
+  8,192 / 32,768 / 65,536 (160 tokens).
+  - **Same-instance triple (the verdict's instrument).** In the ON worker (worker mode `e2_pair`), per request: greedy **ON**
+    (drafter attached); then, after its `_process_cached_request` exit acknowledgement and worker idleness (`wait_idle`), with
+    the drafter detached (`drafter_detached`) and under `DetachedGuard`, greedy **OFF1** and greedy **OFF2** on the same loaded
+    target. Each trajectory uses a fresh chat id; every one must report `cached_tokens == 0` (no reused prefix); after each,
+    its session entry is released (`release_session`) before the next starts. The target model and verify-policy objects are
+    asserted unchanged across the triple (as in E1c). OFF1 and OFF2 must run zero MTP rounds and zero verify-scope projection
+    calls, and the guard must record no draft kwargs / speculative-prefill capture; a violation is a harness error.
+  - **Engagement (ON):** positive `speculative_argmax_from_hidden` calls (the T = 0 argmax readout), a passing kernel verdict
+    and positive MTP rounds on every ON request; every trajectory's templated prompt digest equals the reconstruction's (C84
+    items) and the three trajectories' digests are equal.
+  - **Control C1-E2 (within instance):** OFF1 vs OFF2 — identical token ids and finish reason on every request.
+  - **Verdict per pick (precedence):** (1) C1-E2 differs on any request → **ABORT** (within-instance nondeterminism: the
+    instrument cannot decide; reported, never an MTP finding); (2) any ON request not engaged or any digest problem →
+    **INCOMPLETE**; (3) ON vs OFF1 token ids (first 512; straddles 160) differ on any request → **FAIL**; (4) else **PASS** —
+    the claim reads "greedy MTP-ON equals plain greedy decoding on the same MTP-loaded instance". Every evidence flag is an
+    exact boolean (C186 H34). E2 never skips E7: E7 is an independent incidence record.
+  - **Cross-load comparison (reported, never decides; like C2):** the separate OFF-arm process (the deployed OFF argv) runs
+    the same greedy requests once; per request `identical` or `unestablished` vs OFF1, summarised as `cross_load`. A
+    difference is consistent with reload nondeterminism (P391), identifies no mechanism and never changes the E2 verdict.
+    v7's second OFF process (the reload control) is dropped: the same-instance triple removes the confound it detected.
+  - Smoke: the 2 first reconstructed items (triple + cross-load OFF); the smoke gate needs E2 PASS. A supervisor stop
+    (`JobTimeout`) makes E2 INCOMPLETE.
 - **E7a (Q24):** the 20 reconstructed items per pick at deployed sampling with recorded seeds, MTP ON, full deployed budgets,
   cached-session path; independent requests ⇒ per class requests-with-event / requests with a Clopper–Pearson 95 % interval
   (zero events → ≈ 3/n); class-eligible block rates descriptive only; censored requests never count as event-free.
@@ -188,8 +208,8 @@ sha256 recorded before load.
 
 E1c (v6, Q40): four trajectories per cell (ON, OFF1, OFF2, cross-load OFF) ⇒ ≈ 430K prefill tokens and ≈ 3.2K decode /
 replay steps per pick, plus full-state SHA-256 at every commit on all four (≈ 450 GB per trajectory per pick for Fable at
-≈ 2 GB/s ⇒ ≈ 4 min each, doubled by the probe-neutrality hashes; uniform ≈ ¼) and one probe forward per commit; E2 three arms ×
-20 items × 512 tokens + two arms × ≈ 107K straddle prefill per pick; E7a ≈ 11–14 min per pick from C84 history with a
+≈ 2 GB/s ⇒ ≈ 4 min each, doubled by the probe-neutrality hashes; uniform ≈ ¼) and one probe forward per commit; E2 (v8) three trajectories in the ON process + one cross-load OFF arm ×
+20 items × 512 tokens + four trajectories × ≈ 107K straddle prefill per pick (v7: three arms + two; ≈ +2 straddle sets); E7a ≈ 11–14 min per pick from C84 history with a
 heavy-tail allowance (one 102,400-token runaway ≈ 1–2 h — bounded by the per-request watchdog, reported as censored).
 Reserve **3–3.5 h of GPU time** plus harness build, review and suites (≈ half a session); the smoke's calibration revises
 it, and a revised estimate above 3.5 h goes to the operator before the full run. The handoff's "≈ 1 h" and v1's "≈ 100 min"
