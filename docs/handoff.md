@@ -19,7 +19,7 @@ C194), `docs/specs/p405-kv-scheme-precedence.md` (v4, accepted C192). Model name
   `P406 INTERIM (C191 2026-10-20)`), on top of C177 (the two Qwen3.8-27B picks). All four MTP-certified entries are MTP-OFF.
 - `p369-mtp` = `3a92943d` (= origin); its worktree is on the branch between smokes (the waiters restore it).
 - **Stack `main`** ≈ 110 commits ahead of origin. Pushes need the operator's in-turn go ("no push yet").
-- Stack suite: 6887 passed; 4 failed + 9 errors PRE-EXISTING (P409: docker absent → p371 isolation errors; tg2 Cargo.lock set).
+- Stack suite: run it with the machine config sourced (P409 closed: the 4 failed + 9 errors were an unsourced-config artifact).
 
 - **Fork `p369-v13`** (P405 worktree, local only) HEAD `5f407d5d` on `64afc7dd`: the P369 v13 harness build — 16-state
   registry generator (`dev/p369_phase2/registry_states.py`), four-entry `PICKS` + one-entry campaigns + argv scan check,
@@ -74,7 +74,8 @@ C194), `docs/specs/p405-kv-scheme-precedence.md` (v4, accepted C192). Model name
 ## Rules learned
 
 - Suites: fork `(cd mlx_vlm && ../.venv/bin/python -m pytest -q ./tests --ignore=tests/test_smoke.py -rs -p no:cacheprovider)` ≈ 2.5 min;
-  stack from `benchmark/`: `../.venv-bench/bin/python -m pytest bench/tests -q -p no:cacheprovider -o faulthandler_timeout=600 -rs`.
+  stack from `benchmark/` AFTER sourcing the machine config (P409: without it docker is off PATH and the tg2 test root
+  falls inside the repo): `../.venv-bench/bin/python -m pytest bench/tests -q -p no:cacheprovider -o faulthandler_timeout=600 -rs`.
   Never two suites at once; never edit a worktree while its suite runs. Audits: the 8 `dev/check_*.py --upstream-ref 952d4f6b`
   (`--strict` for deletions) from the worktree with `.venv/bin/python`.
 - **Cursor:** `cursor-agent -p --output-format stream-json --model gpt-5.6-sol-high --mode ask --sandbox enabled --force --trust
