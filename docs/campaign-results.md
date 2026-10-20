@@ -2,6 +2,19 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-20 — P369 phase 2: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` regression smoke on production `7207179b` (SMOKE_PASS)
+
+**What:** the C188 carry-over check — the P369 smoke for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on the reviewed P405
+head `64afc7dd` (production = `7207179b`: P400 + P401 + P405), so its 2026-10-19 full-run PASS (production `4e6d0e03`) carries.
+Run `$STACK_WORKDIR/p369/phase2/20261020-64afc7dd-smoke15-fable-regression`, 1,603 s.
+
+**Result:** E1c PASS at T = 1,024 and 65,536 (every sampled row bit-identical, max TV 0, states / probes equal at every commit,
+C1 / C2 identical); E2 PASS (2 items, cross-load identical); E7b OBSERVED. `verify_blocks_per_query = 0` everywhere and native
+KV — the P400 / P405 changes do not touch its served path, as C188 assumed.
+
+**Implication:** `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` is worker-qualified MTP-ON on the production code the merge will
+ship; it still waits for the fork merge, submodule bump and router-chain re-certification before its C177 lines are restored.
+
 ## 2026-10-20 — P369 phase 2: `Qwen3.8-27B-mlx-uniform-4bit` worker-qualified ON TURBOQUANT (PASS)
 
 **What:** the P369 phase-2 worker-conformance full run for `Qwen3.8-27B-mlx-uniform-4bit` on fork `64afc7dd` (P400 verifier fix
