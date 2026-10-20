@@ -1,41 +1,35 @@
-# Handoff — 2026-10-20 (session 3, in progress): P405 fix decided (C189: TurboQuant engages; re-measure) — plan v1 in Cursor review; P400 code round 2 NOT CLEARED → C2–C7 fixed (`ce04439b`), round 3 next; box on BATTERY (no GPU work)
+# Handoff — 2026-10-20 (session 3, in progress): P405 implemented test-first on `p405-kv-scheme` (F1–F3; plan v4 escalated after Cursor round 3 of 3); P400 code round 3 of 3 running; smoke 11 (affine, harness validation) on the GPU
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P405, P404, P403, C189, C188, C187 …),
-then `docs/specs/p405-kv-scheme-precedence.md` (v1, in review), `docs/specs/p400-tq-width2-fix.md` (v4, approved),
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P407, P408, P406, P405, P404, C189 …),
+then `docs/specs/p405-kv-scheme-precedence.md` (v4, escalated), `docs/specs/p400-tq-width2-fix.md` (v4, approved),
 `docs/specs/p369-phase2-run-plan.md` (v9). Model names: FULL registry names only, always (operator 2026-10-19).
 
 ## State of the world
 
-- **Box `m5max-128`**: **on battery since ≈ 04:00 2026-10-20 (AC disconnected, 79 %)** — every GPU run's power preflight
-  refuses until 140 W / 28 V is back; verify `pmset -g batt` / `pmset -g ac` first. **No `.env`** (the shell carries
-  `HF_TOKEN`). Machine config: `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`. GPU idle.
-- **Fork `p400-tq-width2`** (local only, worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p400`), HEAD `ce04439b`: P401 guard
-  (`06101c24`), P400 fix A (`da27f0ef`; production unchanged since), harness + perf probe. Cursor code round 1 CLEARED
-  `d4150165`; **round 2 of 3 NOT CLEARED** (C2–C7, `docs/reviews/p400/code-round2.*`) → all fixed test-first (`2f14e7af` red,
-  `ce04439b` green). Suites ×2 + audits on `ce04439b`: see below / rerun if unknown. **Round 3 of 3 is the last** before the
-  operator.
-- `p369-mtp` = `3a92943d` (= origin); its worktree is back on the branch.
-- **Stack `main`** ≈ 85 commits ahead of origin (docs only). Push needs the operator's in-turn go.
-- Daily driver MTP-OFF (C177).
-
-## New this stretch (2026-10-20 04:00–)
-
-- **C189 (operator): fix P405 so TurboQuant engages, rerun what that invalidates.** Plan v1
-  `docs/specs/p405-kv-scheme-precedence.md`: F1 rebuild `runtime.config` from the final env in `cli.main` before `uvicorn.run`
-  (also fixes the frozen `--vision-cache-size` and the `/v1/settings` replace restore point), F2 effective-codec load log;
-  T1–T5 red-first; branch `p405-kv-scheme` off `p400-tq-width2`. Rollout R1–R7: both main picks PROVISIONAL from the bump until
-  re-certified on TurboQuant; P404's affine −3.93 % superseded by a TurboQuant ABBA (P405 in both arms); the
-  `Qwen3.8-27B-mlx-uniform-4bit` P369 phase 2 runs on P400 + P405 (TurboQuant leaves, `tq_norm` positive). Defect window: stack
-  bump `111bb538` (2026-08-23) onward. **Cursor plan review round 1 of 3 running** (`$S/p405-plan-r1.jsonl`, prompt head
-  `docs/reviews/p405/plan-round1.prompt-head.md`).
-- P400 round-2 fixes include a served-KV-codec assertion in the perf probe (would have caught P405 at boot); the P405 plan
-  should add the same to the P369 worker's `assert_served`.
+- **Box `m5max-128`**, AC back since ≈ 07:50 (140 W / 28 V). **No `.env`**. Machine config:
+  `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`.
+- **GPU: smoke 11** — P369 phase-2 smoke, `Qwen3.8-27B-mlx-uniform-4bit` as served today (affine), harness `ce04439b`
+  (validates the C2 gate + the affine `quantized_scale` positive live): `$STACK_WORKDIR/p369/phase2/20261020-ce04439b-smoke11-uniform-affine`
+  (+ `.log`), pid at launch 48255, started 08:01. The p369 worktree is DETACHED at `ce04439b`; a waiter restores `p369-mtp`
+  afterwards — verify.
+- **Fork `p400-tq-width2`** HEAD `ce04439b` (production unchanged since `da27f0ef`): round 2 C2–C7 fixed (`2f14e7af` red,
+  `ce04439b` green); suites ×2 6470 / 17 / 0 identical skips, 8 audits green. **Code round 3 of 3 running** (Cursor,
+  `$S/p400-code-r3.jsonl`, prompt head `docs/reviews/p400/code-round3.prompt-head.md`).
+- **Fork `p405-kv-scheme`** (worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p405`, off `ce04439b`, local only): `ad36e941` T1–T5
+  red → `0163f212` F1 (cli rebuilds `runtime.config` before `uvicorn.run`) + F2 (`KV cache resolved:` log; env-derived lifespan
+  line removed); F3 red (`kvmanifest` + integration) → green (`dev/p369_phase2/kvmanifest.py`: argv codec, every resolved KV
+  field, exact per-layer manifest; worker / orchestrator / smoke gate / perf probe wired). Targeted 272 tests green; **full
+  suites ×2 + audits NOT yet run on it** (GPU smoke running; C188 no overlap). `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` not yet in
+  harness `PICKS` (plan v4 R3, `verify_policy=None`).
+- `p369-mtp` = `3a92943d` (= origin). Stack `main` ≈ 90 commits ahead of origin (docs only). Daily driver MTP-OFF for the two
+  Qwen3.8-27B picks (C177); `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` still MTP-ON (P406).
 
 ## Waiting on the operator
 
-1. **Approve the P400 production change** (fix A + the P401 guard) — after code round 3.
-2. **P404** — now deferred to the TurboQuant re-measurement (C189); no decision on the affine number.
-3. Push `p400-tq-width2` (and stack `main`) — each needs an in-turn go.
+1. **P405 plan v4 escalation** (round 3 T13 / T14 / T15) — lead rec: accept v4 without a fourth round.
+2. **P406** — `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` MTP-OFF now (lead rec, as C177) or leave ON until the fixed bump.
+3. Approve the P400 production change (after code round 3). P404 deferred to the TurboQuant re-measurement (C189).
+4. Pushes (`p400-tq-width2`, `p405-kv-scheme`, stack `main`) — each needs an in-turn go.
 
 ## Smoke-found bugs (fixed test-first; P394: smoke iterations need no review round)
 
@@ -51,13 +45,15 @@ then `docs/specs/p405-kv-scheme-precedence.md` (v1, in review), `docs/specs/p400
 
 ## Next work, in order
 
-1. Read the P405 plan review; fix the plan (≤ 3 rounds); then implement P405 test-first on `p405-kv-scheme`.
-2. P400 code round 3 of 3 on `78c9f99d..ce04439b` (one Cursor run at a time) — after the suites / audits are green.
-3. When AC power is back: P369 phase 2 for `Qwen3.8-27B-mlx-uniform-4bit` on P400 + P405 (smoke, then full run on a reviewed
-   head); the P404 TurboQuant ABBA (arm A = `p369-mtp` + the P405 commit on a dev branch, arm B = P400 + P405); 256K peaks
-   for both main picks on TurboQuant.
-4. Then: fork main merge (P400 → P405) + submodule bump (both main picks PROVISIONAL) → M6d re-certification (own plan,
-   Cursor review, operator GPU go) → MTP-ON restore → P383, P385, tg2, M64. Remove the stale `mlx-vlm-p369-r2` worktree.
+1. Smoke 11 result → record (P369 entry / P405 F3 context); fix any live harness bug test-first.
+2. P400 code round 3 result (last round) → CLEARED, or the operator table.
+3. P405: suites ×2 + 8 audits on `p405-kv-scheme` (after the smoke); add `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` to the harness
+   `PICKS` test-first; Cursor code review round 1 of 3 on `ce04439b..p405 HEAD`.
+4. GPU (on P400 + P405, after a reviewed head): R3 P369 phase 2 smoke → full for `Qwen3.8-27B-mlx-uniform-4bit` on TurboQuant
+   (F3 manifest + `tq_norm` must fire) and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`; R4 P404 ABBA (P405 both arms); R5 codec ABBA;
+   R7 six-entry 256K qualification. R6 (matched quality arms) gets its own plan + operator GPU go.
+5. Then: fork main merge (P400 → P405) → candidate stack worktree bump (main unchanged until R6) → M6d / M63 on the chosen
+   codec → MTP-ON restore → P383, P385, tg2, M64. Remove the stale `mlx-vlm-p369-r2` worktree.
 
 ## Known gaps / owed
 
@@ -84,4 +80,4 @@ then `docs/specs/p405-kv-scheme-precedence.md` (v1, in review), `docs/specs/p400
 - Tests that start processes own them in fixtures that kill the PGID and any self-recorded child pid at teardown.
 - Zero flakes; red-first honesty (say "helper absent" vs behavioural); check `git show --stat` after every commit.
 
-Next decision id C190; discussion ids continue from P405.
+Next decision id C190; discussion ids continue from P408.
