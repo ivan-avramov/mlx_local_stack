@@ -1,44 +1,39 @@
-# Handoff — 2026-10-20 (session 3, in progress): P405 reviewed (`64afc7dd`, C195) — TurboQuant engages live, E1c / E2 PASS on it; `Qwen3.8-27B-mlx-uniform-4bit` TurboQuant full run next (C193, no wall cap C194); P369 v13 (four campaigns, C193) accepted
+# Handoff — 2026-10-20 (session 3, END): `Qwen3.8-27B-mlx-uniform-4bit` P369 phase 2 FULL RUN PASS on TurboQuant; P405 reviewed + merged-ready; P369 v13 harness built (code round 1 fixed, round 2 next)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P409, P407 / P408 deferred, P406 → C191,
-P405, C195, C194, C193, C192, C191, C190, C189 …), then `docs/specs/p369-phase2-run-plan.md` (v13, accepted C193; V17 withdrawn
-C194), `docs/specs/p405-kv-scheme-precedence.md` (v4, accepted C192). Model names: FULL registry names only, always.
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P410 → C193, P409 closed, P408 / P407
+deferred C190, P406 → C191, P405, C195, C194, C193, C192, C191, C190, C189), then `docs/specs/p369-phase2-run-plan.md` (v13,
+accepted C193; V17 wall cap withdrawn C194) and `docs/specs/p405-kv-scheme-precedence.md` (v4, accepted C192).
+Model names: FULL registry names only, always.
 
-## State of the world
+## State of the world (2026-10-20 13:40)
 
-- **Box `m5max-128`**, 140 W / 28 V. **No `.env`**. Machine config: `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`.
-- **Fork `p405-kv-scheme`** (worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p405`, local only) HEAD **`64afc7dd` = the reviewed
-  P405 head** (C195; code rounds 1–3 `docs/reviews/p405/`), on top of `p400-tq-width2` `abbbfc84` (reviewed P400 head, C192).
-  Production pin `7207179b` (P400 + P401 + P405 F1 / F2 / K6). Includes: `dev/p369_phase2/kvmanifest.py` (argv codec, resolved
-  KV fields, exact per-layer + drafter manifests), the perf probe's `codec` mode (R5) with live-cache checks, the C193
-  `--projection-ruling` (lifts only `fits`, no cap), `--wall-limit-s` finite > 0. Suites ×2 + audits on `64afc7dd`: see below.
-- **Live evidence:** smoke 11 (affine, today's serving) SMOKE_PASS; smoke 12b / 12c (TurboQuant on P400 + P405): TurboQuant
-  ENGAGES (`KV cache resolved: … turboquant … 'mse'`; 15 TurboQuant + 1 exempt native leaves; manifest clean), **E1c / E2 PASS**;
-  12c: all positives fired, only `fits` open (12,894 s > 12,600 s) → C193.
-- **Registry:** C191 interim MTP-OFF for `Ornith-1.0-35B-mlx-uniform-4bit` + `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (marker
-  `P406 INTERIM (C191 2026-10-20)`), on top of C177 (the two Qwen3.8-27B picks). All four MTP-certified entries are MTP-OFF.
-- `p369-mtp` = `3a92943d` (= origin); its worktree is on the branch between smokes (the waiters restore it).
-- **Stack `main`** ≈ 110 commits ahead of origin. Pushes need the operator's in-turn go ("no push yet").
-- Stack suite: run it with the machine config sourced (P409 closed: the 4 failed + 9 errors were an unsourced-config artifact).
-
-- **Fork `p369-v13`** (P405 worktree, local only) HEAD `5f407d5d` on `64afc7dd`: the P369 v13 harness build — 16-state
-  registry generator (`dev/p369_phase2/registry_states.py`), four-entry `PICKS` + one-entry campaigns + argv scan check,
-  `pins.json` (Hub-verified identical to the certification uploads), loaded-drafter assertions, borrowed panel +
-  `--phase panel`, phase-based projection, MoE telemetry (routed banks, drafter draft-scope inventory, smoke-gate
-  requirement), split-path characterization (adversarial nested `qwen3_next` refused by strict load), V3 (d) MoE bitwise
-  test. Code review round 1 of 3 NOT CLEARED M1–M10 → all fixed (M1 / M2 / M3 / M9 / M10 tested on CPU; M4–M8 + V3 tests
-  written, **Metal-only — run after the GPU campaign**, then code round 2).
-- **GPU: the `Qwen3.8-27B-mlx-uniform-4bit` TurboQuant FULL RUN** (started 2026-10-20 11:27, ≈ 3.5–4 h;
-  `$STACK_WORKDIR/p369/phase2/20261020-64afc7dd-full-uniform-tq-2`, manifest: reviewed head `64afc7dd`, production
-  `7207179b`, `--projection-ruling C193`, no wall cap C194), bound to smoke 14 (`…-smoke14-uniform-tq-bound`: gate pass,
-  only `fits` open, 12,942 s). Chain `$S/chain_uniform_tq.sh` (pid at launch 4004) restores the p369 worktree after — verify.
-  Smoke 13 (unbound: run without `--reviewed-head`) could not authorize; the first full attempt `…-full-uniform-tq` refused.
-- **Fork `p404-arm-a`** (worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p404a`) `e12780d0` = `p369-mtp` + the P405 production commits
-  (F1 / F2 + the K6 hunk): the R4 ABBA arm A; production-differs from `64afc7dd` by P400 + P401 only.
+- **Box `m5max-128`**, 140 W / 28 V, GPU IDLE. **No `.env`**. ALWAYS `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`
+  first (P409: without it the stack suite fails — docker off PATH, tg2 test root inside the repo).
+- **Results today:** P369 phase 2 FULL RUN PASS for `Qwen3.8-27B-mlx-uniform-4bit` on TurboQuant (fork `64afc7dd`, run
+  `$STACK_WORKDIR/p369/phase2/20261020-64afc7dd-full-uniform-tq-2`; E1c 5 / 5, E2, E7a M4a 6 / 20 M4b 11 / 20 M3 0 / 20, E7b 5 / 5;
+  15 TurboQuant + 1 native KV leaves) — open-questions P369 + campaign-results. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+  PASS (2026-10-19, carries by C188 with a regression smoke on `7207179b` still owed).
+- **Fork branches (all LOCAL, unpushed; operator: "no push yet"):**
+  - `p369-mtp` `3a92943d` (= origin) — its worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369` is the GPU runs' fork root (detached
+    to the run head by the chain scripts, restored after).
+  - `p400-tq-width2` `abbbfc84` — reviewed P400 head (C192).
+  - `p405-kv-scheme` `64afc7dd` — reviewed P405 head (C195); production pin `7207179b` (P400 + P401 + P405 F1 / F2 / K6).
+  - `p369-v13` `3e3cec09` (worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p405`, on `64afc7dd`; production unchanged): the v13 harness
+    — `registry_states.py` (16 byte states), four-entry `PICKS` + one-entry campaigns + argv scan check, `pins.json`
+    (Hub-verified identical to the certification uploads), loaded-drafter identity, borrowed panel + `--phase panel`,
+    phase-based projection, MoE telemetry (routed banks, drafter draft-scope inventory), split-path characterization, V3 (d)
+    served-shape MoE bitwise test (PASSES: no MoE P400 analogue at fixture level). **Code round 1 of 3 NOT CLEARED M1–M10 → all
+    fixed** (`docs/reviews/p369-v13/`); all MoE Metal tests green (16). **Fork suites ×2 + 8 audits NOT yet run on `3e3cec09`;
+    code round 2 not yet launched.**
+  - `p404-arm-a` `e12780d0` (worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p404a`) = `p369-mtp` + P405 production only: R4 arm A.
+- **Registry (`main_models.yaml`):** all four MTP-certified entries MTP-OFF — C177 (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`,
+  `Qwen3.8-27B-mlx-uniform-4bit`) + C191 (`Ornith-1.0-35B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, marker
+  `P406 INTERIM (C191 2026-10-20)`). Stack suite with config: 6941 / 6 / 0.
+- **Stack `main`** ≈ 125 commits ahead of origin (docs + C191 registry). Pushes need an in-turn go.
 
 ## Waiting on the operator
 
-- Nothing blocking. Pushes (`p400-tq-width2`, `p405-kv-scheme`, stack `main`) when wanted. P409 fix proposal (small).
+- Nothing blocking. Pushes when wanted.
 
 ## Smoke-found bugs (fixed test-first; P394: smoke iterations need no review round)
 
@@ -54,16 +49,21 @@ C194), `docs/specs/p405-kv-scheme-precedence.md` (v4, accepted C192). Model name
 
 ## Next work, in order
 
-1. Smoke 13 bound to `64afc7dd` → the `Qwen3.8-27B-mlx-uniform-4bit` TurboQuant full run (`--reviewed-head 64afc7dd
-   --smoke-summary <smoke 13> --projection-ruling C193`, no `--wall-limit-s`, C194); 5-min monitor; record in P369 / P405.
-2. During it (CPU only, no suites): the P369 v13 harness build (test-first): 16-state byte generator; `pins.json`; borrowed
-   panel fixture; `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` + `Ornith-1.0-35B-mlx-uniform-4bit` PICKS; tiny `qwen3_5_moe` +
-   `qwen3_next` split tests (V3 / V12 / V14 / V15); phase-based projection (V13). Then Cursor code review (≤ 3 rounds).
-3. GPU after: Fable regression smoke on `7207179b` (C188 carry-over); R4 P404 ABBA (P405 both arms: arm A = `p369-mtp` + the
-   P405 commits on a dev branch); R5 codec ABBA (`p400_perf_probe.py codec`); R7 six-entry 256K qualification; then the
-   Qwen3.6 / Ornith campaigns. R6 (matched quality arms) + router re-certification: own plans + operator GPU go.
-4. Then: fork main merge (P400 → P405) → candidate stack worktree bump → re-certification → per-entry MTP-ON restore.
-   P409; P383, P385, tg2, M64. Remove the stale `mlx-vlm-p369-r2` worktree.
+1. `p369-v13` `3e3cec09`: fork suites ×2 + 8 audits (`--upstream-ref 952d4f6b`, deletions `--strict`; PYTHONPATH = the p405
+   worktree, p369 venv) → Cursor code round 2 of 3 on `5f407d5d..HEAD` (note: the `--phase panel` count-only boot loads weights,
+   a declared refinement of V4) → ≤ 3 rounds, then operator table.
+2. GPU (one at a time; launch detached with a chain script like `$S/chain_uniform_tq.sh`; a SMOKE THAT AUTHORIZES A FULL RUN must
+   run with `--reviewed-head <same head>`; no `pytest` may run at a campaign's preflight):
+   a. Fable regression smoke on the P405 head (C188 carry-over to `7207179b`).
+   b. R4 — P404 TurboQuant ABBA: `dev/p400_perf_probe.py drive --old-tree <p404a wt> --old-ref e12780d0 --new-tree <p405 wt at
+      64afc7dd> --new-ref 64afc7dd --pick Qwen3.8-27B-mlx-uniform-4bit --python <fork venv>`; then decide P404 with the operator.
+   c. R5 — codec ABBA: `p400_perf_probe.py codec --tree … --ref …` (both schedules; long = 261,120-token prompts).
+   d. R7 — six-entry 256K qualification (needs a small tool; plan v4 §5 R7).
+   e. After v13 is reviewed: `--phase panel` for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` and `Ornith-1.0-35B-mlx-uniform-4bit` →
+      review + commit `dev/p369_phase2/borrowed_panel.json` → their campaigns (smoke bound, then full).
+3. R6 (matched affine-vs-TurboQuant quality arms) and the router-chain re-certification: own plans, Cursor review, operator GPU go.
+4. Then: fork main merge (P400 → P405 → v13) + candidate stack worktree bump → re-certification → per-entry MTP-ON restore
+   (exact C177 / P406 pairs via `registry_states`). Then P383, P385, tg2, M64; remove stale worktree `mlx-vlm-p369-r2`.
 
 ## Known gaps / owed
 
