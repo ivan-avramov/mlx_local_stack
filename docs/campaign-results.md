@@ -2,6 +2,21 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-20 — P369 phase 2: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` MTP-ON is exact on real weights (E1c / E2 PASS); `Qwen3.8-27B-mlx-uniform-4bit` blocked by a production defect (P400, fixed on a branch)
+
+Worker-conformance certification on the box's production numerics (fork `3a92943d`, production `4e6d0e03`; the fork's real
+CLI in-process; plan `docs/specs/p369-phase2-run-plan.md` v9). **`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+(native16 KV, `joint_v1`)**: E1c PASS on 5 cells up to T = 65,536 — every sampled target distribution after the sampling
+transforms bit-identical to plain decoding on the same loaded instance, the full KV + recurrent state equal at every commit,
+the thinking-budget forcing schedule identical, the within-instance control and the cross-load comparison identical; E2 PASS
+(greedy ON = plain greedy on 20 C84 items + 4 long-context straddles). E7a: the pre-fix stop-handling conditions occur on real
+traffic — M4a in 4 / 20 requests (CI 0.057–0.437), M4b 7 / 20 (0.154–0.592), M3 / first-token 0 / 20 — so the P369 production
+fixes matter; E7b 5 / 5 sessions continuous. **`Qwen3.8-27B-mlx-uniform-4bit` (TurboQuant 4-bit KV)**: E1c FAIL in the GPU
+smoke — a width-2 verify block is not exact on TurboQuant KV under TF32 (P400: the verifier's length-2 shortcut; reproduced on
+fixtures, MTP emitted a different token); fixed (fix A, C188) on `p400-tq-width2`, Cursor code review CLEARED; its re-certification
+follows the operator's approval of the production change. The fork's exactness suite had run with TF32 forced off (P403); the
+quantized exactness tests now also run under production numerics. Daily driver stays MTP-OFF (C177) until M6d re-certification.
+
 ## 2026-10-16 — c144-base: both picks re-recorded on probe `d4319705…` (descriptive replication of P223) — pick 2 86/86, pick 1 84/86, no 60-min cuts
 
 Design and seeds as P223 (tg1 `opencode-v2-web-tg1`, predictor OFF, k=2 + same-seed reload control), probe `d4319705…`
