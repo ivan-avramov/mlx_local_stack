@@ -22,10 +22,25 @@ Model names: FULL registry names only, always (operator 2026-10-19).
 - **Stack `main`** ≈ 75 commits ahead of origin (docs only). Push needs the operator's in-turn go.
 - Daily driver MTP-OFF (C177).
 
+## New this stretch (2026-10-20 01:00–04:00)
+
+- P369 full run PASS for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (above). P400 perf probe → **P404** (operator decision:
+  `Qwen3.8-27B-mlx-uniform-4bit` −3.93 % tok/s at forced width 2, outside the 3 % bound; worst case by construction).
+- **P405 (operator decision, production):** `--kv-quant-scheme turboquant` is ignored by the server (runtime config frozen at
+  import with the `uniform` default; upstream #1876, fork since 2026-08-22) → six registry entries incl. two main picks are
+  served with AFFINE 4-bit KV labelled TurboQuant. Found by smoke 9's leaf census, root-caused on the live worker.
+- Unbound smoke 9 (`Qwen3.8-27B-mlx-uniform-4bit` on the fix): E1c / E2 PASS (fix verified live on the affine KV actually
+  served); gate failed only on the KV positive (affine leaf). Regression smoke 10 (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+  on the new pin) running. The p369 worktree is DETACHED at the P400 head while it runs; the smoke-10 waiter restores
+  `p369-mtp` afterwards — verify.
+- P400 tests now cover both codecs for `Qwen3.8-27B-mlx-uniform-4bit` (affine + TurboQuant); 441 related tests green.
+
 ## Waiting on the operator
 
-1. **Approve the P400 production change** (fix A + the P401 guard; CLEARED; the perf probe's verdict attached when it lands).
-2. Then: push `p400-tq-width2` (and stack `main`) — each needs an in-turn go.
+1. **Approve the P400 production change** (fix A + the P401 guard; Cursor CLEARED; verified live by smoke 9).
+2. **P404** — accept the worst-case width-2 slowdown (lead rec) or ask for an exact fast width-2 path.
+3. **P405** — fix the scheme precedence (TurboQuant engages; re-measure six models) or align the registry with affine (lead rec: fix, own proposal).
+4. Then: push `p400-tq-width2` (and stack `main`) — each needs an in-turn go.
 
 ## Smoke-found bugs (fixed test-first; P394: smoke iterations need no review round)
 
