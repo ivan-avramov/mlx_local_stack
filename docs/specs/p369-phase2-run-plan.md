@@ -1,4 +1,9 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v9, 2026-10-19
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v10, 2026-10-20
+
+**v10 (C191, operator 2026-10-20: "the goal here must be to qualify and enable MTP across the picks") = v9 + §3.1: the phase
+covers EVERY MTP-certified registry entry** — `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` and `Ornith-1.0-35B-mlx-uniform-4bit`
+join the two Qwen3.8-27B picks; production pin = the P405 head (P400 + P401 + P405; `docs/specs/p405-kv-scheme-precedence.md`
+v4); §5 accepts the P406 interim registry state. v10 is in Cursor plan review (round 1 of 3) before its harness changes.
 
 Status: **v9 = v8 + §2.2 forced positions (P398, found by GPU smoke 3)**; v8 = v7 + §3 E2 on the same-instance design (C185 / P393); reviewed with its build (code review round 1 of 3, C186). v7 — Cursor round 7 `VERDICT: AGREE` (`docs/reviews/p369-phase2-plan-round7.cursor-gpt-5.6-sol-high.md`); the harness is built → its code review. v6 → round 6 `DISAGREE Q35 Q38` (incomplete closures; Q36 Q37 Q39 Q40 closed;
 `docs/reviews/p369-phase2-plan-round6.cursor-gpt-5.6-sol-high.md`), both applied in v7. v5 (= v4 + §2.5, P391) → round 5 `DISAGREE Q35–Q40`, all applied here
@@ -209,6 +214,39 @@ sha256 recorded before load.
   session, never pooled with E7a. Tool-session exposure is NOT measured here (parent §E7 named tg1 sessions); it would need
   production MTP event counters in the worker (a fork change of its own) and is recorded as a gap.
 
+### 3.1 v10 — the two further MTP-certified entries (C191)
+
+Both are MTP-ON certified (M6b / M27) and were served MTP-ON on the pre-fix fork until C191 (P406). Each is qualified exactly
+like the two picks (smoke → full run on a reviewed head, criteria §2.2 / §3), after `Qwen3.8-27B-mlx-uniform-4bit`, with these
+differences:
+
+- **Tuples (from the registry, P406 lines restored by the overlay):** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — `qwen3_5`
+  dense hybrid, TurboQuant 4-bit KV (served as such only with P405), per-query verification (harness `verify_policy=None`, the
+  runtime form of the default; the argv must select / default to `per_query` — P405 round 3 T15), drafter
+  `caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter`. `Ornith-1.0-35B-mlx-uniform-4bit` — `qwen3_5_moe` (40 layers, full
+  attention every 4th, 256 experts + shared; its language model subclasses `qwen3_5`'s), native KV (`kv_bits: 0`), per-query,
+  TRANSPLANTED drafter `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter` (split via `--model-type qwen3_next`, M27).
+- **Overlay:** `overlay_registry` restores exactly the two `P406 INTERIM (C191` marked lines of the entry (draft_kind +
+  adjacent draft_model); the C177 marker logic is unchanged for the two picks; anything else refuses.
+- **Items (no C84 bundles exist for either entry):** E2 / E7a / E7b use the SAME item ids as `Qwen3.8-27B-mlx-uniform-4bit`'s
+  `*.c84bundle-after-tq4-20260914.jsonl` (five per axis), rebuilt by the same prompt builders at the same pins for the entry's
+  own template; the reconstruction's `prompt_tokens == row` check (which proves faithfulness to a C84 request) does not apply —
+  replaced by the recorded per-item templated-prompt sha256 + token count, and the run labels these items "borrowed (no C84
+  run for this entry)". E2 decides as in §3; E7a / E7b stay descriptive and here also record how often the pre-fix conditions
+  would have hit while the entry served MTP-ON (an exposure record for P406).
+- **Ornith coverage, before any GPU minute (test-first):** the observation hooks (§2.2 recorder, emission cut, verifier block
+  boundaries, probe) and the kernel inventory (Q29) must be proven on a tiny `qwen3_5_moe` fixture (MoE MLP via `SwitchGLU`;
+  the static manifest gains the MoE verify-path kernels); a hook that does not fire on the MoE stack is a harness error, not a
+  pass. Expected risk (recorded, not assumed): batched vs singleton expert dispatch inside a verify block is the MoE analogue
+  of P400 — E1c measures it.
+- **Smoke positives:** the KV positive follows the leaf census / exact manifest (P405 F3): `tq_norm` for
+  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `old_prefix_k` for Ornith.
+- **Restore after PASS** (per entry, with the fork bump and its re-certification plan): the P406 lines uncommented; a FAIL
+  keeps the entry MTP-OFF and goes to the operator with the measured bound.
+- **Estimate:** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` ≈ `Qwen3.8-27B-mlx-uniform-4bit` (≈ 2.7 h full + 0.5 h smoke);
+  Ornith ≈ 2 h full (≈ 3B active parameters decode faster; 10 attention layers of native KV hash like Fable's 16 scaled) —
+  the smoke calibrates; > 3.5 h projected goes to the operator first.
+
 ## 4. Estimate (Q25)
 
 E1c (v6, Q40): four trajectories per cell (ON, OFF1, OFF2, cross-load OFF) ⇒ ≈ 430K prefill tokens and ≈ 3.2K decode /
@@ -230,7 +268,10 @@ registry with the fixture field by field and accepts exactly two states: identic
 `draft_model` and Fable's `mtp_verify_scan` absent, where (Q34) each pick's commented `draft_kind` line and Fable's commented
 `mtp_verify_scan` line carry the `P369 INTERIM (C177` marker and the commented `draft_model` line ADJACENT to that pick's
 marked `draft_kind` equals the fixture's `draft_model` exactly (the registry's `draft_model` lines carry no marker; the
-registry is not edited). C182 approved the v1 variant
+registry is not edited). v10 (C191): a third accepted state — the C177 interim plus, for
+`Ornith-1.0-35B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `draft_kind` / `draft_model` absent with the
+commented `draft_kind` line carrying the `P406 INTERIM (C191` marker and the ADJACENT commented `draft_model` equal to the
+fixture's. C182 approved the v1 variant
 (sampling from the live registry); this change goes back to the operator.
 
 ## 6. After this phase
