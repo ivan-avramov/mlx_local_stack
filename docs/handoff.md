@@ -1,27 +1,28 @@
-# Handoff — 2026-10-19 (session 3, in progress): harness review closed (C186); C185 E2 built, review rounds 1–2 fixed (round 3 of 3 deferred until a smoke passes, operator agreed); GPU smoke iterations 1–3 found 3 live bugs (fixed); smoke 4 running
+# Handoff — 2026-10-19 (session 3, in progress): C185 review rounds 1–3 used (round 3 NOT CLEARED E6 E7 → fixed test-first, ESCALATED, awaiting the operator); smoke 4 = Fable PASS / uniform E1c FAIL on a PRODUCTION defect (P400); Fable-only smoke 6 running on the candidate reviewed head 0d06bb0c
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P398, P397, P396, C186, C185, P395 (closed),
-P394, P393, C184 …), then `docs/specs/p369-phase2-run-plan.md` (**v9**: v8 §3 E2 same-instance (C185) + §2.2 forced positions (P398)),
-`docs/specs/p387-build-note.md` (v2), `docs/specs/p383-build-plan.md` (v4).
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P400, P399, P398, P397, P396, C186, C185 …),
+then `docs/specs/p369-phase2-run-plan.md` (**v9**), `docs/specs/p387-build-note.md` (v2), `docs/specs/p383-build-plan.md` (v4).
 
 ## State of the world
 
 - **Box `m5max-128`.** 140 W / 28 V adapter attached. **No `.env` on this box** (the shell carries `HF_TOKEN`; never `. ./.env`).
   Machine config: `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`.
-- **Fork `p369-mtp` at `8d1cf115`** (worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369`); **pushed to origin at `a44a8070`** (operator
-  go 2026-10-19) — local is ahead by the smoke / round-2 fixes (push again only with a new go). Side worktree
-  `$STACK_WORKDIR/worktrees/mlx-vlm-p369-r2` (branch `p369-r2`, = `8d1cf115`) used for edits while a smoke owns the main
-  worktree (its tree guard refuses any change); its tests run with the main worktree's venv, whose editable `mlx_vlm` makes
-  `test_check_sources_refuses_a_module_outside_the_reviewed_tree` fail there (artefact; green in the main worktree).
-  Production diff vs `4e6d0e03` EMPTY. Green at `8d1cf115`: fork suite **6406 / 17 / 0 twice**, identical skips; eight audits
-  green, exclusions 268 / 675 / 34 / 50 / 16.
-- **GPU smoke 4** running: `$STACK_WORKDIR/p369/phase2/20261019-8d1cf115-smoke4` (+ `.log`), no `--reviewed-head` (P394 iteration).
-  Smokes 1–3 (`…-a44a8070-smoke1`, `…-f0bfce29-smoke2`, `…-7b87192e-smoke3`): HARNESS_ERROR, HARNESS_ERROR, INTERRUPTED (stopped by
-  the lead after P398 made its E1c FAIL certain).
-- **C185 review:** round 1 (`f4c841be`) NOT CLEARED E1 E2 E3 (+E4) → fixed; round 2 (`a44a8070`) NOT CLEARED E5 (+E1 partial)
-  → fixed on `p369-r2`. **Round 3 of 3 runs only after a smoke passes** (operator agreed 2026-10-19) so it covers E5 + every
-  smoke fix and its closing commit is the `--reviewed-head`.
-- **Stack `main` ≈ 45 commits ahead of origin** (docs only). Push needs the operator's in-turn go.
+- **Fork `p369-mtp` at `0d06bb0c`** (worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p369`; side worktree `…/mlx-vlm-p369-r2`, branch
+  `p369-r2` = same head, for edits while a smoke owns the main worktree). **origin has `a44a8070`** (pushed with the operator's
+  go); local is ahead — push only with a new go. Production diff vs `4e6d0e03` EMPTY. Green at `0d06bb0c`: fork suite
+  **6412 / 17 / 0 twice**, identical skips; eight audits green (268 / 675 / 34 / 50 / 16).
+- **Smoke 6** (Fable only, `--pick Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, no `--reviewed-head`):
+  `$STACK_WORKDIR/p369/phase2/20261019-0d06bb0c-smoke6-fable`.
+- **Smoke 4** (`…-8d1cf115-smoke4`, both picks): Fable E1c PASS (T 1,024 + 65,536: 158 sampled rows bit-identical, forced
+  [129, 130] excluded, states equal at every commit, C1 identical, cross-load identical, all positives fired), E2 PASS, E7b
+  OBSERVED (continuity, 2 × M4a), wall 1,590 s; **uniform E1c FAIL** (P400: terminal width-2 block on TQ4 KV; T 65,536 a1 rows
+  @159 TV ≈ 0.009 + final state), positives incomplete (`tq_norm` / `old_prefix_k` never fired — harness TurboQuant leaf
+  detection bug, unfixed), E2 / E7 skipped; gate projection 18,348 s (both picks) > 3.5 h. Smokes 5 (`…-fa89d19b-smoke5-fable`)
+  and 3 were stopped early (INTERRUPTED) when a newer head superseded them.
+- **Escalated to the operator (C186 table, in the session):** (1) accept the round-3 E6 / E7 / E1 fixes without a 4th round so
+  `0d06bb0c` is the `--reviewed-head` (lead: accept); (2) P400 — uniform stays MTP-OFF behind its own production-fix proposal,
+  Fable's phase 2 proceeds (lead) vs hold all; (3) full run Fable-only (≈ 2.65 h projected) once smoke 6 passes on `0d06bb0c`.
+- **Stack `main` ≈ 50 commits ahead of origin** (docs only). Push needs the operator's in-turn go.
 - Daily driver MTP-OFF (C177) until P369 ships + re-certification.
 
 ## Smoke-found bugs (fixed test-first; P394: smoke iterations need no review round)
@@ -32,26 +33,24 @@ P394, P393, C184 …), then `docs/specs/p369-phase2-run-plan.md` (**v9**: v8 §3
   TestClient portal (reproduced on CPU). Fix: plain `Exception`, ids recorded on the side (`7b87192e`).
 - Smoke 3: **P398** — E1c compared a stale ON row at a thinking-budget forced position (E1c `max_tokens` 160 → budget 128 →
   forced `\n</think>`). Fix: rows cut at each block's emission decision, forced positions proven and excluded (`8d1cf115`).
+- Smoke 4: P399 (rejected attempts' evidence dropped) and P400 (production defect) — open-questions.
 - Observed, not a bug: Fable T = 1,024 seed a0 had no observed key-length straddle (a block boundary landed on 1,024) while the
   production counter read 16 → that cell retries the next seed (by design). T = 65,536 E1c cell > 11 min (hash cost).
 
 ## Next work, in order
 
-1. **Iterate the GPU smoke to SMOKE_PASS** (C175 go): from the stack root, detached, background waiter:
-   `nohup .venv/bin/python <fork-worktree>/dev/p369_phase2/orchestrate.py --stack-root . --fork-root <fork-worktree>
-   --out $STACK_WORKDIR/p369/phase2/<date>-<head>-smokeN --phase smoke > <out>.log 2>&1 < /dev/null &` (`--out` under
-   `$STACK_WORKDIR/p369/phase2/`; flock `$STACK_WORKDIR/p369/phase2/.lock`; preflight refuses while any pytest runs). Watch
-   `monitor.log` (5 min) + job dirs; exit 0 SMOKE_PASS / 2 not pass / 1 harness error. Fix live bugs test-first (in the side
-   worktree while a smoke runs), suites ×2 + audits, relaunch. Still unproven live: kernel coverage on real weights, `tq_norm`,
-   E2 triple telemetry (`cached_tokens == 0`, detached replay counters), E7b continuity, the uniform pick end to end.
-2. **C185 review round 3 of 3** on `a44a8070..<smoke-passing head>` (E5 + E1 residual + every smoke fix incl. P398); fix; if
-   anything stays open, escalate to the operator as a table (finding + context; recommendation + justification + strongest
-   counterpoint, 2–3 sentences each). The closing commit is the `--reviewed-head`; if round 3 changes code, a confirming smoke on
-   that head is still required (P394).
-3. **Full run** (operator push go first for the reviewed head): `--phase full --smoke-summary <smoke>/summary.json
-   --reviewed-head <sha>` (the summary is re-validated and its gate recomputed, H36; a projected wall > 3.5 h returns to the
-   operator). Report per pick E1c (pair, C1, C2, forced positions), E2 (verdict, C1-E2, cross_load), E7a (Clopper–Pearson), E7b
-   (descriptive) → P369 + handoff.
+1. **Operator rulings on the escalation** (above). On "accept": `0d06bb0c` is the reviewed head; if smoke 6 SMOKE_PASSes on it, the
+   full run: `nohup .venv/bin/python <worktree>/dev/p369_phase2/orchestrate.py --stack-root . --fork-root <worktree> --out
+   $STACK_WORKDIR/p369/phase2/<date>-0d06bb0c-full-fable --phase full --pick Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+   --smoke-summary <smoke6>/summary.json --reviewed-head <full sha of 0d06bb0c> > <out>.log 2>&1 < /dev/null &` (detached; waiter;
+   5-min check-ins). Report Fable E1c (pair, C1, C2, forced positions, rejected attempts), E2 (verdict, C1-E2, cross_load), E7a
+   (Clopper–Pearson), E7b (descriptive) → P369 + handoff.
+2. **P400 (uniform production defect)** — own proposal per the operator's ruling: localise the TurboQuant width-2 verify branch
+   (repro scripts: the scratchpad `tq_repro.py` / `tq_map.py` / `tq_width.py` pattern — uniform `_quantized_pair` + `kv_bits=4,
+   kv_quant_scheme="turboquant", quantized_kv_start=0`, scripted full-accept drafter; block forced to 2 via
+   `test_mtp_stop_state.BLOCK = 2`), red test incl. TQ KV in the E1a / E1c fixtures (both picks), fix, Cursor review, re-pin
+   PRODUCTION, rerun uniform phase 2 (+ the harness `tq_norm` leaf-detection fix).
+3. Smoke-fix bookkeeping: index the new review dir `docs/reviews/p369-c185/` in `docs/README.md`.
 4. Then: fork main merge + submodule bump (suites in both repos) → per-pick re-certification (own plan, operator GPU go) → restore
    MTP-ON (C177 lines = `test_mtp_verify_scan.INTERIM_LINES` reversed) → P368 layers 2–3; P383 build (+P389, P388 snapshot); P385
    with Cursor; tg2 steps 3–4; M64.
@@ -81,4 +80,4 @@ P394, P393, C184 …), then `docs/specs/p369-phase2-run-plan.md` (**v9**: v8 §3
 - Tests that start processes own them in fixtures that kill the PGID and any self-recorded child pid at teardown.
 - Zero flakes; red-first honesty (say "helper absent" vs behavioural); check `git show --stat` after every commit.
 
-Next decision id C187; discussion ids continue from P399.
+Next decision id C187; discussion ids continue from P401.
