@@ -1,6 +1,8 @@
-# P415 — R7 256K operational qualification tool (plan v3, 2026-10-20)
+# P415 — R7 256K operational qualification tool (plan v4, 2026-10-20)
 
-Status: v3 = v2 after Cursor plan review round 2 of 3 (`docs/reviews/p415/plan-round2.*`: Q5 Q6 Q8 closed; Q1 Q2 Q3 Q4 Q7 open +
+Status: v4 = v3 after Cursor plan review round 3 of 3 (`docs/reviews/p415/plan-round3.*`: Q3 Q5 Q6 Q8 Q9 closed; Q1 Q2 Q4 Q7 open +
+new Q10 Q11 — applied in §2.3; v3's shrink exception WITHDRAWN) — escalated to the operator (P416), lead rec: accept v4 without
+a fourth round. v3 = v2 after Cursor plan review round 2 of 3 (`docs/reviews/p415/plan-round2.*`: Q5 Q6 Q8 closed; Q1 Q2 Q3 Q4 Q7 open +
 new Q9 — applied in §2.2, one bounded exception in Q2). v2 = v1 after Cursor plan review round 1 of 3 (`docs/reviews/p415/plan-round1.*`: DISAGREE Q1–Q8, all accepted; §2.1
 adds them, §3 / §4 amended). Operator: "p415: go for it" (2026-10-20); "my primary pick across is the
 Fable distill though so want to make sure that one is covered". Parent: `docs/specs/p405-kv-scheme-precedence.md` v4 §5 R7.
@@ -126,6 +128,41 @@ unaffected by P405) as the primary pick's own 256K record on the shipping code a
   fork tree — else the entry refuses; a test with a wrong prefix (e.g. the `mlx_lm` server) and valid trailing arguments.
   Router-level routing stays out of scope (worker conformance, as P369).
 
+### 2.3 v4 — plan round 3 (Q1 Q2 Q4 Q7 Q10 Q11); supersedes §2.2 where they differ
+
+- **Q1.** The live server defaults are read from `get_server_generation_defaults()` and must equal the registry's
+  `generation_defaults` key for key; the measured request's resolved arguments must equal the request's own overrides
+  (`max_tokens` 32, the seed) and the registry defaults for every omitted field.
+- **Q2 (exception withdrawn).** `cache_session_shrink` IS exercised: `PromptCacheState.update()` shrinks before the terminal
+  chunk is delivered and allocates replacement buffers, so the run reports THREE phases per entry — prefill peak, decode peak
+  (first decode step to the last token), retire peak (the update / shrink) — and capacity = their max; the shrink is observed
+  (a hook on `shrink_to_offset`: called for Fable, not for the others) and the preallocated capacity is captured from the live
+  cache BEFORE it. Prefill chunking is asserted as the exact forward sequence the fork produces for 261,120 tokens (509 × 512,
+  511, then the final 1-token forward), derived in a test from `prefill_step_size` and the prompt length, not hand-written.
+  The context cap is attested at its real consumers (the server's resolved max-KV value where the cached path reads it and the
+  cache objects' limits), not on `ResponseGenerator`. Memory-limit expectations come from mlx-serve's reviewed defaults
+  (`memory_limit_frac` 0.85 when the registry sets none) and mlx-vlm's own cache-limit derivation, recorded and asserted.
+- **Q4.** Per prefill chunk (≈ 511 checks per entry, sub-second each): power and the ownership-aware process scan, plus the
+  15 s supervisor poll; any gap (a chunk without a check), unreadable state or interference invalidates the entry. Residual,
+  stated in the report: an arbitrary non-cooperating Metal workload not identifiable by command line — mitigated by the quiet-
+  box rule, not detected.
+- **Q7.** The mandatory reference fingerprint adds: model snapshot revision + weight hashes, fork revision / harness, context
+  cap, resolved cache / memory limits, shrink policy, output-token count, backend, prompt / template identity. Any absent
+  field ⇒ non-comparable.
+- **Q10.** The resolved `GenerationArguments.seed` and the `generate_step` call's seed must both equal the fixed seed;
+  sabotage test.
+- **Q11.** The phase boundary moves inside `generate_step`: memory is synchronized and read / reset after the prompt step and
+  BEFORE the first decode `_step`, so the first decode allocation belongs to the decode phase; test.
+
+### 2.4 v4 — MTP-ON arms (side-agent note, operator decision P416 row 7)
+
+The three MTP-certified entries among the seven (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`,
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`) are served MTP-OFF today (C177 / C191) but ship MTP-ON after the merge; the drafter and the
+verify path add memory, and Fable's 37.97 GB reference was MTP-ON. Proposed: each also runs an MTP-ON arm — the registry with
+exactly that entry's C177 / P406 block restored by the P369 16-state generator (`registry_states`, the same overlay the P369
+campaigns use), the drafter identity checked as in v13 (`check_loaded_drafter` + live reset checks), the same three-phase peaks
+— reported beside its MTP-OFF arm, never pooled. +3 entries ≈ +40 min nominal. Minimum alternative: Fable only (+≈ 13 min).
+
 ## 3. Tests (CPU, red first)
 
 T1 default entries are exactly the seven of §1; `--entry` must name one of them. T8 (Q1 / Q2) the registry-parsed expectation:
@@ -152,5 +189,5 @@ at a time). Build → suites ×2 + 8 audits → Cursor code review (≤ 3 rounds
 
 ## 5. Out of scope
 
-Quality (R6), MTP-ON memory (the MTP-certified entries are served MTP-OFF; their MTP-ON 256K peak belongs to the router-chain
-re-certification), and any registry change (the operator rules per entry from the report).
+Quality (R6), MTP-ON memory unless §2.4 is accepted (otherwise it belongs to the router-chain re-certification), and any
+registry change (the operator rules per entry from the report).
