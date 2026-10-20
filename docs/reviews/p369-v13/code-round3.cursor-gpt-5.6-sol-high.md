@@ -37,4 +37,4 @@ VERDICT: NOT CLEARED R1 R2
 
 ---
 
-**Lead disposition (after the last round, for the operator):** R1 and R2 fixed test-first without a fourth round — `5f15d641` red, `3ae8770e` green (see `docs/open-questions.md` C196 request).
+**Lead disposition (after the last round, for the operator):** R1 and R2 fixed test-first without a fourth round — `5f15d641` red, `3ae8770e` green (operator decision: `docs/open-questions.md` P414).
