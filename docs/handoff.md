@@ -65,7 +65,7 @@ make it v8), `docs/specs/p387-build-note.md` (v2), `docs/specs/p383-build-plan.m
    go, add the E2 same-instance change (plan v8, Cursor plan check first). Then fork suite twice back to back on the new HEAD
    (expect 17 skips: the opt-in live test + the opt-in overlay test replace the sibling skips; verify the list) + the EIGHT
    audits (`--upstream-ref 952d4f6b`, scratchpad script `run_audits.sh` pattern: the 8 `dev/check_*.py`), then a cold
-   round 3 naming the commit (covers P387 + any P393 code too). Repeat until `VERDICT: CLEARED`.
+   round 3 naming the commit (covers P387 + any P393 code too). At most 3 review rounds, then the operator decides (C186; superseded "repeat until CLEARED").
 2. **Fork branch push (operator go)** — before the GPU smoke, so the manifest's `fork_head` is published.
 3. **P369 phase 2 on GPU** (C175; C183 budget 3–3.5 h projected; C184: no hard stop). From the stack root, detached:
    `nohup .venv/bin/python <fork-worktree>/dev/p369_phase2/orchestrate.py --stack-root . --fork-root <fork-worktree> --out

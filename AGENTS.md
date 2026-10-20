@@ -12,6 +12,7 @@ Select local LLMs for 256K agentic coding on the M5 Max 64GB; prioritize quality
 ## Development and safety
 
 - Obtain approval before non-trivial implementation; newly discovered bugs need their own proposal. Commit coherent approved work autonomously. Never push without explicit in-turn approval. Derive messages from staged diffs; prefixes: `feat(bench)`, `fix`, `docs`, `data(bench)`, `chore(stack)`.
+- Reviews: no more than 3 review rounds per artifact, then it goes to the operator. Every review prompt states which round it is ("round k of 3").
 - Edit parent forks `../mlx-vlm` and `../mlx-serve`, never `src/*`. Commit/publish forks before bumping submodules; push approval still applies. Test via `PYTHONPATH=../mlx-vlm`; synchronize with `git submodule update --force`.
 - Features/bugfixes: failing test first, then minimal fix. Lazy-import heavy dependencies; mock tests; unavailable dependencies yield `skipped/acc:null` with explanation. Transport failures must abort.
 - Public repo: no PII, credentials, absolute home paths, hostnames, usernames or emails, including history. Use placeholders; machine-local values belong in `${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh`, generated on a new box by `scripts/bootstrap_machine.sh --box <label>` (also rebuilds `$STACK_WORKDIR` inputs and `.venv-bench` from `benchmark/requirements-bench.lock`).
