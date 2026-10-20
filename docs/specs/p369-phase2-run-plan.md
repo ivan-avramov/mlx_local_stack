@@ -1,6 +1,6 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v8, 2026-10-19
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v9, 2026-10-19
 
-Status: **v8 = v7 + §3 E2 on the same-instance design (C185 / P393)**; reviewed with its build (code review round 1 of 3, C186). v7 — Cursor round 7 `VERDICT: AGREE` (`docs/reviews/p369-phase2-plan-round7.cursor-gpt-5.6-sol-high.md`); the harness is built → its code review. v6 → round 6 `DISAGREE Q35 Q38` (incomplete closures; Q36 Q37 Q39 Q40 closed;
+Status: **v9 = v8 + §2.2 forced positions (P398, found by GPU smoke 3)**; v8 = v7 + §3 E2 on the same-instance design (C185 / P393); reviewed with its build (code review round 1 of 3, C186). v7 — Cursor round 7 `VERDICT: AGREE` (`docs/reviews/p369-phase2-plan-round7.cursor-gpt-5.6-sol-high.md`); the harness is built → its code review. v6 → round 6 `DISAGREE Q35 Q38` (incomplete closures; Q36 Q37 Q39 Q40 closed;
 `docs/reviews/p369-phase2-plan-round6.cursor-gpt-5.6-sol-high.md`), both applied in v7. v5 (= v4 + §2.5, P391) → round 5 `DISAGREE Q35–Q40`, all applied here
 (`docs/reviews/p369-phase2-plan-round5.cursor-gpt-5.6-sol-high.md`). **v4 — Cursor round 4 `VERDICT: AGREE`** (`docs/reviews/p369-phase2-plan-round4.cursor-gpt-5.6-sol-high.md`) → build the harness;
 the operator items (2.5–3.5 h budget, the E7b narrowing, P387 per Q26) are pending in the handoff. v3 → round 3 `DISAGREE Q29 Q34` (all else closed; both applied here;
@@ -48,6 +48,11 @@ Fork-only, test-only code (`dev/p369_phase2/`, CPU tests in `mlx_vlm/tests/test_
   terminal index and every verifier logit row. Compared rows = every EMITTED target row: the accepted drafts' rows, plus the
   first rejection's replacement row, or the bonus row when all drafts accept. Only rows after the first rejection (unreachable
   history) are excluded. Position 0 (the prefill's first token) is compared separately from the prefill logits on both sides.
+  **v9 (P398):** a verifier block's rows past its emission cut (rejection, stop, length budget or a thinking-budget
+  forced token) are unreachable history and dropped at the cut; forced tokens are emitted with no sampler call, so the
+  ON positions without a row must be EXACTLY the forced emissions (tokens equal the forced sequence in order; else a
+  harness error) and are excluded from the ON/OFF1 row comparison and reported; states are compared at every commit and
+  C1 / C2 compare every position. E1c's row claim covers every SAMPLED emitted position.
 - **Reference (Q17; v6 §2.5):** a sequential clean replay of the forced ON tokens one token at a time — the verdict's
   reference is the SAME-INSTANCE detached replay (OFF1, §2.5), the cross-load OFF arm is comparison C2. Observation point
   (build note): the production sampler (`_PositionedTargetSampler.sample_target`) records the rows it is handed and,
