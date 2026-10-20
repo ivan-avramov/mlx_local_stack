@@ -1,4 +1,7 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v12, 2026-10-20
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v13, 2026-10-20
+
+**v13 = v12 after Cursor plan round 3 of 3 (DISAGREE V14 V15; V16 V17 also applied; V8–V13 resolved incl. the contested V9 —
+`docs/reviews/p369-v10/plan-round3.*`) — escalated to the operator, lead rec: accept v13 without a fourth round.**
 
 **v12 = v11 after Cursor plan round 2 of 3 (DISAGREE V9 V10 V11; V8 V12 V13 also applied; V9 partly contested with the C188
 carry-over rule — `docs/reviews/p369-v10/plan-round2.*`).**
@@ -234,9 +237,10 @@ Both are MTP-ON certified (M6b / M27) and were served MTP-ON on the pre-fix fork
   carry exactly ONE entry; no entry is restored on evidence from an older production pin (Fable only through its
   `7207179b` regression smoke + C188). Projection (V13): per phase from the smoke's measured components × full-run
   cardinalities (E1c cells, E2 20 items + 4 straddles, E7a 20, E7b 5) plus an explicit E7 tail reserve (one full-budget
-  runaway per entry ≈ 1–2 h); both the nominal and the operational upper bound are reported; the gate compares the nominal
-  one with 3.5 h, and a total-wall watchdog stops a campaign at the operational bound. Nominal ≈ 3–3.5 h per full campaign ⇒
-  ≈ 10 GPU h for (2)–(4) + 0.5 h for (1), before tails; an entry projecting > 3.5 h goes to the operator. No Ornith estimate
+  runaway per entry ≈ 1–2 h); the gate compares the nominal projection with 3.5 h, and a total-wall watchdog stops a
+  campaign at its AUTHORIZED WALL CAP (nominal + one reserved tail) — exhausting it yields ABORT / INCOMPLETE and an operator
+  disposition (v13 V17: one reserved tail is an allowance, not a worst case; several E7 requests can each reach their
+  watchdogs). Nominal ≈ 10.5 GPU h for all four campaigns; ≈ 13.5–16.5 h with one reserved tail per full campaign; an entry projecting > 3.5 h goes to the operator. No Ornith estimate
   from its 3B active parameters — its smoke sets it.
 - **Tuples:** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — `qwen3_5` dense hybrid, TurboQuant 4-bit KV (P405), per-query
   (harness `verify_policy=None` + an argv check that the scan resolves to `per_query`), drafter
@@ -263,14 +267,28 @@ Both are MTP-ON certified (M6b / M27) and were served MTP-ON on the pre-fix fork
   refuse any other file. Residual (recorded): the M6b / M27 runs loaded LOCAL extracted drafter directories before the
   uploads, so "upload = certified" rests on the upload procedure, not a recorded hash; the M27 extraction manifest is not on
   record. Mitigation, mandatory: the router-chain re-certification before restore (§3.1 Restore) must reproduce the certified
-  predictor — acceptance within the certified value's 95 % interval or above (M6b 0.923, M27 0.778) and decode speed-up ≥
-  1.3× — else the predictor re-qualifies (M6d) instead of inheriting M6b / M27. The worker asserts on the LOADED drafter (not
+  predictor — acceptance not below the certified level (M6b 0.923, M27 0.778 point estimates) and decode speed-up ≥ 1.3× —
+  else the predictor re-qualifies (M6d) instead of inheriting M6b / M27. The executable gate (v13 V16) is delegated to the
+  reviewed router re-certification plan: pinned prompts / seeds and block size, the acceptance estimator and denominator, the
+  numeric historical interval endpoints recovered from the M6b / M27 records, and the exact speed statistic for 1.3×. The worker asserts on the LOADED drafter (not
   only the target): `qwen3_5_mtp`, the certified depth and block size and effective proposal width, hidden / vocabulary dims
   and embedding / head binding to the target; for Ornith additionally `Qwen3_5MoeDecoderLayer` drafter layers, 256 experts /
   top-k 8 and int4 / g64 quantization.
-- **Ornith drafter construction (v12 V12), before any GPU minute:** a tiny `qwen3_next` split → strict load → bind to a tiny
-  `qwen3_5_moe` target → one draft / verify round test, asserting `Qwen3_5MoeDecoderLayer`, expert count / top-k, all three
-  routed projections and the quantization; the same architecture assertions run on the pinned real Ornith drafter at load.
+- **Ornith drafter construction (v12 V12, v13 V14), before any GPU minute:** a tiny split → strict load → bind to a tiny
+  `qwen3_5_moe` target → one draft / verify round test, with the source configuration's root and nested `text_config.model_type`
+  pinned: (a) the uploaded drafter's shape (nested `qwen3_5_moe_text`) loads as `Qwen3_5MoeDecoderLayer` with expert count /
+  top-k, all three routed projections and the quantization asserted; (b) ADVERSARIAL: a nested `qwen3_next` source (what
+  `Qwen3NextMTPSplitter` preserves today; `Qwen3_5MTPConfig` builds MoE layers only when the nested type contains `moe`) must
+  either be rewritten deterministically to the MoE runtime type or fail during splitting — never emit a dense-runtime artifact
+  holding expert weights. The same architecture assertions run on the pinned real Ornith drafter at load. If (b) exposes a
+  production defect, its fix is its own proposal, creates a NEW production pin and reopens the C188 carry-over assessment for
+  every campaign already run.
+- **Ornith drafter execution (v13 V15):** the drafter's MoE path (`Qwen3_5MTPDraftModel.draft_block` →
+  `Qwen3_5MoeSparseMoeBlock` → `SwitchGLU.__call__`) is distinct from the target verifier's (`_switch_glu`, direct
+  `SwitchLinear`). The tiny round gives it a SEPARATE draft scope and asserts runtime calls to its router, shared expert and all
+  routed gate / up / down projections, with selected-expert evidence; sabotage negatives for each path make the test fail. The
+  real Ornith smoke records the same positive draft-path inventory, separately from the target-verifier telemetry, and the
+  smoke gate requires it.
 - **Items (v11, V4):** no C84 bundles exist for either entry. E2 / E7 use a reviewed BORROWED PANEL fixture
   (`dev/p369_phase2/borrowed_panel.json`): per item the source bundle path (under `Qwen3.8-27B-mlx-uniform-4bit`) and its sha256,
   the item id, seed, dataset revision and content hash, and the canonical built-message sha256; per entry its templated token
