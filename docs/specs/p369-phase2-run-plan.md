@@ -1,4 +1,7 @@
-# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v11, 2026-10-20
+# P369 phase 2 — GPU worker-conformance run plan (E1c, E2, E7) — PLAN v12, 2026-10-20
+
+**v12 = v11 after Cursor plan round 2 of 3 (DISAGREE V9 V10 V11; V8 V12 V13 also applied; V9 partly contested with the C188
+carry-over rule — `docs/reviews/p369-v10/plan-round2.*`).**
 
 **v11 (2026-10-20) = v10 after Cursor plan round 1 of 3 (DISAGREE V1 V2 V3 V5 V6 V7; all seven findings accepted —
 `docs/reviews/p369-v10/plan-round1.*`).** v10 (C191, operator: "the goal here must be to qualify and enable MTP across the
@@ -18,8 +21,8 @@ new Q28–Q33, all accepted and applied here; `docs/reviews/p369-phase2-plan-rou
 `DISAGREE Q15–Q27` (`docs/reviews/p369-phase2-plan-round1.cursor-gpt-5.6-sol-high.md`), all accepted. Parent:
 `docs/specs/p369-mtp-certification.md` (v3) §E1c, §E2, §E7. GPU go: C175 (this phase only). Operator choices: C182 (in-process
 worker harness, reconstructed C84 items, full variant); the round-1 changes to time (Q25) and P387 (Q26) go back to the operator.
-**Production source pinned: fork `p369-mtp` `4e6d0e03`** (code review cleared, round 8). Harness and P387 commits are test /
-dev only; the run refuses unless `git diff 4e6d0e03 -- mlx_vlm ':!mlx_vlm/tests'` is empty (Q27). No serving-configuration
+*(Historical, V8: the completed `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` full run used production pin `4e6d0e03`; smokes
+9–11 used `da27f0ef`. The ONLY production pin for v10+ runs is `7207179b`, stated above.)* No serving-configuration
 change: the daily driver stays MTP-OFF (C177); no router runs. Claims made here are WORKER conformance (the fork's real CLI,
 app, endpoint, templating, cached-session path); router claims belong to the per-pick re-certification on real chains (Q20).
 
@@ -222,33 +225,52 @@ sha256 recorded before load.
 
 Both are MTP-ON certified (M6b / M27) and were served MTP-ON on the pre-fix fork until C191 (P406).
 
-- **Campaigns (v11, V2):** every entry is its OWN campaign — its own smoke, its own smoke gate (`wall_s × 6 ≤ 3.5 h` for that
-  entry alone) and its own full run bound to that smoke; never one four-entry campaign. Order: `Qwen3.8-27B-mlx-uniform-4bit`,
-  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `Ornith-1.0-35B-mlx-uniform-4bit`. Budget ≈ 3–3.5 h per entry, ≈ 9–10 GPU h for the
-  three plus E7 heavy tails; a smoke projecting > 3.5 h goes to the operator. No Ornith wall estimate is assumed from its
-  3B active parameters — its smoke sets it.
+- **Campaigns (v11 V2, v12 V9 / V13):** exactly FOUR pre-registered, independently authorized campaigns on production pin
+  `7207179b`, in order: (1) `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` — a REGRESSION SMOKE only, under the operator-approved
+  C188 carry-over rule (its full-run PASS on `4e6d0e03` carries because `verify_blocks_per_query = 0` on all 65 ON turns and its
+  native KV and draft settings resolve identically under P405; smoke 10 already carried it to `da27f0ef`); the smoke must pass
+  on `7207179b` or Fable gets a full run; (2) `Qwen3.8-27B-mlx-uniform-4bit`; (3) `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`;
+  (4) `Ornith-1.0-35B-mlx-uniform-4bit` — each (2)–(4) its own smoke, gate and full run. The CLI and every smoke / full binding
+  carry exactly ONE entry; no entry is restored on evidence from an older production pin (Fable only through its
+  `7207179b` regression smoke + C188). Projection (V13): per phase from the smoke's measured components × full-run
+  cardinalities (E1c cells, E2 20 items + 4 straddles, E7a 20, E7b 5) plus an explicit E7 tail reserve (one full-budget
+  runaway per entry ≈ 1–2 h); both the nominal and the operational upper bound are reported; the gate compares the nominal
+  one with 3.5 h, and a total-wall watchdog stops a campaign at the operational bound. Nominal ≈ 3–3.5 h per full campaign ⇒
+  ≈ 10 GPU h for (2)–(4) + 0.5 h for (1), before tails; an entry projecting > 3.5 h goes to the operator. No Ornith estimate
+  from its 3B active parameters — its smoke sets it.
 - **Tuples:** `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — `qwen3_5` dense hybrid, TurboQuant 4-bit KV (P405), per-query
   (harness `verify_policy=None` + an argv check that the scan resolves to `per_query`), drafter
   `caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter`. `Ornith-1.0-35B-mlx-uniform-4bit` — `qwen3_5_moe` (40 layers, full
   attention every 4th, 256 experts / top-k 8 + shared), native KV, per-query, TRANSPLANTED drafter
   `caslca/Ornith-1.0-35B-mlx-uniform-4bit-mtp-drafter` (split via `--model-type qwen3_next`, M27).
-- **Registry states and overlay (v11, V5):** `Campaign.prepare` itself (not an opt-in test) requires the live registry to be
-  byte-identical to one of THREE states derived deterministically from the pinned golden fixture: (1) the fixture; (2) the
-  C177 interim (the fixture with exactly C177's raw-byte substitutions); (3) state 2 plus exactly both complete P406 pairs (each
-  entry's `draft_kind` line replaced by the commented line carrying the `P406 INTERIM (C191 2026-10-20)` marker text, and the
-  ADJACENT `draft_model` line commented, bytes otherwise unchanged). Partial P406, an altered comment / path / whitespace /
-  newline, a duplicate marker, non-adjacency or any other edit refuses. Each overlay replaces exactly that entry's pair with
-  the fixture's bytes and asserts the entry's restored block equals the fixture block. The fork's opt-in live-registry test
-  (§5) accepts the same three states by the same derivation.
-- **Model pins (v11, V6):** a reviewed pins file in the harness (`dev/p369_phase2/pins.json`) names, per entry, the target and
-  drafter Hugging Face revisions and the sha256 of every loaded file, including every prompt- / template-affecting file
-  (tokenizer, chat template, generation config): the registry's recorded revision where it has one (e.g.
-  `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` `eee677f5`), else the cached snapshot fixed at review time and labelled "pinned at
-  qualification" (no certification-time hash exists to prove equality). Smoke and full run refuse a snapshot or file that
-  differs. The worker asserts the loaded drafter is `qwen3_5_mtp` with the pinned block size / depth, hidden and vocabulary
-  dims equal to the target's, the target text type (dense vs `qwen3_5_moe`, Ornith 256 experts / top-k 8 and its quantization),
-  the observed verify widths and the effective `per_query` policy. Ornith also binds an extraction manifest (the
-  `qwen3_next` source revision and the resulting drafter hashes) if M27 recorded one; if not, the gap is recorded.
+- **Registry states and overlay (v11 V5, v12 V10):** ONE shared byte-state generator (harness module, used by
+  `Campaign.prepare`, the overlays and the fork's live-registry test) models each entry's MTP-OFF form as an ATOMIC raw-byte
+  substitution of the pinned golden fixture: Fable's three-line C177 block (`draft_kind`, `draft_model`,
+  `mtp_verify_scan: joint_v1`), `Qwen3.8-27B-mlx-uniform-4bit`'s C177 pair, and each P406 pair (the `draft_kind` line → the
+  commented line with the `P406 INTERIM (C191 2026-10-20)` marker; the ADJACENT `draft_model` line commented; bytes otherwise
+  unchanged). The accepted live registries are EXACTLY the 2⁴ = 16 combinations (each entry ON or OFF independently); a half
+  applied atomic block, an altered comment / path / whitespace / newline, a duplicate marker or any other edit refuses —
+  `Campaign.prepare` itself enforces it (not an opt-in test). Each overlay sets its entry ON (replaces that entry's atomic
+  block with the fixture's bytes) and asserts the restored block equals the fixture block. §5's field-based rules are replaced
+  by this generator.
+- **Model pins and certified identity (v11 V6, v12 V11):** verified 2026-10-20 from the Hugging Face commit history — for all
+  four repos (`caslca/Ornith-1.0-35B-mlx-uniform-4bit{,-mtp-drafter}`, `caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit{,-mtp-drafter}`)
+  every file except `README.md` and `evaluation/M44-evidence-2026-09-14.json` is byte-identical (LFS sha256 / blob id) between
+  the certification-time revision (drafters: Ornith `5279f90a` 2026-09-01 = the M27 upload, Qwen3.6 `fb07d16d` 2026-08-25 = the
+  M6b upload; targets: Qwen3.6 `eee677f5`, Ornith `d2c948e0`) and the current head; the same comparison is made for the two
+  Qwen3.8-27B picks' repos before their campaigns. A reviewed `dev/p369_phase2/pins.json` records, per entry, those
+  revisions and every loaded file's sha256 (weights, configs, tokenizer, chat template, generation config); smoke and full run
+  refuse any other file. Residual (recorded): the M6b / M27 runs loaded LOCAL extracted drafter directories before the
+  uploads, so "upload = certified" rests on the upload procedure, not a recorded hash; the M27 extraction manifest is not on
+  record. Mitigation, mandatory: the router-chain re-certification before restore (§3.1 Restore) must reproduce the certified
+  predictor — acceptance within the certified value's 95 % interval or above (M6b 0.923, M27 0.778) and decode speed-up ≥
+  1.3× — else the predictor re-qualifies (M6d) instead of inheriting M6b / M27. The worker asserts on the LOADED drafter (not
+  only the target): `qwen3_5_mtp`, the certified depth and block size and effective proposal width, hidden / vocabulary dims
+  and embedding / head binding to the target; for Ornith additionally `Qwen3_5MoeDecoderLayer` drafter layers, 256 experts /
+  top-k 8 and int4 / g64 quantization.
+- **Ornith drafter construction (v12 V12), before any GPU minute:** a tiny `qwen3_next` split → strict load → bind to a tiny
+  `qwen3_5_moe` target → one draft / verify round test, asserting `Qwen3_5MoeDecoderLayer`, expert count / top-k, all three
+  routed projections and the quantization; the same architecture assertions run on the pinned real Ornith drafter at load.
 - **Items (v11, V4):** no C84 bundles exist for either entry. E2 / E7 use a reviewed BORROWED PANEL fixture
   (`dev/p369_phase2/borrowed_panel.json`): per item the source bundle path (under `Qwen3.8-27B-mlx-uniform-4bit`) and its sha256,
   the item id, seed, dataset revision and content hash, and the canonical built-message sha256; per entry its templated token
@@ -292,10 +314,9 @@ registry with the fixture field by field and accepts exactly two states: identic
 `draft_model` and Fable's `mtp_verify_scan` absent, where (Q34) each pick's commented `draft_kind` line and Fable's commented
 `mtp_verify_scan` line carry the `P369 INTERIM (C177` marker and the commented `draft_model` line ADJACENT to that pick's
 marked `draft_kind` equals the fixture's `draft_model` exactly (the registry's `draft_model` lines carry no marker; the
-registry is not edited). v10 (C191): a third accepted state — the C177 interim plus, for
-`Ornith-1.0-35B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, `draft_kind` / `draft_model` absent with the
-commented `draft_kind` line carrying the `P406 INTERIM (C191` marker and the ADJACENT commented `draft_model` equal to the
-fixture's. C182 approved the v1 variant
+registry is not edited). v12 (V10): SUPERSEDED for v10+ runs — the live-registry test and `Campaign.prepare` use the shared
+byte-state generator of §3.1 (the 16 per-entry ON / OFF combinations); the field-based rules above describe the original
+P387 test only. C182 approved the v1 variant
 (sampling from the live registry); this change goes back to the operator.
 
 ## 6. After this phase
