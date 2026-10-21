@@ -361,12 +361,15 @@ def _declared_auditor_probes_absent(monkeypatch):
 
 
 # --------------------------------------------------------------------------- P311-lite: no docker in unit tests
-@pytest.fixture(autouse=True)
-def _fixed_grader_image(monkeypatch):
+@pytest.fixture(autouse=True, scope="session")
+def _fixed_grader_image():
     """The tg1 scaffold policy records the local grader image id; unit tests never talk to docker. Tests of the
-    real probe use `toolchain.docker_image_id(run=<fake>)`."""
+    real probe use `toolchain.docker_image_id(run=<fake>)`. P409: SESSION scope — pytest builds module / class
+    fixtures before function ones, so a function-scoped patch left module-scoped fixtures on the real daemon."""
     from bench import toolchain
-    monkeypatch.setattr(toolchain, "grader_image_id", lambda: "sha256:" + "f" * 64)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(toolchain, "grader_image_id", lambda: "sha256:" + "f" * 64)
+        yield
 
 # G1 round 2: the guard's reconcile deadline stays at its production value (10 s); tests that wait on it inject the
 # guard's clock and sleep instead (modules opt in with `pytestmark = pytest.mark.usefixtures("fake_guard_clock")`).
