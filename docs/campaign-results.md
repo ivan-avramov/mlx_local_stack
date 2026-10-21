@@ -2,6 +2,18 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-20 — P369 phase 2: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` worker-qualified MTP-ON on TurboQuant (PASS)
+
+**What:** the v13 campaign for the B-menu 4th pick on the shipping production code `7207179b` (P400 + P401 + P405), TurboQuant
+4-bit KV, its certified drafter, borrowed C84 panel (no own bundles). Run `…/p369/phase2/20261020-a45f369d-full-qwen36`, 3.3 h.
+
+**Result:** E1c PASS on all five cells (every sampled MTP-ON row bit-identical to plain decoding on the same instance, max TV 0;
+C1 / C2 identical); E2 PASS (24 requests, cross-load identical); E7a: M4a 8 / 20, M4b 6 / 20, M3 0 / 20 (pre-fix condition incidence,
+synthetic panel); E7b 5 / 5 continuous.
+
+**Implication:** MTP-ON is exact for this pick at the worker level; it stays MTP-OFF in the daily driver (C191) until the fork
+merge, submodule bump and router-chain re-certification. Its R7 MTP-ON entry is now unlocked (C199).
+
 ## 2026-10-20 — P405 R4: the P400 verifier fix on TurboQuant KV — within bounds, and faster (P404 closed)
 
 **What:** the pre-registered P400 §5.3 ABBA re-run with P405 in both arms (arm A `e12780d0` old verifier, arm B `64afc7dd` fix A),
