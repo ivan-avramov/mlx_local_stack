@@ -1,0 +1,19 @@
+Cold PLAN review — ROUND 3 OF 3 (the LAST round; open findings go to the operator) (at most 3 rounds, then the operator decides open findings). The plan (inline below,
+`docs/specs/p426-fable-mtp-recert.md` in this STACK repo at commit `f28e04c2`) re-certifies `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+MTP-ON vs MTP-OFF through the real router before restoring its three C177 registry lines. Governing rules: `AGENTS.md`, rulings
+C203 / C204 / C177 in `docs/open-questions.md` (C204: no strict thresholds — per-axis quality / memory / speed signals for an
+operator judgement call), `docs/specs/p369-phase2-run-plan.md` §3.1 Restore and §6. Code to check the plan against (read-only):
+`benchmark/run.py`, `benchmark/bench/generate.py` (row `draft`, `peak_mem_gb`), `benchmark/bench/compare_predictor.py`,
+`benchmark/vision_gate.py`, `benchmark/bench/run_reasoning.py`, `benchmark/bench/run_capacity.py`, `benchmark/chains/c147/`
+(`run_tg1_chain.py`, `chain_ops.py`, `chain_core.py`), `benchmark/m1/bench_watch.py`, `bench/run_judge_pairwise.py`,
+`main_models.yaml`; the fork at `../mlx-vlm` commit `494aea2c` (`dev/p369_phase2/registry_states.py`,
+`mlx_vlm/server/generation.py` `Request completed` line; read with `git -C ../mlx-vlm show 494aea2c:<path>`).
+
+Rounds 1–2's open findings (R1 R3 R6 R7 R8 R10 R11 R12 R13 S1–S8, `docs/reviews/p426/plan-round{1,2}.cursor-gpt-5.6-sol-high.md`) are claimed applied in v3 (its header maps them). First, for EACH of those state CLOSED or OPEN with the reason. Then review v2 adversarially: (1) can a signal be wrong or misleading (arms differing in more than the predictor, a stale or
+lifetime-high-water memory number, acceptance pooled wrongly, speed measured under different machine state, the ON overlay
+not what would ship); (2) does every step fail closed, and do transport errors abort; (3) consistency with AGENTS.md
+measurement rules (k=2 instances for agentic chains, paired seeds, power, idle, monitor, M50, deployed params, smoke first,
+no pooling across builds); (4) whether each existing tool can actually run as written (flags, file names, refusals) and what
+the plan misses in its builds B1–B6; (5) scope, ordering or estimate problems. New findings ids T1 onward (only real defects; severity honest) (or say none), each:
+severity, plan section, problem, failure scenario, fix. End with exactly one line: `VERDICT: AGREE` or `VERDICT: DISAGREE <ids>` (open R / S / T ids).
+OUTPUT RULE: your FINAL message must contain EVERY finding in full, then the VERDICT line.
