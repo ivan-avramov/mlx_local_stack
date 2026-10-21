@@ -2,6 +2,18 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-21 — P369 phase 2: `Ornith-1.0-35B-mlx-uniform-4bit` worker-qualified MTP-ON (PASS) — all four MTP picks qualified
+
+**What:** the last v13 campaign — the MoE target with its transplanted MoE drafter, native KV, on production `7207179b`. Run
+`…/p369/phase2/20261020-a45f369d-full-ornith`, 2.0 h.
+
+**Result:** E1c PASS (5 / 5 cells, every sampled row bit-identical, max TV 0); the drafter's real MoE draft path observed and
+complete (77 invocations); E2 PASS; E7a M4a 6 / 20, M4b 9 / 20, M3 1 / 20; E7b 5 / 5 continuous.
+
+**Implication:** every MTP-certified registry entry (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`,
+`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, Ornith) is exact MTP-ON at the worker level on the code the merge ships. They stay MTP-OFF
+in the daily driver until the fork merge, the submodule bump and each entry's router-chain re-certification.
+
 ## 2026-10-20 — P369 phase 2: `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` worker-qualified MTP-ON on TurboQuant (PASS)
 
 **What:** the v13 campaign for the B-menu 4th pick on the shipping production code `7207179b` (P400 + P401 + P405), TurboQuant
