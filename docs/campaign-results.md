@@ -2,6 +2,38 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-21 — P405 R7 (P415): 256K operational qualification of seven entries — all qualify
+
+**What:** each entry as it ships (C199: the MTP-certified picks MTP-ON via their exact C177 / P406 blocks; the four others as served),
+on candidate production `7207179b`, one request at the largest prompt the server accepts (262,144 − 2,048 = 260,096 tokens) with
+the registry's own request settings (C198: the server clamps `max_tokens` to 2,048 and thinking to 1,638). Peak = the max of the
+prefill, decode and retire (session shrink) phases (`mx.get_peak_memory`); exact leaf manifest, KV capacity, chunking, fused / lazy /
+shrink behaviour, memory and cache limits asserted per entry; no battery interval in any window (P418). Runs:
+`$STACK_WORKDIR/p415/r7/20261021-189c2565-full` (the three MTP-ON entries) and `…/20261021-2e66d89d-served` (the four served entries,
+rerun after the chunk-landing harness fix, P421).
+
+| Entry | Arm | Capacity (GB) | Prefill / decode / retire peak | Prefill / decode tok/s | Tokens (finish) |
+|---|---|---:|---|---|---|
+| `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` | MTP-ON | **38.25** | 37.97 / 38.00 / 38.25 | 370 / 16.1 | 1,301 (stop) |
+| `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` | MTP-ON | **30.16** | 28.45 / 30.16 / — | 130 / 10.9 | 2,048 (length) |
+| `Qwen3.8-27B-mlx-uniform-4bit` | MTP-ON | **28.27** | 25.33 / 28.27 / — | 130 / 10.4 | 809 (stop) |
+| `Qwen3.8-27B-OptiQ-4.5bpw-mixed` | served | 28.47 | 28.47 / 28.29 / — | 130 / 11.2 | 1,817 (stop) |
+| `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit` | served | 25.21 | 25.17 / 25.21 / — | 133 / 12.2 | 830 (stop) |
+| `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit` | served | 25.17 | 25.17 / 24.98 / — | 132 / 12.4 | 2,048 (length) |
+| `Qwen3.8-27B-static-mixed-4bit` | served | 23.48 | 23.43 / 23.48 / — | 129 / 11.8 | 1,138 (stop) |
+
+**Reference deltas (C199 (a), always labelled):** Fable +0.28 GB vs 37.97 (M57 / M58; differs in prompt length, harness, mlx, …);
+`Qwen3.8-27B-mlx-uniform-4bit` −9.52 vs 37.80 (M43, affine-era, MTP-ON); `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` −7.42 vs 37.58;
+static −8.10 vs 31.58; OptiQ −5.24 vs 33.72 — none comparable like-for-like; no decision hinges on them (every entry is far under
+the guidance), so no like-for-like rerun.
+
+**Mechanism notes:** only native16 Fable has a retire phase (session shrink on) and it adds 0.25 GB over decode; the TurboQuant
+entries' 256K prefill is ≈ 130 tok/s against native16 Fable's 370 (input to the codec decision, R5 / R6). The served MTP-OFF path
+lands its chunked prefill on a snapshot offset (42 tokens) the drafter path does not request.
+
+**Implication:** P405 R7 is met for all six TurboQuant entries — none needs `kv_quant_scheme: uniform` at promotion on capacity
+grounds; Fable MTP-ON fits with ≈ 9.7 GB to spare at 256K on the code the merge ships.
+
 ## 2026-10-21 — P369 phase 2: `Ornith-1.0-35B-mlx-uniform-4bit` worker-qualified MTP-ON (PASS) — all four MTP picks qualified
 
 **What:** the last v13 campaign — the MoE target with its transplanted MoE drafter, native KV, on production `7207179b`. Run
