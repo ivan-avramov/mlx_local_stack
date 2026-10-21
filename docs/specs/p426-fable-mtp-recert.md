@@ -108,11 +108,11 @@ with a fingerprint-labelled delta (C199), never a pair.
 
 ## 7. Subjective quality (R10)
 
-The C161 / C166 panel (B3 = P427): two judges from two providers (m5max-128: Claude Opus via Claude Code, Cursor
-`gpt-5.6-sol-high`), blind pairwise, both orders, length-adjusted, judge model id / client version / prompt sha per verdict,
+The C161 / C166 panel (B3 = P427): two judges from two model families (C206; configured per box — m5max-128 default: Claude Opus via Claude Code + a
+Cursor model of another family), blind pairwise, both orders, length-adjusted, judge model id / client version / prompt sha per verdict,
 retries 0. Over execution-passing pairs: A1 (both-correct), A2 (all 40), A4 (strict draws), A7 (both-pass items per session; the
-judge packet = task, final diff / tree, transcript summary). A3: image + caption + both descriptions; if either provider cannot
-take images, A3's panel stays PENDING (no single-provider result) unless the operator waives. **Generation-side artifacts land
+judge packet = task, final diff / tree, transcript summary). A3: image + caption + both descriptions; the second family is a Cursor model that
+accepts images (e.g. Gemini) if one does; otherwise a Claude-only result, labelled single-family (C206). **Generation-side artifacts land
 before Wave 1 (B12):** A4 completion text; A3 description + image path per row; A7 final tree + transcript per item (verified
 present by B10's exit receipt). Judging needs no GPU and may run after the legs.
 
